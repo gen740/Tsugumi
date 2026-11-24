@@ -46,7 +46,6 @@ include(${CMAKE_CURRENT_LIST_DIR}/installed/daemon.cmake)
 
 include(${CMAKE_CURRENT_LIST_DIR}/installed/client.cmake)
 
-include(${CMAKE_CURRENT_LIST_DIR}/installed/sdk.cmake)
 
 include(${CMAKE_CURRENT_LIST_DIR}/installed/host.cmake)
 
@@ -59,7 +58,7 @@ endforeach()
 set(_project_endpoint_source ${TSUGUMI_CORE_TEST_SUPPORT}/src/project_endpoint.cc ${TSUGUMI_CORE_TEST_SUPPORT}/src/server.cc)
 set(_core_main ${TSUGUMI_CORE_TEST_SUPPORT}/src/main.cc)
 set(_core_headers ${TSUGUMI_CORE_TEST_SUPPORT}/include/tsugumi-private)
-set(_test_sdk ${TSUGUMI_CORE_ROOT}/share/tsugumi/sdk)
+set(_test_nix ${TSUGUMI_CORE_ROOT}/share/tsugumi/nix)
 set(_test_project_schema ${TSUGUMI_CORE_ROOT}/share/tsugumi/protocol/tsugumi.bfbs)
 enable_testing()
 

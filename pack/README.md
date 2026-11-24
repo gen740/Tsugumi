@@ -1,14 +1,12 @@
 # tsugumi-pack: a Project as a standalone Mac app
 
 ```sh
-tsugumi-pack ./CellCount --output ./CellCount.app
-./CellCount.app/Contents/MacOS/CellCount --set generate.seed=11 --output ./counts
-./WordCount.app/Contents/MacOS/WordCount --file text=./my-notes.txt
+tsugumi-pack ./Temperature --output ./Temperature.app
+./Temperature.app/Contents/MacOS/Temperature --output ./temperatures
 ```
 
-`--help` on an app lists its parameters and file inputs. Opened from the
-Finder, an app runs with the exported values and shows its results folder
-(in Documents) when done.
+Opened from the Finder, an app runs with its exported definition and shows
+the results folder in Documents when done.
 
 The exporter turns a Tsugumi Project into an app that the recipient runs
 offline on an Apple Silicon Mac, with no Tsugumi or Nix installed
@@ -26,31 +24,30 @@ come later.
    There `tsugumid --prepare-cards` opens the Project and, for every Code
    Card, performs exactly the evaluation and build a run of that Card would
    perform on the local service (`NixRunner::build`), whether or not a run
-   would reach it. For each Card it records the evaluation key (the nixpkgs
-   pin, the system and the content-addressed definition, contract,
-   parameter and upstream folders) and the build: manifest, closure and run
+   would reach it. Sources resolve against the locked URLs in each owning project's
+   `tsugumi.lock`. Update the locks before export if declarations lack matching entries.
+   For each Card it records the evaluation key (the project source
+   pins, the system and the content-addressed definition, contract,
+   parameter and upstream folders) and the build: plan, closure and run
    list shape. A Card that does not build fails the export and is named.
 3. **Write the payload.** The Cards' runtime closures, minus what the app's
    runner image already holds, go into `payload.erofs` with those records
-   (`cards.jsonl`) and the staged Project. No nixpkgs sources, derivations
+   (`cards.bin`) and the staged Project. No evaluator sources, derivations
    or Nix database: nothing in the app evaluates.
 4. **Write the app.** `Contents/MacOS/<Name>` is a copy of the signed
    `tsugumi-pack` executable; `Contents/Resources` holds `vmlinux`,
    `rootfs.erofs` (the runner image), `payload.erofs` and `pack.json` (the
-   triggers and each Card's parameters, with those that change the build
-   marked fixed).
+   exported workflow entry points).
 
 The app, when run, boots the runner image with **no network device**. The
 payload's store is laid over the image's (a read-only overlay), the
-recipient's parameter values and files are written into a copy of the
-Project on a sparse scratch disk the app removes afterwards, and `tsugumid
+workflow uses a copy of the project on a temporary sparse disk. `tsugumid
 --prepared-cards` runs the Workflow from its trigger through the same RPC
 the apps use. For each Card it computes the evaluation key as it would
 before evaluating, and uses the recorded build only if the key is the
 export's; a Card without a record, or one that changed, fails with that
 reason instead of being evaluated. Every Card's outputs (raw FlatBuffers
-bytes, JSON, and the content of File and Directory values), display (PNG,
-text, table) and logs are written under the results folder. `summary.json`
+bytes, JSON, and artifact directories), and logs are written under the results folder. `summary.json`
 lists every invocation and, under `results`, the outputs no other Card
 consumes: the Workflow's results. The guest then powers off; Ctrl-C stops it
 and removes the run's temporary folder and scratch disk.
@@ -90,17 +87,13 @@ and removes the run's temporary folder and scratch disk.
   over `request.json` and moves the results folder out. Viewing is left to
   the files it writes (an image viewer, a text editor): there is no viewer in
   this path.
-- **Parameters, not rebuilt definitions.** The recipient can change the
-  parameters of Code and Input Cards (`--set card.param=value`,
-  `--params file.json`; `--help` lists them). Parameters marked `nix` change
-  the Card's build, so they are fixed at export; the app refuses them rather than attempting a build offline.
-- **Files through the input Card.** `--file CARD=PATH` replaces the file of
-  an input Card whose output is a File. The core reads an input Card's file
-  only from the Card's own folder, so the app copies the recipient's file
-  into the copy of the Project there (`recipient/<name>`) and points the Card
-  at it. An input Card is not built, so this changes no build.
+- **Values fixed at export.** Export packages the existing build results of
+  all participating definitions, so every Card's params and every Input
+  Card's values are those of the exported Project. The app takes no
+  parameters or files from the recipient: to run other values, change the
+  Project and export it again.
 - **Values are recorded in the app.** Record I/O is off by default, which
-  would leave the recipient with displays only. The app's copy turns it on
+  would leave the recipient without recorded output values. The app's copy turns it on
   for every Code Card; it is a setting, outside what a build evaluates.
 - **Size.** What remains is what the Cards and tsugumid need to run.
   Cell-count's payload (402 MiB) is its Cards' closures: Python 147 MiB,
@@ -138,7 +131,9 @@ it whenever `pack/` or the native runtime changes).
 ## First end-to-end check
 
 `demos/en/cell-count` (seven Python and Bash Cards), exported and
-run on an M-series Mac (14 CPUs; the guest gets 8 GiB), 2026-11-18:
+run on an M-series Mac (14 CPUs; the guest gets 8 GiB), 2026-11-18. This
+measurement predates the current Card ABI. TODO(open): Repeat the check after the demo display port
+([Demos](../docs/Demos.md)).
 
 | | |
 | --- | --- |
@@ -152,30 +147,15 @@ run on an M-series Mac (14 CPUs; the guest gets 8 GiB), 2026-11-18:
 | Whole Workflow, results written | 21.8 s | 23.8–24.8 s |
 
 The first export with an empty store disk took 77 s (builds 28 s). The
-parameter sweep is 18 s of every run.
+batch of threshold variants took 18 s per run.
 
 **Offline.** The app's guest has no network device at all, and its image
 has no Nix, so nothing in it can download or build; tsugumid's log records
 no evaluation. Every Card still ran, which shows the payload is complete. (The Mac's own network was left on: this Mac is
 shared, and the guest's isolation does not depend on it.)
 
-**Same results as the Workflow in Tsugumi.** The reference is the same
-Project run by this branch's `tsugumid` directly on an online aarch64 NixOS
-host (OrbStack), with its own store and the normal project location. All six
-figures (PNG) and all seven Card logs are byte-identical to the app's. With a
-new input, `--set generate.seed=11 --set generate.cells=120 --set
-real.min_area=20`, the counts change (score: 96 by threshold, 117 by
-watershed) and are again byte-identical to the reference given the same
-values. Setting a `nix` parameter (`mitosis.hash`) is refused with its reason.
-
-**A recipient's file.** A three-Card Project (trigger, an input Card with a
-text file, a Python Card that counts lines and words and writes the text
-upper-cased as a File) exported to a 268 MiB app (payload 98 MiB; 407 MiB
-when the app evaluated). With `--file text=mine.txt` the app returned
-`counts.json` (3 lines, 6 words) and `upper/upper.txt` for the given file in
-1.8 s, identical to the reference
-run given the same file (the File value's JSON names the copy, not the
-guest's path).
+The original check compared the image and diagnostic outputs with those of the
+same project run through a standalone `tsugumid` on aarch64 Linux.
 
 Not checked here: a second Mac without Tsugumi or Nix (nothing on this Mac
 is used by the app, but its development signature would need Developer ID
@@ -184,20 +164,11 @@ shared, so nothing was brought to the front).
 
 ## Not done yet
 
-- How a recipient gives inputs. `--set` and `--file` are provisional: they
-  exist to check that an exported app runs on new values. Which values an
-  app exposes (likely only input Cards), how folders and batches are passed,
-  and the recipient's form follow from how Tsugumi itself takes a Workflow's
-  inputs, which is still to be designed; they will be replaced then.
 - hostd integration and the UI's export action (the tool's progress lines
   are already one per stage).
-- Directory inputs: an input Card reads one file; a recipient's folder
-  needs a Card that takes a Directory, which input Cards do not offer today.
 - Progress in the Finder: an app opened there shows nothing until its
   results folder opens.
 - Distribution signing: an app signed with a development certificate runs on
   this Mac; another Mac needs Developer ID signing and notarization.
 - Cards built for x86_64-linux (Rosetta in the guest) and remote execution
-  services are not exported. Cards that use `nixSources` are refused by the
-  app's tsugumid: their source lookups are evaluations too, and the records
-  do not carry them yet.
+  services are not exported.

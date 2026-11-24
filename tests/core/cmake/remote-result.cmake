@@ -11,6 +11,7 @@ add_executable(tsugumi_remote_result_tests
   ${_tsugumi_remote_result_versions_sources}
   ${_tsugumi_remote_result_runtime_support_sources}
 )
+tsugumi_use_nix_double(tsugumi_remote_result_tests)
 target_include_directories(tsugumi_remote_result_tests PRIVATE ${_core_headers} ${_workerd_headers})
 target_link_libraries(tsugumi_remote_result_tests PRIVATE tsugumi_core GTest::gtest_main)
 target_compile_options(tsugumi_remote_result_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)

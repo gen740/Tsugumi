@@ -1,16 +1,8 @@
 {
   "type": "code",
-  "language": "python",
   "inputs": [
     {
       "name": "data"
-    }
-  ],
-  "params": [
-    {
-      "name": "k",
-      "type": "uint64",
-      "data": 3
     }
   ]
 }

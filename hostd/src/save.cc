@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <set>
 
+#include "host/layout_file.hh"
+#include "tsugumi/document/document.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/text.hh"
 
@@ -49,9 +51,9 @@ auto FilterProjectGraph(json::Members project,
     auto boundary = json::Object(project.at("boundary"));
     for (auto& [side, raw] : boundary) {
       (void)side;
-      auto ports = json::Object(raw);
+      auto ports = json::Array(raw);
       std::erase_if(ports, [&](const auto& port) {
-        return !visible(json::Text(json::Object(port.second), "card"));
+        return !visible(json::Text(json::Object(port), "card"));
       });
       raw = json::Encode(ports);
     }
@@ -95,27 +97,51 @@ auto SourcePatches::Project(std::string_view source,
 
 auto CaptureSaveBase(const json::Members& snapshot) -> SaveBase {
   SaveBase base;
-  for (const auto* key :
-       {"rev", "project_json", "layout_json", "definitions", "sources"})
+  for (const auto* key : {"rev", "project_json", "layout", "definitions",
+                          "sources", "resolution"})
     if (snapshot.contains(key)) base.snapshot[key] = snapshot.at(key);
   base.files["tsugumi.json"] = json::Text(snapshot, "project_json", "{}");
-  base.files["layout.json"] = json::Text(snapshot, "layout_json", "{}");
   for (const auto& raw :
        json::Array(json::Get(snapshot, "definitions", "[]"))) {
     const auto definition = json::Object(raw);
     for (const auto& [key, file] :
-         {std::pair{"card_json", "_card.json"}, {"meta_json", "_meta.json"}}) {
+         {std::pair{"card_json", "_card.json"},
+          {"readme", "README.md"},
+          {"comments_json", "_comments.json"}}) {
       const auto text = json::Text(definition, key);
       if (!text.empty())
         base.files["definitions/" + json::Text(definition, "id") + '/' + file] =
             text;
     }
   }
+  // Each project's layout.bin and notes/<id>.md are one JSON view.
+  std::map<std::string, std::string> layouts;  // prefix -> layout.bin
+  std::map<std::string, std::map<std::string, std::string>> notes;
+  layouts[""] = DecodeSourceBytes(json::Get(snapshot, "layout", "\"\""));
   for (const auto& raw : json::Array(json::Get(snapshot, "sources", "[]"))) {
     const auto source = json::Object(raw);
     const auto path = json::Text(source, "path");
-    if (source.contains("document_json"))
-      base.files[path] = json::Text(source, "document_json");
+    if (!source.contains("document")) continue;
+    const auto bytes = DecodeSourceBytes(source.at("document"));
+    const auto notes_at = path.rfind("notes/");
+    if (Document::is_note_file(path) && notes_at != std::string::npos) {
+      const auto prefix = path.substr(0, notes_at);
+      if (const auto id = NoteId(prefix, path)) notes[prefix][*id] = bytes;
+    } else if (path.ends_with("layout.bin") &&
+               Document::is_external_document_file(path)) {
+      layouts[path.substr(0, path.size() - 10)] = bytes;
+    } else {
+      base.files[path] = bytes;
+    }
+  }
+  for (const auto& [prefix, _] : notes) layouts.try_emplace(prefix);
+  for (const auto& [prefix, layout] : layouts) {
+    if (!prefix.empty() && layout.empty() && !notes.contains(prefix)) continue;
+    try {
+      base.files[prefix + "layout.bin"] = LayoutView(layout, notes[prefix]);
+    } catch (const std::exception&) {
+      base.files[prefix + "layout.bin"] = "{}";
+    }
   }
   return base;
 }

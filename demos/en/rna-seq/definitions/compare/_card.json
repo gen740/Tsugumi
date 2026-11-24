@@ -1,21 +1,11 @@
 {
   "type": "code",
-  "language": "r",
   "inputs": [
     {
       "name": "deseq2"
     },
     {
       "name": "edger"
-    }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "agreement",
-  "params": [
-    {
-      "name": "fdr",
-      "type": "double",
-      "data": 0.05
     }
   ]
 }

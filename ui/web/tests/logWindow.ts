@@ -25,8 +25,9 @@ assert.deepEqual(terminal.blocks.flatMap((b) => b.lines.map((text, i) => ({ text
 assert.equal(terminal.request('earlier'), undefined)
 
 const journal = new LogWindow('journal')
-const partial = '{"phase":"save","event":"st'
-journal.apply(journal.request('tail')!, slice(partial.length, 'ored","message":"ok"}\n', 7, false, undefined, false))
+const byteCount = (text: string) => new TextEncoder().encode(text).length
+const partial = 'save · st'
+journal.apply(journal.request('tail')!, slice(byteCount(partial), 'ored: ok\n', 7, false, undefined, false))
 assert.equal(journal.blocks.length, 0)
 journal.follow(false)
 journal.apply(journal.request('earlier')!, slice(0, partial, 7, true, journal.end, false))
@@ -133,16 +134,16 @@ assert.deepEqual(Buffer.from(await file.arrayBuffer()), Buffer.concat(encoded))
 assert.ok(decodeLog((await rpc.logRange('run', null, null, D.LogStream.build, BigInt(encoded[0].length))).text).startsWith('\ufeff'))
 
 const sparse = new LogWindow('journal')
-const record = '{"phase":"save","event":"stored","message":"anchor"}\n'
-const ignored = '{"phase":"build","message":"' + 'x'.repeat((1 << 20) - 64) + '"}\n'
+const record = 'save · stored: anchor\n'
+const ignored = 'build · done: ' + 'x'.repeat((1 << 20) - 64) + '\n'
 const rawPage = (offset: number, line: number, raw: string, size: number) => slice(offset, raw, line, true, size, false)
 const available = 4 * (1 << 20)
-const anchorPage = rawPage(available - record.length, 4, record, available)
+const anchorPage = rawPage(available - byteCount(record), 4, record, available)
 sparse.apply(sparse.request('tail')!, anchorPage)
 sparse.follow(false)
 sparse.visible = { first: 4, last: 4, fragments: new Set() }
 for (let line = 3; line >= 1; line--) {
-  sparse.apply(sparse.request('earlier')!, rawPage(sparse.start - ignored.length, line, ignored, available))
+  sparse.apply(sparse.request('earlier')!, rawPage(sparse.start - byteCount(ignored), line, ignored, available))
 }
 assert.ok(sparse.end < anchorPage.offset)
 assert.deepEqual(sparse.blocks.flatMap((b) => b.lines), ['save · stored: anchor'])

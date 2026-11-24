@@ -1,23 +1,8 @@
 {
   "type": "code",
-  "language": "r",
   "inputs": [
     {
       "name": "counts"
-    }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "results",
-  "params": [
-    {
-      "name": "paired",
-      "type": "bool",
-      "data": true
-    },
-    {
-      "name": "fdr",
-      "type": "double",
-      "data": 0.05
     }
   ]
 }

@@ -46,13 +46,7 @@ auto Covers(const std::string& card, const std::string& key) -> bool {
   return key == card || key.starts_with(card + "/");
 }
 
-// The content a value's evidence names: a File's or Directory's own content,
-// otherwise the recorded bytes. Paths and sizes do not identify content.
 auto ContentHash(const json::Members& value) -> std::string {
-  const auto file = json::Text(value, "file_content_hash");
-  if (!file.empty()) return file;
-  const auto kind = json::Text(value, "kind");
-  if (kind == "File" || kind == "Directory") return {};
   return json::Text(value, "content_hash");
 }
 

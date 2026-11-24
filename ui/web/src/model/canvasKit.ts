@@ -15,7 +15,7 @@ export enum Stage { waiting, prepare, evaluate, build, execute, validate, save, 
 
 export const STAGE_INFO: Record<Stage, { label: string; active: string; icon: string; activeIcon: string; stream: D.LogStream }> = {
   [Stage.waiting]: { label: L('入力待ち'), active: L('入力待ち'), icon: 'tray.and.arrow.down', activeIcon: 'tray.and.arrow.down', stream: D.LogStream.journal },
-  [Stage.prepare]: { label: L('SDK 準備'), active: L('SDK 準備中'), icon: 'shippingbox', activeIcon: 'shippingbox', stream: D.LogStream.build },
+  [Stage.prepare]: { label: L('スキーマ生成'), active: L('スキーマ生成中'), icon: 'shippingbox', activeIcon: 'shippingbox', stream: D.LogStream.build },
   [Stage.evaluate]: { label: L('Nix 評価'), active: L('Nix 評価中'), icon: 'snowflake', activeIcon: 'snowflake', stream: D.LogStream.build },
   [Stage.build]: { label: 'build', active: L('build 中'), icon: 'hammer', activeIcon: 'hammer', stream: D.LogStream.build },
   [Stage.execute]: { label: 'run', active: L('実行中'), icon: 'play', activeIcon: 'play.fill', stream: D.LogStream.standard_output },
@@ -36,7 +36,7 @@ export function stageOfPhase(p: D.Phase): Stage | undefined {
   }
 }
 
-/** Stages shown for a Card, in order: build (SDK preparation, Nix
+/** Stages shown for a Card, in order: build (schema generation, Nix
  *  evaluation and build), run, validate (output check and saving). */
 export const applicableStages = (code: boolean): Stage[] => (code ? [Stage.build, Stage.execute, Stage.validate] : [Stage.execute, Stage.validate])
 
@@ -82,8 +82,6 @@ export function mergeStageStatus(parts: StageStatus[], ended: boolean): StageSta
 export interface PortData {
   name: string
   typeName?: string
-  optional?: boolean
-  note?: string
 }
 
 /** Ports in the order the layout saved for them (`inputOrder` / `outputOrder`):
@@ -127,8 +125,6 @@ export interface CardNodeData {
   errors: string[]
   warnings: string[]
   collapsed: boolean
-  /** The Card's result has a frame on the canvas (display anchor). */
-  hasDisplay: boolean
   /** What it may do beyond computing (network, no sandbox, host folders). */
   permissions?: PermissionKind[]
   /** A Draft being written on the canvas: the Card opens up for it. */
@@ -141,10 +137,10 @@ export interface CardNodeData {
   openComments?: number
 }
 
-export const isRouting = (d: CardNodeData) => d.kind === 'branch' || d.kind === 'fork' || d.kind === 'merge' || d.kind === 'collect'
+export const isRouting = (d: CardNodeData) => d.kind === 'merge' || d.kind === 'collect'
 
-export type CardShape = 'card' | 'branch' | 'fork' | 'merge' | 'collect' | 'start'
-export const shapeOf = (k: CardKind): CardShape => (k === 'trigger' ? 'start' : k === 'branch' || k === 'fork' || k === 'merge' || k === 'collect' ? k : 'card')
+export type CardShape = 'card' | 'merge' | 'collect' | 'start'
+export const shapeOf = (k: CardKind): CardShape => (k === 'trigger' ? 'start' : k === 'merge' || k === 'collect' ? k : 'card')
 
 /** Whether a wire is drawn dotted: either end is a Draft, with no code behind
  *  it yet (no `to` at the bar of a Card in Card's outputs or inputs). */
@@ -160,7 +156,7 @@ export const snapToGrid = (v: number, grid: number) => Math.floor(v / grid + 0.5
 const gridLengthNear = (length: number, grid: number) => 2 * grid * Math.floor(length / (2 * grid) + 0.5)
 const gridLengthAtLeast = (length: number, grid: number) => 2 * grid * Math.ceil(length / (2 * grid))
 
-// Presentation from the document and layout.json: each UI computes the shape
+// Presentation from the document and layout.bin: each UI computes the shape
 // itself rather than asking hostd (port-grid-contract.json keeps them alike).
 /** Size, outline and port positions of a Card (world units, relative to its
  *  top-left corner). Shared by drawing, wires, the selection and hit-tests.
@@ -217,7 +213,7 @@ export class CardGeometry {
     this.summary = d.summary !== undefined && !isRouting(d) && d.kind !== 'trigger' && !this.draft
     this.params = d.params.length
     // Rows are reserved by kind, so a run never makes a Card grow or shrink.
-    this.result = d.hasDisplay
+    this.result = d.result !== undefined
     this.stages = d.kind === 'code'
     this.shape = shapeOf(d.kind)
     this.grid = d.portGrid
@@ -226,14 +222,6 @@ export class CardGeometry {
   /** Width across the flow and length along it of a routing Card's outline. */
   private get routingSize() {
     switch (this.shape) {
-      // Its ports are at a quarter and three quarters of this.
-      case 'branch': return { width: this.grid ? 4 * CardGeometry.rowPitch(this.grid) : 60, height: 48 }
-      // A Branch's diamond, widened by its outputs: two of them sit where a Branch's a and b do.
-      case 'fork': {
-        const n = Math.max(this.outputs.length, 1)
-        const width = this.grid ? 2 * n * CardGeometry.rowPitch(this.grid) : Math.max(60, 30 * n)
-        return { width, height: Math.max(48, width * 0.4) }
-      }
       case 'merge': return { width: this.fanWidth(this.inputs.length), height: this.fanLength(this.inputs.length) }
       case 'collect': return { width: this.grid ? gridLengthAtLeast(64, this.grid) : 64, height: 44 }
       // The start Card: its name and a run button, nothing more.
@@ -383,7 +371,7 @@ export class CardGeometry {
     return { x: 30, y: 0, width: s.width - 60, height: s.height }
   }
 
-  /** The outline (Card box, diamond, triangle) inside `r`, as SVG path data.
+  /** The outline (Card box, triangle, funnel) inside `r`, as SVG path data.
    *  `cornerScale` shrinks the corners that stay the same at every zoom, for a
    *  drawing much smaller than the canvas. */
   outline(r: Rect, cornerScale = 1): string {
@@ -393,19 +381,6 @@ export class CardGeometry {
         return roundedRect(r, 9 * cornerScale)
       case 'start':
         return roundedRect(r, r.height / 2)
-      case 'branch':
-        return roundedPolygon([P(r.x + r.width / 2, r.y), P(r.x + r.width, r.y + r.height / 2), P(r.x + r.width / 2, r.y + r.height), P(r.x, r.y + r.height / 2)], 6 * cornerScale)
-      case 'fork': {
-        // A diamond whose corners along the flow stay sharp (listed twice): value
-        // is on the upstream one, and an odd number of outputs puts one on the other.
-        // The side corners shrink with the zoom, as `r` does.
-        const radius = (6 * (this.flow === 'topToBottom' ? r.height : r.width)) / this.routingSize.height
-        const top = P(r.x + r.width / 2, r.y), right = P(r.x + r.width, r.y + r.height / 2)
-        const bottom = P(r.x + r.width / 2, r.y + r.height), left = P(r.x, r.y + r.height / 2)
-        return this.flow === 'topToBottom'
-          ? roundedPolygon([top, top, right, bottom, bottom, left], radius)
-          : roundedPolygon([top, right, right, bottom, left, left], radius)
-      }
       case 'collect': {
         const point = (across: number, along: number) => this.flow === 'topToBottom'
           ? P(r.x + r.width * across, r.y + r.height * along)
@@ -439,7 +414,7 @@ export class CardGeometry {
 
   /** The segment ports of one side are spread along (top-to-bottom: an x range). */
   private edgeSpan(input: boolean) {
-    if (this.shape === 'card' || this.shape === 'branch' || this.shape === 'fork' || this.shape === 'start') {
+    if (this.shape === 'card' || this.shape === 'start') {
       const w = this.shape === 'card' ? this.cardWidth : this.routingSize.width
       return { start: 0, width: w }
     }
@@ -452,7 +427,6 @@ export class CardGeometry {
   spacing(input: boolean): number {
     const list = input ? this.inputs : this.outputs
     if (!list.length) return 0
-    if (this.shape === 'branch') return this.routingSize.width / 2 - 8
     const span = this.edgeSpan(input)
     // A single label may be as wide as the Card; several share the edge.
     if (list.length === 1) return Math.max(span.width, 90)
@@ -468,8 +442,7 @@ export class CardGeometry {
     if (this.draft) return false
     if (this.shape === 'card' && this.collapsed) return false
     if (this.shape === 'start') return false
-    if (this.shape === 'merge' || this.shape === 'collect' || this.shape === 'fork') return false
-    if (this.shape === 'branch') return true
+    if (this.shape === 'merge' || this.shape === 'collect') return false
     return this.spacing(input) >= CardGeometry.minLabel
   }
 
@@ -499,19 +472,6 @@ export class CardGeometry {
     if (this.shape === 'start') {
       // Its one output, in the middle of the downstream edge.
       return this.flow === 'topToBottom' ? { x: r.x + r.width / 2, y: r.y + r.height } : { x: r.x + r.width, y: r.y + r.height / 2 }
-    }
-    if (this.shape === 'branch') {
-      // value / condition on the two upper edges, a / b on the two lower edges.
-      const first = index === 0
-      if (this.flow === 'topToBottom') return { x: r.x + r.width * (first ? 0.25 : 0.75), y: r.y + r.height * (output ? 0.75 : 0.25) }
-      return { x: r.x + r.width * (output ? 0.75 : 0.25), y: r.y + r.height * (first ? 0.25 : 0.75) }
-    }
-    if (this.shape === 'fork') {
-      // value on the upstream corner; the outputs spread over the two downstream
-      // edges, at the middles of their shares of the width (on the grid: odd rows).
-      const across = output ? (2 * index + 1) / (2 * n) : 0.5
-      const along = output ? 1 - Math.abs(across - 0.5) : 0
-      return this.flow === 'topToBottom' ? { x: r.x + r.width * across, y: r.y + r.height * along } : { x: r.x + r.width * along, y: r.y + r.height * across }
     }
     const along = this.alongGrid(index, list.length, output)
     if (this.flow === 'topToBottom') {
@@ -586,7 +546,7 @@ export type WireEnds = { a: Pt; b: Pt }
 export type WireRoute = { d: string; pts: Pt[]; curved: boolean }
 
 // Drawn routes are each UI's own work. hostd's route_wires is for Untangle,
-// which edits layout.json, not for drawing.
+// which edits layout.bin, not for drawing.
 /** Routes wires in world units around the Cards. A wire going along the flow
  *  whose curve touches no Card stays that curve. Any other wire takes the
  *  cheapest path on a grid of lines beside the Cards: by length, bends and
@@ -618,7 +578,7 @@ export class WireRouter {
     const [c1, c2] = this.controls(a, b)
     const x0 = Math.min(a.x, b.x, c1.x, c2.x), x1 = Math.max(a.x, b.x, c1.x, c2.x)
     const y0 = Math.min(a.y, b.y, c1.y, c2.y), y1 = Math.max(a.y, b.y, c1.y, c2.y)
-    // A port sits on its Card's edge: only the inside counts. A branch's port is
+    // A port sits on its Card's edge: only the inside counts. A routing port is
     // inside its box, and the wire has to get out of there anyway.
     const inside = (o: Rect, p: Pt) => p.x > o.x + 2 && p.x < o.x + o.width - 2 && p.y > o.y + 2 && p.y < o.y + o.height - 2
     const near = this.obstacles.filter((o) => x0 < o.x + o.width && x1 > o.x && y0 < o.y + o.height && y1 > o.y && !inside(o, a) && !inside(o, b))
@@ -985,39 +945,6 @@ export function bezier(a: Pt, c1: Pt, c2: Pt, b: Pt, t: number): Pt {
 export const union = (a: Rect, b: Rect): Rect => {
   const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y)
   return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y }
-}
-
-/** The ends of the link between a Card and its result frame: on the edges
- *  that face each other, each in the middle of the stretch the two share. */
-export function displayLink(card: Rect, frame: Rect): string {
-  const cMaxX = card.x + card.width, cMaxY = card.y + card.height, fMaxX = frame.x + frame.width, fMaxY = frame.y + frame.height
-  const gx = Math.max(frame.x - cMaxX, card.x - fMaxX)
-  const gy = Math.max(frame.y - cMaxY, card.y - fMaxY)
-  const clamp = (v: number, lo: number, hi: number) => (lo > hi ? (lo + hi) / 2 : Math.min(Math.max(v, lo), hi))
-  let a: Pt, b: Pt, horizontal: boolean
-  if (gx >= gy) {
-    const right = frame.x + frame.width / 2 >= card.x + card.width / 2
-    const lo = Math.max(card.y, frame.y), hi = Math.min(cMaxY, fMaxY)
-    const ay = lo <= hi ? (lo + hi) / 2 : clamp(frame.y + frame.height / 2, card.y + 10, cMaxY - 10)
-    const by = lo <= hi ? (lo + hi) / 2 : clamp(card.y + card.height / 2, frame.y + 10, fMaxY - 10)
-    a = { x: right ? cMaxX : card.x, y: ay }
-    b = { x: right ? frame.x : fMaxX, y: by }
-    horizontal = true
-  } else {
-    const down = frame.y + frame.height / 2 >= card.y + card.height / 2
-    const lo = Math.max(card.x, frame.x), hi = Math.min(cMaxX, fMaxX)
-    const ax = lo <= hi ? (lo + hi) / 2 : clamp(frame.x + frame.width / 2, card.x + 10, cMaxX - 10)
-    const bx = lo <= hi ? (lo + hi) / 2 : clamp(card.x + card.width / 2, frame.x + 10, fMaxX - 10)
-    a = { x: ax, y: down ? cMaxY : card.y }
-    b = { x: bx, y: down ? frame.y : fMaxY }
-    horizontal = false
-  }
-  if (horizontal) {
-    const dx = (b.x - a.x) / 2
-    return `M${a.x},${a.y}C${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`
-  }
-  const dy = (b.y - a.y) / 2
-  return `M${a.x},${a.y}C${a.x},${a.y + dy} ${b.x},${b.y - dy} ${b.x},${b.y}`
 }
 
 // ---- Camera ------------------------------------------------------------------------

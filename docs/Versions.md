@@ -2,7 +2,7 @@
 
 A project's folder is a git repository. Projects made in the app, and copies of demos, become repositories the first time they are opened. Other projects can be made repositories with "Start Versioning" in "Version History".
 
-Versions contain the project's definitions: `tsugumi.json`, `layout.json`, each Card's documents (`_card.json`, `_meta.json`) and source files, including Nix definitions and pins, Skills (`skills/`), and embedded projects (`externals/`). The document model's source areas cover all files under each Card's `definitions/<id>/` folder, `skills/` and `externals/`, as in the project file APIs and saves.
+Versions contain the project's definitions: `tsugumi.json`, `tsugumi.lock`, `layout.bin`, canvas notes in `notes/<id>.md`, each Card's documents (`_card.json`, `README.md`, `_comments.json`) and source files, including `default.nix`, `params.nix` and generated `_inputs.fbs`, Skills (`skills/`), and embedded projects (`externals/`). The document model's source areas cover all files under each Card's `definitions/<id>/` folder, `skills/` and `externals/`, as in the project file APIs and saves.
 
 Other files, including results and downloads outside those areas, enter a version only when explicitly listed in `versionPaths` in `tsugumi.json`. Edit **Additional paths to version** in the project's General settings in either the Mac app or Web UI: one project-relative file or folder per line. Folder entries include their descendants. Paths are literal, without wildcard expansion; missing paths add nothing. For example:
 
@@ -57,13 +57,13 @@ In the Mac app, open it with "Version History…" (⌥⌘Y) in the Workflow menu
 
 ## Version notes
 
-A version's note is its change record. The project core compares the full version tree with its first parent, without a model. It lists Cards added or removed and changes to their definitions, source, parameters and wiring, as neutral kinds of change. The host renders these facts in the requesting app's language. Workflow settings are listed separately. The host shows at most six entries and the remaining count; the record keeps all entries. It contains no source text or parameter values. All files under a Card's `src/` count as source inputs, including assets and languages outside the diff allowlist. Changes to `layout.json` and files under `data/` are excluded.
+A version's note is its change record. The project core compares the full version tree with its first parent, without a model. It lists Cards added or removed and changes to their definitions, source, parameters and wiring, as neutral kinds of change. The host renders these facts in the requesting app's language. Workflow settings are listed separately. The host shows at most six entries and the remaining count; the record keeps all entries. It contains no source text or parameter values. All files under a Card's `src/` count as source inputs, including assets. Changes to `layout.bin` and files under `data/` are excluded.
 
-The project RPC returns typed commit, run and change facts. Its Git note JSON format stays private to the project daemon; the host formats the public facts for both clients and tools. The clients request the note when a version is hovered or selected, and display the returned text. No model is called, so several versions can be browsed freely.
+The project RPC returns typed commit, run and change facts. Its binary Git note format stays private to the project daemon; the host formats the public facts for both clients and tools. The clients request the note when a version is hovered or selected, and display the returned text. No model is called, so several versions can be browsed freely.
 
 The core stores the language-neutral record in `refs/notes/tsugumi-record`: added and removed Card IDs, changed Card IDs with change kinds, and whether Workflow settings changed. It contains no sentence templates.
 
-To learn what a change did in more detail, ask the Agent. It reads the version's diff with `version_diff` (in the `versions` tool family) and answers from it. The project core owns the file allowlist and diff limits: the diff covers `tsugumi.json`, the Cards' `_card.json`, `_meta.json`, `_outputs.fbs` and `default.nix`, and code in `src/` (`.py` `.cc` `.cpp` `.cxx` `.c` `.h` `.hh` `.hpp` `.nix` `.fbs` `.sh`). Data files such as `data/`, non-code files in `src/` and `layout.json` are excluded. Long diffs are cut (4,000 bytes per file, 12,000 in all). Parameter values and values written in code are included. `HostVersionDiffRequest` provides the same diff to run comparisons. Read the record from git with:
+To learn what a change did in more detail, ask the Agent. It reads the version's diff with `version_diff` (in the `versions` tool family) and answers from it. The diff covers `tsugumi.json` and regular text files anywhere in a Card definition. Files in `data/`, CSV files, symbolic links, files over 1 MiB and files with a NUL byte in the first 8 KiB are excluded. `layout.bin` is also excluded. Long diffs are cut (4,000 bytes per file, 12,000 in all). Parameter values and values written in code are included. `HostVersionDiffRequest` provides the same diff to run comparisons. Read the record from git with:
 
 ```bash
 git log --notes=tsugumi-record
@@ -81,18 +81,20 @@ Each output port is reported as `same`, `changed` or `unknown` against that earl
 
 ## Comments
 
-A Card's comments ([Generating Cards from comments](Usage.md#working-with-the-agent)) are in `definitions/<id>/_meta.json`, so they are committed like the other settings. The details of a version in the version history show how the comments changed since the previous version (`VersionCommit.comments`).
+A Card's comments ([Generating Cards from comments](Usage.md#working-with-the-agent)) are in `definitions/<id>/_comments.json`, so they are committed like the other settings. The details of a version in the version history show how the comments changed since the previous version (`VersionCommit.comments`).
 
 - The changes are of five kinds: added, edited, resolved, reopened and deleted. One written and resolved within the same version counts as resolved.
 - Each shows who did it (the Agent or the user) and, for a resolving save, the Cards it changed. Who deleted a comment goes with the comment, so it is not shown for deletions (an Agent's deletion remains in the chat's row).
-- Comments are told apart by id, so renaming a Card does not make them different comments.
+- A comment keeps its id across versions.
 - A version is made when a run starts or with "Keep as Version". A comment written and deleted in between is not kept; to keep one, resolve it instead of deleting it.
-- They can be read from git too (for example `git show <version>:definitions/<id>/_meta.json`).
+- They can be read from git too (for example `git show <version>:definitions/<id>/_comments.json`).
 
-## nixpkgs
+## Nix source pins
 
-A new project holds the nixpkgs of the Tsugumi that made it (`flake.lock`) as a fixed value in `pkgsPath` of `tsugumi.json`. It is part of the version, so going back to an earlier version brings back its nixpkgs too. A project that is not pinned (`tsugumi:default`) can be pinned in the Workflow settings.
+A version includes `tsugumi.json` and `tsugumi.lock` for the root project and its externals. Checking out a version restores its declarations and exact source pins. An explicit lock update reconciles one declaration or all declarations in the selected project. [Project Nix search path](features.md#project-nix-search-path)
 
 ## Demo histories
 
-A demo folder's `.tsugumi-history.json` becomes commits, branches, tags and notes when a copy becomes a repository (the file itself goes away). The Cas A demo carries the process of trying bands, grids and stretches: failed branches, branches not adopted, the adopted version `rgb-v1`, the version that added the spectrum on top of it, and the version that pinned CIAO.
+A demo folder's `.tsugumi-history` becomes commits, branches, tags and notes when a copy becomes a repository (the file itself goes away). The Cas A demo carries the process of trying bands, grids and stretches: failed branches, branches not adopted, the adopted version `rgb-v1`, the version that added the spectrum on top of it, and the version that pinned CIAO.
+
+A demo history is the record of what ran. Its earlier versions keep the Card sources of the time they were made, written for the Card ABI of that time, so they show how the analysis went but may not build with the current SDKs. The demo's current definitions are the runnable ones.

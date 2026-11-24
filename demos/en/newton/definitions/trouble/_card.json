@@ -1,16 +1,8 @@
 {
   "type": "code",
-  "language": "python",
   "inputs": [
     {
       "name": "problem"
-    }
-  ],
-  "params": [
-    {
-      "name": "offset",
-      "type": "double",
-      "data": 0.001
     }
   ]
 }

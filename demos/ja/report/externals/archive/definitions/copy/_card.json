@@ -1,11 +1,8 @@
 {
   "type": "code",
-  "language": "bash",
   "inputs": [
     {
       "name": "report"
     }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "archive"
+  ]
 }

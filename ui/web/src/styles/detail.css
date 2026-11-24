@@ -62,7 +62,6 @@
 .cse-content > .form { flex: 1; }
 .cse-conflicts { display: flex; align-items: flex-start; gap: 8px; padding: 8px; background: color-mix(in srgb, var(--orange) 10%, transparent); }
 .cse-footer { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-top: 1px solid var(--separator); flex: none; }
-.cse-context { resize: none; font: inherit; padding: 6px 8px; }
 
 .cse-preview { position: relative; flex: none; display: flex; align-items: center; justify-content: center; overflow: hidden;
   background: var(--text-bg); border-bottom: 1px solid var(--separator); }
@@ -123,7 +122,7 @@
 /* Not comparable is neither changed nor unchanged: outlined, never left plain. */
 .run-comparison .unknown { outline: 1px dashed var(--orange); outline-offset: -1px; border-radius: 5px; }
 .comparison-field { padding: 4px 8px; }
-.comparison-display { display: flex; flex-direction: column; max-height: 400px; min-height: 0; overflow: auto; }
+.comparison-display { display: flex; flex-direction: column; height: 360px; min-height: 0; overflow: auto; }
 
 /* History owns its narrow layout; other split views keep their sizing. */
 .execution-history { container-type: inline-size; min-width: 0; }

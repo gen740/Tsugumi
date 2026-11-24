@@ -1,5 +1,6 @@
 // Bundles the browser UI into dist/public (hostd serves it) with esbuild.
 import * as esbuild from 'esbuild'
+import { installViewer } from './install-viewer.mjs'
 import { preparePlayer } from '../../../docs/site/player/build.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -19,21 +20,13 @@ fs.cpSync(path.join(root, 'third-party'), path.join(out, 'licenses'), { recursiv
 for (const component of ['flatbuffers', 'emscripten']) {
   fs.cpSync(path.join(root, '../../third-party', component), path.join(out, 'licenses', component), { recursive: true })
 }
-// The module viewer (ui/shared/modules) and the plot libraries the page sends it,
-// served from /modules/. The viewer is sandboxed and loads nothing itself, so
-// its script goes inline.
+// The trusted bridge is a self-contained page shared with WKWebView.
 const viewer = path.join(root, '..', 'shared', 'modules')
 // The demo player's data (ui/demoPlayer.tsx, Home's thumbnails): each demo and the
 // images it names, without what only builds that data.
 const playerData = path.join(preparePlayer(), 'player-data')
 const copy = () => {
   fs.copyFileSync(path.join(root, 'src', 'index.html'), path.join(out, 'public', 'index.html'))
-  fs.mkdirSync(path.join(out, 'public', 'modules'), { recursive: true })
-  const script = fs.readFileSync(path.join(viewer, 'viewer.js'), 'utf8')
-  if (script.includes('</script')) throw new Error('viewer.js cannot be inlined: it contains </script')
-  const page = fs.readFileSync(path.join(viewer, 'viewer.html'), 'utf8').replace('<script src="viewer.js"></script>', () => `<script>\n${script}</script>`)
-  if (!page.includes(script)) throw new Error('viewer.html has no <script src="viewer.js"></script> to inline')
-  fs.writeFileSync(path.join(out, 'public', 'modules', 'viewer.html'), page)
   fs.copyFileSync(path.join(root, '../..', 'docs', 'assets', 'tsugumi-icon.svg'), path.join(out, 'public', 'icon.svg'))
   fs.rmSync(path.join(out, 'public', 'player-data'), { recursive: true, force: true })
   fs.cpSync(playerData, path.join(out, 'public', 'player-data'), {
@@ -47,6 +40,7 @@ const copy = () => {
   }
 }
 copy()
+installViewer(viewer, path.join(out, 'public', 'modules'))
 
 const client = {
   entryPoints: { app: path.join(root, 'src', 'main.tsx') },

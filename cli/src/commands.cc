@@ -6,7 +6,7 @@
 #include <sstream>
 
 #include "agent_tools.hh"
-#include "tsugumi/cli/rpc.hh"
+#include "rpc.hh"
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::cli {
@@ -14,6 +14,7 @@ namespace f = std::filesystem;
 namespace {
 
 auto Words(const std::string& name) -> std::vector<std::string> {
+  if (name == "nix_path_lock_update") return {"lock", "update"};
   std::vector<std::string> out;
   std::stringstream s(name);
   for (std::string word; std::getline(s, word, '_');) out.push_back(word);
@@ -76,6 +77,11 @@ auto Help(const ToolInfo& tool) -> void {
   std::cout << "  --json <object>   all arguments as one JSON object\n";
   if (!tool.name.starts_with("agent_"))
     std::cout << "  --project <folder> the project (default: the folder with tsugumi.json at or above this one)\n";
+  if (tool.name == "evaluate_nix")
+    std::cout << R"(
+Example:
+  tsugumi evaluate nix --card '{"segments":["plot"]}' --expression '(import ./. { inherit params inputs; }).api' --build
+)";
 }
 
 /** The tool's JSON arguments from --field value pairs, typed by its schema. */

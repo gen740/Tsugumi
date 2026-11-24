@@ -21,7 +21,7 @@ TEST(RunHistory, NotebookFailurePositionRoundtrip) {
   EXPECT_EQ(restored->kind, failure.kind);
 }
 
-TEST(RunHistory, FileContentDigestsSurviveMissingFilesAndDatabaseRestart) {
+TEST(RunHistory, ArtifactIdsAndSavedInputSchemaSurviveDatabaseRestart) {
   const auto directory = std::filesystem::temp_directory_path() /
                          ("tsugumi-history-" + crypto::uuid4());
   std::filesystem::create_directories(directory);
@@ -29,62 +29,82 @@ TEST(RunHistory, FileContentDigestsSurviveMissingFilesAndDatabaseRestart) {
     std::filesystem::path path;
     ~Cleanup() { std::filesystem::remove_all(path); }
   } cleanup{directory};
-  History original(directory / "original.sqlite");
-  History restored(directory / "original.sqlite");
-  std::string error;
-  const auto type = types::compile(
-      "table File { value:string; } root_type File;", "File", &error);
-  ASSERT_TRUE(type) << error;
+  const auto database = directory / "runs.sqlite";
+  const ArtifactKey id(16, '\0');
   const std::string bytes("\0\xff\x80\xc3(\n", 6);
-  std::vector<std::string> runs, hashes;
-  for (int i = 0; i < 3; ++i) {
-    const auto file = directory / ("file-" + std::to_string(i));
-    fs::write_atomic(file, i == 2 ? "other" : bytes);
-    flatbuffers::FlatBufferBuilder builder;
-    const auto text = builder.CreateString(file.string());
-    const auto start = builder.StartTable();
-    builder.AddOffset(4, text);
-    builder.Finish(
-        flatbuffers::Offset<flatbuffers::Table>(builder.EndTable(start)));
-    Value value{
-        "file",
-        PortKind::File,
-        *type,
-        std::string(reinterpret_cast<const char*>(builder.GetBufferPointer()),
-                    builder.GetSize()),
-        {}};
+  const Value value{"value", nullptr, bytes, "schema-id", {id}};
+  {
+    History original(database);
     RunSummaryData run;
-    run.status.run_id = std::to_string(i + 1);
+    run.status.run_id = "1";
     run.status.state = RunState::succeeded;
-    InvocationRecordData invocation;
-    invocation.summary.run_id = *run.status.run_id;
-    invocation.summary.card = {"card"};
-    invocation.summary.invocation = 1;
-    invocation.summary.state = CardState::succeeded;
-    invocation.record_io = true;
-    invocation.inputs = {value};
-    invocation.outputs = {value};
+    InvocationRecordData record;
+    record.summary.run_id = "1";
+    record.summary.card = {"card"};
+    record.summary.invocation = 1;
+    record.summary.state = CardState::succeeded;
+    record.record_io = true;
+    record.inputs = {value};
+    record.outputs = {value};
     original.write_sync([&](sql::Db& db) {
       History::insert_run(db, run, crypto::uuid4());
-      original.complete_invocation(db, invocation);
+      History::put_artifact(db, {id, "1", {"card"}, 1, "created",
+                                ".tsugumi/artifacts/1/card/@1/example",
+                                10, 11, 123, "tree:digest"});
+      original.complete_invocation(db, record);
+      History::put_last_input(db, {"card"}, "1", 1, {{"value", false, {value}}});
     });
-    hashes.push_back(crypto::sha256_hex(value.bytes));
-    runs.push_back(*run.status.run_id);
-    std::filesystem::remove(file);
   }
-  ASSERT_NE(hashes[0], hashes[1]);
-  for (size_t i = 0; i < runs.size(); ++i) {
+  History restored(database);
+  restored.read([&](sql::Db& db) {
     for (const bool input : {false, true}) {
-      restored.read([&](sql::Db& db) {
-        const auto values =
-            History::value_metas(db, runs[i], {"card"}, 1, input);
-        ASSERT_EQ(values.size(), 1u);
-        EXPECT_EQ(values[0].hash, hashes[i]);
-        EXPECT_EQ(values[0].file_content_hash,
-                  crypto::sha256_hex(i == 2 ? "other" : bytes));
-      });
+      const auto values = History::value_metas(db, "1", {"card"}, 1, input);
+      ASSERT_EQ(values.size(), 1u);
+      EXPECT_EQ(values[0].hash, crypto::sha256_hex(bytes));
+      ASSERT_EQ(values[0].artifacts.size(), 1u);
+      EXPECT_EQ(values[0].artifacts[0].id, id);
+      EXPECT_EQ(values[0].artifacts[0].size, 123u);
     }
-  }
+    const auto saved = History::last_input(db, {"card"});
+    ASSERT_TRUE(saved);
+    EXPECT_EQ(saved->groups.at(0).values.at(0).schema, "schema-id");
+    EXPECT_EQ(saved->groups.at(0).values.at(0).artifacts, value.artifacts);
+    const auto artifact = History::artifact(db, id);
+    ASSERT_TRUE(artifact);
+    EXPECT_EQ(artifact->sealed_ms, 11);
+    EXPECT_EQ(artifact->tree_hash, "tree:digest");
+  });
+}
+
+TEST(RunHistory, StoreArtifactSurvivesDeletingOneOfItsRuns) {
+  const auto database = std::filesystem::temp_directory_path() /
+                        ("tsugumi-history-" + crypto::uuid4()) / "runs.sqlite";
+  struct Cleanup {
+    std::filesystem::path directory;
+    ~Cleanup() { std::filesystem::remove_all(directory); }
+  } cleanup{database.parent_path()};
+  std::filesystem::create_directories(cleanup.directory);
+  History history(database);
+  const ArtifactKey id(16, 's');
+  history.write_sync([&](sql::Db& db) {
+    for (const char* run_id : {"1", "2"}) {
+      RunSummaryData run;
+      run.status.run_id = run_id;
+      run.status.state = RunState::succeeded;
+      History::insert_run(db, run, crypto::uuid4());
+      History::put_artifact(db, {id, run_id, {"input"}, 1, "store",
+                                "/nix/store/store-artifact", 1, 1, 64, "tree:hash"});
+    }
+  });
+  EXPECT_EQ(history.delete_runs(std::nullopt, std::vector<std::string>{"1"}),
+            std::vector<std::string>{"1"});
+  history.read([&](sql::Db& db) {
+    EXPECT_FALSE(History::artifact(db, id, "1"));
+    const auto surviving = History::artifact(db, id);
+    ASSERT_TRUE(surviving);
+    EXPECT_EQ(surviving->run_id, "2");
+    EXPECT_EQ(surviving->origin, "store");
+  });
 }
 
 TEST(RunHistory, RoundTripPreservesEveryRunFieldIncludingCommit) {

@@ -11,7 +11,6 @@
 #include "tsugumi/document/document.hh"
 #include "tsugumi/document/types.hh"
 #include "tsugumi/protocol/tsugumi_enums_generated.h"
-#include "tsugumi/workerd/module_source.hh"
 #include "tsugumi/workerd/values.hh"
 
 namespace tsugumi {
@@ -71,6 +70,7 @@ struct BuildEnvironmentData {
 };
 
 struct InvocationSummaryData {
+  uint64_t artifact_sequence = 0;
   std::string run_id;
   CardPath card;
   uint64_t invocation = 0;
@@ -92,8 +92,8 @@ struct InvocationSummaryData {
   // another system (binfmt_misc); "" when it ran natively.
   std::string emulator;
   std::string environment_id;
-  std::string
-      params_json;  // the invocation's parameters, not the current document
+  // The invocation's parameters, captured from its immutable document.
+  std::optional<std::vector<std::pair<std::string, std::string>>> params;
   std::string execution_service;
   std::string transfer_name, transfer_direction;
   uint64_t transfer_done = 0, transfer_total = 0;
@@ -139,21 +139,17 @@ struct InputSourceData {
   uint64_t invocation = 0;
 };
 
-struct ArtifactMemberData {
-  std::string path;
-  uint64_t size_bytes = 0;
-  std::string hash;
-};
-
 struct ArtifactData {
-  std::string artifact_id;
+  ArtifactKey id;
   std::string run_id;
   CardPath card;
   uint64_t invocation = 0;
-  std::string output;
-  PortKind kind = PortKind::File;
-  std::string name;
-  std::vector<ArtifactMemberData> members;
+  std::string origin;
+  std::string location;
+  int64_t created_ms = 0;
+  std::optional<int64_t> sealed_ms;
+  std::optional<uint64_t> size_bytes;
+  std::optional<std::string> tree_hash;
 };
 
 }  // namespace tsugumi

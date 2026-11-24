@@ -46,21 +46,6 @@ assert.match(html, /href="https:\/\/example.com"/)
 assert.doesNotMatch(html, /href="card:/)
 console.log('evidence links: passed')
 
-// An evidence result is decoded from its own record, never the latest canvas display.
-const { recordedDisplay } = await import('../src/model/session')
-const { DisplayContent } = await import('../src/ui/display')
-const D = await import('../shared/gen/tsugumi/data')
-const recorded = Object.assign(new D.DisplayT(), {
-  runId: run, invocation: 2n, revision: 7n, valueType: D.DisplayValue.DisplayTable,
-  value: Object.assign(new D.DisplayTableT(), { columns: ['Band', 'Photons'], rows: [Object.assign(new D.TableRowT(), { cells: ['green', '157471'] })] }),
-})
-const snapshot = recordedDisplay(recorded)!
-assert.equal(snapshot.runId, run)
-assert.equal(snapshot.invocation, 2n)
-assert.equal(snapshot.revision, 7n)
-assert.match(renderToStaticMarkup(<DisplayContent display={snapshot} large />), /157471/)
-assert.equal(recordedDisplay(new D.DisplayT())?.value.kind, 'unavailable')
-
 const report = 'Read only: [source](card:outer/inner?file=src%2Fmain.py&lines=12-18) uses a clock.\n\nUnrelated prose.\n\nRun and observed: [other](card:b?file=main.cc&lines=1-3) differs.'
 assert.equal(findings(report).length, 2)
 assert.deepEqual(findings(report)[0].target.card, ['outer', 'inner'])

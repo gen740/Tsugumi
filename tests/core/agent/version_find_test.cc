@@ -38,10 +38,10 @@ struct Fake {
       {"c3", R"({"changes":{"changed":[{"card":"bg","kinds":["parameters"]}]}})"},
       {"c1", R"({"changes":{"changed":[{"card":"bg","kinds":["source"]}]}})"}};
   std::map<std::string, std::string> records{
-      {"r3", Record("1", R"([{"name":"peaks","kind":"FlatBuffer","root_type":"Peaks","content_hash":"B"},{"name":"plot","kind":"File","root_type":"File","content_hash":"p3"}])")},
-      {"r2b", Record("2", R"([{"name":"peaks","kind":"FlatBuffer","root_type":"Peaks","content_hash":"A"},{"name":"plot","kind":"File","root_type":"File","content_hash":"p2"}])")},
+      {"r3", Record("1", R"([{"name":"peaks","root_type":"Peaks","content_hash":"B"},{"name":"plot","root_type":"tsugumi.Artifact","artifacts":[{"id":"bb"}]}])")},
+      {"r2b", Record("2", R"([{"name":"peaks","root_type":"Peaks","content_hash":"A"},{"name":"plot","root_type":"tsugumi.Artifact","artifacts":[{"id":"aa"}]}])")},
       {"r2a", R"({"exists":false})"},
-      {"r1", Record("1", R"([{"name":"peaks","kind":"FlatBuffer","root_type":"Peaks","content_hash":"A"}])")}};
+      {"r1", Record("1", R"([{"name":"peaks","root_type":"Peaks","content_hash":"A"}])")}};
   std::vector<std::string> calls;
 
   auto Reader() -> ProjectRead {
@@ -93,8 +93,7 @@ TEST(VersionFind, ComparesEachChangeWithTheRunBeforeIt) {
   ASSERT_EQ(compared.size(), 2u);
   EXPECT_EQ(json::Text(json::Object(compared[0]), "port"), "peaks");
   EXPECT_EQ(json::Text(json::Object(compared[0]), "result"), "changed");
-  // A File's recorded bytes are its path; without its content hash the
-  // content is unknown.
+  // An artifact id alone provides no content hash to compare.
   EXPECT_EQ(json::Text(json::Object(compared[1]), "result"), "unknown");
 
   // c0 kept no record: the earliest change has nothing to compare with, and
@@ -108,7 +107,7 @@ TEST(VersionFind, ComparesEachChangeWithTheRunBeforeIt) {
       json::Object(json::Array(first.at("runs")).at(0)).at("observed"));
   EXPECT_FALSE(first_run.contains("compared"));
   EXPECT_EQ(json::Get(first_run, "outputs"),
-            R"([{"hash":"A","kind":"FlatBuffer","port":"peaks","type":"Peaks"}])");
+            R"([{"hash":"A","port":"peaks","type":"Peaks"}])");
 }
 
 TEST(VersionFind, KindsAndLimitNarrowTheCandidates) {

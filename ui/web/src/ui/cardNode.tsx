@@ -51,8 +51,7 @@ const fade = (c: string, opacity: number) => `color-mix(in srgb, ${colorVar(c)} 
 export interface DraftEdit {
   draft: InlineDraft
   /** Why the Card cannot take the name typed so far. */
-  nameProblem?: string
-  onChange: (change: Partial<Pick<InlineDraft, 'name' | 'content'>>) => void
+  onChange: (change: Partial<Pick<InlineDraft, 'content'>>) => void
   /** Done, the focus having moved elsewhere (undefined) or by the keyboard (true). */
   onDone: (byKey?: boolean) => void
 }
@@ -65,7 +64,7 @@ export interface CardNodeProps {
   /** What the guide calls this Card when it points at it ("card:<id>"). */
   guide?: string
   /** Committing an Input Card's param (undefined: read-only). */
-  onParamBegin?: (edit: InlineParamEdit, name: string) => bigint
+  onParamBegin?: () => bigint
   onParamCommit?: (name: string, text: string, edit?: InlineParamEdit, overwrite?: boolean) => Promise<boolean> | void
   paramsEditable?: boolean
   /** Pointer down on a port: start drawing a wire (from an output, or back from an input). */
@@ -126,19 +125,18 @@ export function CardNodeView(p: CardNodeProps) {
       {[...data.inputs.map((x) => [x, false] as const), ...data.outputs.map((x) => [x, true] as const)].map(([port, output]) => {
         const pt = g.port(port.name, output)
         const mark = g.shape === 'card' ? Math.max(6, s(8)) : s(8), hit = g.portHitSize(z)
-        const condition = !output && data.kind === 'branch' && port.name === 'condition'
         return (
           <div key={(output ? 'o:' : 'i:') + port.name} className={`cv-port${p.onPortDown ? ' connectable' : ''}`}
             style={{ left: s(pt.x) - hit / 2, top: s(pt.y) - hit / 2, width: hit, height: hit }}
-            title={portHelp(data, port, output) + (p.onPortDown ? (output ? L('（ドラッグして入力ポートへ接続）') : L('（ドラッグして出力ポートへ接続）')) : '')}
+            title={portHelp(port, output) + (p.onPortDown ? (output ? L('（ドラッグして入力ポートへ接続）') : L('（ドラッグして出力ポートへ接続）')) : '')}
             onPointerDown={p.onPortDown ? (e) => {
               if (e.button !== 0) return
               e.stopPropagation()
               p.onPortDown!(port.name, output, e)
             } : undefined}>
             {output ? <span className="cv-port-out" style={{ width: mark, height: mark }} /> : (
-              <span className={`cv-port-in${condition ? ' condition' : ''}`}
-                style={{ width: mark, height: mark, borderRadius: Math.max(1, s(1.5)), transform: condition ? 'rotate(45deg)' : undefined }} />
+              <span className="cv-port-in"
+                style={{ width: mark, height: mark, borderRadius: Math.max(1, s(1.5)) }} />
             )}
           </div>
         )
@@ -165,26 +163,23 @@ export function CardNodeView(p: CardNodeProps) {
 }
 
 function useDraftFields(edit: DraftEdit | undefined) {
-  const name = useRef<HTMLInputElement>(null)
   const content = useRef<HTMLTextAreaElement>(null)
   const editing = !!edit
-  // The content is what is written first: a name is not needed.
+  // A Draft's name is its id; what is written is its content.
   useEffect(() => {
     if (!editing) return
     const c = content.current
     c?.focus({ preventScroll: true })
     c?.setSelectionRange(c.value.length, c.value.length)
   }, [editing])
-  const keys = (e: React.KeyboardEvent, field: 'name' | 'content') => {
+  const keys = (e: React.KeyboardEvent, _field: 'content') => {
     if (!edit || e.nativeEvent.isComposing) return
     if (e.key === 'Escape' || (e.key === 'Enter' && (e.metaKey || e.ctrlKey))) edit.onDone(true)
-    else if (field === 'name' && e.key === 'Enter') {
-      if (!edit.nameProblem) content.current?.focus({ preventScroll: true })
-    } else return
+    else return
     e.preventDefault()
     e.stopPropagation()
   }
-  return { name, content, keys }
+  return { content, keys }
 }
 
 const stopping = {
@@ -206,11 +201,7 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
       <div style={{ height: s(g.topLabels) }} />
       {g.untitled ? <div style={{ height: s(g.headerRow), flex: 'none' }} /> : <div className="cv-card-header" style={{ height: s(CardGeometry.header), padding: `0 ${s(9)}px`, gap: s(6) }}>
         <span className="secondary cv-center" style={{ width: s(15) }}><Icon name={data.symbol ?? KIND_ICON[data.kind]} size={font(12)} /></span>
-        {edit
-          ? <input ref={fields.name} className="cv-draft-name" style={{ fontSize: font(12) }} value={edit.draft.name} placeholder={L('名前')} spellCheck={false}
-              aria-label={L('Draft の名前')} aria-invalid={!!edit.nameProblem} {...stopping}
-              onChange={(e) => edit.onChange({ name: e.target.value })} onKeyDown={(e) => fields.keys(e, 'name')} />
-          : <span className="cv-title" style={{ fontSize: font(12) }}>{data.untitled ? data.summary?.split('\n')[0] ?? data.title : data.title}</span>}
+        <span className="cv-title" style={{ fontSize: font(12) }}>{data.untitled && !edit ? data.summary?.split('\n')[0] ?? data.title : data.title}</span>
         {!edit && <span style={{ flex: 1, minWidth: s(2) }} />}
         {data.permissions?.map((p) => (
           <Icon key={p} name={permissionInfo(p).icon} size={font(10)} title={permissionInfo(p).label}
@@ -236,7 +227,6 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
         <>
           {g.draft && (edit ? (
             <div className="cv-draft-edit" style={{ height: s(g.draftRow), padding: `0 ${s(10)}px ${s(8)}px`, gap: s(2) }} {...stopping}>
-              {edit.nameProblem && <span className="cv-draft-problem" role="alert" style={{ fontSize: font(9.5) }}>{edit.nameProblem}</span>}
               <textarea ref={fields.content} style={{ fontSize: font(11), lineHeight: `${s(14)}px` }} value={edit.draft.content}
                 placeholder={L('何を受け取り、何を出し、どう処理するかを書きます')} aria-label={L('Draft の内容')}
                 onChange={(e) => edit.onChange({ content: e.target.value })} onKeyDown={(e) => fields.keys(e, 'content')} />
@@ -255,7 +245,7 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
           {data.params.map((param) => (
             <div key={param.name} className="cv-param-row" style={{ height: s(CardGeometry.paramRow), padding: `0 ${s(10)}px` }}>
               <ParamFieldView param={param} editable={!!p.onParamCommit && p.paramsEditable !== false} zoom={z}
-                revision={edit => p.onParamBegin?.(edit, param.name) ?? 0n} commit={(t, edit, overwrite) => p.onParamCommit?.(param.name, t, edit, overwrite)} />
+                revision={p.onParamBegin} commit={(t, edit, overwrite) => p.onParamCommit?.(param.name, t, edit, overwrite)} />
             </div>
           ))}
           {g.result && (
@@ -324,12 +314,6 @@ function PortLabels({ data, g, flow, z }: { data: CardNodeData; g: CardGeometry;
       for (const p of list) {
         const pt = g.port(p.name, output)
         const w = g.spacing(!output)
-        let text = p.name
-        if (data.kind === 'branch') {
-          // Which output is true / false, and which input is the boolean condition.
-          if (output) text = p.name === 'a' ? 'a (T)' : p.name === 'b' ? 'b (F)' : p.name
-          else if (p.name === 'condition') text = 'bool'
-        }
         let style: CSSProperties
         if (g.shape === 'card') {
           // Inside an ordinary Card: below its input, above its output.
@@ -337,13 +321,13 @@ function PortLabels({ data, g, flow, z }: { data: CardNodeData; g: CardGeometry;
           style = { left: s(pt.x - w / 2), top: s(pt.y + (output ? -half : half)), width: s(w), textAlign: 'center' }
         } else {
           // Beside the port of a routing Card, so the wire (vertical at the port) never runs through the name.
-          const left = pt.x < g.outlineRect.x + g.outlineRect.width / 2 - 1 && (data.kind === 'branch' || g.spacing(!output) < 70)
-          const lw = data.kind === 'branch' ? 40 : Math.max(CardGeometry.minLabel, Math.min(w, 80))
+          const left = pt.x < g.outlineRect.x + g.outlineRect.width / 2 - 1 && g.spacing(!output) < 70
+          const lw = Math.max(CardGeometry.minLabel, Math.min(w, 80))
           const dy = output ? CardGeometry.portRow / 2 : -CardGeometry.portRow / 2
           const x = left ? pt.x - 6 - lw : pt.x + 6
           style = { left: s(x), top: s(pt.y + dy), width: s(lw), textAlign: left ? 'right' : 'left' }
         }
-        out.push(<span key={(output ? 'o:' : 'i:') + p.name} className="cv-port-label secondary" style={{ ...style, fontSize: font(9.5) }}>{text}</span>)
+        out.push(<span key={(output ? 'o:' : 'i:') + p.name} className="cv-port-label secondary" style={{ ...style, fontSize: font(9.5) }}>{p.name}</span>)
       }
     }
   } else if (g.shape === 'card' && !g.collapsed) {
@@ -361,17 +345,9 @@ function PortLabels({ data, g, flow, z }: { data: CardNodeData; g: CardGeometry;
   return <>{out}</>
 }
 
-function portHelp(data: CardNodeData, p: PortData, output: boolean): string {
+function portHelp(p: PortData, output: boolean): string {
   let s = (output ? L('出力 ') : L('入力 ')) + p.name
-  if (data.kind === 'branch') {
-    if (p.name === 'condition') s += L('（bool: true なら a、false なら b へ value を送る）')
-    if (p.name === 'a') s += L('（condition が true のとき）')
-    if (p.name === 'b') s += L('（condition が false のとき）')
-  }
-  if (data.kind === 'fork' && output) s += L('（value をそのまま送る）')
   if (p.typeName) s += ` : ${p.typeName}`
-  s += p.optional ? L('（省略可）') : L('（必須）')
-  if (p.note) s += '\n' + p.note
   return s
 }
 
@@ -432,7 +408,7 @@ export function StageStrip({ progress, zoom = 1, onTap, caption = '' }: { progre
 // ---- Param field --------------------------------------------------------------------------
 
 /** A param shown on an input Card; committed on Return or focus loss. */
-export function ParamFieldView({ param, editable, zoom = 1, revision, commit }: { param: ParamData; editable: boolean; zoom?: number; revision?: (edit: InlineParamEdit) => bigint; commit: (text: string, edit: InlineParamEdit, overwrite: boolean) => Promise<boolean> | void }) {
+export function ParamFieldView({ param, editable, zoom = 1, revision, commit }: { param: ParamData; editable: boolean; zoom?: number; revision?: () => bigint; commit: (text: string, edit: InlineParamEdit, overwrite: boolean) => Promise<boolean> | void }) {
   const z = zoom
   const [text, setText] = useState(param.value)
   const [editing, setEditing] = useState(false)
@@ -443,7 +419,7 @@ export function ParamFieldView({ param, editable, zoom = 1, revision, commit }: 
   useEffect(() => {
     if (!editing) setText(param.value)
   }, [param.value, editing])
-  const begin = () => { edit.begin(param.value, revision?.(edit) ?? 0n); setText(param.value); setEditing(true) }
+  const begin = () => { edit.begin(param.value, revision?.() ?? 0n); setText(param.value); setEditing(true) }
   const finish = async (cancel = false, overwrite = false) => {
     if (!editing || edit.applying) return
     if (cancel) { setEditing(false); setText(param.value); return }
@@ -460,7 +436,7 @@ export function ParamFieldView({ param, editable, zoom = 1, revision, commit }: 
           onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
           <input type="checkbox" aria-label={param.name} checked={param.value === 'true'} disabled={!editable || edit.applying} onChange={(e) => {
             const value = e.target.checked ? 'true' : 'false'
-            edit.begin(param.value, revision?.(edit) ?? 0n); setText(value); setEditing(true)
+            edit.begin(param.value, revision?.() ?? 0n); setText(value); setEditing(true)
             void Promise.resolve(commit(value, edit, false)).then(ok => { if (ok !== false) setEditing(false) })
           }} />
           <span className="cv-switch" style={{ width: 22 * z, height: 13 * z }} />
@@ -491,7 +467,7 @@ export function ParamFieldView({ param, editable, zoom = 1, revision, commit }: 
       )}
       {(edit.conflictRev !== undefined || edit.error) && <div className="pad10" style={{ position: 'absolute', zIndex: 100, top: '100%', width: 320, background: 'var(--window-bg)' }} onPointerDown={e => e.stopPropagation()}>
         <RevisionEditNotice edit={edit} text={() => text} overwrite={() => void finish(false, true)}
-          reload={() => { edit.begin(param.value, revision?.(edit) ?? 0n); setText(param.value); setEditing(false) }} />
+          reload={() => { edit.begin(param.value, revision?.() ?? 0n); setText(param.value); setEditing(false) }} />
       </div>}
     </div>
   )
@@ -528,7 +504,6 @@ export function WireLayer({ wires, animate = false, zoom = 1, width, height }: {
     carried: { color: fade('orange', 0.8), width: w + 0.4 },
     active: { color: 'var(--orange)', width: w + 0.6, dash: anyActive ? '8 6' : undefined },
     selected: { color: 'var(--accent)', width: w + 1.4 },
-    display: { color: fade('purple', 0.75), width: Math.max(1, w - 0.2), dash: '5 4' },
   }
   return (
     <svg className="cv-wires" width={Math.max(1, width)} height={Math.max(1, height)} aria-hidden>

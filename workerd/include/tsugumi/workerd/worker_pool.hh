@@ -24,20 +24,16 @@ struct WorkerLimits {
   size_t max_standby = 32;              // idle and pending fresh workers
 };
 
-// Remote supervised jobs acquire exactly one worker at the existing scratch
-// path, on the invocation thread, with no standby or resident preparation.
-enum class WorkerPoolMode { standby, one_shot };
-
 class WorkerPool {
  public:
-  WorkerPool(std::filesystem::path scratch_root, WorkerLimits limits = {},
-             WorkerPoolMode mode = WorkerPoolMode::standby);
+  WorkerPool(std::filesystem::path scratch_root, WorkerLimits limits = {});
   ~WorkerPool();  // ends every worker (the project stops)
 
   struct Lease {
     std::unique_ptr<WorkerProc> worker;
     bool reused = false;   // a resident worker that served an earlier call
     std::string replaced;  // why previously held state was lost
+    uint64_t generation = 0;
   };
 
   // A worker for `card` running `key` (build and execution conditions; the
@@ -48,11 +44,13 @@ class WorkerPool {
                 const WorkerSpawn& spawn, bool reuse);
   // Retain only successful living residents; remember why a bad call ended
   // its worker so the next acquisition can report fresh state.
-  void release(const std::string& card, const std::string& key,
+  void release(const std::string& card, uint64_t generation,
                std::unique_ptr<WorkerProc> worker, bool keep,
                const std::string& reason = {});
-  // Ends every worker of the project (definitions reloaded, cache cleared).
-  void clear(bool residents = true);
+  // Retires every implementation of the Card. An outstanding lease can
+  // complete, but may not return its version to the pool.
+  auto invalidate(const std::string& card, const std::string& reason) -> void;
+  void clear();
 
  private:
   struct Idle {
@@ -66,13 +64,15 @@ class WorkerPool {
 
   std::filesystem::path root_;
   WorkerLimits limits_;
-  WorkerPoolMode mode_;
   std::mutex mu_;
   std::condition_variable cv_;
   std::vector<Idle> resident_;
   std::map<std::string, std::string>
       resident_keys_;  // also remembers workers that died during a call
   std::map<std::string, std::string> resident_replacements_;
+  std::map<std::string, uint64_t> active_residents_;
+  uint64_t lease_sequence_ = 0;
+  uint64_t standby_epoch_ = 0;
   std::map<std::string, Idle> standby_;  // one per key
   std::map<std::string, bool> refilling_;
   std::deque<std::pair<std::string, WorkerSpawn>>

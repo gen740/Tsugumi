@@ -6,22 +6,26 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <iterator>
 #include <set>
 
 #include "execution_service.hh"
 #include "nix.hh"
+#include "nix_params.hh"
 #include "permissions.hh"
 #include "remote_execution_service.hh"
 #include "run_scratch.hh"
-#include "runtime_schema.hh"
 #include "scheduler.hh"
 #include "tsugumi/document/host_requirements.hh"
 #include "tsugumi/document/input_types.hh"
+#include "tsugumi/protocol/runtime_state_generated.h"
 #include "tsugumi/protocol/trace_codec.hh"
 #include "tsugumi/runtime_support/cache_usage.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
+#include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/store.hh"
 #include "version_facts.hh"
 #include "worker_selection.hh"
@@ -247,6 +251,7 @@ Service::Service(ServiceOptions opts) : opts_(std::move(opts)) {
   // Plan requests can occupy every reader while the execution broker is down.
   cancel_lane_ = std::make_unique<Lane>(1);
   shell_lane_ = std::make_unique<Lane>(2);
+  card_views_lane_ = std::make_unique<Lane>(1);
 }
 
 Service::~Service() { shutdown(); }
@@ -254,19 +259,16 @@ Service::~Service() { shutdown(); }
 void Service::open() {
   store_ = std::make_unique<Store>(StoreOptions{opts_.root, opts_.fault});
   store_->open();
-  history_ = std::make_unique<History>(store_->state_dir() / "runs.sqlite",
-                                       opts_.fault);
-  versions_ = std::make_unique<Versions>(opts_.root);
-  // Local folders (never the project share): the evaluator's inputs by
-  // content and the workers' own folders.
-  auto scratch =
+  const auto scratch =
       opts_.scratch_dir.empty()
           ? stdfs::temp_directory_path() / ("tsugumi-" + store_->project_id())
           : opts_.scratch_dir;
   nix_ = std::make_unique<NixRunner>(*this, scratch / "nix");
+  history_ = std::make_unique<History>(store_->state_dir() / "runs.sqlite",
+                                       opts_.fault);
+  versions_ = std::make_unique<Versions>(opts_.root);
+
   substituters_ = configured_substituters(opts_.substituters_file);
-  for (const char* d : {"runs", "inputs"})
-    stdfs::create_directories(store_->state_dir() / d);
   run_scratch_ = disk_scratch_path(opts_.run_scratch_dir.empty()
                                        ? default_run_scratch(opts_.root)
                                        : opts_.run_scratch_dir);
@@ -291,61 +293,12 @@ void Service::open() {
   }
 }
 
-auto Service::file_roots() const -> std::vector<stdfs::path> {
-  return {store_->state_dir() / "runs", store_->state_dir() / "inputs",
-          run_scratch_ / "runs"};
-}
-
-auto Service::keep_file_value(
-    const Value& value, const stdfs::path& directory,
-    const std::atomic<bool>& stop,
-    const std::function<void(std::string_view, uint64_t, uint64_t)>& progress)
-    -> Value {
-  if (value.kind == PortKind::FlatBuffer) return value;
-  const auto source = path_value(value);
-  if (!source)
-    throw Failed(FailureKind::output_invalid, "file value has no path");
-  for (const auto& root : file_roots()) {
-    const auto rel =
-        stdfs::path(*source).lexically_normal().lexically_relative(root);
-    if (!fs::valid_relative_path(rel.generic_string())) continue;
-    const auto check = [&] {
-      if (stop.load())
-        throw Failed(FailureKind::cancelled,
-                     "keeping file value was cancelled");
-    };
-    const auto destination = directory / rel.filename();
-    const auto copy = [&](const stdfs::path& from, const stdfs::path& to) {
-      check();
-      const auto total = stdfs::file_size(root / from);
-      uint64_t done = 0;
-      if (progress) progress(from.generic_string(), 0, total);
-      fs::copy_beneath(root, from, to, [&](std::string_view chunk) {
-        check();
-        done += chunk.size();
-        if (progress) progress(from.generic_string(), done, total);
-      });
-    };
-    if (value.kind == PortKind::File)
-      copy(rel, destination);
-    else {
-      const auto listing = fs::list_beneath(root, rel);
-      if (!listing.links.empty() || !listing.special.empty())
-        throw Failed(FailureKind::output_invalid,
-                     "kept directory contains a link or special file");
-      stdfs::create_directories(destination);
-      for (const auto& child : listing.directories) {
-        check();
-        stdfs::create_directories(destination / child);
-      }
-      for (const auto& child : listing.files)
-        copy(rel / child, destination / child);
-    }
-    check();
-    return with_path(value, destination.string());
+auto Service::invalidate_resident(const std::string& card) -> void {
+  {
+    std::lock_guard lock(worker_selection_mutex_);
+    resident_targets_.erase(card);
   }
-  throw Failed(FailureKind::output_invalid,
-               "file value is outside the run's folders: " + *source);
+  execution_service_->invalidate(card, "the Card definition changed");
 }
 
 auto Service::execution_service(const std::string& id) -> ExecutionService& {
@@ -375,6 +328,73 @@ class SelectedExecution final : public PreparedExecution {
 };
 }  // namespace
 
+namespace {
+auto unsupported_local_option(const Settings& settings,
+                              const RemoteTarget& target) -> std::string {
+#ifdef __linux__
+  // Without bubblewrap only the plain worker could run, which enforces none
+  // of these: the Card fails instead of running without what it selected.
+  if (!target.namespace_isolation) {
+    if (settings.sandbox.filesystem)
+      return "sandbox.filesystem requires a Linux worker with bubblewrap";
+    if (!settings.grants.network)
+      return "a Card without grants.network requires a Linux worker with "
+             "bubblewrap to keep it off the network";
+    if (settings.sandbox.pid)
+      return "sandbox.pid requires a Linux worker with bubblewrap";
+    if (settings.sandbox.ipc)
+      return "sandbox.ipc requires a Linux worker with bubblewrap";
+    if (settings.sandbox.identity)
+      return "sandbox.identity requires a Linux worker with bubblewrap";
+  }
+#endif
+  if (settings.sandbox.limits.limited() && !target.resource_limits)
+    return "sandbox.limits requires a delegated cgroup v2 subtree";
+  if (settings.grants.gui && !target.gui)
+    return "grants.gui requires a native Linux worker with an available GUI "
+           "socket";
+  return {};
+}
+
+auto effective_local_options(const Settings& settings,
+                             const RemoteTarget& target) -> std::string {
+  std::vector<std::string_view> notes;
+  if (!settings.sandbox.filesystem) {
+    notes.push_back(
+        "host paths and GUI endpoints can be visible with filesystem isolation "
+        "off");
+#ifndef __APPLE__
+    if (!settings.grants.network)
+      notes.push_back(
+          "network isolation does not hide filesystem Unix sockets");
+#endif
+  }
+  (void)target;
+#ifdef __APPLE__
+  if (settings.sandbox.filesystem)
+    notes.push_back("Seatbelt filesystem isolation is partial");
+  if (settings.sandbox.pid) notes.push_back("PID isolation unavailable");
+  if (settings.sandbox.ipc) notes.push_back("IPC isolation unavailable");
+  if (settings.sandbox.identity)
+    notes.push_back("identity isolation unavailable");
+  if (settings.grants.network && settings.sandbox.filesystem)
+    notes.push_back("Seatbelt still restricts access to the local host");
+#endif
+  std::string message;
+  for (const auto note : notes) {
+    if (!message.empty()) message += ", ";
+    message += note;
+  }
+  return message;
+}
+
+auto supports_remote_options(const Settings& settings) -> bool {
+  return settings.sandbox.filesystem && settings.sandbox.pid &&
+         !settings.reuse_worker && !settings.grants.gui &&
+         settings.grants.host_paths.empty();
+}
+}  // namespace
+
 auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
                                 BuildRequest& build)
     -> std::unique_ptr<PreparedExecution> {
@@ -397,7 +417,13 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
       candidates.push_back(
           {target.id, target.grade,
            target.available &&
-               (!capacity || worker_slots_[target.id] < capacity)});
+               (!capacity || worker_slots_[target.id] < capacity),
+           target.id == kLocalExecutionService
+               ? unsupported_local_option(node.settings, target).empty()
+               : (supports_remote_options(node.settings) &&
+                  (node.settings.execution_service != "auto" ||
+                   !node.settings.sandbox.limits.limited() ||
+                   target.resource_limits))});
     }
     const auto resident = resident_targets_.find(card);
     const auto resident_id =
@@ -407,8 +433,9 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
           select_worker(candidates, node.settings.worker_condition.get(),
                         node.settings.execution_service, resident_id);
       if (!choice.matches)
-        throw Failed(FailureKind::invalid_request,
-                     "no registered worker satisfies workerCondition");
+        throw Failed(FailureKind::unsupported,
+                     "no registered worker supports the Card's settings and "
+                     "workerCondition");
       if (!choice.index) break;
       const auto target = targets[*choice.index];
       if (target.id != "local") {
@@ -469,7 +496,8 @@ auto Service::card_secrets(const Node& node, std::stop_token stop) const
     -> std::vector<std::pair<std::string, std::string>> {
   const auto& names = node.settings.secrets;
   if (names.empty()) return {};
-  std::vector<std::pair<std::string, std::string>> values;
+  WorkerSecrets supplied;
+  auto& values = supplied.values;
   try {
     values = remote_jobs_.card_secrets(names, stop);
   } catch (const std::exception& error) {
@@ -478,7 +506,9 @@ auto Service::card_secrets(const Node& node, std::stop_token stop) const
                      std::string(error.what()) +
                      "): open the project from the Tsugumi app or Web UI");
   }
-  std::vector<std::pair<std::string, std::string>> ordered;
+  WorkerSecrets result;
+  auto& ordered = result.values;
+  ordered.reserve(names.size());
   std::string missing;
   for (const auto& name : names) {
     const auto found = std::ranges::find_if(
@@ -486,17 +516,26 @@ auto Service::card_secrets(const Node& node, std::stop_token stop) const
     if (found == values.end() || found->second.empty())
       missing += (missing.empty() ? "" : ", ") + name;
     else
-      ordered.push_back(std::move(*found));
+      ordered.push_back(*found);
   }
   if (!missing.empty())
     throw Failed(FailureKind::not_found,
                  "Card secret not set: " + missing +
                      ". Set it in Settings > Card secrets, then run again",
                  {{"secrets", missing}});
-  return ordered;
+  return std::move(result.values);
 }
 
-auto Service::remote_targets(std::stop_token stop) const -> std::vector<RemoteTarget> {
+auto Service::remote_targets(std::stop_token stop) const
+    -> std::vector<RemoteTarget> {
+  const auto fill_local = [this](RemoteTarget& local) {
+    local.available = true;
+    local.native_system = native_system();
+    local.systems = NixRunner::execution_systems();
+    local.resource_limits = worker_limits_available();
+    local.namespace_isolation = worker_has_bwrap();
+    local.gui = opts_.gcroots_dir.empty() && worker_gui_available();
+  };
   try {
     auto targets = remote_jobs_.catalog(stop);
     auto local =
@@ -507,16 +546,12 @@ auto Service::remote_targets(std::stop_token stop) const -> std::vector<RemoteTa
       targets.insert(targets.begin(), std::move(target));
       local = targets.begin();
     }
-    local->available = true;
-    local->native_system = native_system();
-    local->systems = NixRunner::execution_systems();
+    fill_local(*local);
     return targets;
   } catch (const std::exception&) {
     RemoteTarget local;
     local.id = kLocalExecutionService;
-    local.available = true;
-    local.native_system = native_system();
-    local.systems = NixRunner::execution_systems();
+    fill_local(local);
     return {std::move(local)};
   }
 }
@@ -538,22 +573,49 @@ auto Service::execution_diagnostic(const Node& node,
                      ? "execution service " + target.id + " is not available"
                      : target.unavailable_reason);
   };
+  const auto local_diagnostic =
+      [&](const RemoteTarget& target) -> std::optional<Diag> {
+    if (auto message = unsupported_local_option(settings, target);
+        !message.empty())
+      return error(std::move(message));
+    if (auto message = effective_local_options(settings, target);
+        !message.empty())
+      return Diag{false,
+                  "sandbox_effective_settings",
+                  std::move(message),
+                  node.path,
+                  {},
+                  {}};
+    return std::nullopt;
+  };
   if (settings.execution_service == "auto") {
     const RemoteTarget* blocked = nullptr;
+    const RemoteTarget* local = nullptr;
+    bool other = false;
     for (const auto& target : targets) {
       if (settings.worker_condition &&
           !settings.worker_condition->matches(target.grade))
         continue;
-      if (target.available) return std::nullopt;
+      if (target.id == kLocalExecutionService) {
+        local = &target;
+        continue;
+      }
+      if (!supports_remote_options(settings) ||
+          (settings.sandbox.limits.limited() && !target.resource_limits))
+        continue;
+      if (target.available) other = true;
       if (!blocked) blocked = &target;
     }
+    if (other) return std::nullopt;
+    if (local && local->available) return local_diagnostic(*local);
     if (blocked) return unavailable(*blocked);
-    return Diag{true,
-                "invalid_setting",
-                "no registered worker satisfies workerCondition",
-                node.path,
-                {},
-                {}};
+    return Diag{
+        true,
+        "invalid_setting",
+        "no registered worker supports the Card settings and workerCondition",
+        node.path,
+        {},
+        {}};
   }
   const auto target =
       std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
@@ -563,6 +625,7 @@ auto Service::execution_diagnostic(const Node& node,
     return error("execution service " + settings.execution_service +
                  " is not available");
   if (!target->available) return unavailable(*target);
+  if (target->id == kLocalExecutionService) return local_diagnostic(*target);
   // Cached capabilities describe the last observation, not a reason to refuse
   // a run. RemoteExecutionService probes the worker before choosing a system
   // or checking resources.
@@ -571,6 +634,7 @@ auto Service::execution_diagnostic(const Node& node,
 
 void Service::shutdown() {
   remote_jobs_.stop();
+  card_views_shutdown_.request_stop();
   {
     std::lock_guard lock(cancellations_mu_);
     shell_stopping_ = true;
@@ -582,6 +646,7 @@ void Service::shutdown() {
   if (shell_lane_) shell_lane_->stop();
   if (cancel_lane_) cancel_lane_->stop();
   if (scheduler_) scheduler_->shutdown();
+  if (card_views_lane_) card_views_lane_->stop();
   execution_service_.reset();  // the project's resident and standby workers end
   // Queued history writes announce themselves through the server, which
   // outlives the service only until it is closed.
@@ -604,14 +669,14 @@ std::vector<std::string> Service::capabilities() {
                                    "ProjectCacheUsage",
                                    "RunScratchDelete",
                                    "RunHistoryDelete",
+                                   "RunCategoryDelete",
                                    "OperationGet",
                                    "ProjectFileList",
                                    "ProjectFileStat",
                                    "ProjectFileRead",
                                    "OutputTypes",
                                    "InputTypes",
-                                   "CardSDKPrepare",
-                                   "CardSDKStatus",
+                                   "EvaluateNix",
                                    "RunPlan",
                                    "Run",
                                    "RunCancel",
@@ -627,11 +692,14 @@ std::vector<std::string> Service::capabilities() {
                                    "RunValueRead",
                                    "ArtifactList",
                                    "ArtifactRead",
-                                   "ModuleRead",
                                    "LogRange",
                                    "ViewSetVisible",
+                                   "ViewSend",
+                                   "ViewCredit",
                                    "ViewSave",
-                                   "NixSourceResolve",
+                                   "CardViewRead",
+                                   "NixPathLockSource",
+                                   "RewriteParamLiteral",
                                    "VersionInit",
                                    "VersionMark",
                                    "VersionCheckout",
@@ -640,10 +708,6 @@ std::vector<std::string> Service::capabilities() {
                                    "VersionNote",
                                    "VersionDiff",
                                    "VersionComments"};
-  // Every Display kind of the protocol.
-  for (auto v : D::EnumValuesDisplayValue())
-    if (v != D::DisplayValue::NONE)
-      caps.push_back(std::string("display:") + D::EnumNameDisplayValue(v));
   return caps;
 }
 
@@ -681,9 +745,14 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
   auto r = R::CreateHelloResult(b, b.CreateString(store_->project_id()),
                                 b.CreateString(opts_.server_instance_id),
                                 b.CreateVector(cv));
-  return {
-      wire::reply(b, in.request_id, R::ReplyPayload::HelloResult, r.Union()),
-      true};
+  auto response = wire::reply(b, in.request_id, R::ReplyPayload::HelloResult,
+                              r.Union());
+  if (h->client() == Tsugumi::Trace::Client::MacOS ||
+      h->client() == Tsugumi::Trace::Client::Web) {
+    std::lock_guard lock(subs_mu_);
+    ui_connections_.insert(in.conn);
+  }
+  return {std::move(response), true};
 }
 
 void Service::disconnected(ConnId conn) {
@@ -701,6 +770,9 @@ void Service::disconnected(ConnId conn) {
   }
   std::lock_guard<std::mutex> l(subs_mu_);
   subscriptions_.erase(conn);
+  visible_cards_.erase(conn);
+  ui_connections_.erase(conn);
+  if (ui_owner_ == conn) ui_owner_.reset();
 }
 
 void Service::on_lane(Lane& lane, RequestIn req,
@@ -751,21 +823,25 @@ void Service::dispatch(RequestIn req) {
                              "Project core was started without RPC tracing"));
       const auto* debug = request->value_as_CoreTraceRequest();
       if (req.websocket) {
-        const auto* path = std::getenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE");
+        const auto* path =
+            std::getenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE");
         const auto capability = path ? fs::read_file(path) : std::nullopt;
         if (!capability || capability->empty() || !debug->capability() ||
-            !crypto::equal_secret(debug->capability()->string_view(), *capability))
-          return fail(req, FailureData::make(FailureKind::permission_denied,
-                                            "RPC capture requires local host access"));
+            !crypto::equal_secret(debug->capability()->string_view(),
+                                  *capability))
+          return fail(
+              req, FailureData::make(FailureKind::permission_denied,
+                                     "RPC capture requires local host access"));
       }
       if (trace_owner_ && trace_owner_ != req.conn)
-        return fail(req, FailureData::make(FailureKind::busy,
-                                          "Another host connection owns RPC tracing"));
+        return fail(
+            req, FailureData::make(FailureKind::busy,
+                                   "Another host connection owns RPC tracing"));
       T::SnapshotT snapshot;
       if (auto mode = debug->mode()) {
         if (*mode > static_cast<uint8_t>(T::Mode::MAX))
           return fail(req, FailureData::make(FailureKind::invalid_request,
-                                            "Unknown RPC trace mode"));
+                                             "Unknown RPC trace mode"));
         trace_owner_ = req.conn;
         trace::SetMode(static_cast<trace::Mode>(*mode));
         snapshot.mode = static_cast<T::Mode>(*mode);
@@ -792,8 +868,8 @@ void Service::dispatch(RequestIn req) {
       }
       FBB b;
       auto value = T::Snapshot::Pack(b, &snapshot);
-      reply(req, wire::reply(b, req.request_id,
-                             R::ReplyPayload::TraceSnapshot, value.Union()));
+      reply(req, wire::reply(b, req.request_id, R::ReplyPayload::TraceSnapshot,
+                             value.Union()));
       return;
     }
     case P::ProjectActivityRequest: {
@@ -820,12 +896,12 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::cache_usage);
     case P::RunScratchDeleteRequest:
       return on_lane(m, std::move(req), &Service::scratch_delete);
+    case P::RunCategoryDeleteRequest:
+      return on_lane(m, std::move(req), &Service::history_category_delete);
     case P::RunHistoryDeleteRequest:
       return on_lane(m, std::move(req), &Service::history_delete);
     case P::RunRequest:
       return on_lane(m, std::move(req), &Service::run);
-    case P::CardSDKPrepareRequest:
-      return on_lane(m, std::move(req), &Service::sdk_prepare);
     case P::VersionInitRequest:
       return on_lane(m, std::move(req), &Service::version_init);
     case P::VersionMarkRequest:
@@ -858,10 +934,13 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::input_types);
     case P::OutputTypesRequest:
       return on_lane(r, std::move(req), &Service::output_types);
-    case P::NixSourceResolveRequest:
-      return on_lane(r, std::move(req), &Service::nix_source_resolve);
-    case P::CardSDKStatusRequest:
-      return on_lane(r, std::move(req), &Service::sdk_status);
+    case P::NixPathLockSourceRequest:
+      return on_lane(r, std::move(req), &Service::nix_path_lock_source);
+    case P::RewriteParamLiteralRequest:
+      return on_lane(r, std::move(req),
+                     &Service::rewrite_param_literal_request);
+    case P::EvaluateNixRequest:
+      return on_lane(r, std::move(req), &Service::evaluate_nix);
     case P::RunPlanRequest:
       return on_lane(r, std::move(req), &Service::run_plan);
     case P::RunCancelRequest:
@@ -890,16 +969,20 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::run_value_read);
     case P::ArtifactListRequest:
       return on_lane(r, std::move(req), &Service::artifact_list);
-    case P::ModuleReadRequest:
-      return on_lane(r, std::move(req), &Service::module_read);
     case P::ArtifactReadRequest:
       return on_lane(r, std::move(req), &Service::artifact_read);
     case P::LogRangeRequest:
       return on_lane(r, std::move(req), &Service::log_range);
+    case P::ViewSendRequest:
+      return on_lane(r, std::move(req), &Service::view_send);
+    case P::ViewCreditRequest:
+      return on_lane(r, std::move(req), &Service::view_credit);
     case P::ViewSetVisibleRequest:
       return on_lane(r, std::move(req), &Service::view_set_visible);
     case P::ViewSaveRequest:
       return on_lane(r, std::move(req), &Service::view_save);
+    case P::CardViewReadRequest:
+      return on_lane(r, std::move(req), &Service::card_view_read);
     default:
       return fail(req, FailureData::make(FailureKind::unsupported,
                                          "request is not supported"));
@@ -931,13 +1014,13 @@ std::string Service::receipt_reply(uint64_t request_id,
       type = R::ReplyPayload::ProjectCacheClearResult;
       tname = "Tsugumi.RPC.ProjectCacheClearResult";
       break;
-    case R::ReceiptValue::CardSDKPrepareResult:
-      type = R::ReplyPayload::CardSDKPrepareResult;
-      tname = "Tsugumi.RPC.CardSDKPrepareResult";
-      break;
     case R::ReceiptValue::RunScratchDeleteResult:
       type = R::ReplyPayload::RunScratchDeleteResult;
       tname = "Tsugumi.RPC.RunScratchDeleteResult";
+      break;
+    case R::ReceiptValue::RunCategoryDeleteResult:
+      type = R::ReplyPayload::RunCategoryDeleteResult;
+      tname = "Tsugumi.RPC.RunCategoryDeleteResult";
       break;
     case R::ReceiptValue::RunHistoryDeleteResult:
       type = R::ReplyPayload::RunHistoryDeleteResult;
@@ -1112,7 +1195,7 @@ manifest(FBB& b, const Document& doc, const std::vector<std::string>* only) {
   std::vector<flatbuffers::Offset<R::SourceInfo>> v;
   auto add = [&](const std::string& p, const SourceEntry& e) {
     v.push_back(wire::source_info(b, p, D::SourceKind::file, true, e.hash,
-                                  e.size, e.document_json.get()));
+                                  e.size, e.document.get()));
   };
   if (only) {
     for (const auto& p : *only) add(p, doc.sources.at(p));
@@ -1127,19 +1210,19 @@ manifest(FBB& b, const Document& doc, const std::vector<std::string>* only) {
 std::optional<Service::ViewRecord> Service::load_view(
     const std::string& view_id) {
   std::lock_guard<std::mutex> l(view_mu_);
-  auto text = fs::read_file(store_->state_dir() / "view.json");
-  if (!text) return std::nullopt;
-  schema::ViewFile file;
-  if (schema::decode(*text, file)) return std::nullopt;
-  for (const auto& [id, entry] : file.views->entries())
-    if (id == view_id) return ViewRecord{*entry.rev, *entry.view};
+  auto bytes = fs::read_file(store_->state_dir() / "view");
+  const auto file =
+      bytes ? flat::decode<Tsugumi::State::Views>(*bytes) : std::nullopt;
+  if (!file) return std::nullopt;
+  for (const auto& entry : file->views)
+    if (entry->id == view_id) return ViewRecord{entry->rev, std::string(entry->view.begin(), entry->view.end())};
   return std::nullopt;
 }
 
 auto Service::busy() -> bool {
   return !mutation_lane_->idle() || !read_pool_->idle() ||
-         !cancel_lane_->idle() ||
-         !shell_lane_->idle() || scheduler_->active_status().has_value();
+         !cancel_lane_->idle() || !shell_lane_->idle() ||
+         scheduler_->active_status().has_value();
 }
 
 RunStatusData Service::current_run_status() {
@@ -1168,26 +1251,46 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
   auto run = wire::run_status(b, current_run_status());
   auto pid = b.CreateString(store_->project_id());
   auto pj = b.CreateString(doc.project_json);
-  auto lj = b.CreateString(doc.layout_json);
+  auto lj = b.CreateVector(reinterpret_cast<const uint8_t*>(doc.layout.data()),
+                           doc.layout.size());
   std::vector<flatbuffers::Offset<R::ExecutionService>> services;
-  for (const auto& target : targets)
+  for (const auto& target : targets) {
+    const bool remote = target.id != kLocalExecutionService;
+    using Guarantee = R::IsolationGuarantee;
+    const auto namespaces = remote || target.namespace_isolation
+                                ? Guarantee::enforced
+                                : Guarantee::unavailable;
+    auto filesystem = namespaces;
+    auto network = namespaces;
+    bool host_paths = !remote && target.namespace_isolation;
+#ifdef __APPLE__
+    if (!remote) {
+      network = filesystem = Guarantee::partial;
+      host_paths = true;
+    }
+#endif
+    const auto sandbox = R::CreateSandboxCapabilities(
+        b, filesystem, namespaces, namespaces, namespaces, network, target.gui,
+        host_paths, remote, remote);
     services.push_back(R::CreateExecutionService(
         b, b.CreateString(target.id), b.CreateString(target.native_system),
         b.CreateVectorOfStrings(target.systems),
-        target.id == "local" ? R::ExecutionServiceKind::local
-                             : R::ExecutionServiceKind::remote_daemon,
+        remote ? R::ExecutionServiceKind::remote_daemon
+               : R::ExecutionServiceKind::local,
         target.available, target.resource_limits,
         target.max_jobs ? flatbuffers::Optional(target.max_jobs)
                         : flatbuffers::nullopt,
-        target.grade));
+        target.grade, sandbox));
+  }
   auto execution_services = b.CreateVector(services);
-  flatbuffers::Offset<flatbuffers::String> view;
+  flatbuffers::Offset<flatbuffers::Vector<uint8_t>> view;
   flatbuffers::Offset<flatbuffers::String> vid;
   std::optional<uint64_t> vrev;
   if (view_id) {
     vid = b.CreateString(*view_id);
     if (record) {
-      view = b.CreateString(record->view);
+      view = b.CreateVector(reinterpret_cast<const uint8_t*>(record->view.data()),
+                            record->view.size());
       vrev = record->rev;
     } else {
       vrev = 0;
@@ -1198,7 +1301,7 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
   sb.add_rev(doc.rev);
   sb.add_execution_rev(doc.execution_rev);
   sb.add_project_json(pj);
-  sb.add_layout_json(lj);
+  sb.add_layout(lj);
   sb.add_definitions(defs_v);
   sb.add_sources(src);
   sb.add_resolution(res);
@@ -1206,7 +1309,7 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
   sb.add_run(run);
   sb.add_execution_services(execution_services);
   if (view_id) {
-    if (!view.IsNull()) sb.add_view_json(view);
+    if (!view.IsNull()) sb.add_view(view);
     sb.add_view_id(vid);
     sb.add_view_rev(*vrev);
   }
@@ -1260,8 +1363,11 @@ flatbuffers::Offset<R::DocumentDelta> delta_offset(FBB& b, const Delta& d) {
   auto origin = b.CreateString(d.origin);
   auto pj = d.project_changed ? b.CreateString(doc.project_json)
                               : flatbuffers::Offset<flatbuffers::String>();
-  auto lj = d.layout_changed ? b.CreateString(doc.layout_json)
-                             : flatbuffers::Offset<flatbuffers::String>();
+  auto lj = d.layout_changed
+                ? b.CreateVector(
+                      reinterpret_cast<const uint8_t*>(doc.layout.data()),
+                      doc.layout.size())
+                : flatbuffers::Offset<flatbuffers::Vector<uint8_t>>();
   R::DocumentDeltaBuilder db(b);
   db.add_base_rev(d.base_rev);
   db.add_rev(d.rev);
@@ -1269,7 +1375,10 @@ flatbuffers::Offset<R::DocumentDelta> delta_offset(FBB& b, const Delta& d) {
   db.add_op_id(op);
   db.add_origin(origin);
   if (d.project_changed) db.add_project_json(pj);
-  if (d.layout_changed) db.add_layout_json(lj);
+  if (d.layout_changed) {
+    db.add_layout(lj);
+    db.add_layout_changed(true);
+  }
   db.add_definitions_upsert(ups_v);
   db.add_definitions_removed(rem_v);
   db.add_sources_upsert(src_v);
@@ -1381,7 +1490,14 @@ void Service::open_project(RequestIn& req) {
                                      view ? &*view : nullptr);
   {
     std::lock_guard<std::mutex> l(subs_mu_);
+    if (ui_connections_.contains(req.conn)) {
+      if (ui_owner_ && ui_owner_ != req.conn)
+        throw Failed(FailureKind::project_in_use,
+                     "the project is open in another UI connection");
+      ui_owner_ = req.conn;
+    }
     subscriptions_[req.conn] = sub;
+    visible_cards_.erase(req.conn);
   }
   server_->subscribe(req.conn, sub, std::move(bytes));
 }
@@ -1399,9 +1515,19 @@ std::vector<ChangeIn> decode_changes(
         ch.kind = ChangeIn::Kind::SetProject;
         ch.json = c->value_as_SetProject()->json()->str();
         break;
+      case R::DocumentChangeValue::SetProjectLock: {
+        const auto* lock = c->value_as_SetProjectLock();
+        ch.kind = ChangeIn::Kind::SetProjectLock;
+        ch.path = lock->path()->str();
+        if (lock->json()) ch.lock_json = lock->json()->str();
+        if (lock->base_hash()) ch.base_hash = lock->base_hash()->str();
+        break;
+      }
       case R::DocumentChangeValue::SetLayout:
         ch.kind = ChangeIn::Kind::SetLayout;
-        ch.json = c->value_as_SetLayout()->json()->str();
+        if (const auto* bytes = c->value_as_SetLayout()->layout())
+          ch.json.assign(reinterpret_cast<const char*>(bytes->data()),
+                         bytes->size());
         break;
       case R::DocumentChangeValue::PutDefinition: {
         const auto* p = c->value_as_PutDefinition();
@@ -1409,12 +1535,17 @@ std::vector<ChangeIn> decode_changes(
         ch.id = p->id()->str();
         ch.json = p->card_json()->str();
         // An empty optional document is one not given (a model fills in every
-        // field). Neither file is ever empty. The _meta.json stays: it may hold
-        // the user's intent, and leaving a field blank must not remove that.
-        if (p->meta_json() && p->meta_json()->size() > 0)
-          ch.meta_json = p->meta_json()->str();
-        ch.keep_meta =
-            p->keep_meta() || (p->meta_json() && p->meta_json()->size() == 0);
+        // field). Neither file is ever empty. The README and comments stay:
+        // they may hold the user's intent, and leaving a field blank must not
+        // remove that.
+        if (p->readme() && p->readme()->size() > 0)
+          ch.readme = p->readme()->str();
+        ch.keep_readme =
+            p->keep_readme() || (p->readme() && p->readme()->size() == 0);
+        if (p->comments_json() && p->comments_json()->size() > 0)
+          ch.comments_json = p->comments_json()->str();
+        ch.keep_comments = p->keep_comments() ||
+                           (p->comments_json() && p->comments_json()->size() == 0);
         break;
       }
       case R::DocumentChangeValue::RemoveDefinition:
@@ -1559,7 +1690,8 @@ void Service::save(RequestIn& req) {
                      "until it ends",
                      {{"run_id", *active->run_id}});
     }
-    const auto response = prepare_save_reply(staged, *base, r->operation_data());
+    const auto response =
+        prepare_save_reply(staged, *base, r->operation_data());
     complete_save(req, op_id, "save", digest, *base, staged, response,
                   check_cancelled);
   } catch (const Failed& f) {
@@ -1583,13 +1715,16 @@ void Service::complete_save(RequestIn& req, const std::string& op_id,
                             const Document& base, Store::Staged& staged,
                             const PreparedSaveReply& response,
                             const std::function<void()>& check_cancelled) {
-  store_->commit(staged, kind, digest,
-                 [&](const Delta*) { return response.receipt; },
-                 check_cancelled);
+  store_->commit(
+      staged, kind, digest, [&](const Delta*) { return response.receipt; },
+      check_cancelled);
   if (staged.delta.doc) scheduler_->document_changed(base, *staged.delta.doc);
   reply(req, receipt_reply(req.request_id, response.receipt, false));
-  if (staged.delta.doc)
+  if (staged.delta.doc) {
     publish_delta(staged.delta, response.notification_bytes);
+    if (staged.delta.doc->execution_rev != base.execution_rev)
+      refresh_card_views(staged.delta.doc);
+  }
   finish_op(op_id, response.receipt);
 }
 
@@ -1648,7 +1783,7 @@ std::string version_receipt(const std::string& op_id, const std::string& commit,
 }  // namespace
 
 void Service::note_run_end(const RunStatusData& s,
-                           const std::string& record_json) {
+                           const std::string& facts) {
   if (!s.commit || !s.run_id || !s.terminal()) return;
   VersionRunNote n;
   n.run_id = *s.run_id;
@@ -1657,7 +1792,7 @@ void Service::note_run_end(const RunStatusData& s,
   int64_t start = s.started_at.value_or(s.accepted_at.value_or(end));
   n.ended = Versions::iso_utc(end);
   n.seconds = end > start ? static_cast<double>(end - start) / 1000.0 : 0;
-  n.record_json = record_json;
+  n.facts = facts;
   try {
     versions_->note_run(*s.commit, n);
   } catch (const std::exception& e) {
@@ -1754,7 +1889,8 @@ auto pack_comments(FBB& b, const std::vector<comments::Change>& changes) {
         b, b.CreateString(c.card), b.CreateString(c.text),
         b.CreateString(c.change),
         c.resolution.empty() ? 0 : b.CreateString(c.resolution),
-        c.by.empty() ? 0 : b.CreateString(c.by), b.CreateVectorOfStrings(c.cards)));
+        c.by.empty() ? 0 : b.CreateString(c.by),
+        b.CreateVectorOfStrings(c.cards)));
   return b.CreateVector(entries);
 }
 }  // namespace
@@ -1773,7 +1909,7 @@ void Service::version_graph(RequestIn& req) {
   for (const auto& c : g.commits) {
     std::vector<flatbuffers::Offset<R::VersionRun>> runs;
     for (const auto& n : c.runs) {
-      const auto facts = version_facts::run(n.record_json);
+      const auto facts = version_facts::run(n.facts);
       runs.push_back(R::CreateVersionRun(
           b, b.CreateString(n.run_id), b.CreateString(n.state),
           b.CreateString(n.ended), n.seconds, 0,
@@ -1792,8 +1928,8 @@ void Service::version_graph(RequestIn& req) {
   auto vg = R::CreateVersionGraph(b, g.enabled, b.CreateString(g.head),
                                   b.CreateString(g.branch), g.dirty,
                                   b.CreateVector(commits));
-  auto bytes = wire::reply(b, req.request_id, R::ReplyPayload::VersionGraph,
-                           vg.Union());
+  auto bytes =
+      wire::reply(b, req.request_id, R::ReplyPayload::VersionGraph, vg.Union());
   check_frame(bytes.size(), "the version graph");
   reply(req, std::move(bytes));
 }
@@ -1812,7 +1948,9 @@ void Service::version_canvas(RequestIn& req) {
                                                b.CreateString(to)));
   auto vc =
       R::CreateVersionCanvas(b, b.CreateVector(cards), b.CreateVector(wires),
-                             b.CreateString(canvas.layout_json));
+                             b.CreateVector(reinterpret_cast<const uint8_t*>(
+                                                canvas.layout.data()),
+                                            canvas.layout.size()));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionCanvas,
                          vc.Union()));
 }
@@ -1821,7 +1959,7 @@ void Service::version_note(RequestIn& req) {
   const auto* r = project_request(req)->value_as_VersionNoteRequest();
   auto note = versions_->note(r->commit()->str());
   FBB b;
-  auto facts = version_facts::changes(note.record_json);
+  auto facts = version_facts::changes(note.facts);
   auto n = R::CreateVersionNote(b, R::VersionChanges::Pack(b, &facts),
                                 b.CreateString(note.commit));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionNote,
@@ -1833,8 +1971,8 @@ void Service::version_diff(RequestIn& req) {
   const auto diff = versions_->diff(
       r->commit()->str(), r->from_commit() ? r->from_commit()->str() : "");
   FBB b;
-  const auto value = R::CreateVersionDiff(b, b.CreateString(diff.text),
-                                         diff.truncated);
+  const auto value =
+      R::CreateVersionDiff(b, b.CreateString(diff.text), diff.truncated);
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionDiff,
                          value.Union()));
 }
@@ -1856,17 +1994,25 @@ void Service::cache_clear(RequestIn& req) {
   std::string digest = request_digest(project_request(req));
   if (replay_or_join(req, op_id, "cache_clear", digest)) return;
   try {
-    if (scheduler_->active_status() || nix_->sdk_jobs_active())
-      throw Failed(
-          FailureKind::busy,
-          "cache can only be cleared while no run or SDK job is active");
+    if (scheduler_->active_status())
+      throw Failed(FailureKind::busy,
+                   "cache can only be cleared while no run is active");
     if (history_->read(History::has_remote_jobs))
       throw Failed(
           FailureKind::busy,
           "cache cannot be cleared while external job results are pending");
     execution_service_
         ->clear();  // resident workers hold the builds being removed
-    auto result = nix_->clear_cache();
+    {
+      std::lock_guard lock(worker_selection_mutex_);
+      resident_targets_.clear();
+    }
+    card_views_cancel_.request_stop();
+    card_views_rev_.reset();
+    const auto result = [&] {
+      std::lock_guard lock(card_views_build_mu_);
+      return nix_->clear_cache();
+    }();
     const auto roots = opts_.gcroots_dir.empty()
                            ? store_->state_dir() / "cache" / "gcroots"
                            : opts_.gcroots_dir;
@@ -1989,6 +2135,58 @@ void Service::scratch_delete(RequestIn& req) {
   }
 }
 
+void Service::history_category_delete(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_RunCategoryDeleteRequest();
+  const auto op_id = r->op_id()->str();
+  const auto run_id = r->run_id()->str();
+  const auto category = r->category();
+  constexpr auto kind = "history_category_delete";
+  const auto digest = request_digest(project_request(req));
+  if (replay_or_join(req, op_id, kind, digest)) return;
+  try {
+    if (!crypto::is_run_id(run_id))
+      throw Failed(FailureKind::invalid_request, "invalid run id");
+    if (category != R::RunRecordCategory::Logs &&
+        category != R::RunRecordCategory::Values)
+      throw Failed(FailureKind::invalid_request, "invalid run record category");
+    if (scheduler_->active_status() || history_->read(History::has_remote_jobs))
+      throw Failed(FailureKind::busy,
+                   "history cannot be deleted while a run or external results are pending");
+    const auto run = history_->read([&](sql::Db& db) {
+      return History::run(db, run_id);
+    });
+    if (!run) throw Failed(FailureKind::not_found, "unknown run");
+    if (!run->status.terminal())
+      throw Failed(FailureKind::busy, "the run has not finished");
+    // TODO(open): decide whether artifacts have a separate recording category.
+    FBB b;
+    const auto result = R::CreateRunCategoryDeleteResult(
+        b, b.CreateString(run_id), category);
+    const auto receipt = finish_receipt(
+        b, op_id, R::ReceiptValue::RunCategoryDeleteResult, result.Union());
+    history_->write_sync([&](sql::Db& db) {
+      History::delete_category(db, run_id, category);
+      History::put_receipt(db, op_id, kind, digest, receipt);
+    });
+    Note note;
+    note.build = std::make_shared<const Note::Build>([run_id, category](FBB& b) {
+      return std::pair(R::NotificationPayload::RunCategoryDeleteResult,
+                       R::CreateRunCategoryDeleteResult(
+                           b, b.CreateString(run_id), category).Union());
+    });
+    server_->broadcast(std::move(note));
+    reply(req, receipt_reply(req.request_id, receipt, false));
+    finish_op(op_id, receipt);
+  } catch (const Failed& error) {
+    store_failure_receipt(op_id, kind, digest, error.failure);
+    throw;
+  } catch (const std::exception& error) {
+    auto failure = FailureData::make(FailureKind::persistence_failed, error.what());
+    store_failure_receipt(op_id, kind, digest, failure);
+    throw Failed(failure);
+  }
+}
+
 void Service::history_delete(RequestIn& req) {
   const auto* r = project_request(req)->value_as_RunHistoryDeleteRequest();
   std::string op_id = r->op_id()->str();
@@ -2026,20 +2224,28 @@ void Service::history_delete(RequestIn& req) {
     const auto scratch_after = fs::directory_size(run_scratch_ / "runs");
     files +=
         scratch_before > scratch_after ? scratch_before - scratch_after : 0;
-    // The runs' kept files: recorded values and declared artifacts.
     for (const auto& id : ids) {
       if (!crypto::is_run_id(id))
         continue;  // a run id from a copy names no folder of ours
-      auto dir = store_->state_dir() / "runs" / id;
-      std::error_code ec;
-      if (!stdfs::is_directory(dir, ec)) continue;
-      for (auto it = stdfs::recursive_directory_iterator(dir, ec);
-           !ec && it != stdfs::recursive_directory_iterator(); it.increment(ec))
-        if (it->is_regular_file(ec)) files += it->file_size(ec);
-      stdfs::remove_all(dir, ec);
-      if (ec)
-        log::warn("history: cannot remove " + dir.string() + ": " +
-                  ec.message());
+      const auto artifacts = store_->state_dir() / "artifacts";
+      const auto dir = artifacts / id;
+      if (stdfs::is_symlink(artifacts) || stdfs::is_symlink(dir))
+        throw Failed(FailureKind::invalid_path, "artifact storage is a symbolic link");
+      if (stdfs::is_directory(dir)) {
+        // Take the run out of the sandbox-visible tree before making any
+        // holding directory readable for deletion.
+        const auto detached =
+            store_->state_dir() / (".artifact-delete-" + crypto::uuid4());
+        stdfs::rename(dir, detached);
+        stdfs::permissions(detached, stdfs::perms::owner_all,
+                           stdfs::perm_options::add);
+        for (const auto& entry : stdfs::recursive_directory_iterator(detached))
+          if (stdfs::is_directory(entry.symlink_status()))
+            stdfs::permissions(entry.path(), stdfs::perms::owner_all,
+                               stdfs::perm_options::add);
+        files += fs::directory_size(detached);
+        stdfs::remove_all(detached);
+      }
     }
     uint64_t after = sizes();
     FBB b;
@@ -2163,8 +2369,8 @@ void Service::operation_get(RequestIn& req) {
     pending = pending_ops_.count(op_id) > 0;
   }
   if (shell_receipt && pending) bytes.reset();
-  reply(req, operation_reply(req.request_id, bytes ? &*bytes : nullptr,
-                             pending));
+  reply(req,
+        operation_reply(req.request_id, bytes ? &*bytes : nullptr, pending));
 }
 
 namespace {
@@ -2203,10 +2409,11 @@ void Service::file_list(RequestIn& req) {
   std::set<std::string> files;
   for (const auto& [p, _] : doc->sources) files.insert(p);
   files.insert("tsugumi.json");
-  files.insert("layout.json");
+  if (!doc->layout.empty()) files.insert("layout.bin");
   for (const auto& [id, d] : doc->definitions) {
     files.insert("definitions/" + id + "/_card.json");
-    if (d.meta_json) files.insert("definitions/" + id + "/_meta.json");
+    if (d.readme) files.insert("definitions/" + id + "/README.md");
+    if (d.comments_json) files.insert("definitions/" + id + "/_comments.json");
   }
   std::string prefix = path == "." ? "" : path + "/";
   std::map<std::string, bool> entries;  // path -> is_directory
@@ -2253,14 +2460,15 @@ void Service::file_list(RequestIn& req) {
       } else if (p == "tsugumi.json") {
         hash = crypto::sha256_hex(doc->project_json);
         size = doc->project_json.size();
-      } else if (p == "layout.json") {
-        hash = crypto::sha256_hex(doc->layout_json);
-        size = doc->layout_json.size();
+      } else if (p == "layout.bin") {
+        hash = crypto::sha256_hex(doc->layout);
+        size = doc->layout.size();
       } else {
         auto id = p.substr(12, p.find('/', 12) - 12);
         const auto& d = doc->definitions.at(id);
-        const auto& text =
-            p.ends_with("_card.json") ? d.card_json : *d.meta_json;
+        const auto& text = p.ends_with("_card.json") ? d.card_json
+                           : p.ends_with("/README.md") ? *d.readme
+                                                       : *d.comments_json;
         hash = crypto::sha256_hex(text);
         size = text.size();
       }
@@ -2290,13 +2498,16 @@ std::optional<std::string> confirmed_bytes(const Document& doc,
                                            const Store& store,
                                            const std::string& p) {
   if (p == "tsugumi.json") return doc.project_json;
-  if (p == "layout.json") return doc.layout_json;
+  if (p == "layout.bin")
+    return doc.layout.empty() ? std::nullopt
+                              : std::optional<std::string>(doc.layout);
   if (Document::is_document_file(p)) {
     auto id = p.substr(12, p.find('/', 12) - 12);
     auto it = doc.definitions.find(id);
     if (it == doc.definitions.end()) return std::nullopt;
     if (p.ends_with("_card.json")) return it->second.card_json;
-    return it->second.meta_json;
+    if (p.ends_with("/README.md")) return it->second.readme;
+    return it->second.comments_json;
   }
   if (!doc.sources.count(p)) return std::nullopt;
   return store.read_source(doc, p);
@@ -2327,9 +2538,6 @@ void Service::file_stat(RequestIn& req) {
   } else if (auto bytes = confirmed_bytes(*doc, *store_, path)) {
     info = wire::source_info(b, path, D::SourceKind::file, true,
                              crypto::sha256_hex(*bytes), bytes->size());
-  } else if (auto sdk = nix_->sdk_file(path)) {
-    info = wire::source_info(b, path, D::SourceKind::file, true,
-                             crypto::sha256_hex(*sdk), sdk->size());
   } else {
     info = wire::source_info(b, path, D::SourceKind::file, false, std::nullopt,
                              std::nullopt);
@@ -2347,8 +2555,6 @@ void Service::file_read(RequestIn& req) {
   uint32_t limit = chunk_limit(r->limit_bytes(), 262144, 1, 1u << 20);
   std::optional<std::string> bytes = confirmed_bytes(*doc, *store_, path);
   if (!bytes)
-    bytes = nix_->sdk_file(path, doc->rev);  // throws when the SDK rev is stale
-  if (!bytes)
     throw Failed(FailureKind::not_found, path + " does not exist",
                  {{"path", path}});
   std::string hash = crypto::sha256_hex(*bytes);
@@ -2363,19 +2569,53 @@ void Service::file_read(RequestIn& req) {
                              bytes->size(), hash));
 }
 
-void Service::nix_source_resolve(RequestIn& req) {
-  auto info = nix_->resolve_flake(
-      project_request(req)->value_as_NixSourceResolveRequest()->ref()->str());
+void Service::nix_path_lock_source(RequestIn& req) {
+  const auto url =
+      project_request(req)->value_as_NixPathLockSourceRequest()->url()->str();
+  const auto locked = nix_->lock_source(url);
   FBB b;
-  std::vector<flatbuffers::Offset<flatbuffers::String>> packages;
-  for (const auto& p : info.packages) packages.push_back(b.CreateString(p));
-  auto ref = b.CreateString(info.ref);
-  auto rev = b.CreateString(info.rev);
-  auto hash = b.CreateString(info.nar_hash);
-  auto res =
-      R::CreateNixSourceResolved(b, ref, rev, hash, b.CreateVector(packages));
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::NixSourceResolved,
-                         res.Union()));
+  const auto source = R::CreateNixPathLockedSource(
+      b, locked.rev.empty() ? 0 : b.CreateString(locked.rev),
+      b.CreateString(locked.nar_hash));
+  reply(req, wire::reply(b, req.request_id,
+                         R::ReplyPayload::NixPathLockedSource, source.Union()));
+}
+
+void Service::rewrite_param_literal_request(RequestIn& req) {
+  const auto* request =
+      project_request(req)->value_as_RewriteParamLiteralRequest();
+  const auto doc = store_->current();
+  check_at_rev(request->at_rev(), *doc);
+  const auto card = wire::card_arg(request->card());
+  const auto* node = doc->resolution->find(card);
+  if (!node || node->is_virtual)
+    throw Failed(FailureKind::not_found, "unknown Card " + path_key(card));
+  const auto path = node->def_dir + "params.nix";
+  const auto source = doc->sources.find(path);
+  if (source == doc->sources.end())
+    throw Failed(FailureKind::not_found, path + " does not exist");
+  if (source->second.size > kMaxDocumentJsonBytes ||
+      request->literal()->size() > kMaxDocumentJsonBytes)
+    throw Failed(FailureKind::invalid_request, path + " exceeds 8 MiB");
+  const auto bytes = store_->read_source(*doc, path);
+  std::string rewritten;
+  try {
+    rewritten =
+        rewrite_param_literal(path, bytes, request->name()->string_view(),
+                              request->literal()->string_view());
+  } catch (const std::exception& error) {
+    throw Failed(FailureKind::validation_failed, error.what(),
+                 {{"path", path}});
+  }
+  if (rewritten.size() > kMaxDocumentJsonBytes)
+    throw Failed(FailureKind::invalid_request, path + " would exceed 8 MiB");
+  FBB b;
+  const auto result = R::CreateRewrittenParamLiteral(
+      b, b.CreateString(path), b.CreateString(source->second.hash),
+      b.CreateString(rewritten));
+  reply(req,
+        wire::reply(b, req.request_id, R::ReplyPayload::RewrittenParamLiteral,
+                    result.Union()));
 }
 
 void Service::input_types(RequestIn& req) {
@@ -2384,8 +2624,7 @@ void Service::input_types(RequestIn& req) {
   check_at_rev(request->at_rev(), *doc);
   const auto card = wire::card_arg(request->card());
   const auto& graph = *doc->resolution;
-  const auto* node = graph.find(card);
-  if (!node)
+  if (!graph.find(card))
     throw Failed(FailureKind::not_found, "unknown Card " + path_key(card));
   FBB b;
   std::vector<flatbuffers::Offset<R::InputType>> inputs;
@@ -2397,7 +2636,7 @@ void Service::input_types(RequestIn& req) {
                : flatbuffers::Offset<D::CardPath>(),
         source ? b.CreateString(port)
                : flatbuffers::Offset<flatbuffers::String>(),
-        type ? wire::port(b, *type) : flatbuffers::Offset<D::Port>()));
+        type ? wire::resolved_port(b, *type) : flatbuffers::Offset<D::Port>()));
   };
   try {
     const std::optional<std::string> output =
@@ -2408,9 +2647,7 @@ void Service::input_types(RequestIn& req) {
   } catch (const DocumentError& error) {
     throw Failed(FailureKind::not_found, error.what());
   }
-  auto result = R::CreateInputTypesResult(
-      b, doc->rev, b.CreateString(node->settings.language),
-      b.CreateVector(inputs));
+  auto result = R::CreateInputTypesResult(b, doc->rev, b.CreateVector(inputs));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::InputTypesResult,
                          result.Union()));
 }
@@ -2425,8 +2662,6 @@ void Service::output_types(RequestIn& req) {
   if (bfbs && r->port() && r->type_name()) {
     changed = types::set_catalog_port(
         text, r->port()->str(), r->type_name()->str(),
-        r->kind() == D::PortKind::unspecified ? D::PortKind::FlatBuffer
-                                              : r->kind(),
         &err);
     if (changed) bfbs = types::schema_bfbs(*changed, &root, &err);
   }
@@ -2452,24 +2687,24 @@ void Service::view_save(RequestIn& req) {
     throw Failed(FailureKind::invalid_request, "view_id must be a UUID");
   if (!r->base_view_rev())
     throw Failed(FailureKind::invalid_request, "base_view_rev is required");
-  const auto view = r->view_json()->str();
+  const auto& view = *r->view();
   if (view.size() > kMaxViewBytes)
     throw Failed(FailureKind::resource_limit, "view exceeds 1 MiB");
-  // Validate JSON syntax only; scope, selection and camera belong to clients.
-  schema::Json opaque;
-  if (auto error = schema::decode(view, opaque))
-    throw Failed(FailureKind::invalid_request, error->message);
+  // The clients own scope, selection and camera semantics.
+  flatbuffers::Verifier verifier(view.data(), view.size());
+  if (!verifier.VerifyBuffer<R::ClientView>(nullptr))
+    throw Failed(FailureKind::invalid_request, "invalid client view FlatBuffer");
   std::lock_guard<std::mutex> l(view_mu_);
-  auto path = store_->state_dir() / "view.json";
-  schema::ViewFile file;
-  if (auto text = fs::read_file(path)) {
-    if (schema::decode(*text, file)) file = schema::ViewFile{};
-  }
+  auto path = store_->state_dir() / "view";
+  Tsugumi::State::ViewsT file;
+  if (auto bytes = fs::read_file(path))
+    if (auto decoded = flat::decode<Tsugumi::State::Views>(*bytes))
+      file = std::move(*decoded);
   uint64_t current = 0;
-  schema::ViewEntry* existing = nullptr;
-  for (auto& [id, entry] : file.views->entries())
-    if (id == view_id) existing = &entry;
-  if (existing) current = *existing->rev;
+  Tsugumi::State::ViewT* existing = nullptr;
+  for (auto& entry : file.views)
+    if (entry->id == view_id) existing = entry.get();
+  if (existing) current = existing->rev;
   if (*r->base_view_rev() != current) {
     FailureData f = FailureData::make(FailureKind::revision_conflict,
                                       "the view was saved by another window");
@@ -2477,19 +2712,195 @@ void Service::view_save(RequestIn& req) {
     throw Failed(f);
   }
   if (existing) {
-    *existing->rev = current + 1;
-    *existing->view = view;
+    existing->rev = current + 1;
+    existing->view.assign(view.begin(), view.end());
   } else {
-    schema::ViewEntry e;
-    *e.rev = current + 1;
-    *e.view = view;
-    file.views->emplace_back(view_id, std::move(e));
+    auto e = std::make_unique<Tsugumi::State::ViewT>();
+    e->id = view_id;
+    e->rev = current + 1;
+    e->view.assign(view.begin(), view.end());
+    file.views.push_back(std::move(e));
   }
-  fs::write_atomic(path, schema::encode(file), 0600);
+  fs::write_atomic(path, flat::encode<Tsugumi::State::Views>(file), 0600);
   FBB b;
   auto off = R::CreateViewSaveResult(b, b.CreateString(view_id), current + 1);
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::ViewSaveResult,
                          off.Union()));
+}
+
+namespace {
+
+auto card_views_note(CardPath card, std::vector<schema::CardView> views,
+                     std::optional<FailureData> failure = std::nullopt)
+    -> Note {
+  Note note;
+  note.kind = Note::Kind::CardViews;
+  note.card_key = path_key(card);
+  for (const auto& view : views)
+    note.approx_bytes +=
+        view.name->size() + view.type->size() + view.blob->size() + 64;
+  if (failure)
+    note.approx_bytes += failure->diagnostic.value_or("").size() + 64;
+  note.build = std::make_shared<const Note::Build>(
+      [card = std::move(card), views = std::move(views),
+       failure = std::move(failure)](FBB& b) {
+        std::vector<flatbuffers::Offset<D::CardView>> declarations;
+        declarations.reserve(views.size());
+        for (const auto& view : views)
+          declarations.push_back(D::CreateCardView(
+              b, b.CreateString(*view.name), b.CreateString(*view.type),
+              b.CreateString(*view.blob)));
+        const auto reason = failure ? wire::failure(b, *failure)
+                                    : flatbuffers::Offset<D::Failure>{};
+        const auto value = R::CreateCardViewsUpdated(
+            b, wire::path(b, card), b.CreateVector(declarations), reason);
+        return std::make_pair(R::NotificationPayload::CardViewsUpdated,
+                              value.Union());
+      });
+  return note;
+}
+
+}  // namespace
+
+auto Service::refresh_card_views(DocumentPtr doc) -> void {
+  if (card_views_shutdown_.stop_requested()) return;
+  if (card_views_rev_ != doc->execution_rev) {
+    card_views_cancel_.request_stop();
+    card_views_cancel_ = std::stop_source{};
+    card_views_rev_ = doc->execution_rev;
+    card_views_.clear();
+  }
+  std::set<std::string> visible;
+  {
+    std::lock_guard lock(subs_mu_);
+    for (const auto& [conn, cards] : visible_cards_)
+      visible.insert(cards.begin(), cards.end());
+  }
+  for (const auto& key : visible) {
+    const auto [cached, inserted] = card_views_.try_emplace(key);
+    if (!inserted) continue;
+    auto card = path_from_key(key);
+    const auto* node = doc->resolution->find(card);
+    if (!node || node->kind != CardType::Code) {
+      set_card_views(card, {});
+      cached->second = card_views_note(std::move(card), {});
+      server_->broadcast(*cached->second);
+      continue;
+    }
+    // Build only the declared immutable paths on the native store serving
+    // the UI. Evaluation belongs to the confirmed document snapshot.
+    card_views_lane_->submit([this, doc, node, card = std::move(card), key,
+                              cancel = card_views_cancel_]() mutable {
+      std::stop_callback shutdown(card_views_shutdown_.get_token(),
+                                  [&] { cancel.request_stop(); });
+      const auto stop = cancel.get_token();
+      if (stop.stop_requested()) return;
+      std::vector<schema::CardView> views;
+      std::optional<FailureData> failure;
+      try {
+        std::lock_guard lock(card_views_build_mu_);
+        if (stop.stop_requested()) return;
+        BuildRequest request;
+        request.node = node;
+        request.doc = doc;
+        request.cancel = stop;
+        request.timeout_seconds = node->settings.build_timeout_seconds;
+        views = nix_->declared_views(request);
+      } catch (const Failed& e) {
+        failure = e.failure;
+      } catch (const std::exception& e) {
+        failure = FailureData::make(FailureKind::nix_failed, e.what());
+      }
+      if (stop.stop_requested()) return;
+      // A failed evaluation clears the previous list and says why, so the
+      // UI can tell it from a Card that declares no views.
+      std::vector<DeclaredView> files;
+      files.reserve(views.size());
+      for (const auto& view : views) files.push_back({*view.name, *view.blob});
+      auto note = card_views_note(card, std::move(views), std::move(failure));
+      mutation_lane_->submit([this, key, stop, card = std::move(card),
+                              files = std::move(files),
+                              note = std::move(note)]() mutable {
+        if (stop.stop_requested()) return;
+        card_views_.at(key) = note;
+        // CardViewRead serves exactly the list this notification sends.
+        set_card_views(card, std::move(files));
+        server_->broadcast(note);
+      });
+    });
+  }
+}
+
+auto Service::set_view_receiver(
+    const CardPath& card, std::weak_ptr<WorkerProc::ViewReceiver> receiver) -> void {
+  std::lock_guard lock(view_routes_mu_);
+  auto& routes = view_routes_[path_key(card)];
+  std::erase_if(routes, [](const auto& route) { return route.expired(); });
+  const auto current = receiver.lock();
+  if (std::ranges::none_of(routes, [&](const auto& route) {
+        return route.lock() == current;
+      }))
+    routes.push_back(std::move(receiver));
+}
+
+void Service::view_send(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_ViewSendRequest();
+  const auto card = wire::card_arg(r->card());
+  const auto key = path_key(card);
+  const auto name = r->view()->str();
+  const auto* bytes = r->bytes();
+  if (bytes->size() > TSUGUMI_MESSAGE_MAX || name.empty())
+    throw Failed(FailureKind::invalid_request, "invalid view message");
+  {
+    std::lock_guard lock(subs_mu_);
+    const auto visible = visible_cards_.find(req.conn);
+    if (ui_owner_ != req.conn || visible == visible_cards_.end() ||
+        !visible->second.contains(key))
+      throw Failed(FailureKind::permission_denied, "the view is not open");
+  }
+  {
+    std::lock_guard lock(view_files_mu_);
+    const auto views = view_files_.find(key);
+    if (views == view_files_.end() ||
+        std::ranges::count(views->second, name, &DeclaredView::name) != 1)
+      throw Failed(FailureKind::invalid_request, "unknown or duplicate view name");
+  }
+  std::vector<std::shared_ptr<WorkerProc::ViewReceiver>> receivers;
+  {
+    std::lock_guard lock(view_routes_mu_);
+    if (const auto routes = view_routes_.find(key); routes != view_routes_.end())
+      for (const auto& route : routes->second) {
+        if (auto active = route.lock()) receivers.push_back(std::move(active));
+      }
+  }
+  // With no live Card process the message has no receiver: it is dropped,
+  // and the view is not told (the host took the bytes).
+  using Delivery = WorkerProc::ViewDelivery;
+  const WorkerDisplayData message{name, std::string(bytes->begin(), bytes->end())};
+  bool delivered = false;
+  bool full = false;
+  for (const auto& receiver : receivers) {
+    const auto delivery = receiver->send(message);
+    delivered |= delivery == Delivery::accepted;
+    full |= delivery == Delivery::full;
+  }
+  if (!delivered && full)
+    throw Failed(FailureKind::busy, "the Card cannot accept a view message");
+  FBB b;
+  const auto ack = R::CreateAck(b);
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::Ack, ack.Union()));
+}
+
+void Service::view_credit(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_ViewCreditRequest();
+  if (!r->credit_id() || r->bytes() > TSUGUMI_MESSAGE_MAX)
+    throw Failed(FailureKind::invalid_request, "invalid view credit");
+  server_->return_view_credit(req.conn, r->subscription_id()->str(),
+                              wire::card_arg(r->card()), r->view()->str(),
+                              *r->credit_id(), r->bytes());
+  FBB b;
+  const auto ack = R::CreateAck(b);
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::Ack, ack.Union()));
 }
 
 void Service::view_set_visible(RequestIn& req) {
@@ -2497,18 +2908,35 @@ void Service::view_set_visible(RequestIn& req) {
   std::set<std::string> cards;
   for (const auto* c : *r->cards())
     cards.insert(path_key(wire::card_arg(c, "cards")));
-  bool enabled = r->enabled().value_or(true);
+  const bool enabled = r->enabled().value_or(true);
+  const std::string id = r->subscription_id()->str();
+  bool matches;
+  {
+    std::lock_guard lock(subs_mu_);
+    const auto sub = subscriptions_.find(req.conn);
+    matches = sub != subscriptions_.end() && sub->second == id;
+    if (matches) {
+      if (enabled)
+        visible_cards_[req.conn] = cards;
+      else
+        visible_cards_.erase(req.conn);
+    }
+  }
+  const auto doc = store_->current();
+  std::vector<Note> initial;
+  if (enabled && matches && card_views_rev_ == doc->execution_rev) {
+    for (const auto& key : cards)
+      if (auto cached = card_views_.find(key);
+          cached != card_views_.end() && cached->second)
+        initial.push_back(*cached->second);
+  }
   FBB b;
   auto ack = R::CreateAck(b);
-  std::string ack_bytes =
+  auto ack_bytes =
       wire::reply(b, req.request_id, R::ReplyPayload::Ack, ack.Union());
-  std::vector<Note> initial;
-  if (enabled)
-    for (const auto& key : cards)
-      if (auto n = scheduler_->latest_display_note(key))
-        initial.push_back(std::move(*n));
-  server_->set_visible(req.conn, r->subscription_id()->str(), std::move(cards),
-                       enabled, std::move(ack_bytes), std::move(initial));
+  server_->set_visible(req.conn, id, std::move(cards), enabled,
+                       std::move(ack_bytes), std::move(initial));
+  if (enabled && matches) refresh_card_views(doc);
 }
 
 }  // namespace tsugumi

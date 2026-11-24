@@ -10,37 +10,23 @@
 #include "tsugumi/document/graph.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi {
 namespace {
 
-TEST(DefinitionEvaluationKey, SeparatesAllExplicitEvaluatorArguments) {
+TEST(DefinitionEvaluationKey, SeparatesDefinitionContentAndTargetSystem) {
   NixCall original;
-  original.pin_url = "https://github.com/NixOS/nixpkgs/archive/revision.tar.gz";
-  original.pin_hash = "sha256-pin";
+  original.definition_key = "resolved-lock-wiring-params-and-sources";
   original.system = "aarch64-darwin";
-  // The actual runner supplies content-addressed paths here. A change to
-  // sources/locks, contract/Nix params, or upstream definitions/flake products
-  // changes its corresponding path before consulting the evaluation cache.
-  original.args =
-      "{ sdk = /sdk; card = /defs/digest; gen = /gen/digest; "
-      "upstream = /up/digest; }";
   const auto key = original.evaluation_key();
-  for (const auto& component : {"pin-url", "pin-hash", "system", "args"}) {
-    auto changed = original;
-    const std::string name = component;
-    if (name == "pin-url")
-      changed.pin_url += "revision";
-    else if (name == "pin-hash")
-      changed.pin_hash += "hash";
-    else if (name == "system")
-      changed.system = "aarch64-linux";
-    else
-      changed.args =
-          "{ sdk = /sdk; card = /defs/new; gen = /gen/new; upstream = /up/new; "
-          "remote = true; }";
-    EXPECT_NE(key, changed.evaluation_key()) << name;
-  }
+  auto changed = original;
+  changed.system = "aarch64-linux";
+  EXPECT_NE(key, changed.evaluation_key());
+  changed = original;
+  changed.definition_key = "edited";
+  EXPECT_NE(key, changed.evaluation_key());
+
   auto operational = original;
   operational.root_prefix = "different-card";
   operational.root_dir = "/different-project";
@@ -54,15 +40,24 @@ class DefinitionEvaluation : public ::testing::Test {
   auto SetUp() -> void override {
     root = std::filesystem::canonical(std::filesystem::temp_directory_path()) /
            ("evaluation-" + crypto::uuid4());
-    std::filesystem::create_directories(root / "sdk");
-    fs::write_atomic(root / "sdk" / "value", "first");
-    const auto project = parse_project_json(initial_project_json("evaluation"));
-    const auto pin = project.pkgs_path->value();
-    const auto split = pin.find('#');
-    call.pin_url = pin.substr(0, split);
-    call.pin_hash = pin.substr(split + 1);
+    std::filesystem::create_directories(root / "source");
+    fs::write_atomic(root / "source" / "value", "first");
+    const char* lock = std::getenv("TSUGUMI_TEST_NIX_LOCK");
+    ASSERT_NE(lock, nullptr) << "run using nix develop or tsugumi-test-env";
+    for (const auto& value : json::Array(json::Object(lock).at("entries"))) {
+      const auto row = json::Object(value);
+      const NixSource source{json::Text(row, "url"), json::Text(row, "rev"),
+                             json::Text(row, "narHash")};
+      const auto name = json::Text(row, "name");
+      pins.emplace(name, source);
+      if (name == "nixpkgs") call.core_nixpkgs = source;
+    }
     call.system = native_system();
-    call.args = "{ root = /. + \"" + root.string() + "/sdk\"; }";
+    call.card = "work";
+    call.definition_dir = root / "source";
+    call.definitions = {{call.definition_dir.string(), call.card}};
+    call.args =
+        "{ root = /. + " + json::Quote(call.definition_dir.string()) + "; }";
     call.root_dir = root / "roots";
     call.deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(120);
@@ -70,14 +65,15 @@ class DefinitionEvaluation : public ::testing::Test {
   auto TearDown() -> void override { std::filesystem::remove_all(root); }
   auto evaluator(const std::string& body) -> std::unique_ptr<NixEvaluator> {
     return std::make_unique<NixEvaluator>(
-        "pkgs: args: { executionList = false; implementationCount = 1; "
+        "args: { executionList = false; implementationCount "
+        "= 1; "
         "implementationLabels = builtins.toJSON [ \"\" ]; "
-        "manifest = pkgs.writeText \"evaluation-test\" (" +
-            body + "); }",
-        std::vector<std::string>{root.string()});
+        "plan = (" +
+        body + "); }");
   }
   std::filesystem::path root;
   NixCall call;
+  LockedNixPath pins;
 };
 
 TEST_F(DefinitionEvaluation, CancellationRemovesAnEvaluationBehindABusyOne) {
@@ -118,13 +114,14 @@ TEST_F(DefinitionEvaluation, CancellationRemovesAnEvaluationBehindABusyOne) {
 }
 
 TEST_F(DefinitionEvaluation,
-       UnchangedReadsHitAndSdkContentsInvalidateCachedImports) {
-  fs::write_atomic(root / "sdk" / "default.nix", "builtins.readFile ./value");
+       UnchangedReadsHitAndSourceContentsInvalidateCachedImports) {
+  fs::write_atomic(root / "source" / "default.nix",
+                   "builtins.readFile ./value");
   auto eval = evaluator("import (args.root + \"/default.nix\")");
   auto first = eval->realise_native(call, eval->evaluate(call));
   ASSERT_NE(first.evaluation_epoch, 0u);
   EXPECT_TRUE(eval->reuse(call, first));
-  fs::write_atomic(root / "sdk" / "value", "second");
+  fs::write_atomic(root / "source" / "value", "second");
   EXPECT_FALSE(eval->reuse(call, first));
   auto second = eval->evaluate(call);
   EXPECT_NE(first.derivation.path, second.derivation.path);
@@ -138,24 +135,24 @@ TEST_F(DefinitionEvaluation, DirectoryMembershipAndNegativeLookupsAreInputs) {
   auto first = eval->realise_native(call, eval->evaluate(call));
   ASSERT_NE(first.evaluation_epoch, 0u);
   EXPECT_TRUE(eval->reuse(call, first));
-  fs::write_atomic(root / "sdk" / "optional", "added");
+  fs::write_atomic(root / "source" / "optional", "added");
   EXPECT_FALSE(eval->reuse(call, first));
   auto added = eval->realise_native(call, eval->evaluate(call));
   EXPECT_NE(first.derivation.path, added.derivation.path);
-  std::filesystem::remove(root / "sdk" / "optional");
+  std::filesystem::remove(root / "source" / "optional");
   EXPECT_FALSE(eval->reuse(call, added));
   EXPECT_EQ(first.derivation.path, eval->evaluate(call).derivation.path);
 }
 
-TEST_F(DefinitionEvaluation, CopiedSdkTreeInvalidatesSourceToStoreCache) {
-  fs::write_atomic(root / "sdk" / "views" / "line-chart.js", "first view");
-  // Interpolation copies the tree into the store, as the SDK's derivation
+TEST_F(DefinitionEvaluation, CopiedSourceTreeInvalidatesSourceToStoreCache) {
+  fs::write_atomic(root / "source" / "nested" / "page.txt", "first");
+  // Interpolation copies the tree into the store, as a builder's derivation
   // inputs do. builtins.toString alone would only pass a local path string.
   auto eval = evaluator(R"("${args.root}")");
   auto first = eval->realise_native(call, eval->evaluate(call));
   ASSERT_NE(first.evaluation_epoch, 0u);
   EXPECT_TRUE(eval->reuse(call, first));
-  fs::write_atomic(root / "sdk" / "views" / "line-chart.js", "second view");
+  fs::write_atomic(root / "source" / "nested" / "page.txt", "second");
   EXPECT_FALSE(eval->reuse(call, first));
   auto second = eval->evaluate(call);
   EXPECT_NE(first.derivation.path, second.derivation.path);
@@ -163,7 +160,7 @@ TEST_F(DefinitionEvaluation, CopiedSdkTreeInvalidatesSourceToStoreCache) {
 
 TEST_F(DefinitionEvaluation,
        TargetSystemChangesTheDerivationWithoutBuildingOutputs) {
-  auto eval = evaluator("pkgs.stdenv.hostPlatform.system");
+  auto eval = evaluator("builtins.currentSystem");
   call.system = "aarch64-linux";
   const auto arm = eval->evaluate(call);
   call.system = "x86_64-linux";
@@ -206,11 +203,154 @@ TEST_F(DefinitionEvaluation,
   EXPECT_EQ(body.size(), body.find("first") + 5);
   EXPECT_TRUE(std::ranges::all_of(body.substr(0, body.size() - 5),
                                   [](char c) { return c >= '0' && c <= '9'; }));
-  fs::write_atomic(root / "sdk" / "value", "second");
+  fs::write_atomic(root / "source" / "value", "second");
   EXPECT_FALSE(eval->reuse(call, first));
   auto second = eval->realise_native(call, eval->evaluate(call));
   EXPECT_EQ(fs::read_file(second.derivation.output).value(),
             body.substr(0, body.size() - 5) + "second");
+}
+
+TEST_F(DefinitionEvaluation, SearchPathIsCatchableAndHostPathIsEmpty) {
+  fs::write_atomic(root / "source" / "default.nix", R"(
+    if builtins.nixPath == [] && !(builtins.tryEval <missing>).success
+    then builtins.baseNameOf <local/flake.nix>
+    else throw "external search path was visible"
+  )");
+  call.locked_nix_path.emplace("local", pins.at("nixpkgs"));
+  auto eval = evaluator("import (args.root + \"/default.nix\")");
+  auto result = eval->realise_native(call, eval->evaluate(call));
+  EXPECT_EQ(fs::read_file(result.derivation.output), "flake.nix");
+  fs::write_atomic(root / "source" / "default.nix", "toString <misspelled>");
+  try {
+    eval->evaluate(call);
+    FAIL() << "undeclared name was accepted";
+  } catch (const std::runtime_error& error) {
+    EXPECT_NE(
+        std::string(error.what())
+            .find("undeclared nixPath name 'misspelled' (declared: local)"),
+        std::string::npos);
+  }
+}
+
+TEST_F(DefinitionEvaluation, FetchPrimopsAndImportFromDerivationAreDenied) {
+  auto fetch = evaluator(R"(
+    if (builtins.tryEval (builtins.fetchTree (throw "fetch argument forced"))).success
+    then throw "fetchTree ran"
+    else builtins.fetchTarball { url = "https://example.invalid/source"; sha256 = "wrong"; }
+  )");
+  try {
+    fetch->evaluate(call);
+    FAIL() << "fetchTarball was accepted";
+  } catch (const std::runtime_error& error) {
+    EXPECT_NE(std::string(error.what())
+                  .find("fetchTarball is forbidden during Card evaluation"),
+              std::string::npos);
+  }
+  auto ifd = evaluator(R"(
+    builtins.readFile (builtins.derivation {
+      name = "tsugumi-ifd-test";
+      system = builtins.currentSystem;
+      builder = "/builder-must-not-run";
+    })
+  )");
+  try {
+    ifd->evaluate(call);
+    FAIL() << "import from derivation was accepted";
+  } catch (const std::runtime_error& error) {
+    EXPECT_NE(std::string(error.what()).find("allow-import-from-derivation"),
+              std::string::npos);
+  }
+}
+
+TEST_F(DefinitionEvaluation, ExpressionUsesTheCardDirectoryAndProject) {
+  const auto dir = call.definition_dir;
+  fs::write_atomic(dir / "default.nix",
+                   "{ params, inputs }: { api = params.value; }");
+  fs::write_atomic(dir / "relative", "from the Card");
+  call.locked_nix_path.emplace("dep", pins.at("nixpkgs"));
+  NixEvaluator eval("args: { params.value = 42; inputs = {}; }");
+  const auto result = eval.expression(
+      call,
+      R"({ inherit inputs; x = (import ./. { inherit params inputs; }).api;
+                 local = builtins.readFile ./relative;
+                 lock = builtins.baseNameOf <dep/flake.nix>;
+                 store = import (builtins.toFile "scope-test.nix"
+                   "(builtins.tryEval <dep>).success"); })",
+      false);
+  EXPECT_EQ(
+      result.json,
+      R"({"inputs":{},"local":"from the Card","lock":"flake.nix","store":false,"x":42})");
+  EXPECT_THROW(eval.expression(call,
+                               "builtins.concatStringsSep \"\" "
+                               "(builtins.genList (_: \"abcdefgh\") 1100000)",
+                               false),
+               std::runtime_error);
+}
+
+TEST_F(DefinitionEvaluation, ExpressionBuildReturnsFilesAndFailureLog) {
+  call.locked_nix_path.emplace("dep", pins.at("nixpkgs"));
+  NixEvaluator eval("args: { params = {}; inputs = {}; }");
+  fs::write_atomic(call.definition_dir / "default.nix", R"(
+    { params, inputs }:
+    let pkgs = import <dep> {};
+    in {
+      run = throw "a tool must not force the Card's run";
+      api = pkgs.runCommand "expression-api-test" {} ''
+        mkdir -p "$out/share/tsugumi/api"
+        printf '\000\377' > "$out/share/tsugumi/api/result"
+        ln -s /etc/hosts "$out/skip"
+      '';
+    }
+  )");
+  const auto result = eval.expression(
+      call, "(import ./. { inherit params inputs; }).api", true);
+  ASSERT_FALSE(result.build_error) << result.log_tail;
+  ASSERT_EQ(result.files.size(), 1u);
+  EXPECT_EQ(result.files[0].path, "share/tsugumi/api/result");
+  EXPECT_EQ(result.files[0].bytes, std::string("\x00\xff", 2));
+  EXPECT_THROW(eval.expression(call, R"(
+    { type = "derivation"; name = "fake";
+      drvPath = "/nix/store/00000000000000000000000000000000-fake.drv"; }
+  )",
+                               true),
+               std::runtime_error);
+  auto failed = eval.expression(call, R"(
+    let pkgs = import <dep> {};
+    in pkgs.runCommand "expression-failure" {} ''
+      echo expected-build-failure >&2
+      exit 1
+    ''
+  )",
+                                true);
+  EXPECT_TRUE(failed.build_error);
+  EXPECT_NE(failed.log_tail.find("expected-build-failure"), std::string::npos);
+}
+
+TEST_F(DefinitionEvaluation, ExpressionBuildBoundsDirectoryEntriesAndBytes) {
+  call.locked_nix_path.emplace("dep", pins.at("nixpkgs"));
+  NixEvaluator eval("args: { params = {}; inputs = {}; }");
+  const auto entries = eval.expression(call, R"(
+    let pkgs = import <dep> {};
+    in pkgs.runCommand "expression-many-files" {} ''
+      mkdir "$out"
+      for ((i=0;i<2001;i++)); do touch "$out/$i"; done
+    ''
+  )",
+                                       true);
+  ASSERT_FALSE(entries.build_error) << entries.log_tail;
+  EXPECT_TRUE(entries.truncated);
+  EXPECT_EQ(entries.files.size(), 2000u);
+  const auto bytes = eval.expression(call, R"(
+    let pkgs = import <dep> {};
+    in pkgs.runCommand "expression-large-file" {} ''
+      mkdir "$out"
+      truncate -s 8388608 "$out/result"
+    ''
+  )",
+                                     true);
+  ASSERT_FALSE(bytes.build_error) << bytes.log_tail;
+  EXPECT_TRUE(bytes.truncated);
+  EXPECT_TRUE(bytes.files.empty());
 }
 
 }  // namespace

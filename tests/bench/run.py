@@ -18,69 +18,98 @@ import uuid
 
 from measure_stages import (ROOT, UNAVAILABLE, Daemon, path, print_table, run_once,
                             summarize, summary, text)
-from projects import SINK, card, conn, write
+from harness.real_cards import PYTHON_BINDINGS
+from projects import SINK, card, conn, write_nix_project as write
+from test_worker_loading import native_card
 
 SCENARIOS = ("value-fresh", "value-resident-50", "file-1gib", "file-sparse-1gib",
              "directory-10000", "file-input-1gib", "run-list-100")
-PYTHON_RUN = '''inputs.tsugumi.pythonCard {
-    sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };
-    src = ./src;
-  }'''
-VALUE = 'table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;'
-FILE = ('attribute "tsugumi"; table File { value:string; } '
-        'table Outputs { out:File (required, tsugumi:"file"); } root_type Outputs;')
-DIRECTORY = FILE.replace('tsugumi:"file"', 'tsugumi:"directory"')
+# Requires the redesigned kit pin with sdk/python/default.nix.
+PYTHON_RUN = 'sdk.pythonCard { src = ./src; inputs = ./_inputs.fbs; outputs = ./_outputs.fbs; inherit params; }'
+# Every benchmark Card returns its own metrics as the declared `metrics` output.
+METRICS = 'namespace bench; table Metrics { value:string; } '
+VALUE = METRICS + 'table Number { value:ulong; } table Outputs { out:Number (required); metrics:Metrics (required); } root_type Outputs;'
+ARTIFACT = METRICS + 'table Document {} table Outputs { out:Document; metrics:Metrics (required); } root_type Outputs;'
+ARTIFACT_OPERATIONS = {"file-1gib", "file-sparse-1gib", "source", "directory-10000", "file-input-1gib"}
 
-# Metrics are emitted by the benchmark Card, not added to the product's SDK.
-BODY = '''import hashlib
-import json
+# Metrics are ordinary outputs in both fixtures.
+BODY = '''import json
 import os
-from pathlib import Path
 import time
 
-OP = __OP__
-SIZE = 1 << 30
+from card import Output
+from bench.Metrics import MetricsT
+from bench.Number import NumberT
 
-def main(inputs, report, run):
+def run(input):
     begin = time.perf_counter_ns()
-    logical = allocated = read_bytes = 0
-    result = {"out": {"value": 1}}
-    if OP in ("file-1gib", "file-sparse-1gib", "source"):
-        target = Path(run.output_directory) / "large.bin"
-        with target.open("wb") as stream:
-            if OP == "file-sparse-1gib":
-                stream.truncate(SIZE)
-            else:
-                block = b"x" * (1 << 20)
-                for _ in range(SIZE // len(block)):
-                    stream.write(block)
-        stat = target.stat()
-        logical, allocated = stat.st_size, stat.st_blocks * 512
-        result = {"out": {"value": str(target)}}
-    elif OP == "directory-10000":
-        target = Path(run.output_directory) / "small"
-        target.mkdir()
-        for index in range(10000):
-            member = target / f"{index:05d}.txt"
-            member.write_bytes(b"x" * 128)
-            stat = member.stat()
-            logical += stat.st_size
-            allocated += stat.st_blocks * 512
-        result = {"out": {"value": str(target)}}
-    elif OP == "file-input-1gib":
-        digest = hashlib.sha256()
-        with open(os.fsdecode(inputs.doc.value), "rb") as stream:
-            while block := stream.read(1 << 20):
-                digest.update(block)
-                read_bytes += len(block)
-        if read_bytes != SIZE:
-            raise ValueError(f"expected {SIZE} input bytes, got {read_bytes}")
-        result = {"out": {"value": read_bytes}}
+    out = NumberT(value=1)
     elapsed = (time.perf_counter_ns() - begin) / 1e6
-    report.text(json.dumps({"body_ms": elapsed, "pid": os.getpid(),
-                           "output_logical_bytes": logical, "output_allocated_bytes": allocated,
-                           "input_read_bytes": read_bytes}))
-    return result
+    return Output(out=out, metrics=MetricsT(value=json.dumps({"body_ms": elapsed,
+        "pid": os.getpid(), "output_logical_bytes": 0, "output_allocated_bytes": 0,
+        "input_read_bytes": 0})))
+'''
+
+ARTIFACT_BODY = r'''
+    const auto started = std::chrono::steady_clock::now();
+    constexpr std::string_view operation = __OP__;
+    constexpr uint64_t size = 1ull << 30;
+    uint64_t logical = 0, allocated = 0, read = 0;
+    const auto account = [&](const fs::path& file) {
+      struct stat info{};
+      if (stat(file.c_str(), &info) != 0) return false;
+      logical += info.st_size;
+      allocated += info.st_blocks * 512;
+      return true;
+    };
+
+    if (operation == "file-input-1gib") {
+      const auto directory = open_artifact(call, in);
+      if (directory.empty()) return 1;
+      std::ifstream stream(fs::path(directory) / "large.bin", std::ios::binary);
+      std::string block(1 << 20, '\0');
+      while (stream.read(block.data(), block.size()) || stream.gcount() != 0)
+        read += stream.gcount();
+      if (read != size) return 2;
+      out.number(read);
+    } else {
+      tsugumi_artifact_id id;
+      const auto directory = fs::path(create_artifact(call, id));
+      if (operation == "directory-10000") {
+        for (unsigned index = 0; index < 10000; ++index) {
+          const auto member = directory / (std::to_string(index) + ".txt");
+          std::ofstream(member) << std::string(128, 'x');
+          if (!account(member)) return 3;
+        }
+      } else {
+        const auto file = directory / "large.bin";
+        {
+          std::ofstream stream(file, std::ios::binary);
+          if (operation != "file-sparse-1gib") {
+            const std::string block(1 << 20, 'x');
+            for (uint64_t offset = 0; offset < size; offset += block.size())
+              stream.write(block.data(), block.size());
+          }
+          if (!stream) return 4;
+        }
+        if (operation == "file-sparse-1gib") fs::resize_file(file, size);
+        if (!account(file)) return 5;
+      }
+      out.artifact(id, "out");
+    }
+
+    const auto duration = std::chrono::steady_clock::now() - started;
+    const auto elapsed = std::chrono::duration<double, std::milli>(duration).count();
+    const auto metrics = "{\"body_ms\":" + std::to_string(elapsed) +
+        ",\"pid\":" + std::to_string(getpid()) +
+        ",\"output_logical_bytes\":" + std::to_string(logical) +
+        ",\"output_allocated_bytes\":" + std::to_string(allocated) +
+        ",\"input_read_bytes\":" + std::to_string(read) + "}";
+    fb::FlatBufferBuilder payload;
+    const auto value = payload.CreateString(metrics);
+    const auto table = payload.StartTable();
+    payload.AddOffset(4, value);
+    out.add("metrics", payload, payload.EndTable(table));
 '''
 
 
@@ -90,31 +119,47 @@ def workspace(out):
     return Path(tempfile.mkdtemp(prefix="tsg-bench-", dir=out.parent)).resolve()
 
 
-def python_card(operation, *, service=None, resident=False, run_list=False):
+def python_card(*, service=None, resident=False, run_list=False):
     expression = f"builtins.genList (_: {PYTHON_RUN}) 100" if run_list else PYTHON_RUN
-    result = {"type": "code", "language": "python", "sandbox": True,
-              "reuseWorker": resident, "recordIO": False,
-              "_outputs": FILE if operation in ("file-1gib", "file-sparse-1gib", "source") else
-              DIRECTORY if operation == "directory-10000" else VALUE,
-              "_nix": "{ pkgs, inputs, params }: { run = " + expression + "; }\n"}
+    # recordIO keeps the small metrics value for RunValueRead.
+    result = {"type": "code", "sandbox": {},
+              "reuseWorker": resident, "recordIO": True,
+              "_outputs": VALUE,
+              "_nix": "{ params, inputs }: let " + PYTHON_BINDINGS + " in { run = " + expression + "; }\n"}
     if service:
         result["executionService"] = service
-    if operation == "file-input-1gib":
-        result["inputs"] = [{"name": "doc"}]
     return result
 
 
+def artifact_card(operation, service=None):
+    reads_input = operation == "file-input-1gib"
+    settings = {"recordIO": True}
+    if service:
+        settings["executionService"] = service
+    return native_card(ARTIFACT_BODY.replace("__OP__", json.dumps(operation)),
+                       inputs=["doc"] if reads_input else [],
+                       outputs=VALUE if reads_input else ARTIFACT, **settings)
+
+
 def make_project(root, scenario, service=None):
-    definitions = {"work": python_card(scenario, service=service, resident=scenario == "value-resident-50",
-                                        run_list=scenario == "run-list-100")}
     cards, connections = [card("work", "work")], []
-    files = {"definitions/work/src/main.py": BODY.replace("__OP__", repr(scenario))}
+    files = {}
+    if scenario in ARTIFACT_OPERATIONS:
+        definitions = {"work": artifact_card(scenario, service)}
+    else:
+        definitions = {"work": python_card(service=service, resident=scenario == "value-resident-50",
+                                            run_list=scenario == "run-list-100")}
+        files["definitions/work/src/main.py"] = BODY
     if scenario == "file-input-1gib":
-        definitions["source"] = python_card("source", service=service)
+        definitions["source"] = artifact_card("source", service)
         cards.insert(0, card("source", "source"))
         connections.append(conn("source", "out", "work", "doc"))
-        files["definitions/source/src/main.py"] = BODY.replace("__OP__", repr("source"))
     write(root, definitions, cards, connections, files, name="Execution baseline")
+    if scenario == "directory-10000":
+        filename = root / "tsugumi.json"
+        project = json.loads(filename.read_text())
+        project["outputLimitEntries"] = 11000
+        filename.write_text(json.dumps(project))
     return root
 
 
@@ -192,12 +237,14 @@ class Remote:
 
 
 def fixture_metrics(client, run):
+    """Each invocation's declared `metrics` output, read back as a recorded value."""
+    from harness.observations import decode_scalar, read_pages
+    from Tsugumi.Data.ValueSide import ValueSide
     for row in run["invocations"]:
-        record = client.call("RunRecordRequest", runId=run["run_id"], card=path(*row["card"].split("/")),
-                             invocation=row["invocation"]).record
-        if not record or not record.display:
-            raise RuntimeError("benchmark Card did not report its metrics")
-        metrics = json.loads(text(record.display.value.text))
+        payload = read_pages(client, "RunValueReadRequest", page_bytes=1 << 20, runId=run["run_id"],
+                             card=path(*row["card"].split("/")), invocation=row["invocation"],
+                             side=ValueSide.output, port="metrics")
+        metrics = json.loads(decode_scalar(payload))
         row["fixture"] = metrics
         row["metrics"]["run_ms"] = metrics["body_ms"]
         for key in ("output_logical_bytes", "output_allocated_bytes", "input_read_bytes"):
@@ -254,7 +301,7 @@ def stage_project(root, scenario):
         return root
     if scenario == "builtin-chain":
         definitions = {"trigger": {"type": "trigger"}, "sink": SINK,
-                       "input": {"type": "input", "params": [{"name": "value", "type": "uint64", "data": 1}],
+                       "input": {"type": "input", "_params": "{ value = 1; }",
                                  "_outputs": "table Value { value:ulong; } "
                                              "table Outputs { value:Value; } root_type Outputs;"}}
         cards = [card("start", "trigger"), card("src", "input")]
@@ -269,25 +316,7 @@ def stage_project(root, scenario):
         connections.append(conn(previous, "value", "sink", "in"))
         write(root, definitions, cards, connections)
         return root
-    # Keep the original Python -> C++ -> shell cross-language value workload.
-    # Load only the data literals, not the VM/pytest module and its fixtures.
-    import ast
-    source = ast.parse((ROOT / "tests/python/test_cards_container.py").read_text())
-    constants = {node.targets[0].id: ast.literal_eval(node.value) for node in source.body
-                 if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
-                 and node.targets[0].id in ("RICH", "PY_MAKE", "CPP_CHECK")}
-    from harness.real_cards import bash
-    definitions = {"trigger": {"type": "trigger"},
-                   "make": {**python_card("value-fresh"), "_outputs": constants["RICH"].format(ns="a") +
-                            'attribute "tsugumi"; table Doc { value:string; } table Outputs { rich:Rich (required); doc:Doc (required, tsugumi:"file"); } root_type Outputs;'},
-                   "check": {"type": "code", "language": "cpp", "inputs": [{"name": "rich"}, {"name": "doc"}],
-                             "_outputs": constants["RICH"].format(ns="b") + 'table Outputs { checked:Rich (required); } root_type Outputs;',
-                             "_nix": '{ pkgs, inputs, params }: { run = inputs.tsugumi.cppCard { sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; }; src = ./src; }; }'},
-                   "shell": bash('test "$(wc -c < "$JSON_IN")" -gt 500000 && echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["in"])}
-    write(root, definitions, [card(name, name if name != "start" else "trigger") for name in ("start", "make", "check", "shell")],
-          [conn("make", "rich", "check", "rich"), conn("make", "doc", "check", "doc"), conn("check", "checked", "shell", "in")],
-          {"definitions/make/src/main.py": constants["PY_MAKE"], "definitions/check/src/card.cc": constants["CPP_CHECK"]})
-    return root
+    raise ValueError(f"unknown stage scenario {scenario}")
 
 
 def provenance(build_type):

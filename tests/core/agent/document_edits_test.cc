@@ -54,7 +54,7 @@ TEST(DocumentConnect, OneOutputCanFeedSeveralInputs) {
 }
 TEST(DocumentConnect, InputReplacementKeepsDraftDefinitionsUnchanged) {
   const std::string state =
-      R"({"project":{"canvas":{"cards":[{"id":"old"},{"id":"new"},{"id":"dest"}],"connections":[{"from":{"card":"old","port":""},"to":{"card":"dest","port":"in"}}]}},"definitions":{"old":{"card":{"type":"draft"},"meta":{"content":"planned"}},"new":{"card":{"type":"trigger"}},"dest":{"card":{"type":"code","language":"python"}}}})";
+      R"({"project":{"canvas":{"cards":[{"id":"old"},{"id":"new"},{"id":"dest"}],"connections":[{"from":{"card":"old","port":""},"to":{"card":"dest","port":"in"}}]}},"definitions":{"old":{"card":{"type":"draft"},"meta":{"content":"planned"}},"new":{"card":{"type":"trigger"}},"dest":{"card":{"type":"code"}}}})";
   const auto replaced = ConnectDocuments(state, "new", "out", "dest", "in");
   EXPECT_EQ(ConnectionWires(replaced),
             (std::set<std::string>{"new.out>dest.in"}));
@@ -77,96 +77,45 @@ TEST(DocumentConnect,
                std::runtime_error);
 }
 
-TEST(DocumentTemplate,
-     BuiltinsAndCodeTemplatesHaveTheirSharedInitialDefinition) {
-  const auto draft =
-      json::Object(WriteTemplate("draft", "new-card").definition_json);
-  EXPECT_EQ(json::Text(json::Object(draft.at("card")), "type"), "draft");
-  EXPECT_EQ(json::Text(json::Object(draft.at("meta")), "content"), "");
-  for (const auto* name :
-       {"trigger", "branch", "fork", "collect", "merge", "input"}) {
-    const auto reply = WriteTemplate(name, "new-card.2");
-    const auto card =
-        json::Object(json::Object(reply.definition_json).at("card"));
-    EXPECT_EQ(json::Text(card, "type"), name);
-    if (std::string_view(name) == "merge")
-      EXPECT_EQ(json::Array(card.at("inputs")).size(), 2);
-    if (std::string_view(name) == "fork")
-      EXPECT_EQ(json::Array(card.at("outputs")).size(), 2);
-    if (std::string_view(name) == "input") {
-      ASSERT_EQ(reply.files.size(), 1);
-      EXPECT_NE(reply.files[0].text.find("namespace new_card_2;"),
+TEST(BuiltinCard, CreatesOnlyTheLanguageIndependentKinds) {
+  using Kind = Tsugumi::Host::BuiltinCard;
+  const auto draft = BuiltinCard(Kind::Draft, "new-card");
+  EXPECT_EQ(json::Text(json::Object(draft.at("_card.json")), "type"), "draft");
+  EXPECT_FALSE(draft.contains("README.md"));
+  for (const auto& [kind, type] : {std::pair{Kind::Trigger, "trigger"},
+                                  {Kind::Collect, "collect"},
+                                  {Kind::Merge, "merge"},
+                                  {Kind::InputValue, "input"},
+                                  {Kind::BooleanInput, "input"}}) {
+    const auto files = BuiltinCard(kind, "new-card.2");
+    const auto card = json::Object(files.at("_card.json"));
+    EXPECT_EQ(json::Text(card, "type"), type);
+    if (kind == Kind::Merge) EXPECT_EQ(json::Array(card.at("inputs")).size(), 2);
+    if (kind == Kind::BooleanInput || kind == Kind::InputValue) {
+      const auto schema = files.at("_outputs.fbs");
+      const bool boolean = kind == Kind::BooleanInput;
+      EXPECT_NE(schema.find(boolean ? "table Boolean { value:bool; }"
+                                    : "table Number { value:double; }"),
                 std::string::npos);
-      EXPECT_EQ(reply.files[0].text.find("@NAMESPACE@"), std::string::npos);
-    }
-  }
-  for (const auto* name : {"python", "go", "rust", "ruby", "cpp", "csharp"}) {
-    const auto reply = WriteTemplate(name, "new-card.2");
-    const auto card =
-        json::Object(json::Object(reply.definition_json).at("card"));
-    EXPECT_EQ(json::Text(card, "language"), name);
-    EXPECT_EQ(json::Array(card.at("inputs")).size(), 1);
-    std::set<std::string> paths;
-    for (const auto& file : reply.files) {
-      paths.insert(file.path);
-      EXPECT_FALSE(file.path.starts_with('/'));
-      EXPECT_EQ(file.text.find("@NAMESPACE@"), std::string::npos);
-      if (file.path == "src/main.py")
-        EXPECT_NE(file.text.find("outputs.out.new_card_2.Text"),
-                  std::string::npos);
-    }
-    EXPECT_TRUE(paths.contains("_outputs.fbs"));
-    EXPECT_TRUE(paths.contains("default.nix"));
-    EXPECT_TRUE(std::ranges::any_of(
-        paths, [](const auto& path) { return path.starts_with("src/"); }));
-    if (std::string_view(name) == "go") {
-      EXPECT_TRUE(paths.contains("src/go.mod"));
-      EXPECT_TRUE(paths.contains("src/go.sum"));
-    }
-    if (std::string_view(name) == "rust")
-      EXPECT_TRUE(paths.contains("src/Cargo.toml"));
-  }
-  EXPECT_THROW(WriteTemplate("missing", "new-card"), std::runtime_error);
-}
-TEST(DocumentTemplate,
-     NotebookReportsAndPlotsKeepTheirSourceAndArtifactContracts) {
-  for (const auto* name : {"marimo", "report_rmarkdown", "report_quarto",
-                           "visualization_matplotlib", "visualization_plotly",
-                           "visualization_altair"}) {
-    const auto reply = WriteTemplate(name, "new-card");
-    const auto card =
-        json::Object(json::Object(reply.definition_json).at("card"));
-    EXPECT_EQ(card.at("retainArtifact"), "true");
-    const bool plot = std::string_view(name).starts_with("visualization_");
-    EXPECT_EQ(json::Text(card, "artifactOutput"), plot ? "figure" : "report");
-    std::set<std::string> files;
-    for (const auto& file : reply.files) files.insert(file.path);
-    EXPECT_TRUE(files.contains("default.nix"));
-    EXPECT_TRUE(files.contains("_outputs.fbs"));
-    if (std::string_view(name) == "marimo") {
-      EXPECT_EQ(card.at("reuseWorker"), "false");
-      EXPECT_TRUE(files.contains("src/notebook.py"));
-    }
-    if (plot) {
-      EXPECT_TRUE(files.contains("src/main.py"));
-      const auto params = json::Array(card.at("params"));
-      EXPECT_TRUE(std::ranges::any_of(params, [](const auto& raw) {
-        const auto param = json::Object(raw);
-        return json::Text(param, "name") == "kind" &&
-               json::Text(param, "data") == "line";
-      }));
+      EXPECT_EQ(files.at("params.nix"),
+                boolean ? "{ value = false; }\n" : "{ value = 0.0; }\n");
+      EXPECT_NE(files.at("default.nix").find("run = sdk.input"),
+                std::string::npos);
+    } else {
+      EXPECT_FALSE(files.contains("default.nix"));
     }
   }
 }
 
 TEST(DocumentCopy, DefinitionKeepsSettingsAndGivesCommentsTheirOwnIdentity) {
   const std::string state =
-      R"({"definitions":{"a":{"card":{"type":"code","language":"python","params":[{"name":"n","data":9007199254740993}],"settings":{"sandbox":false}},"meta":{"name":"original","description":"Plots","comments":[{"id":"old","text":"one","author":"user","resolved":true,"cards":["a"]}]}}}})";
+      R"({"definitions":{"a":{"card":{"type":"code","sandbox":{"filesystem":false},"grants":{"network":true}},"readme":"Plots","comments":{"comments":[{"id":"old","text":"one","author":"user","resolved":true,"cards":["a"]}]}}}})";
   const auto edit =
       CopyDocuments(state,
-                    {"definitions/a/src/asset.bin", "definitions/a/_card.json",
-                     "definitions/a/_meta.json", "definitions/ab/no"},
-                    "definitions/a/", "definitions/copy/", "new name");
+                    {"definitions/a/src/asset.bin", "definitions/a/params.nix",
+                     "definitions/a/_card.json", "definitions/a/README.md",
+                     "definitions/ab/no"},
+                    "definitions/a/", "definitions/copy/");
   const auto defs =
       json::Object(json::Object(edit.edits_json).at("definitions"));
   const auto draft = json::Object(defs.at("definitions/copy/"));
@@ -175,31 +124,32 @@ TEST(DocumentCopy, DefinitionKeepsSettingsAndGivesCommentsTheirOwnIdentity) {
                 json::Object(
                     json::Object(json::Object(state).at("definitions")).at("a"))
                     .at("card")));
-  const auto meta = json::Object(draft.at("meta"));
-  EXPECT_EQ(json::Text(meta, "name"), "new name");
-  EXPECT_EQ(json::Text(meta, "description"), "Plots");
+  const auto meta = json::Object(draft.at("comments"));
+  EXPECT_EQ(json::Text(draft, "readme"), "Plots");
   const auto comment = json::Object(json::Array(meta.at("comments"))[0]);
   EXPECT_NE(json::Text(comment, "id"), "old");
   EXPECT_EQ(json::Text(comment, "text"), "one");
   EXPECT_EQ(json::Text(comment, "author"), "user");
   EXPECT_EQ(comment.at("resolved"), "true");
-  ASSERT_EQ(edit.files.size(), 1);
+  ASSERT_EQ(edit.files.size(), 2);
   EXPECT_EQ(edit.files[0].from, "definitions/a/src/asset.bin");
   EXPECT_EQ(edit.files[0].to, "definitions/copy/src/asset.bin");
+  EXPECT_EQ(edit.files[1].from, "definitions/a/params.nix");
+  EXPECT_EQ(edit.files[1].to, "definitions/copy/params.nix");
 }
 
 TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
   const std::string state =
-      R"({"definitions":{"a":{"card":{"type":"subgraph","external":"inner"}}},"externals":{"externals/inner/":{"project":{"name":"inner","pkgsPath":"pinned"},"layout":{"cards":{"x":{"x":2}}},"definitions":{"x":{"card":{"type":"draft"},"meta":{"content":"unsaved"}}}},"externals/inner/externals/grand/":{"project":{"name":"grand"},"layout":{},"definitions":{}}}})";
+      R"({"definitions":{"a":{"card":{"type":"subgraph","external":"inner"}}},"externals":{"externals/inner/":{"project":{"name":"inner","nixPath":[{"name":"pkgs","url":"github:org/pkg"}]},"layout":{"cards":{"x":{"x":2}}},"definitions":{"x":{"card":{"type":"draft"},"readme":"unsaved"}}},"externals/inner/externals/grand/":{"project":{"name":"grand"},"layout":{},"definitions":{}}}})";
   const std::vector<std::string> paths = {
       "externals/inner/tsugumi.json",
-      "externals/inner/definitions/x/_meta.json",
+      "externals/inner/definitions/x/README.md",
       "externals/inner/definitions/removed/_card.json",
       "externals/inner/asset.bin",
       "externals/inner/externals/grand/data.bin",
       "externals/other/no"};
   const auto edit = CopyDocuments(state, paths, "definitions/a/",
-                                  "externals/target/definitions/copy/", "");
+                                  "externals/target/definitions/copy/");
   const auto patch = json::Object(edit.edits_json);
   const auto defs = json::Object(patch.at("definitions"));
   EXPECT_EQ(
@@ -222,7 +172,7 @@ TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
                 "externals/target/externals/copy/asset.bin",
                 "externals/target/externals/copy/externals/grand/data.bin"}));
   const auto external =
-      CopyDocuments(state, paths, "externals/inner/", "externals/another/", "");
+      CopyDocuments(state, paths, "externals/inner/", "externals/another/");
   EXPECT_EQ(external.files.size(), 2);
   EXPECT_EQ(
       json::Object(json::Object(external.edits_json).at("externals")).size(),
@@ -232,21 +182,21 @@ TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
 TEST(DocumentCopy, MissingLinkedProjectCannotProduceAPartialCopy) {
   EXPECT_THROW(
       CopyDocuments(R"({"definitions":{"a":{"card":{"type":"subgraph","external":"missing"}}}})",
-                    {}, "definitions/a/", "definitions/b/", ""),
+                    {}, "definitions/a/", "definitions/b/"),
       std::runtime_error);
   EXPECT_THROW(
-      CopyDocuments("{}", {}, "externals/missing/", "externals/copy/", ""),
+      CopyDocuments("{}", {}, "externals/missing/", "externals/copy/"),
       std::runtime_error);
 }
 
 TEST(DocumentSubgraph, PreservesRunConditionsAndBothSidesOfBoundary) {
   const std::string root =
-      R"({"name":"parent","pkgsPath":"pinned","nixSources":[{"name":"science","type":"flake","ref":"locked","overrides":{"p":{"override":{"flag":true}}}}],"settings":{"future":42},"canvas":{"cards":[{"id":"a","settings":{"sandbox":false},"params":[{"name":"value","data":7}]},{"id":"b"},{"id":"c"}],"connections":[{"from":{"card":"a","port":"x"},"to":{"card":"b","port":"in"}},{"from":{"card":"c","port":"out"},"to":{"card":"a","port":"in"}},{"from":{"card":"a","port":"x"},"to":{"card":"c","port":"in"}}]},"boundary":{"inputs":{"input":{"card":"a","port":"in"}},"outputs":{"result":{"card":"b","port":"out"}}}})";
+      R"({"name":"parent","nixPath":[{"name":"science","url":"github:org/science"}],"settings":{"future":42},"canvas":{"cards":[{"id":"a","sandbox":{"filesystem":false},"grants":{"network":true}},{"id":"b"},{"id":"c"}],"connections":[{"from":{"card":"a","port":"x"},"to":{"card":"b","port":"in"}},{"from":{"card":"c","port":"out"},"to":{"card":"a","port":"in"}},{"from":{"card":"a","port":"x"},"to":{"card":"c","port":"in"}}]},"boundary":{"inputs":[{"name":"input","card":"a","port":"in"}],"outputs":[{"name":"result","card":"b","port":"out"}]}})";
   const auto edit = MakeSubgraph(root, {"a", "b"}, "sub");
   const auto before = json::Object(root),
              outer = json::Object(edit.project_json),
              inner = json::Object(edit.external_json);
-  for (const auto* field : {"pkgsPath", "nixSources", "settings"}) {
+  for (const auto* field : {"nixPath", "settings"}) {
     EXPECT_EQ(before.at(field), inner.at(field));
     EXPECT_EQ(before.at(field), outer.at(field));
   }
@@ -259,25 +209,26 @@ TEST(DocumentSubgraph, PreservesRunConditionsAndBothSidesOfBoundary) {
     EXPECT_TRUE(selected.emplace(id, std::move(card)).second);
   }
   ASSERT_TRUE(selected.contains("a"));
-  EXPECT_FALSE(json::Bool(
-      json::Get(json::Object(selected.at("a").at("settings")), "sandbox")));
-  const auto params = json::Array(selected.at("a").at("params"));
-  ASSERT_EQ(params.size(), 1u);
-  EXPECT_EQ(json::Text(json::Object(params.front()), "name"), "value");
-  EXPECT_EQ(json::UInt(json::Object(params.front()).at("data")), 7u);
+  const auto& card_a = selected.at("a");
+  const auto sandbox = json::Object(card_a.at("sandbox"));
+  const auto grants = json::Object(card_a.at("grants"));
+  EXPECT_FALSE(json::Bool(json::Get(sandbox, "filesystem")));
+  EXPECT_TRUE(json::Bool(json::Get(grants, "network")));
   EXPECT_TRUE(selected.contains("b"));
   EXPECT_FALSE(selected.contains("c"));
   EXPECT_EQ(json::Array(graph.at("connections")).size(), 1);
   const auto boundary = json::Object(inner.at("boundary"));
-  EXPECT_EQ(json::Object(boundary.at("inputs")).size(), 1);
-  EXPECT_EQ(json::Object(boundary.at("outputs")).size(), 2);
+  EXPECT_EQ(json::Array(boundary.at("inputs")).size(), 1);
+  EXPECT_EQ(json::Array(boundary.at("outputs")).size(), 2);
   const auto outer_boundary = json::Object(outer.at("boundary"));
   for (const auto* side : {"inputs", "outputs"})
-    for (const auto& [name, endpoint] : json::Object(outer_boundary.at(side))) {
-      (void)name;
+    for (const auto& endpoint : json::Array(outer_boundary.at(side))) {
       EXPECT_EQ(json::Text(json::Object(endpoint), "card"), "sub");
       const auto port = json::Text(json::Object(endpoint), "port");
-      EXPECT_TRUE(json::Object(boundary.at(side)).contains(port));
+      const auto ends = json::Array(boundary.at(side));
+      EXPECT_TRUE(std::any_of(ends.begin(), ends.end(), [&](const auto& end) {
+        return json::Text(json::Object(end), "name") == port;
+      }));
     }
   EXPECT_EQ(
       json::Array(json::Object(outer.at("canvas")).at("connections")).size(),
@@ -290,10 +241,10 @@ TEST(DocumentSubgraph, ReusesEndpointsAndDisambiguatesPortNames) {
       {"a_b", "a"}, "sub");
   const auto boundary =
       json::Object(json::Object(edit.external_json).at("boundary"));
-  const auto ports = json::Object(boundary.at("outputs"));
-  EXPECT_EQ(ports.size(), 2);
-  EXPECT_TRUE(ports.contains("a_b_c"));
-  EXPECT_TRUE(ports.contains("a_b_c2"));
+  std::set<std::string> ports;
+  for (const auto& output : json::Array(boundary.at("outputs")))
+    ports.insert(json::Text(json::Object(output), "name"));
+  EXPECT_EQ(ports, (std::set<std::string>{"a_b_c", "a_b_c2"}));
   const auto wires =
       json::Array(json::Object(json::Object(edit.project_json).at("canvas"))
                       .at("connections"));

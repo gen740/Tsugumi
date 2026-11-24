@@ -28,10 +28,9 @@ lib.fileset.toSource {
       ../client/include
       ../client/src
       ../cli/CMakeLists.txt
-      ../cli/include
       ../cli/src
-      ../sdk
-      (lib.fileset.fileFilter (file: file.hasExt "json") ../ui/shared/templates)
+      ../nix/card-entry.nix
+      ../nix/worker.nix
       # Documentation tooling does not affect the native runtime.
       ../protocol/CMakeLists.txt
       ../protocol/include

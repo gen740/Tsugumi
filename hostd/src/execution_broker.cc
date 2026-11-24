@@ -418,18 +418,24 @@ struct ExecutionBroker::State {
       return key == entry.worker_public_key;
     });
     peer_tls::Stream tls(context, peer.fd, false, client);
+    const bool view_message = request.body.AsViewSendRequest() != nullptr;
     R::MessageT message;
     message.payload.Set(std::move(request));
     auto bytes = W::encode(std::move(message));
     tls.Write(W::length_prefix(static_cast<uint32_t>(bytes.size())) + bytes);
     trace::Link link;
-    trace::Observe(link, "hostd execution broker", "remote worker service",
-                   true, bytes, &trace::kFlatBufferCodec);
+    if (!view_message)
+      trace::Observe(link, "hostd execution broker", "remote worker service",
+                     true, bytes, &trace::kFlatBufferCodec);
     const auto length = W::frame_length(tls.Read(4));
     const auto frame = tls.Read(length);
     auto reply = W::decode(frame);
-    trace::Observe(link, "remote worker service", "hostd execution broker",
-                   false, frame, &trace::kFlatBufferCodec);
+    // View bytes in a status reply are transient: they are never traced.
+    const auto* answer = reply->payload.AsReply();
+    const auto* status = answer ? answer->body.AsJobStatus() : nullptr;
+    if (!view_message && (!status || status->displays.empty()))
+      trace::Observe(link, "remote worker service", "hostd execution broker",
+                     false, frame, &trace::kFlatBufferCodec);
     Require(reply->payload.AsReply(), "Expected remote worker reply");
     return std::move(*reply);
   }

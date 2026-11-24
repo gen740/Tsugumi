@@ -19,6 +19,7 @@ CardPath card_arg(const D::CardPath* p, const char* field = "card");
 Off<D::Diagnostic> diagnostic(FBB& b, const Diag& d);
 Off<flatbuffers::Vector<Off<D::Diagnostic>>> diagnostics(
     FBB& b, const std::vector<Diag>& d);
+auto resolved_port(FBB& b, const types::PortType& port) -> Off<D::Port>;
 Off<R::ResolvedCard> resolved(FBB& b, const Node& n);
 Off<flatbuffers::Vector<Off<R::ResolvedCard>>> resolution(FBB& b,
                                                           const Resolution& r);
@@ -26,7 +27,7 @@ Off<R::SourceInfo> source_info(FBB& b, const std::string& path,
                                D::SourceKind kind, bool exists,
                                const std::optional<std::string>& hash,
                                std::optional<uint64_t> size,
-                               const std::string* document_json = nullptr);
+                               const std::string* document = nullptr);
 Off<R::Definition> definition(FBB& b, const std::string& id,
                               const DefinitionDoc& d);
 Off<R::RunStatus> run_status(

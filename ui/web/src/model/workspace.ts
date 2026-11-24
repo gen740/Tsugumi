@@ -14,7 +14,7 @@ export const CATEGORY: Record<CardEditorCategory, { title: string; icon: string 
   dependencies: { title: L('依存'), icon: 'shippingbox.and.arrow.backward' },
   executions: { title: L('実行履歴'), icon: 'clock.arrow.circlepath' },
   artifacts: { title: L('成果物'), icon: 'shippingbox' },
-  notes: { title: L('コメントと追加コンテキスト'), icon: 'bubble.left' },
+  notes: { title: L('コメント'), icon: 'bubble.left' },
 }
 
 /** One tab of the workbench: a scope (the root workflow or a child workflow)
@@ -44,19 +44,17 @@ export class WorkflowTab extends Observable {
     this.hoveredNixCard = card
     this.changed()
   }
-  /** Sticky notes (ids) and Cards' output frames caught by a marquee. */
+  /** Sticky notes (ids) caught by a marquee. */
   selectedNotes = new Set<string>()
-  selectedFrames = new Set<CardKey>()
 
   constructor(public scope: string[], public selection = new Set<CardKey>()) {
     super()
   }
 
-  /** Choosing Cards anew lets go of the notes and frames, which come from a marquee. */
-  setSelection(s: Iterable<CardKey>, notes: Iterable<string> = [], frames: Iterable<CardKey> = []) {
+  /** Choosing Cards anew lets go of the notes, which come from a marquee. */
+  setSelection(s: Iterable<CardKey>, notes: Iterable<string> = []) {
     this.selection = new Set(s)
     this.selectedNotes = new Set(notes)
-    this.selectedFrames = new Set(frames)
     this.changed()
   }
 

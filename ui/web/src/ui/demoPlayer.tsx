@@ -3,16 +3,15 @@
 // replayed over it. The documentation site bundles it (docs/site/player/build.mjs,
 // mountPlayer); Home's demo list shows its compact form (DemoThumbnailPlayer).
 // Nothing is computed here and it needs no server: the data comes from
-// player-data/<id>.json (build.mjs), the run's order and results from a real run
-// (docs/site/player/harvest.py).
+// player-data/<id>.json (build.mjs) with optional publication illustrations.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { pathToScreen, WireStyle } from '../model/canvas'
 import {
-  applicableStages, Camera, CardGeometry, CardNodeData, displayLink, fitCamera, mergeStageStatus, ParamData, PortData, Pt, Rect, Stage, StageItem, stageParts,
+  applicableStages, Camera, CardGeometry, CardNodeData, fitCamera, mergeStageStatus, ParamData, PortData, Pt, Rect, Stage, StageItem, stageParts,
   isDraftWire, StageProgress, StageStatus, union, WireRouter,
 } from '../model/canvasKit'
-import { cardState, displaySummary, formatDuration, KIND_ICON, KIND_LABEL } from '../model/session'
+import { cardState, formatDuration, KIND_ICON, KIND_LABEL } from '../model/session'
 import { permissionInfo, PermissionKind } from '../model/permissions'
 import { D } from '../wire/rpc'
 import { CardNodeView, drive, gridStyle, WireDraw, WireLayer } from './cardNode'
@@ -46,14 +45,7 @@ interface NoteDoc { id: string; x: number; y: number; width: number; height: num
 interface StageRecord { phase: string; outcome: string; ms?: number | null }
 interface FinalState { state: keyof typeof D.CardState; count: number; sent: string[]; stages: StageRecord[]; ms?: number }
 interface StepDoc { cards: string[]; say: string; startMs?: number; endMs?: number }
-export type Output =
-  | { type: 'text'; text: string; markdown?: boolean; html?: string; cut?: number }
-  | { type: 'scalar'; value: number; label: string }
-  | { type: 'table'; columns: string[]; rows: string[][]; totalRows: number }
-  | { type: 'image'; src: string; alt?: string }
-  | { type: 'points'; count: number }
-  | { type: 'plot'; library: string; title: string; xLabel: string; yLabel: string; series: { label: string; x: number[]; y: number[]; points: boolean }[] }
-  | { type: 'module'; name: string }
+interface Illustration { src: string; alt: string; caption?: string }
 export interface DemoData {
   id: string
   title: string
@@ -63,11 +55,10 @@ export interface DemoData {
   cards: CardDoc[]
   wires: WireDoc[]
   notes: NoteDoc[]
-  frames: Record<string, Partial<Rect> & { hidden?: boolean }>
   run?: { id: string; state: string; date: string; host: string; sandbox: string; commit: string; totalMs: number; realOrder: boolean }
   steps: StepDoc[]
   final: Record<string, FinalState>
-  outputs: Record<string, Output>
+  illustrations?: Record<string, Illustration>
   intro: string
   finale: string
 }
@@ -171,17 +162,6 @@ function finishedStages(f: FinalState): StageItem[] {
   })
 }
 
-const resultText = (o: Output | undefined): string | undefined => {
-  if (!o) return undefined
-  if (o.type === 'plot') return o.title || L('折れ線 {0} 系列', o.series.length)
-  if (o.type === 'module') return L('モジュール {0}', o.name)
-  const value = o.type === 'text' ? { kind: o.markdown ? 'markdown' : 'text', text: o.text }
-    : o.type === 'table' ? { kind: 'table', columns: o.columns, rows: Array(o.totalRows) }
-    : o.type === 'points' ? { kind: 'points', x: Array(o.count) }
-    : { ...o, kind: o.type }
-  return displaySummary({ value } as Parameters<typeof displaySummary>[0])
-}
-
 /** Where a Card is in the replay. */
 function phaseOf(stepOf: Map<string, number>, id: string, fr: Frame): 'before' | 'running' | 'after' {
   const idx = stepOf.get(id)
@@ -191,10 +171,9 @@ function phaseOf(stepOf: Map<string, number>, id: string, fr: Frame): 'before' |
 }
 
 export function nodeData(data: DemoData, stepOf: Map<string, number>, c: CardDoc, fr: Frame): CardNodeData {
-  const out = data.outputs[c.id]
   const base: CardNodeData = {
     title: c.id, kind: c.kind, symbol: c.symbol, summary: c.summary, inputs: c.inputs, outputs: c.outputs, params: c.params, invocation: 0n,
-    runContinues: fr.mode === 'playing', errors: [], warnings: [], collapsed: false, hasDisplay: !!out, permissions: c.permissions, untitled: c.untitled,
+    runContinues: fr.mode === 'playing', errors: [], warnings: [], collapsed: false, permissions: c.permissions, untitled: c.untitled,
   }
   const f = data.final[c.id]
   const phase = phaseOf(stepOf, c.id, fr)
@@ -202,7 +181,7 @@ export function nodeData(data: DemoData, stepOf: Map<string, number>, c: CardDoc
   const composite = c.kind === 'subgraph'
   if (phase === 'after') {
     const stage: StageProgress | undefined = c.kind === 'code' ? { items: finishedStages(f), workerReused: false } : undefined
-    return { ...base, state: D.CardState[f.state], invocation: composite ? 0n : BigInt(f.count), stage, result: resultText(out) }
+    return { ...base, state: D.CardState[f.state], invocation: composite ? 0n : BigInt(f.count), stage }
   }
   const shown = fr.sub === 0 ? 1 : Math.max(1, Math.ceil((f.count * (fr.tick + 1)) / LOOP_TICKS))
   const done = finishedStages(f)
@@ -212,7 +191,6 @@ export function nodeData(data: DemoData, stepOf: Map<string, number>, c: CardDoc
   } : undefined
   return {
     ...base, state: c.kind === 'code' && fr.sub === 0 ? D.CardState.preparing : D.CardState.running, invocation: composite ? 0n : BigInt(shown), stage,
-    result: fr.sub >= 1 ? resultText(out) : undefined,
   }
 }
 
@@ -227,93 +205,13 @@ function wireStyle(data: DemoData, stepOf: Map<string, number>, w: WireDoc, fr: 
   return 'carried'
 }
 
-// ---- Output frames --------------------------------------------------------------------
-
-const PLOT_COLOR = ['var(--blue)', 'var(--orange)', 'var(--green)', 'var(--purple)']
-const fmt = (v: number) => {
-  const a = Math.abs(v)
-  return a !== 0 && (a >= 1e5 || a < 1e-2) ? v.toExponential(1) : String(Number(v.toPrecision(3)))
-}
-
-/** A figure's own points without the plot library (the app draws these with Plotly,
- *  Vega-Lite or the WebGPU line view, interactive): the page needs neither those nor WebGPU. */
-function PlotView({ plot }: { plot: Extract<Output, { type: 'plot' }> }) {
-  const W = 560, H = 250
-  const m = { left: 54, right: 12, top: plot.title ? 24 : 10, bottom: plot.xLabel ? 36 : 22 }
-  const shown = plot.series.slice(0, 4)
-  const xs = shown.flatMap((s) => s.x), ys = shown.flatMap((s) => s.y)
-  if (!xs.length) return <div className="display-center secondary" style={{ fontSize: 11 }}>{L('図の点を取り出せませんでした')}</div>
-  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]
-  const sx = (v: number) => m.left + ((v - x0) / (x1 - x0 || 1)) * (W - m.left - m.right)
-  const sy = (v: number) => H - m.bottom - ((v - y0) / (y1 - y0 || 1)) * (H - m.top - m.bottom)
-  const ticks = (a: number, b: number) => [a, (a + b) / 2, b]
-  return (
-    <svg className="tp-plot" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={plot.title || L('折れ線の図')}>
-      {plot.title && <text x={W / 2} y={14} textAnchor="middle" className="tp-plot-title">{plot.title}</text>}
-      {ticks(y0, y1).map((t) => (
-        <g key={t}>
-          <line x1={m.left} x2={W - m.right} y1={sy(t)} y2={sy(t)} stroke="var(--separator)" />
-          <text x={m.left - 6} y={sy(t) + 3.5} textAnchor="end" className="tp-plot-tick">{fmt(t)}</text>
-        </g>
-      ))}
-      {ticks(x0, x1).map((t) => <text key={t} x={sx(t)} y={H - m.bottom + 14} textAnchor="middle" className="tp-plot-tick">{fmt(t)}</text>)}
-      {plot.xLabel && <text x={(m.left + W - m.right) / 2} y={H - 6} textAnchor="middle" className="tp-plot-tick">{plot.xLabel}</text>}
-      {plot.yLabel && <text transform={`translate(11 ${(m.top + H - m.bottom) / 2}) rotate(-90)`} textAnchor="middle" className="tp-plot-tick">{plot.yLabel}</text>}
-      {shown.map((s, i) => s.points
-        ? <g key={i} fill={PLOT_COLOR[i]} fillOpacity={0.7}>{s.x.map((x, j) => <circle key={j} cx={sx(x)} cy={sy(s.y[j])} r={2.4} />)}</g>
-        : <polyline key={i} fill="none" stroke={PLOT_COLOR[i]} strokeWidth={2} strokeLinejoin="round" points={s.x.map((x, j) => `${sx(x).toFixed(1)},${sy(s.y[j]).toFixed(1)}`).join(' ')}><title>{s.label}</title></polyline>)}
-      {shown.length > 1 && shown.map((s, i) => (
-        <g key={'k' + i} transform={`translate(${m.left + 8} ${m.top + 8 + i * 14})`}>
-          <rect width={10} height={3} y={-3} fill={PLOT_COLOR[i]} rx={1.5} />
-          <text x={14} y={1} className="tp-plot-tick">{s.label}</text>
-        </g>
-      ))}
-    </svg>
-  )
-}
-
-/** A Card's result, in the classes of ui/web/src/ui/display.tsx. */
-function OutputView({ output, base, zoom, large = false }: { output: Output; base: string; zoom: number; large?: boolean }) {
-  const size = (v: number) => v * zoom
-  switch (output.type) {
-    case 'text':
-      if (output.html) return <div className="display-body tp-md" style={{ fontSize: size(11) }} dangerouslySetInnerHTML={{ __html: output.html }} />
-      return <div className="display-body"><pre className="display-text" style={{ fontSize: size(11) }}>{output.text}</pre></div>
-    case 'scalar':
-      return (
-        <div className="display-center col">
-          <span className="secondary" style={{ fontSize: size(10) }}>{output.label}</span>
-          <span className="mono-digits" style={{ fontSize: size(22), fontWeight: 600 }}>{Number(output.value.toPrecision(6))}</span>
-        </div>
-      )
-    case 'table':
-      return (
-        <div className="display-body">
-          <table className="display-table" style={{ fontSize: size(10), borderSpacing: `${size(12)}px ${size(3)}px`, padding: size(4) }}>
-            <thead><tr>{output.columns.map((c) => <th key={c}>{c}</th>)}</tr></thead>
-            <tbody>{output.rows.map((r, i) => <tr key={i}>{r.map((v, j) => <td key={j}>{v}</td>)}</tr>)}</tbody>
-          </table>
-          {large && output.totalRows > output.rows.length && <p className="secondary caption">{L('全 {0} 行のうち先頭 {1} 行', output.totalRows, output.rows.length)}</p>}
-        </div>
-      )
-    case 'image':
-      return <div className="display-center"><img className="display-image" src={new URL(output.src, base).href} alt={output.alt ?? ''} draggable={false} /></div>
-    case 'plot':
-      return <div className="display-center"><PlotView plot={output} /></div>
-    case 'points':
-      return <div className="display-center secondary" style={{ fontSize: size(11) }}>{L('3D 点群 {0} 点（アプリでは回して見られます）', output.count)}</div>
-    default:
-      return <div className="display-center secondary" style={{ fontSize: size(11) }}>{L('モジュール {0}', output.name)}</div>
-  }
-}
-
 // ---- The canvas ---------------------------------------------------------------------------
 
 interface Placed { doc: CardDoc; node: CardNodeData; geometry: CardGeometry }
 
 /** `view` draws a still at that size, fitted (or with its camera) and without the zoom controls (player/svg.mjs renders one per frame). */
-export function Canvas({ data, frame, base, compact, selected, onSelect, motion, view, children }: {
-  data: DemoData; frame: Frame; base: string; compact: boolean; selected?: string; onSelect: (id: string | undefined) => void; motion: boolean
+export function Canvas({ data, frame, compact, selected, onSelect, motion, view, children }: {
+  data: DemoData; frame: Frame; compact: boolean; selected?: string; onSelect: (id: string | undefined) => void; motion: boolean
   view?: { width: number; height: number; camera?: Camera }; children?: React.ReactNode
 }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -342,19 +240,8 @@ export function Canvas({ data, frame, base, compact, selected, onSelect, motion,
   const byId = new Map(placed.map((p) => [p.doc.id, p]))
   const rectOf = (p: Placed): Rect => ({ x: p.doc.x, y: p.doc.y, ...p.geometry.size })
 
-  // The saved place of a Card's output frame, or beside the Card (Scene.frameRect).
-  const frames = placed.flatMap((p) => {
-    if (!data.outputs[p.doc.id]) return []
-    const f = data.frames[p.doc.id]
-    if (f?.hidden) return []
-    const width = f?.width ?? 320, height = f?.height ?? 170
-    const r: Rect = data.flow === 'topToBottom'
-      ? { x: f?.x ?? p.doc.x + p.geometry.size.width + 40, y: f?.y ?? p.doc.y, width, height }
-      : { x: f?.x ?? p.doc.x, y: f?.y ?? p.doc.y + p.geometry.height + 30, width, height }
-    return [{ p, r }]
-  })
   const notes = compact ? [] : data.notes
-  const box = [...placed.map(rectOf), ...frames.map((f) => f.r), ...notes].reduce<Rect | null>((u, r) => {
+  const box = [...placed.map(rectOf), ...notes].reduce<Rect | null>((u, r) => {
     const rect = { x: r.x, y: r.y, width: r.width, height: r.height }
     return u ? union(u, rect) : rect
   }, null)
@@ -380,7 +267,7 @@ export function Canvas({ data, frame, base, compact, selected, onSelect, motion,
   }, [boxKey, size.width, size.height])
 
   const z = camera.zoom
-  const router = new WireRouter(data.flow, [...placed.map(rectOf), ...frames.map((f) => f.r)])
+  const router = new WireRouter(data.flow, placed.map(rectOf))
   const point = (id: string, port: string, output: boolean): Pt => {
     const p = byId.get(id)
     if (!p) return { x: 0, y: 0 }
@@ -393,15 +280,6 @@ export function Canvas({ data, frame, base, compact, selected, onSelect, motion,
     style: wireStyle(data, stepOf, w, frame),
     dotted: isDraftWire((id) => byId.get(id)?.doc.kind, w.from, w.to),
   }))
-  const shownFrames = frames.filter(({ p }) => {
-    const phase = phaseOf(stepOf, p.doc.id, frame)
-    return phase === 'after' || (phase === 'running' && frame.sub >= 1)
-  })
-  for (const { p, r } of shownFrames) {
-    const o = p.geometry.outlineRect
-    const link = displayLink({ x: p.doc.x + o.x, y: p.doc.y + o.y, width: o.width, height: o.height }, r)
-    draws.push({ d: pathToScreen(link, camera), style: 'display' })
-  }
   const screen = (r: { x: number; y: number }) => ({ left: Math.round((r.x * z + camera.x) * 2) / 2, top: Math.round((r.y * z + camera.y) * 2) / 2 })
   const zoomTo = (nz: number) => {
     adjusted.current = true
@@ -430,19 +308,6 @@ export function Canvas({ data, frame, base, compact, selected, onSelect, motion,
         </div>
       ))}
       <WireLayer wires={draws} animate={motion} zoom={z} width={size.width} height={size.height} />
-      {shownFrames.map(({ p, r }) => {
-        const inv = data.final[p.doc.id]?.count
-        return (
-          <div key={p.doc.id} className="cv-frame tp-frame" style={{ position: 'absolute', ...screen(r), width: r.width * z, height: r.height * z, padding: 8 * z, borderRadius: 8 * z, gap: 4 * z }}>
-            <div className="cv-frame-header secondary" style={{ gap: 6 * z }}>
-              <Icon name="chart.xyaxis.line" size={10 * z} style={{ color: 'var(--purple)' }} />
-              <span className="cv-ellipsis" style={{ fontSize: 10 * z, fontWeight: 700, color: 'var(--label)' }}>{p.doc.id}</span>
-              {data.run && <span className="mono-digits nowrap" style={{ fontSize: 9 * z }}>{L('Run {0} · 実行 #{1}', data.run.id.slice(0, 6), inv ?? 1)}</span>}
-            </div>
-            <div className="cv-frame-body"><OutputView output={data.outputs[p.doc.id]} base={base} zoom={z} /></div>
-          </div>
-        )
-      })}
       {placed.map(({ doc, node }) => (
         <CardNodeView key={doc.id} data={node} flow={data.flow} zoom={z} selected={selected === doc.id}
           style={{ position: 'absolute', ...screen(doc) }}
@@ -495,8 +360,6 @@ function Ports({ title, ports }: { title: string; ports: PortData[] }) {
           <li key={p.name}>
             <span className="mono">{p.name}</span>
             {p.typeName && <span className="mono secondary"> : {p.typeName}</span>}
-            {p.optional && <span className="secondary">{L('（省略可）')}</span>}
-            {p.note && <div className="secondary caption">{p.note}</div>}
           </li>
         ))}
       </ul>
@@ -506,7 +369,7 @@ function Ports({ title, ports }: { title: string; ports: PortData[] }) {
 
 function SidePanel({ data, card, reached, base, onClose }: { data: DemoData; card: CardDoc; reached: boolean; base: string; onClose: () => void }) {
   const f = data.final[card.id]
-  const out = data.outputs[card.id]
+  const illustration = data.illustrations?.[card.id]
   return (
     <aside className="tp-panel material selectable" aria-label={L('Card {0} の中身', card.id)} onPointerDown={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       <header className="tp-panel-head">
@@ -529,11 +392,11 @@ function SidePanel({ data, card, reached, base, onClose }: { data: DemoData; car
           <ul className="tp-ports">{card.allParams.map((p) => <li key={p.name}><span className="mono">{p.name}</span><span className="mono secondary"> : {p.type} = {p.value}</span></li>)}</ul>
         </>
       )}
-      {reached && out && (
-        <>
-          <h4>{L('この Card の表示')}</h4>
-          <div className="tp-panel-output"><OutputView output={out} base={base} zoom={1} large /></div>
-        </>
+      {illustration && (
+        <figure className="tp-illustration">
+          <img src={new URL(illustration.src, base).href} alt={illustration.alt} draggable={false} />
+          {illustration.caption && <figcaption className="caption secondary">{illustration.caption}</figcaption>}
+        </figure>
       )}
       {card.files.length > 0 && <><h4>{L('ファイル')}</h4><Sources files={card.files} /></>}
       {card.inner && card.inner.length > 0 && (
@@ -682,13 +545,13 @@ function Player({ host, url, compact, autoplay }: { host: HTMLElement; url: stri
   if (compact) {
     return (
       <div className="tp-root tp-compact" role="img" aria-label={L('{0} の Canvas{1}', data.title, data.draftOnly ? '（Draft）' : '')}>
-        <Canvas data={data} frame={frame} base={base} compact selected={undefined} onSelect={() => undefined} motion={motion} />
+        <Canvas data={data} frame={frame} compact selected={undefined} onSelect={() => undefined} motion={motion} />
       </div>
     )
   }
   return (
     <div className="tp-root tp-full">
-      <Canvas data={data} frame={frame} base={base} compact={false} selected={selected} onSelect={setSelected} motion={motion}>
+      <Canvas data={data} frame={frame} compact={false} selected={selected} onSelect={setSelected} motion={motion}>
         <div className="tp-top"><RunControl data={data} frame={frame} playing={playing} onRun={replay.play} onStop={replay.reset} /></div>
         {card && <SidePanel data={data} card={card} reached={reached} base={base} onClose={() => setSelected(undefined)} />}
       </Canvas>

@@ -2,11 +2,13 @@
 #include <algorithm>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "host/project_operations.hh"
 #include "tsugumi/document/document.hh"
+#include "tsugumi/document/text.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/json_object.hh"
 
@@ -14,32 +16,68 @@ namespace {
 namespace json = tsugumi::json;
 namespace crypto = tsugumi::crypto;
 using tsugumi::host::OperationReply;
+
+auto CanonicalDocument(const std::string& path, const std::string& text)
+    -> std::string {
+  using namespace tsugumi::document_text;
+  std::optional<Schema> kind;
+  if (path == "tsugumi.json" || path.ends_with("/tsugumi.json"))
+    kind = Schema::Project;
+  if (path.ends_with("/_card.json")) kind = Schema::Card;
+  if (path.ends_with("/_comments.json")) kind = Schema::Comments;
+  if (!kind) return text;
+  try {
+    return print(*kind, parse(*kind, path, text));
+  } catch (const tsugumi::DocumentError&) {
+    // Client behavior fixtures also simulate definitions with diagnostics.
+    return text;
+  }
+}
+
 class ProjectFixture {
  public:
   std::map<std::string, std::string> files;
   uint64_t saves = 0;
   auto Call(const std::string& method, const json::Members& args)
       -> OperationReply {
+    const auto base64_json = [](const std::string& bytes) {
+      return json::Encode(json::Members{{"base64", json::Quote(crypto::base64(bytes))}});
+    };
+    const auto binary = [](const std::string& raw) {
+      std::string out;
+      if (!crypto::base64_decode(json::Text(json::Object(raw), "base64"), out))
+        throw std::runtime_error("invalid fixture bytes");
+      return out;
+    };
     std::string type;
     json::Members value;
     if (method == "operation_get") {
       type = "OperationResult";
       value["state"] = "\"unknown\"";
+    } else if (method == "card_id") {
+      type = "CardIdResult";
+      const auto stem = json::Text(args, "stem");
+      const auto prefix = json::Text(args, "project_path") + "definitions/";
+      auto id = stem;
+      for (size_t i = 2; files.contains(prefix + id + "/_card.json"); ++i)
+        id = stem + "-" + std::to_string(i);
+      value["id"] = json::Quote(id);
     } else if (method == "project_inspect") {
       type = "ProjectSnapshot";
       value = {{"rev", std::to_string(saves)},
                {"project_json", json::Quote(files.at("tsugumi.json"))},
-               {"layout_json", json::Quote(files.at("layout.json"))}};
+               {"layout", base64_json(files.contains("layout.bin") ? files.at("layout.bin") : "")}};
       json::Members definitions;
       std::vector<std::string> sources;
       for (const auto& [path, bytes] : files) {
-        if (path == "tsugumi.json" || path == "layout.json") continue;
+        if (path == "tsugumi.json" || path == "layout.bin") continue;
         if (path.starts_with("definitions/") &&
             std::count(path.begin(), path.end(), '/') == 2) {
           const auto slash = path.find('/', 12);
           const auto name = path.substr(slash + 1);
           const auto key = name == "_card.json"   ? "card_json"
-                           : name == "_meta.json" ? "meta_json"
+                           : name == "README.md" ? "readme"
+                           : name == "_comments.json" ? "comments_json"
                                                   : "";
           if (key != std::string("")) {
             const auto id = path.substr(12, slash - 12);
@@ -51,9 +89,11 @@ class ProjectFixture {
           }
         }
         json::Members source{{"path", json::Quote(path)},
-                             {"hash", json::Quote(crypto::sha256_hex(bytes))}};
-        if (tsugumi::Document::is_external_document_file(path))
-          source["document_json"] = json::Quote(bytes);
+                             {"hash", json::Quote(crypto::sha256_hex(bytes))},
+                             {"size_bytes", std::to_string(bytes.size())}};
+        if (tsugumi::Document::is_external_document_file(path) ||
+            tsugumi::Document::is_note_file(path))
+          source["document"] = base64_json(bytes);
         sources.push_back(json::Encode(source));
       }
       std::vector<std::string> list;
@@ -77,18 +117,21 @@ class ProjectFixture {
         const auto change = json::Object(raw),
                    v = json::Object(change.at("value"));
         const auto kind = json::Text(change, "value_type");
-        if (kind == "SetProject" || kind == "SetLayout")
-          files[kind == "SetProject" ? "tsugumi.json" : "layout.json"] =
-              json::Text(v, "json");
+        if (kind == "SetProject")
+          files["tsugumi.json"] =
+              CanonicalDocument("tsugumi.json", json::Text(v, "json"));
+        else if (kind == "SetLayout")
+          files["layout.bin"] = binary(v.at("layout"));
         else if (kind == "PutDefinition") {
           const auto dir = "definitions/" + json::Text(v, "id") + '/';
           for (const auto& [key, name] : {std::pair{"card_json", "_card.json"},
-                                          {"meta_json", "_meta.json"}}) {
+                                          {"readme", "README.md"},
+                                          {"comments_json", "_comments.json"}}) {
             const auto text = json::Text(v, key);
             if (text.empty())
               files.erase(dir + name);
             else
-              files[dir + name] = text;
+              files[dir + name] = CanonicalDocument(dir + name, text);
           }
         } else if (kind == "RemoveDefinition") {
           const auto dir = "definitions/" + json::Text(v, "id") + '/';
@@ -103,10 +146,10 @@ class ProjectFixture {
           std::string bytes;
           if (data.starts_with('"'))
             bytes = json::String(data);
-          else if (!crypto::base64_decode(
-                       json::Text(json::Object(data), "base64"), bytes))
-            throw std::runtime_error("invalid fixture bytes");
-          files[json::Text(v, "path")] = bytes;
+          else
+            bytes = binary(data);
+          const auto path = json::Text(v, "path");
+          files[path] = CanonicalDocument(path, bytes);
         }
       }
       ++saves;

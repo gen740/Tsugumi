@@ -1,4 +1,6 @@
 """A random forest: the vote of many decision trees, each grown on a random draw of the digits."""
+from card import Input, Output, params
+from mnist.Result import ResultT
 import os
 
 # One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
@@ -26,21 +28,21 @@ def confusions(ax, y, pred):
 def result(name, settings, digest, y, pred, fit, predict):
     model = name
     predictions = pred.astype(np.uint8)
-    return {'result': {
-        'model': model,
-        'settings': settings,
-        'digest': digest,
-        'accuracy': float(np.mean(pred == y)),
-        'fit_seconds': fit,
-        'predict_seconds': predict,
-        'predictions': predictions,
-    }}
+    return Output(result=ResultT(
+        model=model,
+        settings=settings,
+        digest=digest,
+        accuracy=float(np.mean(pred == y)),
+        fitSeconds=fit,
+        predictSeconds=predict,
+        predictions=predictions,
+    ))
 
 
-def main(inputs, report):
+def run(inputs: Input) -> Output:
     params = inputs.params
-    trees, max_depth, seed = params.trees, params.maxDepth, params.seed
-    data = np.load(inputs.data.value.decode())
+    trees, max_depth, seed = params.trees, params.max_depth, params.seed
+    data = np.load(inputs.require("data").open() / "subset.npz")
     train_x, train_y, test_x, test_y = data["train_images"], data["train_labels"], data["test_images"], data["test_labels"]
 
     model = RandomForestClassifier(n_estimators=trees, max_depth=max_depth, random_state=seed, n_jobs=1)
@@ -51,13 +53,13 @@ def main(inputs, report):
     pred = model.predict(test_x)
     predict = time.process_time() - start
     accuracy = np.mean(pred == test_y)
-    report.log(f"forest trees={trees} depth={max_depth}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s")
+    print(f"forest trees={trees} depth={max_depth}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s")
 
     fig, (left, right) = plt.subplots(1, 2, figsize=(9, 4.2), layout="constrained")
     confusions(left, test_y, pred)
     right.imshow(model.feature_importances_.reshape(28, 28), cmap="magma")
     right.set(xticks=[], yticks=[], title="Pixels that mattered for the decision (brighter is more important)")
     fig.suptitle(f"Random forest, {trees} trees, depth up to {max_depth}: accuracy {accuracy:.4f}, training {fit:.2f} s, prediction {predict:.2f} s", fontsize=11)
-    report.figure()
+    # TODO(open): Port the demo display.
 
     return result('forest', f'trees={trees}, depth={max_depth}', str(data['digest']), test_y, pred, fit, predict)

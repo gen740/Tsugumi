@@ -41,9 +41,7 @@ Run them with `TSUGUMI_FULL_RULES=1 bash tests/ci/run-suite.sh core aarch64-darw
 and the same command with `agent`. To reproduce the shorter Mac CI run, build
 `nix build .#ci-core-native --out-link build-ci` and run `core`, `agent` and `host`
 without `TSUGUMI_FULL_RULES`. Standalone host, remote, SDK, adapter and Swift
-jobs use `nix build .#ci-runtime --out-link build-ci`. The suite runner builds
-the input description executable for SDK tests and the daemon double for plugin
-tests. The local Linux pass runs the full suite selection, including on ARM
+jobs use `nix build .#ci-runtime --out-link build-ci`. The suite runner builds the daemon double for plugin tests. The local Linux pass runs the full suite selection, including on ARM
 containers. The guest workflows build the distributable images.
 
 `nix build --no-link .#checks.aarch64-darwin.web-typecheck` checks TypeScript
@@ -96,8 +94,8 @@ The shared-VM suites also require an explicit opt-in on an Apple silicon Mac wit
 
 ```sh
 vm/macos/tools/build-vmctl.sh
-TSUGUMI_TEST_CONTAINER=1 nix develop -c python3 tests/run-isolated.py python3 -m pytest -q \
-  tests/python/test_shared_vm.py tests/python/test_cards_container.py tests/python/test_workers.py
+TSUGUMI_TEST_SHARED_VM=1 nix develop -c python3 tests/run-isolated.py python3 -m pytest -q \
+  tests/python/test_shared_vm.py tests/python/test_cards_shared_vm.py tests/python/test_workers.py
 ```
 
 The VM support directory and its store are disposable and removed at session end. `TSUGUMI_VM_X86=qemu` selects QEMU instead of Rosetta for x86_64 Linux Cards. These VM suites do not run in CI.
@@ -115,8 +113,6 @@ For documentation changes, run `nix run .#build-doc` and `nix run .#test-doc`. T
 - `python3 hostd/tools/test-binary-cache.py`: check signed substitution, unknown-key rejection and HTTP authentication with disposable Nix stores and local test servers. The launcher and Linux integration suites also validate the generated VM cache configuration.
 - `tests/ci-remote-worker.sh`: run Cards through hostd's Host RPC, mutual-TLS broker and packaged `tsugumi-workerd` on Linux; requires listeners and Nix builds. The script name describes the remote worker scenario.
 - `nix develop -c /usr/bin/swift tests/tools/wkwebgpu.swift`: probe WebGPU and adapter availability in an offscreen WKWebView.
-- `python3 sdk/codegen/scaffold.py go`: synchronize the host Go scaffold in `ui/shared/templates/go.json` after editing `sdk/go/template/` (`--check` verifies them).
-- `python3 sdk/codegen/scaffold.py rust`: synchronize the host Rust scaffold in `ui/shared/templates/rust.json` after editing `sdk/rust/template/` (`--check` verifies them).
 
 Scripted Mac trials can register a trusted root before the first project opens:
 
@@ -132,7 +128,7 @@ To show the RPC Trace tab in the Mac debug panel and permit recording in newly l
 open -g -n --env TSUGUMI_RPC_TRACE=1 --env TSUGUMI_HOST_STATE=/absolute/debug-host dist/Tsugumi.app
 ```
 
-For a scripted launch, set `TSUGUMI_RPC_TRACE=1` in the environment of `ui/macos/tools/run-ui.sh`. Open a project to start the host, then select a recording mode in the debug panel. The panel follows the host connection and shows new entries as they are recorded. Closing the panel ends delivery to the view. Select Off to stop recording and clear captured bodies. Reusing a running host or project core leaves its launch setting unchanged. A VM-backed project requires a guest image with the matching RPC trace protocol. To verify propagation through the real VM, run the shared VM suite with `TSUGUMI_TEST_CONTAINER=1` and a matching image. The Web UI and CLI have no RPC Trace view.
+For a scripted launch, set `TSUGUMI_RPC_TRACE=1` in the environment of `ui/macos/tools/run-ui.sh`. Open a project to start the host, then select a recording mode in the debug panel. The panel follows the host connection and shows new entries as they are recorded. Closing the panel ends delivery to the view. Select Off to stop recording and clear captured bodies. Reusing a running host or project core leaves its launch setting unchanged. A VM-backed project requires a guest image with the matching RPC trace protocol. To verify propagation through the real VM, run the shared VM suite with `TSUGUMI_TEST_SHARED_VM=1` and a matching image. The Web UI and CLI have no RPC Trace view.
 
 ## Execution ownership and timing
 
@@ -156,14 +152,13 @@ the core pytest routes and the unfiltered CI runs of the C++ test targets.
 | Real remote execution | x86_64 Linux | Separate worker admission and core-to-worker suites in the remote job. |
 
 The canonical Agent suite also runs `tsugumi_input_types_tests` for resolver and
-Host input descriptions, and `test_host_projects_rpc.py` for the Host's
+Host FlatBuffers schema results, and `test_host_projects_rpc.py` for the Host's
 project-copy permissions and state exclusions. Edit refusal and operation-ID
 checks stay in `tsugumi_host_settings_tests`, and public edit/read-miss scenarios
 stay in `tsugumi_agent_rpc_tests`. Short-identifier tests link the Host and core
 in `tsugumi_host_settings_tests`.
 Every native core suite runs all four `tsugumi_file_transfer_tests` scenarios
-(`large`, `sparse`, `shrink-stream`, `shrink-sparse`). The SDK suite discovers
-`tests/python/test_input_types.py`; core pytest discovers
+(`large`, `sparse`, `shrink-stream`, `shrink-sparse`). Core pytest discovers
 `tests/core/test_short_identifiers.py`.
 
 `tsugumi_worker_condition_tests` runs with the canonical core suite;

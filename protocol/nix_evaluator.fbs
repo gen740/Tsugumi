@@ -1,0 +1,75 @@
+// Private messages between tsugumid and its libnix evaluator subprocess.
+include "project_lock.fbs";
+
+namespace Tsugumi.NixEvaluator;
+
+table Initialize {
+  entry:string (required);
+  epoch:ulong;
+}
+
+table DefinitionScope {
+  directory:string (required);
+  card:string (required);
+}
+table Scope {
+  definitions:[DefinitionScope];
+  entries:[Tsugumi.Document.LockEntry];
+}
+table Evaluate {
+  scope:Scope (required);
+  core_nixpkgs:Tsugumi.Document.LockEntry (required);
+  nix_dir:string;
+  needs_worker:bool;
+  args:string (required);
+  max_implementations:uint;
+}
+
+table Reuse {
+  scope:Scope (required);
+  epoch:ulong;
+  drv:string (required);
+  out:string (required);
+}
+
+table Expression {
+  scope:Scope (required);
+  args:string (required);
+  card:string (required);
+  definition_dir:string (required);
+  text:string (required);
+  build:bool;
+}
+
+table LockSource { url:string (required); }
+
+union RequestBody { Initialize, Evaluate, Reuse, Expression, LockSource }
+
+table Request {
+  system:string;
+  body:RequestBody (required);
+}
+
+table Evaluation {
+  drv:string (required);
+  out:string (required);
+  execution_list:bool;
+  implementation_count:uint;
+  implementation_labels:[string];
+  epoch:ulong;
+}
+table Reusable { value:bool; }
+table ExpressionValue {
+  json:string;
+  drv:string;
+  output_name:string;
+}
+table ResolvedSource { rev:string; narHash:string (required); }
+table Log { line:string; }
+// Size-prefixed stdout frames from the build client.
+table BuildLog { line:string; truncated:bool; }
+table Build { drv:string (required); active:bool; }
+table Error { message:string; limit:bool; }
+
+union ReplyBody { Evaluation, Reusable, ExpressionValue, ResolvedSource, Log = 6, Build, Error }
+table Reply { body:ReplyBody (required); }

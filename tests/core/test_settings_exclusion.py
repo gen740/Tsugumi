@@ -56,7 +56,7 @@ def test_stale_settings_apply_and_explicit_overwrite(daemon, target, writer, sta
 def test_settings_have_no_source_write_bypass(client):
     """Source RPC changes cannot provide a second settings writer."""
     before = client.call("ProjectInspectRequest")
-    for target in ("tsugumi.json", "definitions/settings/_card.json", "definitions/settings/_meta.json"):
+    for target in ("tsugumi.json", "definitions/settings/_card.json", "definitions/settings/README.md"):
         for operation, fields in (
             ("PutSource", {"bytes": list(b"{}")}),
             ("PatchSource", {"baseHash": "0" * 64, "patches": []}),

@@ -11,21 +11,11 @@
 #include <set>
 
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/util/fs.hh"
-#include "tsugumi/util/json.hh"
 
 namespace tsugumi::workerd {
 namespace {
-struct StateJson {
-  schema::t::Uint64<"state"> state;
-  schema::t::String<"fingerprint"> fingerprint;
-  schema::t::String<"result"> result;
-  schema::t::String<"diagnostic"> diagnostic;
-  schema::t::Uint64<"pid"> pid;
-  schema::t::Uint64<"start"> start;
-  schema::t::String<"boot"> boot;
-  schema::t::String<"core_life_id"> core_life_id;
-};
 struct Fd {
   int value;
   ~Fd() {
@@ -127,33 +117,28 @@ auto Journal::jobs() const -> std::vector<std::string> {
 }
 auto Journal::read(const stdfs::path& directory) const -> Record {
   if (!stdfs::exists(directory / "state")) return {};
-  StateJson s;
-  if (schema::decode(bounded_file(directory / "state", 16384), s) ||
-      *s.state > static_cast<uint64_t>(R::JobState::Released))
+  const auto s = remote::decode<R::JournalState>(
+      bounded_file(directory / "state", 16384));
+  if (!s || s->state > R::JobState::Released)
     throw std::runtime_error("corrupt job journal");
-  return {static_cast<R::JobState>(*s.state),
-          *s.fingerprint,
-          *s.result,
-          *s.diagnostic,
-          *s.pid,
-          *s.start,
-          *s.boot,
-          *s.core_life_id};
+  return {s->state,       s->fingerprint, s->result, s->diagnostic,
+          s->pid,         s->start,       s->boot,   s->core_life_id};
 }
 auto Journal::write(const stdfs::path& directory, const Record& r) const
     -> void {
   private_directory(directory);
   durable_directory(directory.parent_path());
-  StateJson s;
-  *s.state = static_cast<uint64_t>(r.state);
-  *s.fingerprint = r.fingerprint;
-  *s.result = r.result;
-  *s.diagnostic = r.diagnostic.substr(0, 4096);
-  *s.pid = r.pid;
-  *s.start = r.start;
-  *s.boot = r.boot;
-  *s.core_life_id = r.core_life_id;
-  fs::write_atomic(directory / "state", schema::encode(s), 0600);
+  R::JournalStateT s;
+  s.state = r.state;
+  s.fingerprint = r.fingerprint;
+  s.result = r.result;
+  s.diagnostic = r.diagnostic.substr(0, 4096);
+  s.pid = r.pid;
+  s.start = r.start;
+  s.boot = r.boot;
+  s.core_life_id = r.core_life_id;
+  fs::write_atomic(directory / "state", remote::encode<R::JournalState>(s),
+                   0600);
 }
 auto Journal::status(std::string_view job,
                      std::optional<std::string_view> core) const -> Record {
@@ -278,7 +263,7 @@ auto Journal::log(std::string_view job, uint64_t offset, uint32_t limit,
   locked(job, [&](const auto& dir) {
     require_owner(read(dir), core);
     // The supervised invocation appends whole entries and flushes each one.
-    Fd file{::open((dir / "work/result/logs.jsonl").c_str(),
+    Fd file{::open((dir / "work/result/logs").c_str(),
                    O_RDONLY | O_CLOEXEC | O_NOFOLLOW)};
     if (file.value < 0) {
       if (errno == ENOENT || errno == ENOTDIR) return;
@@ -462,6 +447,9 @@ auto Journal::import_results(std::string_view job) -> std::string {
       listing.files.size() > 65536)
     throw std::runtime_error("unsupported or excessive result entries");
   R::ResultManifestT manifest;
+  // Staging applies the Card output budget. Leave room for the independently
+  // bounded worker reply, environment metadata and captured log.
+  constexpr uint64_t kMaxResult = kMaxBlob + (64ull << 20);
   uint64_t total = 0;
   for (const auto& name : listing.files) {
     const stdfs::path relative(name);
@@ -473,8 +461,8 @@ auto Journal::import_results(std::string_view job) -> std::string {
         throw std::runtime_error("result component too long");
     const auto file = results / relative;
     const auto size = stdfs::file_size(file);
-    if (size > kMaxBlob - total)
-      throw std::runtime_error("result exceeds 64 GiB");
+    if (size > kMaxBlob || size > kMaxResult - total)
+      throw std::runtime_error("remote result exceeds the transfer limit");
     total += size;
     const auto digest = file_digest(file);
     if (name == "worker.fb") {

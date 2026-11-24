@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import FlatBuffers
 import TsugumiRPC
 
 /// Headless end-to-end check of the app's own path (demo copy -> environment
@@ -32,6 +33,13 @@ enum SmokeTest {
         await s.save()
         report["layout_save_rev"] = [before, s.rev]
         let trigger = s.cards(in: []).compactMap { $0["id"]?.string }.first { s.kind(key([$0])) == .trigger } ?? "start"
+        let viewers = s.resolution.keys.filter { s.kind($0) == .code }.map { card in
+          let id = UUID()
+          s.openDisplayViewer(id, card: card)
+          return id
+        }
+        defer { for id in viewers { s.closeDisplayViewer(id) } }
+        await s.refreshVisibleDisplays()
         let t1 = Date()
         try await s.run(card: [trigger], propagate: true)
         try await Task.sleep(for: .milliseconds(200))
@@ -58,39 +66,26 @@ enum SmokeTest {
           report["rerun_notifications"] = [s.notificationCount - n0, s.notificationBatches - b0]
         }
         report["card_states"] = s.cardStates.mapValues { String(describing: $0.state) }
-        report["displays"] = s.displays.mapValues { d -> String in
-          switch d.value {
-          case .text(let t): return String(t.prefix(200))
-          case .scalar(let v, let l): return "\(l)=\(v)"
-          default: return d.summary
-          }
-        }
+        report["views"] = s.cardViews.declarations.mapValues { $0.map { "\($0.name):\($0.type)" } }
+        report["view_data"] = s.cardViews.received.mapValues { $0.sorted() }
         await s.undo()
         await s.save()
         report["undo_save_rev"] = s.rev
         var ok = s.saveError == nil
         report["save_error"] = s.saveError ?? ""
 
-        // Layout-only UI data (notes, groups, collapse, hidden output frame) passes the core schema.
+        // Layout-only UI data (notes, groups, collapse) passes the core schema.
         let first = s.cards(in: []).compactMap { $0["id"]?.string }.prefix(2).map { $0 }
         _ = try await s.addNote(in: [], at: CGPoint(x: 10, y: 400))
         _ = try await s.addGroup(Set(first), in: [])
         s.setCollapsed([first[0]], true)
-        if let shown = s.resolution.keys.first(where: { s.displays[$0] != nil }) {
-          s.closeDisplayFrame(shown)
-        }
         await s.save()
         report["layout_extras"] = s.saveError ?? "ok"
         ok = ok && s.saveError == nil && s.confirmedLayout["groups"] != nil
 
-        // Metadata does not create Draft ports; wires attach to the Card itself.
+        // Draft wires attach directly to the Card.
         let dk = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 600), name: "smoke-draft")
         let draft = path(dk)[0]
-        s.edit { s in
-          var meta = s.definitionMeta[draft] ?? .object([])
-          meta["outputs"] = .array([.object([("name", .string("summary")), ("description", .string("the result in words"))])])
-          s.setCardDefinition(key([draft]), DefinitionDraft(card: s.definitions[draft] ?? .object([]), meta: meta))
-        }
         let next = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 300, y: 600), name: "smoke-next")
         try await s.connect(from: (dk, CardGeometry.newPort), to: (next, CardGeometry.newPort), in: [])
         await s.save()
@@ -109,9 +104,22 @@ enum SmokeTest {
           _ = try await other.connect(token: ep.token, expectedProjectId: nil, client: .macos)
           let snap = try await other.inspect()
           s.edit { $0.setPosition(dk, CGPoint(x: 333, y: 333)) }
-          var layout = try JSONValue.parse(snap.layoutJson)
-          layout["cards"]?["start"] = .object([("x", .real(77)), ("y", .real(77))])
-          _ = try? await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "smoke:other", changes: [Change.setLayout(layout.serialized())])
+          var layout = Tsugumi_Layout_LayoutT()
+          if !snap.layout.isEmpty {
+            var buffer = ByteBuffer(bytes: snap.layout)
+            let stored: Tsugumi_Layout_Layout = try getCheckedRoot(byteBuffer: &buffer)
+            layout = stored.unpack()
+          }
+          let start = layout.cards.compactMap { $0 }.first { $0.key == "start" }
+            ?? Tsugumi_Layout_CardPlaceT()
+          start.key = "start"; start.x = 77; start.y = 77
+          layout.cards.removeAll { $0?.key == start.key }
+          layout.cards.append(start)
+          var builder = FlatBufferBuilder(initialSize: 256)
+          let offset = Tsugumi_Layout_Layout.pack(&builder, obj: &layout)
+          Tsugumi_Layout_Layout.finish(&builder, end: offset)
+          _ = try? await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "smoke:other",
+                                    changes: [Change.setLayout(builder.sizedByteArray)])
           await other.close()
           await s.save()
           for _ in 0..<50 where s.confirmedLayout["cards"]?["start"]?["x"]?.double != 77 { try await Task.sleep(for: .milliseconds(100)) }

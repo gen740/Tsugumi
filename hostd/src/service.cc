@@ -48,6 +48,7 @@ namespace tsugumi::host {
 namespace A = Tsugumi::Agent;
 namespace H = Tsugumi::Host;
 namespace S = Tsugumi::Service;
+namespace R = Tsugumi::RPC;
 namespace json = ::tsugumi::json;
 namespace wire = agent::wire;
 using agent::Cancelled;
@@ -161,6 +162,10 @@ struct Service::State {
         state_gate, db, *conversations, *providers, *host_settings,
         demo_references, *turns, shutdown, *access,
         Tools::Dependencies{
+            .host_templates =
+                (options.vm.support.empty() ? options.state_dir.parent_path()
+                                            : options.vm.support) /
+                "templates",
             .scrub = [this](std::string raw) { return Scrub(std::move(raw)); },
             .event = [this](const auto& id,
                             const auto& raw) { Event(id, raw); },
@@ -658,8 +663,6 @@ struct Service::State {
                                       {"segments", json::Encode(segments)}})}};
       if (input->output_port())
         args["output_port"] = json::Quote(input->output_port()->str());
-      if (input->language())
-        args["language"] = json::Quote(input->language()->str());
       if (input->at_rev())
         args["at_rev"] = json::Quote(std::to_string(*input->at_rev()));
       lock.unlock();
@@ -860,6 +863,51 @@ struct Service::State {
                                host::PermissionKinds(Text(p->language())));
       }
 
+      case H::RequestPayload::TemplateListRequest: {
+        Human(human);
+        const auto project =
+            r->value_as_TemplateListRequest()->project_id()->str();
+        lock.unlock();
+        return wire::HostReply(
+            request.request_id,
+            tools->ListTemplates(project, false, shutdown.get_token()));
+      }
+      case H::RequestPayload::HostTemplateAddRequest: {
+        Human(human);
+        const auto input = std::unique_ptr<H::TemplateAddT>(
+            r->value_as_HostTemplateAddRequest()->addition()->UnPack());
+        lock.unlock();
+        tools->AddHostTemplate(*input, shutdown.get_token());
+        return wire::HostReply(request.request_id, S::AcknowledgementT{});
+      }
+      case H::RequestPayload::RunCategoryDeleteRequest: {
+        Human(human);
+        const auto* deletion = r->value_as_RunCategoryDeleteRequest();
+        const auto project = deletion->project_id()->str();
+        const auto* category = R::EnumNameRunRecordCategory(deletion->category());
+        if (!*category) throw Failure("invalid_request", "Unknown run record category");
+        json::Members args{{"run_id", json::Quote(deletion->run_id()->str())},
+                           {"category", json::Quote(category)},
+                           {"op_id", json::Quote(deletion->op_id()->str())}};
+        lock.unlock();
+        std::string bytes;
+        const auto envelope = json::Object(tools->RawProjectCall(
+            project, "run_category_delete",
+            json::Encode(args), shutdown.get_token(), &bytes));
+        if (json::Text(envelope, "reply") == "Failure") {
+          const auto failure = json::Object(json::Get(envelope, "value"));
+          throw Failure(json::Text(failure, "kind"), json::Text(failure, "diagnostic"));
+        }
+        if (!bytes.empty()) {
+          const auto* reply = R::GetMessage(bytes.data())->payload_as_Reply();
+          if (const auto* result = reply->value_as_RunCategoryDeleteResult()) {
+            auto value = std::unique_ptr<R::RunCategoryDeleteResultT>(result->UnPack());
+            return wire::HostReply(request.request_id, std::move(*value));
+          }
+
+        }
+        throw Failure("unavailable", "Unexpected project history reply");
+      }
       case H::RequestPayload::ProjectOperateRequest: {
         Human(human);
         const auto operation = std::unique_ptr<H::ProjectOperateRequestT>(
@@ -916,7 +964,8 @@ auto Service::Attach(TransportServer* server, TransportServer* host_server)
       },
       host::WebHome{state_->options.environment.tsugumid,
                     state_->options.environment.worker,
-                    state_->options.environment.sdk, state_->options.demos_dir,
+                    state_->options.environment.nix_dir,
+                    state_->options.demos_dir,
                     !state_->options.vm.binary.empty()});
 }
 auto Service::web() -> host::WebPages& { return *state_->web; }

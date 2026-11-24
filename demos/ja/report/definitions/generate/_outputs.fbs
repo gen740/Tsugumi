@@ -1,5 +1,5 @@
-attribute "tsugumi";
+include "tsugumi/artifact.fbs";
+
 namespace report;
-table CsvFile { value:string; }
-table Outputs { csv:CsvFile (required, tsugumi: "file"); }
+table Outputs { csv:tsugumi.Artifact (required); }
 root_type Outputs;

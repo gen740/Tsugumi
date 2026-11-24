@@ -1,21 +1,8 @@
 {
   "type": "code",
-  "language": "julia",
   "inputs": [
     {
       "name": "scenario"
-    }
-  ],
-  "params": [
-    {
-      "name": "brute_hours",
-      "type": "uint64",
-      "data": 10
-    },
-    {
-      "name": "brute_from_hour",
-      "type": "uint64",
-      "data": 12
     }
   ]
 }

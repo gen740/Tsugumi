@@ -1,37 +1,24 @@
 """Regressions exercised through public execution and history requests."""
 
-import pytest
-
-from harness.fixtures import worker_project
+from harness.fixtures import add_worker, worker_project
 from harness.observations import decode_scalar, read_output
-from harness.scenario import FILE_OUTPUT, STRING_OUTPUT, Project, run, wait_run
+from harness.scenario import FILE_OUTPUT, Project, run, wait_run
+from tsugumi_client import path
 from Tsugumi.Data.RunState import RunState
 
 
-def test_changed_shell_steps_are_used_on_the_next_run(project, core_factory):
-    """Changing a Card's shell steps changes what its next run executes."""
-    client = core_factory(mocked_builds=True).connect()
-    body = 'printf \'{"out":{"value":"%s"}}\' "${MARK:-missing}" > "$TSUGUMI_OUTPUT"'
-    definition = {"type": "code", "language": "bash", "sandbox": False, "reuseWorker": True, "recordIO": True}
-    graph = Project(project).card("work", definition, outputs=STRING_OUTPUT,
-                                 manifest={"run": {"bash": body}, "preRun": "export MARK=old | cat", "postRun": "true"})
-    graph.save(client)
-    first = run(client)
-    # A broken baseline must fail, even while the changed-script bug is expected.
-    if wait_run(client, first).state != RunState.succeeded:
-        pytest.fail("the original shell steps did not complete")
-    try:
-        first_value = decode_scalar(read_output(client, first))
-    except AssertionError as error:
-        pytest.fail(f"the original output could not be read: {error}")
-    if first_value != "missing":
-        pytest.fail(f"the original shell steps returned {first_value!r}, expected 'missing'")
-
-    graph.card("work", definition, outputs=STRING_OUTPUT,
-               manifest={"run": {"bash": body}, "preRun": "export MARK=old ", "postRun": " cat|true"}).save(client)
-    second = run(client)
-    assert wait_run(client, second).state == RunState.succeeded
-    assert decode_scalar(read_output(client, second)) == "old"
+def test_changed_card_package_replaces_a_resident_worker(project, core_factory, tmp_path):
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
+    graph = Project(project)
+    for name in ("original", "updated"):
+        add_worker(graph, "work", tmp_path / name, [
+            {"op": "output", "port": "out", "type": "string", "value": name},
+        ], reuseWorker=True).save(client)
+        run_id = run(client)
+        assert wait_run(client, run_id).state == RunState.succeeded
+        assert decode_scalar(read_output(client, run_id)) == name
+        record, = client.call("RunInvocationsRequest", runId=run_id, card=path("work")).records
+        assert not record.workerReused
 
 
 def test_invalid_artifact_is_a_run_failure_not_a_service_crash(project, core_factory, tmp_path):
@@ -39,10 +26,9 @@ def test_invalid_artifact_is_a_run_failure_not_a_service_crash(project, core_fac
     daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     worker_project(client, project, tmp_path, [
-        {"op": "directory", "port": "doc", "path": "real", "files": {"file.txt": "kept"}},
-        {"op": "symlink", "path": "alias", "target": "real"},
-        {"op": "file", "port": "doc", "path": "alias/file.txt", "text": "kept"},
-    ], outputs=FILE_OUTPUT, retainArtifact=True, artifactOutput="doc")
+        {"op": "file", "port": "doc", "path": "data", "text": "kept"},
+        {"op": "artifact_symlink", "name": "link", "target": "data"},
+    ], outputs=FILE_OUTPUT)
 
     run_id = run(client)
     assert wait_run(client, run_id).state == RunState.failed

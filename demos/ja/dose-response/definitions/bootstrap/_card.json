@@ -1,24 +1,11 @@
 {
   "type": "code",
-  "language": "python",
   "inputs": [
     {
       "name": "plate"
     },
     {
       "name": "fit"
-    }
-  ],
-  "params": [
-    {
-      "name": "n_boot",
-      "type": "uint64",
-      "data": 500
-    },
-    {
-      "name": "seed",
-      "type": "uint64",
-      "data": 7
     }
   ]
 }

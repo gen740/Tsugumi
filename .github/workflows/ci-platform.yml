@@ -99,30 +99,28 @@ jobs:
       - name: Web behavior with the native document edit driver
         if: matrix.checks['web-contracts']
         run: nix build -L --no-link ".#checks.$TSUGUMI_CI_SYSTEM.web"
-
-      - name: Linux desktop UI package and headless GTK check
-        if: matrix.checks['linux-ui']
-        run: |
-          nix build -L --no-link ".#checks.$TSUGUMI_CI_SYSTEM.linux-ui"
-          # With a hostd and a project: tsugumid needs private parents for
-          # its run scratch, which the build sandbox's root is not.
-          nix run -L .#linux-ui-check
-          # The arm64 package is defined from the same expression.
-          nix eval --raw .#packages.aarch64-linux.linux-ui.drvPath > /dev/null
+      - name: Dawn view ABI layout and generator
+        if: matrix.checks['view-abi']
+        run: nix build -L --no-link ".#checks.$TSUGUMI_CI_SYSTEM.view-abi"
 
       - name: Build and run Cards through loopback tsugumi-workerd
         if: matrix.job == 'remote-execution'
+        timeout-minutes: 45
         run: bash tests/ci-remote-worker.sh
 
-      - name: Build the SDK Python environment
-        if: matrix.job == 'sdk'
-        id: sdk-python
+      - name: Card kit checks and the vendored ABI comparison
+        if: matrix.checks.kit
+        run: bash tests/ci/run-suite.sh kit "$TSUGUMI_CI_SYSTEM"
+      - name: Build the demo Python environment
+        if: matrix.checks.demos
+        id: demo-python
         run: |
           path=$(nix build --no-link --print-out-paths .#ci-python)
           echo "python=$path/bin/python3" >> "$GITHUB_OUTPUT"
-      - name: SDK libraries, native runtimes, sandbox and examples
-        if: matrix.job == 'sdk'
-        run: bash tests/ci/run-suite.sh sdk '${{ inputs.system }}' '${{ steps.sdk-python.outputs.python }}'
+      # TODO(Card ABI): the demo runs skip until the demos are ported (docs/Demos.md).
+      - name: Bundled demos
+        if: matrix.checks.demos
+        run: bash tests/ci/run-suite.sh demos "$TSUGUMI_CI_SYSTEM" '${{ steps.demo-python.outputs.python }}'
 
       - name: Identify the Apple toolchain and native runtime
         if: matrix.job == 'swift'

@@ -21,7 +21,7 @@ wait 2
 capture card-source spectrum
 close spectrum
 wait 1
-chatsend $demo Show me on the screen what the spectrum Card shows
+chatsend $demo Show me the spectrum Card on the screen
 waitchat 5
 wait 3
 capture guide

@@ -2,6 +2,7 @@
 #pragma once
 #include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <utility>
@@ -16,7 +17,6 @@ using CardState = Tsugumi::Data::CardState;
 using Phase = Tsugumi::Data::Phase;
 using StageOutcome = Tsugumi::Data::StageOutcome;
 using LogStream = Tsugumi::Data::LogStream;
-using PortKind = Tsugumi::Data::PortKind;
 using RemoteExecutionState = Tsugumi::Data::RemoteExecutionState;
 
 int64_t now_ms();
@@ -53,27 +53,29 @@ class Failed : public std::exception {
   FailureData failure;
 };
 
-// A value travelling on a port. `type` is the port message type.
-struct Value {
-  std::string name;  // port name
-  PortKind kind = PortKind::FlatBuffer;
-  types::TypeRef type;
-  std::string bytes;
-  std::optional<std::string> artifact_id;
+// Artifact ids in C++ are binary (exactly 16 bytes). Paths travel only
+// in private grant messages.
+using ArtifactKey = std::string;
+struct ArtifactGrant {
+  ArtifactKey id;
+  std::string path;
+  // Core-side holding layout used to stage the grant on a remote worker.
+  std::filesystem::path location = {};
+  // On the remote staging wire, the original path of an Input Card artifact.
+  std::string store_path = {};
 };
 
-auto with_path(const Value& value, const std::string& path) -> Value;
-auto path_value(const Value& value) -> std::optional<std::string>;
-
-// The core owns only the address and revision. Presentation remains an opaque
-// verified FlatBuffer, including any shared tables and strings inside it.
-struct DisplayData {
-  CardPath card;
-  std::string run_id;
-  uint64_t invocation = 0;
-  uint64_t revision = 0;
+struct Value {
+  std::string name;
+  types::TypeRef type;
   std::string bytes;
-  size_t root_offset = 0;
+  std::string schema;
+  std::vector<ArtifactKey> artifacts = {};
+};
+
+struct WorkerDisplayData {
+  std::string view;
+  std::string bytes;
 };
 
 }  // namespace tsugumi

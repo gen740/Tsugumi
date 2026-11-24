@@ -1,10 +1,12 @@
 #include "server.hh"
 
 #include "tsugumi/protocol/trace_codec.hh"
+#include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/value_wire.hh"
 namespace tsugumi {
 auto ProjectEndpoint(ServerOptions& options) -> void {
   namespace R = Tsugumi::RPC;
+  options.limits.max_frame_bytes = workerd::kMaxWorkerFrameBytes;
   options.subprotocol = "tsugumi.rpc.v1";
   options.trace_endpoint = "project core";
   options.trace_codec = &trace::kFlatBufferCodec;
@@ -22,10 +24,18 @@ auto ProjectEndpoint(ServerOptions& options) -> void {
         r->value_type() > R::RequestPayload::MAX)
       return std::nullopt;
     const auto* hello = r->value_as_SessionHelloRequest();
+    // Neither trace records the display path: view visibility and view file
+    // reads stay out of it like the live display notifications, and their
+    // replies follow the request.
+    const auto type = r->value_type();
+    const bool display = type == R::RequestPayload::ViewSetVisibleRequest ||
+                         type == R::RequestPayload::CardViewReadRequest ||
+                         type == R::RequestPayload::ViewSendRequest ||
+                         type == R::RequestPayload::ViewCreditRequest;
     return FrameInfo{
         *m->request_id(), hello != nullptr,
         hello ? trace::ClientName(hello->client()) : nullptr,
-        r->value_type() != R::RequestPayload::CoreTraceRequest &&
+        !display && type != R::RequestPayload::CoreTraceRequest &&
             (!hello || hello->client() != Tsugumi::Trace::Client::Trace)};
   };
   options.codec.completed = [](std::string_view bytes) {

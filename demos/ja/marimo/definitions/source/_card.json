@@ -1,16 +1,8 @@
 {
   "type": "code",
-  "language": "bash",
   "inputs": [
     {
       "name": "start"
-    }
-  ],
-  "params": [
-    {
-      "name": "measurement",
-      "type": "double",
-      "data": 7
     }
   ]
 }

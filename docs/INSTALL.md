@@ -2,6 +2,8 @@
 
 ## Getting it
 
+> **Before v1.0.0, any release may break compatibility.** Project files, the Card ABI, the SDKs and settings can change from one release to the next, without migration. Pin the version you use, and expect to update your projects when you upgrade.
+
 **It runs on macOS, Linux and Windows** (Windows through WSL2). The desktop app is for Apple silicon Macs with macOS 26 or later only; on Linux and Windows, use the Web UI of the [`tsugumi` command](#using-it-in-the-browser-the-tsugumi-command).
 
 Preparing the runtime the first time (assembling Tsugumi inside the VM and fetching the Cards' dependencies) needs an internet connection.
@@ -93,7 +95,7 @@ open -g dist/Tsugumi.app
 
 ### Each stage in detail
 
-Enter the development shell and build the core (tsugumid) and the SDK:
+Enter the development shell and build the core (tsugumid, the worker and hostd). Card builds use the SDK source from their project's [Nix search path](features.md#project-nix-search-path).
 
 ```bash
 nix develop

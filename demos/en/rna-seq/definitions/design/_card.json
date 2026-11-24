@@ -1,21 +1,11 @@
 {
   "type": "code",
-  "language": "r",
   "inputs": [
     {
       "name": "counts"
     },
     {
       "name": "results"
-    }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "design",
-  "params": [
-    {
-      "name": "fdr",
-      "type": "double",
-      "data": 0.05
     }
   ]
 }

@@ -8,6 +8,7 @@ import pytest
 
 from harness.proxy import ReplyProxy
 from tsugumi_client import RpcFailure, change, make, new_id, text
+from harness.document import layout_bytes
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.OperationState import OperationState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
@@ -150,7 +151,7 @@ def test_restart_recovers_the_whole_save_and_its_receipt(core_factory, fault):
     snapshot = client.call("ProjectInspectRequest")
     request = save_request(snapshot, "recovered")
     layout = {"cards": {}}
-    request["changes"].append(change("SetLayout", json=json.dumps(layout)))
+    request["changes"].append(change("SetLayout", layout=layout_bytes(layout)))
     request_id = client.send("ProjectSaveRequest", make("ProjectSaveRequest", **request))
     with pytest.raises((ConnectionError, TimeoutError)):
         client.wait_reply(request_id)
@@ -160,7 +161,7 @@ def test_restart_recovers_the_whole_save_and_its_receipt(core_factory, fault):
     current = recovered.call("ProjectInspectRequest")
     assert current.rev == snapshot.rev + 1
     assert json.loads(text(current.projectJson))["name"] == "recovered"
-    assert json.loads(text(current.layoutJson)) == layout
+    assert bytes(current.layout) == layout_bytes(layout)
     operation = recovered.call("OperationGetRequest", opId=request["opId"])
     assert operation.state == OperationState.completed
     assert operation.receipt.resultType == ReceiptValue.SaveResult

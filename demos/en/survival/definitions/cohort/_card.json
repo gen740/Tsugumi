@@ -1,28 +1,8 @@
 {
   "type": "code",
-  "language": "r",
   "inputs": [
     {
       "name": "lung"
-    }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "cohort",
-  "params": [
-    {
-      "name": "age_min",
-      "type": "uint64",
-      "data": 0
-    },
-    {
-      "name": "age_max",
-      "type": "uint64",
-      "data": 120
-    },
-    {
-      "name": "ecog_max",
-      "type": "uint64",
-      "data": 3
     }
   ]
 }

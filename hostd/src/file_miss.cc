@@ -29,7 +29,9 @@ auto DescribeFileMiss(const std::string& path, const json::Members& snapshot,
       if (json::Text(definition, "id") != id) continue;
       card = json::Text(definition, "card_json");
       for (const auto& [key, file] :
-           {std::pair{"card_json", "_card.json"}, {"meta_json", "_meta.json"}})
+           {std::pair{"card_json", "_card.json"},
+            {"readme", "README.md"},
+            {"comments_json", "_comments.json"}})
         if (!json::Text(definition, key).empty()) files.insert(file);
     }
   }
@@ -67,7 +69,7 @@ auto DescribeFileMiss(const std::string& path, const json::Members& snapshot,
              "; project_inspect reports resolved port types in "
              "resolution[].inputs/outputs"
              " (root_type and schema_bfbs)";
-      if (kind == "branch" || kind == "fork" || kind == "merge" ||
+      if (kind == "merge" ||
           kind == "collect")
         out += "; their types follow the connected upstream ports";
     }

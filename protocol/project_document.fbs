@@ -1,0 +1,66 @@
+// tsugumi.json: a project's canvas, Nix search-path declarations and settings.
+//
+// Saved as FlatBuffers JSON text (two-space indent, fields in this order) and
+// read with the FlatBuffers parser, which is the document's schema check. The
+// core checks ids, references and search-path names.
+
+namespace Tsugumi.Document;
+
+table Endpoint {
+  card:string (required);
+  port:string (required);
+}
+
+table Connection {
+  from:Endpoint (required);
+  to:Endpoint (required);
+}
+
+/// A Card on the canvas. Its id is its name and the folder of its own
+/// definition (definitions/<id>/), which holds every setting.
+table CardInstance {
+  id:string (required);
+}
+
+table Graph {
+  cards:[CardInstance] (required);
+  connections:[Connection] (required);
+}
+
+/// One outer port of a project used as a Card in Card: its name and the port
+/// of one of its Cards.
+table BoundaryPort {
+  name:string (required);
+  card:string (required);
+  port:string (required);
+}
+
+table Boundary {
+  inputs:[BoundaryPort];
+  outputs:[BoundaryPort];
+}
+
+table NixPathEntry {
+  name:string (required);
+  url:string (required);
+}
+
+table Project {
+  name:string;
+  nixPath:[NixPathEntry];
+  /// Additional literal project-relative files or folders kept in versions.
+  versionPaths:[string];
+  /// Host policy, carried without affecting execution.
+  agentExclude:[string];
+  recordLogs:bool = null;
+  recordIO:bool = null;
+  logLimitBytes:ulong = null;
+  outputLimitBytes:ulong = null;
+  outputLimitEntries:ulong = null;
+  canvas:Graph (required);
+  /// The ports this project has as a Card in Card (an external of another
+  /// project).
+  boundary:Boundary;
+}
+
+root_type Project;

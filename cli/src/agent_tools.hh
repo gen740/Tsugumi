@@ -14,7 +14,7 @@
 #include <utility>
 #include <vector>
 
-#include "tsugumi/cli/launch.hh"
+#include "launch.hh"
 
 namespace tsugumi::cli {
 

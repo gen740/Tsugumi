@@ -496,6 +496,17 @@
       "field": "プログラミングと可視化"
     },
     {
+      "id": "point-cloud",
+      "path": "point-cloud",
+      "title": "インタラクティブな点群",
+      "description": "WebGPU で描画した40万点のトーラス結び目を回転・拡大して観察する。",
+      "tags": [
+        "C++",
+        "WebGPU"
+      ],
+      "field": "プログラミングと可視化"
+    },
+    {
       "id": "marimo",
       "path": "marimo",
       "title": "marimo ノートブック → 型付き結果",

@@ -27,7 +27,7 @@ enum Stage: Int, CaseIterable, Identifiable {
   var label: String {
     switch self {
     case .waiting: return String(localized: "入力待ち")
-    case .prepare: return String(localized: "SDK 準備")
+    case .prepare: return String(localized: "スキーマ生成")
     case .evaluate: return String(localized: "Nix 評価")
     case .build: return "build"
     case .execute: return "run"
@@ -41,7 +41,7 @@ enum Stage: Int, CaseIterable, Identifiable {
   var activeLabel: String {
     switch self {
     case .waiting: return String(localized: "入力待ち")
-    case .prepare: return String(localized: "SDK 準備中")
+    case .prepare: return String(localized: "スキーマ生成中")
     case .evaluate: return String(localized: "Nix 評価中")
     case .build: return String(localized: "build 中")
     case .execute: return String(localized: "実行中")
@@ -99,7 +99,7 @@ enum Stage: Int, CaseIterable, Identifiable {
     }
   }
 
-  /// Stages shown for a Card, in order: build (SDK preparation, Nix
+  /// Stages shown for a Card, in order: build (schema generation, Nix
   /// evaluation and build), run, validate (output check and saving).
   /// Builtin Cards do not build.
   static func applicable(code: Bool) -> [Stage] {
@@ -173,8 +173,6 @@ struct StageProgress: Equatable {
 struct PortData: Hashable {
   var name: String
   var typeName: String?
-  var optional = false
-  var note: String?
 }
 
 struct ParamData: Hashable {
@@ -183,7 +181,7 @@ struct ParamData: Hashable {
   var value: String
 }
 
-/// What the user and the Agent write about a Card (_meta.json), and the record
+/// What the user and the Agent write about a Card (_comments.json), and the record
 /// of who did what ("agent" or "user"; nil when not recorded).
 struct CardComment: Equatable, Identifiable {
   var id: String
@@ -203,7 +201,7 @@ struct CardComment: Equatable, Identifiable {
       guard let id = c["id"]?.string, let text = c["text"]?.string, !id.isEmpty else { return nil }
       let line = c["resolution"]?.string ?? ""
       return CardComment(id: id, text: text, resolved: c["resolved"]?.bool ?? false, finding: c["finding"]?.bool ?? false, resolution: line.isEmpty ? nil : line,
-                         author: c["author"]?.string, editedBy: c["editedBy"]?.string, stateBy: c["stateBy"]?.string,
+                         author: c["author"]?.string, editedBy: c["edited_by"]?.string, stateBy: c["state_by"]?.string,
                          cards: c["cards"]?.array?.compactMap(\.string) ?? [])
     }
   }
@@ -240,7 +238,6 @@ struct CardNodeData: Equatable {
   var outputs: [PortData]
   var params: [ParamData] = []
   var result: String?
-  var resultFailed = false
   var state: Tsugumi_Data_CardState?
   var executionList = false
   var stage: StageProgress?
@@ -253,8 +250,6 @@ struct CardNodeData: Equatable {
   var errors: [String] = []
   var warnings: [String] = []
   var collapsed = false
-  /// The Card's result has a frame on the canvas (display anchor).
-  var hasDisplay = false
   /// What it may do beyond computing (network, no sandbox, Mac folders).
   var permissions: [CardPermission] = []
   /// A Draft being written on the canvas: the Card opens up for it.
@@ -267,7 +262,7 @@ struct CardNodeData: Equatable {
   var openComments = 0
 
   var isDraft: Bool { kind == .draft }
-  var isRouting: Bool { kind == .branch || kind == .fork || kind == .merge || kind == .collect }
+  var isRouting: Bool { kind == .merge || kind == .collect }
 
   /// "Invocation #3 · Succeeded" and the like; nil before the first invocation.
   var runText: String? {
@@ -294,13 +289,11 @@ struct CardNodeData: Equatable {
 
 /// Outline of a Card on the canvas.
 enum CardShape {
-  case card, branch, fork, merge, collect, start
+  case card, merge, collect, start
 
   init(_ kind: CardKind) {
     switch kind {
     case .trigger: self = .start
-    case .branch: self = .branch
-    case .fork: self = .fork
     case .merge: self = .merge
     case .collect: self = .collect
     default: self = .card
@@ -313,7 +306,7 @@ enum CardShape {
 /// land one grid apart on the two.
 func snapToGrid(_ v: CGFloat, _ grid: CGFloat) -> CGFloat { ((v / grid + 0.5).rounded(.down)) * grid }
 
-// Presentation from the document and layout.json: each UI computes the shape
+// Presentation from the document and the layout: each UI computes the shape
 // itself rather than asking hostd (port-grid-contract.json keeps them alike).
 /// Size, outline and port positions of a Card (world units, relative to its
 /// top-left corner). Shared by drawing, wires, the selection and hit-tests.
@@ -375,7 +368,7 @@ struct CardGeometry {
     summary = d.summary != nil && !d.isRouting && d.kind != .trigger && !d.isDraft
     params = d.params.count
     // Rows are reserved by kind, so a run never makes a Card grow or shrink.
-    result = d.hasDisplay
+    result = d.result != nil
     stages = d.kind == .code
     self.flow = flow
     shape = CardShape(d.kind)
@@ -388,15 +381,6 @@ struct CardGeometry {
   private var routingSize: CGSize {
     switch shape {
     // Small marks: what they do is plain from the shape (details on hover).
-    case .branch:
-      // Its ports are at a quarter and three quarters of this.
-      if let grid { return CGSize(width: 4 * Self.rowPitch(grid), height: 48) }
-      return CGSize(width: 60, height: 48)
-    case .fork:
-      // A Branch's diamond, widened by its outputs: two of them sit where a Branch's a and b do.
-      let n = CGFloat(max(outputs.count, 1))
-      let width = grid.map { 2 * n * Self.rowPitch($0) } ?? max(60, 30 * n)
-      return CGSize(width: width, height: max(48, width * 0.4))
     case .merge: return CGSize(width: fanWidth(inputs.count), height: fanLength(inputs.count))
     case .collect: return CGSize(width: grid.map { Self.gridLength(atLeast: 64, $0) } ?? 64, height: 44)
     // The start Card: its name and a run button, nothing more.
@@ -541,7 +525,7 @@ struct CardGeometry {
     return CGRect(x: 30, y: 0, width: s.width - 60, height: s.height)
   }
 
-  /// The outline itself (Card box, diamond, fan or funnel) inside `r`.
+  /// The outline itself (Card box, fan or funnel) inside `r`.
   /// `cornerScale` shrinks the corners that stay the same at every zoom, for a
   /// drawing much smaller than the canvas.
   func outline(in r: CGRect, cornerScale: CGFloat = 1) -> Path {
@@ -550,18 +534,6 @@ struct CardGeometry {
       return Path(roundedRect: r, cornerRadius: 9 * cornerScale)
     case .start:
       return Path(roundedRect: r, cornerRadius: r.height / 2)
-    case .branch:
-      return roundedPolygon([CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.midY),
-                             CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)], radius: 6 * cornerScale)
-    case .fork:
-      // A diamond whose corners along the flow stay sharp (listed twice): value
-      // is on the upstream one, and an odd number of outputs puts one on the other.
-      // The side corners shrink with the zoom, as `r` does.
-      let radius = 6 * (flow == .topToBottom ? r.height : r.width) / routingSize.height
-      let top = CGPoint(x: r.midX, y: r.minY), right = CGPoint(x: r.maxX, y: r.midY)
-      let bottom = CGPoint(x: r.midX, y: r.maxY), left = CGPoint(x: r.minX, y: r.midY)
-      return flow == .topToBottom ? roundedPolygon([top, top, right, bottom, bottom, left], radius: radius)
-                                  : roundedPolygon([top, right, right, bottom, left, left], radius: radius)
     case .collect:
       func point(_ across: CGFloat, _ along: CGFloat) -> CGPoint {
         flow == .topToBottom ? CGPoint(x: r.minX + r.width * across, y: r.minY + r.height * along)
@@ -597,7 +569,7 @@ struct CardGeometry {
   /// range at a fixed y).
   private func edgeSpan(input: Bool) -> (start: CGFloat, width: CGFloat, at: CGFloat) {
     switch shape {
-    case .card, .branch, .fork, .start:
+    case .card, .start:
       let s = shape == .card ? CGSize(width: cardWidth, height: collapsed ? Self.header : 0) : routingSize
       return (0, s.width, 0)
     case .merge, .collect:
@@ -611,7 +583,6 @@ struct CardGeometry {
   func spacing(input: Bool) -> CGFloat {
     let list = input ? inputs : outputs
     guard !list.isEmpty else { return 0 }
-    if shape == .branch { return routingSize.width / 2 - 8 }
     let span = edgeSpan(input: input)
     // A single label may be as wide as the Card; several share the edge
     // without overlapping their neighbours.
@@ -629,9 +600,8 @@ struct CardGeometry {
     if draft { return false }
     if shape == .card && collapsed { return false }
     if shape == .start { return false }
-    // Routing marks name their ports on hover; a branch marks only T / F.
-    if shape == .merge || shape == .collect || shape == .fork { return false }
-    if shape == .branch { return true }
+    // Routing marks name their ports on hover.
+    if shape == .merge || shape == .collect { return false }
     return spacing(input: input) >= Self.minLabel
   }
 
@@ -659,22 +629,6 @@ struct CardGeometry {
     if shape == .start {
       // Its one output, in the middle of the downstream edge.
       return flow == .topToBottom ? CGPoint(x: r.midX, y: r.maxY) : CGPoint(x: r.maxX, y: r.midY)
-    }
-    if shape == .branch {
-      // value / condition on the two upper edges, a / b on the two lower edges.
-      let first = index == 0
-      if flow == .topToBottom {
-        return CGPoint(x: r.minX + r.width * (first ? 0.25 : 0.75), y: r.minY + r.height * (output ? 0.75 : 0.25))
-      }
-      return CGPoint(x: r.minX + r.width * (output ? 0.75 : 0.25), y: r.minY + r.height * (first ? 0.25 : 0.75))
-    }
-    if shape == .fork {
-      // value on the upstream corner; the outputs spread over the two downstream
-      // edges, at the middles of their shares of the width (on the grid: odd rows).
-      let across = output ? (2 * i + 1) / (2 * n) : 0.5
-      let along = output ? 1 - abs(across - 0.5) : 0
-      return flow == .topToBottom ? CGPoint(x: r.minX + r.width * across, y: r.minY + r.height * along)
-                                  : CGPoint(x: r.minX + r.width * along, y: r.minY + r.height * across)
     }
     switch flow {
     case .topToBottom:
@@ -860,7 +814,6 @@ struct CanvasPanHost<Content: View>: NSViewRepresentable {
 
   static func dismantleNSView(_ view: Container, coordinator: ()) {
     view.settle?.cancel()
-    ModuleThumbnails.shared.viewports[ObjectIdentifier(view)] = nil
   }
 
   func updateNSView(_ view: Container, context: Context) {
@@ -875,9 +828,6 @@ struct CanvasPanHost<Content: View>: NSViewRepresentable {
     let c = session.cameras[scope] ?? (40, 40, 1)
     view.now = CanvasCamera(x: c.x, y: c.y, zoom: c.zoom)
     view.place()
-    // What is in view, for the pictures of displays to be made in that order.
-    ModuleThumbnails.shared.viewports[ObjectIdentifier(view)] =
-      CGRect(x: -c.x / c.zoom, y: -c.y / c.zoom, width: view.bounds.width / c.zoom, height: view.bounds.height / c.zoom)
     view.settle?.cancel()
     guard view.now != view.base else { return }
     let (scale, dx, dy) = view.shift
@@ -958,10 +908,7 @@ extension View {
 
 /// Writing a Draft on its Card: what is typed so far, where it goes, and how it ends.
 struct DraftEdit {
-  let name: Binding<String>
   let content: Binding<String>
-  /// Why the Card cannot take the name typed so far.
-  let nameProblem: String?
   /// Done, the focus having moved elsewhere (false) or by the keyboard (true).
   let onDone: (_ byKey: Bool) -> Void
 }
@@ -988,7 +935,7 @@ struct CardNodeView: View {
   /// The start Card's button: runs the workflow from it (nil: not offered).
   var onRun: (() -> Void)?
   var draftEdit: DraftEdit?
-  private enum DraftField { case name, content }
+  private enum DraftField { case content }
   @FocusState private var draftField: DraftField?
 
   private var edit: DraftEdit? { data.draftEditing ? draftEdit : nil }
@@ -1138,10 +1085,6 @@ struct CardNodeView: View {
     if let edit {
       // No box: the text stays where it is on the Card (the editor insets its text by 5).
       VStack(alignment: .leading, spacing: s(2)) {
-        if let problem = edit.nameProblem {
-          Text(problem).font(font(9.5)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 5)
-        }
         ZStack(alignment: .topLeading) {
           if edit.content.wrappedValue.isEmpty {
             Text("何を受け取り、何を出し、どう処理するかを書きます").font(font(11)).foregroundStyle(.tertiary)
@@ -1185,17 +1128,8 @@ struct CardNodeView: View {
   private var header: some View {
     HStack(spacing: s(6)) {
       Image(systemName: data.symbol ?? data.kind.symbol).font(font(12)).foregroundStyle(.secondary).frame(width: s(15))
-      if let edit {
-        TextField("名前", text: edit.name)
-          .textFieldStyle(.plain).font(font(12, .semibold))
-          .focused($draftField, equals: .name)
-          .onSubmit { if edit.nameProblem == nil { draftField = .content } }
-          .onExitCommand { edit.onDone(true) }
-          .accessibilityLabel("Draft の名前")
-      } else {
-        Text(verbatim: data.untitled ? data.summary?.split(separator: "\n").first.map(String.init) ?? data.title : data.title)
-          .font(font(12, .semibold)).lineLimit(1).truncationMode(.tail)
-      }
+      Text(verbatim: data.untitled && edit == nil ? data.summary?.split(separator: "\n").first.map(String.init) ?? data.title : data.title)
+        .font(font(12, .semibold)).lineLimit(1).truncationMode(.tail)
       if edit == nil { Spacer(minLength: s(2)) }
       ForEach(data.permissions, id: \.rawValue) { p in
         Image(systemName: p.symbol).font(font(10)).foregroundStyle(p == .sandboxOff ? .orange : .secondary).help(p.label)
@@ -1261,7 +1195,7 @@ struct CardNodeView: View {
     .frame(width: outline.width, height: outline.height)
   }
 
-  // MARK: Routing Card (branch, merge)
+  // MARK: Routing Card
 
   /// Only the kind's icon, coloured by the state; name and details on hover.
   private func routingBody(_ g: CardGeometry, outline: CGRect) -> some View {
@@ -1301,13 +1235,7 @@ struct CardNodeView: View {
   private func label(_ p: PortData, _ g: CardGeometry, output: Bool) -> some View {
     let pt = g.port(p.name, output: output)
     let w = g.spacing(input: !output)
-    var text = p.name
-    if data.kind == .branch {
-      // Which output is true / false, and which input is the boolean condition.
-      if output { text = p.name == "a" ? "a (T)" : p.name == "b" ? "b (F)" : p.name }
-      else if p.name == "condition" { text = "bool" }
-    }
-    let label = Text(text).font(font(9.5)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+    let label = Text(p.name).font(font(9.5)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
     if g.shape == .card {
       // Inside an ordinary Card: below its input, above its output.
       let half = CardGeometry.portRow / 2 + 0.5
@@ -1315,8 +1243,8 @@ struct CardNodeView: View {
     }
     // Beside the port of a routing Card, so the wire (vertical at the port)
     // never runs through the name: right of it, or left on the left half.
-    let left = pt.x < g.outlineRect.midX - 1 && (data.kind == .branch || g.spacing(input: !output) < 70)
-    let lw: CGFloat = data.kind == .branch ? 40 : max(CardGeometry.minLabel, min(w, 80))
+    let left = pt.x < g.outlineRect.midX - 1 && g.spacing(input: !output) < 70
+    let lw: CGFloat = max(CardGeometry.minLabel, min(w, 80))
     let dy: CGFloat = output ? CardGeometry.portRow / 2 : -CardGeometry.portRow / 2
     let x = left ? pt.x - 6 - lw / 2 : pt.x + 6 + lw / 2
     return AnyView(label.frame(width: s(lw), alignment: left ? .trailing : .leading)
@@ -1332,13 +1260,10 @@ struct CardNodeView: View {
     return ZStack(alignment: .topLeading) {
       ForEach(data.inputs, id: \.name) { p in
         let pt = g.port(p.name, output: false)
-        // A branch's condition is a boolean: a small diamond instead of a square.
-        let condition = data.kind == .branch && p.name == "condition"
         RoundedRectangle(cornerRadius: max(1, s(1.5)))
-          .fill(condition ? Color.green.opacity(0.35) : Color(nsColor: .controlBackgroundColor))
-          .overlay(RoundedRectangle(cornerRadius: max(1, s(1.5))).strokeBorder(condition ? Color.green : Color.secondary, lineWidth: 1.4))
+          .fill(Color(nsColor: .controlBackgroundColor))
+          .overlay(RoundedRectangle(cornerRadius: max(1, s(1.5))).strokeBorder(.secondary, lineWidth: 1.4))
           .frame(width: mark, height: mark)
-          .rotationEffect(.degrees(condition ? 45 : 0))
           .frame(width: hit, height: hit)
           .contentShape(Rectangle())
           .position(x: s(pt.x), y: s(pt.y))
@@ -1381,15 +1306,7 @@ struct CardNodeView: View {
 
   private func portHelp(_ p: PortData, output: Bool) -> String {
     var s = (output ? String(localized: "出力 ") : String(localized: "入力 ")) + p.name
-    if data.kind == .branch {
-      if p.name == "condition" { s += String(localized: "（bool: true なら a、false なら b へ value を送る）") }
-      if p.name == "a" { s += String(localized: "（condition が true のとき）") }
-      if p.name == "b" { s += String(localized: "（condition が false のとき）") }
-    }
-    if data.kind == .fork && output { s += String(localized: "（value をそのまま送る）") }
     if let t = p.typeName { s += " : \(t)" }
-    s += p.optional ? String(localized: "（省略可）") : String(localized: "（必須）")
-    if let n = p.note, !n.isEmpty { s += "\n" + n }
     return s
   }
 
@@ -1580,7 +1497,7 @@ struct ParamFieldView: View {
 
 /// A wire as drawn (screen units).
 struct WireDraw {
-  enum Style { case normal, carried, active, selected, display }
+  enum Style { case normal, carried, active, selected }
   var path: Path
   var style: Style
   /// A wire to or from a Draft is dotted, whatever its style.
@@ -1612,7 +1529,7 @@ private enum WireCost {
 }
 
 // Drawn routes are each UI's own work. hostd's route_wires is for Untangle,
-// which edits layout.json, not for drawing.
+// which edits the layout, not for drawing.
 /// Routes wires in world units around the Cards. A wire going along the flow
 /// whose curve touches no Card stays that curve. Any other wire takes the
 /// cheapest path on a grid of lines beside the Cards: by length, bends and
@@ -1660,7 +1577,7 @@ struct WireRouter {
     let (c1, c2) = controls(a, b)
     let x0 = min(a.x, b.x, c1.x, c2.x), x1 = max(a.x, b.x, c1.x, c2.x)
     let y0 = min(a.y, b.y, c1.y, c2.y), y1 = max(a.y, b.y, c1.y, c2.y)
-    // A port sits on its Card's edge: only the inside counts. A branch's port is
+    // A port sits on its Card's edge: only the inside counts. A routing port is
     // inside its box, and the wire has to get out of there anyway.
     func inside(_ o: CGRect, _ p: CGPoint) -> Bool { p.x > o.minX + 2 && p.x < o.maxX - 2 && p.y > o.minY + 2 && p.y < o.maxY - 2 }
     let near = obstacles.filter { x0 < $0.maxX && x1 > $0.minX && y0 < $0.maxY && y1 > $0.minY && !inside($0, a) && !inside($0, b) }
@@ -2077,8 +1994,6 @@ struct WireLayer: View {
                                                                              dash: wire.dotted ? dots : anyActive ? Self.dash : [], dashPhase: phase))
           case .selected:
             ctx.stroke(wire.path, with: .color(.accentColor), style: StrokeStyle(lineWidth: width(w + 1.4), lineCap: .round, lineJoin: .round, dash: wire.dotted ? Self.dotSelected : []))
-          case .display:
-            ctx.stroke(wire.path, with: .color(.purple.opacity(0.75)), style: StrokeStyle(lineWidth: max(1, w - 0.2), lineCap: .round, dash: [5, 4]))
           }
           if let count = wire.countLabel, let at = wire.countAt {
             let label = ctx.resolve(Text(verbatim: count).font(.system(size: 11, weight: .medium, design: .monospaced)))
@@ -2094,44 +2009,6 @@ struct WireLayer: View {
     }
     .allowsHitTesting(false)
   }
-}
-
-/// Path (world units) from a Card's display anchor to its output frame.
-/// The ends of the link between a Card and its result frame: on the edges
-/// that face each other (where the two are closest), each in the middle of
-/// the stretch the two share, or toward the other when they share none.
-/// Returns the points and whether the link runs across (left/right).
-func displayLinkEnds(card: CGRect, frame: CGRect) -> (a: CGPoint, b: CGPoint, horizontal: Bool) {
-  let gx = max(frame.minX - card.maxX, card.minX - frame.maxX)
-  let gy = max(frame.minY - card.maxY, card.minY - frame.maxY)
-  func clamp(_ v: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat { lo > hi ? (lo + hi) / 2 : min(max(v, lo), hi) }
-  if gx >= gy {
-    let right = frame.midX >= card.midX
-    let lo = max(card.minY, frame.minY), hi = min(card.maxY, frame.maxY)
-    let ay = lo <= hi ? (lo + hi) / 2 : clamp(frame.midY, card.minY + 10, card.maxY - 10)
-    let by = lo <= hi ? (lo + hi) / 2 : clamp(card.midY, frame.minY + 10, frame.maxY - 10)
-    return (CGPoint(x: right ? card.maxX : card.minX, y: ay), CGPoint(x: right ? frame.minX : frame.maxX, y: by), true)
-  }
-  let down = frame.midY >= card.midY
-  let lo = max(card.minX, frame.minX), hi = min(card.maxX, frame.maxX)
-  let ax = lo <= hi ? (lo + hi) / 2 : clamp(frame.midX, card.minX + 10, card.maxX - 10)
-  let bx = lo <= hi ? (lo + hi) / 2 : clamp(card.midX, frame.minX + 10, frame.maxX - 10)
-  return (CGPoint(x: ax, y: down ? card.maxY : card.minY), CGPoint(x: bx, y: down ? frame.minY : frame.maxY), false)
-}
-
-/// The link itself: a short curve leaving and entering straight.
-func displayLink(card: CGRect, frame: CGRect) -> Path {
-  let (a, b, horizontal) = displayLinkEnds(card: card, frame: frame)
-  var p = Path()
-  p.move(to: a)
-  if horizontal {
-    let dx = (b.x - a.x) / 2
-    p.addCurve(to: b, control1: CGPoint(x: a.x + dx, y: a.y), control2: CGPoint(x: b.x - dx, y: b.y))
-  } else {
-    let dy = (b.y - a.y) / 2
-    p.addCurve(to: b, control1: CGPoint(x: a.x, y: a.y + dy), control2: CGPoint(x: b.x, y: b.y - dy))
-  }
-  return p
 }
 
 // MARK: - Self-contained canvas (previews)
@@ -2323,7 +2200,7 @@ enum PreviewSamples {
     func port(_ n: String) -> PortData { PortData(name: n, typeName: "t.Number") }
     let input = CardNodeData(title: String(localized: "初期値"), kind: .input, summary: nil,
                              inputs: [port("start")], outputs: [port("value")],
-                             params: [ParamData(name: "value", type: "uint64", value: "27")],
+                             params: [ParamData(name: "value", type: "int", value: "27")],
                              state: .succeeded, invocation: 1)
     var step = CardNodeData(title: String(localized: "n / 2"), kind: .code,
                             summary: String(localized: "偶数を半分にする"), inputs: [port("number")], outputs: [port("next")],
@@ -2331,10 +2208,10 @@ enum PreviewSamples {
     step.stage = StageProgress(items: [
       .init(stage: .build, status: .reused), .init(stage: .execute, status: .running), .init(stage: .validate, status: .pending),
     ], workerReused: true)
-    let gate = CardNodeData(title: String(localized: "偶数？"), kind: .branch, summary: nil,
-                            inputs: [port("value"), port("condition")], outputs: [port("a"), port("b")])
+    let gate = CardNodeData(title: String(localized: "合流"), kind: .merge, summary: nil,
+                            inputs: [port("value"), port("next")], outputs: [port("out")])
     let out = CardNodeData(title: String(localized: "結果"), kind: .code, summary: nil,
-                           inputs: [port("in")], outputs: [], result: "[27, 82, 41, …]", state: .succeeded, invocation: 1, hasDisplay: true)
+                           inputs: [port("in")], outputs: [], state: .succeeded, invocation: 1)
     return [
       CanvasItem(id: "input", data: input, origin: CGPoint(x: 0, y: 0)),
       CanvasItem(id: "step", data: step, origin: CGPoint(x: 0, y: 150)),
@@ -2346,7 +2223,6 @@ enum PreviewSamples {
   static let wires = [
     CanvasWire(from: "input", fromPort: "value", to: "step", toPort: "number", active: true),
     CanvasWire(from: "step", fromPort: "next", to: "gate", toPort: "value"),
-    CanvasWire(from: "gate", fromPort: "a", to: "out", toPort: "in"),
-    CanvasWire(from: "gate", fromPort: "b", to: "step", toPort: "number"),
+    CanvasWire(from: "gate", fromPort: "out", to: "out", toPort: "in"),
   ]
 }

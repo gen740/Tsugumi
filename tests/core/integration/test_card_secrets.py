@@ -1,5 +1,5 @@
 """Card secrets: a Card declares names, hostd holds the values, and the Card's
-process receives them as environment variables for one invocation only.
+process receives them as environment variables at launch.
 
 The value must never reach what Tsugumi writes: the project (documents, run
 history and its WAL), derivations, run scratch, control files and the daemon's
@@ -16,8 +16,10 @@ from pathlib import Path
 import pytest
 
 from harness import remote_worker as R
-from harness.real_cards import NUM, bash, log
-from projects import card, run_and_wait, write
+from harness.observations import decode_scalar, read_output
+from harness.real_cards import log
+from test_worker_loading import native_card
+from projects import card, run_and_wait, write_nix_project as write
 from tsugumi_client import path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
@@ -58,19 +60,19 @@ def broker(monkeypatch):
             thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02})
             thread.start()
             try:
-                yield asked
+                yield asked, values
             finally:
                 server.shutdown()
                 thread.join()
 
 
 # The definition checks the value without containing it, and never prints it.
-USES_SECRET = bash(
-    'case "$database_password" in ' + PREFIX + '-*) ;; *) exit 3 ;; esac; '
-    f'test "${{#database_password}}" = {len(SENTINEL)} || exit 5; '
-    'test "$FROM_PRE" = ready || exit 4; '
-    'printf \'{"out":{"value":%d}}\' "${#database_password}" > "$TSUGUMI_OUTPUT"',
-    pre="export FROM_PRE=ready", secrets=["database_password"], recordIO=True)
+USES_SECRET = native_card(f"""
+    const auto* secret = std::getenv("database_password");
+    if (!secret || !std::string_view(secret).starts_with("{PREFIX}-")) return 3;
+    if (std::strlen(secret) != {len(SENTINEL)}) return 5;
+    out.number(std::strlen(secret));
+""", secrets=["database_password"], recordIO=True)
 
 
 def files_containing(root: Path, needle: bytes) -> list[str]:
@@ -85,7 +87,7 @@ def test_secret_reaches_the_process_and_no_record(core_factory, broker, tmp_path
     c = daemon.connect()
     run_id, status = run_and_wait(c, "use")
     assert status.state == RunState.succeeded, log(c, run_id, "use", 2)
-    assert broker == [["database_password"]]
+    assert broker[0] == [["database_password"]]
     record = c.call("RunRecordRequest", runId=run_id, card=path("use"))
     assert [text(name) for name in record.record.summary.secrets] == ["database_password"]
     invocation, = c.call("RunInvocationsRequest", runId=run_id, card=path("use")).records
@@ -103,8 +105,7 @@ def test_secret_reaches_the_process_and_no_record(core_factory, broker, tmp_path
 def test_missing_secret_fails_before_the_card_runs(core_factory, broker, tmp_path):
     """A declared secret that hostd does not hold fails the invocation, naming it."""
     root = tmp_path / "p"
-    definition = bash('printf \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"',
-                      secrets=["database_password", "not_set"])
+    definition = native_card("out.number(1);", secrets=["database_password", "not_set"])
     write(root, {"use": definition}, [card("use", "use")], [])
     c = core_factory(project_root=root).connect()
     run_id, status = run_and_wait(c, "use")
@@ -119,15 +120,34 @@ def test_missing_secret_fails_before_the_card_runs(core_factory, broker, tmp_pat
 @pytest.mark.parametrize("settings,message", [
     ({"secrets": ["Database"]}, "secrets entries"),
     ({"secrets": ["token", "token"]}, "duplicate secret"),
-    ({"secrets": ["token"], "reuseWorker": True}, "reuseWorker"),
 ])
 def test_invalid_secret_declarations_are_reported(core_factory, broker, tmp_path, settings, message):
-    """Names follow one rule, and a Card with secrets keeps no resident worker."""
+    """Secret names follow the same rule as the worker launch channel."""
     root = tmp_path / "p"
-    write(root, {"use": {"type": "code", "language": "bash", "_outputs": NUM,
-                         "_nix": '{ pkgs, inputs, params }: { run = "true"; }', **settings}},
+    write(root, {"use": native_card("out.number(1);", **settings)},
           [card("use", "use")], [])
     validation = core_factory(project_root=root).connect().call("ProjectValidateRequest")
     assert not validation.valid
     assert any(message in text(d.message) for d in validation.diagnostics), \
         [text(d.message) for d in validation.diagnostics]
+
+
+def test_secret_rotation_retires_resident(core_factory, broker, tmp_path):
+    root = tmp_path / "p"
+    definition = native_card(r"""
+        const auto* secret = std::getenv("database_password");
+        if (!secret) return 1;
+        static unsigned count = 0;
+        out.number(++count * 1000 + std::strlen(secret));
+    """, secrets=["database_password"], reuseWorker=True, recordIO=True)
+    write(root, {"use": definition}, [card("use", "use")], [])
+    client = core_factory(project_root=root).connect()
+    for count, rotates in ((1, False), (2, False), (1, True)):
+        if rotates:
+            broker[1]["database_password"] = SENTINEL + "-rotated"
+        run_id, status = run_and_wait(client, "use")
+        assert status.state == RunState.succeeded, log(client, run_id, "use", 2)
+        invocation, = client.call("RunInvocationsRequest", runId=run_id, card=path("use")).records
+        assert invocation.workerReused == (count == 2)
+        observed = decode_scalar(read_output(client, run_id, card="use"), "uint64")
+        assert observed == count * 1000 + len(broker[1]["database_password"])

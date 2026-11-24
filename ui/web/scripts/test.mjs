@@ -1,4 +1,4 @@
-// Run behavioral regression tests and, with a configured Chromium, the log viewport test.
+// Run behavioral regression tests, including browser checks with a configured Chromium.
 import * as esbuild from 'esbuild'
 import { execFileSync } from 'node:child_process'
 import { preparePlayer } from '../../../docs/site/player/build.mjs'
@@ -33,14 +33,19 @@ try {
   preparePlayer()
   await import('../tests/demoRecording.mjs')
   await esbuild.build({
-    entryPoints: [path.join(web, 'tests', 'behavior.ts')], outfile: out,
+    entryPoints: ['behavior', 'dawnLoad', 'dawnInstance'].map(name => path.join(web, 'tests', `${name}.ts`)),
+    outdir: dir, outExtension: { '.js': '.mjs' }, splitting: true,
     bundle: true, platform: 'node', format: 'esm', target: 'node22', loader: { '.md': 'text' }, logLevel: 'warning',
   })
   process.argv = [process.argv[0], out, path.resolve(web, '../..'), ...process.argv.slice(2)]
+  await import(pathToFileURL(path.join(dir, 'dawnLoad.mjs')).href)
+  await import(pathToFileURL(path.join(dir, 'dawnInstance.mjs')).href)
   await import(pathToFileURL(out).href)
   if (process.env.TSUGUMI_CHROMIUM) {
     const { checkLogInChromium } = await import('../tests/logBrowser.mjs')
+    const { checkCardViewsInChromium } = await import('../tests/cardViewsBrowser.mjs')
     await checkLogInChromium(process.env.TSUGUMI_CHROMIUM, web, dir)
+    await checkCardViewsInChromium(process.env.TSUGUMI_CHROMIUM, web, dir)
   }
 } finally {
   fs.rmSync(dir, { recursive: true, force: true })

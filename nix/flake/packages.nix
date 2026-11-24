@@ -2,35 +2,63 @@
 # `tsugumi` command and the shared VM's boot disk.
 { inputs, ... }:
 let
-  inherit (inputs) nixpkgs hosq;
-  # The nixpkgs revision Cards build against unless a project pins another.
-  # Recorded so that the core can fetch it in pure evaluation mode.
+  inherit (inputs)
+    nixpkgs
+    hosq
+    webgpu-headers
+    ;
+  # The core's own package set, used to build plans and target workers.
   cardNixpkgs = {
     rev = nixpkgs.rev or "dirty";
     narHash = nixpkgs.narHash;
   };
+  lock = builtins.fromJSON (builtins.readFile ../../flake.lock);
+  testNixPathLock.entries =
+    map
+      (
+        name:
+        let
+          inherit (lock.nodes.${lock.nodes.root.inputs.${name}}) locked original;
+        in
+        {
+          inherit name;
+          inherit (locked) rev narHash;
+          url = "${original.type}:${original.owner}/${original.repo}/${original.ref}";
+        }
+      )
+      [
+        "nixpkgs"
+        "tsugumi-kit"
+      ];
 in
 {
   perSystem =
     {
       pkgs,
       lib,
-      config,
       ...
     }:
     let
-      core = pkgs.callPackage ../core.nix { inherit cardNixpkgs hosq; };
+      core = pkgs.callPackage ../core.nix {
+        inherit
+          cardNixpkgs
+          hosq
+          testNixPathLock
+          webgpu-headers
+          ;
+      };
       ci-runtime = pkgs.callPackage ../ci-runtime.nix { inherit core; };
       ci-core = pkgs.callPackage ../core-tests.nix {
         inherit core hosq;
         runtime = ci-runtime;
         mock = ci-mock;
-        inputTypes = ci-input-types;
       };
       ci-mock = ci-core.override { target = "tsugumid-mock"; };
-      ci-input-types = ci-core.override { target = "tsugumi_input_types_tests"; };
       client-wasm = pkgs.callPackage ../client-wasm.nix { };
-      web = pkgs.callPackage ../web.nix { inherit client-wasm; };
+      web = pkgs.callPackage ../web.nix {
+        inherit client-wasm;
+        inherit (inputs) webgpu-headers;
+      };
       kernel = pkgs.callPackage ../../vm/guest/kernel.nix { };
       # Formatting runs on the host; guest binaries need no formatter paths.
       guestCore = core.override { withFormatters = false; };
@@ -43,7 +71,6 @@ in
           ci-core
           ci-runtime
           ci-mock
-          ci-input-types
           client-wasm
           web
           ;
@@ -55,7 +82,9 @@ in
           chmod -R u+w $out
           cp ${../../flake.nix} $out/flake.nix
           cp ${../../flake.lock} $out/flake.lock
-          cp -R ${../.} $out/nix
+          mkdir -p $out/nix
+          cp -R ${../.}/. $out/nix/
+          chmod -R u+w $out/nix
           cp -R ${../../vm/guest}/. $out/vm/guest/
         '';
         site-player = web.sitePlayer;
@@ -64,7 +93,15 @@ in
         tsugumid = core;
       }
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
-        ci-core-native = ci-core.override { nativeDarwin = true; };
+        ci-core-native = (ci-core.override { nativeDarwin = true; }).overrideAttrs (old: {
+          postInstall = old.postInstall + ''
+            for suite in load decode; do
+              binary="${core}/libexec/tsugumi-tests/tsugumi-view-$suite-tests"
+              test -x "$binary"
+              ln -s "$binary" "$out/libexec/tsugumi-tests/"
+            done
+          '';
+        });
       }
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         workerd = pkgs.callPackage ../workerd.nix { inherit core; };
@@ -73,27 +110,13 @@ in
           tsugumid = core;
           inherit web;
         };
-        # The desktop UI (ui/linux): GTK 4 windows on the same host.
-        linux-ui = pkgs.callPackage ../linux-ui.nix {
-          inherit
-            cardNixpkgs
-            hosq
-            core
-            web
-            ;
-        };
-        # Its headless GTK check, full (hostd and a project) outside the sandbox.
-        linux-ui-check = pkgs.callPackage ../linux-ui-check.nix {
-          linux-ui = config.packages.linux-ui;
-          inherit core;
-        };
       }
       // lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "aarch64-linux") {
         inherit kernel vm-boot vm-system;
         ci-arm-shell = ci-core.override { target = "tsugumi_arm_shell_tests"; };
         # The guest of tsugumi-pack and of the apps it exports (pack/).
         pack-guest = pkgs.callPackage ../../pack/guest {
-          inherit kernel cardNixpkgs;
+          inherit kernel;
           tsugumid = guestCore;
         };
         # One distributable image; the helper extracts its VZ attachments.

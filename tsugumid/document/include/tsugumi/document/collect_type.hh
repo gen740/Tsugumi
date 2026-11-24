@@ -1,15 +1,17 @@
 // Output type resolution for Collect Cards, independent of run values.
 #pragma once
 
+#include <string_view>
+
 #include <string>
 
 #include "tsugumi/document/types.hh"
 
 namespace tsugumi {
 
-// The output message type of a Collect Card whose input port is `source`.
-// Returns null with `error` set when the source type cannot be collected.
-auto collect_output_type(const types::PortType& source, std::string& error)
-    -> types::TypeRef;
+auto collect_schema_declarations() -> std::string_view;
+
+// The fixed Collected table is the output for every member kind.
+auto collect_output_type(std::string& error) -> types::TypeRef;
 
 }  // namespace tsugumi

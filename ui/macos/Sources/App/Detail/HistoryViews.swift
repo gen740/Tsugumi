@@ -9,6 +9,7 @@ struct ExecutionHistoryRefresh: Equatable {
   let card: CardRunState?
   let connected: Bool
   let remoteHistoryRevision: Int
+  let recordingRevision: Int
 
   @MainActor init(session: ProjectSession, card: CardKey) {
     runId = session.currentRunId
@@ -16,6 +17,7 @@ struct ExecutionHistoryRefresh: Equatable {
     self.card = session.executionBatch(card)?.executionList == true ? nil : session.cardStates[card]
     connected = session.connected
     remoteHistoryRevision = session.remoteHistoryRevision
+    recordingRevision = session.recordingRevision
   }
 }
 
@@ -158,6 +160,7 @@ struct CardExecutionView: View {
               }
             } trailing: {
               if let runId {
+                DeleteRunCategory(session: session, runId: runId)
                 Button("ログ") { model.openLog(runId: runId, invocation: invocation) }
                   .disabled(record?.exists == false).help("この呼び出しのログを「ログ」で開きます")
               }
@@ -220,7 +223,7 @@ struct CardExecutionView: View {
     if let r = record {
       Form {
         infoSection(r)
-        if !ioRecorded {
+        if !ioRecorded, r.record?.inputs.isEmpty != false, r.record?.outputs.isEmpty != false {
           Section {
             Label("この Card は入出力を記録しない設定です。値は残っていません。", systemImage: "nosign")
               .foregroundStyle(.secondary)
@@ -468,6 +471,51 @@ struct ExecutionHistoryControlBounds: PreferenceKey {
 }
 
 /// Retained outputs of one Card: run/invocation → outputs → files → preview.
+private struct DeleteRunCategory: View {
+  let session: ProjectSession
+  let runId: String
+  private struct Selection {
+    let runId: String
+    let category: Tsugumi_RPC_RunRecordCategory
+    let label: String
+  }
+  @State private var selection: Selection?
+  @State private var confirming = false
+  @State private var busy = false
+  @State private var error: String?
+
+  var body: some View {
+    Menu("記録を削除…") {
+      Button("標準出力と標準エラー") { prepare(.logs, String(localized: "標準出力と標準エラー")) }
+      Button("値") { prepare(.values, String(localized: "値")) }
+    }
+    .disabled(busy || session.runActive || !session.connected)
+    .confirmationDialog(
+      Text("実行 \(selection?.runId ?? "") の「\(selection?.label ?? "")」を削除しますか？"),
+      isPresented: $confirming, titleVisibility: .visible, presenting: selection
+    ) { selection in
+      Button("削除", role: .destructive) {
+        busy = true
+        Task {
+          defer { busy = false }
+          do { try await session.deleteRunCategory(selection.runId, selection.category) }
+          catch let failure { error = String(describing: failure) }
+        }
+      }
+      Button("キャンセル", role: .cancel) {}
+    }
+    if let error {
+      Text("削除できませんでした: \(error)").font(.caption).foregroundStyle(.red).textSelection(.enabled)
+    }
+  }
+
+  private func prepare(_ category: Tsugumi_RPC_RunRecordCategory, _ label: String) {
+    error = nil
+    selection = Selection(runId: runId, category: category, label: label)
+    confirming = true
+  }
+}
+
 struct CardArtifactsView: View {
   let session: ProjectSession
   let cardKey: CardKey
@@ -497,16 +545,13 @@ struct CardArtifactsView: View {
           Label("成果物を読み込めませんでした", systemImage: "exclamationmark.triangle")
         } description: { Text(error) } actions: { Button("再試行") { Task { await loadRuns() } } }
       } else if runs.isEmpty {
-        let retains = session.cardSetting(cardKey, "retainArtifact")?.bool == true
-        ContentUnavailableView("保持された成果物はありません", systemImage: "shippingbox",
-                               description: Text(retains ? "成果物を保持する設定です。実行すると、ここに残ります。"
-                                                         : "この Card は成果物を保持していません（設定 > 入出力 > 成果物を保持）。"))
+        ContentUnavailableView("成果物のある実行はありません", systemImage: "shippingbox")
       } else {
         content
       }
     }
     .navigationTitle(session.displayName(cardKey))
-    .task(id: session.lastFinished) { await loadRuns() }
+    .task(id: ExecutionHistoryRefresh(session: session, card: cardKey)) { await loadRuns() }
   }
 
   private var content: some View {
@@ -530,15 +575,15 @@ struct CardArtifactsView: View {
       HSplitView {
         List(artifacts, id: \.artifactId, selection: $artifactId) { a in
           VStack(alignment: .leading) {
-            Text(a.output).font(.callout.bold())
-            Text("#\(a.invocation ?? 0) · \(String(describing: a.kind)) · \(a.members.count) 件").font(.caption).foregroundStyle(.secondary)
+            Text(a.artifactId).font(.callout.bold())
+            Text("#\(a.invocation ?? 0) · \(a.sizeBytes ?? 0) bytes · \(a.members.count) 件").font(.caption).foregroundStyle(.secondary)
           }
           .tag(Optional(a.artifactId))
         }
         .overlay {
           if loaded && artifacts.isEmpty {
             ContentUnavailableView("成果物はありません", systemImage: "shippingbox",
-                                   description: Text("設定 > 入出力 で「成果物を保持」と保持する出力を選ぶと残ります。"))
+                                   description: Text("成果物を出力した実行で確認できます。"))
           }
         }
         .frame(minWidth: 180, idealWidth: 220)
@@ -573,7 +618,7 @@ struct CardArtifactsView: View {
       }
       if let error { Text(error).font(.caption).foregroundStyle(.red).padding(6) }
     }
-    .task(id: runId) { await loadArtifacts() }
+    .task(id: "\(runId ?? "")|\(session.recordingRevision)") { await loadArtifacts() }
     .task(id: "\(artifactId ?? "")|\(member ?? "")") { await loadPreview() }
   }
 
@@ -588,7 +633,7 @@ struct CardArtifactsView: View {
     guard let rpc = session.rpc else { error = String(localized: "実行環境に接続していません"); return }
     do {
       runs = try await rpc.history(card: path(cardKey), artifactsOnly: true, limit: 100).runs.compactMap { $0 }
-      if runId == nil { runId = runs.first?.status.runId }
+      if !runs.contains(where: { $0.status.runId == runId }) { runId = runs.first?.status.runId }
       error = nil
     } catch { self.error = String(localized: "成果物を読み込めません: ") + "\(error)" }
   }
@@ -604,7 +649,7 @@ struct CardArtifactsView: View {
     preview = nil
     guard let rpc = session.rpc, let a = selectedArtifact, let member else { return }
     do {
-      let data = try await rpc.readArtifact(id: a.artifactId, member: a.kind == .directory ? member : nil)
+      let data = try await rpc.readArtifact(id: a.artifactId, member: member)
       guard !Task.isCancelled else { return }
       if let html = ArtifactHTMLPreview.text(member: member, data: data) {
         preview = .html(html)
@@ -626,28 +671,29 @@ struct CardArtifactsView: View {
     p.nameFieldStringValue = (m as NSString).lastPathComponent
     guard p.runModal() == .OK, let url = p.url else { return }
     do {
-      try await rpc.readArtifact(id: a.artifactId, member: a.kind == .directory ? m : nil).write(to: url)
+      try await rpc.readArtifact(id: a.artifactId, member: m).write(to: url)
     } catch { self.error = "\(error)" }
   }
 }
 
-/// A Card's output display enlarged in its own window.
+/// The views a Card declares, live, in their own window. Nothing shown here is recorded.
 struct VisualizationWindow: View {
   let session: ProjectSession
   let cardKey: CardKey
+  @State private var viewer = UUID()
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
         Text(session.displayName(cardKey)).font(.title2.bold())
-        if let d = session.displays[cardKey] { Text("呼び出し #\(d.invocation)").foregroundStyle(.secondary) }
         Spacer()
         Button("チャットに参照を追加") { AppModel.shared.chat(for: session).addReference(.display(cardKey)) }
       }
-      DisplayContent(display: session.displays[cardKey], large: true)
+      CardViewsPanel(session: session, cardKey: cardKey)
     }
     .padding(16)
     .navigationTitle(session.displayName(cardKey))
-    .task { await session.refreshVisibleDisplays() }
+    .onAppear { session.openDisplayViewer(viewer, card: cardKey) }
+    .onDisappear { session.closeDisplayViewer(viewer) }
   }
 }

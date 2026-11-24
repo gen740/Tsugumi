@@ -19,14 +19,22 @@ import time
 
 import pytest
 from harness import remote_worker as R
+from Tsugumi.RemoteWorker.WorkerReady import WorkerReady
+from Tsugumi.RemoteWorker.DisplayCredit import DisplayCreditT
+from Tsugumi.RemoteWorker.JobStatus import JobStatus
+from Tsugumi.RemoteWorker.Reply import Reply
+from Tsugumi.RemoteWorker.ViewSendRequest import ViewSendRequestT
 from harness import peer_tls as TLS
 from harness.file_events import process_file, wait_for_exit
-from Tsugumi.Data.CardPath import CardPathT
 from Tsugumi.Data.FailureKind import FailureKind
-from Tsugumi.Data.FlatBufferData import FlatBufferDataT
 from Tsugumi.Data.LogStream import LogStream
-from Tsugumi.Worker.EnvVar import EnvVarT
+from tsugumi.ArtifactId import ArtifactIdT
+from Tsugumi.Card.CardPort import CardPortT
+from Tsugumi.Worker.ArtifactGrant import ArtifactGrantT
+from Tsugumi.Worker.WorkerPort import WorkerPortT
+from test_worker_loading import card_package
 from Tsugumi.Worker.WorkerCall import WorkerCallT
+from Tsugumi.Worker.WorkerDisplay import WorkerDisplayT
 from Tsugumi.Worker.WorkerMessage import WorkerMessageT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
 
@@ -59,13 +67,13 @@ class Worker:
 
     def start(self):
         self.log = (self.root / "worker.log").open("ab")
-        ready = self.state / "worker.ready.json"
+        ready = self.state / "worker.ready"
         ready.unlink(missing_ok=True)
         self.process = subprocess.Popen(self.command, env=self.env, stdout=self.log, stderr=self.log)
         published = process_file(self.process, ready)
         if published is None:
             raise RuntimeError((self.root / "worker.log").read_text())
-        self.port = json.loads(published.read_text())["port"]
+        self.port = WorkerReady.GetRootAs(published.read_bytes()).Port()
         # Reconnect scenarios deliberately keep the same real endpoint.
         self.command[self.command.index("--port") + 1] = str(self.port)
 
@@ -89,12 +97,12 @@ class Worker:
 
         def read():
             try:
-                record = json.loads(path.read_text())
+                record = R.JournalStateT.InitFromPackedBuf(path.read_bytes())
             except FileNotFoundError:
                 return None
-            if record["state"] in states:
+            if record.state in states:
                 return record
-            assert record["state"] not in (R.JobState.Failed, R.JobState.Cancelled,
+            assert record.state not in (R.JobState.Failed, R.JobState.Cancelled,
                                            R.JobState.Succeeded, R.JobState.Interrupted,
                                            R.JobState.Released), record
             return None
@@ -103,7 +111,8 @@ class Worker:
         assert record is not None, (self.root / "worker.log").read_text()
         return record
 
-    def call(self, kind, body, *, job=None, scoped=True, unix=False, identity=None, **routing):
+    def call(self, kind, body, *, job=None, scoped=True, unix=False, identity=None,
+             read_reply=lambda stream: R.read(stream).payload, **routing):
         fields = {}
         if scoped:
             fields.update(projectScope=self.scope, coreLifeId=self.core_life_id)
@@ -120,7 +129,7 @@ class Worker:
             with context.wrap_socket(peer, server_hostname=None) as secure:
                 secure.sendall(R.frame(request))
                 with secure.makefile("rb") as stream:
-                    return R.read(stream).payload
+                    return read_reply(stream)
 
     def upload(self, job, data):
         digest = hashlib.sha256(data).hexdigest()
@@ -235,43 +244,36 @@ def test_rejects_unsafe_options_before_listening(tmp_path):
     assert result.returncode != 0
 
 
-def deadline_spec(peer, job, budget_ms):
-    # Reference only the pinned Bash and standalone SDK worker outputs. The
-    # Card blocks on a Bash coprocess pipe with both ends open.
-    seed = json.loads(Path(os.environ["TSUGUMI_REMOTE_TEST_SEED_MANIFEST"]).read_text())
-    expression = r'''
-      { system, bashRoot, workerRoot }:
+def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(), files=(),
+              grants=(), output_budget=None):
+    nix_directory = os.environ.get("TSUGUMI_NIX_DIR")
+    if not nix_directory:
+        pytest.skip("needs the installed worker build sources")
+    expression = """
+      { system, nixDirectory }:
       let
-        shell = builtins.storePath bashRoot + "/bin/bash";
-      in
-      builtins.derivation {
-        name = "remote-test-card-deadline";
-        inherit system;
-        builder = shell;
-        args = [ "-c" ''printf '%s' "$manifest" > "$out"'' ];
-        manifest = builtins.toJSON {
-          inherit shell;
-          path = "";
-          run = {
-            worker = builtins.storePath workerRoot + "/bin/tsugumi-worker";
-            bash = ''
-              printf '%s\n' deadline-card-started
-              coproc { read -r line; }
-              read -r line <&"${"$"}{COPROC[0]}"
-            '';
-          };
-        };
-      }
-    '''
+        pkgs = import (builtins.getFlake (toString ./.)).inputs.nixpkgs { inherit system; };
+        worker = import (nixDirectory + "/worker/worker.nix") { inherit pkgs; };
+        card = """ + card_package(body) + """;
+      in pkgs.writeText "remote-card-plan" (builtins.toJSON {
+        runs = [ "${card}" ];
+        views = [];
+        worker = "${worker}/bin/tsugumi-worker";
+      })
+    """
     derivation = subprocess.check_output(
-        ["nix-instantiate", "--expr", expression,
+        ["nix-instantiate", "--extra-experimental-features", "flakes",
+         "--impure", "--expr", expression,
          "--argstr", "system", R.string(peer.caps.nativeSystem),
-         "--argstr", "bashRoot", str(Path(seed["shell"]).parents[1]),
-         "--argstr", "workerRoot", str(Path(seed["run"]["worker"]).parents[1])],
+         "--argstr", "nixDirectory", nix_directory],
         text=True,
     ).strip()
-    output = subprocess.check_output(["nix-store", "--query", "--outputs", derivation], text=True).strip()
-    closure = subprocess.check_output(["nix-store", "--query", "--requisites", derivation], text=True).splitlines()
+    output = subprocess.check_output(
+        ["nix-store", "--query", "--outputs", derivation], text=True,
+    ).strip()
+    closure = subprocess.check_output(
+        ["nix-store", "--query", "--requisites", derivation], text=True,
+    ).splitlines()
     archive = peer.root / "card.archive"
     with archive.open("wb") as stream:
         subprocess.run(["nix-store", "--export", *closure], stdout=stream, check=True)
@@ -282,34 +284,20 @@ def deadline_spec(peer, job, budget_ms):
         for offset in range(0, total, 1 << 20):
             peer.put_chunk(job, archive_digest, total, offset, stream.read(1 << 20))
 
-    schema = peer.root / "params.fbs"
-    schema.write_text("table Params {} root_type Params;")
-    params = peer.root / "params.json"
-    params.write_text("{}")
-    flatc = os.environ.get("TSUGUMI_FLATC", "flatc")
-    subprocess.run([flatc, "--binary", "--schema", "-o", str(peer.root), str(schema)], check=True)
-    subprocess.run([flatc, "--binary", "-o", str(peer.root), str(schema), str(params)], check=True)
-    # Only the Card's call budget can release the blocked body.
     call = WorkerCallT(
-        runId="1", card=CardPathT(segments=["deadline"]), invocation=1,
-        inputs=[], params=FlatBufferDataT(
-            schemaBfbs=schema.with_suffix(".bfbs").read_bytes(), rootType="Params",
-            bytes=params.with_suffix(".bin").read_bytes(),
-        ),
-        outputs=[], workingDirectory="", temporaryDirectory="",
-        environment=[EnvVarT(name="TSUGUMI_PARAMS_JSON", value="{}")],
-        deadlineMs=budget_ms,
+        inputs=list(inputs), outputs=list(outputs), grants=list(grants),
+        deadlineMs=deadline_ms, invocationSequence=5,
     )
     message = WorkerMessageT(callId=1, valueType=WorkerPayload.WorkerCall, value=call)
     call_digest = peer.upload(job, R.pack(message, b"TSW1"))
-    invocation = peer.upload(job, json.dumps({
-        "call_sha256": call_digest, "archive_sha256": archive_digest,
-        "files": [], "directories": [], "network": False, "implementation_index": 1,
-    }).encode())
+    invocation = peer.upload(job, R.pack(R.InvocationT(
+        callSha256=call_digest, archiveSha256=archive_digest,
+        files=[R.InvocationFileT(**file) for file in files], implementationIndex=1,
+    )))
     return R.pack(R.JobSpecT(
         system=peer.caps.nativeSystem, derivation=derivation, output=output,
-        invocationSha256=invocation, inputBlobs=[archive_digest, call_digest, invocation],
-        logLimitBytes=8 << 20,
+        invocationSha256=invocation, inputBlobs=[archive_digest, call_digest, invocation, *[file["sha256"] for file in files]],
+        logLimitBytes=8 << 20, **(output_budget or {}),
     ))
 
 
@@ -324,7 +312,7 @@ def test_global_cap_reconnects_within_one_core_life_and_enforces_call_budget(tmp
     os.mkfifo(gate)
     blocker, next_job, deadline_job = [str(n) * 64 for n in (4, 5, 6)]
     # The first two adapters hold their slots on a FIFO until cancelled. The
-    # deadline job uses the real namespace launcher and executes a Bash Card.
+    # deadline job uses the real namespace launcher and executes a native Card.
     launcher.write_text('''#!/bin/sh
 for arg do
     case "$arg" in
@@ -365,7 +353,13 @@ read -r line < "$TEST_GATE"
         peer.wait_state(blocker, R.JobState.Cancelled)
         peer.wait_state(next_job, R.JobState.Running)
         budget_ms = 1000
-        submit(deadline_job, deadline_spec(peer, deadline_job, budget_ms))
+        submit(deadline_job, card_spec(peer, deadline_job, r"""
+            puts("deadline-card-started");
+            fflush(stdout);
+            while (!call.effects->cancelled(call.host) &&
+                   call.effects->remaining_ms(call.host) != 0)
+              usleep(1000);
+        """, deadline_ms=budget_ms))
         # A job held in the queue emits no event when its prospective Card
         # budget elapses. Keep the slot occupied for at least one such budget.
         time.sleep(budget_ms / 1000)
@@ -381,12 +375,12 @@ read -r line < "$TEST_GATE"
             assert response.bodyType == R.ReplyBody.BlobChunk
             return bytes(response.body.bytes)
 
-        manifest = R.ResultManifestT.InitFromPackedBuf(result_bytes(record["result"]))
+        manifest = R.ResultManifestT.InitFromPackedBuf(result_bytes(R.string(record.result)))
         files = {R.string(file.path): R.string(file.sha256) for file in manifest.outputs}
-        assert json.loads(result_bytes(files["environment.json"]))["built"]
-        logs = map(json.loads, result_bytes(files["logs.jsonl"]).splitlines())
-        assert any(entry["stream"] == LogStream.standard_output and
-                   entry["text"].strip() == "deadline-card-started" for entry in logs)
+        assert R.ResultEnvironmentT.InitFromPackedBuf(result_bytes(files["environment"])).built
+        logs = R.read_logs(result_bytes(files["logs"]))
+        assert any(stream == LogStream.standard_output and text.strip() == "deadline-card-started"
+                   for stream, text in logs)
         result = WorkerMessageT.InitFromPackedBuf(result_bytes(R.string(manifest.invocationResultSha256)))
         assert result.valueType == WorkerPayload.WorkerFailure
         assert result.value.failure.kind == FailureKind.timeout, R.string(result.value.failure.diagnostic)
@@ -401,6 +395,209 @@ read -r line < "$TEST_GATE"
             peer.close()
 
 
+def test_remote_display_credit_and_reverse_messages_share_the_channel(worker):
+    job = "8" * 64
+    spec = card_spec(worker, job, """
+      static uint8_t message[TSUGUMI_MESSAGE_MAX];
+      for (uint8_t i = 1; i <= 3; ++i) {
+        message[0] = i;
+        if (call.effects->send(call.host, "data", message, sizeof(message)))
+          return 1;
+      }
+      tsugumi_bytes input{};
+      if (call.effects->recv(call.host, "control", &input, 60000) ||
+          input.size != 1 || input.data[0] != 42)
+        return 2;
+      if (call.effects->send(call.host, "control", input.data, input.size))
+        return 3;
+    """)
+    submitted = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
+    assert submitted.bodyType == R.ReplyBody.JobStatus, vars(submitted.body)
+    sequence = 0
+    messages = []
+    credits = []
+    deadline = time.monotonic() + 300
+
+    def read_status(stream):
+        # Sample each maximum-size payload without unpacking its entire vector.
+        payload = R.read_message(stream).Payload()
+        reply = Reply()
+        reply.Init(payload.Bytes, payload.Pos)
+        assert reply.BodyType() == R.ReplyBody.JobStatus
+        body = reply.Body()
+        status = JobStatus()
+        status.Init(body.Bytes, body.Pos)
+        return status
+
+    def poll_until(done):
+        nonlocal sequence
+        while time.monotonic() < deadline:
+            query = R.StatusRequestT(displayAfter=sequence, displayCredits=credits)
+            status = worker.call(R.RequestBody.StatusRequest, query, job=job,
+                                 read_reply=read_status)
+            assert status.State() in (R.JobState.Queued, R.JobState.Running,
+                                      R.JobState.Succeeded), status.Diagnostic()
+            if status.DisplaySequence() > sequence:
+                sequence = status.DisplaySequence()
+                for index in range(status.DisplaysLength()):
+                    display = status.Displays(index)
+                    messages.append((R.string(display.View()), display.BytesLength(), display.Bytes(0)))
+            if done(status):
+                return
+            time.sleep(0.05)
+        pytest.fail(f"display stalled after {messages}")
+
+    try:
+        maximum = 1 << 24
+        poll_until(lambda status: len(messages) >= 2 and status.ViewInputReady())
+        assert messages == [("data", maximum, 1), ("data", maximum, 2)]
+        message = WorkerDisplayT(view="control", bytes=[42])
+        sent = worker.call(R.RequestBody.ViewSendRequest,
+                           ViewSendRequestT(display=message, offset=0), job=job)
+        assert sent.bodyType == R.ReplyBody.Ack, vars(sent.body)
+        # The reverse message and its echo cross while the data window is full.
+        poll_until(lambda _: len(messages) >= 3)
+        assert messages[2:] == [("control", 1, 42)]
+        credits.append(DisplayCreditT(view="data", released=maximum))
+        poll_until(lambda status: status.State() == R.JobState.Succeeded and not status.DisplayPending())
+        assert messages[3:] == [("data", maximum, 3)]
+    finally:
+        worker.call(R.RequestBody.CancelRequest, R.CancelRequestT(), job=job)
+        worker.wait_state(job, R.JobState.Cancelled, R.JobState.Succeeded,
+                          R.JobState.Failed, R.JobState.Interrupted)
+        worker.call(R.RequestBody.ReleaseRequest, R.ReleaseRequestT(), job=job)
+
+
+@pytest.mark.parametrize("case", ["artifact", "symlink", "byte-budget", "entry-budget"])
+def test_real_remote_artifact_boundary(worker, case):
+    job = "9" * 64
+    outputs = [WorkerPortT(name="doc", required=True)]
+    inputs = []
+    grants = []
+    files = []
+    create = """
+      tsugumi_artifact_id id;
+      const auto directory = fs::path(create_artifact(call, id));
+    """
+    if case == "artifact":
+        granted = ArtifactIdT(bytes=list((3).to_bytes(8, "big") + bytes(8)))
+        relative = "1/group/source/@2/0"
+        contents = b"staged"
+        files.append({"path": f"artifacts/{relative}/nested/input.txt",
+                      "sha256": worker.upload(job, contents), "size": len(contents)})
+        inputs.append(CardPortT(name="doc", artifacts=[granted]))
+        grants.append(ArtifactGrantT(id=granted, path=relative))
+        body = create + """
+          const fs::path granted = open_artifact(call, in);
+          if (granted.filename() != "3.0" ||
+              std::distance(fs::directory_iterator(granted.parent_path()),
+                            fs::directory_iterator{}) != 1) return 2;
+          tsugumi_artifact_id ungranted{};
+          ungranted.bytes[7] = 3;
+          ungranted.bytes[15] = 1;
+          tsugumi_bytes unused;
+          if (call.effects->artifact_open(call.host, &ungranted, &unused) == 0)
+            return 3;
+          std::string contents;
+          const auto input = granted / "nested/input.txt";
+          std::ifstream(input) >> contents;
+          if (contents != "staged" ||
+              std::ofstream(input, std::ios::app) ||
+              chmod(input.c_str(), 0600) == 0) return 4;
+          static const uint8_t first[] = {0, 0};
+          static const uint8_t second[] = {0, 255, 128};
+          if (call.effects->send(call.host, "data", first, sizeof(first)) ||
+              call.effects->send(call.host, "data", second, sizeof(second))) return 1;
+          std::ofstream(directory / "report.txt") << "artifact";
+          std::ofstream("unrelated") << "not an artifact";
+          out.artifact(id);
+        """
+    elif case == "symlink":
+        body = create + """
+          fs::create_symlink("/etc/passwd", directory / "link");
+          out.artifact(id);
+        """
+    elif case == "byte-budget":
+        body = create + """
+          std::ofstream(directory / "huge").close();
+          fs::resize_file(directory / "huge", (64ull << 30) + 1);
+          out.artifact(id);
+        """
+    else:
+        body = create + """
+          for (int i = 0; i < 1000; ++i)
+            std::ofstream(directory / std::to_string(i)).close();
+          out.artifact(id);
+        """
+    spec = card_spec(worker, job, body, outputs=outputs, inputs=inputs,
+                     grants=grants, files=files)
+    fingerprint = hashlib.sha256(spec).hexdigest()
+    try:
+        response = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
+        assert response.bodyType == R.ReplyBody.JobStatus, vars(response.body)
+        displays = []
+        display_after = 0
+        released = {}
+        deadline = time.monotonic() + 300
+        while True:
+            # Advance past replayed displays and return credit for consumed bytes.
+            query = R.StatusRequestT(displayAfter=display_after, displayCredits=[
+                DisplayCreditT(view=view, released=total)
+                for view, total in released.items()
+            ])
+            response = worker.call(R.RequestBody.StatusRequest, query, job=job)
+            assert response.bodyType == R.ReplyBody.JobStatus, vars(response.body)
+            status = response.body
+            if status.displaySequence > display_after:
+                display_after = status.displaySequence
+                for message in status.displays:
+                    view = R.string(message.view)
+                    payload = bytes(message.bytes)
+                    displays.append((view, payload))
+                    released[view] = released.get(view, 0) + max(1, len(payload))
+            if status.state == R.JobState.Succeeded and not status.displayPending:
+                break
+            assert status.state not in (R.JobState.Failed, R.JobState.Cancelled,
+                                        R.JobState.Interrupted, R.JobState.Released), vars(status)
+            assert time.monotonic() < deadline, vars(status)
+            time.sleep(0.1)
+
+        def result_bytes(digest):
+            response = worker.call(R.RequestBody.GetBlobRequest,
+                                   R.GetBlobRequestT(digest=digest), job=job)
+            assert response.bodyType == R.ReplyBody.BlobChunk
+            return bytes(response.body.bytes)
+
+        manifest = R.ResultManifestT.InitFromPackedBuf(result_bytes(R.string(status.resultSha256)))
+        entries = {R.string(entry.path): R.string(entry.sha256) for entry in manifest.outputs}
+        assert all("display" not in name for name in entries)
+        result = WorkerMessageT.InitFromPackedBuf(
+            result_bytes(R.string(manifest.invocationResultSha256)))
+        if case == "artifact":
+            assert result.valueType == WorkerPayload.WorkerResult, vars(result.value)
+            assert displays == [("data", b"\x00\x00"), ("data", b"\x00\xff\x80")]
+            created, = result.value.created
+            output, = result.value.outputs
+            assert bytes(output.artifacts[0].bytes) == bytes(created.bytes)
+            assert bytes(created.bytes) == (5).to_bytes(8, "big") + bytes(8)
+            artifact_path = "files/artifacts/0/report.txt"
+            assert {name for name in entries if name.startswith("files/")} == {artifact_path}
+            assert result_bytes(entries[artifact_path]) == b"artifact"
+        else:
+            assert result.valueType == WorkerPayload.WorkerFailure
+            assert result.value.failure.kind == FailureKind.output_invalid
+            diagnostic = {
+                "symlink": "symbolic link",
+                "byte-budget": "output byte budget exceeded",
+                "entry-budget": "output entry budget exceeded",
+            }[case]
+            assert diagnostic in R.string(result.value.failure.diagnostic)
+            assert not any(name.startswith("files/") for name in entries)
+    finally:
+        worker.call(R.RequestBody.ReleaseRequest,
+                    R.ReleaseRequestT(fingerprint=fingerprint), job=job)
+
+
 def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
     binary = os.environ.get("TSUGUMI_REMOTE_TEST_RAW_WORKER")
     if not binary:
@@ -411,23 +608,25 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
     gate = tmp_path / "hold"
     os.mkfifo(gate)
     launcher = tools / "unshare"
-    entry = json.dumps({"stream": LogStream.standard_output, "text": "live entry\n"}).encode()
-    later = json.dumps({"stream": LogStream.standard_error, "text": "after restart\n"}).encode() + b"\n"
+    entry = R.log_entries((LogStream.standard_output, "live entry\n"))
+    later = R.log_entries((LogStream.standard_error, "after restart\n"))
+    entry_file = tmp_path / "entry"
+    entry_file.write_bytes(entry)
 
     def log_slice(job, offset, limit=1 << 20):
         reply = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(logOffset=offset, logLimit=limit), job=job)
         assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
-        return reply.body.logOffset, reply.body.logSize, bytes(reply.body.logBytes or b"")
+        return reply.body.logOffset, reply.body.logSize, bytes(reply.body.logBytes) if reply.body.logBytes is not None else b""
 
-    # Like the invocation, append a flushed JSONL entry to the job's log.
+    # Like the invocation, append a flushed log entry to the job's log.
     launcher.write_text('#!/bin/sh\nfor arg do test "$arg" != --check-namespace || exit 0; done\n'
                         'for arg do case "$arg" in */work) mkdir -p "$arg/result" && '
-                        'printf \'%s\\n\' "$TEST_ENTRY" >> "$arg/result/logs.jsonl";; esac; done\n'
+                        'cat "$TEST_ENTRY" >> "$arg/result/logs";; esac; done\n'
                         'echo partial-log\necho $$ > "$TEST_CHILD_PID"\nread -r line < "$TEST_GATE"\n')
     launcher.chmod(0o755)
     peer = Worker(tmp_path, binary, env={**os.environ,
         "PATH": str(tools) + os.pathsep + os.environ["PATH"],
-        "TEST_CHILD_PID": str(child_pid), "TEST_GATE": str(gate), "TEST_ENTRY": entry.decode()})
+        "TEST_CHILD_PID": str(child_pid), "TEST_GATE": str(gate), "TEST_ENTRY": str(entry_file)})
     first, second = "7" * 64, "8" * 64
     directory = peer.state / "projects" / peer.scope / "jobs" / first
 
@@ -448,13 +647,13 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
         pid = process_file(peer.process, child_pid, child)
         assert pid is not None and Path(f"/proc/{pid}").exists()
         # The running job's log arrives in slices bounded by the worker.
-        assert log_slice(first, 0, 5) == (0, len(entry) + 1, entry[:5])
-        assert log_slice(first, 5) == (5, len(entry) + 1, entry[5:] + b"\n")
+        assert log_slice(first, 0, 5) == (0, len(entry), entry[:5])
+        assert log_slice(first, 5) == (5, len(entry), entry[5:])
         peer.restart()
         # A cursor survives the listener restart and returns only new bytes.
-        cursor = len(entry) + 1
+        cursor = len(entry)
         assert log_slice(first, cursor) == (cursor, cursor, b"")
-        with (directory / "work" / "result" / "logs.jsonl").open("ab") as log:
+        with (directory / "work" / "result" / "logs").open("ab") as log:
             log.write(later)
         assert log_slice(first, cursor) == (cursor, cursor + len(later), later)
         acknowledged = peer.call(R.RequestBody.CancelRequest,
@@ -468,8 +667,8 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
         assert blob.bodyType == R.ReplyBody.BlobChunk and bytes(blob.body.bytes) == b"orphan input"
         assert "partial-log" in (directory / "work" / "adapter.log").read_text()
         # Cancellation keeps the log until release, for the same core life only.
-        assert log_slice(first, 0) == (0, cursor + len(later), entry + b"\n" + later)
-        with (directory / "work" / "result" / "logs.jsonl").open("ab") as log:
+        assert log_slice(first, 0) == (0, cursor + len(later), entry + later)
+        with (directory / "work" / "result" / "logs").open("ab") as log:
             log.write(b"x" * (300 << 10))
         assert len(log_slice(first, 0)[2]) == 256 << 10
         # A new life cannot collect the old result, but can use the freed slot.
@@ -499,7 +698,7 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
 
 
 def test_bounded_frames_and_single_listener(worker):
-    for raw in (struct.pack("<I", (2 << 20) + 1), struct.pack("<I", 24) + bytes(24)):
+    for raw in (struct.pack("<I", (18 << 20) + 1), struct.pack("<I", 24) + bytes(24)):
         with socket.create_connection(("127.0.0.1", worker.port)) as connection:
             context = TLS.client_context(worker.identity, worker.state / "identity.pem")
             with context.wrap_socket(connection, server_hostname=None) as secure:
@@ -511,11 +710,11 @@ def test_bounded_frames_and_single_listener(worker):
     command[command.index("--port") + 1] = "0"
     command += ["--socket", str(worker.root / "duplicate.sock")]
     with subprocess.Popen(command, env=worker.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as duplicate:
-        ready = worker.state / "worker.ready.json"
+        ready = worker.state / "worker.ready"
 
         def duplicate_ready():
-            published = json.loads(ready.read_text())
-            return published if published["pid"] == duplicate.pid else None
+            published = WorkerReady.GetRootAs(ready.read_bytes())
+            return published if published.Pid() == duplicate.pid else None
 
         started = process_file(duplicate, ready, duplicate_ready)
         if started:
@@ -599,9 +798,8 @@ def test_jobs_command_lists_and_removes_only_chosen_jobs(worker):
     queued, running = "d" * 64, "e" * 64
     for job, state in ((queued, R.JobState.Queued), (running, R.JobState.Running)):
         (project / "jobs" / job).mkdir(mode=0o700)
-        (project / "jobs" / job / "state").write_text(json.dumps({
-            "state": state, "fingerprint": "0" * 64, "result": "", "diagnostic": "",
-            "pid": 4242, "start": 1, "boot": "", "core_life_id": worker.core_life_id}))
+        (project / "jobs" / job / "state").write_bytes(R.pack(R.JournalStateT(
+            state=state, fingerprint="0" * 64, pid=4242, start=1, coreLifeId=worker.core_life_id)))
     lock = (project / "locks" / f"{running}.supervisor").open("w")
     fcntl.flock(lock, fcntl.LOCK_EX)
 

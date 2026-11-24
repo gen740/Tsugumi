@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT / "tests" / "core"))
 BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build"))
 TSUGUMID = Path(os.environ.get("TSUGUMID", BUILD / "tsugumid" / "tsugumid"))
 WORKER = Path(os.environ.get("TSUGUMI_WORKER", BUILD / "workerd" / "tsugumi-worker"))
-SDK = Path(os.environ.get("TSUGUMI_SDK_DIR", ROOT / "sdk"))
+NIX = Path(os.environ.get("TSUGUMI_NIX_DIR", BUILD / "share/tsugumi/nix"))
 WEB_DIST = Path(os.environ.get("TSUGUMI_WEB_DIST", ROOT / "ui/web" / "dist"))
 # The tsugumi command (cli/), and the built page hostd serves.
 CLI = Path(os.environ.get("TSUGUMI_CLI", BUILD / "cli" / "tsugumi"))
@@ -30,7 +30,7 @@ WEB_ROOT = WEB_DIST / "public"
 
 EMPTY_PROJECT = {
     "name": "test",
-    "pkgsPath": "tsugumi:default",
+    "nixPath": [],
     "canvas": {"cards": [], "connections": []},
 }
 
@@ -38,10 +38,13 @@ EMPTY_PROJECT = {
 def write_project(root: Path, project: dict | None = None, layout: dict | None = None) -> None:
     root.mkdir(parents=True, exist_ok=True)
     (root / "tsugumi.json").write_text(json.dumps(project or EMPTY_PROJECT))
-    (root / "layout.json").write_text(json.dumps(layout or {}))
+    if layout is not None:
+        from harness.document import write_layout
+        write_layout(root, layout)
 
 
 from harness.daemon import Daemon as CoreDaemon
+from harness.control import read_ready
 
 
 class Daemon(CoreDaemon):
@@ -184,7 +187,7 @@ class VMEnv:
         _, self.id, url, control = line.split(" ", 3)
         self.port = int(url.split(":")[2].split("/")[0])
         self.control = Path(control)
-        self.ready = json.loads((self.control / "server.ready").read_text())
+        self.ready = read_ready(self.control / "server.ready")
         return self
 
     def client(self):
@@ -228,20 +231,20 @@ def real_environment(project: Path):
 
 def demo_environment(tmp_path: Path, demo: str, edit=None, language: str = "ja"):
     """A fresh copy of a demo (of demos/<language>) served by the shared VM
-    (TSUGUMI_TEST_CONTAINER=1) or by a host tsugumid with sandboxing disabled
+    (TSUGUMI_TEST_SHARED_VM=1) or by a host tsugumid with sandboxing disabled
     for development. `edit(copy)` changes the copy before it is served."""
     dst = tmp_path / demo
     shutil.copytree(ROOT / "demos" / language / demo, dst)
     if edit:
         edit(dst)
-    if os.environ.get("TSUGUMI_TEST_CONTAINER") == "1":
+    if os.environ.get("TSUGUMI_TEST_SHARED_VM") == "1":
         # The one shared store of the VM keeps Nix downloads.
         return real_environment(dst)
     # Every Card's own definition, also inside its Cards in Card (externals).
     for f in dst.rglob("definitions/*/_card.json"):
         card = json.loads(f.read_text())
-        if card.get("language"):
-            card["sandbox"] = False
+        if card.get("type") == "code":
+            card["sandbox"] = {"filesystem": False}
             f.write_text(json.dumps(card))
     daemon = Daemon(dst).start()
     daemon.client_hello = True

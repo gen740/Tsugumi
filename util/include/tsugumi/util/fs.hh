@@ -38,8 +38,24 @@ std::string read_file_or_throw(const stdfs::path& p);
 // the file does not exist.
 std::optional<std::string> read_range(const stdfs::path& p, uint64_t offset,
                                       uint64_t size);
+// A page of a regular file whose resolved location is inside `root` (also
+// resolved). The file is opened once and its size and bytes come from that
+// descriptor, so a symlink that leads out of root, or a file replaced after
+// the check, is never read. Bytes are read only when `offset` <= size.
+struct ContainedRange {
+  uint64_t size = 0;
+  std::string bytes;
+};
+// nullopt when the file is missing, not a regular file, or outside root.
+std::optional<ContainedRange> read_range_inside(const stdfs::path& root,
+                                                const stdfs::path& p,
+                                                uint64_t offset,
+                                                uint64_t limit);
 // SHA-256 (hex) of a file's content, read in parts.
 std::string sha256_file(const stdfs::path& p);
+// SHA-256 (hex) of a directory tree: every directory name and every regular
+// file's name and content hash, in sorted order. Links are hashed by name.
+std::string sha256_tree(const stdfs::path& p);
 void write_atomic(const stdfs::path& p, std::string_view data,
                   unsigned mode = 0644);
 void fsync_dir(const stdfs::path& dir);
@@ -74,8 +90,15 @@ auto copy_beneath(const stdfs::path& root, const stdfs::path& rel,
                   const stdfs::path& destination,
                   const std::function<void(std::string_view)>& on_chunk)
     -> uint64_t;
+// Links the validated regular inode on Linux. Returns nullopt if linking is
+// unavailable, so callers can use the same checked sparse copy path.
+auto link_beneath(const stdfs::path& root, const stdfs::path& rel,
+                  const stdfs::path& destination) -> std::optional<uint64_t>;
 Listing list_beneath(const stdfs::path& root, const stdfs::path& rel,
                      size_t max_entries = SIZE_MAX);
+// Whether `rel` below root is a directory (true) or a regular file (false),
+// opened without following links. Anything else throws Error.
+bool directory_beneath(const stdfs::path& root, const stdfs::path& rel);
 
 // Exclusive advisory lock held for the lifetime of the object.
 class FileLock {

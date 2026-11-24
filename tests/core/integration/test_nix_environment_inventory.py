@@ -2,6 +2,7 @@
 
 import subprocess
 
+from harness.real_cards import PRINT_MAIN, python_nix
 from harness.scenario import Project, run, wait_run
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
@@ -13,9 +14,9 @@ def test_recorded_closure_matches_nix_and_survives_definition_changes(core_facto
     graph = Project(project)
     environments = []
     for greeting in ["first", "first", "changed"]:
-        graph.card("work", {"type": "code", "language": "bash", "sandbox": False},
+        graph.card("work", {"type": "code", "sandbox": {"filesystem": False}},
                    outputs="table Outputs {} root_type Outputs;",
-                   sources={"default.nix": '{ pkgs, inputs, params }: { run = "echo ' + greeting + '"; }'})
+                   sources={"default.nix": python_nix(PRINT_MAIN, values={"PRINTED": f'"{greeting}"'})})
         graph.save(client)
         run_id = run(client)
         status = wait_run(client, run_id)
@@ -46,11 +47,11 @@ def test_recorded_closure_matches_nix_and_survives_definition_changes(core_facto
 
 
 def test_local_tools_come_from_the_definition_and_are_recorded(core_factory, project):
-    """Local bodies and hooks use the Card's nixpkgs tools, including on cached runs."""
+    """A Card runs the tools it declared to its builder, including on cached runs."""
     from harness.real_cards import DEFINITION_TOOLS_NIX, TXT, check_definition_tools
 
     client = core_factory().connect()
-    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False, "recordIO": True},
+    Project(project).card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True},
                           outputs=TXT, sources={"default.nix": DEFINITION_TOOLS_NIX}).save(client)
     observed = []
     for _ in range(2):

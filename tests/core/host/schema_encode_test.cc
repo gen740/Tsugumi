@@ -3,7 +3,6 @@
 #include <limits>
 
 #include "../agent_fixture_server.hh"
-#include "runtime_schema.hh"
 #include "tsugumi/document/document.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json.hh"
@@ -12,9 +11,8 @@ namespace tsugumi::schema {
 namespace {
 TEST(SchemaDecode, DefinitionLoaderNamesUnknownSettingsAndTheFile) {
   test::TemporaryDirectory directory;
-  fs::write_atomic(
-      directory.path / "tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  fs::write_atomic(directory.path / "tsugumi.json",
+                   R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto file = directory.path / "definitions/x/_card.json";
   std::filesystem::create_directories(file.parent_path());
   for (const auto* member : {"filesystem", "unrecognizedSetting"}) {
@@ -33,8 +31,8 @@ TEST(SchemaDecode, DefinitionLoaderNamesUnknownSettingsAndTheFile) {
 
 TEST(SchemaDecode, EveryCardStatesAKnownType) {
   for (const auto& [text, message] : {
-           std::pair{R"({"language":"python"})", R"("type" is required)"},
-           std::pair{R"({"type":"none"})", R"(unknown type "none")"},
+           std::pair{R"({})", R"("type" is required)"},
+           std::pair{R"({"type":"none"})", "unknown enum value: none"},
            std::pair{R"({"type":"code","external":"inner"})",
                      R"("external" needs "type": "subgraph")"},
            std::pair{R"({"type":"subgraph"})", R"(a subgraph needs "external")"},
@@ -49,8 +47,7 @@ TEST(SchemaDecode, EveryCardStatesAKnownType) {
       EXPECT_EQ(error.args.at("path"), "definitions/x/_card.json");
     }
   }
-  for (const auto* type : {"code", "draft", "trigger", "input", "branch",
-                           "fork", "merge", "collect"})
+  for (const auto* type : {"code", "draft", "trigger", "input", "merge", "collect"})
     EXPECT_NO_THROW(
         parse_card_json("x", std::string(R"({"type":")") + type + "\"}"));
   EXPECT_NO_THROW(
@@ -59,7 +56,7 @@ TEST(SchemaDecode, EveryCardStatesAKnownType) {
 
 TEST(SchemaDecode, NestedUnknownAndWrongTypedSettingsKeepTheirLocation) {
   for (const auto& [text, member] :
-       {std::pair{R"({"type":"code","params":[{"unrecognized":true}]})", "unrecognized"},
+       {std::pair{R"({"type":"code","params":42})", "params"},
         std::pair{R"({"type":"code","sandbox":"yes"})", "sandbox"}}) {
     try {
       parse_card_json("x", text);
@@ -105,15 +102,11 @@ TEST(SchemaEncode, NonFiniteNumbersNameTheTypeAndNestedField) {
   }
 }
 
-TEST(SchemaEncode, InvalidUtf8EmptyOptionalAndUnassignedDomAreIdentified) {
-  StartupError record;
-  *record.message = std::string(1, static_cast<char>(0xff));
-  const auto utf8 = failure(record);
-  EXPECT_FALSE(utf8.empty());
-  const auto optional = failure(InvocationDetailJson{});
-  EXPECT_FALSE(optional.empty());
-  const auto dom = failure(Json{});
-  EXPECT_FALSE(dom.empty());
+TEST(SchemaEncode, InvalidUtf8AndUnassignedDomAreIdentified) {
+  v::String input;
+  input.value() = std::string(1, static_cast<char>(0xff));
+  EXPECT_FALSE(failure(input).empty());
+  EXPECT_FALSE(failure(Json{}).empty());
 }
 
 TEST(SchemaEncode, MappingKeysAreEscapedAndMessagesStayOnOneLine) {

@@ -13,10 +13,10 @@ session.project = parse(doc)
 session.confirmedProject = parse(doc)
 session.layout = parse('{}')
 session.confirmedLayout = parse('{}')
-session.confirmedDefinitions.set('source', parse('{"type":"code","language":"bash"}'))
+session.confirmedDefinitions.set('source', parse('{"type":"code"}'))
 session.confirmedDefinitions.set('collect', parse('{"type":"collect"}'))
-session.confirmedDefinitions.set('sink', parse('{"type":"code","language":"bash"}'))
-const ordinaryList = { name: 'out', kind: D.PortKind.FlatBuffer, rootType: 'Example.List', optional: false, executionShape: D.ExecutionShape.single }
+session.confirmedDefinitions.set('sink', parse('{"type":"code"}'))
+const ordinaryList = { name: 'out', rootType: 'Example.List' }
 session.resolution.set('source', { path: ['source'], inputs: [], outputs: [ordinaryList], diagnostics: [], nixReferences: [] })
 session.resolution.set('collect', { path: ['collect'], inputs: [], outputs: [ordinaryList], diagnostics: [], nixReferences: [] })
 

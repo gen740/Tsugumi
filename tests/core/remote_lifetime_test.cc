@@ -230,9 +230,8 @@ TEST_F(JournalBroker, InterruptedCleanupKeepsUncollectedInputsResultsAndLogs) {
   ServiceOptions options;
   options.root = root / "project";
   std::filesystem::create_directories(options.root);
-  fs::write_atomic(
-      options.root / "tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  fs::write_atomic(options.root / "tsugumi.json",
+                   R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   options.scratch_dir = root / "scratch";
   options.run_scratch_dir = root / "outputs";
   Service current(options);

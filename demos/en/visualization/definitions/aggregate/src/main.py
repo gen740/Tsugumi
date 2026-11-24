@@ -1,14 +1,12 @@
 """Mean of five deterministic measurements at each of 24 times."""
-import math
+from math import sin
+
+from card import Input, Output, params
+from readings.Table import TableT
 
 
-def main(inputs, report):
-    outputs = {}
+def run(input: Input) -> Output:
     xs = list(range(24))
-    ys = [sum(10 + math.sin(t / 3) + j / 10 for j in range(5)) / 5 + inputs.params.offset for t in xs]
-    outputs.update({'data': {
-        'x': xs,
-        'y': ys,
-    }})
-    report.table(["time", "mean"], [[x, y] for x, y in zip(xs, ys)])
-    return outputs
+    ys = [sum(10 + sin(t / 3) + j / 10 for j in range(5)) / 5 + params.offset for t in xs]
+    # TODO(open): Port the demo display.
+    return Output(data=TableT(x=xs, y=ys))

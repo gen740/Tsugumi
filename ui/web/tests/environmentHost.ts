@@ -13,7 +13,7 @@ assert.deepEqual(environmentState(ready), {
 const diagnostic = { kind: 'incompatible_history', found: '2', expected: '3' }
 const failed = Object.assign(new H.EnvironmentStateT(), {
   phase: H.EnvironmentPhase.Failed, recovery: 'Retry the virtual machine', message: 'History open failed',
-  startupErrorJson: JSON.stringify(diagnostic),
+  startupError: Object.assign(new H.StartupErrorT(), diagnostic),
 })
 assert.equal(environmentState(failed).recovery, failed.recovery)
 assert.deepEqual(environmentState(failed).historyVersionMismatch, diagnostic)

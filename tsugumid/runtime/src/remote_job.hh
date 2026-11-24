@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "tsugumi/workerd/protocol.hh"
+#include "tsugumi/workerd/values.hh"
 
 namespace tsugumi {
 
@@ -29,6 +30,8 @@ struct RemoteTarget {
   uint32_t max_jobs = 0;
   uint64_t grade = 0;
   std::string unavailable_reason;
+  bool namespace_isolation = false;
+  bool gui = false;
 };
 
 struct RemoteJobState {
@@ -45,6 +48,11 @@ struct RemoteJobState {
   std::string log = {};
   // The running job waits for its Card secrets (JobSecretsRequest).
   bool secrets_wanted = false;
+  std::vector<WorkerDisplayData> displays = {};
+  bool display_pending = false;
+  uint64_t display_sequence = 0;
+  bool view_input_ready = false;
+  std::map<std::string, uint64_t> view_input_credits = {};
 };
 
 struct RemoteProbe {
@@ -80,12 +88,10 @@ class RemoteJobClient {
   auto stop() -> void { stopped_.request_stop(); }
   auto catalog(std::stop_token stop = {}) const -> std::vector<RemoteTarget>;
   auto probe(std::string_view service, std::string_view registered_server,
-             std::stop_token stop = {}) const
-      -> RemoteProbe;
+             std::stop_token stop = {}) const -> RemoteProbe;
   auto put_blob(std::string_view service, std::string_view instance,
                 std::string_view job_id, std::string_view digest, uint64_t size,
-                std::istream& contents,
-                std::stop_token cancel = {},
+                std::istream& contents, std::stop_token cancel = {},
                 const TransferProgress& progress = {}) const -> void;
   auto get_blob(std::string_view service, std::string_view instance,
                 std::string_view job_id, std::string_view digest,
@@ -95,11 +101,15 @@ class RemoteJobClient {
                 const TransferProgress& progress = {}) const -> void;
   auto submit(std::string_view service, std::string_view instance,
               std::string_view job_id, std::string_view spec,
-              std::stop_token stop) const
-      -> RemoteJobState;
+              std::stop_token stop) const -> RemoteJobState;
+  auto send_view(std::string_view service, std::string_view instance,
+                 std::string_view job_id, const WorkerDisplayData& display,
+                 uint64_t offset, std::stop_token stop) const -> void;
   auto status(std::string_view service, std::string_view instance,
               std::string_view job_id, uint64_t log_offset,
-              std::stop_token stop) const -> RemoteJobState;
+              std::stop_token stop, uint64_t display_after = 0,
+              const std::map<std::string, uint64_t>& credits = {}) const
+      -> RemoteJobState;
   // With a log cursor, the reply also carries the job log from there; only
   // the submitting core life may read it.
   auto cancel(std::string_view service, std::string_view instance,
@@ -117,10 +127,11 @@ class RemoteJobClient {
       -> std::vector<std::pair<std::string, std::string>>;
   // Hands a running job that waits for them its Card secrets, once. The
   // values are cleared from `secrets` whether or not the worker accepts them.
-  auto deliver_secrets(std::string_view service, std::string_view instance,
-                       std::string_view job, std::string_view fingerprint,
-                       std::vector<std::pair<std::string, std::string>>& secrets,
-                       std::stop_token stop) const -> void;
+  auto deliver_secrets(
+      std::string_view service, std::string_view instance, std::string_view job,
+      std::string_view fingerprint,
+      std::vector<std::pair<std::string, std::string>>& secrets,
+      std::stop_token stop) const -> void;
 
  private:
   auto request(Tsugumi::RemoteWorker::RequestT message,

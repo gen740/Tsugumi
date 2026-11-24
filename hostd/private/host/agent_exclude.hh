@@ -23,12 +23,16 @@ class AgentExclude {
                     bool recorded = false) const -> void;
   auto CheckContent(const std::string& raw) const -> void;
   auto CheckSave(const ::tsugumi::json::Members& plan, const SaveBase& base,
-                 const SourcePatches& patches = {}) const -> void;
+                 const SourcePatches& patches = {},
+                 bool allow_template_writes = false) const -> void;
   auto Filter(const std::string& raw, const std::string& prefix = "",
               bool recorded = false) const -> std::string;
   auto ProjectText(const std::string& raw, const std::string& prefix = "") const
       -> std::string;
   auto FileText(const std::string& path, const std::string& raw) const
+      -> std::string;
+  // A layout JSON view without the places of hidden Cards.
+  auto LayoutText(const std::string& view, const std::string& prefix = "") const
       -> std::string;
   auto Paths() const -> const std::vector<std::filesystem::path>& {
     return paths_;

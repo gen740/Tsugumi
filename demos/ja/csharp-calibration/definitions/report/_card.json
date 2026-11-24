@@ -1,11 +1,8 @@
 {
   "type": "code",
-  "language": "python",
   "inputs": [
     {
       "name": "numbers"
     }
-  ],
-  "artifactOutput": "report",
-  "retainArtifact": true
+  ]
 }

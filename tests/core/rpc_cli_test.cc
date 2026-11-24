@@ -146,8 +146,7 @@ class RpcCli : public ::testing::TestWithParam<bool> {
 TEST_P(RpcCli, OrdersUnionsWithinProjectChangeArrays) {
   Write(
       directory.path / "project/tsugumi.json",
-      R"({"name":"Before","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
-  Write(directory.path / "project/layout.json", "{}");
+      R"({"name":"Before","nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   project.Start({TSUGUMI_PROJECT_BINARY, "--scratch-dir",
                  (directory.path / "scratch").string(), "--run-scratch-dir",
                  (directory.path / "run-scratch").string(), "--project",
@@ -155,7 +154,7 @@ TEST_P(RpcCli, OrdersUnionsWithinProjectChangeArrays) {
                  (directory.path / "project.sock").string(), "--listen",
                  "127.0.0.1:0", "--allow-missing-origin", "--control-dir",
                  (directory.path / "project-control").string(), "--worker",
-                 TSUGUMI_WORKER_BINARY, "--sdk-dir", TSUGUMI_TEST_SDK},
+                 TSUGUMI_WORKER_BINARY, "--nix-dir", TSUGUMI_TEST_NIX},
                 directory.path / "project.log");
   const auto server =
       Readiness(project, directory.path / "project-control/server.ready",
@@ -172,7 +171,7 @@ TEST_P(RpcCli, OrdersUnionsWithinProjectChangeArrays) {
       << inspect.replies[1];
   const auto revision = JsonUInt(inspect.replies[1], "/payload/value/rev");
   const std::string document =
-      R"({"name":"After 日本語","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})";
+      R"({"name":"After 日本語","nixPath": [],"canvas":{"cards":[],"connections":[]}})";
   const auto save =
       "{\"changes\":[{\"value\":{\"json\":" + Quote(document) +
       "},\"value_type\":\"SetProject\"}],\"origin\":\"user\",\"op_id\":"
@@ -223,8 +222,7 @@ TEST_P(RpcCliDeepSocket, ServesAndConnectsInAFolderDeeperThanSunPath) {
   ASSERT_GT(socket.size(), sizeof(sockaddr_un::sun_path));
   Write(
       directory.path / "project/tsugumi.json",
-      R"({"name":"Deep","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
-  Write(directory.path / "project/layout.json", "{}");
+      R"({"name":"Deep","nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   project.Start(
       {TSUGUMI_PROJECT_BINARY, "--scratch-dir",
        (directory.path / "scratch").string(), "--run-scratch-dir",
@@ -232,7 +230,7 @@ TEST_P(RpcCliDeepSocket, ServesAndConnectsInAFolderDeeperThanSunPath) {
        (directory.path / "project").string(), "--unix", socket, "--listen",
        "127.0.0.1:0", "--allow-missing-origin", "--control-dir",
        (directory.path / "project-control").string(), "--worker",
-       TSUGUMI_WORKER_BINARY, "--sdk-dir", TSUGUMI_TEST_SDK},
+       TSUGUMI_WORKER_BINARY, "--nix-dir", TSUGUMI_TEST_NIX},
       directory.path / "project.log");
   const auto server =
       Readiness(project, directory.path / "project-control/server.ready",

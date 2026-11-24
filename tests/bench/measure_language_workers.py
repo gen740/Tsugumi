@@ -1,8 +1,8 @@
 """Manual Collatz R/Julia worker comparison, restored from 58079032^.
 
 Run once per SDK/build, with the same daemon, nixpkgs and machine. The first
-run and rerun remain separate; the current inputs/report/result contract and
-external Card ports come from the repository's unmodified Collatz demo.
+run and rerun remain separate; the Cards and their ports come from the
+repository's Collatz demo, with only collect's recordIO turned on.
 """
 from __future__ import annotations
 
@@ -11,8 +11,22 @@ import json
 from pathlib import Path
 import shutil
 
-from measure_stages import Daemon, ROOT, UNAVAILABLE, path, print_table, run_once, summary, text
+from measure_stages import Daemon, ROOT, UNAVAILABLE, path, print_table, run_once, summary
 from run import workspace
+
+
+def sequence_length(client, run_id, selected):
+    """Length of the `values` vector of collect's last `sequence` output."""
+    from flatbuffers.table import Table
+    from harness.observations import read_pages
+    from Tsugumi.Data.ValueSide import ValueSide
+    card = path(selected, "collect")
+    records = client.call("RunInvocationsRequest", runId=run_id, card=card).records
+    payload = read_pages(client, "RunValueReadRequest", page_bytes=1 << 20, runId=run_id, card=card,
+                         invocation=max(r.invocation for r in records), side=ValueSide.output, port="sequence")
+    table = Table(payload, int.from_bytes(payload[:4], "little"))
+    offset = table.Offset(4)
+    return table.VectorLen(offset) if offset else 0
 
 
 def measure(language, directory, timeout):
@@ -30,6 +44,9 @@ def measure(language, directory, timeout):
     for external in (root / "externals").iterdir():
         if external.name != selected:
             shutil.rmtree(external)
+    # The sequence is read back as a recorded value.
+    collect = root / "externals" / selected / "definitions" / "collect" / "_card.json"
+    collect.write_text(json.dumps({**json.loads(collect.read_text()), "recordIO": True}))
     daemon = Daemon(root)
     result = {"path": "local", "scenario": language, "runs": [], "summary": {},
               "project": str(root), "daemon_directory": str(daemon.directory)}
@@ -40,10 +57,9 @@ def measure(language, directory, timeout):
         for repetition in (1, 2):
             measured = run_once(client, "start", timeout)
             measured["repetition"] = repetition
-            # Keep the original workload correctness check: 27 takes 112 values.
-            record = client.call("RunRecordRequest", runId=measured["run_id"],
-                                 card=path(selected, "collect")).record
-            if not text(record.display.value.text).startswith("112 values:"):
+            # Keep the original workload correctness check: 27 takes 112 values,
+            # read from collect's declared `sequence` output.
+            if sequence_length(client, measured["run_id"], selected) != 112:
                 raise RuntimeError("Collatz did not produce the expected 112-value sequence")
             measured["language_invocations"] = sum(r["card"].startswith(selected + "/") for r in measured["invocations"])
             measured["worker_reused_invocations"] = sum(r["worker_reused"] is True for r in measured["invocations"])

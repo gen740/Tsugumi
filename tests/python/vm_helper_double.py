@@ -18,6 +18,7 @@ import threading
 
 sys.path.insert(0, os.environ["TSUGUMI_PY_BINDINGS"])
 import flatbuffers
+from Tsugumi.State.ServerReady import ServerReady
 from Tsugumi.VMGuest.ProjectPhase import ProjectPhase
 from Tsugumi.VMGuest.ProjectStatus import ProjectStatusT
 from Tsugumi.VMHost.Event import EventT
@@ -112,7 +113,7 @@ def status(key):
     result.pid = child.pid if result.running else 0
     if result.running:
         try:
-            result.endpoint = json.loads((controls[key] / "server.ready").read_text())["endpoint"]
+            result.endpoint = text(ServerReady.GetRootAs((controls[key] / "server.ready").read_bytes()).Endpoint())
         except FileNotFoundError:
             pass
     return result
@@ -159,7 +160,7 @@ def serve_requests(peer):
                     # check) have no Origin; browsers still need an allowed one.
                     arguments = [os.environ["TSUGUMID"], "--scratch-dir", str(mounts["control"] / "scratch"),
                                  "--run-scratch-dir", str(mounts["control"].resolve() / "run-scratch"), "--project", str(mounts["project"]), "--control-dir", str(mounts["control"]),
-                                 "--unix", str(sockets / key), "--listen", "127.0.0.1:0", "--allow-missing-origin", "--worker", os.environ["TSUGUMI_WORKER"], "--sdk-dir", os.environ["TSUGUMI_SDK_DIR"]]
+                                 "--unix", str(sockets / key), "--listen", "127.0.0.1:0", "--allow-missing-origin", "--worker", os.environ["TSUGUMI_WORKER"], "--nix-dir", os.environ["TSUGUMI_NIX_DIR"]]
                     for origin in request.origins or []:
                         arguments.extend(["--allow-origin", text(origin)])
                     environment = dict(os.environ, TSUGUMI_EXECUTION_BROKER=broker_endpoint, TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE=str(mounts["control"] / "execution-broker-capability"))

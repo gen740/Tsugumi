@@ -1,4 +1,6 @@
 """Logistic regression: one weight per pixel for each digit, the largest weighted sum wins."""
+from card import Input, Output, params
+from mnist.Result import ResultT
 import os
 
 # One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
@@ -26,20 +28,20 @@ def confusions(ax, y, pred):
 def result(name, settings, digest, y, pred, fit, predict):
     model = name
     predictions = pred.astype(np.uint8)
-    return {'result': {
-        'model': model,
-        'settings': settings,
-        'digest': digest,
-        'accuracy': float(np.mean(pred == y)),
-        'fit_seconds': fit,
-        'predict_seconds': predict,
-        'predictions': predictions,
-    }}
+    return Output(result=ResultT(
+        model=model,
+        settings=settings,
+        digest=digest,
+        accuracy=float(np.mean(pred == y)),
+        fitSeconds=fit,
+        predictSeconds=predict,
+        predictions=predictions,
+    ))
 
 
-def main(inputs, report):
-    c, max_iter = inputs.params.c, inputs.params.maxIter
-    data = np.load(inputs.data.value.decode())
+def run(inputs: Input) -> Output:
+    c, max_iter = params.c, params.max_iter
+    data = np.load(inputs.require("data").open() / "subset.npz")
     train_x, train_y, test_x, test_y = data["train_images"], data["train_labels"], data["test_images"], data["test_labels"]
 
     model = LogisticRegression(C=c, max_iter=max_iter)
@@ -50,7 +52,7 @@ def main(inputs, report):
     pred = model.predict(test_x)
     predict = time.process_time() - start
     accuracy = np.mean(pred == test_y)
-    report.log(f"logistic C={c}: accuracy {accuracy:.4f}, {model.n_iter_[0]} iterations, fit {fit:.3f} s, predict {predict:.3f} s")
+    print(f"logistic C={c}: accuracy {accuracy:.4f}, {model.n_iter_[0]} iterations, fit {fit:.3f} s, predict {predict:.3f} s")
 
     weights = model.coef_.reshape(10, 28, 28)
     mosaic = np.vstack([np.hstack(weights[:5]), np.hstack(weights[5:])])
@@ -63,6 +65,6 @@ def main(inputs, report):
         right.text(28 * (d % 5) + 2, 28 * (d // 5) + 4, str(d), fontsize=9)
     right.set(xticks=[], yticks=[], title="数字ごとの重み（赤: その数字らしい画素、青: 逆）")
     fig.suptitle(f"ロジスティック回帰 C={c:g}: 正解率 {accuracy:.4f}、学習 {fit:.2f} 秒、予測 {predict:.3f} 秒", fontsize=11)
-    report.figure()
+    # TODO(open): Port the demo display.
 
     return result('logistic', f'C={c:g}', str(data['digest']), test_y, pred, fit, predict)

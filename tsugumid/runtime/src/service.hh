@@ -13,6 +13,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <stop_token>
 #include <string>
 #include <thread>
 
@@ -22,6 +23,7 @@
 #include "store.hh"
 #include "tsugumi/rpc/lanes.hh"
 #include "tsugumi/util/json.hh"
+#include "tsugumi/workerd/worker_proc.hh"
 #include "versions.hh"
 #include "wire.hh"
 
@@ -42,7 +44,8 @@ struct ServiceOptions {
   std::string server_instance_id;
   std::filesystem::path
       control_dir;                // launcher-managed files hidden from workers
-  std::filesystem::path sdk_dir;  // installed SDK (share/tsugumi/sdk)
+  std::filesystem::path
+      nix_dir;  // installed Card evaluator (share/tsugumi/nix)
   std::filesystem::path worker_binary;
   std::filesystem::path workerd_binary;
   std::string fault;      // test-only fault injection point
@@ -110,22 +113,27 @@ class Service : public RequestSink {
   auto run_scratch() const -> const std::filesystem::path& {
     return run_scratch_;
   }
-  auto file_roots() const -> std::vector<std::filesystem::path>;
-  auto keep_file_value(const Value& value,
-                       const std::filesystem::path& directory,
-                       const std::atomic<bool>& stop,
-                       const std::function<void(std::string_view, uint64_t,
-                                                uint64_t)>& progress = {})
-      -> Value;
+  auto set_view_receiver(const CardPath& card,
+                         std::weak_ptr<WorkerProc::ViewReceiver> receiver) -> void;
+  auto artifact_grants(std::span<const Value> inputs) -> std::vector<ArtifactGrant>;
+  auto artifact_destination(const InvocationSummaryData& invocation)
+      -> std::filesystem::path;
+  auto record_artifacts(const InvocationSummaryData& invocation,
+                        std::span<const ArtifactKey> ids) -> void;
+  auto register_store_artifact(const std::string& run, const CardPath& card,
+                               uint64_t invocation, const ArtifactKey& id,
+                               const std::filesystem::path& store_path) -> void;
   // The backend that runs the Cards naming execution service `id`.
   auto execution_service(const std::string& id) -> ExecutionService&;
+  auto invalidate_resident(const std::string& card) -> void;
   auto prepare_execution(const Node& node,
                          const std::filesystem::path& directory,
                          BuildRequest& build)
       -> std::unique_ptr<PreparedExecution>;
   // The remote backend uses the same core lifetime as local execution.
   auto remote_execution() -> RemoteExecutionService&;
-  auto remote_targets(std::stop_token stop = {}) const -> std::vector<RemoteTarget>;
+  auto remote_targets(std::stop_token stop = {}) const
+      -> std::vector<RemoteTarget>;
   // The values of a Card's declared secrets for one invocation, from hostd.
   // Throws Failed (before anything of the Card runs) when one is missing.
   auto card_secrets(const Node& node, std::stop_token stop = {}) const
@@ -135,7 +143,16 @@ class Service : public RequestSink {
       -> std::optional<Diag>;
   // A run finished: its record goes to the project's copy soon.
   // A run ended: its result goes to the note of the version it started from.
-  void note_run_end(const RunStatusData& s, const std::string& record_json);
+  void note_run_end(const RunStatusData& s, const std::string& facts);
+  // The views a Card declares (name -> blob), set with the full list each
+  // time CardViewsUpdated is sent; an empty list clears them. CardViewRead
+  // serves only these files.
+  struct DeclaredView {
+    std::string name;
+    std::string blob;
+  };
+  auto set_card_views(const CardPath& card, std::vector<DeclaredView> views)
+      -> void;
 
  private:
   void reply(const RequestIn& req, std::string bytes);
@@ -152,23 +169,22 @@ class Service : public RequestSink {
     std::string receipt;
     size_t notification_bytes = 0;
   };
-  auto prepare_save_reply(
-      Store::Staged& staged, const Document& base,
-      const flatbuffers::Vector<uint8_t>* operation_data = nullptr)
-      -> PreparedSaveReply;
-  void complete_save(RequestIn& req, const std::string& op_id,
-                     const std::string& kind, const std::string& digest,
-                     const Document& base, Store::Staged& staged,
-                     const PreparedSaveReply& response,
-                     const std::function<void()>& check_cancelled = [] {});
+  auto prepare_save_reply(Store::Staged& staged, const Document& base,
+                          const flatbuffers::Vector<uint8_t>* operation_data =
+                              nullptr) -> PreparedSaveReply;
+  void complete_save(
+      RequestIn& req, const std::string& op_id, const std::string& kind,
+      const std::string& digest, const Document& base, Store::Staged& staged,
+      const PreparedSaveReply& response,
+      const std::function<void()>& check_cancelled = [] {});
   auto version_operation(RequestIn& req,
                          const std::function<std::string()>& operation) -> void;
   void cache_clear(RequestIn& req);
   void cache_usage(RequestIn& req);
   void scratch_delete(RequestIn& req);
   void history_delete(RequestIn& req);
+  void history_category_delete(RequestIn& req);
   void run(RequestIn& req);
-  void sdk_prepare(RequestIn& req);
   void version_init(RequestIn& req);
   void version_mark(RequestIn& req);
   void version_checkout(RequestIn& req);
@@ -187,8 +203,9 @@ class Service : public RequestSink {
   void file_read(RequestIn& req);
   void output_types(RequestIn& req);
   void input_types(RequestIn& req);
-  void nix_source_resolve(RequestIn& req);
-  void sdk_status(RequestIn& req);
+  void nix_path_lock_source(RequestIn& req);
+  void rewrite_param_literal_request(RequestIn& req);
+  void evaluate_nix(RequestIn& req);
   void run_plan(RequestIn& req);
   void run_cancel(RequestIn& req);
   void run_status(RequestIn& req);
@@ -206,9 +223,11 @@ class Service : public RequestSink {
   void run_value_read(RequestIn& req);
   void artifact_list(RequestIn& req);
   void artifact_read(RequestIn& req);
-  void module_read(RequestIn& req);
   void log_range(RequestIn& req);
   void view_set_visible(RequestIn& req);
+  void view_send(RequestIn& req);
+  void view_credit(RequestIn& req);
+  void card_view_read(RequestIn& req);
   void view_save(RequestIn& req);
 
   // Receipt handling shared by mutating requests. Returns true when the
@@ -234,6 +253,7 @@ class Service : public RequestSink {
       const std::optional<std::string>& view_id, const ViewRecord* view);
   void check_snapshot(const Document& doc);
   void publish_delta(const Delta& delta, size_t notification_bytes);
+  auto refresh_card_views(DocumentPtr doc) -> void;
   void check_at_rev(std::optional<uint64_t> at_rev, const Document& doc) const;
   RunStatusData current_run_status();
 
@@ -244,10 +264,10 @@ class Service : public RequestSink {
   std::unique_ptr<Store> store_;
   std::unique_ptr<History> history_;
   std::unique_ptr<Versions> versions_;
-  // Artifact files whose content was checked against their hash, by path:
-  // (size, modification time) when checked. Later pages read their range only.
-  std::mutex verified_mu_;
-  std::map<std::string, std::pair<uint64_t, int64_t>> verified_;
+  std::mutex view_routes_mu_;
+  std::map<std::string, std::vector<std::weak_ptr<WorkerProc::ViewReceiver>>> view_routes_;
+  std::mutex view_files_mu_;
+  std::map<std::string, std::vector<DeclaredView>> view_files_;  // path_key
   std::unique_ptr<NixRunner> nix_;
   std::filesystem::path run_scratch_;
   std::unique_ptr<CacheUsage> cache_usage_;
@@ -263,6 +283,13 @@ class Service : public RequestSink {
   std::unique_ptr<Lane> read_pool_;
   std::unique_ptr<Lane> cancel_lane_;
   std::unique_ptr<Lane> shell_lane_;
+  std::unique_ptr<Lane> card_views_lane_;
+  std::stop_source card_views_shutdown_;
+  std::mutex card_views_build_mu_;
+  // Owned by the mutation lane. A new execution revision cancels older work.
+  std::optional<uint64_t> card_views_rev_;
+  std::stop_source card_views_cancel_;
+  std::map<std::string, std::optional<Note>> card_views_;
   std::mutex cancellations_mu_;
   bool shell_stopping_ = false;
   std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::atomic<bool>>>
@@ -279,9 +306,12 @@ class Service : public RequestSink {
   std::map<std::string, Pending> pending_ops_;
 
   std::mutex subs_mu_;
+  std::set<ConnId> ui_connections_;
+  std::optional<ConnId> ui_owner_;
   // Owned by the transport loop, alongside debug dispatch and disconnect.
   std::optional<ConnId> trace_owner_;
   std::map<ConnId, std::string> subscriptions_;  // conn -> subscription id
+  std::map<ConnId, std::set<std::string>> visible_cards_;
 
   std::mutex view_mu_;
 

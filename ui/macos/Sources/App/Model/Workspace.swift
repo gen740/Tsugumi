@@ -33,7 +33,7 @@ enum CardEditorCategory: String, Codable, CaseIterable, Identifiable {
     case .dependencies: return String(localized: "依存")
     case .executions: return String(localized: "実行履歴")
     case .artifacts: return String(localized: "成果物")
-    case .notes: return String(localized: "コメントと追加コンテキスト")
+    case .notes: return String(localized: "コメント")
     }
   }
 
@@ -73,15 +73,13 @@ final class WorkflowTab: Identifiable {
   let id = UUID()
   var scope: [String]
   var selection: Set<CardKey> = [] {
-    // Choosing Cards anew lets go of the notes and frames: those come from a marquee.
+    // Choosing Cards anew lets go of the notes: those come from a marquee.
     didSet {
       selectedNotes = []
-      selectedFrames = []
     }
   }
-  /// Sticky notes (ids) and Cards' output frames caught by a marquee, set after `selection`.
+  /// Sticky notes (ids) caught by a marquee, set after `selection`.
   var selectedNotes: Set<String> = []
-  var selectedFrames: Set<CardKey> = []
   var back: [[String]] = []
   var selectedConnection: Int?
   var showNixReferences = false
@@ -95,7 +93,7 @@ final class WorkflowTab: Identifiable {
     self.selection = selection
   }
 
-  var hasSelection: Bool { !selection.isEmpty || !selectedNotes.isEmpty || !selectedFrames.isEmpty || selectedConnection != nil }
+  var hasSelection: Bool { !selection.isEmpty || !selectedNotes.isEmpty || selectedConnection != nil }
 
   /// Switches the edited scope; the previous one goes on the back stack.
   func enter(_ s: [String]) {

@@ -1,21 +1,8 @@
 {
   "type": "code",
-  "language": "python",
   "inputs": [
     {
       "name": "input"
-    }
-  ],
-  "params": [
-    {
-      "name": "percentile",
-      "type": "double",
-      "data": 99.5
-    },
-    {
-      "name": "q",
-      "type": "double",
-      "data": 10
     }
   ]
 }

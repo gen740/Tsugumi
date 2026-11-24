@@ -47,7 +47,7 @@ struct ComparedRunField: Identifiable {
   private static func names<V>(_ a: [String: V], _ b: [String: V]) -> [String] { Set(a.keys).union(b.keys).sorted() }
 
   /// What names a member of an execution list: its implementation label (a run
-  /// list entry's `label`, an Input sweep's `name=value`), else its number.
+  /// list entry's `label`), else its number.
   static func memberName(_ i: Tsugumi_RPC_InvocationSummaryT) -> String {
     if let label = i.implementationLabel, !label.isEmpty { return label }
     if let index = i.implementationIndex { return String(localized: "実装 \(index)") }
@@ -118,14 +118,14 @@ struct ComparedRunField: Identifiable {
   /// A side that has the Card but no recorded parameters (or no readable record) cannot be compared.
   static func paramsUnavailable(_ c: ComparedRunCard?) -> Bool {
     guard let c else { return false }
-    return (c.record?.record?.paramsJson ?? "").isEmpty
+    return c.record?.record?.params == nil
   }
 
-  /// Parameters pair by name and compare as serialized JSON.
+  /// Parameters pair by name and compare as recorded.
   static func params(_ left: ComparedRunCard?, _ right: ComparedRunCard?) -> [ComparedRunField] {
     func values(_ c: ComparedRunCard?) -> [String: String] {
-      guard let text = c?.record?.record?.paramsJson, let json = try? JSONValue.parse(text), let entries = json.object else { return [:] }
-      return Dictionary(entries.map { ($0.0, $0.1.serialized().trimmingCharacters(in: .whitespacesAndNewlines)) }, uniquingKeysWith: { x, _ in x })
+      let entries = c?.record?.record?.params?.entries.compactMap { $0 } ?? []
+      return Dictionary(entries.map { ($0.name, $0.value) }, uniquingKeysWith: { first, _ in first })
     }
     let a = values(left), b = values(right), unknown = paramsUnavailable(left) || paramsUnavailable(right)
     return names(a, b).map {
@@ -142,11 +142,8 @@ struct ComparedRunField: Identifiable {
   /// Compares the type and content digest, or the payload when both are available.
   static func valueDifference(_ a: Tsugumi_Data_NamedValueT?, _ b: Tsugumi_Data_NamedValueT?) -> ComparedDifference {
     guard let a, let b else { return a == nil && b == nil ? .same : .unknown }
-    if a.kind != b.kind || a.rootType != b.rootType || a.schemaBfbs != b.schemaBfbs { return .changed }
-    if a.kind == .file {
-      guard let x = a.fileContentHash, !x.isEmpty, let y = b.fileContentHash, !y.isEmpty else { return .unknown }
-      return x == y ? .same : .changed
-    }
+    if a.rootType != b.rootType || a.schemaBfbs != b.schemaBfbs { return .changed }
+    if Set(a.artifacts.compactMap { $0?.id }) != Set(b.artifacts.compactMap { $0?.id }) { return .changed }
     if let x = a.contentHash, !x.isEmpty, let y = b.contentHash, !y.isEmpty { return x == y ? .same : .changed }
     if omitted(a) || omitted(b) { return .unknown }
     return a.inlineBytes == b.inlineBytes ? .same : .changed
@@ -267,18 +264,6 @@ struct ComparedRunField: Identifiable {
                             difference: a == nil || b == nil ? .unknown : left?.target.path == right?.target.path && (left?.propagate != false) == (right?.propagate != false) ? .same : .changed)
   }
 
-  static func sameDisplay(_ a: DisplaySnapshot?, _ b: DisplaySnapshot?) -> Bool {
-    switch (a?.content, b?.content) {
-    case (nil, nil), (.unavailable?, .unavailable?): return true
-    case let (.text(x)?, .text(y)?), let (.markdown(x)?, .markdown(y)?): return x == y
-    case let (.scalar(x, xl)?, .scalar(y, yl)?): return x == y && xl == yl
-    case let (.table(xc, xr)?, .table(yc, yr)?): return xc == yc && xr == yr
-    case let (.image(xm, xd, xa)?, .image(ym, yd, ya)?): return xm == ym && xd == yd && xa == ya
-    case let (.module(xn, xj, xb)?, .module(yn, yj, yb)?): return xn == yn && xj == yj && xb == yb
-    case let (.points(xx, xy, xz, xc)?, .points(yx, yy, yz, yc)?): return xx == yx && xy == yy && xz == yz && xc == yc
-    default: return false
-    }
-  }
 }
 
 struct RunComparisonView: View {
@@ -333,7 +318,7 @@ struct RunComparisonView: View {
       }
     }
     .frame(minWidth: 800, idealWidth: 1100, minHeight: 500, idealHeight: 760)
-    .task(id: "\(left)|\(right)|\(attempt)") { await load() }
+    .task(id: "\(left)|\(right)|\(attempt)|\(session.recordingRevision)") { await load() }
   }
 
   private func runPicker(_ label: LocalizedStringKey, selection: Binding<String>) -> some View {
@@ -397,10 +382,6 @@ private struct ComparedRunCardView: View {
   @State private var shown: ComparedRunRow?
   private var row: ComparedRunRow { shown ?? latest }
   private var batch: Bool { RunComparison.inBatch(latest.left?.summary) || RunComparison.inBatch(latest.right?.summary) }
-  private var a: Tsugumi_RPC_RecordResultT? { row.left?.record }
-  private var b: Tsugumi_RPC_RecordResultT? { row.right?.record }
-  private var leftDisplay: DisplaySnapshot? { a?.record?.display.flatMap(recordedDisplay) }
-  private var rightDisplay: DisplaySnapshot? { b?.record?.display.flatMap(recordedDisplay) }
   private let changed = Color.accentColor.opacity(0.09)
 
   var body: some View {
@@ -432,13 +413,6 @@ private struct ComparedRunCardView: View {
                              unavailable: RunComparison.valuesUnavailable(row.left, row.right))
           ComparedFieldsView(title: "出力", values: RunComparison.values(true, row.left, row.right),
                              unavailable: RunComparison.valuesUnavailable(row.left, row.right))
-          if leftDisplay != nil || rightDisplay != nil {
-            HStack { Text("表示").bold(); if !RunComparison.sameDisplay(leftDisplay, rightDisplay) { Text("相違あり").font(.caption) } }
-            HStack(alignment: .top, spacing: 12) {
-              retainedDisplay(leftDisplay)
-              retainedDisplay(rightDisplay)
-            }.background(RunComparison.sameDisplay(leftDisplay, rightDisplay) ? .clear : changed)
-          }
         }.padding(.top, 8)
       } label: {
         HStack {
@@ -490,25 +464,6 @@ private struct ComparedRunCardView: View {
     shown = ComparedRunRow(card: latest.card, left: left, right: right)
   }
 
-  @ViewBuilder private func retainedDisplay(_ display: DisplaySnapshot?) -> some View {
-    Group {
-      if let display { DisplayContent(display: display, large: true) }
-      else { Text("表示の記録がありません").foregroundStyle(.secondary) }
-    }.frame(maxWidth: .infinity).frame(height: displayHeight(display)).clipped()
-  }
-
-  private func displayHeight(_ display: DisplaySnapshot?) -> CGFloat {
-    switch display?.value {
-    case .table(_, let rows)?: return min(400, 50 + CGFloat(rows.prefix(100).reduce(1) { $0 + max(1, $1.map { $0.components(separatedBy: "\n").count }.max() ?? 1) }) * 20)
-    case .text(let text)?, .markdown(let text)?:
-      let lines = text.components(separatedBy: "\n").reduce(0) { $0 + max(1, Int(ceil(Double($1.count) / 60))) }
-      return min(400, max(60, CGFloat(lines) * 22 + 16))
-    case .scalar?: return 120
-    case nil: return 60
-    default: return 400
-    }
-  }
-
   @ViewBuilder private func status(_ side: ComparedRunCard?) -> some View {
     if let side {
       let v = side.record?.record?.summary ?? side.summary
@@ -522,7 +477,7 @@ private struct ComparedRunCardView: View {
         if let error = side.error ?? v.failure?.diagnostic { Text(error).foregroundStyle(.red) }
         if side.record?.record?.recordIo == false { Text("入出力は記録されていません").foregroundStyle(.secondary) }
         if side.record?.truncated == true { Text("大きな値は概要のみ表示しています。").foregroundStyle(.secondary) }
-        if side.record != nil, (side.record?.record?.paramsJson ?? "").isEmpty { Text("パラメータの記録がありません").foregroundStyle(.secondary) }
+        if side.record != nil, side.record?.record?.params == nil { Text("パラメータの記録がありません").foregroundStyle(.secondary) }
       }
     } else { Text("この実行にはありません").foregroundStyle(.secondary) }
   }

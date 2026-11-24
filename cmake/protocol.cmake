@@ -1,6 +1,19 @@
 set(TSUGUMI_PROTOCOL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/protocol)
 set(TSUGUMI_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
-set(TSUGUMI_SCHEMAS tsugumi_enums rpc_trace data worker local_worker remote_worker tsugumi service_common agent host vm_host vm_guest)
+# The public Artifact schema uses the lowercase namespace. On a
+# case-insensitive volume flatc writes both namespaces into one directory.
+# Keep the project RPC directory spelling stable and expose the lowercase
+# package as well. On a case-sensitive volume its real package takes priority.
+if(APPLE)
+  file(MAKE_DIRECTORY "${TSUGUMI_GEN_DIR}/python/Tsugumi")
+  file(WRITE "${TSUGUMI_GEN_DIR}/python/tsugumi.py"
+    "from os.path import dirname, join\n__path__ = [join(dirname(__file__), 'tsugumi')]\n")
+endif()
+set(TSUGUMI_SCHEMAS artifact card_enums tsugumi_enums rpc_trace worker_types data card worker local_worker remote_worker tsugumi service_common agent host vm_host vm_guest runtime_state nix_evaluator version_state)
+# Project document schemas. Their fields keep the documents' camelCase keys,
+# which flatc warns about.
+set(TSUGUMI_DOCUMENT_SCHEMAS project_document project_lock card_document comments_document layout_document)
+list(APPEND TSUGUMI_SCHEMAS ${TSUGUMI_DOCUMENT_SCHEMAS})
 
 function(schema_inputs schema result)
   set(source ${TSUGUMI_PROTOCOL_DIR}/${schema}.fbs)
@@ -23,12 +36,16 @@ foreach(schema ${TSUGUMI_SCHEMAS})
   set(_src ${TSUGUMI_PROTOCOL_DIR}/${schema}.fbs)
   schema_inputs(${schema} _inputs)
   list(APPEND _gen_cpp ${TSUGUMI_GEN_DIR}/cpp/tsugumi/protocol/${schema}_generated.h)
+  set(_quiet "")
+  if(schema IN_LIST TSUGUMI_DOCUMENT_SCHEMAS)
+    set(_quiet --no-warnings)
+  endif()
   add_custom_command(
     OUTPUT ${TSUGUMI_GEN_DIR}/cpp/tsugumi/protocol/${schema}_generated.h
-    COMMAND ${TSUGUMI_FLATC} --cpp --scoped-enums --gen-mutable --gen-object-api
+    COMMAND ${TSUGUMI_FLATC} ${_quiet} --cpp --scoped-enums --gen-mutable --gen-object-api
             --keep-prefix --include-prefix tsugumi/protocol
             -I ${TSUGUMI_PROTOCOL_DIR} -o ${TSUGUMI_GEN_DIR}/cpp/tsugumi/protocol ${_src}
-    COMMAND ${TSUGUMI_FLATC} --python --gen-object-api --python-typing -I ${TSUGUMI_PROTOCOL_DIR}
+    COMMAND ${TSUGUMI_FLATC} ${_quiet} --python --gen-object-api --python-typing -I ${TSUGUMI_PROTOCOL_DIR}
             -o ${TSUGUMI_GEN_DIR}/python ${_src}
     DEPENDS ${_inputs}
     COMMENT "flatc ${schema}.fbs"

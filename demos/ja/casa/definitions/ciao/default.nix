@@ -1,16 +1,17 @@
-{
-  pkgs,
-  inputs,
-  params,
-}:
-# CIAO is fixed like the observation in load: the flake by its commit and hash
-# (nixSources in tsugumi.json), which fixes CIAO's source, then built once by Nix.
+{ params, inputs }:
+# Import the CIAO recipe from the project lock and build it with the project nixpkgs.
 let
-  ciao = inputs.sources.ciao.packages.ciao;
+  pkgs = import <nixpkgs> { };
+  ciao = import <ciao/src/package.nix> { inherit pkgs; };
+  sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
+  common = {
+    params = { version = (builtins.parseDrvName ciao.name).version; };
+    inputs = ./_inputs.fbs;
+    outputs = ./_outputs.fbs;
+  };
 in
 {
-  run = ''
-    echo "ciao: ${ciao} (${ciao.name})"
-    printf '{"tool": {"path": "%s", "version": "%s"}}' "${ciao}" "${(builtins.parseDrvName ciao.name).version}" > "$TSUGUMI_OUTPUT"
-  '';
+  run = sdk.pythonCard (common // { src = ./src; });
+  api = sdk.pythonApi common;
+  exports.ciao = ciao;
 }

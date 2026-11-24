@@ -1,0 +1,31 @@
+// definitions/<id>/_comments.json: the review comments on one Card.
+//
+// Saved as FlatBuffers JSON text and read with the FlatBuffers parser (see
+// project_document.fbs). A comment keeps its id across versions, so its
+// changes are told apart by id.
+
+namespace Tsugumi.Document;
+
+table Comment {
+  /// Unique within the Card. hostd gives an Agent's new comment its id.
+  id:string;
+  text:string (required);
+  resolved:bool = null;
+  resolution:string;
+  /// "agent" or "user"; absent when not recorded (written by hand).
+  author:string;
+  /// Who last changed the text.
+  edited_by:string;
+  /// Who last resolved or reopened it.
+  state_by:string;
+  /// What the save that resolved it changed.
+  cards:[string];
+  /// An observation saved from a review, excluded from change requests.
+  finding:bool = null;
+}
+
+table Comments {
+  comments:[Comment] (required);
+}
+
+root_type Comments;

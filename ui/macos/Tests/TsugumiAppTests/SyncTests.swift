@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import FlatBuffers
 import Testing
 import TsugumiAgentClient
 import TsugumiTestSupport
@@ -18,7 +19,7 @@ import TsugumiTestSupport
     let dir: URL
     var ready: [String: Any] = [:]
 
-    init(project: URL, mockedBuilds: Bool = false) throws {
+    init(project: URL, mockedBuilds: Bool = false, worker: URL? = nil) throws {
       dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"] ?? "/tmp").appendingPathComponent("tsugumi-\(UUID().uuidString.prefix(8))")
       try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
       let env = ProcessInfo.processInfo.environment
@@ -31,8 +32,9 @@ import TsugumiTestSupport
                            "--run-scratch-dir", canonicalDirectory(dir).appendingPathComponent("run-scratch").path,
                            "--project", project.path, "--unix", dir.appendingPathComponent("s").path,
                            "--control-dir", dir.appendingPathComponent("control").path,
-                           "--worker", env["TSUGUMI_WORKER"] ?? build.appendingPathComponent("workerd/tsugumi-worker").path,
-                           "--sdk-dir", env["TSUGUMI_SDK_DIR"] ?? SyncTests.root.appendingPathComponent("sdk").path,
+                           "--worker", worker?.path ?? env["TSUGUMI_WORKER"] ?? build.appendingPathComponent("workerd/tsugumi-worker").path,
+                           "--workerd", env["TSUGUMI_WORKERD"] ?? build.appendingPathComponent("workerd/tsugumi-workerd").path,
+                           "--nix-dir", env["TSUGUMI_NIX_DIR"] ?? build.appendingPathComponent("share/tsugumi/nix").path,
                            "--allow-missing-origin", "--listen", "127.0.0.1:0"]
       process.standardOutput = FileHandle.nullDevice
       process.standardError = FileHandle.nullDevice
@@ -41,7 +43,13 @@ import TsugumiTestSupport
         let file = dir.appendingPathComponent("control/server.ready")
         guard let value = try fixtureReadiness(file, pid: process.processIdentifier, read: {
           guard let data = try? Data(contentsOf: file) else { return nil as [String: Any]? }
-          return try JSONSerialization.jsonObject(with: data) as? [String: Any]
+          var buffer = ByteBuffer(bytes: Array(data))
+          let ready: Tsugumi_State_ServerReady = try getCheckedRoot(byteBuffer: &buffer)
+          return [
+            "endpoint": ready.endpoint ?? "",
+            "token": ready.token ?? "",
+            "project_id": ready.projectId ?? "",
+          ]
         }) else { throw CocoaError(.fileReadNoSuchFile) }
         ready = value
       } catch { stop(); throw error }
@@ -61,11 +69,11 @@ import TsugumiTestSupport
     }
   }
 
-  static let sinkCard = #"{"type":"code","language":"bash","inputs":[{"name":"in"}]}"#
+  static let sinkCard = #"{"type":"code","inputs":[{"name":"in"}]}"#
   static let sinkSources = [
     "_outputs.fbs": "table Outputs {}\nroot_type Outputs;\n",
     "default.nix": #"""
-      { pkgs, inputs, params }:
+      { params, inputs }:
       {
         run = ''
           test -r "$JSON_IN" || exit 1
@@ -93,9 +101,8 @@ import TsugumiTestSupport
         }
       }
       let list = cards.map { "{\"id\": \"\($0)\"}" }.joined(separator: ", ")
-      try Data("{\"name\": \"sync\", \"pkgsPath\": \"tsugumi:default\", \"canvas\": {\"cards\": [\(list)], \"connections\": []}}".utf8)
+      try Data("{\"name\": \"sync\", \"nixPath\": [], \"canvas\": {\"cards\": [\(list)], \"connections\": []}}".utf8)
         .write(to: p.appendingPathComponent("tsugumi.json"))
-      try Data("{}".utf8).write(to: p.appendingPathComponent("layout.json"))
       return p
     } catch {
       try? FileManager.default.removeItem(at: p)
@@ -127,7 +134,7 @@ import TsugumiTestSupport
     s.endpointOverride = d.endpoint
     try await Self.connected(s)
     var definition = try #require(s.cardDefinition("a"))
-    definition["network"] = .bool(true)
+    definition["grants"] = .object([("network", .bool(true))])
     try definition.serialized().write(to: dir.appendingPathComponent("definitions/a/_card.json"), atomically: true, encoding: .utf8)
     let base = s.rev
     await s.reloadExternal()
@@ -139,7 +146,7 @@ import TsugumiTestSupport
     await s.answerReloadApproval(true, selected: ["network a"])
     #expect(s.saveError == nil && s.reloadApproval == nil)
     try await waitForModel { !(s.rev == base) }
-    #expect(s.cardDefinition("a")?["network"]?.bool == true)
+    #expect(s.cardDefinition("a")?["grants"]?["network"]?.bool == true)
 
     let a = try await s.addCard(template: .draft, in: [], at: .zero)
     let b = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 300, y: 0), name: "same name")
@@ -149,7 +156,6 @@ import TsugumiTestSupport
 
     await s.startDraftEdit(a)
     s.inlineDraft?.content = "first Draft"
-    s.inlineDraft?.name = "same name"
     // Return/Command-Return and focus loss can submit without awaiting each
     // other. Opening the next Draft must join them before replacing the fields.
     let done = Task { await s.finishDraftEdit() }
@@ -157,7 +163,7 @@ import TsugumiTestSupport
     await s.startDraftEdit(b)
     _ = await done.value
     _ = await blurred.value
-    #expect(s.nodeData(a).summary == "first Draft" && s.displayName(a) == "same name")
+    #expect(s.nodeData(a).summary == "first Draft" && s.displayName(a) == a)
     #expect(s.inlineDraft?.card == b)
     s.inlineDraft?.content = "before running"
     // Running the unconnected trigger has no worker work; the Draft must be
@@ -177,8 +183,8 @@ import TsugumiTestSupport
     }
     #expect(w.session == nil)
     #expect(s.inlineDraft == nil && s.cardMeta(b)?["content"]?.string == "before closing")
-    let saved = try JSONValue.parse(String(contentsOf: dir.appendingPathComponent("definitions/\(b)/_meta.json"), encoding: .utf8))
-    #expect(saved["content"]?.string == "before closing", "Closing waits for the transaction on disk")
+    let saved = try String(contentsOf: dir.appendingPathComponent("definitions/\(b)/README.md"), encoding: .utf8)
+    #expect(Documents.parseReadme(saved).body == "before closing", "Closing waits for the transaction on disk")
     try await checkUnreachableTsugumid(in: dir)
   }
 
@@ -226,33 +232,13 @@ import TsugumiTestSupport
       try #require(status?.runId == accepted.run.runId && status?.state == .succeeded)
     }
     _ = try await rpc.save(baseRev: opened.snapshot.rev ?? 0, opId: marker, origin: "ui",
-                            changes: [Change.setLayout("{\"cards\":{\"b\":{\"x\":1,\"y\":2}}}")])
+                            changes: [Change.setLayout(fixtureLayout(#"{"cards":{"b":{"x":1,"y":2}}}"#))])
     let (sequences, reachedMarker) = await received.value
     await rpc.close()
     #expect(reachedMarker, "The saved-change barrier must arrive after the run notifications")
     #expect(sequences.first == (opened.seq ?? 1) + 1)
     let outOfOrder = zip(sequences, sequences.dropFirst()).first { $1 != $0 + 1 }
     #expect(outOfOrder == nil)
-  }
-}
-
-@MainActor @Test func defaultDisplayRectTransformsTheHostGeometry() throws {
-  let dir = try SyncTests.project()
-  defer { try? FileManager.default.removeItem(at: dir) }
-  let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
-  let d = Tsugumi_Host_DisplayGeometryT()
-  d.anchorX = 0.5; d.anchorY = 0.25
-  d.x = 71; d.y = 93; d.width = 411; d.height = 219
-  let geometries = Tsugumi_Host_DisplayGeometriesT()
-  geometries.topToBottom = d; geometries.leftToRight = d
-  s.displayGeometries = geometries
-  for flow in ["topToBottom", "leftToRight"] {
-    s.layout = try JSONValue.parse("{\"flow\":\"\(flow)\"}")
-    let k = key(["a"]), size = s.geometry(k).size
-    let rect = s.displayRect(k, origin: CGPoint(x: 10, y: 20))
-    #expect(rect == CGRect(x: 10 + size.width * 0.5 + 71,
-                           y: 20 + size.height * 0.25 + 93,
-                           width: 411, height: 219))
   }
 }
 

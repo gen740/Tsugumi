@@ -39,7 +39,7 @@ else()
   )
 endif()
 target_include_directories(${_agent_rpc_target} PRIVATE $<TARGET_PROPERTY:tsugumi_host_core,INTERFACE_INCLUDE_DIRECTORIES>)
-target_link_libraries(${_agent_rpc_target} PRIVATE tsugumi_json PkgConfig::SQLITE3 tsugumi_client tsugumi_worker_protocol tsugumi_peer_tls GTest::gtest_main hosq Threads::Threads)
+target_link_libraries(${_agent_rpc_target} PRIVATE tsugumi_document tsugumi_json PkgConfig::SQLITE3 tsugumi_client tsugumi_worker_protocol tsugumi_peer_tls GTest::gtest_main hosq Threads::Threads)
 target_compile_options(${_agent_rpc_target} PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
 target_compile_definitions(${_agent_rpc_target} PRIVATE
   TSUGUMI_GUIDE_TEST_ROOT="${_test_guide_root}"
@@ -47,7 +47,7 @@ target_compile_definitions(${_agent_rpc_target} PRIVATE
   TSUGUMI_HOST_BINARY="$<TARGET_FILE:tsugumi-hostd>"
   TSUGUMI_PROJECT_BINARY="${_test_mock}"
   TSUGUMI_WORKER_BINARY="$<TARGET_FILE:tsugumi-worker>"
-  TSUGUMI_TEST_SDK="${_test_sdk}")
+  TSUGUMI_TEST_NIX="${_test_nix}")
 if(TSUGUMI_INSTALLED_CORE)
   install(TARGETS ${_agent_rpc_target} RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()

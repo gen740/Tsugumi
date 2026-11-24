@@ -68,7 +68,7 @@ def registered_remote(monkeypatch, resource_limits):
         def handle(self):
             assert R.read_broker_request(self.rfile).bodyType == R.RequestBody.CatalogRequest
             caps = R.CapabilitiesT(serverId="2" * 64, nativeSystem=FOREIGN, systems=[FOREIGN],
-                                   resourceLimits=resource_limits, maxJobs=8, workerContract=11)
+                                   resourceLimits=resource_limits, maxJobs=8, workerContract=R.WORKER_CONTRACT)
             self.wfile.write(R.frame(R.reply(R.ReplyBody.Catalog, R.CatalogT(
                 services=[R.TargetT(id="cluster", available=True, capabilities=caps)]))))
 
@@ -90,21 +90,25 @@ def registered_remote(monkeypatch, resource_limits):
 
 @pytest.mark.parametrize("resource_limits,settings,valid", [
     (False, {"executionService": "cluster"}, True),
-    (False, {"executionService": "cluster", "hostFolders": []}, True),
-    (False, {"executionService": "cluster", "hostFolders": [{"path": "/data", "name": "data"}]},
+    (False, {"executionService": "cluster", "grants": {"gui": True}}, False),
+    (False, {"executionService": "cluster", "sandbox": {"filesystem": False}}, False),
+    (False, {"executionService": "cluster", "sandbox": {"pid": False}}, False),
+    (False, {"executionService": "cluster", "sandbox": {"ipc": False, "identity": False}}, True),
+    (False, {"executionService": "cluster", "grants": {"hostPaths": []}}, True),
+    (False, {"executionService": "cluster", "grants": {"hostPaths": [{"path": "/data", "name": "data"}]}},
      False),
-    (True, {"executionService": "local", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}},
+    (True, {"executionService": "local", "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}},
      False),
     (True, {"executionService": "cluster", "system": NATIVE.split("-")[0] + "-linux",
-      "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, True),
-    (True, {"executionService": "cluster", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, True),
-    (False, {"executionService": "cluster", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, True),
-], ids=["unlimited", "empty-host-folders", "nonempty-host-folders", "local-resources", "wrong-system", "remote-native", "unsupported-limits"])
+      "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, True),
+    (True, {"executionService": "cluster", "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, True),
+    (False, {"executionService": "cluster", "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, True),
+], ids=["unlimited", "gui", "no-filesystem", "no-pid", "isolation-switches", "empty-host-folders", "nonempty-host-folders", "local-resources", "wrong-system", "remote-native", "unsupported-limits"])
 def test_external_service_validation_keeps_cached_capabilities_advisory(
         project, core_factory, registered_remote, resource_limits, settings, valid):
     """The catalog describes services; live capabilities are checked during prepare."""
-    definition = {"type": "code", "language": "bash", "_outputs": MSG_FBS,
-                  "_nix": '{ pkgs, inputs, params }: { run = "true"; }', **settings}
+    definition = {"type": "code", "_outputs": MSG_FBS,
+                  "_nix": '{ pkgs, inputs, params, ... }: { run = "true"; }', **settings}
     write(project, {"work": definition}, [card("work", "work")], [])
     client = core_factory().connect()
     services = {text(service.id): service for service in client.call("ProjectInspectRequest").executionServices}
@@ -133,6 +137,10 @@ def test_snapshot_lists_the_systems_the_local_service_can_run(client):
     service = services[0]
     assert text(service.nativeSystem) == NATIVE
     assert not service.resourceLimits
+    guarantee = service.sandbox
+    assert guarantee.filesystem == (1 if sys.platform == "darwin" else 2)
+    assert guarantee.network == (1 if sys.platform == "darwin" else 2)
+    assert guarantee.pid == (0 if sys.platform == "darwin" else 2)
     assert service.maxJobs is None
     expected = {NATIVE}
     if sys.platform == "linux" and emulator_registered(FOREIGN):
@@ -141,8 +149,8 @@ def test_snapshot_lists_the_systems_the_local_service_can_run(client):
 
 
 @pytest.mark.parametrize("definition", [
-    {"type": "code", "language": "bash", "executionService": "unavailable", "_outputs": MSG_FBS,
-     "_nix": '{ pkgs, inputs, params }: { run = "true"; }'},
+    {"type": "code", "executionService": "unavailable", "_outputs": MSG_FBS,
+     "_nix": '{ pkgs, inputs, params, ... }: { run = "true"; }'},
     {"type": "trigger", "executionService": "local"},
 ], ids=["unknown-service", "built-in-card"])
 def test_invalid_execution_service_selection_prevents_the_run(project, core_factory, definition):
@@ -159,8 +167,8 @@ def test_invalid_execution_service_selection_prevents_the_run(project, core_fact
 def test_which_systems_and_cards(tmp_path):
     """Supported target systems are accepted for each Card language."""
     root = tmp_path / "p"
-    defs = {"py": {"type": "code", "language": "python"}, "cc": {"type": "code", "language": "cpp"}, "sh": {"type": "code", "language": "bash"},
-            "r": {"type": "code", "language": "r"}}
+    defs = {"py": {"type": "code"}, "cc": {"type": "code"}, "sh": {"type": "code"},
+            "r": {"type": "code"}}
     cards = [card("unknown", "sh", system="riscv64-linux"), card("py", "py", system=FOREIGN),
              card("cc", "cc", system=FOREIGN), card("sh", "sh", system=FOREIGN), card("r", "r", system=FOREIGN)]
     cards.append(card("native", "py", system=NATIVE))
@@ -181,9 +189,9 @@ def test_an_unavailable_foreign_system_stops_the_run(tmp_path):
     """A foreign-system run stops when the local service cannot run that system."""
     root = tmp_path / "p"
     defs = {"trigger": {"type": "trigger"},
-            "sh": {"type": "code", "language": "bash", "inputs": [{"name": "in"}],
+            "sh": {"type": "code", "inputs": [{"name": "in"}],
                    "_outputs": MSG_FBS,
-                   "_nix": '{ pkgs, inputs, params }:\n{ run = "uname -m"; }\n'}}
+                   "_nix": '{ pkgs, inputs, params, ... }:\n{ run = "uname -m"; }\n'}}
     write(root, defs, [card("start", "trigger"), card("x", "sh", system=FOREIGN)], [conn("start", "out", "x", "in")])
     with Daemon(root) as daemon:
         c = daemon.connect()

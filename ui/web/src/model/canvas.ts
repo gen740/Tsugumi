@@ -1,12 +1,12 @@
 // Camera, scene geometry and canvas-wide actions of one tab (fit all, zoom,
 // add note, find, group, Draft), shared by the canvas, its floating
 // controls, the menus and the shortcuts.
-import { arr, bool, dbl, get, isObj, J, real, str } from '../../shared/json'
+import { arr, dbl, get, isObj, J, str } from '../../shared/json'
 import { D } from '../wire/rpc'
-import { Camera, CardGeometry, CardNodeData, displayLink, fitCamera, isDraftWire, Pt, Rect, union, WireRouter } from './canvasKit'
+import { Camera, CardGeometry, CardNodeData, fitCamera, isDraftWire, Pt, Rect, union, WireRouter } from './canvasKit'
 import { Observable } from './observable'
 import { ShortcutAction } from './prefs'
-import { CardKey, DefinitionTemplate, key, path, ProjectSession } from './session'
+import { portTypeName, CardKey, DefinitionTemplate, key, path, ProjectSession } from './session'
 import type { WorkflowTab } from './workspace'
 import { L } from '../i18n'
 
@@ -14,10 +14,10 @@ export type { Camera }
 
 // ---- Scene: where everything of a scope is (world units) ------------------------------
 
-export type WireStyle = 'normal' | 'carried' | 'active' | 'selected' | 'display'
+export type WireStyle = 'normal' | 'carried' | 'active' | 'selected'
 
 export interface RoutedWire {
-  /** Index in the scope's connections (undefined: boundary wire or display link). */
+  /** Index in the scope's connections (undefined: boundary wire). */
   connection?: number
   d: string
   pts: Pt[]
@@ -45,8 +45,8 @@ export interface Boundary {
 
 /** Moves in progress (world units): the scene draws them before they are saved. */
 export interface SceneDrag {
-  /** The selection on the move: its Cards and the frames that go with them. */
-  cards?: { keys: Set<CardKey>; frames?: Set<CardKey>; dx: number; dy: number }
+  /** The selection on the move: its Cards. */
+  cards?: { keys: Set<CardKey>; dx: number; dy: number }
   boundary?: { input: boolean; dx: number; dy: number }
 }
 
@@ -67,7 +67,6 @@ export class Scene {
   readonly cardKeys: CardKey[]
   private datas = new Map<CardKey, CardNodeData>()
   private geos = new Map<CardKey, CardGeometry>()
-  private _outputs?: CardKey[]
   private _boundary?: Boundary | null
   private _wires?: RoutedWire[]
 
@@ -115,28 +114,11 @@ export class Scene {
     return { x: o.x + p.x, y: o.y + p.y }
   }
 
-  /** Cards with an output frame: once their code has shown something (display SDK). */
-  get outputKeys(): CardKey[] {
-    this._outputs ??= this.cardKeys.filter((k) => {
-      const f = this.session.displayFrame(k)
-      return (this.session.displays.has(k) || f !== undefined) && bool(get(f, 'hidden')) !== true
-    })
-    return this._outputs
-  }
-
-  /** Output frame of a Card: saved place, or beside the Card. */
-  frameRect(k: CardKey): Rect {
-    const r = this.session.displayRect(k, this.origin(k))
-    const m = this.drag.cards
-    return m?.frames?.has(k) && !this.session.frameFollowsCard(k, m.keys) ? { ...r, x: r.x + m.dx, y: r.y + m.dy } : r
-  }
-
   /** What a marquee (world units) touches. */
-  itemsIn(r: Rect): { cards: CardKey[]; notes: string[]; frames: CardKey[] } {
+  itemsIn(r: Rect): { cards: CardKey[]; notes: string[] } {
     return {
       cards: this.cardKeys.filter((k) => intersects(r, { ...this.session.placedPosition(k), ...this.geometry(k).size })),
       notes: this.session.notes(this.scope).filter((n) => intersects(r, noteRect(n))).map((n) => str(get(n, 'id'))).filter((x): x is string => !!x),
-      frames: this.outputKeys.filter((k) => intersects(r, this.frameRect(k))),
     }
   }
 
@@ -174,7 +156,7 @@ export class Scene {
     const bx = box ?? { x: 0, y: 0, width: 240, height: 120 }
     const width = Math.max(bx.width, Math.max(ins.length, outs.length) * 110 + 40)
     const x = bx.x + bx.width / 2 - width / 2
-    // Placed above / below the inner Cards unless moved (layout.json "boundary").
+    // Placed above / below the inner Cards unless moved (layout.bin "boundary").
     const placed = (side: 'inputs' | 'outputs', auto: Pt): Pt => {
       const p = { ...(this.session.boundaryPosition(this.scope, side) ?? auto) }
       const d = this.drag.boundary
@@ -190,7 +172,7 @@ export class Scene {
     const ports = (list: [string, J][], bar: Rect, output: boolean): BoundaryPort[] => list.map(([name, v], i) => {
       const px = bar.x + (bar.width * (i + 1)) / (list.length + 1)
       const c = str(get(v, 'card')), p = str(get(v, 'port'))
-      const t = (output ? resolved?.outputs : resolved?.inputs)?.find((x) => x.name === name)?.rootType
+      const t = portTypeName((output ? resolved?.outputs : resolved?.inputs)?.find((x) => x.name === name))
       return { name, point: { x: px, y: output ? bar.y : bar.y + bar.height }, inner: c && p !== undefined ? [key([...this.scope, c]), p] : undefined, type: t }
     })
     return { top, bottom, inputs: ports(ins, top, false), outputs: ports(outs, bottom, true) }
@@ -201,7 +183,7 @@ export class Scene {
     if (this._wires) return this._wires
     const s = this.session
     const kind = (k: CardKey) => s.kind(k)
-    const obstacles = [...this.cardKeys.map((k) => this.cardRect(k)), ...this.outputKeys.map((k) => this.frameRect(k))]
+    const obstacles = this.cardKeys.map((k) => this.cardRect(k))
     const b = this.boundary
     if (b) obstacles.push(b.top, b.bottom)
     // Routed together: a wire's path must not depend on the order of the connections.
@@ -232,17 +214,12 @@ export class Scene {
     }
     const routes = new WireRouter(this.flow, obstacles).routeAll(ends)
     const out: RoutedWire[] = ends.map((e, i) => ({ ...e.wire, d: routes[i].d, pts: routes[i].pts }))
-    // Display links: which Card a result frame belongs to (not a computation).
-    for (const k of this.outputKeys) {
-      const d = displayLink(this.outlineRect(k), this.frameRect(k))
-      out.push({ d, pts: linkEnds(d), style: 'display' })
-    }
     this._wires = out
     return out
   }
 
   /** A wire is colored only when a value really went through it in this run
-   *  (a branch colors only the side it chose), and animated while the value
+   *  and animated while the value
    *  is on its way to a Card that has not finished with it yet. */
   style(from: CardKey, port: string, to: CardKey | undefined): WireStyle {
     const s = this.session
@@ -275,9 +252,9 @@ export class Scene {
   }
 
   /** The connection drawn nearest a point, within `tolerance` (world units). Only where nothing drawn
-   *  over the wires (a Card, an output frame, a note) is: a wire running under one never takes its click. */
+   *  over the wires (a Card, a note) is: a wire running under one never takes its click. */
   wireAt(w: Pt, tolerance: number): number | undefined {
-    if (this.cardAt(w) || this.outputKeys.some((k) => contains(this.frameRect(k), w))
+    if (this.cardAt(w)
       || this.session.notes(this.scope).some((n) => contains(noteRect(n), w))) return undefined
     let best: number | undefined, bestD = tolerance
     for (const r of this.wires) {
@@ -291,12 +268,11 @@ export class Scene {
     return best
   }
 
-  /** Everything shown: Cards, output frames, notes, groups, the boundary bars and the wires. */
+  /** Everything shown: Cards, notes, groups, the boundary bars and the wires. */
   bounds(): Rect | null {
     let r: Rect | null = null
     const add = (x: Rect) => (r = r ? union(r, x) : x)
     for (const k of this.cardKeys) add(this.cardRect(k))
-    for (const k of this.outputKeys) add(this.frameRect(k))
     for (const n of this.session.notes(this.scope)) add(noteRect(n))
     for (const g of this.session.groups(this.scope)) for (const m of this.groupMembers(g)) add(inset(this.cardRect(m), -18, -40))
     const b = this.boundary
@@ -304,7 +280,7 @@ export class Scene {
       add(b.top)
       add(b.bottom)
     }
-    for (const w of this.wires) if (w.style !== 'display' && w.pts.length) add(ptsBounds(w.pts))
+    for (const w of this.wires) if (w.pts.length) add(ptsBounds(w.pts))
     return r
   }
 }
@@ -330,12 +306,6 @@ function distTo(p: Pt, pts: Pt[]): number {
 }
 
 const PAIR = /(-?\d*\.?\d+(?:e[-+]?\d+)?),(-?\d*\.?\d+(?:e[-+]?\d+)?)/g
-
-/** The two ends of a display link's path. */
-export function linkEnds(d: string): Pt[] {
-  const all = [...d.matchAll(PAIR)].map((m) => ({ x: Number(m[1]), y: Number(m[2]) }))
-  return all.length ? [all[0], all[all.length - 1]] : []
-}
 
 /** Path data (world units, made of x,y pairs) on screen. */
 export function pathToScreen(d: string, c: Camera): string {
@@ -567,26 +537,16 @@ export class CanvasController extends Observable implements CanvasOverlay {
    *  only: no computation is re-resolved for a move. Ports around the moved Cards
    *  are then reordered, in the same step of undo, when that removes wire crossings. With a grid (`snap`) the
    *  Cards go by whole grids from where they are drawn, and what moves with them
-   *  goes by the same step, so the arrangement stays. Notes and frames alone land
+   *  goes by the same step, so the arrangement stays. Notes alone land
    *  on whole numbers, as when dragged alone. */
-  moveSelection(cards: Set<CardKey>, notes: Set<string>, frames: Set<CardKey>, movedX: number, movedY: number, snap?: number): Promise<void> {
-    return this.session.moveSelection(this.tab.scope, cards, notes, frames, movedX, movedY, snap)
-  }
-
-  /** Closes a frame, a step of an edit; its Card stays. The layout keeps a frame
-   *  only with its place and size, so one still drawn beside its Card gets them now. */
-  closeFrame(k: CardKey) {
-    const r = this.scene().frameRect(k)
-    this.session.updateDisplayFrame(k, f => {
-      f.set('x', real(Math.round(r.x))); f.set('y', real(Math.round(r.y)))
-      f.set('width', real(r.width)); f.set('height', real(r.height)); f.set('hidden', true)
-    })
+  moveSelection(cards: Set<CardKey>, notes: Set<string>, movedX: number, movedY: number, snap?: number): Promise<void> {
+    return this.session.moveSelection(this.tab.scope, cards, notes, movedX, movedY, snap)
   }
 
   deleteSelection() {
     const s = this.session
     const t = this.tab
-    // Notes and frames are layout: they can go during a run, as from their own menus.
+    // Notes are layout: they can go during a run, as from their own menus.
     if (!s.isEditable && (t.selection.size || t.selectedConnection !== undefined)) {
       s.notice = L('実行中は Card を削除できません。')
       s.changed()
@@ -599,9 +559,7 @@ export class CanvasController extends Observable implements CanvasOverlay {
       this.tab.changed()
       return
     }
-    // A frame alone is closed and its Card stays (the frame's own Remove Frame);
-    // a deleted Card takes its frame with it.
-    s.deleteSelection(t.selection, t.selectedNotes, t.selectedFrames, t.scope)
+    s.deleteSelection(t.selection, t.selectedNotes, t.scope)
     t.setSelection([])
   }
 

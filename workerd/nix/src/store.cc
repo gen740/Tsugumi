@@ -9,11 +9,26 @@ auto NixStore::init_process() -> void {
   static std::once_flag initialized;
   std::call_once(initialized, [] { nix::initLibStore(true); });
 }
+auto NixStore::store_dir() -> std::string {
+  static const std::string dir = nix::openStore()->storeDir;
+  return dir;
+}
+
 std::vector<std::string> NixStore::substituters() {
   std::vector<std::string> urls;
   for (const auto& ref : nix::settings.getWorkerSettings().substituters.get())
     urls.push_back(ref.render(false));
   return urls;
+}
+
+auto NixStore::closure(const std::string& path) -> std::vector<std::string> {
+  auto store = nix::openStore();
+  nix::StorePathSet closure;
+  store->computeFSClosure(store->parseStorePath(path), closure);
+  std::vector<std::string> paths;
+  for (const auto& member : closure)
+    paths.push_back(store->printStorePath(member));
+  return paths;
 }
 
 auto NixStore::rooted_usage(const std::vector<std::vector<std::string>>& roots)

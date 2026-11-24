@@ -84,8 +84,7 @@ auto Docs(
 auto OwnOperationId(const reflection::Object& object) -> bool {
   const auto name = object.name()->str();
   return object.fields()->LookupByKey("op_id") &&
-         !name.ends_with(".OperationGetRequest") &&
-         !name.ends_with(".CardSDKStatusRequest");
+         !name.ends_with(".OperationGetRequest");
 }
 
 auto ObjectSchema(const reflection::Object& object, int depth, bool top)
@@ -165,9 +164,7 @@ auto ObjectSchema(const reflection::Object& object, int depth, bool top)
   // Agent save conveniences belong to hostd, not the project protocol.
   if (object.name()->str() == "Tsugumi.RPC.PutDefinition") {
     properties["fill_description"] =
-        R"({"type":"string","description":"Fill an empty description, preserving existing text."})";
-    properties["fill_context"] =
-        R"({"type":"string","description":"Fill an empty context, preserving existing text."})";
+        R"({"type":"string","description":"Fill an empty README.md description, preserving existing text."})";
   }
   if (object.name()->str() == "Tsugumi.RPC.CardIdRequest") {
     properties.erase("stem");
@@ -297,9 +294,8 @@ auto Catalog::shared() const -> json::Members {
 Catalog::Catalog() {
   tools_.push_back(
       {{"project_file_format",
-        "Return formatted text for path and language using the host's "
-        "formatter.",
-        R"({"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"},"language":{"type":"string","enum":["json","cpp","python","nix","bash","fbs"]}},"required":["path","text"],"additionalProperties":false})"},
+        "Format supplied editor text for a .json or .nix path.",
+        R"({"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"}},"required":["path","text"],"additionalProperties":false})"},
        "FileFormatRequest",
        false,
        false,
@@ -344,8 +340,7 @@ Catalog::Catalog() {
             "Reserve a permanent Card id from name; returns id. project_path "
             "selects an external project; omitted means root.";
       if (tool.spec.name == "run_value_read" ||
-          tool.spec.name == "artifact_read" || tool.spec.name == "log_range" ||
-          tool.spec.name == "module_read")
+          tool.spec.name == "artifact_read" || tool.spec.name == "log_range")
         tool.spec.description +=
             " Agent pages default to 2048 bytes; continue with next_offset.";
       if (tool.spec.name == "run_history" ||
@@ -377,12 +372,14 @@ Catalog::Catalog() {
     const auto tool = json::Object(raw);
     const auto name = json::Text(tool, "name");
     if (Find(name)) throw std::runtime_error("duplicate host tool: " + name);
-    tools_.push_back({{name, json::Text(tool, "description"),
-                       CompactSchema(json::Get(tool, "inputSchema"))},
-                      name,
-                      false,
-                      json::Bool(json::Get(tool, "mutating", "false")),
-                      false});
+    tools_.push_back(
+        {{name, json::Text(tool, "description"),
+          CompactSchema(json::Get(tool, "inputSchema"))},
+         name,
+         false,
+         json::Bool(json::Get(tool, "mutating", "false")),
+         false,
+         json::Bool(json::Get(tool, "approval_required", "false"))});
   }
   for (auto& tool : tools_)
     tool.spec.input_schema = CompactSchema(tool.spec.input_schema);
@@ -407,11 +404,6 @@ Catalog::Catalog() {
 auto Catalog::AllSpecs() const -> std::vector<ToolSpec> {
   std::vector<ToolSpec> specs;
   for (const auto& tool : tools()) specs.push_back(tool.spec);
-  specs.push_back(
-      {"document_template",
-       "Read a Card template by name and reserved id. Returns definition_json "
-       "and source files for one project_edit under definitions/<id>/.",
-       R"({"type":"object","properties":{"name":{"type":"string"},"id":{"type":"string"}},"required":["name","id"],"additionalProperties":false})"});
   specs.push_back(
       {"demo_list",
        "List bundled demos with paths, names and one-line descriptions.",

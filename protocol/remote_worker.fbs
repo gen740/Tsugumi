@@ -1,9 +1,10 @@
 // Host <-> remote worker. The broker forwards these generated messages and
 // fills routing/authentication fields; it never interprets job specifications.
-// Any byte stream: uint32 little-endian length, then one FlatBuffer (<= 2 MiB).
+// Any byte stream: uint32 little-endian length, then one FlatBuffer (<= 18 MiB).
 // One request and reply per connection. Transfers use independent <= 1 MiB
 // chunks, with explicit offset/total; no unframed body follows a message.
 // Worker connections use TLS 1.3 with mutually pinned Ed25519 SPKI keys.
+include "worker.fbs";
 namespace Tsugumi.RemoteWorker;
 attribute "trace_secret";
 
@@ -16,21 +17,32 @@ table JobSpec {
   system:string (required); derivation:string (required); output:string (required);
   invocation_sha256:string (required); input_blobs:[string] (required);
   cpu_millis:ulong; memory_bytes:ulong; build_timeout_ms:ulong;
-  // Core recording policy for combined build/stdout/stderr JSONL bytes.
+  filesystem:bool = true; pid:bool = true; ipc:bool = true; identity:bool = true;
+  network:bool;
+  // Core recording policy for captured stdout and stderr bytes. Zero keeps
+  // live transport available and disables persisted stdout/stderr.
   log_limit_bytes:ulong;
   // Names of the Card secrets the Card's process receives. Their values are
   // never part of the spec: they arrive in a JobSecretsRequest just before the
   // process starts and are kept only in memory.
   secrets:[string];
+  // Output budget for new artifacts (forwards do not count).
+  output_limit_bytes:ulong = 68719476736;
+  output_limit_entries:ulong = 1000;
 }
 // Spec bytes are a FlatBuffer rooted at JobSpec. Keeping the exact buffer
 // makes the fingerprint independent of packing and supports uncertain submits.
 table SubmitRequest { spec:[ubyte] (required); }
-// The core's cursor into the job's combined JSONL log (work/result/logs.jsonl):
-// the number of bytes it has already received. A reply carries at most
+// The core's cursor into the job's combined log (work/result/logs, a sequence
+// of size-prefixed LogEntry buffers): the number of bytes it has already
+// received. A reply carries at most
 // log_limit (capped at 256 KiB) bytes from that offset, so a running job's log
 // arrives while it runs. The completed result's logs.jsonl stays authoritative.
-table StatusRequest { log_offset:ulong; log_limit:uint; }
+table DisplayCredit { view:string (required); released:ulong; }
+table StatusRequest {
+  log_offset:ulong; log_limit:uint;
+  display_after:ulong; display_credits:[DisplayCredit] (trace_secret);
+}
 // A nonzero log_limit also returns a log slice, as for StatusRequest; it
 // requires the job's submitting core life. Zero cancels from any life.
 table CancelRequest { fingerprint:string (required); log_offset:ulong; log_limit:uint; }
@@ -52,7 +64,11 @@ table CardSecretsRequest { names:[string] (required); }
 // through memory and keeps no copy; nothing writes them to the journal or any
 // file. A listener restart before delivery fails the job, and nothing resends.
 table JobSecretsRequest { fingerprint:string (required); secrets:[CardSecret] (required); }
-union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest, StatusRequest, CancelRequest, ReleaseRequest, CatalogRequest, CardSecretsRequest, JobSecretsRequest }
+// Transient bytes sent to a running Card in the submitting core life.
+table ViewSendRequest {
+  display:Tsugumi.Worker.WorkerDisplay (required); offset:ulong;
+}
+union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest, StatusRequest, CancelRequest, ReleaseRequest, CatalogRequest, CardSecretsRequest, JobSecretsRequest, ViewSendRequest }
 table Request {
   service:string; instance_id:string;
   project_scope:string; job_id:string;
@@ -63,9 +79,10 @@ table Request {
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  // Zero means no advertised contract; writers explicitly send contract 11.
+  // Zero means no advertised contract. Writers explicitly send contract 17.
   worker_contract:uint;
   active_jobs:uint;
+  requires_filesystem:bool = true; requires_pid:bool = true;
 }
 // The host decides availability and supplies its reason; the core only carries it.
 table Target { id:string (required); available:bool; capabilities:Capabilities (required); grade:ulong; unavailable_reason:string; }
@@ -73,11 +90,16 @@ table Catalog { services:[Target] (required); }
 table BlobChunk { digest:string (required); total:ulong; offset:ulong; bytes:[ubyte] (required); }
 table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diagnostic:string; transfer_name:string; transfer_done:ulong; transfer_total:ulong; log_truncated:bool;
   // Echo of the requested cursor, the log's current size, and its bytes from
-  // log_offset. Bytes may end inside a JSONL entry. Status and Cancel replies.
+  // log_offset. Bytes may end inside an entry. Status and Cancel replies.
   log_offset:ulong; log_size:ulong; log_bytes:[ubyte];
   // The running job has built its environment and waits for the values of
   // its spec's Card secrets (JobSecretsRequest) before its process starts.
-  secrets_wanted:bool; }
+  secrets_wanted:bool;
+  // Transient view bytes sent since the previous status, in order. Never
+  // stored with the job or its result, and never traced by the broker.
+  displays:[Tsugumi.Worker.WorkerDisplay];
+  display_pending:bool; display_sequence:ulong;
+  view_input_ready:bool; view_input_credits:[DisplayCredit] (trace_secret); }
 table Ack {}
 table Failure { code:ErrorCode; message:string (required); }
 table CardSecrets { secrets:[CardSecret] (required); }
@@ -90,5 +112,35 @@ table Message { payload:Payload (required); }
 // Result manifest is a separate FlatBuffer root stored as a job blob.
 table ResultFile { path:string (required); sha256:string (required); size:ulong; }
 table ResultManifest { invocation_result_sha256:string (required); outputs:[ResultFile] (required); }
+
+// ---- Job files ----------------------------------------------------------------
+// Each is one FlatBuffer root: a blob the core submits, a file of the job's
+// folder, or a member of its result.
+
+/// The invocation blob (JobSpec.invocation_sha256): what to stage and run.
+table InvocationFile { path:string (required); sha256:string (required); size:ulong; }
+table Invocation {
+  call_sha256:string (required); archive_sha256:string (required);
+  files:[InvocationFile]; directories:[string]; implementation_index:ulong;
+}
+/// work/progress: the input transfer in progress.
+table TransferProgress { name:string; done:ulong; total:ulong; }
+/// The result's environment member: the Card's build environment.
+table ResultEnvironment { paths:[string]; directories:[string]; built:bool; log_truncated:bool; }
+/// One entry of the result's logs member: a LogStream value and its bytes.
+/// The member is a sequence of entries, each a uint32 little-endian size and
+/// then its buffer.
+table LogEntry { stream:ubyte; text:[ubyte]; }
+/// A job's state in the worker's journal (jobs/<id>/state).
+table JournalState {
+  state:JobState; fingerprint:string; result:string; diagnostic:string;
+  pid:ulong; start:ulong; boot:string; core_life_id:string;
+}
 root_type Message;
 file_identifier "TSR1";
+
+// Published after the listener binds, for launcher and test discovery.
+table WorkerReady {
+  port:ushort;
+  pid:ulong;
+}

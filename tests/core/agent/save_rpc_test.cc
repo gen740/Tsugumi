@@ -8,12 +8,13 @@ TEST_F(AgentProjectFixture,
        AgentSavePolicyIsAppliedByTheHostAndItsReceiptSurvivesRestart) {
   Write(directory.path / "project/definitions/plan/_card.json",
         R"({"type":"draft"})");
-  Write(
-      directory.path / "project/definitions/plan/_meta.json",
-      R"({"description":"Plan","content":"Keep these words","comments":[{"id":"c1","text":"Ask","author":"user"}]})");
+  Write(directory.path / "project/definitions/plan/README.md",
+        "---\ndescription: Plan\n---\n\nKeep these words");
+  Write(directory.path / "project/definitions/plan/_comments.json",
+        R"({"comments":[{"id":"c1","text":"Ask","author":"user"}]})");
   StartProject(
       false,
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("save-policy");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -34,7 +35,7 @@ TEST_F(AgentProjectFixture,
   };
   json::Members value{{"id", json::Quote("plan")},
                       {"card_json", json::Quote(R"({"type":"code"})")},
-                      {"keep_meta", "true"}};
+                      {"keep_comments", "true"}};
   const auto refused =
       Tool(conversation, "project_save", save(value), "refused");
   ASSERT_TRUE(refused.Code().empty()) << refused.Code();
@@ -44,8 +45,9 @@ TEST_F(AgentProjectFixture,
   // A policy refusal is a terminal host receipt, not an interrupted core save.
   EXPECT_EQ(Tool(conversation, "project_save", save(value), "refused").View(),
             refused.View());
-  value["meta_json"] = json::Quote(
-      R"({"description":"Plan","content":"Keep these words","context":"For the report","comments":[{"id":"c1","text":"Ask","author":"agent","resolved":true,"stateBy":"user","resolution":"Done"},{"text":"New","author":"user"}]})");
+  value["keep_readme"] = "true";
+  value["comments_json"] = json::Quote(
+      R"({"comments":[{"id":"c1","text":"Ask","author":"agent","resolved":true,"state_by":"user","resolution":"Done"},{"text":"New","author":"user"}]})");
   const auto args = save(value);
   const auto saved = Tool(conversation, "project_save", args, "saved");
   ASSERT_TRUE(saved.Code().empty());
@@ -54,9 +56,9 @@ TEST_F(AgentProjectFixture,
   EXPECT_EQ(JsonString(body, "/value/comments/0/card"), "plan");
   EXPECT_EQ(JsonString(body, "/value/comments/0/by"), "agent");
   auto meta = json::Object(
-      Read(directory.path / "project/definitions/plan/_meta.json"));
+      Read(directory.path / "project/definitions/plan/_comments.json"));
   auto comments = json::Array(json::Get(meta, "comments"));
-  EXPECT_EQ(json::Text(json::Object(comments[0]), "stateBy"), "agent");
+  EXPECT_EQ(json::Text(json::Object(comments[0]), "state_by"), "agent");
   EXPECT_EQ(Tool(conversation, "project_save", args, "saved").View(),
             saved.View());
   human.reset();
@@ -102,7 +104,7 @@ TEST_F(AgentProjectFixture, ReadsTheConfirmedExternalDefinitionUntilReload) {
   const auto conversation = Conversation("read-confirmed-document");
   Grant(conversation);
   ASSERT_TRUE(Inspect(conversation).Code().empty());
-  Write(definition, R"({"type":"draft","network":true})");
+  Write(definition, R"({"type":"draft","grants":{"network":true}})");
   ASSERT_TRUE(Inspect(conversation).Code().empty());
   const auto reply =
       Tool(conversation, "project_file_read",
@@ -119,13 +121,14 @@ TEST_F(AgentProjectFixture, ExclusionsUseAcceptedAndRecordedDefinitionPaths) {
   Write(link, R"({"type":"subgraph","external":"private"})");
   for (const auto* name : {"private", "public"}) {
     const auto folder = root / "externals" / name;
-    Write(folder / "tsugumi.json",
-          R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"leaf"}],"connections":[]}})");
+    Write(
+        folder / "tsugumi.json",
+        R"({"nixPath": [],"canvas":{"cards":[{"id":"leaf"}],"connections":[]}})");
     Write(folder / "definitions/leaf/_card.json", R"({"type":"trigger"})");
   }
   StartProject(
       false,
-      R"({"pkgsPath":"tsugumi:default","agentExclude":["externals/private/definitions/leaf/_card.json"],"canvas":{"cards":[{"id":"group"}],"connections":[]}})");
+      R"({"nixPath": [],"agentExclude":["externals/private/definitions/leaf/_card.json"],"canvas":{"cards":[{"id":"group"}],"connections":[]}})");
   const auto conversation = Conversation("confirmed-exclusions");
   for (const auto access :
        {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Run})
@@ -336,7 +339,7 @@ TEST_F(AgentProjectFixture,
                         "externals/storage/definitions/child/src/main.py")},
                    {"put", json::Quote("changed\n")},
                    {"expected_hash", json::Quote(hash)}}),
-               R"({"file_path":"definitions/writer/_card.json","selector":[{"field":"network"}],"old_value":{"present":false},"new_value":{"present":true,"value":true}})"})}})));
+               R"({"file_path":"definitions/writer/_card.json","selector":[{"field":"grants"}],"old_value":{"present":false},"new_value":{"present":true,"value":{"network":true}}})"})}})));
   model.Queue(AnthropicText("Finished."));
   auto delegated = std::async(std::launch::async, [&] {
     return Delegate(
@@ -380,7 +383,7 @@ TEST_F(AgentProjectFixture,
           {"base_rev", json::Get(snapshot, "rev")},
           {"changes",
            json::Encode(std::vector<std::string>{
-               R"({"value_type":"PutDefinition","value":{"id":"alias","card_json":"{\"type\":\"subgraph\",\"external\":\"storage\"}","meta_json":"{\"description\":\"Shared container\"}"}})"})}}),
+               R"({"value_type":"PutDefinition","value":{"id":"alias","card_json":"{\"type\":\"subgraph\",\"external\":\"storage\"}","readme":"---\ndescription: Shared container\n---\n"}})"})}}),
       "add-alias");
   EXPECT_FALSE(JsonBool(alias.View(), "/isError")) << alias.View();
   ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
@@ -427,7 +430,7 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorSavesGraphWithoutWritingLayout) {
   namespace json = ::tsugumi::json;
   const auto nested = directory.path / "project/externals/storage";
   const std::string document =
-      R"({"name":"Nested","pkgsPath":"tsugumi:default","boundary":{"inputs":{},"outputs":{}},"canvas":{"cards":[{"id":"upstream"},{"id":"secret"}],"connections":[]}})";
+      R"({"name":"Nested","nixPath": [],"boundary":{"inputs":[],"outputs":[]},"canvas":{"cards":[{"id":"upstream"},{"id":"secret"}],"connections":[]}})";
   Write(nested / "tsugumi.json", document);
   Write(nested / "definitions/upstream/_card.json", R"({"type":"draft"})");
   Write(nested / "definitions/secret/_card.json", R"({"type":"draft"})");
@@ -439,7 +442,7 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorSavesGraphWithoutWritingLayout) {
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
                 "value"));
   const auto root =
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"outer"}],"connections":[]}})";
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","nixPath": [],"canvas":{"cards":[{"id":"outer"}],"connections":[]}})";
   const auto seeded = Tool(
       conversation, "project_save",
       json::Encode(json::Members{
@@ -515,7 +518,7 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorSavesGraphWithoutWritingLayout) {
                 "value"));
   EXPECT_EQ(json::UInt(json::Text(final, "rev")),
             json::UInt(json::String(rev, rev)) + 1);
-  EXPECT_FALSE(std::filesystem::exists(nested / "layout.json"));
+  EXPECT_FALSE(std::filesystem::exists(nested / "layout.bin"));
   const auto canvas =
       json::Object(json::Object(Read(nested / "tsugumi.json")).at("canvas"));
   const auto cards = json::Array(canvas.at("cards"));
@@ -535,7 +538,7 @@ class ScopedSourceOperation : public AgentProjectFixture,
 TEST_P(ScopedSourceOperation, SourceEditsLeaveLayoutsUntouched) {
   const auto root = directory.path / "project";
   const std::string graph =
-      R"({"name":"Nested","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})";
+      R"({"name":"Nested","nixPath": [],"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})";
   for (const auto& prefix : {std::string{}, std::string{"externals/assigned/"},
                              std::string{"externals/unrelated/"}}) {
     for (const auto* id : {"a", "b"})
@@ -543,13 +546,13 @@ TEST_P(ScopedSourceOperation, SourceEditsLeaveLayoutsUntouched) {
             R"({"type":"draft"})");
     if (!prefix.empty()) {
       Write(root / prefix / "tsugumi.json", graph);
-      Write(root / prefix / "layout.json", "{}");
+      Write(root / prefix / "layout.bin", FixtureLayout("{}"));
     }
   }
   Write(root / "definitions/outer/_card.json", R"({"type":"subgraph","external":"assigned"})");
   StartProject(
       false,
-      R"({"name":"Scoped","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"outer"}],"connections":[]}})");
+      R"({"name":"Scoped","nixPath": [],"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"outer"}],"connections":[]}})");
   const auto conversation = Conversation("source-only-scoped");
   Grant(conversation);
   // A read grant never authorizes a save.
@@ -566,7 +569,7 @@ TEST_P(ScopedSourceOperation, SourceEditsLeaveLayoutsUntouched) {
                  R"json([{"value_type":"PutSource","value":{"path":"definitions/a/code.py","bytes":"print(1)"}},{"value_type":"PutSource","value":{"path":"externals/assigned/definitions/a/code.py","bytes":"print(2)"}}])json"}});
   const auto refused = Tool(conversation, tool, args, "no-write");
   EXPECT_EQ(refused.Code(), "grant_required");
-  EXPECT_EQ(Read(root / "layout.json"), "{}");
+  EXPECT_EQ(Read(root / "layout.bin"), FixtureLayout("{}"));
   Grant(conversation, Tsugumi::Service::Access::Write);
   ModelServer model;
   Configure(model);
@@ -584,9 +587,9 @@ TEST_P(ScopedSourceOperation, SourceEditsLeaveLayoutsUntouched) {
        {std::string{}, std::string{"externals/assigned/"}}) {
     EXPECT_EQ(Read(root / prefix / "definitions/a/code.py"),
               prefix.empty() ? "print(1)" : "print(2)");
-    EXPECT_EQ(Read(root / prefix / "layout.json"), "{}");
+    EXPECT_EQ(Read(root / prefix / "layout.bin"), FixtureLayout("{}"));
   }
-  EXPECT_EQ(Read(root / "externals/unrelated/layout.json"), "{}");
+  EXPECT_EQ(Read(root / "externals/unrelated/layout.bin"), FixtureLayout("{}"));
 }
 INSTANTIATE_TEST_SUITE_P(SaveAndEdit, ScopedSourceOperation,
                          ::testing::Values(false, true));

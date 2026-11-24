@@ -1,4 +1,5 @@
 // A version's minimap fits its Cards and draws each with its canvas shape.
+import { layoutBytes } from './documentFixture'
 import assert from 'node:assert/strict'
 import { VersionCommentT } from '../shared/gen/tsugumi/rpc/version-comment'
 
@@ -19,7 +20,7 @@ function nodeData(kind: CardKind, fan: number): CardNodeData {
   const ports = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `p${i}` }))
   return {
     title: 'c', kind, inputs: ports(kind === 'merge' ? fan : 1), outputs: ports(1), params: [],
-    invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, hasDisplay: false,
+    invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false,
   }
 }
 
@@ -73,24 +74,16 @@ assert.equal(at.start.outline, outlineOf(start, at.start, k))
 const leftmost = (d: string) => Math.min(...[...d.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) => Number(m[1])))
 assert.ok(Math.abs(leftmost(at.merge.outline) - (at.merge.x + mergeGeometry.outlineRect.x * k)) < 1e-6, 'the outline leaves the room the canvas leaves for its wires')
 
-// A branch is a diamond whose corners shrink with it; a merge is a triangle that
-// grows with its inputs.
-const diamond = miniMapLayout([card('b', 0, 0, 'branch')], flow, 284, 132).cards[0]
-const canvasDiamond = new CardGeometry(nodeData('branch', 0), flow)
-assert.equal(diamond.shape, 'branch')
-assert.equal(diamond.w, canvasDiamond.size.width * 0.3)
-assert.equal(diamond.outline, outlineOf(canvasDiamond, diamond, 0.3))
-assert.notEqual(diamond.outline, canvasDiamond.outline({ x: diamond.x + canvasDiamond.outlineRect.x * 0.3, y: diamond.y, width: canvasDiamond.outlineRect.width * 0.3, height: canvasDiamond.outlineRect.height * 0.3 }))
 const merge = (n: number, f: 'leftToRight' | 'topToBottom') => miniMapLayout([card('m', 0, 0, 'merge', n)], f, 284, 132).cards[0]
 assert.equal(merge(2, flow).shape, 'merge')
 assert.ok(merge(6, flow).h > merge(2, flow).h, 'more inputs, a wider edge')
 assert.ok(merge(6, 'topToBottom').w > merge(2, 'topToBottom').w)
 assert.notEqual(merge(2, flow).outline, merge(2, 'topToBottom').outline)
 
-// A loop is a merge and a branch with a wire back: wires are the client's, so
+// A loop is a merge and a Collect: wires are the client's, so
 // the two only need not overlap and keep their shapes.
-const loop = miniMapLayout([card('m', 0, 0, 'merge', 2), card('step', 140, 0), card('b', 400, 0, 'branch')], flow, 284, 132)
-assert.deepEqual(loop.cards.map((c) => c.shape), ['merge', 'card', 'branch'])
+const loop = miniMapLayout([card('m', 0, 0, 'merge', 2), card('step', 140, 0), card('c', 400, 0, 'collect')], flow, 284, 132)
+assert.deepEqual(loop.cards.map((c) => c.shape), ['merge', 'card', 'collect'])
 for (const [i, a] of loop.cards.entries()) for (const b of loop.cards.slice(i + 1)) assert.ok(!overlap(a, b))
 
 // Only a Card or the start has a name inside it; a folded Card is its header.
@@ -104,7 +97,7 @@ assert.equal(cardKindNamed('something new'), 'invalid')
 // The UI asks only for the change record. No client-side diff, model or note write.
 const { ProjectSession } = await import('../src/model/session')
 const { layoutHost } = await import('../src/wire/hostLayout')
-const rawCanvas = { layoutJson: '{"cards":{"plan":{"x":120,"y":80}}}', cards: [{ id: 'plan', kind: 'draft', fan: 0 }], wires: [] }
+const rawCanvas = { layout: layoutBytes('{"cards":{"plan":{"x":120,"y":80}}}'), cards: [{ id: 'plan', kind: 'draft', fan: 0 }], wires: [] }
 const hostCanvas = { cards: [card('plan', 120, 80, 'draft')], wires: [], flow: 'topToBottom' }
 const fetchBefore = globalThis.fetch
 let failNote = false

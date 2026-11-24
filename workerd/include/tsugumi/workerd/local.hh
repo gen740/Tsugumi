@@ -2,6 +2,7 @@
 
 #include <array>
 #include <filesystem>
+#include <map>
 #include <mutex>
 
 #include "tsugumi/protocol/local_worker_generated.h"
@@ -15,10 +16,12 @@ struct LocalPacket {
   std::array<int, 4> descriptors{-1, -1, -1, -1};
   ~LocalPacket();
 };
+auto clear_spawn_secrets(Tsugumi::LocalWorker::MessageT& message) -> void;
 auto send_local(int fd, const Tsugumi::LocalWorker::MessageT& message,
                 const std::array<int, 4>* descriptors = nullptr,
                 trace::Link* link = nullptr) -> void;
-auto receive_local(int fd, LocalPacket& packet, trace::Link* link = nullptr) -> bool;
+auto receive_local(int fd, LocalPacket& packet, trace::Link* link = nullptr)
+    -> bool;
 auto serve_local(int fd, const std::filesystem::path& scratch) -> void;
 
 // One workerd process for this core lifetime, connected by an inherited socket.
@@ -32,6 +35,7 @@ class LocalWorkers {
   auto release(std::unique_ptr<WorkerProc> worker, bool keep,
                const std::string& reason) -> void;
   auto clear() -> void;
+  auto invalidate(const std::string& card, const std::string& reason) -> void;
 
  private:
   auto exchange(Tsugumi::LocalWorker::MessageT message, LocalPacket& reply)
@@ -41,6 +45,10 @@ class LocalWorkers {
   std::filesystem::path binary_;
   std::filesystem::path scratch_;
   std::mutex mutex_;
+  // Serialize lease transitions with reader ownership. workerd still owns
+  // eviction and termination. Retired sockets are removed after commands.
+  std::mutex leases_mutex_;
+  std::map<std::string, std::unique_ptr<WorkerProc>> idle_;
   int fd_ = -1;
   pid_t pid_ = -1;
 };

@@ -44,7 +44,7 @@ function paneStorage(p: ProjectSettingsPane, s: ProjectSession): string {
   const name = s.dir.split('/').pop() ?? ''
   switch (p) {
     case 'general': return L('このプロジェクト（{0}/tsugumi.json）', name)
-    case 'canvas': return L('このプロジェクト（{0}/layout.json）', name)
+    case 'canvas': return L('このプロジェクト（{0}/layout.bin）', name)
     case 'history': return L('このプロジェクトの実行環境（{0}/.tsugumi/runs.sqlite）', name)
     case 'cache': return L('このプロジェクトの実行環境（このホスト）')
     case 'secrets': return L('このホストの hostd（このプロジェクト用、値は表示されません）')
@@ -346,13 +346,9 @@ std::vector<uint64_t> steps(uint64_t n, size_t limit = 1000) {
   return seen;
 }
 `,
-  nix: `# A Python Card with one extra package
-{ pkgs, inputs, params }:
+  nix: `# A Nix definition with a helper export
+{ params, inputs }:
 {
-  run = inputs.tsugumi.pythonCard {
-    src = ./src;
-    packages = ps: [ ps.numpy ];
-  };
   exports = { scale = x: x * 2; };
 }
 `,

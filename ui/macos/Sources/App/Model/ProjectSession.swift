@@ -31,10 +31,12 @@ struct Diagnostic: Identifiable, Hashable {
 
 struct PortInfo: Hashable {
   let name: String
-  let kind: Tsugumi_Data_PortKind
-  let optional: Bool
   let rootType: String?
-  var executionShape: Tsugumi_Data_ExecutionShape = .unspecified
+  var mergeMemberTypes: [String] = []
+  var typeName: String? {
+    if !mergeMemberTypes.isEmpty { return mergeMemberTypes.joined(separator: " | ") }
+    return rootType
+  }
 }
 
 struct ResolvedCard {
@@ -43,37 +45,7 @@ struct ResolvedCard {
   let outputs: [PortInfo]
   let diagnostics: [Diagnostic]
   var nixReferences: [CardNixReference] = []
-}
-
-/// Decode a retained display without changing the live canvas.
-func recordedDisplay(_ d: Tsugumi_Data_DisplayT) -> DisplaySnapshot? {
-  let value: DisplayValue
-  switch d.value?.type {
-  case .displaytext:
-    let t = d.value?.value as? Tsugumi_Data_DisplayTextT
-    value = t?.markdown == true ? .markdown(t?.text ?? "") : .text(t?.text ?? "")
-  case .displayscalar:
-    let s = d.value?.value as? Tsugumi_Data_DisplayScalarT
-    value = .scalar(s?.value ?? .nan, s?.label ?? "")
-  case .displaytable:
-    let t = d.value?.value as? Tsugumi_Data_DisplayTableT
-    value = .table(columns: (t?.columns ?? []).compactMap { $0 }, rows: (t?.rows ?? []).compactMap { $0?.cells.compactMap { $0 } })
-  case .displayimage:
-    let im = d.value?.value as? Tsugumi_Data_DisplayImageT
-    value = .image(mediaType: im?.mediaType ?? "", data: Data(im?.data ?? []), alt: im?.alt ?? "")
-  case .displaypointcloud:
-    let p = d.value?.value as? Tsugumi_Data_DisplayPointCloudT
-    value = .points(x: p?.x ?? [], y: p?.y ?? [], z: p?.z ?? [], colors: p?.colors ?? [])
-  case .displaymodule:
-    let m = d.value?.value as? Tsugumi_Data_DisplayModuleT
-    let names = (m?.blobs ?? []).compactMap { $0?.name }
-    guard Set(names).count == names.count else {
-      return DisplaySnapshot(runId: d.runId, invocation: d.invocation ?? 0, revision: d.revision ?? 0, value: .unavailable)
-    }
-    value = .module(name: m?.module ?? "", json: m?.configJson ?? "", blobs: Dictionary(uniqueKeysWithValues: (m?.blobs ?? []).compactMap { $0 }.map { ($0.name, Data($0.data)) }))
-  default: value = .unavailable
-  }
-  return DisplaySnapshot(runId: d.runId, invocation: d.invocation ?? 0, revision: d.revision ?? 0, value: value)
+  var parameters: [CardParameter] = []
 }
 
 /// One stage of an invocation as the core recorded it (core clock, ms).
@@ -98,7 +70,7 @@ struct CardRunState: Equatable {
   var cached = false
   var workerReused = false
   /// Outputs the latest invocation sent, and every output that sent a value
-  /// in this run (a branch lists only the side it chose).
+  /// in this run.
   var sent: Set<String> = []
   var sentInRun: Set<String> = []
   var startedAt: Int64?
@@ -149,7 +121,9 @@ struct TimelineEntry: Identifiable, Hashable {
   var stages: [StageRecord] = []
 }
 
-/// Draft of one Card's definition (_card.json and optional _meta.json).
+/// Draft of one Card's definition: _card.json, and its notes (README.md's
+/// description and body and _comments.json, as {description, content,
+/// comments}; see Documents.swift).
 struct DefinitionDraft: Equatable {
   var card: JSONValue
   var meta: JSONValue?
@@ -161,7 +135,7 @@ struct DefinitionDraft: Equatable {
 struct ExternalProject: Equatable {
   var project: JSONValue
   var layout: JSONValue
-  /// Card id -> its definition files (_card.json and optional _meta.json).
+  /// Card id -> its definition files (_card.json, README.md, _comments.json).
   var definitions: [String: DefinitionDraft]
   /// Removed (the folder goes with it).
 
@@ -175,70 +149,6 @@ enum SyncState: Equatable {
   case saving
   case failed(String)
   case offline
-}
-
-enum DisplayValue {
-  case unavailable
-  case text(String)
-  /// Markdown with TeX math (the SDK's Markdown display).
-  case markdown(String)
-  case scalar(Double, String)
-  case table(columns: [String], rows: [[String]])
-  case image(mediaType: String, data: Data, alt: String)
-  case points(x: [Float], y: [Float], z: [Float], colors: [UInt32])
-  case module(name: String, json: String, blobs: [String: Data] = [:])
-}
-
-extension DisplayValue {
-  var displayable: Bool {
-    switch self {
-    case .unavailable: return false
-    case .text(let text), .markdown(let text): return text.utf8.count <= 1 << 20
-    case .scalar(let value, _): return value.isFinite
-    case .table(let columns, let rows):
-      return !columns.isEmpty && columns.count <= 64 && rows.count <= 10000 && columns.allSatisfy { $0.utf8.count <= 4096 } &&
-        rows.allSatisfy { $0.count == columns.count && $0.allSatisfy { $0.utf8.count <= 4096 } }
-    case .image(let media, let data, _):
-      return data.count <= 8 << 20 && (media == "image/png" ? data.count > 8 && data.starts(with: [137,80,78,71,13,10,26,10]) :
-        media == "image/jpeg" && data.count > 3 && data.starts(with: [255,216]))
-    case .points(let x, let y, let z, let colors):
-      return x.count <= 1000000 && x.count == y.count && x.count == z.count && (colors.isEmpty || colors.count == x.count) &&
-        [x,y,z].allSatisfy { $0.allSatisfy(\.isFinite) }
-    case .module(let name, let json, let blobs):
-      let pattern = #"^/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[a-zA-Z0-9+._?=-]+$"#
-      return name.range(of: pattern, options: .regularExpression) != nil && json.utf8.count <= 1 << 20 &&
-        (try? JSONSerialization.jsonObject(with: Data(json.utf8), options: [.fragmentsAllowed])) != nil &&
-        blobs.count <= 64 && blobs.keys.allSatisfy { $0 != "." && $0 != ".." && $0.range(of: #"^[a-zA-Z0-9_.-]{1,128}$"#, options: .regularExpression) != nil } &&
-        blobs.values.reduce(0) { $0 + $1.count } <= 8 << 20
-    }
-  }
-}
-
-struct DisplaySnapshot {
-  struct Identity: Equatable {
-    let runId: String
-    let invocation: UInt64
-    let revision: UInt64
-  }
-  var identity: Identity { Identity(runId: runId, invocation: invocation, revision: revision) }
-  let runId: String
-  let invocation: UInt64
-  let revision: UInt64
-  /// Preserve the result's content even when it cannot be rendered.
-  let content: DisplayValue
-  let value: DisplayValue
-  /// What the Card's result row says of it. Worked out once, here: the canvas
-  /// asks at every move, and a figure's title is found by parsing its JSON.
-  let summary: String
-
-  init(runId: String, invocation: UInt64, revision: UInt64, value: DisplayValue) {
-    self.runId = runId
-    self.invocation = invocation
-    self.revision = revision
-    self.content = value
-    self.value = value.displayable ? value : .unavailable
-    summary = Self.summary(of: self.value)
-  }
 }
 
 /// One open project: shared by every window showing it. Owns the RPC
@@ -308,7 +218,11 @@ final class ProjectSession {
   var cardHelper: [String: String] = [:]
   /// Externals by folder ("externals/<name>/", nested "…/externals/<name>/").
   private(set) var externals: [String: ExternalProject] = [:]
-  @ObservationIgnored private var externalDocuments: [String: JSONValue] = [:]
+  /// Bytes of the files the core carries: nested projects' documents and the
+  /// canvas notes (notes/<id>.md).
+  @ObservationIgnored private var sourceDocuments: [String: [UInt8]] = [:]
+  /// The confirmed layout.bin; confirmedLayout is its view with the notes.
+  @ObservationIgnored private var confirmedLayoutBytes: [UInt8] = []
   private(set) var sources: [String: (hash: String, size: UInt64)] = [:]
   private(set) var resolution: [CardKey: ResolvedCard] = [:]
   private(set) var diagnostics: [Diagnostic] = []
@@ -330,17 +244,15 @@ final class ProjectSession {
   var inlineDraft: InlineDraft?
   @ObservationIgnored var draftFinishTask: Task<CardKey?, Never>?
   var hasUnsavedEdits: Bool {
-    dirty || draftFinishTask != nil || inlineDraft.map { $0.name != $0.initialName || $0.content != $0.initialContent } == true
+    dirty || draftFinishTask != nil || inlineDraft.map { $0.content != $0.initialContent } == true
   }
 
   /// A Draft being written on its Card: its name and content as typed so far.
   struct InlineDraft {
     var card: CardKey
-    var name: String
     var content: String
-    var initialName: String
     var initialContent: String
-    var initialMeta: JSONValue?
+    var initialReadme: String?
     let revision: RevisionEdit
   }
 
@@ -387,15 +299,12 @@ final class ProjectSession {
   @ObservationIgnored var makeRepositoryOnConnect = false
 
   // Runs
-  private var runProvenance: [String: Tsugumi_RPC_RunStatusT] = [:]
-  private var loadingProvenance: Set<String> = []
   private var stopRunId: String?
   private(set) var stopError: String?
   var stopRequested: Bool { stopRunId != nil }
   var canStopRun: Bool { runActive && !stopRequested && runStatus?.state != .cancelling }
   private(set) var runStatus: Tsugumi_RPC_RunStatusT? {
     didSet {
-      if let status = runStatus, let id = status.runId { runProvenance[id] = status }
       if oldValue?.runId != currentRunId || !runActive || runStatus?.state == .cancelling {
         stopError = nil
       }
@@ -404,11 +313,15 @@ final class ProjectSession {
       }
     }
   }
-  func markForRun(_ runId: String) -> String? { runMark(runProvenance[runId]) }
   private(set) var cardStates: [CardKey: CardRunState] = [:]
-  private(set) var displays: [CardKey: DisplaySnapshot] = [:]
+  /// Live view traffic of the Cards whose view windows are open (never recorded).
+  let cardViews = CardViewRelay()
+  /// How declared view files are read from the project core.
+  var viewFiles = CardViewFiles.unavailable
+  @ObservationIgnored private var displayViewers: [UUID: CardKey] = [:]
   private(set) var lastFinished: Date?
   private(set) var remoteHistoryRevision = 0
+  private(set) var recordingRevision = 0
   private(set) var batchHistoryRevision = 0
   private var runBatches: [CardKey: Tsugumi_RPC_RunBatchT] = [:]
   /// Invocations of the current (or last) run, for the timeline.
@@ -521,7 +434,6 @@ final class ProjectSession {
   /// The last connection failed before the project could be read (tsugumid was not reached), not while reading it.
   var connectionFailed = false
 
-  var displayGeometries: Tsugumi_Host_DisplayGeometriesT?
 
   private func connect(endpoint: Endpoint? = nil) async {
     guard !closed else { return }
@@ -537,12 +449,10 @@ final class ProjectSession {
       try Task.checkCancellation()
       let c = try await reach(ep)
       if Task.isCancelled || closed { await c.close(); return }
-      displayGeometries = try await CoreHostClient.shared.hostCall(
-        .displaygeometryrequest, Tsugumi_Host_DisplayGeometryRequestT())
       let opened = try await c.open(viewId: viewId)
       if Task.isCancelled || closed { await c.close(); return }
       client = c
-      ModuleSources.register(c)
+      viewFiles = .rpc { [weak self] in self?.client }
       receiveProjectSnapshot(opened.snapshot, projectId: ep.projectId)
       subscription = opened.subscriptionId
       lastSeq = opened.seq ?? 1
@@ -557,7 +467,9 @@ final class ProjectSession {
       guard !Task.isCancelled, !closed else { return }
       setConnected(false)
       connectionFailed = error is Unreached
-      connectionMessage = "\(error)"
+      connectionMessage = (error as? RPCFailure)?.kind == .projectInUse
+        ? String(localized: "別の画面でこのプロジェクトを開いています。")
+        : "\(error)"
       if let launcher = error as? LauncherError, case .incompatibleHistory(let issue) = launcher {
         environment = .incompatibleHistory(issue)
       }
@@ -736,8 +648,10 @@ final class ProjectSession {
       if let d = (e.payload.value as? Tsugumi_RPC_DocPatchedT)?.delta { applyDelta(d) }
     case .runevent:
       if let r = e.payload.value as? Tsugumi_RPC_RunEventT { applyRunEvent(r) }
-    case .displayupdated:
-      if let d = (e.payload.value as? Tsugumi_RPC_DisplayUpdatedT)?.display { applyDisplay(d) }
+    case .cardviewsupdated, .displayupdated:
+      applyViewNotification(e.payload)
+    case .runcategorydeleteresult:
+      recordingRevision += 1
     case .logavailable:
       if let log = e.payload.value as? Tsugumi_RPC_LogAvailableT {
         for listener in logListeners.values { listener(log) }
@@ -746,6 +660,35 @@ final class ProjectSession {
       break
     }
     return true
+  }
+
+  /// Declarations and data of Card views, kept only while a window shows the Card.
+  func applyViewNotification(_ payload: Tsugumi_RPC_NotificationPayloadUnion) {
+    switch payload.type {
+    case .cardviewsupdated:
+      if let u = payload.value as? Tsugumi_RPC_CardViewsUpdatedT, viewing(key(u.card.path)) {
+        cardViews.declare(key(u.card.path), u.views.compactMap { $0 }.map(CardViewDeclaration.init),
+                          failure: u.failure.map { $0.diagnostic ?? "\($0.kind)" })
+      }
+    case .displayupdated:
+      if let d = (payload.value as? Tsugumi_RPC_DisplayUpdatedT)?.display {
+        let card = d.card.path
+        let view = d.view
+        let size = UInt32(d.bytes.count)
+        let complete = { [client, subscription, credit = d.creditId] in
+          guard let client, let subscription, let credit else { return }
+          Task { try? await client.returnViewCredit(subscription: subscription, card: card,
+                                                    view: view, bytes: size, creditId: credit) }
+        }
+        if viewing(key(card)) {
+          cardViews.receive(key(card), view: view, bytes: Data(d.bytes), complete: complete)
+        } else {
+          complete()
+        }
+      }
+    default:
+      break
+    }
   }
 
   // MARK: - Applying core state
@@ -763,26 +706,27 @@ final class ProjectSession {
     executionRev = s.executionRev ?? 0
     executionServices = s.executionServices.compactMap { $0 }
     confirmedProject = (try? JSONValue.parse(s.projectJson)) ?? .object([])
-    confirmedLayout = (try? JSONValue.parse(s.layoutJson)) ?? .object([])
+    confirmedLayoutBytes = s.layout
     confirmedDefinitions = [:]
     confirmedDefinitionMeta = [:]
     for d in s.definitions.compactMap({ $0 }) {
       confirmedDefinitions[d.id] = try? JSONValue.parse(d.cardJson)
-      if let m = d.metaJson { confirmedDefinitionMeta[d.id] = try? JSONValue.parse(m) }
+      confirmedDefinitionMeta[d.id] = Documents.cardNotes(readme: d.readme, comments: d.commentsJson)
     }
     sources = [:]
-    externalDocuments = [:]
+    sourceDocuments = [:]
     externals = [:]
     derivedLayouts = [:]
     for task in layoutTasks.values { task.cancel() }
     layoutTasks = [:]
     applySources(s.sources.compactMap { $0 }, removed: [])
+    confirmedLayout = layout(at: "")
     refreshDerivedLayout()
     applyResolution(s.resolution.compactMap { $0 }, s.diagnostics.compactMap { $0 })
     if currentRunId != s.run.runId { runBatches = [:] }
     runStatus = s.run
     viewRev = s.viewRev ?? 0
-    if let json = s.viewJson, let v = try? JSONDecoder().decode(ClientViewState.self, from: Data(json.utf8)) {
+    if let v = ClientViewState(bytes: s.view) {
       initialScope = v.scope
       for cam in v.cameras where cam.valid { cameras[key(cam.scope)] = (cam.x, cam.y, cam.zoom) }
       initialSelection = Set(v.selected_cards.map { key($0) })
@@ -798,21 +742,20 @@ final class ProjectSession {
     for rc in res {
       let p = rc.card.path
       let port = { (x: Tsugumi_Data_PortT) -> PortInfo in
-        PortInfo(name: x.name, kind: x.kind, optional: x.optional_ ?? false, rootType: x.rootType, executionShape: x.executionShape)
+        PortInfo(name: x.name, rootType: x.rootType, mergeMemberTypes: x.mergeMemberTypes.compactMap { $0 })
       }
       let d = rc.diagnostics.compactMap { $0 }.map(Diagnostic.init)
       r[key(p)] = ResolvedCard(path: p, inputs: rc.inputs.compactMap { $0 }.map(port),
                                outputs: rc.outputs.compactMap { $0 }.map(port), diagnostics: d,
                                nixReferences: rc.nixReferences.compactMap { $0 }.map {
-                                 CardNixReference(source: key(p), target: key($0.target.path), name: $0.name, valid: $0.valid)
-                               })
+                                 CardNixReference(source: key(p), target: key($0.target.path), name: $0.name)
+                               }, parameters: rc.parameters.compactMap { $0 }.compactMap(CardParameter.init))
       all += d
     }
     resolution = r
     diagnostics = all
-    // A result belongs to a Card of the document. A Card that comes back asks for
-    // its own again: displayedCards changed (refreshVisibleDisplays).
-    for k in displays.keys where r[k] == nil { displays[k] = nil }
+    // A result belongs to a Card of the current document.
+    for k in cardViews.cards where r[k] == nil { cardViews.forget(k) }
   }
 
   /// What a Card's invocation says about the Card, from a notification or from the run's record.
@@ -873,9 +816,7 @@ final class ProjectSession {
     if let emitted = batch?.outputs.compactMap({ $0 }).first(where: { $0.port == port }) {
       return (emitted.executionList, emitted.executionList ? emitted.count : nil)
     }
-    let ports = output ? resolution[card]?.outputs : resolution[card]?.inputs
-    let knownList = ports?.first(where: { $0.name == port })?.executionShape == .list
-    return (knownList || (batch?.executionList == true && kind(card) != .collect), nil)
+    return (batch?.executionList == true && kind(card) != .collect, nil)
   }
 
   /// The Cards of the last run, for a project just opened: their notifications were sent before it was.
@@ -899,29 +840,25 @@ final class ProjectSession {
       reconnect()
       return
     }
-    // The Cards that send displays, before this change (definitions and
-    // resolution are replaced below).
-    let shown = displayedCards
     // What the Agent's save changed, seen against the document before it.
     let presenceBefore = d.origin == "agent" ? presenceSnapshot() : nil
     rev = d.rev ?? rev
     executionRev = d.executionRev ?? executionRev
     if let pj = d.projectJson, let v = try? JSONValue.parse(pj) { confirmedProject = v }
-    if let lj = d.layoutJson, let v = try? JSONValue.parse(lj) { confirmedLayout = v }
+    if d.layoutChanged { confirmedLayoutBytes = d.layout }
     for def in d.definitionsRemoved.compactMap({ $0 }) {
       confirmedDefinitions[def] = nil
       confirmedDefinitionMeta[def] = nil
     }
     for def in d.definitionsUpsert.compactMap({ $0 }) {
       confirmedDefinitions[def.id] = try? JSONValue.parse(def.cardJson)
-      confirmedDefinitionMeta[def.id] = def.metaJson.flatMap { try? JSONValue.parse($0) }
+      confirmedDefinitionMeta[def.id] = Documents.cardNotes(readme: def.readme, comments: def.commentsJson)
     }
     applySources(d.sourcesUpsert.compactMap { $0 }, removed: d.sourcesRemoved.compactMap { $0 })
+    confirmedLayout = layout(at: "")
     refreshDerivedLayout()
     applyResolution(d.resolution.compactMap { $0 }, d.diagnostics.compactMap { $0 })
     if let presenceBefore { notePresence(d, before: presenceBefore) }
-    // A Draft implemented (or any Card that became code) sends its displays too.
-    if displayedCards != shown { Task { await refreshVisibleDisplays() } }
     project = confirmedProject
     layout = confirmedLayout
   }
@@ -971,25 +908,6 @@ final class ProjectSession {
     }
   }
 
-  func applyDisplay(_ d: Tsugumi_Data_DisplayT) {
-    let k = key(d.card.path)
-    let rev = d.revision ?? 0
-    if let old = displays[k], old.runId == d.runId, old.revision >= rev { return }  // stale frame
-    if let display = recordedDisplay(d) {
-      displays[k] = display
-      // A reconnected canvas may receive a display from an older run.
-      if let client, runProvenance[display.runId] == nil, !loadingProvenance.contains(display.runId) {
-        loadingProvenance.insert(display.runId)
-        Task {
-          defer { loadingProvenance.remove(display.runId) }
-          if let record = try? await client.record(runId: display.runId, card: path(k), invocation: display.invocation) {
-            runProvenance[display.runId] = record.run.status
-          }
-        }
-      }
-    }
-  }
-
   private func recordTimeline(_ k: CardKey, _ inv: Tsugumi_RPC_InvocationSummaryT) {
     let n = inv.invocation ?? 0
     let stages = TimelineEntry.stages(inv.stages)
@@ -1021,11 +939,11 @@ final class ProjectSession {
     guard !prefix.isEmpty, let before = externals[prefix] else { return }
     var after = before; fn(&after)
     editJSON(prefix + "tsugumi.json", old: before.project, new: after.project)
-    editJSON(prefix + "layout.json", old: before.layout, new: after.layout)
+    editJSON(prefix + "layout.bin", old: before.layout, new: after.layout)
     for (id, d) in after.definitions {
       let old = before.definitions[id], dir = prefix + "definitions/" + id + "/"
       editJSON(dir + "_card.json", old: old?.card, new: d.card)
-      editJSON(dir + "_meta.json", old: old?.meta, new: d.meta)
+      editNotes(dir, old: old?.meta, new: d.meta)
     }
   }
 
@@ -1057,6 +975,24 @@ final class ProjectSession {
     let edit = jsonEdit(file, old: old, new: new)
     if commandEdits != nil { commandEdits!.append(edit) }
     else { queueFields { [edit] } }
+  }
+
+  /// Edits of a Card's notes: its README.md (as a JSON string) and _comments.json.
+  func notesEdits(_ dir: String, old: JSONValue?, new: JSONValue?) -> [Tsugumi_Host_ProjectEditT] {
+    let was = Documents.splitCardNotes(old), now = Documents.splitCardNotes(new)
+    var edits: [Tsugumi_Host_ProjectEditT] = []
+    if was.readme != now.readme {
+      edits.append(jsonEdit(dir + "README.md", old: was.readme.map { .string($0) }, new: now.readme.map { .string($0) }))
+    }
+    if was.comments != now.comments { edits.append(jsonEdit(dir + "_comments.json", old: was.comments, new: now.comments)) }
+    return edits
+  }
+
+  private func editNotes(_ dir: String, old: JSONValue?, new: JSONValue?) {
+    let edits = notesEdits(dir, old: old, new: new)
+    guard !edits.isEmpty else { return }
+    if commandEdits != nil { commandEdits!.append(contentsOf: edits) }
+    else { queueFields { edits } }
   }
 
   func appendEdits(_ edits: [Tsugumi_Host_ProjectEditT]) {
@@ -1258,7 +1194,7 @@ final class ProjectSession {
         ClientViewState.Camera(scope: path(k), x: c.x, y: c.y, zoom: c.zoom)
       }, selectedCards: selection.sorted().map { path($0) })
       do {
-        let r = try await client.saveView(viewId: viewId, baseRev: viewRev, view: try v.json())
+        let r = try await client.saveView(viewId: viewId, baseRev: viewRev, view: v.bytes())
         viewRev = r.viewRev ?? viewRev
       } catch let f as RPCFailure where f.kind == .revisionConflict {
         viewRev = f.currentRev ?? viewRev
@@ -1266,34 +1202,44 @@ final class ProjectSession {
     }
   }
 
-  /// Cards whose displays the canvas shows: what a Card shows is up to its
-  /// code (the display SDK), so every Card that can run may send displays.
-  var displayedCards: Set<CardKey> { Set(resolution.keys.filter { kind($0) == .code }) }
-
   /// A Card that took a name another Card had starts without that Card's result and run state.
   func forgetResult(_ k: CardKey) {
-    displays[k] = nil
+    cardViews.forget(k)
     cardStates[k] = nil
   }
 
-  /// Why a Card that ran has no result to show.
-  func noResultNote(_ k: CardKey) -> String? {
-    switch cardStates[k]?.state {
-    case .failed: return String(localized: "失敗したので結果はありません")
-    case .blocked: return String(localized: "上流の Card が失敗したので実行していません")
-    default: return nil
-    }
+  func updateNixPathLock(prefix: String, name: String? = nil) async throws {
+    let update = Tsugumi_Host_ProjectUpdateNixPathLockT()
+    update.projectPath = prefix.isEmpty ? nil : String(prefix.dropLast())
+    update.name = name
+    try await operate(.projectupdatenixpathlock, body: update, record: false)
   }
 
-  /// Looks a flake up for nixSources (nothing is saved).
-  func resolveNixSource(ref: String) async throws -> Tsugumi_RPC_NixSourceResolvedT {
-    guard let client else { throw RPCError.disconnected }
-    return try await client.resolveNixSource(ref: ref)
+  func nixPathLock(prefix: String) -> JSONValue? {
+    let file = prefix + "tsugumi.lock"
+    guard sources[file] != nil, let text = carriedText(file) else { return nil }
+    return try? JSONValue.parse(text)
+  }
+
+  /// View traffic is kept only for Cards a window shows.
+  private func viewing(_ card: CardKey) -> Bool { displayViewers.values.contains(card) }
+
+  func openDisplayViewer(_ id: UUID, card: CardKey) {
+    let alreadyOpen = displayViewers.values.contains(card)
+    displayViewers[id] = card
+    if !alreadyOpen { Task { await refreshVisibleDisplays() } }
+  }
+
+  func closeDisplayViewer(_ id: UUID) {
+    guard let card = displayViewers.removeValue(forKey: id), !displayViewers.values.contains(card) else { return }
+    cardViews.forget(card)
+    Task { await refreshVisibleDisplays() }
   }
 
   func refreshVisibleDisplays() async {
     guard let client, let subscription else { return }
-    try? await client.setVisible(subscription: subscription, cards: displayedCards.sorted().map(path), enabled: true)
+    let cards = Set(displayViewers.values).sorted().map(path)
+    try? await client.setVisible(subscription: subscription, cards: cards, enabled: !cards.isEmpty)
   }
 
   // MARK: - Runs
@@ -1403,7 +1349,7 @@ final class ProjectSession {
   func updateLayout(of scope: [String], _ fn: (inout JSONValue) -> Void) {
     guard let prefix = projectPrefix(scope) else { return }
     let before = layout(of: scope); var after = before
-    fn(&after); editJSON(prefix + "layout.json", old: before, new: after)
+    fn(&after); editJSON(prefix + "layout.bin", old: before, new: after)
   }
 
   /// A Card's key in the layout of its scope.
@@ -1428,7 +1374,7 @@ final class ProjectSession {
     return d.card
   }
 
-  /// The Card's _meta.json.
+  /// The Card's notes: {description, content, comments}.
   func cardMeta(_ k: CardKey) -> JSONValue? { cardDefinitionDraft(k)?.meta }
 
   /// Sets a Card's definition files in the draft (nil removes them).
@@ -1436,7 +1382,7 @@ final class ProjectSession {
     guard let dir = definitionDir(k), let d else { return }
     let before = cardDefinitionDraft(k)
     editJSON(dir + "_card.json", old: before?.card, new: d.card)
-    editJSON(dir + "_meta.json", old: before?.meta, new: d.meta)
+    editNotes(dir, old: before?.meta, new: d.meta)
   }
 
   /// The external project of a Card in Card ("externals/<name>/…"), if it is one.
@@ -1461,26 +1407,15 @@ final class ProjectSession {
   /// A Card in Card's ports: its external's boundary.
   func boundary(_ k: CardKey) -> JSONValue? {
     guard let ext = cardExternal(k) else { return nil }
-    return external(ext)?.project["boundary"]
+    guard let boundary = external(ext)?.project["boundary"] else { return nil }
+    return .object(["inputs", "outputs"].map { side in
+      (side, .object((boundary[side]?.array ?? []).compactMap { port in
+        port["name"]?.string.map { ($0, port) }
+      }))
+    })
   }
 
-  /// Changes a Card's _card.json in the draft.
-  func updateCard(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
-    guard var d = cardDefinitionDraft(k), definitionKind(d.card) != .subgraph else { return }
-    fn(&d.card)
-    setCardDefinition(k, d)
-  }
-
-  /// Changes a Card's _meta.json in the draft.
-  func updateMeta(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
-    guard var d = cardDefinitionDraft(k) else { return }
-    var meta = d.meta ?? .object([])
-    fn(&meta)
-    d.meta = meta
-    setCardDefinition(k, d)
-  }
-
-  // MARK: - Comments on a Card (its _meta.json)
+  // MARK: - Comments on a Card (its _comments.json)
 
   /// What the user asks of this Card, in the order written.
   func comments(_ k: CardKey) -> [CardComment] { CardComment.list(in: cardMeta(k)) }
@@ -1517,23 +1452,6 @@ final class ProjectSession {
     _ = try await applyMutation { s in s.changeComments(k) { $0 + [.object([("id", .string(id)), ("text", .string(t)), ("author", .string("user")), ("finding", .bool(finding))])] } }
   }
 
-  func setCommentText(_ k: CardKey, id: String, text: String) {
-    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !t.isEmpty else { return }
-    changeComments(k) { list in
-      if !list.contains(where: { $0["id"]?.string == id }) {
-        return list + [.object([("id", .string(id)), ("text", .string(t)), ("author", .string("user"))])]
-      }
-      return list.map { c in
-        guard c["id"]?.string == id else { return c }
-        var n = c
-        n["text"] = .string(t)
-        n["editedBy"] = .string("user")
-        return n
-      }
-    }
-  }
-
   /// Marks a comment by hand. Opening one again takes back what was said about it.
   func setCommentResolved(_ k: CardKey, id: String, _ resolved: Bool) {
     editComments(k) { list in
@@ -1541,7 +1459,7 @@ final class ProjectSession {
         guard c["id"]?.string == id else { return c }
         var n = c
         n["resolved"] = resolved ? .bool(true) : nil
-        n["stateBy"] = .string("user")
+        n["state_by"] = .string("user")
         if !resolved {
           n["resolution"] = nil
           n["cards"] = nil
@@ -1554,9 +1472,6 @@ final class ProjectSession {
   func removeComment(_ k: CardKey, id: String) {
     editComments(k) { $0.filter { $0["id"]?.string != id } }
   }
-
-  /// A setting of the Card (its _card.json).
-  func cardSetting(_ k: CardKey, _ name: String) -> JSONValue? { cardDefinition(k)?[name] }
 
   private(set) var derivedLayouts: [String: JSONValue] = [:]
   @ObservationIgnored private var layoutTasks: [String: Task<Void, Never>] = [:]
@@ -1613,39 +1528,57 @@ final class ProjectSession {
     return CGPoint(x: derived?["x"]?.double ?? 0, y: derived?["y"]?.double ?? 0)
   }
 
+  /// The text of a carried file.
+  private func carriedText(_ path: String) -> String? {
+    sourceDocuments[path].map { String(decoding: $0, as: UTF8.self) }
+  }
+
+  /// The layout view of a project ("" or "externals/<p>/…"): its layout.bin
+  /// and the text of its notes.
+  private func layout(at prefix: String) -> JSONValue {
+    var notes: [String: String] = [:]
+    for path in sourceDocuments.keys {
+      guard let id = Documents.noteId(prefix: prefix, path: path),
+            path.dropFirst(prefix.count).split(separator: "/").count == 2 else { continue }
+      notes[id] = carriedText(path) ?? ""
+    }
+    return Documents.layoutView(prefix.isEmpty ? confirmedLayoutBytes : sourceDocuments[prefix + "layout.bin"] ?? [], notes: notes)
+  }
+
   private func applySources(_ upserts: [Tsugumi_RPC_SourceInfoT], removed: [String]) {
     var changed = false
     for path in removed {
       sources[path] = nil
-      if externalDocuments.removeValue(forKey: path) != nil { changed = true }
+      if sourceDocuments.removeValue(forKey: path) != nil { changed = true }
     }
     for source in upserts {
       sources[source.path] = (source.hash ?? "", source.sizeBytes ?? 0)
-      guard let text = source.documentJson else { continue }
+      // A carried file: a nested project's documents or a note (which may be empty).
+      let notes = source.path.range(of: "notes/", options: .backwards).map { String(source.path[..<$0.lowerBound]) } ?? ""
+      guard !source.document.isEmpty || Documents.noteId(prefix: notes, path: source.path) != nil else { continue }
       changed = true
-      do {
-        externalDocuments[source.path] = try JSONValue.parse(text)
-      } catch {
-        externalDocuments[source.path] = nil
-        notice = "\(source.path): \(error)"
-      }
+      sourceDocuments[source.path] = source.document
     }
     guard changed else { return }
-    var found: [String: ExternalProject] = [:]
-    for (path, project) in externalDocuments where path.hasSuffix("/tsugumi.json") {
-      let prefix = String(path.dropLast("tsugumi.json".count))
-      found[prefix] = ExternalProject(
-        project: project, layout: externalDocuments[prefix + "layout.json"] ?? .object([]),
-        definitions: [:])
+    func json(_ path: String) -> JSONValue? {
+      guard let text = carriedText(path) else { return nil }
+      do { return try JSONValue.parse(text) } catch { notice = "\(path): \(error)"; return nil }
     }
-    for (path, card) in externalDocuments where path.hasSuffix("/_card.json") {
+    var found: [String: ExternalProject] = [:]
+    for path in sourceDocuments.keys where path.hasSuffix("/tsugumi.json") {
+      let prefix = String(path.dropLast("tsugumi.json".count))
+      guard let project = json(path) else { continue }
+      found[prefix] = ExternalProject(project: project, layout: layout(at: prefix), definitions: [:])
+    }
+    for path in sourceDocuments.keys where path.hasSuffix("/_card.json") {
+      guard let card = json(path) else { continue }
       let dir = path.dropLast("_card.json".count)
       let parent = dir.dropLast()
       guard let split = parent.lastIndex(of: "/") else { continue }
       let id = String(parent[parent.index(after: split)...])
       let prefix = String(parent[...split].dropLast("definitions/".count))
       found[prefix]?.definitions[id] = DefinitionDraft(
-        card: card, meta: externalDocuments[String(dir) + "_meta.json"])
+        card: card, meta: Documents.cardNotes(readme: carriedText(String(dir) + "README.md"), comments: carriedText(String(dir) + "_comments.json")))
     }
     let previous = externals
     externals = found

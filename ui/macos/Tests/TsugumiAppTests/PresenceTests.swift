@@ -209,7 +209,7 @@ import SwiftUI
   p.toolInputEnded(ok: false, now: at(0.5))
   #expect(p.liveCode(at: at(0.5)) == nil && p.liveCode(at: at(4)) == nil)
   // What is not a Card's file shows nothing, and the next call starts afresh.
-  p.toolInput(index: 1, tool: "project_save", delta: #"{"changes":[{"value":{"path":"layout.json","bytes":"{"#, now: at(1))
+  p.toolInput(index: 1, tool: "project_save", delta: #"{"changes":[{"value":{"path":"layout.bin","bytes":"{"#, now: at(1))
   #expect(p.liveCode(at: at(1)) == nil)
   p.toolInput(index: 2, tool: "project_save", delta: file("c"), now: at(2))
   #expect(p.liveCode(at: at(2.5))?.card == "c")

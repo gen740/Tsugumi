@@ -1,23 +1,8 @@
 {
   "type": "code",
-  "language": "r",
   "inputs": [
     {
       "name": "trials"
-    }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "pooled",
-  "params": [
-    {
-      "name": "method",
-      "type": "string",
-      "data": "DL"
-    },
-    {
-      "name": "exclude",
-      "type": "uint64[]",
-      "data": []
     }
   ]
 }

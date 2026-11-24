@@ -50,19 +50,28 @@ func batchExecutionUsesRecordedWireCountsAndSelectsExactInvocations(count: Int) 
   let directory = try SyncTests.project()
   defer { try? FileManager.default.removeItem(at: directory) }
   let card = directory.appendingPathComponent("definitions/a")
-  try Data(#"{"type":"code","language":"bash","sandbox":false,"recordIO":true}"#.utf8)
+  try Data(#"{"type":"code","sandbox":{"filesystem":false},"recordIO":true}"#.utf8)
     .write(to: card.appendingPathComponent("_card.json"))
   try Data("table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;".utf8)
     .write(to: card.appendingPathComponent("_outputs.fbs"))
-  let implementations = (0..<count).map { index in
-    ["bash": "printf '%s' '{\"out\":{\"value\":\(index)}}' > \"$TSUGUMI_OUTPUT\"; printf 'member \(index)'"]
+  // Each implementation is a package the scripted worker double plays.
+  let implementations = try (0..<count).map { index in
+    let package = directory.appendingPathComponent("packages/\(index)")
+    try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+    let actions: [[String: Any]] = [["op": "log", "text": "member \(index)"],
+                                    ["op": "output", "port": "out", "type": "uint64", "value": index]]
+    try JSONSerialization.data(withJSONObject: ["actions": actions])
+      .write(to: package.appendingPathComponent("scenario.json"))
+    return package.path
   }
   let mock = try JSONSerialization.data(withJSONObject: [
-    "manifest": ["runs": implementations, "shell": "/bin/bash", "path": "/usr/bin:/bin"]
-  ])
+    "product": ["runs": implementations, "views": [] as [Any]], "executionList": true,
+  ] as [String: Any])
   try mock.write(to: card.appendingPathComponent("mock-build.json"))
+  try Data("{ params, inputs }: { }".utf8).write(to: card.appendingPathComponent("default.nix"))
+  let worker = try scriptedWorker(in: directory)
 
-  let daemon = try SyncTests.Daemon(project: directory, mockedBuilds: true)
+  let daemon = try SyncTests.Daemon(project: directory, mockedBuilds: true, worker: worker)
   defer { daemon.stop() }
   let identity = try ProjectIdentity(url: directory)
   let session = ProjectSession(identity: identity, environments: EnvironmentManager(image: nil))
@@ -72,7 +81,7 @@ func batchExecutionUsesRecordedWireCountsAndSelectsExactInvocations(count: Int) 
   try await session.run(card: ["a"], propagate: false)
   // Run status and batch metadata can arrive in separate UI notification frames.
   try await waitForModel { !session.runActive && session.executionBatch("a")?.complete == true }
-  #expect(session.runStatus?.state == .succeeded)
+  #expect(session.runStatus?.state == .succeeded, "\(session.runStatus?.failure?.diagnostic ?? "No run diagnostic")")
   let runId = try #require(session.currentRunId)
   let batch = try #require(session.executionBatch("a"))
   #expect(batch.complete)
@@ -105,6 +114,22 @@ func batchExecutionUsesRecordedWireCountsAndSelectsExactInvocations(count: Int) 
     #expect(log.text.contains("member 0"))
   }
   await session.close()
+}
+
+/// tests/core/doubles/worker.py with absolute paths: a worker gets no PATH.
+private func scriptedWorker(in directory: URL) throws -> URL {
+  let env = ProcessInfo.processInfo.environment
+  let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+  let python = try #require((env["PATH"] ?? "").split(separator: ":").map { URL(fileURLWithPath: String($0)).appendingPathComponent("python3") }
+    .first { FileManager.default.isExecutableFile(atPath: $0.path) })
+  let bindings = env["TSUGUMI_PY_BINDINGS"] ?? repo.appendingPathComponent("build/generated/python").path
+  let double = repo.appendingPathComponent("tests/core/doubles/worker.py").path
+  let launcher = directory.appendingPathComponent("worker")
+  try Data("#!\(python.path)\nimport sys, runpy\nsys.path.insert(0, \(bindings.debugDescription))\nrunpy.run_path(\(double.debugDescription), run_name='__main__')\n".utf8)
+    .write(to: launcher)
+  try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: launcher.path)
+  return launcher
 }
 
 @MainActor @Test func comparisonPairsBatchMembersByName() {

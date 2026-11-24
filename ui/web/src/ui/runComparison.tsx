@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react'
-import { ComparedCard, ComparedField, ComparedMember, ComparedRow, Difference, batchMembers, comparedConditions, comparedParams, comparedValues, inBatch, loadRunComparison, memberName, pairMembers, runScope, sameDisplay } from '../model/runComparison'
-import { ProjectSession, cardState, errorText, formatDuration, formatMillis, recordedDisplay, runState } from '../model/session'
+import { useObserve } from '../model/observable'
+import { ComparedCard, ComparedField, ComparedMember, ComparedRow, Difference, batchMembers, comparedConditions, comparedParams, comparedValues, inBatch, loadRunComparison, memberName, pairMembers, runScope } from '../model/runComparison'
+import { ProjectSession, cardState, errorText, formatDuration, formatMillis, runState } from '../model/session'
 import { R, RPCClient, s, segs } from '../wire/rpc'
 import { Button, Empty, Select, Spinner } from './controls'
-import { DisplayContent } from './display'
 import { L } from '../i18n'
 import { environmentChange } from '../model/environments'
 import { EnvironmentComparison, EnvironmentReadScope } from './environments'
 import { runMark } from '../model/runMark'
 
 export function RunComparisonView({ session, runs, initial, onClose }: { session: ProjectSession; runs: R.RunSummaryT[]; initial?: string; onClose: () => void }) {
+  useObserve(session)
   const [left, setLeft] = useState(initial ?? s(runs[0]?.status?.runId))
   const [right, setRight] = useState(s(runs.find(r => s(r.status?.runId) !== (initial ?? s(runs[0]?.status?.runId)))?.status?.runId))
   const [rows, setRows] = useState<ComparedRow[]>()
@@ -27,7 +28,7 @@ export function RunComparisonView({ session, runs, initial, onClose }: { session
     const controller = new AbortController()
     void loadRunComparison(session.rpc, left, right, controller.signal).then(v => { if (alive) setRows(v) }).catch(e => alive && setError(errorText(e)))
     return () => { alive = false; controller.abort() }
-  }, [session.rpc, left, right, attempt])
+  }, [session.rpc, left, right, attempt, session.recordingRevision])
   useEffect(() => {
     setDiff(undefined); setDiffError(undefined)
     if (!session.rpc || !from || !to || from === to) return
@@ -98,7 +99,7 @@ function SideStatus({ side }: { side?: ComparedCard }) {
     {(side.error || s(v.failure?.diagnostic)) && <p role="alert">{side.error || s(v.failure?.diagnostic)}</p>}
     {side.record?.record?.recordIo === false && <p className="secondary">{L('入出力は記録されていません')}</p>}
     {side.record?.truncated && <p className="secondary">{L('大きな値は概要のみ表示しています。')}</p>}
-    {side.record && !s(side.record.record?.paramsJson) && <p className="secondary">{L('パラメータの記録がありません')}</p>}
+    {side.record && !side.record.record?.params && <p className="secondary">{L('パラメータの記録がありません')}</p>}
   </div>
 }
 
@@ -146,11 +147,11 @@ export function ComparedMembers({ rpc, left, right, row, children }: { rpc: Pick
   return <>{children(shown ?? row, choice)}</>
 }
 
-export function ComparedCardView({ row, displayPath = p => p.join('/'), environmentSection, choice }: { row: ComparedRow; displayPath?: (p: string[]) => string; environmentSection?: React.ReactNode; choice?: React.ReactNode }) {
+export function ComparedCardView({ row, displayPath = p => p.join('/'), environmentSection, choice }: {
+  row: ComparedRow; displayPath?: (p: string[]) => string; environmentSection?: React.ReactNode; choice?: React.ReactNode;
+}) {
   const a = row.left?.record, b = row.right?.record
-  const leftDisplay = a?.record?.display ? recordedDisplay(a.record.display) : undefined, rightDisplay = b?.record?.display ? recordedDisplay(b.record.display) : undefined
   const statusChanged = row.left?.summary.state !== row.right?.summary.state || row.left?.summary.durationMs !== row.right?.summary.durationMs
-  const displayChanged = !sameDisplay(leftDisplay, rightDisplay)
   return <details className="comparison-card" open>
     <summary>{displayPath(row.card.split('/'))} {environmentChange(s((row.left?.record?.record?.summary ?? row.left?.summary)?.environmentId), s((row.right?.record?.record?.summary ?? row.right?.summary)?.environmentId)) === 'changed' && <span className="caption">· {L('環境が変わった Card')}</span>}</summary>
     {choice && <div className="pad8">{choice}</div>}
@@ -160,9 +161,5 @@ export function ComparedCardView({ row, displayPath = p => p.join('/'), environm
     <ComparedFields title={L('パラメータ')} fields={comparedParams(a, b)} />
     <ComparedFields title={L('入力')} fields={comparedValues('inputs', a, b)} />
     <ComparedFields title={L('出力')} fields={comparedValues('outputs', a, b)} />
-    {(leftDisplay || rightDisplay) && <section><h4>{L('表示')} {displayChanged && <span className="caption">· {L('相違あり')}</span>}</h4><div className={`comparison-pair${displayChanged ? ' changed' : ''}`}>
-      <div className="comparison-display" style={{ height: leftDisplay && ['image', 'points', 'module'].includes(leftDisplay.value.kind) ? 400 : undefined }}>{leftDisplay ? <DisplayContent display={leftDisplay} large /> : <Empty small title={L('表示の記録がありません')} icon="chart.xyaxis.line" />}</div>
-      <div className="comparison-display" style={{ height: rightDisplay && ['image', 'points', 'module'].includes(rightDisplay.value.kind) ? 400 : undefined }}>{rightDisplay ? <DisplayContent display={rightDisplay} large /> : <Empty small title={L('表示の記録がありません')} icon="chart.xyaxis.line" />}</div>
-    </div></section>}
   </details>
 }

@@ -1,15 +1,4 @@
 {
   "type": "input",
-  "params": [
-    {
-      "name": "value",
-      "type": "uint64",
-      "sweep": [
-        8,
-        12,
-        16
-      ]
-    }
-  ],
   "recordIO": true
 }

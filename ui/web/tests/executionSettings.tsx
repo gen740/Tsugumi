@@ -1,4 +1,4 @@
-import { cardIds } from './cardIds'
+import { addCodeCard, cardIds } from './cardIds'
 import assert from 'node:assert/strict'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { parse } from '../shared/json'
@@ -16,7 +16,7 @@ const session = cardIds(new ProjectSession('/p', 'k', 'p'))
 session.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
 session.layout = parse('{}')
 session.connected = true
-const card = await session.addCard('python', [], { x: 0, y: 0 })
+const card = await addCodeCard(session, { x: 0, y: 0 })
 session.updateCard(card, def => def.set('executionService', 'local'))
 await session.save()
 const show = (nativeSystem: string, systems: string[]) => {
@@ -43,15 +43,14 @@ session.executionServices = [
 ]
 session.updateCard(card, (def) => {
   def.set('executionService', 'worker')
-  def.set('executionResources', parse('{"cpuMillis":1000,"memoryBytes":1073741824}'))
-  def.set('sandbox', false)
+  def.set('sandbox', parse('{"filesystem":false,"limits":{"cpu":1,"memoryMiB":1024}}'))
 })
 await session.save()
 const remote = renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
 assert.match(remote, /<option value="worker" selected="">worker/)
 assert.doesNotMatch(remote, /<option value="aarch64-linux"/)
-assert.match(remote, /<input(?=[^>]*name="cpuMillis")(?=[^>]*value="1000")[^>]*>/)
-assert.match(remote, /<input(?=[^>]*name="memoryBytes")(?=[^>]*value="1073741824")[^>]*>/)
+assert.match(remote, /<input(?=[^>]*name="cpu")(?=[^>]*value="1(?:\.0)?")[^>]*>/)
+assert.match(remote, /<input(?=[^>]*name="memoryMiB")(?=[^>]*value="1024")[^>]*>/)
 
 session.executionServices = session.executionServices.filter((entry) => entry.id === 'local')
 const missingService = renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)

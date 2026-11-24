@@ -1,84 +1,48 @@
-"""Scheduler behaviour with builtin Cards only (no Nix): consumption order of
-all/any inputs, non-firing optional outputs, maxRuns, no lost or duplicated
-tokens, subgraph runs through their boundary, and per-path history."""
-
-from __future__ import annotations
-
-import json
-from contextlib import ExitStack
-from pathlib import Path
+"""Graph scheduling, opaque routing and terminal states through public RPC."""
 
 import pytest
 
-from harness.daemon import Daemon
-from harness.values import recorded_input_json
-from projects import SINK, card, card_in_card, conn, run_and_wait, wait_run, wait_run_notification, write
-from tsugumi_client import RpcFailure, change, new_id, path, text
+from harness.native_card import STATIC_RESULT_ENTRY, native_card
+from harness.scenario import Project
+from harness.values import reference_json
+from projects import run_and_wait, wait_run, wait_run_notification
+from tsugumi_client import new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
-from Tsugumi.Data.Phase import Phase
-from Tsugumi.Data.StageOutcome import StageOutcome
 from Tsugumi.Data.RunState import RunState
 
-MSG_FBS = """
-namespace demo;
-table Msg { text:string; }
-table Outputs { msg:Msg (required); }
-root_type Outputs;
-"""
-
-FLAG_FBS = """
-namespace demo;
-table Flag { value:bool; }
-table Outputs { flag:Flag (required); }
-root_type Outputs;
-"""
-
-BASE_DEFS = {
-    "trigger": {"type": "trigger"},
-    "msg": {"type": "input", "params": [{"name": "text", "type": "string", "data": "hello"}], "_outputs": MSG_FBS},
-    "flag": {"type": "input", "params": [{"name": "value", "type": "bool", "data": True}], "_outputs": FLAG_FBS},
-    "branch": {"type": "branch"},
-    "fork": {"type": "fork", "outputs": [{"name": "a"}, {"name": "b"}, {"name": "c"}]},
-    "merge": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
-    "sink": dict(SINK, maxRuns=4, recordIO=True),
-    "relay": {"type": "merge", "inputs": [{"name": "in"}]},
-}
+NUMBER = "table Number { value:long; } table Outputs { out:Number; } root_type Outputs;"
+EMPTY = "table Outputs {} root_type Outputs;"
+TEXT = "table Text { value:string; } table Outputs { out:Text; } root_type Outputs;"
 
 
-def inputs(c, directory, run_id, card_id):
-    page = c.call("RunInvocationsRequest", runId=run_id, card=path(*card_id.split("/")))
-    return [recorded_input_json(c, directory, run_id, card_id, invocation=r.invocation)
-            for r in page.records if r.state == CardState.succeeded]
+def add_code(graph, directory, name, *, inputs=(), outputs=None, values=(), runs=None):
+    packages = [native_card(directory / name, STATIC_RESULT_ENTRY, values)] if runs is None else runs
+    return graph.card(name, {"type": "code", "recordIO": True,
+                            "sandbox": {"filesystem": False},
+                            "inputs": [{"name": name} for name in inputs]},
+                      outputs=outputs or EMPTY,
+                      plan={"product": {"runs": packages, "views": []},
+                            "executionList": runs is not None})
 
 
-def states(c, run_id, card_id):
-    try:
-        page = c.call("RunInvocationsRequest", runId=run_id, card=path(*card_id.split("/")))
-    except RpcFailure as failure:
-        if failure.kind != "not_found":
-            raise
-        return []
-    return [r.state for r in page.records]
+def records(client, run, card):
+    return client.call("RunInvocationsRequest", runId=run, card=path(card)).records or []
 
 
-@pytest.fixture
-def env(tmp_path: Path):
-    with ExitStack() as stack:
-        count = 0
-
-        def make(cards, conns, defs=None):
-            nonlocal count
-            root = tmp_path / f"project-{count}"
-            count += 1
-            write(root, defs or BASE_DEFS, cards, conns)
-            return stack.enter_context(Daemon(root)).connect()
-
-        yield make
+def record(client, run, card, invocation=1):
+    return client.call("RunRecordRequest", runId=run, card=path(*card.split("/")), invocation=invocation).record
 
 
-def test_run_can_start_on_terminal_status_notification(env):
-    c = env([card("start", "trigger")], [])
+def collected(client, directory, run, card):
+    value, = record(client, run, card).outputs
+    return reference_json(directory, bytes(value.schemaBfbs), bytes(value.inlineBytes),
+                          root_type="tsugumi.builtin.Collected")["items"]
+
+
+def test_run_can_start_on_terminal_status_notification(core_factory, project):
+    c = core_factory().connect()
+    Project(project).card("start", {"type": "trigger"}).save(c)
     c.ensure_subscription()
     rev = c.call("ProjectInspectRequest").rev
 
@@ -95,276 +59,133 @@ def test_run_can_start_on_terminal_status_notification(env):
     assert wait_run(c, second).state == RunState.succeeded
 
 
-def test_direct_fanout_reaches_each_input_once(env, tmp_path):
-    """A merge consumes one copy of the output for each connected input."""
-    c = env([card("src", "msg"), card("join", "merge"), card("out", "sink")],
-            [conn("src", "msg", "join", "a"), conn("src", "msg", "join", "b"), conn("join", "out", "out", "in")])
-    run_id, st = run_and_wait(c, "src")
-    assert st.state == RunState.succeeded
-    values = inputs(c, tmp_path / "decode", run_id, "out")
-    assert len(values) == 2  # one per arrival, none lost or repeated
-    kinds = [value["value_type"] for value in values]
-    assert sorted(kinds) == ["a", "b"]
 
+def test_single_output_fans_out_and_only_connected_inputs_are_passed(core_factory, project, tmp_path):
+    c = core_factory(mocked_builds=True).connect()
+    payload = b"\xffopaque\0"
+    graph = Project(project).card("start", {"type": "trigger"})
+    add_code(graph, tmp_path, "src", outputs=NUMBER, values=[("out", payload)])
+    add_code(graph, tmp_path, "left", inputs=["a", "unwired"])
+    add_code(graph, tmp_path, "right", inputs=["b"])
+    add_code(graph, tmp_path, "join", inputs=["a", "b"])
+    graph.connect("src", "out", "left", "a").connect("src", "out", "right", "b")
+    graph.connect("src", "out", "join", "a").connect("src", "out", "join", "b").save(c)
 
-def test_all_takes_one_value_per_input_and_optional_output_does_not_fire(env):
-    """A branch waits for both inputs and runs only its selected downstream path."""
-    c = env([card("start", "trigger"), card("src", "msg"), card("cond", "flag"), card("gate", "branch"),
-             card("yes", "sink"), card("no", "sink")],
-            [conn("src", "msg", "gate", "value"), conn("cond", "flag", "gate", "condition"),
-             conn("gate", "a", "yes", "in"), conn("gate", "b", "no", "in")])
-    # Whole run from the trigger: every source starts once.
-    run_id, st = run_and_wait(c, "start")
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    assert states(c, run_id, "gate") == [CardState.succeeded]
-    assert states(c, run_id, "yes") == [CardState.succeeded]
-    assert states(c, run_id, "no") in ([], [CardState.skipped])  # b never fired
-    # The record says which output carried the value and which stages ran.
-    rec = c.call("RunInvocationsRequest", runId=run_id, card=path("gate")).records[0]
-    assert [text(p) for p in rec.outputsSent] == ["a"]
-    assert not rec.executionService
-    assert {(stage.phase, stage.outcome) for stage in rec.stages} >= {
-        (Phase.execute, StageOutcome.done), (Phase.validate, StageOutcome.done), (Phase.save, StageOutcome.done)
+    run, status = run_and_wait(c, "start")
+    assert status.state == RunState.succeeded, status.failure
+    for card, port in [("left", "a"), ("right", "b")]:
+        value, = record(c, run, card).inputs
+        assert text(value.name) == port
+        assert bytes(value.inlineBytes) == payload
+    assert {text(v.name): bytes(v.inlineBytes) for v in record(c, run, "join").inputs} == {
+        "a": payload, "b": payload,
     }
 
 
-def test_fork_sends_the_value_on_every_output(env, tmp_path):
-    """A Fork emits its one value on each declared output and logs where it went."""
-    c = env([card("start", "trigger"), card("src", "msg"), card("split", "fork"),
-             card("x", "sink"), card("y", "sink"), card("z", "sink")],
-            [conn("src", "msg", "split", "value"), conn("split", "a", "x", "in"),
-             conn("split", "b", "y", "in"), conn("split", "c", "z", "in")])
-    run_id, st = run_and_wait(c, "start")
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    rec = c.call("RunInvocationsRequest", runId=run_id, card=path("split")).records[0]
-    assert [text(p) for p in rec.outputsSent] == ["a", "b", "c"]
-    for sink in ("x", "y", "z"):
-        assert states(c, run_id, sink) == [CardState.succeeded]
-        assert inputs(c, tmp_path / sink, run_id, sink) == [{"text": "hello"}]
-    log = text(c.call("LogRangeRequest", runId=run_id, card=path("split"), stream=1, limitBytes=4096).text)
-    assert log == "fork -> a, b, c\n"
+@pytest.mark.parametrize("absent", ["optional", "empty-list", "failed"])
+def test_missing_output_skips_join_and_propagates(core_factory, project, tmp_path, absent):
+    daemon = core_factory(mocked_builds=True)
+    c = daemon.connect()
+    graph = Project(project).card("start", {"type": "trigger"})
+    add_code(graph, tmp_path, "arrives", outputs=NUMBER, values=[("out", b"arrived")])
+    add_code(graph, tmp_path, "absent", outputs=NUMBER, runs=[] if absent == "empty-list" else None,
+             values=[("unknown", b"bad")] if absent == "failed" else [])
+    add_code(graph, tmp_path, "join", inputs=["left", "right"], outputs=NUMBER)
+    add_code(graph, tmp_path, "downstream", inputs=["in"])
+    graph.card("merge", {"type": "merge", "inputs": [{"name": "in"}]})
+    graph.card("collect", {"type": "collect", "recordIO": True})
+    graph.connect("arrives", "out", "join", "left").connect("absent", "out", "join", "right")
+    graph.connect("join", "out", "merge", "in").connect("merge", "out", "downstream", "in")
+    graph.connect("merge", "out", "collect", "in").save(c)
+
+    run, status = run_and_wait(c, "start")
+    failed = absent == "failed"
+    assert status.state == (RunState.failed if failed else RunState.succeeded), status.failure
+    if failed:
+        assert status.failure.kind == FailureKind.output_invalid
+    expected = CardState.blocked if failed else CardState.skipped
+    for card in ("join", "merge", "downstream"):
+        assert [row.state for row in records(c, run, card)] == [expected]
+    if failed:
+        assert [row.state for row in records(c, run, "collect")] == [CardState.blocked]
+    else:
+        assert collected(c, tmp_path / "decoded", run, "collect") == []
+        daemon.restart()
+        c = daemon.connect()
+        assert [row.state for row in records(c, run, "downstream")] == [CardState.skipped]
+        replay, status = run_and_wait(c, "collect", propagate=False)
+        assert status.state == RunState.succeeded, status.failure
+        assert collected(c, tmp_path / "replayed", replay, "collect") == []
 
 
-def test_boolean_input_drives_a_branch_and_persists_after_reopen(project, core_factory):
-    """A saved Boolean Input selects the same branch after reopening the project."""
-    write(project, dict(BASE_DEFS, condition={"type": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG_FBS}),
-          [card("start", "trigger"), card("src", "msg"), card("toggle", "condition"),
-           card("gate", "branch"), card("yes", "sink"), card("no", "sink")],
-          [conn("src", "msg", "gate", "value"), conn("toggle", "flag", "gate", "condition"),
-           conn("gate", "a", "yes", "in"), conn("gate", "b", "no", "in")])
-    d = core_factory()
-    c = d.connect()
+def test_merge_forwards_heterogeneous_arrivals_unchanged(core_factory, project, tmp_path):
+    c = core_factory(mocked_builds=True).connect()
+    graph = Project(project).card("start", {"type": "trigger"})
+    add_code(graph, tmp_path, "first", outputs=NUMBER, values=[("out", b"opaque number")])
+    add_code(graph, tmp_path, "second", outputs=TEXT, values=[("out", b"opaque text")])
+    add_code(graph, tmp_path, "absent", outputs=NUMBER)
+    graph.card("merge", {"type": "merge", "recordIO": True, "maxRuns": 3,
+                         "inputs": [{"name": n} for n in ("a", "b", "c", "unwired")]})
+    graph.connect("first", "out", "merge", "a").connect("second", "out", "merge", "b")
+    graph.connect("absent", "out", "merge", "c").save(c)
 
-    def assert_branch(selected, skipped):
-        rid, status = run_and_wait(c, "start")
-        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-        assert states(c, rid, selected) == [CardState.succeeded]
-        assert states(c, rid, skipped) in ([], [CardState.skipped])
-
-    assert_branch("no", "yes")
-    set_param(c, "toggle", "value", True)
-
-    d.restart()
-    c = d.connect()
-    assert_branch("yes", "no")
-
-
-def test_max_runs_is_enforced(env):
-    """A card stops the run when another invocation would exceed maxRuns."""
-    defs = dict(BASE_DEFS, merge={"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 1})
-    c = env([card("src", "msg"), card("join", "merge"), card("out", "sink")],
-            [conn("src", "msg", "join", "a"), conn("src", "msg", "join", "b"), conn("join", "out", "out", "in")], defs)
-    run_id, st = run_and_wait(c, "src")
-    assert st.state == RunState.failed
-    assert st.failure.kind == FailureKind.execution_limit
-    assert CardState.failed in states(c, run_id, "join")
+    run, status = run_and_wait(c, "start")
+    assert status.state == RunState.succeeded, status.failure
+    arrivals = set()
+    for row in records(c, run, "merge"):
+        assert row.state == CardState.succeeded
+        invocation = record(c, run, "merge", row.invocation)
+        incoming, = invocation.inputs
+        outgoing, = invocation.outputs
+        assert text(outgoing.name) == "out"
+        assert bytes(incoming.schemaBfbs) == bytes(outgoing.schemaBfbs)
+        assert bytes(incoming.inlineBytes) == bytes(outgoing.inlineBytes)
+        arrivals.add((text(outgoing.rootType), bytes(outgoing.inlineBytes)))
+    assert arrivals == {("Number", b"opaque number"), ("Text", b"opaque text")}
 
 
-def subgraph(id_, inner_text_id="inner"):
-    return card_in_card(id_, [card(inner_text_id, "relay")], [],
-                        {"inputs": {"in": {"card": inner_text_id, "port": "in"}},
-                         "outputs": {"out": {"card": inner_text_id, "port": "out"}}})
+def test_collect_keeps_only_members_that_emit_the_port(core_factory, project, tmp_path):
+    c = core_factory(mocked_builds=True).connect()
+    graph = Project(project)
+    packages = [
+        native_card(tmp_path / "present", STATIC_RESULT_ENTRY, [("out", b"member")]),
+        native_card(tmp_path / "empty", STATIC_RESULT_ENTRY),
+    ]
+    graph.card("start", {"type": "trigger"})
+    add_code(graph, tmp_path, "batch", outputs=NUMBER, runs=packages)
+    graph.card("collect", {"type": "collect", "recordIO": True})
+    graph.connect("batch", "out", "collect", "in").save(c)
+
+    run, status = run_and_wait(c, "start")
+    assert status.state == RunState.succeeded, status.failure
+    item, = collected(c, tmp_path / "decoded", run, "collect")
+    assert bytes(item["bytes"]) == b"member"
+    assert len(item["schema"]) == 64
 
 
-def test_subgraph_runs_as_one_card_and_keeps_paths_apart(env):
-    """Nested workflows keep separate histories and honor partial-run propagation."""
-    c = env([card("src", "msg"), subgraph("s1"), subgraph("s2"), card("o1", "sink"), card("o2", "sink")],
-            [conn("src", "msg", "s1", "in"), conn("src", "msg", "s2", "in"),
-             conn("s1", "out", "o1", "in"), conn("s2", "out", "o2", "in")])
-    run_id, st = run_and_wait(c, "src")
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    # Same inner id, different full paths: separate histories.
-    assert states(c, run_id, "s1/inner") == [CardState.succeeded]
-    assert states(c, run_id, "s2/inner") == [CardState.succeeded]
-    # Run the subgraph alone from its boundary input (saved values).
-    run2, st2 = run_and_wait(c, "s1", propagate=False)
-    assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)
-    assert states(c, run2, "s1/inner") == [CardState.succeeded]
-    assert states(c, run2, "o1") == []  # not propagated
-    assert states(c, run2, "s2/inner") == []
-    # With propagation the outside downstream runs too.
-    run3, st3 = run_and_wait(c, "s1", propagate=True)
-    assert st3.state == RunState.succeeded
-    assert states(c, run3, "o1") == [CardState.succeeded]
-    assert states(c, run3, "o2") == []
+def test_merge_still_enforces_max_runs(core_factory, project, tmp_path):
+    c = core_factory(mocked_builds=True).connect()
+    graph = Project(project)
+    add_code(graph, tmp_path, "source", outputs=NUMBER, values=[("out", b"one")])
+    graph.card("merge", {"type": "merge", "maxRuns": 1,
+                         "inputs": [{"name": "a"}, {"name": "b"}]})
+    graph.connect("source", "out", "merge", "a")
+    graph.connect("source", "out", "merge", "b").save(c)
+
+    run, status = run_and_wait(c, "source")
+    assert status.state == RunState.failed
+    assert status.failure.kind == FailureKind.execution_limit
+    assert [row.state for row in records(c, run, "merge")] == [CardState.succeeded, CardState.failed]
 
 
-def set_param(c, card_id, name, value):
-    snap = c.call("ProjectInspectRequest")
-    body = next(json.loads(text(d.cardJson)) for d in snap.definitions if text(d.id) == card_id)
-    next(p for p in body["params"] if p["name"] == name)["data"] = value
-    c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
-           changes=[change("PutDefinition", id=card_id, cardJson=json.dumps(body), keepMeta=True)])
+def test_unwired_merge_skips_and_collect_emits_an_empty_value(core_factory, project, tmp_path):
+    c = core_factory().connect()
+    graph = Project(project).card("start", {"type": "trigger"})
+    graph.card("merge", {"type": "merge", "inputs": [{"name": "unused"}]})
+    graph.card("collect", {"type": "collect", "recordIO": True})
+    graph.connect("merge", "out", "collect", "in").save(c)
 
-
-FAN_DEFS = {**BASE_DEFS, "words": dict(BASE_DEFS["msg"]), "cond": dict(BASE_DEFS["flag"]),
-            "branch": dict(BASE_DEFS["branch"], recordIO=True)}
-FAN_CARDS = [card("start", "trigger"), card("words", "words"), card("cond", "cond"),
-             card("gate", "branch"), card("yes", "sink"), card("no", "sink")]
-FAN_CONNS = [conn("start", "out", "words", "start"), conn("start", "out", "cond", "start"),
-             conn("words", "msg", "gate", "value"), conn("cond", "flag", "gate", "condition"),
-             conn("gate", "a", "yes", "in"), conn("gate", "b", "no", "in")]
-
-
-def test_run_from_one_branch_meets_the_saved_values_of_the_others(env, tmp_path):
-    """A partial branch run joins its new value with the other saved inputs."""
-    c = env(FAN_CARDS, FAN_CONNS, FAN_DEFS)
-    first, st = run_and_wait(c, "start")
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    assert inputs(c, tmp_path / "decode", first, "yes") == [{"text": "hello"}]
-
-    assert not st.partialRun and not st.usesPartialResult
-
-    # Only this branch runs; the join takes its new value and the saved condition.
-    set_param(c, "words", "text", "changed")
-    run_id, st = run_and_wait(c, "words")
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    assert st.partialRun and st.usesPartialResult  # Its downstream Cards used partial values too.
-    assert states(c, run_id, "words") == [CardState.succeeded]
-    assert states(c, run_id, "cond") == [] and states(c, run_id, "fan") == []
-    assert states(c, run_id, "gate") == [CardState.succeeded]
-    assert inputs(c, tmp_path / "decode", run_id, "yes") == [{"text": "changed"}]
-    # Only the branch that ran is a live source. The invocation records the saved condition.
-    rec = c.call("RunRecordRequest", runId=run_id, card=path("gate")).record
-    assert [text(s.port) for s in rec.inputSources] == ["value"]
-    saved_condition = recorded_input_json(c, tmp_path / "condition", run_id, "gate", port="condition")
-    assert saved_condition["value"] is True
-    assert states(c, run_id, "no") in ([], [CardState.skipped])
-
-    # The other branch next: the saved value is now the one that just went through.
-    set_param(c, "cond", "value", False)
-    run_id, st = run_and_wait(c, "cond")
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    assert st.partialRun and st.usesPartialResult
-    assert states(c, run_id, "words") == []
-    assert inputs(c, tmp_path / "decode", run_id, "no") == [{"text": "changed"}]
-
-    # The join alone reuses that set as it is.
-    run_id, st = run_and_wait(c, "gate", propagate=False)
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    assert states(c, run_id, "gate") == [CardState.succeeded]
-
-    assert st.partialRun and st.usesPartialResult
-    listed = c.call("RunHistoryRequest").runs
-    summary = next(r for r in listed if text(r.status.runId) == run_id)
-    assert summary.status.partialRun and summary.status.usesPartialResult
-    assert c.call("RunStatusRequest", runId=run_id).usesPartialResult
-    # A complete Workflow run replaces the saved values and clears provenance.
-    _, st = run_and_wait(c, "start")
-    assert not st.partialRun and not st.usesPartialResult
-    _, st = run_and_wait(c, "gate", propagate=False)
-    assert st.partialRun and not st.usesPartialResult
-
-
-def test_run_from_one_branch_without_saved_values_says_so(env):
-    """A partial branch reports a missing saved input and blocks its dependents."""
-    c = env([card("words", "words"), card("cond", "cond"), card("gate", "branch"), card("yes", "sink")],
-            [conn("words", "msg", "gate", "value"), conn("cond", "flag", "gate", "condition"), conn("gate", "a", "yes", "in")],
-            FAN_DEFS)
-    run_id, st = run_and_wait(c, "words")
-    assert st.state == RunState.failed
-    assert st.failure.kind == FailureKind.input_missing
-    assert states(c, run_id, "words") == [CardState.succeeded]  # the branch itself still ran
-    assert states(c, run_id, "yes") == [CardState.blocked]
-
-
-def test_a_saved_value_never_goes_ahead_of_the_new_one_on_a_shared_port(env, tmp_path):
-    """A running input source takes precedence over a saved value on the same port."""
-    defs = {**FAN_DEFS, "other": dict(BASE_DEFS["msg"])}
-    c = env(FAN_CARDS + [card("other", "other")],
-            FAN_CONNS + [conn("other", "msg", "gate", "value")], defs)
-    _, st = run_and_wait(c, "start")
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    set_param(c, "words", "text", "changed")
-    run_id, st = run_and_wait(c, "words")
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    assert inputs(c, tmp_path / "decode", run_id, "yes") == [{"text": "changed"}]
-
-
-def test_run_from_one_branch_of_an_any_card_consumes_only_what_arrives(env, tmp_path):
-    """An `any` Card takes values as they arrive, so nothing is added to them."""
-    defs = {**FAN_DEFS, "other": dict(BASE_DEFS["msg"])}
-    c = env([card("start", "trigger"), card("words", "words"), card("other", "other"),
-             card("join", "merge"), card("out", "sink")],
-            [conn("start", "out", "words", "start"), conn("start", "out", "other", "start"),
-             conn("words", "msg", "join", "a"), conn("other", "msg", "join", "b"), conn("join", "out", "out", "in")], defs)
-    _, st = run_and_wait(c, "start")
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    set_param(c, "words", "text", "changed")
-    run_id, st = run_and_wait(c, "words")
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    assert states(c, run_id, "join") == [CardState.succeeded]
-    assert inputs(c, tmp_path / "decode", run_id, "out") == [{"value_type": "a", "value": {"text": "changed"}}]
-
-
-def test_start_wired_to_input_and_drafts_leave_only_their_dependents_out(env):
-    """Draft cards block their dependents while implemented branches still run."""
-    defs = dict(BASE_DEFS)
-    defs["plan"] = {"type": "draft", "inputs": [{"name": "data"}]}
-    c = env([card("start", "trigger"), card("src", "msg"), card("out", "sink"), card("plan", "plan"),
-             card("after", "sink")],
-            [conn("start", "out", "src", "start"), conn("src", "msg", "out", "in"),
-             conn("src", "msg", "plan", ""),
-             conn("plan", "", "after", "in")], defs)
-    # Metadata descriptions do not create ports on the Draft.
-    snap = c.call("ProjectInspectRequest")
-    meta = {"description": "Summarize", "content": "Input: messages. Output: the word count. Count the words.",
-            "inputs": [{"name": "data", "description": "messages"}],
-            "outputs": [{"name": "summary", "description": "the word count"}]}
-    res = c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t", changes=[
-        change("PutDefinition", id="plan", cardJson=json.dumps(defs["plan"]), metaJson=json.dumps(meta))])
-    plan = next(r for r in res.delta.resolution if [text(s) for s in r.card.segments] == ["plan"])
-    assert [text(p.name) for p in plan.outputs] == []
-    run_id, st = run_and_wait(c, "start")
-    # The implemented part ran; the Draft and the Card that needs its output did not.
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    assert states(c, run_id, "src") == [CardState.succeeded]
-    assert states(c, run_id, "out") == [CardState.succeeded]
-    assert states(c, run_id, "plan") == [] and states(c, run_id, "after") == []
-    # Step by step: running from the implemented Card leaves the Draft out too.
-    run_id, st = run_and_wait(c, "src")
-    assert st.state == RunState.succeeded and states(c, run_id, "out") == [CardState.succeeded]
-    # A Draft itself cannot be run.
-    snap = c.call("ProjectInspectRequest")
-    with pytest.raises(RpcFailure):
-        c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("plan"), propagate=True)
-
-
-def test_merges_nested_several_levels_deep(env, tmp_path):
-    """Nested merge values preserve their union names through four graph levels."""
-    cards = [card("start", "trigger"), card("src", "msg"), card("out", "sink")]
-    conns = [conn("start", "out", "src", "start")]
-    prev = ("src", "msg")
-    for i in range(4):
-        cards.append(card(f"m{i}", "merge"))
-        conns.append(conn(*prev, f"m{i}", "a"))
-        prev = (f"m{i}", "out")
-    conns.append(conn(prev[0], prev[1], "out", "in"))
-    c = env(cards, conns, defs=dict(BASE_DEFS, merge={"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}]}))
-    run_id, st = run_and_wait(c, "start")
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    out = inputs(c, tmp_path / "decode", run_id, "out")[0]
-    for _ in range(4):
-        assert out["value_type"] == "a"
-        out = out["value"]
-    assert out == {"text": "hello"}
+    run, status = run_and_wait(c, "start")
+    assert status.state == RunState.succeeded, status.failure
+    assert [row.state for row in records(c, run, "merge")] == [CardState.skipped]
+    assert collected(c, tmp_path / "decoded", run, "collect") == []

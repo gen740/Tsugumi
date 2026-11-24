@@ -1,35 +1,10 @@
 {
   "type": "code",
-  "language": "python",
   "inputs": [
     {
       "name": "data"
     }
   ],
   "recordIO": true,
-  "retainArtifact": true,
-  "artifactOutput": "report",
-  "reuseWorker": false,
-  "params": [
-    {
-      "name": "notebook",
-      "type": "string",
-      "data": "notebook.py"
-    },
-    {
-      "name": "bindings",
-      "type": "string",
-      "data": "{\"source\":\"inputs.data.source\",\"factor\":\"param.factor\"}"
-    },
-    {
-      "name": "selected",
-      "type": "string",
-      "data": "result"
-    },
-    {
-      "name": "factor",
-      "type": "double",
-      "data": 2
-    }
-  ]
+  "reuseWorker": false
 }

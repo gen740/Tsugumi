@@ -1,16 +1,8 @@
 {
   "type": "code",
-  "language": "python",
   "inputs": [
     {
       "name": "csv"
-    }
-  ],
-  "params": [
-    {
-      "name": "fail_on_purpose",
-      "type": "bool",
-      "data": false
     }
   ],
   "recordIO": true

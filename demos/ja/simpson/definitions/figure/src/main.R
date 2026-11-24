@@ -1,9 +1,9 @@
 library(ggplot2)
 
 # The same points with the overall line and one line per stratum.
-main <- function(inputs, report) {
-  d <- read.csv(inputs$path("points"))
-  r <- read.csv(inputs$path("correlations"))
+main <- function(inputs) {
+  d <- read.csv(file.path(artifact_open(inputs$points), "points.csv"))
+  r <- read.csv(file.path(artifact_open(inputs$correlations), "correlations.csv"))
   strata <- r[r$stratum != "全体", ]
   labels <- setNames(sprintf("%s (r = %.2f)", strata$stratum, strata$r), strata$stratum)
   figure <- ggplot(d, aes(bill_length_mm, bill_depth_mm)) +
@@ -15,7 +15,7 @@ main <- function(inputs, report) {
          title = sprintf("%s で層別: 全体 (破線) r = %.2f", r$stratify[1], r$r[r$stratum == "全体"])) +
     theme_minimal(base_size = 13) +
     theme(legend.position = "top")
-  report$figure(print(figure), alt = "Bill length against bill depth, overall and by stratum", width = 7.5, height = 5.2)
+  # TODO(open): Port the demo display.
 
   invisible(NULL)
 }

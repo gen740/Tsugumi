@@ -20,8 +20,10 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -29,22 +31,29 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <sstream>
 #include <thread>
+#include <utility>
 #include <vector>
 
+#include "display_channel.hh"
 #include "journal.hh"
+#include "tsugumi/rpc/frame.hh"
 #include "tsugumi/rpc/peer_tls.hh"
 #include "tsugumi/rpc/unix_socket.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/invocation.hh"
+#include "tsugumi/workerd/worker_proc.hh"
 
 extern char** environ;
 namespace tsugumi::workerd {
 auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
-            const stdfs::path& store) -> void;
+            const stdfs::path& store, const stdfs::path& group) -> void;
 auto jobs_main(stdfs::path root, std::span<char*> args) -> int;
 namespace {
 using namespace std::chrono_literals;
@@ -56,11 +65,214 @@ struct Fd {
   Fd() = default;
   explicit Fd(int fd) : value(fd) {}
   Fd(const Fd&) = delete;
+  Fd(Fd&& other) noexcept : value(std::exchange(other.value, -1)) {}
   auto operator=(const Fd&) -> Fd& = delete;
   ~Fd() {
     if (value >= 0) ::close(value);
   }
 };
+// The adapter and the project each have an independent credit window per view.
+class DisplayChannel {
+ public:
+  explicit DisplayChannel(Fd&& descriptor)
+      : socket_(std::move(descriptor)), reader_([this] { read(); }) {
+    try {
+      writer_ = std::thread([this] { write(); });
+    } catch (...) {
+      ::shutdown(socket_.value, SHUT_RDWR);
+      reader_.join();
+      throw;
+    }
+  }
+  ~DisplayChannel() {
+    ::shutdown(socket_.value, SHUT_RDWR);
+    reader_.join();
+    writer_.join();
+  }
+
+  auto take(R::JobStatusT& status, const R::StatusRequestT& query) -> void {
+    std::lock_guard lock(mutex_);
+    if (query.display_after == sequence_) replay_.reset();
+    for (const auto& credit : query.display_credits) {
+      const auto view = outbound_.find(credit->view);
+      if (view != outbound_.end() && credit->released <= view->second.sent)
+        view->second.released =
+            std::max(view->second.released, credit->released);
+    }
+    if (!replay_) {
+      const auto next = std::ranges::find_if(pending_, [&](const auto& item) {
+        const auto& view = outbound_.at(item.view);
+        return view.sent - view.released <= kViewBudget - TSUGUMI_MESSAGE_MAX;
+      });
+      if (next != pending_.end()) {
+        auto& view = outbound_.at(next->view);
+        const auto size = message_cost(next->bytes.size());
+        view.queued -= size;
+        view.sent += size;
+        if (!closed_) {
+          view.credit += size;
+          ready_.notify_all();
+        }
+        replay_.emplace(std::move(*next));
+        pending_.erase(next);
+        ++sequence_;
+      }
+    }
+    if (replay_) {
+      status.displays.push_back(std::make_unique<W::WorkerDisplayT>(*replay_));
+      status.display_sequence = sequence_;
+    }
+    status.view_input_ready = input_ready_ && !closed_;
+    for (const auto& [name, view] : inbound_) {
+      auto credit = std::make_unique<R::DisplayCreditT>();
+      credit->view = name;
+      credit->released = view.released;
+      status.view_input_credits.push_back(std::move(credit));
+    }
+    status.display_pending =
+        !pending_.empty() ||
+        (status.state == R::JobState::Succeeded && !closed_);
+  }
+
+  auto send(const R::ViewSendRequestT& request) -> bool {
+    const auto& message = *request.display;
+    if (message.view.empty() || message.bytes.size() > TSUGUMI_MESSAGE_MAX)
+      return false;
+    std::lock_guard lock(mutex_);
+    if (!input_ready_ || closed_) return false;
+    auto& view = inbound_[message.view];
+    if (request.offset < view.accepted)
+      return true;  // Retried after a lost reply.
+    if (request.offset != view.accepted ||
+        view.queued > kViewBudget - TSUGUMI_MESSAGE_MAX)
+      return false;
+    view.pending.emplace_back(message.bytes.begin(), message.bytes.end());
+    const auto cost = message_cost(message.bytes.size());
+    view.queued += cost;
+    view.accepted += cost;
+    ready_.notify_all();
+    return true;
+  }
+
+  auto expired() -> bool {
+    std::lock_guard lock(mutex_);
+    return closed_ && std::chrono::steady_clock::now() - *closed_ > 10s &&
+           pending_.empty() && !replay_;
+  }
+
+ private:
+  struct Outbound {
+    size_t queued = 0;
+    size_t credit = 0;
+    uint64_t sent = 0;
+    uint64_t released = 0;
+  };
+  struct Inbound {
+    std::deque<std::string> pending;
+    size_t queued = 0;
+    size_t in_flight = 0;
+    uint64_t accepted = 0, released = 0;
+  };
+
+  auto read() -> void {
+    try {
+      char ready = 0;
+      if (::read(socket_.value, &ready, 1) == 1 && ready == 1) {
+        {
+          std::lock_guard lock(mutex_);
+          input_ready_ = true;
+        }
+        while (auto frame = read_display(socket_.value)) {
+          const auto* envelope = W::GetWorkerMessage(frame->data());
+          std::lock_guard lock(mutex_);
+          if (const auto* credit = envelope->value_as_WorkerDisplayCredit()) {
+            const auto view = inbound_.find(credit->view()->str());
+            if (view == inbound_.end() || credit->bytes() > view->second.in_flight)
+              break;
+            view->second.in_flight -= credit->bytes();
+            ready_.notify_all();
+            continue;
+          }
+          const auto* message = envelope->value_as_WorkerDisplay();
+          if (!message || !message->view()->size() ||
+              message->bytes()->size() > TSUGUMI_MESSAGE_MAX)
+            break;
+          const auto size = message_cost(message->bytes()->size());
+          auto& view = outbound_[message->view()->str()];
+          if (view.queued > kViewBudget - TSUGUMI_MESSAGE_MAX) break;
+          view.queued += size;
+          pending_.emplace_back();
+          message->UnPackTo(&pending_.back());
+        }
+      }
+    } catch (const std::exception&) {
+    }
+    std::lock_guard lock(mutex_);
+    closed_ = std::chrono::steady_clock::now();
+    ready_.notify_all();
+    ::shutdown(socket_.value, SHUT_RDWR);
+  }
+
+  auto write() -> void {
+    std::string last;
+    const auto has_credit = [](const auto& entry) {
+      return entry.second.credit != 0;
+    };
+    const auto can_send = [](const auto& entry) {
+      const auto& view = entry.second;
+      return !view.pending.empty() &&
+             view.in_flight <= kViewBudget - TSUGUMI_MESSAGE_MAX;
+    };
+    try {
+      for (;;) {
+        std::unique_lock lock(mutex_);
+        ready_.wait(lock, [&] {
+          return closed_ || std::ranges::any_of(outbound_, has_credit) ||
+                 std::ranges::any_of(inbound_, can_send);
+        });
+        if (closed_) return;
+        // Credit can unblock the other direction even when data cannot move.
+        const auto credit_entry = std::ranges::find_if(outbound_, has_credit);
+        if (credit_entry != outbound_.end()) {
+          const auto view = credit_entry->first;
+          const auto credit = std::exchange(credit_entry->second.credit, 0);
+          lock.unlock();
+          write_display_credit(socket_.value, view, credit);
+          continue;
+        }
+        const auto end = inbound_.end();
+        auto next = std::find_if(inbound_.upper_bound(last), end, can_send);
+        if (next == end) next = std::find_if(inbound_.begin(), end, can_send);
+        last = next->first;
+        auto& view = next->second;
+        auto bytes = std::move(view.pending.front());
+        view.pending.pop_front();
+        const auto cost = message_cost(bytes.size());
+        view.queued -= cost;
+        view.released += cost;
+        view.in_flight += cost;
+        lock.unlock();
+        write_display(socket_.value, last, bytes);
+      }
+    } catch (const std::exception&) {
+      ::shutdown(socket_.value, SHUT_RDWR);
+    }
+  }
+
+  Fd socket_;
+  std::mutex mutex_;
+  std::condition_variable ready_;
+  std::deque<W::WorkerDisplayT> pending_;
+  std::optional<W::WorkerDisplayT> replay_;
+  uint64_t sequence_ = 0;
+  std::map<std::string, Outbound> outbound_;
+  std::map<std::string, Inbound> inbound_;
+  bool input_ready_ = false;
+  std::optional<std::chrono::steady_clock::time_point> closed_;
+  std::thread reader_;
+  std::thread writer_;
+};
+
 auto log(const std::string& line) -> void {
   std::cerr << "tsugumi-workerd: " << line << '\n';
 }
@@ -122,23 +334,6 @@ auto cgroup_path(const stdfs::path& root, const Journal& journal,
   return root /
          ("tsugumi-" +
           crypto::sha256_hex(journal.root().string() + job).substr(0, 32));
-}
-auto remove_cgroup(const stdfs::path& path) -> void {
-  if (path.empty() || !stdfs::exists(path)) return;
-  try {
-    cgroup_write(path / "cgroup.kill", "1");
-  } catch (const std::exception&) {
-  }
-  std::error_code ec;
-  stdfs::remove(path, ec);
-}
-auto make_cgroup(const stdfs::path& path, const R::JobSpecT& spec) -> void {
-  remove_cgroup(path);
-  if (!stdfs::create_directory(path))
-    throw std::runtime_error("cannot create private job cgroup");
-  const auto quota = std::to_string(spec.cpu_millis * 1000) + " 1000000";
-  cgroup_write(path / "cpu.max", quota);
-  cgroup_write(path / "memory.max", std::to_string(spec.memory_bytes));
 }
 auto supervisor_lock(const Journal& journal, const std::string& job) -> int {
   return ::open(journal.supervisor_lock_path(job).c_str(),
@@ -264,8 +459,8 @@ class Daemon {
       return status;
     };
     const auto log_slice = [&](uint64_t offset, uint32_t limit) {
-      auto range = journal->log(q.job_id, offset,
-                                std::min(limit, kLogChunkBytes), q.core_life_id);
+      auto range = journal->log(
+          q.job_id, offset, std::min(limit, kLogChunkBytes), q.core_life_id);
       return [offset, range = std::move(range)](R::JobStatusT status) {
         status.log_offset = offset;
         status.log_size = range.first;
@@ -290,15 +485,29 @@ class Daemon {
         if (spec->system != system_)
           throw Error(R::ErrorCode::Rejected,
                       "job system is not supported by this worker");
-        if (spec->cpu_millis &&
-            (config_.cgroup.empty() ||
-             spec->memory_bytes <
-                 static_cast<uint64_t>(::sysconf(_SC_PAGESIZE))))
+        if (!spec->pid)
           throw Error(R::ErrorCode::Rejected,
-                      "hard limits require a delegated cgroup v2 subtree and "
-                      "at least one page of memory");
+                      "remote execution requires PID isolation");
+        if (!spec->filesystem)
+          throw Error(R::ErrorCode::Rejected,
+                      "remote execution requires filesystem isolation");
+        if (spec->cpu_millis > 256'000 ||
+            spec->memory_bytes > (uint64_t{1} << 40) ||
+            (spec->memory_bytes && spec->memory_bytes < (uint64_t{1} << 20)))
+          throw Error(R::ErrorCode::Rejected, "invalid sandbox limits");
+        if ((spec->cpu_millis || spec->memory_bytes) && config_.cgroup.empty())
+          throw Error(R::ErrorCode::Rejected,
+                      "sandbox limits require a delegated cgroup v2 subtree");
         return reply(
             journal->submit(q.job_id, data, *spec, q.core_life_id).status());
+      }
+      case R::RequestBody::ViewSendRequest: {
+        const auto record = journal->status(q.job_id, q.core_life_id);
+        const auto channel = display_channel(*journal, q.job_id);
+        if (record.state != R::JobState::Running || !channel ||
+            !channel->send(*q.body.AsViewSendRequest()))
+          throw Error(R::ErrorCode::Rejected, "the Card cannot accept a view message");
+        return reply(R::AckT{});
       }
       case R::RequestBody::StatusRequest: {
         auto status =
@@ -311,14 +520,17 @@ class Daemon {
           status.secrets_wanted = stdfs::exists(
               journal->job_path(q.job_id) / "work" / kSecretsWanted, ec);
           const auto bytes =
-              fs::read_file(journal->job_path(q.job_id) / "work/progress.json");
-          remote::TransferJson progress;
-          if (bytes && !schema::decode(*bytes, progress)) {
-            status.transfer_name = *progress.name;
-            status.transfer_done = *progress.done;
-            status.transfer_total = *progress.total;
+              fs::read_file(journal->job_path(q.job_id) / "work/progress");
+          if (const auto progress =
+                  bytes ? remote::decode<R::TransferProgress>(*bytes)
+                        : std::nullopt) {
+            status.transfer_name = progress->name;
+            status.transfer_done = progress->done;
+            status.transfer_total = progress->total;
           }
         }
+        if (const auto channel = display_channel(*journal, q.job_id))
+          channel->take(status, query);
         return reply(std::move(status));
       }
       case R::RequestBody::CancelRequest: {
@@ -335,6 +547,10 @@ class Daemon {
       }
       case R::RequestBody::ReleaseRequest:
         journal->release(q.job_id, q.body.AsReleaseRequest()->fingerprint);
+        {
+          std::lock_guard guard(channel_mutex_);
+          displays_.erase(channel_key(*journal, q.job_id));
+        }
         return reply(R::AckT{});
       case R::RequestBody::JobSecretsRequest:
         deliver_secrets(*journal, q.job_id, q.core_life_id,
@@ -363,6 +579,11 @@ class Daemon {
     }
   }
   auto tick() -> void {
+    {
+      std::lock_guard guard(channel_mutex_);
+      std::erase_if(displays_,
+                    [](const auto& item) { return item.second->expired(); });
+    }
     while (::waitpid(-1, nullptr, WNOHANG) > 0) {
     }
     for (const auto& entry :
@@ -391,12 +612,12 @@ class Daemon {
           close_channel(*p, job);
           if (state.state == R::JobState::Running ||
               state.state == R::JobState::Cancelling) {
-            remove_cgroup(cgroup_path(config_.cgroup, *p, job));
+            remove_card_cgroup(cgroup_path(config_.cgroup, *p, job));
             p->finish(job, R::JobState::Interrupted, {},
                       "execution supervisor ended without recording a result");
           }
           if (terminal(state.state)) {
-            remove_cgroup(cgroup_path(config_.cgroup, *p, job));
+            remove_card_cgroup(cgroup_path(config_.cgroup, *p, job));
           }
           p->clean_released(job);
           if (p->status(job).state == R::JobState::Queued)
@@ -442,6 +663,12 @@ class Daemon {
   static auto channel_key(const Journal& journal, const std::string& job)
       -> std::string {
     return journal.root().string() + '\n' + job;
+  }
+  auto display_channel(const Journal& journal, const std::string& job)
+      -> std::shared_ptr<DisplayChannel> {
+    std::lock_guard guard(channel_mutex_);
+    const auto found = displays_.find(channel_key(journal, job));
+    return found == displays_.end() ? nullptr : found->second;
   }
   auto close_channel(const Journal& journal, const std::string& job) -> void {
     std::lock_guard guard(channel_mutex_);
@@ -523,9 +750,23 @@ class Daemon {
     } catch (const std::exception&) {
       return false;
     }
+    int pair[2];
+    if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) != 0)
+      return false;
+    Fd listener_display(pair[0]), job_display(pair[1]);
+    Fd adapter_display(::fcntl(job_display.value, F_DUPFD_CLOEXEC, 10));
+    if (adapter_display.value < 0) return false;
+    std::shared_ptr<DisplayChannel> display;
+    try {
+      display = std::make_shared<DisplayChannel>(std::move(listener_display));
+    } catch (const std::exception&) {
+      return false;
+    }
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_adddup2(&actions, lock, 5);
+    posix_spawn_file_actions_adddup2(&actions, adapter_display.value,
+                                     kDisplayChannelFd);
     if (channel)
       posix_spawn_file_actions_adddup2(&actions, channel_reader.value,
                                        kSecretChannelFd);
@@ -552,9 +793,11 @@ class Daemon {
         ::posix_spawn(&pid, argv[0], &actions, &attr, argv.data(), environ);
     posix_spawn_file_actions_destroy(&actions);
     posix_spawnattr_destroy(&attr);
-    if (rc == 0 && channel) {
+    if (rc == 0) {
       std::lock_guard guard(channel_mutex_);
-      channels_[channel_key(p, job)] = std::move(channel);
+      const auto key = channel_key(p, job);
+      if (channel) channels_[key] = std::move(channel);
+      displays_[key] = std::move(display);
     }
     return rc == 0;
   }
@@ -566,6 +809,7 @@ class Daemon {
   std::mutex channel_mutex_;
   // Write ends of the Card secret pipes of running jobs, by journal and job.
   std::map<std::string, std::shared_ptr<Fd>> channels_;
+  std::map<std::string, std::shared_ptr<DisplayChannel>> displays_;
 };
 
 auto supervise(const std::string& self, const stdfs::path& root,
@@ -610,11 +854,6 @@ auto supervise(const std::string& self, const stdfs::path& root,
     if (!spec->secrets.empty() && ::fcntl(kSecretChannelFd, F_GETFD) < 0)
       throw std::runtime_error("the job's Card secret channel is missing");
     fs::write_atomic(work / "spec.fb", bytes, 0600);
-    if (spec->cpu_millis) {
-      if (cgroup_root.empty())
-        throw std::runtime_error("resource limits require a delegated cgroup");
-      make_cgroup(group, *spec);
-    }
     Fd adapter(::open((work / "adapter.log").c_str(),
                       O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600));
     if (adapter.value < 0) throw std::runtime_error("cannot open adapter log");
@@ -627,18 +866,15 @@ auto supervise(const std::string& self, const stdfs::path& root,
         ::_exit(126);
       ::dup2(adapter.value, 1);
       ::dup2(adapter.value, 2);
-      if (spec->cpu_millis) {
-        int fd = ::open((group / "cgroup.procs").c_str(), O_WRONLY);
-        if (fd < 0 || ::write(fd, "0", 1) != 1) ::_exit(126);
-        ::close(fd);
-      }
       const auto blobs = directory / "blobs";
       ::execlp("unshare", "unshare", "--map-current-user", "--pid", "--fork",
                "--kill-child=SIGKILL", "--mount-proc", "--", self.c_str(),
-               "--invoke", work.c_str(), blobs.c_str(), store.c_str(), nullptr);
+               "--invoke", work.c_str(), blobs.c_str(), store.c_str(),
+               group.c_str(), nullptr);
       ::_exit(127);
     }
     if (!spec->secrets.empty()) ::close(kSecretChannelFd);
+    ::close(kDisplayChannelFd);
     int status = 0;
     for (;;) {
       const auto current = journal.status(job);
@@ -671,7 +907,7 @@ auto supervise(const std::string& self, const stdfs::path& root,
     while (::waitpid(child, nullptr, 0) < 0 && errno == EINTR) {
     }
   }
-  remove_cgroup(group);
+  remove_card_cgroup(group);
   // Keep partial outputs and logs as well as imported blobs until release.
   // Stopping a supervisor frees its execution slot without deleting run data.
   journal.finish(job, outcome, result, diagnostic);
@@ -693,8 +929,8 @@ auto unix_listener(const stdfs::path& path) -> int {
   }
   int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
   if (fd < 0 ||
-      ::bind(fd, reinterpret_cast<const sockaddr*>(&address),
-             sizeof address) != 0 ||
+      ::bind(fd, reinterpret_cast<const sockaddr*>(&address), sizeof address) !=
+          0 ||
       ::listen(fd, 64) != 0)
     throw std::runtime_error("cannot listen on Unix socket");
   ::chmod(path.c_str(), 0600);
@@ -755,9 +991,11 @@ auto run(Config config) -> int {
   Daemon daemon(config);
   Fd unixfd(unix_listener(config.unix_socket));
   Fd tcpfd(tcp_listener(config));
-  fs::write_atomic(config.root / "worker.ready.json",
-                   "{\"port\":" + std::to_string(config.port) +
-                       ",\"pid\":" + std::to_string(::getpid()) + "}",
+  Tsugumi::RemoteWorker::WorkerReadyT ready;
+  ready.port = config.port;
+  ready.pid = static_cast<uint64_t>(::getpid());
+  fs::write_atomic(config.root / "worker.ready",
+                   flat::encode<Tsugumi::RemoteWorker::WorkerReady>(ready),
                    0600);
   ::signal(SIGTERM, stop);
   ::signal(SIGINT, stop);
@@ -821,8 +1059,8 @@ auto remote_workerd_main(int argc, char** argv) -> int {
   try {
     if (argc == 2 && std::string_view(argv[1]) == "--check-namespace")
       return ::getpid() == 1 ? 0 : 1;
-    if (argc == 5 && std::string_view(argv[1]) == "--invoke") {
-      invoke(argv[2], argv[3], argv[4]);
+    if (argc == 6 && std::string_view(argv[1]) == "--invoke") {
+      invoke(argv[2], argv[3], argv[4], argv[5]);
       return 0;
     }
     if (argc >= 2 && std::string_view(argv[1]) == "jobs")

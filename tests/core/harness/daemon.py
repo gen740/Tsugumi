@@ -12,7 +12,9 @@ from pathlib import Path
 
 from tsugumi_client import Client
 
+from .control import read_ready, read_startup_error
 from .file_events import process_file
+from .nix_path import declarations, write_lock
 
 ROOT = Path(__file__).resolve().parents[3]
 BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build")).resolve()
@@ -20,7 +22,7 @@ DAEMON = Path(os.environ.get("TSUGUMID", BUILD / "tsugumid/tsugumid"))
 MOCK_DAEMON = Path(os.environ.get("TSUGUMI_MOCK_DAEMON", BUILD / "tests/core/tsugumid-mock"))
 WORKER = Path(os.environ.get("TSUGUMI_WORKER", BUILD / "workerd/tsugumi-worker"))
 WORKERD = Path(os.environ.get("TSUGUMI_WORKERD", WORKER.parent / "tsugumi-workerd"))
-SDK = Path(os.environ.get("TSUGUMI_SDK_DIR", ROOT / "sdk"))
+NIX = Path(os.environ.get("TSUGUMI_NIX_DIR", BUILD / "share/tsugumi/nix"))
 
 # Adapter to existing crash points, not a contract asserted by test cases.
 FAULTS = {
@@ -34,13 +36,14 @@ FAULTS = {
 }
 
 
-def write_project(root: Path) -> None:
+def write_project(root: Path, *, locked=()) -> None:
     root.mkdir(parents=True, exist_ok=True)
     (root / "tsugumi.json").write_text(json.dumps({
-        "name": "rpc-test", "pkgsPath": "tsugumi:default",
+        "name": "rpc-test", "nixPath": declarations(locked),
         "canvas": {"cards": [], "connections": []},
     }))
-    (root / "layout.json").write_text("{}")
+    if locked:
+        write_lock(root, locked)
 
 
 class StartupFailure(RuntimeError):
@@ -86,7 +89,7 @@ class Daemon:
                 "--run-scratch-dir", str(self.directory / "run-scratch"),
                 "--project", str(self.project), "--unix", self.unix,
                 "--listen", "127.0.0.1:0", "--control-dir", str(self.control),
-                "--worker", str(self.worker), "--workerd", str(WORKERD), "--sdk-dir", str(SDK),
+                "--worker", str(self.worker), "--workerd", str(WORKERD), "--nix-dir", str(NIX),
                 "--allow-origin", "http://rpc.test", "--cpus", "2"]
         args += self.args
         try:
@@ -95,25 +98,25 @@ class Daemon:
             with self.log.open("ab") as log:
                 self.proc = subprocess.Popen(args, env=env, stdout=log, stderr=log)
             if process_file(self.proc, ready) is not None:
-                self.ready = json.loads(ready.read_text())
+                self.ready = read_ready(ready)
                 return self
             status = self.proc.wait()
             if expect_exit:
                 return self
-            record_path = self.control / "server.startup-error.json"
-            record = json.loads(record_path.read_text()) if record_path.exists() else {}
+            record_path = self.control / "server.startup-error"
+            record = read_startup_error(record_path) if record_path.exists() else {}
             raise StartupFailure(status, record, self.diagnostics())
         except BaseException:
             self.close()
             raise
 
-    def connect(self, *, websocket=False, unix=None):
+    def connect(self, *, websocket=False, unix=None, client=0):
         if websocket:
             c = Client(ws=self.ready["endpoint"], origin="http://rpc.test")
         else:
             c = Client(unix=unix or self.unix)
         self.clients.append(c)
-        c.hello(token=self.ready["token"] if websocket else None)
+        c.hello(token=self.ready["token"] if websocket else None, client=client)
         return c
 
     def diagnostics(self):

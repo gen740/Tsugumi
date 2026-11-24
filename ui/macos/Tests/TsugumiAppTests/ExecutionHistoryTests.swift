@@ -79,8 +79,9 @@ extension ChatResumeTests {
                   environment.project = identity.url.path; environment.key = identity.id
                   attempts += 1
                   environment.phase = .failed; environment.message = "cannot open history"
-                  let diagnostic = ["kind": "incompatible_history", "found": "2", "expected": "3"]
-                  environment.startupErrorJson = String(decoding: try JSONSerialization.data(withJSONObject: diagnostic), as: UTF8.self)
+                  let diagnostic = Tsugumi_Host_StartupErrorT()
+                  diagnostic.kind = "incompatible_history"; diagnostic.found = "2"; diagnostic.expected = "3"
+                  environment.startupError = diagnostic
                   latest = environment
                 } else {
                   guard input.action == .state else { throw POSIXError(.EPROTO) }

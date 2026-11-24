@@ -30,8 +30,8 @@ private func logPage(_ text: String, at offset: UInt64 = 0, line: UInt64, starts
 }
 
 @Test func incompleteJournalRecordsAppearAtTheirAbsoluteLineAfterJoining() throws {
-  let a = logPage(#"{"phase":"save","event":"st"#, line: 7, form: .journal)
-  let b = logPage(#"ored","message":"ok"}"# + "\n" + #"{"phase":"execute"}"# + "\n",
+  let a = logPage("save · st", line: 7, form: .journal)
+  let b = logPage("ored: ok\nexecute · done: finished\n",
                   at: a.end, line: 7, starts: false, form: .journal)
   var window = LogWindow(form: .journal)
   window.apply(try #require(window.request(.tail)), b)
@@ -83,8 +83,8 @@ private func logPage(_ text: String, at offset: UInt64 = 0, line: UInt64, starts
 }
 
 @Test func keepingVisibleJournalRowsDoesNotKeepTheirRawPage() throws {
-  let shown = "{\"phase\":\"save\",\"message\":\"anchor\"}\n"
-  let filtered = "{\"phase\":\"build\",\"message\":\"" + String(repeating: "a", count: (1 << 20) - 80) + "\"}\n"
+  let shown = "save · done: anchor\n"
+  let filtered = "build · done: " + String(repeating: "a", count: (1 << 20) - 80) + "\n"
   let size = UInt64(4 << 20)
   var window = LogWindow(form: .journal)
   let tail = logPage(shown, at: size - UInt64(shown.utf8.count), line: 4, form: .journal)
@@ -98,7 +98,7 @@ private func logPage(_ text: String, at offset: UInt64 = 0, line: UInt64, starts
     window.apply(try #require(window.request(.earlier)), page)
   }
   #expect(window.end < tail.offset)
-  #expect(window.blocks.map(\.text) == ["4\tsave · : anchor\n"])
+  #expect(window.blocks.map(\.text) == ["4\tsave · done: anchor\n"])
 }
 
 @Test func appendingToARebuiltBlockKeepsTheLogicalRowAndColumn() throws {
@@ -174,7 +174,7 @@ private func logPage(_ text: String, at offset: UInt64 = 0, line: UInt64, starts
   coordinator.scroll = scroll
   coordinator.fontSize = 12
   coordinator.attach(reader)
-  let records = (1...100).map { "{\"phase\":\"save\",\"message\":\"record \($0)\"}\n" }.joined()
+  let records = (1...100).map { "save · done: record \($0)\n" }.joined()
   let base = logPage(records, line: 1, form: .journal)
   reader.apply(.init(kind: .tail, read: try #require(reader.window.request(.tail)), result: .success(base)))
   text.layoutManager?.ensureLayout(for: try #require(text.textContainer))
@@ -183,7 +183,7 @@ private func logPage(_ text: String, at offset: UInt64 = 0, line: UInt64, starts
 
   reader.follow(false)
   scroll.contentView.scroll(to: .zero)
-  let filtered = logPage("{\"phase\":\"build\"}\n", at: base.end, line: 101, form: .journal)
+  let filtered = logPage("build · done: finished\n", at: base.end, line: 101, form: .journal)
   reader.apply(.init(kind: .status, read: try #require(reader.window.request(.status)), result: .success(filtered)))
   #expect(reader.waiting)
   let before = text.string

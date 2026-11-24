@@ -1,19 +1,9 @@
 {
   "type": "code",
-  "language": "r",
   "inputs": [
     {
       "name": "data"
     }
   ],
-  "recordIO": true,
-  "retainArtifact": true,
-  "artifactOutput": "report",
-  "params": [
-    {
-      "name": "title",
-      "type": "string",
-      "data": "Analysis report"
-    }
-  ]
+  "recordIO": true
 }

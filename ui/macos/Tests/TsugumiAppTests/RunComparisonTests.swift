@@ -18,13 +18,21 @@ import Testing
   }
 
   @Test func parametersAlignByNameAndRetainMissingSides() throws {
-    func record(_ json: String) -> ComparedRunCard {
+    func record(_ values: [(String, String)]) -> ComparedRunCard {
       let result = Tsugumi_RPC_RecordResultT()
       result.record = Tsugumi_RPC_InvocationRecordT()
-      result.record?.paramsJson = json
+      let params = Tsugumi_Data_InvocationParamsT()
+      params.entries = values.map { name, value in
+        let param = Tsugumi_Data_InvocationParamT()
+        param.name = name
+        param.value = value
+        return param
+      }
+      result.record?.params = params
       return ComparedRunCard(summary: Tsugumi_RPC_InvocationSummaryT(), record: result)
     }
-    let a = record(#"{"low":600,"boundary":1650}"#), b = record(#"{"boundary":1800,"low":600,"added":true}"#)
+    let a = record([("low", "600"), ("boundary", "1650")])
+    let b = record([("boundary", "1800"), ("low", "600"), ("added", "true")])
     let fields = RunComparison.params(a, b)
     let added = try #require(fields.first { $0.name == "added" })
     let boundary = try #require(fields.first { $0.name == "boundary" })
@@ -55,51 +63,6 @@ import Testing
     #expect(missing[2].difference == .unknown && missing[2].right == nil)
   }
 
-  @Test func retainedDisplayEqualityIgnoresIdentityButChecksContent() {
-    let first = DisplaySnapshot(runId: "left", invocation: 1, revision: 1, value: .table(columns: ["Band", "Photons"], rows: [["red", "101187"]]))
-    let equal = DisplaySnapshot(runId: "right", invocation: 3, revision: 9, value: first.value)
-    let changed = DisplaySnapshot(runId: "right", invocation: 3, revision: 9, value: .table(columns: ["Band", "Photons"], rows: [["red", "104821"]]))
-    #expect(RunComparison.sameDisplay(first, equal))
-    #expect(!RunComparison.sameDisplay(first, changed))
-    #expect(!RunComparison.sameDisplay(first, nil))
-    let image = DisplaySnapshot(runId: "left", invocation: 1, revision: 1, value: .image(mediaType: "image/png", data: Data([1, 2]), alt: "rgb"))
-    let other = DisplaySnapshot(runId: "right", invocation: 1, revision: 1, value: .image(mediaType: "image/png", data: Data([1, 3]), alt: "rgb"))
-    #expect(!RunComparison.sameDisplay(image, other))
-    let sameImage = DisplaySnapshot(runId: "right", invocation: 2, revision: 9, value: image.content)
-    #expect(RunComparison.sameDisplay(image, sameImage))
-  }
-
-  @Test func recordedDisplayDoesNotNeedALiveSession() {
-    let value = Tsugumi_Data_DisplayTableT()
-    value.columns = ["Band", "Photons"]
-    let row = Tsugumi_Data_TableRowT()
-    row.cells = ["red", "101187"]
-    value.rows = [row]
-    let display = Tsugumi_Data_DisplayT()
-    display.runId = "old-run"
-    display.invocation = 7
-    display.value = Tsugumi_Data_DisplayValueUnion(value, type: .displaytable)
-    let decoded = recordedDisplay(display)
-    #expect(decoded?.runId == "old-run" && decoded?.invocation == 7)
-    guard case .table(let columns, let rows) = decoded?.value else { Issue.record("expected a retained table"); return }
-    #expect(columns == ["Band", "Photons"] && rows == [["red", "101187"]])
-  }
-
-  @Test func retainedCopyIdentityDoesNotChangeTheRecordedValue() {
-    func record(_ id: String, _ bytes: [UInt8]) -> ComparedRunCard {
-      let value = Tsugumi_Data_NamedValueT()
-      value.name = "photons"; value.rootType = "Counts"; value.inlineBytes = bytes; value.artifactId = id
-      let result = Tsugumi_RPC_RecordResultT()
-      result.record = Tsugumi_RPC_InvocationRecordT()
-      result.record?.outputs = [value]
-      return ComparedRunCard(summary: Tsugumi_RPC_InvocationSummaryT(), record: result)
-    }
-    let a = record("copy-left", [1, 2]), b = record("copy-right", [1, 2])
-    #expect(RunComparison.values(true, a, b).first?.changed == false)
-    #expect(a.record?.record?.outputs.first??.artifactId == "copy-left")
-    b.record?.record?.outputs.first??.inlineBytes = [1, 3]
-    #expect(RunComparison.values(true, a, b).first?.changed == true)
-  }
   @Test func omittedValuesCompareByContentHashAndType() {
     let a = Tsugumi_Data_NamedValueT(), b = Tsugumi_Data_NamedValueT()
     a.sizeBytes = 4096; b.sizeBytes = 4096
@@ -118,22 +81,22 @@ import Testing
 
 }
 
-@MainActor @Test func filesCompareRecordedContentAndOneSidedValuesAreNotComparable() {
-  func file(_ path: String, _ digest: String?) -> Tsugumi_Data_NamedValueT {
+@MainActor @Test func artifactIdsParticipateInValueComparison() {
+  func value(_ id: String) -> Tsugumi_Data_NamedValueT {
     let v = Tsugumi_Data_NamedValueT()
-    v.name = "file"; v.kind = .file; v.rootType = "File"; v.schemaBfbs = [1]
-    v.inlineBytes = Array(path.utf8); v.contentHash = path; v.fileContentHash = digest
+    v.name = "value"
+    v.contentHash = "bytes"
+    let artifact = Tsugumi_Data_ValueArtifactT()
+    artifact.id = id
+    artifact.sizeBytes = 1
+    v.artifacts = [artifact]
     return v
   }
-  let a = file("/runs/left/value", "bytes"), b = file("/runs/right/value", "bytes")
+  let a = value("id"), b = value("id")
   #expect(RunComparison.valueDifference(a, b) == .same)
-  b.fileContentHash = "other"
+  b.artifacts = value("other").artifacts
   #expect(RunComparison.valueDifference(a, b) == .changed)
-  b.fileContentHash = nil
-  #expect(RunComparison.valueDifference(a, b) == .unknown)
-  #expect(RunComparison.valueDifference(file("/same/path", nil), file("/same/path", nil)) == .unknown)
-  b.fileContentHash = "bytes"; b.fileMissing = true
-  #expect(RunComparison.valueDifference(a, b) == .same)
+  b.artifacts = a.artifacts
   b.rootType = "Other"
   #expect(RunComparison.valueDifference(a, b) == .changed)
   #expect(RunComparison.valueDifference(a, nil) == .unknown)

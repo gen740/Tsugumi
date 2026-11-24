@@ -1,5 +1,5 @@
-attribute "tsugumi";
+include "tsugumi/artifact.fbs";
+
 namespace simpson;
-table Penguins { value:string; }
-table Outputs { penguins:Penguins (required, tsugumi: "file"); }
+table Outputs { penguins:tsugumi.Artifact (required); }
 root_type Outputs;

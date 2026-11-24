@@ -1,5 +1,5 @@
-import { cardIds } from './cardIds'
-// Comments on a Card: written, edited, resolved and removed in its _meta.json,
+import { addCodeCard, cardIds } from './cardIds'
+// Comments on a Card: written, edited, resolved and removed in its _comments.json,
 // each saved at once, on any Card, its copy having comments of its own; who did
 // what is kept; the canvas shows how many are open and the Agent is asked about those only.
 import assert from 'node:assert/strict'
@@ -26,7 +26,7 @@ const session = () => {
 
 {
   const { s, saves } = session()
-  const k = await s.addCard('python', [], { x: 0, y: 0 })
+  const k = await addCodeCard(s, { x: 0, y: 0 })
   assert.deepEqual(s.comments(k), [])
   assert.equal(get(s.cardMeta(k), 'comments'), undefined)
 
@@ -44,12 +44,7 @@ const session = () => {
   assert.ok(s.cardDetails(k).some((l) => l.includes('y 軸を対数に')), 'the hover says what is asked')
 
   await s.addComment(k, '軸に名前を')
-  s.edit((x) => x.setCommentText(k, first.id, '両軸を対数に'))
-  await s.save()
-  assert.deepEqual(s.comments(k).map((c) => c.text), ['両軸を対数に', '軸に名前を'])
-  s.edit((x) => x.setCommentText(k, first.id, '  '))
-  await s.save()
-  assert.equal(s.comments(k)[0].text, '両軸を対数に', 'a comment keeps its text rather than going blank')
+  assert.deepEqual(s.comments(k).map((c) => c.text), ['y 軸を対数に', '軸に名前を'])
 
   // The Agent's line goes away when the comment is opened again.
   s.updateMeta(k, (m) => {
@@ -70,14 +65,14 @@ const session = () => {
 
   for (const c of s.comments(k)) { s.removeComment(k, c.id); await s.save() }
   assert.deepEqual(s.comments(k), [], 'no comments remain')
-  assert.equal(get(s.cardMeta(k), 'name'), 'card', 'the name stays after the last comment is removed')
+  assert.equal(s.displayName(k), k, 'the id is the Card name')
   assert.deepEqual(s.cardsWithOpenComments([]), [])
 }
 
 {
-  // What else the Card's _meta.json says is kept, and undo takes a comment back.
+  // What else the Card's _comments.json says is kept, and undo takes a comment back.
   const { s } = session()
-  const k = await s.addCard('python', [], { x: 0, y: 0 })
+  const k = await addCodeCard(s, { x: 0, y: 0 })
   s.edit((x) => x.updateMeta(k, (m) => m.set('description', 'Plots')))
   await s.save()
   await s.addComment(k, 'one')
@@ -88,9 +83,9 @@ const session = () => {
 }
 
 {
-  // A Card in Card has a _meta.json too, though its settings are not edited here.
+  // A Card in Card has a _comments.json too, though its settings are not edited here.
   const { s } = session()
-  const k = await s.addCard('python', [], { x: 0, y: 0 })
+  const k = await addCodeCard(s, { x: 0, y: 0 })
   s.setCardDefinition(k, { card: parse('{"type":"subgraph","external":"inner"}') })
   await s.addComment(k, 'split this')
   assert.equal(s.comments(k).length, 1)
@@ -109,13 +104,10 @@ const session = () => {
 {
   // Who did what: the user's marks here, and what the core recorded of the Agent's.
   const { s } = session()
-  const k = await s.addCard('python', [], { x: 0, y: 0 })
+  const k = await addCodeCard(s, { x: 0, y: 0 })
   await s.addComment(k, 'mine')
   const [c] = s.comments(k)
   assert.equal(c.author, 'user')
-  s.edit((x) => x.setCommentText(k, c.id, 'mine, reworded'))
-  await s.save()
-  assert.equal(s.comments(k)[0].editedBy, 'user')
   s.setCommentResolved(k, c.id, true)
   await s.save()
   assert.equal(s.comments(k)[0].stateBy, 'user')
@@ -135,7 +127,7 @@ console.log('comments: ok')
 
 {
   const { s } = session()
-  const k = await s.addCard('python', [], { x: 0, y: 0 })
+  const k = await addCodeCard(s, { x: 0, y: 0 })
   await s.addComment(k, 'Read only: [source](card:a?file=src%2Fmain.py&lines=2-4) uses a clock.', true)
   assert.equal(s.comments(k)[0].finding, true)
   assert.equal(s.openComments(k).length, 1, 'Kept observations remain visible as comments')

@@ -1,5 +1,8 @@
 #include "host/project_edit.hh"
 
+#include "host/layout_file.hh"
+#include "host/save.hh"
+
 #include <algorithm>
 #include <cctype>
 #include <map>
@@ -10,6 +13,7 @@
 #include "host/failure.hh"
 #include "host/layout_saving.hh"
 #include "tsugumi/document/document.hh"
+#include "tsugumi/document/text.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 
@@ -497,25 +501,87 @@ auto ReverseFields(const std::string& path,
 
 auto ReverseProjectChanges(const json::Members& plan, const SaveBase& base,
                            const EditFileRead& read) -> H::ProjectEditsT {
+  using document_text::Schema;
+  const auto canonical = [](Schema schema, const std::string& path,
+                            const std::string& text) {
+    try {
+      return document_text::print(schema, document_text::parse(schema, path, text));
+    } catch (const DocumentError&) {
+      // The core reports invalid documents when it applies the save.
+      return text;
+    }
+  };
   std::map<std::string, std::optional<std::string>> after;
   auto original = [&](const std::string& path) -> std::optional<std::string> {
     if (base.files.contains(path)) return base.files.at(path);
     return read(path);
   };
+  std::map<std::string, LayoutFiles> layout_updates;
+  EditFiles note_updates;
+  auto layout_update = [&](const std::string& path) -> LayoutFiles& {
+    if (auto it = layout_updates.find(path); it != layout_updates.end())
+      return it->second;
+    const auto previous = original(path);
+    return layout_updates
+        .emplace(path, previous ? SplitLayoutView(*previous) : LayoutFiles{})
+        .first->second;
+  };
+  auto store_source = [&](const std::string& path,
+                          std::optional<std::string> bytes) {
+    if (IsExternalDocument(path, "layout.bin")) {
+      layout_update(path).layout = bytes.value_or("");
+    } else if (Document::is_note_file(path)) {
+      note_updates[path] = bytes;
+      const auto prefix = path.substr(0, path.rfind("notes/"));
+      const auto id = NoteId(prefix, path);
+      auto& notes = layout_update(prefix + "layout.bin").notes;
+      if (bytes)
+        notes[*id] = std::move(*bytes);
+      else
+        notes.erase(*id);
+    } else {
+      if (bytes && Document::is_external_document_file(path)) {
+        if (path.ends_with("/tsugumi.json") && original(path))
+          bytes = canonical(Schema::Project, path, *bytes);
+        if (path.ends_with("/_card.json"))
+          bytes = canonical(Schema::Card, path, *bytes);
+        if (path.ends_with("/_comments.json"))
+          bytes = canonical(Schema::Comments, path, *bytes);
+      }
+      after[path] = std::move(bytes);
+    }
+  };
   for (const auto& raw : json::Array(json::Get(plan, "changes", "[]"))) {
     const auto change = json::Object(raw);
     const auto type = json::Text(change, "value_type");
     const auto value = json::Object(json::Get(change, "value", "{}"));
-    if (type == "SetProject" || type == "SetLayout")
-      after[type == "SetProject" ? "tsugumi.json" : "layout.json"] =
-          json::Text(value, "json");
+    if (type == "SetProject")
+      after["tsugumi.json"] =
+          canonical(Schema::Project, "tsugumi.json", json::Text(value, "json"));
+    else if (type == "SetLayout")
+      layout_update("layout.bin").layout =
+          DecodeSourceBytes(json::Get(value, "layout", "\"\""));
     else if (type == "PutDefinition") {
       const auto dir = "definitions/" + json::Text(value, "id") + '/';
       for (const auto& [key, file] : {std::pair{"card_json", "_card.json"},
-                                      {"meta_json", "_meta.json"}}) {
-        // PutDefinition replaces both documents; omission means removal.
-        const auto bytes = json::Text(value, key);
-        after[dir + file] = bytes.empty() ? std::nullopt : std::optional(bytes);
+                                      {"readme", "README.md"},
+                                      {"comments_json", "_comments.json"}}) {
+        const auto path = dir + file;
+        auto bytes = json::Text(value, key);
+        if (bytes.empty()) {
+          if (value.contains(key) ||
+              json::Bool(json::Get(value, std::string("keep_") +
+                                             (std::string_view(key) == "readme"
+                                                  ? "readme" : "comments"))))
+            continue;
+          after[path] = std::nullopt;
+        } else {
+          if (std::string_view(key) == "card_json")
+            bytes = canonical(Schema::Card, path, bytes);
+          if (std::string_view(key) == "comments_json")
+            bytes = canonical(Schema::Comments, path, bytes);
+          after[path] = std::move(bytes);
+        }
       }
     } else if (type == "RemoveDefinition") {
       const auto dir = "definitions/" + json::Text(value, "id") + '/';
@@ -528,21 +594,26 @@ auto ReverseProjectChanges(const json::Members& plan, const SaveBase& base,
         const auto path = json::Text(json::Object(raw_source), "path");
         if (path.starts_with(dir)) after[path] = std::nullopt;
       }
+    } else if (type == "SetProjectLock") {
+      // Explicit lock updates have no undo. Pins installed with a new
+      // external leave with the rest of that external's tree.
+      const auto path = json::Text(value, "path");
+      if (path.starts_with("externals/") && value.contains("json") &&
+          !original(path))
+        store_source(path, json::Text(value, "json"));
     } else if (type == "PutSource") {
-      const auto bytes = json::Get(value, "bytes");
-      std::string decoded;
-      if (bytes.starts_with('"'))
-        decoded = json::String(bytes);
-      else if (!crypto::base64_decode(json::Text(json::Object(bytes), "base64"),
-                                      decoded))
-        throw Failure("invalid_request",
-                      "invalid file bytes in operation plan");
-      after[json::Text(value, "path")] = std::move(decoded);
-    } else if (type == "RemoveSource")
-      after[json::Text(value, "path")] = std::nullopt;
-    else
+      store_source(json::Text(value, "path"),
+                   DecodeSourceBytes(json::Get(value, "bytes")));
+    } else if (type == "RemoveSource") {
+      store_source(json::Text(value, "path"), std::nullopt);
+    } else {
       throw Failure("invalid_request", "unsupported operation change: " + type);
+    }
   }
+  for (const auto& [path, layout] : layout_updates)
+    after[path] = path != "layout.bin" && layout.layout.empty()
+                      ? std::nullopt
+                      : std::optional(LayoutView(layout.layout, layout.notes));
   H::ProjectEditsT result;
   // Creation/removal of a structural root reverses its whole folder, including
   // files added by a later writer. Guard the closure as well as every byte.
@@ -561,6 +632,10 @@ auto ReverseProjectChanges(const json::Members& plan, const SaveBase& base,
     (void)ignored;
     paths.insert(path);
   }
+  for (const auto& [path, ignored] : note_updates) {
+    (void)ignored;
+    paths.insert(path);
+  }
   std::set<std::string> covered;
   for (const auto& prefix : trees) {
     if (std::any_of(covered.begin(), covered.end(), [&](const auto& parent) {
@@ -572,7 +647,9 @@ auto ReverseProjectChanges(const json::Members& plan, const SaveBase& base,
     for (const auto& path : paths) {
       if (!path.starts_with(prefix)) continue;
       const auto previous = original(path);
-      const auto now = after.contains(path) ? after.at(path) : previous;
+      const auto now = after.contains(path)          ? after.at(path)
+                       : note_updates.contains(path) ? note_updates.at(path)
+                                                     : previous;
       if (now) {
         auto hash = std::make_unique<H::ProjectFileHashT>();
         hash->path = path;
@@ -598,12 +675,15 @@ auto ReverseProjectChanges(const json::Members& plan, const SaveBase& base,
       continue;
     const auto previous = original(path);
     if (now == previous) continue;
-    const bool document = path == "tsugumi.json" || path == "layout.json" ||
+    const bool document = path == "tsugumi.json" || path == "layout.bin" ||
                           IsExternalDocument(path, "tsugumi.json") ||
-                          IsExternalDocument(path, "layout.json") ||
+                          IsExternalDocument(path, "layout.bin") ||
                           path.ends_with("/_card.json") ||
-                          path.ends_with("/_meta.json");
-    if (document && now && previous) {
+                          path.ends_with("/_comments.json");
+    if (now && !previous && path.ends_with("/_comments.json")) {
+      // Removing a first comment must keep comments from later writers.
+      ReverseFields(path, now, R"({"comments":[]})", {}, result);
+    } else if (document && now && previous) {
       ReverseFields(path, now, previous, {}, result);
     } else {
       auto entry = std::make_unique<H::ProjectEditT>();
@@ -647,6 +727,34 @@ auto PrepareProjectEdits(
       const auto current = base.files.contains(edit.file_path)
                                ? std::optional(base.files.at(edit.file_path))
                                : read(edit.file_path);
+      // A README.md is Markdown: its values are the text as a JSON string.
+      if (edit.file_path.ends_with("/README.md")) {
+        const auto text = [](const std::optional<std::string>& value) {
+          return value ? std::optional(json::String(*value)) : std::nullopt;
+        };
+        const auto was = text(before), now = text(after);
+        if (was != current)
+          throw Failure("value_conflict", edit.file_path + ": document changed");
+        if (now == current) continue;
+        auto value = std::make_unique<H::ProjectEditT>();
+        if (now) {
+          H::ProjectFilePutT put;
+          put.file_path = edit.file_path;
+          if (current)
+            put.expected_hash = crypto::sha256_hex(*current);
+          else
+            put.expect_missing = true;
+          put.bytes.assign(now->begin(), now->end());
+          value->value.Set(std::move(put));
+        } else {
+          H::ProjectFileRemoveT remove;
+          remove.file_path = edit.file_path;
+          remove.expected_hash = crypto::sha256_hex(*current);
+          value->value.Set(std::move(remove));
+        }
+        expanded.edits.push_back(std::move(value));
+        continue;
+      }
       if (!current && after) {
         if (before) throw Failure("target_missing", edit.file_path);
         H::ProjectFilePutT put;
@@ -832,8 +940,8 @@ auto PrepareProjectEdits(
   std::vector<std::string> implemented;
   for (const auto& [path, content] : files)
     if (path.ends_with("/_card.json") &&
-        Document::is_card_meta_file(path.substr(0, path.size() - 10) +
-                                    "_meta.json") &&
+        Document::is_card_note_file(path.substr(0, path.size() - 10) +
+                                    "README.md") &&
         content && originals.at(path) &&
         json::Text(json::Object(*originals.at(path), path), "type") == "draft")
       implemented.push_back(path);
@@ -881,6 +989,15 @@ auto PrepareProjectEdits(
     root["canvas"] = json::Encode(canvas);
     project = PreserveProjectBytes(*project, json::Encode(root));
   }
+  for (const auto& [path, bytes] : files) {
+    if (!Document::is_lock_file(path) || bytes == originals.at(path)) continue;
+    const auto project = path.substr(0, path.size() - 4) + "json";
+    if (path == "tsugumi.lock" || !files.contains(project) ||
+        files.at(project).has_value() == originals.at(project).has_value() ||
+        bytes.has_value() != files.at(project).has_value())
+      throw Failure("permission_denied",
+                    "Use the explicit nixPath lock update");
+  }
   return ProjectSaveChanges(base, originals, files, removed_definitions);
 }
 
@@ -894,6 +1011,62 @@ auto ProjectPaths(const SaveBase& base) -> std::set<std::string> {
     paths.insert(json::Text(json::Object(raw), "path"));
   return paths;
 }
+namespace {
+auto SourceHash(const SaveBase& base, const std::string& path) -> std::string {
+  for (const auto& raw : json::Array(json::Get(base.snapshot, "sources", "[]")))
+    if (const auto source = json::Object(raw); json::Text(source, "path") == path)
+      return json::Text(source, "hash");
+  return {};
+}
+
+// The changes that save a project's layout view: its layout.bin and the
+// notes whose text was added, changed or removed.
+void LayoutChanges(const SaveBase& base, const std::string& path,
+                   const std::optional<std::string>& original,
+                   const std::optional<std::string>& view,
+                   const EditFiles& files,
+                   std::vector<std::string>& changes) {
+  const auto prefix = path.substr(0, path.size() - 10);
+  const auto before = original ? SplitLayoutView(*original) : LayoutFiles{};
+  const auto after = view ? SplitLayoutView(*view) : LayoutFiles{};
+  if (after.layout != before.layout || !original) {
+    if (prefix.empty()) {
+      changes.push_back(
+          Change("SetLayout", {{"layout", EncodedBytes(after.layout)}}));
+    } else {
+      const auto hash = SourceHash(base, path);
+      json::Members value{{"path", json::Quote(path)}};
+      if (!hash.empty()) value["base_hash"] = json::Quote(hash);
+      if (after.layout.empty()) {
+        if (!hash.empty()) changes.push_back(Change("RemoveSource", value));
+      } else {
+        value["bytes"] = EncodedBytes(after.layout);
+        changes.push_back(Change("PutSource", std::move(value)));
+      }
+    }
+  }
+  for (const auto& [id, text] : after.notes) {
+    const auto was = before.notes.find(id);
+    if (was != before.notes.end() && was->second == text) continue;
+    const auto note = NotePath(prefix, id);
+    if (files.contains(note)) continue;
+    json::Members value{{"path", json::Quote(note)},
+                        {"bytes", EncodedBytes(text)}};
+    if (const auto hash = SourceHash(base, note); !hash.empty())
+      value["base_hash"] = json::Quote(hash);
+    changes.push_back(Change("PutSource", std::move(value)));
+  }
+  for (const auto& [id, text] : before.notes) {
+    if (after.notes.contains(id)) continue;
+    const auto note = NotePath(prefix, id);
+    if (files.contains(note)) continue;
+    if (const auto hash = SourceHash(base, note); !hash.empty())
+      changes.push_back(Change("RemoveSource", {{"path", json::Quote(note)},
+                                                {"base_hash", json::Quote(hash)}}));
+  }
+}
+}  // namespace
+
 auto ProjectSaveChanges(const SaveBase& base, const EditFiles& originals,
                         const EditFiles& files,
                         const std::set<std::string>& removed_definitions)
@@ -906,17 +1079,24 @@ auto ProjectSaveChanges(const SaveBase& base, const EditFiles& originals,
       const auto slash = path.find('/', 12);
       if (removed_definitions.contains(path.substr(12, slash - 12))) continue;
     }
-    if (path == "tsugumi.json" || path == "layout.json") {
+    if (path == "tsugumi.json") {
       if (!content)
         throw Failure("invalid_request", "root document cannot be removed");
-      changes.push_back(
-          Change(path == "tsugumi.json" ? "SetProject" : "SetLayout",
-                 {{"json", json::Quote(*content)}}));
+      changes.push_back(Change("SetProject", {{"json", json::Quote(*content)}}));
+    } else if (Document::is_lock_file(path)) {
+      json::Members value{{"path", json::Quote(path)}};
+      if (originals.at(path))
+        value["base_hash"] =
+            json::Quote(crypto::sha256_hex(*originals.at(path)));
+      if (content) value["json"] = json::Quote(*content);
+      changes.push_back(Change("SetProjectLock", std::move(value)));
+    } else if (path == "layout.bin" || IsExternalDocument(path, "layout.bin")) {
+      LayoutChanges(base, path, originals.at(path), content, files, changes);
     } else if (path.starts_with("definitions/") &&
                std::count(path.begin(), path.end(), '/') == 2 &&
-               (path.ends_with("/_card.json") ||
-                path.ends_with("/_meta.json"))) {
-      if (!content && !path.ends_with("/_meta.json"))
+               (path.ends_with("/_card.json") || path.ends_with("/README.md") ||
+                path.ends_with("/_comments.json"))) {
+      if (!content && path.ends_with("/_card.json"))
         throw Failure("invalid_request",
                       "definition documents cannot be removed independently");
       const auto slash = path.find('/', 12);
@@ -938,8 +1118,9 @@ auto ProjectSaveChanges(const SaveBase& base, const EditFiles& originals,
     (void)ignored;
     json::Members value{{"id", json::Quote(id)},
                         {"card_json", json::Quote("")}};
-    for (const auto& [name, key] :
-         {std::pair{"_card.json", "card_json"}, {"_meta.json", "meta_json"}}) {
+    for (const auto& [name, key] : {std::pair{"_card.json", "card_json"},
+                                    {"README.md", "readme"},
+                                    {"_comments.json", "comments_json"}}) {
       const auto path = "definitions/" + id + '/' + name;
       if (files.contains(path)) {
         if (files.at(path)) value[key] = json::Quote(*files.at(path));

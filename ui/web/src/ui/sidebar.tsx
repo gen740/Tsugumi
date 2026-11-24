@@ -120,7 +120,7 @@ function Definitions({ session, tab }: { session: ProjectSession; tab: WorkflowT
       {exts.map((prefix) => {
         const name = prefix.split('/').filter(Boolean).pop() ?? prefix
         const e = session.external(prefix)
-        const ids = [...(e?.definitions.keys() ?? [])].sort().filter((id) => !search || has(id) || has(str(get(e?.definitions.get(id)?.meta, 'name')) ?? id) || has(name))
+        const ids = [...(e?.definitions.keys() ?? [])].sort().filter((id) => !search || has(id) || has(id) || has(name))
         return (
           <div key={prefix}>
             <TreeHead open={isOpen(prefix)} onToggle={() => toggle(prefix)} icon="shippingbox" label={name} />
@@ -131,7 +131,7 @@ function Definitions({ session, tab }: { session: ProjectSession; tab: WorkflowT
                 {ids.map((id) => {
                   const d = e?.definitions.get(id)
                   return (
-                    <DefinitionRow key={id} session={session} icon={kindIcon(definitionKind(d?.card))} title={str(get(d?.meta, 'name')) ?? id}
+                    <DefinitionRow key={id} session={session} icon={kindIcon(definitionKind(d?.card))} title={id}
                       drag={EXTERNAL_DEFINITION_DRAG + prefix + '\n' + id} help={L('定義をこのプロジェクトの definitions にコピーして Card を置きます')}
                       onAdd={() => void placeCopy(prefix, id)} />
                   )

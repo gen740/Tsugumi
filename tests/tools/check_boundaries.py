@@ -8,7 +8,7 @@ FAMILIES = {
     "util": "util", "rpc": "rpc", "protocol": "protocol",
     "tsugumid/document": "document", "tsugumid/runtime_support": "support",
     "tsugumid": "runtime", "hostd": "host", "workerd/nix": "store", "workerd": "worker",
-    "client": "client", "vm/guest": "guest", "sdk": "sdk",
+    "client": "client", "vm/guest": "guest",
 }
 ALLOWED = {
     "util": {"util"}, "rpc": {"rpc", "util"}, "protocol": {"protocol", "rpc"},  # The BFBS trace adapter implements the recorder codec.
@@ -16,15 +16,15 @@ ALLOWED = {
     "store": {"store"},
     "support": {"support", "store", "util", "protocol"},
     "runtime": {"runtime", "support", "document", "worker", "store", "util", "rpc", "protocol"},
-    "host": {"host", "document", "worker", "util", "rpc", "protocol", "client", "sdk"},
-    "worker": {"worker", "store", "document", "util", "rpc", "protocol", "sdk"},
-    "client": {"client", "rpc", "protocol"}, "sdk": {"sdk", "util", "protocol"},
+    "host": {"host", "document", "worker", "util", "rpc", "protocol", "client"},
+    "worker": {"worker", "store", "document", "util", "rpc", "protocol"},
+    "client": {"client", "rpc", "protocol"},
     "guest": {"guest", "support", "store", "util", "protocol"},
 }
 INCLUDES = [ROOT / path for path in (
     "util/include", "protocol/include", "rpc/include", "rpc/tls/include", "tsugumid/document/include",
     "tsugumid/runtime_support/include", "tsugumid/include", "workerd/include",
-    "workerd/nix/include", "client/include", "sdk/include", "sdk/describe",
+    "workerd/nix/include", "client/include",
     "hostd/private", "hostd/agent/private", "tsugumid/runtime/src", "workerd/src",
 )]
 

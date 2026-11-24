@@ -1,0 +1,15 @@
+---
+description: 7 つの分類器を並べて比べる
+---
+
+data と 7 つの分類器の result を、全部そろうのを待って受け取る。7 つの入力は同じ型（mnist.Result）で、それぞれの入力ポートの属性から読む。モデル名・正解率・学習時間・予測時間・設定の順位表を Markdown で表示し、正解率と学習時間の散布図（横軸は対数）を matplotlib で表示する。1 位と 2 位の差については、2 つの判定が割れた枚数 m から見込まれる揺らぎ √m / テスト枚数 と比べ、2 倍以上なら差があると言える、届かなければこの枚数では順位を決められない、と文章で述べる。次を assert で確かめる: 7 つの digest がすべて data の digest と等しいこと、報告された正解率が predictions と test_labels から計算し直した値と 1e-12 まで一致すること、7 つのうち最も高い正解率が最も低い正解率より高いこと。numpy と matplotlib を使う。
+
+入力の意図:
+- data: prepare の部分データ（テストのラベルと digest）
+- knn: knn の結果
+- logistic: logistic の結果
+- svm: svm の結果
+- forest: forest の結果
+- boosting: boosting の結果
+- mlp: mlp の結果
+- cnn: cnn の結果

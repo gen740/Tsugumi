@@ -1,26 +1,11 @@
 {
   "type": "code",
-  "language": "python",
   "inputs": [
     {
       "name": "input"
-    }
-  ],
-  "params": [
-    {
-      "name": "min_ev",
-      "type": "double",
-      "data": 300
     },
     {
-      "name": "max_ev",
-      "type": "double",
-      "data": 8000
-    },
-    {
-      "name": "bin_ev",
-      "type": "double",
-      "data": 20
+      "name": "events"
     }
   ]
 }

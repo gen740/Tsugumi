@@ -63,6 +63,7 @@ pid_t spawn(const Spec& spec) {
     kOpSetgid = 2,
     kOpSetuid = 3,
     kOpExecve = 4,
+    kOpCgroup = 5,
   };
   if (pid == 0) {
     ::close(err_pipe[0]);
@@ -78,8 +79,7 @@ pid_t spawn(const Spec& spec) {
       size_t written = 0;
       while (written < sizeof ce) {
         ssize_t count =
-            ::write(err_pipe[1],
-                    reinterpret_cast<const char*>(&ce) + written,
+            ::write(err_pipe[1], reinterpret_cast<const char*>(&ce) + written,
                     sizeof ce - written);
         if (count < 0 && errno == EINTR) continue;
         if (count <= 0) break;
@@ -133,6 +133,16 @@ pid_t spawn(const Spec& spec) {
     for (int fd = 3; fd < (max > 0 ? max : 65536); ++fd)
       if (!keep(fd)) ::close(fd);
 #endif
+    if (!spec.cgroup_procs.empty()) {
+      const int fd = ::open(spec.cgroup_procs.c_str(), O_WRONLY | O_CLOEXEC);
+      if (fd < 0) fail(kOpCgroup);
+      ssize_t count;
+      do {
+        count = ::write(fd, "0", 1);
+      } while (count < 0 && errno == EINTR);
+      if (count != 1) fail(kOpCgroup);
+      ::close(fd);
+    }
     if (!spec.cwd.empty() && ::chdir(spec.cwd.c_str()) != 0) fail(kOpChdir);
     if (spec.gid && ::setgid(*spec.gid) != 0) fail(kOpSetgid);
     if (spec.uid && ::setuid(*spec.uid) != 0) fail(kOpSetuid);
@@ -144,8 +154,7 @@ pid_t spawn(const Spec& spec) {
   ChildError child_err{};
   size_t got = 0;
   while (got < sizeof child_err) {
-    ssize_t n = ::read(err_pipe[0],
-                       reinterpret_cast<char*>(&child_err) + got,
+    ssize_t n = ::read(err_pipe[0], reinterpret_cast<char*>(&child_err) + got,
                        sizeof child_err - got);
     if (n < 0 && errno == EINTR) continue;
     if (n <= 0) break;
@@ -165,6 +174,10 @@ pid_t spawn(const Spec& spec) {
         break;
       case kOpSetuid:
         op_name = "setuid";
+        break;
+      case kOpCgroup:
+        op_name = "join Card cgroup";
+        op_path = spec.cgroup_procs.c_str();
         break;
       case kOpExecve:
         op_name = "execve";
@@ -213,7 +226,7 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
            std::optional<std::chrono::steady_clock::time_point> deadline,
            const std::function<void(LineChunk)>& on_stderr,
            std::optional<size_t> stderr_line_limit,
-           std::chrono::milliseconds grace) {
+           std::chrono::milliseconds grace, LogFraming framing) {
   int out_pipe[2] = {-1, -1};
   int err_pipe[2] = {-1, -1};
   if (::pipe(out_pipe) != 0) throw std::runtime_error("pipe failed");
@@ -237,6 +250,8 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
   }
   ::close(out_pipe[1]);
   ::close(err_pipe[1]);
+  const bool framed = framing == LogFraming::stdout_size_prefixed;
+  if (framed) std::swap(out_pipe[0], err_pipe[0]);
   Result res;
   std::exception_ptr log_error;
   const auto deliver = [&](LineChunk chunk) {
@@ -260,6 +275,34 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
     line_bytes = 0;
     flush_at.reset();
   };
+  const auto collect = [&](std::string line) {
+    line_bytes += line.size();
+    lines.push_back(std::move(line));
+    if (!flush_at)
+      flush_at = std::chrono::steady_clock::now() + kStderrFlushInterval;
+  };
+  const auto collect_frames = [&](std::string_view bytes) {
+    pending.append(bytes);
+    size_t at = 0;
+    constexpr size_t header_bytes = sizeof(uint32_t);
+    while (pending.size() - at >= header_bytes) {
+      const auto* header =
+          reinterpret_cast<const unsigned char*>(pending.data() + at);
+      uint32_t size = 0;
+      for (size_t i = 0; i < header_bytes; ++i)
+        size |= static_cast<uint32_t>(header[i]) << (i * 8);
+      const size_t total = header_bytes + static_cast<size_t>(size);
+      if (stderr_line_limit && total > *stderr_line_limit) {
+        truncated = true;
+        std::string{}.swap(pending);
+        return;
+      }
+      if (total > pending.size() - at) break;
+      collect(pending.substr(at, total));
+      at += total;
+    }
+    pending.erase(0, at);
+  };
   bool out_open = true;
   bool err_open = true;
   std::optional<std::chrono::steady_clock::time_point> kill_at;
@@ -271,12 +314,13 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
     if (flush_at) {
       const auto left = std::chrono::ceil<std::chrono::milliseconds>(
           *flush_at - std::chrono::steady_clock::now());
-      timeout_ms = static_cast<int>(
-          std::clamp<int64_t>(left.count(), 0, timeout_ms));
+      timeout_ms =
+          static_cast<int>(std::clamp<int64_t>(left.count(), 0, timeout_ms));
     }
     ::poll(fds, 2, timeout_ms);
     char buf[8192];
-    if (out_open && (fds[0].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
+    if (out_open &&
+        (fds[0].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
       ssize_t r = ::read(out_pipe[0], buf, sizeof buf);
       if (r < 0 && errno == EINTR) {
       } else if (r <= 0)
@@ -284,13 +328,18 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
       else
         res.out.append(buf, static_cast<size_t>(r));
     }
-    if (err_open && (fds[1].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
+    if (err_open &&
+        (fds[1].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
       ssize_t r = ::read(err_pipe[0], buf, sizeof buf);
       if (r < 0 && errno == EINTR) {
       } else if (r <= 0) {
         err_open = false;
       } else if (on_stderr && !log_error && !truncated) {
         std::string_view remaining(buf, static_cast<size_t>(r));
+        if (framed) {
+          collect_frames(remaining);
+          remaining = {};
+        }
         while (!remaining.empty()) {
           const auto newline = remaining.find('\n');
           const auto fragment = remaining.substr(
@@ -307,15 +356,12 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
             continue;
           }
           if (pending.empty()) {
-            lines.emplace_back(fragment);
+            collect(std::string(fragment));
           } else {
             pending.append(fragment);
-            lines.push_back(std::move(pending));
+            collect(std::move(pending));
             pending.clear();
           }
-          line_bytes += lines.back().size();
-          if (!flush_at)
-            flush_at = std::chrono::steady_clock::now() + kStderrFlushInterval;
         }
         if (truncated || line_bytes >= kStderrFlushBytes) flush();
       }
@@ -343,10 +389,12 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
     }
   }
   if (!pending.empty()) {
-    lines.push_back(std::move(pending));
-    line_bytes += lines.back().size();
+    if (framed)
+      truncated = true;
+    else
+      collect(std::move(pending));
   }
-  if (!lines.empty() && !log_error) flush();
+  if ((!lines.empty() || (framed && !pending.empty())) && !log_error) flush();
   ::close(out_pipe[0]);
   ::close(err_pipe[0]);
   res.status = wait(pid);

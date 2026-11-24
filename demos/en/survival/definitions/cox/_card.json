@@ -1,22 +1,8 @@
 {
   "type": "code",
-  "language": "r",
   "inputs": [
     {
       "name": "cohort"
-    }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "fit",
-  "params": [
-    {
-      "name": "covariates",
-      "type": "string[]",
-      "data": [
-        "female",
-        "age",
-        "ph.ecog"
-      ]
     }
   ]
 }

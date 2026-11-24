@@ -1,9 +1,8 @@
 // A comparison reads retained records only; it never loads them onto the canvas.
 import { D, R, RPCClient, s, segs } from '../wire/rpc'
 import { describeValue } from '../wire/flatjson'
-import { isObj, serialize, tryParse } from '../../shared/json'
 import { L } from '../i18n'
-import { DisplaySnapshot, errorText } from './session'
+import { errorText } from './session'
 
 export interface ComparedCard { summary: R.InvocationSummaryT; record?: R.RecordResultT; error?: string }
 export interface ComparedRow { card: string; left?: ComparedCard; right?: ComparedCard }
@@ -35,11 +34,9 @@ const names = (a: Iterable<string>, b: Iterable<string>) => [...new Set([...a, .
 
 /** Parameters pair by name. A side whose record holds no parameters cannot be compared. */
 export function comparedParams(left?: R.RecordResultT, right?: R.RecordResultT): ComparedField[] {
-  const values = (r?: R.RecordResultT) => {
-    const json = tryParse(s(r?.record?.paramsJson))
-    return new Map(isObj(json) ? json.entries().map(([k, v]) => [k, serialize(v).trim()]) : [])
-  }
-  const unrecorded = (r?: R.RecordResultT) => !!r?.record && r.record.paramsJson === null
+  const values = (r?: R.RecordResultT) =>
+    new Map((r?.record?.params?.entries ?? []).map(p => [s(p.name), s(p.value)]))
+  const unrecorded = (r?: R.RecordResultT) => !!r?.record && r.record.params === null
   const a = values(left), b = values(right), unknown = unrecorded(left) || unrecorded(right)
   return names(a.keys(), b.keys()).map(name => ({
     name, left: a.get(name), right: b.get(name), difference: unknown ? 'unknown' : a.get(name) === b.get(name) ? 'same' : 'changed',
@@ -52,11 +49,10 @@ const sameBytes = (a: number[], b: number[]) => a.length === b.length && a.every
  *  The response may omit a large payload. Its size alone cannot show equality. */
 export function valueDifference(a?: D.NamedValueT, b?: D.NamedValueT): Difference {
   if (!a || !b) return a || b ? 'unknown' : 'same'
-  if (a.kind !== b.kind || s(a.rootType) !== s(b.rootType) || !sameBytes(a.schemaBfbs, b.schemaBfbs)) return 'changed'
-  if (a.kind === D.PortKind.File) {
-    const x = s(a.fileContentHash), y = s(b.fileContentHash)
-    return x && y ? x === y ? 'same' : 'changed' : 'unknown'
-  }
+  if (s(a.rootType) !== s(b.rootType) || !sameBytes(a.schemaBfbs, b.schemaBfbs)) return 'changed'
+  const ids = (value: D.NamedValueT) => [...new Set(value.artifacts.map(artifact => s(artifact.id)))].sort()
+  const leftIds = ids(a), rightIds = ids(b)
+  if (leftIds.length !== rightIds.length || leftIds.some((id, i) => id !== rightIds[i])) return 'changed'
   const leftHash = s(a.contentHash), rightHash = s(b.contentHash)
   if (leftHash && rightHash) return leftHash === rightHash ? 'same' : 'changed'
   if ((!a.inlineBytes.length && a.sizeBytes !== 0n) || (!b.inlineBytes.length && b.sizeBytes !== 0n)) return 'unknown'
@@ -66,8 +62,7 @@ export function valueDifference(a?: D.NamedValueT, b?: D.NamedValueT): Differenc
 export function comparedValues(side: 'inputs' | 'outputs', left?: R.RecordResultT, right?: R.RecordResultT): ComparedField[] {
   const values = (r?: R.RecordResultT) => new Map((r?.record?.[side] ?? []).map(v => [s(v.name), v]))
   const text = (v?: D.NamedValueT) => v && describeValue({
-    name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifactId: null,
-    filePath: v.filePath === null ? null : s(v.filePath), fileMissing: v.fileMissing, inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs,
+    name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifacts: v.artifacts.map(a => ({ id: s(a.id), sizeBytes: a.sizeBytes })), inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs,
   })
   const a = values(left), b = values(right)
   return names(a.keys(), b.keys()).map(name => ({ name, left: text(a.get(name)), right: text(b.get(name)), difference: valueDifference(a.get(name), b.get(name)) }))
@@ -122,31 +117,8 @@ export function runScope(run?: R.RunSummaryT, displayPath = (segments: string[])
   return run.propagate === false ? L('{0} だけ（保存した入力）', target) : L('{0} から下流', target)
 }
 
-const sameNumbers = (a: ArrayLike<number>, b: ArrayLike<number>) => {
-  if (a.length !== b.length) return false
-  // NaN marks a gap in a chart: two gaps at the same place are the same content.
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i] && !(a[i] !== a[i] && b[i] !== b[i])) return false
-  return true
-}
-const sameStrings = (a: string[], b: string[]) => a.length === b.length && a.every((v, i) => v === b[i])
-
-/** Compares what the two displays show, ignoring run identity and frame revision. */
-export function sameDisplay(a?: DisplaySnapshot, b?: DisplaySnapshot): boolean {
-  const x = a?.value, y = b?.value
-  if (!x || !y) return !x && !y
-  switch (x.kind) {
-    case 'unavailable': return y.kind === 'unavailable'
-    case 'text': case 'markdown': return y.kind === x.kind && x.text === y.text
-    case 'scalar': return y.kind === 'scalar' && sameNumbers([x.value], [y.value]) && x.label === y.label
-    case 'table': return y.kind === 'table' && sameStrings(x.columns, y.columns) && x.rows.length === y.rows.length && x.rows.every((r, i) => sameStrings(r, y.rows[i]))
-    case 'image': return y.kind === 'image' && x.mediaType === y.mediaType && x.alt === y.alt && sameNumbers(x.data, y.data)
-    case 'module': return y.kind === 'module' && x.name === y.name && x.json === y.json && Object.keys(x.blobs).length === Object.keys(y.blobs).length && Object.keys(x.blobs).every(k => !!y.blobs[k] && sameNumbers(x.blobs[k], y.blobs[k]))
-    case 'points': return y.kind === 'points' && sameNumbers(x.x, y.x) && sameNumbers(x.y, y.y) && sameNumbers(x.z, y.z) && sameNumbers(x.colors, y.colors)
-  }
-}
-
 /** What names a member of an execution list: its implementation label (a run
- *  list entry's `label`, an Input sweep's `name=value`), else its number. */
+ *  list entry's `label`), else its number. */
 export function memberName(i: R.InvocationSummaryT): string {
   const label = s(i.implementationLabel)
   return label || (i.implementationIndex != null ? L('実装 {0}', i.implementationIndex) : L('{0} 回目', String(i.invocation ?? 0n)))

@@ -8,10 +8,10 @@ import TsugumiRPC
 /// `invalid`: its _card.json has no type or one this build does not know (or
 /// one that does not match `external`), a definition error the core reports.
 enum CardKind: String {
-  case trigger, input, branch, fork, merge, collect, draft, subgraph, code, invalid
+  case trigger, input, merge, collect, draft, subgraph, code, invalid
 
   /// The _card.json "type" names.
-  static let types: [CardKind] = [.trigger, .input, .branch, .fork, .merge, .collect, .draft, .subgraph, .code]
+  static let types: [CardKind] = [.trigger, .input, .merge, .collect, .draft, .subgraph, .code]
 
   /// A kind by its _card.json "type" name (also VersionCanvasCard.kind, empty
   /// for a definition the daemon cannot read). Anything else is `invalid`: the
@@ -26,8 +26,6 @@ enum CardKind: String {
     switch self {
     case .trigger: return String(localized: "開始")
     case .input: return String(localized: "入力")
-    case .branch: return String(localized: "分岐")
-    case .fork: return String(localized: "分配")
     case .merge: return String(localized: "合流")
     case .collect: return String(localized: "収集")
     case .draft: return "Draft"
@@ -41,8 +39,6 @@ enum CardKind: String {
     switch self {
     case .trigger: return "play.circle"
     case .input: return "slider.horizontal.3"
-    case .branch: return "arrow.triangle.swap"
-    case .fork: return "arrow.triangle.branch"
     case .merge: return "arrow.triangle.merge"
     case .collect: return "line.3.horizontal.decrease"
     case .draft: return "pencil.and.outline"
@@ -63,54 +59,40 @@ func definitionKind(_ def: JSONValue?) -> CardKind {
 /// What a new Card starts from: a built-in Card or a scaffold. Every Card
 /// gets a definition folder of its own (definitions/<id>/).
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
+  case draft, trigger, input
   case booleanInput = "input_bool"
-  case python, cpp, go, rust, ruby, csharp, input, draft, trigger, branch, fork, merge, collect
-  case report_rmarkdown, report_quarto
-  /// Visualization starting points: ordinary Python Cards, one per plotting library.
-  case matplotlib = "visualization_matplotlib"
-  case plotly = "visualization_plotly"
-  case altair = "visualization_altair"
-
-  case marimo
+  case merge, collect
 
   var id: String { rawValue }
-  var isVisualization: Bool { self == .matplotlib || self == .plotly || self == .altair }
+  var kind: Tsugumi_Host_BuiltinCard {
+    switch self {
+    case .draft: .draft
+    case .trigger: .trigger
+    case .input: .inputvalue
+    case .booleanInput: .booleaninput
+    case .merge: .merge
+    case .collect: .collect
+    }
+  }
   var label: String {
     switch self {
-    case .matplotlib: return String(localized: "Matplotlib（PNG / SVG / PDF）")
-    case .plotly: return String(localized: "Plotly（対話型 HTML）")
-    case .altair: return String(localized: "Altair（対話型 HTML）")
-    case .draft: return String(localized: "Draft（未実装の計画）")
-    case .marimo: return String(localized: "marimo ノートブック")
-    case .report_rmarkdown: return String(localized: "R Markdown レポート（HTML）")
-    case .report_quarto: return String(localized: "Quarto レポート（HTML）")
-    case .python: return String(localized: "Python の処理")
-    case .ruby: return String(localized: "Ruby の処理")
-    case .cpp: return String(localized: "C++ の処理")
-    case .go: return String(localized: "Go の処理")
-    case .csharp: return String(localized: "C# の処理")
-    case .rust: return String(localized: "Rust の処理")
-    case .input: return String(localized: "入力値")
-    case .booleanInput: return String(localized: "真偽値の入力")
-    case .trigger: return String(localized: "開始")
-    case .branch: return String(localized: "分岐")
-    case .fork: return String(localized: "分配")
-    case .merge: return String(localized: "合流")
-    case .collect: return String(localized: "収集")
+    case .draft: String(localized: "Draft")
+    case .trigger: String(localized: "トリガー")
+    case .input: String(localized: "入力値")
+    case .booleanInput: String(localized: "真偽値の入力")
+    case .merge: String(localized: "合流")
+    case .collect: String(localized: "収集")
     }
   }
   var symbol: String {
-    if self == .booleanInput { return CardKind.input.symbol }
-    return isVisualization ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? (rawValue.hasPrefix("report_") || [.python, .cpp, .go, .rust, .ruby, .csharp, .marimo].contains(self) ? .code : .draft)).symbol
+    (self == .booleanInput ? .input : CardKind(rawValue: rawValue) ?? .draft).symbol
   }
   /// The human name used when creating a Card; the core generates its identifier.
   var baseName: String {
     switch self {
-    case .matplotlib, .plotly, .altair: return "visualization"
-    case .python, .cpp, .go, .rust, .ruby, .csharp: return "card"
-    case .trigger: return "start"
-    case .booleanInput: return "condition"
-    default: return rawValue
+    case .trigger: "start"
+    case .booleanInput: "condition"
+    default: rawValue
     }
   }
 }
@@ -128,7 +110,8 @@ extension ProjectSession {
   func kind(_ k: CardKey) -> CardKind { definitionKind(cardDefinitionDraft(k)?.card) }
 
   /// The human name; exact addresses keep the permanent identifier.
-  func displayName(_ k: CardKey) -> String { cardMeta(k)?["name"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? path(k).last ?? k }
+  /// A Card's name: its id, the only name it has.
+  func displayName(_ k: CardKey) -> String { path(k).last ?? k }
 
   /// A human-readable path. Tools and evidence links use the original segments.
   func displayPath(_ segments: [String]) -> String {
@@ -161,12 +144,12 @@ extension ProjectSession {
     return key([id])
   }
 
-  private func selectionOperation(_ action: Tsugumi_Host_ProjectSelectionAction, cards: Set<CardKey>, notes: Set<String> = [], frames: Set<CardKey> = [], in scope: [String], connections: [JSONValue]? = nil, at point: CGPoint = .zero) {
+  private func selectionOperation(_ action: Tsugumi_Host_ProjectSelectionAction, cards: Set<CardKey>, notes: Set<String> = [], in scope: [String], connections: [JSONValue]? = nil, at point: CGPoint = .zero) {
     guard let prefix = projectPrefix(scope) else { return }
     let body = Tsugumi_Host_ProjectSelectionT()
     body.projectPath = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/")); body.action = action
-    body.cards = cards.map { layoutKey($0) }.sorted(); body.notes = notes.sorted(); body.frames = frames.map { layoutKey($0) }.sorted()
-    body.connectionsJson = connections.map { JSONValue.array($0).serialized() }; body.x = point.x; body.y = point.y; body.scene = layoutScene(scope)
+    body.cards = cards.map { layoutKey($0) }.sorted(); body.notes = notes.sorted()
+    body.connectionsJson = connections.map { JSONValue.array($0).serialized() }; body.x = point.x; body.y = point.y
     _ = enqueueOperation(.projectselection, body: body)
   }
 
@@ -202,18 +185,49 @@ extension ProjectSession {
     return id
   }
 
-  /// The host assembles the template, sources and placement in one operation.
+  /// The host saves the definition and placement together.
   @discardableResult
   func addCard(template t: DefinitionTemplate, in scope: [String], at point: CGPoint, name: String? = nil,
                automaticPlacement: Bool = false) async throws -> CardKey {
     let id = try await newCardId(name ?? t.baseName, in: scope)
     let body = Tsugumi_Host_ProjectCreateCardT()
     body.projectPath = (projectPrefix(scope) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    body.id = id; body.template = t.rawValue; body.name = name ?? t.baseName
+    body.id = id; body.kind = t.kind
     body.x = point.x; body.y = point.y; body.automaticPlacement = automaticPlacement
     try await operate(.projectcreatecard, body: body)
     forgetResult(key(scope + [id]))
     return key(scope + [id])
+  }
+
+  func listTemplates() async throws -> [Tsugumi_Host_TemplateEntryT] {
+    guard let projectId else { throw RPCError.disconnected }
+    let request = Tsugumi_Host_TemplateListRequestT()
+    request.projectId = projectId
+    let reply: Tsugumi_Host_TemplateListT = try await CoreHostClient.shared.hostCall(.templatelistrequest, request)
+    return reply.entries.compactMap { $0 }
+  }
+
+  func copyTemplate(_ template: Tsugumi_Host_TemplateEntryT, in scope: [String], at point: CGPoint) async throws {
+    guard let prefix = projectPrefix(scope) else {
+      throw RPCFailure(kind: .invalidPath, diagnostic: "Unknown Card scope")
+    }
+    let body = Tsugumi_Host_ProjectTemplateCopyT()
+    body.projectPath = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    body.store = template.store
+    body.name = template.name
+    body.x = point.x
+    body.y = point.y
+    try await operate(.projecttemplatecopy, body: body)
+  }
+
+  func addTemplate(_ addition: Tsugumi_Host_TemplateAddT, to store: Tsugumi_Host_TemplateStore) async throws {
+    if store == .project {
+      try await operate(.templateadd, body: addition)
+    } else {
+      let request = Tsugumi_Host_HostTemplateAddRequestT()
+      request.addition = addition
+      let _: Tsugumi_Service_AcknowledgementT = try await CoreHostClient.shared.hostCall(.hosttemplateaddrequest, request)
+    }
   }
 
   @discardableResult
@@ -222,7 +236,7 @@ extension ProjectSession {
     do {
       let id = try await newCardId(base, in: scope)
       let item = Tsugumi_Host_ProjectCopyItemT()
-      item.from = from; item.id = id; item.name = base; item.x = point.x; item.y = point.y
+      item.from = from; item.id = id; item.x = point.x; item.y = point.y
       try await copyCards([item], in: scope)
       return key(scope + [id])
     } catch { notice = error.localizedDescription; return nil }
@@ -273,12 +287,6 @@ extension ProjectSession {
     } catch { notice = error.localizedDescription; return [] }
   }
 
-  /// Names are independent of identifiers and may be shared by several Cards.
-  func cardNameProblem(_ k: CardKey, _ raw: String) -> String? {
-    let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-    return name.isEmpty || name.utf8.count > 4096 ? String(localized: "名前を入力してください（4096 バイトまで）。") : nil
-  }
-
   // MARK: - A Draft written on the canvas
 
   /// Whether a Draft has no name of its own: its id is one made for it.
@@ -286,22 +294,18 @@ extension ProjectSession {
     kind(k) == .draft && displayName(k) == "draft"
   }
 
-  /// Starts writing a Draft's name and content on its Card.
+  /// Starts writing a Draft's content on its Card.
   func startDraftEdit(_ k: CardKey, revision existing: RevisionEdit? = nil) async {
     if existing == nil, let current = inlineDraft {
       guard current.card != k else { return }
       _ = await finishDraftEdit()
       guard inlineDraft == nil else { return }
     }
-    let name = draftUntitled(k) ? "" : displayName(k), content = cardMeta(k)?["content"]?.string ?? ""
+    let content = cardMeta(k)?["content"]?.string ?? ""
     let revision = existing ?? RevisionEdit()
     revision.reload(rev)
-    inlineDraft = InlineDraft(card: k, name: name, content: content, initialName: name, initialContent: content, initialMeta: cardMeta(k), revision: revision)
-  }
-
-  /// Why the name typed on a Draft's Card cannot be taken (no name is fine).
-  func draftNameProblem(_ k: CardKey, _ name: String) -> String? {
-    name.trimmingCharacters(in: .whitespaces).isEmpty ? nil : cardNameProblem(k, name)
+    inlineDraft = InlineDraft(card: k, content: content, initialContent: content,
+                              initialReadme: Documents.splitCardNotes(cardMeta(k)).readme, revision: revision)
   }
 
   /// Keeps what was written. A name the Card cannot take stays as it was, with
@@ -329,24 +333,20 @@ extension ProjectSession {
     // advance this editor's base; another client's deltas never do.
     await save()
     guard let e = inlineDraft else { return nil }
-    let contentChanged = e.content != e.initialContent, nameChanged = e.name != e.initialName
-    guard instance(e.card) != nil, contentChanged || nameChanged else { inlineDraft = nil; return nil }
-    let trimmed = e.name.trimmingCharacters(in: .whitespacesAndNewlines)
-    let name = trimmed.isEmpty ? "draft" : trimmed
-    if nameChanged, let problem = cardNameProblem(e.card, name) { notice = problem; e.revision.error = problem; return nil }
+    guard instance(e.card) != nil, e.content != e.initialContent else { inlineDraft = nil; return nil }
     guard let dir = definitionDir(e.card) else { return nil }
-    let before = e.revision.jsonBase(dir + "_meta.json", initial: e.initialMeta, overwrite: overwrite)
-    var after = before ?? .object([])
-    if contentChanged { after["content"] = e.content.isEmpty ? nil : .string(e.content) }
-    if nameChanged { after["name"] = .string(name) }
+    // The README.md as it was when writing began (or as the conflict found it).
+    let before = e.revision.jsonBase(dir + "README.md", initial: e.initialReadme.map { .string($0) }, overwrite: overwrite)?.string
+    let readme = Documents.parseReadme(before ?? "")
+    let after = Documents.printReadme(description: readme.description, body: e.content)
     let ok = await e.revision.apply(self) { s in
-      s.appendEdits([s.jsonEdit(dir + "_meta.json", old: before, new: after)])
+      s.appendEdits([s.jsonEdit(dir + "README.md", old: before.map { .string($0) }, new: after.map { .string($0) })])
     }
     if ok, inlineDraft?.revision === e.revision {
-      if inlineDraft?.name == e.name && inlineDraft?.content == e.content { inlineDraft = nil }
-      else { inlineDraft?.initialName = e.name; inlineDraft?.initialContent = e.content; inlineDraft?.initialMeta = after }
+      if inlineDraft?.content == e.content { inlineDraft = nil }
+      else { inlineDraft?.initialContent = e.content; inlineDraft?.initialReadme = after }
     }
-    return ok && nameChanged ? e.card : nil
+    return nil
   }
 
   func deleteCards(_ keys: Set<CardKey>, in scope: [String]) {
@@ -386,41 +386,22 @@ extension ProjectSession {
           let at = position(k)
           var placed: JSONValue = .object([("x", .real(at.x)), ("y", .real(at.y))])
           if value { placed["collapsed"] = .bool(true) }
-          return fieldEdit(prefix + "layout.json", [.string("cards"), .string(layoutKey(k))], old: nil, new: placed)
+          return fieldEdit(prefix + "layout.bin", [.string("cards"), .string(layoutKey(k))], old: nil, new: placed)
         }
-        return fieldEdit(prefix + "layout.json", [.string("cards"), .string(layoutKey(k)), .string("collapsed")],
+        return fieldEdit(prefix + "layout.bin", [.string("cards"), .string(layoutKey(k)), .string("collapsed")],
                          old: entry?["collapsed"], new: value ? .bool(true) : nil)
       }
     }
   }
 
-  func setParam(_ k: CardKey, _ name: String, _ value: JSONValue?) {
-    guard let dir = definitionDir(k) else { return }
-    queueFields { [self] in
-      let definition = cardDefinition(k), match = JSONValue.object([("name", .string(name))])
-      if let param = (definition?["params"]?.array ?? []).first(where: { $0["name"]?.string == name }) {
-        return [fieldEdit(dir + "_card.json", [.string("params"), match, .string("data")], old: param["data"], new: value)]
-      }
-      throw RPCFailure(kind: .invalidRequest, diagnostic: "Unknown param: \(name)")
-    }
-  }
-
-  /// Mutates the value inside the caller's transaction, without an autosave.
-  func updateParam(_ k: CardKey, _ name: String, _ value: JSONValue?, initial: InlineParamEdit.ParamBase? = nil) {
-    if let initial {
-      if let dir = definitionDir(k) {
-        let selector: [JSONValue] = [.string("params"), .object([("name", .string(name))])]
-        appendEdits([fieldEdit(dir + "_card.json", selector + [.string("data")], old: initial.parameter?["data"], new: value)])
-      }
-      return
-    }
-    updateCard(k) { c in
-      var params = c["params"]?.array ?? []
-      if let i = params.firstIndex(where: { $0["name"]?.string == name }) {
-        params[i]["data"] = value
-      }
-      c["params"] = .array(params)
-    }
+  @discardableResult
+  func setParam(_ k: CardKey, _ name: String, _ literal: String, expectedRev: UInt64) async throws -> UInt64 {
+    let edit = Tsugumi_Host_ProjectRewriteParamLiteralT()
+    edit.card = cardPath(path(k))
+    edit.name = name
+    edit.literal = literal
+    edit.expectedRev = expectedRev
+    return try await operate(.projectrewriteparamliteral, body: edit).rev ?? rev
   }
 
   /// Moves the selected Cards into a new Card in Card: a new external project
@@ -434,13 +415,13 @@ extension ProjectSession {
       let id = try await newCardId(name, in: scope)
       let body = Tsugumi_Host_ProjectMakeSubgraphT()
       body.projectPath = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-      body.cards = keys.compactMap { path($0).last }.sorted(); body.id = id; body.name = name
+      body.cards = keys.compactMap { path($0).last }.sorted(); body.id = id
       try await operate(.projectmakesubgraph, body: body)
       return key(scope + [id])
     } catch { notice = error.localizedDescription; return nil }
   }
 
-  // MARK: - Layout: notes, groups, output frames
+  // MARK: - Layout: notes and groups
 
   func reserveReference(_ kind: String, scope: String = "") async throws -> String {
     let project = projectId
@@ -494,7 +475,7 @@ extension ProjectSession {
 
   private func operateLayoutEntity(_ scope: [String], _ field: String, _ id: String, old: JSONValue?, new: JSONValue?) async throws {
     guard let prefix = projectPrefix(scope) else { return }
-    try await operateFields([fieldEdit(prefix + "layout.json", [.string(field), .object([("id", .string(id))])], old: old, new: new)])
+    try await operateFields([fieldEdit(prefix + "layout.bin", [.string(field), .object([("id", .string(id))])], old: old, new: new)])
   }
 
   func updateNote(_ id: String, _ fn: @escaping (inout JSONValue) -> Void) {
@@ -503,7 +484,7 @@ extension ProjectSession {
         throw RPCFailure(kind: .notFound, diagnostic: "Unknown note: \(id)")
       }
       var after = before; fn(&after)
-      return [fieldEdit(prefix + "layout.json", [.string("notes"), .object([("id", .string(id))])], old: before, new: after)]
+      return [fieldEdit(prefix + "layout.bin", [.string("notes"), .object([("id", .string(id))])], old: before, new: after)]
     }
   }
 
@@ -512,7 +493,7 @@ extension ProjectSession {
       guard let scope = scopeHolding("notes", id), let prefix = projectPrefix(scope), let before = note(id) else {
         throw RPCFailure(kind: .notFound, diagnostic: "Unknown note: \(id)")
       }
-      return [fieldEdit(prefix + "layout.json", [.string("notes"), .object([("id", .string(id))])], old: before, new: nil)]
+      return [fieldEdit(prefix + "layout.bin", [.string("notes"), .object([("id", .string(id))])], old: before, new: nil)]
     }
   }
 
@@ -540,74 +521,36 @@ extension ProjectSession {
             let before = groups(in: scope).first(where: { $0["id"]?.string == id }) else {
         throw RPCFailure(kind: .notFound, diagnostic: "Unknown group: \(id)")
       }
-      return [fieldEdit(prefix + "layout.json", [.string("groups"), .object([("id", .string(id))])], old: before, new: nil)]
+      return [fieldEdit(prefix + "layout.bin", [.string("groups"), .object([("id", .string(id))])], old: before, new: nil)]
     }
-  }
-
-  func displayFrame(_ k: CardKey) -> JSONValue? { layout(of: Array(path(k).dropLast()))["displays"]?[layoutKey(k)] }
-
-  func updateDisplayFrame(_ k: CardKey, _ fn: @escaping (inout JSONValue) -> Void) {
-    queueFields { [self] in
-      let scope = Array(path(k).dropLast())
-      guard let prefix = projectPrefix(scope) else { throw RPCError.disconnected }
-      let before = displayFrame(k), r = displayRect(k, origin: placedPosition(k))
-      var after = before ?? .object([("x", .real(r.minX)), ("y", .real(r.minY)), ("width", .real(r.width)), ("height", .real(r.height))]); fn(&after)
-      return [fieldEdit(prefix + "layout.json", [.string("displays"), .string(layoutKey(k))], old: before, new: after)]
-    }
-  }
-
-  /// Closes a frame; its Card stays. The layout keeps a frame only with its
-  /// place and size, so one still drawn beside its Card gets them now.
-  func closeDisplayFrame(_ k: CardKey) {
-    let r = displayRect(k, origin: placedPosition(k))
-    updateDisplayFrame(k) { f in
-      f["x"] = .real(r.minX.rounded()); f["y"] = .real(r.minY.rounded())
-      f["width"] = .real(r.width); f["height"] = .real(r.height); f["hidden"] = .bool(true)
-    }
-  }
-
-  /// The Cards of a scope whose output frame shows: once their code has shown
-  /// something (display SDK), until the frame is closed.
-  func framedCards(in scope: [String]) -> [CardKey] {
-    cards(in: scope).compactMap { $0["id"]?.string }.map { key(scope + [$0]) }.filter {
-      (displays[$0] != nil || displayFrame($0) != nil) && displayFrame($0)?["hidden"]?.bool != true
-    }
-  }
-
-  /// A frame without a place of its own is drawn beside its Card, so it goes
-  /// where the Card goes and is not moved itself.
-  func frameFollowsCard(_ k: CardKey, moving cards: Set<CardKey>) -> Bool {
-    cards.contains(k) && displayFrame(k)?["x"]?.double == nil
   }
 
   /// What a marquee (world units) touches in a scope.
-  func marqueeItems(_ r: CGRect, in scope: [String]) -> (cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>) {
+  func marqueeItems(_ r: CGRect, in scope: [String]) -> (cards: Set<CardKey>, notes: Set<String>) {
     let keys = cards(in: scope).compactMap { $0["id"]?.string }.map { key(scope + [$0]) }
     return (Set(keys.filter { r.intersects(CGRect(origin: placedPosition($0), size: geometry($0).size)) }),
-            Set(notes(in: scope).filter { r.intersects(noteRect($0)) }.compactMap { $0["id"]?.string }),
-            Set(framedCards(in: scope).filter { r.intersects(displayRect($0, origin: placedPosition($0))) }))
+            Set(notes(in: scope).filter { r.intersects(noteRect($0)) }.compactMap { $0["id"]?.string }))
   }
 
   /// Moves a selection (world units) as one edit: one save, one undo. Layout
   /// only: no computation is re-resolved for a move. Ports around the moved Cards
   /// are then reordered in the same undo step when that removes wire crossings. With a grid (`snap`) the
   /// Cards go by whole grids from where they are drawn, and what moves with them
-  /// goes by the same step, so the arrangement stays. Notes and frames alone
+  /// goes by the same step, so the arrangement stays. Notes alone
   /// land on whole numbers, as when dragged alone.
   @discardableResult
-  func moveSelection(cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>, by moved: CGSize, snap: Double?) -> Task<Void, Never> {
-    let scope = cards.first.map { Array(path($0).dropLast()) } ?? frames.first.map { Array(path($0).dropLast()) } ?? scopeHolding("notes", notes.first ?? "") ?? []
+  func moveSelection(cards: Set<CardKey>, notes: Set<String>, by moved: CGSize, snap: Double?) -> Task<Void, Never> {
+    let scope = cards.first.map { Array(path($0).dropLast()) } ?? scopeHolding("notes", notes.first ?? "") ?? []
     let body = Tsugumi_Host_ProjectMoveT()
     body.projectPath = (projectPrefix(scope) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    body.cards = cards.map { layoutKey($0) }.sorted(); body.notes = notes.sorted(); body.frames = frames.map { layoutKey($0) }.sorted()
+    body.cards = cards.map { layoutKey($0) }.sorted(); body.notes = notes.sorted()
     body.dx = moved.width; body.dy = moved.height; body.snap = snap ?? 0; body.scene = layoutScene(scope)
     return enqueueOperation(.projectmove, body: body)
   }
 
-  /// Deletes a selection as one edit. Notes go. A frame alone is closed and its
-  /// Card stays (the frame's own Remove Frame); a deleted Card takes its frame with it.
-  func deleteSelection(cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>, in scope: [String]) {
-    selectionOperation(.delete, cards: cards, notes: notes, frames: frames, in: scope)
+  /// Deletes the selected Cards and notes as one edit.
+  func deleteSelection(cards: Set<CardKey>, notes: Set<String>, in scope: [String]) {
+    selectionOperation(.delete, cards: cards, notes: notes, in: scope)
   }
 
   /// Where a scope's boundary ports are drawn (inside a Card in Card).
@@ -618,7 +561,7 @@ extension ProjectSession {
 
   func setBoundaryPosition(_ scope: [String], _ side: String, _ p: CGPoint) {
     guard let prefix = projectPrefix(scope) else { return }
-    queueFields { [self] in [fieldEdit(prefix + "layout.json", [.string("boundary"), .string(side)], old: layout(of: scope)["boundary"]?[side],
+    queueFields { [self] in [fieldEdit(prefix + "layout.bin", [.string("boundary"), .string(side)], old: layout(of: scope)["boundary"]?[side],
                          new: .object([("x", .real((p.x * 10).rounded() / 10)), ("y", .real((p.y * 10).rounded() / 10)) ]))] }
   }
 
@@ -664,11 +607,6 @@ extension ProjectSession {
       let w = Tsugumi_Host_LayoutWireT()
       w.from = f; w.fromPort = fp; w.to = t; w.toPort = tp
       return w
-    }
-    scene.frames = framedCards(in: scope).map { k in
-      let r = displayRect(k, origin: placedPosition(k)), b = Tsugumi_Host_LayoutBoxT()
-      b.id = path(k).last!; b.x = r.minX; b.y = r.minY; b.width = r.width; b.height = r.height
-      return b
     }
     scene.notes = notes(in: scope).compactMap { n in
       guard let id = n["id"]?.string else { return nil }
@@ -722,7 +660,7 @@ extension ProjectSession {
       let entry = layout(of: scope)["cards"]?[layoutKey(k)]
       for field in ["inputOrder", "outputOrder"] {
         if let value = entry?[field] {
-          edits.append(fieldEdit(prefix + "layout.json", [.string("cards"), .string(layoutKey(k)), .string(field)], old: value, new: nil))
+          edits.append(fieldEdit(prefix + "layout.bin", [.string("cards"), .string(layoutKey(k)), .string(field)], old: value, new: nil))
         }
       }
     }
@@ -748,6 +686,16 @@ extension ProjectSession {
     let result = try await rpc.deleteRunScratch(opId: UUID(), paths: paths)
     await refreshCacheUsage()
     return result
+  }
+
+  func deleteRunCategory(_ runId: String, _ category: Tsugumi_RPC_RunRecordCategory) async throws {
+    guard connected, let projectId else { throw RPCError.disconnected }
+    let request = Tsugumi_Host_RunCategoryDeleteRequestT()
+    request.projectId = projectId
+    request.runId = runId
+    request.category = category
+    request.opId = UUID().uuidString.lowercased()
+    let _: Tsugumi_RPC_RunCategoryDeleteResultT = try await CoreHostClient.shared.hostCall(.runcategorydeleterequest, request)
   }
 
   func deleteRunHistory(endedBefore: Date?) async throws -> Tsugumi_RPC_RunHistoryDeleteResultT {

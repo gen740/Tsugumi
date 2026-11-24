@@ -13,10 +13,10 @@ import TsugumiTestSupport
   @Test func routingHitRegionsLeaveTheBodyForMoving() {
     for flow in [FlowDirection.topToBottom, .leftToRight] {
       for zoom in [1.0, 0.2] {
-        for kind in [CardKind.trigger, .branch, .merge, .collect] {
+        for kind in [CardKind.trigger, .merge, .collect] {
           let inputs = kind == .trigger ? [] :
-            (kind == .branch ? [PortData(name: "value"), PortData(name: "condition")] : [PortData(name: "in")])
-          let outputs = kind == .branch ? [PortData(name: "a"), PortData(name: "b")] : [PortData(name: "out")]
+            [PortData(name: "in")]
+          let outputs = [PortData(name: "out")]
           let data = CardNodeData(title: "start", kind: kind, inputs: inputs, outputs: outputs)
           let g = CardGeometry(data, flow: flow)
           let hit = CardNodeView.hitShape(data, flow: flow, zoom: zoom, newPorts: false)

@@ -1,0 +1,78 @@
+"""Build fixtures using the current project's FlatBuffers document schemas."""
+
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+from Tsugumi.Layout.Layout import Layout
+from tsugumi_client import change, new_id, path, text
+
+PROTOCOL = Path(__file__).resolve().parents[3] / "protocol"
+
+
+def build_buffer(schema, root_type, value):
+    with tempfile.TemporaryDirectory() as directory:
+        source = Path(directory) / "fixture.json"
+        source.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+        subprocess.run(
+            [os.environ.get("TSUGUMI_FLATC", "flatc"), "--binary",
+             "--strict-json", "--no-warnings", "-I", PROTOCOL, "--root-type", root_type,
+             "-o", directory, PROTOCOL / f"{schema}.fbs", source],
+            check=True, capture_output=True,
+        )
+        return source.with_suffix(".bin").read_bytes()
+
+
+def layout_bytes(view):
+    layout = dict(view)
+    for field, key in (("cards", "key"), ("boundaries", "scope")):
+        if field in layout:
+            layout[field] = [{key: name, **value} for name, value in layout[field].items()]
+    if "notes" in layout:
+        layout["notes"] = [{k: v for k, v in note.items() if k != "text"} for note in layout["notes"]]
+    return build_buffer("layout_document", "Tsugumi.Layout.Layout", layout)
+
+
+def write_layout(root, layout):
+    (root / "layout.bin").write_bytes(layout_bytes(layout))
+    for note in layout.get("notes", []):
+        file = root / "notes" / f"{note['id']}.md"
+        file.parent.mkdir(exist_ok=True)
+        file.write_text(note.get("text", ""), encoding="utf-8")
+
+
+def positions(buffer):
+    layout = Layout.GetRootAs(bytes(buffer))
+    cards = [layout.Cards(i) for i in range(layout.CardsLength())]
+    return {card.Key().decode(): {"x": card.X(), "y": card.Y()} for card in cards}
+
+
+def nix_literal(value):
+    if isinstance(value, str):
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("$" + "{", "\\$" + "{")
+        return '"' + escaped + '"'
+    if isinstance(value, list):
+        items = [nix_literal(item) for item in value]
+        return "[ " + " ".join(f"({item})" if item.startswith("-") else item
+                               for item in items) + " ]"
+    literal = json.dumps(value)
+    mantissa, exponent, power = literal.partition("e")
+    if type(value) is float and exponent and "." not in mantissa:
+        return mantissa + ".0e" + power
+    return literal
+
+
+def params_nix(values):
+    return "{\n" + "".join(f"  {nix_literal(name)} = {nix_literal(value)};\n"
+                           for name, value in sorted(values.items())) + "}\n"
+
+
+def set_param(client, card, name, value):
+    rev = client.call("ProjectInspectRequest").rev
+    rewritten = client.call("RewriteParamLiteralRequest", card=path(*card.split("/")),
+                            name=name, literal=nix_literal(value), atRev=rev)
+    client.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="ui:test",
+                changes=[change("PutSource", path=text(rewritten.path),
+                                baseHash=text(rewritten.baseHash), bytes=rewritten.text)])

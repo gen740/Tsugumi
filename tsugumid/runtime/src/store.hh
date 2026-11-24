@@ -28,6 +28,7 @@ struct SourcePatchIn {
 struct ChangeIn {
   enum class Kind {
     SetProject,
+    SetProjectLock,
     SetLayout,
     PutDefinition,
     RemoveDefinition,
@@ -37,11 +38,15 @@ struct ChangeIn {
   };
   Kind kind;
   std::string id;    // definitions
-  std::string json;  // SetProject / SetLayout / card_json
-  std::optional<std::string> meta_json;
-  bool keep_meta =
-      false;  // PutDefinition without meta_json keeps the current _meta.json
-  std::string path;   // sources
+  std::string json;  // SetProject / card_json; SetLayout's layout.bin bytes
+  // PutDefinition: a README.md or _comments.json not given is removed, unless
+  // its keep flag keeps the current one.
+  std::optional<std::string> readme;
+  bool keep_readme = false;
+  std::optional<std::string> comments_json;
+  bool keep_comments = false;
+  std::optional<std::string> lock_json;
+  std::string path;   // sources and lock documents
   std::string bytes;  // PutSource
   std::optional<std::string> base_hash;
   std::vector<SourcePatchIn> patches;
@@ -100,6 +105,9 @@ class Store {
   struct Staged {
     std::shared_ptr<Document> doc;
     std::vector<FileOp> ops;
+    // Generated writes during Reload use the just-read working tree as
+    // their baseline, including files that had changed outside Tsugumi.
+    std::map<std::string, std::optional<std::string>> disk_expectations;
     Delta delta;
     bool effective = false;
   };
@@ -149,8 +157,9 @@ class Store {
       std::shared_ptr<Document> doc,
       const std::vector<FileOp>* pending = nullptr,
       const Document* base = nullptr) const;
-  void check_disk_unchanged(const Document& base,
-                            const std::vector<FileOp>& ops) const;
+  void check_disk_unchanged(
+      const Document& base, const std::vector<FileOp>& ops,
+      const std::map<std::string, std::optional<std::string>>& expectations = {}) const;
   void fault(const char* point) const;
 
   StoreOptions opts_;

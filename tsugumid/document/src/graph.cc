@@ -1,20 +1,22 @@
 #include "tsugumi/document/graph.hh"
 
 #include <algorithm>
+#include <cmath>
 #include <deque>
-#include <limits>
 #include <map>
 #include <mutex>
+#include <ranges>
 #include <set>
 #include <stdexcept>
 #include <tuple>
 
 #include "tsugumi/document/collect_type.hh"
-#include "tsugumi/document/nix_refs.hh"
+#include "tsugumi/document/input_schema.hh"
+#include "tsugumi/document/schema_id.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi {
 
-using types::PortKind;
 using types::PortType;
 using types::TypeRef;
 
@@ -31,10 +33,9 @@ auto Resolution::endpoint(const CardPath& card, const std::string& port,
 
 namespace {
 constexpr std::pair<CardType, const char*> kCardTypes[] = {
-    {CardType::Code, "code"},       {CardType::Draft, "draft"},
-    {CardType::Trigger, "trigger"}, {CardType::Input, "input"},
-    {CardType::Branch, "branch"},   {CardType::Fork, "fork"},
-    {CardType::Merge, "merge"},     {CardType::Collect, "collect"},
+    {CardType::Code, "code"},         {CardType::Draft, "draft"},
+    {CardType::Trigger, "trigger"},   {CardType::Input, "input"},
+    {CardType::Merge, "merge"},       {CardType::Collect, "collect"},
     {CardType::Subgraph, "subgraph"},
 };
 }  // namespace
@@ -45,189 +46,47 @@ const char* card_type_name(CardType t) {
   return "";
 }
 
-std::optional<CardType> parse_card_type(std::string_view name) {
+namespace {
+auto parse_card_type(std::string_view name) -> std::optional<CardType> {
   for (const auto& [type, text] : kCardTypes)
     if (name == text) return type;
   return std::nullopt;
 }
 
-std::optional<ParamType> parse_param_type(const std::string& s) {
-  static const std::map<std::string, ParamType> m = {
-      {"bool", ParamType::Bool},
-      {"int64", ParamType::Int64},
-      {"uint64", ParamType::UInt64},
-      {"double", ParamType::Double},
-      {"string", ParamType::String},
-      {"bool[]", ParamType::BoolArray},
-      {"int64[]", ParamType::Int64Array},
-      {"uint64[]", ParamType::UInt64Array},
-      {"double[]", ParamType::DoubleArray},
-      {"string[]", ParamType::StringArray},
-  };
-  auto it = m.find(s);
-  if (it == m.end()) return std::nullopt;
-  return it->second;
-}
+struct ParamTypeInfo {
+  ParamType type;
+  const char* name;
+};
+constexpr ParamTypeInfo kParamTypes[] = {
+    {ParamType::Bool, "bool"},           {ParamType::Int64, "int"},
+    {ParamType::Double, "float"},        {ParamType::String, "string"},
+    {ParamType::BoolArray, "[bool]"},    {ParamType::Int64Array, "[int]"},
+    {ParamType::DoubleArray, "[float]"}, {ParamType::StringArray, "[string]"},
+};
 
-const char* param_type_name(ParamType t) {
-  switch (t) {
-    case ParamType::Bool:
-      return "bool";
-    case ParamType::Int64:
-      return "int64";
-    case ParamType::UInt64:
-      return "uint64";
-    case ParamType::Double:
-      return "double";
-    case ParamType::String:
-      return "string";
-    case ParamType::BoolArray:
-      return "bool[]";
-    case ParamType::Int64Array:
-      return "int64[]";
-    case ParamType::UInt64Array:
-      return "uint64[]";
-    case ParamType::DoubleArray:
-      return "double[]";
-    case ParamType::StringArray:
-      return "string[]";
-  }
-  return "string";
-}
-
-std::string param_fbs_type(ParamType t) {
-  switch (t) {
-    case ParamType::Bool:
-      return "bool";
-    case ParamType::Int64:
-      return "long";
-    case ParamType::UInt64:
-      return "ulong";
-    case ParamType::Double:
-      return "double";
-    case ParamType::String:
-      return "string";
-    case ParamType::BoolArray:
-      return "[bool]";
-    case ParamType::Int64Array:
-      return "[long]";
-    case ParamType::UInt64Array:
-      return "[ulong]";
-    case ParamType::DoubleArray:
-      return "[double]";
-    case ParamType::StringArray:
-      return "[string]";
-  }
-  return "string";
-}
-
-namespace {
-
-template <class E>
-bool decodes_as(const hosq::json::GenericDom<>& v) {
-  E e;
-  return !schema::decode(v, e);
-}
+namespace D = Tsugumi::Document;
+using document_text::str;
 
 }  // namespace
 
-std::optional<std::string> check_param_value(
-    ParamType t, const hosq::json::GenericDom<>& v) {
-  namespace sv = schema::v;
-  bool ok = false;
-  switch (t) {
-    case ParamType::Bool:
-      ok = decodes_as<sv::Bool>(v);
-      break;
-    case ParamType::Int64:
-      ok = decodes_as<sv::Int64>(v);
-      break;
-    case ParamType::UInt64:
-      ok = decodes_as<sv::Uint64>(v);
-      break;
-    case ParamType::Double:
-      ok = decodes_as<schema::Number>(v);
-      break;
-    case ParamType::String:
-      ok = decodes_as<sv::String>(v);
-      break;
-    case ParamType::BoolArray:
-      ok = decodes_as<sv::Array<sv::Bool>>(v);
-      break;
-    case ParamType::Int64Array:
-      ok = decodes_as<sv::Array<sv::Int64>>(v);
-      break;
-    case ParamType::UInt64Array:
-      ok = decodes_as<sv::Array<sv::Uint64>>(v);
-      break;
-    case ParamType::DoubleArray:
-      ok = decodes_as<sv::Array<schema::Number>>(v);
-      break;
-    case ParamType::StringArray:
-      ok = decodes_as<sv::Array<sv::String>>(v);
-      break;
-  }
-  if (ok) return std::nullopt;
-  return std::string("expected ") + param_type_name(t) +
-         " (integers must be in range, no implicit conversion)";
+auto parse_param_type(const std::string& name) -> std::optional<ParamType> {
+  for (const auto& info : kParamTypes)
+    if (name == info.name) return info.type;
+  return std::nullopt;
 }
 
-bool has_value_sweep(const Settings& settings) {
-  return std::ranges::any_of(
-      settings.params, [](const ParamDef& p) { return p.sweep.has_value(); });
-}
-
-uint64_t value_sweep_size(const Settings& settings) {
-  // Saturates above the limit, so an oversized sweep cannot overflow.
-  uint64_t size = 1;
-  for (const auto& p : settings.params) {
-    if (!p.sweep) continue;
-    size = std::min<uint64_t>(
-        size * std::min<uint64_t>(p.sweep->size(), kMaxValueSweepSize + 1),
-        kMaxValueSweepSize + 1);
-  }
-  return size;
-}
-
-ValueSweepMember value_sweep_member(const Settings& settings, uint64_t index) {
-  ValueSweepMember member;
-  member.params = settings.params;
-  std::vector<std::string> parts;
-  for (auto it = member.params.rbegin(); it != member.params.rend(); ++it) {
-    if (!it->sweep) continue;
-    const auto& values = *it->sweep;
-    if (values.empty()) throw std::out_of_range("empty value sweep");
-    it->data = values.at(index % values.size());
-    index /= values.size();
-    // Strings read as they are; other values as their JSON text.
-    schema::v::String string;
-    const std::string value = schema::decode(*it->data, string)
-                                  ? schema::text(*it->data)
-                                  : std::string(string.value());
-    parts.push_back(it->name + "=" + value);
-    it->sweep.reset();
-  }
-  for (auto it = parts.rbegin(); it != parts.rend(); ++it)
-    member.label += (member.label.empty() ? "" : ", ") + *it;
-  return member;
+auto param_type_name(ParamType type) -> const char* {
+  for (const auto& info : kParamTypes)
+    if (type == info.type) return info.name;
+  throw std::logic_error("unknown param type");
 }
 
 CardType card_type_of(const DefinitionDoc& def) {
-  const auto* name = schema::get(def.card.type);
-  const auto type = name ? parse_card_type(*name) : std::nullopt;
-  if (!type) throw std::logic_error("card definition without a valid type");
-  return *type;
-}
-
-std::vector<std::string> fork_outputs(const DefinitionDoc& def) {
-  const auto* outputs = schema::get(def.card.outputs);
-  if (!outputs) return {"a", "b"};
-  std::vector<std::string> names;
-  for (const auto& o : *outputs) {
-    const auto* name = schema::get(o.name);
-    names.push_back(name ? *name : "");
-  }
-  return names;
+  const auto type = def.card().type();
+  const auto parsed =
+      type ? parse_card_type(D::EnumNameCardType(*type)) : std::nullopt;
+  if (!parsed) throw std::logic_error("card definition without a valid type");
+  return *parsed;
 }
 
 const PortType* Node::input(const std::string& n) const {
@@ -240,6 +99,32 @@ const PortType* Node::output(const std::string& n) const {
   for (const auto& p : outputs)
     if (p.name == n) return &p;
   return nullptr;
+}
+
+auto Resolution::merge_candidates(size_t node, const std::string& port) const
+    -> std::map<std::string, types::TypeRef> {
+  if (nodes.at(node).kind != CardType::Merge || !nodes[node].output(port))
+    return {};
+  std::vector<size_t> pending{node};
+  std::set<size_t> visited;
+  std::map<std::string, types::TypeRef> candidates;
+  while (!pending.empty()) {
+    const auto merge = pending.back();
+    pending.pop_back();
+    if (!visited.insert(merge).second) continue;
+    for (const auto& edge : edges) {
+      if (edge.to != merge) continue;
+      const auto& producer = nodes[edge.from];
+      if (producer.kind == CardType::Merge) {
+        pending.push_back(edge.from);
+        continue;
+      }
+      auto* output = producer.output(edge.from_port);
+      if (output && output->type)
+        candidates.try_emplace(schema_id(*output->type), output->type);
+    }
+  }
+  return candidates;
 }
 
 const Node* Resolution::find(const CardPath& p) const {
@@ -272,24 +157,29 @@ Diag diag(const CardPath& card, std::string code, std::string message,
 
 class Builder {
  public:
-  Builder(const Document& doc, const SourceReader& read)
-      : doc_(doc), read_(read) {}
+  Builder(const Document& doc, const SourceReader& read,
+          const ParamsReader& read_params)
+      : doc_(doc), read_(read), read_params_(read_params) {}
 
   std::shared_ptr<Resolution> run() {
     res_ = std::make_shared<Resolution>();
-    scope(doc_.project, "", {}, 0);
+    scope(doc_.project(), "", {}, 0);
     connect_all();
     res_->incoming.resize(res_->nodes.size());
-    res_->outgoing.resize(res_->nodes.size());
-    for (const auto& edge : res_->edges) {
-      res_->incoming[edge.to][edge.to_port].push_back(edge.from);
-      res_->outgoing[edge.from].push_back(edge.to);
-    }
+    for (const auto& edge : res_->edges)
+      res_->incoming[edge.to].emplace(edge.to_port, edge.from);
     resolve_types();
-    resolve_execution_shapes();
-    finish_checks();
-    compute_guarantees();
-    check_nix_references();
+    resolve_boundary_types();
+    resolve_nix_exports();
+    for (auto& node : res_->nodes) {
+      if (node.kind != CardType::Code && node.kind != CardType::Input) continue;
+      try {
+        node.generated_inputs = generated_input_schema(*res_, node);
+      } catch (const std::runtime_error& error) {
+        node.exec_diags.push_back(diag(node.path, "invalid_inputs", error.what(),
+                                       true, node.def_dir + "_inputs.fbs"));
+      }
+    }
     return res_;
   }
 
@@ -302,61 +192,40 @@ class Builder {
     std::string to_port;
   };
 
-  void timeout(Node& n, const char* key, const hosq::json::GenericDom<>* v,
+  void timeout(Node& n, const char* key, std::optional<uint64_t> v,
                std::optional<uint64_t>& out) {
     if (!v) return;
-    if (schema::is_null(*v)) {
-      out.reset();  // explicit null: no deadline
-      return;
-    }
-    schema::v::Uint64 u;
-    if (!schema::decode(*v, u) && u.value() > 0)
-      out = u.value();
+    if (*v > 0)
+      out = *v;
     else
-      n.diags.push_back(
-          diag(n.path, "invalid_setting",
-               std::string(key) + " must be a positive integer or null"));
+      n.diags.push_back(diag(n.path, "invalid_setting",
+                             std::string(key) + " must be a positive integer"));
   }
 
   void read_settings(Node& n, const DefinitionDoc* def) {
     auto& s = n.settings;
     s.name = n.path.back();
-    if (!def || schema::get(def->card.external)) return;
-    const auto& d = def->card;
-    auto str = [&](const auto& f, std::string& out) {
-      if (const auto* v = schema::get(f)) out = *v;
+    if (!def || def->card().external()) return;
+    const auto& d = def->card();
+    auto boolean = [&](std::optional<bool> v, bool& out) {
+      if (v) out = *v;
     };
-    auto boolean = [&](const auto& f, bool& out) {
-      if (const auto* v = schema::get(f)) out = *v;
-    };
-    str(d.symbol, s.symbol);
-    if (const auto* lang = schema::get(d.language))
-      s.language = *lang == "none" ? "" : *lang;
-    if (const auto* t = schema::get(d.trigger)) {
-      if (*t == "allInputs" || *t == "eachInput")
-        s.any_mode = *t == "eachInput";
-      else
-        n.diags.push_back(diag(n.path, "invalid_setting",
-                               "trigger must be allInputs or eachInput"));
-    }
-    if (const auto* ins = schema::get(d.inputs);
-        ins && n.kind != CardType::Draft) {
+    if (const auto* ins = d.inputs(); ins && n.kind != CardType::Draft) {
       std::set<std::string> seen;
-      for (const auto& in : *ins) {
-        const auto* name = schema::get(in.name);
-        if (!name || !valid_id(*name)) {
+      for (const auto* in : *ins) {
+        const auto name = in->name()->str();
+        if (!valid_id(name)) {
           n.diags.push_back(diag(n.path, "invalid_setting",
                                  "inputs entries need a valid name"));
           continue;
         }
-        if (!seen.insert(*name).second)
+        if (!seen.insert(name).second)
           n.diags.push_back(
-              diag(n.path, "invalid_setting", "duplicate input " + *name));
-        const auto* opt = schema::get(in.optional);
-        n.input_defs.push_back({*name, opt && *opt});
+              diag(n.path, "invalid_setting", "duplicate input " + name));
+        n.inputs.push_back({name, false, nullptr});
       }
     }
-    if (const auto* v = schema::get(d.max_runs)) {
+    if (const auto v = d.maxRuns()) {
       if (*v > 0)
         s.max_runs = *v;
       else
@@ -364,29 +233,57 @@ class Builder {
             diag(n.path, "invalid_setting",
                  "maxRuns must be a positive integer (0 is rejected)"));
     }
-    timeout(n, "timeoutSeconds", schema::get(d.timeout_seconds),
-            s.timeout_seconds);
-    timeout(n, "buildTimeoutSeconds", schema::get(d.build_timeout_seconds),
+    timeout(n, "timeoutSeconds", d.timeoutSeconds(), s.timeout_seconds);
+    timeout(n, "buildTimeoutSeconds", d.buildTimeoutSeconds(),
             s.build_timeout_seconds);
-    boolean(d.record_io, s.record_io);
-    boolean(d.retain_artifact, s.retain_artifact);
-    boolean(d.sandbox, s.sandbox);
-    boolean(d.reuse_worker, s.reuse_worker);
-    boolean(d.network, s.network);
-    if (const auto* v = schema::get(d.execution_service)) {
+    boolean(d.recordLogs(), s.record_logs);
+    boolean(d.recordIO(), s.record_io);
+    if (const auto* sandbox = d.sandbox()) {
+      boolean(sandbox->filesystem(), s.sandbox.filesystem);
+      boolean(sandbox->pid(), s.sandbox.pid);
+      boolean(sandbox->ipc(), s.sandbox.ipc);
+      boolean(sandbox->identity(), s.sandbox.identity);
+      if (const auto* limits = sandbox->limits()) {
+        if (const auto cpu = limits->cpu()) {
+          if (!std::isfinite(*cpu) || *cpu <= 0 || *cpu > 256)
+            n.diags.push_back(
+                diag(n.path, "invalid_setting",
+                     "sandbox.limits.cpu must be in (0, 256] or null"));
+          else
+            s.sandbox.limits.cpu_millis =
+                static_cast<uint32_t>(std::ceil(*cpu * 1000));
+        }
+        if (const auto mib = limits->memoryMiB()) {
+          if (*mib == 0 || *mib > (uint64_t{1} << 20))
+            n.diags.push_back(diag(n.path, "invalid_setting",
+                                   "sandbox.limits.memoryMiB must be a "
+                                   "positive integer up to 1048576 or null"));
+          else
+            s.sandbox.limits.memory_bytes = *mib << 20;
+        }
+      }
+    }
+    boolean(d.reuseWorker(), s.reuse_worker);
+    const auto* grants = d.grants();
+    if (grants) {
+      boolean(grants->network(), s.grants.network);
+      boolean(grants->gui(), s.grants.gui);
+    }
+    if (const auto* service = d.executionService()) {
+      const auto value = service->str();
       if (n.kind != CardType::Code)
         n.diags.push_back(
             diag(n.path, "invalid_setting",
                  "executionService is only available on Code Cards"));
-      else if (!valid_id(*v))
+      else if (!valid_id(value))
         n.diags.push_back(diag(n.path, "invalid_setting",
                                "executionService must be a valid service ID"));
       else
-        s.execution_service = *v;
+        s.execution_service = value;
     }
-    if (const auto* condition = schema::get(d.worker_condition)) {
+    if (const auto* condition = d.workerCondition()) {
       auto compiled = worker_condition::compile(
-          {*condition->language, *condition->expression});
+          {condition->language()->str(), condition->expression()->str()});
       if (const auto* diagnostic =
               std::get_if<worker_condition::Diagnostic>(&compiled))
         n.diags.push_back(diag(n.path, "invalid_setting",
@@ -400,15 +297,10 @@ class Builder {
     }
     const bool remote = s.execution_service != kLocalExecutionService &&
                         s.execution_service != "auto";
-    const auto* host_folders = schema::get(d.host_folders);
-    if (remote && (!s.sandbox || s.reuse_worker ||
-                   (host_folders && !host_folders->empty())))
-      n.diags.push_back(diag(n.path, "invalid_setting",
-                             "external execution requires sandbox, no worker "
-                             "reuse or host folders"));
-    if (const auto* secrets = schema::get(d.secrets)) {
+    if (const auto* secrets = d.secrets()) {
       std::set<std::string> names;
-      for (const auto& name : *secrets) {
+      for (const auto* entry : *secrets) {
+        const auto name = entry->str();
         if (!valid_secret_name(name)) {
           n.diags.push_back(diag(n.path, "invalid_setting",
                                  "secrets entries must match "
@@ -423,142 +315,75 @@ class Builder {
         }
         s.secrets.push_back(name);
       }
-      if (!s.secrets.empty() && s.reuse_worker)
-        n.diags.push_back(diag(n.path, "invalid_setting",
-                               "a Card with secrets cannot reuse its worker "
-                               "(reuseWorker)"));
     }
-    if (const auto* resources = schema::get(d.execution_resources)) {
-      const auto* cpu = schema::get(resources->cpu_millis);
-      const auto* memory = schema::get(resources->memory_bytes);
-      if (s.execution_service == kLocalExecutionService)
-        n.diags.push_back(
-            diag(n.path, "invalid_setting",
-                 "executionResources requires an external execution service"));
-      else if (!cpu || *cpu == 0 || *cpu > 256'000 || !memory || *memory == 0 ||
-               *memory > (uint64_t{1} << 40))
-        n.diags.push_back(diag(n.path, "invalid_setting",
-                               "executionResources requires 1–256000 cpuMillis "
-                               "and up to 1 TiB of memoryBytes"));
-      else
-        s.execution_resources =
-            ExecutionResources{static_cast<uint32_t>(*cpu), *memory};
-    }
-    if (const auto* v = schema::get(d.system)) {
-      if (!remote && *v == native_system())
+    if (const auto* system = d.system()) {
+      const auto value = system->str();
+      if (!remote && value == native_system())
         s.system.clear();
-      else if (*v == "x86_64-linux" || *v == "aarch64-linux")
-        s.system = *v;
+      else if (value == "x86_64-linux" || value == "aarch64-linux")
+        s.system = value;
       else
         n.diags.push_back(diag(
             n.path, "invalid_setting",
             "system must be the native system, x86_64-linux or aarch64-linux"));
     }
-    if (const auto* v = schema::get(d.artifact_output)) s.artifact_output = *v;
-    if (const auto* folders = schema::get(d.host_folders)) {
+    const auto* folders = grants ? grants->hostPaths() : nullptr;
+    if (folders) {
       std::set<std::string> names;
-      for (const auto& f : *folders) {
-        const auto* path = schema::get(f.path);
-        const auto* name = schema::get(f.name);
-        if (!path || path->empty() || path->front() != '/' || !name ||
-            !valid_id(*name)) {
+      for (const auto* f : *folders) {
+        const auto path = f->path()->str();
+        const auto name = f->name()->str();
+        if (path.empty() || path.front() != '/' || !valid_id(name)) {
+          n.diags.push_back(diag(
+              n.path, "invalid_setting",
+              "grants.hostPaths entries need an absolute path and a name"));
+          continue;
+        }
+        if (!names.insert(grant_environment(name)).second) {
           n.diags.push_back(
               diag(n.path, "invalid_setting",
-                   "hostFolders entries need an absolute path and a name"));
+                   "duplicate host path grant variable for " + name));
           continue;
         }
-        if (!names.insert(*name).second) {
-          n.diags.push_back(diag(n.path, "invalid_setting",
-                                 "duplicate host folder name " + *name));
-          continue;
-        }
-        const auto* w = schema::get(f.write);
-        s.host_folders.push_back({*path, *name, w && *w});
+        s.grants.host_paths.push_back({path, name, f->write().value_or(false)});
       }
     }
-    read_params(n, def);
+    if (remote && (!s.sandbox.filesystem || !s.sandbox.pid || s.reuse_worker ||
+                   s.grants.gui || !s.grants.host_paths.empty()))
+      n.diags.push_back(
+          diag(n.path, "invalid_setting",
+               "external execution requires filesystem and PID isolation "
+               "and does not support reuseWorker, GUI or host path grants"));
+    read_params(n);
   }
 
-  void read_params(Node& n, const DefinitionDoc* def) {
-    std::set<std::string> names;
-    if (const auto* list = schema::get(def->card.params)) {
-      for (const auto& p : *list) {
-        const auto* name = schema::get(p.name);
-        const auto* type = schema::get(p.type);
-        if (!name || !valid_id(*name) || !type) {
-          n.diags.push_back(
-              diag(n.path, "invalid_param", "params need a name and type"));
+  void read_params(Node& n) {
+    const auto rel = n.def_dir + "params.nix";
+    const auto invalid = [&](const std::string& message) {
+      n.diags.push_back(diag(n.path, "invalid_param", message, true, rel));
+    };
+    const auto source = doc_.sources.find(rel);
+    if (source == doc_.sources.end() || !read_params_) return;
+    try {
+      if (source->second.size > kMaxDocumentJsonBytes)
+        throw std::runtime_error(rel + ": exceeds the 8 MiB document limit");
+      auto bytes = read_(rel);
+      if (!bytes)
+        throw std::runtime_error(rel +
+                                 " differs from the confirmed document");
+      for (const auto& raw : json::Array(read_params_(n.def_dir, *bytes))) {
+        const auto entry = json::Object(raw);
+        const auto name = json::Text(entry, "name");
+        const auto type = parse_param_type(json::Text(entry, "type"));
+        if (!type || !valid_id(name)) {
+          invalid("invalid value for param " + name);
           continue;
         }
-        auto pt = parse_param_type(*type);
-        if (!pt) {
-          n.diags.push_back(diag(n.path, "invalid_param",
-                                 "Card " + path_key(n.path) + ": param " +
-                                     *name + " has unknown type " + *type +
-                                     "; write params[].type as bool, int64, "
-                                     "uint64, double, string, "
-                                     "or one of these with [] for a list"));
-          continue;
-        }
-        if (!names.insert(*name).second) {
-          n.diags.push_back(
-              diag(n.path, "invalid_param", "duplicate param " + *name));
-          continue;
-        }
-        ParamDef d;
-        d.name = *name;
-        d.type = *pt;
-        if (const auto* nix = schema::get(p.nix)) d.nix = *nix;
-        if (const auto* sweep = schema::get(p.sweep)) {
-          if (n.kind != CardType::Input) {
-            n.diags.push_back(
-                diag(n.path, "invalid_param",
-                     "param " + d.name +
-                         ": sweep is for Input Cards; a Code Card lists its "
-                         "implementations in the run list of default.nix"));
-          } else if (schema::get(p.data)) {
-            n.diags.push_back(
-                diag(n.path, "invalid_param",
-                     "param " + d.name +
-                         ": write data for one value or sweep for one "
-                         "invocation per value, not both"));
-          } else {
-            std::vector<hosq::json::GenericDom<>> values;
-            std::optional<std::string> error;
-            for (size_t i = 0; i < sweep->size() && !error; ++i) {
-              error = check_param_value(d.type, (*sweep)[i]);
-              if (error)
-                error = "sweep[" + std::to_string(i) + "]: " + *error;
-              else
-                values.push_back((*sweep)[i]);
-            }
-            if (error)
-              n.diags.push_back(diag(n.path, "invalid_param",
-                                     "param " + d.name + ": " + *error));
-            else
-              d.sweep = std::move(values);
-          }
-        }
-        if (const auto* data = schema::get(p.data)) {
-          if (auto err = check_param_value(d.type, *data))
-            n.diags.push_back(
-                diag(n.path, "invalid_param", "param " + d.name + ": " + *err));
-          else
-            d.data = *data;
-        }
-        n.settings.params.push_back(std::move(d));
+        n.settings.params.push_back({name, *type, entry.at("value")});
       }
+    } catch (const std::exception& error) {
+      invalid(error.what());
     }
-    for (const auto& p : n.settings.params)
-      if (!p.data && !p.sweep)
-        n.exec_diags.push_back(
-            diag(n.path, "missing_param", "param " + p.name + " has no value"));
-    if (const auto size = value_sweep_size(n.settings);
-        size > kMaxValueSweepSize)
-      n.diags.push_back(
-          diag(n.path, "invalid_param",
-               "the value sweep makes " + std::to_string(size) +
-                   " combinations; at most 256 are allowed per trigger"));
   }
 
   void load_catalog(Node& n) {
@@ -569,9 +394,12 @@ class Builder {
             diag(n.path, "missing_outputs", rel + " is missing", true, rel));
       return;
     }
-    // Parsed catalogs by content (the source's hash): an unchanged
-    // _outputs.fbs is neither read nor parsed again.
-    std::string key = rel + '\0' + doc_.sources.at(rel).hash;
+    // Included definition schemas participate in the same cache key.
+    std::string key = rel;
+    for (auto it = doc_.sources.lower_bound(n.def_dir);
+         it != doc_.sources.end() && it->first.starts_with(n.def_dir); ++it)
+      if (it->first.ends_with(".fbs") && it->first != n.def_dir + "_inputs.fbs")
+        key += '\0' + it->first + '\0' + it->second.hash;
     static std::mutex mu;
     static std::map<std::string, types::CatalogResult> parsed;
     std::optional<types::CatalogResult> cat;
@@ -586,7 +414,10 @@ class Builder {
                                rel + " could not be read", true, rel));
         return;
       }
-      cat = types::parse_catalog(*text, rel);
+      cat = types::parse_catalog(*text, rel, [&](const std::string& include) {
+        // Output types must be available independently of incoming wiring.
+        return include == n.def_dir + "_inputs.fbs" ? std::nullopt : read_(include);
+      });
       std::lock_guard<std::mutex> l(mu);
       if (parsed.size() >= 2048) parsed.clear();
       parsed[key] = *cat;
@@ -607,12 +438,9 @@ class Builder {
     DefinitionDoc d;
     const std::string& id = n.path.back();
     try {
-      d.card = parse_card_json(id, *card);
-      d.card_json = *card;
-      if (auto meta = read_(n.def_dir + "_meta.json")) {
-        check_meta_json(*meta);
-        d.meta_json = *meta;
-      }
+      auto parsed = parse_card_json(id, *card);
+      d.card_buffer = std::move(parsed.buffer);
+      d.card_json = std::move(parsed.text);
     } catch (const DocumentError& e) {
       n.diags.push_back(
           diag(n.path, "invalid_document", e.what(), true, n.def_dir));
@@ -624,28 +452,24 @@ class Builder {
 
   // One project's canvas: the root project (prefix "") or an external
   // ("externals/<p>/", nested further inside its own externals).
-  void scope(const schema::Project& project, const std::string& prefix,
+  void scope(const D::Project& project, const std::string& prefix,
              const CardPath& scope_path, int depth) {
-    std::string pkgs = project.pkgs_path->value_or("tsugumi:default");
-    std::vector<NixSourceRef> sources;
-    if (project.nix_sources->has_value())
-      for (const auto& s : project.nix_sources->value()) {
-        sources.push_back({s.name->value(), s.type->value(), s.ref->value(),
-                           schema::get(s.overrides)
-                               ? schema::canonical_text(*schema::get(s.overrides))
-                               : "{}"});
-      }
-    for (const auto& card : project.canvas->value().cards->value()) {
+    std::vector<NixPathEntry> sources;
+    if (const auto* list = project.nixPath())
+      for (const auto* entry : *list)
+        sources.push_back({entry->name()->str(), entry->url()->str()});
+
+    for (const auto* card : *project.canvas()->cards()) {
+      const auto id = card->id()->str();
       Node n;
       n.path = scope_path;
-      n.path.push_back(card.id->value());
-      n.def_dir = prefix + "definitions/" + card.id->value() + "/";
+      n.path.push_back(id);
+      n.def_dir = prefix + "definitions/" + id + "/";
       n.project_dir = prefix;
-      n.pkgs_path = pkgs;
-      n.nix_sources = sources;
+      n.nix_path = sources;
       const DefinitionDoc* def = nullptr;
       if (prefix.empty()) {
-        auto it = doc_.definitions.find(card.id->value());
+        auto it = doc_.definitions.find(id);
         if (it != doc_.definitions.end()) def = &it->second;
       } else {
         def = external_definition(n);
@@ -653,6 +477,16 @@ class Builder {
       // An unreadable definition is already diagnosed above; it declares no
       // ports and cannot run, like a Draft.
       n.kind = def ? card_type_of(*def) : CardType::Draft;
+      // The accepted Document owns this resolution. Edits only affect later
+      // runs.
+      n.settings.record_logs = project.recordLogs().value_or(true);
+      n.settings.record_io = project.recordIO().value_or(false);
+      n.settings.log_limit_bytes =
+          project.logLimitBytes().value_or(kDefaultLogLimitBytes);
+      n.settings.output_limit_bytes =
+          project.outputLimitBytes().value_or(kDefaultOutputLimitBytes);
+      n.settings.output_limit_entries =
+          project.outputLimitEntries().value_or(kDefaultOutputLimitEntries);
       read_settings(n, def);
       switch (n.kind) {
         case CardType::Code:
@@ -663,57 +497,33 @@ class Builder {
           load_catalog(n);
           break;
         case CardType::Input:
-          // Optional start input: connected, the value is produced when the
-          // start signal arrives (e.g. from the trigger); unconnected, the
-          // Card is a source that fires once per run.
-          n.input_defs = {{"start", true}};
+          if (!doc_.sources.count(n.def_dir + "default.nix"))
+            n.exec_diags.push_back(diag(n.path, "missing_nix",
+                                        "default.nix is missing", true,
+                                        n.def_dir + "default.nix"));
+          // A connected start input triggers the Card on arrival.
+          // An unconnected Input Card is a source that fires once per run.
+          n.inputs = {{"start", false, nullptr}};
           load_catalog(n);
           break;
         case CardType::Trigger:
           n.outputs.push_back(
-              {"out", PortKind::FlatBuffer, false, types::empty_type()});
+              {"out", false, types::empty_type()});
           break;
-        case CardType::Branch:
-          n.input_defs = {{"value", false}, {"condition", false}};
-          n.outputs = {{"a", PortKind::FlatBuffer, true, nullptr},
-                       {"b", PortKind::FlatBuffer, true, nullptr}};
-          break;
-        case CardType::Fork: {
-          // Every output always receives the value, unlike a Branch's.
-          n.input_defs = {{"value", false}};
-          std::set<std::string> seen;
-          for (const auto& name : fork_outputs(*def)) {
-            if (!valid_id(name))
-              n.diags.push_back(diag(n.path, "invalid_setting",
-                                     "outputs entries need a valid name"));
-            else if (!seen.insert(name).second)
-              n.diags.push_back(
-                  diag(n.path, "invalid_setting", "duplicate output " + name));
-            else
-              n.outputs.push_back({name, PortKind::FlatBuffer, false, nullptr});
-          }
-          if (n.outputs.empty())
-            n.diags.push_back(
-                diag(n.path, "invalid_setting", "fork needs declared outputs"));
-          break;
-        }
         case CardType::Merge:
-          n.settings.any_mode = true;
-          n.outputs = {{"out", PortKind::FlatBuffer, false, nullptr}};
-          if (n.input_defs.empty())
+          n.outputs = {{"out", false, nullptr}};
+          if (n.inputs.empty())
             n.diags.push_back(
                 diag(n.path, "invalid_setting", "merge needs declared inputs"));
-          for (auto& in : n.input_defs) in.optional = true;
           break;
         case CardType::Collect:
-          n.input_defs = {{"in", false}};
-          n.settings.any_mode = true;
-          n.outputs = {{"out", PortKind::FlatBuffer, false, nullptr}};
+          n.inputs = {{"in", false, nullptr}};
+          n.outputs = {{"out", false, nullptr}};
           break;
         case CardType::Draft:
           // Draft wires end on the Card itself. Neither metadata nor a schema
           // declares ports until the Card is implemented.
-          n.input_defs.clear();
+          n.inputs.clear();
           n.exec_diags.push_back(
               diag(n.path, "draft",
                    "draft cards are not implemented and cannot run"));
@@ -722,23 +532,15 @@ class Builder {
           n.is_virtual = true;
           break;
       }
-      for (const auto& in : n.input_defs)
-        n.inputs.push_back(
-            {in.name, PortKind::FlatBuffer, in.optional, nullptr});
-      if (n.settings.retain_artifact) {
-        if (!n.settings.artifact_output)
-          n.diags.push_back(diag(n.path, "invalid_setting",
-                                 "retainArtifact needs artifactOutput"));
-      }
       size_t idx = res_->nodes.size();
       res_->index[path_key(n.path)] = idx;
       CardPath inner_scope = n.path;
-      const auto* link = def ? schema::get(def->card.external) : nullptr;
+      const auto* link = def ? def->card().external() : nullptr;
       res_->nodes.push_back(std::move(n));
 
       if (link) {
         // A Card in Card: the project externals/<link>/ of this project.
-        std::string ext = prefix + "externals/" + *link + "/";
+        std::string ext = prefix + "externals/" + link->str() + "/";
         res_->nodes[idx].external = ext;
         auto text = read_(ext + "tsugumi.json");
         if (!text) {
@@ -751,11 +553,14 @@ class Builder {
                    "Card in Card nesting deeper than 15", true, ext));
         } else {
           try {
-            auto inner = parse_external_project(ext + "tsugumi.json", *text);
-            if (const auto* b = schema::get(inner.boundary))
-              res_->nodes[idx].boundary = *b;
-            projects_.push_back(std::move(inner));
-            scope(projects_.back(), ext, inner_scope, depth + 1);
+            projects_.push_back(
+                parse_external_project(ext + "tsugumi.json", *text).buffer);
+            const auto& inner =
+                document_text::root<D::Project>(projects_.back());
+            if (const auto* b = inner.boundary())
+              res_->nodes[idx].boundary =
+                  *std::unique_ptr<D::BoundaryT>(b->UnPack());
+            scope(inner, ext, inner_scope, depth + 1);
           } catch (const DocumentError& e) {
             res_->nodes[idx].diags.push_back(diag(inner_scope, "invalid_graph",
                                                   e.what(), true,
@@ -764,13 +569,13 @@ class Builder {
         }
       }
     }
-    for (const auto& c : project.canvas->value().connections->value()) {
+    for (const auto* c : *project.canvas()->connections()) {
       RawEdge e;
       e.scope = scope_path;
-      e.from = c.from->value().card->value();
-      e.from_port = c.from->value().port->value();
-      e.to = c.to->value().card->value();
-      e.to_port = c.to->value().port->value();
+      e.from = c->from()->card()->str();
+      e.from_port = c->from()->port()->str();
+      e.to = c->to()->card()->str();
+      e.to_port = c->to()->port()->str();
       raw_.push_back(std::move(e));
     }
   }
@@ -785,13 +590,11 @@ class Builder {
       Node& n = res_->nodes[it->second];
       if (n.kind != CardType::Subgraph) return std::make_pair(it->second, port);
       const auto* b = n.boundary ? &*n.boundary : nullptr;
-      const auto* side =
-          b ? (output ? schema::get(b->outputs) : schema::get(b->inputs))
-            : nullptr;
-      const schema::Endpoint* ep = nullptr;
+      const auto* side = b ? (output ? &b->outputs : &b->inputs) : nullptr;
+      const D::BoundaryPortT* ep = nullptr;
       if (side)
-        for (const auto& [name, e] : side->entries())
-          if (name == port) ep = &e;
+        for (const auto& e : *side)
+          if (e->name == port) ep = e.get();
       if (!ep) {
         if (diagnose)
           n.diags.push_back(diag(n.path, "unknown_port",
@@ -799,8 +602,8 @@ class Builder {
                                      (output ? "output " : "input ") + port));
         return std::nullopt;
       }
-      path.push_back(ep->card->value());
-      port = ep->port->value();
+      path.push_back(ep->card);
+      port = ep->port;
       if (!res_->index.count(path_key(path))) {
         if (diagnose)
           n.diags.push_back(diag(n.path, "unknown_card",
@@ -821,12 +624,11 @@ class Builder {
     for (auto& n : res_->nodes) {
       if (n.kind != CardType::Subgraph) continue;
       if (const auto* b = n.boundary ? &*n.boundary : nullptr) {
-        if (const auto* ins = schema::get(b->inputs))
-          for (const auto& [name, _] : ins->entries())
-            n.inputs.push_back({name, PortKind::FlatBuffer, true, nullptr});
-        if (const auto* outs = schema::get(b->outputs))
-          for (const auto& [name, _] : outs->entries())
-            n.outputs.push_back({name, PortKind::FlatBuffer, true, nullptr});
+        for (const auto& port : b->inputs)
+          n.inputs.push_back({port->name, false, nullptr});
+        for (const auto& port : b->outputs)
+          n.outputs.push_back(
+              {port->name, false, nullptr});
       }
     }
     for (const auto& node : res_->nodes) {
@@ -837,7 +639,7 @@ class Builder {
                               "boundary", false))
             res_->endpoints[{path_key(node.path), port.name, output}] = *end;
     }
-    std::set<std::tuple<size_t, std::string, size_t, std::string>> wires;
+    std::set<std::pair<size_t, std::string>> wired_inputs;
     for (const auto& e : raw_) {
       CardPath from = e.scope;
       CardPath to = e.scope;
@@ -865,17 +667,17 @@ class Builder {
         } else {
           const auto direction = output ? "output" : "input";
           fix = card + " has no " + direction + " port " +
-                schema::text(schema::string_value(port));
+                json::Quote(port);
           std::string ports;
           if (output) {
             for (const auto& p : node.outputs) {
               if (!ports.empty()) ports += ", ";
-              ports += schema::text(schema::string_value(p.name));
+              ports += json::Quote(p.name);
             }
           } else {
             for (const auto& p : node.inputs) {
               if (!ports.empty()) ports += ", ";
-              ports += schema::text(schema::string_value(p.name));
+              ports += json::Quote(p.name);
             }
           }
           if (!ports.empty())
@@ -883,8 +685,7 @@ class Builder {
           if (!output && node.kind == CardType::Code &&
               (!port.empty() || ports.empty()))
             fix += "; add {\"name\": " +
-                   schema::text(
-                       schema::string_value(port.empty() ? "source" : port)) +
+                   json::Quote(port.empty() ? "source" : port) +
                    "} to " + node.def_dir +
                    "_card.json inputs and write to.port with that name";
           else if (ports.empty())
@@ -898,12 +699,12 @@ class Builder {
       check(sn, src->second, true);
       check(dn, dst->second, false);
       if (!ok) continue;
-      if (sn.kind != CardType::Draft && dn.kind != CardType::Draft &&
-          !wires.emplace(src->first, src->second, dst->first, dst->second)
-               .second) {
-        dn.diags.push_back(diag(dn.path, "duplicate_wire",
-                               wire + ": " + src->second + " -> " +
-                                   dst->second + " repeats a connection"));
+      if (dn.kind != CardType::Draft &&
+          !wired_inputs.emplace(dst->first, dst->second).second) {
+        dn.diags.push_back(diag(dn.path, "input_already_connected",
+                                wire + ": input " + dst->second +
+                                    " already has a wire; use a Merge Card "
+                                    "to combine arrivals"));
         continue;
       }
       res_->edges.push_back({src->first, src->second, dst->first, dst->second});
@@ -915,423 +716,137 @@ class Builder {
       if (p.name == name) return &p;
     return nullptr;
   }
-  types::PortType* out_port(Node& n, const std::string& name) {
-    for (auto& p : n.outputs)
-      if (p.name == name) return &p;
-    return nullptr;
-  }
-
   void resolve_types() {
-    std::set<std::pair<size_t, std::string>> mismatch_reported;
-    // Resolve real producers first. Draft placeholders must neither constrain
-    // a real producer nor replace a type that can be derived without a Draft.
-    for (const bool include_drafts : {false, true}) {
-      for (size_t pass = 0; pass <= res_->nodes.size() + 1; ++pass) {
-        bool changed = false;
-        for (const auto& e : res_->edges) {
-          if (res_->nodes[e.to].kind == CardType::Draft) continue;
-          const bool from_draft = res_->nodes[e.from].kind == CardType::Draft;
-          if (from_draft && !include_drafts) continue;
-          types::PortType draft{"", PortKind::FlatBuffer, true,
-                                types::empty_type()};
-          auto* src =
-              from_draft ? &draft : out_port(res_->nodes[e.from], e.from_port);
-          auto* dst = in_port(res_->nodes[e.to], e.to_port);
-          if (!src || !dst || !src->type) continue;
-          const bool provisional = from_draft || provisional_outputs_.contains(
-                                                     {e.from, e.from_port});
-          if (!dst->type) {
-            dst->type = src->type;
-            dst->kind = src->kind;
-            if (provisional) provisional_inputs_.insert({e.to, e.to_port});
-            changed = true;
-          } else if (!provisional && dst->type != src->type &&
-                     !types::compatible(*dst->type, *src->type) &&
-                     mismatch_reported.insert({e.to, e.to_port}).second) {
-            auto& dn = res_->nodes[e.to];
-            dn.diags.push_back(diag(
-                dn.path, "type_mismatch",
-                "input " + e.to_port + " receives incompatible types " +
-                    dst->type->root_type + " and " + src->type->root_type));
-          }
-        }
-        for (size_t i = 0; i < res_->nodes.size(); ++i) {
-          auto& n = res_->nodes[i];
-          if (!derive(n)) continue;
-          changed = true;
-          bool provisional = false;
-          for (const auto& input : n.inputs) {
-            // A Branch's output type follows value, not condition.
-            if (n.kind == CardType::Branch && input.name != "value") continue;
-            provisional |= provisional_inputs_.contains({i, input.name});
-          }
-          if (provisional)
-            for (const auto& output : n.outputs)
-              provisional_outputs_.insert({i, output.name});
-        }
-        if (!changed) break;
-      }
+    const types::PortType draft{.name = "", .type = types::empty_type()};
+    for (auto& node : res_->nodes) {
+      if (node.kind != CardType::Collect) continue;
+      std::string error;
+      node.outputs.front().type = collect_output_type(error);
+      if (!node.outputs.front().type)
+        node.diags.push_back(
+            diag(node.path, "invalid_type", "collect type: " + error));
     }
-    for (auto& n : res_->nodes) {
-      if (n.is_virtual) continue;
-      for (auto& p : n.outputs)
-        if (!p.type && n.kind != CardType::Code && n.kind != CardType::Input &&
-            connected_out(n, p.name))
-          n.diags.push_back(diag(n.path, "unresolved_type",
-                                 "output " + p.name +
-                                     " type cannot be derived (unresolved "
-                                     "cycle or missing input)"));
-    }
-  }
-
-  bool connected_out(const Node& n, const std::string& port) {
-    size_t idx = res_->index.at(path_key(n.path));
-    for (const auto& e : res_->edges)
-      if (e.from == idx && e.from_port == port) return true;
-    return false;
-  }
-
-  auto resolve_execution_shapes() -> void {
-    using Shape = types::ExecutionShape;
-    for (size_t pass = 0; pass <= res_->nodes.size(); ++pass) {
-      bool changed = false;
-      for (size_t i = 0; i < res_->nodes.size(); ++i) {
-        auto& node = res_->nodes[i];
-        size_t connected = 0, lists = 0, singles = 0;
-        for (auto& port : node.inputs) {
-          std::optional<Shape> shape;
-          for (const auto& edge : res_->edges) {
-            if (edge.to != i || edge.to_port != port.name) continue;
-            const auto* output = res_->nodes[edge.from].output(edge.from_port);
-            const auto from =
-                output ? output->execution_shape : Shape::unspecified;
-            shape = !shape || *shape == from ? from : Shape::unspecified;
-          }
-          if (!shape) continue;
-          ++connected;
-          if (*shape == Shape::list) ++lists;
-          if (*shape == Shape::single) ++singles;
-          if (port.execution_shape != *shape) {
-            port.execution_shape = *shape;
-            changed = true;
-          }
-        }
-        Shape shape = Shape::unspecified;
-        if (node.kind == CardType::Collect)
-          shape = Shape::single;
-        else if (node.kind == CardType::Input && has_value_sweep(node.settings))
-          shape = Shape::list;
-        else if (lists > 0 && (!node.settings.any_mode || lists == connected))
-          shape = Shape::list;
-        else if (node.kind != CardType::Code &&
-                 node.kind != CardType::Subgraph && singles == connected)
-          shape = Shape::single;
-        for (auto& port : node.outputs) {
-          if (port.execution_shape == shape) continue;
-          port.execution_shape = shape;
-          changed = true;
-        }
-      }
-      if (!changed) break;
-    }
-  }
-
-  bool derive(Node& n) {
-    bool changed = false;
-    switch (n.kind) {
-      case CardType::Branch:
-      case CardType::Fork: {
-        const auto* v = n.input("value");
-        if (v && v->type)
-          for (auto& o : n.outputs)
-            if (!o.type) {
-              o.type = v->type;
-              o.kind = v->kind;
-              changed = true;
-            }
-        break;
-      }
-      case CardType::Collect: {
-        const auto* in = n.input("in");
-        if (!in || !in->type || n.outputs[0].type) break;
-        std::string error;
-        if (auto type = collect_output_type(*in, error)) {
-          n.outputs[0].type = std::move(type);
-          n.outputs[0].kind = in->kind == PortKind::FlatBuffer
-                                  ? PortKind::FlatBuffer
-                                  : PortKind::Directory;
-          changed = true;
-        } else if (derive_failed_.insert(path_key(n.path)).second) {
-          n.diags.push_back(
-              diag(n.path, "invalid_type", "collect type: " + error));
-        }
-        break;
-      }
-      case CardType::Merge: {
-        if (n.outputs[0].type || derive_failed_.count(path_key(n.path))) break;
-        std::vector<std::pair<std::string, TypeRef>> ins;
-        bool ready = true;
-        size_t idx = res_->index.at(path_key(n.path));
-        for (const auto& p : n.inputs) {
-          bool connected = false;
-          for (const auto& e : res_->edges)
-            if (e.to == idx && e.to_port == p.name) connected = true;
-          if (!connected) continue;
-          if (!p.type) {
-            ready = false;
-            break;
-          }
-          ins.emplace_back(p.name, p.type);
-        }
-        if (!ready || ins.empty()) break;
-        std::string err;
-        if (auto t = types::merged_type(ins, &err)) {
-          n.outputs[0].type = *t;
-          changed = true;
-        } else {
-          derive_failed_.insert(path_key(n.path));
-          n.diags.push_back(diag(n.path, "invalid_type", "merge type: " + err));
-        }
-        break;
-      }
-      default:
-        break;
-    }
-    return changed;
-  }
-
-  void finish_checks() {
-    for (size_t i = 0; i < res_->nodes.size(); ++i) {
-      Node& n = res_->nodes[i];
-      if (n.is_virtual) continue;
-      for (const auto& p : n.inputs) {
-        bool connected = false;
-        for (const auto& e : res_->edges)
-          if (e.to == i && e.to_port == p.name) connected = true;
-        if (!connected && !p.optional)
-          n.exec_diags.push_back(
-              diag(n.path, "input_missing",
-                   "required input " + p.name + " is not connected"));
-        else if (connected && !p.type)
-          n.diags.push_back(diag(n.path, "unresolved_type",
-                                 "input " + p.name + " type is unresolved"));
-      }
-      if (n.kind == CardType::Branch) {
-        const auto* c = n.input("condition");
-        if (c && c->type && !provisional_inputs_.contains({i, "condition"}) &&
-            !types::is_condition(*c->type))
-          n.diags.push_back(
-              diag(n.path, "invalid_condition",
-                   "branch condition must be a message with value:bool, got " +
-                       c->type->root_type));
-      }
-      if (n.settings.retain_artifact && n.settings.artifact_output) {
-        const auto* o = n.output(*n.settings.artifact_output);
-        if (!o)
-          n.diags.push_back(diag(n.path, "invalid_setting",
-                                 "artifactOutput " +
-                                     *n.settings.artifact_output +
-                                     " is not an output"));
-        else if (o->kind == PortKind::FlatBuffer)
-          n.diags.push_back(
-              diag(n.path, "invalid_setting",
-                   "artifactOutput must be a File or Directory port"));
-      }
-    }
-  }
-
-  // Must-analysis over the flattened graph (greatest fixpoint, so feedback
-  // loops converge): a node is guaranteed before n when it lies on every way
-  // n can fire. One port: common to all edges into it. all: union over the
-  // ports needed to fire. any: common to all connected ports. A branch side
-  // therefore never leaks past a merge with the other side.
-  void compute_guarantees() {
-    size_t n = res_->nodes.size();
-    using Set = std::vector<char>;
-    auto in = res_->incoming;
-    for (size_t i = 0; i < n; ++i) {
-      for (auto& [port, froms] : in[i]) std::erase(froms, i);
-      std::erase_if(in[i],
-                    [](const auto& port) { return port.second.empty(); });
-    }
-    // Only nodes that can ever fire take part; others guarantee nothing.
-    std::vector<char> reach(n, 0);
-    std::vector<size_t> stack;
-    for (size_t i = 0; i < n; ++i)
-      if (!res_->nodes[i].is_virtual && in[i].empty()) {
-        reach[i] = 1;
-        stack.push_back(i);
-      }
-    while (!stack.empty()) {
-      size_t i = stack.back();
-      stack.pop_back();
-      for (const auto to : res_->outgoing[i])
-        if (!reach[to]) {
-          reach[to] = 1;
-          stack.push_back(to);
-        }
-    }
-    std::vector<Set> g(n, Set(n, 1));
-    for (size_t i = 0; i < n; ++i)
-      if (!reach[i] || in[i].empty()) g[i].assign(n, 0);
-    for (bool changed = true; changed;) {
-      changed = false;
-      for (size_t i = 0; i < n; ++i) {
-        if (!reach[i] || in[i].empty()) continue;
-        const Node& node = res_->nodes[i];
-        std::vector<Set> ports;
-        std::vector<bool> required;
-        for (const auto& [port, froms] : in[i]) {
-          Set s(n, 1);
-          bool any_from = false;
-          for (size_t u : froms) {
-            if (!reach[u]) continue;
-            any_from = true;
-            for (size_t k = 0; k < n; ++k) s[k] &= g[u][k] || k == u;
-          }
-          if (!any_from) continue;
-          const auto* p = node.input(port);
-          ports.push_back(std::move(s));
-          required.push_back(p && !p->optional);
-        }
-        Set r(n, 0);
-        bool any_required = false;
-        for (bool b : required) any_required |= b;
-        if (node.settings.any_mode || !any_required) {
-          r.assign(n, ports.empty() ? 0 : 1);
-          for (const auto& s : ports)
-            for (size_t k = 0; k < n; ++k) r[k] &= s[k];
-        } else {
-          for (size_t j = 0; j < ports.size(); ++j)
-            if (required[j])
-              for (size_t k = 0; k < n; ++k) r[k] |= ports[j][k];
-        }
-        r[i] = 0;
-        if (r != g[i]) {
-          g[i] = std::move(r);
-          changed = true;
-        }
-      }
-    }
-    res_->guaranteed.assign(n, {});
-    for (size_t i = 0; i < n; ++i)
-      for (size_t k = 0; k < n; ++k)
-        if (g[i][k] && !res_->nodes[k].is_virtual)
-          res_->guaranteed[i].push_back(k);
-  }
-
-  // Direct inputs.<port> names are resolved from the same edges and
-  // guarantees used by the evaluator, including when Nix accesses an alias.
-  auto trace_nix_producers(size_t source, std::set<size_t>& visiting,
-                           std::set<size_t>& result) const -> void {
-    const auto kind = res_->nodes[source].kind;
-    if (kind != CardType::Collect && kind != CardType::Branch &&
-        kind != CardType::Fork && kind != CardType::Merge) {
-      result.insert(source);
-      return;
-    }
-    if (!visiting.insert(source).second) {
-      result.insert(source);
-      return;
-    }
-    bool found = false;
-    for (const auto& edge : res_->edges) {
-      if (edge.to != source) continue;
-      if (kind == CardType::Branch && edge.to_port != "value") continue;
-      found = true;
-      trace_nix_producers(edge.from, visiting, result);
-    }
-    if (!found) result.insert(source);
-    visiting.erase(source);
-  }
-
-  auto check_nix_references() -> void {
     for (size_t i = 0; i < res_->nodes.size(); ++i) {
       auto& node = res_->nodes[i];
-      if (node.kind != CardType::Code) continue;
-      const auto file = node.def_dir + "default.nix";
-      const auto allowed = res_->nix_upstream(i);
-      std::map<std::string, std::set<size_t>> producers;
-      for (const auto& edge : res_->edges) {
-        if (edge.to != i) continue;
-        std::set<size_t> visiting;
-        trace_nix_producers(edge.from, visiting, producers[edge.to_port]);
+      if (node.kind != CardType::Merge) continue;
+      auto& output = node.outputs.front();
+      const auto candidates = res_->merge_candidates(i, output.name);
+      if (candidates.size() == 1) output.type = candidates.begin()->second;
+      const auto short_name = [](const std::string& full) {
+        return full.substr(full.find_last_of('.') + 1);
+      };
+      std::map<std::string, size_t> name_counts;
+      for (const auto& [_, type] : candidates)
+        ++name_counts[short_name(type->root_type)];
+      for (const auto& [_, type] : candidates) {
+        auto name = short_name(type->root_type);
+        output.merge_member_types.push_back(
+            name_counts.at(name) == 1 ? std::move(name) : type->root_type);
       }
-      for (const auto& [name, from] : producers) {
-        if (name == "tsugumi" || name == "sources") {
-          node.diags.push_back(
-              diag(node.path, "nix_input_reserved",
-                   "input " + name + " is reserved by the Nix SDK"));
+      std::ranges::sort(output.merge_member_types);
+    }
+    for (const auto& edge : res_->edges) {
+      auto& target = res_->nodes[edge.to];
+      const auto& source = res_->nodes[edge.from];
+      const auto* from = source.kind == CardType::Draft
+                             ? &draft
+                             : source.output(edge.from_port);
+      auto* to = in_port(target, edge.to_port);
+      if (!from || !to) continue;
+      to->type = from->type;
+      to->merge_member_types = from->merge_member_types;
+    }
+  }
+
+  auto resolve_boundary_types() -> void {
+    for (auto& node : res_->nodes) {
+      if (!node.is_virtual) continue;
+      auto inherit = [&](auto& ports, bool output) {
+        for (auto& port : ports) {
+          const auto end = res_->endpoint(node.path, port.name, output);
+          if (!end) continue;
+          const auto& leaf = res_->nodes[end->first];
+          const auto* resolved =
+              output ? leaf.output(end->second) : leaf.input(end->second);
+          if (!resolved) continue;
+          port.type = resolved->type;
+          port.merge_member_types = resolved->merge_member_types;
+        }
+      };
+      inherit(node.inputs, false);
+      inherit(node.outputs, true);
+    }
+  }
+
+  auto resolve_nix_exports() -> void {
+    const size_t count = res_->nodes.size();
+    std::vector<std::vector<size_t>> outgoing(count);
+    for (const auto& edge : res_->edges)
+      outgoing[edge.from].push_back(edge.to);
+    std::vector<bool> visited(count);
+    std::vector<size_t> order;
+    const auto finish = [&](auto&& self, size_t node) -> void {
+      if (visited[node]) return;
+      visited[node] = true;
+      for (auto next : outgoing[node]) self(self, next);
+      order.push_back(node);
+    };
+    for (size_t node = 0; node < count; ++node) finish(finish, node);
+
+    // Edges within a strongly connected component are feedback edges.
+    std::vector<size_t> component(count, count);
+    const auto assign = [&](auto&& self, size_t node, size_t group) -> void {
+      if (component[node] != count) return;
+      component[node] = group;
+      for (const auto& [_, source] : res_->incoming[node])
+        self(self, source, group);
+    };
+    for (auto node : order | std::views::reverse) assign(assign, node, node);
+
+    const auto normal = [](CardType kind) {
+      // TODO(open): exports across Merge, Collect, and Draft Cards.
+      return kind == CardType::Code || kind == CardType::Input ||
+             kind == CardType::Trigger;
+    };
+    for (auto index : order | std::views::reverse) {
+      auto& node = res_->nodes[index];
+      if (!normal(node.kind)) continue;
+      std::map<std::string, CardPath> exports;
+      for (const auto& [_, source] : res_->incoming[index]) {
+        const auto& producer = res_->nodes[source];
+        if (!normal(producer.kind)) continue;
+        // TODO(open): exports across feedback wires.
+        if (component[index] == component[source]) continue;
+        // TODO(open): exports across nested and external Card boundaries.
+        if (producer.project_dir != node.project_dir ||
+            producer.path.size() != node.path.size() ||
+            !std::equal(producer.path.begin(), producer.path.end() - 1,
+                        node.path.begin()))
           continue;
-        }
-        if (from.size() != 1) continue;
-        const size_t producer = *from.begin();
-        if (std::ranges::find(allowed, producer) != allowed.end())
-          node.nix_inputs.emplace(name, producer);
+        exports.emplace(producer.path.back(), producer.path);
+        for (const auto& ref : producer.nix_references)
+          exports.emplace(ref.name, ref.target);
       }
-      if (!doc_.sources.count(file)) continue;
-      auto text = read_(file);
-      if (!text) continue;
-      std::set<std::string> seen;
-      for (const auto& name : nix_references(*text)) {
-        if (!seen.insert(name).second) continue;
-        const auto from = producers.find(name);
-        const auto alias = node.nix_inputs.find(name);
-        if (alias != node.nix_inputs.end()) {
-          node.nix_references.push_back(
-              {res_->nodes[alias->second].path, name, true});
-        } else if (from == producers.end()) {
-          node.nix_references.push_back({{}, name, false});
-          node.diags.push_back(diag(node.path, "nix_reference_unknown",
-                                    "default.nix references inputs." + name +
-                                        " without a connected input",
-                                    true, file));
-        } else if (from->second.size() != 1) {
-          node.nix_references.push_back({{}, name, false});
-          node.diags.push_back(diag(
-              node.path, "nix_reference_ambiguous",
-              "inputs." + name + " has more than one producer", true, file));
-        } else {
-          const auto& target = res_->nodes[*from->second.begin()].path;
-          node.nix_references.push_back({target, name, false});
-          node.diags.push_back(diag(
-              node.path, "nix_reference_not_guaranteed",
-              "inputs." + name +
-                  " requires a Code Card that always runs before this Card",
-              true, file));
-        }
-      }
+      for (auto& [id, target] : exports)
+        node.nix_references.push_back({std::move(target), id});
     }
   }
 
   const Document& doc_;
   const SourceReader& read_;
+  const ParamsReader& read_params_;
   std::deque<DefinitionDoc> external_defs_;
-  std::deque<schema::Project> projects_;
+  std::deque<std::string> projects_;  // nested tsugumi.json buffers
   std::shared_ptr<Resolution> res_;
   std::vector<RawEdge> raw_;
-  std::set<std::string> derive_failed_;
-  std::set<std::pair<size_t, std::string>> provisional_inputs_;
-  std::set<std::pair<size_t, std::string>> provisional_outputs_;
 };
 
 }  // namespace
 
-std::vector<size_t> Resolution::nix_upstream(size_t node) const {
-  std::vector<size_t> out;
-  if (node >= guaranteed.size()) return out;
-  for (size_t u : guaranteed[node]) {
-    if (nodes[u].kind != CardType::Code) continue;
-    const auto& gu = guaranteed[u];
-    if (std::find(gu.begin(), gu.end(), node) != gu.end()) continue;
-    out.push_back(u);
-  }
-  return out;
-}
-
 std::shared_ptr<const Resolution> resolve(const Document& doc,
-                                          const SourceReader& read) {
-  return Builder(doc, read).run();
+                                          const SourceReader& read,
+                                          const ParamsReader& read_params) {
+  return Builder(doc, read, read_params).run();
 }
 
 }  // namespace tsugumi

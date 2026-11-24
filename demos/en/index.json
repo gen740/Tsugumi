@@ -496,6 +496,17 @@
       "field": "Programming and visualization"
     },
     {
+      "id": "point-cloud",
+      "path": "point-cloud",
+      "title": "Interactive point cloud",
+      "description": "Orbit and zoom around 400,000 points in a torus knot drawn with WebGPU.",
+      "tags": [
+        "C++",
+        "WebGPU"
+      ],
+      "field": "Programming and visualization"
+    },
+    {
       "id": "marimo",
       "path": "marimo",
       "title": "marimo notebook → typed result",

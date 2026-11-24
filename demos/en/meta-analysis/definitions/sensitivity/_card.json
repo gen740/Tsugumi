@@ -1,26 +1,8 @@
 {
   "type": "code",
-  "language": "r",
   "inputs": [
     {
       "name": "trials"
-    }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "sensitivity",
-  "params": [
-    {
-      "name": "estimators",
-      "type": "string[]",
-      "data": [
-        "DL",
-        "HE",
-        "HS",
-        "SJ",
-        "ML",
-        "REML",
-        "PM"
-      ]
     }
   ]
 }

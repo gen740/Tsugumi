@@ -1,0 +1,5 @@
+---
+description: Kaplan–Meier と log-rank 検定
+---
+
+group（sex / ecog / age）で分けた Kaplan–Meier 曲線を描き、中央値と log-rank 検定を添える。曲線の値はファイルに残す。

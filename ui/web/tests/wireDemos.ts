@@ -3,12 +3,15 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { CardGeometry, CardNodeData, Pt, Rect, snapToGrid, union, WireRouter } from '../src/model/canvasKit'
+import { ByteBuffer } from 'flatbuffers'
+import { Layout as LayoutBuffer } from '../shared/gen/tsugumi/layout/layout'
+import { parseReadme } from '../src/model/documents'
 import type { FlowDirection } from '../src/model/prefs'
 
 const root = process.argv[2]
 type Wire = { a: Pt; b: Pt; name: string }
 type Scene = { name: string; flow: FlowDirection; obstacles: Rect[]; wires: Wire[] }
-type Layout = { flow?: string; cards?: Record<string, Partial<Pt> & { collapsed?: boolean }>; displays?: Record<string, Partial<Rect> & { hidden?: boolean }>; boundary?: Record<string, Pt> }
+type Layout = { flow?: string; cards?: Record<string, Partial<Pt> & { collapsed?: boolean }>; boundary?: Record<string, Pt> }
 
 const read = (file: string) => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : undefined)
 
@@ -16,31 +19,30 @@ const read = (file: string) => (fs.existsSync(file) ? JSON.parse(fs.readFileSync
 function node(dir: string, id: string): CardNodeData {
   const base = path.join(dir, 'definitions', id)
   const def = read(path.join(base, '_card.json'))
-  const meta = read(path.join(base, '_meta.json'))
+  const readme = path.join(base, 'README.md')
+  const meta = parseReadme(fs.existsSync(readme) ? fs.readFileSync(readme, 'utf8') : '')
   const named = (list?: { name?: string }[]) => (list ?? []).flatMap((p) => (p.name ? [{ name: p.name }] : []))
   const fbs = path.join(base, '_outputs.fbs')
   const typed = fs.existsSync(fbs)
     ? [...(/table Outputs\s*\{([^}]*)\}/.exec(fs.readFileSync(fbs, 'utf8').replace(/\/\*.*?\*\//gs, ''))?.[1] ?? '').matchAll(/(\w+)\s*:/g)].map((m) => ({ name: m[1] }))
     : []
-  const blank = { summary: def?.description || meta?.description || undefined, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, hasDisplay: false, title: id }
+  const blank = { summary: meta?.description || undefined, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, title: id }
   if (def?.type === 'subgraph') {
     const b = read(path.join(dir, 'externals', def.external, 'tsugumi.json'))?.boundary ?? {}
-    return { ...blank, kind: 'subgraph', inputs: Object.keys(b.inputs ?? {}).map((name) => ({ name })), outputs: Object.keys(b.outputs ?? {}).map((name) => ({ name })) }
+    return { ...blank, kind: 'subgraph', inputs: named(b.inputs), outputs: named(b.outputs) }
   }
   const declared = named(def?.inputs)
   switch (def?.type) {
     case 'trigger': return { ...blank, kind: 'trigger', inputs: [], outputs: [{ name: 'out' }] }
-    case 'input': {
-      const params = (def.params ?? []).filter((p: { type: string }) => ['int64', 'uint64', 'double', 'bool', 'string'].includes(p.type)).map((p: { name: string; type: string }) => ({ ...p, value: '' }))
-      return { ...blank, kind: 'input', params, inputs: [{ name: 'start' }], outputs: typed }
-    }
-    case 'branch': return { ...blank, kind: 'branch', inputs: [{ name: 'value' }, { name: 'condition' }], outputs: [{ name: 'a' }, { name: 'b' }] }
+    // This fixture tests port routing without an evaluator. Parameter rows
+    // from the live resolution are covered in the Input Card behavior tests.
+    case 'input': return { ...blank, kind: 'input', inputs: [{ name: 'start' }], outputs: typed }
     case 'merge': return { ...blank, kind: 'merge', inputs: declared, outputs: [{ name: 'out' }] }
     case 'collect': return { ...blank, kind: 'collect', inputs: [{ name: 'in' }], outputs: [{ name: 'out' }] }
     case 'code': return { ...blank, kind: 'code', inputs: declared, outputs: typed }
     case 'draft': {
       const untitled = /^draft(-[0-9]+)?$/.test(id)
-      return { ...blank, kind: 'draft', summary: meta?.content || blank.summary, untitled, inputs: [], outputs: [] }
+      return { ...blank, kind: 'draft', summary: meta.body || blank.summary, untitled, inputs: [], outputs: [] }
     }
     default: throw new Error(`type ${def?.type}`)
   }
@@ -51,7 +53,18 @@ function node(dir: string, id: string): CardNodeData {
  *  nearest line and sized by it, frames where they were saved. */
 function scene(name: string, dir: string, flow: FlowDirection | undefined, moved: Record<string, Pt> = {}, grid?: number): { scene: Scene; flow: FlowDirection } {
   const project = read(path.join(dir, 'tsugumi.json'))
-  const layout: Layout = read(path.join(dir, 'layout.json')) ?? {}
+  const layoutFile = path.join(dir, 'layout.bin')
+  const savedLayout = fs.existsSync(layoutFile)
+    ? LayoutBuffer.getRootAsLayout(new ByteBuffer(fs.readFileSync(layoutFile))).unpack()
+    : undefined
+  const layout: Layout = {
+    flow: typeof savedLayout?.flow === 'string' ? savedLayout.flow : undefined,
+    cards: Object.fromEntries((savedLayout?.cards ?? []).map(c => [String(c.key), { x: c.x ?? 0, y: c.y ?? 0, collapsed: c.collapsed ?? false }])),
+    boundary: Object.fromEntries((['inputs', 'outputs'] as const).flatMap(side => {
+      const p = savedLayout?.boundary?.[side]
+      return p?.x != null && p.y != null ? [[side, { x: p.x, y: p.y }]] : []
+    })),
+  }
   const ids: string[] = project.canvas.cards.map((c: { id: string }) => c.id)
   const saved = (id: string): Pt => moved[id] ?? { x: layout.cards?.[id]?.x ?? 0, y: layout.cards?.[id]?.y ?? 0 }
   const place = (id: string): Pt => {
@@ -73,8 +86,7 @@ function scene(name: string, dir: string, flow: FlowDirection | undefined, moved
   }
   const datas = new Map(ids.map((id) => {
     const d = node(dir, id)
-    const frame = layout.displays?.[id]
-    return [id, { ...d, collapsed: layout.cards?.[id]?.collapsed ?? false, hasDisplay: !!frame && frame.hidden !== true, portGrid: grid }]
+    return [id, { ...d, collapsed: layout.cards?.[id]?.collapsed ?? false, portGrid: grid }]
   }))
   const geos = new Map(ids.map((id) => [id, new CardGeometry(datas.get(id)!, flow!)]))
   const cardRect = (id: string): Rect => ({ ...place(id), ...geos.get(id)!.size })
@@ -83,17 +95,10 @@ function scene(name: string, dir: string, flow: FlowDirection | undefined, moved
     return { x: o.x + q.x, y: o.y + q.y }
   }
   const obstacles = ids.map(cardRect)
-  for (const id of ids) {
-    const f = layout.displays?.[id]
-    if (!f || f.hidden === true) continue
-    const o = place(id), g = geos.get(id)!
-    const width = f.width ?? 320, height = f.height ?? 170
-    obstacles.push(flow === 'topToBottom'
-      ? { x: f.x ?? o.x + g.size.width + 40, y: f.y ?? o.y, width, height }
-      : { x: f.x ?? o.x, y: f.y ?? o.y + g.height + 30, width, height })
-  }
   const wires: Wire[] = conns.map((c) => ({ a: port(c.from.card, c.from.port, true), b: port(c.to.card, c.to.port, false), name: `${c.from.card}.${c.from.port}>${c.to.card}.${c.to.port}` }))
-  const bi = Object.entries<{ card: string; port: string }>(project.boundary?.inputs ?? {}), bo = Object.entries<{ card: string; port: string }>(project.boundary?.outputs ?? {})
+  type End = { name: string; card: string; port: string }
+  const ends = (list: End[] = []) => list.map(end => [end.name, end] as const)
+  const bi = ends(project.boundary?.inputs), bo = ends(project.boundary?.outputs)
   if (bi.length || bo.length) {
     const box = ids.map(cardRect).reduce<Rect | null>((u, r) => (u ? union(u, r) : r), null) ?? { x: 0, y: 0, width: 240, height: 120 }
     const width = Math.max(box.width, Math.max(bi.length, bo.length) * 110 + 40)
@@ -120,8 +125,7 @@ function scopes(name: string, dir: string, grid?: number): Scene[] {
   return out
 }
 
-/** Cards the path enters and leaves again. A branch's port sits inside its box:
- *  a stay that starts or ends the path is the wire reaching its port. */
+/** Counts Cards the path enters and leaves. The wire may start or end at a port inside its Card. */
 function crossed(pts: Pt[], obstacles: Rect[]): number {
   const dense: Pt[] = [pts[0]]
   for (let i = 1; i < pts.length; i++) {

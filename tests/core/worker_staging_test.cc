@@ -13,6 +13,7 @@
 #include <system_error>
 #include <thread>
 
+#include "tsugumi/util/fs.hh"
 #include "tsugumi/util/sparse.hh"
 #include "tsugumi/workerd/staging.hh"
 
@@ -144,8 +145,8 @@ auto clean_unreadable_directories(const stdfs::path& root) -> void {
 // observer that must see every logical byte.
 auto copy_sparse_outputs(const stdfs::path& root) -> void {
   const auto staging = root / "sparse";
-  stdfs::create_directory(staging);
-  const auto source = staging / "large";
+  stdfs::create_directories(staging / "artifact");
+  const auto source = staging / "artifact/large";
   constexpr off_t size = 4 * 1024 * 1024;
   const int file = ::open(source.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
   expect(file >= 0, "open sparse source");
@@ -156,7 +157,8 @@ auto copy_sparse_outputs(const stdfs::path& root) -> void {
   expect(directory >= 0, "open sparse staging");
   std::atomic<bool> cancel = false;
   const auto output = root / "sparse-output";
-  tsugumi::fs::copy_staging_output(directory, "large", output, false, cancel);
+  tsugumi::fs::OutputBudget budget;
+  tsugumi::fs::copy_staging_artifact(directory, "artifact", output, cancel, budget);
   ::close(directory);
   const auto check = [&](const stdfs::path& path) {
     expect(stdfs::file_size(path) == static_cast<uint64_t>(size),
@@ -178,7 +180,7 @@ auto copy_sparse_outputs(const stdfs::path& root) -> void {
     }
     ::close(fd);
   };
-  check(output);
+  check(output / "large");
   // Input transfers additionally consume every logical byte for hashing.
   const auto input = root / "sparse-input";
   const int destination =
@@ -197,18 +199,18 @@ auto copy_sparse_outputs(const stdfs::path& root) -> void {
   // A filesystem may report all allocated zero blocks as data. The block
   // detector must avoid allocating them even when extent seeking skips none.
   {
-    std::ofstream dense(staging / "allocated-zeros", std::ios::binary);
+    std::ofstream dense(staging / "artifact/allocated-zeros", std::ios::binary);
     const std::string zeros(65536, '\0');
     for (int i = 0; i < 64; ++i) dense.write(zeros.data(), zeros.size());
   }
   const int zeros_root = ::open(staging.c_str(), O_RDONLY | O_DIRECTORY);
   expect(zeros_root >= 0, "open zero-block staging");
   const auto zeros_copy = root / "zero-block-copy";
-  tsugumi::fs::copy_staging_output(zeros_root, "allocated-zeros", zeros_copy,
-                                   false, cancel);
+  tsugumi::fs::copy_staging_artifact(zeros_root, "artifact", zeros_copy,
+                                     cancel, budget);
   ::close(zeros_root);
   struct stat zeros_status{};
-  expect(::stat(zeros_copy.c_str(), &zeros_status) == 0 &&
+  expect(::stat((zeros_copy / "allocated-zeros").c_str(), &zeros_status) == 0 &&
              zeros_status.st_size == 4 * 1024 * 1024,
          "zero-block copy size");
   expect(zeros_status.st_blocks * 512 < 1024 * 1024,
@@ -218,8 +220,8 @@ auto copy_sparse_outputs(const stdfs::path& root) -> void {
   const int fd = ::open(staging.c_str(), O_RDONLY | O_DIRECTORY);
   bool cancelled = false;
   try {
-    tsugumi::fs::copy_staging_output(fd, "large", root / "sparse-cancelled",
-                                     false, cancel);
+    tsugumi::fs::copy_staging_artifact(fd, "artifact", root / "sparse-cancelled",
+                                       cancel, budget);
   } catch (const std::runtime_error&) {
     cancelled = true;
   }
@@ -258,15 +260,6 @@ auto copy_outputs(const stdfs::path& root) -> void {
   stdfs::create_directories(report / "assets");
   std::ofstream(report / "assets/data") << "inside";
   std::ofstream(staging / "secret") << "outside-output";
-  stdfs::create_symlink("assets/data", report / "file-link");
-  stdfs::create_directory_symlink("assets", report / "directory-link");
-  stdfs::create_symlink("file-link", report / "chain");
-  stdfs::create_symlink("../file-link", report / "assets/up-link");
-  // Resolution must use the physical parent of an aliased directory.
-  stdfs::create_directories(report / "nested/inner");
-  std::ofstream(report / "nested/data") << "physical-parent";
-  stdfs::create_symlink("../data", report / "nested/inner/up");
-  stdfs::create_directory_symlink("nested/inner", report / "alias");
   // These are not declared outputs and must never be walked.
   stdfs::create_symlink("/etc/passwd", staging / "unused-link");
   expect(::mkfifo((staging / "unused-fifo").c_str(), 0600) == 0,
@@ -275,25 +268,28 @@ auto copy_outputs(const stdfs::path& root) -> void {
   expect(fd >= 0, "open output staging");
   const std::atomic<bool> cancel = false;
   const auto destination = root / "saved-report";
-  tsugumi::fs::copy_staging_output(fd, "report", destination, true, cancel);
-  for (const auto& name :
-       {"file-link", "directory-link/data", "chain", "assets/up-link"})
-    expect(read_file(destination / name) == "inside",
-           "internal link lost its contents");
-  expect(read_file(destination / "alias/up") == "physical-parent",
-         "resolved from logical rather than physical parent");
-  for (const auto& entry : stdfs::recursive_directory_iterator(destination))
-    expect(!entry.is_symlink(), "copy retained a source symlink");
-  tsugumi::fs::copy_staging_output(fd, "report/assets/data",
-                                   destination / "direct", false, cancel);
-  expect(read_file(destination / "direct") == "inside", "declared File copy");
+  tsugumi::fs::OutputBudget budget;
+  tsugumi::fs::copy_staging_artifact(fd, "report", destination, cancel, budget);
+  expect(read_file(destination / "assets/data") == "inside", "directory copy");
+  std::ofstream(report / "assets/data") << "changed";
+  expect(read_file(destination / "assets/data") == "inside",
+         "snapshot changed");
+  std::ofstream(report / "assets/data") << "inside";
+  for (const auto* name : {"secret", "report/assets"}) {
+    bool rejected = false;
+    try {
+      tsugumi::fs::copy_staging_artifact(fd, name, root / "rejected", cancel, budget);
+    } catch (const std::exception&) {
+      rejected = true;
+    }
+    expect(rejected, "invalid artifact root was accepted");
+  }
 
   const auto bad = report / "bad";
   const auto refuse = [&](const std::string& kind) {
     bool rejected = false;
     try {
-      tsugumi::fs::copy_staging_output(fd, "report", root / "rejected", true,
-                                       cancel);
+      tsugumi::fs::copy_staging_artifact(fd, "report", root / "rejected", cancel, budget);
     } catch (const std::exception& error) {
       const std::string message = error.what();
       expect(message.find("report/bad") != std::string::npos,
@@ -309,23 +305,10 @@ auto copy_outputs(const stdfs::path& root) -> void {
   refuse("symbolic link");
   stdfs::create_symlink(staging / "secret", bad);
   refuse("symbolic link");
-  // An innocent-looking chain must not allow an escape through a later link.
-  stdfs::create_symlink("../../secret", report / "assets/escape");
-  stdfs::create_symlink("assets/escape", bad);
-  try {
-    tsugumi::fs::copy_staging_output(fd, "report", root / "chain-rejected",
-                                     true, cancel);
-    throw std::logic_error("accepted escaping chain");
-  } catch (const std::runtime_error& error) {
-    expect(std::string(error.what()).find("symbolic link") != std::string::npos,
-           "chain rejection kind");
-  }
-  stdfs::remove(bad);
-  stdfs::remove(report / "assets/escape");
-  stdfs::create_symlink("bad", bad);
+  stdfs::create_symlink("assets/data", bad);
   refuse("symbolic link");
-  stdfs::create_directory_symlink(".", bad);
-  refuse("directory symbolic link");
+  stdfs::create_directory_symlink("assets", bad);
+  refuse("symbolic link");
   expect(::mkfifo(bad.c_str(), 0600) == 0, "mkfifo output");
   refuse("FIFO");
   ::close(fd);
@@ -366,8 +349,8 @@ auto copy_link_race(const stdfs::path& root) -> void {
     for (int i = 0; i < 100; ++i) {
       const auto destination = root / ("race-copy-" + std::to_string(i));
       try {
-        tsugumi::fs::copy_staging_output(fd, "report", destination, true,
-                                         cancel);
+        tsugumi::fs::OutputBudget budget;
+        tsugumi::fs::copy_staging_artifact(fd, "report", destination, cancel, budget);
       } catch (const std::runtime_error& error) {
         expect(
             std::string(error.what()).find("report/link") != std::string::npos,
@@ -385,12 +368,38 @@ auto copy_link_race(const stdfs::path& root) -> void {
   expect(read_file(secret) == "host-secret", "race changed host file");
 }
 
+auto swap_linked_inputs(const stdfs::path& root) -> void {
+  const auto original = root / "input-original";
+  const auto replacement = root / "input-replacement";
+  const auto staged = root / "input-staged";
+  std::ofstream(original) << "first";
+  std::ofstream(replacement) << "second";
+  const auto size =
+      tsugumi::fs::link_beneath(root, original.filename(), staged);
+#ifdef __linux__
+  expect(size == 5 && stdfs::equivalent(original, staged),
+         "input was not linked");
+#else
+  expect(!size, "input was linked without Linux");
+  tsugumi::fs::copy_beneath(root, original.filename(), staged, {});
+  expect(!stdfs::equivalent(original, staged), "input was not copied");
+#endif
+  std::ifstream retained(staged);
+  stdfs::remove(staged);
+  tsugumi::fs::copy_beneath(root, replacement.filename(), staged, {});
+  std::string old_value;
+  retained >> old_value;
+  expect(old_value == "first" && tsugumi::fs::read_file(staged) == "second",
+         "input replacement changed an open file");
+}
+
 }  // namespace
 
 auto main() -> int {
   try {
     Scratch scratch;
     clean_card_entries(scratch.path);
+    swap_linked_inputs(scratch.path);
     clean_unreadable_directories(scratch.path);
     copy_sparse_outputs(scratch.path);
     failure_details(scratch.path);

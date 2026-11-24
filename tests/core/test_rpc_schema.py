@@ -5,6 +5,7 @@ import json
 import pytest
 
 from tsugumi_client import RpcFailure, change, new_id, text
+from harness.document import layout_bytes
 
 
 def test_invalid_card_documents_are_rejected_without_a_save(client):
@@ -12,7 +13,8 @@ def test_invalid_card_documents_are_rejected_without_a_save(client):
     before = client.call("ProjectInspectRequest")
     invalid_documents = (
         '{"type":"code","sandbox":true,"sandbox":false}',
-        '{"type":"code","params":[{"name":"a","data":{"k":1,"k":2}}]}',
+        '{"type":"code","params":{"k":1}}',
+        '{"type":"input","sweeps":{"k":[1]}}',
         b'{"type":"code","symbol":"\xff"}',
         b'{"type":"code","symbol":"\xc3"}',
         '{"type":"code","timeoutSeconds":NaN}',
@@ -21,10 +23,12 @@ def test_invalid_card_documents_are_rejected_without_a_save(client):
         '{"type":"code","maxRuns":-1}',
         '{"type":"code","maxRuns":1.5}',
         '{"type":"code","maxRuns":18446744073709551616}',
-        '{"type":"code","sandbox":true} trailing',
-        '{"type":"code","sandbox":null}',
+        '{"type":"code","sandbox":{}} trailing',
+        '{"type":"code","sandbox":false}',
         '{"type":"code","unknownCardField":true}',
-        '{"language":"bash"}',
+        '{"type":"code","inputs":[{"name":"old","optional":true}]}',
+        '{"type":"code","trigger":"eachInput"}',
+        '{}',
         '{"type":"none"}',
     )
     for raw in invalid_documents:
@@ -36,42 +40,43 @@ def test_invalid_card_documents_are_rejected_without_a_save(client):
     assert after.rev == before.rev
     assert all(text(definition.id) != "work" for definition in after.definitions)
 
-    # A valid document on the same connection preserves spelling and nulls.
+    # A valid document keeps exact integer values and writes canonical text.
     raw = ('{"type":"draft","symbol":"é","timeoutSeconds":null,'
-           '"maxRuns":18446744073709551615,'
-           '"params":[{"name":"decimal","data":1.50e+2},'
-           '{"name":"minimum","data":-9223372036854775808}]}')
+           '"maxRuns":18446744073709551615}')
     client.call("ProjectSaveRequest", baseRev=before.rev, opId=new_id(), origin="ui:test",
                 changes=[change("PutDefinition", id="work", cardJson=raw)])
     after = client.call("ProjectInspectRequest")
     saved = next(definition for definition in after.definitions if text(definition.id) == "work")
-    assert text(saved.cardJson) == raw
+    parsed = json.loads(text(saved.cardJson))
+    assert parsed["maxRuns"] == (1 << 64) - 1
+    assert text(saved.cardJson).endswith("\n")
 
 
 
 
 def test_core_stores_opaque_layout_unchanged(client):
-    """The core carries bounded JSON objects without interpreting presentation fields."""
+    """The core verifies the layout buffer and preserves the exact bytes."""
     before = client.call("ProjectInspectRequest")
-    raw = r'{"extension":{"escaped\u006bey":"日本語","x":1e999},"boundary":{},"boundaries":{}}'
+    raw = layout_bytes({"cards": {"work": {"x": 1.25, "y": 2.5}}})
     saved = client.call("ProjectSaveRequest", baseRev=before.rev, opId=new_id(), origin="ui:test",
-                        changes=[change("SetLayout", json=raw)])
-    assert text(saved.delta.layoutJson) == raw
+                        changes=[change("SetLayout", layout=raw)])
+    assert bytes(saved.delta.layout) == raw
     after = client.call("ProjectInspectRequest")
     assert after.rev == before.rev + 1
-    assert text(after.layoutJson) == raw
+    assert bytes(after.layout) == raw
 
 
 def test_card_settings_round_trip(client):
     """Execution settings survive a save and inspect without a filesystem switch."""
     settings = {
-        "type": "code", "language": "bash", "inputs": [{"name": "data", "optional": True}],
-        "params": [{"name": "limit", "type": "double", "data": 2.5}],
-        "trigger": "eachInput", "maxRuns": 3,
+        "type": "code", "inputs": [{"name": "data"}],
+        "maxRuns": 3,
         "timeoutSeconds": 120, "buildTimeoutSeconds": 240,
-        "recordIO": True, "retainArtifact": True, "artifactOutput": "report",
-        "sandbox": True, "network": False, "reuseWorker": False,
-        "executionService": "local", "hostFolders": [],
+        "recordIO": True,
+        "sandbox": {"pid": False, "ipc": True, "identity": False, "filesystem": True,
+                    "limits": {"cpu": 0.5}},
+        "grants": {"network": False, "gui": False, "hostPaths": []},
+        "reuseWorker": False, "executionService": "local",
     }
     before = client.call("ProjectInspectRequest")
     saved = client.call("ProjectSaveRequest", baseRev=before.rev, opId=new_id(), origin="ui:test",

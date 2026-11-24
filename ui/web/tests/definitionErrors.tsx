@@ -18,26 +18,26 @@ const { CardNodeView, idleText } = await import('../src/ui/cardNode')
 const { miniMapLayout } = await import('../src/ui/versions')
 const { parse } = await import('../shared/json')
 
-const missing = 'definitions/old/_card.json: "type" is required (one of code, draft, trigger, input, branch, fork, merge, collect, subgraph)'
+const missing = 'definitions/old/_card.json: "type" is required (one of code, draft, trigger, input, merge, collect, subgraph)'
 const diagnostic = (id: string, message: string) => Object.assign(new DT.DiagnosticT(), {
   severity: DT.Severity.error, code: 'invalid_document', message, card: Object.assign(new DT.CardPathT(), { segments: [id] }),
   path: `definitions/${id}/_card.json`,
 })
 const resolved = (id: string, diagnostics: DT.DiagnosticT[] = []) =>
-  ({ card: { segments: [id] }, inputs: [], outputs: [{ name: 'out', kind: 0 }], diagnostics, nixReferences: [] }) as unknown as R.ResolvedCardT
+  ({ card: { segments: [id] }, inputs: [], outputs: [Object.assign(new DT.PortT(), { name: 'out' })], diagnostics, nixReferences: [] }) as unknown as R.ResolvedCardT
 const definition = (id: string, card: string) => Object.assign(new R.DefinitionT(), { id, cardJson: card })
 
 const s = new ProjectSession('/p', 'k', 'p')
 const inner = s as unknown as { apply(snapshot: R.ProjectSnapshotT, reset: boolean): void }
 inner.apply(Object.assign(new R.ProjectSnapshotT(), {
-  rev: 1n, layoutJson: '{}',
+  rev: 1n, layout: [],
   projectJson: '{"name":"t","canvas":{"cards":[{"id":"old"},{"id":"future"},{"id":"loose"},{"id":"plan"},{"id":"step"}],"connections":[]}}',
   definitions: [
-    definition('old', '{"language":"python","inputs":[{"name":"in"}]}'),
+    definition('old', '{"inputs":[{"name":"in"}]}'),
     definition('future', '{"type":"something new","inputs":[{"name":"in"}]}'),
     definition('loose', '{"type":"code","external":"lib"}'),
     definition('plan', '{"type":"draft"}'),
-    definition('step', '{"type":"code","language":"python"}'),
+    definition('step', '{"type":"code"}'),
   ],
   resolution: [resolved('old', [diagnostic('old', missing)]), resolved('future'), resolved('loose'), resolved('plan'), resolved('step')],
 }), true)

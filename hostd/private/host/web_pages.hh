@@ -21,7 +21,7 @@ namespace tsugumi::host {
 struct WebHome {
   std::filesystem::path tsugumid;
   std::filesystem::path worker;
-  std::filesystem::path sdk;
+  std::filesystem::path nix_dir;
   std::filesystem::path demos;
   bool vm = false;
 };

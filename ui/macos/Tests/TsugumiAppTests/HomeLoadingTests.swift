@@ -29,10 +29,10 @@ import Testing
   #expect(model.homeLoaded && model.recents.first?.name == "Project")
   #expect(!model.demosLoaded)
   replies.answer("HostDemoListRequest", ["value": []])
-  replies.answer("HostProjectDefaultsRequest", ["nixpkgsPin": "pin"])
+  replies.answer("HostProjectDefaultsRequest", ["agentExclude": ["private"]])
   await first.value
   await joined.value
-  #expect(model.demosLoaded && model.nixpkgsPin == "pin")
+  #expect(model.demosLoaded && model.agentExcludeDefaults == ["private"])
   #expect(replies.calls.values.allSatisfy { $0 == 1 })
   #expect(!model.setupNeeded) // Unknown is never reported as missing.
 }
@@ -41,7 +41,7 @@ import Testing
   var calls = 0
   let model = AppModel(requestHome: { method, _ in
     calls += 1
-    return method == "HostProjectDefaultsRequest" ? ["nixpkgsPin": "pin"] : ["value": []]
+    return method == "HostProjectDefaultsRequest" ? ["agentExclude": ["private"]] : ["value": []]
   })
   await model.initialRefresh?.value
   await model.showHome()
@@ -52,11 +52,11 @@ import Testing
 @MainActor @Test func aFailedRecentListDoesNotPretendToBeEmptyOrBlockDemos() async {
   let model = AppModel(refreshOnInit: false, requestHome: { method, _ in
     if method == "HostRecentListRequest" { throw CocoaError(.fileReadNoPermission) }
-    return method == "HostProjectDefaultsRequest" ? ["nixpkgsPin": "pin"] : ["value": []]
+    return method == "HostProjectDefaultsRequest" ? ["agentExclude": ["private"]] : ["value": []]
   })
   await model.refreshHome()
   #expect(!model.homeLoaded && model.recentsError != nil)
-  #expect(model.demosLoaded && model.nixpkgsPin == "pin")
+  #expect(model.demosLoaded && model.agentExcludeDefaults == ["private"])
   #expect(!model.setupNeeded)
 }
 

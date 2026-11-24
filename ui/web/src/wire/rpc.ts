@@ -19,29 +19,6 @@ export { D, R, RequestPayload }
 export const s = (v: string | Uint8Array | null | undefined): string => (typeof v === 'string' ? v : v ? new TextDecoder().decode(v) : '')
 export const sOpt = (v: string | Uint8Array | null | undefined): string | undefined => (v === null || v === undefined ? undefined : s(v))
 
-/** Preserve invalid display text as an unavailable display, before lossy decoding. */
-export function unpackDisplay(wire: D.Display): D.DisplayT {
-  return wire.unpack()
-}
-
-function unpackRecordResult(wire: R.RecordResult): R.RecordResultT {
-  const value = Object.assign(new R.RecordResultT(), {
-    selectedInvocation: wire.selectedInvocation(), run: wire.run()?.unpack() ?? null,
-    status: wire.status()?.unpack() ?? null, aggregate: wire.aggregate()?.unpack() ?? null,
-    exists: wire.exists(), recordingDisabled: wire.recordingDisabled(), truncated: wire.truncated(), orphaned: wire.orphaned(),
-  })
-  const record = wire.record()
-  if (record) value.record = Object.assign(new R.InvocationRecordT(), {
-    summary: record.summary()?.unpack() ?? null,
-    inputs: Array.from({ length: record.inputsLength() }, (_, i) => record.inputs(i)!.unpack()),
-    outputs: Array.from({ length: record.outputsLength() }, (_, i) => record.outputs(i)!.unpack()),
-    inputSources: Array.from({ length: record.inputSourcesLength() }, (_, i) => record.inputSources(i)!.unpack()),
-    display: record.display() ? unpackDisplay(record.display()!) : null,
-    recordIo: record.recordIo(), paramsJson: record.paramsJson(),
-  })
-  return value
-}
-
 /** A structured failure returned by tsugumid (never matched by its text). */
 export class RPCFailure extends Error {
   readonly kind: D.FailureKind
@@ -52,7 +29,9 @@ export class RPCFailure extends Error {
   readonly retryAfterMs?: number
 
   constructor(f: { kind: D.FailureKind; args?: D.KeyValueT[]; diagnostic?: string | Uint8Array | null; currentRev?: bigint | null; retryAfterMs?: number | null }) {
-    super(`${D.FailureKind[f.kind] ?? f.kind}: ${s(f.diagnostic)}`)
+    super(f.kind === D.FailureKind.project_in_use
+      ? L('別の画面でこのプロジェクトを開いています。')
+      : `${D.FailureKind[f.kind] ?? f.kind}: ${s(f.diagnostic)}`)
     this.kind = f.kind
     this.permissions = (f.args ?? []).filter(kv => s(kv.key) === 'permission').map(kv => s(kv.value))
     this.args = {}
@@ -84,11 +63,18 @@ export interface Transport {
   onClose?: (reason: string) => void
 }
 
+export interface LiveDisplayUpdate {
+  creditId?: bigint
+  card: string[]
+  view: string
+  bytes: Uint8Array<ArrayBuffer>
+}
+
 export interface NotificationEvent {
   subscriptionId: string
   seq: bigint
   type: R.NotificationPayload
-  value: NotificationT['value']
+  value: NotificationT['value'] | LiveDisplayUpdate
 }
 
 export const uuid = (): string =>
@@ -139,10 +125,20 @@ export class RPCClient {
       const bb = new ByteBuffer(frame)
       const message = Message.getRootAsMessage(bb)
       const raw = message.payload(new R.Notification()) as R.Notification
-      const note = raw.valueType() === R.NotificationPayload.DisplayUpdated
-        ? Object.assign(new R.NotificationT(), { subscriptionId: raw.subscriptionId(), seq: raw.seq(), valueType: raw.valueType(),
-          value: new R.DisplayUpdatedT(unpackDisplay((raw.value(new R.DisplayUpdated()) as R.DisplayUpdated).display()!)) })
-        : raw.unpack()
+      if (raw.valueType() === R.NotificationPayload.DisplayUpdated) {
+        const update = raw.value(new R.DisplayUpdated()) as R.DisplayUpdated
+        const display = update.display()!
+        const card = display.card()!
+        const value: LiveDisplayUpdate = {
+          card: Array.from({ length: card.segmentsLength() }, (_, i) => s(card.segments(i))),
+          view: s(display.view()),
+          creditId: display.creditId() ?? undefined,
+          bytes: display.bytesArray()?.slice() ?? new Uint8Array(),
+        }
+        this.onNotification?.({ subscriptionId: s(raw.subscriptionId()), seq: raw.seq() ?? 0n, type: raw.valueType(), value })
+        return
+      }
+      const note = raw.unpack()
       this.onNotification?.({ subscriptionId: s(note.subscriptionId), seq: note.seq ?? 0n, type: note.valueType, value: note.value })
     } catch (error) {
       this.transport.close()
@@ -150,15 +146,15 @@ export class RPCClient {
     }
   }
 
-  private async dispatch(frame: Uint8Array, timeoutMs: number): Promise<ReplyT> {
+  private async dispatch(frame: Uint8Array, timeoutMs: number): Promise<{
+    valueType: R.ReplyPayload; value: ReplyT['value']
+  }> {
     if (this._closed) throw disconnected()
     const bytes = await this.transport.call(frame, timeoutMs)
     // The native/Wasm library has already verified the entire FlatBuffer and ID.
     const message = Message.getRootAsMessage(new ByteBuffer(bytes))
     const wire = message.payload(new Reply()) as Reply
     const type = wire.valueType()
-    if (type === R.ReplyPayload.RecordResult)
-      return new ReplyT(type, unpackRecordResult(wire.value(new R.RecordResult()) as R.RecordResult))
     if (type === R.ReplyPayload.LogSlice) {
       const slice = wire.value(new R.LogSlice()) as R.LogSlice
       return new ReplyT(type, new R.LogSliceT(
@@ -196,16 +192,11 @@ export class RPCClient {
   save(baseRev: bigint, opId: string, origin: string, changes: R.DocumentChangeT[], checkPermissions = false, approvedPermissions: string[] = []) {
     return this.call<R.SaveResultT>(RequestPayload.ProjectSaveRequest, Object.assign(new R.ProjectSaveRequestT(), { baseRev, opId, origin, changes, checkPermissions, approvedPermissions }))
   }
-  /** Generates the Card's contracts (_inputs.fbs, _outputs.fbs, _params.fbs)
-   *  for one revision and returns the file list when ready. */
-  async generatedContracts(card: string[], atRev: bigint): Promise<R.SDKFileT[]> {
-    let res = await this.call<R.CardSDKPrepareResultT>(RequestPayload.CardSDKPrepareRequest,
-      Object.assign(new R.CardSDKPrepareRequestT(), { card: cardPath(card), atRev, opId: uuid() }))
-    for (let i = 0; i < 100 && res.state === D.SDKState.pending; i++) {
-      await new Promise((r) => setTimeout(r, 100))
-      res = await this.call<R.CardSDKPrepareResultT>(RequestPayload.CardSDKStatusRequest, Object.assign(new R.CardSDKStatusRequestT(), { opId: res.opId }))
-    }
-    return res.files
+  evaluateNix(card: string[], expression: string, { build = false, atRev = null }: {
+    build?: boolean; atRev?: bigint | null
+  } = {}) {
+    return this.call<R.EvaluateNixResultT>(RequestPayload.EvaluateNixRequest,
+      Object.assign(new R.EvaluateNixRequestT(), { card: cardPath(card), expression, build, atRev }))
   }
   /** Deletes finished runs (all, or those that ended before the date) with their files. */
   deleteHistory(opId: string, endedBefore: number | null) {
@@ -214,9 +205,9 @@ export class RPCClient {
   }
   /** The types of an _outputs.fbs text as the core compiles them (bfbs); with
    *  a port and a type, also the text with that port changed. Saves nothing. */
-  outputTypes(text: string, port: string | null = null, typeName: string | null = null, kind: D.PortKind = D.PortKind.FlatBuffer) {
+  outputTypes(text: string, port: string | null = null, typeName: string | null = null) {
     return this.call<R.OutputTypesResultT>(RequestPayload.OutputTypesRequest,
-      Object.assign(new R.OutputTypesRequestT(), { text, port, typeName, kind: port !== null ? kind : D.PortKind.unspecified }))
+      Object.assign(new R.OutputTypesRequestT(), { text, port, typeName }))
   }
   /** Checks the document as it would be after `changes` (nothing is saved). */
   validate(changes: R.DocumentChangeT[] | null = null) {
@@ -269,11 +260,11 @@ export class RPCClient {
       Object.assign(new R.RunRecordRequestT(), { runId, card: cardPath(card), invocation, followLatest }),
     )
   }
-  logRange(runId: string, card: string[] | null, invocation: bigint | null, stream: D.LogStream, offset = 0n, tail = false, limit = 65536, before: bigint | null = null, terminal = false, terminalSince: bigint | null = null) {
+  logRange(runId: string, card: string[] | null, invocation: bigint | null, stream: D.LogStream, offset = 0n, tail = false, limit = 65536, before: bigint | null = null, terminal = false, terminalSince: bigint | null = null, live = false) {
     return this.call<R.LogSliceT>(
       RequestPayload.LogRangeRequest,
       Object.assign(new R.LogRangeRequestT(), {
-        runId, card: card ? cardPath(card) : null, invocation, stream, offset: tail || before !== null ? null : offset, tail, limitBytes: limit, before, terminal, terminalSince,
+        runId, card: card ? cardPath(card) : null, invocation, stream, offset: tail || before !== null ? null : offset, tail, limitBytes: limit, before, terminal, terminalSince, live,
       }),
     )
   }
@@ -301,22 +292,52 @@ export class RPCClient {
     const out = concat(parts)
     return out
   }
+  async readCardView(card: string[], index: number, name: string, signal: AbortSignal): Promise<string> {
+    return new TextDecoder().decode(await this.readCardViewBytes(card, index, name, signal))
+  }
+
+  /** The file of entry `index` of the Card's views list; `name` guards against a changed list. */
+  async readCardViewBytes(card: string[], index: number, name: string, signal: AbortSignal): Promise<Uint8Array<ArrayBuffer>> {
+    const parts: Uint8Array[] = []
+    let offset = 0n
+    for (;;) {
+      signal.throwIfAborted()
+      const request = Object.assign(new R.CardViewReadRequestT(), { card: cardPath(card), name, offset, index })
+      const page = await this.call<R.FileContentT>(RequestPayload.CardViewReadRequest, request)
+      signal.throwIfAborted()
+      const next = page.nextOffset ?? offset
+      if (!page.eof && next <= offset)
+        throw new RPCError('protocol', L('ビューの内容を最後まで読み込めませんでした。'))
+      parts.push(Uint8Array.from(page.bytes))
+      if (page.eof) return concat(parts)
+      offset = next
+    }
+  }
+  sendView(card: string[], view: string, bytes: Uint8Array) {
+    const value = new R.ViewSendRequestT(cardPath(card), view)
+    value.pack = builder => R.ViewSendRequest.createViewSendRequest(
+      builder, value.card!.pack(builder), builder.createString(view),
+      R.ViewSendRequest.createBytesVector(builder, bytes),
+    )
+    return this.call<R.AckT>(RequestPayload.ViewSendRequest, value)
+  }
+
+  viewCredit(subscriptionId: string, card: string[], view: string, bytes: number, creditId: bigint) {
+    return this.call<R.AckT>(RequestPayload.ViewCreditRequest, new R.ViewCreditRequestT(subscriptionId, cardPath(card), view, bytes, creditId))
+  }
+
   setVisible(subscriptionId: string, cards: string[][], enabled = true) {
     return this.call<R.AckT>(
       RequestPayload.ViewSetVisibleRequest,
       Object.assign(new R.ViewSetVisibleRequestT(), { subscriptionId, cards: cards.map(cardPath), enabled }),
     )
   }
-  saveView(viewId: string, baseViewRev: bigint, view: string) {
-    return this.call<R.ViewSaveResultT>(RequestPayload.ViewSaveRequest, Object.assign(new R.ViewSaveRequestT(), { viewId, baseViewRev, viewJson: view }))
+  saveView(viewId: string, baseViewRev: bigint, view: number[]) {
+    return this.call<R.ViewSaveResultT>(RequestPayload.ViewSaveRequest, Object.assign(new R.ViewSaveRequestT(), { viewId, baseViewRev, view }))
   }
   /** Each Card's latest invocation of a run. */
   latestInvocations(runId: string) {
     return this.call<R.InvocationPageT>(RequestPayload.RunLatestInvocationsRequest, Object.assign(new R.RunLatestInvocationsRequestT(), { runId }))
-  }
-  /** Looks a flake up for nixSources (nothing is saved). */
-  resolveNixSource(ref: string) {
-    return this.call<R.NixSourceResolvedT>(RequestPayload.NixSourceResolveRequest, Object.assign(new R.NixSourceResolveRequestT(), { ref }))
   }
   /** Deletes the project's build caches; documents and history are kept. */
   clearCache(opId: string) {
@@ -353,7 +374,7 @@ export const cardPath = (segments: string[]) => new D.CardPathT([...segments])
 export const segs = (p: D.CardPathT | null | undefined): string[] => (p?.segments ?? []).map((x) => s(x))
 
 /** DocumentChange builders. */
-export function concat(parts: Uint8Array[]): Uint8Array {
+export function concat(parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
   const n = parts.reduce((a, p) => a + p.length, 0)
   const out = new Uint8Array(n)
   let o = 0

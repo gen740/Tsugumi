@@ -1,4 +1,4 @@
-#include "tsugumi/workerd/manifest.hh"
+#include "tsugumi/workerd/card_plan.hh"
 #include "tsugumi/workerd/store.hh"
 // A build product double, not a Nix interpreter. The real daemon, RPC,
 // document store, scheduler and worker processes stay in use. Tests submit
@@ -24,7 +24,8 @@ namespace tsugumi {
 namespace {
 
 struct BuildPlan {
-  schema::Opt<"manifest", schema::Json> manifest;
+  schema::Opt<"product", schema::Json> product;
+  schema::Opt<"executionList", schema::v::Bool> execution_list;
   schema::Opt<"gate", schema::v::String> gate;
   schema::Opt<"error", schema::v::String> error;
   schema::Opt<"log", schema::v::String> log;
@@ -32,6 +33,11 @@ struct BuildPlan {
   schema::Opt<"closure", schema::v::Array<schema::v::String>> closure;
   // Run list labels, one per implementation ("" for none); default: none.
   schema::Opt<"labels", schema::v::Array<schema::v::String>> labels;
+};
+
+struct ViewsOnlyPlan {
+  schema::Opt<"runs", schema::v::Array<schema::v::String>> runs;
+  schema::Opt<"views", schema::v::Array<schema::Obj<schema::CardView>>> views;
 };
 
 auto check_interrupted(const NixCall& call) -> void {
@@ -49,31 +55,32 @@ auto valid_gate(const std::string& name) -> bool {
          });
 }
 
-auto manifest_text(const BuildPlan& plan, const NixCall& call,
-                   NixResult& result) -> std::string {
-  const auto* value = schema::get(plan.manifest);
+auto plan_text(const BuildPlan& plan, const NixCall& call, NixResult& result)
+    -> std::string {
+  const auto* value = schema::get(plan.product);
   if (!value)
-    throw std::runtime_error("mock-build.json needs manifest or error");
-  schema::CardManifest manifest;
-  if (auto error = schema::decode(*value, manifest))
-    throw std::runtime_error("mock build manifest is invalid: " +
-                             error->message);
-  const auto* run = schema::get(manifest.run);
-  const auto* runs = schema::get(manifest.runs);
-  const auto valid = [](const auto& body) {
-    return (schema::get(body.bash) != nullptr) !=
-           (schema::get(body.package) != nullptr);
-  };
-  if ((run != nullptr) == (runs != nullptr) || (run && !valid(*run)) ||
-      (runs && !std::ranges::all_of(*runs, valid)))
-    throw std::runtime_error(
-        "mock build manifest needs one or more valid run implementations, or "
-        "an empty run list");
-  result.execution_list = runs != nullptr;
-  result.implementation_count = runs ? static_cast<uint32_t>(runs->size()) : 1;
-  if (result.implementation_count > call.max_implementations)
-    throw NixImplementationLimit(
-        "input and run list expansion exceeds 256 combinations");
+    throw std::runtime_error("mock-build.json needs product or error");
+  schema::CardPlan product;
+  if (auto error = schema::decode_card_plan(schema::text(*value), product))
+    throw std::runtime_error("mock Card plan is invalid: " + error->message);
+  if (call.views_only) {
+    // The view-only plan has no runs and no worker.
+    ViewsOnlyPlan views_only;
+    views_only.runs = product.runs;
+    views_only.runs->value().clear();
+    views_only.views = std::move(product.views);
+    result.execution_list = true;
+    result.implementation_count = 0;
+    return schema::encode(views_only);
+  }
+  result.execution_list =
+      schema::get(plan.execution_list) && *schema::get(plan.execution_list);
+  result.implementation_count =
+      static_cast<uint32_t>(product.runs->value().size());
+  if (!result.execution_list && result.implementation_count != 1)
+    throw std::runtime_error("mock scalar Card plan needs exactly one run");
+  enforce_implementation_limit(result.implementation_count,
+                               call.max_implementations);
   if (const auto* labels = schema::get(plan.labels))
     result.implementation_labels = *labels;
   else
@@ -88,7 +95,6 @@ auto manifest_text(const BuildPlan& plan, const NixCall& call,
 struct NixEvaluator::Impl {
   std::filesystem::path control;
   std::filesystem::path products;
-  std::vector<std::string> allowed;
   uint64_t full_evaluations = 0;
   // Evaluations take turns, as on the real evaluator's single thread.
   std::mutex evaluation;
@@ -103,10 +109,19 @@ auto NixEvaluator::build_client(int, char**) -> std::optional<int> {
 }
 auto NixStore::init_process() -> void {}
 
+// Tests that serve view files name the folder standing in for the store.
+auto NixStore::store_dir() -> std::string {
+  const char* dir = std::getenv("TSUGUMI_MOCK_STORE");
+  return dir && *dir ? dir : "/nix/store";
+}
+
 auto NixStore::substituters() -> std::vector<std::string> { return {}; }
 
-NixEvaluator::NixEvaluator(std::string, std::vector<std::string> allowed)
-    : impl_(std::make_unique<Impl>()) {
+auto NixStore::closure(const std::string& path) -> std::vector<std::string> {
+  return {path};
+}
+
+NixEvaluator::NixEvaluator(std::string) : impl_(std::make_unique<Impl>()) {
   const char* control = std::getenv("TSUGUMI_MOCK_CONTROL");
   if (!control || !*control)
     throw std::runtime_error("tsugumid-mock requires TSUGUMI_MOCK_CONTROL");
@@ -115,7 +130,6 @@ NixEvaluator::NixEvaluator(std::string, std::vector<std::string> allowed)
   std::filesystem::create_directories(control);
   impl_->control = std::filesystem::canonical(control);
   impl_->products = impl_->control / "products";
-  impl_->allowed = std::move(allowed);
 }
 
 NixEvaluator::~NixEvaluator() = default;
@@ -126,10 +140,9 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
   std::lock_guard turn(impl_->evaluation);
   check_interrupted(call);
   if (call.definition_dir.empty() || !call.definition_dir.is_absolute() ||
-      std::none_of(impl_->allowed.begin(), impl_->allowed.end(),
-                   [&](const auto& root) {
-                     return fs::resolves_inside(root, call.definition_dir);
-                   }))
+      std::ranges::none_of(call.definitions, [&](const auto& scope) {
+        return scope.directory == call.definition_dir;
+      }))
     throw std::runtime_error(
         "mock build needs confirmed definition sources inside the evaluation "
         "area");
@@ -137,8 +150,9 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
   // Test-only observation of full Card evaluations, including store hits.
   // Evaluations take turns (above). Publish before returning
   // so a completed RPC run is also a barrier for readers of this counter.
-  fs::write_atomic(impl_->control / "full-evaluations",
-                   std::to_string(++impl_->full_evaluations), 0600);
+  if (!call.views_only)
+    fs::write_atomic(impl_->control / "full-evaluations",
+                     std::to_string(++impl_->full_evaluations), 0600);
 
   BuildPlan plan;
   const auto source = fs::read_beneath(call.definition_dir, "mock-build.json");
@@ -148,16 +162,16 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
   // its product, while malformed products never fall back to real Nix.
   NixResult result;
   result.evaluation_epoch = 1;
-  std::string manifest;
-  if (schema::get(plan.manifest)) manifest = manifest_text(plan, call, result);
-  if (!schema::get(plan.error) && manifest.empty())
-    throw std::runtime_error("mock-build.json needs manifest or error");
+  if (schema::get(plan.product))
+    result.plan_json = plan_text(plan, call, result);
+  if (!schema::get(plan.error) && result.plan_json.empty())
+    throw std::runtime_error("mock-build.json needs product or error");
   if (call.on_phase) call.on_phase(false);
   if (const auto* line = schema::get(plan.log); line && call.log) {
     const std::string text = *line + "\n";
     call.log({std::span(&text, 1)});
   }
-  if (const auto* gate = schema::get(plan.gate)) {
+  if (const auto* gate = schema::get(plan.gate); gate && !call.views_only) {
     if (!valid_gate(*gate))
       throw std::runtime_error(
           "mock build gate must contain only letters, digits, '-' or '_'");
@@ -173,15 +187,14 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
   if (const auto* error = schema::get(plan.error))
     throw std::runtime_error(*error);
 
-  const auto digest = crypto::sha256_hex(manifest + call.system);
-  const auto product = impl_->products / (digest + "-manifest.json");
+  const auto digest = crypto::sha256_hex(result.plan_json + call.system);
+  const auto product = impl_->products / (digest + "-plan.json");
   const bool cached = schema::get(plan.cached)
                           ? *schema::get(plan.cached)
                           : std::filesystem::exists(product);
   result.derivation = {"/nix/store/00000000000000000000000000000000-mock.drv",
                        "/nix/store/00000000000000000000000000000000-mock",
                        call.system};
-  result.manifest = std::move(manifest);
   result.built = !cached;
   if (const auto* closure = schema::get(plan.closure))
     result.closure = *closure;
@@ -212,10 +225,10 @@ auto ArchiveDerivationTransport::receive(nix::Store&,
 
 auto NixEvaluator::realise_native(const NixCall& call, NixResult result)
     -> NixResult {
-  const auto digest = crypto::sha256_hex(result.manifest + call.system);
-  const auto product = impl_->products / (digest + "-manifest.json");
+  const auto digest = crypto::sha256_hex(result.plan_json + call.system);
+  const auto product = impl_->products / (digest + "-plan.json");
   if (result.built && call.on_phase) call.on_phase(true);
-  fs::write_atomic(product, result.manifest, 0444);
+  fs::write_atomic(product, result.plan_json, 0444);
   result.derivation.output = product.string();
   result.derivation.path = product.string() + ".drv";
   result.closure.push_back(product.string());
@@ -236,20 +249,13 @@ auto NixEvaluator::realise_native(const NixCall& call, NixResult result)
   return result;
 }
 
-auto NixEvaluator::flake(const NixCall& call, const std::string& ref)
-    -> FlakeInfo {
-  // Controlled source products, never a fetcher: key tests supply the result
-  // for an exact ref/system/override request in their private control folder.
-  const auto key =
-      crypto::sha256_hex(ref + "|" + call.system + "|" + call.source_overrides);
-  const auto product =
-      fs::read_file(impl_->control / "flakes" / (key + ".json"));
-  if (!product)
-    throw std::runtime_error(
-        "tsugumid-mock does not resolve flakes or contact the network");
-  FlakeInfo result;
-  result.json = *product;
-  return result;
+auto NixEvaluator::lock_source(const std::string&) -> NixSource {
+  throw std::runtime_error("the mock evaluator cannot fetch sources");
+}
+
+auto NixEvaluator::expression(const NixCall&, const std::string&, bool)
+    -> ExpressionResult {
+  throw std::runtime_error("the mock evaluator cannot evaluate expressions");
 }
 
 auto NixStore::rooted_usage(const std::vector<std::vector<std::string>>& roots)

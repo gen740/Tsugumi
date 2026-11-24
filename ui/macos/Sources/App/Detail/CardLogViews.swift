@@ -101,18 +101,13 @@ struct DependenciesCategory: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 14) {
-        Text("この Card が使う SDK、nixpkgs の package、ほかの Card の出力は、Nix 定義（default.nix）で決まります。変えるときは default.nix を編集します。")
+        Text("この Card が使う SDK、nixpkgs の package、上流 Card の Nix exports は、Nix 定義（default.nix）で決まります。変えるときは default.nix を編集します。")
           .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         HStack {
           if hasDefinition {
             Button("default.nix を開く") { model.openDefinition() }
           } else if model.kind == .code {
             Text("default.nix がありません").foregroundStyle(.secondary)
-            Button("default.nix を作成") {
-              model.createFile("default.nix", text: "{ pkgs, inputs, params }:\n{\n  package = inputs.tsugumi.pythonCard { src = ./src; };\n}\n")
-              model.openDefinition()
-            }
-            .disabled(!session.isEditable)
           }
         }
 
@@ -125,7 +120,6 @@ struct DependenciesCategory: View {
             VStack(alignment: .leading, spacing: 2) {
               Text(session.displayPath(path(ref.target)))
               Text(ref.expression).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-              if !ref.valid { Text("参照を解決できません。Nix 定義と診断を確認してください。").font(.caption).foregroundStyle(.orange) }
             }
           }
         }

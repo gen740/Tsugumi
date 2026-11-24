@@ -57,8 +57,8 @@ auto log_test() -> void {
   const auto build = sample.append(LogStream::build, "build");
   const auto error = sample.append(LogStream::standard_error, "\n");
   expect(build && error, "sample entries omitted");
-  const auto build_size = build->size() + 1;
-  const auto error_size = error->size() + 1;
+  const auto build_size = build->size();
+  const auto error_size = error->size();
   InvocationLog maximum(build_size + error_size);
   expect(maximum.append(LogStream::build, "build").has_value(),
          "build entry omitted");
@@ -71,10 +71,11 @@ auto log_test() -> void {
   expect(!maximum.append(LogStream::journal, "journal"),
          "wrote an entry after truncation");
 
-  InvocationLog escaped(error_size - 1);
+  InvocationLog short_frame(error_size - 1);
   expect(
-      !escaped.append(LogStream::standard_error, "\n") && escaped.truncated(),
-      "budget did not account for JSON escaping and the line ending");
+      !short_frame.append(LogStream::standard_error, "\n") &&
+          short_frame.truncated(),
+      "budget did not account for the complete size-prefixed entry");
 
   InvocationLog combined(build_size + error_size - 1);
   expect(combined.append(LogStream::build, "build").has_value(),
@@ -239,7 +240,7 @@ auto journal_test(const stdfs::path& root) -> void {
   private_directory(output);
   // A running job's log is read from the core's cursor, in bounded slices,
   // by its own core life only.
-  fs::write_atomic(output / "logs.jsonl", "running entry\npart", 0600);
+  fs::write_atomic(output / "logs", "running entry\npart", 0600);
   expect(j.log(result_job, 0, 8, core) ==
              std::pair<uint64_t, std::string>{18, "running "},
          "log slice from the start");
@@ -252,11 +253,11 @@ auto journal_test(const stdfs::path& root) -> void {
          "a cursor past the end returned bytes");
   rejected([&] { j.log(result_job, 0, kLogChunkBytes + 1, core); });
   rejected([&] { j.log(result_job, 0, 8, std::string(64, 'b')); });
-  stdfs::remove(output / "logs.jsonl");
+  stdfs::remove(output / "logs");
   stdfs::create_symlink(j.job_path(result_job) / "spec.fb",
-                        output / "logs.jsonl");
+                        output / "logs");
   rejected([&] { j.log(result_job, 0, 8, core); });
-  stdfs::remove(output / "logs.jsonl");
+  stdfs::remove(output / "logs");
   flatbuffers::FlatBufferBuilder worker;
   namespace W = Tsugumi::Worker;
   const auto values =
@@ -269,8 +270,8 @@ auto journal_test(const stdfs::path& root) -> void {
                    {reinterpret_cast<const char*>(worker.GetBufferPointer()),
                     worker.GetSize()},
                    0600);
-  fs::write_atomic(output / "logs.jsonl", "job log", 0600);
-  stdfs::create_symlink("logs.jsonl", output / "link");
+  fs::write_atomic(output / "logs", "job log", 0600);
+  stdfs::create_symlink("logs", output / "link");
   rejected([&] { j.import_results(result_job); });
   stdfs::remove(output / "link");
   const auto result = j.import_results(result_job);

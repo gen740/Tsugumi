@@ -2,23 +2,46 @@
 // lifetimes.
 #include <unistd.h>
 
-#include "fixture.hh"
+#include "project_fixture.hh"
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::test {
 namespace {
 TEST_F(AgentFixture, EditorFormattingIsAHostRequestWithoutAProject) {
-  const auto result =
-      Call(*host, H::RequestPayload::FileFormatRequest, [](Builder& b) {
-        return H::CreateFileFormatRequest(b,
-                                          b.CreateString("missing/file.json"),
-                                          b.CreateString("{\"a\":1}"))
-            .Union();
-      });
-  ASSERT_TRUE(result.Code().empty());
-  const auto* formatted = result.HostValue()->value_as_FileFormatResult();
+  const auto format = [&](const char* path, const char* text) {
+    return Call(*host, H::RequestPayload::FileFormatRequest, [&](Builder& b) {
+      return H::CreateFileFormatRequest(b, b.CreateString(path),
+                                         b.CreateString(text))
+          .Union();
+    });
+  };
+  const auto json = format("missing/file.json", "{\"a\":1}");
+  ASSERT_TRUE(json.Code().empty());
+  const auto* formatted = json.HostValue()->value_as_FileFormatResult();
   ASSERT_NE(formatted, nullptr);
-  EXPECT_EQ(JsonUInt(formatted->text()->string_view(), "/a"), 1u);
+  EXPECT_EQ(formatted->text()->str(), "{\n  \"a\": 1\n}\n");
+
+  const auto schema = format("missing/file.fbs", "table X {}");
+  EXPECT_EQ(schema.Code(), "unsupported");
+  const auto source = format("missing/file.py", "x=1");
+  EXPECT_EQ(source.Code(), "unsupported");
+
+  const auto nix = format("missing/default.nix", "{a=1;}");
+  if (nix.Code() == "unsupported") GTEST_SKIP() << "nixfmt was not configured";
+  ASSERT_TRUE(nix.Code().empty());
+  ASSERT_NE(nix.HostValue()->value_as_FileFormatResult(), nullptr);
+  EXPECT_EQ(nix.HostValue()->value_as_FileFormatResult()->text()->str(),
+            "{ a = 1; }\n");
+
+  const auto invalid = format("missing/default.nix", "{ a = ; }");
+  ASSERT_TRUE(invalid.Code().empty());
+  const auto* unchanged = invalid.HostValue()->value_as_FileFormatResult();
+  ASSERT_NE(unchanged, nullptr);
+  EXPECT_EQ(unchanged->text()->str(), "{ a = ; }");
+  ASSERT_NE(unchanged->diagnostics(), nullptr);
+  ASSERT_EQ(unchanged->diagnostics()->size(), 1u);
+  EXPECT_EQ(unchanged->diagnostics()->Get(0)->path()->str(),
+            "missing/default.nix");
 }
 
 TEST_F(AgentFixture, HostRejectsTheExternalAgentCredentialOnBothTransports) {
@@ -69,7 +92,8 @@ class HostProjectsFixture : public AgentFixture {
   }
 };
 
-TEST_F(HostProjectsFixture, CreatesPinnedDocumentsInNewAndExactlyEmptyFolders) {
+TEST_F(HostProjectsFixture,
+       CreatesProjectDocumentsInNewAndExactlyEmptyFolders) {
   const auto defaults = Call(
       *host, H::RequestPayload::HostProjectDefaultsRequest, [](Builder& b) {
         return H::CreateHostProjectDefaultsRequest(b).Union();
@@ -83,9 +107,9 @@ TEST_F(HostProjectsFixture, CreatesPinnedDocumentsInNewAndExactlyEmptyFolders) {
       });
   EXPECT_EQ(trust.HostValue()->value_as_ProjectTrust()->decision(),
             H::ProjectTrustDecision::Trusted);
-  EXPECT_EQ(JsonString(Read(folder / "tsugumi.json"), "/pkgsPath"),
-            JsonString(defaults.View(), "/nixpkgsPin"));
-  EXPECT_EQ(JsonString(Read(folder / "layout.json"), "/flow"), "leftToRight");
+  EXPECT_NE(Read(folder / "tsugumi.json").find(R"("nixPath": [])"),
+            std::string::npos);
+  EXPECT_EQ(JsonString(FixtureLayoutText(Read(folder / "layout.bin")), "/flow"), "leftToRight");
   std::filesystem::create_directory(directory.path / "empty");
   EXPECT_TRUE(Create("empty").Code().empty());
   EXPECT_EQ(Create("new").Code(), "folder_not_empty");

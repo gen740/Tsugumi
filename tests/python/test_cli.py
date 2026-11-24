@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from conftest import CLI, HOSTD, WEB_ROOT, BUILD, WORKER, SDK, write_project
+from conftest import CLI, HOSTD, WEB_ROOT, BUILD, WORKER, NIX, write_project
 from test_claude_code_plugin import isolated_environment, stop_resident_services
 from harness.file_events import process_file, wait_for_file
 
@@ -441,7 +441,7 @@ def vm_server(tmp_path):
     helper = (Path(__file__).parent / "vm_helper_double.py").read_text()
     executable(tmp_path / "host", f"#!{sys.executable}\n{helper}")
     env = isolated_environment(tmp_path, TSUGUMI_VMHOST=str(tmp_path / "host"), TSUGUMI_VM_IMAGE="/image", TSUGUMI_SUPPORT_DIR=str(support),
-               TSUGUMI_PY_BINDINGS=os.environ.get("TSUGUMI_PY_BINDINGS", str(BUILD / "generated/python")), TSUGUMI_WORKER=str(WORKER), TSUGUMI_SDK_DIR=str(SDK), HOST_LOG=str(tmp_path / "log"), HOST_BUSY=str(tmp_path / "busy"))
+               TSUGUMI_PY_BINDINGS=os.environ.get("TSUGUMI_PY_BINDINGS", str(BUILD / "generated/python")), TSUGUMI_WORKER=str(WORKER), TSUGUMI_NIX_DIR=str(NIX), HOST_LOG=str(tmp_path / "log"), HOST_BUSY=str(tmp_path / "busy"))
     try:
         _, port, query = page_url(web(env).stdout)
         yield tmp_path, project, port, page_cookie(port, query["key"][0])
@@ -457,7 +457,7 @@ def test_the_page_needs_no_setup_and_may_share_folders(vm_server):
     with closing(page_host(port, cookie)) as host:
         home = host.call("HostHomeRequest")
     assert home.vm and home.hostFolders
-    assert home.tsugumid.ok and home.worker.ok and home.sdk.ok
+    assert home.tsugumid.ok and home.worker.ok and home.nixDir.ok
 
 
 @needs_server
@@ -564,6 +564,25 @@ def test_bare_tsugumi_prints_its_usage(tmp_path):
     r = subprocess.run([str(CLI), "no-such-command"], capture_output=True, text=True, env=isolated_environment(tmp_path))
     assert r.returncode == 64
     stop_resident_services(tmp_path)
+
+
+@needs_cli
+@pytest.mark.skipif(sys.platform != "darwin", reason="the Mac support folders")
+def test_a_build_from_source_uses_the_dev_apps_support_folder(tmp_path):
+    """Like the app built from source (AppChannel.swift), only a release shares the release app's folder."""
+    env = isolated_environment(tmp_path, TSUGUMI_WEB_ROOT=str(tmp_path / "page"), TSUGUMI_HOSTD=str(tmp_path / "hostd"))
+    for key in ("TSUGUMI_HOST_STATE", "TSUGUMI_SUPPORT_DIR", "TSUGUMI_WEB_DATA"):
+        env.pop(key)
+    (tmp_path / "page").mkdir()
+    (tmp_path / "page" / "index.html").write_text("")
+    # A stand-in host that records how it was started and never becomes ready.
+    executable(tmp_path / "hostd", f'#!/bin/sh\nprintf "%s\\n" "$@" > "{tmp_path / "args"}"\n')
+    r = subprocess.run([str(CLI), "web", "--no-browser"], capture_output=True, text=True, env=env)
+    assert r.returncode != 0 and "did not start" in r.stderr
+    args = (tmp_path / "args").read_text().splitlines()
+    support = Path(env["HOME"]) / "Library/Application Support"
+    assert args[args.index("--state-dir") + 1] == str(support / "Tsugumi-dev/host-core")
+    assert not (support / "Tsugumi").exists()
 
 
 @needs_server
@@ -689,3 +708,69 @@ def test_the_usual_port_taken_means_another_port(tmp_path):
             assert page_url(web(env).stdout)[1] != 8780
         finally:
             stop_resident_services(tmp_path)
+
+@needs_cli
+def test_lock_update_pins_a_local_archive_through_the_agent_tool(tmp_path):
+    from harness.daemon import Daemon
+    from harness.definition_evaluation import EMPTY_OUTPUTS
+    from test_claude_code_plugin import UserAgent
+    from tsugumi_client import path, text
+
+    project = tmp_path / "project"
+    contents = tmp_path / "library"
+    contents.mkdir()
+    (contents / "default.nix").write_text('"from the fixture archive"')
+    archive = tmp_path / "library.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(contents, arcname="library")
+    url = "tarball+" + archive.resolve().as_uri()
+    write_project(project, {
+        "name": "locked fixture",
+        "nixPath": [{"name": "lib", "url": url}],
+        "canvas": {"cards": [{"id": "work"}], "connections": []},
+    })
+    definition = project / "definitions/work"
+    definition.mkdir(parents=True)
+    (definition / "_card.json").write_text('{"type":"code"}')
+    (definition / "_outputs.fbs").write_text(EMPTY_OUTPUTS)
+    (definition / "default.nix").write_text("{ params, inputs }: { }")
+    env = isolated_environment(tmp_path, TSUGUMI_NIX_DIR=str(NIX.resolve()))
+
+    def update(*args):
+        return subprocess.run([str(CLI.resolve()), "lock", "update", *args, "--project", str(project)],
+                              env=env, capture_output=True, text=True, timeout=30)
+
+    def approved_update(*args):
+        for _ in range(4):
+            updated = update(*args)
+            if updated.returncode == 0:
+                return
+            assert updated.stdout, updated.stderr
+            request = json.loads(updated.stdout)
+            assert request["code"] == "grant_required", updated.stdout + updated.stderr
+            user = UserAgent(tmp_path)
+            try:
+                user.call("AccessResolveRequest", request_id=request["request_id"], allow=True)
+            finally:
+                user.close()
+        pytest.fail(updated.stdout + updated.stderr)
+
+    try:
+        approved_update("lib")
+        lock = project / "tsugumi.lock"
+        entry, = json.loads(lock.read_text())["entries"]
+        assert entry["name"] == "lib"
+        assert entry["url"] == url
+        assert entry["narHash"].startswith("sha256-")
+        assert "rev" not in entry
+        instant = lock.stat().st_mtime_ns
+        approved_update()
+        assert lock.stat().st_mtime_ns == instant
+    finally:
+        stop_resident_services(tmp_path)
+
+    with Daemon(project) as daemon:
+        result = daemon.connect().call("EvaluateNixRequest", card=path("work"),
+                                       expression="import <lib>")
+        assert result.failure is None, result.failure and text(result.failure.diagnostic)
+        assert json.loads(text(result.json)) == "from the fixture archive"

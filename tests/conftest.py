@@ -38,6 +38,7 @@ PACKAGE_SMOKES = {
     # A real packaged server and Wasm policy, plus the packaged CLI entry point.
     "test_only_the_page_with_the_key_reaches_the_api",
     "test_the_shared_wasm_client_is_served_and_allowed_by_the_page_policy",
+    "test_a_build_from_source_uses_the_dev_apps_support_folder",
     "test_a_second_run_opens_a_page_on_the_running_server",
     # Exercise native imports and rendering in the filtered SDK run.
     "test_report_figure_sends_plotly",

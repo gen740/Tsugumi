@@ -9,9 +9,11 @@ from pathlib import Path
 import pytest
 
 from harness.values import recorded_input_json
-from projects import MSG_FBS, SINK, builtin_project, card, conn, put, run_and_wait
+from projects import MSG_FBS, MSG_INPUT_NIX, SINK, builtin_project, card, conn, put, run_and_wait
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
+from harness.document import layout_bytes, params_nix, write_layout
+from harness.nix_path import declarations, test_lock_entries as fixture_locks, write_lock
 
 
 def project_json(c) -> tuple[int, dict]:
@@ -30,32 +32,31 @@ def diagnostics(c, card: list[str]) -> list[str]:
 def external(root: Path, name: str, text_value: str) -> None:
     """externals/<name>: an Input with its message as the boundary output."""
     ext = root / "externals" / name
+    pins = [entry for entry in fixture_locks() if entry["name"] == "nixpkgs"]
     put(ext / "tsugumi.json", json.dumps({
-        "name": name, "pkgsPath": "tsugumi:default",
+        "name": name, "nixPath": declarations(pins),
         "canvas": {"cards": [{"id": "say"}], "connections": []},
-        "boundary": {"inputs": {}, "outputs": {"said": {"card": "say", "port": "msg"}}}}))
-    put(ext / "layout.json", "{}")
-    put(ext / "definitions" / "say" / "_card.json", json.dumps(
-        {"type": "input", "params": [{"name": "text", "type": "string", "data": text_value},
-                                         {"name": "value", "type": "bool", "data": True}]}))
+        "boundary": {"inputs": [], "outputs": [{"name": "said", "card": "say", "port": "msg"}]}}))
+    write_lock(ext, pins)
+    put(ext / "definitions" / "say" / "default.nix", MSG_INPUT_NIX)
+    put(ext / "definitions" / "say" / "_card.json", json.dumps({"type": "input"}))
+    put(ext / "definitions" / "say" / "params.nix", params_nix({"text": text_value, "value": True}))
     put(ext / "definitions" / "say" / "_outputs.fbs", MSG_FBS)
 
 
-def rename(c, card_id, name, prefix=""):
-    """Change a human name through the same metadata used by both UIs."""
+def edit_description(c, card_id, description, prefix=""):
+    """Edit the Card README without changing its identity."""
     snap = c.call("ProjectInspectRequest")
+    readme = f"---\ndescription: {description}\n---\n"
     if not prefix:
         d = next(d for d in snap.definitions if text(d.id) == card_id)
-        meta = json.loads(text(d.metaJson) or "{}")
-        meta["name"] = name
         changes = [change("PutDefinition", id=card_id, cardJson=text(d.cardJson),
-                          metaJson=json.dumps(meta))]
+                          readme=readme, keepComments=True)]
     else:
-        filename = prefix + "definitions/" + card_id + "/_meta.json"
+        filename = prefix + "definitions/" + card_id + "/README.md"
         hashes = {text(s.path): text(s.hash) for s in snap.sources}
-        old = json.loads(bytes(c.call("ProjectFileReadRequest", path=filename).bytes)) if filename in hashes else {}
-        old["name"] = name
-        changes = [change("PutSource", path=filename, bytes=json.dumps(old).encode(), baseHash=hashes.get(filename))]
+        changes = [change("PutSource", path=filename, bytes=readme.encode(),
+                          baseHash=hashes.get(filename))]
     return c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="agent", changes=changes)
 
 
@@ -64,8 +65,8 @@ def recorded_invocations(client, run_id, *card_id):
     return {record.invocation: record.state for record in page.records}
 
 
-def test_rename_preserves_every_past_record_and_saved_input(tmp_path, core_factory):
-    """A name edit preserves recorded invocations and saved inputs."""
+def test_description_edit_preserves_every_past_record_and_saved_input(tmp_path, core_factory):
+    """A description edit preserves recorded invocations and saved inputs."""
     root = tmp_path / "p"
     builtin_project(root, text="hi")
     put(root / "definitions" / "out" / "_card.json", json.dumps(dict(SINK, recordIO=True)))
@@ -77,7 +78,7 @@ def test_rename_preserves_every_past_record_and_saved_input(tmp_path, core_facto
     before = recorded_invocations(c, run_id, "src")
     assert before
     saved_input = recorded_input_json(c, tmp_path / "before", run_id, "out")
-    result = rename(c, "src", "日本語 / source")
+    result = edit_description(c, "src", "日本語 / source")
     assert result.executionRev == snap.executionRev
     assert recorded_invocations(c, run_id, "src") == before
     assert recorded_input_json(c, tmp_path / "after", run_id, "out") == saved_input
@@ -90,7 +91,7 @@ def test_rename_preserves_every_past_record_and_saved_input(tmp_path, core_facto
     assert recorded_input_json(c, tmp_path / "decode", run2, "out")["text"] == "hi"
 
 
-def test_new_ids_are_unique_and_names_may_be_shared(tmp_path, core_factory):
+def test_new_ids_are_unique_with_shared_descriptions(tmp_path, core_factory):
     """The core reserves short ids, including before any definitions are saved."""
     root = tmp_path / "p"
     builtin_project(root)
@@ -103,9 +104,9 @@ def test_new_ids_are_unique_and_names_may_be_shared(tmp_path, core_factory):
     doc["canvas"]["cards"] += [{"id": x} for x in ids[:2]]
     c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="ui:test", changes=[
         change("SetProject", json=json.dumps(doc)), *[
-            change("PutDefinition", id=x, cardJson='{"type":"draft"}', metaJson='{"name":"Aggregate"}') for x in ids[:2]]])
+            change("PutDefinition", id=x, cardJson='{"type":"draft"}', readme="---\ndescription: Aggregate\n---\n") for x in ids[:2]]])
     snap = c.call("ProjectInspectRequest")
-    assert sum(json.loads(text(x.metaJson) or "{}").get("name") == "Aggregate" for x in snap.definitions) == 2
+    assert sum("description: Aggregate" in (text(x.readme) or "") for x in snap.definitions) == 2
     assert "src" in [text(x.id) for x in snap.definitions]  # existing ids are unchanged
     d.restart()
     c = d.connect()
@@ -117,23 +118,11 @@ def test_new_ids_are_unique_and_names_may_be_shared(tmp_path, core_factory):
             c.call("CardIdRequest", stem="aggregate", projectPath=bad)
 
 
-def pretty(doc: dict) -> str:
-    """layout.json as the clients write it."""
-    return json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
-
-
-def spelled(layout: dict) -> str:
-    """A number's spelling, which a rewrite of the file keeps."""
-    return pretty(layout).replace('"x": 10.5,', '"x": 10.50,')
-
-
 LAID_OUT = {
     "flow": "topToBottom",
     "cards": {"start": {"x": 0, "y": 0}, "src": {"x": 10.5, "y": 20, "collapsed": True}, "out": {"x": 30, "y": 40},
               "src/inner": {"x": 1, "y": 2}, "src2": {"x": 5, "y": 6}},
     "notes": [{"id": "n", "scope": "", "text": "メモ \"src\"\n改行", "x": 1, "y": 2}],
-    "displays": {"src": {"x": 100, "y": 200, "width": 300, "height": 150, "hidden": False},
-                 "src2": {"x": 7, "y": 8, "width": 9, "height": 10}},
     "groups": [{"id": "g", "scope": "", "name": "src", "color": "blue", "cards": ["src", "out"],
                 "outputs": [{"card": "src", "port": "msg"}, {"card": "out", "port": "x"}]}],
 }
@@ -141,7 +130,7 @@ LAID_OUT = {
 
 def laid_out_project(root: Path, layout: dict = LAID_OUT) -> None:
     builtin_project(root, extra_cards=[card("src2", "sink")])
-    (root / "layout.json").write_text(spelled(layout), encoding="utf-8")
+    write_layout(root, layout)
 
 
 def without_card(doc: dict, id: str) -> dict:
@@ -151,20 +140,20 @@ def without_card(doc: dict, id: str) -> dict:
 
 
 def test_an_agent_name_change_preserves_layout_verbatim(tmp_path, core_factory):
-    """Names do not affect positions, frames, groups or any formatting."""
+    """Names do not affect positions, groups or any formatting."""
     root = tmp_path / "p"
     laid_out_project(root)
     d = core_factory(project_root=root)
     c = d.connect()
-    result = rename(c, "src", "source")
-    assert text(c.call("ProjectInspectRequest").layoutJson) == spelled(LAID_OUT)
-    assert result.delta.layoutJson is None
+    result = edit_description(c, "src", "source")
+    assert bytes(c.call("ProjectInspectRequest").layout) == layout_bytes(LAID_OUT)
+    assert result.delta.layoutChanged is False
     d.restart()
-    assert text(d.connect().call("ProjectInspectRequest").layoutJson) == spelled(LAID_OUT)
+    assert bytes(d.connect().call("ProjectInspectRequest").layout) == layout_bytes(LAID_OUT)
 
 
 def test_the_saving_client_supplies_deleted_card_layout_cleanup(tmp_path, core_factory):
-    """The saving client supplies position, frame and group cleanup atomically.
+    """The saving client supplies position and group cleanup atomically.
 
     A new card with the same name starts without that layout, while restoring
     the card and its layout together keeps the supplied layout.
@@ -176,50 +165,48 @@ def test_the_saving_client_supplies_deleted_card_layout_cleanup(tmp_path, core_f
     rev, doc = project_json(c)
     kept = json.loads(json.dumps(LAID_OUT))
     kept["cards"] = {k: v for k, v in kept["cards"].items() if k not in ("src", "src/inner")}
-    del kept["displays"]["src"]
     kept["groups"][0]["cards"] = ["out"]
     kept["groups"][0]["outputs"] = [{"card": "out", "port": "x"}]
     c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
-        change("SetProject", json=json.dumps(without_card(doc, "src"))), change("RemoveDefinition", id="src"), change("SetLayout", json=spelled(kept))])
-    assert text(c.call("ProjectInspectRequest").layoutJson) == spelled(kept)
+        change("SetProject", json=json.dumps(without_card(doc, "src"))), change("RemoveDefinition", id="src"), change("SetLayout", layout=layout_bytes(kept))])
+    assert bytes(c.call("ProjectInspectRequest").layout) == layout_bytes(kept)
 
     # Off the canvas with its definition left behind is deleted too.
     rev, doc = project_json(c)
     del kept["cards"]["src2"]
-    del kept["displays"]["src2"]
     c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
-        change("SetProject", json=json.dumps(without_card(doc, "src2"))), change("SetLayout", json=spelled(kept))])
-    assert text(c.call("ProjectInspectRequest").layoutJson) == spelled(kept)
+        change("SetProject", json=json.dumps(without_card(doc, "src2"))), change("SetLayout", layout=layout_bytes(kept))])
+    assert bytes(c.call("ProjectInspectRequest").layout) == layout_bytes(kept)
 
-    # A Card of the same name starts with no frame.
+    # A Card of the same name starts without the prior layout.
     rev, doc = project_json(c)
     doc["canvas"]["cards"].append({"id": "src"})
     res = c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
         change("PutDefinition", id="src", cardJson=json.dumps(SINK)),
         change("SetProject", json=json.dumps(doc))])
-    assert res.delta.layoutJson is None
-    assert text(c.call("ProjectInspectRequest").layoutJson) == spelled(kept)
+    assert res.delta.layoutChanged is False
+    assert bytes(c.call("ProjectInspectRequest").layout) == layout_bytes(kept)
 
     # Nothing of the Card in the layout: not rewritten, even in another form.
     rev, doc = project_json(c)
-    compact = json.dumps({"cards": {"out": {"x": 1, "y": 2}}}, separators=(",", ":"))
+    compact = layout_bytes({"cards": {"out": {"x": 1, "y": 2}}})
     c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
-        change("SetLayout", json=compact)])
+        change("SetLayout", layout=compact)])
     rev, doc = project_json(c)
     res = c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
         change("SetProject", json=json.dumps(without_card(doc, "src"))), change("RemoveDefinition", id="src")])
-    assert res.delta.layoutJson is None
-    assert text(c.call("ProjectInspectRequest").layoutJson) == compact
+    assert res.delta.layoutChanged is False
+    assert bytes(c.call("ProjectInspectRequest").layout) == compact
 
     # An undo: the Card comes back, with its layout, in one save.
     rev, doc = project_json(c)
     doc["canvas"]["cards"].append({"id": "src"})
-    back = pretty({"cards": {"src": {"x": 5, "y": 6}, "out": {"x": 1, "y": 2}}})
+    back = layout_bytes({"cards": {"src": {"x": 5, "y": 6}, "out": {"x": 1, "y": 2}}})
     c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="ui:x", changes=[
         change("PutDefinition", id="src", cardJson=json.dumps(SINK)),
         change("SetProject", json=json.dumps(doc)),
-        change("SetLayout", json=back)])
-    assert text(c.call("ProjectInspectRequest").layoutJson) == back
+        change("SetLayout", layout=back)])
+    assert bytes(c.call("ProjectInspectRequest").layout) == back
 
 
 def test_every_card_needs_its_own_definition(tmp_path, core_factory):
@@ -247,11 +234,12 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
     prefix = "externals/outer/externals/inner/"
     project_path = prefix + "tsugumi.json"
     card_path = prefix + "definitions/definitions/_card.json"
-    meta_path = prefix + "definitions/definitions/_meta.json"
+    inputs_path = prefix + "definitions/definitions/_inputs.fbs"
+    meta_path = prefix + "definitions/definitions/README.md"
     code_path = prefix + "definitions/definitions/src/run.py"
     project = '{"canvas":{"cards":[{"id":"definitions"}],"connections":[]}}'
     draft = '{"type":"draft"}'
-    metadata = '{"name":"Nested Card"}'
+    metadata = "---\ndescription: Nested Card\n---\n"
     root_doc = json.loads((root / "tsugumi.json").read_text())
     root_doc["canvas"]["cards"].append({"id": "outer"})
     put(root / "tsugumi.json", json.dumps(root_doc))
@@ -266,10 +254,10 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
     c = core_factory(project_root=root).connect()
     snap = c.call("ProjectInspectRequest")
     sources = {text(s.path): s for s in snap.sources}
-    assert text(sources[project_path].documentJson) == project
-    assert text(sources[card_path].documentJson) == draft
-    assert text(sources[meta_path].documentJson) == metadata
-    assert sources[code_path].documentJson is None
+    assert json.loads(bytes(sources[project_path].document)) == json.loads(project)
+    assert json.loads(bytes(sources[card_path].document)) == json.loads(draft)
+    assert bytes(sources[meta_path].document).decode() == metadata
+    assert sources[code_path].document is None
 
     updated = '{"type":"input"}'
     saved = c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
@@ -278,7 +266,10 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
                               baseHash=text(sources[card_path].hash)),
                        change("RemoveSource", path=meta_path, baseHash=text(sources[meta_path].hash)),
                    ])
-    assert {text(s.path): text(s.documentJson) for s in saved.delta.sourcesUpsert} == {card_path: updated}
+    upserts = {text(s.path): s for s in saved.delta.sourcesUpsert}
+    assert set(upserts) == {card_path, inputs_path}
+    assert json.loads(bytes(upserts[card_path].document)) == json.loads(updated)
+    assert upserts[inputs_path].document is None
     assert [text(p) for p in saved.delta.sourcesRemoved] == [meta_path]
 
     # Only a reload accepts an out-of-band change. A save that needs a new
@@ -288,7 +279,7 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
     assert "invalid_document" not in accepted
     put(root / card_path, draft)
     layout = c.call("ProjectSaveRequest", baseRev=saved.rev, opId=new_id(), origin="t",
-                    changes=[change("SetLayout", json='{"flow":"topToBottom"}')])
+                    changes=[change("SetLayout", layout=layout_bytes({"flow": "topToBottom"}))])
     assert layout.executionRev == saved.executionRev
     assert diagnostics(c, nested_card) == accepted
     changed = c.call("ProjectSaveRequest", baseRev=layout.rev, opId=new_id(), origin="t",
@@ -298,9 +289,9 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
     inspected = c.call("ProjectInspectRequest")
     assert inspected.rev == changed.rev
     accepted_source = next(s for s in inspected.sources if text(s.path) == card_path)
-    assert text(accepted_source.documentJson) == updated
+    assert json.loads(bytes(accepted_source.document)) == json.loads(updated)
     content = c.call("ProjectFileReadRequest", path=card_path, atRev=changed.rev)
-    assert bytes(content.bytes) == updated.encode()
+    assert bytes(content.bytes) == bytes(accepted_source.document)
     with pytest.raises(RpcFailure) as error:
         c.call("ProjectSaveRequest", baseRev=changed.rev, opId=new_id(), origin="t",
                changes=[change("PutSource", path=card_path, bytes=b'{"type":"trigger"}',
@@ -308,7 +299,8 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
     assert error.value.kind == "external_change"
     reloaded = c.call("ProjectReloadRequest", baseRev=changed.rev, opId=new_id(), origin="t")
     assert reloaded.executionRev > changed.executionRev
-    assert {text(s.path): text(s.documentJson) for s in reloaded.delta.sourcesUpsert} == {card_path: draft}
+    assert {text(s.path): json.loads(bytes(s.document)) for s in reloaded.delta.sourcesUpsert} == {card_path: json.loads(draft)}
+    assert [text(p) for p in reloaded.delta.sourcesRemoved] == [inputs_path]
 
 
 def test_card_in_card_is_an_external_project(tmp_path, core_factory):
@@ -331,10 +323,9 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     assert {"greet", "greet/say"} <= cards
     assert any(text(x.id) == "greet" and json.loads(text(x.cardJson)).get("external") == "greeting" for x in snap.definitions)
     first = c.call("VersionInitRequest", opId=new_id(), origin="test")
-    source = "externals/greeting/definitions/say/_card.json"
-    body = json.loads((root / source).read_text())
-    body["params"][0]["data"] = "changed on disk"
-    put(root / source, json.dumps(body))
+    source = "externals/greeting/definitions/say/params.nix"
+    edited = params_nix({"text": "changed on disk", "value": True})
+    put(root / source, edited)
     with pytest.raises(RpcFailure) as error:
         c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="test", card=path("greet"))
     assert error.value.kind == "external_change"
@@ -347,7 +338,8 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     committed = subprocess.check_output(
         ["git", "-C", root, "show", f"{text(st.commit)}:{source}"], text=True)
     result = recorded_input_json(c, tmp_path / "decode", run_id, "show")
-    assert result["text"] == json.loads(committed)["params"][0]["data"] == "changed on disk"
+    assert committed == edited
+    assert result["text"] == "changed on disk"
     # The external is this project's copy: its files change here like any other.
     rev = reloaded.rev
     c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="t",
@@ -355,7 +347,8 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     assert bytes(c.call("ProjectFileReadRequest", path="externals/greeting/notes.txt").bytes) == b"x"
     snap = c.call("ProjectInspectRequest")
     c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
-           changes=[change("PutSource", path="externals/fresh/tsugumi.json", bytes=list(b"{}"))])
+           changes=[change("PutSource", path="externals/fresh/tsugumi.json",
+                           bytes=b'{"canvas":{"cards":[],"connections":[]}}')])
     # The external opens on its own, with the same result.
     d.stop()
     alone = root / "externals" / "greeting"
@@ -387,7 +380,7 @@ def test_link_diagnostics(tmp_path, core_factory):
     assert {text(d.id) for d in after.definitions} == {text(d.id) for d in before.definitions}
 
 
-@pytest.mark.parametrize("settings", [{"language": "bash"}, {"maxRuns": 2}, {"network": False}])
+@pytest.mark.parametrize("settings", [{"maxRuns": 2}, {"grants": {"network": False}}])
 def test_card_in_card_definition_rejects_execution_settings(tmp_path, core_factory, settings):
     root = tmp_path / "p"
     builtin_project(root)
@@ -404,31 +397,6 @@ def test_card_in_card_definition_rejects_execution_settings(tmp_path, core_facto
         assert c.call("ProjectInspectRequest").rev == before.rev
 
 
-def test_trigger_setting(tmp_path, core_factory):
-    """An unknown trigger setting is reported on the affected card."""
-    root = tmp_path / "p"
-    builtin_project(root)
-    card = json.loads((root / "definitions" / "out" / "_card.json").read_text())
-    card["trigger"] = "whenever"
-    put(root / "definitions" / "out" / "_card.json", json.dumps(card))
-    d = core_factory(project_root=root)
-    c = d.connect()
-    assert "invalid_setting" in diagnostics(c, ["out"])
-
-
-def test_display_mode_setting(tmp_path, core_factory):
-    """Presentation modes do not participate in core validation."""
-    for value, reuse_worker, valid in (("update", False, True), ("live", True, True), ("smooth", True, True)):
-        root = tmp_path / value
-        builtin_project(root)
-        card = json.loads((root / "definitions" / "out" / "_card.json").read_text())
-        card["displayMode"] = value
-        card["reuseWorker"] = reuse_worker
-        put(root / "definitions" / "out" / "_card.json", json.dumps(card))
-        c = core_factory(project_root=root).connect()
-        assert ("invalid_setting" not in diagnostics(c, ["out"])) == valid, value
-
-
 def test_output_types_lists_and_rewrites_a_port(tmp_path, core_factory):
     """Output type edits preserve unrelated schema text and reject incompatible types."""
     root = tmp_path / "p"
@@ -439,15 +407,14 @@ def test_output_types_lists_and_rewrites_a_port(tmp_path, core_factory):
            "table Outputs { msg:Msg (required); /* note */ other:Msg; }\nroot_type Outputs;\n")
     res = c.call("OutputTypesRequest", text=fbs)
     assert text(res.rootType) == "demo.Outputs" and len(bytes(res.bfbs)) > 0 and res.text is None
-    changed = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Path", kind=1)  # File
+    changed = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Path")
     out = text(changed.text)
-    assert 'msg:Path (required, tsugumi: "file");' in out and "other:Msg;" in out and "// kept" in out
-    assert 'attribute "tsugumi";' in out
+    assert "msg:Path (required);" in out and "other:Msg;" in out and "// kept" in out
     bad = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Missing")
     assert bad.text is None and bad.error
-    # A File port needs a string value: Msg has none.
-    bad = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Msg", kind=1)
-    assert bad.text is None and bad.error
+    restored = c.call("OutputTypesRequest", text=out, port="msg", typeName="demo.Msg")
+    assert 'msg:Msg (required);' in text(restored.text)
+
 
 
 def test_name_changes_inside_a_card_in_card_preserve_history(tmp_path, core_factory):
@@ -465,11 +432,11 @@ def test_name_changes_inside_a_card_in_card_preserve_history(tmp_path, core_fact
     snap = c.call("ProjectInspectRequest")
     before = recorded_invocations(c, run_id, "greet", "say")
     assert before
-    rename(c, "say", "Greeting", "externals/greeting/")
-    rename(c, "greet", "Greeting")
+    edit_description(c, "say", "Greeting", "externals/greeting/")
+    edit_description(c, "greet", "Greeting")
     assert recorded_invocations(c, run_id, "greet", "say") == before
     assert c.call("RunInvocationsRequest", runId=run_id, card=path("greet", "say")).records
     after = c.call("ProjectInspectRequest")
     assert after.executionRev == snap.executionRev
     assert ("greet", "say") in {tuple(text(s) for s in r.card.segments) for r in after.resolution}
-    assert json.loads(bytes(c.call("ProjectFileReadRequest", path="externals/greeting/definitions/say/_meta.json").bytes))["name"] == "Greeting"
+    assert b"description: Greeting" in bytes(c.call("ProjectFileReadRequest", path="externals/greeting/definitions/say/README.md").bytes)

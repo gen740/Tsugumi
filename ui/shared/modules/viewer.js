@@ -1,143 +1,128 @@
-// Trusted transport only. Card code runs in a second, opaque-origin frame.
-// Both WKWebView and the browser use this exact host and module lifecycle.
+// Trusted bridge between the browser UI and the sandboxed Card document.
 'use strict'
-const frame = document.createElement('iframe')
-frame.sandbox = 'allow-scripts'
-frame.allow = 'webgpu'
-frame.title = 'Card view'
-const policy = "default-src 'none'; script-src blob: 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src blob: data:; font-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
-function runtime() {
-  const root = document.createElement('div')
-  Object.assign(root.style, { position: 'absolute', inset: '0', overflow: 'auto' })
-  document.body.append(root)
-  let module, identity, currentData, viewError, initialised = false, visible = true, colorScheme = 'light', pending, working = false, resizePending = false
-  const size = () => ({ width: innerWidth, height: innerHeight, pixelRatio: devicePixelRatio, visible, colorScheme })
-  const send = data => parent.postMessage({ tsugumi: 'state', ...data }, '*')
-  root.addEventListener('tsugumi-view-error', event => {
-    const message = String(event.detail).slice(0, 4096)
-    viewError = new Error(message)
-    send({ state: 'error', message })
-    if (!working) {
-      identity = undefined; initialised = false
-      void module?.dispose()
-      root.textContent = message
-    }
-  })
-  async function render(message) {
-    try {
-      viewError = undefined
-      visible = message.visible !== false
-      colorScheme = message.colorScheme === 'dark' ? 'dark' : 'light'
-      if (identity !== message.name) {
-        await module?.dispose()
-        root.replaceChildren()
-        module = undefined; initialised = false
-        const url = URL.createObjectURL(new Blob([message.code], { type: 'text/javascript' }))
-        try { module = await import(url) } finally { URL.revokeObjectURL(url) }
-        for (const name of ['initialise', 'update', 'resize', 'dispose'])
-          if (typeof module[name] !== 'function') throw new Error(`View must export ${name}`)
-        identity = message.name
-        currentData = { config: JSON.parse(message.json), blobs: message.blobs ?? {} }
-        await module.initialise(root, currentData, size())
-        initialised = true
-      } else {
-        if (message.json !== undefined) {
-          currentData = { config: JSON.parse(message.json), blobs: message.blobs ?? {} }
-          await module.update(currentData)
-        }
-        await module.resize(size())
-      }
-      if (message.snapshot) await new Promise(resolve => setTimeout(resolve, 30))
-      if (viewError) throw viewError
-      let image
-      if (message.snapshot) {
-        if (module.snapshot) image = await module.snapshot()
-        else {
-          const canvas = root.querySelector('canvas')
-          if (canvas) image = canvas.toDataURL('image/png')
-          else {
-            // DOM/SVG views can export a PNG through snapshot().
-            throw new Error('A DOM view must export snapshot() for canvas previews')
-          }
-        }
-      }
-      send({ state: 'ok', requestId: message.requestId, image })
-    } catch (e) {
-      identity = undefined; initialised = false
-      try { await module?.dispose() } catch { /* Keep the original diagnostic. */ }
-      root.textContent = String(e?.message ?? e)
-      send({ state: 'error', requestId: message.requestId, message: root.textContent })
-    }
-  }
-  async function drain() {
-    if (working) return
-    working = true
-    try {
-      while (pending || resizePending) {
-        if (pending) { const next = pending; pending = undefined; await render(next) }
-        else {
-          resizePending = false
-          if (initialised) await module.resize(size())
-        }
-      }
-    } catch (e) { send({ state: 'error', message: String(e?.message ?? e) }) }
-    finally { working = false }
-  }
-  addEventListener('message', async event => {
-    if (event.source !== parent) return
-    if (event.data?.tsugumi === 'visibility') {
-      visible = event.data.visible; resizePending = true; await drain(); return
-    }
-    if (event.data?.tsugumi !== 'render') return
-    if (pending) send({ state: 'superseded', requestId: pending.requestId })
-    pending = event.data
-    await drain()
-  })
-  new ResizeObserver(() => { resizePending = true; void drain() }).observe(root)
-  addEventListener('pagehide', () => { void module?.dispose() })
-  addEventListener('keydown', e => { if (e.key === 'Escape') parent.postMessage({ tsugumi: 'key', key: 'Escape' }, '*') })
-  parent.postMessage({ tsugumi: 'inner-ready' }, '*')
-}
-frame.srcdoc = `<meta http-equiv="Content-Security-Policy" content="${policy}"><style>html,body{margin:0;height:100%;overflow:hidden}</style><script>(${runtime.toString()})()<` + '/script>'
-let readyResolve
-const ready = new Promise(resolve => { readyResolve = resolve })
-let sequence = 0
-let intersecting = true, preview = false
-const visibility = () => intersecting && document.visibilityState !== 'hidden'
-function updateVisibility() {
-  frame.contentWindow?.postMessage({ tsugumi: 'visibility', visible: preview || visibility() }, '*')
-}
-new IntersectionObserver(entries => { intersecting = entries.some(entry => entry.isIntersecting); updateVisibility() }).observe(frame)
-addEventListener('visibilitychange', updateVisibility)
-const waiting = new Map()
-function notify(message) {
-  if (parent !== window) parent.postMessage(message, '*')
-  window.webkit?.messageHandlers?.tsugumi?.postMessage(message)
-}
-window.tsugumiRender = async message => {
-  await ready
-  preview = message.interactive === false
-  const requestId = message.requestId ?? ++sequence
-  const blobs = message.blobs && Object.fromEntries(Object.entries(message.blobs).map(([name, value]) => [name,
-    typeof value === 'string' ? Uint8Array.from(atob(value), c => c.charCodeAt(0)) : value]))
-  const promise = new Promise(resolve => waiting.set(requestId, resolve))
-  frame.contentWindow.postMessage({ ...message, blobs, visible: message.interactive === false || (message.visible !== false && visibility()), tsugumi: 'render', requestId }, '*')
-  return await promise
-}
+const policy = document.querySelector('meta[http-equiv="Content-Security-Policy"]').content
+const messageMax = 1 << 24
+const budget = 2 * messageMax
+
+// Acknowledges a delivered MessagePort event after the view's handlers ran.
+// The Card's data messages keep the public {type, bytes} shape.
+const creditScript = `<script>
 addEventListener('message', event => {
-  if (event.source === frame.contentWindow) {
-    const message = event.data
-    if (message?.tsugumi === 'inner-ready') { readyResolve(); notify({ tsugumi: 'ready' }); return }
-    if (message?.tsugumi === 'state') {
-      document.body.dataset.state = message.state
-      document.body.dataset.error = String(message.message ?? '')
-      waiting.get(message.requestId)?.(message.state === 'ok'); waiting.delete(message.requestId)
-      if (message.state !== 'superseded') notify({ tsugumi: 'state', state: message.state, requestId: message.requestId, image: message.image, message: String(message.message ?? '').slice(0, 4096) })
+  if (event.source !== parent || event.data?.tsugumi !== 1) return
+  const port = event.data.port
+  const max = 1 << 24
+  const post = port.postMessage.bind(port)
+  let used = 0, reportedDrop = false
+  port.postMessage = (message, options) => {
+    if (message?.type !== 'data' || !(message.bytes instanceof ArrayBuffer)) return
+    const size = message.bytes.byteLength
+    if (size > max || used > max) {
+      if (!reportedDrop) post({ type: 'dropped' })
+      reportedDrop = true
+      return
     }
-    if (message?.tsugumi === 'key') notify({ tsugumi: 'key', key: 'Escape' })
-  } else if (event.source === parent && event.data?.name) {
-    void window.tsugumiRender(event.data)
+    post(message, options)
+    used += Math.max(1, size)
   }
+  port.addEventListener('message', message => {
+    if (message.data?.type === 'reverseCredit') {
+      message.stopImmediatePropagation()
+      used -= Math.max(1, message.data.size)
+      reportedDrop = false
+    } else if (message.data?.type === 'data') {
+      setTimeout(() => post({ type: 'credit' }), 0)
+    }
+  })
+  port.start()
+}, { once: true })
+<\/script>`
+
+let current
+
+function notify(message, transfer = []) {
+  if (parent !== window) parent.postMessage(message, '*', transfer)
+}
+
+function dispose() {
+  if (!current) return
+  current.port?.close()
+  current.frame.remove()
+  current = undefined
+}
+
+function flush(view) {
+  while (view.port && view.pending.length && view.outBytes <= budget - messageMax) {
+    const { bytes, ticket } = view.pending.shift()
+    const size = Math.max(1, bytes.byteLength)
+    view.outBytes += size
+    view.out.push(size)
+    view.port.postMessage({ type: 'data', bytes }, [bytes])
+    notify({ tsugumi: 'credit', ticket })
+  }
+}
+
+function mount(html) {
+  dispose()
+  const frame = document.createElement('iframe')
+  frame.setAttribute('sandbox', 'allow-scripts')
+  frame.title = 'Card view'
+  const content = html.replace(/^\s*<!doctype\s+html\s*>/i, '')
+  frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="${policy}">${creditScript}${content}`
+  const view = current = { frame, pending: [], out: [], outBytes: 0, reverseBytes: 0 }
+  frame.addEventListener('load', () => {
+    if (current !== view) return
+    const { port1, port2 } = new MessageChannel()
+    view.port = port1
+    port1.onmessage = ({ data }) => {
+      if (current !== view) return
+      if (data?.type === 'credit') {
+        const sent = view.out.shift()
+        if (!sent) return
+        view.outBytes -= sent
+        flush(view)
+      } else if (data?.type === 'dropped') {
+        notify({ tsugumi: 'messageDropped' })
+      } else if (data?.type === 'data' && data.bytes instanceof ArrayBuffer) {
+        if (data.bytes.byteLength > messageMax || view.reverseBytes > budget - messageMax) {
+          notify({ tsugumi: 'messageDropped' })
+          view.port.postMessage({ type: 'reverseCredit', size: data.bytes.byteLength })
+          return
+        }
+        view.reverseBytes += Math.max(1, data.bytes.byteLength)
+        notify({ tsugumi: 'send', bytes: data.bytes }, [data.bytes])
+      }
+    }
+    frame.contentWindow.postMessage({ tsugumi: 1, port: port2 }, '*', [port2])
+    flush(view)
+  }, { once: true })
+  document.body.append(frame)
+}
+
+window.tsugumiView = message => {
+  switch (message?.type) {
+    case 'mount':
+      if (typeof message.html === 'string') mount(message.html)
+      return
+    case 'dispose':
+      dispose()
+      return
+    case 'data':
+      if (!current || !(message.bytes instanceof ArrayBuffer)) return
+      current.pending.push({ bytes: message.bytes, ticket: message.ticket })
+      flush(current)
+      return
+    case 'reverseCredit':
+      if (current && Number.isInteger(message.size) && message.size >= 0) {
+        current.reverseBytes = Math.max(0, current.reverseBytes - Math.max(1, message.size))
+        current.port?.postMessage({ type: 'reverseCredit', size: message.size })
+      }
+  }
+}
+
+addEventListener('message', event => {
+  if (parent === window || event.source !== parent) return
+  if (event.data?.tsugumi === 'probe') notify({ tsugumi: 'ready' })
+  if (event.data?.tsugumi === 'view') window.tsugumiView(event.data.message)
 })
-addEventListener('pagehide', () => frame.remove())
-document.body.append(frame)
+addEventListener('pagehide', dispose)
+notify({ tsugumi: 'ready' })

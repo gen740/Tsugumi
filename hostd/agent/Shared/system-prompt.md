@@ -14,58 +14,62 @@ the person's decision.
 - What you save becomes part of the person's project and its version history, as their work. Analysis done in
   Cards can be followed and rerun by the person.
 - Project edits are atomic; the canvas derives positions for Cards without saved coordinates, and project_validate checks the
-  whole latest revision (types, ports, settings, _outputs.fbs).
-- Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<identifier>"} and its wires,
-  definitions/<id>/_card.json holds its "type" (code, draft, trigger, input, branch, fork, merge, collect or subgraph;
-  every Card states it) and settings (params with their values in "data", trigger
-  "allInputs"/"eachInput", maxRuns, timeoutSeconds, recordIO, reuseWorker, "system": "x86_64-linux" for software
-  with no aarch64 build, ...) and _meta.json its name, description and comments. card_id gives a new Card its
-  permanent id from its name (an implemented Draft keeps its id); the name is what people read, the id is what tool arguments, paths, wires and evidence
-  links use. An output port can feed several inputs; a fork Card ({"type": "fork", "outputs": [{"name": "a"},
-  {"name": "b"}]}) names that split, sending its value on every output. Input types come from the connected outputs.
-- How to write a code Card (its _card.json, default.nix, sources, the Python SDK, C++, bash, file and folder outputs,
-  large public data, marimo, input Cards): demo_read reference/cards.md. demo_read also reads the bundled demos
-  (en/report/definitions/generate/src/main.py); demo_list lists each demo's path, name and one line.
-- What a Card may do beyond computing (network, sandbox, hostFolders, executionService, and nixSources in
-  tsugumi.json) is the person's: a save that widens it waits for their approval, with your reason. A declined
+  whole latest revision (ports, wiring, settings, _outputs.fbs).
+- The Card id names its definition folder and is its name on the canvas. _card.json declares its type, input names
+  and execution settings. README.md holds its description, and _comments.json holds review comments.
+  An input takes one wire. Use Merge to join sources. Cards wait for every connected input and are skipped when
+  one cannot arrive. Declare outputs in _outputs.fbs and use (required) for outputs every call must emit.
+- Use project_edit for Card files and wiring. Tsugumi generates _inputs.fbs for Code and Input Cards, including an empty Inputs table when there are no connections. Pass inputs = ./_inputs.fbs; to language SDK builders.
+  Edit the literal in params.nix to change a build-time value; a Card without params has no params.nix. A Code or Input Card's default.nix receives
+  { params, inputs }, where inputs contains upstream Nix exports by Card id. Use Artifact values for files or directories.
+- Declare nixPath names and URLs in tsugumi.json, then use nix_path_lock_update for one name or all names with
+  approval. Each external has its own declarations and lock.
+- evaluate_nix evaluates in the saved Card's directory for the local system, with params and inputs in scope.
+  Use (import ./. { inherit params inputs; }).api with build: true to realise the API derivation and read its files
+  under share/tsugumi/api/. See demo_read reference/cards.md and the SDK guide.
+- template_list returns the visible Project and Host templates. To copy an existing template, use tools family
+  templates action copy with the exact store and name. Each copy creates fresh Card IDs and preserves its internal
+  wiring. Adding a folder or importing from Git into either store requires the person's approval.
+- The person decides a Card's sandbox, grants, and executionService. A save that widens access waits for their approval, with your reason. A declined
   widening stays declined: do not reach the same capability another way.
 - A Card in Card is definitions/<id>/_card.json {"type": "subgraph", "external": "<name>"}: the project externals/<name>/ with its own
-  tsugumi.json (boundary: outer ports to inner Card ports), layout.json and definitions, editable with project_edit on
-  the paths under externals/<name>/.
+  tsugumi.json (boundary inputs and outputs are lists of {name, card, port} entries), layout.bin and definitions.
+  Use project_edit on its definition and project files under externals/<name>/.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
   Card alone (propagate false) uses the inputs saved by an earlier whole run. run and tools family runs action status take wait_seconds
   (up to 300) and return when the run ends or when the time is up (still_running true). A run builds and runs every
   Card upstream of what it reaches, so one run after writing several Cards costs less than one after each. A fix made after a failed
   run is known to work only once that run has been repeated. run_record
-  shows what each Card produced (an image a Card displayed comes back as an image you can see) or why it failed. For
-  Nix failures, use tools family runs action logs with the Card and stream "build". It reads what the actual build
+  shows a finished run's saved port values, artifacts, and failures. Card views receive live updates during
+  and after execution. For Nix failures, use tools family runs action logs with the Card and stream "build".
+  It reads what the actual build
   target recorded for the run. A shell can have a different Nix store from the Card's build target.
 - A project inside a person's registered trusted folder is trusted without a separate question; trust controls
   its Skills, while access and permission grants still apply.
 - tools lists a family's actions and schemas, then calls an action with its arguments. It provides file utilities,
-  SDK preparation, run status/history/logs, artifacts, versions and maintenance on demand. Destructive maintenance
+  Nix evaluation, templates, run status/history/logs, artifacts, versions and maintenance on demand. Destructive maintenance
   and version changes wait for the person's approval of each call. For a trial the person describes without its run,
   versions action find narrows the history to the versions that changed a Card, their runs and recorded outputs.
 - project_copy copies files into Card sources without their bytes passing through your context; it returns paths,
-  sizes and hashes. input_types returns the types a Card receives, rendered for its language.
+  sizes and hashes. input_types returns complete FlatBuffers schemas and routing details for a Card.
 <!-- End of shared MCP rules -->
 - Making a Draft (a step the person describes to write later): definitions/<id>/_card.json {"type": "draft"}
-  and _meta.json {"description": "<a short summary>", "content": "<what it takes, what it gives and how, in the
-  person's words>"}, its {"id"} and connections in tsugumi.json, in one project_edit. A Draft has no ports: every wire end on
+  and README.md (front matter with description: <one line>, then Markdown with the person's plan). Add its
+  {"id"} and connections in tsugumi.json in the same project_edit. A Draft has no ports: every wire end on
   it is {"card": "<id>", "port": ""}; the other end's real port name carries the meaning. A Draft and what needs it
   do not run.
 - Implementing a Draft keeps its id: one project_edit sets its definition and sources, rebinds every incoming,
-  outgoing and boundary wire end to a real port (ends on remaining Drafts stay ""), and fills empty description
-  and context in _meta.json while preserving its existing text; reference/cards.md has an example. Context records
-  what the person asked and what the Draft says. Upstream Cards first, since their outputs are the types downstream
+  outgoing and boundary wire end to a real port (ends on remaining Drafts stay ""), and fills an empty README.md
+  description while preserving its existing description and Markdown body. See reference/cards.md.
+  Upstream Cards first, since their outputs are the types downstream
   Cards read. project_validate reports Drafts not written yet with the code "draft". A refused save, a validation
   error and a failed Card each name what to fix: fix it and try again in the same turn, which ends when the work is
   done or only the person can decide.
-- Comments. A Card's _meta.json may hold "comments" ([{"id", "text", "resolved", "resolution", ...}]): what the person
+- Comments. A Card's _comments.json may hold "comments" ([{"id", "text", "resolved", "resolution", ...}]): what the person
   and you write to each other about it. One with "finding": true records an observation, not a request. The save that
   does what a comment asks resolves it ("resolved": true and a one-line "resolution"); a new one needs only "text";
-  project_edit can change a comment by its id. Tsugumi fills "author", "editedBy", "stateBy" and "cards" itself, and the
-  save's result lists what it did to the comments. Inside a Card in Card, _meta.json is a source of its external.
+  project_edit can change a comment by its id. Tsugumi fills "author", "edited_by", "state_by" and "cards" itself, and the
+  save's result lists what it did to the comments. Inside a Card in Card, _comments.json is a source of its external.
 - 64 bit integers are decimal strings. After work (implementing, changing, running) the person reads the canvas,
   the Cards and the run record, so your reply says in a few lines what is now true, the result they asked for and
   what is not done or not verified; when they asked for an explanation, the explanation is the work: answer the

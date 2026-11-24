@@ -7,9 +7,10 @@ import shutil
 import pytest
 
 from projects import wait_invocation
+from harness.fixtures import mock_plan
 from harness.observations import read_output
 from harness.scenario import Gate, Project, run, wait_run
-from harness.values import recorded_input_json, reference_json
+from harness.values import collected_items as collected, encode_message, recorded_input_json, reference_json
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
@@ -20,35 +21,38 @@ from Tsugumi.RPC.RunEventValue import RunEventValue
 
 
 NUMBER = 'table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;'
-DIRECTORY = ('attribute "tsugumi"; table Directory { value:string; } '
-             'table Outputs { out:Directory (tsugumi:"directory"); } root_type Outputs;')
-
-
-def implementation(value):
-    output = json.dumps({"out": {"value": value}})
-    return {"bash": f"printf '%s' '{output}' > \"$TSUGUMI_OUTPUT\""}
+ARTIFACT_OUTPUT = 'table Doc {} table Outputs { out:Doc; } root_type Outputs;'
 
 
 def scripted_implementations(directory, scenarios):
+    directory.mkdir(parents=True, exist_ok=True)
     implementations = []
     for index, actions in enumerate(scenarios):
         package = directory / f"package-{index}"
-        package.mkdir()
+        package.mkdir(exist_ok=True)
         (package / "scenario.json").write_text(json.dumps({"actions": actions}))
-        implementations.append({"package": str(package)})
+        implementations.append(str(package))
     return implementations
 
 
+def numeric_implementations(directory, values):
+    return scripted_implementations(directory, [
+        [{"op": "output", "port": "out", "type": "uint64", "value": value}]
+        for value in values
+    ])
+
+
 def producer(graph, name, values):
-    graph.card(name, {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
-               manifest={"runs": [implementation(value) for value in values]})
+    runs = numeric_implementations(graph.directory.parent / ("runs-" + name), values)
+    graph.card(name, {"type": "code", "sandbox": {"filesystem": False}}, outputs=NUMBER,
+               plan=mock_plan(runs, execution_list=True))
 
 
 def consumer(graph, *, implementations=None):
-    manifest = {"run": implementation(99)} if implementations is None else {"runs": implementations}
-    graph.card("work", {"type": "code", "language": "bash", "sandbox": False, "recordIO": True, "maxRuns": 1,
+    runs = numeric_implementations(graph.directory.parent / "runs-work", [99]) if implementations is None else implementations
+    graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True, "maxRuns": 1,
                         "inputs": [{"name": "left"}, {"name": "right"}]},
-               outputs=NUMBER, manifest=manifest)
+               outputs=NUMBER, plan=mock_plan(runs, execution_list=implementations is not None))
     graph.connect("left", "out", "work", "left").connect("right", "out", "work", "right")
 
 
@@ -61,12 +65,91 @@ def invocation_page(client, run_id, card):
     return client.call("RunInvocationsRequest", runId=run_id, card=path(card))
 
 
-def collected(client, directory, run_id, card="collect"):
-    record = client.call("RunRecordRequest", runId=run_id, card=path(card)).record
-    value, = record.outputs
-    payload = read_output(client, run_id, card=card)
-    return reference_json(directory, bytes(value.schemaBfbs), payload,
-                          root_type=text(value.rootType))["items"]
+def label(row):
+    return text(row.implementationLabel) if row.implementationLabel is not None else None
+
+
+def test_run_list_labels_name_each_invocation(core_factory, project, tmp_path):
+    """Labels from the execution plan are recorded on every member, and an unlabeled entry keeps only its index."""
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
+    graph = Project(project)
+    graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True}, outputs=NUMBER,
+               plan=mock_plan(numeric_implementations(tmp_path, [1, 2, 3]), execution_list=True, labels=["threshold 10", "", "threshold 14"]))
+    graph.save(client)
+
+    run_id = run(client, "work", propagate=False)
+    assert wait_run(client, run_id).state == RunState.succeeded
+    page = invocation_page(client, run_id, "work")
+    assert [(row.implementationIndex, label(row)) for row in page.records] == [
+        (1, "threshold 10"), (2, None), (3, "threshold 14")]
+    latest, = [row for row in client.call("RunLatestInvocationsRequest", runId=run_id).records
+               if row.card.segments == [b"work"]]
+    assert label(latest) == "threshold 14"
+    record = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1).record
+    assert label(record.summary) == "threshold 10"
+
+
+@pytest.mark.parametrize("labels,message", [
+    (["same", "same"], "names more than one implementation"),
+    (["tab\there", ""], "control character"),
+])
+def test_invalid_run_list_labels_fail_before_any_member_runs(core_factory, project, tmp_path, labels, message):
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
+    graph = Project(project).card("work", {"type": "code", "sandbox": {"filesystem": False}}, outputs=NUMBER,
+                                  plan=mock_plan(numeric_implementations(tmp_path, [1, 2]), execution_list=True, labels=labels))
+    graph.save(client)
+
+    run_id = run(client, "work", propagate=False)
+    status = wait_run(client, run_id)
+    assert status.state == RunState.failed
+    assert message in text(status.failure.diagnostic)
+    assert all(row.batchIndex is None for row in invocation_page(client, run_id, "work").records)
+
+
+def test_input_card_emits_built_variants_without_a_worker(core_factory, project, tmp_path):
+    store = tmp_path / "store"
+    client = core_factory(mocked_builds=True, env={"TSUGUMI_MOCK_STORE": str(store)}).connect()
+    values = [17, 23]
+    packages, payloads = [], []
+    for value in values:
+        package = store / f"number-{value}"
+        port = package / "share/tsugumi/input/ports/out"
+        port.parent.mkdir(parents=True)
+        payload = encode_message(tmp_path / f"encode-{value}", NUMBER, {"value": value}, root_type="Number")
+        port.write_bytes(payload)
+        packages.append(str(package))
+        payloads.append(payload)
+    graph = Project(project).card("work", {"type": "input", "recordIO": True,
+                                         "_params": "{ values = [ 17 23 ]; }"},
+                                  outputs=NUMBER,
+                                  plan=mock_plan(packages, execution_list=True, labels=["17", "23"]))
+    graph.save(client)
+    run_id = run(client, "work", propagate=False)
+    status = wait_run(client, run_id)
+    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+    page = invocation_page(client, run_id, "work")
+    assert [(row.implementationIndex, label(row)) for row in page.records] == [
+        (1, "17"), (2, "23")]
+    for invocation, payload in enumerate(payloads, 1):
+        assert read_output(client, run_id, card="work", invocation=invocation) == payload
+
+
+@pytest.mark.parametrize("required", [True, False])
+def test_input_card_missing_output_follows_required_attribute(core_factory, project, tmp_path, required):
+    store = tmp_path / "store"
+    package = store / "empty"
+    package.mkdir(parents=True)
+    client = core_factory(mocked_builds=True, env={"TSUGUMI_MOCK_STORE": str(store)}).connect()
+    schema = NUMBER if required else NUMBER.replace(" (required)", "")
+    Project(project).card("work", {"type": "input"}, outputs=schema,
+                          plan=mock_plan([str(package)])).save(client)
+    status = wait_run(client, run(client, "work", propagate=False))
+    if required:
+        assert status.state == RunState.failed
+        assert status.failure.kind == FailureKind.output_invalid
+        assert "required output out is missing" in text(status.failure.diagnostic)
+    else:
+        assert status.state == RunState.succeeded
 
 
 def combinations(client, directory, run_id):
@@ -82,12 +165,12 @@ def combinations(client, directory, run_id):
 def test_cartesian_order_is_saved_and_replayed(core_factory, project, tmp_path):
     """One trigger runs the complete Cartesian product and the saved inputs replay it in order."""
     history_dir = tmp_path / "history"
-    daemon = core_factory(mocked_builds=True)
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     graph = Project(project).card("start", {"type": "trigger"})
     producer(graph, "left", [10, 20])
     producer(graph, "right", [1, 2])
-    consumer(graph, implementations=[implementation(101), implementation(202)])
+    consumer(graph, implementations=numeric_implementations(tmp_path, [101, 202]))
     connect_collect(graph)
     graph.save(client)
     opened = client.open()
@@ -136,12 +219,12 @@ def test_cartesian_order_is_saved_and_replayed(core_factory, project, tmp_path):
 
 
 def test_empty_batch_is_delivered_to_collect_without_starting_a_worker(core_factory, project, tmp_path):
-    """An empty run list produces a typed empty vector through a downstream scalar implementation."""
+    """An empty run list skips the join and Collect emits an empty vector."""
     diagnostic = "the evaluation selected no implementations"
-    client = core_factory(mocked_builds=True).connect()
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project).card("start", {"type": "trigger"})
-    graph.card("left", {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
-               manifest={"runs": []}, plan={"log": diagnostic})
+    graph.card("left", {"type": "code", "sandbox": {"filesystem": False}}, outputs=NUMBER,
+               plan=mock_plan([], execution_list=True, log=diagnostic))
     producer(graph, "right", [1])
     consumer(graph)
     connect_collect(graph)
@@ -153,93 +236,60 @@ def test_empty_batch_is_delivered_to_collect_without_starting_a_worker(core_fact
 
     run_id = run(client, "start", propagate=True)
     assert wait_run(client, run_id).state == RunState.succeeded
-    for name in ("left", "work"):
-        page = invocation_page(client, run_id, name)
-        assert not page.records
-        batch, = page.batches
-        assert batch.complete and batch.executionList and batch.invocationCount == 0
-    assert collected(client, tmp_path / "decode", run_id) == []
-    journal = client.call("LogRangeRequest", runId=run_id, stream=LogStream.journal)
-    lines = [json.loads(line) for line in text(journal.text).splitlines()]
-    assert any(diagnostic in line["message"] and "left activation 1" in line["message"]
-               for line in lines)
-
-    assert not any(
-        note.valueType == NotificationPayload.RunEvent
-        and text(note.value.runId) == run_id
-        and note.value.valueType == RunEventValue.RunCardChanged
-        and note.value.value.invocation.card.segments in ([b"left"], [b"work"])
-        for note in client.notifications
-    )
-
-    replay = run(client, "work", propagate=False)
-    assert wait_run(client, replay).state == RunState.succeeded
-    page = invocation_page(client, replay, "work")
+    page = invocation_page(client, run_id, "left")
     assert not page.records
     batch, = page.batches
     assert batch.complete and batch.executionList and batch.invocationCount == 0
+    page = invocation_page(client, run_id, "work")
+    assert not page.batches
+    assert [row.state for row in page.records] == [CardState.skipped]
+    assert collected(client, tmp_path / "decode", run_id) == []
+    journal = client.call("LogRangeRequest", runId=run_id, stream=LogStream.journal)
+    assert any(diagnostic in line and "left activation 1" in line
+               for line in text(journal.text).splitlines())
 
 
 def test_singleton_run_list_and_vector_value_have_different_execution_shapes(core_factory, project, tmp_path):
     """A vector remains one value, while a singleton run list stays a one-item execution batch."""
+    from harness.native_card import STATIC_RESULT_ENTRY, native_card
+
     client = core_factory(mocked_builds=True).connect()
-    graph = Project(project).card("start", {"type": "trigger"})
+    graph = Project(project)
     vector = 'table Vector { items:[ulong]; } table Outputs { out:Vector (required); } root_type Outputs;'
-    graph.card("vector", {"type": "code", "language": "bash", "sandbox": False}, outputs=vector,
-               manifest={"run": {"bash": "printf '%s' '{\"out\":{\"items\":[1,2,3]}}' > \"$TSUGUMI_OUTPUT\""}})
-    graph.card("work", {"type": "code", "language": "bash", "sandbox": False, "recordIO": True,
+    vector_run = native_card(tmp_path / "vector", STATIC_RESULT_ENTRY, [
+        ("out", encode_message(tmp_path / "encode", vector,
+                                                    {"items": [1, 2, 3]}, root_type="Vector")),
+    ])
+    work_run = native_card(tmp_path / "work", STATIC_RESULT_ENTRY, [
+        ("out", encode_message(tmp_path / "encode", NUMBER,
+                                                    {"value": 42}, root_type="Number")),
+    ])
+    graph.card("vector", {"type": "code", "sandbox": {"filesystem": False}}, outputs=vector,
+               plan=mock_plan([vector_run]))
+    graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True,
                         "inputs": [{"name": "in"}]}, outputs=NUMBER,
-               manifest={"runs": [implementation(42)]})
+               plan=mock_plan([work_run], execution_list=True, labels=["forty-two"]))
     graph.connect("vector", "out", "work", "in")
     connect_collect(graph)
     graph.save(client)
 
-    run_id = run(client, "start", propagate=True)
+    run_id = run(client, "vector", propagate=True)
     assert wait_run(client, run_id).state == RunState.succeeded
     vector_page = invocation_page(client, run_id, "vector")
     assert len(vector_page.records) == 1
     assert all(not batch.executionList for batch in vector_page.batches or [])
     work = invocation_page(client, run_id, "work")
     assert len(work.records) == 1
+    assert text(work.records[0].implementationLabel) == "forty-two"
     batch, = work.batches
     assert batch.executionList and batch.invocationCount == 1
     assert recorded_input_json(client, tmp_path / "decode", run_id, "work") == {"items": [1, 2, 3]}
     assert collected(client, tmp_path / "decode", run_id) == [{"value": 42}]
 
 
-def test_branch_filters_cartesian_batch_and_sends_an_empty_list(core_factory, project, tmp_path):
-    """Direct fan-out and both Branch outputs preserve list shape."""
-    client = core_factory(mocked_builds=True).connect()
-    graph = Project(project).card("start", {"type": "trigger"})
-    producer(graph, "values", [10, 20])
-    flag = 'table Flag { value:bool; } table Outputs { out:Flag (required); } root_type Outputs;'
-    yes = {"bash": "printf '%s' '{\"out\":{\"value\":true}}' > \"$TSUGUMI_OUTPUT\""}
-    graph.card("flags", {"type": "code", "language": "bash", "sandbox": False}, outputs=flag,
-               manifest={"runs": [yes, yes]})
-    graph.card("branch", {"type": "branch"})
-    graph.card("selected", {"type": "collect", "recordIO": True})
-    graph.card("empty", {"type": "collect", "recordIO": True})
-    graph.card("original", {"type": "collect", "recordIO": True})
-    graph.connect("values", "out", "branch", "value").connect("values", "out", "original", "in")
-    graph.connect("flags", "out", "branch", "condition")
-    graph.connect("branch", "a", "selected", "in").connect("branch", "b", "empty", "in")
-    graph.save(client)
-
-    run_id = run(client, "start", propagate=True)
-    assert wait_run(client, run_id).state == RunState.succeeded
-    batch, = invocation_page(client, run_id, "branch").batches
-    assert batch.executionList and batch.invocationCount == 4
-    assert {text(output.port): (output.count, output.executionList)
-            for output in batch.outputs} == {"a": (4, True), "b": (0, True)}
-    selected = collected(client, tmp_path / "decode", run_id, "selected")
-    assert sorted(item["value"] for item in selected) == [10, 10, 20, 20]
-    assert collected(client, tmp_path / "decode", run_id, "empty") == []
-    assert sorted(item["value"] for item in collected(client, tmp_path / "decode", run_id, "original")) == [10, 20]
-
-
 def test_cartesian_limit_prevents_workers_and_partial_output(core_factory, project):
     """An oversized Cartesian product fails before the affected Card can run any combination."""
-    client = core_factory(mocked_builds=True).connect()
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project).card("start", {"type": "trigger"})
     producer(graph, "left", range(17))
     producer(graph, "right", range(16))
@@ -257,16 +307,16 @@ def test_cartesian_limit_prevents_workers_and_partial_output(core_factory, proje
 
 @pytest.mark.parametrize("prepared", [False, True])
 def test_implementation_limit_applies_before_running_batch(core_factory, project, tmp_path, prepared):
-    daemon = core_factory(mocked_builds=True)
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     graph = Project(project).card("start", {"type": "trigger"})
     producer(graph, "left", range(17))
     producer(graph, "right", [1])
-    consumer(graph, implementations=[implementation(99)] * 16)
+    consumer(graph, implementations=numeric_implementations(tmp_path, [99]) * 16)
     graph.save(client)
 
     if prepared:
-        cards = tmp_path / "cards.jsonl"
+        cards = tmp_path / "cards.bin"
         daemon.stop()
         daemon.args = ["--prepare-cards", str(cards)]
         daemon.start(expect_exit=True)
@@ -282,15 +332,15 @@ def test_implementation_limit_applies_before_running_batch(core_factory, project
     assert row.failure.kind == FailureKind.execution_limit and not row.executionService
 
 
-def test_output_batch_limit_withholds_successful_members(core_factory, project):
+def test_output_batch_limit_withholds_successful_members(core_factory, project, tmp_path):
     """Each output fits in a worker frame, but the aggregate exceeds the batch limit."""
-    client = core_factory(mocked_builds=True).connect()
-    body = r'''
-        { printf '%s' '{"out":{"value":"'; head -c 9437184 /dev/zero | tr '\000' x; printf '%s' '"}}'; } > "$TSUGUMI_OUTPUT"
-    '''
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
+    body, = scripted_implementations(tmp_path, [
+        [{"op": "output", "port": "out", "type": "string", "value": "x" * (9 * 1024 * 1024)}],
+    ])
     schema = 'table Value { value:string; } table Outputs { out:Value; } root_type Outputs;'
-    graph = Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False}, outputs=schema,
-                                  manifest={"runs": [{"bash": body}] * 4})
+    graph = Project(project).card("work", {"type": "code", "sandbox": {"filesystem": False}}, outputs=schema,
+                                  plan=mock_plan([body] * 4, execution_list=True))
     connect_collect(graph)
     graph.save(client)
 
@@ -301,50 +351,47 @@ def test_output_batch_limit_withholds_successful_members(core_factory, project):
     assert batch.complete and batch.failed and not batch.outputs
 
 
-def test_collected_directories_and_saved_batch_keep_empty_subdirectories(core_factory, project):
-    """Directory batches retain each item's tree during collection and a saved-input rerun."""
-    daemon = core_factory(mocked_builds=True)
+def test_collected_artifact_members_preserve_batch_order_and_grants(core_factory, project, tmp_path):
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
-    graph = Project(project).card("start", {"type": "trigger"})
-    emit = '''jq -nc --arg dir "$1" '{out:{value:$dir}}' > "$TSUGUMI_OUTPUT"'''
-    runs = [{"bash": f'''
-        dir="$TSUGUMI_OUTPUT_DIR/sample"
-        mkdir -p "$dir/empty/inner"
-        printf '%s\\n' {number} > "$dir/data.txt"
-        set -- "$dir"
-        {emit}
-    '''} for number in (1, 2)]
-    graph.card("source", {"type": "code", "language": "bash", "sandbox": False}, outputs=DIRECTORY, manifest={"runs": runs})
-    graph.card("work", {"type": "code", "language": "bash", "sandbox": False, "inputs": [{"name": "in"}]},
-               outputs=DIRECTORY, manifest={"run": {"bash": f'''
-                   test -d "$DIR_IN/empty/inner"
-                   cat "$DIR_IN/data.txt"
-                   set -- "$DIR_IN"
-                   {emit}
-               '''}})
-    graph.connect("source", "out", "work", "in")
+    graph = Project(project)
+    packages = scripted_implementations(tmp_path / "packages", [
+        [{"op": "file", "port": "out", "path": "first.txt", "text": "one"}],
+        [{"op": "directory", "port": "out", "path": "second", "files": {"data.txt": "two"}}],
+    ])
+    graph.card("work", {"type": "code", "recordIO": True, "sandbox": {"filesystem": False}},
+               outputs=ARTIFACT_OUTPUT, plan=mock_plan(packages, execution_list=True))
     connect_collect(graph)
-    graph.card("check", {"type": "code", "language": "bash", "sandbox": False, "inputs": [{"name": "in"}]},
-               outputs=NUMBER, manifest={"run": {"bash": '''
-                   test "$(find "$DIR_IN" -type d -name inner | wc -l | tr -d ' ')" = 2
-                   test "$(find "$DIR_IN" -type f -name data.txt | wc -l | tr -d ' ')" = 2
-                   printf '%s' '{"out":{"value":2}}' > "$TSUGUMI_OUTPUT"
-               '''}})
-    graph.connect("collect", "out", "check", "in")
-    graph.save(client)
+    graph.card("consumer", {"type": "code", "recordIO": True, "sandbox": {"filesystem": False},
+                            "inputs": [{"name": "in"}]},
+               outputs=NUMBER, plan=mock_plan(numeric_implementations(tmp_path / "consumer", [1])))
+    graph.connect("collect", "out", "consumer", "in").save(client)
 
-    run_id = run(client, "start", propagate=True)
+    run_id = run(client, "work", propagate=True)
     assert wait_run(client, run_id).state == RunState.succeeded
-    assert len(invocation_page(client, run_id, "check").records) == 1
+
+    def record(current, card, invocation=1):
+        return current.call("RunRecordRequest", runId=run_id, card=path(card), invocation=invocation).record
+
+    def check(current):
+        members = [text(record(current, "work", index).outputs[0].artifacts[0].id)
+                   for index in (1, 2)]
+        assert len(set(members)) == 2
+        value, = record(current, "collect").outputs
+        envelopes = reference_json(tmp_path / "decode", bytes(value.schemaBfbs), bytes(value.inlineBytes),
+                                   root_type="tsugumi.builtin.Collected")["items"]
+        def label(item):
+            key = bytes(item["artifacts"][0]["bytes"])
+            return f"{int.from_bytes(key[:8], 'big')}.{int.from_bytes(key[8:], 'big')}"
+
+        assert [label(item) for item in envelopes] == members
+        received, = record(current, "consumer").inputs
+        assert {text(item.id) for item in value.artifacts} == set(members)
+        assert {text(item.id) for item in received.artifacts} == set(members)
+
+    check(client)
     daemon.restart()
-    client = daemon.connect()
-    replay = run(client, "work", propagate=True)
-    assert wait_run(client, replay).state == RunState.succeeded
-    page = invocation_page(client, replay, "work")
-    assert len(page.records) == 2
-    logs = [client.call("LogRangeRequest", runId=replay, card=path("work"), invocation=row.invocation,
-                        stream=LogStream.standard_output) for row in page.records]
-    assert [text(log.text) for log in logs] == ["1\n", "2\n"]
+    check(daemon.connect())
 
 
 def test_failed_batch_keeps_individual_history_and_cancels_its_sibling(core_factory, project, tmp_path):
@@ -357,8 +404,8 @@ def test_failed_batch_keeps_individual_history_and_cancels_its_sibling(core_fact
         [failure.action(), {"op": "failure", "message": "the batch member failed"}],
         [{"op": "hang", "entered": str(hanging.entered)}],
     ]
-    graph = Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False, "recordIO": True},
-                                  outputs=NUMBER, manifest={"runs": scripted_implementations(tmp_path, scenarios)})
+    graph = Project(project).card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True},
+                                  outputs=NUMBER, plan=mock_plan(scripted_implementations(tmp_path, scenarios), execution_list=True))
     connect_collect(graph)
     graph.save(client)
 
@@ -384,8 +431,8 @@ def test_interrupted_batch_recovers_each_running_members_position(core_factory, 
     client = daemon.connect()
     gates = [Gate(tmp_path, "first"), Gate(tmp_path, "second")]
     implementations = scripted_implementations(tmp_path, [[gate.action()] for gate in gates])
-    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
-                          manifest={"runs": implementations}).save(client)
+    Project(project).card("work", {"type": "code", "sandbox": {"filesystem": False}}, outputs=NUMBER,
+                          plan=mock_plan(implementations, execution_list=True)).save(client)
     run_id = run(client, maxConcurrency=2)
     try:
         for gate in gates:
@@ -409,8 +456,8 @@ def test_collect_keeps_input_order_when_members_finish_in_reverse(core_factory, 
     gates = [Gate(tmp_path, str(index)) for index in range(3)]
     scenarios = [[gate.action(), {"op": "output", "port": "out", "type": "uint64", "value": index}]
                  for index, gate in enumerate(gates)]
-    graph = Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
-                                  manifest={"runs": scripted_implementations(tmp_path, scenarios)})
+    graph = Project(project).card("work", {"type": "code", "sandbox": {"filesystem": False}}, outputs=NUMBER,
+                                  plan=mock_plan(scripted_implementations(tmp_path, scenarios), execution_list=True))
     connect_collect(graph)
     graph.save(client)
 
@@ -431,8 +478,8 @@ def test_eight_worker_cap_and_user_cancel_leave_no_partial_batch(core_factory, p
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     gates = [Gate(tmp_path, str(index)) for index in range(slots + 1)]
     scenarios = [[{"op": "hang", "entered": str(gate.entered)}] for gate in gates]
-    graph = Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
-                                  manifest={"runs": scripted_implementations(tmp_path, scenarios)})
+    graph = Project(project).card("work", {"type": "code", "sandbox": {"filesystem": False}}, outputs=NUMBER,
+                                  plan=mock_plan(scripted_implementations(tmp_path, scenarios), execution_list=True))
     connect_collect(graph)
     graph.save(client)
 
@@ -452,42 +499,38 @@ def test_eight_worker_cap_and_user_cancel_leave_no_partial_batch(core_factory, p
                    for row in latest.records)
 
 
-def test_each_input_code_consumes_one_complete_batch_per_arrival(core_factory, project, tmp_path):
-    client = core_factory(mocked_builds=True).connect()
+def test_code_waits_for_connected_inputs_and_omits_unconnected_inputs(core_factory, project, tmp_path):
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project).card("start", {"type": "trigger"})
     producer(graph, "left", [10, 20])
     producer(graph, "right", [30, 40, 50])
-    graph.card("work", {"type": "code", "language": "bash", "sandbox": False, "recordIO": True,
-                        "trigger": "eachInput", "maxRuns": 2,
-                        "inputs": [{"name": "left", "optional": True}, {"name": "right", "optional": True}]},
-               outputs=NUMBER, manifest={"run": implementation(1)})
+    graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True,
+                        "inputs": [{"name": name} for name in ("left", "right", "unconnected")]},
+               outputs=NUMBER, plan=mock_plan(numeric_implementations(tmp_path, [1])))
     graph.connect("left", "out", "work", "left").connect("right", "out", "work", "right").save(client)
 
     run_id = run(client, "start", propagate=True)
     assert wait_run(client, run_id).state == RunState.succeeded
     rows = invocation_page(client, run_id, "work").records
-    assert len(rows) == 5
-    assert {row.batchActivation for row in rows} == {1, 2}
-    arrivals = {}
+    assert len(rows) == 6
+    assert {row.batchActivation for row in rows} == {1}
     for row in rows:
         record = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=row.invocation).record
-        value, = record.inputs
-        port = text(value.name)
-        item = recorded_input_json(client, tmp_path / "decode", run_id, "work", invocation=row.invocation, port=port)
-        arrivals.setdefault(row.batchActivation, []).append((port, item["value"]))
-    assert sorted(arrivals.values()) == [[("left", 10), ("left", 20)], [("right", 30), ("right", 40), ("right", 50)]]
-    for activation, members in arrivals.items():
-        assert [row.batchIndex for row in rows if row.batchActivation == activation] == list(range(1, len(members) + 1))
+        assert {text(value.name) for value in record.inputs} == {"left", "right"}
+
+    rerun = run(client, "work", propagate=False)
+    assert wait_run(client, rerun).state == RunState.succeeded
+    assert len(invocation_page(client, rerun, "work").records) == 6
 
 
-def test_merge_feedback_counts_batch_activations_toward_max_runs(core_factory, project):
+def test_merge_feedback_counts_batch_activations_toward_max_runs(core_factory, project, tmp_path):
     """A two-item batch takes two passes around a feedback loop before maxRuns stops it."""
-    client = core_factory(mocked_builds=True).connect()
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project).card("start", {"type": "trigger"})
     producer(graph, "seed", [10, 20])
     graph.card("merge", {"type": "merge", "maxRuns": 2, "inputs": [{"name": "seed"}, {"name": "feedback"}]})
-    graph.card("work", {"type": "code", "language": "bash", "sandbox": False, "maxRuns": 3, "inputs": [{"name": "in"}]},
-               outputs=NUMBER, manifest={"run": implementation(1)})
+    graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "maxRuns": 3, "inputs": [{"name": "in"}]},
+               outputs=NUMBER, plan=mock_plan(numeric_implementations(tmp_path, [1])))
     graph.connect("seed", "out", "merge", "seed").connect("merge", "out", "work", "in")
     graph.connect("work", "out", "merge", "feedback").save(client)
 
@@ -506,11 +549,11 @@ def test_per_run_worker_budget_stops_before_starting_an_over_budget_batch(core_f
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     body, = scripted_implementations(tmp_path, [[{"op": "output", "port": "out", "type": "uint64", "value": 1}]])
     graph = Project(project).card("start", {"type": "trigger"})
-    graph.card("seed", {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
-               manifest={"runs": [body] * 256})
+    graph.card("seed", {"type": "code", "sandbox": {"filesystem": False}}, outputs=NUMBER,
+               plan=mock_plan([body] * 256, execution_list=True))
     graph.card("merge", {"type": "merge", "maxRuns": 20, "inputs": [{"name": "seed"}, {"name": "feedback"}]})
-    graph.card("work", {"type": "code", "language": "bash", "sandbox": False, "reuseWorker": True, "maxRuns": 20,
-                        "inputs": [{"name": "in"}]}, outputs=NUMBER, manifest={"run": body})
+    graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "reuseWorker": True, "maxRuns": 20,
+                        "inputs": [{"name": "in"}]}, outputs=NUMBER, plan=mock_plan([body]))
     graph.connect("seed", "out", "merge", "seed").connect("merge", "out", "work", "in")
     graph.connect("work", "out", "merge", "feedback").save(client)
 

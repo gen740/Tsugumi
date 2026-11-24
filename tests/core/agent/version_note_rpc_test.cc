@@ -12,7 +12,7 @@ TEST_F(AgentProjectFixture,
        VersionNotesAreTheChangeRecordAndTheAgentReadsTheDiffWhenAsked) {
   StartProject(
       false,
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("version-notes");
   Grant(conversation, Tsugumi::Service::Access::Read);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -20,7 +20,7 @@ TEST_F(AgentProjectFixture,
   ASSERT_TRUE(initialized.Code().empty());
   const auto first =
       JsonString(JsonString(initialized.View(), "/text"), "/value/commit");
-  Write(directory.path / "project/layout.json", R"({"flow":"topToBottom"})");
+  Write(directory.path / "project/layout.bin", FixtureLayout(R"({"flow":"topToBottom"})"));
   const auto marked = ApprovedTool(conversation, "version_mark",
                                    R"({"name":"layout","message":"Layout"})");
   ASSERT_TRUE(marked.Code().empty());
@@ -64,7 +64,7 @@ TEST_F(AgentProjectFixture,
   };
   EXPECT_NE(diff(R"({"commit":")" + first + R"("})").find("tsugumi.json"),
             std::string::npos);
-  // layout.json says where Cards sit, not what they do.
+  // layout.bin says where Cards sit, not what they do.
   EXPECT_EQ(diff(R"({"commit":")" + commit + R"("})"), "");
   EXPECT_EQ(diff(R"({"commit":")" + commit + R"(","from_commit":")" + first +
                  R"("})"),
@@ -74,7 +74,7 @@ TEST_F(AgentProjectFixture,
        HostGraphsRenderOneCommitInBothLanguagesAndAgentFormattingStaysOnHost) {
   StartProject(
       false,
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("host-presentation");
   Grant(conversation, Tsugumi::Service::Access::Read);
   Grant(conversation, Tsugumi::Service::Access::Write);

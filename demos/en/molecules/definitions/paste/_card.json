@@ -4,17 +4,5 @@
     {
       "name": "start"
     }
-  ],
-  "params": [
-    {
-      "name": "name",
-      "type": "string",
-      "data": "dopamine"
-    },
-    {
-      "name": "smiles",
-      "type": "string",
-      "data": "NCCc1ccc(O)c(O)c1"
-    }
   ]
 }

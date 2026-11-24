@@ -5,7 +5,7 @@ include(cmake/runtime.cmake)
 include(cmake/native.cmake)
 include(cmake/service.cmake)
 include(cmake/nix.cmake)
-include(cmake/sdk-install.cmake)
+include(cmake/worker-source-install.cmake)
 
 target_link_libraries(tsugumi-workerd PRIVATE tsugumi_peer_tls)
 add_library(tsugumi_launch_paths STATIC src/scratch_policy.cc)

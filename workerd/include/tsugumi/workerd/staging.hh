@@ -3,8 +3,10 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <string_view>
 
 namespace tsugumi::fs {
 using TransferProgress =
@@ -18,17 +20,30 @@ using TransferProgress =
 // recover(parent, name), executed with the Card's own identity and sandbox.
 // Without a callback, unreadable Darwin directories fail with EACCES.
 auto clear_staging(const std::filesystem::path& path,
-                   const std::function<void(int, const char*)>& recover = {})
-    -> void;
+                   const std::function<void(int, const char*)>& recover = {},
+                   std::string_view preserved_entry = {}) -> void;
 
-// Copy only one declared File/Directory from a pinned staging root. Within a
-// Directory, materialize relative symlinks whose fully resolved targets stay
-// inside that output. No kernel lookup follows a symlink, including during
-// concurrent replacement. The destination must be private to the core.
-// Throws with the offending path and entry kind; cancellation is also checked.
-auto copy_staging_output(int staging, const std::filesystem::path& relative,
-                         const std::filesystem::path& destination,
-                         bool directory, const std::atomic<bool>& cancel,
-                         const TransferProgress& progress = {}) -> void;
+// Limits count logical bytes, including sparse holes, and filesystem entries
+// across a call's new outputs. A forwarded input never consumes this budget.
+struct OutputBudget {
+  uint64_t bytes = 64ull << 30;
+  uint64_t entries = 1000;
+};
+
+// Copy a new artifact directory from the pinned staging directory. The
+// artifact name is a single component and links inside it are rejected.
+auto copy_staging_artifact(int staging, const std::filesystem::path& name,
+                           const std::filesystem::path& destination,
+                           const std::atomic<bool>& cancel, OutputBudget& budget,
+                           const TransferProgress& progress = {}) -> void;
+
+// Materialize the granted tree in a directory writable only by the supervisor.
+auto link_artifact(const std::filesystem::path& source,
+                   const std::filesystem::path& destination) -> void;
+
+// Validate and move an artifact after the process that wrote it is retired.
+auto move_staging_artifact(int staging, const std::filesystem::path& name,
+                           const std::filesystem::path& destination,
+                           OutputBudget& budget) -> void;
 
 }  // namespace tsugumi::fs

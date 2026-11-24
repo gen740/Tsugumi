@@ -11,10 +11,7 @@
   nodejs,
   jq,
   nix,
-  clang-tools,
-  ruff,
   nixfmt,
-  shfmt,
   python3,
   ruby,
   openssl,
@@ -30,7 +27,7 @@ runCommand "tsugumi-ci-runtime"
     for program in ${core}/bin/*; do
       ln -s "$program" "$out/bin/$(basename "$program")"
     done
-    ln -s ${core}/share/tsugumi/sdk "$out/share/tsugumi/sdk"
+    ln -s ${core}/share/tsugumi/nix "$out/share/tsugumi/nix"
     ln -s ${core}/share/tsugumi/protocol "$out/share/tsugumi/protocol"
     ln -s ${core.testSupport}/python "$out/share/tsugumi/python"
     ln -s ${core}/lib "$out/lib"
@@ -53,7 +50,6 @@ runCommand "tsugumi-ci-runtime"
             ps.websockets
           ]))
           flatbuffers
-          # Interpreter adapter tests must use the SDK's Ruby, not macOS Ruby 2.6.
           ruby
           bash
           coreutils
@@ -62,10 +58,7 @@ runCommand "tsugumi-ci-runtime"
           nodejs
           jq
           nix
-          clang-tools
-          ruff
           nixfmt
-          shfmt
         ]
       } \
       --set TSUGUMID ${core}/bin/tsugumid \
@@ -76,7 +69,8 @@ runCommand "tsugumi-ci-runtime"
       --set TSUGUMI_CACHED ${core}/bin/tsugumi-cached \
       --set TSUGUMI_RPC_CLIENT ${core}/bin/tsugumi-rpc \
       --set TSUGUMI_CLI ${core}/bin/tsugumi \
-      --set TSUGUMI_SDK_DIR ${core}/share/tsugumi/sdk \
+      --set TSUGUMI_NIX_DIR ${core}/share/tsugumi/nix \
+      --set TSUGUMI_TEST_NIX_LOCK ${lib.escapeShellArg core.devEnv.TSUGUMI_TEST_NIX_LOCK} \
       --set TSUGUMI_AGENT_SCHEMA ${core}/share/tsugumi/protocol/agent.bfbs \
       --set TSUGUMI_PROJECT_SCHEMA ${core}/share/tsugumi/protocol/tsugumi.bfbs \
       --set TSUGUMI_PY_BINDINGS ${core.testSupport}/python \

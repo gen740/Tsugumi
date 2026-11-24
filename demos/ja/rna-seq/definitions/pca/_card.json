@@ -1,18 +1,8 @@
 {
   "type": "code",
-  "language": "r",
   "inputs": [
     {
       "name": "normalized"
-    }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "pca",
-  "params": [
-    {
-      "name": "top_genes",
-      "type": "uint64",
-      "data": 500
     }
   ]
 }

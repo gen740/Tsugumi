@@ -128,7 +128,61 @@ auto Tools::EditProjectTool(const std::string& conversation,
     H::ProjectOperateRequestT request;
     request.project_id = project;
     request.op_id = operation;
-    if (call.name == "project_edit")
+    const auto store = json::Text(args, "store");
+    auto selected_store = [&] {
+      if (store == "project") return H::TemplateStore::Project;
+      if (store == "host") return H::TemplateStore::Host;
+      throw Failure("invalid_request",
+                    "Choose the project or host template store");
+    };
+    const bool adding =
+        call.name == "template_add" || call.name == "template_import";
+    if (call.name == "nix_path_lock_update") {
+      H::ProjectUpdateNixPathLockT value;
+      value.project_path = json::Text(args, "project_path");
+      value.name = json::Text(args, "name");
+      request.body.Set(std::move(value));
+    } else if (adding) {
+      H::TemplateAddT value;
+      value.name = json::Text(args, "name");
+      if (!host::TemplateName(value.name))
+        throw Failure("invalid_request", "Choose a valid template name");
+      if (call.name == "template_add") {
+        H::TemplateFolderT folder;
+        folder.path = json::Text(args, "path");
+        value.source.Set(std::move(folder));
+      } else {
+        H::TemplateGitT git;
+        git.url = json::Text(args, "url");
+        git.ref = json::Text(args, "ref");
+        git.subdirectory = json::Text(args, "subdirectory");
+        value.source.Set(std::move(git));
+      }
+      if (selected_store() == H::TemplateStore::Host) {
+        const auto policy = Exclusions(project, stop);
+        policy.Check(dependencies.host_templates / value.name);
+        AddHostTemplate(value, stop,
+                        [&](const auto& path) { policy.Check(path); });
+        return R"({"reply":"Acknowledgement","value":{}})";
+      }
+      request.body.Set(std::move(value));
+    } else if (call.name == "template_copy") {
+      H::ProjectTemplateCopyT value;
+      value.project_path = json::Text(args, "project_path");
+      value.name = json::Text(args, "name");
+      value.store = selected_store();
+      auto coordinate = [&](const char* field) {
+        const auto raw = json::Get(args, field, "0");
+        size_t end = 0;
+        const auto number = std::stod(raw, &end);
+        if (end != raw.size())
+          throw Failure("invalid_request", "Invalid template position");
+        return number;
+      };
+      value.x = coordinate("x");
+      value.y = coordinate("y");
+      request.body.Set(std::move(value));
+    } else if (call.name == "project_edit")
       request.body.Set(Edits(args));
     else if (call.name == "project_connect") {
       H::ProjectConnectT value;
@@ -181,6 +235,12 @@ auto Tools::EditProjectTool(const std::string& conversation,
         return;
       boundary->Check("project_file_read", {{"path", json::Quote(path)}}, read);
     };
+    if (adding)
+      context.read_template_source = [&](const auto& input) {
+        const auto excluded = Exclusions(project, stop);
+        return host::ReadTemplateSource(
+            input, stop, [&](const auto& path) { excluded.Check(path); });
+      };
     context.authorize = [&](json::Members& plan, const host::SaveBase& base) {
       {
         std::lock_guard lock(mutex);
@@ -188,7 +248,7 @@ auto Tools::EditProjectTool(const std::string& conversation,
       }
       use_inspection(base);
       if (read) boundary->CheckCurrentSave(plan, read);
-      policy->CheckSave(plan, base);
+      policy->CheckSave(plan, base, {}, adding);
       if (args.contains("approved_permissions"))
         plan["approved_permissions"] = args.at("approved_permissions");
     };

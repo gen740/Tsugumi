@@ -1,15 +1,12 @@
 # The strongest genes, and where the known responders of the literature stand.
-main <- function(inputs, report) {
-  d <- read.csv(inputs$path("results"))
+main <- function(inputs) {
+  d <- read.csv(list.files(artifact_open(inputs$results), full.names = TRUE)[[1]])
   d <- d[!is.na(d$fdr), ]
   d <- d[order(d$fdr, d$p), ]
   d$rank <- seq_len(nrow(d))
-  known <- inputs$params$known
-  shown <- d[d$rank <= inputs$params$top | d$symbol %in% known, ]
-  report$table(data.frame(
-    Rank = shown$rank, Gene = shown$symbol, `Mean count` = sprintf("%.0f", shown$base_mean),
-    log2FC = sprintf("%.2f", shown$log2fc), Fold = sprintf("%.1f", 2^shown$log2fc), FDR = sprintf("%.2g", shown$fdr),
-    Known = ifelse(shown$symbol %in% known, "○", ""), check.names = FALSE))
+  known <- params$known
+  shown <- d[d$rank <= params$top | d$symbol %in% known, ]
+  # TODO(open): Port the demo display.
 
   invisible(NULL)
 }

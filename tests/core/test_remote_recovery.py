@@ -16,21 +16,24 @@ from pathlib import Path
 import flatbuffers
 import pytest
 from harness import remote_worker as R
-from harness.fixtures import worker_project
+from harness.fixtures import add_worker, worker_project
 from harness.scenario import Project
-from projects import FILE_FBS, start_run, wait_invocation, wait_run, wait_run_notification
+from harness.scenario import FILE_OUTPUT
+from projects import start_run, wait_invocation, wait_run, wait_run_notification
 from Tsugumi.Data.CardState import CardState
+from tsugumi.ArtifactId import ArtifactIdT
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
+from Tsugumi.Worker.WorkerDisplay import WorkerDisplayT
 from Tsugumi.Worker.WorkerMessage import WorkerMessageT
 from Tsugumi.Worker.WorkerOutput import WorkerOutputT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
 from Tsugumi.Worker.WorkerResult import WorkerResultT
-from tsugumi_client import RpcFailure, make, new_id, path, text
+from tsugumi_client import change, RpcFailure, make, new_id, path, text
 
 
 class Gateway(socketserver.ThreadingUnixStreamServer):
@@ -57,6 +60,9 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         self.catalog_contract = 3
         self.probe_overrides = {}
         self.receipts = {}
+        self.view_messages = []
+        self.hold_view = None
+        self.view_stalled = threading.Event()
         self.submit_count = 0
         self.download_count = 0
         self.released = set()
@@ -80,11 +86,12 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         self.stalls_expected = 1
         self.stall_lock = threading.Lock()
         self.resume = threading.Event()
-        # A running job's JSONL log, served by status requests from the
+        # A running job's framed log, served by status requests from the
         # core's cursor; hidden ones appear only once the job has stopped.
         self.live_logs = {}
         self.hidden_live_logs = False
         self.log_offsets = []
+        self.live_displays = {}
 
     def finish(self, job, *, result_fault=None, logs=None, log_truncated=False):
         def blob(data):
@@ -92,35 +99,38 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             self.results[digest] = data
             return digest
 
-        value = flatbuffers.Builder(64)
-        output_path = value.CreateString("out/result.txt")
-        value.StartObject(1)
-        value.PrependUOffsetTRelativeSlot(0, output_path, 0)
-        value.Finish(value.EndObject())
-        value_bytes = b"\x00" if result_fault == "type" else value.Output()
-        result = WorkerResultT(outputs=[WorkerOutputT(name="doc", bytes=value_bytes)])
+        spec = self.specs[job]
+        invocation = R.InvocationT.InitFromPackedBuf(self.blob_contents[R.string(spec.invocationSha256)])
+        request = WorkerMessageT.InitFromPackedBuf(self.blob_contents[R.string(invocation.callSha256)])
+        artifact = ArtifactIdT(bytes=list(request.value.invocationSequence.to_bytes(8, "big") + bytes(8)))
+        output = WorkerOutputT(name="doc", artifacts=[artifact])
+        created = [] if result_fault == "artifact" else [artifact]
+        result = WorkerResultT(outputs=[output], created=created)
         message = WorkerMessageT(callId=1, valueType=WorkerPayload.WorkerResult, value=result)
         buffer = flatbuffers.Builder(128)
         buffer.Finish(message.Pack(buffer), file_identifier=b"TSW1")
         files = {
-            "files/out/result.txt": b"retained after shutdown\n",
-            "environment.json": json.dumps({
-                "paths": ["/nix/store/00000000000000000000000000000000-mock"],
-                "directories": ["out"], "built": True, "log_truncated": log_truncated,
-            }).encode(),
-            "logs.jsonl": b'{"stream":1,"text":"one recovered message\\n"}\n',
+            "environment": R.pack(R.ResultEnvironmentT(
+                paths=["/nix/store/00000000000000000000000000000000-mock"],
+                directories=["artifacts", "artifacts/0"],
+                built=True, logTruncated=log_truncated,
+            )),
+            "logs": R.log_entries((LogStream.standard_output, "one recovered message\n")),
         }
+        files = {"files/artifacts/0/result.txt": b"retained after shutdown\n", **files}
         if logs is not None:
-            files["logs.jsonl"] = logs
+            files["logs"] = logs
+        if result_fault == "display":
+            files["display.fb"] = b"old display result"
         if result_fault == "log":
-            files["logs.jsonl"] = b'{"stream":1,"text":"message"} trailing data\n'
+            files["logs"] = b"invalid frame"
         entries = [{"size": len(data), "sha256": blob(data), "path": path} for path, data in files.items()]
         if result_fault == "escape":
-            entries[0]["path"] = "files/out/../../escape"
+            entries[0]["path"] = "files/artifacts/../../escape"
         if result_fault == "size":
             entries[0]["size"] += 1
         if result_fault == "oversize":
-            next(entry for entry in entries if entry["path"] == "logs.jsonl")["size"] = (128 << 20) + 1
+            next(entry for entry in entries if entry["path"] == "logs")["size"] = (128 << 20) + 1
         manifest = R.pack(R.ResultManifestT(outputs=[R.ResultFileT(**entry) for entry in entries],
             invocationResultSha256=blob(bytes(buffer.Output()))))
         self.receipts[job] = {**self.receipts[job], "state": "succeeded", "result_sha256": blob(manifest)}
@@ -129,7 +139,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         self.core_ids.add(R.string(q.coreLifeId))
         kind, body = q.bodyType, q.body
         caps = R.CapabilitiesT(serverId=self.registered_server, nativeSystem=self.system, systems=[self.system],
-                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=11)
+                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=R.WORKER_CONTRACT)
         if kind == R.RequestBody.CatalogRequest:
             caps.resourceLimits = self.catalog_resource_limits
             caps.workerContract = self.catalog_contract
@@ -143,7 +153,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             caps.instanceId = self.instance
             for key, value in self.probe_overrides.items():
                 setattr(caps, key, value)
-            if caps.workerContract != 11 or not caps.maxJobs:
+            if caps.workerContract != R.WORKER_CONTRACT or not caps.maxJobs:
                 return R.failure(R.ErrorCode.Rejected, "invalid capabilities")
             return R.reply(R.ReplyBody.Capabilities, caps)
         assert R.string(q.instanceId) == self.instance
@@ -169,6 +179,14 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             return R.blob_chunk(body.digest, len(data), body.offset,
                                 data[body.offset:body.offset + body.limit])
         job = R.string(q.jobId)
+        if kind == R.RequestBody.ViewSendRequest:
+            assert self.receipts[job]["state"] == "running"
+            view = R.string(body.display.view)
+            self.view_messages.append((job, view, bytes(body.display.bytes)))
+            if view == self.hold_view:
+                self.view_stalled.set()
+                self.resume.wait(10)
+            return R.reply(R.ReplyBody.Ack, R.AckT())
         if kind == R.RequestBody.ReleaseRequest:
             self.released.add(job)
             return R.reply(R.ReplyBody.Ack, R.AckT())
@@ -198,6 +216,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             state=getattr(R.JobState, state["state"].capitalize()), fingerprint=state.get("fingerprint"),
             resultSha256=state.get("result_sha256"), diagnostic=state.get("diagnostic"),
             logTruncated=state.get("log_truncated", False))
+        status.viewInputReady = state["state"] == "running"
         log = self.live_logs.get(job, b"")
         # Status and Cancel replies carry a slice of the log from the cursor.
         if body.logLimit and log and (
@@ -206,6 +225,10 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             status.logOffset = body.logOffset
             status.logSize = len(log)
             status.logBytes = list(log[body.logOffset:body.logOffset + min(body.logLimit, 7)])
+        if kind == R.RequestBody.StatusRequest:
+            status.displays = self.live_displays.pop(job, None)
+            if status.displays:
+                status.displaySequence = body.displayAfter + 1
         return R.reply(R.ReplyBody.JobStatus, status)
 
 
@@ -282,7 +305,7 @@ def remote_gateway(monkeypatch):
 
 def test_stop_is_accepted_while_worker_selection_catalog_is_pending(project, remote_gateway, core_factory, tmp_path):
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
                    executionService="cluster")
     client.ensure_subscription()
     rev = client.call("ProjectInspectRequest").rev
@@ -327,17 +350,25 @@ def test_stop_is_accepted_while_worker_selection_catalog_is_pending(project, rem
 
 
 @pytest.fixture
-def running_job(project, remote_gateway, core_factory, tmp_path):
+def running_job(project, remote_gateway, core_factory, tmp_path, request):
     daemon = core_factory(mocked_builds=True)
     client = daemon.connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster",
-                   retainArtifact=True, artifactOutput="doc",
-                   executionResources={"cpuMillis": 500, "memoryBytes": 256 << 20})
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, executionService="cluster",
+                   sandbox={"limits": {"cpu": 0.5, "memoryMiB": 256}})
+    limit = getattr(request, "param", 128 << 20)
+    if hasattr(request, "param"):
+        snapshot = client.call("ProjectInspectRequest")
+        config = json.loads(text(snapshot.projectJson))
+        config["logLimitBytes"] = limit
+        client.call("ProjectSaveRequest", baseRev=snapshot.rev, opId=new_id(), origin="ui:test",
+                    changes=[change("SetProject", json=json.dumps(config))])
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     job_id = text(live.executionJobId)
     assert remote_gateway.submit_count == 1
     spec = remote_gateway.specs[job_id]
+    assert spec.logLimitBytes == limit
+    assert spec.outputLimitBytes == 64 << 30 and spec.outputLimitEntries == 1000
     assert spec.cpuMillis == 500 and spec.memoryBytes == 256 << 20
     try:
         yield remote_gateway, daemon, client, run_id, job_id
@@ -355,8 +386,8 @@ def running_job(project, remote_gateway, core_factory, tmp_path):
 def test_incompatible_remote_gateway_prevents_upload(project, remote_gateway, core_factory, tmp_path, field, value):
     remote_gateway.probe_overrides[field] = value
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster",
-                   executionResources={"cpuMillis": 500, "memoryBytes": 256 << 20})
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, executionService="cluster",
+                   sandbox={"limits": {"cpu": 0.5, "memoryMiB": 256}})
     run_id = start_run(client, "work", propagate=False)
     status = wait_run(client, run_id)
     assert status.state == RunState.failed
@@ -372,8 +403,8 @@ def test_resource_limits_use_live_worker_not_catalog(project, remote_gateway, co
         remote_gateway.catalog_contract = 99
     remote_gateway.resource_limits = live_resources
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster",
-                   executionResources={"cpuMillis": 500, "memoryBytes": 256 << 20})
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, executionService="cluster",
+                   sandbox={"limits": {"cpu": 0.5, "memoryMiB": 256}})
     run_id = start_run(client, "work", propagate=False)
     if live_resources:
         live = wait_for_state(client, run_id, RemoteExecutionState.running)
@@ -394,17 +425,17 @@ def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tm
     remote_gateway.resource_limits = False
     client = core_factory(mocked_builds=True).connect()
     settings = {} if requested_system is None else {"system": requested_system}
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
                    executionService="cluster", **settings)
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     spec = remote_gateway.specs[text(live.executionJobId)]
     assert R.string(spec.system) == text(live.executionSystem) == "aarch64-linux"
     assert R.string(spec.derivation).endswith(".drv")
-    invocation = json.loads(remote_gateway.blob_contents[R.string(spec.invocationSha256)])
-    assert invocation["archive_sha256"] in [R.string(d) for d in spec.inputBlobs]
-    assert invocation["call_sha256"] in [R.string(d) for d in spec.inputBlobs]
-    assert remote_gateway.blob_contents[invocation["archive_sha256"]] == b"test Nix derivation archive"
+    invocation = R.InvocationT.InitFromPackedBuf(remote_gateway.blob_contents[R.string(spec.invocationSha256)])
+    assert R.string(invocation.archiveSha256) in [R.string(d) for d in spec.inputBlobs]
+    assert R.string(invocation.callSha256) in [R.string(d) for d in spec.inputBlobs]
+    assert remote_gateway.blob_contents[R.string(invocation.archiveSha256)] == b"test Nix derivation archive"
     remote_gateway.finish(text(live.executionJobId))
     assert wait_run(client, run_id).state == RunState.succeeded
 
@@ -412,8 +443,8 @@ def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tm
 def test_evaluation_failure_prevents_transfer(project, remote_gateway, core_factory):
     """A target-system evaluation error is visible before any upload or submission."""
     client = core_factory(mocked_builds=True).connect()
-    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": True, "executionService": "cluster"},
-                          outputs=FILE_FBS, plan={"error": "package is unavailable on this platform"}).save(client)
+    Project(project).card("work", {"type": "code", "sandbox": {}, "executionService": "cluster"},
+                          outputs=FILE_OUTPUT, plan={"error": "package is unavailable on this platform"}).save(client)
     run_id = start_run(client, "work", propagate=False)
     status = wait_run(client, run_id)
     assert status.state == RunState.failed
@@ -425,7 +456,7 @@ def test_evaluation_failure_prevents_transfer(project, remote_gateway, core_fact
 def test_remote_job_without_resource_limits(project, remote_gateway, core_factory, tmp_path):
     remote_gateway.resource_limits = False
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster")
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, executionService="cluster")
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     assert live.executionResources is None
@@ -435,7 +466,86 @@ def test_remote_job_without_resource_limits(project, remote_gateway, core_factor
     assert wait_run(client, run_id).state == RunState.succeeded
 
 
-@pytest.mark.parametrize("fault", ["type", "escape", "size", "oversize", "log"])
+def test_remote_status_relay_keeps_binary_view_data_out_of_results(project, remote_gateway, core_factory, tmp_path):
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, executionService="cluster")
+    subscription = text(client.open().subscriptionId)
+    client.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("work")])
+    run_id = start_run(client, "work", propagate=False)
+    live = wait_for_state(client, run_id, RemoteExecutionState.running)
+    job_id = text(live.executionJobId)
+    view = "unmatched/remote-view"
+    payload = b"remote-view\x00\xff\xfe"
+    remote_gateway.live_displays[job_id] = [WorkerDisplayT(view=view, bytes=payload)]
+    shown = client.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated, timeout=10)
+    update = shown.value.display
+    assert update.card.segments == [b"work"]
+    assert text(update.view) == view and bytes(update.bytes) == payload
+    client.call("ViewCreditRequest", subscriptionId=subscription, card=update.card,
+                view=view, bytes=len(payload), creditId=update.creditId)
+    remote_gateway.finish(job_id)
+    assert wait_run(client, run_id).state == RunState.succeeded
+    assert all(payload not in blob for blob in remote_gateway.results.values())
+    saved = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
+    assert saved.outputs and not hasattr(saved, "display")
+
+
+def test_remote_view_messages_do_not_wait_for_another_views_reply(project, remote_gateway, core_factory, tmp_path):
+    from Tsugumi.Trace.Client import Client
+
+    daemon = core_factory(mocked_builds=True)
+    ui = daemon.connect(client=Client.Web)
+    worker_project(ui, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
+                   executionService="cluster", views=[
+                       {"blob": "/nix/store/example-notes", "name": "notes", "type": "html"},
+                       {"blob": "/nix/store/example-plot", "name": "plot", "type": "html"},
+                   ])
+    subscription = text(ui.open().subscriptionId)
+    ui.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("work")])
+    ui.wait_notification(lambda n: n.valueType == NotificationPayload.CardViewsUpdated)
+    run_id = start_run(ui, "work", propagate=False)
+    try:
+        live = wait_for_state(ui, run_id, RemoteExecutionState.running)
+    except AssertionError:
+        status = ui.call("RunStatusRequest", runId=run_id)
+        assert not status.failure, status.failure and text(status.failure.diagnostic)
+        raise
+    job = text(live.executionJobId)
+    payload = b"reply\0\xff"
+    remote_gateway.hold_view = "notes"
+    ui.call("ViewSendRequest", card=path("work"), view="notes", bytes=list(payload))
+    assert remote_gateway.view_stalled.wait(5)
+    try:
+        ui.call("ViewSendRequest", card=path("work"), view="plot", bytes=list(payload))
+        deadline = time.monotonic() + 5
+        while len(remote_gateway.view_messages) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert remote_gateway.view_messages == [(job, "notes", payload), (job, "plot", payload)]
+    finally:
+        remote_gateway.resume.set()
+    remote_gateway.finish(job)
+    assert wait_run(ui, run_id).state == RunState.succeeded
+
+
+@pytest.mark.parametrize("field", ["outputLimitBytes", "outputLimitEntries"])
+def test_remote_result_cannot_exceed_the_project_output_budget(project, remote_gateway, core_factory, tmp_path, field):
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, executionService="cluster")
+    snapshot = client.call("ProjectInspectRequest")
+    config = json.loads(text(snapshot.projectJson))
+    config[field] = 0
+    client.call("ProjectSaveRequest", baseRev=snapshot.rev, opId=new_id(), origin="ui:test",
+                changes=[change("SetProject", json=json.dumps(config))])
+    run_id = start_run(client, "work", propagate=False)
+    live = wait_for_state(client, run_id, RemoteExecutionState.running)
+    job_id = text(live.executionJobId)
+    assert getattr(remote_gateway.specs[job_id], field) == 0
+    remote_gateway.finish(job_id)
+    result = wait_run(client, run_id)
+    assert result.state == RunState.failed and result.failure.kind == FailureKind.output_invalid
+
+
+@pytest.mark.parametrize("fault", ["artifact", "escape", "size", "oversize", "log", "display"])
 def test_invalid_remote_results_do_not_publish_outputs(running_job, fault):
     """The core validates output bytes and result members before publishing an artifact."""
     gateway, _, client, run_id, job_id = running_job
@@ -455,16 +565,15 @@ def test_rolled_back_remote_journal_leaves_no_gap(running_job, project):
             BEGIN SELECT RAISE(ABORT, 'test invocation write failed'); END
         """)
     rolled_back = "remote journal entry that must roll back"
-    gateway.finish(job_id, logs=(json.dumps({"stream": LogStream.journal,
-                                            "text": rolled_back + "\n"}) + "\n").encode())
+    gateway.finish(job_id, logs=R.log_entries((LogStream.journal, rolled_back + "\n")))
     assert wait_run(client, run_id).state == RunState.failed
 
     for scope in ({}, {"card": path("work")}, {"card": path("work"), "invocation": 1}):
         journal = client.call("LogRangeRequest", runId=run_id, stream=LogStream.journal, **scope)
         saved = text(journal.text)
-        entries = [json.loads(line) for line in saved.splitlines()]
         assert rolled_back not in saved
-        assert any(entry["event"] == "failed" for entry in entries)
+        assert any(line.partition(" · ")[2].startswith("failed: ")
+                   for line in saved.splitlines())
         assert journal.sizeBytes == journal.nextOffset == len(saved.encode())
 
 
@@ -472,8 +581,7 @@ def test_large_remote_build_entry_supports_small_backward_reads(running_job):
     gateway, _, client, run_id, job_id = running_job
     # Put a multibyte character across the on-disk chunk boundary.
     content = ("x" * 65535 + "雪\n" + "é\n" * 410000 + "end\n").encode()
-    gateway.finish(job_id, logs=(json.dumps({"stream": LogStream.build,
-                                            "text": content.decode()}, ensure_ascii=False) + "\n").encode())
+    gateway.finish(job_id, logs=R.log_entries((LogStream.build, content.decode())))
     assert wait_run(client, run_id).state == RunState.succeeded
 
     args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.build)
@@ -490,8 +598,7 @@ def test_large_remote_build_entry_supports_small_backward_reads(running_job):
 
 def test_log_read_reports_corrupt_chunk_offsets(running_job, project):
     gateway, _, client, run_id, job_id = running_job
-    gateway.finish(job_id, logs=(json.dumps({"stream": LogStream.build,
-                                            "text": "x" * 70000}) + "\n").encode())
+    gateway.finish(job_id, logs=R.log_entries((LogStream.build, "x" * 70000)))
     assert wait_run(client, run_id).state == RunState.succeeded
     with sqlite3.connect(project / ".tsugumi" / "runs.sqlite") as db:
         db.execute("UPDATE logs SET inv_off=inv_off+10 WHERE run_id=? AND stream=? AND inv_off=65536",
@@ -506,8 +613,7 @@ def test_log_read_reports_corrupt_chunk_offsets(running_job, project):
 def test_long_terminal_redraw_is_consistent_in_forward_and_reverse_pages(running_job):
     gateway, _, client, run_id, job_id = running_job
     raw = "first\na" + "x" * (3 << 20) + "\r雪\nend\n"
-    gateway.finish(job_id, logs=(json.dumps({"stream": LogStream.build,
-                                            "text": raw}, ensure_ascii=False) + "\n").encode())
+    gateway.finish(job_id, logs=R.log_entries((LogStream.build, raw)))
     assert wait_run(client, run_id).state == RunState.succeeded
 
     args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.build)
@@ -565,7 +671,7 @@ def test_core_restart_interrupts_the_external_job(running_job, outage, completed
     assert gateway.receipts[job_id]["state"] == ("succeeded" if completed else "cancelled")
     assert len(gateway.core_ids) == 2
     record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
-    assert not record.outputs and not record.display
+    assert not record.outputs
     assert not client.call("ArtifactListRequest", runId=run_id, card=path("work")).artifacts
     assert gateway.submit_count == 1 and gateway.download_count == 0
 
@@ -586,7 +692,7 @@ def test_network_cut_within_same_core_life_resumes(running_job):
                          ids=["pending-status", "pending-submit"])
 def test_stop_cancels_remote_job_before_the_pending_reply(project, remote_gateway, core_factory, tmp_path, operation):
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
                    executionService="cluster")
     if operation == R.RequestBody.StatusRequest:
         run_id = start_run(client, "work", propagate=False)
@@ -608,7 +714,7 @@ def test_stop_cancels_remote_job_before_the_pending_reply(project, remote_gatewa
 
 def test_stop_reaches_worker_before_submit_is_applied(project, remote_gateway, core_factory, tmp_path):
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
                    executionService="cluster")
     remote_gateway.stall_operation = R.RequestBody.SubmitRequest
     remote_gateway.stall = "blackhole"
@@ -676,11 +782,12 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
     assert gateway.download_count == 0 and gateway.submit_count == 1
 
 
+@pytest.mark.parametrize("running_job", [6], indirect=True)
 def test_remote_truncation_metadata_survives_import_and_restart(running_job):
     gateway, daemon, client, run_id, job_id = running_job
-    limit = 128 << 20
-    logs = b'{"stream":1,"text":"remote output"}\n'
-    gateway.receipts[job_id]["log_truncated"] = True
+    limit = 6
+    logs = R.log_entries((LogStream.standard_output, "remote output"))
+    gateway.live_logs[job_id] = logs
     client.wait_notification(
         lambda n: n.valueType == NotificationPayload.LogAvailable
         and text(n.value.runId) == run_id
@@ -690,7 +797,10 @@ def test_remote_truncation_metadata_survives_import_and_restart(running_job):
     live = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1)
     assert live.record.summary.logTruncatedAtBytes == limit
     assert live.record.summary.state == CardState.running
-    gateway.finish(job_id, logs=logs, log_truncated=True)
+    full = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1,
+                       stream=LogStream.standard_output, tail=True, live=True)
+    assert text(full.text) == "remote output"
+    gateway.finish(job_id, logs=logs)
     assert wait_run(client, run_id).state == RunState.succeeded
     daemon.restart()
     client = daemon.connect()
@@ -702,13 +812,13 @@ def test_remote_truncation_metadata_survives_import_and_restart(running_job):
     journal = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1,
                           stream=LogStream.journal)
     assert journal.logTruncatedAtBytes == limit
-    assert text(stdout.text).strip() == "remote output"
+    assert text(stdout.text) == "remote"
 
 
 def test_grade_condition_selects_and_records_registered_worker(project, remote_gateway, core_factory, tmp_path):
     remote_gateway.grade = 0x8000000000000000
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
                    workerCondition={"language": "simple", "expression": "x & 0x8000000000000000 != 0"})
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
@@ -722,7 +832,7 @@ def test_grade_condition_selects_and_records_registered_worker(project, remote_g
 
 def test_grade_condition_without_registered_match_fails_before_submission(project, remote_gateway, core_factory, tmp_path):
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
                    workerCondition={"language": "simple", "expression": "x > 1"})
     plan = client.call("RunPlanRequest", card=path("work"), propagate=False)
     assert any(text(d.code) == "invalid_setting" for d in plan.diagnostics)
@@ -734,13 +844,13 @@ def test_grade_condition_without_registered_match_fails_before_submission(projec
 @pytest.mark.parametrize("run_budget,build_budget", [(None, None), (2, 3)])
 def test_remote_separates_build_and_call_budgets(project, remote_gateway, core_factory, tmp_path, run_budget, build_budget):
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster",
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, executionService="cluster",
                    timeoutSeconds=run_budget, buildTimeoutSeconds=build_budget)
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     spec = remote_gateway.specs[text(live.executionJobId)]
-    invocation = json.loads(remote_gateway.blob_contents[text(spec.invocationSha256)])
-    call = WorkerMessageT.InitFromPackedBuf(remote_gateway.blob_contents[invocation["call_sha256"]])
+    invocation = R.InvocationT.InitFromPackedBuf(remote_gateway.blob_contents[text(spec.invocationSha256)])
+    call = WorkerMessageT.InitFromPackedBuf(remote_gateway.blob_contents[R.string(invocation.callSha256)])
     assert call.value.deadlineMs == (run_budget * 1000 if run_budget is not None else None)
     assert (0 < spec.buildTimeoutMs <= build_budget * 1000) if build_budget else spec.buildTimeoutMs == 0
     # Spending more than the call budget in transport/queue polling must not
@@ -748,9 +858,6 @@ def test_remote_separates_build_and_call_budgets(project, remote_gateway, core_f
     remote_gateway.finish(text(live.executionJobId))
     assert wait_run(client, run_id).state == RunState.succeeded
 
-
-def log_entries(*entries):
-    return b"".join((json.dumps({"stream": stream, "text": value}) + "\n").encode() for stream, value in entries)
 
 
 def recorded_log(client, run_id, stream):
@@ -768,7 +875,7 @@ def wait_recorded_log(client, run_id, stream, expected, timeout=10):
 def test_running_remote_log_arrives_once_across_reconnects(running_job):
     """Logs arrive while the job runs; the result's log only adds what is new."""
     gateway, _, client, run_id, job_id = running_job
-    first = log_entries((LogStream.standard_output, "first line\n"), (LogStream.build, "building\n"))
+    first = R.log_entries((LogStream.standard_output, "first line\n"), (LogStream.build, "building\n"))
     gateway.live_logs[job_id] = first
     wait_recorded_log(client, run_id, LogStream.standard_output, "first line\n")
     wait_recorded_log(client, run_id, LogStream.build, "building\n")
@@ -776,12 +883,12 @@ def test_running_remote_log_arrives_once_across_reconnects(running_job):
 
     gateway.online = False
     wait_for_state(client, run_id, RemoteExecutionState.disconnected)
-    second = first + log_entries((LogStream.standard_output, "after reconnect\n"))
+    second = first + R.log_entries((LogStream.standard_output, "after reconnect\n"))
     gateway.live_logs[job_id] = second
     gateway.online = True
     wait_recorded_log(client, run_id, LogStream.standard_output, "first line\nafter reconnect\n")
 
-    complete = second + log_entries((LogStream.standard_error, "only in the result\n"))
+    complete = second + R.log_entries((LogStream.standard_error, "only in the result\n"))
     gateway.finish(job_id, logs=complete)
     assert wait_run(client, run_id).state == RunState.succeeded
     assert recorded_log(client, run_id, LogStream.standard_output) == "first line\nafter reconnect\n"
@@ -796,7 +903,7 @@ def test_running_remote_log_arrives_once_across_reconnects(running_job):
 def test_stopped_remote_job_keeps_its_collected_log(running_job):
     gateway, _, client, run_id, job_id = running_job
     gateway.hidden_live_logs = True
-    gateway.live_logs[job_id] = log_entries((LogStream.standard_output, "before cancel\n"))
+    gateway.live_logs[job_id] = R.log_entries((LogStream.standard_output, "before cancel\n"))
     assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
     assert wait_run(client, run_id).state == RunState.cancelled
     assert recorded_log(client, run_id, LogStream.standard_output) == "before cancel\n"
@@ -805,9 +912,9 @@ def test_stopped_remote_job_keeps_its_collected_log(running_job):
 
 def test_remote_result_must_extend_the_recorded_log(running_job):
     gateway, _, client, run_id, job_id = running_job
-    gateway.live_logs[job_id] = log_entries((LogStream.standard_output, "recorded\n"))
+    gateway.live_logs[job_id] = R.log_entries((LogStream.standard_output, "recorded\n"))
     wait_recorded_log(client, run_id, LogStream.standard_output, "recorded\n")
-    gateway.finish(job_id, logs=log_entries((LogStream.standard_output, "replaced\n")))
+    gateway.finish(job_id, logs=R.log_entries((LogStream.standard_output, "replaced\n")))
     assert wait_run(client, run_id).state == RunState.failed
     assert recorded_log(client, run_id, LogStream.standard_output) == "recorded\n"
     assert not client.call("RunRecordRequest", runId=run_id, card=path("work")).record.outputs

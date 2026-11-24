@@ -1,6 +1,5 @@
 """Read a real Card's Nix output from run history."""
 
-import json
 import os
 import socket
 import sqlite3
@@ -9,10 +8,11 @@ from uuid import uuid4
 
 import pytest
 
-from harness.real_cards import bash, log
+from harness.nix_path import test_lock_entries as fixture_locks
+from harness.real_cards import log, python_card, python_nix
 from harness.scenario import run
 from projects import (MSG_FBS, card, run_and_wait, start_run, wait_for_log, wait_run,
-                      wait_run_notification, write)
+                      wait_run_notification, write_nix_project as write)
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
@@ -20,6 +20,34 @@ from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
+
+# Cards that depend on the probe derivation through main.py's text.
+PROBE_MAIN = """import os
+from card import Output
+
+def run(input):
+    assert os.path.exists(PROBE)
+    print(PRINTED, flush=True)
+    return Output()
+"""
+CAT_MAIN = """from card import Output
+
+def run(input):
+    print(open(PROBE).read(), end="", flush=True)
+    return Output()
+"""
+EXISTS_MAIN = """import os
+from card import Output
+
+def run(input):
+    assert os.path.exists(PROBE)
+    return Output()
+"""
+EMPTY_MAIN = """from card import Output
+
+def run(input):
+    return Output()
+"""
 
 
 @pytest.mark.parametrize(
@@ -29,9 +57,8 @@ from Tsugumi.RPC.RunEventValue import RunEventValue
         ("exit 23", RunState.failed, False),
         ("exec sleep infinity", RunState.cancelled, False),
         (
-            # Quotes expand to two bytes in the pipe's JSON string. Exercise
-            # the reader's bound on a record before it reaches the log budget.
-            r'''{ head -c $((65 * 1024 * 1024)) /dev/zero | tr '\0' '"'; echo; } >&2; touch "$out"''',
+            # One oversized record reaches the build client's frame limit.
+            r'''{ head -c $((129 * 1024 * 1024)) /dev/zero | tr '\0' '"'; echo; } >&2; touch "$out"''',
             RunState.succeeded,
             True,
         ),
@@ -42,11 +69,12 @@ def test_build_log_preserves_output_and_flushes_before_notifications(core_factor
     cancelling = state == RunState.cancelled
     # A unique derivation forces the daemon to build and stream these records.
     definition = {
-        "type": "code", "language": "bash",
+        "type": "code",
         "_outputs": "table Outputs {} root_type Outputs;",
         "_nix": r'''
-{ pkgs, inputs, params }:
+{ params, inputs }:
 let
+  pkgs = import <nixpkgs> { };
   probe = pkgs.runCommand "tsugumi-build-log-@id@" {} ''
     printf 'before invalid bytes\n' >&2
     printf 'builder byte: \377\n' >&2
@@ -60,12 +88,9 @@ let
     printf 'builder reached finish\n' >&2
     @finish@
   '';
-in {
-  preRun = ''printf 'pre-run: \377\n' >&2'';
-  run = "test -f ${probe} && echo card-ran";
-  postRun = ''printf 'post-run: \377\n' >&2'';
-}
-'''.replace("@id@", uuid4().hex).replace("@finish@", finish),
+in
+@run@'''.replace("@id@", uuid4().hex).replace("@finish@", finish).replace(
+            "@run@", python_nix(PROBE_MAIN, values={"PROBE": "\"${probe}\"", "PRINTED": "\"card-ran\""}).split("\n", 1)[1]),
     }
     if cancelling:
         # Let the gate fail visibly if a regression prevents live log delivery.
@@ -138,9 +163,6 @@ in {
         assert record.summary.failure.kind == FailureKind.nix_failed
     if state == RunState.succeeded and not truncating:
         assert log(client, run_id, "probe", LogStream.standard_output) == "card-ran\n"
-        stderr = log(client, run_id, "probe", LogStream.standard_error)
-        assert "pre-run: \ufffd\n" in stderr
-        assert "post-run: \ufffd\n" in stderr
 
 
 @pytest.mark.parametrize(
@@ -157,18 +179,18 @@ def test_run_nix_parallelism(core_factory, tmp_path, monkeypatch, max_jobs, opti
     monkeypatch.setenv("NIX_CONFIG", f"{config}\nmax-jobs = {max_jobs}\ncores = 2\nbuilders =")
     root = tmp_path / "project"
     definition = {
-        "type": "code", "language": "bash",
+        "type": "code",
         "_outputs": "table Outputs {} root_type Outputs;",
         "_nix": r'''
-{ pkgs, inputs, params }:
+{ params, inputs }:
 let
+  pkgs = import <nixpkgs> { };
   probe = pkgs.runCommand "tsugumi-build-cores-@id@" {} ''
     printf '%s\n' "$NIX_BUILD_CORES" > "$out"
   '';
-in {
-  run = "cat ${probe}";
-}
-'''.replace("@id@", uuid4().hex),
+in
+@run@'''.replace("@id@", uuid4().hex).replace(
+            "@run@", python_nix(CAT_MAIN, values={"PROBE": "\"${probe}\""}).split("\n", 1)[1]),
     }
     write(root, {"probe": definition}, [card("probe", "probe")], [])
     client = core_factory(project_root=root).connect()
@@ -193,7 +215,7 @@ def test_stop_disconnects_the_daemon_build(core_factory, monkeypatch, tmp_path):
         listener.settimeout(120)
         port = listener.getsockname()[1]
         defs = {"probe": blocked_builder("probe", port)}
-        defs["warm"] = bash("true", outputs="table Outputs {} root_type Outputs;")
+        defs["warm"] = python_card(EMPTY_MAIN, outputs="table Outputs {} root_type Outputs;")
         write(root, defs, [card(name, name) for name in defs], [])
         client = core_factory(project_root=root).connect()
         # Exercise a build on a later Run, using the existing evaluator.
@@ -216,7 +238,7 @@ def test_stop_disconnects_the_daemon_build(core_factory, monkeypatch, tmp_path):
         assert marker.read(1) == b"", "the builder is still alive"
 
 
-def test_stop_ends_an_evaluation_waiting_for_nixpkgs(core_factory, monkeypatch, tmp_path):
+def test_stop_ends_locked_source_materialization(core_factory, monkeypatch, tmp_path):
     root = tmp_path / "project"
     with ExitStack() as stack:
         proxy = stack.enter_context(socket.socket())
@@ -225,16 +247,16 @@ def test_stop_ends_an_evaluation_waiting_for_nixpkgs(core_factory, monkeypatch, 
         proxy.settimeout(120)
         address = "http://127.0.0.1:" + str(proxy.getsockname()[1])
 
-        # The project's pin names a tarball no store has, so the Card's
-        # evaluation fetches it through this proxy.
-        write(root, {"fetch": bash("true", outputs="table Outputs {} root_type Outputs;")},
-              [card("fetch", "fetch")], [])
-        doc_file = root / "tsugumi.json"
-        doc = json.loads(doc_file.read_text())
+        # The pinned NAR is absent, so materializing the lock uses this proxy.
+        pin = next(entry for entry in fixture_locks() if entry["name"] == "nixpkgs")
         revision = uuid4().hex + "cafef00d"
-        doc["pkgsPath"] = ("https://github.com/NixOS/nixpkgs/archive/" + revision
-                           + ".tar.gz#sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-        doc_file.write_text(json.dumps(doc))
+        pin["rev"] = revision
+        pin["narHash"] = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        write(root, {"fetch": {
+            "type": "code",
+            "_outputs": "table Outputs {} root_type Outputs;",
+            "_nix": "{ params, inputs }: { run = []; }",
+        }}, [card("fetch", "fetch")], [], locked=[pin])
         # This fixture never answers. Its network deadlines must not end the
         # wait on behalf of Stop (the host may configure a short connect timeout).
         monkeypatch.setenv("NIX_CONFIG", os.environ.get("NIX_CONFIG", "")
@@ -249,7 +271,8 @@ def test_stop_ends_an_evaluation_waiting_for_nixpkgs(core_factory, monkeypatch, 
         stack.enter_context(peer)
         peer.settimeout(15)
         stream = stack.enter_context(peer.makefile("rb"))
-        assert stream.readline().startswith(b"CONNECT github.com:443 ")
+        connect = stream.readline()
+        assert connect.startswith(b"CONNECT ") and b"github.com:443 " in connect
         while stream.readline().strip():
             pass
         assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
@@ -259,13 +282,14 @@ def test_stop_ends_an_evaluation_waiting_for_nixpkgs(core_factory, monkeypatch, 
 
 def blocked_builder(name, port):
     return {
-        "type": "code", "language": "bash",
+        "type": "code",
         "_outputs": MSG_FBS,
         # Fixed-output derivations can reach loopback in the Nix sandbox.
         # The fixture checks the connection lifetime across PID namespaces.
         "_nix": r'''
-{ pkgs, inputs, params }:
+{ params, inputs }:
 let
+  pkgs = import <nixpkgs> { };
   probe = pkgs.runCommand "tsugumi-build-stop-@id@" {
     outputHashMode = "flat";
     outputHashAlgo = "sha256";
@@ -277,6 +301,7 @@ let
     read -r line <&3
     touch "$out"
   '';
-in { run = "test -f ${probe}"; }
-'''.replace("@id@", uuid4().hex).replace("@port@", str(port)).replace("@card@", name),
+in
+@run@'''.replace("@id@", uuid4().hex).replace("@port@", str(port)).replace("@card@", name).replace(
+            "@run@", python_nix(EXISTS_MAIN, values={"PROBE": "\"${probe}\""}).split("\n", 1)[1]),
     }

@@ -453,10 +453,16 @@ enum ServiceWire {
       return out
 
     case let v as Tsugumi_Host_EnvironmentStateT:
-      return ["project": v.project, "key": v.key, "phase": v.phase, "endpoint": v.endpoint ?? "", "token": v.token ?? "",
+      var result: [String: Any] = ["project": v.project, "key": v.key, "phase": v.phase, "endpoint": v.endpoint ?? "", "token": v.token ?? "",
         "project_id": v.projectId ?? "", "control_dir": v.controlDir ?? "",
         "ready_file": v.readyFile ?? "", "message": v.message ?? "", "recovery": v.recovery ?? "", "log": v.log ?? "",
-        "startup_error_json": v.startupErrorJson ?? "", "folders": v.folders.compactMap { $0 }] as [String: Any]
+        "folders": v.folders.compactMap { $0 }]
+      if let error = v.startupError {
+        result["startup_error"] = ["kind": error.kind ?? "", "found": error.found ?? "",
+                                   "expected": error.expected ?? "", "source": error.source ?? "",
+                                   "message": error.message ?? ""]
+      }
+      return result
     case let v as Tsugumi_Host_HostTerminalT: return ["session": v.session]
     case let v as Tsugumi_Host_HostTerminalDataT: return ["session": v.session, "data": v.data, "closed": v.closed] as [String: Any]
     case let v as Tsugumi_Host_ExecutionServicesT:
@@ -586,7 +592,6 @@ enum ServiceWire {
       return out
     case let v as Tsugumi_Host_ProjectDefaultsT:
       var out: [String: Any] = [:]
-      out["nixpkgsPin"] = v.nixpkgsPin
       out["agentExclude"] = v.agentExclude
       return out
     case let v as Tsugumi_Host_ProjectFileT:

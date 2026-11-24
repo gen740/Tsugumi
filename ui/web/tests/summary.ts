@@ -1,5 +1,5 @@
-import { cardIds } from './cardIds'
-// A Card's summary is in its _meta.json, whatever its kind, and only there.
+import { addCodeCard, cardIds } from './cardIds'
+// A Card's summary is in its README.md, whatever its kind, and only there.
 import assert from 'node:assert/strict'
 import { get, parse, str } from '../shared/json'
 
@@ -23,13 +23,11 @@ const session = () => {
 
 {
   const s = session()
-  const code = await s.addCard('python', [], { x: 0, y: 0 })
-  s.updateCard(code, (c) => c.set('description', 'in the settings'))
-  await s.save()
+  const code = await addCodeCard(s, { x: 0, y: 0 })
   assert.equal(s.nodeData(code).summary, undefined, 'the settings hold no summary')
   assert.equal(s.cardDescription(code), undefined)
 
-  // Written in Card settings, it goes to _meta.json and shows on the Card and on hover.
+  // Written in Card settings, it goes to README.md and shows on the Card and on hover.
   const editor = new CardEditorModel(s, code)
   editor.meta = parse('{"description":"logs the value"}')
   assert.ok(await editor.apply())
@@ -42,7 +40,7 @@ const session = () => {
 {
   // The small Cards keep their shape: the summary is on hover.
   const s = session()
-  for (const kind of ['trigger', 'merge', 'branch'] as const) {
+  for (const kind of ['trigger', 'merge', 'collect'] as const) {
     const k = await s.addCard(kind, [], { x: 0, y: 0 })
     s.updateMeta(k, (m) => m.set('description', 'what it does'))
     await s.save()

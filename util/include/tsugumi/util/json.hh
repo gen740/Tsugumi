@@ -85,16 +85,13 @@ std::string encode(const S& value) {
 // Source text of a captured value (validated JSON, original spelling).
 std::string text(const hosq::json::GenericDom<>& value);
 // Compact JSON from a captured value. Sorts object keys recursively and
-// normalizes string escapes while preserving array order and number spelling.
+// normalizes string escapes and number spellings (20, 20.0 and 2e1 are one
+// value) while preserving array order.
 auto canonical_text(const hosq::json::GenericDom<>& value) -> std::string;
 // Captures a JSON text as a value. Throws std::runtime_error when invalid.
 hosq::json::GenericDom<> capture(std::string_view json_text);
 // Captures a string value.
 hosq::json::GenericDom<> string_value(const std::string& s);
-// JSON object text from (key, captured value) pairs, in the given order.
-std::string object_text(
-    const std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>>&
-        members);
 // The form the clients write document files in: two spaces, a final newline.
 // `compact` is validated JSON without whitespace between its tokens.
 std::string pretty_text(std::string_view compact);

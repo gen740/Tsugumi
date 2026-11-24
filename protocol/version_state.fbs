@@ -1,0 +1,17 @@
+// Binary Git notes written by the project daemon.
+include "tsugumi.fbs";
+
+namespace Tsugumi.Version;
+
+table Run {
+  run_id:string (required);
+  state:string (required);
+  ended:string (required);
+  seconds:double;
+  facts:[ubyte] (nested_flatbuffer: "Tsugumi.RPC.VersionRunFacts");
+}
+
+/// refs/notes/tsugumi. refs/notes/tsugumi-record stores RPC.VersionChanges.
+table Runs {
+  runs:[Run];
+}

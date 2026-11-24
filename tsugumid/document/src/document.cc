@@ -1,9 +1,11 @@
 #include "tsugumi/document/document.hh"
 
-#include <regex>
+#include <algorithm>
+#include <cctype>
 #include <set>
 
 #include "tsugumi/document/graph.hh"
+#include "tsugumi/document/readme.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json_object.hh"
@@ -73,54 +75,97 @@ auto local_document_path(std::string_view path) -> std::string_view {
 }
 }  // namespace
 
-auto Document::is_card_meta_file(const std::string& path) -> bool {
+auto Document::is_card_note_file(const std::string& path) -> bool {
   const auto rel = local_document_path(path);
-  return rel.ends_with("/_meta.json") && is_document_file(std::string(rel));
+  return (rel.ends_with("/README.md") || rel.ends_with("/_comments.json")) &&
+         is_document_file(std::string(rel));
+}
+
+auto Document::is_generated_input_file(const std::string& path) -> bool {
+  auto local = local_document_path(path);
+  if (!local.starts_with("definitions/") || !local.ends_with("/_inputs.fbs"))
+    return false;
+  local.remove_prefix(12);
+  local.remove_suffix(12);
+  return valid_id(std::string(local));
+}
+
+auto Document::is_note_file(const std::string& path) -> bool {
+  const auto rel = local_document_path(path);
+  if (!rel.starts_with("notes/") || !rel.ends_with(".md")) return false;
+  const auto id = rel.substr(6, rel.size() - 9);
+  return valid_id(std::string(id));
 }
 
 bool Document::is_document_file(const std::string& rel) {
-  if (rel == "tsugumi.json" || rel == "layout.json") return true;
+  if (rel == "tsugumi.json" || rel == "layout.bin") return true;
   if (!rel.starts_with("definitions/")) return false;
   auto rest = rel.substr(12);
   auto slash = rest.find('/');
   if (slash == std::string::npos) return false;
   auto file = rest.substr(slash + 1);
-  return file == "_card.json" || file == "_meta.json";
+  return file == "_card.json" || file == "README.md" ||
+         file == "_comments.json";
 }
 
 auto Document::is_external_document_file(std::string_view path) -> bool {
   return path.starts_with("externals/") &&
-         is_document_file(std::string(local_document_path(path)));
+         (is_document_file(std::string(local_document_path(path))) ||
+          is_lock_file(path));
 }
 
-auto external_document_source(const std::string& path, std::string bytes)
+auto Document::is_lock_file(std::string_view path) -> bool {
+  return local_document_path(path) == "tsugumi.lock";
+}
+
+auto external_document_source(const std::string& path, std::string bytes,
+                              bool canonicalize)
     -> SourceEntry {
-  if (!text::valid_utf8(bytes))
-    throw DocumentError("invalid_document", path + ": expected UTF-8 JSON text",
-                        {{"path", path}});
   const auto local = local_document_path(path);
+  if (local != "layout.bin" && !text::valid_utf8(bytes))
+    throw DocumentError("invalid_document", path + ": expected UTF-8 text",
+                        {{"path", path}});
+  auto check = [&](ParsedDocument parsed) {
+    if (canonicalize) bytes = std::move(parsed.text);
+  };
+  if (local == "tsugumi.lock") parse_project_lock(path, bytes);
+  if (local == "tsugumi.json") check(parse_external_project(path, bytes));
   if (local.ends_with("/_card.json"))
-    parse_card_json(stdfs::path(path).parent_path().filename().string(), bytes);
-  if (local.ends_with("/_meta.json")) check_meta_json(bytes);
+    check(parse_card_json(stdfs::path(path).parent_path().filename().string(),
+                          bytes));
+  if (local.ends_with("/_comments.json"))
+    check(parse_comments_json(path, bytes));
+  if (local.ends_with("/README.md")) check_readme(path, bytes);
+  if (local == "layout.bin") check_layout(path, bytes);
+  return {crypto::sha256_hex(bytes), bytes.size(),
+          std::make_shared<const std::string>(std::move(bytes))};
+}
+
+auto note_source(const std::string& path, std::string bytes) -> SourceEntry {
+  if (!text::valid_utf8(bytes))
+    throw DocumentError("invalid_document", path + ": expected UTF-8 Markdown",
+                        {{"path", path}});
   return {crypto::sha256_hex(bytes), bytes.size(),
           std::make_shared<const std::string>(std::move(bytes))};
 }
 
 auto Document::check_document_size() const -> void {
-  size_t json_bytes = project_json.size() + layout_json.size();
+  size_t json_bytes = project_json.size() + layout.size();
   for (const auto& [_, definition] : definitions)
     json_bytes += definition.card_json.size() +
-                  (definition.meta_json ? definition.meta_json->size() : 0);
+                  (definition.readme ? definition.readme->size() : 0) +
+                  (definition.comments_json ? definition.comments_json->size()
+                                            : 0);
   for (const auto& [_, source] : sources)
-    if (source.document_json) json_bytes += source.size;
+    if (source.document) json_bytes += source.size;
   // Snapshot and save replies must leave room in the RPC frame for manifests,
   // graph resolution and operation metadata in addition to document text.
   if (json_bytes > kMaxDocumentJsonBytes)
     throw DocumentError(
         "resource_limit",
-        "document JSON has " + std::to_string(json_bytes) +
+        "the documents have " + std::to_string(json_bytes) +
             " bytes; limit is 8388608 bytes (8 MiB). Keep data in an attached "
-            "folder and read it through hostFolders (/host/<name>).");
+            "folder and read it through a grants.hostPaths entry.");
 }
 
 bool Document::is_source_area(const std::string& rel) {
@@ -129,8 +174,9 @@ bool Document::is_source_area(const std::string& rel) {
 
 auto Document::classify_source_path(const std::string& rel) -> SourcePath {
   if (!fs::valid_relative_path(rel)) return SourcePath::Invalid;
-  if (is_document_file(rel) || rel.starts_with(".tsugumi/") ||
-      rel == ".tsugumi" || rel.find(".tsugumi-tmp-") != std::string::npos)
+  if (is_document_file(rel) || is_lock_file(rel) ||
+      rel.starts_with(".tsugumi/") || rel == ".tsugumi" ||
+      rel.find(".tsugumi-tmp-") != std::string::npos)
     return SourcePath::Protected;
   if (rel.starts_with("definitions/")) {
     auto rest = rel.substr(12);
@@ -144,6 +190,9 @@ auto Document::classify_source_path(const std::string& rel) -> SourcePath {
       rel.find("/.tsugumi/") == std::string::npos &&
       !rel.ends_with("/.tsugumi"))
     return SourcePath::Source;
+  if (rel.starts_with("templates/") && valid_version_path(rel))
+    return SourcePath::Source;
+  if (is_note_file(rel)) return SourcePath::Source;
   return rel.starts_with("skills/") ? SourcePath::Source
                                     : SourcePath::Protected;
 }
@@ -161,189 +210,195 @@ auto Document::valid_version_path(const std::string& rel) -> bool {
 
 namespace {
 
-constexpr const char* kCardTypeList =
-    "one of code, draft, trigger, input, branch, fork, merge, collect, "
-    "subgraph";
+namespace D = Tsugumi::Document;
+using document_text::Schema;
+using document_text::str;
 
 [[noreturn]] void invalid(const std::string& message,
                           std::map<std::string, std::string> args = {}) {
   throw DocumentError("invalid_document", message, std::move(args));
 }
 
-template <class S>
-S decode_doc(const std::string& what, const std::string& text) {
-  S out;
-  if (auto err = schema::decode(text, out))
-    throw DocumentError(
-        "invalid_document",
-        what + ": " + err->message + " at byte " + std::to_string(err->offset),
-        {{"path", what}, {"offset", std::to_string(err->offset)}});
-  return out;
+auto parsed(Schema schema, const std::string& what, const std::string& text)
+    -> ParsedDocument {
+  auto buffer = document_text::parse(schema, what, text);
+  auto canonical = document_text::print(schema, buffer);
+  return {std::move(buffer), std::move(canonical)};
 }
 
-void check_endpoint(const schema::Endpoint& ep, const std::string& where) {
-  if (!ep.card->has_value() || !ep.port->has_value())
-    invalid(where + " needs card and port");
-}
-
-void check_graph_shape(const schema::Graph& g, const std::string& where) {
-  if (!g.cards->has_value()) invalid(where + ": \"cards\" is required");
-  if (!g.connections->has_value())
-    invalid(where + ": \"connections\" is required");
-  const auto& cards = g.cards->value();
-  for (size_t i = 0; i < cards.size(); ++i)
-    if (!cards[i].id->has_value() || !valid_id(cards[i].id->value()))
+void check_graph_shape(const D::Graph& g, const std::string& where) {
+  for (size_t i = 0; i < g.cards()->size(); ++i)
+    if (!valid_id(g.cards()->Get(i)->id()->str()))
       invalid(where + ".cards[" + std::to_string(i) +
               "]: card id must match [A-Za-z0-9_.-]{1,128}");
-  const auto& conns = g.connections->value();
-  for (size_t i = 0; i < conns.size(); ++i) {
-    std::string w = where + ".connections[" + std::to_string(i) + "]";
-    if (!conns[i].from->has_value() || !conns[i].to->has_value())
-      invalid(w + " needs from and to");
-    check_endpoint(conns[i].from->value(), w + ".from");
-    check_endpoint(conns[i].to->value(), w + ".to");
+}
+
+void check_boundary(const D::Project& p, const std::string& where) {
+  const auto* b = p.boundary();
+  if (!b) return;
+  for (const auto* side : {b->inputs(), b->outputs()}) {
+    if (!side) continue;
+    std::set<std::string> names;
+    for (const auto* port : *side)
+      if (!names.insert(port->name()->str()).second)
+        invalid(where + " boundary: duplicate port " + port->name()->str());
   }
 }
 
-void check_boundary(const schema::Project& p, const std::string& where) {
-  if (const auto* b = schema::get(p.boundary)) {
-    if (const auto* ins = schema::get(b->inputs))
-      for (const auto& [name, ep] : ins->entries())
-        check_endpoint(ep, where + " boundary.inputs." + name);
-    if (const auto* outs = schema::get(b->outputs))
-      for (const auto& [name, ep] : outs->entries())
-        check_endpoint(ep, where + " boundary.outputs." + name);
+template <class Entries>
+auto check_nix_path(const Entries* entries, const std::string& path) -> void {
+  if (!entries) return;
+  std::set<std::string> names;
+  for (const auto* entry : *entries) {
+    const auto name = entry->name()->str();
+    if (!valid_nix_path_name(name))
+      invalid(path + ": nixPath name \"" + name +
+              "\" must match [A-Za-z0-9][A-Za-z0-9._-]*");
+    if (!names.insert(name).second)
+      invalid(path + ": duplicate nixPath name " + name);
+    const auto url = entry->url()->string_view();
+    if (url.empty() || url.find_first_of(" \t\r\n") != std::string_view::npos ||
+        url.find('\0') != std::string_view::npos ||
+        url.find(':') == std::string_view::npos)
+      invalid(path + ": nixPath \"" + name + "\" needs a fetchTree URL");
   }
 }
 
-auto check_nix_sources(const schema::Project& p) -> void {
-  if (p.nix_sources->has_value()) {
-    static const std::regex name_re(R"(^[A-Za-z_][A-Za-z0-9_-]*$)");
-    static const std::regex ref_re(
-        R"(^(github:|gitlab:|sourcehut:|git\+https://|https://)[^\s"\\$]*[?&]narHash=sha256-[A-Za-z0-9%+/=]+.*$)");
-    std::set<std::string> sources;
-    for (const auto& s : p.nix_sources->value()) {
-      if (!s.name->has_value() || !s.type->has_value() || !s.ref->has_value())
-        invalid("nixSources entries need name, type and ref");
-      const auto& name = s.name->value();
-      if (!std::regex_match(name, name_re))
-        invalid("nixSources: \"" + name + "\" is not a name");
-      if (s.type->value() != "flake")
-        invalid("nixSources: " + name + ": type must be flake");
-      if (!std::regex_match(s.ref->value(), ref_re))
-        invalid("nixSources: " + name +
-                ": ref must be a locked flake reference with a narHash");
-      if (const auto* overrides = schema::get(s.overrides)) {
-        schema::v::Mapping<schema::v::String,
-                           schema::Obj<schema::ExternalPackageOverride>>
-            checked;
-        if (auto error = schema::decode(*overrides, checked))
-          invalid("nixSources: " + name +
-                  ": invalid overrides: " + error->message);
-      }
-      if (!sources.insert(name).second)
-        invalid("nixSources: duplicate name " + name);
-    }
-  }
-}
-
-auto check_version_paths(const schema::Project& p) -> void {
-  if (const auto* paths = schema::get(p.version_paths))
-    for (const auto& path : *paths)
-      if (!Document::valid_version_path(path))
+auto check_version_paths(const D::Project& p) -> void {
+  if (const auto* paths = p.versionPaths())
+    for (const auto* path : *paths)
+      if (!Document::valid_version_path(path->str()))
         invalid(
             "versionPaths: expected a relative file or folder outside .git "
             "and .tsugumi",
-            {{"path", path}});
+            {{"path", path->str()}});
+}
+
+auto check_log_limit(const D::Project& p, const std::string& where) -> void {
+  if (const auto limit = p.logLimitBytes(); limit && *limit > kMaxLogLimitBytes)
+    invalid(where + ": logLimitBytes must be between 0 and 1073741824",
+            {{"path", where}});
 }
 
 }  // namespace
 
 auto initial_project_json(const std::string& name) -> std::string {
-  const std::string rev = TSUGUMI_CARD_NIXPKGS_REV;
-  const std::string hash = TSUGUMI_CARD_NIXPKGS_NARHASH;
-  if (rev.empty() || hash.empty())
-    throw DocumentError("project_defaults_unavailable",
-                        "This build has no default Card Nixpkgs pin");
-  const auto display_name = schema::string_value(name);
-  const auto pin = schema::string_value(
-      "https://github.com/NixOS/nixpkgs/archive/" + rev + ".tar.gz#" + hash);
-  const auto canvas = schema::capture(R"({"cards":[],"connections":[]})");
-  return schema::object_text({{"name", &display_name},
-                              {"pkgsPath", &pin},
-                              {"canvas", &canvas}}) +
-         '\n';
+  return parse_project_json(
+             "{\"name\":" + json::Quote(name) +
+             R"(,"nixPath":[],"canvas":{"cards":[],"connections":[]}})")
+      .text;
 }
 
-schema::Project parse_project_json(const std::string& text) {
-  auto p = decode_doc<schema::Project>("tsugumi.json", text);
-  if (!p.pkgs_path->has_value())
-    invalid("tsugumi.json: \"pkgsPath\" is required");
-  if (!p.canvas->has_value()) invalid("tsugumi.json: \"canvas\" is required");
-  check_nix_sources(p);
-  check_version_paths(p);
-  check_graph_shape(p.canvas->value(), "tsugumi.json canvas");
-  check_boundary(p, "tsugumi.json");
-  return p;
+auto valid_nix_path_name(std::string_view name) -> bool {
+  const auto alnum = [](char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+           (c >= '0' && c <= '9');
+  };
+  return !name.empty() && alnum(name.front()) &&
+         std::ranges::all_of(name, [&](char c) {
+           return alnum(c) || c == '.' || c == '_' || c == '-';
+         });
 }
 
-schema::Project parse_external_project(const std::string& rel,
-                                       const std::string& text) {
-  auto p = decode_doc<schema::Project>(rel, text);
-  check_nix_sources(p);
+auto parse_project_lock(const std::string& path, const std::string& text)
+    -> ParsedDocument {
+  auto buffer = document_text::parse(Schema::Lock, path, text);
+  const auto& lock = document_text::root<D::ProjectLock>(buffer);
+  check_nix_path(lock.entries(), path);
+  for (const auto* entry : *lock.entries()) {
+    const auto hash = entry->narHash()->string_view();
+    if (!hash.starts_with("sha256-") || hash.size() <= 7)
+      invalid(path + ": invalid narHash for " + entry->name()->str());
+  }
+  std::unique_ptr<D::ProjectLockT> object(lock.UnPack());
+  std::ranges::sort(object->entries, {}, &D::LockEntryT::name);
+  buffer = document_text::pack<D::ProjectLock>(*object);
+  return {buffer, document_text::print(Schema::Lock, buffer)};
+}
+
+auto parse_project_json(const std::string& text) -> ParsedDocument {
+  return parse_external_project("tsugumi.json", text);
+}
+
+auto parse_external_project(const std::string& rel, const std::string& text)
+    -> ParsedDocument {
+  auto doc = parsed(Schema::Project, rel, text);
+  const auto& p = document_text::root<D::Project>(doc.buffer);
+  check_nix_path(p.nixPath(), rel);
   check_version_paths(p);
-  if (!p.canvas->has_value())
-    invalid(rel + ": \"canvas\" is required", {{"path", rel}});
-  check_graph_shape(p.canvas->value(), rel + " canvas");
+  check_log_limit(p, rel);
+  check_graph_shape(*p.canvas(), rel + " canvas");
   check_boundary(p, rel);
-  return p;
+  return doc;
 }
 
-schema::CardDefinition parse_card_json(const std::string& id,
-                                       const std::string& text) {
+auto parse_card_json(const std::string& id, const std::string& text)
+    -> ParsedDocument {
   const auto rel = "definitions/" + id + "/_card.json";
-  auto card = decode_doc<schema::CardDefinition>(rel, text);
-  const auto* type_name = schema::get(card.type);
-  if (!type_name)
-    invalid(rel + ": \"type\" is required (" + kCardTypeList + ")",
+  auto doc = parsed(Schema::Card, rel, text);
+  const auto& card = document_text::root<D::Card>(doc.buffer);
+  if (!card.type())
+    invalid(rel +
+                ": \"type\" is required (one of code, draft, trigger, input, "
+                "merge, collect, subgraph)",
             {{"path", rel}});
-  const auto type = parse_card_type(*type_name);
-  if (!type)
-    invalid(rel + ": unknown type \"" + *type_name + "\" (" + kCardTypeList +
-                ")",
-            {{"path", rel}});
-  const auto* external = schema::get(card.external);
-  if ((*type == CardType::Subgraph) != (external != nullptr))
+  const auto* external = card.external();
+  if ((*card.type() == D::CardType::subgraph) != (external != nullptr))
     invalid(rel + (external ? ": \"external\" needs \"type\": \"subgraph\""
                             : ": a subgraph needs \"external\""),
             {{"path", rel}});
   if (external) {
-    if (!valid_id(*external))
+    if (!valid_id(external->str()))
       invalid(rel + ": \"external\" must name a folder of externals/",
               {{"path", rel}});
-    const auto members =
-        decode_doc<schema::v::Mapping<schema::v::String, schema::Json>>(rel,
-                                                                        text);
-    for (const auto& [field, value] : members.value())
-      if (field != "type" && field != "external" && field != "displayMode")
-        invalid(rel + ": execution field " + field + " on a Card in Card",
-                {{"path", rel}});
+    // A Card in Card has only its kind and its project.
+    D::CardT rest;
+    card.UnPackTo(&rest);
+    rest.type.reset();
+    rest.external.clear();
+    const auto fields = document_text::pack<D::Card>(rest);
+    if (fields != document_text::pack<D::Card>(D::CardT{}))
+      invalid(rel + ": execution fields on a Card in Card: " +
+                  document_text::print(Schema::Card, fields),
+              {{"path", rel}});
   }
-  return card;
+  return doc;
 }
 
-void check_meta_json(const std::string& text) {
-  if (text.size() > (1u << 20)) invalid("_meta.json exceeds 1 MiB");
-  decode_doc<schema::v::Mapping<schema::v::String, schema::Json>>("_meta.json",
-                                                                  text);
+auto parse_comments_json(const std::string& rel, const std::string& text)
+    -> ParsedDocument {
+  if (text.size() > (1u << 20)) invalid(rel + " exceeds 1 MiB", {{"path", rel}});
+  auto doc = parsed(Schema::Comments, rel, text);
+  std::set<std::string> ids;
+  for (const auto* c :
+       *document_text::root<D::Comments>(doc.buffer).comments())
+    if (c->id() && !ids.insert(c->id()->str()).second)
+      invalid(rel + ": duplicate comment id " + c->id()->str(),
+              {{"path", rel}});
+  return doc;
+}
+
+void check_readme(const std::string& rel, const std::string& text) {
+  if (text.size() > (1u << 20)) invalid(rel + " exceeds 1 MiB", {{"path", rel}});
+  if (!text::valid_utf8(text))
+    invalid(rel + ": expected UTF-8 text", {{"path", rel}});
+  std::string error;
+  if (!readme::parse(text, &error))
+    invalid(rel + ": " + error, {{"path", rel}});
+}
+
+void check_layout(const std::string& rel, const std::string& bytes) {
+  if (!bytes.empty() &&
+      !document_text::verify(Schema::Layout, bytes))
+    invalid(rel + ": not a layout FlatBuffer", {{"path", rel}});
 }
 
 void check_structure(const Document& doc) {
-  const auto& graph = doc.project.canvas->value();
+  const auto& graph = *doc.project().canvas();
   std::set<std::string> ids;
   int triggers = 0;
-  for (const auto& card : graph.cards->value()) {
-    const auto& id = card.id->value();
+  for (const auto* card : *graph.cards()) {
+    const auto id = card->id()->str();
     if (!ids.insert(id).second)
       throw DocumentError("invalid_document", "duplicate card id " + id,
                           {{"card", id}});
@@ -358,9 +413,9 @@ void check_structure(const Document& doc) {
   if (triggers > 1)
     throw DocumentError("invalid_document",
                         "the canvas has more than one trigger card");
-  for (const auto& c : graph.connections->value()) {
-    for (const auto* ep : {&c.from->value(), &c.to->value()}) {
-      const auto& card = ep->card->value();
+  for (const auto* c : *graph.connections()) {
+    for (const auto* ep : {c->from(), c->to()}) {
+      const auto card = ep->card()->str();
       if (!ids.count(card))
         throw DocumentError("invalid_document",
                             "connection refers to unknown card " + card,
@@ -370,47 +425,47 @@ void check_structure(const Document& doc) {
 }
 
 namespace {
-// Project/Card documents are hashed by value: a client's JSON writer may
-// reorder or reindent the rest while changing a presentation field.
-auto execution_json(const std::string& text, const char* omitted)
-    -> std::string {
-  schema::v::Mapping<schema::v::String, schema::Json> object;
-  if (auto error = schema::decode(text, object))
-    throw DocumentError("invalid_document", error->message);
-  json::Members fields;
-  try {
-    for (const auto& [key, value] : object.value())
-      if (key != omitted &&
-          !(std::string_view(omitted) == "name" && key == "agentExclude"))
-        fields.emplace(key, schema::canonical_text(value));
-    return json::Encode(fields);
-  } catch (const std::runtime_error& error) {
-    throw DocumentError("invalid_document", error.what());
+// What of a project or Card document identifies a run: its text without the
+// presentation fields (a project's name and Agent exclusions).
+auto execution_text(Schema schema, const std::string& buffer) -> std::string {
+  if (schema == Schema::Project) {
+    D::ProjectT p;
+    document_text::root<D::Project>(buffer).UnPackTo(&p);
+    p.name.clear();
+    p.agentExclude.clear();
+    return document_text::print(schema, document_text::pack<D::Project>(p));
   }
+  return document_text::print(schema, buffer);
 }
 }  // namespace
 
 std::string execution_fingerprint(const Document& doc) {
   crypto::Sha256 h;
-  h.update(execution_json(doc.project_json, "name"));
+  h.update(execution_text(Schema::Project, doc.project_buffer));
   for (const auto& [id, def] : doc.definitions) {
     h.update("\0def\0", 5);
     h.update(id);
-    h.update(execution_json(def.card_json, "displayMode"));
+    h.update(execution_text(Schema::Card, def.card_buffer));
   }
   for (const auto& [path, src] : doc.sources) {
-    if (path.starts_with("skills/") || Document::is_card_meta_file(path))
-      continue;
-    // External projects carry layout as a source file; it never identifies a
-    // run.
     const auto relative = local_document_path(path);
-    if (relative == "layout.json") continue;
+    // Presentation never identifies a run: an external project's layout,
+    // notes and Card READMEs and comments.
+    if (path.starts_with("skills/") || path.starts_with("templates/") ||
+        relative.starts_with("templates/") ||
+        Document::is_card_note_file(path) || Document::is_note_file(path) ||
+        relative == "layout.bin" || Document::is_generated_input_file(path))
+      continue;
     h.update("\0src\0", 5);
     h.update(path);
-    if (src.document_json)
-      h.update(execution_json(*src.document_json, relative == "tsugumi.json"
-                                                      ? "name"
-                                                      : "displayMode"));
+    if (src.document && relative == "tsugumi.json")
+      h.update(execution_text(Schema::Project,
+                              document_text::parse(Schema::Project, path,
+                                                   *src.document)));
+    else if (src.document && relative.ends_with("/_card.json"))
+      h.update(execution_text(
+          Schema::Card,
+          document_text::parse(Schema::Card, path, *src.document)));
     else
       h.update(src.hash);
   }
@@ -424,7 +479,7 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
     if (bytes > remaining)
       throw DocumentError(
           "resource_limit",
-          path + " exceeds the remaining 8 MiB document JSON budget",
+          path + " exceeds the remaining 8 MiB document budget",
           {{"path", path}});
     remaining -= bytes;
   };
@@ -432,15 +487,28 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
   if (!project_text)
     throw DocumentError("invalid_document", "tsugumi.json is missing");
   consume("tsugumi.json", project_text->size());
-  doc->project = parse_project_json(*project_text);
-  doc->project_json = *project_text;
+  auto project = parse_project_json(*project_text);
+  doc->project_buffer = std::move(project.buffer);
+  doc->project_json = std::move(project.text);
   doc->disk_hashes["tsugumi.json"] = crypto::sha256_hex(*project_text);
+  if (std::error_code error;
+      stdfs::exists(stdfs::symlink_status(root / "tsugumi.lock", error))) {
+    std::string bytes;
+    fs::stream_beneath(root, "tsugumi.lock", UINT64_MAX,
+                       [&](std::string_view chunk) {
+                         consume("tsugumi.lock", chunk.size());
+                         bytes.append(chunk);
+                       });
+    doc->sources.emplace(
+        "tsugumi.lock", external_document_source("tsugumi.lock", std::move(bytes)));
+  }
 
-  auto layout_text = fs::read_file(root / "layout.json");
-  doc->layout_json = layout_text ? *layout_text : kEmptyLayout;
-  consume("layout.json", doc->layout_json.size());
-  if (layout_text)
-    doc->disk_hashes["layout.json"] = crypto::sha256_hex(*layout_text);
+  if (auto layout = fs::read_file(root / "layout.bin")) {
+    consume("layout.bin", layout->size());
+    check_layout("layout.bin", *layout);
+    doc->disk_hashes["layout.bin"] = crypto::sha256_hex(*layout);
+    doc->layout = std::move(*layout);
+  }
 
   std::error_code ec;
   if (stdfs::is_directory(root / "definitions", ec)) {
@@ -458,19 +526,28 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
       const auto prefix = "definitions/" + id + '/';
       consume(prefix + "_card.json", card_text->size());
       DefinitionDoc d;
-      d.card = parse_card_json(id, *card_text);
-      d.card_json = *card_text;
+      auto card = parse_card_json(id, *card_text);
+      d.card_buffer = std::move(card.buffer);
+      d.card_json = std::move(card.text);
       doc->disk_hashes[prefix + "_card.json"] = crypto::sha256_hex(*card_text);
-      if (auto meta = fs::read_file(entry.path() / "_meta.json")) {
-        consume(prefix + "_meta.json", meta->size());
-        check_meta_json(*meta);
-        d.meta_json = *meta;
-        doc->disk_hashes[prefix + "_meta.json"] = crypto::sha256_hex(*meta);
+      if (auto readme = fs::read_file(entry.path() / "README.md")) {
+        consume(prefix + "README.md", readme->size());
+        check_readme(prefix + "README.md", *readme);
+        doc->disk_hashes[prefix + "README.md"] = crypto::sha256_hex(*readme);
+        d.readme = std::move(*readme);
+      }
+      if (auto comments = fs::read_file(entry.path() / "_comments.json")) {
+        consume(prefix + "_comments.json", comments->size());
+        d.comments_json =
+            parse_comments_json(prefix + "_comments.json", *comments).text;
+        doc->disk_hashes[prefix + "_comments.json"] =
+            crypto::sha256_hex(*comments);
       }
       doc->definitions.emplace(id, std::move(d));
     }
   }
-  for (const char* area : {"definitions", "skills", "externals"}) {
+  for (const char* area :
+       {"definitions", "skills", "externals", "templates", "notes"}) {
     auto listing = fs::list_tree(root / area);
     if (!listing.links.empty())
       throw DocumentError(
@@ -480,15 +557,18 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
           {{"path", std::string(area) + "/" + listing.links.front()}});
     for (const auto& f : listing.files) {
       std::string rel = std::string(area) + "/" + f;
-      if (!Document::is_source_area(rel)) continue;
-      if (Document::is_external_document_file(rel)) {
+      if (!Document::is_source_area(rel) && !Document::is_lock_file(rel))
+        continue;
+      const bool external = Document::is_external_document_file(rel);
+      if (external || Document::is_note_file(rel)) {
         std::string bytes;
         fs::stream_beneath(root, rel, UINT64_MAX, [&](std::string_view chunk) {
           consume(rel, chunk.size());
           bytes.append(chunk);
         });
-        doc->sources.emplace(rel,
-                             external_document_source(rel, std::move(bytes)));
+        doc->sources.emplace(rel, external ? external_document_source(
+                                                 rel, std::move(bytes))
+                                           : note_source(rel, std::move(bytes)));
         continue;
       }
       crypto::Sha256 hash;

@@ -19,7 +19,7 @@ ID_KEYS = {'id', 'run_id', 'project_id', 'conversation_id', 'op_id', 'call_id',
            'activation', 'rev', 'base_rev', 'at_rev', 'execution_rev'}
 CARD_KEYS = {'card', 'card_id', 'from_card', 'to_card', 'segments',
              'read_cards', 'write_cards', 'run_cards'}
-DOCUMENTS = {'project_json', 'layout_json', 'card_json', 'meta_json', 'json'}
+DOCUMENTS = {'project_json', 'layout', 'card_json', 'comments_json', 'json'}
 OPAQUE = {'bytes', 'stdout_bytes', 'stderr_bytes', 'text', 'record_json'} | DOCUMENTS
 UUID = re.compile(r'\b[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\b')
 

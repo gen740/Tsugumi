@@ -1,21 +1,8 @@
 {
   "type": "code",
-  "language": "python",
   "inputs": [
     {
       "name": "detrended"
-    }
-  ],
-  "params": [
-    {
-      "name": "window_hours",
-      "type": "double",
-      "data": 8.0
-    },
-    {
-      "name": "core_fraction",
-      "type": "double",
-      "data": 0.5
     }
   ]
 }

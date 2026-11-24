@@ -306,7 +306,7 @@ TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
   const auto requests = model.Requests();
   ASSERT_EQ(requests.size(), 4u);
   const auto main_tools = names(J::Get(J::Object(requests[0]), "tools"));
-  auto helper_tools = names(J::Get(J::Object(requests[1]), "tools"));
+  const auto helper_tools = names(J::Get(J::Object(requests[1]), "tools"));
   const auto guide_specs = J::Array(J::Get(J::Object(requests[2]), "tools"));
   const auto guide_tools = names(J::Encode(guide_specs));
   const auto external_catalog =
@@ -319,11 +319,13 @@ TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
     EXPECT_TRUE(main_tools.contains(name)) << name;
     EXPECT_TRUE(helper_tools.contains(name)) << name;
   }
-  EXPECT_FALSE(helper_tools.contains("delegate"));
-  helper_tools.insert("delegate");
-  EXPECT_EQ(helper_tools, main_tools);
-  const auto helper_catalog = helper_tools;
-  for (const auto* catalog : {&main_tools, &helper_catalog, &guide_tools}) {
+  auto expected_helper_tools = main_tools;
+  EXPECT_EQ(expected_helper_tools.erase("delegate"), 1u);
+  EXPECT_EQ(expected_helper_tools.erase("nix_path_lock_update"), 1u);
+  EXPECT_EQ(expected_helper_tools.erase("template_list"), 1u);
+  EXPECT_EQ(helper_tools, expected_helper_tools);
+  EXPECT_TRUE(guide_tools.contains("template_list"));
+  for (const auto* catalog : {&main_tools, &helper_tools, &guide_tools}) {
     for (const auto* name : {"demo_list", "demo_read", "project_inspect"})
       EXPECT_TRUE(catalog->contains(name));
     std::set<std::string> guidance;

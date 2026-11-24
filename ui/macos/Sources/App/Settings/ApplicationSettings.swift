@@ -173,7 +173,7 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
     let name = s.identity.url.lastPathComponent
     switch self {
     case .general: return String(localized: "このプロジェクト（\(name)/tsugumi.json）")
-    case .canvas: return String(localized: "このプロジェクト（\(name)/layout.json）")
+    case .canvas: return String(localized: "このプロジェクト（\(name)/layout.bin）")
     case .history: return String(localized: "このプロジェクトの実行環境（\(name)/.tsugumi/runs.sqlite）")
     case .cache: return String(localized: "このプロジェクトの実行環境（VM の中）")
     case .secrets: return String(localized: "このホストの hostd（このプロジェクト用、値は表示されません）")
@@ -356,13 +356,9 @@ private struct EditorSettings: View {
 
     """,
     "nix": """
-    # A Python Card with one extra package
-    { pkgs, inputs, params }:
+    # A Nix definition with a helper export
+    { params, inputs }:
     {
-      run = inputs.tsugumi.pythonCard {
-        src = ./src;
-        packages = ps: [ ps.numpy ];
-      };
       exports = { scale = x: x * 2; };
     }
 

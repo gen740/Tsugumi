@@ -20,12 +20,11 @@
 #include <nix/expr/eval-settings.hh>
 #include <nix/expr/eval.hh>
 #include <nix/expr/get-drvs.hh>
+#include <nix/expr/json-to-value.hh>
 #include <nix/expr/value-to-json.hh>
 #include <nix/fetchers/fetch-settings.hh>
+#include <nix/fetchers/fetchers.hh>
 #include <nix/fetchers/filtering-source-accessor.hh>
-#include <nix/flake/flake.hh>
-#include <nix/flake/flakeref.hh>
-#include <nix/flake/settings.hh>
 #include <nix/store/derivations.hh>
 #include <nix/store/derived-path.hh>
 #include <nix/store/globals.hh>
@@ -47,6 +46,8 @@
 #include <thread>
 
 #include "nix_eval.hh"
+#include "tsugumi/protocol/nix_evaluator_generated.h"
+#include "tsugumi/util/fs.hh"
 #include "tsugumi/util/process.hh"
 #include "tsugumi/workerd/log_limits.hh"
 #include "tsugumi/workerd/store.hh"
@@ -56,6 +57,22 @@ extern char** environ;
 namespace tsugumi {
 
 namespace {
+
+namespace E = Tsugumi::NixEvaluator;
+
+constexpr size_t kExpressionBytes = 8u << 20;
+constexpr size_t kExpressionEntries = 2000;
+constexpr size_t kBuildLogTail = 256u << 10;
+
+auto write_build_log(std::string_view line, bool truncated) -> void {
+  flatbuffers::FlatBufferBuilder builder;
+  const auto text = truncated ? flatbuffers::Offset<flatbuffers::String>{}
+                              : builder.CreateString(line);
+  builder.FinishSizePrefixed(E::CreateBuildLog(builder, text, truncated));
+  nix::writeFull(STDOUT_FILENO,
+                 {reinterpret_cast<const char*>(builder.GetBufferPointer()),
+                  builder.GetSize()});
+}
 
 // Observe below Nix's allow-list, including negative lookups and directory
 // enumeration. Keep observations for the entire EvalState: cached imports and
@@ -269,10 +286,11 @@ class CallScope {
  public:
   explicit CallScope(const NixCall& call,
                      nix::RemoteStore* build_store = nullptr)
-      : wake_(call, [thread = pthread_self(), build_store] {
-          if (build_store) build_store->shutdownConnections();
-          pthread_kill(thread, SIGUSR1);
-        }),
+      : wake_(call,
+              [thread = pthread_self(), build_store] {
+                if (build_store) build_store->shutdownConnections();
+                pthread_kill(thread, SIGUSR1);
+              }),
         log_line_([&call](const std::string& line) {
           call.log({std::span(&line, 1)});
         }) {
@@ -328,7 +346,9 @@ void NixEvaluator::init_process() {
 auto NixEvaluator::build_client(int argc, char** argv) -> std::optional<int> {
   if (argc < 2 || std::string_view(argv[1]) != "--nix-build-client")
     return std::nullopt;
-  if (argc != 5) return 2;
+  const bool sandboxed =
+      argc == 6 && std::string_view(argv[5]) == "--sandboxed";
+  if (argc != 5 && !sandboxed) return 2;
 
   try {
     NixStore::init_process();
@@ -336,21 +356,31 @@ auto NixEvaluator::build_client(int argc, char** argv) -> std::optional<int> {
       nix::settings.getWorkerSettings().maxBuildJobs.set(argv[3], false);
     if (*argv[4])
       nix::settings.getLocalSettings().buildCores.set(argv[4], false);
-    // A JSON string retains embedded newlines in a single log entry. The
-    // parent can discard an oversized frame without trying to decode it.
+    if (sandboxed) {
+      nix::settings.set("sandbox", "true");
+      nix::settings.set("sandbox-fallback", "false");
+      // Only the receiving daemon is bound by these settings.
+      nix::settings.set("builders", "");
+    }
     nix::logger = std::make_unique<NixLogSink>(
-        [truncated = false](const std::string& line) mutable {
-          if (truncated) return;
-          if (line.size() >= kInvocationLogLimitBytes) {
-            nix::writeFull(STDERR_FILENO, "null\n");
-            truncated = true;
+        [sandboxed, truncated = false](const std::string& line) mutable {
+          if (sandboxed) {
+            const std::string_view text(line);
+            write_build_log(text.substr(text.size() > kBuildLogTail
+                                            ? text.size() - kBuildLogTail
+                                            : 0),
+                            false);
             return;
           }
-          auto frame = nlohmann::json(line).dump();
-          frame += '\n';
-          nix::writeFull(STDERR_FILENO, frame);
+          if (truncated) return;
+          truncated = line.size() >= kInvocationLogLimitBytes;
+          write_build_log(line, truncated);
         });
     auto store = nix::openStore();
+    if (sandboxed && dynamic_cast<nix::RemoteStore*>(&*store) &&
+        store->isTrustedClient() != nix::Trusted)
+      throw std::runtime_error(
+          "the Nix daemon cannot enforce sandbox settings for this client");
     store->buildPaths({nix::DerivedPath::Built{
         .drvPath =
             nix::makeConstantStorePathRef(store->parseStorePath(argv[2])),
@@ -362,58 +392,282 @@ auto NixEvaluator::build_client(int argc, char** argv) -> std::optional<int> {
     nix::logger->log(nix::lvlError, diagnostic);
     // Keep the build diagnostic available even if the history log filled up.
     if (diagnostic.size() < kInvocationLogLimitBytes)
-      nix::writeFull(STDOUT_FILENO, diagnostic);
+      nix::writeFull(STDERR_FILENO, diagnostic);
     return 1;
   }
 }
 
 namespace {
 
+struct SourceFetcher {
+  nix::fetchers::Settings settings;
+  nix::ref<nix::Store> store = nix::openStore();
+  std::map<nix::Hash, nix::StorePath> fetched;
+
+  SourceFetcher() {
+    nix::experimentalFeatureSettings.set("extra-experimental-features",
+                                         "flakes fetch-tree");
+    nix::loadConfFile(settings);
+  }
+
+  auto lock(const std::string& url) -> NixSource {
+    const auto input = nix::fetchers::Input::fromURL(settings, url);
+    const auto [path, locked] = input.fetchToStore(settings, *store);
+    const auto hash = store->queryPathInfo(path)->narHash;
+    const auto rev = locked.getRev();
+    return {url, rev ? rev->to_string(nix::HashFormat::Base16, false) : "",
+            hash.to_string(nix::HashFormat::SRI, true)};
+  }
+
+  auto materialize(const NixSource& source) -> std::string {
+    auto input = nix::fetchers::Input::fromURL(settings, source.url);
+    if (!source.rev.empty()) {
+      const auto algorithm = source.rev.size() == 64
+                                 ? nix::HashAlgorithm::SHA256
+                                 : nix::HashAlgorithm::SHA1;
+      input = input.applyOverrides(
+          std::nullopt,
+          nix::Hash::parseNonSRIUnprefixed(source.rev, algorithm));
+    }
+    auto attrs = input.toAttrs();
+    attrs.insert_or_assign("narHash", source.nar_hash);
+    return materialize(
+        nix::fetchers::Input::fromAttrs(settings, std::move(attrs)));
+  }
+
+  auto materialize(const nix::fetchers::Input& input) -> std::string {
+    const auto expected = input.getNarHash();
+    if (!expected)
+      throw std::runtime_error("nixPath source requires narHash");
+    if (auto found = fetched.find(*expected); found != fetched.end())
+      return store->printStorePath(found->second);
+    // A locked fetchTree source is a fixed-output NAR named "source".
+    // Reuse a valid object already in the store, including a flake input
+    // fetched by the test harness, without a network round trip.
+    auto path = store->makeFixedOutputPath(
+        "source", {nix::FileIngestionMethod::NixArchive, *expected, {}});
+    store->addTempRoot(path);
+    if (!store->isValidPath(path))
+      path = input.fetchToStore(settings, *store).first;
+    store->addTempRoot(path);
+    if (store->queryPathInfo(path)->narHash != *expected)
+      throw std::runtime_error("nixPath source narHash mismatch");
+    fetched.emplace(*expected, path);
+    return store->printStorePath(path);
+  }
+};
+
+// Use Nix's scalar conversion rules while streaming container members into
+// the byte budget. The regular Nix JSON conversion builds the entire result
+// in memory first, including repeated or recursive lists/attrsets.
+auto bounded_json(nix::EvalState& st, nix::Value& value, std::string& out,
+                  nix::PosIdx pos = nix::noPos) -> void {
+  auto depth = st.addCallDepth(pos);
+  nix::checkInterrupt();
+  st.forceValue(value, pos);
+  const auto append = [&](std::string_view part) {
+    if (part.size() > kExpressionBytes - out.size())
+      throw std::runtime_error("Nix expression JSON exceeds 8 MiB");
+    out += part;
+  };
+  const auto quoted = [&](std::string_view part) {
+    if (part.size() > kExpressionBytes - out.size())
+      throw std::runtime_error("Nix expression JSON exceeds 8 MiB");
+    append(nlohmann::json(part).dump());
+  };
+  nix::NixStringContext context;
+  if (value.type() == nix::nAttrs) {
+    if (auto str = st.tryAttrsToString(pos, value, context, false, false)) {
+      quoted(*str);
+      return;
+    }
+    if (auto* path = value.attrs()->get(st.s.outPath)) {
+      bounded_json(st, *path->value, out, path->pos);
+      return;
+    }
+    append("{");
+    bool first = true;
+    for (auto* attr : value.attrs()->lexicographicOrder(st.symbols)) {
+      if (!std::exchange(first, false)) append(",");
+      quoted(st.symbols[attr->name]);
+      append(":");
+      bounded_json(st, *attr->value, out, attr->pos);
+    }
+    append("}");
+  } else if (value.type() == nix::nList) {
+    append("[");
+    bool first = true;
+    for (auto* item : value.listView()) {
+      if (!std::exchange(first, false)) append(",");
+      bounded_json(st, *item, out, pos);
+    }
+    append("]");
+  } else if (value.type() == nix::nString) {
+    quoted(value.string_view());
+  } else {
+    append(nix::printValueAsJSON(st, true, value, pos, context, false).dump());
+  }
+}
+
+// libnix passes the primop's own position to PrimOp::impl. The evaluation
+// hook supplies the actual call site, including the parser's <name> calls.
+class CallPositions final : public nix::EvalProfiler {
+ public:
+  auto preFunctionCallHook(nix::EvalState&, const nix::Value&,
+                           std::span<nix::Value*>, nix::PosIdx pos)
+      -> void override {
+    stack_.push_back(pos);
+  }
+
+  auto postFunctionCallHook(nix::EvalState&, const nix::Value&,
+                            std::span<nix::Value*>, nix::PosIdx)
+      -> void override {
+    stack_.pop_back();
+  }
+
+  auto current() const -> nix::PosIdx {
+    return stack_.empty() ? nix::noPos : stack_.back();
+  }
+
+ private:
+  auto getNeededHooksImpl() const -> Hooks override {
+    Hooks hooks;
+    return hooks.set(preFunctionCall).set(postFunctionCall);
+  }
+
+  std::vector<nix::PosIdx> stack_;
+};
+
+// The pinned libnix has call hooks but no registration method on EvalState.
+// An explicit template instantiation may name a private member. Keep access
+// in this one translation unit and let a libnix API change fail at compile
+// time.
+struct ProfilerMember {
+  using Pointer = nix::MultiEvalProfiler nix::EvalState::*;
+  friend auto profiler_member(ProfilerMember) -> Pointer;
+};
+
+template <ProfilerMember::Pointer Member>
+struct RegisterProfilerMember {
+  friend auto profiler_member(ProfilerMember) -> ProfilerMember::Pointer {
+    return Member;
+  }
+};
+
+template struct RegisterProfilerMember<&nix::EvalState::profiler>;
+
 struct EvaluationState {
+  using SearchPath = std::map<std::string, std::string>;
   std::string entry_text;
-  std::vector<std::string> allowed;
-  // Settings must outlive the EvalState.
+  std::string system;
+  std::vector<NixDefinitionScope> definitions;
+  SearchPath search_path;
+  // Settings outlive each state's own values, positions and caches.
   bool read_only = false;
   std::unique_ptr<nix::EvalSettings> eval_settings;
-  std::unique_ptr<nix::fetchers::Settings> fetch_settings;
-  // Opted-in flakes only: Cards never reach this state, or getFlake.
-  std::unique_ptr<nix::EvalSettings> flake_eval_settings;
-  std::unique_ptr<nix::flake::Settings> flake_settings;
-  std::shared_ptr<nix::EvalState> flake_state;
-  std::map<std::string, FlakeInfo>
-      flakes;  // by the ref asked for and the locked one
-  std::shared_ptr<nix::Store> store;
-  std::shared_ptr<nix::EvalState> state;
-  std::shared_ptr<EvaluationReads> reads;
-  uint64_t epoch = 1;
-  std::optional<int64_t> current_time;
+  nix::fetchers::Settings& fetch_settings;
+  nix::ref<nix::Store> store;
+  uint64_t& next_epoch;
+  uint64_t epoch = 0;
+  std::map<std::string, int64_t>& evaluation_times;
   std::optional<nix::PrimOp> path_exists;
   std::map<std::string, std::pair<nix::RootValue, bool>> existence_checks;
   std::vector<std::unique_ptr<nix::PrimOp>> wrapped_ops;
-  nix::RootValue entry;
-  std::map<std::string, nix::RootValue> pkgs;  // per nixpkgs pin: read once
+  std::shared_ptr<nix::EvalState> state;
+  std::shared_ptr<EvaluationReads> reads;
+  std::string expression_text;
+  const NixDefinitionScope* expression_scope = nullptr;
+  bool capture_derivations = false;
+  std::set<std::string> instantiated_derivations;
+
+  EvaluationState(nix::fetchers::Settings& fetch, nix::ref<nix::Store> store,
+                  uint64_t& epoch, std::map<std::string, int64_t>& times)
+      : fetch_settings(fetch),
+        store(std::move(store)),
+        next_epoch(epoch),
+        evaluation_times(times) {}
+
+  auto origin(nix::EvalState& st, nix::PosIdx pos) const
+      -> const NixDefinitionScope* {
+    const auto location = st.positions.originOf(pos);
+    if (auto file = std::get_if<nix::SourcePath>(&location)) {
+      if (file->accessor != st.rootFS) return nullptr;
+      for (const auto& definition : definitions) {
+        if (file->path.isWithin(nix::CanonPath(definition.directory)))
+          return &definition;
+      }
+    } else if (auto str = std::get_if<nix::Pos::String>(&location);
+               str && expression_scope && *str->source == expression_text) {
+      return expression_scope;
+    }
+    return nullptr;
+  }
+
+  auto find_file(nix::EvalState& st, nix::PosIdx pos, nix::Value** args,
+                 nix::Value& out) -> void {
+    st.forceList(*args[0], pos, "while evaluating the Nix search path");
+    if (args[0]->listSize() != 0)
+      st.error<nix::ThrownError>("Card search paths come from tsugumi.lock")
+          .atPos(pos)
+          .debugThrow();
+    const auto lookup =
+        st.forceStringNoCtx(*args[1], pos, "while resolving a Nix search path");
+    const auto slash = lookup.find('/');
+    const std::string name(lookup.substr(0, slash));
+    const auto* owner = origin(st, pos);
+    const SearchPath empty;
+    const auto& entries = owner ? search_path : empty;
+    const auto found = entries.find(name);
+    if (found == entries.end()) {
+      // Nix's embedded fetchurl derivation is a language resource, outside
+      // NIX_PATH. Locked libraries use it to describe bootstrap downloads.
+      // It creates a derivation and cannot download during evaluation.
+      const auto location = st.positions.originOf(pos);
+      const auto* file = std::get_if<nix::SourcePath>(&location);
+      if (!owner && lookup == "nix/fetchurl.nix" && file &&
+          file->path.abs().starts_with(std::string(st.store->storeDir) + "/")) {
+        out.mkPath(st.findFile(nix::LookupPath{}, lookup, pos), st.mem);
+        return;
+      }
+      std::string declared;
+      for (const auto& [entry, _] : entries) {
+        if (!declared.empty()) declared += ", ";
+        declared += entry;
+      }
+      st.error<nix::ThrownError>("undeclared nixPath name '%s' (declared: %s)",
+                                 name, declared.empty() ? "(none)" : declared)
+          .atPos(pos)
+          .debugThrow();
+    }
+    auto path = st.rootPath(nix::CanonPath(found->second));
+    if (slash != lookup.npos)
+      path = path / nix::CanonPath(lookup.substr(slash));
+    path = path.resolveSymlinks();
+    if (!path.pathExists())
+      st.error<nix::ThrownError>("nixPath '%s' does not contain '%s'", name,
+                                 lookup)
+          .atPos(pos)
+          .debugThrow();
+    out.mkPath(path, st.mem);
+  }
 
   auto install(nix::Value& value, nix::PrimOp operation) -> void {
     wrapped_ops.push_back(std::make_unique<nix::PrimOp>(std::move(operation)));
     value.mkPrimOp(wrapped_ops.back().get());
   }
 
-  void open() {
-    if (!store) store = nix::openStore().get_ptr();
+  auto open() -> void {
+    epoch = ++next_epoch;
     eval_settings = std::make_unique<nix::EvalSettings>(read_only);
     nix::loadConfFile(*eval_settings);
     eval_settings->restrictEval = true;
+    eval_settings->pureEval = false;
     eval_settings->enableImportFromDerivation = false;
-    eval_settings->allowedUris =
-        nix::Strings{"https://github.com/NixOS/nixpkgs/archive/"};
+    eval_settings->allowedUris = nix::Strings{};
     eval_settings->nixPath = nix::Strings{};
-    if (!fetch_settings) {
-      fetch_settings = std::make_unique<nix::fetchers::Settings>();
-      nix::loadConfFile(*fetch_settings);
-    }
-    state = std::make_shared<nix::EvalState>(nix::LookupPath{},
-                                             nix::ref<nix::Store>(store),
-                                             *fetch_settings, *eval_settings);
+    eval_settings->currentSystem = system;
+    state = std::make_shared<nix::EvalState>(nix::LookupPath{}, store,
+                                             fetch_settings, *eval_settings);
     auto access =
         state->rootFS.dynamic_pointer_cast<nix::FilteringSourceAccessor>();
     if (!access)
@@ -424,48 +678,70 @@ struct EvaluationState {
     reads->allowed_path = [ptr = access.get()](const nix::CanonPath& path) {
       return ptr->isAllowed(path);
     };
-    // Preserve the original evaluator constant when filesystem changes require
-    // a fresh import/source-to-store cache. getEnv is masked by restrictEval.
+    // currentTime is constant across filesystem invalidation for this system.
     auto& time = state->getBuiltin("currentTime");
-    if (!eval_settings->pureEval) {
-      if (!current_time)
-        current_time =
-            state->forceInt(time, nix::noPos, "while reading evaluator time")
-                .value;
-      time.mkInt(*current_time);
-    }
-    // Fetchers bypass SourceAccessor. Only hashed fetchurl/fetchTarball are
-    // covered; other fetches continue to work but make this state ineligible.
+    auto [saved, _] = evaluation_times.try_emplace(
+        system,
+        state->forceInt(time, nix::noPos, "while reading evaluator time")
+            .value);
+    time.mkInt(saved->second);
+
+    // Fetch primops bypass the filesystem allow-list. Refuse them before
+    // forcing any of their arguments, even for a hash already in the store.
     for (const char* name :
          {"fetchTarball", "fetchurl", "fetchGit", "fetchTree", "fetchMercurial",
-          "fetchClosure", "getFlake", "exec", "importNative"}) {
+          "fetchClosure", "getFlake", "storePath", "exec", "importNative"}) {
       auto* attr =
           state->getBuiltins().attrs()->get(state->symbols.create(name));
       if (!attr || attr->value->type() != nix::nFunction ||
           !attr->value->isPrimOp())
         continue;
-      auto original = *attr->value->primOp();
-      auto wrapped = original;
-      wrapped.impl = [this, original,
-                      hashed = std::string(name) == "fetchTarball" ||
-                               std::string(name) == "fetchurl"](
-                         nix::EvalState& st, nix::PosIdx pos, nix::Value** args,
-                         nix::Value& out) {
-        bool covered = false;
-        if (hashed) {
-          st.forceValue(*args[0], pos);
-          if (args[0]->type() == nix::nAttrs) {
-            if (auto* hash = args[0]->attrs()->get(st.symbols.create("sha256")))
-              covered = !st.forceStringNoCtx(*hash->value, pos,
-                                             "while checking the fetch hash")
-                             .empty();
-          }
-        }
-        if (!covered) reads->reusable = false;
-        original.impl(st, pos, args, out);
+      auto wrapped = *attr->value->primOp();
+      wrapped.impl = [name](nix::EvalState& st, nix::PosIdx pos, nix::Value**,
+                            nix::Value&) {
+        st.error<nix::ThrownError>("%s is forbidden during Card evaluation",
+                                   name)
+            .atPos(pos)
+            .debugThrow();
       };
       install(*attr->value, std::move(wrapped));
     }
+    auto& find = state->getBuiltin("findFile");
+    auto lookup = *find.primOp();
+    auto positions = nix::make_ref<CallPositions>();
+    ((*state).*profiler_member(ProfilerMember{})).addProfiler(positions);
+    lookup.impl = [this, positions](nix::EvalState& st, nix::PosIdx,
+                                    nix::Value** args, nix::Value& out) {
+      find_file(st, positions->current(), args, out);
+    };
+    install(find, std::move(lookup));
+    // A caller can construct an attrset with type = "derivation", but cannot
+    // use it to ask the tool to read an unrelated store object's files.
+    auto& strict = state->getBuiltin("derivationStrict");
+    auto strict_op = *strict.primOp();
+    auto instantiate = strict_op;
+    instantiate.impl = [this, strict_op](nix::EvalState& st, nix::PosIdx pos,
+                                         nix::Value** args, nix::Value& out) {
+      strict_op.impl(st, pos, args, out);
+      if (capture_derivations)
+        instantiated_derivations.emplace(
+            out.attrs()->get(st.s.drvPath)->value->string_view());
+    };
+    install(strict, std::move(instantiate));
+    auto& path = state->getBuiltin("path");
+    auto path_op = *path.primOp();
+    auto add_path = path_op;
+    add_path.impl = [path_op](nix::EvalState& st, nix::PosIdx pos,
+                              nix::Value** args, nix::Value& out) {
+      st.forceAttrs(*args[0], pos, "while checking builtins.path");
+      if (args[0]->attrs()->get(st.symbols.create("sha256")))
+        st.error<nix::ThrownError>(
+              "builtins.path with sha256 is forbidden during Card evaluation")
+            .atPos(pos)
+            .debugThrow();
+      path_op.impl(st, pos, args, out);
+    };
+    install(path, std::move(add_path));
     // A denied pathExists is answered by the allow-list without reaching its
     // underlying accessor. Replay these probes too: later evaluations can add
     // allowed store paths. Otherwise a negative answer could become stale.
@@ -493,13 +769,8 @@ struct EvaluationState {
                                      out.boolean());
     };
     install(exists, std::move(tracked_exists));
-    for (const auto& p : allowed) state->allowPathLegacy(p);
-    auto* v = state->allocValue();
-    state->eval(
-        state->parseExprFromString(
-            entry_text, state->rootPath(nix::CanonPath(allowed.back()))),
-        *v);
-    entry = nix::allocRootValue(v);
+    for (const auto& def : definitions) state->allowPathLegacy(def.directory);
+    for (const auto& [_, path] : search_path) state->allowPathLegacy(path);
   }
 
   auto unchanged() -> bool {
@@ -513,184 +784,93 @@ struct EvaluationState {
     return reads->reusable;
   }
 
-  auto refresh() -> void {
-    if (!state || unchanged()) return;
-    // Untracked fetches cannot be proven unchanged, so they also get a fresh
-    // state on the next evaluation rather than a stale cached import.
+  auto reset() -> void {
     existence_checks.clear();
-    pkgs.clear();
-    entry.reset();
     state.reset();
     wrapped_ops.clear();
-    ++epoch;
+  }
+
+  auto begin() -> void {
+    reset();
     open();
   }
 
-  nix::Value& pkgs_for(const NixCall& c) {
-    std::string key = c.pin_url + "#" + c.pin_hash + "#" + c.system;
-    if (auto it = pkgs.find(key); it != pkgs.end()) return **it->second;
-    auto quote = [](const std::string& s) {
-      std::string q = "\"";
-      for (char ch : s) {
-        if (ch == '"' || ch == '\\' || ch == '$') q += '\\';
-        q += ch;
-      }
-      return q + "\"";
-    };
-    std::string expr =
-        "import (builtins.fetchTarball { url = " + quote(c.pin_url) +
-        "; sha256 = " + quote(c.pin_hash) +
-        "; }) { system = " + quote(c.system) +
-        "; config = { }; overlays = [ ]; }";
-    auto* v = state->allocValue();
-    state->eval(
-        state->parseExprFromString(expr, state->rootPath(nix::CanonPath("/"))),
-        *v);
-    state->forceValue(*v, nix::noPos);
-    return **(pkgs[key] = nix::allocRootValue(v));
+  auto arguments(const NixCall& call, nix::Value& out) -> void {
+    nix::Value entry;
+    auto& args = *state->allocValue();
+    const auto root = state->rootPath(nix::CanonPath("/"));
+    state->eval(state->parseExprFromString(entry_text, root), entry);
+    state->eval(state->parseExprFromString(call.args, root), args);
+    state->callFunction(entry, args, out, nix::noPos);
   }
 
-  void open_flakes() {
-    if (!state) open();
-    nix::experimentalFeatureSettings.set("extra-experimental-features",
-                                         "flakes");
-    if (!flake_settings)
-      flake_settings = std::make_unique<nix::flake::Settings>();
-    flake_eval_settings = std::make_unique<nix::EvalSettings>(read_only);
-    nix::loadConfFile(*flake_eval_settings);
-    flake_eval_settings->pureEval = true;
-    flake_eval_settings->enableImportFromDerivation = false;
-    flake_eval_settings->nixPath = nix::Strings{};
-    flake_settings->configureEvalSettings(*flake_eval_settings);
-    flake_state = std::make_shared<nix::EvalState>(
-        nix::LookupPath{}, nix::ref<nix::Store>(store), *fetch_settings,
-        *flake_eval_settings);
+  auto derivation(nix::EvalState& st, nix::Value& value,
+                  const std::string& system) -> WorkerDerivation {
+    st.forceValue(value, nix::noPos);
+    const auto drv = nix::getDerivation(st, value, false);
+    if (!drv)
+      throw std::runtime_error("Nix expression must return a derivation");
+    const auto out = drv->queryOutPath();
+    const auto drv_path = drv->requireDrvPath();
+    store->addTempRoot(drv_path);
+    return {store->printStorePath(drv_path), store->printStorePath(out),
+            system};
   }
 
-  // Every .drv of a remembered result is still there, and stays while this
-  // process does.
-  bool hold(const FlakeInfo& info) {
-    for (const auto& [attr, p] :
-         nlohmann::json::parse(info.json).at("packages").items()) {
-      auto drv = store->parseStorePath(p.at("drv").get<std::string>());
-      if (!store->isValidPath(drv)) return false;
-      store->addTempRoot(drv);
-    }
-    return true;
-  }
-
-  FlakeInfo flake(const NixCall& c, const std::string& ref) {
-    if (!flake_state) open_flakes();
-    std::string system =
-        c.system.empty() ? flake_eval_settings->getCurrentSystem() : c.system;
-    const auto customization = "|" + c.source_overrides;
-    if (auto it = flakes.find(ref + "|" + system + customization);
-        it != flakes.end()) {
-      if (hold(it->second)) return it->second;
-      // Collected since: this state remembers derivations it would not write
-      // again.
-      flakes.clear();
-      open_flakes();
-    }
-    auto quote = [](const std::string& s) {
-      std::string q = "\"";
-      for (char ch : s) {
-        if (ch == '"' || ch == '\\' || ch == '$') q += '\\';
-        q += ch;
-      }
-      return q + "\"";
-    };
-    auto input = nix::parseFlakeRef(*fetch_settings, ref);
-    auto locked = nix::flake::getFlake(*flake_state, input,
-                                       nix::fetchers::UseRegistries::No)
-                      .lockedRef.to_string();
-    std::string expr = R"(
-      let
-        f = builtins.getFlake )" +
-                       quote(locked) + R"(;
-        custom = builtins.fromJSON )" +
-                       quote(c.source_overrides) + R"(;
-        # JSON values only: no caller-provided expression runs in the source evaluator.
-        convert = v:
-          if builtins.isList v then map convert v
-          else if builtins.isAttrs v then
-            if builtins.attrNames v == [ "fetchurl" ] then
-              let spec = v.fetchurl; in
-              if !(spec ? url && spec ? sha256) then
-                throw "nixSources overrides: fetchurl needs url and sha256"
-              else builtins.fetchurl { inherit (spec) url sha256; }
-            else builtins.mapAttrs (_: convert) v
-          else v;
-        customize = name: package:
-          let
-            config = custom.${name} or {};
-            args = convert (config.override or {});
-            attrs = convert (config.overrideAttrs or {});
-            overridden = if !(config ? override) then package
-              else if package ? override then package.override args
-              else throw "nixSources overrides: package ${name} does not support override; use overrideAttrs when available";
-          in if !(config ? overrideAttrs) then overridden
-             else if overridden ? overrideAttrs then overridden.overrideAttrs (_: attrs)
-             else throw "nixSources overrides: package ${name} does not support overrideAttrs";
-        plain = builtins.unsafeDiscardStringContext;
-        read = d: builtins.tryEval (builtins.deepSeq [ d.drvPath d.outPath ] {
-          name = d.name or "";
-          drv = plain d.drvPath;  # not outPath: Nix would write the whole set as that path
-          out = plain d.outPath;
-          output = d.outputName or "out";
-        });
-        packages = f.packages.)" +
-                       quote(system) + R"( or { };
-        missing = builtins.filter (name: !(builtins.hasAttr name packages)) (builtins.attrNames custom);
-        all = if missing != [] then throw "nixSources overrides: unknown package ${builtins.head missing}"
-          else builtins.mapAttrs (name: package:
-            if builtins.hasAttr name custom then
-              let d = customize name package;
-              in { success = true; value = { name = d.name or ""; drv = plain d.drvPath;
-                    out = plain d.outPath; output = d.outputName or "out"; }; }
-            else read package) packages;
-      in {
-        ref = )" + quote(locked) +
-                       R"(;
-        rev = f.rev or "";
-        narHash = f.narHash or "";
-        packages = builtins.listToAttrs (builtins.concatMap
-          (n: if all.${n}.success then [ { name = n; value = all.${n}.value; } ] else [ ])
-          (builtins.attrNames all));
-      }
-    )";
-    auto* v = flake_state->allocValue();
-    flake_state->eval(flake_state->parseExprFromString(
-                          expr, flake_state->rootPath(nix::CanonPath("/"))),
-                      *v);
+  auto plan(const NixCall& c, nix::Value& value, SourceFetcher& fetch)
+      -> WorkerDerivation {
     nix::NixStringContext context;
-    auto json = nix::printValueAsJSON(*flake_state, true, *v, nix::noPos,
-                                      context, false);
-    FlakeInfo info;
-    info.ref = locked;
-    info.rev = json.at("rev").get<std::string>();
-    info.nar_hash = json.at("narHash").get<std::string>();
-    for (const auto& [attr, p] : json.at("packages").items())
-      info.packages.push_back(attr);
-    info.json = json.dump();
-    hold(info);
-    flakes[ref + "|" + system + customization] = info;
-    flakes[locked + "|" + system + customization] = info;
-    return info;
+    const auto text = state->forceString(
+        value, context, nix::noPos, "while reading the Card execution plan");
+    const auto pkgs = fetch.materialize(c.core_nixpkgs);
+    // Use a separate state for the core's own package set and worker.
+    // Transfer the plan as data with Nix string context, never as code.
+    bool read_only = false;
+    nix::EvalSettings settings(read_only);
+    settings.currentSystem = c.system;
+    settings.enableImportFromDerivation = false;
+    settings.restrictEval = true;
+    settings.allowedUris = nix::Strings{};
+    settings.nixPath = nix::Strings{};
+    nix::EvalState glue(nix::LookupPath{}, store, fetch_settings, settings);
+    glue.allowPathLegacy(pkgs);
+    if (c.needs_worker) glue.allowPathLegacy(c.nix_dir.string());
+    auto quote = [](const std::string& s) {
+      std::string result = "\"";
+      for (char ch : s) {
+        if (ch == '"' || ch == '\\' || ch == '$') result += '\\';
+        result += ch;
+      }
+      return result + "\"";
+    };
+    const auto expr =
+        "text: let pkgs = import (/. + " + quote(pkgs) +
+        ") { config = {}; overlays = []; }; in " +
+        (c.needs_worker
+             ? "let worker = import (/. + " +
+                   quote((c.nix_dir / "worker/worker.nix").string()) +
+                   ") { inherit pkgs; }; in "
+                   "pkgs.writeText \"tsugumi-card-plan.json\" "
+                   "(builtins.appendContext (builtins.toJSON "
+                   "(builtins.fromJSON (builtins.unsafeDiscardStringContext "
+                   "text) // "
+                   "{ worker = \"${worker}/bin/tsugumi-worker\"; })) "
+                   "(builtins.getContext text))"
+             : "pkgs.writeText \"tsugumi-card-plan.json\" text");
+    nix::Value function, arg, output;
+    glue.eval(
+        glue.parseExprFromString(expr, glue.rootPath(nix::CanonPath("/"))),
+        function);
+    arg.mkString(text, context, glue.mem);
+    glue.callFunction(function, arg, output, nix::noPos);
+    return derivation(glue, output, c.system);
   }
 
-  auto evaluate(const NixCall& c) -> NixResult {
-    refresh();
-    if (!state) open();
-    auto& vpkgs = pkgs_for(c);
-    auto* vargs = state->allocValue();
-    state->eval(state->parseExprFromString(
-                    c.args, state->rootPath(nix::CanonPath("/"))),
-                *vargs);
-    auto* partial = state->allocValue();
-    state->callFunction(**entry, vpkgs, *partial, nix::noPos);
-    auto* vres = state->allocValue();
-    state->callFunction(*partial, *vargs, *vres, nix::noPos);
+  auto evaluate(const NixCall& c, SourceFetcher& fetch) -> NixResult {
+    begin();
+    nix::Value result;
+    arguments(c, result);
+    auto* vres = &result;
     state->forceAttrs(*vres, nix::noPos,
                       "while evaluating the Card execution plan");
     auto attr = [&](const char* name) -> nix::Value& {
@@ -715,18 +895,11 @@ struct EvaluationState {
     for (const auto& label : labels)
       r.implementation_labels.push_back(label.get<std::string>());
     check_implementation_labels(r.implementation_labels, count);
-    auto& manifest = attr("manifest");
-    state->forceValue(manifest, nix::noPos);
-    auto drv = nix::getDerivation(*state, manifest, false);
-    if (!drv) throw std::runtime_error("the Card manifest is not a derivation");
-    auto out = drv->queryOutPath();
-    auto drv_path = drv->requireDrvPath();
-    r.derivation = {store->printStorePath(drv_path), store->printStorePath(out),
-                    c.system};
-    if (store->readDerivation(drv_path).platform != c.system)
+    r.derivation = plan(c, attr("plan"), fetch);
+    if (store->readDerivation(store->parseStorePath(r.derivation.path))
+            .platform != c.system)
       throw std::runtime_error("Card derivation does not target system " +
                                c.system);
-    store->addTempRoot(drv_path);
     if (reads->reusable) {
       for (const auto& path : reads->store_roots) {
         const auto source = store->parseStorePath(path);
@@ -738,9 +911,62 @@ struct EvaluationState {
     return r;
   }
 
+  auto expression(const NixCall& call, const std::string& text, bool build)
+      -> E::ExpressionValueT {
+    begin();
+    const auto def =
+        std::ranges::find(definitions, call.card, &NixDefinitionScope::card);
+    if (def == definitions.end())
+      throw std::runtime_error("missing Card scope");
+    expression_scope = &*def;
+    expression_text = "{ params, inputs }: (\n" + text + "\n)";
+    capture_derivations = build;
+    Finally clear_expression([&] {
+      expression_scope = nullptr;
+      expression_text.clear();
+      capture_derivations = false;
+      instantiated_derivations.clear();
+    });
+    nix::Value function, args, value;
+    const auto dir =
+        state->rootPath(nix::CanonPath(call.definition_dir.string()));
+    state->eval(state->parseExprFromString(expression_text, dir), function);
+    arguments(call, args);
+    state->callFunction(function, args, value, nix::noPos);
+    E::ExpressionValueT result;
+    if (build) {
+      state->forceValue(value, nix::noPos);
+      if (value.type() == nix::nNull) {
+        result.json = "null";
+        return result;
+      }
+      const auto drv = nix::getDerivation(*state, value, false);
+      if (!drv)
+        throw std::runtime_error("Nix expression must return a derivation");
+      const auto path = drv->requireDrvPath();
+      result.drv = store->printStorePath(path);
+      if (!instantiated_derivations.contains(result.drv))
+        throw std::runtime_error(
+            "Nix expression must instantiate its derivation");
+      result.output_name = drv->queryOutputName();
+      const auto derivation = store->readDerivation(path);
+      if (derivation.platform != call.system)
+        throw std::runtime_error("Nix expression must build for " +
+                                 call.system);
+      if (!derivation.outputs.contains(result.output_name))
+        throw std::runtime_error(
+            "Nix expression returned an unknown derivation output");
+      store->addTempRoot(path);
+    } else {
+      bounded_json(*state, value, result.json);
+    }
+    return result;
+  }
+
   // The Nix client sends these options with its own daemon connection. The
   // evaluator and the other builds can keep using their own settings.
-  static auto build(const NixCall& c, const std::string& drv) -> void {
+  static auto build(const NixCall& c, const std::string& drv,
+                    bool sandboxed = false) -> void {
     const auto executable = nix::getSelfExe();
     if (!executable)
       throw std::runtime_error("cannot locate the Nix build client");
@@ -748,6 +974,7 @@ struct EvaluationState {
     spec.argv = {executable->string(), "--nix-build-client", drv,
                  c.jobs ? std::to_string(*c.jobs) : "",
                  c.cores ? std::to_string(*c.cores) : ""};
+    if (sandboxed) spec.argv.emplace_back("--sandboxed");
     // Use the same store, Nix configuration and environment as the evaluator.
     for (const auto& [key, value] : nix::getEnv())
       spec.env.push_back(key + "=" + value);
@@ -760,32 +987,28 @@ struct EvaluationState {
         [&](proc::LineChunk chunk) {
           if (!c.log) return;
           std::vector<std::string> output;
-          for (const auto& line : chunk.lines) {
-            if (line == "null\n") {
-              chunk.truncated = true;
-              break;
-            }
-            if (line.starts_with('"')) {
-              auto entry = nlohmann::json::parse(line, nullptr, false);
-              if (auto* text = entry.get_ptr<std::string*>()) {
-                output.push_back(std::move(*text));
-                continue;
-              }
-            }
-            // Keep diagnostics printed before the child installs its logger.
-            output.push_back(tsugumi::text::replace_invalid_utf8(line));
+          for (const auto& frame : chunk.lines) {
+            const auto* start = reinterpret_cast<const uint8_t*>(frame.data());
+            flatbuffers::Verifier verifier(start, frame.size());
+            if (!verifier.VerifySizePrefixedBuffer<E::BuildLog>(nullptr))
+              throw std::runtime_error("invalid Nix build log frame");
+            const auto* log =
+                flatbuffers::GetSizePrefixedRoot<E::BuildLog>(start);
+            if (log->truncated()) chunk.truncated = true;
+            if (log->line()) output.push_back(log->line()->str());
           }
           c.log({output, chunk.truncated});
         },
-        kInvocationLogLimitBytes);
+        kInvocationLogLimitBytes + 64, std::chrono::seconds(1),
+        proc::LogFraming::stdout_size_prefixed);
     if (result.cancelled) throw NixInterrupted(false, "Nix cancelled");
     if (result.timed_out)
       throw NixInterrupted(true, "Nix exceeded buildTimeoutSeconds");
     if (!proc::exited_ok(result.status))
-      throw std::runtime_error(result.out.empty()
-                                   ? "Nix build failed: " +
-                                         proc::describe(result.status)
-                                   : result.out);
+      throw std::runtime_error(
+          result.out.empty()
+              ? "Nix build failed: " + proc::describe(result.status)
+              : tsugumi::text::replace_invalid_utf8(result.out));
   }
   static auto realise_native(const NixCall& c, NixResult r) -> NixResult {
     auto store = nix::openStore();
@@ -817,7 +1040,7 @@ struct EvaluationState {
     std::ifstream f(r.derivation.output, std::ios::binary);
     std::stringstream ss;
     ss << f.rdbuf();
-    r.manifest = ss.str();
+    r.plan_json = ss.str();
     return r;
   }
 
@@ -846,7 +1069,7 @@ struct EvaluationState {
     if (!state || !result.evaluation_epoch || result.evaluation_epoch != epoch)
       return false;
     if (!unchanged()) {
-      refresh();
+      reset();
       return false;
     }
     auto drv = store->parseStorePath(result.derivation.path);
@@ -855,23 +1078,71 @@ struct EvaluationState {
     store->addTempRoot(out);
     if (store->isValidPath(drv) && store->isValidPath(out)) return true;
     // Nix remembers derivations it may not write a second time after GC.
-    existence_checks.clear();
-    pkgs.clear();
-    entry.reset();
-    state.reset();
-    wrapped_ops.clear();
-    ++epoch;
+    reset();
     return false;
   }
 };
 
-auto receive(nix::Source& source) -> nlohmann::json {
-  return nlohmann::json::parse(nix::readString(source));
+template <class Table>
+auto receive(nix::Source& source) -> typename Table::NativeTableType {
+  const auto bytes = nix::readString(source);
+  flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(bytes.data()),
+                                 bytes.size());
+  if (!verifier.VerifyBuffer<Table>(nullptr))
+    throw std::runtime_error("invalid Nix evaluator message");
+  typename Table::NativeTableType result;
+  flatbuffers::GetRoot<Table>(bytes.data())->UnPackTo(&result);
+  return result;
 }
 
-auto send(nix::FdSink& sink, const nlohmann::json& message) -> void {
-  sink << message.dump();
+template <class Table, class Message>
+auto send(nix::FdSink& sink, Message&& message, std::string system = {})
+    -> void {
+  typename Table::NativeTableType envelope;
+  if constexpr (std::is_same_v<Table, E::Request>)
+    envelope.system = std::move(system);
+  envelope.body.Set(std::forward<Message>(message));
+  flatbuffers::FlatBufferBuilder builder;
+  builder.Finish(Table::Pack(builder, &envelope));
+  sink << std::string_view(
+      reinterpret_cast<const char*>(builder.GetBufferPointer()),
+      builder.GetSize());
   sink.flush();
+}
+
+auto pack_source(const std::string& name, const NixSource& source)
+    -> Tsugumi::Document::LockEntryT {
+  Tsugumi::Document::LockEntryT result;
+  result.name = name;
+  result.url = source.url;
+  result.rev = source.rev;
+  result.narHash = source.nar_hash;
+  return result;
+}
+
+auto unpack_source(const Tsugumi::Document::LockEntryT& source) -> NixSource {
+  return {source.url, source.rev, source.narHash};
+}
+
+auto pack_scope(const NixCall& call) -> std::unique_ptr<E::ScopeT> {
+  auto result = std::make_unique<E::ScopeT>();
+  for (const auto& definition : call.definitions) {
+    auto entry = std::make_unique<E::DefinitionScopeT>();
+    entry->directory = definition.directory;
+    entry->card = definition.card;
+    result->definitions.push_back(std::move(entry));
+  }
+  for (const auto& [name, source] : call.locked_nix_path)
+    result->entries.push_back(std::make_unique<Tsugumi::Document::LockEntryT>(
+        pack_source(name, source)));
+  return result;
+}
+
+auto unpack_scope(const E::ScopeT& data, NixCall& call) -> void {
+  for (const auto& def : data.definitions)
+    call.definitions.push_back({def->directory, def->card});
+  for (const auto& source : data.entries)
+    call.locked_nix_path.emplace(source->name, unpack_source(*source));
 }
 
 constexpr int kEvaluatorSocket = 3;
@@ -892,19 +1163,50 @@ auto executable_path() -> std::filesystem::path {
 auto evaluator_main() -> void {
   nix::FdSource source(kEvaluatorSocket);
   nix::FdSink sink(kEvaluatorSocket);
-  auto init = receive(source);
-  EvaluationState eval;
-  eval.entry_text = init.at("entry");
-  eval.allowed = init.at("allowed").get<std::vector<std::string>>();
-  eval.epoch = init.at("epoch");
-  auto loop = [&](const nlohmann::json& req) -> nlohmann::json {
+  auto init = receive<E::Request>(source);
+  const auto* settings = init.body.AsInitialize();
+  if (!settings) throw std::runtime_error("missing Nix evaluator settings");
+  SourceFetcher fetch;
+  uint64_t epoch = settings->epoch - 1;
+  std::map<std::string, int64_t> times;
+  using ScopeKey = std::tuple<std::string, std::vector<NixDefinitionScope>,
+                              LockedNixPath>;
+  std::list<std::pair<ScopeKey, std::unique_ptr<EvaluationState>>> warm;
+  auto evaluator = [&](const NixCall& call) -> EvaluationState& {
+    auto key = ScopeKey{call.system, call.definitions, call.locked_nix_path};
+    auto cached =
+        std::ranges::find(warm, key, &decltype(warm)::value_type::first);
+    if (cached != warm.end()) {
+      warm.splice(warm.begin(), warm, cached);
+      return *warm.front().second;
+    }
+    auto eval = std::make_unique<EvaluationState>(fetch.settings, fetch.store,
+                                                  epoch, times);
+    eval->entry_text = settings->entry;
+    eval->system = call.system;
+    eval->definitions = call.definitions;
+    // Fetch (and verify) everything before opening the restricted state.
+    for (const auto& [name, source] : call.locked_nix_path)
+      eval->search_path.emplace(name, fetch.materialize(source));
+    if (warm.size() >= 4) warm.pop_back();
+    warm.emplace_front(std::move(key), std::move(eval));
+    return *warm.front().second;
+  };
+  auto evaluate = [&](const E::RequestT& request) {
     NixCall call;
-    call.system = req.at("system");
+    call.system = request.system;
     const std::function<void(const std::string&)> log =
-        [&](const std::string& line) { send(sink, {{"log", line}}); };
+        [&](const std::string& line) {
+          E::LogT log;
+          log.line = line;
+          send<E::Reply>(sink, std::move(log));
+        };
     const NixLogSink::BuildActivity builds = [&](const std::string& drv,
                                                  bool active) {
-      send(sink, {{"build", drv}, {"active", active}});
+      E::BuildT build;
+      build.drv = drv;
+      build.active = active;
+      send<E::Reply>(sink, std::move(build));
     };
     g_logger->set_thread(&log);
     g_logger->set_thread_builds(&builds);
@@ -912,54 +1214,71 @@ auto evaluator_main() -> void {
       g_logger->set_thread(nullptr);
       g_logger->set_thread_builds(nullptr);
     });
-    const auto& op = req.at("op");
-    if (op == "evaluate") {
-      call.pin_url = req.at("pin_url");
-      call.pin_hash = req.at("pin_hash");
-      call.args = req.at("args");
-      call.max_implementations = req.at("max_implementations");
-      const auto result = eval.evaluate(call);
-      return {{"drv", result.derivation.path},
-              {"out", result.derivation.output},
-              {"execution_list", result.execution_list},
-              {"implementation_count", result.implementation_count},
-              {"implementation_labels", result.implementation_labels},
-              {"epoch", result.evaluation_epoch}};
+    if (const auto* op = request.body.AsEvaluate()) {
+      unpack_scope(*op->scope, call);
+      call.core_nixpkgs = unpack_source(*op->core_nixpkgs);
+      call.nix_dir = op->nix_dir;
+      call.needs_worker = op->needs_worker;
+      call.args = op->args;
+      call.max_implementations = op->max_implementations;
+      const auto result = evaluator(call).evaluate(call, fetch);
+      E::EvaluationT reply;
+      reply.drv = result.derivation.path;
+      reply.out = result.derivation.output;
+      reply.execution_list = result.execution_list;
+      reply.implementation_count = result.implementation_count;
+      reply.implementation_labels = result.implementation_labels;
+      reply.epoch = result.evaluation_epoch;
+      send<E::Reply>(sink, std::move(reply));
+    } else if (const auto* op = request.body.AsLockSource()) {
+      const auto source = fetch.lock(op->url);
+      E::ResolvedSourceT locked;
+      locked.rev = source.rev;
+      locked.narHash = source.nar_hash;
+      send<E::Reply>(sink, std::move(locked));
+    } else if (const auto* op = request.body.AsExpression()) {
+      unpack_scope(*op->scope, call);
+      call.args = op->args;
+      call.card = op->card;
+      call.definition_dir = op->definition_dir;
+      auto& eval = evaluator(call);
+      auto result = eval.expression(call, op->text, op->build);
+      send<E::Reply>(sink, std::move(result));
+    } else if (const auto* op = request.body.AsReuse()) {
+      NixResult result;
+      result.evaluation_epoch = op->epoch;
+      result.derivation.path = op->drv;
+      result.derivation.output = op->out;
+      E::ReusableT reply;
+      unpack_scope(*op->scope, call);
+      reply.value = evaluator(call).reuse(result);
+      send<E::Reply>(sink, std::move(reply));
+    } else {
+      throw std::runtime_error("unknown Nix evaluator operation");
     }
-    if (op == "flake") {
-      call.source_overrides = req.at("overrides");
-      auto result = eval.flake(call, req.at("ref").get<std::string>());
-      return {{"ref", result.ref},
-              {"rev", result.rev},
-              {"nar_hash", result.nar_hash},
-              {"packages", result.packages},
-              {"json", result.json}};
-    }
-    if (op != "reuse") throw std::runtime_error("unknown evaluation operation");
-    NixResult result;
-    result.evaluation_epoch = req.at("epoch");
-    result.derivation.path = req.at("drv");
-    result.derivation.output = req.at("out");
-    return eval.reuse(result);
+  };
+  auto send_error = [&](std::string text, bool limit) {
+    E::ErrorT reply;
+    reply.message = std::move(text);
+    reply.limit = limit;
+    send<E::Reply>(sink, std::move(reply));
   };
   for (;;) {
-    nlohmann::json request;
+    E::RequestT request;
     try {
-      request = receive(source);
+      request = receive<E::Request>(source);
     } catch (const nix::EndOfFile&) {
       return;
     }
-    nlohmann::json response;
     try {
-      response = {{"result", loop(request)}};
+      evaluate(request);
     } catch (const NixImplementationLimit& e) {
-      response = {{"limit", e.what()}};
+      send_error(e.what(), true);
     } catch (const nix::BaseError& e) {
-      response = {{"error", message(e)}};
+      send_error(message(e), false);
     } catch (const std::exception& e) {
-      response = {{"error", e.what()}};
+      send_error(e.what(), false);
     }
-    send(sink, response);
   }
 }
 
@@ -969,7 +1288,6 @@ auto evaluator_main() -> void {
 // the connection. Cancelling a queued caller removes only that waiter.
 struct NixEvaluator::Impl {
   std::string entry;
-  std::vector<std::string> allowed;
   std::mutex mu;
   std::condition_variable_any changed;
   std::list<int> waiters;
@@ -1007,7 +1325,9 @@ struct NixEvaluator::Impl {
 
     proc::Spec spec;
     spec.argv = {executable_path(), "--nix-evaluator"};
-    for (auto e = environ; *e; ++e) spec.env.emplace_back(*e);
+    for (auto e = environ; *e; ++e)
+      if (!std::string_view(*e).starts_with("NIX_PATH="))
+        spec.env.emplace_back(*e);
     spec.stderr_fd = STDERR_FILENO;
     spec.fds.emplace_back(kEvaluatorSocket, child.get());
     spec.fds.emplace_back(kCoreLifetime, reader.get());
@@ -1021,9 +1341,9 @@ struct NixEvaluator::Impl {
     roots->addTempRoot(roots->parseStorePath(path));
   }
 
-  template <class F>
-  auto exchange(const NixCall& call, nlohmann::json request, F result)
-      -> decltype(result(std::declval<const nlohmann::json&>())) {
+  template <class Request, class Result>
+  auto exchange(const NixCall& call, Request request, Result result)
+      -> decltype(result(std::declval<E::ReplyBodyUnion&>())) {
     std::unique_lock lock(mu);
     const auto waiter = waiters.emplace(waiters.end());
     Finally dequeue([&] {
@@ -1042,7 +1362,7 @@ struct NixEvaluator::Impl {
     if (interrupted(call, nullptr)) throw interruption(call);
     lock.unlock();
 
-    nlohmann::json reply;
+    E::ReplyT reply;
     try {
       const bool start = pid < 0;
       if (start) open();
@@ -1050,25 +1370,22 @@ struct NixEvaluator::Impl {
       if (interrupted(call, nullptr)) throw interruption(call);
       nix::FdSink sink(socket.get());
       nix::FdSource source(socket.get());
-      if (start)
-        send(sink, {{"entry", entry},
-                    {"allowed", allowed},
-                    {"epoch", last_epoch + 1}});
-      request["system"] = call.system;
-      send(sink, request);
+      if (start) {
+        E::InitializeT settings;
+        settings.entry = entry;
+        settings.epoch = last_epoch + 1;
+        send<E::Request>(sink, std::move(settings));
+      }
+      send<E::Request>(sink, std::move(request), call.system);
       for (;;) {
-        reply = receive(source);
-        if (reply.contains("build")) {
-          if (call.on_build)
-            call.on_build(reply.at("build").get<std::string>(),
-                          reply.at("active").get<bool>());
+        reply = receive<E::Reply>(source);
+        if (const auto* build = reply.body.AsBuild()) {
+          if (call.on_build) call.on_build(build->drv, build->active);
           continue;
         }
-        if (!reply.contains("log")) break;
-        if (call.log) {
-          const auto line = reply.at("log").get<std::string>();
-          call.log({std::span(&line, 1)});
-        }
+        const auto* log = reply.body.AsLog();
+        if (!log) break;
+        if (call.log) call.log({std::span(&log->line, 1)});
       }
     } catch (const std::exception& e) {
       close();
@@ -1080,12 +1397,12 @@ struct NixEvaluator::Impl {
       close();
       throw interruption(call);
     }
-    if (reply.contains("limit"))
-      throw NixImplementationLimit(reply.at("limit").get<std::string>());
-    if (reply.contains("error"))
-      throw std::runtime_error(reply.at("error").get<std::string>());
+    if (const auto* error = reply.body.AsError()) {
+      if (error->limit) throw NixImplementationLimit(error->message);
+      throw std::runtime_error(error->message);
+    }
     CallScope scope(call);
-    return translated(call, [&] { return result(reply.at("result")); });
+    return translated(call, [&] { return result(reply.body); });
   }
 };
 
@@ -1122,10 +1439,9 @@ auto NixEvaluator::run_subprocess_if_requested(int argc, char** argv) -> void {
   std::_Exit(1);
 }
 
-NixEvaluator::NixEvaluator(std::string entry, std::vector<std::string> allowed)
+NixEvaluator::NixEvaluator(std::string entry)
     : impl_(std::make_unique<Impl>()) {
   impl_->entry = std::move(entry);
-  impl_->allowed = std::move(allowed);
 }
 
 NixEvaluator::~NixEvaluator() = default;
@@ -1133,59 +1449,165 @@ NixEvaluator::~NixEvaluator() = default;
 auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
   if (call.system.empty())
     throw std::runtime_error("execution target system is unknown");
-  return impl_->exchange(
-      call,
-      {{"op", "evaluate"},
-       {"pin_url", call.pin_url},
-       {"pin_hash", call.pin_hash},
-       {"args", call.args},
-       {"max_implementations", call.max_implementations}},
-      [&](const auto& data) {
-        NixResult result;
-        result.derivation = {data.at("drv"), data.at("out"), call.system};
-        result.execution_list = data.at("execution_list");
-        result.implementation_count = data.at("implementation_count");
-        result.implementation_labels =
-            data.at("implementation_labels")
-                .template get<std::vector<std::string>>();
-        result.evaluation_epoch = data.at("epoch");
-        impl_->last_epoch =
-            std::max(impl_->last_epoch, result.evaluation_epoch);
-        impl_->hold(result.derivation.path);
-        return result;
-      });
+  E::EvaluateT request;
+  request.scope = pack_scope(call);
+  request.core_nixpkgs =
+      std::make_unique<Tsugumi::Document::LockEntryT>(
+          pack_source("nixpkgs", call.core_nixpkgs));
+  request.nix_dir = call.nix_dir.string();
+  request.needs_worker = call.needs_worker;
+  request.args = call.args;
+  request.max_implementations = call.max_implementations;
+  return impl_->exchange(call, std::move(request), [&](auto& reply) {
+    const auto* data = reply.AsEvaluation();
+    if (!data) throw std::runtime_error("missing Nix evaluation reply");
+    NixResult result;
+    result.derivation = {data->drv, data->out, call.system};
+    result.execution_list = data->execution_list;
+    result.implementation_count = data->implementation_count;
+    result.implementation_labels = data->implementation_labels;
+    result.evaluation_epoch = data->epoch;
+    impl_->last_epoch = std::max(impl_->last_epoch, result.evaluation_epoch);
+    impl_->hold(result.derivation.path);
+    return result;
+  });
 }
 
 auto NixEvaluator::reuse(const NixCall& call, const NixResult& result) -> bool {
-  return impl_->exchange(call,
-                         {{"op", "reuse"},
-                          {"epoch", result.evaluation_epoch},
-                          {"drv", result.derivation.path},
-                          {"out", result.derivation.output}},
-                         [&](const nlohmann::json& data) {
-                           const bool reusable = data.get<bool>();
-                           if (reusable) {
-                             impl_->hold(result.derivation.path);
-                             impl_->hold(result.derivation.output);
-                           }
-                           return reusable;
-                         });
+  E::ReuseT request;
+  request.scope = pack_scope(call);
+  request.epoch = result.evaluation_epoch;
+  request.drv = result.derivation.path;
+  request.out = result.derivation.output;
+  return impl_->exchange(call, std::move(request), [&](auto& reply) {
+    const auto* data = reply.AsReusable();
+    if (!data) throw std::runtime_error("missing Nix reuse reply");
+    if (data->value) {
+      impl_->hold(result.derivation.path);
+      impl_->hold(result.derivation.output);
+    }
+    return data->value;
+  });
 }
 
-auto NixEvaluator::flake(const NixCall& call, const std::string& ref)
-    -> FlakeInfo {
-  return impl_->exchange(
-      call,
-      {{"op", "flake"}, {"ref", ref}, {"overrides", call.source_overrides}},
-      [&](const nlohmann::json& data) {
-        FlakeInfo info{data.at("ref"), data.at("rev"), data.at("nar_hash"),
-                       data.at("packages").get<std::vector<std::string>>(),
-                       data.at("json")};
-        for (const auto& [attr, p] :
-             nlohmann::json::parse(info.json).at("packages").items())
-          impl_->hold(p.at("drv").get<std::string>());
-        return info;
+auto NixEvaluator::lock_source(const std::string& url) -> NixSource {
+  E::LockSourceT request;
+  request.url = url;
+  return impl_->exchange(NixCall{}, std::move(request), [&](auto& reply) {
+    const auto* source = reply.AsResolvedSource();
+    if (!source) throw std::runtime_error("missing nixPath lock reply");
+    return NixSource{url, source->rev, source->narHash};
+  });
+}
+
+auto NixEvaluator::expression(const NixCall& call,
+                              const std::string& expression, bool build)
+    -> ExpressionResult {
+  E::ExpressionT request;
+  request.scope = pack_scope(call);
+  request.args = call.args;
+  request.card = call.card;
+  request.definition_dir = call.definition_dir.string();
+  request.text = expression;
+  request.build = build;
+  const auto value =
+      impl_->exchange(call, std::move(request), [&](auto& reply) {
+        auto* data = reply.AsExpressionValue();
+        if (!data) throw std::runtime_error("missing Nix expression reply");
+        if (build && !data->drv.empty()) impl_->hold(data->drv);
+        return std::move(*data);
       });
+  ExpressionResult result;
+  if (!build || value.drv.empty()) {
+    result.json = value.json;
+    return result;
+  }
+
+  auto building = call;
+  auto tail = [&](std::string_view text) {
+    text = text.substr(text.size() > kBuildLogTail ? text.size() - kBuildLogTail
+                                                   : 0);
+    if (text.size() + result.log_tail.size() > kBuildLogTail)
+      result.log_tail.erase(
+          0, text.size() + result.log_tail.size() - kBuildLogTail);
+    result.log_tail.append(text);
+  };
+  building.log = [&](proc::LineChunk chunk) {
+    for (const auto& line : chunk.lines) {
+      tail(line);
+      tail("\n");
+    }
+    if (call.log) call.log(chunk);
+  };
+  namespace fsys = std::filesystem;
+  auto store = nix::openStore();
+  translated(building, [&] {
+    CallScope scope(building, dynamic_cast<nix::RemoteStore*>(&*store));
+    const auto drv = store->parseStorePath(value.drv);
+    const auto output = [&]() -> std::optional<nix::StorePath> {
+      const auto outputs = store->queryPartialDerivationOutputMap(drv);
+      const auto found = outputs.find(value.output_name);
+      if (found == outputs.end() || !found->second) return std::nullopt;
+      store->addTempRoot(*found->second);
+      if (!store->isValidPath(*found->second)) return std::nullopt;
+      return found->second;
+    };
+    auto out = output();
+    try {
+      if (!out) {
+        EvaluationState::build(building, value.drv, true);
+        out = output();
+      }
+      if (!out)
+        throw std::runtime_error(
+            "Nix build did not realize the requested output");
+    } catch (const NixInterrupted&) {
+      throw;
+    } catch (const std::exception& error) {
+      result.build_error = error.what();
+      if (!result.log_tail.ends_with(error.what())) tail(error.what());
+      return;
+    }
+    result.log_tail.clear();
+    const fsys::path path(store->printStorePath(*out));
+    size_t bytes = 0;
+    auto add = [&](const fsys::path& root, const fsys::path& relative,
+                   const std::string& name) {
+      const auto size = fsys::file_size(root / relative);
+      if (name.size() > kExpressionBytes - bytes ||
+          size > kExpressionBytes - bytes - name.size()) {
+        result.truncated = true;
+        return false;
+      }
+      ExpressionFile file{name, {}};
+      file.bytes.reserve(size);
+      bytes += name.size() + fs::stream_beneath(root, relative, size,
+                                                [&](std::string_view chunk) {
+                                                  nix::checkInterrupt();
+                                                  file.bytes += chunk;
+                                                });
+      result.files.push_back(std::move(file));
+      return true;
+    };
+    const auto status = fsys::symlink_status(path);
+    if (fsys::is_regular_file(status)) {
+      add(path.parent_path(), path.filename(), path.filename().string());
+    } else if (fsys::is_directory(status)) {
+      size_t entries = 0;
+      for (const auto& item : fsys::recursive_directory_iterator(path)) {
+        nix::checkInterrupt();
+        if (++entries > kExpressionEntries) {
+          result.truncated = true;
+          break;
+        }
+        if (!fsys::is_regular_file(item.symlink_status())) continue;
+        const auto relative = item.path().lexically_relative(path);
+        if (!add(path, relative, relative.string())) break;
+      }
+      std::ranges::sort(result.files, {}, &ExpressionFile::path);
+    }
+  });
+  return result;
 }
 
 auto NixEvaluator::make_available(const NixCall& call,

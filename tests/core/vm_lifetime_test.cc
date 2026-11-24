@@ -9,6 +9,8 @@
 #include <mutex>
 #include <thread>
 
+#include "tsugumi/protocol/runtime_state_generated.h"
+#include "tsugumi/util/flat_file.hh"
 #include "agent/wire.hh"
 #include "host/service.hh"
 #include "host/wire_endpoint.hh"
@@ -39,14 +41,15 @@ class RuntimeDouble final : public host::EnvironmentProcess {
     const auto id = fs::read_file(std::filesystem::path(launch.project) /
                                   ".tsugumi/project-id");
     if (!id) throw std::runtime_error("Host did not prepare project identity");
-    fs::write_atomic(
-        std::filesystem::path(launch.control) / "server.ready",
-        "{\"protocol\":1,\"pid\":42,\"endpoint\":\"ws://localhost:1/rpc\","
-        "\"token\":\"fixture\",\"project_id\":\"" +
-            *id +
-            "\","
-            "\"server_instance_id\":\"fixture\",\"unix_socket\":\"fixture\"}",
-        0600);
+    Tsugumi::State::ServerReadyT ready;
+    ready.protocol = 1;
+    ready.pid = 42;
+    ready.endpoint = "ws://localhost:1/rpc";
+    ready.token = "fixture";
+    ready.project_id = *id;
+    ready.unix_socket = "fixture";
+    fs::write_atomic(std::filesystem::path(launch.control) / "server.ready",
+                     flat::encode<Tsugumi::State::ServerReady>(ready), 0600);
     running = true;
     return 42;
   }
@@ -225,7 +228,6 @@ TEST(VMLifetimeLane, QueuedAndRunningTasksCountAsWork) {
     std::unique_lock lock(mutex);
     changed.wait(lock, [&] { return started; });
   }
-  EXPECT_EQ(lane.queued(), 0);
   EXPECT_EQ(lane.pending(), 1);
   EXPECT_FALSE(lane.idle());
   EXPECT_TRUE(lane.submit([]() {}));

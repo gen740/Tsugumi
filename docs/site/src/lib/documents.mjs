@@ -25,7 +25,7 @@ const STORY = [
       ['Download the observation, split it', 'casaSky', 'Take Cassiopeia A: the remnant of a supernova whose light reached Earth a little over three hundred years ago, still expanding at thousands of kilometres per second. Split its observation into three by energy and overlay them, and you have a three-colour image.'],
       ['three boxes on paper', 'sketch', 'Three boxes, drawn on paper.'],
       ['macOS app for assembling', 'draft', 'What if what you wrote took shape just as it is? The three boxes become Drafts.'],
-      ['**Check.** Run the graph', 'run', 'The Agent implements the Drafts and runs them, and the photon counts per band and the RGB image appear on the Canvas (the bundled Cas A · Chandra RGB demo).'],
+      ['**Check.** Run the graph', 'run', 'The Agent implements the Drafts and runs them, and the photon counts per band and the RGB image appear in the Cards\' views (the bundled Cas A · Chandra RGB demo).'],
       ['**Check.** Run the graph', { image: 'assets/screenshots/workflow.png', width: 1440, height: 900, alt: 'A Canvas that makes an RGB image and an energy spectrum from an X-ray observation of Cas A' }, 'The real screen. Run it on a deep observation, and even how the spectrum\'s lines match the image\'s colours can be checked on the same Canvas.'],
     ],
   },

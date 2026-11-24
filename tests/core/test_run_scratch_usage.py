@@ -1,80 +1,91 @@
 """Scratch lifetime, independent kept files and the cached space-management RPC."""
 
 import os
-import shutil
 import time
 from pathlib import Path
 
 import pytest
 
 from harness.fixtures import worker_project
-from harness.observations import decode_scalar, read_output, read_pages
+from harness.observations import read_pages
 from harness.scenario import FILE_OUTPUT, Gate, run, wait_run
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 
 
 def usage_when(client, condition):
-    # Cache usage is measured in the background and has no subscription event.
-    while True:
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
         usage = client.call("ProjectCacheUsageRequest")
         if usage.measuredAt is not None and condition(usage):
             return usage
         time.sleep(0.01)
+    pytest.fail("project cache usage did not reach the expected state")
 
 
 def current(usage):
     return next(p for p in usage.projects if text(p.project) == text(usage.currentProject))
 
 
+def write_run_scratch(scratch, run_id, contents):
+    directory = scratch / "runs" / run_id
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "scratch.txt").write_bytes(contents)
+
+
 def test_past_run_scratch_stays_until_explicit_deletion(core_factory, project, tmp_path):
     """A new run and restart keep scratch; explicit deletion leaves independent copies."""
+    scratch = tmp_path / "scratch"
     daemon = core_factory(mocked_builds=True, mocked_worker=True,
-                          args=["--run-scratch-dir", str(tmp_path / "scratch")])
+                          args=["--run-scratch-dir", str(scratch)])
     client = daemon.connect()
     payload = "large output\n" * 10000
+    first_scratch = b"first run scratch"
+    second_scratch = b"second run scratch"
     worker_project(client, project, tmp_path / "first", [
         {"op": "file", "port": "doc", "path": "report.txt", "text": payload},
-    ], outputs=FILE_OUTPUT, recordIO=True, retainArtifact=True, artifactOutput="doc")
+    ], outputs=FILE_OUTPUT, recordIO=True)
     first = run(client)
     assert wait_run(client, first).state == RunState.succeeded
-    usage_when(client, lambda u: current(u).scratchBytes == len(payload))
-    saved = Path(decode_scalar(read_output(client, first, port="doc")))
+    usage_when(client, lambda u: current(u).scratchBytes == 0)
+    write_run_scratch(scratch, first, first_scratch)
+    usage_when(client, lambda u: current(u).scratchBytes == len(first_scratch))
 
     # A separate package is fixture setup; saving uses the same public Card.
     worker_project(client, project, tmp_path / "second", [
         {"op": "file", "port": "doc", "path": "report.txt", "text": "small"},
-    ], outputs=FILE_OUTPUT, recordIO=True, retainArtifact=True, artifactOutput="doc")
+    ], outputs=FILE_OUTPUT, recordIO=True)
     second = run(client)
     assert wait_run(client, second).state == RunState.succeeded
-    usage_when(client, lambda u: current(u).scratchBytes == len(payload) + len("small"))
+    write_run_scratch(scratch, second, second_scratch)
+    total_scratch = len(first_scratch) + len(second_scratch)
+    usage_when(client, lambda u: current(u).scratchBytes == total_scratch)
     artifact, = client.call("ArtifactListRequest", runId=first).artifacts
     artifact_id = text(artifact.artifactId)
 
     daemon.restart()
     client = daemon.connect()
-    usage_when(client, lambda u: current(u).scratchBytes == len(payload) + len("small"))
+    usage_when(client, lambda u: current(u).scratchBytes == total_scratch)
     candidates = usage_when(client, lambda u: len(current(u).runScratch) >= 2)
     assert text(candidates.protectedRun) == second
     sizes = {text(p.path): p.bytes for p in current(candidates).runScratch}
-    assert sizes[f"runs/{first}"] == len(payload)
-    assert sizes[f"runs/{second}"] == len("small")
+    assert sizes[f"runs/{first}"] == len(first_scratch)
+    assert sizes[f"runs/{second}"] == len(second_scratch)
     for paths, kind in [([f"runs/{first}", f"runs/{second}"], "busy"),
                         ([f"runs/{first}", f"runs/0{second}"], "invalid_request"),
                         ([f"runs/{first}", "../outside"], "invalid_request")]:
         with pytest.raises(RpcFailure) as failure:
             client.call("RunScratchDeleteRequest", opId=new_id(), paths=paths)
         assert failure.value.kind == kind
-        assert (tmp_path / "scratch" / "runs" / first).exists()
+        assert (scratch / "runs" / first).exists()
     op_id = new_id()
     deleted = client.call("RunScratchDeleteRequest", opId=op_id, paths=[f"runs/{first}"])
     assert [text(p) for p in deleted.deleted] == [f"runs/{first}"]
     assert not deleted.retained
-    assert deleted.freedBytes == len(payload)
-    assert client.call("RunScratchDeleteRequest", opId=op_id, paths=[f"runs/{first}"]).freedBytes == len(payload)
-    usage_when(client, lambda u: current(u).scratchBytes == len("small"))
-    assert saved.read_text() == payload
-    assert read_pages(client, "ArtifactReadRequest", artifactId=artifact_id) == payload.encode()
+    assert deleted.freedBytes == len(first_scratch)
+    assert client.call("RunScratchDeleteRequest", opId=op_id, paths=[f"runs/{first}"]).freedBytes == len(first_scratch)
+    usage_when(client, lambda u: current(u).scratchBytes == len(second_scratch))
+    assert read_pages(client, "ArtifactReadRequest", artifactId=artifact_id, member="report.txt") == payload.encode()
     assert client.call("RunRecordRequest", runId=first, card=path("work")).record
     client.call("RunHistoryDeleteRequest", opId=new_id())
     daemon.restart()
@@ -96,52 +107,27 @@ def test_startup_keeps_scratch_without_history(core_factory, tmp_path):
 
 
 def test_failed_acceptance_preserves_previous_scratch(core_factory, project, tmp_path):
+    scratch = tmp_path / "scratch"
     daemon = core_factory(mocked_builds=True, mocked_worker=True,
-                          args=["--run-scratch-dir", str(tmp_path / "scratch")])
+                          args=["--run-scratch-dir", str(scratch)])
     client = daemon.connect()
     worker_project(client, project, tmp_path, [
         {"op": "file", "port": "doc", "path": "report.txt", "text": "previous output"},
     ], outputs=FILE_OUTPUT)
     first = run(client)
     assert wait_run(client, first).state == RunState.succeeded
-    before = {p.relative_to(tmp_path / "scratch"): p.read_bytes()
-              for p in (tmp_path / "scratch").rglob("*") if p.is_file()}
+    write_run_scratch(scratch, first, b"previous run scratch")
+    before = {p.relative_to(scratch): p.read_bytes()
+              for p in scratch.rglob("*") if p.is_file()}
     daemon.restart(fault="run_acceptance")
     client = daemon.connect()
     with pytest.raises(RpcFailure) as failure:
         run(client)
     assert failure.value.kind == "persistence_failed"
-    assert {p.relative_to(tmp_path / "scratch"): p.read_bytes()
-            for p in (tmp_path / "scratch").rglob("*") if p.is_file()} == before
+    assert {p.relative_to(scratch): p.read_bytes()
+            for p in scratch.rglob("*") if p.is_file()} == before
     assert [text(r.status.runId) for r in client.call("RunHistoryRequest").runs] == [first]
-    assert sorted(p.name for p in (tmp_path / "scratch" / "runs").iterdir()) == [first]
-
-
-@pytest.mark.parametrize("include_content", [False, True])
-def test_copied_history_reports_kept_file_location_or_missing_content(core_factory, project, tmp_path, include_content):
-    """A copied history locates its own file copy or clearly marks missing content."""
-    original = core_factory(mocked_builds=True, mocked_worker=True)
-    client = original.connect()
-    worker_project(client, project, tmp_path / "source", [
-        {"op": "file", "port": "doc", "path": "result.txt", "text": "kept independently"},
-    ], outputs=FILE_OUTPUT, recordIO=True)
-    run_id = run(client)
-    assert wait_run(client, run_id).state == RunState.succeeded
-    evidence = read_output(client, run_id, port="doc")
-    original.stop()
-    copied = tmp_path / "copied"
-    shutil.copytree(project, copied)
-    if not include_content:
-        shutil.rmtree(copied / ".tsugumi" / "runs")
-    restored = core_factory(project_root=copied, mocked_builds=True).connect()
-    value = restored.call("RunRecordRequest", runId=run_id, card=path("work")).record.outputs[0]
-    assert value.fileMissing is not include_content
-    assert read_output(restored, run_id, port="doc") == evidence
-    if include_content:
-        assert Path(text(value.filePath)).is_relative_to(copied)
-        assert Path(text(value.filePath)).read_text() == "kept independently"
-    else:
-        assert not value.filePath
+    assert sorted(p.name for p in (scratch / "runs").iterdir()) == [first]
 
 
 def test_usage_deduplicates_shared_roots_and_keeps_old_roots(core_factory, tmp_path):

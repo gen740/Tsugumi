@@ -1,21 +1,8 @@
 {
   "type": "code",
-  "language": "python",
   "inputs": [
     {
       "name": "section"
-    }
-  ],
-  "params": [
-    {
-      "name": "mc",
-      "type": "double",
-      "data": 4.5
-    },
-    {
-      "name": "bin_width",
-      "type": "double",
-      "data": 0.1
     }
   ]
 }

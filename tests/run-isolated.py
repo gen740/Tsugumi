@@ -67,7 +67,8 @@ def stop_services(root, group=None):
     # discovery records, including hosts whose command has no state argument.
     recorded = set()
     for directory, _, files in os.walk(root, followlinks=False):
-        for name in ('host.ready', 'server.ready', 'server.json'):
+        # Project daemons carry the test directory in their arguments.
+        for name in ('host.ready', 'server.json'):
             if name in files and not (Path(directory) / name).is_symlink():
                 try:
                     recorded.add(int(json.loads((Path(directory) / name).read_text())['pid']))
@@ -150,7 +151,8 @@ def run(arguments):
     before = shared_entries()
     # /var/tmp is disk-backed on Linux; /tmp can be tmpfs. Resolve macOS aliases
     # because invocation scratch rejects symbolic links in every parent.
-    root = Path(tempfile.mkdtemp(prefix='tsugumi-', dir=Path('/tmp' if sys.platform == 'darwin' else '/var/tmp').resolve()))
+    parent = os.environ.get("TSUGUMI_TEST_TEMP_PARENT", "/tmp" if sys.platform == "darwin" else "/var/tmp")
+    root = Path(tempfile.mkdtemp(prefix='tsugumi-', dir=Path(parent).resolve()))
     env = dict(os.environ)
     # Keep explicit per-client support directories usable; the default service
     # is isolated by SUPPORT_DIR, without forcing all clients onto one state.

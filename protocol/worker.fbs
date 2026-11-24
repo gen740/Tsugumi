@@ -1,11 +1,12 @@
 // core <-> Card worker protocol. Independent from the external RPC.
-// Frames: 4 byte little-endian length + FlatBuffer (max 16 MiB).
+// Frames: 4 byte little-endian length + FlatBuffer.
 //
 // One call at a time per worker. call_id >= 1 and never reused by a worker.
-// A call ends with exactly one WorkerResult or WorkerFailure; WorkerDisplay may
-// be sent any number of times before that.
+// A call ends with exactly one WorkerResult or WorkerFailure. WorkerDisplay
+// uses call_id 0 and is independent of calls.
 
-include "data.fbs";
+include "card.fbs";
+include "worker_types.fbs";
 
 namespace Tsugumi.Worker;
 attribute "trace_secret";
@@ -15,40 +16,67 @@ table EnvVar {
   value:string (id: 1, required, trace_secret);
 }
 
-table WorkerInput {
+// A declared output: the worker checks names and required presence.
+table WorkerPort {
   name:string (id: 0, required);
-  kind:Tsugumi.Data.PortKind (id: 1);
-  value:Tsugumi.Data.FlatBufferData (id: 2, required);
+  required:bool (id: 1);
 }
 
+// Private filesystem information for an artifact already granted by core.
+table ArtifactGrant {
+  id:tsugumi.ArtifactId (required);
+  path:string (required);
+  store_path:string;
+}
+
+// The worker never opens input or output bytes.
 table WorkerCall {
-  run_id:string (id: 0, required);
-  card:Tsugumi.Data.CardPath (id: 1, required);
-  invocation:uint64 = null (id: 2);
-  inputs:[WorkerInput] (id: 3, required);
-  params:Tsugumi.Data.FlatBufferData (id: 4, required);
-  outputs:[Tsugumi.Data.Port] (id: 5, required);
-  working_directory:string (id: 6, required);
-  temporary_directory:string (id: 7, required);
-  // Only for Cards with File / Directory outputs.
-  output_directory:string (id: 8);
-  environment:[EnvVar] (id: 9, required);
+  inputs:[Tsugumi.Card.CardPort] (id: 0, required);
+  outputs:[WorkerPort] (id: 1, required);
   // Remaining time in milliseconds. Omitted means no deadline.
-  deadline_ms:uint64 = null (id: 10);
+  deadline_ms:uint64 = null (id: 2);
+  artifact_directory:string (id: 3);
+  grants:[ArtifactGrant] (id: 4);
+  // Before replying, forward displays queued before a one-shot call returned.
+  drain_display:bool (id: 5);
+  invocation_sequence:ulong (id: 6);
 }
 
 table WorkerOutput {
   name:string (id: 0, required);
-  bytes:[ubyte] (id: 1, required);
+  bytes:[ubyte] (id: 1);
+  artifacts:[tsugumi.ArtifactId] (id: 2);
 }
 
-table WorkerResult { outputs:[WorkerOutput] (id: 0, required); }
+table WorkerResult {
+  outputs:[WorkerOutput] (id: 0, required);
+  created:[tsugumi.ArtifactId] (id: 1);
+}
 
-table WorkerFailure { failure:Tsugumi.Data.Failure (id: 0, required); }
+table WorkerFailure {
+  failure:Tsugumi.Data.Failure (id: 0, required);
+  created:[tsugumi.ArtifactId] (id: 1);
+}
+
+// The supervisor resolves the ID using the active call's grants.
+table WorkerArtifactOpen { id:tsugumi.ArtifactId (required); }
+table WorkerArtifactOpened { path:string; }
 
 table WorkerCancel {}
 
-table WorkerDisplay { display:Tsugumi.Data.Display (id: 0, required); }
+// A private launch frame sent before the first call when the Card uses secrets.
+table WorkerStart { environment:[EnvVar] (required); }
+
+table WorkerDisplay {
+  view:string (id: 0, required);
+  bytes:[ubyte] (id: 1, required);
+}
+
+// Incremental credit: bytes the receiver has freed for this view.
+table WorkerDisplayCredit {
+  view:string (required);
+  bytes:uint32;
+}
 
 union WorkerPayload {
   WorkerCall = 1,
@@ -56,6 +84,10 @@ union WorkerPayload {
   WorkerFailure = 3,
   WorkerCancel = 4,
   WorkerDisplay = 5,
+  WorkerStart = 6,
+  WorkerDisplayCredit = 7,
+  WorkerArtifactOpen = 8,
+  WorkerArtifactOpened = 9,
 }
 
 table WorkerMessage {

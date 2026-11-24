@@ -2,12 +2,13 @@
 # clang-format (.clang-format) for C and C++.
 # The core's tests are not here: `ci-core` packages their binaries and runner,
 # and CI runs them outside the build sandbox (.github/workflows/ci-platform.yml).
-{ ... }:
+{ inputs, ... }:
 {
+  imports = [ ./view-abi.nix ];
   perSystem =
     {
       pkgs,
-      lib,
+      system,
       config,
       ...
     }:
@@ -18,20 +19,25 @@
       operationDriver = config.packages.ci-core.override {
         target = "tsugumi_document_edit_driver";
       };
+      abi = pkgs.runCommand "tsugumi-kit-card-abi" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        python3 ${../check-card-abi.py} ${../../protocol} ${inputs.tsugumi-kit}/abi
+        touch "$out"
+      '';
     in
     {
       checks = {
+        card-abi = abi;
+        # The pinned pair, kept apart from the core's own checks: the kit
+        # revision in flake.lock passes its own checks (which the kit owns)
+        # and shares this core's Card and Dawn view ABIs. No core check depends on a
+        # particular kit product.
+        pinned-kit = pkgs.linkFarm "tsugumi-pinned-kit-checks" (
+          inputs.tsugumi-kit.checks.${system} // { card-abi = abi; }
+        );
         web-typecheck = web.override { typecheckOnly = true; };
         web = pkgs.callPackage ../web-checks.nix {
           inherit web operationDriver;
         };
-      }
-      // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-        # The display part; CI also runs the full check with a host.
-        linux-ui = pkgs.runCommand "tsugumi-gtk-display-check" { } ''
-          ${lib.getExe config.packages.linux-ui-check} --no-host
-          touch $out
-        '';
       };
       formatter = pkgs.treefmt.withConfig {
         runtimeInputs = [

@@ -1,0 +1,202 @@
+// What a project daemon (tsugumid) keeps for itself and the files it shares
+// with the host that starts it. Each is one FlatBuffer root: a value in the
+// run history (history.sqlite), a file of the project's state folder, or a
+// file of its control folder. Nothing here is a project document.
+
+include "data.fbs";
+include "artifact.fbs";
+
+namespace Tsugumi.State;
+
+// ---- Control folder ------------------------------------------------------------
+
+/// control/server.ready: where and how to reach the started daemon. Written
+/// atomically once the RPC server listens; mode 0600 (it holds the token).
+table ServerReady {
+  /// ws://host:port/rpc as seen inside the environment; empty without TCP.
+  endpoint:string;
+  token:string;
+  protocol:uint;
+  project_id:string;
+  unix_socket:string;
+  pid:long;
+}
+
+/// control/server.startup-error: why the daemon could not open the project.
+table StartupError {
+  /// incompatible_history, resource_limit or project_open_failed.
+  kind:string;
+  found:string;
+  expected:string;
+  source:string;
+  message:string;
+}
+
+/// control/origins: the Web origins the host currently allows.
+table Origins {
+  origins:[string];
+}
+
+// ---- --prepare-cards ----------------------------------------------------------
+
+/// One Card evaluated and built ahead of its runs (tsugumid --prepare-cards
+/// writes the PreparedCards manifest); a core started with
+/// --prepared-cards uses it instead of evaluating.
+table PreparedCard {
+  card:string (required);
+  error:string;
+  /// The evaluation key, as the core would compute it again for this Card.
+  key:string;
+  derivation:string;
+  plan:string;
+  system:string;
+  execution_list:bool;
+  implementations:ulong;
+  implementation_labels:[string];
+  closure:[string];
+}
+
+table PreparedCards {
+  cards:[PreparedCard];
+}
+
+// ---- State folder ---------------------------------------------------------------
+
+/// .tsugumi/view: the clients' saved view states, opaque to the core.
+table View {
+  id:string (required);
+  rev:ulong;
+  view:[ubyte];
+}
+table Views {
+  views:[View];
+}
+
+// ---- Run history values ---------------------------------------------------------
+
+table Upstream {
+  card:string;
+  port:string;
+}
+table WaitingInput {
+  port:string;
+  upstream:[Upstream];
+}
+/// invocations.waiting and statuses.waiting.
+table WaitingInputs {
+  inputs:[WaitingInput];
+}
+
+table Stage {
+  phase:int;
+  outcome:int;
+  start:long;
+  end:long = null;
+}
+/// invocations.detail and statuses.detail: stage times, reuse and delivered
+/// outputs of an invocation.
+table InvocationDetail {
+  stages:[Stage];
+  worker_reused:bool = null;
+  outputs_sent:[string];
+  ready_at:long = null;
+  emulator:string;
+  environment_id:string;
+  params:Tsugumi.Data.InvocationParams;
+  execution_service:string;
+  execution_job_id:string;
+  execution_system:string;
+  execution_cpu_millis:ulong;
+  execution_memory_bytes:ulong;
+  execution_state:int = -1;
+  batch_activation:ulong;
+  batch_index:ulong;
+  batch_size:ulong;
+  implementation_index:ulong;
+  implementation_label:string;
+  secrets:[string];
+}
+
+table InputSource {
+  port:string;
+  card:string;
+  invocation:ulong;
+}
+/// invocations.input_sources.
+table InputSources {
+  sources:[InputSource];
+}
+
+table SavedInput {
+  schema:string;
+  root_type:string;
+  data:[ubyte];
+  schema_id:string;
+  artifacts:[tsugumi.ArtifactId];
+}
+table SavedInputGroup {
+  port:string;
+  execution_list:bool;
+  values:[SavedInput];
+  partial_result:bool;
+}
+/// last_inputs.inputs.
+table SavedInputs {
+  groups:[SavedInputGroup];
+}
+
+table BatchOutput {
+  port:string;
+  count:ulong;
+  execution_list:bool;
+}
+/// run_batches.outputs.
+table BatchOutputs {
+  outputs:[BatchOutput];
+}
+
+/// A page cursor handed to clients (base64 of this buffer).
+table Cursor {
+  hi:long;
+  after:string;
+}
+
+// ---- A demo's versions ------------------------------------------------------------
+
+/// .tsugumi-history in a demo folder: the versions it carries. When a copy of
+/// the demo becomes a repository they become its commits, branches, tags and
+/// notes, and the file goes away.
+table HistoryRun {
+  run_id:string (required);
+  state:string (required);
+  ended:string (required);
+  seconds:double;
+}
+/// A file that differs from the folder's own: its path and bytes.
+table HistoryFile {
+  path:string (required);
+  bytes:[ubyte];
+}
+table HistoryCommit {
+  id:string (required);
+  parents:[string];
+  message:string (required);
+  /// Seconds since the epoch.
+  time:ulong;
+  /// What differs from the files on disk: their content, and files left out.
+  files:[HistoryFile];
+  removed:[string];
+  runs:[HistoryRun];
+  tag:string;
+  tag_message:string;
+}
+table HistoryBranch {
+  name:string (required);
+  commit:string (required);
+}
+table History {
+  commits:[HistoryCommit];
+  branches:[HistoryBranch];
+  /// A branch name.
+  head:string;
+}

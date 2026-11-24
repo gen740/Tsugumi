@@ -9,6 +9,7 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
+import os from 'node:os'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -42,6 +43,28 @@ const MAX_SOURCE = 6000
 
 const readJson = (p, fallback) => (fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : fallback)
 
+/** Read the demo's layout using the same schema as the app. */
+export function readLayout(root) {
+  const file = path.join(root, 'layout.bin')
+  if (!fs.existsSync(file)) return {}
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-demo-layout-'))
+  try {
+    execFileSync('flatc', ['--json', '--strict-json', '--no-warnings', '-o', scratch,
+      path.join(ROOT, 'protocol', 'layout_document.fbs'), '--', file])
+    const layout = readJson(path.join(scratch, 'layout.json'))
+    layout.cards = Object.fromEntries((layout.cards ?? []).map(({ key, ...place }) => [key, place]))
+    for (const note of layout.notes ?? []) {
+      if (/^[a-zA-Z0-9_.-]{1,128}$/.test(note.id) && note.id !== '.' && note.id !== '..') {
+        const markdown = path.join(root, 'notes', note.id + '.md')
+        if (fs.existsSync(markdown)) note.text = fs.readFileSync(markdown, 'utf8')
+      }
+    }
+    return layout
+  } finally {
+    fs.rmSync(scratch, { recursive: true })
+  }
+}
+
 /** A source file for the panel, cut when long. */
 function sourceFile(rel, text) {
   return text.length > MAX_SOURCE ? { path: rel, text: text.slice(0, MAX_SOURCE), cut: text.length } : { path: rel, text }
@@ -53,13 +76,13 @@ function cardFiles(dir) {
   const walk = (d, prefix = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
     (e.isDirectory() ? walk(path.join(d, e.name), `${prefix}${e.name}/`) : [`${prefix}${e.name}`]))
   if (!fs.existsSync(dir)) return []
-  return walk(dir).filter((f) => f !== '_meta.json').sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).flatMap((f) => {
+  return walk(dir).filter((f) => f !== 'README.md' && f !== '_comments.json').sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).flatMap((f) => {
     const bytes = fs.readFileSync(path.join(dir, f))
     return bytes.includes(0) ? [] : [sourceFile(f, bytes.toString('utf8'))]
   })
 }
 
-const KINDS = new Set(['code', 'draft', 'trigger', 'input', 'branch', 'fork', 'merge', 'collect', 'subgraph'])
+const KINDS = new Set(['code', 'draft', 'trigger', 'input', 'merge', 'collect', 'subgraph'])
 
 /** A demo's Card states one of the types (the UIs show anything else as a
  *  definition error, which no demo has). */
@@ -71,30 +94,54 @@ const kindOf = (def, id) => {
 /** As paramText in ui/web/src/model/session.ts. */
 const paramText = (v) => (typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : Array.isArray(v) ? JSON.stringify(v) : '')
 
-const INLINE_TYPES = new Set(['int64', 'uint64', 'double', 'bool', 'string'])
+const INLINE_TYPES = new Set(['int', 'float', 'bool', 'string'])
+
+// The checked-in flat parameter sets put one current literal on each assignment line.
+// Read these for the static preview without evaluating any Nix expressions.
+function cardParams(dir) {
+  const file = path.join(dir, 'params.nix')
+  if (!fs.existsSync(file)) return []
+  const source = fs.readFileSync(file, 'utf8')
+  const values = []
+  const scalar = /"(?:[^"\\]|\\.)*"|true|false|-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/gi
+  for (const [, name, literal] of source.matchAll(/^  ([\w.-]+) = (.+);$/gm)) {
+    const parts = literal.match(scalar)
+    const first = parts?.[0]
+    if (first === undefined) continue
+    const type = first.startsWith('"') ? 'string' : first === 'true' || first === 'false' ? 'bool'
+      : /[.e]/i.test(first) ? 'float' : 'int'
+    const decoded = parts.map((part) => JSON.parse(part.replace(/\\\$\{/g, '${')))
+    const list = literal.startsWith('[')
+    const value = list ? decoded : decoded[0]
+    values.push({ name, type: list ? `[${type}]` : type, value: paramText(value) })
+  }
+  return values
+}
 
 function readCard(root, id, ports, wires) {
   const dir = path.join(root, 'definitions', id)
   const def = readJson(path.join(dir, '_card.json'), {})
-  const meta = readJson(path.join(dir, '_meta.json'), {})
+  const readme = path.join(dir, 'README.md')
+  const markdown = fs.existsSync(readme) ? fs.readFileSync(readme, 'utf8') : ''
+  const frontMatter = /^---\ndescription: (.*)\n---\n\n?/.exec(markdown)
+  const description = frontMatter?.[1]
+  const body = markdown.slice(frontMatter?.[0].length ?? 0)
   const kind = kindOf(def, id)
-  const note = (list, name) => (meta[list] ?? []).find((x) => x.name === name)?.description
-  const description = meta.description
-  const allParams = (def.params ?? []).filter((p) => p.name && p.type).map((p) => ({ name: p.name, type: p.type, value: paramText(p.data) }))
+  const allParams = cardParams(dir)
   // Resolved ports are the core's; Drafts have no ports.
   const resolved = kind === 'draft' ? undefined : ports?.[id]
   if (kind !== 'draft' && !resolved) throw new Error(`no resolved ports for ${id}: run harvest.py --ports`)
   const inputs = resolved
-    ? resolved.inputs.map((p) => ({ name: p.name, typeName: p.rootType || undefined, optional: p.optional || undefined, note: note('inputs', p.name) }))
+    ? resolved.inputs.map((p) => ({ name: p.name, typeName: p.rootType || undefined }))
     : []
   const outputs = resolved
-    ? resolved.outputs.map((p) => ({ name: p.name, typeName: p.rootType || undefined, optional: p.optional || undefined, note: note('outputs', p.name) }))
+    ? resolved.outputs.map((p) => ({ name: p.name, typeName: p.rootType || undefined }))
     : []
-  const summary = kind === 'draft' ? meta.content || description : description
-  const details = [description, kind === 'draft' ? meta.content : undefined].filter(Boolean)
+  const summary = kind === 'draft' ? body || description : description
+  const details = [description, kind === 'draft' ? body : undefined].filter(Boolean)
   const permissions = []
-  if (def.network === true) permissions.push('network')
-  if (def.sandbox === false) permissions.push('sandbox_off')
+  if (def.grants?.network === true) permissions.push('network')
+  if (Object.values(def.sandbox ?? {}).some((on) => on === false)) permissions.push('sandbox_off')
   return {
     id, kind, symbol: def.symbol || undefined, summary: summary || undefined, details, inputs, outputs,
     params: kind === 'input' ? allParams.filter((p) => INLINE_TYPES.has(p.type)) : [], allParams, permissions,
@@ -122,7 +169,8 @@ function graphId(graph) {
   const topology = ({ doc, wires, children }) => ({
     cards: doc.canvas.cards.map(({ id }) => id).sort(),
     wires: wires.map(({ from, fromPort, to, toPort }) => JSON.stringify([from, fromPort, to, toPort])).sort(),
-    boundary: doc.boundary ?? {},
+    boundary: Object.fromEntries(Object.entries(doc.boundary ?? {}).map(([side, ports]) =>
+      [side, Object.fromEntries(ports.map(({ name, ...end }) => [name, end]))])),
     children: Object.fromEntries([...children].map(([id, child]) => [id, topology(child)])),
   })
   const canonical = JSON.stringify(topology(graph), (_, value) =>
@@ -150,7 +198,7 @@ function readProject(root, ports, prefix = '', graph = readGraph(root)) {
 
 // ---- The written project of docs/CardGuide.md ----------------------------------------------
 
-/** Its Python Card, parsed as guide_files() in tests/python/test_sdk_examples.py does. */
+/** Project files shown in the guide, each in a named code block. */
 function guideFiles() {
   const page = fs.readFileSync(path.join(ROOT, 'docs', 'CardGuide.md'), 'utf8')
   const out = {}
@@ -167,7 +215,6 @@ function writeGuideProject(dir) {
     fs.mkdirSync(path.dirname(p), { recursive: true })
     fs.writeFileSync(p, text)
   }
-  fs.writeFileSync(path.join(dir, 'layout.json'), '{}')
 }
 
 // ---- Layout ---------------------------------------------------------------------------------
@@ -258,7 +305,7 @@ function finalsFromRun(cards, timeline) {
       const states = span.entries.map((e) => e.lastState)
       // A Card in Card sends what the inner Card behind that output sent (Scene.style).
       const sent = c.outputs.map((p) => p.name).filter((p) => {
-        const ep = c.boundary?.outputs?.[p]
+        const ep = c.boundary?.outputs?.find((port) => port.name === p)
         return ep && timeline[`${c.id}/${ep.card}`]?.sent.includes(ep.port)
       })
       out[c.id] = { state: states.includes('failed') ? 'failed' : states.includes('blocked') ? 'blocked' : 'succeeded', count: 1, sent, stages: [], ms: span.end - span.start }
@@ -287,7 +334,7 @@ function say(steps, narration, cards) {
 export function buildDemo(entry, root, portsOf, narrations, recorded) {
   const graph = readGraph(root)
   const { wires, cards } = readProject(root, portsOf[entry.id], '', graph)
-  const layout = readJson(path.join(root, 'layout.json'), {})
+  const layout = readLayout(root)
   // A Draft stops the run at it: such a project is shown as a plan.
   const draftOnly = cards.some((c) => c.kind === 'draft')
   const layer = layers(cards, wires)
@@ -326,7 +373,7 @@ export function buildDemo(entry, root, portsOf, narrations, recorded) {
   for (const c of cards) delete c.boundary
   return {
     id: entry.id, title: entry.title, description: entry.description, tags: entry.tags ?? [], flow, draftOnly,
-    cards, wires, notes, frames: layout.displays ?? {}, run, steps, final, outputs,
+    cards, wires, notes, run, steps, final, outputs,
     intro: narration?.intro ?? entry.description ?? '', finale: narration?.finale ?? '',
   }
 }
@@ -396,7 +443,7 @@ async function main() {
   writeGuideProject(guideDir)
   const entries = [
     ...readJson(path.join(ROOT, 'demos', 'en', 'index.json')).demos.map((d) => ({ ...d, root: path.join(ROOT, 'demos', 'en', d.path) })),
-    { id: 'card-guide', title: 'Your first Card', description: 'start → settings → multiply of docs/CardGuide.md.', tags: ['Python', 'Guide'], root: guideDir },
+    { id: 'card-guide', title: 'Your first Card', description: 'start → settings → convert from the Card guide.', tags: ['C++', 'Guide'], root: guideDir },
   ]
   const index = []
   const built = []

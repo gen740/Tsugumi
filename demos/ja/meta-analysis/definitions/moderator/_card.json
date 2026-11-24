@@ -1,23 +1,8 @@
 {
   "type": "code",
-  "language": "r",
   "inputs": [
     {
       "name": "trials"
-    }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "regression",
-  "params": [
-    {
-      "name": "moderator",
-      "type": "string",
-      "data": "ablat"
-    },
-    {
-      "name": "method",
-      "type": "string",
-      "data": "REML"
     }
   ]
 }

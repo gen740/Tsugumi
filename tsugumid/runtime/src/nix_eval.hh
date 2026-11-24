@@ -19,35 +19,49 @@
 #include <vector>
 
 #include "tsugumi/util/process.hh"
-#include "tsugumi/workerd/store_result.hh"
+#include "tsugumi/workerd/derivation.hh"
 
 namespace tsugumi {
 
 inline constexpr uint32_t kMaxExecutionBatchSize = 256;
 
-// Settings and entry source belong to one evaluator epoch; observed reads are
-// checked by reuse(). Operational limits/deadlines are applied on every call.
-using EvaluationKey =
-    std::tuple<std::string, std::string, std::string, std::string>;
+struct NixSource {
+  std::string url, rev, nar_hash;
+  auto operator<=>(const NixSource&) const = default;
+};
+
+using LockedNixPath = std::map<std::string, NixSource>;
+
+struct NixDefinitionScope {
+  std::string directory;
+  std::string card;
+  auto operator<=>(const NixDefinitionScope&) const = default;
+};
+
+using EvaluationKey = std::tuple<std::string, std::string>;
 
 using NixOutput = std::function<void(proc::LineChunk)>;
 
 struct NixCall {
-  std::string pin_url;   // nixpkgs: a fetchTarball URL
-  std::string pin_hash;  // nixpkgs: its sha256 (SRI)
-  std::string args;  // Nix expression of the entry's arguments (sdk, gen, card)
+  NixSource core_nixpkgs;  // only consumed by the trusted plan builder
+  std::filesystem::path nix_dir;
+  std::string args;
   // Confirmed definition sources, also available to alternative build backends
   // without parsing the Nix expression above.
   std::filesystem::path definition_dir;
-  std::string source_overrides = "{}";  // approved JSON package customizations
-  std::string system;  // explicit Card target system; flake lookup may use the
-                       // host default
+  std::string definition_key;  // content, project lock and build arguments
+  std::string card;
+  std::vector<NixDefinitionScope> definitions;
+  LockedNixPath locked_nix_path;
+  std::string system;
+  bool needs_worker = false;
   // GC root created for the result: <root_dir>/<root_prefix><result name>, a
   // symlink (registered as an indirect root outside /nix/var/nix/gcroots).
   std::filesystem::path root_dir;
   std::string root_prefix;
   std::optional<uint32_t> jobs;
   std::optional<uint32_t> cores;
+  bool views_only = false;
   uint32_t max_implementations = kMaxExecutionBatchSize;
   std::stop_token cancel;
   std::optional<std::chrono::steady_clock::time_point> deadline;
@@ -57,11 +71,15 @@ struct NixCall {
   std::function<void(const std::string& derivation, bool active)>
       on_build;  // a derivation build starting or ending
   auto evaluation_key() const -> EvaluationKey {
-    return {pin_url, pin_hash, system, args};
+    return {system, definition_key.empty() ? args : definition_key};
   }
 };
 
-struct NixResult : WorkerStoreResult {
+struct NixResult {
+  WorkerDerivation derivation;
+  std::string plan_json;
+  std::vector<std::string> closure;
+  bool built = false;
   bool execution_list = false;
   uint32_t implementation_count = 1;
   // One per implementation, in run list order; "" for an unlabeled one.
@@ -69,13 +87,16 @@ struct NixResult : WorkerStoreResult {
   uint64_t evaluation_epoch = 0;
 };
 
-struct FlakeInfo {
-  std::string ref;  // locked: a commit and its narHash
-  std::string rev, nar_hash;
-  std::vector<std::string> packages;  // packages.<this system>, by attribute
-  // {"ref", "rev", "narHash", "packages": {<attr>: {"name", "drv", "out",
-  // "output"}}}; the .drv files are in the store.
-  std::string json;
+struct ExpressionFile {
+  std::string path, bytes;
+};
+
+struct ExpressionResult {
+  std::optional<std::string> json;
+  std::vector<ExpressionFile> files;
+  bool truncated = false;
+  std::string log_tail;
+  std::optional<std::string> build_error;
 };
 
 class NixEvaluator {
@@ -85,9 +106,8 @@ class NixEvaluator {
   static auto run_subprocess_if_requested(int argc, char** argv) -> void;
   // Dispatch the private build-client mode before starting the evaluator.
   static auto build_client(int argc, char** argv) -> std::optional<int>;
-  // `entry` is the entry function's source; `allowed` the folders evaluation
-  // may read (restricted mode): the SDK and the evaluation folder.
-  NixEvaluator(std::string entry, std::vector<std::string> allowed);
+  // `entry` is the trusted Card entry function. Each call supplies its scope.
+  explicit NixEvaluator(std::string entry);
   ~NixEvaluator();
 
   // Evaluate only: writes the .drv and input paths, never builds an output.
@@ -103,13 +123,9 @@ class NixEvaluator {
   // store, on the caller's thread.
   auto realise_native(const NixCall& call, NixResult result) -> NixResult;
 
-  // A flake a project opted in to, evaluated apart from every Card: its own
-  // state has getFlake and runs as `nix build` does (pure, no IFD). A Card only
-  // ever gets the result. `ref` may be unlocked; the result's is locked.
-  // `call.source_overrides` contains approved JSON override/overrideAttrs maps,
-  // applied here before derivations cross into the restricted Card evaluator.
-  // It also supplies the target system, cancellation, deadline and log.
-  FlakeInfo flake(const NixCall& call, const std::string& ref);
+  auto expression(const NixCall& call, const std::string& expression,
+                  bool build) -> ExpressionResult;
+  auto lock_source(const std::string& url) -> NixSource;
 
  private:
   struct Impl;

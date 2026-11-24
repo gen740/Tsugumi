@@ -15,13 +15,13 @@ class HostRequirements : public ::testing::Test {
   auto SetUp() -> void override {
     fs::write_atomic(
         root / "tsugumi.json",
-        R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"}],"connections":[]}})");
+        R"({"nixPath": [],"canvas":{"cards":[{"id":"a"}],"connections":[]}})");
     fs::write_atomic(
         root / "definitions/a/_card.json",
-        R"({"type":"code","executionService":"local","hostFolders":[{"name":"data","path":"/data"}]})");
+        R"({"type":"code","executionService":"local","grants":{"hostPaths":[{"name":"data","path":"/data"}]}})");
     fs::write_atomic(
         root / "definitions/unused/_card.json",
-        R"({"type":"code","executionService":"local","hostFolders":[{"name":"unused","path":"/unused","write":true}]})");
+        R"({"type":"code","executionService":"local","grants":{"hostPaths":[{"name":"unused","path":"/unused","write":true}]}})");
   }
   auto TearDown() -> void override { std::filesystem::remove_all(root); }
 };
@@ -43,7 +43,7 @@ TEST_F(HostRequirements, DiskEditsDoNotChangeAcceptedRequirementsUntilReload) {
   store.open();
   fs::write_atomic(
       root / "definitions/a/_card.json",
-      R"({"type":"code","executionService":"local","hostFolders":[{"name":"data","path":"/new","write":true}]})");
+      R"({"type":"code","executionService":"local","grants":{"hostPaths":[{"name":"data","path":"/new","write":true}]}})");
   auto accepted = host_requirements(*store.current()->resolution);
   ASSERT_EQ(accepted.folders.size(), 1u);
   EXPECT_EQ(accepted.folders[0]->path, "/data");
@@ -61,14 +61,13 @@ TEST_F(HostRequirements, DiskEditsDoNotChangeAcceptedRequirementsUntilReload) {
 TEST_F(HostRequirements, EmptyAndRemoteCardsNeedNoHostShare) {
   fs::write_atomic(
       root / "definitions/a/_card.json",
-      R"({"type":"trigger","hostFolders":[{"name":"unused","path":"/unused"}]})");
+      R"({"type":"trigger","grants":{"hostPaths":[{"name":"unused","path":"/unused"}]}})");
   EXPECT_TRUE(load_host_requirements(root).folders.empty());
   fs::write_atomic(root / "definitions/a/_card.json",
                    R"({"type":"code","executionService":"remote"})");
   EXPECT_TRUE(load_host_requirements(root).folders.empty());
-  fs::write_atomic(
-      root / "tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  fs::write_atomic(root / "tsugumi.json",
+                   R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   EXPECT_TRUE(load_host_requirements(root).folders.empty());
 }
 }  // namespace

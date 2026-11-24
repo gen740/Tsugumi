@@ -17,59 +17,30 @@
 
 namespace tsugumi::workerd {
 
-// Preserve the existing carriers' output semantics until storage handover is
-// unified. Local forwards original input paths and defers validation to core;
-// transferred results copy forwarded inputs and use relative transport paths.
-enum class OutputDelivery { local_paths, transferred_files };
-
 struct InvocationResult {
   std::vector<Value> outputs;
   std::optional<FailureData> failure;
-  // Worker-visible out path and its caller-visible destination.
-  std::optional<std::pair<std::string, std::string>> out_alias;
-};
-
-struct InvocationParameters {
-  std::string bfbs;
-  std::string root;
-  std::string bytes;
-  std::optional<std::string> json;
+  std::vector<ArtifactKey> created = {};
 };
 
 struct Invocation {
-  std::string run_id;
-  CardPath card;
-  uint64_t number = 0;
   // Borrowed for this synchronous invocation; never retained by the pool.
   std::span<const Value> inputs;
   std::vector<types::PortType> outputs;
-  InvocationParameters params;
-  std::string path;
-  std::string worker_binary;
-  // Card secrets included: the worker sets these in the Card's process.
-  std::vector<std::pair<std::string, std::string>> environment;
-  // Runs once the call reached the worker, so the caller can drop the Card
-  // secrets it put in `environment` before the Card's process ends.
-  std::function<void()> on_call_sent;
-  std::filesystem::path output_directory;
-  std::optional<std::pair<uid_t, gid_t>> output_owner;
-  OutputDelivery delivery = OutputDelivery::local_paths;
-  // The remote input snapshot root. Local input copies are made by
-  // stage_inputs.
-  std::filesystem::path input_directory;
+  std::filesystem::path artifact_directory;
+  uint64_t artifact_sequence = 0;
+  bool artifact_inputs = false;
+  // The native process-group lifecycle cannot rule out a detached writer.
+  std::filesystem::path artifact_snapshot_root;
+  std::vector<ArtifactGrant> grants;
+  fs::OutputBudget output_budget;
   const std::atomic<bool>* cancel = nullptr;
   std::optional<uint64_t> timeout_ms;
   std::chrono::milliseconds deadline_grace{0};
-  // Remote workers used to stop before output inspection, with the supervisor
-  // enforcing the whole-job deadline/cancel outside this call.
-  bool stop_before_outputs = false;
   WorkerProc::LogSink log;
   WorkerProc::DisplaySink display;
-  std::function<std::vector<Value>(WorkerProc&)> stage_inputs;
-  std::function<InvocationParameters()> prepare_params;
   std::function<void(int64_t, int64_t)> on_timing;
   std::function<void(InvocationResult&)> validate;
-  fs::TransferProgress transfer = {};
 };
 
 // Exactly one decision for resident retention, including exceptional exits.
@@ -84,20 +55,12 @@ auto worker_disposition(bool reuse, bool alive, bool between_calls,
                         const std::optional<FailureData>& failure)
     -> WorkerDisposition;
 
-// Admit bytes from a worker process before interpreting them as port values.
-auto accept_outputs(std::vector<std::pair<std::string, std::string>> raw,
-                    std::span<const types::PortType> ports)
+// Admit opaque outputs by declared name, required presence and capability.
+auto accept_outputs(std::vector<RawOutput> raw,
+                    std::span<const types::PortType> ports,
+                    std::span<const Value> inputs = {},
+                    std::span<const ArtifactKey> created = {})
     -> std::vector<Value>;
-
-// Output transfer can fail after a successful ABI call. Transfer failures
-// preserve resident reuse.
-auto stage_outputs(std::span<Value> outputs, std::span<const Value> inputs,
-                   std::span<const Value> original_inputs, int output_root,
-                   const std::string& output_alias, int input_root,
-                   const std::filesystem::path& input_directory,
-                   const std::filesystem::path& destination,
-                   OutputDelivery delivery, const std::atomic<bool>& cancel,
-                   const fs::TransferProgress& progress = {}) -> void;
 
 using ReleaseWorker =
     std::function<void(std::unique_ptr<WorkerProc>, bool, const std::string&)>;

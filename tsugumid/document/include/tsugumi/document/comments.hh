@@ -31,9 +31,9 @@ struct Change {
   std::vector<std::string> cards;
 };
 
-// The comments of a _meta.json (none when it is not valid).
+// The comments of a _comments.json (none when it is not valid).
 std::vector<Comment> parse(const std::string& card,
-                           const std::string& meta_json);
+                           const std::string& comments_json);
 
 auto find(const std::vector<Comment>& list, const std::string& card,
           const std::string& id) -> const Comment*;
@@ -45,7 +45,7 @@ std::vector<Change> changes(const std::vector<Comment>& before,
 
 using Files = std::map<std::string, std::string>;
 // Definition paths use ids, including nested external project directories.
-auto is_meta(const std::string& path) -> bool;
+auto is_comments(const std::string& path) -> bool;
 auto card_of(const std::string& path, const Files& files = {})
     -> std::optional<std::string>;
 auto of(const Files& files) -> std::vector<Comment>;

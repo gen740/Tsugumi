@@ -29,7 +29,8 @@ target_include_directories(tsugumi_core
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/runtime/src)
 target_link_libraries(tsugumi_core PUBLIC tsugumi_trace_codec tsugumi_rpc_schema tsugumi_transport tsugumi_document tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
-  PkgConfig::SQLITE3 PkgConfig::LIBGIT2 Threads::Threads tsugumi_workerd_support tsugumi_worker_values tsugumi_runtime_support tsugumi_launch_paths tsugumi_nix_store)
+  PkgConfig::SQLITE3 PkgConfig::LIBGIT2 Threads::Threads tsugumi_workerd_support tsugumi_worker_values tsugumi_runtime_support tsugumi_launch_paths
+  "$<$<NOT:$<BOOL:$<TARGET_PROPERTY:TSUGUMI_MOCK_NIX>>>:tsugumi_nix_store>")
 # Embed the shared worker engine once in the installed core archive. It uses
 # neutral value/wire helpers supplied by its caller, never scheduler/service APIs.
 target_link_libraries(tsugumi_core PRIVATE tsugumi_worker_runtime)

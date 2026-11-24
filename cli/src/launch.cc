@@ -1,4 +1,4 @@
-#include "tsugumi/cli/launch.hh"
+#include "launch.hh"
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -11,7 +11,7 @@
 #include <random>
 #include <stdexcept>
 
-#include "tsugumi/cli/rpc.hh"
+#include "rpc.hh"
 #include "tsugumi/protocol/agent_generated.h"
 #include "tsugumi/protocol/host_generated.h"
 #include "tsugumi/util/json_object.hh"
@@ -64,9 +64,16 @@ auto LaunchFromEnvironment(const f::path& executable) -> Launch {
                                                       : launch.root / "ui" / "web" / "dist" / "public";
   if (!Env("TSUGUMI_WEB_PORT").empty()) launch.web_port = std::stoi(Env("TSUGUMI_WEB_PORT"));
 #ifdef __APPLE__
+  // The support folder of the Mac app of the same channel (AppChannel.swift):
+  // a release shares the release app's, a build from source the dev app's.
+#ifdef TSUGUMI_RELEASE
+  constexpr auto kSupportFolder = "Tsugumi";
+#else
+  constexpr auto kSupportFolder = "Tsugumi-dev";
+#endif
   const auto support = !Env("TSUGUMI_SUPPORT_DIR").empty()
                            ? f::path(Env("TSUGUMI_SUPPORT_DIR"))
-                           : Home() / "Library" / "Application Support" / "Tsugumi";
+                           : Home() / "Library" / "Application Support" / kSupportFolder;
   const auto data = !Env("TSUGUMI_WEB_DATA").empty() ? f::path(Env("TSUGUMI_WEB_DATA")) : support / "web";
   // The desktop app's host: the same VM, store, settings and recent projects.
   launch.state = support / "host-core";
@@ -87,8 +94,9 @@ auto LaunchFromEnvironment(const f::path& executable) -> Launch {
     };
     launch.runtime = {"--tsugumid", pick("TSUGUMID", FirstExisting({self.parent_path() / "tsugumid", build / "tsugumid" / "tsugumid"})),
                       "--worker", pick("TSUGUMI_WORKER", FirstExisting({self.parent_path() / "tsugumi-worker", build / "workerd" / "tsugumi-worker"})),
-                      "--sdk-dir", pick("TSUGUMI_SDK_DIR", launch.root / "sdk"),
                       "--environment-dir", (data / "env").string()};
+    if (const auto dir = Env("TSUGUMI_NIX_DIR"); !dir.empty())
+      launch.runtime.insert(launch.runtime.end(), {"--nix-dir", dir});
   }
   return launch;
 }

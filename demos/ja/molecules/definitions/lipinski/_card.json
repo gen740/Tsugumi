@@ -1,16 +1,8 @@
 {
   "type": "code",
-  "language": "python",
   "inputs": [
     {
       "name": "molecules"
-    }
-  ],
-  "params": [
-    {
-      "name": "max_violations",
-      "type": "uint64",
-      "data": 1
     }
   ]
 }

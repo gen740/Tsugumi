@@ -691,7 +691,7 @@ struct ToolStep {
     let n = name.lowercased()
     if n == "project_reload" { return (String(localized: "プロジェクトを再読込しています"), String(localized: "プロジェクトを再読込")) }
     if n == "project_shell" { return (String(localized: "シェルコマンドを実行しています"), String(localized: "シェルコマンドを実行")) }
-    if n == "card_s_d_k_prepare" { return (String(localized: "Card SDK を準備しています"), String(localized: "Card SDK を準備")) }
+    if n == "evaluate_nix" { return (String(localized: "Nix 式を評価しています"), String(localized: "Nix 式を評価")) }
     if n == "layout_arrange" || n == "layout_untangle" { return (String(localized: "配置を整えています"), String(localized: "配置を整理")) }
     if n == "project_cache_clear" { return (String(localized: "ビルドキャッシュを削除しています"), String(localized: "ビルドキャッシュを削除")) }
     if n == "version_find" { return (String(localized: "過去の試行を探しています"), String(localized: "過去の試行を探しました")) }
@@ -705,7 +705,7 @@ struct ToolStep {
     if n == "guide_show" { return (String(localized: "案内を表示しています"), String(localized: "案内を表示")) }
     if n == "delegate" { return (String(localized: "手分けして進めています"), String(localized: "手分けして進めました")) }
     if n == "web_search" { return (String(localized: "Web を検索しています"), String(localized: "Web を検索")) }
-    if ["project_file_stat", "output_types", "version_graph", "version_canvas", "version_diff", "nix_source_resolve", "project_cache_usage"].contains(n) { return (String(localized: "確認しています"), String(localized: "確認")) }
+    if ["project_file_stat", "output_types", "version_graph", "version_canvas", "version_diff", "project_cache_usage"].contains(n) { return (String(localized: "確認しています"), String(localized: "確認")) }
     if n.contains("save") || n.contains("put") || n.contains("write") { return (String(localized: "変更を保存しています"), String(localized: "変更を保存")) }
     if n.contains("run") && !n.contains("status") { return (String(localized: "実行しています"), String(localized: "実行")) }
     if n.contains("read") || n.contains("inspect") || n.contains("get") { return (String(localized: "確認しています"), String(localized: "確認")) }

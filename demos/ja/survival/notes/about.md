@@ -1,0 +1,13 @@
+## 生存時間解析: 結果は「誰を」「何で」で動く
+
+データは **survival** パッケージ同梱の `lung`。北中部がん治療グループ（NCCTG）の進行肺がん患者 228 人の実データです（Loprinzi et al., *J Clin Oncol* 1994;12:601–607）。
+
+打ち切りを含む生存割合は Kaplan–Meier 推定で、ハザード比は Cox モデルで求めます。
+
+$$\hat S(t)=\prod_{t_i\le t}\Bigl(1-\frac{d_i}{n_i}\Bigr),\qquad h(t\mid x)=h_0(t)\,e^{\beta x}$$
+
+**cohort** の年齢と ECOG、**cox** の `covariates`、**specs** の `subsets` と `adjustments` を変えて、その Card だけを実行し直せます。**specs** の図が、同じ問いの答えが仕様でどれだけ動くかを並べます。部分集団の値は 1 列ごとに人数が違い、調整の変数が欠損する人は落ちます。
+
+**zph** は比例ハザードの確認です。`covariates` に `ph.karno` を加えると、仮定が怪しくなるのが見えます。
+
+これは古い試験データの中の関連で、原因を示すものではなく、治療や予後についての助言でもありません。

@@ -1,15 +1,14 @@
-// Port types. Every resolved port carries a self contained BFBS whose root is
-// the message carried on that port. Compatibility is structural (field names,
-// ids, types, presence rules and defaults compared recursively), never by
-// comparing hashes or raw BFBS bytes.
+// Types resolved from the project's port declarations and wires.
 #pragma once
 
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "tsugumi/document/schema_sources.hh"
 #include "tsugumi/protocol/tsugumi_enums_generated.h"
 
 namespace reflection {
@@ -19,8 +18,6 @@ struct Object;
 
 namespace tsugumi::types {
 
-using PortKind = Tsugumi::Data::PortKind;
-using ExecutionShape = Tsugumi::Data::ExecutionShape;
 
 struct Type {
   std::string bfbs;       // reflection schema, root_table = root message
@@ -34,10 +31,11 @@ using TypeRef = std::shared_ptr<const Type>;
 
 struct PortType {
   std::string name;
-  PortKind kind = PortKind::FlatBuffer;
-  bool optional = false;
-  TypeRef type;  // null when unresolved
-  ExecutionShape execution_shape = ExecutionShape::unspecified;
+  bool required = false;  // output catalog attribute only
+  TypeRef type;           // null when unresolved
+  std::vector<std::string> merge_member_types{};  // presentation only
+
+  auto resolved() const -> bool { return type != nullptr; }
 };
 
 struct CatalogResult {
@@ -46,80 +44,33 @@ struct CatalogResult {
 };
 
 // Parses an _outputs.fbs text. The root table is the port catalog; each field
-// is one port carrying the field's table type. `tsugumi:"file"` /
-// `tsugumi:"directory"` on a catalog field marks File/Directory ports, whose
-// message must have a string `value` field.
+// is one port carrying a table.
 CatalogResult parse_catalog(const std::string& fbs_text,
-                            const std::string& filename);
+                            const std::string& filename,
+                            const SchemaSourceReader& read = {});
 
 // The whole schema of an _outputs.fbs text, rooted at its catalog (`root`).
 std::optional<std::string> schema_bfbs(const std::string& fbs_text,
                                        std::string* root, std::string* error);
 
 // The text with one catalog field (port) set to `type_name` (a table of the
-// schema, fully qualified or not) and `kind` (File / Directory: the tsugumi
-// attribute). Only that field's declaration changes.
+// schema, fully qualified or not). Only that field's
+// declaration changes.
 std::optional<std::string> set_catalog_port(const std::string& fbs_text,
                                             const std::string& port,
                                             const std::string& type_name,
-                                            PortKind kind, std::string* error);
+                                            std::string* error);
 
 // Compiles a schema text and returns the type rooted at `root`.
 std::optional<TypeRef> compile(const std::string& fbs_text,
                                const std::string& root, std::string* error);
 
-bool compatible(const Type& a, const Type& b);
-
 // Renders the closure of `t` into fbs declarations under namespace `prefix`
 // and returns the new fully qualified root name.
 std::string render_closure(const Type& t, const std::string& prefix,
-                           std::string& out, bool nested = false);
-
-// A catalog of the message types used to generate a Card's SDK bindings.
-auto card_catalog(const std::vector<PortType>& ports, bool inputs)
-    -> std::string;
-
-// A union field of a root table, named as render_closure(t, prefix) names it.
-struct UnionField {
-  std::string field;  // e.g. "value"
-  std::string type;   // fully qualified union name
-  std::vector<std::string>
-      members;  // member names in declaration order (no NONE)
-};
-std::vector<UnionField> root_unions(const Type& t, const std::string& prefix);
+                           std::string& out);
 
 // Builtin message types.
 TypeRef empty_type();
-
-// Union wrapper used by merge: `table Merged { value:In; }` with one union
-// member per input port name. Returns nullopt with an error on failure.
-std::optional<TypeRef> merged_type(
-    const std::vector<std::pair<std::string, TypeRef>>& inputs,
-    std::string* error);
-
-// True when the message has a `value:bool` field (branch condition).
-bool is_condition(const Type& t);
-// True when the message has a string `value` field (File/Directory payload).
-bool has_string_value(const Type& t);
-
-// Builds a FlatBuffer of `t` from JSON text. Returns false with error text.
-bool json_to_flatbuffer(const Type& t, const std::string& json,
-                        std::string* out, std::string* error);
-// Builds a buffer of `merged` (a table whose `value` is a union with one
-// member per input port) holding the table `bytes` of `member` as the member
-// `port`, by copying the table directly (no JSON round trip). `bytes` must
-// already be verified against `member` (values are verified when produced).
-std::optional<std::string> wrap_in_union(const Type& merged,
-                                         const std::string& port,
-                                         const Type& member,
-                                         const std::string& bytes,
-                                         std::string* error);
-// Verifies `bytes` as a buffer of `t`.
-bool verify(const Type& t, const std::string& bytes);
-
-// Generates a Params schema text (`table Params {...}`) for the given
-// name -> fbs type list.
-std::string params_schema(
-    const std::vector<std::pair<std::string, std::string>>& fields);
 
 }  // namespace tsugumi::types

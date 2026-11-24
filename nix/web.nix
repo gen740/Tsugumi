@@ -8,6 +8,7 @@
   flatbuffers,
   python3,
   client-wasm,
+  webgpu-headers,
   typecheckOnly ? false,
 }:
 buildNpmPackage {
@@ -37,18 +38,19 @@ buildNpmPackage {
         ../hostd/agent/Shared/agent.json
         ../hostd/agent/Shared/demo-skill.md
         ../ui/shared/i18n/en.json
+        ../ui/shared/dawn
+        ../protocol/include/tsugumi/tsugumi_view.h
         ../ui/shared/modules
-        ../ui/shared/templates
         (lib.fileset.fileFilter (file: file.hasExt "fbs") ../protocol)
       ]
       ++ lib.optionals (!typecheckOnly) [
         ../ui/web/scripts/build.mjs
+        ../ui/web/scripts/install-viewer.mjs
         ../ui/web/scripts/build-client.sh
         ../ui/web/third-party
         ../third-party/emscripten
         ../third-party/flatbuffers
         ../demos
-        ../flake.lock
         ../VERSION
         ../docs/site/player/build.mjs
         ../docs/site/player/narration.json
@@ -64,8 +66,9 @@ buildNpmPackage {
   npmConfigHook = importNpmLock.npmConfigHook;
   nativeBuildInputs = [
     flatbuffers
-    python3
+    (python3.withPackages (ps: [ ps.pyyaml ]))
   ];
+  TSUGUMI_WEBGPU_HEADERS = webgpu-headers;
   TSUGUMI_WASM_CLIENT_DIR = if typecheckOnly then null else "${client-wasm}/share/tsugumi/client";
   buildPhase =
     if typecheckOnly then
@@ -97,7 +100,7 @@ buildNpmPackage {
         share=$out/share/tsugumi
         mkdir -p $share/ui/web $testSupport
         cp -R ui/web/dist $share/ui/web/dist
-        cp -R demos flake.lock VERSION $share/
+        cp -R demos VERSION $share/
         # Checks reuse installation and generated bindings, without putting the
         # development tools in the distributed Web output's runtime closure.
         cp -R ui/web/node_modules $testSupport/node_modules

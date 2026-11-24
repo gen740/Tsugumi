@@ -4,7 +4,6 @@ struct CardNixReference: Identifiable {
   let source: CardKey
   let target: CardKey
   let name: String
-  let valid: Bool
   var id: String { [source, target, name].joined(separator: "\u{0}") }
   var expression: String {
     let quoted = String(data: try! JSONEncoder().encode(name), encoding: .utf8)!
@@ -77,14 +76,14 @@ struct NixReferenceControls: View {
     HStack(spacing: 8) {
       Toggle(isOn: $tab.showNixReferences) { Label("Nix 参照", systemImage: "snowflake") }
         .toggleStyle(.button)
-        .help("保存済みの default.nix に書かれた Card 参照をそのまま表示します。別名や計算で決まる参照は含みません。")
+        .help("配線から決まる Nix の Card 入力を表示します。")
       // Turned on with nothing to draw here, the overlay says so instead of
       // looking as if the button did nothing.
       if tab.showNixReferences && nixLinkCount(session, scope: tab.scope) == 0 {
         let all = nixReferences(session).count
-        Text(all == 0 ? "default.nix に Card 間の参照はありません" : "この階層には参照がありません（一覧に \(all) 件）")
+        Text(all == 0 ? "配線から決まる Nix の Card 入力はありません" : "この階層には参照がありません（一覧に \(all) 件）")
           .foregroundStyle(.secondary)
-          .help("inputs.<入力ポート名> と書いた参照を表示します。")
+          .help("配線を通じて参照できる上流 Card を表示します。")
       }
       Button { tab.showNixList.toggle() } label: { Label("一覧", systemImage: "list.bullet") }
         .help("Nix 参照一覧")
@@ -98,7 +97,7 @@ struct NixReferenceControls: View {
       ScrollView {
         VStack(alignment: .leading, spacing: 10) {
           Text("Nix 参照一覧").font(.headline)
-          Text("参照元 → 参照先。保存済みの default.nix にある静的な Card 参照を表示します。")
+          Text("参照元 → 参照先。配線を通じて参照できる上流 Card を表示します。")
             .font(.caption).foregroundStyle(.secondary)
           let refs = nixReferences(session)
           if refs.isEmpty { Text("Card 間の Nix 参照はありません") }
@@ -110,7 +109,6 @@ struct NixReferenceControls: View {
                 Button(ref.target) { jump(ref.target) }.disabled(session.resolution[ref.target] == nil)
               }
               Text(ref.expression).font(.caption.monospaced()).textSelection(.enabled)
-              if !ref.valid { Text("参照を解決できません。Nix 定義と診断を確認してください。").foregroundStyle(.secondary) }
               Button("Nix 定義を開く") {
                 tab.showNixList = false
                 openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: ref.source, category: .source, file: "default.nix"))

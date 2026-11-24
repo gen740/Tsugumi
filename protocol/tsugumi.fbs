@@ -25,23 +25,31 @@ table SourceInfo {
   exists:bool = null (id: 2);
   hash:string (id: 3);
   size_bytes:uint64 = null (id: 4);
-  /// Nested project, layout, Card or metadata text in snapshots and deltas.
-  document_json:string (id: 5);
+  /// The bytes of a file carried in snapshots and deltas: a nested project's
+  /// documents and every canvas note (notes/<id>.md).
+  document:[ubyte] (id: 5);
 }
 
-/// definitions/<id>/_card.json. An external field names a Card in Card.
+/// definitions/<id>/: _card.json (whose external field names a Card in
+/// Card), and its optional README.md and _comments.json.
 table Definition {
   id:string (id: 0, required);
   card_json:string (id: 1, required);
-  meta_json:string (id: 2);
+  readme:string (id: 2);
+  comments_json:string (id: 3);
 }
 
-/// A static Card reference in default.nix. Target paths are absolute in the
-/// project, including references that fail validation. No Nix evaluation.
+/// An authorized Nix input derived from the project wiring. The target path
+/// is absolute in the project.
 table CardNixReference {
   target:Tsugumi.Data.CardPath (id: 0, required);
   name:string (id: 1, required);
-  valid:bool (id: 2);
+}
+
+table CardParameter {
+  name:string (id: 0, required);
+  type:string (id: 1, required);
+  value_json:string (id: 2, required);
 }
 
 table ResolvedCard {
@@ -50,6 +58,7 @@ table ResolvedCard {
   outputs:[Tsugumi.Data.Port] (id: 2, required);
   diagnostics:[Tsugumi.Data.Diagnostic] (id: 3, required);
   nix_references:[CardNixReference] (id: 4, required);
+  parameters:[CardParameter] (id: 5);
 }
 
 /// state: idle -> queued -> preparing -> running -> succeeded|failed|cancelled,
@@ -97,6 +106,20 @@ table ExecutionResources {
   memory_bytes:uint64 = null (id: 1);
 }
 
+enum IsolationGuarantee:ubyte { unavailable, partial, enforced }
+
+table SandboxCapabilities {
+  filesystem:IsolationGuarantee;
+  pid:IsolationGuarantee;
+  ipc:IsolationGuarantee;
+  identity:IsolationGuarantee;
+  network:IsolationGuarantee;
+  gui:bool;
+  host_paths:bool;
+  requires_filesystem:bool;
+  requires_pid:bool;
+}
+
 /// An execution service registered with this project's host.
 table ExecutionService {
   /// Logical ID used by Card settings, independent of the host's name.
@@ -111,6 +134,7 @@ table ExecutionService {
   /// The daemon's concurrent job capacity across its projects, when known.
   max_jobs:uint32 = null (id: 6);
   grade:uint64 (id: 7);
+  sandbox:SandboxCapabilities (id: 8);
 }
 
 table ProjectSnapshot {
@@ -118,14 +142,15 @@ table ProjectSnapshot {
   rev:uint64 = null (id: 1);
   execution_rev:uint64 = null (id: 2);
   project_json:string (id: 3, required);
-  layout_json:string (id: 4, required);
+  /// layout.bin (protocol/layout_document.fbs); empty when there is none.
+  layout:[ubyte] (id: 4, required);
   definitions:[Definition] (id: 5, required);
   sources:[SourceInfo] (id: 6, required);
   resolution:[ResolvedCard] (id: 7, required);
   diagnostics:[Tsugumi.Data.Diagnostic] (id: 8, required);
   run:RunStatus (id: 9, required);
   /// Opaque client-owned JSON; the core never interprets camera or selection.
-  view_json:string (id: 10);
+  view:[ubyte] (id: 10);
   view_id:string (id: 11);
   view_rev:uint64 = null (id: 12);
   execution_services:[ExecutionService] (id: 13);
@@ -150,14 +175,25 @@ table ProjectHostRequirementsRequest {}
 // ---- Document changes --------------------------------------------------------
 
 table SetProject { json:string (id: 0, required); }
-table SetLayout { json:string (id: 0, required); }
+/// A lock update or an explicit copy of a project's lock document.
+/// Omitted JSON removes the document. Existing locks require base_hash.
+table SetProjectLock {
+  path:string (id: 0, required);
+  json:string (id: 1);
+  base_hash:string (id: 2);
+}
+/// The new layout.bin; empty removes it.
+table SetLayout { layout:[ubyte] (id: 0, required); }
 table PutDefinition {
   id:string (id: 0, required);
   card_json:string (id: 1, required);
-  /// The new _meta.json; omitted removes it unless keep_meta. Empty keeps it.
-  meta_json:string (id: 2);
-  /// Preserve existing _meta.json when meta_json is omitted.
-  keep_meta:bool = false (id: 3);
+  /// The new README.md; omitted removes it unless keep_readme. Empty keeps it.
+  readme:string (id: 2);
+  keep_readme:bool = false (id: 3);
+  /// The new _comments.json; omitted removes it unless keep_comments. Empty
+  /// keeps it.
+  comments_json:string (id: 4);
+  keep_comments:bool = false (id: 5);
 }
 table RemoveDefinition { id:string (id: 0, required); }
 table PutSource {
@@ -188,6 +224,7 @@ union DocumentChangeValue {
   PutSource = 5,
   PatchSource = 6,
   RemoveSource = 7,
+  SetProjectLock = 8,
 }
 
 table DocumentChange { value:DocumentChangeValue (id: 1); }
@@ -199,13 +236,15 @@ table DocumentDelta {
   op_id:string (id: 3, required);
   origin:string (id: 4, required);
   project_json:string (id: 5);
-  layout_json:string (id: 6);
+  /// The new layout.bin when layout_changed; empty when it was removed.
+  layout:[ubyte] (id: 6);
   definitions_upsert:[Definition] (id: 7, required);
   definitions_removed:[string] (id: 8, required);
   sources_upsert:[SourceInfo] (id: 9, required);
   sources_removed:[string] (id: 10, required);
   resolution:[ResolvedCard] (id: 11, required);
   diagnostics:[Tsugumi.Data.Diagnostic] (id: 12, required);
+  layout_changed:bool (id: 13);
 }
 
 table SaveResult {
@@ -228,17 +267,23 @@ table RunHistoryDeleteResult {
   freed_bytes:uint64 = null (id: 1);
 }
 
-table SDKFile {
+/// A regular file in the realized output.
+table NixOutputFile {
+  /// Relative to the output directory, with / between folders.
   path:string (id: 0, required);
-  hash:string (id: 1, required);
-  size_bytes:uint64 = null (id: 2);
+  content:[ubyte] (id: 1);
 }
 
-table CardSDKPrepareResult {
-  op_id:string (id: 0, required);
-  rev:uint64 = null (id: 1);
-  state:Tsugumi.Data.SDKState (id: 2);
-  files:[SDKFile] (id: 3, required);  // empty while pending
+table EvaluateNixResult {
+  rev:uint64 = null (id: 0);
+  /// Strict JSON (up to 8 MiB). A derivation is represented by its output path.
+  json:string (id: 1);
+  /// Regular output files, up to 2000 entries and 8 MiB including paths.
+  files:[NixOutputFile] (id: 2);
+  truncated:bool = false (id: 3);
+  failure:Tsugumi.Data.Failure (id: 4);
+  /// The last 256 KiB of the build log on failure.
+  log:string (id: 5);
 }
 
 table RunAccepted {
@@ -251,12 +296,12 @@ union ReceiptValue {
   SaveResult = 1,
   RunAccepted = 3,
   ProjectCacheClearResult = 4,
-  CardSDKPrepareResult = 5,
   Failure: Tsugumi.Data.Failure = 6,
   RunHistoryDeleteResult = 7,
   VersionResult = 8,
   ProjectShellResult = 9,
   RunScratchDeleteResult = 10,
+  RunCategoryDeleteResult = 11,
 }
 
 table OperationReceipt {
@@ -400,8 +445,30 @@ table ProjectCacheUsageResult {
   protected_run:string (id: 7);
 }
 
-/// -> NixSourceResolved. Resolve a flake to its commit, hash and packages for this system. May fetch and evaluate on first use.
-table NixSourceResolveRequest { ref:string (id: 0, required); }
+/// -> NixPathLockedSource. Fetch a source for an explicit Host lock update.
+table NixPathLockSourceRequest { url:string (id: 0, required); }
+
+/// -> RewrittenParamLiteral. Prepare a guarded params.nix edit for the Host.
+table RewriteParamLiteralRequest {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  name:string (id: 1, required);
+  literal:string (id: 2, required);
+  at_rev:uint64 = null (id: 3);
+}
+enum RunRecordCategory:ubyte { Unspecified, Logs, Values }
+
+/// -> RunCategoryDeleteResult. Delete one category from a finished run.
+table RunCategoryDeleteRequest {
+  op_id:string (id: 0, required);
+  run_id:string (id: 1, required);
+  category:RunRecordCategory (id: 2);
+}
+
+
+table RunCategoryDeleteResult {
+  run_id:string (id: 0, required);
+  category:RunRecordCategory (id: 1);
+}
 
 /// -> RunHistoryDeleteResult. Delete finished runs and their records, values, logs and files. ended_before is a Unix-millisecond cutoff; omitted means all finished runs.
 table RunHistoryDeleteRequest {
@@ -489,13 +556,11 @@ table ProjectFileReadRequest {
   limit_bytes:uint32 = null (id: 4);
 }
 
-/// -> InputTypesResult. Read resolved incoming sources, port kinds and full types. The host renders SDK definitions in language (default: Card language; use language for a Draft or "schema" for tables). output_port selects an upstream output instead.
+/// -> InputTypesResult. Read resolved incoming sources and full types. output_port selects an upstream output instead.
 table InputTypesRequest {
   card:Tsugumi.Data.CardPath (id: 0, required);
   output_port:string (id: 1);
   at_rev:uint64 = null (id: 2);
-  /// SDK language for host rendering; opaque to the project core.
-  language:string (id: 3);
 }
 
 table InputType {
@@ -507,27 +572,26 @@ table InputType {
 
 table InputTypesResult {
   rev:uint64 = null (id: 0);
-  language:string (id: 1);
-  inputs:[InputType] (id: 2);
+  inputs:[InputType] (id: 1);
 }
 
-/// -> OutputTypesResult. Compile _outputs.fbs text to reflection schema; port and type_name optionally set an output's type and kind in returned text.
+/// -> OutputTypesResult. Compile _outputs.fbs text to reflection schema; port and type_name optionally set an output's type in returned text.
 table OutputTypesRequest {
   text:string (id: 0, required);
   port:string (id: 1);
   type_name:string (id: 2);
-  kind:Tsugumi.Data.PortKind (id: 3);
 }
 
-/// -> CardSDKPrepareResult. Accepted asynchronously.
-table CardSDKPrepareRequest {
+/// -> EvaluateNixResult. Evaluate a Nix expression on the local system in the saved Card's directory with its nixPath, params and inputs. Returns JSON. For Build SDK, evaluate (import ./. { inherit params inputs; }).api with build enabled to return the derivation's output files.
+table EvaluateNixRequest {
+  /// Card path segments from the root project.
   card:Tsugumi.Data.CardPath (id: 0, required);
   at_rev:uint64 = null (id: 1);
-  op_id:string (id: 2, required);
+  /// Nix expression relative to this Card's definition directory.
+  expression:string (id: 2, required);
+  /// Realize the derivation returned by the expression. Defaults to false.
+  build:bool = false (id: 3);
 }
-
-/// -> CardSDKPrepareResult or Failure.
-table CardSDKStatusRequest { op_id:string (id: 0, required); }
 
 /// -> RunPlanResult. Preview the Cards a run reaches; propagate defaults to true.
 table RunPlanRequest {
@@ -738,6 +802,8 @@ table LogRangeRequest {
   terminal:bool = false (id: 8);
   /// Raw byte size of the previous terminal update. Read the tail if a redraw overwrote cells since then.
   terminal_since:uint64 = null (id: 9);
+  /// Read stdout or stderr from the active run's transient log.
+  live:bool = false (id: 10);
 }
 
 /// -> Ack. Replaces the subscription's Display targets. enabled = true.
@@ -747,18 +813,59 @@ table ViewSetVisibleRequest {
   enabled:bool = null (id: 2);
 }
 
+/// -> Ack. Send opaque bytes from an open view to its Card process. With no live Card process the bytes are dropped and the reply is still Ack.
+table ViewSendRequest {
+  card:Tsugumi.Data.CardPath (required);
+  view:string (required);
+  bytes:[ubyte] (required);
+}
+
+/// -> Ack. Return display capacity after the UI forwards or discards a message.
+table ViewCreditRequest {
+  subscription_id:string (required);
+  card:Tsugumi.Data.CardPath (required);
+  view:string (required);
+  bytes:uint32;
+  credit_id:uint64 = null;
+}
+
+// A client's viewport, carried by the core as one FlatBuffer.
+table ViewCamera {
+  scope:[string];
+  x:double;
+  y:double;
+  zoom:double;
+}
+table ClientView {
+  scope:[string];
+  cameras:[ViewCamera];
+  selected_cards:[Tsugumi.Data.CardPath];
+}
+
 /// -> ViewSaveResult. CAS on view_rev only.
 table ViewSaveRequest {
   view_id:string (id: 0, required);
   base_view_rev:uint64 = null (id: 1);
-  view_json:string (id: 2, required);
+  view:[ubyte] (id: 2, required);
 }
 
-/// -> FileContent. Read immutable display-module source in pages.
-table ModuleReadRequest {
-  module:string (id: 0, required);
-  offset:uint64 = null (id: 1);
-  limit_bytes:uint32 = null (id: 2);
+/// -> FileContent. Read a page of the file of one view declaration: entry
+/// `index` (required) of the Card's views list, as CardViewsUpdated last sent it. `name`
+/// must be that entry's name, so a read made against a list that has since
+/// changed fails with not_found instead of serving another declaration. Names
+/// may repeat; the core never chooses between declarations by name. Only
+/// declared regular files that resolve inside the Nix store are served, read
+/// from one open descriptor, and their bytes are relayed without being
+/// interpreted. Neither RPC trace records these requests or their replies.
+/// FileContent.name is the view name and hash is the declared store path,
+/// which names immutable content. offset defaults to 0 and limit_bytes to
+/// 1 MiB (1..1048576).
+table CardViewReadRequest {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  name:string (id: 1, required);
+  offset:uint64 = null (id: 2);
+  limit_bytes:uint32 = null (id: 3);
+  index:uint32 = null (id: 4);
 }
 
 /// -> ProjectActivity. Observe active runs and queued/running requests, across
@@ -778,8 +885,7 @@ union RequestPayload {
   ProjectFileListRequest = 11,
   ProjectFileStatRequest = 12,
   ProjectFileReadRequest = 13,
-  CardSDKPrepareRequest = 15,
-  CardSDKStatusRequest = 16,
+  EvaluateNixRequest = 15,
   RunPlanRequest = 17,
   RunRequest = 18,
   RunCancelRequest = 19,
@@ -800,12 +906,12 @@ union RequestPayload {
   VersionCheckoutRequest = 35,
   VersionGraphRequest = 36,
   VersionCanvasRequest = 37,
-  NixSourceResolveRequest = 40,
+  NixPathLockSourceRequest = 40,
+  RewriteParamLiteralRequest = 66,
   RunLatestInvocationsRequest = 41,
   RunEnvironmentsRequest = 42,
   RunEnvironmentPathsRequest = 43,
   ProjectShellRequest = 44,
-  ModuleReadRequest = 45,
   ProjectCacheUsageRequest = 48,
   RunScratchDeleteRequest = 49,
   CardIdRequest = 50,
@@ -818,6 +924,10 @@ union RequestPayload {
   RunDefinitionPathsRequest = 57,
   VersionDiffRequest = 58,
   VersionCommentsRequest = 59,
+  RunCategoryDeleteRequest = 60,
+  CardViewReadRequest = 62,
+  ViewSendRequest = 63,
+  ViewCreditRequest = 64,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -891,7 +1001,8 @@ table VersionCanvasWire {
 table VersionCanvas {
   cards:[VersionCanvasCard] (id: 0, required);
   wires:[VersionCanvasWire] (id: 1, required);
-  layout_json:string (id: 2, required);
+  /// That version's layout.bin; empty when it had none.
+  layout:[ubyte] (id: 2, required);
 }
 
 table VersionNote {
@@ -965,12 +1076,15 @@ table FileContent {
   eof:bool = null (id: 6);
 }
 
-table NixSourceResolved {
-  /// Locked: what goes into nixSources.
-  ref:string (id: 0, required);
-  rev:string (id: 1);
-  nar_hash:string (id: 2);
-  packages:[string] (id: 3);
+table NixPathLockedSource {
+  rev:string (id: 0);
+  narHash:string (id: 1, required);
+}
+
+table RewrittenParamLiteral {
+  path:string (id: 0, required);
+  base_hash:string (id: 1, required);
+  text:string (id: 2, required);
 }
 
 table OutputTypesResult {
@@ -1056,7 +1170,7 @@ table InvocationSummary {
   /// The invocation omitted log output at this combined limit, in bytes.
   log_truncated_at_bytes:uint64 = null (id: 30);
   /// Human-readable name of the implementation: a `label` of a Nix run list
-  /// entry, or the swept parameter values of an Input Card (`name=value`).
+  /// entry.
   /// Absent when the implementation has no label; implementation_index still
   /// identifies it.
   implementation_label:string (id: 31);
@@ -1105,10 +1219,9 @@ table InvocationRecord {
   inputs:[Tsugumi.Data.NamedValue] (id: 1, required);
   outputs:[Tsugumi.Data.NamedValue] (id: 2, required);
   input_sources:[InputSource] (id: 3, required);
-  display:Tsugumi.Data.Display (id: 4);
-  record_io:bool = null (id: 5);
+  record_io:bool = null (id: 4);
   /// Parameters captured from the run's immutable document; absent if unavailable.
-  params_json:string (id: 6);
+  params:Tsugumi.Data.InvocationParams (id: 5);
 }
 
 table HistoryState {
@@ -1148,10 +1261,9 @@ table ArtifactInfo {
   run_id:string (id: 1, required);
   card:Tsugumi.Data.CardPath (id: 2, required);
   invocation:uint64 = null (id: 3);
-  output:string (id: 4, required);
-  kind:Tsugumi.Data.PortKind (id: 5);
-  name:string (id: 6, required);
-  members:[ArtifactMember] (id: 7, required);
+  size_bytes:uint64 = null (id: 4);
+  tree_hash:string (id: 5);
+  members:[ArtifactMember] (id: 6, required);
 }
 
 table ArtifactPage {
@@ -1196,7 +1308,7 @@ union ReplyPayload {
   SourcePage = 10,
   SourceInfo = 11,
   FileContent = 12,
-  CardSDKPrepareResult = 14,
+  EvaluateNixResult = 14,
   RunPlanResult = 15,
   RunAccepted = 16,
   RunStatus = 17,
@@ -1212,7 +1324,8 @@ union ReplyPayload {
   VersionResult = 27,
   VersionGraph = 28,
   VersionCanvas = 29,
-  NixSourceResolved = 31,
+  NixPathLockedSource = 31,
+  RewrittenParamLiteral = 53,
   BuildEnvironmentPage = 32,
   EnvironmentPathPage = 33,
   ProjectShellResult = 34,
@@ -1228,6 +1341,7 @@ union ReplyPayload {
   RunDefinitionPaths = 45,
   VersionDiff = 46,
   VersionComments = 47,
+  RunCategoryDeleteResult = 48,
 }
 
 // ---- Notifications -----------------------------------------------------------
@@ -1265,6 +1379,16 @@ table RunEvent {
 
 table DisplayUpdated { display:Tsugumi.Data.Display (id: 0, required); }
 
+/// The full list of views for a Card, available independently of a run.
+/// When evaluating the declarations failed, failure says why and views is
+/// empty; an absent failure with an empty list means the Card declares none.
+table CardViewsUpdated {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  views:[Tsugumi.Data.CardView] (id: 1, required);
+  failure:Tsugumi.Data.Failure (id: 2);
+}
+
+
 /// An absent end_offset and unspecified stream indicate invocation log
 /// metadata changed without new stream bytes.
 table LogAvailable {
@@ -1273,6 +1397,7 @@ table LogAvailable {
   invocation:uint64 = null (id: 2);
   stream:Tsugumi.Data.LogStream (id: 3);
   end_offset:uint64 = null (id: 4);
+  live:bool = false (id: 5);
 }
 
 union NotificationPayload {
@@ -1281,6 +1406,8 @@ union NotificationPayload {
   DisplayUpdated = 3,
   LogAvailable = 4,
   TraceChanged:Tsugumi.Trace.TraceChanged = 5,
+  RunCategoryDeleteResult = 6,
+  CardViewsUpdated = 7,
 }
 
 // ---- Frame -------------------------------------------------------------------

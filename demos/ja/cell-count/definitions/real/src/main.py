@@ -1,5 +1,6 @@
 """The same steps on a real image of nuclei. There is no ground truth here, so it
 shows the counts and the outlines to look at instead of a score."""
+from card import Input, Output, params
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import ndimage as ndi
@@ -18,10 +19,11 @@ def background(image, radius):
     return ndi.zoom(smooth, np.array(image.shape) / np.array(smooth.shape), order=1)
 
 
-def main(inputs, report):
-    p = inputs.params
-    source = inputs.image
-    raw = imread(source.path.decode()).astype(np.float64)
+def run(input: Input) -> Output:
+    p = params
+    source = input.require("image")
+    image_file, = source.file.open().iterdir()
+    raw = imread(image_file).astype(np.float64)
     image = raw / np.percentile(raw, 99.9)
     clean = gaussian(image - background(image, p.backgroundRadius), sigma=p.sigma)
     mask = remove_small_objects(ndi.binary_fill_holes(clean > threshold_otsu(clean)), max_size=p.minArea)
@@ -32,8 +34,8 @@ def main(inputs, report):
     markers[tuple(peaks.T)] = np.arange(1, len(peaks) + 1)
     split = watershed(-distance, markers, mask=mask)
     areas = [r.area for r in regionprops(split)]
-    report.log(f"{raw.shape[1]} x {raw.shape[0]} px from {source.source.decode()}")
-    report.log(f"threshold only {plain.max()} objects; watershed {split.max()} objects; median area {np.median(areas):.0f} px")
+    print(f"{raw.shape[1]} x {raw.shape[0]} px from {source.source.decode()}")
+    print(f"threshold only {plain.max()} objects; watershed {split.max()} objects; median area {np.median(areas):.0f} px")
 
     fig, axes = plt.subplots(1, 2, figsize=(9, 5.2))
     for ax in axes:
@@ -46,4 +48,6 @@ def main(inputs, report):
     fig.text(0.5, 0.02, "正解がないので採点はしません。接した核や、分裂中の明るい核を輪郭で確かめてください。",
              ha="center", fontsize=9)
     fig.tight_layout(rect=(0, 0.06, 1, 1))
-    report.figure()
+    plt.close(fig)
+    # TODO(open): Port the demo display.
+    return Output()

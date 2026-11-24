@@ -1,4 +1,4 @@
-import { cardIds } from './cardIds'
+import { addCodeCard, cardIds } from './cardIds'
 // A wire to or from a Draft is dotted, whatever else it shows, until the Draft
 // has code. The Mac app checks the same (UILogicTests: draftWiresAreDotted).
 import assert from 'node:assert/strict'
@@ -45,7 +45,7 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
 {
   const s = session()
   const start = await s.addCard('trigger', [], { x: 0, y: 0 }, 'start')
-  const log = await s.addCard('python', [], { x: 600, y: 0 }, 'log')
+  const log = await addCodeCard(s, { x: 600, y: 0 }, 'log')
   const draft = await s.addCard('draft', [], { x: 300, y: 0 }, 'plan')
   await s.connect([start, 'out'], [log, 'in'], [])
   assert.deepEqual(dotted(s), { 'start>log': false }, 'Cards with code keep their solid wire')
@@ -68,7 +68,6 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
   await s.applyMutation((x) => {
     x.updateCard(draft, (c) => {
       c.set('type', 'code')
-      c.set('language', 'python')
       c.set('inputs', parse('[{"name":"in"}]'))
     })
     x.updateGraph([], (g) => g.set('connections', parse(`[
@@ -84,7 +83,7 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
   // In a Card in Card: its bars' wires to an inner Draft are dotted, the wires of the Card itself are not.
   const s = session()
   const start = await s.addCard('trigger', [], { x: 0, y: 0 }, 'start')
-  const log = await s.addCard('python', [], { x: 600, y: 0 }, 'log')
+  const log = await addCodeCard(s, { x: 600, y: 0 }, 'log')
   const draft = await s.addCard('draft', [], { x: 300, y: 0 }, 'plan')
   await s.connect([start, 'out'], [draft, NEW_PORT], [])
   await s.connect([draft, NEW_PORT], [log, 'in'], [])
@@ -97,14 +96,14 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
   await new Promise<void>(resolve => setImmediate(resolve))
   const inside = new Scene(s, [outer])
   assert.ok(inside.boundary)
-  const bars = inside.wires.filter((w) => w.connection === undefined && w.style !== 'display')
+  const bars = inside.wires.filter((w) => w.connection === undefined)
   assert.equal(bars.length, 2)
   assert.ok(bars.every((w) => w.dotted))
 }
 
 {
   // Drawn: the dots replace the style's own dashes, and move while the value does.
-  const html = (style: 'normal' | 'carried' | 'active' | 'selected' | 'display', dotted?: boolean, animate = false) => renderToStaticMarkup(
+  const html = (style: 'normal' | 'carried' | 'active' | 'selected', dotted?: boolean, animate = false) => renderToStaticMarkup(
     <WireLayer wires={[{ d: 'M0,0L9,9', style, dotted }]} animate={animate} width={10} height={10} />)
   const dash = (markup: string) => /stroke-dasharray="([^"]*)"/.exec(markup)?.[1]
   const dots = dash(html('normal', true))!
@@ -122,6 +121,5 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
   for (const style of ['normal', 'carried', 'selected'] as const) assert.equal(dash(html(style)), undefined, `${style}, not a Draft's`)
   assert.equal(dash(html('active', false, true)), '8 6', 'the moving dashes of other wires are as they were')
   assert.ok(html('active', true, true).includes('cv-wire-moving'))
-  assert.equal(dash(html('display')), '5 4', 'the link to a result frame is as it was')
 }
 console.log('draft wires: passed')

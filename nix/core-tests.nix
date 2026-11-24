@@ -17,7 +17,6 @@
   hosq,
   runtime,
   mock,
-  inputTypes,
   # The narrow consumers configure only the target they actually execute.
   target ? null,
   nativeDarwin ? false,
@@ -40,6 +39,9 @@ clangStdenv.mkDerivation {
         [
           ../hostd/tools/test-binary-cache.py
           ../vm/guest/src/control_wire.hh
+          # The evaluator double compiles the real params.nix parser.
+          ../tsugumid/runtime/src/nix_params.cc
+          ../tsugumid/runtime/src/nix_params.hh
           (lib.fileset.fileFilter (
             file: file.name == "CMakeLists.txt" || file.hasExt "cmake" || file.hasExt "cc" || file.hasExt "hh"
           ) ../tests/core)
@@ -62,11 +64,8 @@ clangStdenv.mkDerivation {
           tsugumid-mock = [
             ../tests/core/cmake/daemon-double.cmake
             ../tests/core/doubles/nix_eval.cc
-          ];
-          tsugumi_input_types_tests = [
-            ../tests/core/cmake/input-types.cmake
-            ../tests/core/doubles/nix_eval.cc
-            ../tests/core/input_types_test.cc
+            ../tsugumid/runtime/src/nix_params.cc
+            ../tsugumid/runtime/src/nix_params.hh
           ];
           tsugumi_document_edit_driver = [
             ../tests/core/cmake/host-edit-driver.cmake
@@ -145,14 +144,8 @@ clangStdenv.mkDerivation {
     ln -s ${runtime}/share/tsugumi/* "$out/share/tsugumi/"
     ln -s ${runtime}/{lib,include} "$out/"
     ln -s ${mock}/libexec/tsugumi-tests/tsugumid-mock "$out/libexec/tsugumi-tests/"
-    ${lib.optionalString (!nativeDarwin) ''
-      ln -s ${inputTypes}/libexec/tsugumi-tests/tsugumi_input_types_tests "$out/libexec/tsugumi-tests/"
-    ''}
     makeWrapper ${runtime}/bin/tsugumi-test-env "$out/bin/tsugumi-test-env" \
-      --set TSUGUMI_MOCK_DAEMON "$out/libexec/tsugumi-tests/tsugumid-mock" \
-      ${lib.optionalString (
-        !nativeDarwin
-      ) ''--set TSUGUMI_INPUT_TYPES_TESTS "$out/libexec/tsugumi-tests/tsugumi_input_types_tests"''}
+      --set TSUGUMI_MOCK_DAEMON "$out/libexec/tsugumi-tests/tsugumid-mock"
   '';
   meta = {
     description = "Reusable public RPC test binaries and runner environment for Tsugumi";

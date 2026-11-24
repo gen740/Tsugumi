@@ -3,37 +3,35 @@ import { agentAppearance } from '../model/agentAppearance'
 import { InlineParamEdit, RevisionEditNotice } from './revisionEdit'
 import { activeNixLinks, nixCurve, nixLinks as linksIn, nixReferences } from '../model/nixReferences'
 // The canvas of one scope: grid, groups, connections, Cards, sticky notes
-// and output frames, with pan/zoom, selection, wiring and drag & drop.
+// with pan/zoom, selection, wiring and drag & drop.
 // Inside a Card in Card, the outer Card's inputs and outputs are drawn as
 // bars above and below the inner graph.
 import { CSSProperties, Fragment, ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { app } from '../model/app'
 import { HelperBirds } from './helperBirds'
 import { WritingPanels } from './writingPanel'
-import { Boundary, canvasFor, linkEnds, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
+import { Boundary, canvasFor, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
 import { NEW_PORT, Pt, Rect, snapToGrid } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
-import { holdsDisplay } from '../model/moduleThumbnails'
 import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
 import {
-  CardKey, DefinitionTemplate, key, KIND_ICON, KIND_LABEL, NOTE_COLORS, parseParam, path, ProjectSession, TEMPLATES, templateIcon,
+  CardKey, DefinitionTemplate, key, KIND_ICON, KIND_LABEL, NOTE_COLORS, parameterInputLiteral, path, portTypeName, ProjectSession,
 } from '../model/session'
 import { Workspace, WorkflowTab } from '../model/workspace'
 import { arr, clone, dbl, get, J, JObj, obj, real, str } from '../../shared/json'
 import {
-  DEFINITION_DRAG, EXTERNAL_DEFINITION_DRAG, EXTERNAL_DRAG, openCard, openWorkflowWindow, runCard, showLog, TEMPLATE_DRAG,
+  DEFINITION_DRAG, EXTERNAL_DEFINITION_DRAG, EXTERNAL_DRAG, openCard, openWorkflowWindow, runCard, showLog,
 } from './actions'
 import { BoundaryBarView, CardNodeView, drive, gridStyle, idleText, runText, WireLayer } from './cardNode'
 import { BatchInvocations } from './batchInvocations'
 import { Button, MenuItem, Segmented, Sheet, showMenu, Stepper, TextField, Toggle } from './controls'
-import { DisplayContent } from './display'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
 import { L } from '../i18n'
-import { visualizationTemplates } from '../model/visualizationTemplates'
+import { newCardItems, TemplatePicker, type TemplatePlacement } from './cardTemplates'
 
 // Kept here for the views that import them from the canvas.
-export { DEFINITION_DRAG, DisplayContent, openWorkflowWindow }
+export { DEFINITION_DRAG, openWorkflowWindow }
 export const kindIcon = (k: string) => (KIND_ICON as Record<string, string>)[k] ?? 'circle'
 export const noteColor = (id: J | string | undefined) => {
   const c = typeof id === 'string' ? id : str(id as J | undefined)
@@ -59,13 +57,13 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   const cv = canvasFor(session, tab)
   useObserve(session, tab, cv, prefs, agentAppearance)
   const root = useRef<HTMLDivElement>(null)
+  const [templatePlacement, setTemplatePlacement] = useState<TemplatePlacement>()
   const [cardDrag, setCardDrag] = useState<SceneDrag['cards']>()
   const [boundaryDrag, setBoundaryDrag] = useState<SceneDrag['boundary']>()
   /** A wire being drawn from a port: from an output (to an input), or from an input back to an output. */
   const [pending, setPending] = useState<{ from: [CardKey, string]; fromOutput: boolean; point: Pt }>()
   const [marquee, setMarquee] = useState<{ start: Pt; end: Pt }>()
   const [panning, setPanning] = useState(false)
-  const [frameDrag, setFrameDrag] = useState<{ card: CardKey; dx: number; dy: number }>()
   const [noteDrag, setNoteDrag] = useState<{ id: string; dx: number; dy: number }>()
   const [hover, setHover] = useState<HoverTarget>()
   const [hoverAt, setHoverAt] = useState<Pt>({ x: 0, y: 0 })
@@ -95,7 +93,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   const cam = cv.camera
   const z = cam.zoom
   const scope = tab.scope
-  const interacting = !!(cardDrag || pending || marquee || panning || boundaryDrag || frameDrag || noteDrag)
+  const interacting = !!(cardDrag || pending || marquee || panning || boundaryDrag || noteDrag)
   const screen = (w: Pt) => cv.screen(w)
   const local = (e: { clientX: number; clientY: number }): Pt => {
     const r = root.current?.getBoundingClientRect()
@@ -124,7 +122,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     const el = root.current
     if (!el) return
     const onWheel = (e: WheelEvent) => {
-      if ((e.target as HTMLElement).closest('.cv-find, .display-scroll, .cv-draft-edit')) return
+      if ((e.target as HTMLElement).closest('.cv-find, .cv-draft-edit')) return
       e.preventDefault()
       clearHover()
       const r = el.getBoundingClientRect()
@@ -203,7 +201,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       else n.add(k)
       tab.selectedConnection = undefined
       // Adding to the selection keeps what a marquee caught.
-      tab.setSelection(n, tab.selectedNotes, tab.selectedFrames)
+      tab.setSelection(n, tab.selectedNotes)
     } else {
       tab.selectedConnection = undefined
       tab.setSelection([k])
@@ -259,9 +257,9 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
 
   const commitParam = async (k: CardKey, name: string, text: string, edit = new InlineParamEdit(), overwrite = false) => {
     if (!session.isEditable) return false
-    const type = str(get((arr(get(session.cardDefinition(k), 'params')) ?? []).find((p) => str(get(p, 'name')) === name), 'type'))
-    if (!type) return false
-    return edit.commit(session, text, x => x.updateParam(k, name, parseParam(text, type), edit.parameterBase(session, k, name, overwrite)))
+    const parameter = session.resolution.get(k)?.parameters?.find(p => p.name === name)
+    if (!parameter) return false
+    return edit.commitParam(session, k, name, parameterInputLiteral(text, parameter.type), overwrite)
   }
 
   const addBuiltin = (t: DefinitionTemplate, at?: Pt) => {
@@ -363,7 +361,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         const r = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(b.x - a.x), height: Math.abs(b.y - a.y) }
         tab.selectedConnection = undefined
         const items = scene.itemsIn(r)
-        tab.setSelection(items.cards, items.notes, items.frames)
+        tab.setSelection(items.cards, items.notes)
       })
       return
     }
@@ -391,7 +389,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         if (!tab.selection.has(k)) tab.setSelection([k])
         keys = new Set(tab.selection)
       }
-      setCardDrag({ keys, frames: tab.selectedFrames, dx: (ev.clientX - start.x) / z, dy: (ev.clientY - start.y) / z })
+      setCardDrag({ keys, dx: (ev.clientX - start.x) / z, dy: (ev.clientY - start.y) / z })
     }, (ev, moved) => {
       setCardDrag(undefined)
       if (!moved || !keys) return select(k, toggle)
@@ -400,14 +398,14 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   }
 
   const moveSelection = (dx: number, dy: number) =>
-    cv.moveSelection(tab.selection, tab.selectedNotes, tab.selectedFrames, dx, dy, prefs.showGrid ? prefs.gridSize : undefined)
+    cv.moveSelection(tab.selection, tab.selectedNotes, dx, dy, prefs.showGrid ? prefs.gridSize : undefined)
 
-  /** Drags the selection from one of its notes or frames. */
+  /** Drags the selection from one of its notes. */
   const dragSelection = (e: React.PointerEvent) => {
     const start = { x: e.clientX, y: e.clientY }
     drive(e, 3, (ev) => {
       clearHover()
-      setCardDrag({ keys: tab.selection, frames: tab.selectedFrames, dx: (ev.clientX - start.x) / z, dy: (ev.clientY - start.y) / z })
+      setCardDrag({ keys: tab.selection, dx: (ev.clientX - start.x) / z, dy: (ev.clientY - start.y) / z })
     }, (ev, moved) => {
       setCardDrag(undefined)
       if (moved) moveSelection((ev.clientX - start.x) / z, (ev.clientY - start.y) / z)
@@ -447,7 +445,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         x = snapToGrid(x, prefs.gridSize)
         y = snapToGrid(y, prefs.gridSize)
       }
-      // Layout only (the external's layout.json).
+      // Layout only (the external's layout.bin).
       session.setBoundaryPosition(scope, input ? 'inputs' : 'outputs', { x: Math.round(x), y: Math.round(y) })
     })
   }
@@ -457,10 +455,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     if (!item || !session.isEditable) return
     e.preventDefault()
     const at = cv.world(local(e))
-    if (item.startsWith(TEMPLATE_DRAG)) {
-      const t = item.slice(TEMPLATE_DRAG.length) as DefinitionTemplate
-      if (TEMPLATES.some((x) => x.id === t)) void session.addCard(t, scope, at).then((k) => tab.setSelection([k])).catch((e) => { session.notice = String(e); session.changed() })
-    } else if (item.startsWith(EXTERNAL_DEFINITION_DRAG)) {
+    if (item.startsWith(EXTERNAL_DEFINITION_DRAG)) {
       const parts = item.slice(EXTERNAL_DEFINITION_DRAG.length).split('\n')
       if (parts.length === 2) void session.placeDefinitionCopy(parts[0], parts[1], scope, at).then((k) => k && tab.setSelection([k]))
     } else if (item.startsWith(EXTERNAL_DRAG)) {
@@ -473,7 +468,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   const backgroundMenu = (e: React.MouseEvent) => {
     const at = cv.world(local(e))
     showMenu(e, [
-      { label: L('Card を追加'), disabled: !session.isEditable, submenu: builtinCardItems((t) => addBuiltin(t, at)) },
+      { label: L('Card を追加'), disabled: !session.isEditable, submenu: newCardItems((t) => addBuiltin(t, at), () => setTemplatePlacement({ scope: [...scope], at })) },
       { label: L('付箋を追加'), action: () => cv.addNote(at) },
       'divider',
       { label: L('全体表示'), action: () => cv.fitAll() },
@@ -519,7 +514,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       }}
       onDrop={onDrop}>
       {session.inlineDraft && <div style={{ position: 'absolute', top: 12, left: 12, maxWidth: 520, zIndex: 20 }} onPointerDown={e => e.stopPropagation()}>
-        <RevisionEditNotice edit={session.inlineDraft.revision} text={() => session.inlineDraft!.name + '\n' + session.inlineDraft!.content}
+        <RevisionEditNotice edit={session.inlineDraft.revision} text={() => session.inlineDraft!.content}
           overwrite={() => void session.finishDraftEdit(true)} reload={() => void session.startDraftEdit(session.inlineDraft!.card, session.inlineDraft!.revision)} />
       </div>}
       <div className="cv-bg" style={gridStyle(cam, prefs.showGrid, prefs.gridSize)}
@@ -587,7 +582,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
           const d = pathToScreen(nixCurve(scene.cardRect(ref.source), scene.cardRect(ref.target)), cam)
           const active = activeNix.includes(ref)
           return <g key={ref.id}>
-            <path d={d} fill="none" stroke={ref.valid ? 'var(--purple)' : 'var(--orange)'} strokeWidth={active ? 3 : 1.5} strokeDasharray="7 4"
+            <path d={d} fill="none" stroke={'var(--purple)'} strokeWidth={active ? 3 : 1.5} strokeDasharray="7 4"
               opacity={tab.hoveredNixCard && !active ? 0.2 : 0.9} markerEnd={`url(#nix-arrow-${tab.id})`} />
             <path d={d} fill="none" stroke="transparent" strokeWidth={14} style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
               role="button" tabIndex={0} aria-label={`${ref.source} → ${ref.target}: ${ref.expression}`}
@@ -615,10 +610,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
           <Fragment key={k}>
           <CardNodeView data={data} flow={flow} zoom={z} selected={sel.has(k)} guide={'card:' + k}
             style={placed(origin, g.size.width * z, g.size.height * z, data.draftEditing ? { zIndex: 1 } : undefined)}
-            onParamBegin={(edit, name) => {
-              edit.paramBase = { parameter: clone((arr(get(session.cardDefinition(k), 'params')) ?? []).find(p => str(get(p, 'name')) === name)) }
-              return session.rev
-            }}
+            onParamBegin={() => session.rev}
             onParamCommit={data.kind === 'input' ? (name, text, edit, overwrite) => {
               if (!edit) { edit = new InlineParamEdit(); edit.begin(data.params.find(p => p.name === name)?.value ?? '', session.rev) }
               return commitParam(k, name, text, edit, overwrite)
@@ -627,7 +619,6 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
             onPortDown={session.isEditable ? (port, output, e) => onPortDown(k, port, output, e) : undefined}
             draftEdit={session.inlineDraft?.card === k ? {
               draft: session.inlineDraft,
-              nameProblem: session.draftNameProblem(k, session.inlineDraft.name),
               onChange: (change) => { if (session.inlineDraft?.card === k) session.setDraftEdit(change) },
               onDone: (byKey) => {
                 if (session.inlineDraft?.card !== k) return
@@ -652,59 +643,6 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
           </Fragment>
         )
       })}
-
-      {scene.outputKeys.map((k) => {
-        const r = scene.frameRect(k)
-        const d = frameDrag?.card === k ? frameDrag : undefined
-        const p = screen(r)
-        return (
-          <OutputFrameView key={'f:' + k} session={session} cardKey={k} zoom={z} selected={tab.selectedFrames.has(k)}
-            style={placed({ x: p.x + (d?.dx ?? 0), y: p.y + (d?.dy ?? 0) }, r.width * z, r.height * z)}
-            onExpand={() => app.openWindow(session, { kind: 'visual', card: k })}
-            onClose={() => cv.closeFrame(k)}
-            onResize={(dx, dy) => session.updateDisplayFrame(k, (f) => {
-              f.set('x', real(Math.round(r.x)))
-              f.set('y', real(Math.round(r.y)))
-              f.set('width', real(Math.round(Math.max(180, r.width + dx / z))))
-              f.set('height', real(Math.round(Math.max(100, r.height + dy / z))))
-            })}
-            onPointerDown={(e) => {
-              if (e.button !== 0) return
-              e.stopPropagation()
-              focus()
-              if (tab.selectedFrames.has(k)) return dragSelection(e)
-              const start = { x: e.clientX, y: e.clientY }
-              let first = true
-              // Follows the pointer while dragged; the layout changes once, on release.
-              drive(e, 3, (ev) => {
-                if (first) tab.setSelection([])
-                first = false
-                setFrameDrag({ card: k, dx: ev.clientX - start.x, dy: ev.clientY - start.y })
-              }, (ev, moved) => {
-                setFrameDrag(undefined)
-                if (!moved) return
-                session.updateDisplayFrame(k, (f) => {
-                  f.set('x', real(Math.round(r.x + (ev.clientX - start.x) / z)))
-                  f.set('y', real(Math.round(r.y + (ev.clientY - start.y) / z)))
-                  f.set('width', real(r.width))
-                  f.set('height', real(r.height))
-                })
-              })
-            }}
-            onContextMenu={(e) => showMenu(e, [
-              { label: L('拡大して表示'), action: () => app.openWindow(session, { kind: 'visual', card: k }) },
-              { label: L('チャットに参照を追加'), action: () => app.chat(session).addReference({ kind: 'display', card: k }) },
-              'divider',
-              { label: L('枠を削除（Card は残ります）'), action: () => cv.closeFrame(k) },
-            ])} />
-        )
-      })}
-
-      {/* The link's ports, where the link meets the Card and the frame. */}
-      {wires.filter((w) => w.style === 'display').flatMap((w, i) => linkEnds(w.d).map((p, j) => {
-        const s = screen(p)
-        return <span key={`l${i}:${j}`} className="cv-link-dot" style={{ left: s.x - 3.5, top: s.y - 3.5 }} />
-      }))}
 
       {session.notes(scope).map((n) => {
         const id = str(get(n, 'id'))
@@ -768,7 +706,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       })}
 
       <WritingPanels writers={app.chat(session).writers} team={app.chat(session).team} known={(k) => scene.cardKeys.includes(k)} rect={(k) => scene.outlineRect(k)}
-        obstacles={() => [...scene.cardKeys.map((k) => scene.cardRect(k)), ...scene.outputKeys.map((k) => scene.frameRect(k))]}
+        obstacles={() => scene.cardKeys.map((k) => scene.cardRect(k))}
         screen={screen} zoom={z} size={cv.size} />
       <HelperBirds chat={app.chat(session)} known={(k) => scene.cardKeys.includes(k)} rect={(k) => scene.outlineRect(k)} screen={screen} zoom={z} size={cv.size} />
 
@@ -831,6 +769,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       {cv.editingGroup && session.groups(scope).some((g) => str(g.get('id')) === cv.editingGroup) && (
         <GroupEditor session={session} scope={scope} groupId={cv.editingGroup} onClose={() => cv.set('editingGroup', undefined)} />
       )}
+      {templatePlacement && <TemplatePicker session={session} placement={templatePlacement} onClose={() => setTemplatePlacement(undefined)} />}
     </div>
   )
 }
@@ -851,17 +790,6 @@ function bubblePosition(at: Pt, size: { width: number; height: number }, view: {
 
 // ---- Menus ------------------------------------------------------------------------------
 
-/** The built-in Cards, for the canvas menu and the + button. */
-export function builtinCardItems(add: (t: DefinitionTemplate) => void): MenuItem[] {
-  const item = (id: DefinitionTemplate): MenuItem => ({ label: TEMPLATES.find((t) => t.id === id)?.label ?? id, action: () => add(id) })
-  const visualization: MenuItem = {
-    label: L('可視化'),
-    submenu: visualizationTemplates.map(t => ({ label: t.label, action: () => add(t.id) })),
-  }
-  return [item('python'), item('cpp'), item('go'), item('rust'), item('ruby'), item('csharp'), { label: L('レポート（HTML・PDF 未対応）'), submenu: [item('report_rmarkdown'), item('report_quarto')] }, item('draft'), item('marimo'), visualization, 'divider', item('trigger'), item('input'), item('input_bool'), item('branch'), item('fork'), item('merge'), item('collect')]
-}
-export { templateIcon }
-
 /** Right-click menu of a Card. */
 export function cardMenu(workspace: Workspace, session: ProjectSession, tab: WorkflowTab, k: CardKey, onGroup?: () => void): MenuItem[] {
   const kind = session.kind(k)
@@ -879,6 +807,7 @@ export function cardMenu(workspace: Workspace, session: ProjectSession, tab: Wor
     { label: L('設定…'), action: () => app.openWindow(session, { kind: 'card', card: k }) },
     { label: L('コメント…'), action: () => app.openWindow(session, { kind: 'card', card: k, category: 'notes' }) },
     { label: L('実行履歴…'), action: () => app.openWindow(session, { kind: 'executions', card: k }) },
+    kind === 'code' && { label: L('可視化を開く'), action: () => app.openWindow(session, { kind: 'visual', card: k }) },
     { label: L('成果物…'), action: () => app.openWindow(session, { kind: 'artifacts', card: k }) },
     { label: L('ログを表示'), action: () => showLog(workspace, k) },
     { label: L('Skill を実行'), submenu: app.chat(session).skills.filter(s => s.scoped).map(s => ({ label: `$${s.name} (${s.scope?.join(', ') ?? ''})`, disabled: app.chat(session).busy, action: () => {
@@ -897,9 +826,6 @@ export function cardMenu(workspace: Workspace, session: ProjectSession, tab: Wor
     'divider',
     { label: L('複製'), disabled: !editable, action: () => void session.duplicate(targets, tab.scope).then((s) => tab.setSelection(s)) },
     { label: session.collapsed(k) ? L('展開') : L('折りたたむ'), action: () => session.setCollapsed(targets, !session.collapsed(k)) },
-    get(session.displayFrame(k), 'hidden') === true && {
-      label: L('出力表示を戻す'), action: () => session.updateDisplayFrame(k, (f) => f.set('hidden', undefined)),
-    },
     [...targets].some((t) => session.hasPortOrder(t)) && {
       label: L('ポートの並びを元に戻す'), disabled: !editable, action: () => session.resetPortOrder(targets),
     },
@@ -944,7 +870,7 @@ function BoundaryBars({ b, zoom, screen, drag, onDown }: {
   )
 }
 
-// ---- Groups, notes, output frames ------------------------------------------------------------
+// ---- Groups and notes ------------------------------------------------------------
 
 type ItemEvents = {
   style: CSSProperties
@@ -983,7 +909,7 @@ function GroupFrameView({ session, group, scope, zoom: z, ...ev }: { session: Pr
 
 export const noteFontSize = (n: J | undefined) => dbl(get(n, 'fontSize')) ?? 13
 
-/** Markdown sticky note; it does not take part in runs. Its text size is its own (`fontSize` in layout.json). */
+/** Markdown sticky note; it does not take part in runs. Its text size is its own (`fontSize` in layout.bin). */
 function StickyNoteView({ note, zoom: z, selected, onResize, ...ev }: { note: J; zoom: number; selected: boolean; onResize: (dx: number, dy: number) => void } & ItemEvents) {
   const color = noteColor(get(note, 'color'))
   return (
@@ -1012,44 +938,6 @@ function ResizeHandle({ onEnd }: { onEnd: (dx: number, dy: number) => void }) {
       }}>
       <Icon name="arrow.down.right.and.arrow.up.left" size={8} />
     </span>
-  )
-}
-
-/** A Card's result in its own movable frame. */
-function OutputFrameView({ session, cardKey, zoom: z, selected, onExpand, onClose, onResize, ...ev }: {
-  session: ProjectSession; cardKey: CardKey; zoom: number; selected: boolean; onExpand: () => void; onClose: () => void; onResize: (dx: number, dy: number) => void
-} & ItemEvents) {
-  const figure = session.figureState(cardKey)
-  const latest = session.displays.get(cardKey)
-  const hold = holdsDisplay(figure)
-  const settled = useRef(hold ? undefined : latest)
-  useLayoutEffect(() => { if (!hold) settled.current = latest }, [hold, latest])
-  const d = hold ? settled.current : latest
-  const stop = (e: React.PointerEvent | React.MouseEvent) => e.stopPropagation()
-  return (
-    <div className={`cv-frame${selected ? ' selected' : ''}`} {...ev} style={{ ...ev.style, padding: 8 * z, borderRadius: 8 * z, gap: 4 * z }}>
-      <div className="cv-frame-header secondary" style={{ gap: 6 * z }}>
-        <Icon name="chart.xyaxis.line" size={10 * z} style={{ color: 'var(--purple)' }} />
-        <span className="cv-ellipsis" style={{ fontSize: 10 * z, fontWeight: 700, color: 'var(--label)' }}>{session.displayName(cardKey)}</span>
-        {d && session.markForRun(d.runId) && <span style={{ fontSize: 9 * z }}>{session.markForRun(d.runId)}</span>}
-        {d && (
-          <span className="mono-digits nowrap" style={{ fontSize: 9 * z }} title={L('Run {0} の中で、この Card の {1} 回目の実行の結果', d.runId, d.invocation)}>
-            {L('Run {0} · 実行 #{1}', d.runId.slice(0, 6), d.invocation)}
-          </span>
-        )}
-        <span style={{ flex: 1 }} />
-        <button type="button" className="cv-icon-button" title={L('拡大して表示')} onPointerDown={stop} onDoubleClick={stop} onClick={(e) => { e.stopPropagation(); onExpand() }}>
-          <Icon name="arrow.up.left.and.arrow.down.right" size={11 * z} />
-        </button>
-        <button type="button" className="cv-icon-button" title={L('枠を削除（Card は残ります）')} onPointerDown={stop} onDoubleClick={stop} onClick={(e) => { e.stopPropagation(); onClose() }}>
-          <Icon name="xmark" size={11 * z} />
-        </button>
-      </div>
-      <div className="cv-frame-body" aria-busy={hold} style={{ opacity: hold ? 0.4 : 1 }}>
-        <DisplayContent display={d} zoom={z} emptyNote={session.noResultNote(cardKey)} figure={figure.mode === 'live' ? figure : undefined} />
-      </div>
-      <ResizeHandle onEnd={onResize} />
-    </div>
   )
 }
 
@@ -1085,8 +973,7 @@ function hoverContent(session: ProjectSession, scope: string[], t: HoverTarget):
   const out = session.resolution.get(fk)?.outputs.find((p) => p.name === fp)
   const inp = session.resolution.get(tk)?.inputs.find((p) => p.name === tp)
   const lines = [`${session.displayName(fk)}.${fp}  →  ${session.displayName(tk)}.${tp}`]
-  lines.push(L('型: ') + (out?.rootType ?? inp?.rootType ?? L('未解決')))
-  if (session.kind(tk) !== 'draft') lines.push(inp?.optional ? L('受け側の入力: 省略可') : L('受け側の入力: 必須'))
+  lines.push(L('型: ') + (portTypeName(out) ?? portTypeName(inp) ?? L('未解決')))
   let status = L('この Run ではまだ値が通っていません')
   const st = session.cardStates.get(fk)
   const id = session.currentRunId
@@ -1199,12 +1086,12 @@ function NoteEditor({ session, noteId, onClose }: { session: ProjectSession; not
   const [height, setHeight] = useState(dbl(get(init, 'height')) ?? 120)
   const [fontSize, setFontSize] = useState(dbl(get(init, 'fontSize')) ?? 13)
   const value = () => JSON.stringify([text, color, width, height, fontSize])
-  const [edit] = useState(() => { const e = new InlineParamEdit(); e.beginField(value(), session, (session.projectPrefix(session.scopeHolding('notes', noteId) ?? []) ?? '') + 'layout.json', ['notes', obj([['id', noteId]])], init); return e })
+  const [edit] = useState(() => { const e = new InlineParamEdit(); e.beginField(value(), session, (session.projectPrefix(session.scopeHolding('notes', noteId) ?? []) ?? '') + 'layout.bin', ['notes', obj([['id', noteId]])], init); return e })
   const reload = () => {
     const n = session.note(noteId)
     const t = str(get(n, 'text')) ?? '', c = str(get(n, 'color')) ?? 'yellow', w = dbl(get(n, 'width')) ?? 240, h = dbl(get(n, 'height')) ?? 120, f = dbl(get(n, 'fontSize')) ?? 13
     setText(t); setColor(c); setWidth(w); setHeight(h); setFontSize(f)
-    edit.beginField(JSON.stringify([t, c, w, h, f]), session, (session.projectPrefix(session.scopeHolding('notes', noteId) ?? []) ?? '') + 'layout.json', ['notes', obj([['id', noteId]])], n)
+    edit.beginField(JSON.stringify([t, c, w, h, f]), session, (session.projectPrefix(session.scopeHolding('notes', noteId) ?? []) ?? '') + 'layout.bin', ['notes', obj([['id', noteId]])], n)
   }
   const apply = (overwrite = false) => edit.commitField(session, value(), overwrite, n => {
     if (!(n instanceof JObj)) return n
@@ -1252,7 +1139,7 @@ function GroupEditor({ session, scope, groupId, onClose }: { session: ProjectSes
     return n
   }
   const value = () => JSON.stringify([name, color, [...members].sort(), [...outputs].sort()])
-  const [edit] = useState(() => { const e = new InlineParamEdit(); e.beginField(value(), session, (session.projectPrefix(scope) ?? '') + 'layout.json', ['groups', obj([['id', groupId]])], init); return e })
+  const [edit] = useState(() => { const e = new InlineParamEdit(); e.beginField(value(), session, (session.projectPrefix(scope) ?? '') + 'layout.bin', ['groups', obj([['id', groupId]])], init); return e })
   const reload = () => {
     const g = session.groups(scope).find(g => str(g.get('id')) === groupId)
     const n = str(g?.get('name')) ?? '', c = str(g?.get('color')) ?? 'blue'
@@ -1261,7 +1148,7 @@ function GroupEditor({ session, scope, groupId, onClose }: { session: ProjectSes
       const c = str(get(o, 'card')), p = str(get(o, 'port')); return c && p ? [`${c}\t${p}`] : []
     }))
     setName(n); setColor(c); setMembers(m); setOutputs(o)
-    edit.beginField(JSON.stringify([n, c, [...m].sort(), [...o].sort()]), session, (session.projectPrefix(scope) ?? '') + 'layout.json', ['groups', obj([['id', groupId]])], g)
+    edit.beginField(JSON.stringify([n, c, [...m].sort(), [...o].sort()]), session, (session.projectPrefix(scope) ?? '') + 'layout.bin', ['groups', obj([['id', groupId]])], g)
   }
   const apply = (overwrite = false) => edit.commitField(session, value(), overwrite, g => {
     if (!(g instanceof JObj)) return g

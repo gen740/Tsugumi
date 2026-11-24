@@ -1,8 +1,7 @@
 # Manual execution baseline
 
 These are operator-run measurement tools, restored from the two probes removed
-by `58079032` and updated for the current Card inputs/report/result, ports and
-public RPC. They are not pytest tests, are not named `test_*.py`, and are not
+by `58079032` and updated for the Card ABI, ports and public RPC. They are not pytest tests, are not named `test_*.py`, and are not
 registered with CTest or CI. No product implementation, cache, worker ownership,
 retention policy or execution setting is patched by these tools.
 
@@ -26,7 +25,8 @@ macOS uses the native Darwin daemon and worker. No app, foreground interaction,
 VM controller or shared Linux VM is needed. Linux needs the sandbox facilities
 and dependencies described in [building](../../docs/INSTALL.md#building-from-source).
 Run as an ordinary user on a disk-backed filesystem. The generated benchmark
-Cards use `sandbox: true` and `recordIO: false` on both paths.
+Cards use default filesystem isolation on both paths, and `recordIO: true` so
+that their declared `metrics` output can be read back.
 Only the resident scenario sets `reuseWorker: true`.
 
 The existing `tests/core/harness/daemon.py` starts a real `tsugumid`, with its
@@ -39,9 +39,9 @@ OS caches and worker prefetch remain in effect: "first" does not mean a cold
 machine or an empty store. Local runs precede remote runs.
 
 For another build tree, set `TSUGUMI_BUILD_DIR` before starting Python. The harness
-also accepts `TSUGUMID`, `TSUGUMI_WORKER`, `TSUGUMI_SDK_DIR`, and
+also accepts `TSUGUMID`, `TSUGUMI_WORKER`, `TSUGUMI_NIX_DIR`, and
 `TSUGUMI_PY_BINDINGS` (normally `$TSUGUMI_BUILD_DIR/generated/python`). Bindings,
-daemon, SDK and worker must match this checkout. `TSUGUMI_WORKER` selects the
+daemon, Card evaluator and worker must match this checkout. `TSUGUMI_WORKER` selects the
 harness's `--worker` fallback; a worker supplied by a Card's built environment
 still follows the normal product selection rules.
 
@@ -99,8 +99,8 @@ under `bundles[].setup` and excluded from measured samples. It intentionally
 benchmarks replay of the saved File input, including ordinary input staging.
 File generation uses buffered writes without fsync; it is not a disk durability
 benchmark. Sparse source allocation does not imply sparse-preserving hand-over.
-The small report emitted by each benchmark Card adds the same instrumentation
-path across comparable builds; its own encoding and report publication are
+The small `metrics` output each benchmark Card returns adds the same
+instrumentation path across comparable builds; its encoding and recording are
 outside `run_ms` but inside the invocation.
 
 ## Reading the table and JSON
@@ -127,7 +127,7 @@ sample counts and totals; for N=1, median and p95 coincide.
 | `execute_ms` | Existing execute StageTime; a coarse envelope, including more than the Card body |
 | `worker_call_ms` | Already emitted execute RunTimeline end minus start; on local code Cards this covers worker.call, including SDK work; it excludes acquisition/input staging and later output copies. Events may be coalesced, so availability/sample counts can differ. Remote has no corresponding event |
 | `validate_ms`, `save_ms` | Recorded output validation and save StageTime intervals; save closes just before the completion transaction, and does not time its final commit |
-| `run_ms` | Monotonic duration inside benchmark main, including file writes/reads but excluding SDK encoding and report publication; emitted through Report and read from RunRecordRequest |
+| `run_ms` | Monotonic duration inside the benchmark's `run`, including file writes/reads but excluding SDK encoding and recording; returned as the declared `metrics` output and read with RunValueReadRequest |
 | `output_logical_bytes`, `output_allocated_bytes` | Benchmark-generated file sizes and `st_blocks * 512` before worker hand-over (Directory sums file entries, not directory metadata); JSON only |
 | `input_read_bytes` | Bytes actually read by the consumer's benchmark body, not bytes staged by the core; JSON only |
 | `Card PIDs` | Number of distinct local PID values reported by measured Card bodies, not a spawn counter; PID recycling is possible. Remote namespace PIDs are retained in JSON but are not counted as distinct host processes |
@@ -203,17 +203,14 @@ or removing abandoned state.
 ```sh
 nix develop -c python3 tests/bench/measure_stages.py collatz --out /tmp/stages.json
 nix develop -c python3 tests/bench/measure_stages.py builtin-chain --out /tmp/chain.json
-nix develop -c python3 tests/bench/measure_stages.py large-values --out /tmp/values.json
 nix develop -c python3 tests/bench/measure_language_workers.py --languages r jl --out /tmp/languages.json
 ```
 
 The stage probe runs a first pass and rerun separately, on native Darwin or Linux.
 `--project /absolute/project --start card/path` can probe another current-format
-project. `large-values` retains the original 100,000-element Python → C++ → shell
-fixture, reusing the current source literals in `test_cards_container.py` without
-importing pytest/VM fixtures. `builtin-chain` uses current Input ports.
-The language probe keeps the unchanged Collatz R/Julia branches and checks that
-27 produces 112 values. Its first/rerun records and per-stage times allow SDK or
+project. `builtin-chain` uses current Input ports.
+The language probe keeps the Collatz R/Julia branches and checks that 27
+produces 112 values, read from collect's declared `sequence` output. Its first/rerun records and per-stage times allow SDK or
 worker-build comparisons on a fixed daemon/nixpkgs. Both probes keep run data.
 
 ## Static validation without execution

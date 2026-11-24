@@ -3,52 +3,12 @@
 // Value 0 is always a reserved "invalid" marker so that an omitted field is
 // detected by semantic validation instead of silently meaning something.
 
-namespace Tsugumi.Data;
+include "card_enums.fbs";
 
-enum FailureKind : ushort {
-  unspecified = 0,
-  invalid_request = 1,
-  protocol_mismatch = 2,
-  unauthenticated = 3,
-  permission_denied = 4,
-  not_found = 5,
-  invalid_path = 6,
-  invalid_range = 7,
-  invalid_cursor = 8,
-  revision_conflict = 9,
-  hash_conflict = 10,
-  external_change = 11,
-  operation_conflict = 12,
-  busy = 13,
-  timeout = 14,
-  resource_limit = 15,
-  invalid_document = 16,
-  validation_failed = 17,
-  input_missing = 18,
-  execution_limit = 19,
-  cancelled = 20,
-  interrupted = 21,
-  nix_failed = 22,
-  worker_failed = 23,
-  output_invalid = 24,
-  persistence_failed = 25,
-  integrity_error = 26,
-  recording_disabled = 27,
-  unsupported = 28,
-  internal_error = 29,
-  type_mismatch = 30,
-  /// A save from a model widens Card permissions (network, sandbox off, host
-  /// folders) the user has not approved: one `permission` argument each.
-  approval_required = 31,
-  value_conflict = 32,
-  source_changed = 33,
-}
+namespace Tsugumi.Data;
 
 enum Severity : ubyte { unspecified = 0, error = 1, warning = 2 }
 
-enum PortKind : ubyte { unspecified = 0, File = 1, Directory = 2, FlatBuffer = 3 }
-
-enum ExecutionShape : ubyte { unspecified = 0, single = 1, list = 2 }
 
 enum RunState : ubyte {
   unspecified = 0, idle = 1, queued = 2, preparing = 3, running = 4,
@@ -62,9 +22,9 @@ enum CardState : ubyte {
 
 enum RemoteExecutionState : ubyte { unspecified = 0, queued, running, disconnected, cancelling, succeeded, failed, cancelled, interrupted }
 
-/// Stages of one invocation, in order: prepare (input/output contracts and
-/// SDK files) -> evaluate (Nix) -> build -> execute -> validate (outputs) ->
-/// save (records, artifacts). Stages a Card does not need are skipped.
+/// Stages of one invocation, in order: prepare (port schemas) -> evaluate
+/// (Nix) -> build -> execute -> validate (outputs) -> save (records,
+/// artifacts). Stages a Card does not need are skipped.
 enum Phase : ubyte { unspecified = 0, evaluate = 1, build = 2, execute = 3, validate = 4, prepare = 5, save = 6 }
 
 /// How a stage of an invocation ended. `running` is a stage still open;
@@ -72,7 +32,7 @@ enum Phase : ubyte { unspecified = 0, evaluate = 1, build = 2, execute = 3, vali
 /// build/worker kept from an earlier invocation of the same run).
 enum StageOutcome : ubyte { unspecified = 0, running = 1, done = 2, cached = 3, reused = 4, failed = 5, cancelled = 6 }
 
-/// build: what SDK preparation, Nix evaluation and build printed (kept apart
+/// build: what schema preparation, Nix evaluation and build printed (kept apart
 /// from the Card's own stderr so logs can be shown by stage).
 enum LogStream : ubyte { unspecified = 0, standard_output = 1, standard_error = 2, journal = 3, build = 4 }
 
@@ -80,10 +40,6 @@ enum ValueSide : ubyte { unspecified = 0, input = 1, output = 2 }
 
 enum ValidateMode : ubyte { unspecified = 0, structure = 1, executable = 2 }
 
-enum FormatLanguage : ubyte { unspecified = 0, cpp = 1, python = 2, bash = 3, nix = 4, json = 5, fbs = 6 }
-
 enum OperationState : ubyte { unspecified = 0, unknown = 1, pending = 2, completed = 3 }
-
-enum SDKState : ubyte { unspecified = 0, pending = 1, ready = 2 }
 
 enum SourceKind : ubyte { unspecified = 0, file = 1, directory = 2 }

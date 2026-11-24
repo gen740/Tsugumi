@@ -1,21 +1,8 @@
 {
   "type": "code",
-  "language": "python",
   "inputs": [
     {
       "name": "atoms"
-    }
-  ],
-  "params": [
-    {
-      "name": "cutoff",
-      "type": "double",
-      "data": 4.0
-    },
-    {
-      "name": "contact_angstrom",
-      "type": "double",
-      "data": 8.0
     }
   ]
 }

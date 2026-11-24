@@ -71,6 +71,11 @@ table EnvironmentRequest {
   origins:[string];
   folders:[string];
 }
+// Why a project daemon could not open its project (its control folder's
+// server.startup-error). kind: incompatible_history, resource_limit or
+// project_open_failed; found, expected and source describe a history version
+// mismatch.
+table StartupError { kind:string; found:string; expected:string; source:string; message:string; }
 // Host-selected attached roots in the running project environment.
 table AttachedRoot { host_path:string (required); execution_path:string (required); }
 table EnvironmentState {
@@ -89,7 +94,7 @@ table EnvironmentState {
   recovery:string;
   log:string;
   // The daemon's structured history mismatch diagnostic, for explicit recovery.
-  startup_error_json:string;
+  startup_error:StartupError;
   execution_scope_unavailable:bool;
   folders:[string];
   attached_roots:[AttachedRoot];
@@ -146,7 +151,7 @@ table RuntimeFile { path:string (required); ok:bool; }
 table HostHome {
   home:string (required); documents:string (required); repo:string;
   host_folders:bool; vm:bool; nix:bool;
-  tsugumid:RuntimeFile; worker:RuntimeFile; sdk:RuntimeFile;
+  tsugumid:RuntimeFile; worker:RuntimeFile; nix_dir:RuntimeFile;
 }
 // Shows a file or folder in Finder or the file manager.
 table HostRevealRequest { path:string (required); }
@@ -244,13 +249,21 @@ table ProjectConnect {
   from_card:string (required); from_port:string (required);
   to_card:string (required); to_port:string (required);
 }
-table ProjectMakeSubgraph { project_path:string; cards:[string]; id:string (required); name:string; }
+table ProjectMakeSubgraph { project_path:string; cards:[string]; id:string (required); }
 // Source paths name a definition or an external folder in the current project.
 // The host copies its complete document/source closure and places the new Card.
-table ProjectCopyItem { from:string (required); id:string (required); name:string; x:double; y:double; demo:string; folder:string; }
+table ProjectCopyItem {
+  from:string (required);
+  id:string (required);
+  x:double;
+  y:double;
+  demo:string;
+  folder:string;
+}
 table ProjectCopy { project_path:string; items:[ProjectCopyItem]; copy_connections:bool; }
 table ProjectImport { project_path:string; path:string (required); id:string (required); x:double; y:double; }
-table ProjectCreateCard { project_path:string; id:string (required); template:string (required); name:string; x:double; y:double; automatic_placement:bool; }
+enum BuiltinCard:ubyte { Draft, Trigger, InputValue, BooleanInput, Merge, Collect }
+table ProjectCreateCard { project_path:string; id:string (required); kind:BuiltinCard; x:double; y:double; automatic_placement:bool; }
 enum ProjectLayoutAction:ubyte { Arrange, Untangle }
 table ProjectLayout {
   project_path:string;
@@ -259,22 +272,55 @@ table ProjectLayout {
   scene:LayoutScene;
 }
 table ProjectMove {
-  project_path:string; cards:[string]; notes:[string]; frames:[string];
+  project_path:string; cards:[string]; notes:[string];
   dx:double; dy:double; snap:double; scene:LayoutScene;
 }
 table ProjectDocument { path:string (required); present:bool = true; json:string; }
 // Raw editors refuse every stale revision, including unrelated changes.
 table ProjectReplaceDocuments { expected_rev:ulong; documents:[ProjectDocument]; }
 enum ProjectSelectionAction:ubyte { Place, Delete, DeleteDefinitions, DisconnectInputs, DisconnectOutputs, RemoveConnections }
-table ProjectSelection { project_path:string; action:ProjectSelectionAction; cards:[string]; notes:[string]; frames:[string]; connections_json:string; x:double; y:double; scene:LayoutScene; }
+table ProjectSelection { project_path:string; action:ProjectSelectionAction; cards:[string]; notes:[string]; connections_json:string; x:double; y:double; }
 table ProjectReload { expected_rev:ulong; approved_permissions:[string]; }
-union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout, ProjectCopy, ProjectImport, ProjectCreateCard, ProjectMove, ProjectReplaceDocuments, ProjectSelection, ProjectReload }
+enum TemplateStore:ubyte { Unspecified, Project, Host }
+table TemplateEntry { store:TemplateStore; name:string (required); }
+table TemplateListRequest { project_id:string (required); }
+table TemplateList { entries:[TemplateEntry]; }
+// A folder path or a public HTTPS Git repository, ref and template subdirectory.
+table TemplateFolder { path:string (required); }
+table TemplateGit { url:string (required); ref:string (required); subdirectory:string (required); }
+union TemplateSource { TemplateFolder, TemplateGit }
+table TemplateAdd { name:string (required); source:TemplateSource; }
+table HostTemplateAddRequest { addition:TemplateAdd (required); }
+// The project store belongs to the root project, even when copying into a subgraph.
+table ProjectTemplateCopy {
+  project_path:string; store:TemplateStore; name:string (required); x:double; y:double;
+}
+table ProjectUpdateNixPathLock {
+  project_path:string;
+  /// Omitted locks every declared name and removes obsolete lines.
+  name:string;
+}
+table ProjectRewriteParamLiteral {
+  card:Tsugumi.Data.CardPath (required);
+  name:string (required);
+  /// One Nix value of the same type as the current literal.
+  literal:string (required);
+  expected_rev:uint64 = null;
+}
+union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout, ProjectCopy, ProjectImport, ProjectCreateCard, ProjectMove, ProjectReplaceDocuments, ProjectSelection, ProjectReload, ProjectTemplateCopy, TemplateAdd, ProjectUpdateNixPathLock, ProjectRewriteParamLiteral }
 table ProjectOperateRequest {
   project_id:string (required);
   op_id:string (required);
   body:ProjectOperationBody;
 }
 table ProjectOperationResult { reply:Tsugumi.RPC.Reply (required); }
+
+table RunCategoryDeleteRequest {
+  project_id:string (required);
+  run_id:string (required);
+  category:Tsugumi.RPC.RunRecordCategory;
+  op_id:string (required);
+}
 
 // Host policy owns the permission catalog. Unknown ids must still be displayed
 // verbatim by clients, and cannot become standing approvals implicitly.
@@ -319,7 +365,7 @@ table ExecutionService { id:string (required); name:string (required); endpoint:
 table ExecutionServices { services:[ExecutionService]; host_public_key:string (required); }
 table ExecutionAuthorization { endpoint:string (required); capability_file:string (required); available:bool; }
 
-table ProjectDefaults { nixpkgs_pin:string (required); agent_exclude:[string]; }
+table ProjectDefaults { agent_exclude:[string]; }
 table ProjectInfo { path:string (required); name:string (required); }
 table ProjectLocation { path:string (required); }
 // opened_at is Unix epoch milliseconds. Forget never removes project folders.
@@ -334,7 +380,7 @@ table ModelList { models:[Model]; }
 // client says what its canvas draws in one scope (a Card's size and where its
 // ports are depend on how the window draws them and on its grid), the answer is
 // a proposal, and the client saves it with ProjectSave as one edit, as it saves
-// any change of layout.json. Nothing is read from or written to the document.
+// any change of layout.bin. Nothing is read from or written to the document.
 
 table LayoutPort {
   name:string (id: 0, required);
@@ -353,8 +399,7 @@ table LayoutCard {
   /// In the order drawn.
   inputs:[LayoutPort] (id: 5);
   outputs:[LayoutPort] (id: 6);
-  /// Its ports may be drawn in another order (not those of a branch
-  /// and the like, whose places have a meaning).
+  /// Its ports may be drawn in another order.
   reorderable:bool (id: 7);
 }
 
@@ -365,30 +410,13 @@ table LayoutWire {
   to_port:string (id: 3, required);
 }
 
-/// An output frame (`id` is its Card's) or a note, where it is drawn now.
+/// A note, where it is drawn now.
 table LayoutBox {
   id:string (id: 0, required);
   x:double (id: 1);
   y:double (id: 2);
   width:double (id: 3);
   height:double (id: 4);
-}
-
-/// A rectangle in Card-local coordinates. Anchors multiply the measured Card
-/// width/height; x/y are world-unit offsets. Clients only transform coordinates.
-table DisplayGeometry {
-  anchor_x:double;
-  anchor_y:double;
-  x:double;
-  y:double;
-  width:double;
-  height:double;
-}
-/// -> DisplayGeometries. Host-owned default output-frame geometry for both flows.
-table DisplayGeometryRequest {}
-table DisplayGeometries {
-  top_to_bottom:DisplayGeometry (required);
-  left_to_right:DisplayGeometry (required);
 }
 
 /// One port of a Card in Card and the inner Card it goes to or comes from.
@@ -410,23 +438,21 @@ table LayoutBar {
 table LayoutScene {
   /// "topToBottom" or "leftToRight".
   flow:string (id: 0, required);
-  /// The grid's spacing (frames, notes and layers go on it; 20 when 0).
+  /// The grid's spacing (notes and layers go on it; 20 when 0).
   grid:double (id: 1);
   /// The grid is on: Cards are placed on it.
   snap:bool (id: 2);
   cards:[LayoutCard] (id: 3);
   wires:[LayoutWire] (id: 4);
-  /// The output frames shown.
-  frames:[LayoutBox] (id: 5);
-  notes:[LayoutBox] (id: 6);
+  notes:[LayoutBox] (id: 5);
   /// Inside a Card in Card only.
-  inputs:LayoutBar (id: 7);
-  outputs:LayoutBar (id: 8);
+  inputs:LayoutBar (id: 6);
+  outputs:LayoutBar (id: 7);
 }
 
 
 
-/// The order a Card's ports are drawn in (layout.json's inputOrder / outputOrder).
+/// The order a Card's ports are drawn in (layout.bin's inputOrder / outputOrder).
 
 /// What LayoutArrange or LayoutUntangle would change; the client saves it.
 
@@ -434,11 +460,9 @@ table VersionCanvasCard {
   id:string (id: 0, required);
   x:double (id: 1);
   y:double (id: 2);
-  /// What it is, which decides its shape: trigger, input, branch, fork,
-  /// merge, draft, subgraph or code.
+  /// The Card type that determines its shape.
   kind:string (id: 3, required);
-  /// The inputs of a Merge or the outputs of a Fork, which decide its width;
-  /// 0 for others.
+  /// The number of inputs of a Merge, or 0 for other Cards.
   fan:uint32 (id: 4);
   /// Folded on the canvas: only its header shows.
   collapsed:bool (id: 5);
@@ -459,18 +483,23 @@ table VersionCanvas {
   flow:string (id: 2, required);
 }
 
-/// -> LayoutValidated. Validate before saving; removed_cards cleans deleted
-/// Card references. The caller includes the returned JSON in the same save.
+/// A layout view is the JSON object hostd and the UIs edit for a project's
+/// layout.bin and notes/<id>.md: {"flow", "cards": {key: place},
+/// "boundaries": {scope: bars}, "boundary", "notes": [{id, text, ...}],
+/// "groups"}.
+/// -> LayoutValidated. Validate a layout view before saving; removed_cards
+/// cleans deleted Card references. The caller includes the returned view in
+/// the same save.
 table LayoutValidateRequest { json:string (required); removed_cards:[string]; }
 table LayoutValidated { json:string (required); }
 /// Pure display derivation for one workflow. definitions_json maps Card ids to
 /// their _card.json text. Same document yields the same places on every client.
-/// The returned layout is presentation only; opening never saves it.
-table LayoutCompleteRequest { project_json:string (required); layout_json:string (required); definitions_json:string (required); }
-/// -> VersionCanvas. Draw the raw definition data and layout returned by the
-/// project's VersionCanvasRequest; no document is changed.
+/// The returned layout view is presentation only; opening never saves it.
+table LayoutCompleteRequest { project_json:string (required); layout:string (required); definitions_json:string (required); }
+/// -> VersionCanvas. Draw the raw definition data and layout.bin returned by
+/// the project's VersionCanvasRequest; no document is changed.
 table VersionCanvasRequest {
-  layout_json:string (required);
+  layout:[ubyte] (required);
   cards:[VersionCanvasCard];
   wires:[VersionCanvasWire];
 }
@@ -478,32 +507,29 @@ table VersionCanvasRequest {
 /// Read the project version’s comment changes from its first parent.
 table VersionCommentsRequest { project:string (required); commit:string (required); }
 
-/// -> InputTypes. Read each incoming wire's source, kind and complete input
-/// definition as Card code sees it. May help when writing a Card; routing types
-/// are resolved automatically. language defaults to the Card implementation;
-/// pass it for a Draft, or "schema" for plain tables. output_port selects
-/// one upstream output instead. No result size limit.
+/// -> InputTypes. Read the project revision and each incoming wire's source,
+/// port, kind, resolution state and full FlatBuffers schema text.
+/// output_port selects one upstream output instead. No result size limit.
 table InputTypesRequest {
   project:string (required);
   card:Tsugumi.Data.CardPath (required);
   output_port:string;
-  language:string;
   at_rev:ulong = null;
 }
 table InputType {
   port:string (required);
   source_card:Tsugumi.Data.CardPath;
   source_port:string;
-  /// value, file or directory; empty when unresolved.
-  kind:string;
   /// no_source, unresolved or resolved.
   state:string (required);
+  /// Complete .fbs schema when resolved.
   definition:string;
 }
-table InputTypes { rev:ulong = null; language:string; inputs:[InputType]; }
+table InputTypes { rev:ulong = null; inputs:[InputType]; }
 
-// Pure editing support: paths select a language and label diagnostics, never files.
-table FileFormatRequest { path:string (required); text:string (required); language:Tsugumi.Data.FormatLanguage; }
+// Format supplied editor text. The .json or .nix extension selects the formatter
+// and the supplied path labels diagnostics.
+table FileFormatRequest { path:string (required); text:string (required); }
 table FileFormatResult { text:string (required); diagnostics:[Tsugumi.Data.Diagnostic]; }
 // Language applies on every read, including commits/runs created by another client.
 table HostVersionDiffRequest { project:string (required); commit:string (required); from_commit:string; }
@@ -532,10 +558,12 @@ union RequestPayload {
   ProjectOperateRequest,
 
   ModelSelectionRequest,
-  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest, EnvironmentListRequest,
+  DemoListRequest, DemoReadRequest, VersionNoteRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest, EnvironmentListRequest,
   HostTraceRequest:Tsugumi.Trace.HostTraceRequest, HostPageRequest,
   HostHomeRequest, HostRevealRequest, HostFolderListRequest, HostFolderCreateRequest,
   CardSecretListRequest, CardSecretSetRequest,
+  RunCategoryDeleteRequest,
+  TemplateListRequest, HostTemplateAddRequest,
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -547,9 +575,11 @@ union ReplyPayload {
   LayoutValidated, VersionCanvas,
   FileFormatResult, VersionDiff:Tsugumi.RPC.VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   PermissionKinds,
-  ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier, InputTypes, HostActivity,
+  ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, Identifier, InputTypes, HostActivity,
   HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList, HostHome, FolderListing,
   CardSecretList,
+  RunCategoryDeleteResult:Tsugumi.RPC.RunCategoryDeleteResult,
+  TemplateList,
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

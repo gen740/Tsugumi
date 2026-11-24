@@ -1,4 +1,6 @@
 """A multilayer perceptron: two fully connected hidden layers, trained on the CPU with a fixed seed."""
+from card import Input, Output, params
+from mnist.Result import ResultT
 import os
 
 # One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
@@ -30,21 +32,21 @@ def confusions(ax, y, pred):
 def result(name, settings, digest, y, pred, fit, predict):
     model = name
     predictions = pred.astype(np.uint8)
-    return {'result': {
-        'model': model,
-        'settings': settings,
-        'digest': digest,
-        'accuracy': float(np.mean(pred == y)),
-        'fit_seconds': fit,
-        'predict_seconds': predict,
-        'predictions': predictions,
-    }}
+    return Output(result=ResultT(
+        model=model,
+        settings=settings,
+        digest=digest,
+        accuracy=float(np.mean(pred == y)),
+        fitSeconds=fit,
+        predictSeconds=predict,
+        predictions=predictions,
+    ))
 
 
-def main(inputs, report):
+def run(inputs: Input) -> Output:
     params = inputs.params
     hidden, epochs, seed = params.hidden, params.epochs, params.seed
-    data = np.load(inputs.data.value.decode())
+    data = np.load(inputs.require("data").open() / "subset.npz")
     test_y = data["test_labels"]
     train_x = torch.from_numpy(data["train_images"])
     train_y = torch.from_numpy(data["train_labels"]).long()
@@ -70,7 +72,7 @@ def main(inputs, report):
             optimizer.step()
             total += loss.item() * len(batch)
         losses.append(total / len(order))
-        report.log(f"epoch {epoch + 1}: train loss {losses[-1]:.4f}")
+        print(f"epoch {epoch + 1}: train loss {losses[-1]:.4f}")
     fit = time.process_time() - start
 
     start = time.process_time()
@@ -78,7 +80,7 @@ def main(inputs, report):
         pred = model(test_x).argmax(dim=1).numpy()
     predict = time.process_time() - start
     accuracy = np.mean(pred == test_y)
-    report.log(f"mlp hidden={hidden} epochs={epochs}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s")
+    print(f"mlp hidden={hidden} epochs={epochs}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s")
 
     fig, (left, right) = plt.subplots(1, 2, figsize=(9, 4.2), layout="constrained")
     confusions(left, test_y, pred)
@@ -86,6 +88,6 @@ def main(inputs, report):
     right.set(xlabel="Epoch", ylabel="Loss on the training data", ylim=(0, None), title="How training went")
     right.grid(alpha=0.3)
     fig.suptitle(f"MLP, width {hidden} × 2 layers, {epochs} epochs: accuracy {accuracy:.4f}, training {fit:.2f} s, prediction {predict:.3f} s", fontsize=11)
-    report.figure()
+    # TODO(open): Port the demo display.
 
     return result('mlp', f'hidden={hidden}, epochs={epochs}', str(data['digest']), test_y, pred, fit, predict)

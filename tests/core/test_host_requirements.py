@@ -8,14 +8,14 @@ from tsugumi_client import change, new_id, text
 def test_host_requirements_follow_acceptance_and_keep_card_identity(tmp_path, core_factory):
     root = tmp_path / "project"
     put(root / "tsugumi.json", json.dumps({
-        "pkgsPath": "tsugumi:default",
+        "nixPath": [],
         "canvas": {"cards": [{"id": "a"}], "connections": []},
     }))
-    card = {"type": "code", "hostFolders": [{"name": "data", "path": "/data"}]}
+    card = {"type": "code", "grants": {"hostPaths": [{"name": "data", "path": "/data"}]}}
     put(root / "definitions/a/_card.json", json.dumps(card))
     put(root / "definitions/unused/_card.json", json.dumps({
         "type": "code",
-        "hostFolders": [{"name": "ignored", "path": "/ignored", "write": True}],
+        "grants": {"hostPaths": [{"name": "ignored", "path": "/ignored", "write": True}]},
     }))
     client = core_factory(project_root=root, mocked_builds=True).connect()
 
@@ -26,7 +26,7 @@ def test_host_requirements_follow_acceptance_and_keep_card_identity(tmp_path, co
 
     revision, folders = requirements()
     assert folders == [(["a"], "/data", False)]
-    card["hostFolders"][0]["write"] = True
+    card["grants"]["hostPaths"][0]["write"] = True
     put(root / "definitions/a/_card.json", json.dumps(card))
     assert requirements() == (revision, folders)
     client.call("ProjectReloadRequest", opId=new_id(), origin="test", baseRev=revision,

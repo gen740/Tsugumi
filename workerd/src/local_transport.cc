@@ -8,6 +8,7 @@
 
 #include "tsugumi/protocol/trace_codec.hh"
 #include "tsugumi/workerd/local.hh"
+#include "tsugumi/workerd/protocol.hh"
 
 namespace tsugumi::workerd {
 namespace {
@@ -30,7 +31,14 @@ auto transfer(int fd, void* buffer, size_t length, bool writing) -> void {
 }
 }  // namespace
 
+auto clear_spawn_secrets(Tsugumi::LocalWorker::MessageT& message) -> void {
+  if (!message.spawn) return;
+  for (auto& entry : message.spawn->secrets) clear_secret(entry->value);
+  message.spawn->secrets.clear();
+}
+
 LocalPacket::~LocalPacket() {
+  if (message) clear_spawn_secrets(*message);
   for (int fd : descriptors)
     if (fd >= 0) ::close(fd);
 }
@@ -41,6 +49,10 @@ auto send_local(int fd, const Tsugumi::LocalWorker::MessageT& message,
   Tsugumi::LocalWorker::FinishMessageBuffer(
       builder, Tsugumi::LocalWorker::Message::Pack(builder, &message));
   const auto size = builder.GetSize();
+  struct Wipe {
+    std::span<char> bytes;
+    ~Wipe() { wipe_secret(bytes); }
+  } wipe{{reinterpret_cast<char*>(builder.GetBufferPointer()), size}};
   if (!size || size > kMaxLocalFrame)
     throw std::runtime_error("local workerd message too large");
   const std::array<unsigned char, 4> prefix{
@@ -120,6 +132,10 @@ auto receive_local(int fd, LocalPacket& packet, trace::Link* link) -> bool {
   if (!size || size > kMaxLocalFrame)
     throw std::runtime_error("invalid local workerd frame length");
   std::string bytes(size, '\0');
+  struct Wipe {
+    std::string& bytes;
+    ~Wipe() { clear_secret(bytes); }
+  } wipe{bytes};
   transfer(fd, bytes.data(), bytes.size(), false);
   flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(bytes.data()),
                                  bytes.size());

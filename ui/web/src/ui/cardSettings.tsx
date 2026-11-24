@@ -3,7 +3,6 @@
 // "Apply". Every Card has its own definition folder, so what is edited here is
 // this Card only (inside a Card in Card: the Card of the external, this
 // project's copy).
-import inputTemplates from '../../../shared/templates/input/Sources/InputTemplates/inputs.json'
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import * as H from '../../shared/gen/tsugumi/host'
 import { api } from '../api'
@@ -12,11 +11,11 @@ import { app } from '../model/app'
 import { Observable, useObserve } from '../model/observable'
 import { OutputCatalogResult, parseOutputCatalog } from '../model/outputCatalog'
 import { prefs } from '../model/prefs'
-import { CardComment, CardKey, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
+import { portTypeName, CardComment, CardKey, CardParameter, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parameterInputLiteral, path, PortInfo, ProjectSession } from '../model/session'
 import { CardEditorCategory, CATEGORY } from '../model/workspace'
 import { BFBS } from '../../shared/bfbs'
-import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, parse, serialize, str, tryParse } from '../../shared/json'
-import { D, RPCFailure, s, sOpt, sha256Hex } from '../wire/rpc'
+import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, serialize, str } from '../../shared/json'
+import { D, R, RPCFailure, s, sOpt, sha256Hex } from '../wire/rpc'
 import { CardNodeView } from './cardNode'
 import { Button, Confirm, Disclosure, Empty, Form, HSplit, Prompt, Row, Section, Select, showMenu, Spinner, TextField, Toggle, Value } from './controls'
 import { CodeEditor, EditorMarker } from './editor'
@@ -26,6 +25,7 @@ import { Icon } from './icons'
 import { FolderPicker } from './sidebar'
 import { SymbolPicker } from './symbolPicker'
 import { L } from '../i18n'
+import { splitCardNotes } from '../model/documents'
 import { InlineParamEdit, RevisionEdit, RevisionEditNotice } from './revisionEdit'
 
 /** Whether a source file's content is known. A file that could not be read
@@ -36,6 +36,8 @@ export type SourceLoad = { state: 'loading' } | { state: 'loaded' } | { state: '
  *  is open (the Agent, the canvas): settings and files not touched here take
  *  the new content; changes on both sides require an explicit overwrite or
  *  reload choice. */
+const inputParameters = (boolean: boolean) => `{ value = ${boolean ? 'false' : '0.0'}; }\n`
+
 export class CardEditorModel extends Observable {
   definition?: J
   meta?: J
@@ -62,7 +64,7 @@ export class CardEditorModel extends Observable {
   private baseDefinition?: J
   private baseMeta?: J
   private baseTexts = new Map<string, string>()
-  private presetOutputs?: string
+  private presetFiles = new Map<string, string>()
   /** Source hash when each file was read. */
   private baseHashes = new Map<string, string>()
 
@@ -114,35 +116,41 @@ export class CardEditorModel extends Observable {
 
   get implementation() {
     const kind = definitionKind(this.definition)
-    if (kind === 'input' && str(get(arr(get(this.definition, 'params'))?.[0], 'type')) === 'bool') return 'input_bool'
-    return kind === 'code' ? str(get(this.definition, 'language')) ?? kind : kind
+    if (kind === 'input' && (this.presetFiles.get(this.prefix + 'params.nix') === inputParameters(true) ||
+      this.session.resolution.get(this.cardKey)?.parameters?.some(p => p.name === 'value' && p.type === 'bool'))) return 'input_bool'
+    return kind
   }
 
   implementAs(value: string) {
     if (value === 'input' || value === 'input_bool') {
-      const files = inputTemplates[value]
-      this.definition = parse(files['_card.json'])
-      const p = this.outputsPath
-      if (p && !this.session.sources.has(p) && !this.removed.has(p)) {
-        const untouched = this.created.has(p) && this.presetOutputs !== undefined && this.texts.get(p) === this.presetOutputs
-        if (untouched || (!this.created.has(p) && !this.texts.has(p))) {
-          const outputs = files['_outputs.fbs'].replaceAll('@NAMESPACE@', 'card')
-          this.createFile('_outputs.fbs', outputs)
-          this.presetOutputs = outputs
-        }
-      }
-    } else if (['python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia'].includes(value)) this.definition = obj([['type', 'code'], ['language', value]])
-    else this.definition = obj([['type', value]])
+      const type = value === 'input_bool' ? 'bool' : 'double'
+      this.definition = obj([['type', 'input']])
+      this.preset('_outputs.fbs', `namespace card;\ntable Value { value:${type}; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n`)
+      this.preset('params.nix', inputParameters(value === 'input_bool'))
+    } else {
+      this.definition = obj([['type', value]])
+      for (const [file, text] of this.presetFiles)
+        if (this.created.has(file) && this.texts.get(file) === text) this.removeFile(file)
+      this.presetFiles.clear()
+    }
     if (value === 'merge') this.setSetting('inputs', [obj([['name', 'a']]), obj([['name', 'b']])])
-    if (value === 'fork') this.setSetting('outputs', [obj([['name', 'a']]), obj([['name', 'b']])])
     this.changed()
+  }
+
+  private preset(relative: string, text: string) {
+    const file = this.prefix + relative
+    if (!this.prefix || this.session.sources.has(file) || this.removed.has(file)) return
+    const untouched = this.created.has(file) && this.presetFiles.has(file) && this.texts.get(file) === this.presetFiles.get(file)
+    if (!untouched && (this.created.has(file) || this.texts.has(file))) return
+    this.createFile(relative, text)
+    this.presetFiles.set(file, text)
   }
 
   /** Source files of the definition (documents excluded), with local changes. */
   get files(): string[] {
     const prefix = this.prefix
     if (!prefix) return []
-    const docs = new Set([prefix + '_card.json', prefix + '_meta.json'])
+    const docs = new Set([prefix + '_card.json', prefix + 'README.md', prefix + '_comments.json'])
     const all = new Set([...this.session.sourcePaths.filter((p) => p.startsWith(prefix) && !docs.has(p)), ...this.created])
     for (const p of this.removed) all.delete(p)
     return [...all].sort()
@@ -167,7 +175,7 @@ export class CardEditorModel extends Observable {
     this.baseMeta = clone(this.meta)
     this.texts = new Map()
     this.baseTexts = new Map()
-    this.presetOutputs = undefined
+    this.presetFiles.clear()
     this.baseHashes = new Map()
     this.loads = new Map()
     for (const [p, t] of keep) {
@@ -299,7 +307,7 @@ export class CardEditorModel extends Observable {
     const prefix = this.prefix
     if (!prefix || !rel) return
     const p = prefix + rel
-    if (p === this.outputsPath) this.presetOutputs = undefined
+    if (!this.created.has(p)) this.presetFiles.delete(p)
     this.removed.delete(p)
     this.created.add(p)
     const hash = this.session.sources.get(p)?.hash
@@ -313,7 +321,8 @@ export class CardEditorModel extends Observable {
   async rename(p: string, rel: string): Promise<boolean> {
     const target = this.prefix + rel
     if (target === p) return true
-    if (p === this.outputsPath || target === this.outputsPath) this.presetOutputs = undefined
+    this.presetFiles.delete(p)
+    this.presetFiles.delete(target)
     const origin = this.renames.get(p) ?? p
     const hash = this.baseHashes.get(p) ?? this.session.sources.get(origin)?.hash
     const text = this.texts.get(p), base = this.baseTexts.get(p), load = this.loads.get(p)
@@ -359,7 +368,8 @@ export class CardEditorModel extends Observable {
   }
 
   get recoveryText(): string {
-    return `_card.json\n${this.definition === undefined ? '' : serialize(this.definition)}\n_meta.json\n${this.meta === undefined ? '' : serialize(this.meta)}` +
+    const notes = splitCardNotes(this.meta)
+    return `_card.json\n${this.definition === undefined ? '' : serialize(this.definition)}\nREADME.md\n${notes.readme ?? ''}\n_comments.json\n${notes.comments === undefined ? '' : serialize(notes.comments)}` +
       [...this.texts].map(([p, t]) => `\n${p}\n${t}`).join('') + [...this.removed].map((p) => `\n- ${p}`).join('')
   }
 
@@ -391,7 +401,7 @@ export class CardEditorModel extends Observable {
     const ok = await this.revisionEdit.apply(session, (x) => {
       const edits: H.ProjectEditT[] = []
       if (def !== undefined) edits.push(x.jsonEdit(prefix + '_card.json', this.revisionEdit.jsonBase(prefix + '_card.json', this.baseDefinition, overwrite), def))
-      edits.push(x.jsonEdit(prefix + '_meta.json', this.revisionEdit.jsonBase(prefix + '_meta.json', this.baseMeta, overwrite), m))
+      edits.push(...x.notesEdits(prefix, this.revisionEdit.jsonBase(prefix + '#notes', this.baseMeta, overwrite), m))
       for (const [to, from] of moves) {
         const hash = this.revisionEdit.hashBase(from, bases.get(to), overwrite)
         if (!hash) throw new Error('Missing source hash: ' + from)
@@ -420,7 +430,7 @@ export class CardEditorModel extends Observable {
       })
       if (ends.some(e => e.boundary !== undefined)) x.updateExternal(x.projectPrefix(scope)!, ext => {
         for (const e of ends) if (e.boundary !== undefined) {
-          const ep = get(ext.project, 'boundary', e.side, e.boundary)
+          const ep = arr(get(ext.project, 'boundary', e.side))?.find(port => str(get(port, 'name')) === e.boundary)
           if (isObj(ep)) ep.set('port', bindings.get(e.id)!.trim())
         }
       })
@@ -539,7 +549,7 @@ export function CardSettingsEditor({ session, card, initial, file, onClose }: { 
           {category === 'dependencies' && <DependenciesCategory model={model} />}
           {category === 'executions' && <CardExecutionView session={session} model={model} />}
           {category === 'artifacts' && <CardArtifactsView session={session} cardKey={model.cardKey} />}
-          {category === 'notes' && <NotesCategory model={model} />}
+          {category === 'notes' && <CommentsCategory session={model.session} card={model.cardKey} />}
         </div>
         <RevisionEditNotice edit={model.revisionEdit} text={() => model.recoveryText}
           overwrite={() => void model.apply(true)} reload={() => model.reload()} />
@@ -612,45 +622,18 @@ export function CardPreview({ session, model, height }: { session: ProjectSessio
 
 // ---- Categories --------------------------------------------------------------------
 
-/** Human name, description, params, when it runs, and
- *  the worker's permissions. */
+/** Id, description, params, when it runs, and the worker's permissions. */
 function GeneralCategory({ model }: { model: CardEditorModel }) {
   const session = model.session
   const def = model.definition
-  const [name, setName] = useState(() => session.displayName(model.cardKey))
-  const [nameEdit] = useState(() => { const e = new InlineParamEdit(); e.beginField(session.displayName(model.cardKey), session, (session.definitionDir(model.cardKey) ?? '') + '_meta.json', ['name'], get(session.cardMeta(model.cardKey), 'name')); return e })
-  const [renaming, setRenaming] = useState(false)
-  const [renameError, setRenameError] = useState<string>()
   // This tsugumid runs on this host: without the sandbox a Card is a process
   // of the user's, so turning it off is the user's knowing choice.
   const [confirmSandboxOff, setConfirmSandboxOff] = useState(false)
-  const currentName = session.displayName(model.cardKey)
-  const previousName = useRef(currentName)
-  useEffect(() => {
-    const before = previousName.current
-    if (name === before) { setName(currentName); nameEdit.beginField(currentName, session, (session.definitionDir(model.cardKey) ?? '') + '_meta.json', ['name'], get(session.cardMeta(model.cardKey), 'name')) }
-    previousName.current = currentName
-  }, [currentName])
-
-  const rename = async (overwrite = false) => {
-    const nw = name.trim()
-    if (nw === session.displayName(model.cardKey)) return
-    setRenaming(true)
-    setRenameError(undefined)
-    try {
-      const problem = session.cardNameProblem(model.cardKey, nw)
-      if (problem) throw new Error(problem)
-      await nameEdit.commitField(session, nw, overwrite, () => nw)
-    } catch (e) {
-      setRenameError(e instanceof RPCFailure ? e.diagnostic ?? errorText(e) : errorText(e))
-    }
-    setRenaming(false)
-  }
   const string = (n: string, fallback?: string) => ({
     value: str(get(def, n)) ?? fallback ?? '',
     onChange: (v: string) => model.setSetting(n, !v || v === fallback ? undefined : v),
   })
-  // A Card's intent is in _meta.json.
+  // A Card's intent is in its README.md.
   const metaString = (n: string) => ({
     value: str(get(model.meta, n)) ?? '',
     onChange: (v: string) => model.update((x) => {
@@ -680,9 +663,9 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
         onChange={(v) => model.setSetting(n, v.trim() ? new JNum(v.trim()) : undefined)} />
     </Row>
   )
-  const params = arr(get(def, 'params')) ?? []
-  const diags = session.resolution.get(model.cardKey)?.diagnostics ?? []
   const kind = model.kind
+  const params = kind === session.kind(model.cardKey) ? session.resolution.get(model.cardKey)?.parameters ?? [] : []
+  const diags = session.diagnostics.filter(d => d.card?.join('/') === model.cardKey)
   const serviceSetting = string('executionService', 'auto')
   const serviceId = serviceSetting.value
   const service = session.executionServices.find((e) => s(e.id) === serviceId)
@@ -698,34 +681,31 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
     if (native.endsWith('-darwin')) return `macOS (${native})`
     return id
   }
-  const resourceLimits = serviceId !== 'local' && service?.resourceLimits === true
-  const resources = get(def, 'executionResources')
+  const sandbox = get(def, 'sandbox')
+  const grants = get(def, 'grants')
+  const limits = get(sandbox, 'limits')
+  const setSandbox = (key: string, value: J | undefined) => {
+    const next = isObj(sandbox) ? clone(sandbox) as JObj : obj()
+    next.set(key, value)
+    model.setSetting('sandbox', next.size ? next : undefined)
+  }
+  const resourceLimits = serviceId === 'auto' || service?.resourceLimits === true
   const resource = (name: string, label: string, example: string) => (
     <Row label={label}>
-      <TextField name={name} value={numText(get(resources, name)) ?? str(get(resources, name)) ?? ''} placeholder={example} style={{ width: 140 }}
+      <TextField name={name} value={numText(get(limits, name)) ?? str(get(limits, name)) ?? ''} placeholder={example} style={{ width: 140 }}
         onChange={(value) => {
           const text = value.trim()
-          const next = isObj(resources) ? clone(resources) as JObj : obj()
-          next.set(name, !text ? undefined : /^[0-9]+$/.test(text) ? new JNum(text.replace(/^0+(?=\d)/, '')) : text)
-          model.setSetting('executionResources', next.size ? next : undefined)
+          const next = isObj(limits) ? clone(limits) as JObj : obj()
+          const number = name === 'cpu' ? /^[0-9]+(?:\.[0-9]+)?$/ : /^[0-9]+$/
+          next.set(name, !text ? undefined : number.test(text) ? new JNum(text.replace(/^0+(?=\d)/, '')) : text)
+          setSandbox('limits', next.size ? next : undefined)
         }} />
     </Row>
   )
   return (
     <Form>
       <Section>
-        <Row label={L('名前')} help={L('表示する名前です。同じ名前を複数の Card に使えます。変えても ID・接続・実行履歴は変わりません（すぐに保存します）。')}>
-          <div className="row gap6 center">
-            <TextField value={name} onChange={setName} style={{ width: 220 }}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void rename() }} />
-            {name !== session.displayName(model.cardKey) && (
-              <Button disabled={renaming || !session.isEditable} onClick={() => void rename()}>{L('名前を変更')}</Button>
-            )}
-            {renaming && <Spinner small />}
-          </div>
-        </Row>
-        <RevisionEditNotice edit={nameEdit} text={() => name} overwrite={() => void rename(true)} reload={() => { setName(currentName); nameEdit.beginField(currentName, session, (session.definitionDir(model.cardKey) ?? '') + '_meta.json', ['name'], get(session.cardMeta(model.cardKey), 'name')) }} />
-      {renameError && <Row><span className="caption selectable" style={{ color: 'var(--red)' }}>{renameError}</span></Row>}
+        <Value label="ID" value={session.displayName(model.cardKey)} />
         <Value label={L('種類')} value={KIND_LABEL[kind]} />
         {def !== undefined && (
           <Row label={L('アイコン')}>
@@ -744,33 +724,17 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
       </Section>
       {model.session.kind(model.cardKey) === 'draft' && <Section title={L('Draft を手動で実装')} footer={L('定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。')}>
         <Row label={L('種類')}><Select value={model.implementation} onChange={v => model.implementAs(v)} options={
-          ['draft', 'python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia', 'input', 'input_bool', 'trigger', 'branch', 'fork', 'merge', 'collect']
-            .map(value => ({ value, label: value === 'input_bool' ? L('真偽値の入力') : value }))
+          ['draft', 'code', 'input', 'input_bool', 'trigger', 'merge', 'collect']
+            .map(value => ({ value, label: value === 'input_bool' ? L('真偽値の入力') : value === 'code' ? L('コード') : value }))
         } /></Row>
       </Section>}
-      {params.length > 0 && (
-        <Section title={L('パラメータ')}>
-          {params.map((_, i) => <ParamRow key={i} model={model} index={i} />)}
-        </Section>
-      )}
+      {params.length > 0 && <Section title={L('パラメータ')}>
+        {params.map(parameter => <ParamRow key={parameter.name} model={model} parameter={parameter} />)}
+      </Section>}
       {kind !== 'subgraph' && kind !== 'draft' && kind !== 'invalid' && (
         <Section title={L('実行')}>
-          {kind === 'code' && (
-            <Row label="trigger" help={L('allInputs: 必須の入力がすべて届いたら 1 回動きます。eachInput: 値が 1 つ届くたびに動きます。')}>
-              <Select {...string('trigger', 'allInputs')} options={[
-                { value: 'allInputs', label: L('すべての入力が揃ったとき') }, { value: 'eachInput', label: L('入力が届くたび') },
-              ]} />
-            </Row>
-          )}
           {numberField('maxRuns', L('最大発火回数'), '1', L('実行リスト内の呼び出しはまとめて 1 回の発火として数えます。'))}
           {timeoutField('timeoutSeconds', L('実行の期限（秒）'))}
-          {kind === 'code' && (
-            <Row label={L('グラフの更新')} help={L('更新: 最後のグラフを表示し、この Card か上流の Card が実行中のあいだは薄くします。新しい結果が届いたら置き換えます。ライブ: 実行中に届くグラフを、前のグラフを残したまま続けて置き換えます。')}>
-              <Select {...string('displayMode', 'update')} options={[
-                { value: 'update', label: L('更新（実行中は薄く表示）') }, { value: 'live', label: L('ライブ（実行中も追う）') },
-              ]} />
-            </Row>
-          )}
           {kind === 'code' && (
             <>
               {timeoutField('buildTimeoutSeconds', L('ビルドの期限（秒）'))}
@@ -804,12 +768,12 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
               )}
               {resourceLimits && <>
                 <Row><span className="caption secondary">{L('CPU とメモリの上限を指定します。実行先のリソースは他のジョブと共有します。')}</span></Row>
-                {resource('cpuMillis', L('CPU 上限（ミリコア）'), '1000')}
-                {resource('memoryBytes', L('メモリ上限（バイト）'), '1073741824')}
+                {resource('cpu', L('CPU 上限（コア）'), '0.5')}
+                {resource('memoryMiB', L('メモリ上限（MiB）'), '1024')}
               </>}
-              {resources !== undefined && <Row>
+              {limits !== undefined && <Row>
                 {!resourceLimits && <span className="caption">{L('この実行サービスではリソースを指定できません。')}</span>}
-                <Button kind="borderless" onClick={() => model.setSetting('executionResources', undefined)}>{L('リソース指定を削除')}</Button>
+                <Button kind="borderless" onClick={() => setSandbox('limits', undefined)}>{L('リソース指定を削除')}</Button>
               </Row>}
               {toggle('reuseWorker', L('worker の状態を残す'), false,
                 L('オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。'),
@@ -818,25 +782,42 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
                 <Row><span className="caption">{L('外部の実行サービスでは worker の状態を残せません。')}</span></Row>
               )}
               <Row label={L('ファイルアクセスを制限')}>
-                <Toggle checked={bool(get(def, 'sandbox')) ?? true} disabled={serviceId !== 'local' && bool(get(def, 'sandbox')) !== false}
-                  onChange={(v) => (v ? model.setSetting('sandbox', undefined) : serviceId === 'local' && setConfirmSandboxOff(true))} />
+                <Toggle checked={bool(get(sandbox, 'filesystem')) ?? true} disabled={serviceId !== 'local' && serviceId !== 'auto' && bool(get(sandbox, 'filesystem')) !== false}
+                  onChange={(v) => (v ? setSandbox('filesystem', undefined) : setConfirmSandboxOff(true))} />
               </Row>
-              {serviceId !== 'local' && bool(get(def, 'sandbox')) === false && (
+              {serviceId !== 'local' && serviceId !== 'auto' && bool(get(sandbox, 'filesystem')) === false && (
                 <Row><span className="caption">{L('外部の実行サービスにはファイルアクセスの制限が必要です。')}</span></Row>
               )}
+              {([
+                ['pid', L('PID 名前空間を分離')],
+                ['ipc', L('IPC 名前空間を分離')],
+                ['identity', L('実行ユーザーと権限を分離')],
+              ] as const).map(([key, label]) => (
+                <Row key={key} label={label}>
+                  <Toggle checked={bool(get(sandbox, key)) ?? true} onChange={(v) => setSandbox(key, v ? undefined : false)} />
+                </Row>
+              ))}
               {confirmSandboxOff && (
                 <Confirm title={L('この Card のファイルアクセス制限を解除しますか？')} confirm={L('制限を解除する')}
                   message={L('アクセスできる範囲は実行環境の権限と共有フォルダに依存します。ネットワーク制限も実行環境によっては無効になります。')}
-                  onConfirm={() => { setConfirmSandboxOff(false); model.setSetting('sandbox', false) }} onCancel={() => setConfirmSandboxOff(false)} />
+                  onConfirm={() => { setConfirmSandboxOff(false); setSandbox('filesystem', false) }} onCancel={() => setConfirmSandboxOff(false)} />
               )}
             </>
           )}
         </Section>
       )}
       {kind === 'code' && (
-        <Section title={<span className="label"><Icon name="flask" />Experimental</span>}>
-          {toggle('network', L('ネットワークへのアクセスを許可する'), false, L('オフ（デフォルト）: ファイルアクセスの制限がオンなら、preRun・run・postRun の外部通信を禁止します。'))}
-          <Row><HostFoldersEditor model={model} remote={serviceId !== 'local'} /></Row>
+        <Section title={L('アクセス許可')}>
+          {([
+            ['network', L('ネットワークへのアクセスを許可する')],
+            ['gui', L('GUI へのアクセスを許可する')],
+          ] as const).map(([key, label]) => (
+            <Row key={key} label={label}>
+              <Toggle checked={bool(get(grants, key)) ?? false}
+                onChange={(v) => setGrant(model, key, v ? true : undefined)} />
+            </Row>
+          ))}
+          <Row><HostFoldersEditor model={model} remote={serviceId !== 'local' && serviceId !== 'auto'} /></Row>
         </Section>
       )}
       {diags.length > 0 && (
@@ -854,11 +835,20 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
   )
 }
 
+function setGrant(model: CardEditorModel, key: string, value: J | undefined) {
+  const grants = get(model.definition, 'grants')
+  const next = isObj(grants) ? clone(grants) as JObj : obj()
+  next.set(key, value)
+  model.setSetting('grants', next.size ? next : undefined)
+}
+
 /** Folders of the host this Card's worker may read (Experimental): each at
  *  /host/<name> in the worker, read-only unless allowed to write. Only the
  *  folder's path is kept in the project. */
+const grantName = (name: string) => name.toUpperCase().replace(/[^A-Z0-9]/g, '_')
+
 function HostFoldersEditor({ model, remote }: { model: CardEditorModel; remote: boolean }) {
-  const folders = arr(get(model.definition, 'hostFolders')) ?? []
+  const folders = arr(get(get(model.definition, 'grants'), 'hostPaths')) ?? []
   const usable = app.status?.hostFolders ?? true
   const [picking, setPicking] = useState(false)
   const [present, setPresent] = useState<Record<string, boolean>>({})
@@ -880,14 +870,14 @@ function HostFoldersEditor({ model, remote }: { model: CardEditorModel; remote: 
   const edit = (fn: (list: J[]) => void) => {
     const list = folders.map((f) => clone(f))
     fn(list)
-    model.setSetting('hostFolders', list.length ? list : undefined)
+    setGrant(model, 'hostPaths', list.length ? list : undefined)
   }
   const add = (p: string) => {
-    const taken = new Set(folders.map((f) => str(get(f, 'name'))).filter(Boolean))
+    const taken = new Set(folders.map((f) => grantName(str(get(f, 'name')) ?? '')))
     const last = p.replace(/\/+$/, '').split('/').pop() ?? ''
     const base = [...last].map((c) => (/[A-Za-z0-9\-_.]/.test(c) ? c : '-')).join('')
     let name = !base || base === '.' || base === '..' ? 'folder' : base
-    for (let n = 2; taken.has(name); n++) name = `${base}-${n}`
+    for (let n = 2; taken.has(grantName(name)); n++) name = `${base}-${n}`
     edit((l) => l.push(obj([['path', p], ['name', name]])))
   }
   return (
@@ -906,7 +896,7 @@ function HostFoldersEditor({ model, remote }: { model: CardEditorModel; remote: 
             <div className="col flex1 min0">
               <span className="callout ellipsis" title={p}>{p}</span>
               <span className="caption" style={{ color: ok && usable ? 'var(--secondary)' : 'var(--orange)' }}>
-                {remote ? L('外部の実行サービスにはホストのフォルダを共有できません。') : !usable ? L('この Web UI では使えません（実行すると失敗します）') : ok ? `/host/${str(get(f, 'name')) ?? ''}` : L('このホストにはありません（実行すると失敗します）')}
+                {remote ? L('外部の実行サービスにはホストのフォルダを共有できません。') : !usable ? L('この Web UI では使えません（実行すると失敗します）') : ok ? `TSUGUMI_GRANT_${grantName(str(get(f, 'name')) ?? '')}` : L('このホストにはありません（実行すると失敗します）')}
               </span>
             </div>
             <Toggle kind="checkbox" label={L('書き込み')} help={L('オフ（デフォルト）: 読み取り専用')} checked={bool(get(f, 'write')) ?? false} disabled={remote}
@@ -917,94 +907,61 @@ function HostFoldersEditor({ model, remote }: { model: CardEditorModel; remote: 
       })}
       {remote ? <div className="caption secondary">{L('外部の実行サービスにはホストのフォルダを共有できません。')}</div>
         : !usable && <div className="caption" style={{ color: 'var(--orange)' }}>{L('macOS 上の Web UI では、フォルダを Card に共有できません（Mac アプリの共通 VM が必要です）。この設定のある Card を実行すると失敗します。')}</div>}
-      <div className="caption secondary">{L('選んだフォルダだけを、この Card の worker から /host/<名前> として読めます。プロジェクトに保存するのはフォルダの場所だけです。追加・変更はプロジェクトを開き直すと反映されます。')}</div>
+      <div className="caption secondary">{L('Card は TSUGUMI_GRANT_<名前> からフォルダのパスを取得できます。共有 VM での追加・変更はプロジェクトを開き直すと反映されます。')}</div>
       {picking && <FolderPicker message={L('worker から読めるようにするフォルダを選んでください')} onClose={() => setPicking(false)} onPick={(p) => { setPicking(false); add(p) }} />}
     </div>
   )
 }
 
-function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
-  const param = (arr(get(model.definition, 'params')) ?? [])[index] ?? obj()
-  const name = str(get(param, 'name')) ?? '?'
-  const type = str(get(param, 'type')) ?? 'string'
-  const value = get(param, 'data')
-  // An Input Card can hand on several values, one invocation each (an
-  // execution list). A list-typed value without it stays one vector.
-  const sweep = arr(get(param, 'sweep'))
+function ParamRow({ model, parameter }: { model: CardEditorModel; parameter: CardParameter }) {
+  const session = model.session
+  const { name, type } = parameter
+  const value = parameter.value
   const [draft, setDraft] = useState<string>()
-  const fileInput = model.kind === 'input' && name === 'value' && type === 'string' &&
-    model.session.resolution.get(model.cardKey)?.outputs.some((p) => p.kind === D.PortKind.File)
-  const folder = model.session.definitionDir(model.cardKey) ?? ''
-  const entered = str(value) ?? ''
-  const target = entered.startsWith('project:')
-    ? folder.slice(0, folder.lastIndexOf('definitions/')) + entered.slice(8)
-    : folder + entered
-  const update = (change: (p: JObj) => void) => {
-    const params = (arr(get(model.definition, 'params')) ?? []).map((p) => clone(p))
-    if (index >= params.length || !isObj(params[index])) return
-    change(params[index] as JObj)
-    model.setSetting('params', params)
+  const [edit] = useState(() => new InlineParamEdit())
+  useObserve(edit)
+
+  const disabled = !session.isEditable || edit.applying || model.applying
+  const begin = () => {
+    if (draft === undefined) edit.begin(paramText(value, type), session.rev)
   }
-  const set = (v: J | undefined) => update((p) => p.set('data', v))
-  const setSweeping = (on: boolean) => {
+  const clear = () => {
     setDraft(undefined)
-    update((p) => {
-      const current = get(p, 'data'), first = arr(get(p, 'sweep'))?.[0]
-      p.set('sweep', on ? (current === undefined ? [] : [current]) : undefined)
-      p.set('data', on ? undefined : first)
-    })
+    edit.begin(paramText(value, type), session.rev)
   }
-  const sweepText = draft ?? serialize(sweep ?? [], false)
-  const parsedSweep = arr(tryParse(sweepText))
+  const save = async (text: string | undefined, overwrite = false) => {
+    if (text !== undefined && await edit.commitParam(session, model.cardKey, name, parameterInputLiteral(text, type), overwrite)) clear()
+  }
+  const set = (text: string) => {
+    begin()
+    setDraft(text)
+    void save(text)
+  }
   return (
     <Row label={name}>
       <div>
-        <div className="row gap6 center" data-guide={`param:${name}`}>
-          {sweep ? <TextField value={sweepText} onChange={(t) => {
-            setDraft(t)
-            const values = arr(tryParse(t))
-            if (values) update((p) => p.set('sweep', values))
-          }} style={{ width: 220 }} />
-            : type === 'bool'
-            ? <Toggle checked={bool(value) ?? false} onChange={(v) => set(v)} />
-            : <TextField value={paramText(value)} onChange={(t) => set(parseParam(t, type))} style={{ width: 220 }} />}
-          <span className="caption2 secondary nowrap">{type + (bool(get(param, 'nix')) ? ' · nix' : '')}</span>
+        <div className="row gap6 center" data-guide={'param:' + name}>
+          {type === 'bool'
+            ? <Toggle checked={draft === undefined ? bool(value) ?? false : draft === 'true'} disabled={disabled} onChange={v => set(String(v))} />
+            : <>
+              <TextField value={draft ?? paramText(value, type)} disabled={disabled} onChange={text => { begin(); setDraft(text) }}
+                onKeyDown={e => {
+                  if (e.key !== 'Enter' || e.nativeEvent.isComposing || draft === undefined) return
+                  e.stopPropagation()
+                  void save(draft)
+                }} style={{ width: 220 }} />
+              {draft !== undefined && <Button disabled={disabled} onClick={() => void save(draft)}>{L('保存')}</Button>}
+            </>}
+          <span className="caption2 secondary nowrap">{type}</span>
         </div>
-        {model.kind === 'input' && <div className="row gap6 center" style={{ marginTop: 4 }}>
-          <Toggle kind="checkbox" small checked={!!sweep} onChange={setSweeping} label={L('値ごとに呼び出す')}
-            help={L('並べた値を 1 つずつ別の呼び出しとして渡します（実行リスト）。')} />
-        </div>}
-        {sweep && <div className="caption secondary" style={{ marginTop: 4 }}>
-          {parsedSweep ? L('{0} 個の値を 1 つずつ別の呼び出しとして渡します（実行リスト）。', parsedSweep.length)
-            : L('値を JSON の配列で書いてください。例: [8, 12, 16]')}
-          {type.endsWith('[]') && <div>{L('リスト型のパラメータでは、配列の各要素がそれぞれ 1 つのリストです。')}</div>}
-        </div>}
-        {fileInput && <div className="caption secondary" style={{ marginTop: 4, overflowWrap: 'anywhere' }}>
-          <div>{L('Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。')}</div>
-          {!sweep && <div>{L('参照先: {0}', target)}</div>}
-        </div>}
+        <RevisionEditNotice edit={edit} text={() => draft ?? ''}
+          overwrite={() => void save(draft, true)} reload={clear} />
       </div>
     </Row>
   )
 }
 
-/** A port's purpose in _meta.json. */
-function portNote(model: CardEditorModel, list: string, name: string): { value: string; onChange: (v: string) => void } {
-  return {
-    value: str(get((arr(get(model.meta, list)) ?? []).find((x) => str(get(x, 'name')) === name), 'description')) ?? '',
-    onChange: (v) => model.update((m) => {
-      const meta: JObj = isObj(m.meta) ? m.meta : obj()
-      const items = (arr(meta.get(list)) ?? []).map((x) => clone(x))
-      const i = items.findIndex((x) => str(get(x, 'name')) === name)
-      if (i >= 0 && isObj(items[i])) (items[i] as JObj).set('description', v || undefined)
-      else if (v) items.push(obj([['name', name], ['description', v]]))
-      meta.set(list, items.length ? items : undefined)
-      m.meta = meta.size ? meta : undefined
-    }),
-  }
-}
-
-/** Ports, their purposes, recording and artifact retention. */
+/** Ports and recording. */
 function PortsCategory({ model }: { model: CardEditorModel }) {
   const r = model.session.resolution.get(model.cardKey)
   const def = model.definition
@@ -1015,7 +972,6 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
     fn(a)
     model.setSetting('inputs', a.length ? a : undefined)
   }
-  const keepable = (r?.outputs ?? []).filter((p) => p.kind === D.PortKind.File || p.kind === D.PortKind.Directory)
   return (
     <Form>
       {model.draftEnds.length > 0 && <Section title={L('wire の再接続')} footer={L('入力 wire には実入力ポート、出力 wire には実出力ポートを指定します。候補が一つでも指定が必要です。')}>
@@ -1033,9 +989,7 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
                   <div className="row gap8 center fill">
                     <TextField value={name} placeholder={L('名前')} mono help={L('入力ポートの名前')} style={{ width: 140 }}
                       onChange={(v) => editInputs((a) => isObj(a[i]) && (a[i] as JObj).set('name', v))} />
-                    <TextField {...portNote(model, 'inputs', name)} placeholder={L('用途（何を受け取るか）')} style={{ flex: 1 }}
-                      help={L('このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。')} />
-                    <span className="caption secondary nowrap">{r?.inputs.find((p) => p.name === name)?.rootType ?? L('未解決')}</span>
+                    <span className="caption secondary nowrap">{portTypeName(r?.inputs.find((p) => p.name === name)) ?? L('未解決')}</span>
                     <Button kind="borderless" iconOnly icon="minus.circle" help={L('入力を削除')} onClick={() => editInputs((a) => a.splice(i, 1))} />
                   </div>
                 </Row>
@@ -1045,28 +999,26 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
           </>
         ) : (
           <>
-            {(r?.inputs ?? []).map((p) => <Value key={p.name} label={p.name} value={p.rootType ?? L('未解決')} />)}
+            {(r?.inputs ?? []).map((p) => <Value key={p.name} label={p.name} value={portTypeName(p) ?? L('未解決')} />)}
             {!(r?.inputs ?? []).length && <Row><span className="secondary">{L('入力はありません')}</span></Row>}
           </>
         )}
       </Section>
-      {model.kind === 'fork' && def !== undefined ? <ForkOutputsSection model={model} /> : <OutputPortsSection model={model} />}
+      <OutputPortsSection model={model} />
       {model.kind !== 'subgraph' && model.kind !== 'draft' && model.kind !== 'invalid' && (
         <Section title={L('記録と成果物')}>
-          <Row label={L('入出力を記録')}>
-            <Toggle checked={bool(get(def, 'recordIO')) ?? false} onChange={(v) => model.setSetting('recordIO', v ? true : undefined)} />
-          </Row>
-          <Row label={L('成果物を保持')}>
-            <Toggle checked={bool(get(def, 'retainArtifact')) ?? false} onChange={(v) => model.setSetting('retainArtifact', v ? true : undefined)} />
-          </Row>
-          {/* Only File / Directory outputs can be kept as artifacts. */}
-          <Row label={L('保持する出力')}>
-            {keepable.length === 0
-              ? <span className="callout secondary">{r === undefined ? L('出力の型がまだ解決されていません') : L('File / Directory の出力がないため、保持できる出力はありません')}</span>
-              : <Select value={str(get(def, 'artifactOutput')) ?? ''} onChange={(v) => model.setSetting('artifactOutput', v || undefined)}
-                  options={[{ value: '', label: L('選んでください') },
-                    ...keepable.map((p) => ({ value: p.name, label: L('{0}（{1}）', p.name, p.kind === D.PortKind.File ? 'File' : 'Directory') }))]} />}
-          </Row>
+          {([
+            ['recordLogs', L('標準出力と標準エラーを記録')],
+            ['recordIO', L('入出力の値を記録')],
+          ] as const).map(([key, label]) => {
+            const value = bool(get(def, key))
+            return <Row key={key} label={label}>
+              <Select value={value === undefined ? 'inherit' : value ? 'on' : 'off'}
+                onChange={(v) => model.setSetting(key, v === 'inherit' ? undefined : v === 'on')}
+                options={[{ value: 'inherit', label: L('プロジェクト設定に従う') },
+                  { value: 'on', label: L('オン') }, { value: 'off', label: L('オフ') }]} />
+            </Row>
+          })}
         </Section>
       )}
     </Form>
@@ -1074,37 +1026,6 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
 }
 
 const shortType = (full: string) => full.split('.').pop() ?? full
-
-/** A Fork's outputs, declared in _card.json (a and b until they are). Each one
- *  receives the value, with its type. */
-function ForkOutputsSection({ model }: { model: CardEditorModel }) {
-  const r = model.session.resolution.get(model.cardKey)
-  const outputs = arr(get(model.definition, 'outputs')) ?? [obj([['name', 'a']]), obj([['name', 'b']])]
-  const names = outputs.map((x) => str(get(x, 'name')) ?? '')
-  const edit = (fn: (a: J[]) => void) => {
-    const a = outputs.map((x) => clone(x))
-    fn(a)
-    model.setSetting('outputs', a)
-  }
-  const next = () => [...'abcdefghijklmnopqrstuvwxyz'].find((c) => !names.includes(c)) ?? `out${names.length + 1}`
-  return (
-    <Section title={L('出力ポート')} footer={L('分配は受け取った値をすべての出力へ送ります。出力の型は value と同じです。')}>
-      {names.map((name, i) => (
-        <Row key={i}>
-          <div className="row gap8 center fill">
-            <TextField value={name} placeholder={L('名前')} mono help={L('出力ポートの名前')} style={{ width: 140 }}
-              onChange={(v) => edit((a) => isObj(a[i]) && (a[i] as JObj).set('name', v))} />
-            <TextField {...portNote(model, 'outputs', name)} placeholder={L('用途（何を出すか）')} style={{ flex: 1 }} />
-            <span className="caption secondary nowrap">{r?.outputs.find((p) => p.name === name)?.rootType ?? L('未解決')}</span>
-            <Button kind="borderless" iconOnly icon="minus.circle" help={L('出力を削除')} disabled={names.length <= 1}
-              onClick={() => edit((a) => a.splice(i, 1))} />
-          </div>
-        </Row>
-      ))}
-      <Row><Button onClick={() => edit((a) => a.push(obj([['name', next()]])))}>{L('出力を追加')}</Button></Row>
-    </Section>
-  )
-}
 
 /** Output ports as `_outputs.fbs` defines them (its source is the truth).
  *  Each port's type is chosen from the tables of that schema, as the core
@@ -1143,12 +1064,12 @@ function OutputPortsSection({ model }: { model: CardEditorModel }) {
   }, [p, model.generation, loaded, session.rpc])
 
   /** Rewrites the port in the working copy of _outputs.fbs (applied with the rest). */
-  const set = async (port: string, type: string, kind: D.PortKind) => {
+  const set = async (port: string, type: string) => {
     const rpc = session.rpc
     if (!type || !p || !rpc) return
     try {
       const text = await model.text(p)
-      const res = await rpc.outputTypes(text, port, type, kind)
+      const res = await rpc.outputTypes(text, port, type)
       const changed = sOpt(res.text)
       if (changed !== undefined) {
         model.setText(p, changed)
@@ -1167,21 +1088,15 @@ function OutputPortsSection({ model }: { model: CardEditorModel }) {
         <Row key={port.name}>
           <div className="row gap8 center fill">
             <span className="mono ellipsis" style={{ width: 120, flex: 'none' }}>{port.name}</span>
-            <TextField {...portNote(model, 'outputs', port.name)} placeholder={L('用途（何を出すか）')} style={{ flex: 1 }} />
-            {types.length === 0 || !p ? (
-              <span className="caption secondary nowrap">{(port.rootType ?? L('未解決')) + (port.optional ? L('（省略可）') : '')}</span>
+            {!p ? (
+              <span className="caption secondary nowrap">{portTypeName(port) ?? L('未解決')}</span>
             ) : (
-              <>
-                <Select value={port.rootType ?? ''} style={{ maxWidth: 150 }} help={L('_outputs.fbs で定義した型から選びます（_outputs.fbs に書き戻します）')}
-                  onChange={(t) => void set(port.name, t, port.kind)}
-                  options={[...(port.rootType === undefined ? [{ value: '', label: L('未解決') }] : []),
-                    ...(port.rootType !== undefined && !types.includes(port.rootType) ? [{ value: port.rootType, label: shortType(port.rootType) }] : []),
-                    ...types.map((t) => ({ value: t, label: shortType(t) }))]} />
-                <Select<number> value={port.kind} style={{ maxWidth: 100 }} help={L('File / Directory は、型に文字列の value（パス）がある場合に選べます')}
-                  onChange={(k) => void set(port.name, port.rootType ?? '', k)}
-                  options={[{ value: D.PortKind.FlatBuffer, label: L('値') }, { value: D.PortKind.File, label: 'File' }, { value: D.PortKind.Directory, label: 'Directory' },
-                    ...(port.kind === D.PortKind.unspecified ? [{ value: D.PortKind.unspecified, label: '—' }] : [])]} />
-              </>
+              <Select value={port.rootType ?? ''} style={{ maxWidth: 150 }}
+                help={L('_outputs.fbs で定義した型から選びます（_outputs.fbs に書き戻します）')}
+                onChange={(type) => void set(port.name, type)}
+                options={[...(port.rootType === undefined ? [{ value: '', label: L('未解決'), disabled: true }] : []),
+                  ...(port.rootType !== undefined && !types.includes(port.rootType) ? [{ value: port.rootType, label: shortType(port.rootType) }] : []),
+                  ...types.map((type) => ({ value: type, label: shortType(type) }))]} />
             )}
           </div>
         </Row>
@@ -1224,41 +1139,6 @@ function BoundaryCategory({ model }: { model: CardEditorModel }) {
   )
 }
 
-/** Comments (what to change, for the Agent) above the added context (what the
- *  Card is for); a Card with no definition has only comments. */
-function NotesCategory({ model }: { model: CardEditorModel }) {
-  return (
-    <div className="col fill min0">
-      <div className="flex1 min0 col"><CommentsCategory session={model.session} card={model.cardKey} /></div>
-      {model.kind !== 'subgraph' && (
-        <div className="col border-top" style={{ height: 220 }}>
-          <div className="headline" style={{ padding: '12px 12px 0' }}>{L('追加コンテキスト')}</div>
-          <ContextCategory model={model} />
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** Free text describing intent and notes, kept in `_meta.json` (`context`). */
-function ContextCategory({ model }: { model: CardEditorModel }) {
-  return (
-    <div className="col gap8 fill pad12">
-      <div className="callout secondary">{L('処理の意図や補足を文章で残します（_meta.json）。チャットで Card を参照したときにも使われます。')}</div>
-      {model.definitionId === undefined ? <div className="secondary">{L('定義を持たない Card には追加コンテキストを置けません。')}</div> : (
-        <textarea className="field flex1 cse-context" value={str(get(model.meta, 'context')) ?? ''} onChange={(e) => {
-          const v = e.target.value
-          model.update((m) => {
-            const meta: JObj = isObj(m.meta) ? m.meta : obj()
-            meta.set('context', v || undefined)
-            m.meta = meta.size ? meta : undefined
-          })
-        }} />
-      )}
-    </div>
-  )
-}
-
 /** Whose comment this is, when it is not simply one of the user's. */
 function CommentRecord({ comment: c }: { comment: CardComment }) {
   const parts = [
@@ -1294,13 +1174,13 @@ function CommentsCategory({ session, card }: { session: ProjectSession; card: Ca
   }
   const beginCommentEdit = (id: string, text: string) => {
     const value = arr(get(session.cardMeta(card), 'comments'))?.find(c => str(get(c, 'id')) === id)
-    revisionEdit.beginField(text, session, (session.definitionDir(card) ?? '') + '_meta.json', ['comments', obj([['id', id]])], value)
+    revisionEdit.beginField(text, session, (session.definitionDir(card) ?? '') + '_comments.json', ['comments', obj([['id', id]])], value)
   }
   const saveEdit = async (overwrite = false) => {
     if (!editing) return
     const copy = editing
     if (await revisionEdit.commitField(session, copy.text, overwrite, value => {
-      if (isObj(value) && copy.text.trim()) { value.set('text', copy.text.trim()); value.set('editedBy', 'user') }
+      if (isObj(value) && copy.text.trim()) { value.set('text', copy.text.trim()); value.set('edited_by', 'user') }
       return value
     })) setEditing(undefined)
   }
@@ -1345,7 +1225,7 @@ function CommentsCategory({ session, card }: { session: ProjectSession; card: Ca
   )
   return (
     <div className="col gap8 pad12 scroll fill">
-      <div className="callout secondary">{L('この Card をどう変えたいかを書きます。Canvas の「コメントから生成」で Agent が従います（_meta.json に保存され、版の履歴に残ります）。')}</div>
+      <div className="callout secondary">{L('この Card をどう変えたいかを書きます。Canvas の「コメントから生成」で Agent が従います（_comments.json に保存され、版の履歴に残ります）。')}</div>
       <TextField multiline rows={3} value={text} onChange={setText} placeholder={L('例: y 軸を対数にしてください')} onKeyDown={submitting(add)} />
       <div className="row end">
         <Button kind="prominent" disabled={!text.trim() || !session.connected} help="⌘Return" onClick={add}>{L('コメントを追加')}</Button>
@@ -1396,7 +1276,7 @@ function fileTree(rel: string[], base: string): FileNode[] {
   ]
 }
 
-const READ_ONLY_WHY = L('接続から生成されるファイルです（手で編集しません）')
+const READ_ONLY_WHY = L('Card のビルドが生成したファイルです（手で編集しません）')
 
 /** A short "RO" mark for files that are not edited here; hover tells why. */
 export function ReadOnlyMark({ why }: { why: string }) {
@@ -1419,10 +1299,30 @@ function FileRow({ name, icon, depth, folder, selected, edited, readOnly, onClic
   )
 }
 
-const GENERATED = 'generated:'
+const SDK = 'sdk:'
+const SDK_LOG = SDK + '/log'
+
+/** What the last "build SDK" returned: the files of share/tsugumi/api/ by
+ *  their shown name, or the build failure and its log. Held only while the
+ *  editor is open. */
+type SdkState = { building: boolean, files?: { id: string, name: string, text: string }[], failure?: string, log?: string, truncated?: boolean }
+
+export function sdkBuild(result: R.EvaluateNixResultT): SdkState {
+  if (result.failure) return { building: false, failure: sOpt(result.failure.diagnostic) ?? D.FailureKind[result.failure.kind], log: sOpt(result.log) }
+  const directory = 'share/tsugumi/api/'
+  const decoder = new TextDecoder()
+  const files = result.files.flatMap(file => {
+    const fullPath = s(file.path)
+    if (!fullPath.startsWith(directory)) return []
+    const name = fullPath.slice(directory.length)
+    return [{ id: SDK + name, name, text: decoder.decode(Uint8Array.from(file.content)) }]
+  })
+  return { building: false, files, truncated: result.truncated }
+}
 
 /** File tree, tabs and editor for a definition's sources, `_outputs.fbs` and
- *  `default.nix`, with formatting, errors in place and the generated inputs.
+ *  `default.nix`, with formatting, errors in place and the Card's generated
+ *  API (the "SDK" section: what the builder placed under share/tsugumi/api/).
  *  The open files, the shown one and the expanded folders live on the model,
  *  so switching categories or applying keeps them. */
 function SourceCategory({ model }: { model: CardEditorModel }) {
@@ -1435,13 +1335,12 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
   const [formatting, setFormatting] = useState(false)
   const [formatMessage, setFormatMessage] = useState<string>()
   const [formatMarkers, setFormatMarkers] = useState<EditorMarker[]>([])
-  const [generated, setGenerated] = useState<Record<string, string>>({})
-  const [generatedError, setGeneratedError] = useState<string>()
+  const [sdk, setSdk] = useState<SdkState>({ building: false })
   const shown = model.shownFile
 
   useEffect(() => {
     if (shown === undefined) {
-      const f = files.find((x) => x.endsWith('.py') || x.endsWith('.cc') || x.endsWith('.rb') || x.endsWith('.cs') || /\.(rmd|qmd)$/i.test(x)) ?? files[0]
+      const f = files[0]
       if (f) model.openFile(f)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1451,43 +1350,29 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
   useEffect(() => {
     setFormatMarkers([])
     setFormatMessage(undefined)
-    if (shown && !shown.startsWith(GENERATED) && model.files.includes(shown)) void model.text(shown).catch(() => {})
+    if (shown && !shown.startsWith(SDK) && model.files.includes(shown)) void model.text(shown).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown, model.generation])
 
-  useEffect(() => {
-    if (!shown?.startsWith(GENERATED)) return
+  // Build the saved Card's API derivation with the current wiring.
+  const buildSdk = async () => {
     const rpc = session.rpc
-    if (!rpc) return
-    let alive = true
-    void (async () => {
-      try {
-        const rev = session.rev
-        const list = await rpc.generatedContracts(path(model.cardKey), rev)
-        const out: Record<string, string> = {}
-        for (const f of list) {
-          const p = s(f.path)
-          const name = p.split('/').pop() ?? p
-          if (!name.endsWith('.fbs')) continue
-          out[name] = new TextDecoder().decode(await rpc.readFile(p, rev))
-        }
-        if (!alive) return
-        setGenerated((g) => ({ ...g, ...out }))
-        setGeneratedError(undefined)
-      } catch (e) {
-        if (alive) setGeneratedError(L('生成できませんでした（保存されていない変更や未解決の型があると生成できません）: ') + errorText(e))
-      }
-    })()
-    return () => {
-      alive = false
+    if (!rpc || sdk.building) return
+    setSdk({ building: true })
+    try {
+      const result = await rpc.evaluateNix(path(model.cardKey), '(import ./. { inherit params inputs; }).api or null', { build: true, atRev: session.rev })
+      setSdk(sdkBuild(result))
+    } catch (e) {
+      setSdk({ building: false, failure: errorText(e) })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shown, session.rev])
+  }
+
+  const canFormat = (p: string) => /[^/]\.(json|nix)$/.test(p)
 
   const format = async (p: string) => {
     const rpc = session.rpc
     const source = model.loadedText(p)
-    if (!rpc || source === undefined || formatting) return
+    if (!rpc || !canFormat(p) || source === undefined || formatting) return
     setFormatting(true)
     try {
       const r = await hostCall<H.FileFormatResultT>(H.RequestPayload.FileFormatRequest,
@@ -1527,10 +1412,11 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
     ]
   })
 
-  const displayName = (f: string) => (f.startsWith(GENERATED) ? f.slice(GENERATED.length) : f.split('/').pop() ?? f)
+  const sdkName = (f: string) => f === SDK_LOG ? L('ビルドログ') : sdk.files?.find((file) => file.id === f)?.name ?? f.split('/').pop() ?? f
+  const displayName = (f: string) => (f.startsWith(SDK) ? sdkName(f) : f).split('/').pop() ?? f
 
   const header = (p: string, generatedFile: boolean) => {
-    const rel = generatedFile ? p.slice(GENERATED.length) : p.slice(prefix.length)
+    const rel = generatedFile ? sdkName(p) : p.slice(prefix.length)
     const parts = rel.split('/')
     return (
       <div className="src-head">
@@ -1545,7 +1431,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
           : model.isEdited(p) ? <span className="caption2" style={{ color: 'var(--orange)' }}>{L('未適用')}</span> : null}
         <span className="spacer" />
         {formatMessage && <span className="caption secondary ellipsis">{formatMessage}</span>}
-        {!generatedFile && (
+        {!generatedFile && canFormat(p) && (
           <Button small disabled={formatting || model.loadedText(p) === undefined} help={L('ソースコードを整形（{0}）', prefs.label('formatSource'))}
             onClick={() => void format(p)}>{L('整形')}</Button>
         )}
@@ -1554,13 +1440,16 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
   }
 
   let pane: ReactNode
-  if (shown?.startsWith(GENERATED)) {
-    const name = shown.slice(GENERATED.length)
+  if (shown?.startsWith(SDK)) {
+    const text = shown === SDK_LOG ? sdk.log : sdk.files?.find((file) => file.id === shown)?.text
     pane = (
       <>
         {header(shown, true)}
-        {generatedError && <div className="callout pad12 selectable" style={{ color: 'var(--red)' }}>{generatedError}</div>}
-        <CodeEditor text={generated[name] ?? ''} language="fbs" editable={false} documentId={shown} className="src-editor" />
+        {text !== undefined ? (
+          <CodeEditor text={text} language={shown === SDK_LOG ? undefined : shown.split('.').pop()} editable={false} documentId={shown} className="src-editor" />
+        ) : (
+          <Empty title={L('SDK をビルドすると表示されます')} icon="doc.text" />
+        )}
       </>
     )
   } else if (shown && model.files.includes(shown)) {
@@ -1600,7 +1489,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
 
   const editor = (
     <div key="editor" className="src-pane" onKeyDown={(e) => {
-      if (e.nativeEvent.isComposing || !shown || shown.startsWith(GENERATED)) return
+      if (e.nativeEvent.isComposing || !shown || shown.startsWith(SDK) || !canFormat(shown)) return
       if (prefs.action(e.nativeEvent, false) === 'formatSource') {
         e.preventDefault()
         e.stopPropagation()
@@ -1611,7 +1500,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
         <div className="src-tabs" role="tablist">
           {model.openFiles.map((f) => (
             <div key={f} role="tab" aria-selected={shown === f} className={`src-tab${shown === f ? ' shown' : ''}`} title={f} onClick={() => model.openFile(f)}>
-              <Icon name={f.startsWith(GENERATED) ? 'lock.doc' : fileIcon(f)} size={11} />
+              <Icon name={f.startsWith(SDK) ? 'lock.doc' : fileIcon(f)} size={11} />
               <span className="caption ellipsis">{displayName(f)}</span>
               {model.isEdited(f) && <span className="edited-dot" title={L('未適用の変更')} />}
               <button type="button" className="src-tab-close" title={L('タブを閉じる（内容は保持されます）')} aria-label={L('タブを閉じる')}
@@ -1635,17 +1524,35 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
                 {tree(fileTree(files.map((f) => f.slice(prefix.length)), prefix), 0)}
                 {model.kind === 'code' && (
                   <>
-                    <div className="src-section caption">{L('生成')}</div>
-                    {['_inputs.fbs', '_params.fbs'].map((n) => (
-                      <FileRow key={n} name={n} icon="lock.doc" depth={0} selected={shown === GENERATED + n} readOnly onClick={() => model.openFile(GENERATED + n)} />
+                    <div className="src-section caption row center gap4">
+                      <span className="spacer">{L('SDK')}</span>
+                      <Button small disabled={sdk.building || !session.rpc} onClick={() => void buildSdk()}
+                        help={L('保存済みの定義と現在の接続で SDK をビルドし、share/tsugumi/api/ のファイルを表示します')}>
+                        {sdk.building ? L('ビルドしています…') : L('SDK をビルド')}
+                      </Button>
+                    </div>
+                    {sdk.failure !== undefined && (
+                      <>
+                        <div className="caption selectable pad6 wrap-pre" style={{ color: 'var(--red)' }}>{L('ビルドできませんでした: {0}', sdk.failure)}</div>
+                        {sdk.log && (
+                          <FileRow name={L('ビルドログ')} icon="doc.text" depth={0} selected={shown === SDK_LOG} readOnly onClick={() => model.openFile(SDK_LOG)} />
+                        )}
+                      </>
+                    )}
+                    {sdk.truncated && <div className="caption pad6">{L('出力の上限に達したため、一部のファイルのみ表示しています')}</div>}
+                    {sdk.files?.length === 0 && (
+                      <div className="caption pad6">{L('ビルドで生成された SDK ファイルはありません')}</div>
+                    )}
+                    {sdk.files?.map((file) => (
+                      <FileRow key={file.id} name={file.name} icon="lock.doc" depth={0} selected={shown === file.id} readOnly help={file.name} onClick={() => model.openFile(file.id)} />
                     ))}
                   </>
                 )}
               </div>
               <div className="row gap4 pad6 border-top">
                 <Button kind="borderless" iconOnly icon="plus" help={L('ファイルを作成')} onClick={() => setShowNew(true)} />
-                <Button kind="borderless" iconOnly icon="minus" help={L('表示中のファイルを削除')} disabled={!shown || shown.startsWith(GENERATED)}
-                  onClick={() => { if (shown && !shown.startsWith(GENERATED)) { model.removeFile(shown); model.closeFile(shown) } }} />
+                <Button kind="borderless" iconOnly icon="minus" help={L('表示中のファイルを削除')} disabled={!shown || shown.startsWith(SDK)}
+                  onClick={() => { if (shown && !shown.startsWith(SDK)) { model.removeFile(shown); model.closeFile(shown) } }} />
               </div>
             </div>,
             editor,

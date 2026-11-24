@@ -5,7 +5,7 @@ import { readViewState, writeViewState } from '../../shared/clientViewState'
 import { layoutHost, H, sceneRequest } from '../wire/hostLayout'
 import { VersionCommentT } from '../../shared/gen/tsugumi/rpc/version-comment'
 import { RevisionEdit } from '../ui/revisionEdit'
-import { registerModuleClient, ModuleBlobs } from './moduleSources'
+import { LiveViews } from './liveViews'
 // One open project: shared by every view showing it. Owns the RPC
 // connection, the confirmed document (from tsugumid), the local draft with
 // undo/redo, run progress, displays and logs. Every edit is saved at once:
@@ -15,17 +15,16 @@ import { api, onServerEvent } from '../api'
 import { projectHost } from '../wire/projectHost'
 import { hostCall, onHostEvent } from '../wire/host'
 import { environmentHost, environmentProgress, environmentState, type EnvPublicState } from '../wire/environment'
-import { parse, arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../../shared/json'
-import { D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../wire/rpc'
+import { parse, arr, bool, clone, dbl, get, isObj, J, jeq, JObj, numText, obj, real, serialize, str, tryParse } from '../../shared/json'
+import { cardPath, D, R, LiveDisplayUpdate, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../wire/rpc'
 import {
   applicableStages, CardGeometry, CardNodeData, mergeStageStatus, orderedPorts, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
   snapToGrid,
 } from './canvasKit'
 import type { LayoutBar, LayoutScene } from '../../shared/layoutScene'
-import { FigureState, figureMode } from './moduleThumbnails'
 import { cloneDef, cloneExternal, defEq } from './documentValues'
+import { cardNotes, layoutView, noteId, parseReadme, printReadme, splitCardNotes } from './documents'
 import { Observable } from './observable'
-import { VisualizationTemplate, visualizationTemplates } from './visualizationTemplates'
 import { FlowDirection, prefs } from './prefs'
 import { runMark } from './runMark'
 import { cardPermissions } from './permissions'
@@ -52,10 +51,32 @@ const diag = (d: D.DiagnosticT): Diagnostic => ({
 
 export interface PortInfo {
   name: string
-  kind: D.PortKind
-  optional: boolean
   rootType?: string
-  executionShape?: D.ExecutionShape
+  mergeMemberTypes?: string[]
+}
+
+export function portTypeName(port?: PortInfo): string | undefined {
+  if (port?.mergeMemberTypes?.length) return port.mergeMemberTypes.join(' | ')
+  return port?.rootType
+}
+
+export interface CardParameter {
+  name: string
+  type: string
+  value: J
+}
+
+function parameterLiteral(value: J, type: string): string {
+  if (Array.isArray(value) && type.startsWith('[')) {
+    const items = value.map(item => parameterLiteral(item, type.slice(1, -1)))
+    return '[ ' + items.map(item => item.startsWith('-') ? '(' + item + ')' : item).join(' ') + ' ]'
+  }
+  if (typeof value === 'string') {
+    return '"' + value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$\{/g, '\\$' + '{') + '"'
+  }
+  const literal = serialize(value, false)
+  if (type === 'float') return literal.replace(/^(-?\d+)(?=[eE]|$)/, '$1.0')
+  return literal
 }
 
 export interface ResolvedCard {
@@ -63,7 +84,8 @@ export interface ResolvedCard {
   inputs: PortInfo[]
   outputs: PortInfo[]
   diagnostics: Diagnostic[]
-  nixReferences: { target: string[]; name: string; valid: boolean }[]
+  nixReferences: { target: string[]; name: string }[]
+  parameters?: CardParameter[]
 }
 
 /** One stage of an invocation as the core recorded it (core clock, ms). */
@@ -80,7 +102,7 @@ export const stageRecords = (list: R.StageTimeT[]): StageRecord[] =>
     return st === undefined ? [] : [{ stage: st, outcome: t.outcome, start: t.start !== null ? Number(t.start) : undefined, end: t.end !== null ? Number(t.end) : undefined }]
   })
 
-/** What the user and the Agent write about a Card (_meta.json), and the record
+/** What the user and the Agent write about a Card (_comments.json), and the record
  *  of who did what ("agent" or "user"; absent when not recorded). */
 export interface CardComment {
   id: string
@@ -101,7 +123,7 @@ export function cardComments(meta: J | undefined): CardComment[] {
     const id = str(get(c, 'id')), text = str(get(c, 'text'))
     return id && text !== undefined ? [{
       id, text, resolved: bool(get(c, 'resolved')) ?? false, finding: bool(get(c, 'finding')) ?? false, resolution: str(get(c, 'resolution')) || undefined,
-      author: str(get(c, 'author')), editedBy: str(get(c, 'editedBy')), stateBy: str(get(c, 'stateBy')),
+      author: str(get(c, 'author')), editedBy: str(get(c, 'edited_by')), stateBy: str(get(c, 'state_by')),
       cards: (arr(get(c, 'cards')) ?? []).map((x) => str(x)).filter((x): x is string => !!x),
     }] : []
   })
@@ -167,18 +189,18 @@ export interface TimelineEntry {
   stages: StageRecord[]
 }
 
-/** A Draft being written on its Card: its name and content as typed so far. */
+/** A Draft being written on its Card: its content as typed so far. */
 export interface InlineDraft {
   card: CardKey
-  name: string
   content: string
-  initialName: string
   initialContent: string
-  initialMeta?: J
+  initialReadme?: string
   revision: RevisionEdit
 }
 
-/** Draft of one Card's definition (`_card.json` and optional `_meta.json`). */
+/** Draft of one Card's definition: `_card.json`, and its notes (README.md's
+ *  description and body and _comments.json, as {description, content,
+ *  comments}; see documents.ts). */
 export interface DefinitionDraft {
   card: J
   meta?: J
@@ -190,7 +212,7 @@ export interface DefinitionDraft {
 export interface ExternalProject {
   project: J
   layout: J
-  /** Card id -> its definition files (_card.json and optional _meta.json). */
+  /** Card id -> its definition files (_card.json, README.md, _comments.json). */
   definitions: Map<string, DefinitionDraft>
   /** Removed (the folder goes with it). */
 }
@@ -202,124 +224,6 @@ export type SyncState =
   | { kind: 'failed'; message: string }
   | { kind: 'offline' }
   /** Card changes wait until the run ends. */
-
-export type DisplayValue =
-  | { kind: 'unavailable' }
-  | { kind: 'text'; text: string }
-  /** Markdown with TeX math (the SDK's Markdown display). */
-  | { kind: 'markdown'; text: string }
-  | { kind: 'scalar'; value: number; label: string }
-  | { kind: 'table'; columns: string[]; rows: string[][] }
-  | { kind: 'image'; mediaType: string; data: Uint8Array; alt: string }
-  | { kind: 'points'; x: number[]; y: number[]; z: number[]; colors: number[] }
-  | { kind: 'module'; name: string; json: string; blobs: ModuleBlobs }
-
-export interface DisplaySnapshot {
-  runId: string
-  invocation: bigint
-  revision: bigint
-  value: DisplayValue
-}
-
-/** Decode a retained display without changing the live canvas. */
-export function recordedDisplay(d: D.DisplayT): DisplaySnapshot | undefined {
-  let value: DisplayValue
-  try {
-  switch (d.valueType) {
-    case D.DisplayValue.DisplayText: {
-      const t = d.value as D.DisplayTextT
-      value = t.markdown ? { kind: 'markdown', text: s(t.text) } : { kind: 'text', text: s(t.text) }
-      break
-    }
-    case D.DisplayValue.DisplayScalar: {
-      const v = d.value as D.DisplayScalarT
-      value = { kind: 'scalar', value: v.value ?? NaN, label: s(v.label) }
-      break
-    }
-    case D.DisplayValue.DisplayTable: {
-      const t = d.value as D.DisplayTableT
-      value = { kind: 'table', columns: t.columns.map((c) => s(c)), rows: t.rows.map((r) => r.cells.map((c) => s(c))) }
-      break
-    }
-    case D.DisplayValue.DisplayImage: {
-      const im = d.value as D.DisplayImageT
-      value = { kind: 'image', mediaType: s(im.mediaType), data: Uint8Array.from(im.data), alt: s(im.alt) }
-      break
-    }
-    case D.DisplayValue.DisplayPointCloud: {
-      const p = d.value as D.DisplayPointCloudT
-      value = { kind: 'points', x: p.x, y: p.y, z: p.z, colors: p.colors }
-      break
-    }
-    case D.DisplayValue.DisplayModule: {
-      const m = d.value as D.DisplayModuleT
-      if (new Set(m.blobs.map(b => s(b.name))).size !== m.blobs.length) throw new Error('duplicate blobs')
-      value = { kind: 'module', name: s(m.module), json: s(m.configJson), blobs: Object.fromEntries(m.blobs.map(b => [s(b.name), Uint8Array.from(b.data)])) }
-      break
-    }
-    default:
-      value = { kind: 'unavailable' }
-  }
-  if (!displayable(value)) value = { kind: 'unavailable' }
-  } catch { value = { kind: 'unavailable' } }
-  return { runId: s(d.runId), invocation: d.invocation ?? 0n, revision: d.revision ?? 0n, value }
-}
-
-export function displaySummary(d: DisplaySnapshot): string {
-  const v = d.value
-  switch (v.kind) {
-    case 'unavailable': return L('この結果は表示できません')
-    case 'text': return v.text.split('\n')[0] ?? ''
-    case 'markdown': {
-      // The first line with text, without Markdown marks.
-      const line = v.text.split('\n').find((l) => l.trim()) ?? ''
-      return line.replace(/^[#>*\-` ]+|[#>*\-` ]+$/g, '').replace(/\*\*/g, '')
-    }
-    case 'scalar': return `${v.label} = ${Number(v.value.toPrecision(6))}`
-    case 'table': return L('表 {0} 列 × {1} 行', v.columns.length, v.rows.length)
-    case 'image': return v.alt || L('画像')
-    case 'points': return L('点群 {0} 点', v.x.length)
-    case 'module': return plotTitle(v.name, v.json) ?? L('モジュール {0}', v.name)
-  }
-}
-
-/** A malformed presentation stays attached to its run, with an explicit state. */
-function displayable(v: DisplayValue): boolean {
-  const bytes = (s: string) => new TextEncoder().encode(s).length
-  const id = (s: string) => s !== '.' && s !== '..' && /^[a-zA-Z0-9_.-]{1,128}$/.test(s)
-  switch (v.kind) {
-    case 'unavailable': return false
-    case 'text': case 'markdown': return bytes(v.text) <= 1 << 20
-    case 'scalar': return Number.isFinite(v.value)
-    case 'table': return v.columns.length > 0 && v.columns.length <= 64 && v.rows.length <= 10000 &&
-      v.columns.every(c => bytes(c) <= 4096) && v.rows.every(r => r.length === v.columns.length && r.every(c => bytes(c) <= 4096))
-    case 'image': return v.data.length <= 8 << 20 && (v.mediaType === 'image/png'
-      ? v.data.length > 8 && [137,80,78,71,13,10,26,10].every((b,i) => v.data[i] === b)
-      : v.mediaType === 'image/jpeg' && v.data.length > 3 && v.data[0] === 255 && v.data[1] === 216)
-    case 'points': return v.x.length <= 1000000 && v.x.length === v.y.length && v.x.length === v.z.length &&
-      (!v.colors.length || v.colors.length === v.x.length) && [v.x,v.y,v.z].every(a => a.every(Number.isFinite))
-    case 'module':
-      if (!/^\/nix\/store\/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[a-zA-Z0-9+._?=-]+$/.test(v.name) || bytes(v.json) > 1 << 20 ||
-          Object.keys(v.blobs).length > 64 || !Object.keys(v.blobs).every(id) || Object.values(v.blobs).reduce((n,b) => n+b.length,0) > 8 << 20) return false
-      try { JSON.parse(v.json); return true } catch { return false }
-  }
-}
-
-/** A built-in view's title or line-series summary (as an image shows its alt
- *  text), or what it is when it has none. */
-function plotTitle(name: string, json: string): string | undefined {
-  let v: any
-  try { v = JSON.parse(json) } catch { return undefined }
-  if (name.endsWith('-tsugumi-view-line-chart')) {
-    const series = Array.isArray(v?.series) ? v.series : []
-    return L('折れ線 {0} 系列 · {1} 点', series.length, Math.max(0, ...series.map((s: any) => Number(s.count) || 0)))
-  }
-  const plotly = name.endsWith('-tsugumi-view-plotly')
-  if (!plotly && !name.endsWith('-tsugumi-view-vega-lite')) return undefined
-  const t = plotly ? v?.layout?.title : v?.title
-  const text = typeof t === 'string' ? t : typeof t?.text === 'string' ? t.text : ''
-  return text || (plotly ? L('Plotly のグラフ') : L('Vega-Lite のグラフ'))
-}
 
 export type EnvironmentState = EnvPublicState | { state: 'reconnecting' }
 
@@ -398,7 +302,11 @@ export class ProjectSession extends Observable {
   confirmedDefinitionMeta = new Map<string, J>()
   /** Externals by folder ("externals/<name>/", nested "…/externals/<name>/"). */
   externals = new Map<string, ExternalProject>()
-  private externalDocuments = new Map<string, J>()
+  /** Bytes of the files the core carries: nested projects' documents and the
+   *  canvas notes (notes/<id>.md). */
+  private sourceDocuments = new Map<string, Uint8Array>()
+  /** The confirmed layout.bin; confirmedLayout is its view with the notes. */
+  private confirmedLayoutBytes: Uint8Array = new Uint8Array()
   sources = new Map<string, { hash: string; size: bigint }>()
   resolution = new Map<CardKey, ResolvedCard>()
   diagnostics: Diagnostic[] = []
@@ -409,10 +317,10 @@ export class ProjectSession extends Observable {
   layout: J = obj()
   /** The Draft being written on the canvas (geometry opens its Card up). */
   inlineDraft?: InlineDraft
-  private draftFinishTask?: Promise<CardKey | undefined>
+  private draftFinishTask?: Promise<void>
   get hasUnsavedEdits() {
     const e = this.inlineDraft
-    return this.dirty || !!this.draftFinishTask || !!e && (e.name !== e.initialName || e.content !== e.initialContent)
+    return this.dirty || !!this.draftFinishTask || !!e && e.content !== e.initialContent
   }
   /** Edited externals (by folder), written back as their files. */
   /** Base hashes chosen by an editor that read the file before this draft started. */
@@ -438,8 +346,6 @@ export class ProjectSession extends Observable {
   private closed = false
 
   // Runs
-  private runProvenance = new Map<string, R.RunStatusT>()
-  private loadingProvenance = new Set<string>()
   private stopRunId?: string
   stopError?: string
   get stopRequested() { return this.stopRunId !== undefined }
@@ -451,17 +357,16 @@ export class ProjectSession extends Observable {
   set runStatus(status: R.RunStatusT | undefined) {
     const previousId = this.currentRunId
     this._runStatus = status
-    if (status?.runId) this.runProvenance.set(s(status.runId), status)
     if (previousId !== this.currentRunId || !this.runActive || status?.state === D.RunState.cancelling)
       this.stopError = undefined
     if (this.stopRunId !== this.currentRunId || !this.runActive || status?.state === D.RunState.cancelling)
       this.stopRunId = undefined
   }
-  markForRun(runId: string) { return runMark(this.runProvenance.get(runId)) }
   cardStates = new Map<CardKey, CardRunState>()
-  displays = new Map<CardKey, DisplaySnapshot>()
+  readonly liveViews = new LiveViews()
   lastFinished = 0
   remoteHistoryRevision = 0
+  recordingRevision = 0
   batchHistoryRevision = 0
   private runBatches = new Map<CardKey, R.RunBatchT>()
   timeline: TimelineEntry[] = []
@@ -477,8 +382,6 @@ export class ProjectSession extends Observable {
   /** How many notifications the UI has taken in, and in how many batches. */
   notificationCount = 0
   notificationBatches = 0
-  private inbox: Notification[] = []
-  private inboxScheduled = false
   private offEvents: () => void
   private offHost: () => void
 
@@ -571,8 +474,7 @@ export class ProjectSession extends Observable {
     const batch = output ? this.executionBatch(card) : undefined
     const emitted = batch?.outputs.find((item) => s(item.port) === port)
     if (emitted) return { executionList: emitted.executionList, count: emitted.executionList ? emitted.count : undefined }
-    const shape = this.resolution.get(card)?.[output ? 'outputs' : 'inputs'].find((item) => item.name === port)?.executionShape
-    return { executionList: shape === D.ExecutionShape.list || (batch?.executionList === true && this.kind(card) !== 'collect') }
+    return { executionList: batch?.executionList === true && this.kind(card) !== 'collect' }
   }
 
   get rpc(): RPCClient | undefined {
@@ -620,7 +522,6 @@ export class ProjectSession extends Observable {
       this.changed()
       if (env.state !== 'ready') return
       const c = await this.reach(env.endpoint!, env.token, connection.signal)
-      this.displayGeometries = await this.layoutHost.displayGeometry()
       const opened = await c.open(this.viewId)
       if (this.closed || epoch !== this.connectionEpoch) {
         c.close()
@@ -639,6 +540,7 @@ export class ProjectSession extends Observable {
         if (this.client !== c) return
         this.documentRevisions.disconnect(new RPCError('disconnected', L('接続していません')))
         this.connected = false
+        this.liveViews.reset()
         this.changed()
         this.reconnect()
       }
@@ -651,6 +553,7 @@ export class ProjectSession extends Observable {
     } catch (e) {
       if (epoch !== this.connectionEpoch || this.closed) return
       this.connected = false
+      this.liveViews.reset()
       this.connectionFailed = e instanceof Unreached
       this.connectionMessage = errorText(e instanceof Unreached ? e.cause : e)
       if (this.environment.state === 'starting' || this.environment.state === 'reconnecting') this.environment = { state: 'ready' }
@@ -670,7 +573,6 @@ export class ProjectSession extends Observable {
       signal.addEventListener('abort', cancel, { once: true })
       try { await client.connect(token) }
       finally { signal.removeEventListener('abort', cancel) }
-      registerModuleClient(client)
       return client
     } catch (e) {
       client?.close()
@@ -688,6 +590,7 @@ export class ProjectSession extends Observable {
     this.client = undefined
     old?.close()
     this.connected = false
+    this.liveViews.reset()
     this.changed()
     void (async () => {
       // The host Start request joins a restart and answers only when ready or
@@ -708,6 +611,7 @@ export class ProjectSession extends Observable {
       this.client = undefined
       old?.close()
       this.connected = false
+      this.liveViews.reset()
       this.environment = { state: 'starting', message: L('tsugumid の応答を待っています') }
       this.changed()
       try {
@@ -737,6 +641,7 @@ export class ProjectSession extends Observable {
     this.client = undefined
     c?.close()
     this.connected = false
+    this.liveViews.reset()
   }
 
   async stopEnvironment() {
@@ -746,6 +651,7 @@ export class ProjectSession extends Observable {
     this.client = undefined
     c?.close()
     this.connected = false
+    this.liveViews.reset()
     this.changed()
     try { this.environment = await this.environmentHost.stop(this.dir) }
     catch (error) { this.connectionMessage = errorText(error) }
@@ -756,24 +662,29 @@ export class ProjectSession extends Observable {
     this.offEvents()
     this.offHost()
     this.client?.close()
+    this.liveViews.reset()
   }
 
   /** Notifications are taken in as they arrive and applied in batches at most
    *  once per frame (or four times a second with no frames): a run with thousands of short invocations causes one
    *  view update per batch, not per event. */
   private listen(c: RPCClient) {
+    let inbox: Notification[] = []
     c.onNotification = (e) => {
-      this.inbox.push(e)
-      if (this.inboxScheduled) return
-      this.inboxScheduled = true
+      if (this.client !== c) return
+      inbox.push(e)
+      if (inbox.length > 1) return
       const apply = () => {
         cancelAnimationFrame(frame)
         clearTimeout(timer)
-        this.inboxScheduled = false
-        const batch = this.inbox
-        this.inbox = []
-        if (batch.length) this.notificationBatches++
-        for (const ev of batch) this.handle(ev)
+        const batch = inbox
+        inbox = []
+        if (this.client !== c) return
+        this.notificationBatches++
+        for (const ev of batch) {
+          if (this.client !== c) break
+          this.handle(ev)
+        }
         this.changed()
       }
       const frame = requestAnimationFrame(apply)
@@ -838,14 +749,30 @@ export class ProjectSession extends Observable {
         if (d) this.applyDelta(d)
         break
       }
+      case R.NotificationPayload.CardViewsUpdated: {
+        const { card, views, failure } = e.value as R.CardViewsUpdatedT
+        this.liveViews.get(key(segs(card)))?.declare(views.map(v => ({ name: s(v.name), type: s(v.type), blob: s(v.blob) })),
+          failure ? s(failure.diagnostic) || (D.FailureKind[failure.kind] ?? String(failure.kind)) : undefined)
+        break
+      }
+      case R.NotificationPayload.DisplayUpdated: {
+        const { card, view, bytes, creditId } = e.value as LiveDisplayUpdate
+        const client = this.client
+        const complete = creditId === undefined ? undefined : () => {
+          void client?.viewCredit(e.subscriptionId, card, view, bytes.length, creditId).catch(() => {})
+        }
+        const views = this.liveViews.get(key(card))
+        if (views) views.data(view, bytes, complete)
+        else complete?.()
+        break
+      }
       case R.NotificationPayload.RunEvent:
         this.applyRunEvent(e.value as R.RunEventT)
         break
-      case R.NotificationPayload.DisplayUpdated: {
-        const d = (e.value as R.DisplayUpdatedT).display
-        if (d) this.applyDisplay(d)
+      case R.NotificationPayload.RunCategoryDeleteResult:
+        this.recordingRevision++
+        this.changed()
         break
-      }
       case R.NotificationPayload.LogAvailable:
         for (const listener of this.logListeners) listener(e.value as R.LogAvailableT)
         break
@@ -859,7 +786,7 @@ export class ProjectSession extends Observable {
       const id = s(d.id)
       const c = tryParse(s(d.cardJson))
       if (c !== undefined) this.confirmedDefinitions.set(id, c)
-      const m = d.metaJson !== null ? tryParse(s(d.metaJson)) : undefined
+      const m = cardNotes(sOpt(d.readme), sOpt(d.commentsJson))
       if (m !== undefined) this.confirmedDefinitionMeta.set(id, m)
       else this.confirmedDefinitionMeta.delete(id)
     }
@@ -871,22 +798,23 @@ export class ProjectSession extends Observable {
     this.documentRevisions.reset(this.rev)
     this.executionRev = snap.executionRev ?? 0n
     this.confirmedProject = tryParse(s(snap.projectJson)) ?? obj()
-    this.confirmedLayout = tryParse(s(snap.layoutJson)) ?? obj()
+    this.confirmedLayoutBytes = Uint8Array.from(snap.layout)
     this.confirmedDefinitions = new Map()
     this.confirmedDefinitionMeta = new Map()
     this.readDefinitions(snap.definitions)
     this.sources = new Map()
-    this.externalDocuments.clear()
+    this.sourceDocuments.clear()
     this.externals.clear()
     this.derivedLayouts.clear()
     this.layoutTasks.clear()
     this.applySources(snap.sources, [])
+    this.confirmedLayout = this.layoutAt('')
     this.refreshDerivedLayout()
     this.applyResolution(snap.resolution, snap.diagnostics)
     if (this.currentRunId !== sOpt(snap.run?.runId)) this.runBatches = new Map()
     this.runStatus = snap.run ?? undefined
     this.viewRev = snap.viewRev ?? 0n
-    const view = readViewState(s(snap.viewJson))
+    const view = readViewState(snap.view)
     if (view) {
       this.initialScope = view.scope
       for (const cam of view.cameras) this.cameras.set(key(cam.scope), { x: cam.x, y: cam.y, zoom: cam.zoom })
@@ -901,20 +829,26 @@ export class ProjectSession extends Observable {
     const r = new Map<CardKey, ResolvedCard>()
     const all = diags.map(diag)
     const port = (x: D.PortT): PortInfo => ({
-      name: s(x.name), kind: x.kind, optional: !!x.optional, rootType: sOpt(x.rootType), executionShape: x.executionShape,
+      name: s(x.name), rootType: sOpt(x.rootType),
+      mergeMemberTypes: x.mergeMemberTypes.map(s),
     })
     for (const rc of res) {
       const p = segs(rc.card)
       const d = rc.diagnostics.map(diag)
       r.set(key(p), { path: p, inputs: rc.inputs.map(port), outputs: rc.outputs.map(port), diagnostics: d,
-        nixReferences: rc.nixReferences.map(r => ({ target: segs(r.target), name: s(r.name), valid: r.valid })) })
+        nixReferences: rc.nixReferences.map(r => ({ target: segs(r.target), name: s(r.name) })),
+        parameters: (rc.parameters ?? []).flatMap(p => {
+          const value = tryParse(s(p.valueJson))
+          if (value === undefined) return []
+          return [{ name: s(p.name), type: s(p.type), value }]
+        }) })
       all.push(...d)
+    }
+    for (const [card, views] of this.liveViews) {
+      if (this.resolution.has(card) && !r.has(card)) views.clear()
     }
     this.resolution = r
     this.diagnostics = all
-    // A result belongs to a Card of the document. A Card that comes back asks for
-    // its own again: displayedCards changed (refreshVisibleDisplays).
-    for (const k of [...this.displays.keys()]) if (!r.has(k)) this.displays.delete(k)
   }
 
   private applyDelta(d: R.DocumentDeltaT) {
@@ -929,25 +863,20 @@ export class ProjectSession extends Observable {
     }
     const beforePresence = connectionsOf(this.confirmedProject)
     this.presence.finish()
-    // The Cards that send displays, before this change (definitions and
-    // resolution are replaced below).
-    const shown = [...this.displayedCards].sort().join('|')
     this.rev = d.rev ?? this.rev
     this.executionRev = d.executionRev ?? this.executionRev
     if (d.projectJson !== null) {
       const v = tryParse(s(d.projectJson))
       if (v !== undefined) this.confirmedProject = v
     }
-    if (d.layoutJson !== null) {
-      const v = tryParse(s(d.layoutJson))
-      if (v !== undefined) this.confirmedLayout = v
-    }
+    if (d.layoutChanged) this.confirmedLayoutBytes = Uint8Array.from(d.layout)
     for (const id of d.definitionsRemoved) {
       this.confirmedDefinitions.delete(s(id))
       this.confirmedDefinitionMeta.delete(s(id))
     }
     this.readDefinitions(d.definitionsUpsert)
     this.applySources(d.sourcesUpsert, d.sourcesRemoved.map(s))
+    this.confirmedLayout = this.layoutAt('')
     if (d.origin === 'agent') {
       const cards = [...d.definitionsUpsert.map(x => s(x.id)), ...d.sourcesUpsert.flatMap(x => {
         const parts = s(x.path).split('/')
@@ -957,8 +886,6 @@ export class ProjectSession extends Observable {
     }
     this.refreshDerivedLayout()
     this.applyResolution(d.resolution, d.diagnostics)
-    // A Draft implemented (or any Card that became code) sends its displays too.
-    if ([...this.displayedCards].sort().join('|') !== shown) void this.refreshVisibleDisplays()
     this.project = clone(this.confirmedProject)
     this.layout = clone(this.confirmedLayout)
   }
@@ -1018,25 +945,6 @@ export class ProjectSession extends Observable {
     }
   }
 
-  private applyDisplay(d: D.DisplayT) {
-    const k = key(segs(d.card))
-    const rev = d.revision ?? 0n
-    const old = this.displays.get(k)
-    if (old && old.runId === s(d.runId) && old.revision >= rev) return // stale frame
-    const display = recordedDisplay(d)
-    if (display) {
-      this.displays.set(k, display)
-      // A reconnected canvas may receive a display from an older run.
-      if (this.client && !this.runProvenance.has(display.runId) && !this.loadingProvenance.has(display.runId)) {
-        this.loadingProvenance.add(display.runId)
-        void this.client.record(display.runId, path(k), display.invocation).then(record => {
-          if (record.run?.status) this.runProvenance.set(display.runId, record.run.status)
-          this.changed()
-        }).catch(() => {}).finally(() => this.loadingProvenance.delete(display.runId))
-      }
-    }
-  }
-
   private recordTimeline(k: CardKey, inv: R.InvocationSummaryT) {
     const n = inv.invocation ?? 0n
     const stages = stageRecords(inv.stages)
@@ -1070,11 +978,11 @@ export class ProjectSession extends Observable {
     if (!prefix || !before) return
     const after = cloneExternal(before); fn(after)
     this.editJSON(prefix + 'tsugumi.json', before.project, after.project)
-    this.editJSON(prefix + 'layout.json', before.layout, after.layout)
+    this.editJSON(prefix + 'layout.bin', before.layout, after.layout)
     for (const [id, d] of after.definitions) {
       const old = before.definitions.get(id), dir = prefix + 'definitions/' + id + '/'
       this.editJSON(dir + '_card.json', old?.card, d.card)
-      this.editJSON(dir + '_meta.json', old?.meta, d.meta)
+      this.editNotes(dir, old?.meta, d.meta)
     }
   }
 
@@ -1090,6 +998,22 @@ export class ProjectSession extends Observable {
     return new H.ProjectEditT(H.ProjectEditValue.ProjectJSONEdit, new H.ProjectJSONEditT(file,
       new H.ProjectValueT(before !== undefined, before === undefined ? null : serialize(before)),
       new H.ProjectValueT(after !== undefined, after === undefined ? null : serialize(after))))
+  }
+
+  /** Edits of a Card's notes: its README.md (as a JSON string) and _comments.json. */
+  notesEdits(dir: string, before: J | undefined, after: J | undefined): H.ProjectEditT[] {
+    const was = splitCardNotes(before), now = splitCardNotes(after)
+    const edits: H.ProjectEditT[] = []
+    if (was.readme !== now.readme) edits.push(this.jsonEdit(dir + 'README.md', was.readme, now.readme))
+    if (!jeq(was.comments, now.comments)) edits.push(this.jsonEdit(dir + '_comments.json', was.comments, now.comments))
+    return edits
+  }
+
+  private editNotes(dir: string, before: J | undefined, after: J | undefined) {
+    const edits = this.notesEdits(dir, before, after)
+    if (!edits.length) return
+    if (this.commandEdits) this.commandEdits.push(...edits)
+    else void this.operateFields(edits).catch(e => this.cardEditFailed(e))
   }
 
   private editJSON(file: string, before: J | undefined, after: J | undefined) {
@@ -1245,14 +1169,15 @@ export class ProjectSession extends Observable {
     }, 600)
   }
 
-  /** Cards whose displays the canvas shows: every Card that can run may send displays. */
-  get displayedCards(): Set<CardKey> {
-    return new Set([...this.resolution.keys()].filter((k) => this.kind(k) === 'code'))
+  /** Subscribe only while at least one live viewer for a Card is open. */
+  observeDisplay(card: CardKey): () => void {
+    return this.liveViews.observe(card, () => { void this.refreshVisibleDisplays() })
   }
 
-  async refreshVisibleDisplays() {
+  private async refreshVisibleDisplays() {
     if (!this.client || !this.subscription) return
-    await this.client.setVisible(this.subscription, [...this.displayedCards].sort().map(path), true).catch(() => {})
+    const cards = [...this.liveViews.keys()].sort().map(path)
+    await this.client.setVisible(this.subscription, cards, cards.length > 0).catch(() => {})
   }
 
   // ---- Runs --------------------------------------------------------------------
@@ -1364,7 +1289,7 @@ export class ProjectSession extends Observable {
     if (prefix === undefined) return
     const before = this.layoutOf(scope), after = clone(before)
     if (!isObj(after)) return
-    fn(after); this.editJSON(prefix + 'layout.json', before, after)
+    fn(after); this.editJSON(prefix + 'layout.bin', before, after)
   }
 
   /** A Card's key in the layout of its scope (inside a Card in Card: its id). */
@@ -1401,7 +1326,7 @@ export class ProjectSession extends Observable {
     return d && definitionKind(d.card) !== 'subgraph' ? d.card : undefined
   }
 
-  /** The Card's _meta.json. */
+  /** The Card's notes: {description, content, comments}. */
   cardMeta(k: CardKey): J | undefined {
     return this.cardDefinitionDraft(k)?.meta
   }
@@ -1411,7 +1336,7 @@ export class ProjectSession extends Observable {
     const dir = this.definitionDir(k), before = this.cardDefinitionDraft(k)
     if (!dir || !d) return
     this.editJSON(dir + '_card.json', before?.card, d.card)
-    this.editJSON(dir + '_meta.json', before?.meta, d.meta)
+    this.editNotes(dir, before?.meta, d.meta)
   }
 
   /** The external project of a Card in Card ("externals/<name>/…"), if it is one. */
@@ -1431,7 +1356,12 @@ export class ProjectSession extends Observable {
   /** A Card in Card's ports: its external's boundary. */
   boundary(k: CardKey): J | undefined {
     const ext = this.cardExternal(k)
-    return ext ? get(this.external(ext)?.project, 'boundary') : undefined
+    const boundary = ext ? get(this.external(ext)?.project, 'boundary') : undefined
+    if (!boundary) return undefined
+    return obj(['inputs', 'outputs'].map(side => [side, obj((arr(get(boundary, side)) ?? []).flatMap(port => {
+      const name = str(get(port, 'name'))
+      return name ? [[name, port]] : []
+    }))]))
   }
 
   /** Changes a Card's _card.json in the draft. */
@@ -1444,7 +1374,7 @@ export class ProjectSession extends Observable {
     this.setCardDefinition(k, n)
   }
 
-  /** Changes a Card's _meta.json in the draft. */
+  /** Changes a Card's notes in the draft. */
   updateMeta(k: CardKey, fn: (m: JObj) => void) {
     const d = this.cardDefinitionDraft(k)
     if (!d) return
@@ -1454,7 +1384,7 @@ export class ProjectSession extends Observable {
     this.setCardDefinition(k, n)
   }
 
-  // ---- Comments on a Card (its _meta.json) ---------------------------------------------
+  // ---- Comments on a Card (its _comments.json) ------------------------------------------
 
   /** What the user asks of this Card, in the order written. */
   comments(k: CardKey): CardComment[] {
@@ -1498,26 +1428,12 @@ export class ProjectSession extends Observable {
     await this.applyMutation(x => x.changeComments(k, list => [...list, obj([['id', id], ['text', t], ['author', 'user'], ['finding', finding]])]))
   }
 
-  setCommentText(k: CardKey, id: string, text: string) {
-    const t = text.trim()
-    if (t) this.changeComments(k, (list) => {
-      if (!list.some((c) => str(get(c, 'id')) === id)) return [...list, obj([['id', id], ['text', t], ['author', 'user']])]
-      return list.map((c) => {
-        if (str(get(c, 'id')) === id && isObj(c)) {
-          c.set('text', t)
-          c.set('editedBy', 'user')
-        }
-        return c
-      })
-    })
-  }
-
   /** Marks a comment by hand. Opening one again takes back what was said about it. */
   setCommentResolved(k: CardKey, id: string, resolved: boolean) {
     this.editComments(k, (list) => list.map((c) => {
       if (str(get(c, 'id')) === id && isObj(c)) {
         c.set('resolved', resolved ? true : undefined)
-        c.set('stateBy', 'user')
+        c.set('state_by', 'user')
         if (!resolved) {
           c.set('resolution', undefined)
           c.set('cards', undefined)
@@ -1529,11 +1445,6 @@ export class ProjectSession extends Observable {
 
   removeComment(k: CardKey, id: string) {
     this.editComments(k, (list) => list.filter((c) => str(get(c, 'id')) !== id))
-  }
-
-  /** A setting of the Card (its _card.json). */
-  cardSetting(k: CardKey, name: string): J | undefined {
-    return get(this.cardDefinition(k), name)
   }
 
   derivedLayouts = new Map<string, J>()
@@ -1588,42 +1499,69 @@ export class ProjectSession extends Observable {
     return { x: dbl(get(derived, 'x')) ?? 0, y: dbl(get(derived, 'y')) ?? 0 }
   }
 
+  /** The text of a carried file. */
+  private carriedText(path: string): string | undefined {
+    const bytes = this.sourceDocuments.get(path)
+    return bytes ? new TextDecoder().decode(bytes) : undefined
+  }
+
+  /** The layout view of a project ("" or "externals/<p>/…"): its layout.bin
+   *  and the text of its notes. */
+  private layoutAt(prefix: string): JObj {
+    const notes = new Map<string, string>()
+    for (const path of this.sourceDocuments.keys()) {
+      const id = noteId(prefix, path)
+      if (id !== undefined && path.slice(prefix.length).split('/').length === 2) notes.set(id, this.carriedText(path) ?? '')
+    }
+    try {
+      return layoutView(prefix ? this.sourceDocuments.get(prefix + 'layout.bin') : this.confirmedLayoutBytes, notes)
+    } catch (error) {
+      this.notice = `${prefix}layout.bin: ${errorText(error)}`
+      return obj()
+    }
+  }
+
   private applySources(upserts: R.SourceInfoT[], removed: string[]) {
     let changed = false
     for (const path of removed) {
       this.sources.delete(path)
-      changed = this.externalDocuments.delete(path) || changed
+      changed = this.sourceDocuments.delete(path) || changed
     }
     for (const src of upserts) {
       const path = s(src.path)
       this.sources.set(path, { hash: s(src.hash), size: src.sizeBytes ?? 0n })
-      if (src.documentJson === null) continue
+      // A carried file: a nested project's documents or a note (which may be empty).
+      if (!src.document.length && noteId(path.slice(0, path.lastIndexOf('notes/')), path) === undefined) continue
       changed = true
-      try {
-        this.externalDocuments.set(path, parse(s(src.documentJson)))
-      } catch (error) {
-        this.externalDocuments.delete(path)
-        this.notice = `${path}: ${errorText(error)}`
-      }
+      this.sourceDocuments.set(path, Uint8Array.from(src.document))
     }
     if (!changed) return
+    const json = (path: string): J | undefined => {
+      const text = this.carriedText(path)
+      if (text === undefined) return undefined
+      try { return parse(text) } catch (error) {
+        this.notice = `${path}: ${errorText(error)}`
+        return undefined
+      }
+    }
     const found = new Map<string, ExternalProject>()
-    for (const [path, project] of this.externalDocuments) {
+    for (const path of this.sourceDocuments.keys()) {
       if (!path.endsWith('/tsugumi.json')) continue
       const prefix = path.slice(0, -'tsugumi.json'.length)
-      found.set(prefix, {
-        project, layout: this.externalDocuments.get(prefix + 'layout.json') ?? obj(),
-        definitions: new Map(),
-      })
+      const project = json(path)
+      if (project === undefined) continue
+      found.set(prefix, { project, layout: this.layoutAt(prefix), definitions: new Map() })
     }
-    for (const [path, card] of this.externalDocuments) {
+    for (const path of this.sourceDocuments.keys()) {
       if (!path.endsWith('/_card.json')) continue
+      const card = json(path)
+      if (card === undefined) continue
       const dir = path.slice(0, -'_card.json'.length)
       const split = dir.lastIndexOf('/', dir.length - 2) + 1
       const id = dir.slice(split, -1)
       const prefix = dir.slice(0, split - 'definitions/'.length)
       found.get(prefix)?.definitions.set(id, {
-        card, meta: this.externalDocuments.get(dir + '_meta.json'),
+        card, meta: cardNotes(this.carriedText(dir + 'README.md'), this.carriedText(dir + '_comments.json')),
       })
     }
     const previous = this.externals
@@ -1645,9 +1583,9 @@ export class ProjectSession extends Observable {
     return definitionKind(this.cardDefinitionDraft(k)?.card)
   }
 
-  /** The editable human name; the identifier remains the exact address. */
+  /** A Card's name: its id, the only name it has. */
   displayName(k: CardKey): string {
-    return str(get(this.cardMeta(k), 'name')) || path(k).pop() || k
+    return path(k).pop() || k
   }
 
   /** A human-readable path. Pass the original segments to tools and links. */
@@ -1675,20 +1613,20 @@ export class ProjectSession extends Observable {
 
   /** Places a definition folder no Card uses as its Card (the same name). */
   placeDefinition(id: string, at: { x: number; y: number }): CardKey {
-    this.selectOperation(H.ProjectSelectionAction.Place, [], [key([id])], [], [], undefined, at)
+    this.selectOperation(H.ProjectSelectionAction.Place, [], [key([id])], [], undefined, at)
     return key([id])
   }
 
-  private selectOperation(action: H.ProjectSelectionAction, scope: string[], cards: Iterable<CardKey>, notes: Iterable<string> = [], frames: Iterable<CardKey> = [], connections?: J[], at = { x: 0, y: 0 }) {
+  private selectOperation(action: H.ProjectSelectionAction, scope: string[], cards: Iterable<CardKey>, notes: Iterable<string> = [], connections?: J[], at = { x: 0, y: 0 }) {
     const prefix = this.projectPrefix(scope)
     if (prefix === undefined) return
     void this.operate(H.ProjectOperationBody.ProjectSelection, new H.ProjectSelectionT(prefix.replace(/\/$/, ''), action,
-      [...cards].map(k => this.layoutKey(k)).sort(), [...notes].sort(), [...frames].map(k => this.layoutKey(k)).sort(),
-      connections ? serialize(connections) : null, at.x, at.y, sceneRequest(this.layoutScene(scope)))).catch(e => this.cardEditFailed(e))
+      [...cards].map(k => this.layoutKey(k)).sort(), [...notes].sort(),
+      connections ? serialize(connections) : null, at.x, at.y)).catch(e => this.cardEditFailed(e))
   }
 
-  deleteSelection(cards: Set<CardKey>, notes: Set<string>, frames: Set<CardKey>, scope: string[]) {
-    this.selectOperation(H.ProjectSelectionAction.Delete, scope, cards, notes, frames)
+  deleteSelection(cards: Set<CardKey>, notes: Set<string>, scope: string[]) {
+    this.selectOperation(H.ProjectSelectionAction.Delete, scope, cards, notes)
   }
 
   /** Source text as the draft sees it. */
@@ -1725,13 +1663,34 @@ export class ProjectSession extends Observable {
     return id
   }
 
-  /** The host assembles the template, sources and placement in one operation. */
+  /** The host saves the definition and placement together. */
   async addCard(t: DefinitionTemplate, scope: string[], at: { x: number; y: number }, name?: string, automaticPlacement = false): Promise<CardKey> {
     const id = await this.newCardId(name ?? templateBaseName(t), scope)
     await this.operate(H.ProjectOperationBody.ProjectCreateCard, new H.ProjectCreateCardT(
-      (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), id, t, name ?? templateBaseName(t), at.x, at.y, automaticPlacement))
+      (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), id, BUILTIN_CARDS[t], at.x, at.y, automaticPlacement))
     this.forgetResult(key([...scope, id]))
     return key([...scope, id])
+  }
+
+  async copyTemplate(entry: H.TemplateEntryT, scope: string[], at: { x: number; y: number }) {
+    const prefix = this.projectPrefix(scope)
+    if (prefix === undefined) throw new Error('Unknown Card scope')
+    return this.operate(H.ProjectOperationBody.ProjectTemplateCopy,
+      new H.ProjectTemplateCopyT(prefix.replace(/\/$/, ''), entry.store, entry.name, at.x, at.y))
+  }
+
+  async listTemplates(): Promise<H.TemplateEntryT[]> {
+    const result = await hostCall<H.TemplateListT>(H.RequestPayload.TemplateListRequest,
+      new H.TemplateListRequestT(this.projectId), H.ReplyPayload.TemplateList)
+    return result.entries
+  }
+
+  async addTemplate(store: H.TemplateStore, addition: H.TemplateAddT) {
+    if (store === H.TemplateStore.Project)
+      await this.operate(H.ProjectOperationBody.TemplateAdd, addition)
+    else
+      await hostCall(H.RequestPayload.HostTemplateAddRequest,
+        new H.HostTemplateAddRequestT(addition), H.ReplyPayload.Acknowledgement)
   }
 
   async placeExternalCopy(from: string, scope: string[], at: { x: number; y: number }): Promise<CardKey | undefined> {
@@ -1739,7 +1698,7 @@ export class ProjectSession extends Observable {
     const id = await this.newCardId(base, scope)
     try {
       await this.operate(H.ProjectOperationBody.ProjectCopy, new H.ProjectCopyT(
-        (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), [new H.ProjectCopyItemT(from, id, base, at.x, at.y)]))
+        (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), [new H.ProjectCopyItemT(from, id, at.x, at.y)]))
       this.forgetResult(key([...scope, id]))
       return key([...scope, id])
     } catch (e) { this.cardEditFailed(e); return undefined }
@@ -1749,7 +1708,7 @@ export class ProjectSession extends Observable {
     const newId = await this.newCardId(id, scope)
     try {
       await this.operate(H.ProjectOperationBody.ProjectCopy, new H.ProjectCopyT(
-        (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), [new H.ProjectCopyItemT(`${prefix}definitions/${id}/`, newId, null, at.x, at.y)]))
+        (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), [new H.ProjectCopyItemT(`${prefix}definitions/${id}/`, newId, at.x, at.y)]))
       this.forgetResult(key([...scope, newId]))
       return key([...scope, newId])
     } catch (e) { this.cardEditFailed(e); return undefined }
@@ -1782,15 +1741,9 @@ export class ProjectSession extends Observable {
 
   /** A new Card must not display the result or run state of a previous owner of its ID. */
   private forgetResult(k: CardKey) {
-    this.displays.delete(k)
+    this.liveViews.get(k)?.clear()
     this.cardStates.delete(k)
     this.changed()
-  }
-
-  /** Names are independent of identifiers and may be shared by several Cards. */
-  cardNameProblem(_k: CardKey, raw: string): string | undefined {
-    if (!raw.trim() || new TextEncoder().encode(raw.trim()).length > 4096) return L('名前を入力してください（4096 バイトまで）。')
-    return undefined
   }
 
   // ---- A Draft written on the canvas -------------------------------------------------
@@ -1800,7 +1753,7 @@ export class ProjectSession extends Observable {
     return this.kind(k) === 'draft' && this.displayName(k) === 'draft'
   }
 
-  /** Starts writing a Draft's name and content on its Card. */
+  /** Starts writing a Draft's content on its Card. */
   async startDraftEdit(k: CardKey, revision?: RevisionEdit) {
     if (!revision && this.inlineDraft) {
       if (this.inlineDraft.card === k) return
@@ -1808,66 +1761,52 @@ export class ProjectSession extends Observable {
       if (this.inlineDraft) return
     }
     revision ??= new RevisionEdit()
-    const name = this.draftUntitled(k) ? '' : this.displayName(k), content = str(get(this.cardMeta(k), 'content')) ?? ''
+    const content = str(get(this.cardMeta(k), 'content')) ?? ''
     revision.reload(this.rev)
-    this.inlineDraft = { card: k, name, content, initialName: name, initialContent: content, initialMeta: clone(this.cardMeta(k)), revision }
+    this.inlineDraft = { card: k, content, initialContent: content, initialReadme: splitCardNotes(this.cardMeta(k)).readme, revision }
     this.changed()
   }
 
-  /** Why the name typed on a Draft's Card cannot be taken (no name is fine). */
-  draftNameProblem(k: CardKey, name: string): string | undefined {
-    return name.trim() ? this.cardNameProblem(k, name) : undefined
-  }
-
-  setDraftEdit(change: Partial<Pick<InlineDraft, 'name' | 'content'>>) {
+  setDraftEdit(change: Partial<Pick<InlineDraft, 'content'>>) {
     if (!this.inlineDraft) return
     this.inlineDraft = { ...this.inlineDraft, ...change }
     this.changed()
   }
 
-  /** Keeps what was written. A name the Card cannot take stays as it was, with
-   *  a notice. The Card's permanent key when its name changed. */
-  async finishDraftEdit(overwrite = false): Promise<CardKey | undefined> {
+  /** Saves the Draft text and keeps the edit open if saving fails. */
+  async finishDraftEdit(overwrite = false): Promise<void> {
     if (this.draftFinishTask) return this.draftFinishTask
-    if (!this.inlineDraft) return undefined
+    if (!this.inlineDraft) return
     const task = (async () => {
-      let renamed: CardKey | undefined
       do {
-        renamed = await this.finishDraftEditOnce(overwrite) ?? renamed
+        await this.finishDraftEditOnce(overwrite)
         const current = this.inlineDraft
         if (!current || current.revision.conflictRev !== undefined || current.revision.error) break
       } while (true)
-      return renamed
     })()
     this.draftFinishTask = task
     try { return await task } finally { this.draftFinishTask = undefined; this.changed() }
   }
 
-  private async finishDraftEditOnce(overwrite: boolean): Promise<CardKey | undefined> {
+  private async finishDraftEditOnce(overwrite: boolean): Promise<void> {
     const e = this.inlineDraft
-    if (!e) return undefined
-    const contentChanged = e.content !== e.initialContent
-    const nameChanged = e.name !== e.initialName
-    if (!this.instance(e.card) || (!contentChanged && !nameChanged)) {
-      this.inlineDraft = undefined; this.changed(); return undefined
+    if (!e) return
+    if (!this.instance(e.card) || e.content === e.initialContent) {
+      this.inlineDraft = undefined; this.changed(); return
     }
-    const name = e.name.trim() || 'draft'
-    const problem = nameChanged ? this.cardNameProblem(e.card, name) : undefined
-    if (problem) { this.notice = problem; e.revision.error = problem; e.revision.changed(); this.changed(); return undefined }
     const dir = this.definitionDir(e.card)
-    if (!dir) return undefined
-    const before = e.revision.jsonBase(dir + '_meta.json', e.initialMeta, overwrite)
-    const after = clone(before) ?? obj()
-    if (!isObj(after)) return undefined
-    if (contentChanged) after.set('content', e.content || undefined)
-    if (nameChanged) after.set('name', name)
-    const ok = await e.revision.apply(this, x => x.appendEdits([x.jsonEdit(dir + '_meta.json', before, after)]))
+    if (!dir) return
+    // The README.md as it was when writing began (or as the conflict found it).
+    const base = e.revision.jsonBase(dir + 'README.md', e.initialReadme, overwrite)
+    const before = typeof base === 'string' ? base : undefined
+    const readme = parseReadme(before ?? '')
+    const after = printReadme({ ...readme, body: e.content })
+    const ok = await e.revision.apply(this, x => x.appendEdits([x.jsonEdit(dir + 'README.md', before, after)]))
     if (ok && this.inlineDraft?.revision === e.revision) {
-      if (this.inlineDraft.name === e.name && this.inlineDraft.content === e.content) this.inlineDraft = undefined
-      else this.inlineDraft = { ...this.inlineDraft, initialName: e.name, initialContent: e.content, initialMeta: clone(after) }
+      if (this.inlineDraft.content === e.content) this.inlineDraft = undefined
+      else this.inlineDraft = { ...this.inlineDraft, initialContent: e.content, initialReadme: after }
     }
     this.changed()
-    return ok && nameChanged ? e.card : undefined
   }
 
   deleteCards(keys: Set<CardKey>, scope: string[]) {
@@ -1886,7 +1825,7 @@ export class ProjectSession extends Observable {
   }
 
   removeConnections(list: J[], scope: string[]) {
-    if (list.length) this.selectOperation(H.ProjectSelectionAction.RemoveConnections, scope, [], [], [], list)
+    if (list.length) this.selectOperation(H.ProjectSelectionAction.RemoveConnections, scope, [], [], list)
   }
 
   disconnect(k: CardKey, inputs: boolean, scope: string[]) {
@@ -1903,28 +1842,15 @@ export class ProjectSession extends Observable {
       if (entry === undefined) {
         const at = this.position(k), placed = obj([['x', real(at.x)], ['y', real(at.y)]])
         if (value) placed.set('collapsed', true)
-        return [this.fieldEdit(prefix + 'layout.json', ['cards', this.layoutKey(k)], undefined, placed)]
+        return [this.fieldEdit(prefix + 'layout.bin', ['cards', this.layoutKey(k)], undefined, placed)]
       }
-      return [this.fieldEdit(prefix + 'layout.json', ['cards', this.layoutKey(k), 'collapsed'], get(entry, 'collapsed'), value ? true : undefined)]
+      return [this.fieldEdit(prefix + 'layout.bin', ['cards', this.layoutKey(k), 'collapsed'], get(entry, 'collapsed'), value ? true : undefined)]
     })).catch(e => this.cardEditFailed(e))
   }
 
-  /** Mutates the value inside the caller's transaction, without an autosave. */
-  updateParam(k: CardKey, name: string, value: J | undefined, initial?: { parameter?: J }) {
-    if (initial) {
-      const dir = this.definitionDir(k)
-      if (dir) {
-        const selector = ['params', obj([['name', name]])]
-        this.appendEdits([this.fieldEdit(dir + '_card.json', [...selector, 'data'], get(initial.parameter, 'data'), value)])
-      }
-      return
-    }
-    this.updateCard(k, (c) => {
-      const params = (arr(c.get('params')) ?? []).map((p) => clone(p))
-      const p = params.find((p) => str(get(p, 'name')) === name)
-      if (isObj(p)) p.set('data', value)
-      c.set('params', params)
-    })
+  async setParam(k: CardKey, name: string, literal: string, expectedRev: bigint) {
+    const edit = new H.ProjectRewriteParamLiteralT(cardPath(path(k)), name, literal, expectedRev)
+    return (await this.operate(H.ProjectOperationBody.ProjectRewriteParamLiteral, edit)).rev ?? this.rev
   }
 
   /** The host moves the complete selected definition/external closure. */
@@ -1934,12 +1860,12 @@ export class ProjectSession extends Observable {
     const id = await this.newCardId(name, scope)
     try {
       await this.operate(H.ProjectOperationBody.ProjectMakeSubgraph, new H.ProjectMakeSubgraphT(
-        prefix.replace(/\/$/, ''), [...keys].map(k => path(k).pop()!).sort(), id, name))
+        prefix.replace(/\/$/, ''), [...keys].map(k => path(k).pop()!).sort(), id))
       return key([...scope, id])
     } catch (e) { this.cardEditFailed(e); return undefined }
   }
 
-  // ---- Layout: notes, groups, output frames --------------------------------------------
+  // ---- Layout: notes and groups --------------------------------------------
 
   referenceIdProvider?: (kind: string, scope: string, occupied: string[]) => Promise<string>
   private async reserveReference(kind: string, scope = ''): Promise<string> {
@@ -2001,7 +1927,7 @@ export class ProjectSession extends Observable {
   private async operateLayoutEntity(scope: string[], field: string, id: string, oldValue: J | undefined, newValue: J | undefined) {
     const prefix = this.projectPrefix(scope)
     if (prefix === undefined) return
-    await this.operateFields([this.fieldEdit(prefix + 'layout.json', [field, obj([['id', id]])], oldValue, newValue)])
+    await this.operateFields([this.fieldEdit(prefix + 'layout.bin', [field, obj([['id', id]])], oldValue, newValue)])
   }
 
   updateNote(id: string, fn: (n: JObj) => void) {
@@ -2009,7 +1935,7 @@ export class ProjectSession extends Observable {
       const scope = this.scopeHolding('notes', id), before = this.note(id)
       if (!scope || !before) throw new Error('Unknown note: ' + id)
       const prefix = this.projectPrefix(scope), after = clone(before) as JObj; fn(after)
-      return [this.fieldEdit(prefix + 'layout.json', ['notes', obj([['id', id]])], before, after)]
+      return [this.fieldEdit(prefix + 'layout.bin', ['notes', obj([['id', id]])], before, after)]
     }).catch(e => this.cardEditFailed(e))
   }
 
@@ -2038,27 +1964,6 @@ export class ProjectSession extends Observable {
     if (before) void this.operateLayoutEntity(scope, 'groups', id, before, undefined).catch(e => this.cardEditFailed(e))
   }
 
-  displayFrame(k: CardKey): J | undefined {
-    return get(this.layoutOf(path(k).slice(0, -1)), 'displays', this.layoutKey(k))
-  }
-
-  /** A frame without a place of its own is drawn beside its Card, so it goes where the Card goes. */
-  frameFollowsCard(k: CardKey, moving: Set<CardKey>): boolean {
-    return moving.has(k) && dbl(get(this.displayFrame(k), 'x')) === undefined
-  }
-
-  updateDisplayFrame(k: CardKey, fn: (d: JObj) => void) {
-    void this.operateFields(() => {
-      const scope = path(k).slice(0, -1), prefix = this.projectPrefix(scope)
-      if (prefix === undefined) throw new Error('Unknown Card scope')
-      const before = this.displayFrame(k), r = this.displayRect(k)
-      const after = clone(before) ?? obj([['x', real(r.x)], ['y', real(r.y)], ['width', real(r.width)], ['height', real(r.height)]])
-      if (!isObj(after)) throw new Error('Invalid frame')
-      fn(after)
-      return [this.fieldEdit(prefix + 'layout.json', ['displays', this.layoutKey(k)], before, after)]
-    }).catch(e => this.cardEditFailed(e))
-  }
-
   /** Where a scope's boundary ports are drawn (inside a Card in Card). */
   boundaryPosition(scope: string[], side: string): { x: number; y: number } | undefined {
     const v = get(this.layoutOf(scope), 'boundary', side)
@@ -2069,13 +1974,13 @@ export class ProjectSession extends Observable {
   setBoundaryPosition(scope: string[], side: string, p: { x: number; y: number }) {
     const prefix = this.projectPrefix(scope)
     if (prefix === undefined) return
-    void this.operateFields(() => [this.fieldEdit(prefix + 'layout.json', ['boundary', side], get(this.layoutOf(scope), 'boundary', side),
+    void this.operateFields(() => [this.fieldEdit(prefix + 'layout.bin', ['boundary', side], get(this.layoutOf(scope), 'boundary', side),
       obj([['x', real(Math.round(p.x * 10) / 10)], ['y', real(Math.round(p.y * 10) / 10)]]))]).catch(e => this.cardEditFailed(e))
   }
 
-  // Inferring a missing flow from Card places is presentation of layout.json:
+  // Inferring a missing flow from Card places is presentation of the layout:
   // each UI does it itself rather than asking hostd.
-  /** The direction this project's Cards are laid out in (layout.json "flow");
+  /** The direction this project's Cards are laid out in (the layout's "flow");
    *  without one, read from where the wired Cards sit, else the app's default. */
   get flow(): FlowDirection {
     const f = str(get(this.layout, 'flow'))
@@ -2093,22 +1998,7 @@ export class ProjectSession extends Observable {
   }
 
   setFlow(f: FlowDirection) {
-    void this.operateFields(() => [this.fieldEdit('layout.json', ['flow'], get(this.layout, 'flow'), f)]).catch(e => this.cardEditFailed(e))
-  }
-
-  /** Lays out a scope's Cards, output frames and notes (layout only, one undo).
-   *  tsugumi-hostd works the layout out (LayoutArrange) from what the canvas draws:
-   *  Cards are placed, ports then take the order that crosses fewer wires, and
-   *  the Cards are placed once more for that order. */
-  displayGeometries?: H.DisplayGeometriesT
-
-  /** Transform the host's rectangle from measured Card-local to world units. */
-  displayRect(k: CardKey, origin = this.placedPosition(k)) {
-    const f = this.displayFrame(k), size = this.geometry(k).size
-    const d = this.flow === 'topToBottom' ? this.displayGeometries?.topToBottom : this.displayGeometries?.leftToRight
-    return { x: dbl(get(f, 'x')) ?? origin.x + size.width * (d?.anchorX ?? 0) + (d?.x ?? 0),
-      y: dbl(get(f, 'y')) ?? origin.y + size.height * (d?.anchorY ?? 0) + (d?.y ?? 0),
-      width: dbl(get(f, 'width')) ?? d?.width ?? 0, height: dbl(get(f, 'height')) ?? d?.height ?? 0 }
+    void this.operateFields(() => [this.fieldEdit('layout.bin', ['flow'], get(this.layout, 'flow'), f)]).catch(e => this.cardEditFailed(e))
   }
 
   layoutHost = layoutHost
@@ -2135,12 +2025,6 @@ export class ProjectSession extends Observable {
       const from = str(get(c, 'from', 'card')), fromPort = str(get(c, 'from', 'port')), to = str(get(c, 'to', 'card')), toPort = str(get(c, 'to', 'port'))
       return from && fromPort !== undefined && to && toPort !== undefined ? [{ from, fromPort, to, toPort }] : []
     })
-    // A frame without a place of its own is drawn beside its Card.
-    const frames = ids.flatMap((id) => {
-      const k = key([...scope, id]), f = this.displayFrame(k)
-      if ((!this.displays.has(k) && f === undefined) || bool(get(f, 'hidden')) === true) return []
-      return [{ id, ...this.displayRect(k) }]
-    })
     const notes = this.notes(scope).flatMap((n) => {
       const id = str(get(n, 'id'))
       return id ? [{ id, x: dbl(get(n, 'x')) ?? 0, y: dbl(get(n, 'y')) ?? 0, width: dbl(get(n, 'width')) ?? 240, height: dbl(get(n, 'height')) ?? 120 }] : []
@@ -2153,7 +2037,7 @@ export class ProjectSession extends Observable {
         at: this.boundaryPosition(scope, side),
       }
     }
-    return { flow: this.flow, grid: prefs.gridSize, snap: prefs.showGrid, cards, wires, frames, notes, inputs: bar('inputs'), outputs: bar('outputs') }
+    return { flow: this.flow, grid: prefs.gridSize, snap: prefs.showGrid, cards, wires, notes, inputs: bar('inputs'), outputs: bar('outputs') }
   }
 
 
@@ -2163,18 +2047,15 @@ export class ProjectSession extends Observable {
     this.selectOperation(H.ProjectSelectionAction.DeleteDefinitions, [], [key([id])])
   }
 
-  /** Why a Card that ran has no result to show. */
-  noResultNote(k: CardKey): string | undefined {
-    switch (this.cardStates.get(k)?.state) {
-      case D.CardState.failed: return L('失敗したので結果はありません')
-      case D.CardState.blocked: return L('上流の Card が失敗したので実行していません')
-      default: return undefined
-    }
+  async updateNixPathLock(prefix: string, name?: string) {
+    await this.operate(H.ProjectOperationBody.ProjectUpdateNixPathLock,
+      new H.ProjectUpdateNixPathLockT(prefix ? prefix.slice(0, -1) : null, name ?? null), false)
   }
 
-  async resolveNixSource(ref: string): Promise<R.NixSourceResolvedT> {
-    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
-    return this.client.resolveNixSource(ref)
+  nixPathLock(prefix: string): J | undefined {
+    const text = this.carriedText(prefix + 'tsugumi.lock')
+    try { return text === undefined ? undefined : parse(text) }
+    catch { return undefined }
   }
 
   async refreshCacheUsage() {
@@ -2293,6 +2174,12 @@ export class ProjectSession extends Observable {
     return result
   }
 
+  async deleteRunCategory(runId: string, category: R.RunRecordCategory) {
+    if (!this.projectId || !this.connected) throw new RPCError('disconnected', L('接続していません'))
+    await hostCall<R.RunCategoryDeleteResultT>(H.RequestPayload.RunCategoryDeleteRequest,
+      new H.RunCategoryDeleteRequestT(this.projectId, runId, category, uuid()), H.ReplyPayload.RunCategoryDeleteResult)
+  }
+
   async deleteRunHistory(endedBefore: Date | null): Promise<R.RunHistoryDeleteResultT> {
     if (!this.client) throw new RPCError('disconnected', L('接続していません'))
     return this.client.deleteHistory(uuid(), endedBefore ? endedBefore.getTime() : null)
@@ -2306,44 +2193,36 @@ export class ProjectSession extends Observable {
     return { inputs: d.inputs.map((p) => p.name), outputs: d.outputs.map((p) => p.name) }
   }
 
-  portData(k: CardKey, definition?: J, meta?: J): { inputs: PortData[]; outputs: PortData[] } {
+  portData(k: CardKey, definition?: J): { inputs: PortData[]; outputs: PortData[] } {
     const def = definition ?? this.cardDefinition(k)
-    const m = meta ?? this.cardMeta(k)
-    const note = (list: string, name: string) => str(get((arr(get(m, list)) ?? []).find((x) => str(get(x, 'name')) === name), 'description'))
     const r = this.resolution.get(k)
     if (definitionKind(def) === 'collect') return {
-      inputs: [{ name: 'in', typeName: r?.inputs.find((p) => p.name === 'in')?.rootType, note: note('inputs', 'in') }],
-      outputs: [{ name: 'out', typeName: r?.outputs.find((p) => p.name === 'out')?.rootType, note: note('outputs', 'out') }],
+      inputs: [{ name: 'in', typeName: portTypeName(r?.inputs.find((p) => p.name === 'in')) }],
+      outputs: [{ name: 'out', typeName: portTypeName(r?.outputs.find((p) => p.name === 'out')) }],
     }
     const kind = definitionKind(def)
     const draft = kind === 'draft'
     if (draft || kind === 'invalid') return { inputs: [], outputs: [] }
     if (definition === undefined && r && !draft) {
       return {
-        inputs: r.inputs.map((p) => ({ name: p.name, typeName: p.rootType, optional: p.optional, note: note('inputs', p.name) })),
-        outputs: r.outputs.map((p) => ({ name: p.name, typeName: p.rootType, optional: p.optional, note: note('outputs', p.name) })),
+        inputs: r.inputs.map((p) => ({ name: p.name, typeName: portTypeName(p) })),
+        outputs: r.outputs.map((p) => ({ name: p.name, typeName: portTypeName(p) })),
       }
     }
     // Not resolved yet (unsaved) or a working copy: declared ports.
     const ins = (arr(get(def, 'inputs')) ?? []).flatMap((i) => {
       const n = str(get(i, 'name'))
-      return n ? [{ name: n, typeName: r?.inputs.find((p) => p.name === n)?.rootType, optional: bool(get(i, 'optional')) ?? false, note: note('inputs', n) }] : []
+      return n ? [{ name: n, typeName: portTypeName(r?.inputs.find((p) => p.name === n)) }] : []
     })
-    const outs: PortData[] = (r?.outputs ?? []).map((p) => ({ name: p.name, typeName: p.rootType, optional: p.optional, note: note('outputs', p.name) }))
+    const outs: PortData[] = (r?.outputs ?? []).map((p) => ({ name: p.name, typeName: portTypeName(p) }))
     return { inputs: ins, outputs: outs }
   }
 
-  /** Params edited directly on Input Cards. */
-  inlineParams(k: CardKey, definition?: J): ParamData[] {
-    const def = definition ?? this.cardDefinition(k)
-    if (this.kind(k) !== 'input' || def === undefined) return []
-    return (arr(get(def, 'params')) ?? []).flatMap((p) => {
-      const name = str(get(p, 'name')), type = str(get(p, 'type'))
-      if (!name || !type || !['int64', 'uint64', 'double', 'bool', 'string'].includes(type)) return []
-      // Swept values are edited in the Card's settings, where the list is visible.
-      if (get(p, 'sweep') !== undefined) return []
-      return [{ name, type, value: paramText(get(p, 'data')) }]
-    })
+  /** Scalar parameters editable on Input Cards. */
+  inlineParams(k: CardKey): ParamData[] {
+    if (this.kind(k) !== 'input') return []
+    return (this.resolution.get(k)?.parameters ?? []).filter(p => !p.type.startsWith('['))
+      .map(p => ({ name: p.name, type: p.type, value: paramText(p.value) }))
   }
 
   cardDescription(k: CardKey): string | undefined {
@@ -2373,14 +2252,14 @@ export class ProjectSession extends Observable {
       changed = false
       for (const id of ids) {
         if (waits.has(id)) continue
-        for (const p of this.resolution.get(key([...scope, id]))?.inputs ?? []) {
-          if (p.optional) continue
-          const from = conns.filter((c) => str(get(c, 'to', 'card')) === id && str(get(c, 'to', 'port')) === p.name).map((c) => str(get(c, 'from', 'card')) ?? '')
-          if (from.length && from.every((f) => waits.has(f))) {
-            waits.add(id)
-            changed = true
-            break
-          }
+        const sources = conns.filter((c) => str(get(c, 'to', 'card')) === id)
+          .map((c) => str(get(c, 'from', 'card')) ?? '')
+        const blocked = this.kind(key([...scope, id])) === 'merge'
+          ? sources.length > 0 && sources.every((f) => waits.has(f))
+          : sources.some((f) => waits.has(f))
+        if (blocked) {
+          waits.add(id)
+          changed = true
         }
       }
     }
@@ -2433,36 +2312,6 @@ export class ProjectSession extends Observable {
     return D.CardState.succeeded
   }
 
-  /** How the Card's figure on the canvas follows its results: its
-   *  `displayMode`, whether the Card runs, and whether one upstream of it
-   *  does (its figure is about to be replaced). */
-  figureState(k: CardKey): FigureState {
-    const mode = figureMode(str(this.cardSetting(k, 'displayMode')))
-    if (!this.runActive) return { mode, running: false, stale: false }
-    const busy = (c: CardKey) => {
-      const st = this.canvasCardState(c)
-      return st === D.CardState.ready || st === D.CardState.preparing || st === D.CardState.running || this.compositeState(c) === D.CardState.running
-    }
-    // Upstream in the Card's own Workflow, then upstream of each Card in Card it is inside.
-    const upstream = (c: CardKey): boolean => {
-      const scope = path(c).slice(0, -1)
-      const conns = this.connections(scope)
-      const seen = new Set<string>(), todo = [path(c)[scope.length]]
-      while (todo.length) {
-        const id = todo.pop()!
-        for (const conn of conns) {
-          const from = str(get(conn, 'from', 'card'))
-          if (!from || str(get(conn, 'to', 'card')) !== id || seen.has(from)) continue
-          seen.add(from)
-          if (busy(key([...scope, from]))) return true
-          todo.push(from)
-        }
-      }
-      return scope.length > 0 && upstream(key(scope))
-    }
-    return { mode, running: busy(k), stale: upstream(k) }
-  }
-
   /** The inner Card and port an outer output of a Card in Card comes from. */
   boundarySource(k: CardKey, port: string): [CardKey, string] | undefined {
     const ep = get(this.boundary(k), 'outputs', port)
@@ -2487,7 +2336,7 @@ export class ProjectSession extends Observable {
     const executionList = batch?.executionList === true
     const empty = executionList && batch.complete && !batch.failed && batch.invocationCount === 0
     const diags = this.resolution.get(k)?.diagnostics ?? []
-    const ports = this.portData(k, opts.definition, opts.meta)
+    const ports = this.portData(k, opts.definition)
     const def = opts.definition ?? this.cardDefinition(k)
     const m = opts.meta ?? this.cardMeta(k)
     let summary = str(get(m, 'description'))
@@ -2495,22 +2344,19 @@ export class ProjectSession extends Observable {
     // definition cannot be read, what the core says about it.
     if (kind === 'draft') summary = str(get(m, 'content')) || summary
     if (kind === 'invalid') summary = diags.find((x) => x.error)?.message ?? L('Card の定義を読めません')
-    const frame = this.displayFrame(k)
-    const display = (this.displays.has(k) || frame !== undefined) && bool(get(frame, 'hidden')) !== true
-    const d = this.displays.get(k)
     const sym = str(get(def, 'symbol'))
     const editing = kind === 'draft' && this.inlineDraft?.card === k
     const pending = state?.executionState === D.RemoteExecutionState.queued || state?.executionState === D.RemoteExecutionState.disconnected ||
       state?.executionState === D.RemoteExecutionState.cancelling ? remoteExecutionLabel(state.executionState) : undefined
     return {
-      title: str(get(m, 'name')) || path(k).pop() || k, kind, runMark: d ? this.markForRun(d.runId) : state || batch ? runMark(this.runStatus) : undefined, symbol: kind === 'invalid' ? undefined : sym || undefined, summary: summary || undefined,
-      inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k, opts.definition),
-      result: state?.transfer ?? pending ?? (d ? (executionList ? `#${d.invocation} · ` : '') + displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
+      title: path(k).pop() || k, kind, runMark: state || batch ? runMark(this.runStatus) : undefined, symbol: kind === 'invalid' ? undefined : sym || undefined, summary: summary || undefined,
+      inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k),
+      result: state?.transfer ?? pending ?? (!state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
       state: kind === 'subgraph' ? this.compositeState(k) : this.canvasCardState(k), stage: empty ? undefined : this.stageProgress(k), executionList,
       invocation: empty ? 0n : state?.invocation ?? 0n, runContinues: this.runActive,
       failure: state && (state.state === D.CardState.failed || state.state === D.CardState.blocked) ? state.failure ?? cardState(state.state).label : undefined,
       errors: diags.filter((x) => x.error).map((x) => x.message), warnings: diags.filter((x) => !x.error).map((x) => x.message),
-      collapsed: !editing && (opts.collapsed ?? this.collapsed(k)), hasDisplay: display, permissions: cardPermissions(def),
+      collapsed: !editing && (opts.collapsed ?? this.collapsed(k)), permissions: cardPermissions(def),
       draftEditing: editing, untitled: this.draftUntitled(k), openComments: cardComments(m).filter((c) => !c.resolved).length,
       portGrid: prefs.showGrid ? prefs.gridSize : undefined,
     }
@@ -2524,7 +2370,7 @@ export class ProjectSession extends Observable {
     return prefs.showGrid ? { x: snapToGrid(p.x, prefs.gridSize), y: snapToGrid(p.y, prefs.gridSize) } : p
   }
 
-  // Shown ports and their order (layout.json inputOrder / outputOrder) are
+  // Shown ports and their order (the layout's inputOrder / outputOrder) are
   // presentation: each UI works them out itself rather than asking hostd.
   private visualPorts(k: CardKey, ports: PortData[], output: boolean): PortData[] {
     if (!['code', 'draft', 'input', 'subgraph'].includes(this.kind(k))) return ports
@@ -2540,12 +2386,12 @@ export class ProjectSession extends Observable {
     catch (error) { this.cardEditFailed(error) }
   }
 
-  async moveSelection(scope: string[], cards: Set<CardKey>, notes: Set<string>, frames: Set<CardKey>, dx: number, dy: number, snap = 0): Promise<void> {
+  async moveSelection(scope: string[], cards: Set<CardKey>, notes: Set<string>, dx: number, dy: number, snap = 0): Promise<void> {
     const prefix = this.projectPrefix(scope)
     if (prefix === undefined) return
     const local = (keys: Set<CardKey>) => [...keys].map(k => this.layoutKey(k)).sort()
     try {
-      await this.operate(H.ProjectOperationBody.ProjectMove, new H.ProjectMoveT(prefix.replace(/\/$/, ''), local(cards), [...notes].sort(), local(frames), dx, dy, snap, sceneRequest(this.layoutScene(scope))))
+      await this.operate(H.ProjectOperationBody.ProjectMove, new H.ProjectMoveT(prefix.replace(/\/$/, ''), local(cards), [...notes].sort(), dx, dy, snap, sceneRequest(this.layoutScene(scope))))
     } catch (e) { this.cardEditFailed(e) }
   }
 
@@ -2566,7 +2412,7 @@ export class ProjectSession extends Observable {
       const entry = get(this.layoutOf(scope), 'cards', this.layoutKey(k))
       for (const field of ['inputOrder', 'outputOrder']) {
         const value = get(entry, field)
-        if (value !== undefined) edits.push(this.fieldEdit(`${prefix}layout.json`, ['cards', this.layoutKey(k), field], value, undefined))
+        if (value !== undefined) edits.push(this.fieldEdit(`${prefix}layout.bin`, ['cards', this.layoutKey(k), field], value, undefined))
       }
     }
     try { await this.operateFields(edits) } catch (error) { this.cardEditFailed(error) }
@@ -2587,17 +2433,17 @@ export class ProjectSession extends Observable {
 /** What a Card is, for choosing what the canvas and the editor offer.
  *  `invalid`: its _card.json has no type or one this build does not know (or
  *  one that does not match `external`), a definition error the core reports. */
-export type CardKind = 'trigger' | 'input' | 'branch' | 'fork' | 'merge' | 'collect' | 'draft' | 'subgraph' | 'code' | 'invalid'
+export type CardKind = 'trigger' | 'input' | 'merge' | 'collect' | 'draft' | 'subgraph' | 'code' | 'invalid'
 /** The _card.json "type" names. */
-const KINDS: CardKind[] = ['trigger', 'input', 'branch', 'fork', 'merge', 'collect', 'draft', 'subgraph', 'code']
+const KINDS: CardKind[] = ['trigger', 'input', 'merge', 'collect', 'draft', 'subgraph', 'code']
 
 export const KIND_LABEL: Record<CardKind, string> = {
-  trigger: L('開始'), input: L('入力'), branch: L('分岐'), fork: L('分配'), merge: L('合流'), collect: L('収集'),
+  trigger: L('開始'), input: L('入力'), merge: L('合流'), collect: L('収集'),
   draft: 'Draft', subgraph: 'Card in Card', code: L('処理'), invalid: L('定義エラー'),
 }
 
 export const KIND_ICON: Record<CardKind, string> = {
-  trigger: 'play.circle', input: 'slider.horizontal.3', branch: 'arrow.triangle.swap', fork: 'arrow.triangle.branch',
+  trigger: 'play.circle', input: 'slider.horizontal.3',
   merge: 'arrow.triangle.merge', collect: 'line.3.horizontal.decrease', draft: 'pencil.and.outline', subgraph: 'link',
   code: 'chevron.left.forwardslash.chevron.right', invalid: 'xmark.octagon',
 }
@@ -2615,24 +2461,24 @@ export function definitionKind(def: J | undefined): CardKind {
   return (kind === 'subgraph') === (get(def, 'external') !== undefined) ? kind : 'invalid'
 }
 
-/** What a new Card starts from: a built-in Card or a scaffold. Every Card
- *  gets a definition folder of its own (definitions/<id>/). */
-export type DefinitionTemplate = VisualizationTemplate | 'python' | 'cpp' | 'go' | 'rust' | 'ruby' | 'csharp' | 'input' | 'input_bool' | 'draft' | 'trigger' | 'branch' | 'fork' | 'merge' | 'collect' | 'marimo' | 'report_rmarkdown' | 'report_quarto'
+const BUILTIN_CARDS = {
+  draft: H.BuiltinCard.Draft,
+  trigger: H.BuiltinCard.Trigger,
+  input: H.BuiltinCard.InputValue,
+  input_bool: H.BuiltinCard.BooleanInput,
+  merge: H.BuiltinCard.Merge,
+  collect: H.BuiltinCard.Collect,
+}
+export type DefinitionTemplate = keyof typeof BUILTIN_CARDS
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
-  { id: 'ruby', label: L('Ruby の処理') },
-  { id: 'rust', label: L('Rust の処理') },
-  { id: 'go', label: L('Go の処理') },
-  { id: 'csharp', label: L('C# の処理') },
-  ...visualizationTemplates,
-  { id: 'marimo', label: L('marimo ノートブック') },
-  { id: 'report_rmarkdown', label: L('R Markdown レポート（HTML）') }, { id: 'report_quarto', label: L('Quarto レポート（HTML）') },
-  { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'input', label: L('入力値') }, { id: 'input_bool', label: L('真偽値の入力') },
-  { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') },
-  { id: 'branch', label: L('分岐') }, { id: 'fork', label: L('分配') }, { id: 'merge', label: L('合流') }, { id: 'collect', label: L('収集') },
+  { id: 'draft', label: L('Draft') },
+  { id: 'trigger', label: L('トリガー') },
+  { id: 'input', label: L('入力値') },
+  { id: 'input_bool', label: L('真偽値の入力') },
+  { id: 'merge', label: L('合流') },
+  { id: 'collect', label: L('収集') },
 ]
-export const templateIcon = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'chart.xyaxis.line' : t === 'input_bool' ? KIND_ICON.input : KIND_ICON[t.startsWith('report_') || t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'ruby' || t === 'csharp' || t === 'marimo' ? 'code' : (t as CardKind)]
-/** The human name used when creating a Card; the core generates its identifier. */
-export const templateBaseName = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'visualization' : t === 'input_bool' ? 'condition' : (t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'ruby' || t === 'csharp' ? 'card' : t)
+export const templateBaseName = (t: DefinitionTemplate) => t === 'input_bool' ? 'condition' : t === 'trigger' ? 'start' : t
 
 export const NOTE_COLORS: { id: string; label: string }[] = [
   { id: 'yellow', label: L('黄') }, { id: 'blue', label: L('青') }, { id: 'green', label: L('緑') }, { id: 'pink', label: L('桃') }, { id: 'gray', label: L('灰') },
@@ -2690,22 +2536,16 @@ export function formatBytes(n: number | bigint | null | undefined): string {
 
 /** Integers keep their exact decimal spelling (64 bit safe); the core
  *  validates types and ranges and reports what it rejects. */
-export function parseParam(text: string, type: string): J {
-  const t = text.trim()
-  switch (type) {
-    case 'int64': case 'uint64': return /^-?[0-9]+$/.test(t) ? num(t) : t
-    case 'double': return t !== '' && /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/.test(t) ? num(t) : t
-    case 'bool': return t === 'true'
-    case 'string': return text
-    default: return tryParse(t) ?? text
-  }
+export function parameterInputLiteral(text: string, type: string): string {
+  if (type.startsWith('[')) return text
+  return parameterLiteral(type === 'string' ? text : tryParse(text) ?? text, type)
 }
 
-export const paramText = (v: J | undefined): string => {
+export const paramText = (v: J | undefined, type = ''): string => {
+  if (Array.isArray(v)) return parameterLiteral(v, type)
   if (typeof v === 'string') return v
   const n = numText(v)
   if (n !== undefined) return n
   if (typeof v === 'boolean') return v ? 'true' : 'false'
-  if (Array.isArray(v)) return serialize(v, false)
   return ''
 }

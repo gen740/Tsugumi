@@ -1,56 +1,64 @@
 # Your first Card
 
-Make a Card that just multiplies the number it receives, run it, and try other conditions.
-After making it in Python, replace the same Card with bash, C++, R and Julia.
-
-This page is the Card specification and SDK reference. [C# Cards](CSharp.md), [visualisation templates](Visualization.md), [marimo notebooks](Marimo.md) and [R reports](Reports.md) describe their specialised APIs.
+Make a C++ Card that converts a temperature from Celsius to Fahrenheit. Then rerun it with a different parameter and inspect the saved result. The [temperature-conversion template](https://github.com/gen740/tsugumi-kit/tree/main/templates/temperature-conversion) has the same wiring.
 
 ## What you will make
 
 ```text
-start ──out→ settings ──number→ multiply
+start ──out→ settings ──temperature→ convert
 ```
 
-| Card | Kind | What it does |
-| --- | --- | --- |
-| `start` | Start (trigger) | Where the run begins |
-| `settings` | Input value (input) | Sends a number you can edit on the Canvas |
-| `multiply` | Python step | Multiplies the number it receives by `factor`, outputs the result and displays it |
-
-When it is done, the Canvas looks like this. Below are the same Cards as on the real screen, and they run without installing anything. Press ▶ Run to watch the flow, and click `multiply` to read the Python code on this page (web version only).
+The Trigger starts the run. The Input Card `settings` sends an editable temperature. The Code Card `convert` calculates a Fahrenheit value, sends it to its live view and returns a typed output.
 
 <div data-player="card-guide"></div>
 
 ## Making it on screen
 
-1. Make a project with "New Project…" on the home screen.
-2. Right-click the Canvas and, from "Add Card", place "Start", "Input value" and "Python step", naming them `start`, `settings` and `multiply`.
-3. Draw a wire from the output of `start` to `settings`, and from the output of `settings` to `multiply`.
-4. Open each Card (the `s` key or "Settings" in the context menu) and make it the same as the files in the next section.
-
-A Card's settings look like this. Switch between "Source", "Ports" and "Nix Definition" in the list on the left to edit, and "Apply" puts the change into the Workflow.
-
-![Editing the source code in a Card's settings](assets/screenshots/card-source.png)
-
-A Card is ordinary files in the project folder, so writing them directly in an editor is the same.
+1. Create a project from the temperature-conversion template or start with an empty project.
+2. For an empty project, place a Trigger, an Input Value and a Draft on the Canvas. Name them `start`, `settings` and `convert`. Add the files below and connect the ports. In the Draft's settings, choose Code as the implementation kind.
+3. If you are declaring the sources yourself, add the two names under **Project settings → Name and Environment → Nix search path**. Choose **Update all** to write `tsugumi.lock`.
 
 ## The files
-
-The whole project:
 
 `tsugumi.json`
 
 ```json
 {
-  "name": "Your first Card",
-  "pkgsPath": "tsugumi:default",
+  "name": "Temperature conversion",
+  "nixPath": [
+    {"name": "nixpkgs", "url": "github:NixOS/nixpkgs/nixos-unstable"},
+    {"name": "tsugumi-kit", "url": "github:gen740/tsugumi-kit/main"}
+  ],
   "canvas": {
-    "cards": [{"id": "start"}, {"id": "settings"}, {"id": "multiply"}],
+    "cards": [{"id": "start"}, {"id": "settings"}, {"id": "convert"}],
     "connections": [
       {"from": {"card": "start", "port": "out"}, "to": {"card": "settings", "port": "start"}},
-      {"from": {"card": "settings", "port": "number"}, "to": {"card": "multiply", "port": "number"}}
+      {"from": {"card": "settings", "port": "temperature"}, "to": {"card": "convert", "port": "celsius"}}
     ]
   }
+}
+```
+
+The lock below is an example of the pins for these declarations. Use an explicit update to resolve new pins for your own declarations. [Project Nix search path](features.md#project-nix-search-path)
+
+`tsugumi.lock`
+
+```json
+{
+  "entries": [
+    {
+      "name": "nixpkgs",
+      "url": "github:NixOS/nixpkgs/nixos-unstable",
+      "rev": "1c89083e451e891152365b799595cf7790a43325",
+      "narHash": "sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4="
+    },
+    {
+      "name": "tsugumi-kit",
+      "url": "github:gen740/tsugumi-kit/main",
+      "rev": "2c56fee956c62950c8cf925a821d4bf5f97a8598",
+      "narHash": "sha256-+QxSovos92wRFoAD4MlpTEkdJtoNJnXU1qplCsWJOws="
+    }
+  ]
 }
 ```
 
@@ -62,1023 +70,314 @@ The whole project:
 
 ### The input value Card
 
-Write the output type in `_outputs.fbs`. The fields of `Outputs` are the output ports.
-`params` have the same names as the fields of the table that is output.
+The `value` parameter has the same name as the field in the `Temperature` message. The `temperature` field of `Outputs` names the output port.
 
 `definitions/settings/_card.json`
 
 ```json
-{"type": "input", "params": [{"name": "value", "type": "uint64", "data": 21}]}
+{"type": "input"}
+```
+
+`definitions/settings/params.nix`
+
+```nix
+{
+  value = 20.0;
+}
 ```
 
 `definitions/settings/_outputs.fbs`
 
 ```text
-namespace hello;
-table Number { value:ulong; }
-table Outputs { number:Number (required); }
+namespace thermometer;
+table Temperature { value:double; }
+table Outputs { temperature:Temperature (required); }
 root_type Outputs;
 ```
 
-For a File output, the `value` parameter names a saved project source. A path such
-as `data/events.fits` is relative to the input Card's own definition folder;
-`project:definitions/shared/data/events.fits` explicitly uses the owning
-project's root to name a saved source in another Card. Inside an
-external project, these bases stay within that external project. Absolute paths
-and `..` components are rejected. The file is copied into the saved run before
-it is passed downstream, so later source edits do not change that run's file.
-
-### The processing Card (Python)
-
-Write the names of the input ports in `inputs`. Input types are not written: they are derived from the outputs of the connected Cards.
-
-`definitions/multiply/_card.json`
-
-```json
-{
-  "type": "code",
-  "language": "python",
-  "inputs": [{"name": "number"}],
-  "params": [{"name": "factor", "type": "uint64", "data": 2}]
-}
-```
-
-`definitions/multiply/_outputs.fbs`
-
-```text
-namespace hello;
-table Result { value:ulong; }
-table Outputs { result:Result (required); }
-root_type Outputs;
-```
-
-A Card's summary goes in `_meta.json`. It appears on the Canvas and in the Card's settings, so write briefly what the Card does.
-
-`definitions/multiply/_meta.json`
-
-```json
-{
-  "description": "Multiply number by factor"
-}
-```
-
-The environment goes in `default.nix`. To use `numpy` and the like, add `packages = ps: [ ps.numpy ];` to `pythonCard`.
-
-A package that nixpkgs does not have, or a version it does not carry, comes from PyPI through a lock that belongs to the Card. Nothing is resolved when a Card is built: a Card uses PyPI packages only when its `default.nix` names both the lock and the hash of what the lock fetches.
-
-1. Put a `pyproject.toml` in the Card's folder, beside `default.nix`:
-
-   ```toml
-   [project]
-   name = "card"
-   version = "0"
-   requires-python = ">=3.11"
-   dependencies = ["tabulate==0.9.0"]
-   ```
-
-2. Make `uv.lock` beside it. In the project's terminal (the lock is made by uv, which needs the network once):
-
-   ```sh
-   cd definitions/multiply
-   nix shell nixpkgs#uv nixpkgs#python3 --command env UV_PYTHON_DOWNLOADS=never uv lock
-   ```
-
-3. Name the lock in `default.nix`, with a placeholder hash:
-
-   ```nix
-   run = inputs.tsugumi.pythonCard {
-     inherit sdk;
-     src = ./src;
-     lock = ./uv.lock;
-     hash = pkgs.lib.fakeHash;
-   };
-   ```
-
-4. Run the Card once. The Card’s build log reports `hash mismatch ... got: sha256-...`. Replace `pkgs.lib.fakeHash` with that hash (`hash = "sha256-...";`) and run again.
-
-From then on the Card is built from exactly those files, without the network. To change a dependency, edit `pyproject.toml`, repeat steps 2 to 4, and keep `pyproject.toml`, `uv.lock` and `default.nix` together in the Card's folder. A lock inconsistent with `pyproject.toml`, a missing hash or a mismatched hash fails the build.
-
-- Only wheels are installed. A package that has no wheel for the Card's Python and system fails with a message; take such a package from nixpkgs with `packages`. `packages` and `lock` can be used together, and a locked package wins over one of the same name from nixpkgs.
-- Compiled wheels differ per system, so their hash does too. Give one per system the Card is built for: `hash = { aarch64-linux = "sha256-..."; x86_64-linux = "sha256-..."; };`.
-- A compiled wheel that loads a shared library beyond the C and C++ runtimes and zlib gets it from `libraries = [ pkgs.libGL ];`.
-
-`definitions/multiply/default.nix`
+`definitions/settings/default.nix`
 
 ```nix
-{ pkgs, inputs, params }:
+{ params, inputs }:
 let
-  sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };
-in
-{
-  run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/input> { inherit pkgs; };
+in {
+  run = sdk.input {
+    outputs = ./_outputs.fbs;
+    values.temperature.value = params.value;
+  };
 }
 ```
 
-The body is `main(inputs, report)`. Import inputs from `inputs.<port>.<namespace>.<table>` and outputs from `outputs.<port>.<namespace>.<table>`.
+### The conversion Card
 
-`definitions/multiply/src/main.py`
+`definitions/convert/_card.json`
 
-```python
-import tsugumi
-import outputs.result.hello.Result as result_out
-
-def main(inputs, report):
-    n = inputs.number.value
-    factor = inputs.params.factor
-    b = tsugumi.builder()
-    result_out.Start(b)
-    result_out.AddValue(b, n * factor)
-    report.text(f"{n} × {factor} = {n * factor}")
-    return {"result": tsugumi.message(b, result_out.End(b))}
+```json
+{"type": "code", "inputs": [{"name": "celsius"}]}
 ```
+
+`definitions/convert/_outputs.fbs`
+
+```text
+namespace thermometer;
+table Temperature { value:double; }
+table Outputs { fahrenheit:Temperature (required); }
+root_type Outputs;
+```
+
+`definitions/convert/params.nix`
+
+```nix
+{
+  scale = 1.8;
+  offset = 32.0;
+  unit = "°F";
+  cxxflags = [ "-O2" ];
+  plot = true;
+}
+```
+
+`definitions/convert/default.nix`
+
+```nix
+{ params, inputs }:
+let
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/cpp> { inherit pkgs; };
+  common = {
+    inherit params;
+    inputs = ./_inputs.fbs;
+    outputs = ./_outputs.fbs;
+  };
+in
+{
+  run = sdk.cppCard (common // {
+    src = ./src;
+    cxxflags = params.cxxflags;
+    tools = pkgs.lib.optional params.plot pkgs.gnuplot;
+  });
+  api = sdk.cppApi common;
+  views = builtins.filter (view: view.name == "markdown") sdk.views;
+}
+```
+
+`default.nix` uses `cxxflags` and `plot` to configure the build. The SDK embeds the evaluated parameters in the Card build. The SDK generates the interface from the port schema, `_outputs.fbs` and the names and types of the evaluated `params`.
+
+`definitions/convert/README.md`
+
+```markdown
+---
+description: Convert Celsius to Fahrenheit
+---
+```
+
+`definitions/convert/src/card.cc`
+
+```cpp
+#include "card.hh"
+
+auto run(const Card::Inputs& input) -> Card::Output {
+  using Fallback = decltype(Card::Output::fahrenheit)::value_type;
+  using Celsius = Card::InputType<"celsius", Fallback>;
+  const auto celsius = input.get<Celsius>("celsius");
+  const double fahrenheit = celsius.value * Card::params.scale + Card::params.offset;
+  card::display::send(card::display::Scalar{fahrenheit, Card::params.unit});
+  Card::Output output;
+  output.fahrenheit.emplace().value = fahrenheit;
+  return output;
+}
+```
+
+`Card::InputType` selects the connected type or a fallback that lets the source compile while unwired. `input.get` reports `input_missing` if the call requires an absent value. In the Card editor's Source view, press **Build SDK** to read the generated names and declarations.
 
 ## Running it and checking
 
-1. Press "Run" (⌘R) at the top of the Canvas. Only the first time takes a while, as Nix prepares the environment.
-2. `multiply` displays `21 × 2 = 42`.
-3. "Run History" in the context menu shows the time and logs of each stage (Nix evaluation, build, run, saving).
+1. Press **Run** (⌘R). The first build prepares the Card's environment.
+2. Open `convert`'s live view to see `68 °F`. Use **Run History** to inspect the output on `fahrenheit` and the logs for evaluation, build and execution.
+3. Change the `offset` to `0.0` and choose **Run Only This Card (Last Inputs)**. The editor saves the new literal in `params.nix`. This experiment uses the saved 20-degree input and yields 36 after rebuilding the Card. Set the value back to `32.0` to restore the original calculation.
 
-## Trying other conditions
+## Inputs and outputs
 
-- **Change only a parameter.** Set `factor` of `multiply` to 3 and run only `multiply` with "Run Only This Card (Last Inputs)" in the context menu. `settings` does not run, and with the saved input the result is `21 × 3 = 63`. `factor` is not passed to Nix, so nothing is rebuilt either.
-- **Change something upstream.** After changing `value` of `settings`, run again from `start`. Partial runs use saved inputs, so an upstream change does not arrive until you run the whole ([Rerunning from the middle](Rationale.md#rerunning-from-the-middle)).
-- **Go back to an earlier version.** Each run commits the changes to git. From "Version History…" (⌥⌘Y) in the Workflow menu, go back to an earlier version and start a different attempt ([Versions](Versions.md)).
+Name each input in `_card.json` and connect at most one wire. An output can
+feed several inputs. Use Merge to join several sources. A normal Card waits
+for every connected input and skips if an upstream Card finishes without it.
 
-## Inputs, results and reports
+The root table of `_outputs.fbs` lists the output ports. Each field names a
+table type. Mark outputs the Card must produce as `(required)`. A Card may
+omit other outputs to select which downstream Cards run.
 
-A Card receives read-only `inputs`, returns its output ports, and publishes presentation through `report`. A Card that needs invocation metadata also asks for `run`. Parameters belong to `inputs.params`. Omit unused trailing roles; requesting `run` requires the preceding `report` argument.
+Tsugumi generates `_inputs.fbs` from the wiring and the upstream schemas. Use
+**Build SDK** to read the generated interface. Merge candidates appear as a
+union in that schema when their types differ. The SDK decodes each arrival
+using its schema ID.
 
-| Language | Entry point and result |
-| --- | --- |
-| Python | `main(inputs[, report[, run]])` returns a mapping by port |
-| C++ | `auto run(const Card::Inputs& inputs[, tsugumi::Report& report[, const tsugumi::Run& run]]) -> Card::Output` |
-| R | `main <- function(inputs, report, run)` returns a named list; omit unused trailing arguments |
-| Julia | `main(inputs, report, run)` returns a `Dict`; omit unused trailing arguments |
-| Go | `func run(inputs tsugumi.Inputs, report *tsugumi.Report, run *tsugumi.Run) (tsugumi.Output, error)`; omit unused trailing arguments |
-| Rust | `fn run(inputs: Inputs<'_>, report: &Report<'_>, run: &Run<'_>) -> Result<Output>` |
-| Ruby | `def main(inputs, report, run)` returns a Hash; omit unused trailing arguments |
-| C# | `ValueTask<Outputs> RunAsync(Inputs inputs, Report report, Run run)`; omit unused trailing arguments |
-| Bash | Input files `$JSON_<PORT>`, paths `$FILE_<PORT>` / `$DIR_<PORT>` and `$TSUGUMI_PARAMS_JSON`; result JSON to `$TSUGUMI_OUTPUT`; presentation JSON to `$TSUGUMI_REPORT` |
+### Building outputs
 
-In C++ parameters are `inputs.params`; Go uses `inputs.Params()` and port accessors such as `inputs.Number()`; Rust uses `inputs.params`; C# uses `inputs.Params`. Python has `inputs.number.value` and `inputs.params.threshold`, with generated lowerCamelCase field names. `inputs.input(port, GeneratedTable)` and `inputs.input_bytes(port)` also offer the low-level FlatBuffers view and bytes. R uses `inputs$number$value`, Julia `inputs.number["value"]`, Ruby `inputs.number.fetch('value')`. Optional ports can be absent.
+Pack the port table with the SDK. Report errors through its failure API.
+Use `cancelled` and `remaining_ms` for work that observes cancellation and deadlines.
 
-Inputs do not expose emission or presentation callbacks. C++ takes a const object and Rust borrows verified table views. Python freezes object attributes and arrays, Ruby recursively freezes values, and R rejects assignment through its input facade. Go accessors unpack fresh owned copies, C# properties unpack fresh managed copies, and Julia reads copies: editing one of these detached messages cannot modify the inputs received by the step.
+### Artifacts
 
-### Building results
+Include `tsugumi/artifact.fbs` and use `tsugumi.Artifact` for a file or directory.
+Use the SDK to create a writable directory or upload existing contents. Return
+the Artifact in an output. A downstream Card can open the granted Artifact for
+reading or forward its ID. The directory is sealed when the creating call ends.
 
-Python returns generated output `TableT` objects directly: `return {"result": result}`. A finished builder or bytes can also be a mapping value. `tsugumi.builder()` constructs a FlatBuffers builder; `tsugumi.message(builder, root)` finishes it and owns its bytes. `tsugumi.message(builder)` copies a builder already finished by the Card. This also allows building several roots in one builder, snapshotting each result before reusing the builder.
+## Views
 
-C++, Go and Rust return a generated `Output` object. Set a field for each produced port. Go waits for managed tasks to finish before packing the result.
+Return `views` at the top level of `default.nix` alongside `run`. The example
+uses the SDK's Markdown view. A custom declaration has `name`, `type` and `blob`.
+The HTML file receives and sends bytes on a MessagePort. Display traffic is
+live, and data saved for later inspection should go through output ports.
 
-R returns a named list, Julia returns a Dict and Ruby returns a Hash. The worker converts each returned port value from JSON to that port's FlatBuffer. R's `NULL` and Julia's `nothing` omit the port. C# returns an `Outputs` object with one generated property per port. The adapter packs each returned port after awaiting `RunAsync`.
-
-Numeric messages retain IEEE NaN, positive and negative infinity, and signed zero across SDKs; these values never become an absent optional scalar. The worker uses `NaN`, `Infinity` and `-Infinity` in its JSON conversion. R's `NA` is rejected: use `NaN` for a numeric NaN or `NULL` for an absent optional scalar.
-
-The worker validates each emitted output against its port type, checks that all required ports are present, and applies the 16 MiB result-frame limit before `postRun`. A missing required port fails the invocation with `output_invalid`. Report calls validate each display immediately and can publish any number of displays during the invocation.
-
-File and Directory outputs use the same result forms as other messages. Their `value` / `Value` field is an absolute path beneath `run.output_directory` (Go `run.OutputDirectory()`, C# `run.OutputDirectory`, Bash `$TSUGUMI_OUTPUT_DIR`). Write the files there, then return the path message. A Directory result includes its files and nested directories; [Run history](RunHistory.md#keep-and-open-artifacts) describes retention. The run object also exposes working and temporary directories, run and Card IDs, invocation number, cancellation and remaining time. Python, R and Julia cancellation/deadline callbacks expire with their invocation; retaining a Run does not give it access to a later invocation.
-
-### Presentation and hooks
-
-Report methods are `text`, `markdown`, `scalar`, `line_chart`, `table`, `image`, `points`, `figure`, `module` and `log`, where supported by that language. Go and C# use PascalCase. Bash uses `$TSUGUMI_REPORT` for presentation JSON and captured stdout/stderr for diagnostics. Julia uses functions such as `markdown(report, text)`; its module method is `report.module(name, config)` because `module` is a keyword. Presentation publishes immediately and a new display replaces the preceding display; logs remain log lines.
-
-Python uses `report.figure(fig)` for Matplotlib, Plotly or Altair. `report.figure()` renders open Matplotlib figures, drives animations until they finish or the run stops, then closes them. `report.figure(wait=seconds)` publishes live frames and drives timers for that interval. Drawing, `plt.show()` and leaving a figure open do not publish on their own; invocation cleanup closes open figures. R uses `report$figure(expr)` for base graphics or ggplot. Third-party libraries can still write their own diagnostic stdout/stderr; Card-authored presentation and log lines should use Report.
-
-`on_run_start`, C++/Go `onRunStart` and C# `OnRunStartAsync` receive the same three roles as the main function, using the first invocation's inputs and params. They run before the first invocation of each run. Use the hook for initialization and report calls. Only the main function returns outputs. The C# hook returns `ValueTask`. No role is supplied at source-loading time. A resident worker keeps language state only when `reuseWorker` is enabled.
-
-Rust selects arity explicitly: `export!(run, inputs)` for inputs only, `export!(run)` for inputs and report, `export!(run, with_run)` for all three. Add the hook as the last macro argument; the hook receives all three roles and returns `Result<()>`.
-
-Bash `preRun` / `postRun` receive no Card inputs; see [Worker state](#worker-state) for their lifecycle.
-
-## Writing the same Card in another language
-
-As long as the input and output types are the same, what is inside can be replaced while the wires on the Canvas and the Cards around it stay as they are.
-
-### Python, with plain objects
-
-The generated Python classes also come in an object form (`NumberT`, `ResultT`, `ParamsT`): plain attributes named after the schema's fields (`photon_count` becomes `photonCount`), and `Pack` to build an output. `tsugumi.contract` gives an input or the params in that form without importing the class by name, and lists the Card's ports (`contract.ports()`, `contract.port("number")["kind"]`). It is meant for code shared by many Cards, which cannot know the port types when it is written.
-
-`definitions/multiply/src/main.py` (Python objects)
-
-```python
-from outputs.result.hello.Result import ResultT
-
-def main(inputs, report):
-    n = inputs.number.value
-    factor = inputs.params.factor
-    result = ResultT()
-    result.value = n * factor
-    report.text(f"{n} × {factor} = {n * factor}")
-    return {"result": result}
-```
-
-### bash
-
-Delete `src/`, set `language` to `bash`, and write a string in `run` of `default.nix`. Inputs are `$JSON_<PORT>` (the path of a JSON file); write the output as JSON to `$TSUGUMI_OUTPUT`.
-
-`definitions/multiply/_card.json` (bash)
-
-```json
-{
-  "type": "code",
-  "language": "bash",
-  "inputs": [{"name": "number"}],
-  "params": [{"name": "factor", "type": "uint64", "data": 2, "nix": true}]
-}
-```
-
-`definitions/multiply/default.nix` (bash)
-
-```nix
-{ pkgs, inputs, params }: {
-  run = ''
-    jq --argjson f ${toString params.factor} '{result: {value: (.value * $f)}}' "$JSON_NUMBER" > "$TSUGUMI_OUTPUT"
-  '';
-}
-```
-
-Here `"nix": true` is set and `factor` is read from the Nix expression. This param is passed to Nix, so changing it rebuilds the Card. To read params at run time instead, all of them are in `$TSUGUMI_PARAMS_JSON` (the JSON text).
-
-For a display, write JSON to `$TSUGUMI_REPORT`: one of `{"markdown": "**bold**"}`, `text`, `table` (`columns` and `rows`), `image` (`path` and `alt`) or `module` (`module`, `config`, and optional `blobs`, a map of names to local file paths). It is shown when the script ends normally.
-
-To log and show a value of any connected type, see the ordinary Bash Card in
-[`demos/en/marimo/definitions/result`](../demos/en/marimo/definitions/result).
-It declares a required `in` port and lets the connection supply its type.
-In `text` mode, the worker's formatted value goes to stdout and to the
-Canvas as text. The format can include `nan` and `inf`, so it is meant for
-inspection and does not promise strict JSON. Byte vectors appear as arrays of
-numbers. File and Directory messages show their staged paths.
-
-Set `format` to `markdown` to render a string field (named `value` by default).
-Set `markdown_field` to select another top-level field. This mode reads the
-input as an object and fails if the selected field is missing or is not a
-string. The full formatted message still goes to stdout. Canvas displays
-larger than 1 MiB are shortened with a marker, independently of the normal
-worker and log limits. Each run logs and displays the value again, even when
-the Card's build is reused.
-
-### C++
-
-The input and output ports become members of `Card::Inputs` and `Card::Output` as they are.
-
-`definitions/multiply/_card.json` (C++)
-
-```json
-{
-  "type": "code",
-  "language": "cpp",
-  "inputs": [{"name": "number"}],
-  "params": [{"name": "factor", "type": "uint64", "data": 2}]
-}
-```
-
-`definitions/multiply/default.nix` (C++)
-
-```nix
-{ pkgs, inputs, params }:
-let
-  sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };
-in
-{
-  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };
-}
-```
-
-`definitions/multiply/src/card.cc` (C++)
-
-```cpp
-#include <card.hh>
-
-#include <string>
-
-auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output {
-  const auto n = inputs.number.value;
-  const auto factor = inputs.params.factor.value_or(1);
-  Card::Output out;
-  out.result.emplace().value = n * factor;
-  report.text(std::to_string(n) + " × " + std::to_string(factor) + " = " + std::to_string(n * factor));
-  return out;
-}
-```
-
-### R
-
-An R Card embeds R in the Card's worker. Messages are lists: the worker converts them in memory using the port’s FlatBuffers type, with no JSON files. Every invocation starts a new interpreter unless the Card turns `reuseWorker` on ([worker lifecycle](#r-and-julia-worker-lifecycle)).
-
-`definitions/multiply/_card.json` (R)
-
-```json
-{
-  "type": "code",
-  "language": "r",
-  "inputs": [{"name": "number"}],
-  "params": [{"name": "factor", "type": "uint64", "data": 2}]
-}
-```
-
-`definitions/multiply/default.nix` (R)
-
-```nix
-{ pkgs, inputs, params }: {
-  run = inputs.tsugumi.rCard { src = ./src; };
-}
-```
-
-`definitions/multiply/src/main.R` (R)
-
-```r
-main <- function(inputs, report) {
-  n <- inputs$number$value
-  factor <- inputs$params$factor
-  report$text(sprintf("%g × %g = %g", n, factor, n * factor))
-  list(result = list(value = n * factor))
-}
-```
-
-Packages come from nixpkgs' `rPackages` (`packages = ps: [ ps.survival ps.ggplot2 ];`). `report$figure(expr, alt = "description")` draws a figure in the Card's display (both base graphics and ggplot). Tables are `report$table(data.frame)`.
-
-Use `inputs$input("events")` for a message and `inputs$path("events")` for a File/Directory path. Wrap array fields in `I()` even when they contain one element: `list(counts = list(bins = I(c(1, 2))))`. Integers beyond R's exact double range, ±(2^53 − 1), arrive as decimal strings, preserving signed and unsigned 64-bit values. Return an R integer (`27L`) or a decimal string for a `long`/`ulong` field; `27` is a double and serializes as `27.0`, which that type rejects. `stop("why")` fails the invocation with its diagnostic.
-
-
-### Julia
-
-A Julia Card embeds Julia in the Card's worker. Messages are Dicts, converted in memory using each port’s FlatBuffers type. Every invocation starts a new interpreter unless the Card turns `reuseWorker` on.
-
-`definitions/multiply/_card.json` (Julia)
-
-```json
-{
-  "type": "code",
-  "language": "julia",
-  "inputs": [{"name": "number"}],
-  "params": [{"name": "factor", "type": "uint64", "data": 2}]
-}
-```
-
-`definitions/multiply/default.nix` (Julia)
-
-```nix
-{ pkgs, inputs, params }: {
-  run = inputs.tsugumi.juliaCard { src = ./src; };
-}
-```
-
-`definitions/multiply/src/main.jl` (Julia)
-
-```julia
-function main(inputs, report)
-    n = inputs.number["value"]
-    factor = inputs.params["factor"]
-    report.text("$n × $factor = $(n * factor)")
-    return Dict("result" => Dict("value" => n * factor))
-end
-```
-
-It runs with the standard library alone. The Nix helper retains `packages = [ "JuMP" ];`, but the pinned nixpkgs implementation uses import-from-derivation, which the Card evaluator disables; registry package resolution is currently rejected before the build. This limitation is independent of interpreter reuse. For a figure, pass a Vega-Lite spec as a Dict to `vegalite(report, spec)` and it is shown as an interactive chart.
-
-### R and Julia worker lifecycle
-
-The [worker state rules](#worker-state) apply to both interpreters. With `reuseWorker: true`, globals, loaded modules and RNG state survive invocations and runs. R also retains `options()`, `par()` and open graphics devices. Set the random seed explicitly when reproducibility requires it; reset per-run state in the run-start hook.
-
-Read inputs and params inside the entry point or hook. Each invocation receives fresh Inputs, Report and (when requested) Run objects; copied input messages may be retained. Report/Run callbacks belong to the interpreter's invocation thread and must not be retained or used in background work. `run$cancelled()` / `cancelled(run)` support cooperative stopping, and `run$remaining_ms()` / `remaining_ms(run)` return milliseconds remaining, or `-1` without a deadline. A stop/deadline also terminates uncooperative code. Displays publish immediately and each new display replaces the previous one. File/Directory paths change on the next invocation.
-
-## The same Card in Ruby
-
-Ruby uses MRI in the package worker. Inputs and parameters are Hashes and output is validated
-against the FlatBuffers schema. The instance can retain state between invocations.
-
-`definitions/multiply/_card.json` (Ruby)
-
-```json
-{"type":"code","language":"ruby","inputs":[{"name":"number"}],"params":[{"name":"factor","type":"int64","data":2}]}
-```
-
-`definitions/multiply/default.nix` (Ruby)
-
-```nix
-{ pkgs, inputs, params }:
-{ run = inputs.tsugumi.rubyCard { src = ./src; }; }
-```
-
-`definitions/multiply/src/main.rb` (Ruby)
-
-```ruby
-def main(inputs, report)
-  n = inputs.number.fetch('value')
-  factor = inputs.params.fetch('factor')
-  report.text("#{n} × #{factor} = #{n * factor}")
-  { result: { value: n * factor } }
-end
-```
-
-See the [Ruby API](#ruby-api) for files, reports, lifecycle and dependency locks.
-
-### Native Card ABI
-
-Every package provides `lib/main.so` with one exported entry, `tsugumi_main`.
-ABI 8 exposes each input and output as a separate FlatBuffer through
-the function table. Each buffer uses that port's message type. File and
-Directory messages carry paths. Parameters arrive as a `parameters.Params`
-FlatBuffer from `_params.fbs`. The function table also provides one display
-callback, logging, cancellation, deadlines, structured failures and typed
-JSON conversion. The same entry handles interpreter preparation, source
-loading and the run-start hook. See [abi.h](../sdk/include/tsugumi/sdk/abi.h).
+See [Views](CoreAndSDK.md#views) for the display protocol and Dawn contract.
 
 ## Worker state
 
-Cards start a fresh worker for each invocation by default. Set `reuseWorker: true` to retain state across invocations and runs, and use the [run-start hook](#presentation-and-hooks) to reset per-run state. Resident workers have no count, idle-time or memory eviction limit, including workers used for monitoring. They live until the project's environment stops or the Card's definition or execution conditions change. A failed, cancelled or timed-out call always discards its resident worker in every language; the next invocation starts fresh and logs the reason, as it does after a crash or definition change. Each invocation records whether its worker already held state (`worker_reused`). Ordinary fresh workers prepared for speed remain limited to 32, ten minutes idle and 2 GiB each.
+Cards start a fresh worker for each call by default. Set `reuseWorker: true` to keep one worker for the Card: memory, loaded libraries and files in its working directory survive across calls and runs. One worker takes one call at a time. There is no hook at the start of a run, so a Card that keeps state decides from its inputs when to reset it, for example starting over when a loop's initial value arrives. Resident workers have no count, idle-time or memory eviction limit, including workers used for monitoring. They live until the project's environment stops or the Card's definition, SDK, grants or a secret value changes; a call already running when the definition changes finishes on the old version. A failed, cancelled or timed-out call always discards its worker; the next call starts fresh and logs the reason, as it does after a crash. Each invocation records whether its worker already held state (`worker_reused`). Ordinary fresh workers prepared for speed remain limited to 32, ten minutes idle and 2 GiB each.
+A call granted a project artifact uses a fresh worker. A worker that creates
+a project artifact retires when the call returns.
 
-Standby preparation starts only the worker executable. The SDK compiles interpreter startup code once per language version and links it into each Card's `lib/main.so` with the Card's source or assembly paths. The worker opens package libraries and initializes interpreters inside the first invocation, after `preRun`, with that invocation's identity, logs, deadline and cancellation. A reused worker retains the loaded code. The working directory and environment are set again on each call; `preRun`'s exports and `cd` reach source loading on the first call and the entry point on every call, including Python's `os.environ`. Source-loading environment changes, including removals, survive reuse; later calls cannot reconfigure libraries already loaded. Configure native libraries at the top of `main.py`, before importing them:
 
-```python
-import os
-os.environ["OMP_NUM_THREADS"] = "1"
-import numpy as np
-```
+| Location | Use | Lifetime |
+| --- | --- | --- |
+| Working directory, also `HOME` | The Card's files and caches. New outputs are created here. | The worker. A reused worker keeps the contents. |
+| `TMPDIR` | Scratch. Read the path from the environment. | Cleared for each call. |
+| `/tmp` | On Linux workers, the shared VM and remote workers, the same scratch as `TMPDIR`. | On native macOS only `TMPDIR` is scratch. |
 
-Top-level settings last for the worker; environment changes made inside an entry point or hook last for that call. `HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` are writable worker directories for library caches.
-
-The shell steps are `preRun → run → postRun`. `preRun` and `postRun` receive no Card inputs. Their shell and the tools on `PATH` (Bash, coreutils, findutils, grep, sed, gawk, tar, gzip and jq; the same `PATH` is what a code Card's subprocesses see) are built from the Card's own nixpkgs: local and remote runs use the same ones, an update of the app does not change them, and they are part of the environment recorded for the invocation. Name any other tool by its package (`${pkgs.ripgrep}/bin/rg`). `postRun` also runs after a failed earlier step, with `TSUGUMI_FAILED=1` and the produced port names in `TSUGUMI_OUTPUTS`; it cannot clear the failure. Cancellation or a deadline prevents further steps, including `postRun`, from starting. File/Directory results are written under the invocation's output directory, then returned as path messages; see [Building results](#building-results).
-
-## What to read next
-
-| To know | Document |
-| --- | --- |
-| Branches, merges and loops, passing files, data pinned with Nix | [The Card specification](CardGuide.md), [The bundled demos](Demos.md) |
-| Examples of code that runs | [demos/](../demos/) (`report`, `collatz` and others) |
-| Leaving implementation to the Agent | [the Agent in Features](features.md#9-agent) |
-| What the words mean | [Glossary](Glossary.md) |
-
-## Go Cards
-
-
-Use `"language": "go"` and start from the whole
-`demos/en/go-pipeline/definitions/scale` folder. The **Go step** menu creates the
-same scaffold. `default.nix` selects its typed SDK:
-
-```nix
-{ pkgs, inputs, params }:
-let sdk = inputs.tsugumi.sdk { languages = [ "go" ]; };
-in { run = inputs.tsugumi.goCard { inherit sdk; src = ./src; }; }
-```
-
-The source is one `package main` module. `go.mod` requires `tsugumi v0.0.0`
-and replaces it with `./tsugumi`; Nix supplies that reserved directory and
-`tsugumi_adapter.go`. Define both functions (the run hook may be a no-op):
-
-```go
-package main
-
-import "tsugumi"
-
-func run(inputs tsugumi.Inputs, report *tsugumi.Report) (tsugumi.Output, error) {
-    params := inputs.Params()
-    product := inputs.Number().Value * *params.Factor
-    if err := report.Scalar(float64(product), "product"); err != nil {
-        return tsugumi.Output{}, err
-    }
-    return tsugumi.Output{Out: &tsugumi.OutputOut{Value: product}}, nil
-}
-
-func onRunStart(inputs tsugumi.Inputs, report *tsugumi.Report) error { return nil }
-```
-
-The generated `Inputs` accessors return owned snapshots to FlatBuffers object API values:
-`inputs.Number().Value`, not a raw message buffer. Missing optional inputs are nil.
-Every input/param buffer is copied to Go memory. Accessors unpack fresh snapshots,
-which may be retained and edited without changing the received inputs. Outputs own objects; an alias `Output<Port>` (for example
-`OutputOut`) identifies each output's type. A non-nil field includes that port in the result;
-required outputs are still checked by the host. Optional scalar params are
-pointers, such as `params.Factor`. Use native `int64`/`uint64` without a float
-conversion for full integer precision.
-
-State in the library lives for the resident worker's lifetime. `onRunStart`
-runs before the first invocation of each run; `reuseWorker: false` creates a
-fresh process per invocation. The Go runtime is never unloaded from a live
-worker. `Report` and `Run` copies share an internal guard: after the invocation ends,
-callbacks return `tsugumi.ErrClosed`. It exposes `RunID`, `Card`, `Invocation`,
-`WorkingDirectory`, `TemporaryDirectory`, `OutputDirectory`, `Cancelled`,
-`Done` and `Remaining` (`-1` means no deadline).
-
-Use `run.Go(func() error { ... })` for concurrent work. Schedule tasks before
-`run` returns; the SDK joins them before packing outputs and serializes host
-callbacks. Task panics/errors fail the invocation. Select on `run.Done()` to
-stop cooperatively. Cancellation or deadline also kills the entire worker,
-including an uncooperative goroutine, and the next call starts clean. Ordinary
-`go` statements are outside this task group: join them yourself, and do not
-expect their panics to be recovered by the caller. Such a crash is still
-reported as a worker failure. Data shared between tasks needs ordinary Go
-synchronization.
-
-File/Directory inputs have a `Value` path staged for this call. Write outputs
-under `run.OutputDirectory()` and assign the path to the owned output's
-`Value`. `report.Log` and `Text`, `Markdown`, `Scalar`,
-`LineChart` (one series), `Table`, `Image`, `Points`
-and `Module` return errors; propagate them. Displays stream while the
-Card runs. Return `tsugumi.Fail("output_invalid", "explanation")` for a
-structured failure, or an ordinary error for `worker_failed`.
-
-The default scaffold uses the standard library and FlatBuffers' Go runtime
-from the same pinned nixpkgs source as `flatc`. For external modules, keep
-`go.mod` and `go.sum` in the Card's `src` and name the lock in `default.nix`:
-`goCard { inherit sdk; src = ./src; lock = ./src/go.sum; hash = pkgs.lib.fakeHash; }`.
-Run the Card once and copy the actual `got: sha256-…` value from the build log
-into `hash`. Builds use a local immutable module cache and never update the
-lock. A Card without `lock` and `hash` cannot fetch external modules.
-Native libraries use `buildInputs`, and build tools use `nativeBuildInputs`.
-
-To make or update the lock on request, use the human Terminal panel with Go on PATH:
-`python3 <sdk>/go/update-lock.py <card>/src`. The helper runs `go mod tidy` in
-a temporary copy and writes only `go.mod` and `go.sum` to the Card's source
-directory. It accepts `--offline` for a populated module cache. Reload the
-project after generating the files, then obtain the hash as above. The Agent
-uses `project_save` to write source and lock files; its shell is read-only.
-
-## C#
-
-Choose C# Card for a .NET Card. The [C# guide](CSharp.md) covers typed inputs, outputs and parameters, asynchronous work, NuGet dependencies and the cross-language demo.
-
-## Rust Cards
-
-
-Use `"language": "rust"`. Start from `demos/en/rust-pipeline/definitions/scale`
-for a Card using only the standard library and SDK. The UI's **Rust step**
-creates the same scaffold. `default.nix`:
-
-```nix
-{ pkgs, inputs, params }:
-let sdk = inputs.tsugumi.sdk { languages = [ "rust" ]; };
-in { run = inputs.tsugumi.rustCard { inherit sdk; src = ./src; }; }
-```
-
-`src/Cargo.toml` declares a `staticlib` and `tsugumi = { path = "tsugumi" }`.
-That path is reserved for the crate generated from the Card's contract. The
-SDK builds its Rust runtime and the FlatBuffers crate matching `flatc`
-once per toolchain. A Card without a lock builds offline using the SDK's own crates.
-
-To add crates.io dependencies on request, add them to `src/Cargo.toml`, then
-use the human Terminal panel with Cargo on PATH. Build the FlatBuffers source from
-the Card's nixpkgs pin and pass it to the lock helper. For a GitHub nixpkgs
-pin, for example:
-
-```sh
-flatbuffers_src=$(nix build --no-link --print-out-paths "github:NixOS/nixpkgs/<revision>#flatbuffers.src")
-python3 <sdk>/rust/update-lock.py <card>/src --flatbuffers-source "$flatbuffers_src"
-```
-
-The helper resolves in a temporary copy and writes only `src/Cargo.lock`.
-The Agent writes source and lock files with `project_save`; its shell is read-only.
-Reload the project and name it in `rustCard` with
-`lock = ./src/Cargo.lock; hash = pkgs.lib.fakeHash;`. Run once and copy the
-`got: sha256-…` value from the build log into `hash`. This pins the whole
-vendored directory. Repeat when updating dependencies. Native libraries go in
-`buildInputs` and build tools such as pkg-config in `nativeBuildInputs`. The
-Card never fetches crates when it runs.
-
-```rust
-use tsugumi::{Report, Run, Inputs, Output, Result};
-
-fn run(inputs: Inputs<'_>, report: &Report<'_>) -> Result<Output> {
-    let mut out = tsugumi::outputs::Out::default();
-    out.value = inputs.number.value() * inputs.params.factor().unwrap_or(1);
-    report.scalar(out.value as f64, "product")?;
-    Ok(Output { out: Some(out) })
-}
-tsugumi::export!(run);
-```
-
-`Inputs` contains verified, borrowed FlatBuffers views; optional ports are
-`Option`. Inputs and `inputs.params` cannot outlive the current call. Copy or
-`unpack()` a value before retaining it. `Output` holds owned FlatBuffers object
-API types, aliased by port under `tsugumi::outputs` (for example `Out`). Construct
-them with `Default` and assign fields: generated types are non-exhaustive.
-Input/output namespaces differ, so explicitly construct an output object rather
-than returning an input's owned object. `Some` includes a port in the result; `None` omits it and
-normal required-output validation still applies. Integers remain native `i64`/
-`u64`, including values outside a double's exact range.
-
-With `reuseWorker: true`, the worker retains the library and its state. Use
-`tsugumi::export!(run, on_run_start)` with a `fn(Inputs<'_>, &Report<'_>, &Run<'_>) -> Result<()>`
-hook for per-run initialization; `reuseWorker: false` starts fresh each call.
-Keep owned state in ordinary Rust synchronization/thread-local containers.
-`Report` and `Run` cannot be sent/shared across threads. `run.invocation()`, `run_id()`,
-`card()`, `cancelled()` and `remaining_ms()` describe the current call.
-
-File/Directory inputs are typed tables with a `value()` path, staged afresh for
-each invocation. Write output files beneath `run.output_directory()` and put
-that absolute path in the output object's `value`. Other paths are
-`working_directory()` and `temporary_directory()`.
-
-`report.log()` and all display methods return `Result<()>`: `text`,
-`markdown`, `scalar`, `line_chart` (one series),
-`table`, `image`, `points`, and `module` (Plotly/
-Vega-Lite JSON). Displays stream before completion. Propagate errors with `?` or
-return `Error::new("output_invalid", "explanation")`. Panics are caught at the
-FFI boundary and fail the invocation; the failed worker is discarded. Explicit
-abort, double panic during unwinding and native crashes still terminate the
-worker, and the daemon records that failure. Cancellation/deadlines stop even
-uncooperative native code; check `run.cancelled()` for cooperative early exit.
-
-
-## Card-owned web views
-
-A view is fixed by the Card's Nix definition. Write it either as a JavaScript
-ES module using DOM, canvas, WebGPU or bundled libraries, or as C/C++ compiled
-to a small Wasm module using standard `webgpu.h` and the SDK's shared host.
-Choose JavaScript for DOM/SVG, plotting libraries and direct browser APIs;
-choose C/C++ for existing native rendering code or portable GPU rendering code. No Tsugumi drawing API is
-involved. Pointer handling stays in the frame and works
-after the worker exits. The built-in line chart uses this same module mechanism
-on both platforms; Card authors keep their existing line-chart SDK calls.
-
-Declare the view alongside the implementation in `default.nix`:
-
-```nix
-{ pkgs, inputs, params }:
-let
-  sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };
-in {
-  views.points = inputs.tsugumi.viewModule {
-    src = ./view;
-    entry = "index.js";  # default
-    name = "point-cloud-view";
-  };
-  run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };
-}
-```
-
-`viewModule` uses esbuild to bundle local imports into `$out/index.js`, a
-self-contained ES module. It makes no runtime downloads. Bundle dependencies
-in the source directory or pass an already prepared source derivation. Import
-`.wasm` as bytes (`import wasm from './solver.wasm'`, then
-`WebAssembly.instantiate(wasm, imports)`); PNG, JPEG and SVG imports become data
-URLs. Do not use runtime relative fetches or `import.meta.url` to locate files:
-the UI imports the built entry from a blob URL, with network access disabled.
-All assets must be incorporated at build time. This output directory is shared
-and cached by Nix, referenced by the Card manifest's closure and fixed with the
-Card's SDK. It is not a per-run artifact.
-
-The entry must export these functions (each may return a Promise):
-
-```javascript
-export function initialise(root, { config, blobs }, size) {
-  // root is a plain HTMLElement; blobs is { name: Uint8Array }.
-  // size is { width, height, pixelRatio, visible, colorScheme }, in CSS pixels.
-}
-export function update({ config, blobs }) {}
-export function resize({ width, height, pixelRatio, visible, colorScheme }) {}
-export function dispose() {}
-```
-
-`initialise` runs once per loaded identity, `update` replaces all input data,
-`resize` supplies geometry and visibility, and `dispose` releases timers,
-listeners, GPU resources and library instances. Treat a display as a full
-replacement snapshot. Export `snapshot()` returning a PNG data URL for DOM
-views or libraries with their own image exporter. Otherwise previews capture
-the first canvas. A WebGPU view should redraw before its snapshot and await
-`device.queue.onSubmittedWorkDone()`. The canvas remains a cached still image;
-Expand creates an interactive frame. Closing it releases the frame.
-
-In Python, send computed bytes separately from the small JSON configuration:
-
-```python
-report.module("points", {"count": count}, {"points": packed_xyz})
-```
-
-Values support the contiguous Python buffer protocol; the native bridge holds
-the buffer only during the call. C++ accepts `std::vector<tsugumi_blob>` as the
-third argument of `report.module`. The ABI is version 5;
-`tsugumi_blob` contains `name`, `data` and `size`. A display on the RPC carries
-`Module { module, config_json, blobs }`, where `module` is the immutable
-Nix store directory, not the declaration's short name. Configuration is limited
-to 1 MiB; up to 64 blobs together to 8 MiB (within the existing 16 MiB frame limit). Plotly and Vega-Lite are view
-outputs of this SDK and use the same loader and RPC.
-
-The [view isolation boundary](security.md#showing-card-views-line-charts-plotly-vega-lite-and-card-owned-modules) applies to both platforms; code is separate from retained display data.
-
-The runnable example is
-[`tests/fixtures/view-point-cloud`](../tests/fixtures/view-point-cloud): Python
-computes 12,000 little-endian float32 XYZ triples, and the JavaScript view
-rotates them on drag through WebGPU alone. It gives a clear error if WebGPU or
-an adapter is unavailable.
-
-### C/C++ views with standard WebGPU
-
-Declare a Wasm view in the same `views` attribute set:
-
-```nix
-views.points = inputs.tsugumi.wasmViewModule {
-  src = ./view;
-  sources = [ "main.c" ];  # default; .cc/.cpp sources use C++20
-  name = "point-cloud-wasm-view";
-  # cflags = [ "-DMY_OPTION=1" ];
-};
-```
-
-The processing Card and `report.module("points", config, blobs)` are unchanged.
-The builder compiles C11 or C++20 with Emscripten as a Wasm side module. Its
-output contains `view.wasm` and an `index.js` symlink to
-`inputs.tsugumi.wasmViewTemplate`, one shared Nix output independent of every
-Card's source. `inputs.tsugumi.wasmViewHeaders` supplies the headers separately.
-The standard `<webgpu/webgpu.h>` is the webgpu-headers snapshot from the pinned
-nixpkgs `wgpu-native.src` (no Rust library build). The small portable header is
-[`<tsugumi/view.h>`](../sdk/include/tsugumi/view.h):
-
-| Host function | Meaning |
-| --- | --- |
-| `tsugumi_view_config(size_t*)` | Borrowed JSON bytes; length excludes the trailing NUL |
-| `tsugumi_view_blob(const char*, size_t*)` | Borrowed named binary input; missing is NULL/0 |
-| `tsugumi_view_size(TsugumiViewSize*)` | Width/height in CSS pixels and pixel ratio |
-| `tsugumi_view_on_pointer(callback)` | Down/move/up/cancel, local CSS coordinates and button mask |
-| `tsugumi_view_on_wheel(callback)` | Wheel deltas normalized to CSS pixels |
-| `tsugumi_view_on_frame(callback)` | Animation callback in monotonic milliseconds, paused while hidden |
-| `tsugumi_view_error(const char*)` | Stop and report a UTF-8 diagnostic |
-
-Callbacks are replaced by registration; NULL unregisters. Input pointers remain
-valid until the next update or disposal. Updating replaces all blobs, including
-removing absent names. Inputs are copied into Wasm memory, never stored as build
-outputs. Pointer capture and browser event normalization belong to the shared
-host; neither DOM objects nor JavaScript types appear in the C header.
-
-Implement these four C-linkage entry points (no `main`):
-
-```c
-#include <tsugumi/view.h>
-void tsugumi_view_initialise(WGPUDevice device, WGPUSurface surface, WGPUTextureFormat format);
-void tsugumi_view_update(void);
-void tsugumi_view_resize(void);
-void tsugumi_view_dispose(void);
-```
-
-The host passes borrowed standard GPU handles, configures the surface at the
-current pixel size and owns its presentation, device and surface lifetime.
-Create pipelines/buffers with ordinary `wgpu*` calls, get the current surface
-texture to render, and release each acquired handle. Do not reconfigure or
-release the borrowed device/surface, or call `wgpuSurfacePresent` (Emdawnwebgpu
-does not implement that blocking call). Register a frame callback to redraw;
-snapshots invoke it and wait for the GPU queue before exporting PNG. Dispose
-unregisters callbacks and releases the view's buffers, pipelines and other GPU
-resources. The host cancels animation, removes listeners and frees input memory.
-Initialization failures, callback failures and device loss reach the ordinary
-module error bridge. No worker needs to remain alive.
-
-Use the [C/Wasm point-cloud example](../tests/fixtures/view-point-cloud-wasm) to try the API.
-
-### Built-in line chart
-
-`report.line_chart` calls (and their other-language
-equivalents) produce the built-in `line-chart` view. The JSON configuration is `{series: [{id, label, offset, count}, ...]}`.
-Offsets and counts index two named blobs, `x` and `y`, each a concatenation of
-little-endian float64 arrays. The limit is 10,000 points and
-1 MiB of coordinate/label data. The view subtracts the visible origin in double
-precision before converting to float32 GPU vertices, preserving small differences
-in large values such as timestamps. Multiple series, the four-colour palette,
-legends, live updates and canvas previews use the shared module lifecycle.
-`size.colorScheme` is `light` or `dark`, supplied by the UI; appearance is part
-of preview identity. Coordinates and display retention are independent of theme.
-
+The worker sets the working directory, `HOME`, `TMPDIR` and the environment at launch. An opened artifact's path is valid only during its call. A cache in `HOME` should be safe to rebuild when a later call finds it missing. The Card's process gets no shell and no `PATH` of its own: there is no implicit `/bin/sh`. A Card that runs other programs declares them to its SDK's builder, for example `sdk.pythonCard (common // { src = ./src; tools = [ pkgs.coreutils pkgs.ripgrep ]; })`, and the builder puts exactly those on the Card's `PATH`. Packages come from the project's pinned nixpkgs.
 
 ## Card definition reference
 
 ### A Card's folder
 
-`definitions/<id>/` belongs to one Card. Its identifier is permanent; its editable human name is `_meta.json.name`, with the identifier shown when the name is omitted. Names may be shared by several Cards. New identifiers come from the core `card_id` RPC: the lowercase slug of the creation name, then `-2`, `-3`, and so on when that name is occupied, checked for uniqueness in the owning project (including reserved unsaved Cards and case variants). Pass `project_path` for a Card in Card, then save the definition and canvas using the returned identifier. The slug uses lowercase ASCII letters and digits separated by hyphens; a name without those characters uses `card`. Identifiers already present, including unsuffixed ones, stay as written.
-
-Renaming changes only `_meta.json.name`. Definition folders, canvas keys, connections, saved inputs, run records and evidence links retain their identifiers. The same rule holds inside a Card in Card.
-
-Definition files:
-
-| File | What it is |
+| File | Role |
 | --- | --- |
-| `_card.json` | What the Card is (`type`, required) and all settings: `language`, `inputs`, `params`, run settings |
-| `_meta.json` | The human `name` and intent, for every kind of Card: `description` (its summary, shown on the Canvas and in Card settings; `_card.json` has none), `content`, `context`, port descriptions. When implementing a Draft, preserve its intent and fill an empty `description` and `context` from the user and Draft |
-| `_outputs.fbs` | One table per output port, root table `Outputs` |
-| `default.nix` | Code Cards only: a function `{ pkgs, inputs, params }:` returning `{ run = ...; }` with one implementation or an ordered list |
-| `src/` | Code Cards only: the sources |
+| `_card.json` | Card type, input names and execution settings |
+| `_outputs.fbs` | Output ports and their types |
+| `_inputs.fbs` | Generated input schema for connected ports |
+| `params.nix` | Current parameter literals; absent when the Card has no params |
+| `default.nix` | Nix definition receiving `{ params, inputs }` |
+| `README.md` | Optional one-line `description` front matter and Markdown body |
+| `_comments.json` | Review comments |
+| `src/`, `views/` | Card source and optional custom view source |
 
-Never write `_inputs.fbs`: input types come from the connected outputs.
+The folder ID is the Card's name on the canvas.
 
 ### Card types
 
-Every `_card.json` states what the Card is in `type`; a missing or unknown `type` is a definition error.
-`code` runs the Card's own sources (below), `draft` is a step described but not written yet, and `subgraph` is a Card in Card (with `external`).
-The other types are built-in Cards with no code:
-
-| Type | Ports | Use |
-| --- | --- | --- |
-| `trigger` | out `out` | Where a whole run starts |
-| `input` | in `start` (optional), outs from `_outputs.fbs` | Hands on values or a project file (below) |
-| `branch` | ins `value`, `condition` (a table with `value:bool`), outs `a` (true), `b` (false) | Sends to one side |
-| `fork` | in `value`, outs as declared in `outputs` (default `a`, `b`) | Sends the same value to every output |
-| `merge` | ins as declared in `inputs`, out `out` (a union of them) | Joins paths of a loop |
-| `collect` | in `in`, out `out` (derived from the input) | Sends a batch as one typed vector or Directory |
-
-To show a received value without choosing its type in advance, use an ordinary
-Bash Card with an untyped input. The marimo demo's `result` Card logs
-`$JSON_IN` to stdout and sends it as text to `$TSUGUMI_REPORT`. For Markdown,
-select the string field to display explicitly.
+Use Code for processing, Input for values built with Nix, and Trigger to start
+the workflow. Merge and Collect route and aggregate arrivals. Draft is a
+placeholder, and Subgraph embeds a project from `externals/<id>/`.
 
 ### An input Card with fixed values
 
-`demos/en/report/definitions/settings`: params named like the fields of its output table.
-To control a Branch from the Canvas, declare a `bool` parameter named `value`
-and an output message with a `value:bool` field. Wire that output to the
-Branch’s `condition` input. The Canvas renders the parameter as a toggle.
+The `sdk.input` helper takes the output schema and a map of output port names
+to FlatBuffers JSON table values. It builds the port bytes, which core emits.
+See the [temperature Card](#the-input-value-card) above.
 
-```json
-{"type": "input", "params": [{"name": "seed", "type": "uint64", "data": 42}]}
-```
+### An input Card that passes on a project file or folder
 
-### An input Card that hands on a project file
+Use `sdk.artifact ./data.csv` where a value of type `tsugumi.Artifact` is
+expected in `sdk.input`. The SDK packages the file or directory in the build
+output. Core registers its existing read-only store directory.
 
-The file stays in the project; at run time it is copied into the run and the
-next Card receives its path.
+### Parameters
 
-`definitions/load/_card.json` (the path is relative to this Card's definition folder):
-
-```json
-{"type": "input",
- "params": [{"name": "value", "type": "string", "data": "data/events.fits"}]}
-```
-
-Use `project:definitions/shared/data/events.fits` for a saved source in another
-Card of the owning project.
-The same rules apply inside external projects: `project:` names that external
-project's root. Paths cannot be absolute or contain `..`, and must name a saved
-project source. The base never changes according to which file exists.
-
-`_outputs.fbs` (a File port: one table whose only field is `value:string`):
-
-```
-attribute "tsugumi";
-namespace data;
-table EventsFile { value:string; }
-table Outputs { events:EventsFile (required, tsugumi: "file"); }
-root_type Outputs;
-```
-
-The next Card reads it as a path: `inputs.input("events", EventsFile).Value().decode()` (Python),
-`$FILE_EVENTS` (bash).
-
+`params.nix` is a flat attrset of literals. A Card without params has no
+`params.nix`; a missing file is the same as `{ }`. Entries can be booleans, signed
+64-bit integers, doubles, strings and nonempty homogeneous lists of these types.
+`10` and `10.0` have different types. Editing a value in the UI replaces that
+literal in place, preserving the type, other entries and comments. Pass
+the evaluated values to the builder. A derivation depends on the values
+its expression uses.
 
 ### Code Card settings
 
-A Code Card has `"type": "code"`. Set `language` to `python`, `cpp`, `go`, `rust`, `csharp`, `bash`, `r`, `julia` or `ruby`. Declare input port names in `inputs`; connected outputs determine their types. Parameters are entries such as `{"name": "low", "type": "double", "data": 600}`. Their types are `bool`, `int64`, `uint64`, `double`, `string` and arrays of those types; they are part of `inputs.params` at runtime. A parameter with `nix: true` is also a build-time value in `default.nix`.
+A Code Card has `"type": "code"`. Declare input port names in `inputs`. The connected outputs supply the input types, and `default.nix` selects the SDK.
 
-With `sandbox: true`, network access is disabled unless `_card.json` explicitly sets `network: true` (Experimental). With the sandbox off, network restrictions depend on the execution environment. TLS uses `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
+Network access is off by default where the worker can isolate it. Set `grants.network` to true to allow it. TLS uses the Nix `cacert` bundle through `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
 
-Omit `executionService` for local execution, or select a host-registered service ID. `executionResources: {"cpuMillis": 1000, "memoryBytes": 4294967296}` caps CPU and memory when the service advertises limits, including its build. Connection details and credentials belong to the host; see [Remote execution](RemoteExecution.md). Worker state and run hooks follow the [worker state rules](#worker-state).
+Use `executionService` to select a registered service. The default is `auto`. In `sandbox`, `filesystem`, `pid`, `ipc` and `identity` default to true. Use `sandbox.limits.cpu` for a limit in cores (fractions are allowed) and `sandbox.limits.memoryMiB` for a memory limit in MiB. Omit either value or use `null` for an unlimited resource. A Linux worker with delegated cgroup v2 applies these limits to the Card's process.
+
+Set `grants.network` or `grants.gui` to enable that access on a supported worker. Add named paths with `grants.hostPaths` entries containing `name`, an absolute `path` and an optional `write` flag. The Card reads the worker-visible path from `TSUGUMI_GRANT_<NAME>`, using uppercase letters and underscores in place of other separators. For example, `sample-data` becomes `TSUGUMI_GRANT_SAMPLE_DATA`.
+
+Connection details and credentials belong to the host; see [Remote execution](RemoteExecution.md). Worker state follows the [worker state rules](#worker-state).
 
 ### Card secrets
 
-A Card that needs a credential declares only its names: `"secrets": ["database_password"]`. A name is `[a-z][a-z0-9_]{0,63}`. Set the value in the project's **Settings > Card secrets** in the Mac app or the Web UI; this host's hostd keeps it for that project only and never shows it again. At each invocation the Card's process receives it as an environment variable of the same name, the same way in every language:
+A Card that needs a credential declares only its names: `"secrets": ["database_password"]`. A name is `[a-z][a-z0-9_]{0,63}`. Set the value in the project's **Settings > Card secrets** in the Mac app or the Web UI; this host's hostd keeps it for that project only and never shows it again. At launch the Card's process receives it as an environment variable of the same name, the same way in every language:
 
 ```python
 import os
 password = os.environ["database_password"]
 ```
 
-```bash
-PGPASSWORD="$database_password" psql -h db.example -U reader catalog -c 'select 1'
-```
+The value is not in the project, its parameters, its Nix build or the run history; the history records only that `database_password` was provided. A Card whose secret is not set fails before it runs and names the missing one. When a secret changes, the next run starts a fresh worker. A [remote worker](RemoteExecution.md#card-secrets) receives secrets at launch too.
 
-The value is not in the project, its parameters, its Nix build or the run history; the history records only that `database_password` was provided. A Card whose secret is not set fails before it runs and names the missing one. A Card with secrets cannot use `reuseWorker`. On a [remote worker](RemoteExecution.md#card-secrets) it receives them the same way.
-
-What the Card does with the value is its author's responsibility: child processes inherit the environment, and a value the Card prints, logs or writes to an output is recorded like any other. Pass it on only where it is needed (above, only `psql` receives it, in its environment rather than its command line), and never write it to a report or an output. See [Card secrets](security.md#card-secrets).
+What the Card does with the value is its author's responsibility: child processes inherit the environment, and a value the Card prints, logs or writes to an output is recorded like any other. Pass it on only where it is needed (to a subprocess, in its environment rather than its command line), and never send it to a view or write it to an output. See [Card secrets](security.md#card-secrets).
 
 ### Run lists and connected Nix exports
 
-Use `demos/en/signal-sweep` for a parameter sweep. The `samples` Input Card
-sweeps its `value` parameter: `"sweep": [8, 12, 16]` in place of `"data"` hands
-on each signal in its own invocation, labeled `value=8` and so on. The `score`
-Card receives `samples.out` on its `signal` port and uses
-`run = map compare thresholds;` to make two implementations. Each entry is
-`{ label = "threshold=10"; run = ''...''; }`: the label names the implementation
-in the history and when comparing runs. Labels are optional and unique within a
-list. Each implementation reads the runtime signal from `$JSON_SIGNAL`.
+A definition can return several variants. An Input Card can map a list of literals
+to distinct values using the same mechanism.
 
-A list-typed parameter (`"type": "uint64[]"`) with `data` is one ordinary
-vector value. Only `sweep` makes a batch, also for a single value
-(`"sweep": [5]` is ×1); each element of a list-typed sweep is one vector.
-Several swept parameters run their Cartesian product, the last one varying
-fastest. Code Cards use run lists instead of `sweep`.
+```nix
+run = map (value: {
+  label = toString value;
+  run = sdk.input { outputs = ./_outputs.fbs; values.temperature = { inherit value; }; };
+}) params.temperatures;
+```
 
-The three swept values and two implementations produce six invocations, in input
-item order with implementation order varying fastest. Every batch input is an
-independent axis. `maxRuns` counts triggers, and a failed member cancels the
-rest of the batch. Inspect each member's history for its inputs and result.
-An empty list yields an empty batch.
+Variants from different Cards form batch axes. Collect turns a batch into one
+`Collected` envelope list. Runtime port values flow between Cards independently
+of their derivation inputs.
 
-Add a built-in `collect` after `score` to send one ordinary port value with an
-`items` vector. The next Bash Card can read `.items` from its `$JSON_RESULTS` input file, as
-`summary/default.nix` does. Collect turns File or Directory batches into a
-Directory. The ordered `items` records contain each original name and a path
-relative to the Directory root.
-
-Refer to Nix exports as `inputs.<destination-port>`. Collect, Fork, Branch's
-`value` input and Workflow boundaries preserve a unique Code producer. Use a
-direct connection to that Code Card if the producer would otherwise be
-ambiguous. The `score` Card also exports `thresholdCount`, which `summary` reads through
-Collect as `inputs.results.thresholdCount`. Each run implementation shares
-the same exports.
-
+Set `exports` to publish Nix values to guaranteed downstream Cards. A downstream
+definition reads them as `inputs.<card_id>.<attr>`. For example, C can see both
+A and B in `A → B → C`. TODO(open): Exports across Merge, Collect, feedback,
+Draft and nested or external boundaries.
 
 ### Data fixed by Nix
 
-Large public data (an observation, a reference genome, a simulation's result) can be fixed like a
-package: fetched once into the Nix store by its hash, never during a run. A param with `"nix":
-true` is readable in `default.nix` as `params.<name>` (changing it rebuilds the Card):
-
-```nix
-{ pkgs, inputs, params }:
-let
-  raw = pkgs.fetchurl {
-    url = "ftp://host/path/${params.file}";  # explicit FTPS: ftp:// with
-    curlOptsList = [ "--ssl-reqd" ];           # --ssl-reqd (often faster than https)
-    hash = params.hash;                        # "sha256-..." (nix hash file <file>)
-  };
-  data = pkgs.runCommand "data.fits" { } "gunzip -c ${raw} > $out";
-in
-{
-  run = ''
-    printf '{"events": {"path": "%s"}}' "${data}" > "$TSUGUMI_OUTPUT"
-  '';
-}
-```
-
-The store path goes on as a plain string (a FlatBuffer table `{ path:string; }`, not a File port,
-whose files must be in the Card's output folder); every Card can read `/nix/store`. A long build
-step (a simulation) is fixed the same way with `pkgs.runCommand` or `stdenv.mkDerivation`.
-
-### File and Directory outputs
-
-`demos/en/report/definitions/generate` (File) and `demos/en/report/definitions/render` (Directory):
-`attribute "tsugumi";`, the port marked `(required, tsugumi: "file")` or `(required, tsugumi:
-"directory")`, a table with `value:string`, and the files written under
-`run.output_directory` (Python) / `$TSUGUMI_OUTPUT_DIR` (bash).
+Use a locked project source and include its store path in the Card build when
+the program needs immutable data. To send a project file through the graph,
+declare an Artifact output and publish it with an Input Card.
 
 ### Reading a merge output
 
-The input is a table whose `value` is a union with one member per merge input. C++:
-`Card::visit(inputs.arrival.value, [](const auto& v) { return v.value; })` calls the lambda
-with whichever member arrived (`inputs.arrival.value.type` says which port). Python:
-`demos/en/collatz/externals/collatz-py/definitions/check/src/main.py`.
+Build SDK after connecting the Merge. Decode a single candidate as its
+ordinary type, or select a member of the generated union when there are
+multiple candidates. Merge forwards the original bytes and artifact IDs.
 
+### Templates
 
-### Ruby API
+A template is a folder of Card definition directories: one Card, several Cards, or part of a graph
+with its internal connections and an optional `layout.bin` fragment. Choose **From Template…** in
+**New Card** to copy one into the graph. The copy gets fresh Card IDs; connect its boundary ports to
+the rest of the project.
 
-`_card.json`: `{"type": "code", "language": "ruby", ...}`. Use the MRI adapter with worker-side typed JSON conversion:
+| Store | Where | Scope |
+| --- | --- | --- |
+| **Project** | The project's `templates/` folder | Versioned with the project |
+| **Host** | `templates/` in this host's Tsugumi support folder | Shared by the projects on this host |
 
-```nix
-{ pkgs, inputs, params }:
-{ run = inputs.tsugumi.rubyCard { src = ./src; }; }
-```
-
-```ruby
-def main(inputs, report, run)
-  outputs = {}
-  value = inputs.input('number').fetch('value') * inputs.params.fetch('factor')
-  outputs['result'] = {value: value}
-  report.text("result: #{value}")
-
-  outputs
-end
-```
-
-Inputs and params are owned Hashes / Arrays; output takes a Hash or a value object with `to_h`.
-Field names may be strings or symbols. Integers retain all 64 bits and out-of-range values fail;
-strings must be UTF-8 text. Use `Tsugumi.bytes(binary_string)` for a byte vector. A missing optional
-input is `nil`; a message field may be `nil`, but a returned nil output message is invalid. Omit the
-port to leave an optional output unproduced. FlatBuffers checks the port schema.
-
-`inputs.path('file')` reads a File / Directory input path. Write artifacts under `run.output_directory`
-and return `{value: path}` for the port. `run.temporary_directory`, `run.run_id`, `run.card`, `run.invocation` and
-`run.working_directory` are also available. `report.log(text)` writes a log line. Interpreter stdout/stderr are also captured for diagnostics.
-Displays: `text`, `markdown`, `scalar(value, label)`,
-`table(columns, rows)`, `image(binary_string, media_type: 'image/png', alt: '')`,
-`plotly(hash)`, `vegalite(hash)` and `module(name, hash)`.
-
-MRI and the Card instance stay in the worker: instance variables survive invocations when
-`reuseWorker` is enabled. Optional `on_run_start(inputs, report, run)` runs once per Run. Disable reuse for fresh
-state. Report and Run expire when the callback returns and may only be used on its thread; copied input
-values may be retained. Join any Ruby threads before returning. Exceptions produce a structured
-failure; `raise Tsugumi::Failure.new('worker_failed', 'reason')` supplies a diagnostic. `run.cancelled?` and
-`run.remaining_ms` support cooperative work; the worker is killed at cancellation / deadline, so
-ensure blocks are not guaranteed then. Failed workers are discarded before later work.
-
-On request, create a Gemfile in the Card's directory, then use the project
-shell to run `bundle lock --add-platform ruby` from that directory. Reload the
-project to read the resulting Gemfile.lock. Name it explicitly in `rubyCard`:
-`lock = ./Gemfile.lock; hash = pkgs.lib.fakeHash;`. Run once and replace the
-placeholder with the `got: sha256-…` hash of the downloaded `.gem` files from
-the Card's build log. Keep both files with the Card and repeat the hash step
-when either changes. The locked gems are installed offline, including native
-extensions that use libraries supplied through `buildInputs`.
+The menu lists both stores separately, with nothing preselected; the same name in both stores
+appears twice with its store label. Add a template to either store from a folder or from a public
+HTTPS Git repository with a ref (a commit ID selects an exact version) and the template's
+subdirectory. The examples in [tsugumi-kit's templates](https://github.com/gen740/tsugumi-kit/tree/main/templates)
+import with the repository `https://github.com/gen740/tsugumi-kit.git` and a subdirectory such as
+`templates/filter-counts`. Tsugumi lists, imports and copies templates; a person or the Agent
+chooses one, and there is no default per language. The Agent may list and copy templates; adding
+or importing one needs a person's approval. The [template format](https://github.com/gen740/tsugumi-kit/blob/main/docs/templates.md)
+is described in the kit.
 
 ### Draft wire ends and implementation
 
 A Draft (`_card.json` with `"type": "draft"`) has no input or output ports,
-including when `_meta.json` contains port descriptions or `_outputs.fbs` exists.
+including when `_outputs.fbs` exists.
 A connection attaches directly to the Draft with `{"card":"plan","port":""}`.
 The `port` field is required; the empty string is reserved for Draft ends.
 Any number of wires can enter or leave a Draft, including wires between Drafts.
@@ -1102,3 +401,14 @@ edit the definition's inputs, sources and output schema, and fill **Rebind wires
 under Ports before Apply. Each wire starts with an empty choice. Apply saves the
 implementation and the selected endpoints together; a rejection leaves the
 working copy open for correction.
+
+## What to read next
+
+| To know | Document |
+| --- | --- |
+| Conditional outputs, loops, artifacts and data pinned with Nix | [The bundled demos](Demos.md) ([display port status](Demos.md#demo-status)) |
+| Examples of code that runs | [tsugumi-kit's templates](https://github.com/gen740/tsugumi-kit/tree/main/templates) |
+| One language's API, dependencies and threads | [tsugumi-kit](https://github.com/gen740/tsugumi-kit/tree/main) |
+| The contract between the core and an SDK | [Card ABI](CardABI.md) |
+| Leaving implementation to the Agent | [the Agent in Features](features.md#9-agent) |
+| What the words mean | [Glossary](Glossary.md) |

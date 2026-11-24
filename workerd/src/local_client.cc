@@ -15,11 +15,16 @@ LocalWorkers::LocalWorkers(std::filesystem::path binary,
     : binary_(std::move(binary)), scratch_(std::move(scratch)) {}
 
 LocalWorkers::~LocalWorkers() {
+  idle_.clear();
   if (fd_ >= 0) ::close(fd_);  // EOF is the sole lifetime of the local pool.
   if (pid_ > 0) proc::wait(pid_);
 }
 
 auto LocalWorkers::exchange(L::MessageT message, LocalPacket& reply) -> void {
+  struct Wipe {
+    L::MessageT& message;
+    ~Wipe() { clear_spawn_secrets(message); }
+  } wipe{message};
   std::lock_guard guard(mutex_);
   try {
     if (fd_ < 0) {
@@ -40,11 +45,12 @@ auto LocalWorkers::exchange(L::MessageT message, LocalPacket& reply) -> void {
       spec.argv = {binary_.string(), "--local", "3", scratch_.string()};
       spec.fds = {{3, pair[1]}};
       spec.stderr_fd = STDERR_FILENO;
+      for (const auto* name : {"DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
+                               "TSUGUMI_CARD_CGROUP_ROOT"})
+        if (const auto* value = std::getenv(name))
+          spec.env.push_back(std::string(name) + "=" + value);
       if (trace::LaunchEnabled())
         spec.env.push_back(std::string(trace::kLaunchVariable) + "=1");
-      for (const auto* variable : {"SSL_CERT_FILE", "NIX_SSL_CERT_FILE"})
-        if (const auto* value = std::getenv(variable))
-          spec.env.push_back(std::string(variable) + "=" + value);
       try {
         pid_ = proc::spawn(spec);
       } catch (...) {
@@ -57,6 +63,7 @@ auto LocalWorkers::exchange(L::MessageT message, LocalPacket& reply) -> void {
     }
     trace::Link link;
     send_local(fd_, message, nullptr, &link);
+    clear_spawn_secrets(message);
     if (!receive_local(fd_, reply, &link))
       throw std::runtime_error("local workerd exited");
     if (!reply.message->error.empty())
@@ -92,17 +99,30 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
   request.reuse = reuse;
   auto& target = request.spawn = std::make_unique<L::SpawnT>();
   target->worker_binary = spawn.worker_binary;
-  target->bash = spawn.bash;
+  target->closure = spawn.closure;
+  target->shared_vm = spawn.shared_vm;
+  if (spawn.secrets) {
+    for (const auto& [name, value] : spawn.secrets->values) {
+      auto entry = std::make_unique<Tsugumi::Worker::EnvVarT>();
+      entry->name = name;
+      entry->value = value;
+      target->secrets.push_back(std::move(entry));
+    }
+  }
   target->store_path = spawn.store_path;
-  target->package = spawn.program.package.value_or("");
-  target->script = spawn.program.bash.value_or("");
-  target->has_script = spawn.program.bash.has_value();
-  target->pre_run = spawn.program.pre_run;
-  target->post_run = spawn.program.post_run;
-  target->views = spawn.program.views;
-  target->sandbox = spawn.sandbox;
+  target->package = spawn.package;
+  target->filesystem = spawn.sandbox.filesystem;
+  target->pid = spawn.sandbox.pid;
+  target->ipc = spawn.sandbox.ipc;
+  target->identity = spawn.sandbox.identity;
+  target->cpu_millis = spawn.sandbox.limits.cpu_millis;
+  target->memory_bytes = spawn.sandbox.limits.memory_bytes;
+  target->gui = spawn.gui;
   target->network = spawn.network;
   target->ro_paths = spawn.ro_paths;
+  target->artifact_store = spawn.artifact_store;
+  target->artifact_inputs = spawn.artifact_inputs;
+  target->artifact_staging = spawn.artifact_staging.string();
   target->hidden_paths = spawn.hidden_paths;
   if (spawn.uid) target->uid = *spawn.uid;
   if (spawn.gid) target->gid = *spawn.gid;
@@ -111,10 +131,14 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
     value->source = bind.source;
     value->target = bind.target;
     value->write = bind.write;
+    value->name = bind.name;
     target->binds.push_back(std::move(value));
   }
+  std::lock_guard leases(leases_mutex_);
   LocalPacket reply;
   exchange(std::move(request), reply);
+  std::erase_if(idle_,
+                [](const auto& entry) { return !entry.second->alive(); });
   const auto& message = *reply.message;
   if (!message.lease || message.scratch.empty() || reply.descriptors[3] < 0)
     throw Failed(FailureKind::worker_failed,
@@ -122,6 +146,7 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
   WorkerProc::Borrowed borrowed{
       reply.descriptors,
       message.scratch,
+      message.artifact_scratch,
       message.call_id,
       message.lease,
       [this, id = message.lease] { command(L::Action::ClearScratch, id); },
@@ -131,7 +156,13 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
       [this, id = message.lease] { command(L::Action::Release, id); }};
   std::unique_ptr<WorkerProc> worker;
   try {
-    worker = std::make_unique<WorkerProc>(std::move(borrowed));
+    if (auto found = idle_.extract(message.scratch); found) {
+      worker = std::move(found.mapped());
+      worker->resume(std::move(borrowed));
+    } else {
+      worker = std::make_unique<WorkerProc>(std::move(borrowed));
+      reply.descriptors.fill(-1);
+    }
   } catch (...) {
     try {
       command(L::Action::Release, message.lease);
@@ -139,7 +170,6 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
     }
     throw;
   }
-  reply.descriptors.fill(-1);
   return {std::move(worker), message.reused, message.replaced};
 }
 
@@ -152,18 +182,44 @@ auto LocalWorkers::release(std::unique_ptr<WorkerProc> worker, bool keep,
   request.call_id = worker->call_id();
   request.keep = keep;
   request.reason = reason;
-  worker->returning_lease();
-  worker.reset();  // No concurrent log readers when workerd resumes ownership.
+  std::lock_guard leases(leases_mutex_);
+  worker->idle();
+  if (!keep) worker.reset();
   LocalPacket reply;
   exchange(std::move(request), reply);
+  std::erase_if(idle_,
+                [](const auto& entry) { return !entry.second->alive(); });
+  if (worker && worker->alive()) {
+    const auto scratch = worker->scratch();
+    idle_.emplace(scratch, std::move(worker));
+  }
 }
 
 auto LocalWorkers::clear() -> void {
+  std::lock_guard leases(leases_mutex_);
   // Clearing an unused pool must not start a service.
   {
     std::lock_guard guard(mutex_);
     if (fd_ < 0) return;
   }
   command(L::Action::Clear, 0);
+  idle_.clear();
 }
+auto LocalWorkers::invalidate(const std::string& card,
+                              const std::string& reason) -> void {
+  std::lock_guard leases(leases_mutex_);
+  {
+    std::lock_guard guard(mutex_);
+    if (fd_ < 0) return;
+  }
+  L::MessageT request;
+  request.action = L::Action::Invalidate;
+  request.card = card;
+  request.reason = reason;
+  LocalPacket reply;
+  exchange(std::move(request), reply);
+  std::erase_if(idle_,
+                [](const auto& entry) { return !entry.second->alive(); });
+}
+
 }  // namespace tsugumi::workerd

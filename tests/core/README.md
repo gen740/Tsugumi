@@ -80,7 +80,7 @@ confirmed definition directory; test cases do not import or call core classes.
 The adapter does not parse internal Nix argument strings, interpret Nix, download
 packages, or silently fall back to the real evaluator.
 
-Use the real worker for shell steps, worker reuse and process/sandbox behavior.
+Use the real worker for worker reuse, the process a Card runs in and sandbox behavior.
 Use the worker double for controlled outcomes, corrupt frames and uncooperative
 processes. A mock build passing does **not** validate real Nix evaluation, its
 watchdog, package construction, VM isolation, or platform-specific durability.
@@ -93,21 +93,25 @@ save requests. Source updates obtain their base hashes through RPC. The shared
 `projects.py` also prepares ordinary project files for existing scenarios and
 external-edit/Reload cases. Neither helper reads private history or journal state.
 
-Build plans are ordinary fixture sources named `mock-build.json`:
+Build plans are ordinary fixture sources named `mock-build.json`;
+`harness.fixtures.mock_plan` writes one:
 
 ```json
 {
-  "manifest": { "run": { "bash": "true" }, "shell": "/bin/bash", "path": "/usr/bin:/bin" },
+  "product": { "runs": ["/absolute/worker/package"], "views": [] },
+  "executionList": false,
   "gate": "build-ready"
 }
 ```
 
-`manifest` uses the actual build-product format (`run.bash` or `run.package`,
-the `shell` and `path` of the Card's processes, optional `preRun`/`postRun`);
-`Project.card` fills in the host's `/bin/bash` and `/usr/bin:/bin` when a fixture
-does not name them. `closure` adds paths to the recorded environment. `error` produces a build failure. `gate` pauses before
-the product is returned; use `Gate(daemon.gates, name)` to wait/release it.
-`cached` can explicitly control the external cache result.
+`product` uses the actual Card plan format: `runs` lists the packages (each a
+worker package such as a mock worker's folder) and `views` the declared views
+(`name`, `type`, `blob`). `executionList` makes `runs` a run list. `closure`
+adds paths to the recorded environment. `error` produces a build failure. `gate`
+pauses before the product is returned; use `Gate(daemon.gates, name)` to
+wait/release it. `cached` can explicitly control the external cache result.
+`CardViewRead` serves view files only from inside the Nix store; with mocked
+builds, `TSUGUMI_MOCK_STORE` names the folder that stands in for it.
 
 A mock worker package contains `scenario.json` with `startup` and `actions` lists.
 Startup actions run before the worker begins reading. Normal actions include:

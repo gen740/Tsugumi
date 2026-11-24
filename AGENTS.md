@@ -13,25 +13,24 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 
 | Where | What |
 | --- | --- |
-| [protocol/](protocol/) | FlatBuffers contracts: project (`tsugumi.fbs`), Agent (`agent.fbs`), host operations (`host.fbs`, shared types in `service_common.fbs`), private VM helper (`vm_host.fbs`), workers (`worker.fbs`, `remote_worker.fbs`), data and enums |
+| [protocol/](protocol/) | FlatBuffers contracts: project (`tsugumi.fbs`), Agent (`agent.fbs`), host operations (`host.fbs`, shared types in `service_common.fbs`), private VM helper (`vm_host.fbs`), workers (`worker.fbs`, `remote_worker.fbs`), data and enums. The Card ABI is core-owned here: [`card.fbs`](protocol/card.fbs) and [`card_abi.h`](protocol/include/tsugumi/card_abi.h) ([Card ABI](docs/CardABI.md)) |
 | [util/](util/), [rpc/](rpc/) | Generic filesystem/process/JSON mechanisms and protocol-free transport/TLS |
 | [tsugumid/](tsugumid/) | Project document contracts, runtime, scheduling, history and versions; narrow shared runtime accounting |
 | [hostd/](hostd/) | Human/Agent policy, settings, credentials, document operations and environment adapters |
 | [hostd/cache/](hostd/cache/) | `tsugumi-cached`, the own Nix binary cache server ([design](docs/BinaryCacheServer.md)); its own process because it links Nix |
 | [client/](client/) | Shared C++ RPC client, C interface and WebAssembly bindings |
 | [workerd/](workerd/) | Native Card host `tsugumi-worker`, remote listener/supervisor/Nix runner `tsugumi-workerd`, framing and job support |
-| [sdk/](sdk/) | Card ABI and runtime, language SDKs and code generation, views, [Nix SDK](sdk/nix/default.nix) |
 | [vm/](vm/) | Release-built Linux guest and independent macOS VM runtime/helper |
 | [ui/macos/](ui/macos/) | SwiftUI app and Host/Agent presentation adapters |
-| [ui/shared/](ui/shared/) | Shared isolated web-module host and Card scaffolds |
+| [ui/shared/](ui/shared/) | Shared isolated host for Card views and the UI strings |
 | [hostd/agent/](hostd/agent/) | Agent implementation, prompts, tool descriptions and guide scripts |
 | [ui/web/](ui/web/) | Browser UI, host server and platform adapters |
 | [cli/](cli/) | The `tsugumi` command, installers and distribution packaging |
 | [pack/](pack/) | `tsugumi-pack`: exports a Project as a standalone Mac app ([design](pack/README.md)) |
 | [plugins/](plugins/) | Claude Code plugin; [installation and usage](docs/claude-code.md) |
-| [nix/](nix/) | Runtime, SDK, remote worker and CLI packages; flake outputs, checks and development shell |
+| [nix/](nix/) | Runtime, remote worker and CLI packages, Card evaluation entry; flake outputs, checks and development shell. The language SDKs and example templates live in [tsugumi-kit](https://github.com/gen740/tsugumi-kit), pinned in `flake.lock`; templates are copied from the Project (`templates/`) and Host stores ([Templates](docs/CoreAndSDK.md#templates)) |
 | [demos/](demos/) | Matching Japanese and English demos and Drafts (`ja/`, `en/`): change both |
-| [tests/](tests/) | Core, SDK, host, remote worker, static and prompt tests; [commands and manual tools](tests/README.md) |
+| [tests/](tests/) | Core, host, remote worker, static and prompt tests; [commands and manual tools](tests/README.md). SDK tests live in tsugumi-kit |
 | [docs/](docs/) | User documents ([index](docs/README.md)), assets and [documentation site tooling](docs/site/README.md) |
 
 The architecture and mechanisms are in [Features](docs/features.md#1-architecture). Release procedures are in [RELEASING.md](RELEASING.md).
@@ -66,6 +65,6 @@ Use `--no-nix` for only the static tests (seconds). See [tests/README.md](tests/
 
 ### Compatibility
 
-- **Do not worry about compatibility until v1.0.0.** Project documents (`tsugumi.json`, `layout.json` and so on), settings, the RPC protocol, storage formats and the contents of the VM and support folders may change without migration code or compatibility layers.
+- **Do not worry about compatibility until v1.0.0.** Project documents (`tsugumi.json`, `layout.bin` and so on), settings, the RPC protocol, storage formats and the contents of the VM and support folders may change without migration code or compatibility layers.
 - Do not add code that reads old formats, migrations or deprecated aliases. When something changes, delete the old one.
 - The version number is in `VERSION`. This policy holds for the versions before v1.0.0 (0.x).

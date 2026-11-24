@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "model.hh"
+#include "tsugumi/protocol/tsugumi_generated.h"
 #include "tsugumi/util/sqlite.hh"
 
 namespace tsugumi {
@@ -37,7 +38,6 @@ struct InvocationRecordData {
   std::vector<Value> inputs;   // only when record_io
   std::vector<Value> outputs;  // only when record_io
   std::vector<InputSourceData> input_sources;
-  std::optional<DisplayData> display;
   bool record_io = false;
 };
 
@@ -51,13 +51,17 @@ struct RemoteJobRecord {
 
 struct StoredValueMeta {
   std::string name;
-  PortKind kind;
   std::string bfbs;
   std::string root_type;
   uint64_t size_bytes = 0;
-  std::optional<std::string> artifact_id;
-  std::string hash;               // SHA-256 of the bytes, stored with the value
-  std::string file_content_hash;  // SHA-256 of File content, not the path value
+  struct Artifact {
+    ArtifactKey id;
+    std::optional<uint64_t> size;
+    bool store;
+  };
+  std::vector<Artifact> artifacts;
+  std::string hash;  // SHA-256 of the recorded bytes
+
 };
 
 struct LogEnd {
@@ -66,6 +70,7 @@ struct LogEnd {
   std::optional<uint64_t> invocation;
   LogStream stream;
   std::optional<uint64_t> end_offset;
+  bool live = false;
 };
 
 struct LogRead {
@@ -93,6 +98,8 @@ class History {
   void submit(Work work, std::function<void(bool ok)> done = {});
   // Synchronous write; throws Failed(persistence_failed) on error.
   void write_sync(const Work& work);
+  auto allocate_invocation_sequence(const InvocationSummaryData& invocation)
+      -> uint64_t;
   // Consistent read transaction on a dedicated reader connection.
   template <class F>
   auto read(F&& f) -> decltype(f(std::declval<sql::Db&>()));
@@ -123,17 +130,17 @@ class History {
                              const std::vector<SavedInputGroup>& groups)
       -> void;
   static void put_artifact(sql::Db& db, const ArtifactData& a);
-  static void put_display(sql::Db& db, const DisplayData& d);
   static void put_receipt(sql::Db& db, const std::string& op_id,
                           const std::string& kind, const std::string& digest,
                           const std::string& bytes);
+  static auto open_live_logs() -> std::unique_ptr<sql::Db>;
   // Appends UTF-8 text to a log stream; returns the new end offsets per scope.
   static std::vector<LogEnd> append_log(sql::Db& db, const std::string& run_id,
                                  const CardPath& card, uint64_t invocation,
                                  LogStream stream, const std::string& text);
   static auto mark_log_truncated(sql::Db& db, const std::string& run_id,
                                  const CardPath& card, uint64_t invocation,
-                                 uint64_t limit_bytes) -> void;
+                                 uint64_t limit_bytes, bool build = false) -> void;
   // Run level journal lines (no card).
 
   // --- reads ---
@@ -222,14 +229,12 @@ class History {
                                                   const CardPath& card,
                                                   const std::string& port);
   static std::optional<ArtifactData> artifact(sql::Db& db,
-                                              const std::string& artifact_id);
+                                              const std::string& artifact_id,
+                                              std::optional<std::string_view> run_id = std::nullopt);
   static std::vector<ArtifactData> artifacts(
       sql::Db& db, const std::string& run_id,
       const std::optional<CardPath>& card, std::optional<uint64_t> invocation,
       const std::string& after, uint64_t limit);
-  static std::optional<DisplayData> display(sql::Db& db,
-                                            const std::string& run_id,
-                                            const CardPath& card);
   static std::vector<RunSummaryData> runs_page(sql::Db& db,
                                                std::optional<CardPath> card,
                                                bool artifacts_only,
@@ -238,12 +243,12 @@ class History {
                                                std::vector<int64_t>* seqs);
   static int64_t max_run_seq(sql::Db& db);
   static std::vector<std::string> unfinished_runs(sql::Db& db);
-  LogRead read_log(sql::Db& db, const std::string& run_id,
-                   const std::optional<CardPath>& card,
-                   std::optional<uint64_t> invocation, LogStream stream,
-                   uint64_t offset, bool tail, uint64_t limit,
-                   std::optional<uint64_t> before, bool terminal,
-                   std::optional<uint64_t> since);
+  static auto read_log(sql::Db& db, const std::string& run_id,
+                       const std::optional<CardPath>& card,
+                       std::optional<uint64_t> invocation, LogStream stream,
+                       uint64_t offset, bool tail, uint64_t limit,
+                       std::optional<uint64_t> before, bool terminal,
+                       std::optional<uint64_t> since) -> LogRead;
 
   // Cursors carry a paging position.
   std::string make_cursor(int64_t hi, const std::string& after) const;
@@ -251,6 +256,9 @@ class History {
   std::pair<int64_t, std::string> open_cursor(const std::string& cursor) const;
 
   const std::filesystem::path& path() const { return path_; }
+
+  static auto delete_category(sql::Db& db, const std::string& run_id,
+                              Tsugumi::RPC::RunRecordCategory category) -> void;
 
   // Deletes the selected finished runs from .tsugumi/runs.sqlite.
   std::vector<std::string> delete_runs(

@@ -1,18 +1,8 @@
 {
   "type": "code",
-  "language": "r",
   "inputs": [
     {
       "name": "counts"
-    }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "results",
-  "params": [
-    {
-      "name": "fdr",
-      "type": "double",
-      "data": 0.05
     }
   ]
 }

@@ -68,16 +68,37 @@ import TsugumiTestSupport
   #expect(names == [bundledName])
 }
 
-@Test func nixSourcesNameTheirFlakesAsTheWebUIDoes() async throws {
-  struct Case: Decodable { let ref: String; let name: String; let unlocked: String; let commit: String? }
-  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../..")
-  let cases = try JSONDecoder().decode([Case].self, from: Data(contentsOf: root.appendingPathComponent("tests/fixtures/nix-source-refs.json")))
-  #expect(!cases.isEmpty)
-  for c in cases {
-    #expect(NixSources.sourceName(c.ref) == c.name, "\(c.ref)")
-    #expect(NixSources.unlockedRef(c.ref) == c.unlocked, "\(c.ref)")
-    #expect(NixSources.shortCommit(c.ref) == c.commit, "\(c.ref)")
+@Test func nixPathShowsTheLockForTheDeclaredURL() throws {
+  let url = "github:owner/repo"
+  let lock = try JSONValue.parse(#"{"entries":[{"name":"science","url":"github:owner/repo","rev":"abcdef1234567890abcdef1234567890abcdef12","narHash":"sha256-example"}]}"#)
+  #expect(NixPathLockStatus.read(nil, name: "science", url: url) == .unlocked)
+  #expect(NixPathLockStatus.read(lock, name: "other", url: url) == .unlocked)
+  #expect(NixPathLockStatus.read(lock, name: "science", url: "github:owner/other") == .urlChanged)
+  #expect(NixPathLockStatus.read(lock, name: "science", url: url + "/other") == .urlChanged)
+  #expect(NixPathLockStatus.read(lock, name: "science", url: url) ==
+          .locked(pin: "abcdef1"))
+}
+
+@Test func sdkBuildShowsOnlyTheApiDirectoryAndPreservesFailureLog() {
+  let result = Tsugumi_RPC_EvaluateNixResultT()
+  result.failure = nil
+  func file(_ path: String) -> Tsugumi_RPC_NixOutputFileT {
+    let file = Tsugumi_RPC_NixOutputFileT()
+    file.path = path
+    file.content = Array("api".utf8)
+    return file
   }
+  result.files = [file("share/tsugumi/api/README.md"), file("share/tsugumi/api-extra/x"), file("bin/tool")]
+  result.truncated = true
+  let sdk = SdkBuild(result, prefix: "sdk:")
+  #expect(sdk.files?.map(\.id) == ["sdk:README.md"])
+  #expect(sdk.files?.first?.text == "api" && sdk.truncated)
+  let failure = Tsugumi_Data_FailureT()
+  failure.diagnostic = "Nix failed"
+  result.failure = failure
+  result.log = "last line"
+  let failed = SdkBuild(result, prefix: "sdk:")
+  #expect(failed.files == nil && failed.failure == "Nix failed" && failed.log == "last line")
 }
 
 @Test func aVersionHoverFitsItsCards() {
@@ -142,12 +163,6 @@ import TsugumiTestSupport
   #expect(at["start"]!.outline == outline(start, in: at["start"]!.box, k))
   #expect(abs(at["merge"]!.outline.boundingRect.minX - (at["merge"]!.box.minX + merge.outlineRect.minX * k)) < 1)
 
-  // A branch is a diamond whose corners shrink with it; a merge is a triangle that
-  // grows with its inputs.
-  let diamond = VersionMiniMapLayout([.init(id: "b", x: 0, y: 0, kind: .branch)], flow: .leftToRight, width: 284, height: 132).cards["b"]!
-  #expect(diamond.shape == .branch && abs(diamond.box.width - canvas(.branch).size.width * 0.3) < 1e-9)
-  #expect(diamond.outline == outline(canvas(.branch), in: diamond.box, 0.3))
-  #expect(diamond.outline != outline(canvas(.branch), in: diamond.box, 1))
   func single(_ kind: CardKind, _ fan: Int, _ flow: FlowDirection = .leftToRight) -> VersionMiniMapLayout.Placed {
     VersionMiniMapLayout([.init(id: "m", x: 0, y: 0, kind: kind, fan: fan)], flow: flow, width: 284, height: 132).cards["m"]!
   }
@@ -156,10 +171,10 @@ import TsugumiTestSupport
   #expect(single(.merge, 6, .topToBottom).box.width > single(.merge, 2, .topToBottom).box.width)
   #expect(single(.merge, 2).outline != single(.merge, 2, .topToBottom).outline)
 
-  // A loop is a merge and a branch with a wire back: they keep their shapes and do not overlap.
-  let loop = VersionMiniMapLayout([.init(id: "m", x: 0, y: 0, kind: .merge, fan: 2), .init(id: "step", x: 140, y: 0), .init(id: "b", x: 400, y: 0, kind: .branch)],
+  // A loop is a merge and a Collect: they keep their shapes and do not overlap.
+  let loop = VersionMiniMapLayout([.init(id: "m", x: 0, y: 0, kind: .merge, fan: 2), .init(id: "step", x: 140, y: 0), .init(id: "b", x: 400, y: 0, kind: .collect)],
                                   flow: .leftToRight, width: 284, height: 132).cards
-  #expect(loop["m"]!.shape == .merge && loop["step"]!.shape == .card && loop["b"]!.shape == .branch)
+  #expect(loop["m"]!.shape == .merge && loop["step"]!.shape == .card && loop["b"]!.shape == .collect)
   #expect(!loop["m"]!.box.intersects(loop["step"]!.box) && !loop["step"]!.box.intersects(loop["b"]!.box))
 
   // A folded Card is its header.
@@ -205,7 +220,7 @@ import TsugumiTestSupport
   defer { try? FileManager.default.removeItem(at: dir) }
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   let (start, log, draft) = ("start", "log", "plan")
-  let s = try offlineSession(dir, cards: [(start, #"{"type":"trigger"}"#), (log, #"{"type":"code","language":"python"}"#), (draft, #"{"type":"draft"}"#)])
+  let s = try offlineSession(dir, cards: [(start, #"{"type":"trigger"}"#), (log, #"{"type":"code"}"#), (draft, #"{"type":"draft"}"#)])
 
   #expect(s.isDraftWire(from: draft, to: log), "from a Draft")
   #expect(s.isDraftWire(from: start, to: draft), "to a Draft")
@@ -217,7 +232,7 @@ import TsugumiTestSupport
   // Once the Card is implemented, endpoint styling becomes solid.
   let implemented = Tsugumi_RPC_DocumentDeltaT()
   implemented.baseRev = 0; implemented.rev = 1; implemented.origin = "agent"
-  let definition = Tsugumi_RPC_DefinitionT(); definition.id = draft; definition.cardJson = #"{"type":"code","language":"python"}"#
+  let definition = Tsugumi_RPC_DefinitionT(); definition.id = draft; definition.cardJson = #"{"type":"code"}"#
   implemented.definitionsUpsert = [definition]
   s.applyDelta(implemented)
   #expect(s.kind(draft) == .code)
@@ -241,11 +256,11 @@ import TsugumiTestSupport
   defer { try? FileManager.default.removeItem(at: dir) }
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   let s = try offlineSession(dir, cards: [
-    ("old", #"{"language":"python","inputs":[{"name":"in"}]}"#),
+    ("old", #"{"inputs":[{"name":"in"}]}"#),
     ("future", #"{"type":"something new","inputs":[{"name":"in"}]}"#),
     ("loose", #"{"type":"code","external":"lib"}"#),
     ("plan", #"{"type":"draft"}"#),
-    ("step", #"{"type":"code","language":"python"}"#),
+    ("step", #"{"type":"code"}"#),
   ])
   #expect(s.kind("old") == .invalid)
   #expect(s.kind("future") == .invalid)
@@ -258,7 +273,7 @@ import TsugumiTestSupport
   #expect(definitionKind(try JSONValue.parse(#"{"type":"invalid"}"#)) == .invalid, "not a type name")
 
   // The core's diagnostic (file and message) is what the Card says.
-  let missing = #"definitions/old/_card.json: "type" is required (one of code, draft, trigger, input, branch, fork, merge, collect, subgraph)"#
+  let missing = #"definitions/old/_card.json: "type" is required (one of code, draft, trigger, input, merge, collect, subgraph)"#
   let delta = Tsugumi_RPC_DocumentDeltaT()
   delta.baseRev = 0; delta.rev = 1; delta.origin = "agent"
   delta.resolution = ["old", "future", "loose", "plan", "step"].map { id in
@@ -342,11 +357,11 @@ import TsugumiTestSupport
 }
 
 @Test func paramsKeepExactIntegerSpelling() {
-  #expect(parseParam("18446744073709551615", "uint64") == .number("18446744073709551615"))
-  #expect(parseParam("-3", "int64") == .number("-3"))
-  #expect(parseParam("1.5e3", "double") == .number("1.5e3"))
+  #expect(parseParam("9223372036854775807", "int") == .number("9223372036854775807"))
+  #expect(parseParam("-3", "int") == .number("-3"))
+  #expect(parseParam("1.5e3", "float") == .number("1.5e3"))
   // Values the core must reject are passed on as text, never coerced.
-  #expect(parseParam("12abc", "uint64") == .string("12abc"))
+  #expect(parseParam("12abc", "int") == .string("12abc"))
   #expect(parseParam(" x ", "string") == .string(" x "))
 }
 
@@ -354,7 +369,7 @@ import TsugumiTestSupport
   func geometry(_ kind: CardKind) -> CardGeometry {
     CardGeometry(CardNodeData(title: "x", kind: kind, summary: "what it does", inputs: [], outputs: []), flow: .topToBottom)
   }
-  for kind in [CardKind.trigger, .merge, .branch] { #expect(!geometry(kind).summary, "\(kind)") }
+  for kind in [CardKind.trigger, .merge, .collect] { #expect(!geometry(kind).summary, "\(kind)") }
   #expect(geometry(.code).summary)
   #expect(geometry(.subgraph).summary)
 }
@@ -376,19 +391,6 @@ import TsugumiTestSupport
 }
 
 @Test func routingCardsHaveTheirShapeAndPorts() {
-  let branch = CardGeometry(CardNodeData(title: "b", kind: .branch, summary: nil,
-                                         inputs: [PortData(name: "value"), PortData(name: "condition")],
-                                         outputs: [PortData(name: "a"), PortData(name: "b")]), flow: .topToBottom)
-  #expect(branch.shape == .branch)
-  let v = branch.port("value", output: false), c = branch.port("condition", output: false)
-  let a = branch.port("a", output: true), b = branch.port("b", output: true)
-  // Data and condition never share a point; a (true) left, b (false) right, below the inputs.
-  #expect(v != c && v.x < c.x && a.x < b.x && a.y > v.y && b.y > c.y)
-  // Every port lies on the diamond's outline.
-  let outline = branch.outline(in: branch.outlineRect)
-  for p in [v, c, a, b] {
-    #expect(outline.strokedPath(StrokeStyle(lineWidth: 2)).contains(p))
-  }
   let merge = CardGeometry(CardNodeData(title: "m", kind: .merge, summary: nil,
                                         inputs: [PortData(name: "a"), PortData(name: "b")], outputs: [PortData(name: "out")]), flow: .topToBottom)
   #expect(abs(merge.port("out", output: true).x - merge.size.width / 2) < 0.5)
@@ -499,7 +501,7 @@ import TsugumiTestSupport
     table Outputs { out:Num (required); extra:Num; /* note */ }
     root_type Outputs;
     """)
-  #expect(ok == .ports([PortData(name: "out", typeName: "Num", optional: false), PortData(name: "extra", typeName: "Num", optional: true)]))
+  #expect(ok == .ports([PortData(name: "out", typeName: "Num"), PortData(name: "extra", typeName: "Num")]))
   if case .error = OutputCatalog.parse("table Outputs { out:Num ") {} else { Issue.record("an unfinished catalog is an error") }
   if case .error = OutputCatalog.parse("table Outputs { out:Num; }") {} else { Issue.record("root_type is required") }
 }
@@ -638,7 +640,7 @@ import TsugumiTestSupport
     let g = CardGeometry(d, flow: flow)
     #expect(g.size.width.isFinite && g.size.width > 0 && g.size.height.isFinite && g.size.height > 0)
     let edge = flow == .topToBottom ? g.size.width : g.size.height
-    if d.kind == .merge || d.kind == .fork {
+    if d.kind == .merge {
       let r = g.outlineRect
       for z: CGFloat in [1, 0.25] {
         // What is drawn: every port is on it, and rounding takes only a little off the wide edge.
@@ -721,7 +723,7 @@ private final class CountingRuler: LineNumberRuler {
   let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
   let document = try JSONValue.parse(#"{"canvas":{"cards":[{"id":"plan"},{"id":"start"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},{"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}]}}"#)
   let snapshot = Tsugumi_RPC_ProjectSnapshotT()
-  snapshot.projectJson = document.serialized(); snapshot.layoutJson = "{}"
+  snapshot.projectJson = document.serialized(); snapshot.layout = []
   snapshot.definitions = ["plan", "next"].map { id in
     let definition = Tsugumi_RPC_DefinitionT(); definition.id = id; definition.cardJson = #"{"type":"draft"}"#
     return definition

@@ -15,16 +15,17 @@
 #include <string>
 #include <vector>
 
-#include "runtime_schema.hh"
+#include "tsugumi/protocol/runtime_state_generated.h"
+#include "tsugumi/util/flat_file.hh"
 #include "service.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
-#include "tsugumi/util/json.hh"
 #include "tsugumi/util/log.hh"
 
 namespace tsugumi::core {
 
 namespace stdfs = std::filesystem;
+namespace S = Tsugumi::State;
 
 namespace {
 
@@ -37,7 +38,7 @@ struct Options {
   stdfs::path control_dir;
   std::vector<std::string> origins;
   bool allow_missing_origin = false;
-  stdfs::path sdk_dir;
+  stdfs::path nix_dir;
   stdfs::path worker;
   stdfs::path workerd;
   uint32_t cpus = 2;
@@ -61,7 +62,7 @@ void usage() {
       "usage: tsugumid --project DIR [--unix PATH] [--listen HOST:PORT] "
       "[--control-dir DIR]\n"
       "                [--allow-origin ORIGIN]... [--allow-missing-origin] "
-      "[--sdk-dir DIR]\n"
+      "[--nix-dir DIR]\n"
       "                [--worker PATH] [--workerd PATH] [--cpus N] "
       "[--gcroots-dir DIR]\n"
       "                [--scratch-dir DIR] [--run-scratch-dir DIR] "
@@ -101,8 +102,8 @@ std::optional<Options> parse(int argc, char** argv) {
       o.origins.push_back(next());
     else if (a == "--allow-missing-origin")
       o.allow_missing_origin = true;
-    else if (a == "--sdk-dir")
-      o.sdk_dir = next();
+    else if (a == "--nix-dir")
+      o.nix_dir = next();
     else if (a == "--worker")
       o.worker = next();
     else if (a == "--workerd")
@@ -187,8 +188,8 @@ int run_daemon(int argc, char** argv) {
     else
       opt.workerd = opt.worker.parent_path() / "tsugumi-workerd";
   }
-  if (opt.sdk_dir.empty())
-    opt.sdk_dir = bin.parent_path() / "share" / "tsugumi" / "sdk";
+  if (opt.nix_dir.empty())
+    opt.nix_dir = bin.parent_path() / "share" / "tsugumi" / "nix";
 
   // Ownership: a fixed lock file, exclusive and non-blocking, held for life.
   auto state = root / ".tsugumi";
@@ -226,7 +227,7 @@ int run_daemon(int argc, char** argv) {
   so.token = crypto::random_token(32);
   so.server_instance_id = crypto::uuid4();
   so.control_dir = opt.control_dir;
-  so.sdk_dir = opt.sdk_dir;
+  so.nix_dir = opt.nix_dir;
   so.worker_binary = opt.worker;
   so.workerd_binary = opt.workerd;
   so.fault = opt.fault;
@@ -260,31 +261,31 @@ int run_daemon(int argc, char** argv) {
 
   if (!opt.control_dir.empty()) {
     stdfs::create_directories(opt.control_dir);
-    stdfs::remove(opt.control_dir / "server.startup-error.json");
+    stdfs::remove(opt.control_dir / "server.startup-error");
   }
   Service service(so);
-  const auto report_startup_failure = [&](schema::StartupError error,
+  const auto report_startup_failure = [&](S::StartupErrorT error,
                                           const std::exception& cause) {
-    *error.message = cause.what();
+    error.message = cause.what();
     if (!opt.control_dir.empty())
-      fs::write_atomic(opt.control_dir / "server.startup-error.json",
-                       schema::encode(error), 0600);
+      fs::write_atomic(opt.control_dir / "server.startup-error",
+                       flat::encode<S::StartupError>(error), 0600);
     log::error(std::string("cannot open the project: ") + cause.what());
     return 6;
   };
   try {
     service.open();
   } catch (const IncompatibleHistory& e) {
-    schema::StartupError error;
-    *error.kind = "incompatible_history";
-    *error.found = e.found;
-    *error.expected = e.expected;
-    *error.source = e.source;
+    S::StartupErrorT error;
+    error.kind = "incompatible_history";
+    error.found = e.found;
+    error.expected = e.expected;
+    error.source = e.source;
     return report_startup_failure(std::move(error), e);
   } catch (const std::exception& e) {
-    schema::StartupError error;
+    S::StartupErrorT error;
     const auto* failure = dynamic_cast<const Failed*>(&e);
-    *error.kind =
+    error.kind =
         failure && failure->failure.kind == FailureKind::resource_limit
             ? "resource_limit"
             : "project_open_failed";
@@ -306,8 +307,17 @@ int run_daemon(int argc, char** argv) {
   sv.tcp_host = opt.listen_host;
   sv.tcp_port = opt.listen_port;
   sv.allowed_origins = opt.origins;
+  // The launcher writes control/origins (protocol/runtime_state.fbs) to allow
+  // another UI's origin while the project stays open.
   if (!opt.control_dir.empty())
-    sv.origins_file = (opt.control_dir / "origins.json").string();
+    sv.origin_allowed = [file = opt.control_dir / "origins"](
+                            const std::string& origin) {
+      const auto bytes = fs::read_file(file);
+      const auto list =
+          bytes ? flat::decode<S::Origins>(*bytes) : std::nullopt;
+      return list && std::find(list->origins.begin(), list->origins.end(),
+                               origin) != list->origins.end();
+    };
   sv.allow_missing_origin = opt.allow_missing_origin;
   ProjectEndpoint(sv);
   Server server(sv, &service);
@@ -325,16 +335,16 @@ int run_daemon(int argc, char** argv) {
                                    "/rpc"
                              : "";
   if (!opt.control_dir.empty()) {
-    schema::ServerReady ready;
-    *ready.endpoint = endpoint;
-    *ready.token = so.token;
-    *ready.protocol = 1;
-    *ready.project_id = service.project_id();
-    *ready.unix_socket = opt.unix_socket;
-    *ready.pid = ::getpid();
+    S::ServerReadyT ready;
+    ready.endpoint = endpoint;
+    ready.token = so.token;
+    ready.protocol = 1;
+    ready.project_id = service.project_id();
+    ready.unix_socket = opt.unix_socket;
+    ready.pid = ::getpid();
     stdfs::create_directories(opt.control_dir);
-    fs::write_atomic(opt.control_dir / "server.ready", schema::encode(ready),
-                     0600);
+    fs::write_atomic(opt.control_dir / "server.ready",
+                     flat::encode<S::ServerReady>(ready), 0600);
   }
   log::info("ready project_id=" + service.project_id() +
             (endpoint.empty() ? "" : " endpoint=" + endpoint) +

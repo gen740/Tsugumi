@@ -1,16 +1,17 @@
-# The loop delivers a merge union tagged with the arrival port: `init` carries a Number, `half` and `triple`
-# a Walk (the value and every value before it, so that no Card has to remember anything between calls).
-# Julia's UInt64 holds every value of the message exactly.
+# Initial values start a sequence. Feedback carries the sequence so far.
 function arrival(inputs)
-    m = inputs.arrival
-    n = UInt64(m["value"]["value"])
-    return n, m["value_type"] == "init" ? UInt64[n] : UInt64.(m["value"]["path"])
+    value = inputs.arrival["value"]
+    if haskey(value, "seed")
+        n = UInt64(value["seed"])
+        return n, UInt64[n]
+    end
+    return UInt64(value["value"]), UInt64.(value["path"])
 end
 
-function main(inputs, report)
+function main(inputs)
     outputs = Dict{String,Any}()
     n, path = arrival(inputs)
-    report.text("$(length(path)) values: " * join(path, " "))
+    # TODO(open): Port the demo display.
     n == 1 && (outputs["sequence"] = Dict("values" => path))
 
     return outputs

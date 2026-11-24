@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Tsugumi
-Comment=Card graph workbench
-Exec=tsugumi-gtk %F
-Terminal=false
-Categories=Science;Development;
-StartupNotify=true

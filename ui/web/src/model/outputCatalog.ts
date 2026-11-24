@@ -1,7 +1,7 @@
 // Output ports read from an `_outputs.fbs` text that is being edited, for
 // the Card preview. The core remains the authority (it resolves the types
 // on apply); this only reads the port catalog's shape: the root table's
-// fields, their message types and `required`.
+// fields and their types.
 import type { PortData } from './canvasKit'
 import { L } from '../i18n'
 
@@ -46,10 +46,7 @@ export function parseOutputCatalog(text: string): OutputCatalogResult {
     const typeAndAttrs = parts[1]
     const type = typeAndAttrs.split('(')[0].trim()
     if (!type) return { error: L('型がありません: {0}', parts[0]) }
-    const paren = typeAndAttrs.indexOf('(')
-    const attrs = paren >= 0 ? typeAndAttrs.slice(paren) : ''
-    const required = /\brequired\b/.test(attrs)
-    ports.push({ name: parts[0], typeName: type, optional: !required })
+    ports.push({ name: parts[0], typeName: type })
   }
   return { ports }
 }

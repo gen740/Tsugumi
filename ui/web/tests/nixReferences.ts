@@ -9,14 +9,12 @@ assert.equal(visibleNixCard('missing', [], visible), undefined)
 assert.equal(visibleNixCard('sibling/inner', ['child'], new Set(['child/inner'])), undefined)
 assert.equal(visibleNixCard('child/inner', ['child'], new Set(['child/inner'])), 'child/inner')
 const resolution = new Map<string, ResolvedCard>([['sink', { path: ['sink'], inputs: [], outputs: [], diagnostics: [],
-  nixReferences: [{ target: ['child', 'inner'], name: 'child result', valid: true },
-    { target: ['missing'], name: 'missing', valid: false }] }]])
+  nixReferences: [{ target: ['child', 'inner'], name: 'child result' },
+    { target: ['missing'], name: 'missing' }] }]])
 const byTarget = new Map(nixReferences({ resolution }).map(ref => [ref.target, ref]))
 assert.deepEqual(new Set(byTarget.keys()), new Set(['child/inner', 'missing']))
 assert.equal(byTarget.get('child/inner')?.source, 'sink')
 assert.equal(byTarget.get('child/inner')?.expression, 'inputs."child result"')
-assert.equal(byTarget.get('child/inner')?.valid, true)
-assert.equal(byTarget.get('missing')?.valid, false)
 const card = (path: string[]): ResolvedCard => ({ path, inputs: [], outputs: [], diagnostics: [], nixReferences: [] })
 for (const k of ['child', 'child/inner']) resolution.set(k, card(k.split('/')))
 assert.equal(nixLinkCount({ resolution }, []), 1, 'a nested target meets its visible container')

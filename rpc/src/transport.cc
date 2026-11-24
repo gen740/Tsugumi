@@ -20,7 +20,6 @@
 #include "tsugumi/rpc/unix_socket.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
-#include "tsugumi/util/json.hh"
 #include "tsugumi/util/log.hh"
 
 #ifdef MSG_NOSIGNAL
@@ -300,7 +299,7 @@ bool TransportServer::fill_write(Conn& c) {
     body = std::move(o.raw);
   }
   trace::Observe(c.trace_link, opts_.trace_endpoint, c.peer, true, body,
-                 opts_.trace_codec, o.trace);
+                 opts_.trace_codec, o.note ? o.note->trace : o.trace);
   if (c.websocket) {
     std::string h;
     h += static_cast<char>(0x82);  // FIN + binary
@@ -447,18 +446,8 @@ bool TransportServer::handle_ws_handshake(Conn& c) {
     bool allowed =
         std::find(opts_.allowed_origins.begin(), opts_.allowed_origins.end(),
                   origin->second) != opts_.allowed_origins.end();
-    if (!allowed && !opts_.origins_file.empty()) {
-      struct OriginList {
-        schema::t::Array<"origins", schema::v::String> origins;
-      };
-      OriginList list;
-      if (auto bytes = fs::read_file(opts_.origins_file);
-          bytes && !schema::decode(std::string_view(*bytes), list)) {
-        const auto& origins = *list.origins;
-        allowed = std::find(origins.begin(), origins.end(), origin->second) !=
-                  origins.end();
-      }
-    }
+    if (!allowed && opts_.origin_allowed)
+      allowed = opts_.origin_allowed(origin->second);
     if (!allowed) return reject("403 Forbidden");
   }
   auto digest = crypto::sha1(h["sec-websocket-key"] +

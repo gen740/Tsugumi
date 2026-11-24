@@ -1,24 +1,26 @@
 import assert from 'node:assert/strict'
 import { setImmediate } from 'node:timers/promises'
 import { L } from '../src/i18n'
-import fs from 'node:fs'
-import path from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { act, create } from 'react-test-renderer'
 import { D, R, cardPath } from '../src/wire/rpc'
-import { batchMembers, comparedConditions, comparedParams, comparedValues, inBatch, loadRunComparison, memberName, pairMembers, runScope, sameDisplay, valueDifference } from '../src/model/runComparison'
-import { ProjectSession, recordedDisplay } from '../src/model/session'
+import { batchMembers, comparedConditions, comparedParams, comparedValues, inBatch, loadRunComparison, memberName, pairMembers, runScope, valueDifference } from '../src/model/runComparison'
+import { ProjectSession } from '../src/model/session'
 import { ComparedCardView, ComparedMembers, RunComparisonView, RunScopes, VersionDifference } from '../src/ui/runComparison'
 
 const summary = (runId: string, card: string, state = D.CardState.succeeded) => Object.assign(new R.InvocationSummaryT(), {
   runId, card: cardPath(card.split('/')), invocation: 1n, state, durationMs: 10n,
 })
-const record = (runId: string, card: string, params: string, state = D.CardState.succeeded) => Object.assign(new R.RecordResultT(), {
-  record: Object.assign(new R.InvocationRecordT(), { summary: summary(runId, card, state), paramsJson: params, recordIo: true }),
+const params = (values: Record<string, string>) =>
+  Object.assign(new D.InvocationParamsT(), {
+    entries: Object.entries(values).map(([name, value]) => Object.assign(new D.InvocationParamT(), { name, value })),
+  })
+const record = (runId: string, card: string, values: Record<string, string>, state = D.CardState.succeeded) => Object.assign(new R.RecordResultT(), {
+  record: Object.assign(new R.InvocationRecordT(), { summary: summary(runId, card, state), params: params(values), recordIo: true }),
   status: Object.assign(new R.HistoryStateT(), { state }), aggregate: Object.assign(new R.AggregateT(), { calls: 1n, succeeded: 1n }), exists: true,
 })
-const a = record('left', 'bands', '{"low":600,"boundary":1650}')
-const b = record('right', 'bands', '{"low":600,"boundary":1800}')
+const a = record('left', 'bands', { low: '600', boundary: '1650' })
+const b = record('right', 'bands', { low: '600', boundary: '1800' })
 const calls: string[] = []
 const rows = await loadRunComparison({
   async latestInvocations(run) { calls.push('latest:' + run); return Object.assign(new R.InvocationPageT(), {
@@ -28,7 +30,7 @@ const rows = await loadRunComparison({
     assert.equal(invocation, 1n); assert.equal(follow, false)
     calls.push('record:' + run + '/' + card.join('/'))
     if (card[0] === 'stopped') throw new Error('record unavailable')
-    return card[0] === 'bands' ? run === 'left' ? a : b : record(run, card[0], '{}', card[0] === 'failed' ? D.CardState.failed : D.CardState.succeeded)
+    return card[0] === 'bands' ? run === 'left' ? a : b : record(run, card[0], {}, card[0] === 'failed' ? D.CardState.failed : D.CardState.succeeded)
   },
 }, 'left', 'right')
 const compared = new Map(rows.map(row => [row.card, row]))
@@ -52,13 +54,11 @@ for (const name of ['boundary', 'low']) {
   assert.equal(field.difference, 'changed')
 }
 // A record that holds no parameters says nothing about them: not a list of removed ones.
-const unrecorded = record('left', 'bands', '{}'); unrecorded.record!.paramsJson = null
+const unrecorded = record('left', 'bands', {}); unrecorded.record!.params = null
 for (const name of ['low', 'boundary']) assert.equal(byName(comparedParams(unrecorded, b), name).difference, 'unknown')
 const v = Object.assign(new D.NamedValueT(), { name: 'photons', rootType: 'Counts', inlineBytes: [1, 2, 3], sizeBytes: 3n })
 a.record!.outputs = [v]; b.record!.outputs = [Object.assign(new D.NamedValueT(), v, { inlineBytes: [1, 2, 4] })]
 assert.equal(comparedValues('outputs', a, b)[0].difference, 'changed')
-b.record!.outputs = [Object.assign(new D.NamedValueT(), v, { artifactId: 'another-retained-copy' })]
-assert.equal(comparedValues('outputs', a, b)[0].difference, 'same', 'retention identity alone does not change the value')
 
 // A value the response left out (too large to inline) is never reported as unchanged.
 const omitted = (hash: string | null = null, size = 9000000n) => Object.assign(new D.NamedValueT(), { name: 'photons', rootType: 'Counts', inlineBytes: [], sizeBytes: size, contentHash: hash })
@@ -71,7 +71,7 @@ assert.equal(valueDifference(v, omitted(null, 3n)), 'unknown', 'inline on one si
 assert.equal(valueDifference(v, Object.assign(new D.NamedValueT(), v, { rootType: 'Other' })), 'changed', 'a type change is a difference')
 assert.equal(valueDifference(v, undefined), 'unknown')
 {
-  const x = record('left', 'big', '{}'), y = record('right', 'big', '{}')
+  const x = record('left', 'big', {}), y = record('right', 'big', {})
   x.record!.outputs = [omitted()]; y.record!.outputs = [omitted()]
   x.truncated = y.truncated = true
   const field = comparedValues('outputs', x, y)[0]
@@ -85,24 +85,22 @@ assert.equal(valueDifference(v, undefined), 'unknown')
   } finally { view.unmount() }
 }
 
-// Files compare their recorded content, never the serialized storage path.
+// Opaque values also compare the artifact capabilities they carry.
 {
-  const file = (path: string, digest: string | null) => Object.assign(new D.NamedValueT(), {
-    name: 'file', kind: D.PortKind.File, rootType: 'File', schemaBfbs: [1],
-    inlineBytes: [...new TextEncoder().encode(path)], contentHash: path, fileContentHash: digest,
+  const value = (id: string) => Object.assign(new D.NamedValueT(), {
+    name: 'value', contentHash: 'bytes', artifacts: [new D.ValueArtifactT(id, 1n)],
   })
-  const x = file('/runs/left/value', 'bytes'), y = file('/runs/right/value', 'bytes')
+  const x = value('id'), y = value('id')
   assert.equal(valueDifference(x, y), 'same')
-  y.fileContentHash = 'other'; assert.equal(valueDifference(x, y), 'changed')
-  y.fileContentHash = null; assert.equal(valueDifference(x, y), 'unknown')
-  assert.equal(valueDifference(file('/same/path', null), file('/same/path', null)), 'unknown')
-  y.fileContentHash = 'bytes'; y.fileMissing = true; assert.equal(valueDifference(x, y), 'same')
+  y.artifacts = [new D.ValueArtifactT('other', 1n)]
+  assert.equal(valueDifference(x, y), 'changed')
+  y.artifacts = x.artifacts
   y.rootType = 'Other'; assert.equal(valueDifference(x, y), 'changed')
   assert.equal(valueDifference(x, undefined), 'unknown')
   assert.equal(valueDifference(undefined, x), 'unknown')
   assert.equal(valueDifference(undefined, undefined), 'same')
   for (const side of ['inputs', 'outputs'] as const) {
-    const left = record('left', 'files', '{}'), right = record('right', 'files', '{}')
+    const left = record('left', 'files', {}), right = record('right', 'files', {})
     left.record![side] = [x]
     assert.equal(comparedValues(side, left, right)[0].difference, 'unknown')
     assert.equal(comparedValues(side, undefined, left)[0].difference, 'unknown')
@@ -112,7 +110,7 @@ assert.equal(valueDifference(v, undefined), 'unknown')
 // Execution conditions beyond parameters: environment, service, emulation and input sources.
 {
   const side = (run: string, env: string | null, emulator: string | null, executionService: string | null = null) => {
-    const r = record(run, 'bands', '{}')
+    const r = record(run, 'bands', {})
     Object.assign(r.record!.summary!, { environmentId: env, emulator, executionService })
     return { summary: r.record!.summary!, record: r }
   }
@@ -174,58 +172,16 @@ assert.equal(valueDifference(v, undefined), 'unknown')
 
 // A Card called several times in a run is compared by its last call, and says so.
 {
-  const many = record('left', 'loop', '{}')
+  const many = record('left', 'loop', {})
   many.record!.summary!.invocation = 3n; many.aggregate!.calls = 3n
-  const once = record('right', 'loop', '{}')
+  const once = record('right', 'loop', {})
   const html = renderToStaticMarkup(<ComparedCardView row={{ card: 'loop', left: { summary: many.record!.summary!, record: many }, right: { summary: once.record!.summary!, record: once } }} />)
   assert.ok(html.includes('#3') && html.includes('#1'), 'the two sides identify the compared invocations')
 }
 
-// Use the retained table and images from the Cas A recording.
-const playerData = path.join(process.env.TSUGUMI_SITE_PLAYER_DIR!, 'player-data')
-const { outputs } = JSON.parse(fs.readFileSync(path.join(playerData, 'assets/casa.run.json'), 'utf8'))
-const table = outputs.bands
-const display = (runId: string, valueType: D.DisplayValue, value: D.DisplayTableT | D.DisplayImageT) => Object.assign(new D.DisplayT(), { runId, invocation: 1n, revision: 1n, card: cardPath(['bands']), valueType, value })
-const tableValue = (rows: string[][]) => Object.assign(new D.DisplayTableT(), { columns: table.columns, rows: rows.map(cells => Object.assign(new D.TableRowT(), { cells })) })
-a.record!.display = display('left', D.DisplayValue.DisplayTable, tableValue(table.rows))
-const changedRows = structuredClone(table.rows)
-changedRows[0][2] = String(Number(changedRows[0][2]) + 1)
-b.record!.display = display('right', D.DisplayValue.DisplayTable, tableValue(changedRows))
-const shown = (d?: D.DisplayT | null) => d ? recordedDisplay(d) : undefined
-assert.equal(sameDisplay(shown(a.record!.display), shown(b.record!.display)), false)
-assert.equal(sameDisplay(shown(a.record!.display), undefined), false)
-assert.equal(sameDisplay(undefined, undefined), true)
-{
-  // The same rule as the Mac app: compare what is shown, kind by kind; module equality includes binary data.
-  const chart = (y: number[]) => ({ runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'module' as const, name: 'line-chart', json: '{}', blobs: { y: new Uint8Array(new Float64Array(y).buffer) } } })
-  assert.ok(sameDisplay(chart([1, NaN]), chart([1, NaN])))
-  assert.ok(!sameDisplay(chart([1, NaN]), chart([1, 2])))
-  const text = (kind: 'text' | 'markdown', value: string) => ({ runId: 'r', invocation: 1n, revision: 1n, value: { kind, text: value } })
-  assert.ok(!sameDisplay(text('text', 'a'), text('markdown', 'a')), 'plain text and Markdown are different displays')
-  const scalar = (value: number, label: string) => ({ runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'scalar' as const, value, label } })
-  assert.ok(sameDisplay(scalar(1, 'n'), scalar(1, 'n')) && !sameDisplay(scalar(1, 'n'), scalar(1, 'm')))
-}
-assert.equal(recordedDisplay(a.record!.display)?.value.kind, 'table')
-const markup = renderToStaticMarkup(<ComparedCardView row={compared.get('bands')!} />)
-for (const text of ['bands', '1650', '1800', table.rows[0][2], changedRows[0][2], 'Photons']) assert.ok(markup.includes(text), text)
-for (const name of ['rgb', 'spectrum']) {
-  const image = outputs[name]
-  const bytes = [...fs.readFileSync(path.join(playerData, image.src))]
-  const value = Object.assign(new D.DisplayImageT(), { data: bytes, mediaType: name === 'rgb' ? 'image/jpeg' : 'image/png', alt: name })
-  const retained = display('left', D.DisplayValue.DisplayImage, value)
-  const other = display('right', D.DisplayValue.DisplayImage, value)
-  other.revision = 99n
-  assert.ok(sameDisplay(shown(retained), shown(other)), 'identity and frame revision do not change image equality')
-  assert.equal(recordedDisplay(retained)?.value.kind, 'image')
-  a.record!.display = retained; b.record!.display = other
-  assert.ok(renderToStaticMarkup(<ComparedCardView row={compared.get('bands')!} />).includes('<img'), name + ': both retained images render')
-}
-// Opening a comparison leaves the live canvas alone: the displays the session holds are
-// the same objects afterwards, and the only requests are reads of the two selected runs.
+// Opening a comparison only reads the two selected runs.
 {
   const session = new ProjectSession('/p', 'k', 'p')
-  const live = recordedDisplay(display('current', D.DisplayValue.DisplayTable, tableValue(table.rows)))!
-  session.displays.set('bands', live)
   const requests: string[] = []
   const unavailable = 'fixture history error'
   let fail = true
@@ -237,7 +193,6 @@ for (const name of ['rgb', 'spectrum']) {
     throw new Error('unexpected request ' + name)
   } })
   ;(session as unknown as { client: unknown }).client = fake
-  const before = new Map(session.displays)
   const run = (id: string) => Object.assign(new R.RunSummaryT(), { status: Object.assign(new R.RunStatusT(), { runId: id, state: D.RunState.succeeded }), target: cardPath(['start']) })
   let view!: ReturnType<typeof create>
   act(() => { view = create(<RunComparisonView session={session} runs={[run('left'), run('right')]} onClose={() => {}} />) })
@@ -254,9 +209,6 @@ for (const name of ['rgb', 'spectrum']) {
   assert.equal(row?.right?.record, b)
   assert.deepEqual(new Set(requests), new Set(['latestInvocations:left', 'latestInvocations:right', 'record:left:bands', 'record:right:bands']))
   view.unmount()
-  assert.equal(session.displays.size, before.size)
-  assert.equal(session.displays.get('bands'), live, 'the canvas keeps its own display object')
-  assert.equal(live.runId, 'current')
 }
 
 // Versions: a run that recorded none, the same version, an empty diff and a diff cut short.
@@ -308,8 +260,8 @@ for (const name of ['rgb', 'spectrum']) {
   ])
   assert.equal(memberName(member('left', 1n, 1, null, 2)), L('実装 {0}', 2))
   assert.ok(inBatch(member('left', 1n, 1, null)) && !inBatch(summary('left', 'single')))
-  const one = Object.assign(member('left', 1n, 1, 'value=5'), { batchSize: 1 })
-  assert.ok(inBatch(one), 'a one-member sweep is still a named batch member')
+  const one = Object.assign(member('left', 1n, 1, 'threshold 5'), { batchSize: 1 })
+  assert.ok(inBatch(one), 'a one-entry run list is still a named batch member')
 
   const pages: string[] = []
   const all = await batchMembers({
@@ -324,7 +276,7 @@ for (const name of ['rgb', 'spectrum']) {
 
   // The view shows the last member, then the member chosen by name on both sides.
   const recorded = (run: string, m: R.InvocationSummaryT) => Object.assign(new R.RecordResultT(), {
-    record: Object.assign(new R.InvocationRecordT(), { summary: m, paramsJson: `{"run":"${run}","at":${m.invocation}}`, recordIo: true }), exists: true,
+    record: Object.assign(new R.InvocationRecordT(), { summary: m, params: params({ run: JSON.stringify(run), at: m.invocation.toString() }), recordIo: true }), exists: true,
   })
   const reads: string[] = []
   const rpc = {

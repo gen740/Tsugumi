@@ -1,8 +1,29 @@
 #pragma once
 
 #include "fixture.hh"
+#include "tsugumi/document/text.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::test {
+
+inline auto FixtureLayout(const std::string& view) -> std::string {
+  auto input = json::Object(view);
+  std::vector<std::string> places;
+  if (input.contains("cards")) {
+    for (const auto& [id, raw] : json::Object(input.at("cards"))) {
+      auto card = json::Object(raw);
+      card["key"] = json::Quote(id);
+      places.push_back(json::Encode(card));
+    }
+    input["cards"] = json::Encode(places);
+  }
+  return document_text::parse(document_text::Schema::Layout, "layout.bin",
+                              json::Encode(input));
+}
+
+inline auto FixtureLayoutText(const std::string& bytes) -> std::string {
+  return document_text::print(document_text::Schema::Layout, bytes);
+}
 
 // Project integration is opt-in; Agent-only scenarios never start a core
 // project.
@@ -59,10 +80,12 @@ class AgentProjectFixture : public AgentFixture {
   auto StartProject(
       bool shell = false,
       const std::string& document =
-          R"({"name":"PRIVATE_PROJECT_SENTINEL","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})",
+          R"({"name":"PRIVATE_PROJECT_SENTINEL","nixPath": [],"canvas":{"cards":[],"connections":[]}})",
       const std::string& layout = "{}") -> void {
     Write(directory.path / "project/tsugumi.json", document);
-    Write(directory.path / "project/layout.json", layout);
+    const auto layout_path = directory.path / "project/layout.bin";
+    if (!std::filesystem::exists(layout_path))
+      Write(layout_path, FixtureLayout(layout));
     std::vector<std::string> args{
         "/usr/bin/env",
         "TSUGUMI_MOCK_CONTROL=" + (directory.path / "mock").string(),
@@ -81,8 +104,8 @@ class AgentProjectFixture : public AgentFixture {
         (directory.path / "project-control").string(),
         "--worker",
         TSUGUMI_WORKER_BINARY,
-        "--sdk-dir",
-        TSUGUMI_TEST_SDK};
+        "--nix-dir",
+        TSUGUMI_TEST_NIX};
     if (!project_fault.empty())
       args.insert(args.begin() + 2, {"TSUGUMI_ENABLE_FAULTS=1",
                                      "TSUGUMI_FAULT=" + project_fault});

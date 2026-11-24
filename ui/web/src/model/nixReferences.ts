@@ -6,14 +6,13 @@ export interface NixReference {
   source: CardKey
   target: CardKey
   expression: string
-  valid: boolean
 }
 
 export function nixReferences(session: Pick<ProjectSession, 'resolution'>): NixReference[] {
   return [...session.resolution].flatMap(([source, card]) => card.nixReferences.map(ref => {
     const attr = /^[A-Za-z_][A-Za-z0-9_'-]*$/.test(ref.name) ? ref.name : JSON.stringify(ref.name)
     return { id: JSON.stringify([source, ref.target, ref.name]), source, target: key(ref.target),
-      expression: `inputs.${attr}`, valid: ref.valid }
+      expression: `inputs.${attr}` }
   })).sort((a, b) => a.source.localeCompare(b.source) || a.expression.localeCompare(b.expression))
 }
 

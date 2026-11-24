@@ -5,9 +5,9 @@ import TsugumiRPC
 /// Builds the canvas data of Cards from a project session (and, for previews
 /// in Card settings, from unapplied working copies).
 extension ProjectSession {
-  // Inferring a missing flow from Card places is presentation of layout.json:
+  // Inferring a missing flow from Card places is presentation of the layout:
   // each UI does it itself rather than asking hostd.
-  /// The direction this project's Cards are laid out in (layout.json
+  /// The direction this project's Cards are laid out in (the layout's
   /// "flow"; projects without it follow the app's default).
   /// Without one, it is read from where the wired Cards sit (mostly to the
   /// right of their sources: left to right), else the app's default.
@@ -25,7 +25,7 @@ extension ProjectSession {
   }
 
   func setFlow(_ f: FlowDirection) {
-    queueFields { [self] in [fieldEdit("layout.json", [.string("flow")], old: layout["flow"], new: .string(f.rawValue))] }
+    queueFields { [self] in [fieldEdit("layout.bin", [.string("flow")], old: layout["flow"], new: .string(f.rawValue))] }
   }
 
   /// Ports for drawing: resolved ports when available, else declared inputs.
@@ -34,50 +34,34 @@ extension ProjectSession {
     return (d.inputs.map(\.name), d.outputs.map(\.name))
   }
 
-  func portData(_ k: CardKey, definition: JSONValue? = nil, meta: JSONValue? = nil) -> (inputs: [PortData], outputs: [PortData]) {
+  func portData(_ k: CardKey, definition: JSONValue? = nil) -> (inputs: [PortData], outputs: [PortData]) {
     let def = definition ?? cardDefinition(k)
-    let m = meta ?? cardMeta(k)
-    func note(_ list: String, _ name: String) -> String? {
-      m?[list]?.array?.first { $0["name"]?.string == name }?["description"]?.string
-    }
     let draft = definitionKind(def) == .draft
     if draft || definitionKind(def) == .invalid { return ([], []) }
     if kind(k) == .collect {
       let r = resolution[k]
-      return ([PortData(name: "in", typeName: r?.inputs.first { $0.name == "in" }?.rootType, note: note("inputs", "in"))],
-              [PortData(name: "out", typeName: r?.outputs.first { $0.name == "out" }?.rootType, note: note("outputs", "out"))])
+      return ([PortData(name: "in", typeName: r?.inputs.first { $0.name == "in" }?.typeName)],
+              [PortData(name: "out", typeName: r?.outputs.first { $0.name == "out" }?.typeName)])
     }
     if definition == nil, !draft, let r = resolution[k] {
-      return (r.inputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("inputs", $0.name)) },
-              r.outputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("outputs", $0.name)) })
+      return (r.inputs.map { PortData(name: $0.name, typeName: $0.typeName) },
+              r.outputs.map { PortData(name: $0.name, typeName: $0.typeName) })
     }
     // Not resolved yet (unsaved) or a working copy: declared ports.
     let ins = (def?["inputs"]?.array ?? []).compactMap { i -> PortData? in
       guard let n = i["name"]?.string else { return nil }
-      return PortData(name: n, typeName: resolution[k]?.inputs.first { $0.name == n }?.rootType,
-                      optional: i["optional"]?.bool ?? false, note: note("inputs", n))
+      return PortData(name: n, typeName: resolution[k]?.inputs.first { $0.name == n }?.typeName)
     }
-    let outs = resolution[k]?.outputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("outputs", $0.name)) } ?? []
+    let outs = resolution[k]?.outputs.map { PortData(name: $0.name, typeName: $0.typeName) } ?? []
     return (ins, outs)
   }
 
   /// Params edited directly on input Cards.
-  func inlineParams(_ k: CardKey, definition: JSONValue? = nil) -> [ParamData] {
-    guard kind(k).editsValueOnCanvas, let def = definition ?? cardDefinition(k) else { return [] }
-    return (def["params"]?.array ?? []).compactMap { p -> ParamData? in
-      guard let name = p["name"]?.string, let type = p["type"]?.string,
-            ["int64", "uint64", "double", "bool", "string"].contains(type) else { return nil }
-      // Swept values are edited in the Card's settings, where the list is visible.
-      if p["sweep"] != nil { return nil }
-      let v = p["data"]
-      let text: String
-      switch v {
-      case .string(let s)?: text = s
-      case .number(let n)?: text = n
-      case .bool(let b)?: text = b ? "true" : "false"
-      default: text = ""
-      }
-      return ParamData(name: name, type: type, value: text)
+  func inlineParams(_ k: CardKey) -> [ParamData] {
+    guard kind(k).editsValueOnCanvas else { return [] }
+    return (resolution[k]?.parameters ?? []).compactMap { parameter in
+      guard !parameter.type.hasPrefix("[") else { return nil }
+      return ParamData(name: parameter.name, type: parameter.type, value: parameterText(parameter.effectiveValue))
     }
   }
 
@@ -103,7 +87,7 @@ extension ProjectSession {
   }
 
   /// Whether a Card does not run because it needs a Draft's output: a
-  /// required input fed only by Drafts or Cards waiting on one (the core
+  /// connected input fed by a Draft or a Card waiting on one (the core
   /// leaves the same Cards out of a run).
   func waitsOnDraft(_ k: CardKey) -> Bool {
     let scope = Array(path(k).dropLast())
@@ -121,14 +105,14 @@ extension ProjectSession {
       changed = false
       for id in ids where !waits.contains(id) {
         let k = key(scope + [id])
-        for p in resolution[k]?.inputs ?? [] where !p.optional {
-          let from = conns.filter { $0["to"]?["card"]?.string == id && $0["to"]?["port"]?.string == p.name }
-            .compactMap { $0["from"]?["card"]?.string }
-          if !from.isEmpty && from.allSatisfy(waits.contains) {
-            waits.insert(id)
-            changed = true
-            break
-          }
+        let sources = conns.filter { $0["to"]?["card"]?.string == id }
+          .compactMap { $0["from"]?["card"]?.string }
+        let blocked = kind(k) == .merge
+          ? !sources.isEmpty && sources.allSatisfy(waits.contains)
+          : sources.contains(where: waits.contains)
+        if blocked {
+          waits.insert(id)
+          changed = true
         }
       }
     }
@@ -180,19 +164,6 @@ extension ProjectSession {
     return .succeeded
   }
 
-  /// How the Card's figure on the canvas follows its results: its
-  /// `displayMode`, whether the Card runs, and whether one upstream of it does.
-  func figureState(_ k: CardKey) -> FigureState {
-    let mode = FigureMode(rawValue: cardSetting(k, "displayMode")?.string ?? "") ?? .update
-    guard runActive else { return FigureState(mode: mode) }
-    let busy: (CardKey) -> Bool = { c in
-      if let s = self.canvasCardState(c), [.ready, .preparing, .running].contains(s) { return true }
-      return self.compositeState(c) == .running
-    }
-    return FigureState(mode: mode, running: busy(k),
-                       stale: FigureState.upstreamBusy(k, connections: { self.connections(in: $0) }, busy: busy))
-  }
-
   /// The inner Card and port an outer output of a Card in Card comes from.
   func boundarySource(_ k: CardKey, output port: String) -> (CardKey, String)? {
     guard let ep = boundary(k)?["outputs"]?[port], let c = ep["card"]?.string, let p = ep["port"]?.string else { return nil }
@@ -207,7 +178,7 @@ extension ProjectSession {
     return (key(parent + [from]), output)
   }
 
-  func nodeData(_ k: CardKey, definition: JSONValue? = nil, meta: JSONValue? = nil,
+  func nodeData(_ k: CardKey, definition: JSONValue? = nil, notes: JSONValue? = nil,
                 collapsed: Bool? = nil, outputs: [PortData]? = nil) -> CardNodeData {
     let kind = definition.map(definitionKind) ?? self.kind(k)
     let state = cardStates[k]
@@ -215,10 +186,10 @@ extension ProjectSession {
     let executionList = batch?.executionList == true
     let empty = executionList && batch?.complete == true && batch?.failed == false && batch?.invocationCount == 0
     let diags = resolution[k]?.diagnostics ?? []
-    let ports = portData(k, definition: definition, meta: meta)
+    let ports = portData(k, definition: definition)
     let def = definition ?? cardDefinition(k)
-    let m = meta ?? cardMeta(k)
-    let title = m?["name"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? path(k).last ?? k
+    let m = notes ?? cardMeta(k)
+    let title = displayName(k)
     var summary = m?["description"]?.string
     // What a Draft shows on its Card is what it says it will do.
     if kind == .draft, let content = m?["content"]?.string, !content.isEmpty { summary = content }
@@ -226,19 +197,17 @@ extension ProjectSession {
     if kind == .invalid { summary = diags.first(where: \.error)?.message ?? String(localized: "Card の定義を読めません") }
     if summary?.isEmpty ?? true { summary = nil }
     let editing = kind == .draft && inlineDraft?.card == k
-    let display = (displays[k] != nil || displayFrame(k) != nil) && displayFrame(k)?["hidden"]?.bool != true
     return CardNodeData(
       title: title, kind: kind,
       symbol: kind == .invalid ? nil : (def?["symbol"]?.string).flatMap { $0.isEmpty ? nil : $0 },
       summary: summary, inputs: visualPorts(k, ports.inputs, output: false), outputs: visualPorts(k, outputs ?? ports.outputs, output: true),
-      params: inlineParams(k, definition: definition),
-      result: state?.transfer ?? state?.executionState?.pendingLabel ?? displays[k].map { (executionList ? "#\($0.invocation) · " : "") + $0.summary } ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
-      resultFailed: false,
+      params: inlineParams(k),
+      result: state?.transfer ?? state?.executionState?.pendingLabel ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
       state: kind == .subgraph ? compositeState(k) : canvasCardState(k), executionList: executionList, stage: empty ? nil : stageProgress(k),
-      invocation: empty ? 0 : state?.invocation ?? 0, runContinues: runActive, runMark: displays[k].map { markForRun($0.runId) } ?? (state != nil || batch != nil ? runMark(runStatus) : nil),
+      invocation: empty ? 0 : state?.invocation ?? 0, runContinues: runActive, runMark: (state != nil || batch != nil ? runMark(runStatus) : nil),
       failure: state.flatMap { $0.state == .failed || $0.state == .blocked ? ($0.failure ?? $0.state.label) : nil },
       errors: diags.filter(\.error).map(\.message), warnings: diags.filter { !$0.error }.map(\.message),
-      collapsed: !editing && (collapsed ?? self.collapsed(k)), hasDisplay: display, permissions: CardPermission.of(def),
+      collapsed: !editing && (collapsed ?? self.collapsed(k)), permissions: CardPermission.of(def),
       draftEditing: editing, untitled: draftUntitled(k),
       portGrid: AppPreferences.shared.showGrid ? AppPreferences.shared.gridSize : nil,
       openComments: CardComment.list(in: m).filter { !$0.resolved }.count)
@@ -252,7 +221,7 @@ extension ProjectSession {
     return prefs.showGrid ? CGPoint(x: snapToGrid(p.x, prefs.gridSize), y: snapToGrid(p.y, prefs.gridSize)) : p
   }
 
-  // Shown ports and their order (layout.json inputOrder / outputOrder) are
+  // Shown ports and their order (layout.bin inputOrder / outputOrder) are
   // presentation: each UI works them out itself rather than asking hostd.
   private func visualPorts(_ k: CardKey, _ ports: [PortData], output: Bool) -> [PortData] {
     guard [.code, .draft, .input, .subgraph].contains(kind(k)) else { return ports }
@@ -261,53 +230,6 @@ extension ProjectSession {
   }
 
   func geometry(_ k: CardKey) -> CardGeometry { CardGeometry(nodeData(k), flow: flow) }
-}
-
-extension DisplaySnapshot {
-  static func summary(of value: DisplayValue) -> String {
-    switch value {
-    case .unavailable: return String(localized: "この結果は表示できません")
-    case .text(let t): return t.split(separator: "\n").first.map(String.init) ?? ""
-    case .markdown(let t):
-      // The first line with text, without Markdown marks.
-      let line = t.split(separator: "\n").first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? ""
-      return line.trimmingCharacters(in: CharacterSet(charactersIn: "#>*-` ")).replacingOccurrences(of: "**", with: "")
-    case .scalar(let v, let l): return "\(l) = \(v.formatted(.number.precision(.significantDigits(6))))"
-    case .table(let cols, let rows): return String(localized: "表 \(cols.count) 列 × \(rows.count) 行")
-    case .image(_, _, let alt): return alt.isEmpty ? String(localized: "画像") : alt
-    case .points(let x, _, _, _): return String(localized: "点群 \(x.count) 点")
-    case .module(let name, let json, _): return Self.plotTitle(name, json) ?? String(localized: "モジュール \(name)")
-    }
-  }
-
-  /// A built-in view's title or line-series summary (as an image shows its alt
-  /// text), or what it is when it has none.
-  static func plotTitle(_ name: String, _ json: String) -> String? {
-    let v = try? JSONValue.parse(json)
-    if name.hasSuffix("-tsugumi-view-line-chart") {
-      let series = v?["series"]?.array ?? []
-      let points = series.compactMap { $0["count"]?.numberText.flatMap(Int.init) }.max() ?? 0
-      return String(localized: "折れ線 \(series.count) 系列 · \(points) 点")
-    }
-    guard name.hasSuffix("-tsugumi-view-plotly") || name.hasSuffix("-tsugumi-view-vega-lite") else { return nil }
-    let plotly = name.hasSuffix("-tsugumi-view-plotly")
-    let title = plotly ? v?["layout"]?["title"] : v?["title"]
-    if let t = title?.string ?? title?["text"]?.string, !t.isEmpty { return t }
-    return plotly ? String(localized: "Plotly のグラフ") : String(localized: "Vega-Lite のグラフ")
-  }
-}
-
-/// Integers keep their exact decimal spelling (64 bit safe); the core
-/// validates types and ranges and reports what it rejects.
-func parseParam(_ s: String, _ type: String) -> JSONValue {
-  let t = s.trimmingCharacters(in: .whitespaces)
-  switch type {
-  case "int64", "uint64": return t.range(of: #"^-?[0-9]+$"#, options: .regularExpression) != nil ? .number(t) : .string(t)
-  case "double": return Double(t) != nil && !t.isEmpty ? .number(t) : .string(t)
-  case "bool": return .bool(t == "true")
-  case "string": return .string(s)
-  default: return (try? JSONValue.parse(t)) ?? .string(s)
-  }
 }
 
 func orderedPorts(_ ports: [PortData], saved: [String]) -> [PortData] {

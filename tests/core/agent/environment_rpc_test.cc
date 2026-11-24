@@ -32,7 +32,7 @@ class EnvironmentFixture : public AgentFixture {
     extra_host_arguments = {
         "--tsugumid",        DaemonBinary(),
         "--worker",          TSUGUMI_WORKER_BINARY,
-        "--sdk-dir",         TSUGUMI_TEST_SDK,
+        "--nix-dir",         TSUGUMI_TEST_NIX,
         "--environment-dir", (directory.path / "environments").string()};
     AgentFixture::SetUp();
     Observe();
@@ -184,8 +184,7 @@ class RealEnvironmentFixture : public EnvironmentFixture {
 TEST_F(RealEnvironmentFixture, AuthenticatesTheRealProjectServiceBeforeReady) {
   Write(
       project / "tsugumi.json",
-      R"({"name":"Environment","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
-  Write(project / "layout.json", "{}");
+      R"({"name":"Environment","nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   struct Startup {
     std::mutex mutex;
     std::condition_variable changed;

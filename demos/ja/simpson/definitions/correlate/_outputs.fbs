@@ -1,6 +1,5 @@
-attribute "tsugumi";
+include "tsugumi/artifact.fbs";
+
 namespace simpson;
-table Points { value:string; }
-table Correlations { value:string; }
-table Outputs { points:Points (required, tsugumi: "file"); correlations:Correlations (required, tsugumi: "file"); }
+table Outputs { points:tsugumi.Artifact (required); correlations:tsugumi.Artifact (required); }
 root_type Outputs;

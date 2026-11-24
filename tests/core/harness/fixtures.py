@@ -5,13 +5,17 @@ import json
 from harness.scenario import Project, STRING_OUTPUT
 
 
-def add_worker(graph, name, package, actions, *, outputs=STRING_OUTPUT, **settings):
+def mock_plan(runs, *, views=(), execution_list=False, **options):
+    return {"product": {"runs": runs, "views": list(views)}, "executionList": execution_list, **options}
+
+
+def add_worker(graph, name, package, actions, *, outputs=STRING_OUTPUT, views=(), **settings):
     """Add a card whose external worker follows the supplied scenario."""
-    package.mkdir(parents=True)
+    package.mkdir(parents=True, exist_ok=True)
     (package / "scenario.json").write_text(json.dumps({"actions": actions}))
     return graph.card(
-        name, {"type": "code", "language": "bash", "sandbox": False, "recordIO": True, **settings},
-        outputs=outputs, manifest={"run": {"package": str(package)}},
+        name, {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True, **settings},
+        outputs=outputs, plan=mock_plan([str(package)], views=views),
     )
 
 

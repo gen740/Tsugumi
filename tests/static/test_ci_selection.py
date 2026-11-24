@@ -26,7 +26,7 @@ def checks(paths):
 
 @pytest.mark.parametrize("path", [
     "protocol/host.fbs", "flake.lock", "flake.nix", "nix/core.nix", "CMakeLists.txt",
-    "tsugumid/CMakeLists.txt", "sdk/CMakeLists.txt",
+    "tsugumid/CMakeLists.txt", "nix/card-entry.nix",
     ".github/workflows/docs.yml", ".github/actions/setup-nix/action.yml",
     "tests/ci/select_jobs.py", "tests/conftest.py", "tests/fixtures/agent-contract.json",
     "unknown/new-file", "docs-with-a-new-name/Usage.md",
@@ -39,8 +39,8 @@ def test_full_run_schedules_only_supported_jobs():
     plan = selection.select()
     assert {entry["system"]: [job["job"] for job in entry["tests"]["include"]]
             for entry in plan["matrix"]["include"]} == {
-        "x86_64-linux": ["native-checks", "host-and-web", "sdk", "remote-execution", "linux-ui"],
-        "aarch64-darwin": ["native-checks", "swift"],
+        "x86_64-linux": ["native-checks", "host-and-web", "kit-and-demos", "remote-execution"],
+        "aarch64-darwin": ["native-checks", "swift", "kit"],
     }
     assert checks(None)["aarch64-linux"] == {"vm", "pack-guest"}
 
@@ -50,7 +50,6 @@ def test_changed_paths_produce_only_selected_matrix_entries():
     assert checks(["ui/macos/Package.swift"]) == {"aarch64-darwin": {"swift"}}
     assert checks(["tests/remote/test_worker.py"]) == {"x86_64-linux": {"remote-execution"}}
     assert checks(["pack/build.sh"]) == {"aarch64-linux": {"pack-guest"}}
-    assert checks(["ui/linux/src/main.cc"]) == {"x86_64-linux": {"linux-ui"}}
     assert checks(["tests/core/agent/project_rpc_test.cc"])["aarch64-linux"] == {"vm"}
 
     boundary = selection.select(["ui/web/scripts/check-boundaries.mjs"])
@@ -71,7 +70,7 @@ def test_changed_paths_produce_only_selected_matrix_entries():
 def test_a_shared_native_test_fixture_selects_all_its_consumers():
     selected = checks(["tests/core/doubles/nix_eval.cc"])
     assert {"swift", "rpc", "agent-rpc"} <= selected["aarch64-darwin"]
-    assert {"adapters", "sdk"} <= selected["x86_64-linux"]
+    assert {"adapters", "rpc"} <= selected["x86_64-linux"]
 
 
 def test_scheduled_manual_missing_base_and_initial_push_run_all(monkeypatch):

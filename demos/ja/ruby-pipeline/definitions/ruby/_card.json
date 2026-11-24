@@ -1,16 +1,8 @@
 {
   "type": "code",
-  "language": "ruby",
   "inputs": [
     {
       "name": "number"
-    }
-  ],
-  "params": [
-    {
-      "name": "factor",
-      "type": "int64",
-      "data": 2
     }
   ]
 }

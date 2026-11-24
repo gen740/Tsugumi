@@ -1,26 +1,36 @@
-#include "tsugumi/workerd/manifest.hh"
 // Realises and runs one accepted invocation inside its supervised namespace.
+#include "tsugumi/workerd/invocation.hh"
+
 #include <fcntl.h>
-#include <flatbuffers/reflection.h>
 #include <poll.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <mutex>
 #include <set>
+#include <thread>
 
+#include "display_channel.hh"
 #include "nix_store.hh"
 #include "tsugumi/protocol/worker_generated.h"
+#include "tsugumi/rpc/frame.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/system.hh"
+#include "tsugumi/workerd/artifact_id.hh"
+#include "tsugumi/workerd/card_plan.hh"
 #include "tsugumi/workerd/frame.hh"
-#include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/workerd/log.hh"
-#include "tsugumi/workerd/module_source.hh"
+#include "tsugumi/workerd/log_limits.hh"
 #include "tsugumi/workerd/protocol.hh"
+#include "tsugumi/workerd/staging.hh"
 #include "tsugumi/workerd/store_result.hh"
 #include "tsugumi/workerd/value_wire.hh"
 #include "tsugumi/workerd/worker_execution.hh"
@@ -35,7 +45,7 @@ constexpr uint64_t kWorkerLimit = workerd::kMaxWorkerFrameBytes;
 // How long a built invocation waits for its Card secrets from the core.
 constexpr auto kSecretWait = std::chrono::minutes(5);
 
-using Secrets = std::vector<std::pair<std::string, std::string>>;
+using Secrets = std::shared_ptr<WorkerSecrets>;
 
 // Reads the job's Card secrets from the listener's pipe once the environment
 // is built and nothing but the Card's process remains to start. The values
@@ -45,6 +55,7 @@ auto receive_secrets(const stdfs::path& directory,
   const auto marker = directory / workerd::kSecretsWanted;
   fs::write_atomic(marker, "", 0600);
   std::string frame;
+  frame.reserve(workerd::kMaxFrame + 4);
   bool closed = false;
   const auto deadline = std::chrono::steady_clock::now() + kSecretWait;
   while (!closed && frame.size() <= workerd::kMaxFrame + 4) {
@@ -60,8 +71,10 @@ auto receive_secrets(const stdfs::path& directory,
     if (n < 0 && errno == EINTR) continue;
     if (n <= 0)
       closed = true;
-    else
+    else {
       frame.append(buffer, static_cast<size_t>(n));
+      workerd::wipe_secret({buffer, static_cast<size_t>(n)});
+    }
   }
   ::close(workerd::kSecretChannelFd);
   std::error_code ec;
@@ -76,7 +89,7 @@ auto receive_secrets(const stdfs::path& directory,
                  "the Card's secrets did not arrive within 5 minutes. Run the "
                  "Card again");
   }
-  Secrets secrets;
+  auto secrets = std::make_shared<WorkerSecrets>();
   try {
     if (!closed || frame.size() < 4 ||
         workerd::frame_length(std::string_view(frame).substr(0, 4)) !=
@@ -86,21 +99,22 @@ auto receive_secrets(const stdfs::path& directory,
     auto* reply = message->payload.AsReply();
     auto* body = reply ? reply->body.AsCardSecrets() : nullptr;
     if (!body) throw std::runtime_error("unexpected message");
-    for (auto& secret : body->secrets)
-      secrets.emplace_back(std::move(secret->name), std::move(secret->value));
+    secrets->values.reserve(body->secrets.size());
+    for (auto& secret : body->secrets) {
+      secrets->values.emplace_back(std::move(secret->name), secret->value);
+      workerd::clear_secret(secret->value);
+    }
   } catch (const std::exception&) {
     workerd::clear_secret(frame);
-    for (auto& secret : secrets) workerd::clear_secret(secret.second);
     throw Failed(FailureKind::worker_failed,
                  "the Card's secrets arrived incomplete. Run the Card again");
   }
   workerd::clear_secret(frame);
   std::vector<std::string> wanted = job.secrets, given;
-  for (const auto& secret : secrets) given.push_back(secret.first);
+  for (const auto& secret : secrets->values) given.push_back(secret.first);
   std::ranges::sort(wanted);
   std::ranges::sort(given);
   if (wanted != given) {
-    for (auto& secret : secrets) workerd::clear_secret(secret.second);
     throw Failed(FailureKind::worker_failed,
                  "the Card's secrets do not match the names it declares");
   }
@@ -119,19 +133,6 @@ auto bytes(const flatbuffers::Vector<uint8_t>* value) -> std::string {
   return {reinterpret_cast<const char*>(value->data()), value->size()};
 }
 
-auto type(const flatbuffers::Vector<uint8_t>* schema,
-          const flatbuffers::String* root) -> types::TypeRef {
-  if (!schema || !root) throw std::runtime_error("missing remote port schema");
-  flatbuffers::Verifier verifier(schema->data(), schema->size());
-  if (!reflection::VerifySchemaBuffer(verifier))
-    throw std::runtime_error("invalid remote port schema");
-  auto result = std::make_shared<types::Type>();
-  result->bfbs = bytes(schema);
-  result->root_type = root->str();
-  if (!result->root()) throw std::runtime_error("unknown remote port type");
-  return result;
-}
-
 auto make_result(const workerd::InvocationResult& outcome) -> std::string {
   flatbuffers::FlatBufferBuilder b;
   W::WorkerPayload kind;
@@ -139,18 +140,19 @@ auto make_result(const workerd::InvocationResult& outcome) -> std::string {
   if (outcome.failure) {
     kind = W::WorkerPayload::WorkerFailure;
     body =
-        W::CreateWorkerFailure(b, wire::failure(b, *outcome.failure)).Union();
+        W::CreateWorkerFailure(b, wire::failure(b, *outcome.failure),
+                               wire::artifact_ids(b, outcome.created)).Union();
   } else {
     std::vector<flatbuffers::Offset<W::WorkerOutput>> outputs;
-    for (const auto& value : outcome.outputs) {
-      auto data =
+    for (const auto& value : outcome.outputs)
+      outputs.push_back(W::CreateWorkerOutput(
+          b, b.CreateString(value.name),
           b.CreateVector(reinterpret_cast<const uint8_t*>(value.bytes.data()),
-                         value.bytes.size());
-      outputs.push_back(
-          W::CreateWorkerOutput(b, b.CreateString(value.name), data));
-    }
+                         value.bytes.size()),
+          wire::artifact_ids(b, value.artifacts)));
     kind = W::WorkerPayload::WorkerResult;
-    body = W::CreateWorkerResult(b, b.CreateVector(outputs)).Union();
+    body = W::CreateWorkerResult(b, b.CreateVector(outputs),
+                                 wire::artifact_ids(b, outcome.created)).Union();
   }
   W::FinishWorkerMessageBuffer(b, W::CreateWorkerMessage(b, 1, kind, body));
   if (b.GetSize() > kWorkerLimit)
@@ -158,121 +160,267 @@ auto make_result(const workerd::InvocationResult& outcome) -> std::string {
   return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};
 }
 
-auto run_worker(const W::WorkerCall& call,
-                const remote::InvocationJson& invocation,
+// The native worker's credit is held until the remote listener forwards the
+// message. Its socket reader never waits for a slow view or a network poll.
+class InvocationDisplay {
+ public:
+  explicit InvocationDisplay(std::weak_ptr<WorkerProc::ViewReceiver> target)
+      : target_(std::move(target)), reader_([this] { read(); }) {
+    try {
+      writer_ = std::thread([this] { write(); });
+    } catch (...) {
+      ::shutdown(workerd::kDisplayChannelFd, SHUT_RDWR);
+      reader_.join();
+      throw;
+    }
+  }
+  ~InvocationDisplay() {
+    {
+      std::lock_guard lock(mutex_);
+      stopping_ = true;
+    }
+    ready_.notify_all();
+    writer_.join();
+    ::shutdown(workerd::kDisplayChannelFd, SHUT_RDWR);
+    reader_.join();
+  }
+
+  auto push(WorkerDisplayData display, WorkerProc::DisplayCredit complete)
+      -> void {
+    std::unique_lock lock(mutex_);
+    if (closed_) {
+      lock.unlock();
+      complete();
+      return;
+    }
+    pending_.emplace_back(std::move(display), std::move(complete));
+    ready_.notify_one();
+  }
+
+ private:
+  auto write() -> void {
+    try {
+      const char ready = 1;
+      if (::write(workerd::kDisplayChannelFd, &ready, 1) != 1)
+        throw std::runtime_error("cannot signal remote display readiness");
+      for (;;) {
+        std::unique_lock lock(mutex_);
+        ready_.wait(lock, [&] {
+          return stopping_ || closed_ || !pending_.empty() || !credits_.empty();
+        });
+        if (closed_) return;
+        if (!credits_.empty()) {
+          auto credit = credits_.extract(credits_.begin());
+          lock.unlock();
+          workerd::write_display_credit(workerd::kDisplayChannelFd,
+                                        credit.key(), credit.mapped());
+          continue;
+        }
+        if (stopping_ && pending_.empty()) return;
+        auto [display, complete] = std::move(pending_.front());
+        pending_.pop_front();
+        in_flight_[display.view].emplace_back(
+            workerd::message_cost(display.bytes.size()), std::move(complete));
+        lock.unlock();
+        workerd::write_display(workerd::kDisplayChannelFd, display.view,
+                               display.bytes);
+      }
+    } catch (const std::exception&) {
+      ::shutdown(workerd::kDisplayChannelFd, SHUT_RDWR);
+    }
+  }
+
+  auto read() -> void {
+    try {
+      while (auto frame = workerd::read_display(workerd::kDisplayChannelFd)) {
+        const auto* envelope = W::GetWorkerMessage(frame->data());
+        if (const auto* message = envelope->value_as_WorkerDisplay()) {
+          if (auto worker = target_.lock()) {
+            WorkerDisplayData display{message->view()->str(),
+                                      bytes(message->bytes())};
+            // Once the worker retires, reverse messages may still be in
+            // transit. Keep draining forward credits until the writer stops.
+            if (worker->send(display, [this, view = display.view,
+                                        cost = workerd::message_cost(
+                                            display.bytes.size())] {
+                  std::lock_guard lock(mutex_);
+                  credits_[view] += cost;
+                  ready_.notify_one();
+                }) != WorkerProc::ViewDelivery::accepted) {
+              target_.reset();
+            }
+          }
+          continue;
+        }
+        const auto* credit = envelope->value_as_WorkerDisplayCredit();
+        if (!credit) break;
+        size_t bytes = credit->bytes();
+        std::unique_lock lock(mutex_);
+        auto& view = in_flight_[credit->view()->str()];
+        while (bytes) {
+          if (view.empty() || bytes < view.front().first)
+            throw std::runtime_error("invalid remote display credit");
+          auto [cost, complete] = std::move(view.front());
+          view.pop_front();
+          bytes -= cost;
+          lock.unlock();
+          complete();
+          lock.lock();
+        }
+      }
+    } catch (const std::exception&) {
+    }
+    ::shutdown(workerd::kDisplayChannelFd, SHUT_RDWR);
+    std::unique_lock lock(mutex_);
+    closed_ = true;
+    auto in_flight = std::move(in_flight_);
+    auto pending = std::move(pending_);
+    ready_.notify_all();
+    lock.unlock();
+    for (auto& [name, view] : in_flight)
+      for (auto& [cost, complete] : view) complete();
+    for (auto& [display, complete] : pending) complete();
+  }
+
+  std::weak_ptr<WorkerProc::ViewReceiver> target_;
+  std::mutex mutex_;
+  std::condition_variable ready_;
+  std::deque<std::pair<WorkerDisplayData, WorkerProc::DisplayCredit>> pending_;
+  std::map<std::string,
+           std::deque<std::pair<size_t, WorkerProc::DisplayCredit>>>
+      in_flight_;
+  bool stopping_ = false;
+  bool closed_ = false;
+  std::map<std::string, size_t> credits_;
+  std::thread reader_;
+  std::thread writer_;
+};
+
+auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
+                const remote::RW::InvocationT& invocation,
                 const stdfs::path& input, const stdfs::path& directory,
-                const stdfs::path& store, const WorkerStoreResult& env,
-                const WorkerProc::LogSink& log,
-                const WorkerProc::DisplaySink& display,
-                const fs::TransferProgress& progress, Secrets secrets)
-    -> workerd::InvocationResult {
-  schema::CardManifest manifest;
-  if (schema::decode(env.manifest, manifest))
-    throw Failed(FailureKind::nix_failed, "invalid remote Card manifest");
-  const auto* single = schema::get(manifest.run);
-  const auto* runs = schema::get(manifest.runs);
-  const auto index = *invocation.implementation_index;
-  const schema::ManifestRun* run = nullptr;
-  if (single && !runs && index == 1) run = single;
-  if (!single && runs && index > 0 && index <= runs->size())
-    run = &runs->at(index - 1);
-  const auto* shell = schema::get(manifest.shell);
-  const auto* path = schema::get(manifest.path);
-  const auto* worker_binary = run ? schema::get(run->worker) : nullptr;
-  if (!run || !shell || !shell->starts_with("/nix/store/") || !path ||
-      !worker_binary || !worker_binary->starts_with("/nix/store/"))
+                const stdfs::path& store, const stdfs::path& group,
+                const WorkerStoreResult& env, const WorkerProc::LogSink& log,
+                Secrets secrets) -> workerd::InvocationResult {
+  schema::CardPlan plan;
+  if (schema::decode_card_plan(env.plan, plan))
+    throw Failed(FailureKind::nix_failed, "invalid remote Card build plan");
+  const auto index = invocation.implementation_index;
+  const auto& runs = *schema::get(plan.runs);
+  const auto* worker_binary = schema::get(plan.worker);
+  if (index == 0 || index > runs.size() || !worker_binary ||
+      !worker_binary->starts_with("/nix/store/") ||
+      !runs.at(index - 1).starts_with("/nix/store/"))
     throw Failed(FailureKind::nix_failed,
-                 "remote Card manifest lacks a pinned shell or worker");
+                 "remote Card build plan lacks a package or worker");
   WorkerSpawn spawn;
   spawn.worker_binary = *worker_binary;
-  spawn.bash = *shell;
+  spawn.package = runs.at(index - 1);
+  spawn.secrets = std::move(secrets);
+  spawn.closure = env.closure;
+  spawn.cgroup = group;
   spawn.store_path = (store / "nix/store").string();
   spawn.scratch = (directory / "scratch").string();
-  spawn.program.package = *run->package;
-  spawn.program.bash = *run->bash;
-  if (spawn.program.package.has_value() == spawn.program.bash.has_value())
-    throw Failed(FailureKind::nix_failed,
-                 "remote Card manifest must contain one package or Bash body");
-  spawn.program.pre_run = manifest.pre_run->value_or("");
-  spawn.program.post_run = manifest.post_run->value_or("");
-  spawn.program.views = manifest.views->value_or("");
-  spawn.network = *invocation.network;
-  spawn.uid = 65534;
-  spawn.gid = 65534;
-  spawn.ro_paths = {input.string()};
-  CardPath card;
-  for (const auto* name : *call.card()->segments()) card.push_back(name->str());
-  spawn.card = path_key(card);
+  spawn.sandbox = {job.filesystem,
+                   job.pid,
+                   job.ipc,
+                   job.identity,
+                   {static_cast<uint32_t>(job.cpu_millis), job.memory_bytes}};
+  spawn.network = job.network;
+  if (spawn.sandbox.identity) spawn.uid = spawn.gid = 65534;
 
   std::vector<Value> values;
-  for (const auto* port : *call.inputs()) {
-    const auto* data = port->value();
-    Value value{port->name()->str(),
-                port->kind(),
-                type(data->schema_bfbs(), data->root_type()),
-                bytes(data->bytes()),
-                {}};
-    if (value.kind != PortKind::FlatBuffer) {
-      const auto logical = path_value(value);
-      if (!logical) throw std::runtime_error("remote input value lacks a path");
-      const auto rel = remote::relative_path(*logical);
-      if (*rel.begin() != "inputs")
-        throw std::runtime_error("remote input path is outside staging");
-      value = with_path(value, (input / rel).string());
-    }
-    values.push_back(std::move(value));
-  }
+  for (const auto* port : *call.inputs())
+    values.push_back({port->name()->str(), nullptr,
+                      port->bytes() ? bytes(port->bytes()) : "",
+                      port->schema() ? port->schema()->str() : "",
+                      wire::artifact_ids(port->artifacts())});
   std::vector<types::PortType> outputs;
   for (const auto* port : *call.outputs())
-    outputs.push_back({port->name()->str(), port->kind(),
-                       port->optional().value_or(false),
-                       type(port->schema_bfbs(), port->root_type())});
-  WorkerPool pool(directory / "scratch", {}, WorkerPoolMode::one_shot);
-  auto lease = pool.acquire(spawn.card, "", spawn, false);
+    outputs.push_back({port->name()->str(), port->required(), nullptr});
+  const auto artifacts_root = input / "artifacts";
+  const auto outputs_root = directory / "result/files/artifacts";
+  spawn.artifact_store = outputs_root.string();
+  spawn.artifact_staging = directory / "artifact-invocations";
+  std::vector<ArtifactGrant> grants;
+  if (const auto* entries = call.grants()) {
+    for (const auto* entry : *entries) {
+      auto id = wire::artifact_id(*entry->id());
+      const bool store_origin = entry->store_path() != nullptr;
+      const auto leaf =
+          store_origin
+              ? crypto::hex(id.data(), id.size())
+              : std::to_string(artifact_counter(artifact_id_bytes(id)));
+      const auto relative = remote::relative_path(entry->path()->string_view());
+      const auto holders = relative.parent_path();
+      const auto invocation_name = holders.filename().string();
+      const auto source = artifacts_root / relative;
+      if (relative.filename() != leaf ||
+          !crypto::is_run_id(relative.begin()->string()) ||
+          !invocation_name.starts_with('@') || invocation_name.size() == 1 ||
+          invocation_name.find_first_not_of("0123456789", 1) !=
+              std::string::npos ||
+          !stdfs::is_directory(stdfs::symlink_status(source)))
+        throw Failed(FailureKind::input_missing, "invalid remote artifact grant");
+      std::string store_target;
+      if (const auto* store_path = entry->store_path()) {
+        const stdfs::path path(store_path->str());
+        const stdfs::path store_root = "/nix/store";
+        const auto relative_store_path = path.lexically_relative(store_root);
+        if (relative_store_path.empty() ||
+            !fs::valid_relative_path(relative_store_path.begin()->string()) ||
+            path != store_root / *relative_store_path.begin() /
+                        "share/tsugumi/input/artifacts" / leaf)
+          throw Failed(FailureKind::input_missing,
+                       "invalid store artifact path");
+        if (spawn.sandbox.filesystem) {
+          spawn.binds.push_back({source.string(), path.string(), false, ""});
+          store_target = path.string();
+        } else {
+          store_target = source.string();
+        }
+      } else {
+        spawn.artifact_inputs = true;
+      }
+      grants.push_back(
+          {std::move(id), source.string(), {}, std::move(store_target)});
+    }
+  }
+  stdfs::create_directories(outputs_root);
+  auto worker = std::make_unique<WorkerProc>(spawn);
+  InvocationDisplay display(worker->view_receiver());
+  // Retire the worker and its pending display callbacks before the relay.
+  WorkerPool::Lease lease;
+  lease.worker = std::move(worker);
+  spawn.secrets.reset();
   workerd::Invocation request;
-  request.run_id = call.run_id()->str();
-  request.card = card;
-  request.number = call.invocation().value_or(0);
   request.inputs = values;
   request.outputs = std::move(outputs);
-  request.params.bfbs = bytes(call.params()->schema_bfbs());
-  request.params.root = call.params()->root_type()->str();
-  request.params.bytes = bytes(call.params()->bytes());
-  request.path = *path;
-  request.worker_binary = spawn.worker_binary;
-  for (const auto* v : *call.environment())
-    if (v->name()->string_view() == "TSUGUMI_PARAMS_JSON")
-      request.environment.emplace_back(v->name()->str(), v->value()->str());
-  // Each Card secret is an environment variable of the same name in the
-  // Card's process only; this process drops its copy once the call is sent.
-  for (auto& secret : secrets) request.environment.push_back(std::move(secret));
-  request.on_call_sent = [&environment = request.environment] {
-    for (auto& variable : environment) workerd::clear_secret(variable.second);
-    environment.clear();
-  };
-  request.output_directory = directory / "result/files/out";
-  request.input_directory = input;
-  request.delivery = workerd::OutputDelivery::transferred_files;
-  request.stop_before_outputs = true;
+  request.artifact_directory = outputs_root;
+  request.artifact_sequence = call.invocation_sequence();
+  request.artifact_inputs = spawn.artifact_inputs;
+  request.grants = std::move(grants);
+  request.output_budget = {job.output_limit_bytes, job.output_limit_entries};
   if (call.deadline_ms()) request.timeout_ms = *call.deadline_ms();
   // Allow the worker to report its own budget failure before escalation.
   request.deadline_grace = std::chrono::milliseconds(500);
   request.log = log;
-  request.transfer = progress;
-  request.display = display;
+  request.display = [&display](auto message, auto complete) {
+    display.push(std::move(message), std::move(complete));
+  };
   return workerd::run_invocation(
-      [&](auto worker, bool keep, const auto& reason) {
-        pool.release(spawn.card, "", std::move(worker), keep, reason);
-      },
-      lease, false, request);
+      [](std::unique_ptr<WorkerProc>, bool, const std::string&) {}, lease,
+      false, request);
 }
 
 }  // namespace
 
 namespace workerd {
 auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
-            const stdfs::path& store) -> void {
+            const stdfs::path& store, const stdfs::path& group) -> void {
   const auto job = parse_spec(read(directory / "spec.fb", kMaxSpec));
+  if (::fcntl(kDisplayChannelFd, F_SETFD, FD_CLOEXEC) != 0)
+    throw std::runtime_error("the job's live display channel is missing");
   // Nothing this process starts may inherit the Card secret pipe.
   if (!job->secrets.empty() &&
       ::fcntl(kSecretChannelFd, F_SETFD, FD_CLOEXEC) != 0)
@@ -286,101 +434,86 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
       throw std::runtime_error("remote input blob was not submitted");
     return blobs / digest;
   };
-  remote::InvocationJson invocation;
-  if (schema::decode(read(blob(job->invocation_sha256), kWorkerLimit),
-                     invocation))
-    throw std::runtime_error("invalid remote invocation manifest");
+  const auto decoded = remote::decode<remote::RW::Invocation>(
+      read(blob(job->invocation_sha256), kWorkerLimit));
+  if (!decoded) throw std::runtime_error("invalid remote invocation manifest");
+  const auto& invocation = *decoded;
   int64_t last_progress = 0;
   const auto progress = [&](const stdfs::path& name, uint64_t done,
                             uint64_t total) {
     const auto now = now_ms();
     if (done && done != total && now - last_progress < 100) return;
     last_progress = now;
-    remote::TransferJson value;
-    *value.name = name.generic_string();
-    *value.done = done;
-    *value.total = total;
-    fs::write_atomic(directory / "progress.json", schema::encode(value), 0600);
+    remote::RW::TransferProgressT value;
+    value.name = name.generic_string();
+    value.done = done;
+    value.total = total;
+    fs::write_atomic(directory / "progress",
+                     remote::encode<remote::RW::TransferProgress>(value), 0600);
   };
   const auto input = directory / "staged";
   stdfs::create_directories(input);
-  for (const auto& dir : *invocation.directories)
+  for (const auto& dir : invocation.directories)
     stdfs::create_directories(input / remote::relative_path(dir));
-  for (const auto& file : *invocation.files) {
-    const auto path = input / remote::relative_path(*file.path);
-    const auto source = blob(*file.sha256);
+  for (const auto& entry : invocation.files) {
+    const auto& file = *entry;
+    const auto path = input / remote::relative_path(file.path);
+    const auto source = blob(file.sha256);
     stdfs::create_directories(path.parent_path());
     uint64_t done = 0;
-    progress(*file.path, 0, *file.size);
-    fs::copy_beneath(blobs, *file.sha256, path, [&](std::string_view chunk) {
-      done += chunk.size();
-      progress(*file.path, done, *file.size);
-    });
+    if (const auto size = fs::link_beneath(blobs, source.filename(), path)) {
+      done = *size;
+      progress(file.path, done, file.size);
+    } else {
+      progress(file.path, 0, file.size);
+      fs::copy_beneath(blobs, source.filename(), path,
+                       [&](std::string_view chunk) {
+                         done += chunk.size();
+                         progress(file.path, done, file.size);
+                       });
+    }
+    if (done != file.size)
+      throw std::runtime_error("remote invocation input size does not match");
   }
-  const auto frame = read(blob(*invocation.call_sha256), kWorkerLimit);
+  const auto frame = read(blob(invocation.call_sha256), kWorkerLimit);
+  flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(frame.data()),
+                                 frame.size());
+  if (!W::VerifyWorkerMessageBuffer(verifier))
+    throw std::runtime_error("invalid remote invocation call");
   const auto* call = W::GetWorkerMessage(frame.data())->value_as_WorkerCall();
+  if (!call)
+    throw std::runtime_error("remote invocation does not contain a Card call");
 
   const auto result_dir = directory / "result";
   stdfs::create_directories(result_dir);
-  std::ofstream logs(result_dir / "logs.jsonl", std::ios::binary);
-  InvocationLog invocation_log(job->log_limit_bytes);
+  std::ofstream logs(result_dir / "logs", std::ios::binary);
+  InvocationLog invocation_log(kRemoteLogTransportBytes);
   const auto truncation_marker = directory / "log-truncated";
   auto log = [&](LogStream stream, const std::string& text) {
     if (invocation_log.truncated()) return;
     if (auto entry = invocation_log.append(stream, text)) {
       // Flush each entry so status requests can collect it while it runs.
-      logs << *entry << '\n' << std::flush;
+      logs << *entry << std::flush;
     } else {
       const int fd = ::open(truncation_marker.c_str(),
                             O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
       if (fd >= 0) ::close(fd);
     }
   };
-  std::string display;
   WorkerStoreResult environment;
   InvocationResult outcome;
   // Only definition data enter this persistent private Nix store. Invocation
   // inputs and results remain in job scratch, outside the store.
   try {
     environment = RemoteWorkerStore::realise(
-        ArchiveDerivationTransport(blob(*invocation.archive_sha256)), store,
+        ArchiveDerivationTransport(blob(invocation.archive_sha256)), store,
         WorkerDerivation{derivation, output, job->system},
         [&](const std::string& line) { log(LogStream::build, line); },
         job->build_timeout_ms);
-    auto secrets = job->secrets.empty() ? Secrets{}
-                                        : receive_secrets(directory, *job);
-    outcome = run_worker(
-        *call, invocation, input, directory, store, environment, log,
-        [&](const DisplayData& data) {
-          display = wire::standalone_display(data);
-        },
-        progress, std::move(secrets));
-    if (!display.empty()) {
-      const auto* module =
-          flatbuffers::GetRoot<Tsugumi::Data::Display>(display.data())
-              ->value_as_DisplayModule();
-      if (module && module->module_()) {
-        try {
-          const auto identity = module->module_()->str();
-          if (!valid_module_identity(identity) ||
-              std::ranges::find(environment.closure, identity) ==
-                  environment.closure.end())
-            throw std::runtime_error(
-                "display module is outside the built closure");
-          // Transport a built definition resource under its immutable identity.
-          // The core imports it without interpreting the display's run data.
-          const auto store_directory = store / "nix/store";
-          const auto basename = stdfs::path(identity).filename();
-          const auto root = store_directory / basename;
-          if (stdfs::is_symlink(root) || !stdfs::is_directory(root))
-            throw std::runtime_error("invalid display module output");
-          fs::write_atomic(result_dir / "modules" / basename / "index.js",
-                           module_source(root, store_directory), 0600);
-        } catch (const std::exception&) {
-          // A view failure must not replace the Card result.
-        }
-      }
-    }
+    auto secrets =
+        job->secrets.empty() ? Secrets{} : receive_secrets(directory, *job);
+    outcome = run_worker(*call, *job, invocation, input, directory, store,
+                         group, environment, log, std::move(secrets));
   } catch (const Failed& error) {
     outcome.failure = error.failure;
   } catch (const std::exception& error) {
@@ -389,22 +522,19 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
                                             : FailureKind::worker_failed,
                                         error.what());
   }
-  remote::EnvironmentJson info;
-  *info.paths = std::move(environment.closure);
-  *info.built = environment.built;
-  *info.log_truncated = invocation_log.truncated();
-  *info.directories = std::vector<std::string>{};
+  remote::RW::ResultEnvironmentT info;
+  info.paths = std::move(environment.closure);
+  info.built = environment.built;
+  info.log_truncated = invocation_log.truncated();
   const auto files = result_dir / "files";
-  if (outcome.failure) stdfs::remove_all(files);
   if (stdfs::is_directory(files)) {
     for (const auto& entry : stdfs::recursive_directory_iterator(files))
       if (stdfs::is_directory(entry.symlink_status()))
-        info.directories->push_back(
+        info.directories.push_back(
             entry.path().lexically_relative(files).generic_string());
   }
-  if (!display.empty())
-    fs::write_atomic(result_dir / "display.fb", display, 0600);
-  fs::write_atomic(result_dir / "environment.json", schema::encode(info), 0600);
+  fs::write_atomic(result_dir / "environment",
+                   remote::encode<remote::RW::ResultEnvironment>(info), 0600);
   fs::write_atomic(result_dir / "worker.fb", make_result(outcome), 0600);
 }
 

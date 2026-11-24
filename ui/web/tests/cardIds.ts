@@ -1,13 +1,9 @@
 import { operationFixture } from './operationFixture'
 // A deterministic RPC double for presentation tests. Identity behavior itself
 // is checked against the core; unrelated fixtures keep their readable keys.
-import { DisplayGeometriesT, DisplayGeometryT } from '../shared/gen/tsugumi/host'
 import type { ProjectSession } from '../src/model/session'
-import { get, str } from '../shared/json'
+import { get, parse, str } from '../shared/json'
 export function cardIds<T extends ProjectSession>(s: T): T {
-  // The same geometry returned by the host (covered by HostLayout's RPC test).
-  s.displayGeometries = new DisplayGeometriesT(
-    new DisplayGeometryT(1, 0, 40, 0, 320, 170), new DisplayGeometryT(0, 1, 0, 30, 320, 170))
   hostEdits(s)
   s.connected = true // This boundary stands in for the connected core.
   const issued = new Set<string>()
@@ -38,3 +34,15 @@ export function cardIds<T extends ProjectSession>(s: T): T {
 }
 
 export const hostEdits = operationFixture
+
+/** Install a Code definition for tests that need one on the canvas. */
+export async function addCodeCard(s: ProjectSession, at: { x: number; y: number }, name = 'card') {
+  const card = await s.addCard('draft', [], at, name)
+  await s.applyMutation(session => {
+    session.updateCard(card, definition => {
+      definition.set('type', 'code')
+      definition.set('inputs', parse('[{"name":"in"}]'))
+    })
+  })
+  return card
+}

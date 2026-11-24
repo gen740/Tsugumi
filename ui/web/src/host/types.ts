@@ -9,7 +9,7 @@ export type ContentBlock =
 
 export interface WebSource { url: string; title?: string }
 
-/** An image in a tool's result (a Card's display in run_record, a PNG read from
+/** An image in a tool's result (a PNG read from
  *  the project or an artifact), which the model sees as an image, never as text. */
 export interface ToolImage { media_type: string; data: string }
 

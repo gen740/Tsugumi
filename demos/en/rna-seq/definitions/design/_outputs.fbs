@@ -1,5 +1,5 @@
-attribute "tsugumi";
+include "tsugumi/artifact.fbs";
+
 namespace airway;
-table Design { value:string; }
-table Outputs { design:Design (required, tsugumi: "file"); }
+table Outputs { design:tsugumi.Artifact (required); }
 root_type Outputs;

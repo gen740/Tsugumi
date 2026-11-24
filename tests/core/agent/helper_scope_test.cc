@@ -151,7 +151,7 @@ TEST(HelperScope, ReadsAndWritesAreSeparateExactSetsWithNestedIdentifiers) {
 TEST(HelperScope,
      ExecutorChecksTheCompleteGraphWithoutRewritingUntouchedBytes) {
   const std::string before =
-      R"({"name": "workflow", "pkgsPath":"tsugumi:default", "canvas":{"cards":[{"id":"writer"},{"id":"other"}],"connections":[]}})";
+      R"({"name": "workflow", "nixPath": [], "canvas":{"cards":[{"id":"writer"},{"id":"other"}],"connections":[]}})";
   const auto reader = [&](const std::string& path) {
     return path == "tsugumi.json" ? before : "";
   };
@@ -380,7 +380,7 @@ TEST(HelperScope, InspectionDoesNotLeakOtherCardsOrProjectWideState) {
             R"([{"id":"visible","card_json":"VISIBLE"},{"id":"SECRET","card_json":"SECRET"}])"},
            {"sources",
             R"([{"path":"definitions/visible/a"},{"path":"definitions/SECRET/b"}])"},
-           {"layout_json", json::Quote("SECRET")},
+           {"layout", json::Quote("SECRET")},
            {"run", R"({"failure":"SECRET"})"},
            {"diagnostics", R"([{"message":"SECRET"}])"}})}});
   const auto filtered = scope.Inspect(result, kRead);
@@ -428,11 +428,14 @@ TEST(HelperScope, WriteDoesNotGrantRunAndReadRunDoesNotGrantWrite) {
       R"({"read_cards":["a"],"write_cards":["a"],"run_cards":[]})"));
   HelperScope runner(json::Object(
       R"({"read_cards":["a"],"write_cards":[],"run_cards":["a"]})"));
-  const auto card = json::Object(R"({"card":{"segments":["a"]}})");
-  for (const auto* tool : {"run", "card_s_d_k_prepare"}) {
+  const auto card = json::Object(R"({"card":{"segments":["a"]},"build":true})");
+  for (const auto* tool : {"run", "evaluate_nix"}) {
     EXPECT_THROW(writer.Check(tool, card, kRead), std::runtime_error);
     EXPECT_NO_THROW(runner.Check(tool, card, kRead));
   }
+  EXPECT_NO_THROW(writer.Check("evaluate_nix",
+                               json::Object(R"({"card":{"segments":["a"]}})"),
+                               kRead));
   EXPECT_THROW(
       runner.Check(
           "project_save",
@@ -514,7 +517,7 @@ TEST(HelperGraphScope, AddsOnlyOwnedCardsAndKeepsTheHiddenGraph) {
   project["canvas"] = json::Encode(canvas);
   EXPECT_THROW(scope.Check("project_save", args(json::Encode(project)), read),
                std::runtime_error);
-  project["pkgsPath"] = json::Quote("changed");
+  project["nixPath"] = R"([{"name":"science","url":"github:org/science"}])";
   EXPECT_THROW(scope.Check("project_save", args(json::Encode(project)), read),
                std::runtime_error);
 }
@@ -543,7 +546,7 @@ TEST(HelperGraphScope, NestedGraphAndBoundaryRebindingKeepOtherEndpoints) {
     if (path == "definitions/outer/_card.json")
       return R"({"type":"subgraph","external":"storage"})";
     if (path == "externals/storage/tsugumi.json")
-      return R"({"boundary":{"inputs":{"visible":{"card":"draft","port":""},"hidden":{"card":"secret","port":"in"}},"outputs":{}},"canvas":{"cards":[{"id":"draft"},{"id":"secret"}],"connections":[]}})";
+      return R"({"boundary":{"inputs":[{"name":"visible","card":"draft","port":""},{"name":"hidden","card":"secret","port":"in"}],"outputs":[]},"canvas":{"cards":[{"id":"draft"},{"id":"secret"}],"connections":[]}})";
     return "";
   };
   HelperScope scope(json::Object(
@@ -556,7 +559,7 @@ TEST(HelperGraphScope, NestedGraphAndBoundaryRebindingKeepOtherEndpoints) {
       scope.Graph(read("externals/storage/tsugumi.json"), "outer/"));
   EXPECT_EQ(json::Encode(graph).find("secret"), std::string::npos);
   graph["boundary"] =
-      R"({"inputs":{"visible":{"card":"draft","port":"real"}},"outputs":{}})";
+      R"({"inputs":[{"name":"visible","card":"draft","port":"real"}],"outputs":[]})";
   auto canvas = json::Object(graph.at("canvas"));
   canvas["cards"] = R"([{"id":"draft"},{"id":"mine"}])";
   graph["canvas"] = json::Encode(canvas);
@@ -590,7 +593,7 @@ TEST(HelperGraphScope, SaveReceiptFiltersOtherHelpersCards) {
   HelperScope scope(json::Object(
       R"({"read_cards":["mine"],"write_cards":["mine"],"run_cards":[]})"));
   const auto result =
-      R"({"reply":"SaveResult","value":{"rev":"2","delta":{"project_json":"{\"canvas\":{\"cards\":[{\"id\":\"mine\"},{\"id\":\"SECRET\"}],\"connections\":[]}}","layout_json":"SECRET","definitions_upsert":[],"sources_upsert":[],"resolution":[{"card":{"segments":["mine"]},"diagnostics":[]},{"card":{"segments":["SECRET"]}}],"diagnostics":[{"message":"SECRET"}]}}})";
+      R"({"reply":"SaveResult","value":{"rev":"2","delta":{"project_json":"{\"canvas\":{\"cards\":[{\"id\":\"mine\"},{\"id\":\"SECRET\"}],\"connections\":[]}}","layout":"SECRET","definitions_upsert":[],"sources_upsert":[],"resolution":[{"card":{"segments":["mine"]},"diagnostics":[]},{"card":{"segments":["SECRET"]}}],"diagnostics":[{"message":"SECRET"}]}}})";
   const auto filtered = scope.SaveResult(result, kRead);
   EXPECT_EQ(filtered.find("SECRET"), std::string::npos);
   EXPECT_NE(filtered.find("mine"), std::string::npos);

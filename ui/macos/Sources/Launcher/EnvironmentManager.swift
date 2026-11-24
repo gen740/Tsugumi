@@ -55,7 +55,7 @@ public actor EnvironmentManager {
       } else { state = .failed(message: "Invalid environment endpoint", recovery: "Retry", log: "") }
     case .starting: state = .starting(value["message"] as? String ?? "")
     case .failed:
-      if let raw = value["startup_error_json"] as? String, let diagnostic = (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) as? [String: Any], let issue = HistoryVersionMismatch(diagnostic: diagnostic) {
+      if let diagnostic = value["startup_error"] as? [String: Any], let issue = HistoryVersionMismatch(diagnostic: diagnostic) {
         state = .incompatibleHistory(issue)
       } else { state = .failed(message: value["message"] as? String ?? "", recovery: value["recovery"] as? String ?? "", log: value["log"] as? String ?? "") }
     case .stopped: state = .stopped

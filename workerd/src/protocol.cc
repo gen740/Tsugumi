@@ -11,7 +11,7 @@ auto encode(R::MessageT message) -> std::string {
   flatbuffers::FlatBufferBuilder b;
   R::FinishMessageBuffer(b, R::Message::Pack(b, &message));
   if (b.GetSize() > kMaxFrame)
-    throw Error(R::ErrorCode::Invalid, "frame exceeds 2 MiB");
+    throw Error(R::ErrorCode::Invalid, "frame exceeds 18 MiB");
   return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};
 }
 auto decode(std::string_view bytes) -> std::unique_ptr<R::MessageT> {
@@ -45,12 +45,15 @@ auto failure(R::ErrorCode code, std::string message) -> R::MessageT {
   return reply(std::move(error));
 }
 auto parse_spec(std::string_view bytes) -> std::unique_ptr<R::JobSpecT> {
+  flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(bytes.data()),
+                                 bytes.size());
+  if (!verifier.VerifyBuffer<R::JobSpec>())
+    throw Error(R::ErrorCode::Invalid, "invalid remote JobSpec");
   return std::unique_ptr<R::JobSpecT>(
       flatbuffers::GetRoot<R::JobSpec>(bytes.data())->UnPack());
 }
 auto validate_log_limit(const R::JobSpecT& spec) -> void {
-  if (spec.log_limit_bytes == 0 ||
-      spec.log_limit_bytes > kInvocationLogLimitBytes)
+  if (spec.log_limit_bytes > kMaxRecordedLogBytes)
     throw Error(R::ErrorCode::Invalid, "invalid invocation log limit");
 }
 auto validate_secret_names(const R::JobSpecT& spec) -> void {
@@ -66,12 +69,6 @@ auto validate_secret_names(const R::JobSpecT& spec) -> void {
     if (!valid || !seen.insert(name).second)
       throw Error(R::ErrorCode::Invalid, "invalid Card secret name");
   }
-}
-auto clear_secret(std::string& value) -> void {
-  volatile char* bytes = value.data();
-  for (size_t i = 0; i < value.size(); ++i) bytes[i] = 0;
-  value.clear();
-  value.shrink_to_fit();
 }
 auto terminal(R::JobState state) -> bool {
   return state == R::JobState::Succeeded || state == R::JobState::Failed ||

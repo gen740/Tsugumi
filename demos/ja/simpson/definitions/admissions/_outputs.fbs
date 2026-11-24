@@ -1,5 +1,5 @@
-attribute "tsugumi";
+include "tsugumi/artifact.fbs";
+
 namespace simpson;
-table Admissions { value:string; }
-table Outputs { admissions:Admissions (required, tsugumi: "file"); }
+table Outputs { admissions:tsugumi.Artifact (required); }
 root_type Outputs;

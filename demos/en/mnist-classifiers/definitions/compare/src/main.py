@@ -1,4 +1,6 @@
 """Waits for every branch, checks they scored the same test digits, and ranks them."""
+from card import Input, Output
+from mnist.Comparison import ComparisonT
 import numpy as np
 
 # All seven branches send the same table.
@@ -7,8 +9,8 @@ from tsugumi import Failure
 MODELS = ["knn", "logistic", "svm", "forest", "boosting", "mlp", "cnn"]
 
 
-def main(inputs, report):
-    data = np.load(inputs.data.value.decode())
+def run(inputs: Input) -> Output:
+    data = np.load(inputs.require("data").open() / "subset.npz")
     labels = data["test_labels"]
     results = [getattr(inputs, m) for m in MODELS]
     predictions = np.stack([r.predictions for r in results])
@@ -42,24 +44,15 @@ def main(inputs, report):
     se = np.sqrt(accuracy[best] * (1 - accuracy[best]) / n)
     fastest_fit = np.argmin(fit)
     fastest_predict = np.argmin(predict)
-    report.markdown(
-        f"**Compared on {n} test images** (the same images for all; accuracies recomputed from the predictions and confirmed)\n\n"
-        "| Rank | Model | Accuracy | Training (s) | Prediction (s) | Settings |\n| ---: | --- | ---: | ---: | ---: | --- |\n"
-        + "\n".join(rows)
-        + f"\n\nThe highest accuracy is **{MODELS[best]}** ({accuracy[best]:.4f}, standard error about {se:.4f}), "
-          f"followed by **{MODELS[second]}** ({accuracy[second]:.4f}). {verdict}\n\n"
-          f"The shortest training is **{MODELS[fastest_fit]}** ({fit[fastest_fit]:.2f} s), "
-          f"The shortest prediction is **{MODELS[fastest_predict]}** ({predict[fastest_predict]:.3f} s)."
-          "Times are single-thread CPU times and vary by machine."
-    )
+    # TODO(open): Port the demo display.
     models = list(MODELS)
     images = np.round(data["test_images"].ravel() * 255).astype(np.uint8)
-    return {'comparison': {
-        'models': models,
-        'accuracy': accuracy,
-        'fit_seconds': fit,
-        'predict_seconds': predict,
-        'test_labels': labels,
-        'predictions': predictions.ravel(),
-        'test_images': images,
-    }}
+    return Output(comparison=ComparisonT(
+        models=models,
+        accuracy=accuracy,
+        fitSeconds=fit,
+        predictSeconds=predict,
+        testLabels=labels,
+        predictions=predictions.ravel(),
+        testImages=images,
+    ))

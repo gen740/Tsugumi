@@ -18,15 +18,16 @@ def save(client, changes):
 def test_direct_rpc_does_not_stamp_comments_or_enforce_draft_intent(tmp_path, core_factory):
     root = tmp_path / "p"
     builtin_project(root, extra_cards=[card("plan")])
-    (root / "definitions/plan/_meta.json").write_text('{"description":"Original","content":"Plan"}')
+    (root / "definitions/plan/README.md").write_text("---\ndescription: Original\n---\n\nPlan")
     client = core_factory(project_root=root).connect()
-    meta = '{"future":true,"name":false,"description":[],"comments":[{"text":"Ask","author":"user"}]}'
-    save(client, [change("PutDefinition", id="plan", cardJson='{"type":"code"}', metaJson=meta)])
+    comments = {"comments": [{"text": "Ask", "author": "user"}]}
+    save(client, [change("PutDefinition", id="plan", cardJson='{"type":"code"}', readme='Updated plan', commentsJson=json.dumps(comments))])
     result = next(d for d in client.call("ProjectInspectRequest").definitions if text(d.id) == "plan")
-    assert text(result.metaJson) == meta
+    assert json.loads(text(result.commentsJson)) == comments
+    assert text(result.readme) == "Updated plan"
     for invalid in ('[]', 'null', '{'):
         with pytest.raises(RpcFailure):
-            save(client, [change("PutDefinition", id="plan", cardJson='{"type":"code"}', metaJson=invalid)])
+            save(client, [change("PutDefinition", id="plan", cardJson='{"type":"code"}', commentsJson=invalid)])
 
 
 def test_presentation_saves_while_busy_keep_execution_revision_and_run_source_hash(core_factory, project, tmp_path):
@@ -39,16 +40,15 @@ def test_presentation_saves_while_busy_keep_execution_revision_and_run_source_ha
     gate.wait()
     try:
         document = json.loads(text(before.projectJson))
-        document["name"] = {"future": "Renamed"}
+        document["name"] = "Renamed"
         definition = next(d for d in before.definitions if text(d.id) == "work")
         settings = json.loads(text(definition.cardJson))
-        settings["displayMode"] = {"future": "anything"}
         result = save(client, [change("SetProject", json=json.dumps(document)),
-            change("PutDefinition", id="work", cardJson=json.dumps(settings), metaJson='{"comments":false,"future":12}')])
+            change("PutDefinition", id="work", cardJson=json.dumps(settings), readme="Updated description")])
         assert result.executionRev == before.executionRev
         settings["maxRuns"] = 2
         with pytest.raises(RpcFailure) as failure:
-            save(client, [change("PutDefinition", id="work", cardJson=json.dumps(settings), keepMeta=True)])
+            save(client, [change("PutDefinition", id="work", cardJson=json.dumps(settings), keepReadme=True, keepComments=True)])
         assert failure.value.kind == "busy"
     finally:
         gate.release()

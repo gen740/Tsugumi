@@ -18,9 +18,12 @@
 
 namespace tsugumi {
 
+namespace sql { class Db; }
+
 class Service;
 class RunExec;
 struct RemoteJobRecord;
+struct LogRead;
 
 struct RunPlanData {
   std::vector<CardPath> targets;
@@ -63,22 +66,18 @@ class Scheduler {
   static RunPlanData plan(const Resolution& res, const CardPath& card,
                           bool propagate);
   /// Drafts and the Cards that need their outputs (they do not run).
-  static std::set<size_t> draft_waiting(const Resolution& res);
   // Accepts a run (durable before returning) and starts it. Returns the
   // OperationReceipt bytes of the RunAccepted result.
   std::string accept(DocumentPtr doc, const RunParams& p);
   std::optional<RunStatusData> active_status();
+  auto live_log(const std::string& run_id, const std::function<LogRead(sql::Db&)>& read) -> LogRead;
   RunStatusData cancel(const std::string& run_id);
-  std::optional<Note> latest_display_note(const std::string& card_key);
-  // A committed change of the document. The display of a Card that left
-  // the document is its own: see gone_.
+  // Invalidate resident workers whose Card definitions changed.
   void document_changed(const Document& before, const Document& after);
   void shutdown();
 
   // Called by RunExec.
-  void publish_display(const DisplayData& d);
-  auto finished(RunSummaryData sum, const std::vector<DisplayData>& displays,
-                std::string record) -> void;
+  auto finished(RunSummaryData sum, std::string record) -> void;
 
  private:
   Service& svc_;
@@ -90,17 +89,6 @@ class Scheduler {
   std::vector<std::thread> reapers_;
   std::atomic<bool> stopping_{false};
   std::thread remote_cleanup_;
-  std::map<std::string, DisplayData>
-      displays_;  // latest per card key (any run)
-  // Cards that left the document, with what they were made of. Their name can
-  // come back: the same Card (an undo, an older version) has its display again,
-  // another Card under that name starts without one.
-  std::map<std::string, std::string> gone_;
-  // Card keys whose display went that way: the last run's history is not asked
-  // for them either, until they show something themselves.
-  std::set<std::string> no_display_;
 };
-
-Note display_note(const DisplayData& d);
 
 }  // namespace tsugumi

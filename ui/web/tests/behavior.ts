@@ -20,9 +20,7 @@ await import("./chatStopped")
 await import("./chatInterrupted")
 await import("./folderAttachments")
 await import("./booleanInput")
-await import("./reports")
 
-await import("./table")
 await import("./artifactHTML")
 
 await import("./draft")
@@ -65,11 +63,13 @@ await import("./freeSpot")
 
 
 
-await import("./draftDisplays")
+await import("./liveViews")
+await import("./cardViewStates")
 await import("./definitionErrors")
 
-await import("./nixSources")
-await import("./marimoTemplate")
+await import("./nixPath")
+await import("./nixEvaluation")
+await import("./cardTemplates")
 
 await import("./sessionRestore")
 await import("./sessionConnect")
@@ -82,21 +82,15 @@ await import('./environments')
 
 await import('./runComparison')
 
-await import('./moduleThumbnails')
-await import('./moduleViewer')
-await import('./wasmView.mjs')
-await import('./figurePreview')
 await import('./nixReferences')
 await import('./nixReferenceOverlay')
 
 
-await import("./lineChart")
 
 await import("./runScratch")
 await import('./cardIdentity')
 await import('./agentAppearance')
 
-await import("./invalidDisplays")
 
 
 
@@ -105,3 +99,4 @@ await import('./marimo')
 
 await import('./projectOperations')
 await import('./reviewOperations')
+await import('./dawnImports')

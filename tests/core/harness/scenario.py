@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -12,17 +11,11 @@ from projects import wait_run as wait_run
 from tsugumi_client import RpcFailure, change, new_id, path, text
 
 from .daemon import BUILD, ROOT
+from .document import params_nix
 from .file_events import wait_for_file
 
-# A mocked build has no pinned shell, so its Cards use the host's. NixOS and the
-# nixos/nix container have no /bin/bash and no tools in /usr/bin:/bin; there the
-# shell and the tools come from the PATH the tests run with.
-HOST_BASH = "/bin/bash" if os.access("/bin/bash", os.X_OK) else shutil.which("bash")
-HOST_PATH = "/usr/bin:/bin" if HOST_BASH == "/bin/bash" else os.environ["PATH"]
-
 STRING_OUTPUT = 'table Value { value:string; } table Outputs { out:Value; } root_type Outputs;'
-FILE_OUTPUT = ('attribute "tsugumi"; table File { value:string; } '
-               'table Outputs { doc:File (tsugumi:"file"); } root_type Outputs;')
+FILE_OUTPUT = 'table Document {} table Outputs { doc:Document; } root_type Outputs;'
 
 
 class Gate:
@@ -55,17 +48,19 @@ class Project:
         self.cards = {}
         self.connections = []
 
-    def card(self, name, definition, *, outputs=None, manifest=None, plan=None, sources=None):
+    def card(self, name, definition, *, outputs=None, plan=None, sources=None):
         files = dict(sources or {})
+        definition = dict(definition)
+        if "_params" in definition:
+            files["params.nix"] = definition.pop("_params")
+        if values := definition.pop("params", {}):
+            files["params.nix"] = params_nix(values)
         if outputs is not None:
             files["_outputs.fbs"] = outputs
-        if manifest is not None or plan is not None:
+        if plan is not None:
             # This source is interpreted only by the test build adapter.
-            files["default.nix"] = "{ pkgs, inputs, params }: { }"
-            product = {**(plan or {}), **({"manifest": manifest} if manifest else {})}
-            if "manifest" in product:
-                product["manifest"] = {"shell": HOST_BASH, "path": HOST_PATH, **product["manifest"]}
-            files["mock-build.json"] = json.dumps(product)
+            files["default.nix"] = "{ params, inputs }: { }"
+            files["mock-build.json"] = json.dumps(plan)
         self.cards[name] = (definition, files)
         return self
 

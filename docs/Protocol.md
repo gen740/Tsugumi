@@ -13,7 +13,7 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Regular status and log exchanges detect a lost connection; reconnection in the same core life resumes existing work. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 51 requests.
+There are 54 requests.
 
 ## Connection
 
@@ -192,29 +192,39 @@ No fields.
 | `offset` | `uint64` |  |  |
 | `limit_bytes` | `uint32` |  |  |
 
-## Card SDKs and types
+## Nix evaluation and Card types
 
 | Request | Response | Description |
 | --- | --- | --- |
-| [`CardSDKPrepare`](#cardsdkprepare) | CardSDKPrepareResult | Accepted asynchronously. |
-| [`CardSDKStatus`](#cardsdkstatus) | CardSDKPrepareResult or Failure |  |
-| [`InputTypes`](#inputtypes) | InputTypesResult | Read resolved incoming sources, port kinds and full types. The host renders SDK definitions in language (default: Card language; use language for a Draft or "schema" for tables). output_port selects an upstream output instead. |
-| [`OutputTypes`](#outputtypes) | OutputTypesResult | Compile _outputs.fbs text to reflection schema; port and type_name optionally set an output's type and kind in returned text. |
-| [`NixSourceResolve`](#nixsourceresolve) | NixSourceResolved | Resolve a flake to its commit, hash and packages for this system. May fetch and evaluate on first use. |
+| [`EvaluateNix`](#evaluatenix) | EvaluateNixResult | Evaluate a Nix expression on the local system in the saved Card's directory with its nixPath, params and inputs. Returns JSON. For Build SDK, evaluate (import ./. { inherit params inputs; }).api with build enabled to return the derivation's output files. |
+| [`NixPathLockSource`](#nixpathlocksource) | NixPathLockedSource | Fetch a source for an explicit Host lock update. |
+| [`RewriteParamLiteral`](#rewriteparamliteral) | RewrittenParamLiteral | Prepare a guarded params.nix edit for the Host. |
+| [`InputTypes`](#inputtypes) | InputTypesResult | Read resolved incoming sources and full types. output_port selects an upstream output instead. |
+| [`OutputTypes`](#outputtypes) | OutputTypesResult | Compile _outputs.fbs text to reflection schema; port and type_name optionally set an output's type in returned text. |
 
-### CardSDKPrepare
+### EvaluateNix
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `card` | `CardPath` | yes | Card path segments from the root project. |
+| `at_rev` | `uint64` |  |  |
+| `expression` | `string` | yes | Nix expression relative to this Card's definition directory. |
+| `build` | `bool` |  | Realize the derivation returned by the expression. Defaults to false. |
+
+### NixPathLockSource
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `url` | `string` | yes |  |
+
+### RewriteParamLiteral
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `card` | `CardPath` | yes |  |
+| `name` | `string` | yes |  |
+| `literal` | `string` | yes |  |
 | `at_rev` | `uint64` |  |  |
-| `op_id` | `string` | yes |  |
-
-### CardSDKStatus
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `op_id` | `string` | yes |  |
 
 ### InputTypes
 
@@ -223,7 +233,6 @@ No fields.
 | `card` | `CardPath` | yes |  |
 | `output_port` | `string` |  |  |
 | `at_rev` | `uint64` |  |  |
-| `language` | `string` |  | SDK language for host rendering; opaque to the project core. |
 
 ### OutputTypes
 
@@ -232,13 +241,6 @@ No fields.
 | `text` | `string` | yes |  |
 | `port` | `string` |  |  |
 | `type_name` | `string` |  |  |
-| `kind` | `PortKind` |  |  |
-
-### NixSourceResolve
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `ref` | `string` | yes |  |
 
 ## Running
 
@@ -291,6 +293,7 @@ No fields.
 | [`RunLatestInvocations`](#runlatestinvocations) | InvocationPage | Read each Card's latest invocation in a run. |
 | [`RunRecord`](#runrecord) | RecordResult | Read a Card's invocation record; choose invocation or follow_latest=true. |
 | [`RunValueRead`](#runvalueread) | FileContent | Read a recorded port value page; offset defaults to 0. |
+| [`RunCategoryDelete`](#runcategorydelete) | RunCategoryDeleteResult | Delete one category from a finished run. |
 | [`RunHistoryDelete`](#runhistorydelete) | RunHistoryDeleteResult | Delete finished runs and their records, values, logs and files. ended_before is a Unix-millisecond cutoff; omitted means all finished runs. |
 | [`RunDefinitionPaths`](#rundefinitionpaths) | RunDefinitionPaths | Accepted definition files for the recorded Card and its enclosing Cards, or for the whole run if card is absent. |
 | [`ArtifactList`](#artifactlist) | ArtifactPage | List run artifacts; invocation requires card. |
@@ -345,6 +348,14 @@ No fields.
 | `offset` | `uint64` |  |  |
 | `limit_bytes` | `uint32` |  |  |
 
+### RunCategoryDelete
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `op_id` | `string` | yes |  |
+| `run_id` | `string` | yes |  |
+| `category` | `RunRecordCategory` |  |  |
+
 ### RunHistoryDelete
 
 | Field | Type | Required | Description |
@@ -394,6 +405,7 @@ No fields.
 | `before` | `uint64` |  | Read up to limit_bytes immediately before this exclusive byte offset. Cannot be combined with tail or a nonzero offset. |
 | `terminal` | `bool` |  | Read the terminal display. Offsets and the size use four units per Unicode scalar. |
 | `terminal_since` | `uint64` |  | Raw byte size of the previous terminal update. Read the tail if a redraw overwrote cells since then. |
+| `live` | `bool` |  | Read stdout or stderr from the active run's transient log. |
 
 ### RunEnvironments
 
@@ -430,7 +442,9 @@ No fields.
 | --- | --- | --- |
 | [`ViewSetVisible`](#viewsetvisible) | Ack | Replaces the subscription's Display targets. enabled = true. |
 | [`ViewSave`](#viewsave) | ViewSaveResult | CAS on view_rev only. |
-| [`ModuleRead`](#moduleread) | FileContent | Read immutable display-module source in pages. |
+| [`CardViewRead`](#cardviewread) | FileContent | Read a page of the file of one view declaration: entry `index` (required) of the Card's views list, as CardViewsUpdated last sent it. `name` must be that entry's name, so a read made against a list that has since changed fails with not_found instead of serving another declaration. Names may repeat; the core never chooses between declarations by name. Only declared regular files that resolve inside the Nix store are served, read from one open descriptor, and their bytes are relayed without being interpreted. Neither RPC trace records these requests or their replies. FileContent.name is the view name and hash is the declared store path, which names immutable content. offset defaults to 0 and limit_bytes to 1 MiB (1..1048576). |
+| [`ViewSend`](#viewsend) | Ack | Send opaque bytes from an open view to its Card process. With no live Card process the bytes are dropped and the reply is still Ack. |
+| [`ViewCredit`](#viewcredit) | Ack | Return display capacity after the UI forwards or discards a message. |
 
 ### ViewSetVisible
 
@@ -446,15 +460,35 @@ No fields.
 | --- | --- | --- | --- |
 | `view_id` | `string` | yes |  |
 | `base_view_rev` | `uint64` |  |  |
-| `view_json` | `string` | yes |  |
+| `view` | `[ubyte]` | yes |  |
 
-### ModuleRead
+### CardViewRead
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `module` | `string` | yes |  |
+| `card` | `CardPath` | yes |  |
+| `name` | `string` | yes |  |
 | `offset` | `uint64` |  |  |
 | `limit_bytes` | `uint32` |  |  |
+| `index` | `uint32` |  |  |
+
+### ViewSend
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `card` | `CardPath` | yes |  |
+| `view` | `string` | yes |  |
+| `bytes` | `[ubyte]` | yes |  |
+
+### ViewCredit
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `subscription_id` | `string` | yes |  |
+| `card` | `CardPath` | yes |  |
+| `view` | `string` | yes |  |
+| `bytes` | `uint32` |  |  |
+| `credit_id` | `uint64` |  |  |
 
 ## Versions
 
@@ -535,6 +569,8 @@ Sent from `tsugumid` to connected clients.
 - `DisplayUpdated`
 - `LogAvailable`
 - `TraceChanged`
+- `RunCategoryDeleteResult`
+- `CardViewsUpdated`
 
 ### Run events
 
@@ -628,8 +664,8 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `HostRecentRememberRequest` | `path: string` (required) |
 | `HostRecentForgetRequest` | `paths: [string]` |
 | `LayoutValidateRequest` | `json: string` (required), `removed_cards: [string]` |
-| `VersionCanvasRequest` | `layout_json: string` (required), `cards: [VersionCanvasCard]`, `wires: [VersionCanvasWire]` |
-| `FileFormatRequest` | `path: string` (required), `text: string` (required), `language: FormatLanguage` |
+| `VersionCanvasRequest` | `layout: [ubyte]` (required), `cards: [VersionCanvasCard]`, `wires: [VersionCanvasWire]` |
+| `FileFormatRequest` | `path: string` (required), `text: string` (required) |
 | `HostVersionGraphRequest` | `project: string` (required), `language: string`, `limit: uint` |
 | `HostVersionDiffRequest` | `project: string` (required), `commit: string` (required), `from_commit: string` |
 | `PermissionKindsRequest` | `language: string` |
@@ -638,10 +674,9 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `DemoListRequest` | None |
 | `DemoReadRequest` | `path: string` (required) |
 | `VersionNoteRequest` | `project_id: string` (required), `commit: string` (required), `language: string` (required) |
-| `DisplayGeometryRequest` | None |
-| `LayoutCompleteRequest` | `project_json: string` (required), `layout_json: string` (required), `definitions_json: string` (required) |
+| `LayoutCompleteRequest` | `project_json: string` (required), `layout: string` (required), `definitions_json: string` (required) |
 | `IdentifierReserveRequest` | `project_id: string` (required), `kind: string` (required), `scope: string`, `occupied: [string]` |
-| `InputTypesRequest` | `project: string` (required), `card: CardPath` (required), `output_port: string`, `language: string`, `at_rev: ulong` |
+| `InputTypesRequest` | `project: string` (required), `card: CardPath` (required), `output_port: string`, `at_rev: ulong` |
 | `HostActivityRequest` | None |
 | `EnvironmentListRequest` | None |
 | `HostTraceRequest` | `mode: ubyte`, `source: string`, `after: ulong`, `generation: ulong` |
@@ -652,5 +687,8 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `HostFolderCreateRequest` | `parent: string` (required), `name: string` (required) |
 | `CardSecretListRequest` | `project_id: string` (required) |
 | `CardSecretSetRequest` | `project_id: string` (required), `name: string` (required), `value: string`, `remove: bool` |
+| `RunCategoryDeleteRequest` | `project_id: string` (required), `run_id: string` (required), `category: Tsugumi.RPC.RunRecordCategory`, `op_id: string` (required) |
+| `TemplateListRequest` | `project_id: string` (required) |
+| `HostTemplateAddRequest` | `addition: TemplateAdd` (required) |
 
-Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`, `HostHome`, `FolderListing`, `CardSecretList`.
+Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`, `HostHome`, `FolderListing`, `CardSecretList`, `RunCategoryDeleteResult`, `TemplateList`.

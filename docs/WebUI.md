@@ -25,7 +25,7 @@ Browser ── WebSocket /rpc ── loopback relay ── vsock ── tsugumid
 
 The page supplies its origin in `EnvironmentRequest`; hostd applies them when starting the project daemon. The browser authenticates to that daemon with its project token. Agent requests run in hostd on the host. [RPC authentication](security.md#6-rpc-authentication)
 
-The installed Mac command uses the release app's support directory by default:
+The installed Mac command uses the release app's support directory by default. A `tsugumi` built from source is the development version, like the app built from source, and uses `~/Library/Application Support/Tsugumi-dev/` instead ("Development and release versions" in [Releasing](../RELEASING.md)):
 
 | Data | Location and sharing |
 | --- | --- |
@@ -71,13 +71,14 @@ npm --prefix ui/web run build
 build/cli/tsugumi web
 ```
 
-The command finds `tsugumi-hostd`, `tsugumid`, the worker, the SDK and the page (`ui/web/dist/public`) in the checkout and starts hostd with them; `--port` asks for a port and a project folder shows that project at once. Open the `http://127.0.0.1:8780/?key=…` it prints when the browser does not open.
+The command finds `tsugumi-hostd`, `tsugumid`, the worker and the page (`ui/web/dist/public`) in the checkout and starts hostd with them; `--port` asks for a port and a project folder shows that project at once. Open the `http://127.0.0.1:8780/?key=…` it prints when the browser does not open.
 
 `key` is a key made at each hostd start. hostd replaces it with a cookie only this page sends (HttpOnly, SameSite=Strict) and removes it from the address bar. The page's Host token (`POST /api/host/connect`, which also needs a dedicated header) and its `/rpc/host` and `/rpc/agent` WebSockets require this cookie and the page's own Origin; hostd then authenticates the binary Hello. Responses carry a CSP (`frame-ancestors 'none'`) and `nosniff`. Only the user's principal gets a URL with the key; the Claude Code plugin works as the external principal ([Security §7](security.md#the-agents-permission-boundary)).
 
 | Environment variable | Meaning |
 | --- | --- |
-| `TSUGUMID` / `TSUGUMI_WORKER` / `TSUGUMI_SDK_DIR` | Project daemon, worker and SDK locations (defaults under `build/` and `sdk/`) |
+| `TSUGUMID` / `TSUGUMI_WORKER` | Project daemon and worker locations (defaults under `build/`) |
+| `TSUGUMI_NIX_DIR` | The core's Nix files used to evaluate Cards (default `share/tsugumi/nix` beside the installed binaries). Cards obtain SDKs from their project’s [Nix search path](features.md#project-nix-search-path) |
 | `TSUGUMI_HOSTD` / `TSUGUMI_HOST_STATE` | Host service binary and its state folder (defaults chosen by `cli/src/launch.cc`) |
 | `TSUGUMI_WEB_ROOT` / `TSUGUMI_WEB_PORT` | The built page hostd serves and the port it asks for |
 | `TSUGUMI_VM_X86=qemu` | The Mac's shared VM runs x86_64-linux Cards with qemu instead of Rosetta (by default Rosetta when it is installed; [Another system](features.md#another-system-x86_64-linux)). Also read by the desktop app |
@@ -92,9 +93,7 @@ Starting the repository's daemon directly on a Mac uses Seatbelt. Review its [we
 
 ## Several projects
 
-Each browser tab can open a different project (how this corresponds to the app's windows: [Several projects](Usage.md#several-projects)). ⌘O, demos and duplicates from a project's tab open in a new tab, and "Open Home in a New Tab" on the Canvas adds a Home tab. A browser cannot bring another tab to the front, though, so the same project can be open in two tabs (equal clients of the same `tsugumid`; a save in one shows in the other). Going back Home closes that project's windows, such as Card settings. If no other tab shows the project, its terminal tabs and chat observation close; hostd, the project daemon and active core conversations continue. Reopening the project reconnects to them.
-
-hostd manages one `tsugumid` per project. Each page reports what it shows on its Host connection (`HostPageRequest`; the Mac app's main windows share one connection and each names its page), so a project the user or Claude Code shows goes to a tab or window showing it or to one on Home, and one showing another project is not switched.
+Each browser tab can open a different project. Opening a project in a second UI connection returns `project_in_use` while the first UI is connected. Opening another project, a demo or a duplicate can use a new tab. Returning Home closes project windows and observation. Reopening the project reconnects to the project daemon and active conversations.
 
 ## Shortcuts
 

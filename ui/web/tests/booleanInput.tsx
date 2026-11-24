@@ -1,37 +1,54 @@
 import { cardIds } from './cardIds'
 import assert from 'node:assert/strict'
+import { Builder } from 'flatbuffers'
 import TestRenderer from 'react-test-renderer'
 import { L } from '../src/i18n'
 import { CardGeometry } from '../src/model/canvasKit'
 import { ProjectSession, TEMPLATES, definitionKind } from '../src/model/session'
-import { get, parse, serialize } from '../shared/json'
+import { get, parse } from '../shared/json'
 import { CardNodeView, ParamFieldView } from '../src/ui/cardNode'
-import { CardEditorModel } from '../src/ui/cardSettings'
+import { CardEditorModel, CardSettingsEditor } from '../src/ui/cardSettings'
+import * as H from '../shared/gen/tsugumi/host'
+import { R, cardPath } from '../src/wire/rpc'
 
 const session = cardIds(new ProjectSession('/input-test', 'input-test', 'input-test'))
 session.project = parse('{"name":"input-test","canvas":{"cards":[],"connections":[]}}')
 session.layout = parse('{}')
 let operations = 0
 const operate = session.operateProject
-session.operateProject = async request => { operations++; return operate(request) }
+const resolved = (card: string, value: string) =>
+  Object.assign(new R.ResolvedCardT(), { card: cardPath([card]), parameters: [new R.CardParameterT('value', 'bool', value)] })
+session.operateProject = async request => {
+  operations++
+  if (request.bodyType !== H.ProjectOperationBody.ProjectRewriteParamLiteral) return operate(request)
+  const param = request.body as H.ProjectRewriteParamLiteralT
+  assert.equal(param.expectedRev, session.rev)
+  assert.equal(param.name, 'value')
+  assert.deepEqual(param.card?.segments, ['calibrate'])
+  const delta = Object.assign(new R.DocumentDeltaT(), { baseRev: session.rev, rev: session.rev + 1n,
+    resolution: [resolved('calibrate', String(param.literal))] })
+  const builder = new Builder()
+  builder.finish(new H.ProjectEditsT().pack(builder))
+  return Object.assign(new R.SaveResultT(), { rev: delta.rev, delta, operationData: [...builder.asUint8Array()] })
+}
 const preset = TEMPLATES.find(t => t.id === 'input_bool')
 assert.ok(preset)
 const card = await session.addCard(preset.id, [], { x: 0, y: 0 }, 'calibrate')
-const branch = await session.addCard('branch', [], { x: 0, y: 100 })
+const merge = await session.addCard('merge', [], { x: 0, y: 100 })
 assert.equal(definitionKind(session.cardDefinition(card)), 'input')
-assert.deepEqual(session.inlineParams(card), [{ name: 'value', type: 'bool', value: 'false' }])
-await session.connect([card, 'value'], [branch, 'condition'], [])
+await session.connect([card, 'value'], [merge, 'a'], [])
 assert.ok(session.connections([]).some(wire =>
   get(wire, 'from', 'card') === card && get(wire, 'from', 'port') === 'value' &&
-  get(wire, 'to', 'card') === branch && get(wire, 'to', 'port') === 'condition'))
+  get(wire, 'to', 'card') === merge && get(wire, 'to', 'port') === 'a'))
 
+session.resolution.get(card)!.parameters = [{ name: 'value', type: 'bool', value: false }]
+assert.deepEqual(session.inlineParams(card), [{ name: 'value', type: 'bool', value: 'false' }])
 const before = operations
 let pending: Promise<void> | undefined
 const render = (editable: boolean) => <ParamFieldView param={session.inlineParams(card)[0]} editable={editable}
   commit={value => {
     pending = (async () => {
-      await session.applyMutation(x => x.updateParam(card, 'value', value === 'true'))
-      await session.save()
+      await session.setParam(card, 'value', value, session.rev)
     })()
     return pending
   }} />
@@ -47,12 +64,44 @@ view.update(render(false))
 assert.equal(checkbox().props.disabled, true)
 view.unmount()
 assert.equal(operations, before + 1, 'Toggling submits one operation')
-const saved = parse(serialize(session.cardDefinition(card)!))
-assert.equal(get((get(saved, 'params') as any[])[0], 'data'), true, 'The saved value is a boolean')
-await session.undo()
-assert.equal(session.inlineParams(card)[0].value, 'false')
-await session.redo()
+assert.equal(get(session.cardDefinition(card), 'params'), undefined)
 assert.equal(session.inlineParams(card)[0].value, 'true')
+
+// List parameters in Settings display and submit Nix syntax.
+session.resolution.get(card)!.parameters = [{ name: 'values', type: '[float]', value: parse('[1,-2.5]') }]
+const definition = session.cardDefinition(card)
+const list = '[ 2.0 (-3.5) 4.0 ]'
+let listWrites = 0
+const operateBeforeList = session.operateProject
+session.operateProject = async request => {
+  assert.equal(request.bodyType, H.ProjectOperationBody.ProjectRewriteParamLiteral)
+  const param = request.body as H.ProjectRewriteParamLiteralT
+  assert.deepEqual(param.card?.segments, [card])
+  assert.equal(param.name, 'values')
+  assert.equal(param.literal, list)
+  assert.equal(param.expectedRev, session.rev)
+  listWrites++
+  const delta = Object.assign(new R.DocumentDeltaT(), { baseRev: session.rev, rev: session.rev + 1n,
+    resolution: [Object.assign(new R.ResolvedCardT(), { card: cardPath([card]),
+      parameters: [new R.CardParameterT('values', '[float]', '[2,-3.5,4]')] })] })
+  const builder = new Builder()
+  builder.finish(new H.ProjectEditsT().pack(builder))
+  return Object.assign(new R.SaveResultT(), { rev: delta.rev, delta, operationData: [...builder.asUint8Array()] })
+}
+const settings = TestRenderer.create(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
+const row = settings.root.findByProps({ 'data-guide': 'param:values' })
+const input = row.findByType('input')
+assert.equal(input.props.value, '[ 1.0 (-2.5) ]')
+TestRenderer.act(() => input.props.onChange({ target: { value: list } }))
+// Async act in the bundled renderer creates MessagePorts that keep Node running.
+TestRenderer.act(() => input.props.onKeyDown({
+  key: 'Enter', nativeEvent: { isComposing: false }, stopPropagation() {},
+}))
+await session.save()
+assert.equal(listWrites, 1)
+assert.deepEqual(session.cardDefinition(card), definition)
+settings.unmount()
+session.operateProject = operateBeforeList
 
 const draft = await session.addCard('draft', [], { x: 100, y: 0 })
 const draftEditor = new CardEditorModel(session, draft)
@@ -60,10 +109,11 @@ draftEditor.implementAs('input')
 draftEditor.implementAs(preset.id)
 assert.equal(draftEditor.implementation, preset.id)
 assert.equal(await draftEditor.apply(), true)
-assert.deepEqual(session.inlineParams(draft), [{ name: 'value', type: 'bool', value: 'false' }])
-const outputSchema = (async (id: string) => (await session.sourceText(`definitions/${id}/_outputs.fbs`))
-  .replace(/^namespace .*;\n/, ''))
-assert.equal(await outputSchema(draft), await outputSchema(card))
+assert.equal(await session.sourceText(`definitions/${draft}/params.nix`), '{ value = false; }\n')
+assert.equal(get(session.cardDefinition(draft), 'params'), undefined)
+const draftSchema = await session.sourceText(`definitions/${draft}/_outputs.fbs`)
+assert.match(draftSchema, /table Value \{ value:bool; \}/)
+assert.match(draftSchema, /table Outputs \{ value:Value \(required\); \}/)
 
 const customDraft = await session.addCard('draft', [], { x: 200, y: 0 })
 const original = 'table Value { value:bool; } table Outputs { custom:Value (required); } root_type Outputs;'
@@ -88,10 +138,10 @@ assert.equal(await freshEditor.apply(), true)
 assert.equal(await session.sourceText(freshEditor.outputsPath!), localSchema)
 
 // Routing ports shrink with the body. At 20%, the old 16px target covered the
-// start's title and the branch's centre, stealing a body drag to start a wire.
+// start's title and the routing Card's centre, stealing a body drag to start a wire.
 for (const flow of ['topToBottom', 'leftToRight'] as const) {
   for (const zoom of [1, 0.2]) {
-    for (const kind of ['trigger', 'branch', 'merge', 'collect'] as const) {
+    for (const kind of ['trigger', 'merge', 'collect'] as const) {
       const data = { ...session.nodeData(card), kind,
         inputs: kind === 'trigger' ? [] : [{ name: 'value' }, { name: 'condition' }],
         outputs: [{ name: 'a' }, { name: 'b' }] }

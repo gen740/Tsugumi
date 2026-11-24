@@ -47,7 +47,7 @@ struct EvidenceMarkup: ViewModifier {
         }
         return .handled
       })
-      .task(id: "\(text)|\(session.rev)|\(String(describing: session.lastFinished))") {
+      .task(id: "\(text)|\(session.rev)|\(String(describing: session.lastFinished))|\(session.recordingRevision)") {
         allowed = []
         for href in Self.links(MarkdownDocument.parse(text).blocks) {
           guard !Task.isCancelled else { return }
@@ -107,9 +107,6 @@ struct EvidenceView: View {
             }.buttonStyle(.link).disabled((row.invocation ?? 0) == 0)
           }
           if let r = record?.record {
-            if let display = r.display.flatMap(recordedDisplay) {
-              DisplayContent(display: display, large: true).frame(height: 360)
-            }
             Text("入力").font(.headline)
             ForEach(Array(r.inputs.compactMap { $0 }.enumerated()), id: \.offset) { _, value in Text(describeValue(value)).monospaced().textSelection(.enabled) }
             Text("出力").font(.headline)
@@ -118,10 +115,14 @@ struct EvidenceView: View {
         }.frame(maxWidth: .infinity, alignment: .leading)
       }
     }.padding(20).frame(minWidth: 650, minHeight: 450)
-      .task { await load() }
-      .sheet(item: $selected) { EvidenceView(session: session, target: $0) }
+      .task(id: "\(target.href)|\(session.recordingRevision)") { await load() }
   }
   private func load() async {
+    artifact = nil
+    artifactMember = nil
+    preview = nil
+    record = nil
+    rows = []
     if target.kind == "card", let file = target.file, let card = target.card,
        let directory = session.definitionDir(key(card)), let rpc = session.rpc {
       do {
@@ -146,11 +147,11 @@ struct EvidenceView: View {
         artifactMember = member
         let request = Tsugumi_RPC_ArtifactReadRequestT()
         request.artifactId = a.artifactId
-        request.member = a.kind == .directory ? member : nil
+        request.member = member
         request.limitBytes = 65536
         let data: Tsugumi_RPC_FileContentT = try await rpc.call(.artifactreadrequest, request)
         if data.eof == true { preview = NSImage(data: Data(data.bytes)) }
-        bodyText = "\(session.displayPath(a.card.path)) · \(a.output)\n\(member ?? "")\n\n" + (preview == nil ? (String(bytes: data.bytes, encoding: .utf8) ?? String(localized: "バイナリの成果物です")) : "")
+        bodyText = "\(session.displayPath(a.card.path)) · \(a.artifactId)\n\(member ?? "")\n\n" + (preview == nil ? (String(bytes: data.bytes, encoding: .utf8) ?? String(localized: "バイナリの成果物です")) : "")
         if data.eof != true { bodyText += "\n" + String(localized: "先頭 64 KiB を表示") }
       } else if let card = target.card {
         let r = try await rpc.record(runId: run, card: card, invocation: target.invocation)
@@ -181,7 +182,7 @@ struct EvidenceView: View {
       guard await target.exists(in: session) else {
         exportError = String(localized: "このプロジェクトに根拠の記録がありません"); return
       }
-      let data = try await rpc.readArtifact(id: artifact.artifactId, member: artifact.kind == .directory ? member : nil)
+      let data = try await rpc.readArtifact(id: artifact.artifactId, member: member)
       try data.write(to: url, options: .atomic)
     } catch { exportError = String(describing: error) }
   }

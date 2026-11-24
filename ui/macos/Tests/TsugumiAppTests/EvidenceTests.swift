@@ -45,23 +45,6 @@ import TsugumiRPC
   #expect(EvidenceMarkup.links(document.blocks) == ["card:spectrum", "run:12"])
 }
 
-@Test func evidenceDecodesTheCitedDisplayWithoutUsingTheLiveResult() throws {
-  let text = Tsugumi_Data_DisplayTextT()
-  text.text = "recorded photons: 157471"
-  let recorded = Tsugumi_Data_DisplayT()
-  recorded.runId = "12"
-  recorded.invocation = 1
-  recorded.revision = 7
-  recorded.value = Tsugumi_Data_DisplayValueUnion(text, type: .displaytext)
-  let snapshot = try #require(recordedDisplay(recorded))
-  #expect(snapshot.runId == recorded.runId)
-  #expect(snapshot.invocation == 1)
-  #expect(snapshot.revision == 7)
-  guard case .text(let value) = snapshot.value else { Issue.record("Expected recorded text"); return }
-  #expect(value == "recorded photons: 157471")
-  if case .unavailable? = recordedDisplay(Tsugumi_Data_DisplayT())?.value {} else { Issue.record("Malformed display needs an unavailable state") }
-}
-
 @Test func findingParagraphsKeepExactSourceLocations() throws {
   let values = ChatFinding.list("Read only: [source](card:outer/inner?file=src%2Fmain.py&lines=12-18) uses a clock.\n\nOther prose.")
   #expect(values.count == 1)

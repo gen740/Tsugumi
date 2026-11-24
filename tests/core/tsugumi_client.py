@@ -28,9 +28,13 @@ sys.path.insert(0, os.path.abspath(GENERATED))
 
 import flatbuffers  # noqa: E402
 from Tsugumi.Data.CardPath import CardPathT  # noqa: E402
+from Tsugumi.Data.Display import DisplayT  # noqa: E402
 from Tsugumi.Data.FailureKind import FailureKind  # noqa: E402
 from Tsugumi.RPC import Message as _Message  # noqa: E402
 from Tsugumi.RPC.Message import MessageT  # noqa: E402
+from Tsugumi.RPC.DisplayUpdated import DisplayUpdated, DisplayUpdatedT  # noqa: E402
+from Tsugumi.RPC.Notification import Notification, NotificationT  # noqa: E402
+from Tsugumi.RPC.NotificationPayload import NotificationPayload  # noqa: E402
 from Tsugumi.RPC.Payload import Payload  # noqa: E402
 from Tsugumi.RPC.ReplyPayload import ReplyPayload  # noqa: E402
 from Tsugumi.RPC.RequestPayload import RequestPayload  # noqa: E402
@@ -94,6 +98,26 @@ def encode_request(request_id: int, name: str, obj: Any) -> bytes:
 
 def decode_message(buf: bytes) -> MessageT:
     m = _Message.Message.GetRootAs(buf, 0)
+    if m.PayloadType() == Payload.Notification:
+        payload = m.Payload()
+        notification = Notification()
+        notification.Init(payload.Bytes, payload.Pos)
+        if notification.ValueType() == NotificationPayload.DisplayUpdated:
+            # The generated object API decodes vectors one byte at a time
+            # without NumPy. Copy the opaque display vector in one operation.
+            value = notification.Value()
+            update = DisplayUpdated()
+            update.Init(value.Bytes, value.Pos)
+            display = update.Display()
+            table = display._tab
+            offset = table.Offset(8)  # Display.bytes, field id 2
+            start = table.Vector(offset)
+            data = buf[start:start + table.VectorLen(offset)]
+            decoded = DisplayT(card=CardPathT.InitFromObj(display.Card()), view=display.View(),
+                               bytes=data, creditId=display.CreditId())
+            note = NotificationT(subscriptionId=notification.SubscriptionId(), seq=notification.Seq(),
+                                 valueType=notification.ValueType(), value=DisplayUpdatedT(display=decoded))
+            return MessageT(requestId=m.RequestId(), payloadType=Payload.Notification, payload=note)
     return MessageT.InitFromObj(m)
 
 
@@ -254,9 +278,9 @@ class Client:
 
     # -- conveniences ------------------------------------------------------------
 
-    def hello(self, token: Optional[str] = None, project: Optional[str] = None):
+    def hello(self, token: Optional[str] = None, project: Optional[str] = None, *, client=0):
         return self.call("SessionHelloRequest", token=token,
-                         expectedProjectId=project)
+                         expectedProjectId=project, client=client)
 
     def open(self, view_id: Optional[str] = None):
         opened = self.call("ProjectOpenRequest", viewId=view_id)
@@ -284,16 +308,3 @@ def change(kind: str, **fields: Any):
 
 def text(v: Any) -> Any:
     return v.decode() if isinstance(v, bytes) else v
-
-
-def line_chart_series(value):
-    """Decode a built-in line view's binary input for integration assertions."""
-    import json
-    import struct
-    from types import SimpleNamespace
-    config = json.loads(text(value.configJson))
-    blobs = {text(b.name): bytes(b.data) for b in value.blobs}
-    x = struct.unpack("<" + "d" * (len(blobs["x"]) // 8), blobs["x"])
-    y = struct.unpack("<" + "d" * (len(blobs["y"]) // 8), blobs["y"])
-    return [SimpleNamespace(id=s["id"], label=s["label"], x=x[s["offset"]:s["offset"] + s["count"]],
-                            y=y[s["offset"]:s["offset"] + s["count"]]) for s in config["series"]]

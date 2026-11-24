@@ -6,6 +6,7 @@
   chromium,
   dejavu_fonts,
   fetchurl,
+  flatbuffers,
   makeFontsConf,
   unzip,
   runCommand,
@@ -24,6 +25,7 @@ in
 runCommand "tsugumi-web-checks"
   {
     nativeBuildInputs = [
+      flatbuffers
       nodejs
     ]
     ++ lib.optional stdenv.hostPlatform.isDarwin unzip;
@@ -32,7 +34,6 @@ runCommand "tsugumi-web-checks"
       fileset = lib.fileset.unions [
         ../ui/web/scripts/test.mjs
         ../ui/web/tests
-        ../sdk/views
         ../tests/bench/wire-frames.ts
         ../tests/fixtures
         ../hostd/agent/Shared/system-prompt.md
@@ -48,6 +49,7 @@ runCommand "tsugumi-web-checks"
     ln -s ${web.testSupport}/node_modules source/ui/web/node_modules
     cp -R ${web.testSupport}/gen source/ui/web/shared/gen
     export TSUGUMI_SITE_PLAYER_DIR=${web.sitePlayer}
+    export TSUGUMI_WEB_PUBLIC_DIR=${web}/share/tsugumi/ui/web/dist/public
     export TSUGUMI_DOCUMENT_EDIT_DRIVER=${operationDriver}/libexec/tsugumi-tests/tsugumi_document_edit_driver
     ${
       if stdenv.hostPlatform.isDarwin then

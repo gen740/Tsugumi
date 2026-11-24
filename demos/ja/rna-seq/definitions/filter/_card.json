@@ -1,18 +1,8 @@
 {
   "type": "code",
-  "language": "r",
   "inputs": [
     {
       "name": "airway"
-    }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "counts",
-  "params": [
-    {
-      "name": "min_total",
-      "type": "uint64",
-      "data": 10
     }
   ]
 }

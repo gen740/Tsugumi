@@ -24,6 +24,194 @@ namespace {
 class CancelledCopy : public AgentProjectFixture,
                       public ::testing::WithParamInterface<bool> {};
 
+TEST_F(AgentProjectFixture, TemplateStoresCopyWholeGraphsWithFreshIds) {
+  StartProject();
+  const auto folder = directory.path / "sample-template";
+  Write(folder / "start/_card.json", R"({"type":"input"})");
+  Write(folder / "start/params.nix", "{ value = 1.0; }");
+  Write(folder / "start/_outputs.fbs",
+        "namespace sample; table Value { value:double; } "
+        "table Outputs { value:Value (required); } root_type Outputs;");
+  Write(folder / "plan/_card.json", R"({"type":"draft"})");
+  Write(folder / "plan/src/notes.txt", "source");
+  Write(
+      folder / "tsugumi.json",
+      R"({"canvas":{"cards":[{"id":"start"},{"id":"plan"}],"connections":[{"from":{"card":"start","port":"value"},"to":{"card":"plan","port":""}}]}})");
+  Write(folder / "layout.bin",
+        FixtureLayout(R"({"cards":{"start":{"x":0,"y":0},"plan":{"x":250,"y":30}}})"));
+  H::TemplateAddT addition;
+  addition.name = "Shared name";
+  H::TemplateFolderT local;
+  local.path = folder.string();
+  addition.source.Set(local);
+  auto operate = [&](const H::ProjectOperationBodyUnion& body,
+                     const std::string& op) {
+    H::ProjectOperateRequestT request;
+    request.project_id = project_id;
+    request.op_id = op;
+    request.body = body;
+    return Call(*host, H::RequestPayload::ProjectOperateRequest,
+                [&](Builder& b) {
+                  return H::ProjectOperateRequest::Pack(b, &request).Union();
+                });
+  };
+  auto list = [&] {
+    return Call(*host, H::RequestPayload::TemplateListRequest, [&](Builder& b) {
+      return H::CreateTemplateListRequest(b, b.CreateString(project_id))
+          .Union();
+    });
+  };
+  H::ProjectOperationBodyUnion body;
+  body.Set(addition);
+  const auto added = operate(body, "add-template");
+  ASSERT_TRUE(added.Code().empty()) << added.View();
+  ASSERT_EQ(added.HostValue()
+                ->value_as_ProjectOperationResult()
+                ->reply()
+                ->value_type(),
+            Tsugumi::RPC::ReplyPayload::SaveResult);
+  const auto disk = directory.path / "project";
+  ASSERT_TRUE(std::filesystem::is_regular_file(
+      disk / "templates/Shared name/plan/src/notes.txt"));
+  EXPECT_FALSE(std::filesystem::exists(disk / "definitions/plan"));
+
+  Write(folder / "plan/src/notes.txt", "host source");
+  H::HostTemplateAddRequestT add_host;
+  add_host.addition = std::make_unique<H::TemplateAddT>(addition);
+  auto add_to_host = [&] {
+    return Call(*host, H::RequestPayload::HostTemplateAddRequest,
+                [&](Builder& b) {
+                  return H::HostTemplateAddRequest::Pack(b, &add_host).Union();
+                });
+  };
+  EXPECT_TRUE(add_to_host().Code().empty());
+  EXPECT_EQ(add_to_host().Code(), "value_conflict");
+
+  const auto listed = list();
+  ASSERT_TRUE(listed.Code().empty()) << listed.View();
+  const auto* entries = listed.HostValue()->value_as_TemplateList()->entries();
+  ASSERT_EQ(entries->size(), 2u);
+  EXPECT_EQ(entries->Get(0)->store(), H::TemplateStore::Project);
+  EXPECT_EQ(entries->Get(1)->store(), H::TemplateStore::Host);
+  for (const auto* entry : *entries)
+    EXPECT_EQ(entry->name()->str(), addition.name);
+
+  H::ProjectTemplateCopyT copy;
+  copy.name = addition.name;
+  copy.x = 10;
+  copy.y = 20;
+  auto success = [&](H::TemplateStore store, const std::string& op) {
+    copy.store = store;
+    body.Set(copy);
+    const auto replied = operate(body, op);
+    ASSERT_TRUE(replied.Code().empty()) << replied.View();
+    const auto* reply =
+        replied.HostValue()->value_as_ProjectOperationResult()->reply();
+    const auto* failure = reply->value_as_Failure();
+    ASSERT_EQ(reply->value_type(), Tsugumi::RPC::ReplyPayload::SaveResult)
+        << op << (failure && failure->diagnostic()
+                      ? ": " + failure->diagnostic()->str()
+                      : "");
+  };
+  success(H::TemplateStore::Project, "project-copy");
+  success(H::TemplateStore::Project,
+          "project-copy");  // Replay uses the same IDs.
+  success(H::TemplateStore::Host, "host-copy");
+  const auto document = Read(disk / "tsugumi.json");
+  namespace json = tsugumi::json;
+  const auto graph = json::Object(json::Object(document).at("canvas"));
+  EXPECT_EQ(json::Array(graph.at("cards")).size(), 4u);
+  const auto wires = json::Array(graph.at("connections"));
+  ASSERT_EQ(wires.size(), 2u);
+  auto endpoint = [&](size_t index, const char* end) {
+    return json::Text(json::Object(json::Object(wires[index]).at(end)), "card");
+  };
+  EXPECT_NE(endpoint(0, "from"), endpoint(1, "from"));
+  EXPECT_NE(endpoint(0, "to"), endpoint(1, "to"));
+  EXPECT_EQ(Read(disk / "definitions" / endpoint(0, "to") / "src/notes.txt"),
+            "source");
+  EXPECT_EQ(Read(disk / "definitions" / endpoint(1, "to") / "src/notes.txt"),
+            "host source");
+  const auto layout = json::Object(FixtureLayoutText(Read(disk / "layout.bin")));
+  const auto positions = json::Array(layout.at("cards"));
+  const auto plan = std::find_if(positions.begin(), positions.end(), [&](const auto& raw) {
+    return json::Text(json::Object(raw), "key") == endpoint(0, "to");
+  });
+  ASSERT_NE(plan, positions.end());
+  EXPECT_EQ(std::stod(json::Object(*plan).at("x")), 260);
+
+  copy.name = "../outside";
+  body.Set(copy);
+  EXPECT_EQ(operate(body, "unsafe-template").Code(), "invalid_request");
+  copy.name = "missing";
+  body.Set(copy);
+  EXPECT_EQ(operate(body, "stale-template").Code(), "not_found");
+  EXPECT_EQ(Read(disk / "tsugumi.json"), document);
+}
+
+TEST_F(AgentProjectFixture,
+       AgentTemplateWritesNeedApprovalAndRespectExclusions) {
+  const auto folder = directory.path / "picked-template";
+  Write(folder / "start/_card.json", R"({"type":"trigger"})");
+  Write(directory.path / "project/templates/private/start/_card.json",
+        R"({"type":"trigger"})");
+  StartProject(
+      false,
+      R"({"name":"Templates","nixPath": [],"agentExclude":["templates/private"],"canvas":{"cards":[],"connections":[]}})");
+  const auto conversation = Conversation("agent-templates");
+  Grant(conversation);
+  Grant(conversation, Tsugumi::Service::Access::Write);
+
+  const auto arguments = tsugumi::json::Encode(
+      tsugumi::json::Members{{"store", Quote("project")},
+                             {"name", Quote("chosen")},
+                             {"path", Quote(folder.string())}});
+  const auto pending = Tool(conversation, "template_add", arguments, "add");
+  ASSERT_EQ(pending.Code(), "grant_required") << pending.View();
+  EXPECT_FALSE(
+      std::filesystem::exists(directory.path / "project/templates/chosen"));
+
+  const auto unapproved = Tool(
+      conversation, "project_edit",
+      R"({"edits":[{"file_path":"templates/other/start/_card.json","expect_missing":true,"put":"{}"}]})");
+  EXPECT_EQ(JsonString(JsonString(unapproved.View(), "/text"), "/value/kind"),
+            "permission_denied")
+      << unapproved.View();
+
+  const auto permit =
+      Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+        return A::CreateAccessResolveRequest(
+                   b, b.CreateString(pending.RequestId()), true)
+            .Union();
+      });
+  ASSERT_TRUE(permit.Code().empty());
+  const auto added = Tool(conversation, "template_add", arguments, "add");
+  ASSERT_TRUE(added.Code().empty()) << added.View();
+  EXPECT_EQ(JsonString(JsonString(added.View(), "/text"), "/reply"),
+            "SaveResult")
+      << added.View();
+  EXPECT_EQ(Read(directory.path / "project/templates/chosen/start/_card.json"),
+            R"({"type":"trigger"})");
+
+  const auto listed = Tool(conversation, "template_list", "{}");
+  ASSERT_TRUE(listed.Code().empty()) << listed.View();
+  const auto listing = JsonString(listed.View(), "/text");
+  EXPECT_EQ(JsonString(listing, "/value/entries/0/store"), "project");
+  EXPECT_EQ(JsonString(listing, "/value/entries/0/name"), "chosen");
+  EXPECT_EQ(listing.find("private"), std::string::npos);
+  const auto copied = Tool(
+      conversation, "tools",
+      R"({"family":"templates","action":"copy","arguments":{"store":"project","name":"chosen"}})");
+  EXPECT_EQ(JsonString(JsonString(copied.View(), "/text"), "/reply"),
+            "SaveResult")
+      << copied.View();
+  const auto hidden = Tool(conversation, "template_copy",
+                           R"({"store":"project","name":"private"})");
+  EXPECT_EQ(JsonString(JsonString(hidden.View(), "/text"), "/value/kind"),
+            "not_found")
+      << hidden.View();
+}
+
 TEST_F(AgentProjectFixture, HostSettingsOwnProjectAndAttachedFolderGrants) {
   StartProject();
   const auto first = Conversation("settings-first");
@@ -108,7 +296,7 @@ TEST_F(AgentProjectFixture, HostSettingsOwnProjectAndAttachedFolderGrants) {
 TEST_F(AgentProjectFixture, MissingCollectSchemaReportsTypedFailureAndPath) {
   Write(directory.path / "project/definitions/share/_card.json",
         R"({"type":"collect"})");
-  Write(directory.path / "project/definitions/share/_meta.json", "{}");
+  Write(directory.path / "project/definitions/share/README.md", "{}");
   StartProject();
   const auto conversation = Conversation("missing-schema");
   Grant(conversation);
@@ -1546,7 +1734,7 @@ TEST_F(AgentProjectFixture,
   // model-facing file pages intentionally no longer fill this much context.
   Write(directory.path / "project/definitions/long/_card.json",
         R"({"type":"draft"})");
-  Write(directory.path / "project/definitions/long/_meta.json",
+  Write(directory.path / "project/definitions/long/README.md",
         R"({"description":)" + Quote(std::string(50000, 'x')) + "}");
   StartProject();
   const auto conversation = Conversation("context-refusal");
@@ -1822,7 +2010,7 @@ TEST_F(AgentProjectFixture,
   const auto original = JsonString(Inspect(conversation).View(), "/text");
   const auto initial_revision = JsonString(original, "/value/rev");
   const auto document =
-      R"({"name":"RENAMED_BY_MODEL","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})";
+      R"({"name":"RENAMED_BY_MODEL","nixPath": [],"canvas":{"cards":[],"connections":[]}})";
   const auto arguments =
       "{\"base_rev\":" + Quote(initial_revision) +
       ",\"changes\":[{\"value_type\":\"SetProject\",\"value\":{\"json\":" +
@@ -2319,17 +2507,17 @@ TEST_F(AgentProjectFixture,
   const auto snapshot = JsonString(Inspect(conversation).View(), "/text");
   const auto revision = JsonString(snapshot, "/value/rev");
   const auto document =
-      R"({"name":"Permission test","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"work"}],"connections":[]}})";
+      R"({"name":"Permission test","nixPath": [],"canvas":{"cards":[{"id":"work"}],"connections":[]}})";
   auto save = [&](const std::string& body) {
     return "{\"base_rev\":" + Quote(revision) +
            ",\"changes\":[{\"value_type\":\"SetProject\",\"value\":{\"json\":" +
            Quote(document) +
            "}},{\"value_type\":\"PutDefinition\",\"value\":{\"id\":\"work\","
            "\"card_json\":" +
-           Quote(body) + ",\"keep_meta\":true}}]}";
+           Quote(body) + ",\"keep_readme\":true}}]}";
   };
-  const auto network = save(R"({"type":"draft","network":true})");
-  const auto sandbox = save(R"({"type":"draft","sandbox":false})");
+  const auto network = save(R"({"type":"draft","grants":{"network":true}})");
+  const auto sandbox = save(R"({"type":"draft","sandbox":{"filesystem":false}})");
   const auto a = Tool(conversation, "project_save", network, "save-a");
   const auto b = Tool(conversation, "project_save", sandbox, "save-b");
   const auto independent =
@@ -2372,8 +2560,8 @@ TEST_F(AgentProjectFixture,
             result.View());
   const auto settings =
       Read(directory.path / "project/definitions/work/_card.json");
-  EXPECT_TRUE(JsonBool(settings, "/network"));
-  EXPECT_EQ(settings.find("\"sandbox\":false"), std::string::npos);
+  EXPECT_TRUE(JsonBool(settings, "/grants/network"));
+  EXPECT_EQ(settings.find("\"filesystem\":false"), std::string::npos);
 }
 
 TEST_F(AgentProjectFixture, DiagnosticShellSupportsPythonAsyncioWhenAvailable) {
@@ -2408,10 +2596,10 @@ TEST_F(AgentProjectFixture, ReloadApprovalCannotWidenADifferentPermissionSet) {
       "{\"base_rev\":" + Quote(JsonString(snapshot, "/value/rev")) + "}";
   Write(
       directory.path / "project/tsugumi.json",
-      R"({"name":"External edit","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"work"}],"connections":[]}})");
+      R"({"name":"External edit","nixPath": [],"canvas":{"cards":[{"id":"work"}],"connections":[]}})");
   const auto definition =
       directory.path / "project/definitions/work/_card.json";
-  Write(definition, R"({"type":"draft","network":true})");
+  Write(definition, R"({"type":"draft","grants":{"network":true}})");
   const auto pending =
       Tool(conversation, "project_reload", arguments, "reload-a");
   ASSERT_EQ(pending.Code(), "grant_required");
@@ -2425,7 +2613,7 @@ TEST_F(AgentProjectFixture, ReloadApprovalCannotWidenADifferentPermissionSet) {
                    })
                   .Code()
                   .empty());
-  Write(definition, R"({"type":"draft","sandbox":false})");
+  Write(definition, R"({"type":"draft","sandbox":{"filesystem":false}})");
   const auto result =
       Tool(conversation, "project_reload", arguments, "reload-a");
   // The same arguments now require different permissions. Like other changed
@@ -2490,7 +2678,7 @@ TEST_F(AgentProjectFixture,
        EveryApprovalOperationIsBoundToOneCallAndArguments) {
   StartProject(
       false,
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("operation-approvals");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -2589,7 +2777,7 @@ TEST_F(AgentProjectFixture,
        DeletingAConversationInvalidatesItsPendingOperationApprovals) {
   StartProject(
       false,
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("deleted-approval");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -2646,7 +2834,7 @@ TEST_F(AgentProjectFixture,
 TEST_F(AgentProjectFixture, ChangedApprovalTargetsNeedANewApproval) {
   StartProject(
       false,
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("changed-approval-targets");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -2665,7 +2853,7 @@ TEST_F(AgentProjectFixture, ChangedApprovalTargetsNeedANewApproval) {
   const auto inspect = JsonString(Inspect(conversation).View(), "/text");
   const auto rev = JsonString(inspect, "/value/rev");
   const auto document =
-      R"({"name":"Changed approval target","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})";
+      R"({"name":"Changed approval target","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})";
   const auto saved = Tool(
       conversation, "project_save",
       "{\"base_rev\":" + Quote(rev) +
@@ -2689,13 +2877,13 @@ TEST_F(AgentProjectFixture,
        HelperScopesGuardInspectionFilesSavesRunsRecordsAndLogs) {
   Write(directory.path / "project/definitions/allowed/_card.json",
         R"({"type":"draft"})");
-  Write(directory.path / "project/definitions/allowed/_meta.json",
+  Write(directory.path / "project/definitions/allowed/README.md",
         R"({"description":"VISIBLE_CARD_SENTINEL"})");
   Write(directory.path / "project/definitions/secret/_card.json",
         R"({"type":"draft"})");
   Write(directory.path / "project/definitions/writer/_card.json",
         R"({"type":"draft"})");
-  Write(directory.path / "project/definitions/secret/_meta.json",
+  Write(directory.path / "project/definitions/secret/README.md",
         R"({"description":"HIDDEN_CARD_SENTINEL"})");
   Write(directory.path / "project/definitions/outer/_card.json",
         R"({"type":"subgraph","external":"different-directory"})");

@@ -8,7 +8,7 @@
 // Every frame of the player's replay (framesOf in ui/web/src/ui/demoPlayer.tsx) is drawn
 // by the player's own Canvas and RunControl with React's static renderer, from the same
 // player-data/<id>.json, with the player's own stylesheet (site/player.css). The Cards,
-// wires, output frames and the run control are kept once per distinct drawing, each shown
+// wires and the run control are kept once per distinct drawing, each shown
 // during the frames that drew it. Chrome (headless) lays that HTML out and dom-to-svg turns
 // it into plain SVG (`render`), the animations staying on its elements' classes. Images come
 // from player-data/assets/ as data: URIs (a tile's shrunk with sips, macOS, as harvest.py does).
@@ -19,7 +19,7 @@ import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { preparePlayer, finalsFromRun, flowOf, readJson, readProject, stepsFromRun } from './build.mjs'
+import { preparePlayer, finalsFromRun, flowOf, readJson, readLayout, readProject, stepsFromRun } from './build.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SITE = path.dirname(HERE)
@@ -54,7 +54,7 @@ export { framesOf, IDLE, DONE }
 const control = (data, frame) => h(RunControl, { data, frame, playing: frame.mode === 'playing', onRun: () => undefined, onStop: () => undefined })
 /** The canvas, with the run control on it unless \`control\` is false (a tile, or the window, which has it in its title bar). */
 export function surface(data, frame, base, view, compact, withControl = !compact) {
-  return renderToStaticMarkup(h(Canvas, { data, frame, base, compact, onSelect: () => undefined, motion: true, view },
+  return renderToStaticMarkup(h(Canvas, { data, frame, compact, onSelect: () => undefined, motion: true, view },
     withControl ? h('div', { className: 'tp-top' }, control(data, frame)) : null))
 }
 export const runControl = (data, frame) => renderToStaticMarkup(control(data, frame))
@@ -108,7 +108,7 @@ export function innerSurface(data, frame, base, view, boundary) {
   ]
   const bar = (r, list, input) => h(BoundaryBarView, { key: input ? 'in' : 'out', title: input ? "This Card's inputs" : "This Card's outputs", ports: list.map((p) => ({ ...p, inner: [p.inner[0], p.inner[1]] })), input, zoom: z, rect: r,
     style: { position: 'absolute', left: screen(r).x, top: screen(r).y, width: r.width * z, height: r.height * z }, onPointerDown: () => undefined })
-  return renderToStaticMarkup(h(Canvas, { data, frame, base, compact: false, onSelect: () => undefined, motion: true, view: { ...view, camera } },
+  return renderToStaticMarkup(h(Canvas, { data, frame, compact: false, onSelect: () => undefined, motion: true, view: { ...view, camera } },
     h(WireLayer, { wires: draws, animate: true, zoom: z, width: view.width, height: view.height }), bar(top, bars.inputs, true), bar(bottom, bars.outputs, false)))
 }
 export { formatDuration } from '../model/session'
@@ -204,25 +204,11 @@ function layerOf(child) {
   return 1
 }
 
-const SHRUNK = fs.mkdtempSync(path.join(process.env.TMPDIR ?? '/tmp', 'tsg-svg-img-'))
-process.on('exit', () => fs.rmSync(SHRUNK, { recursive: true, force: true }))
-
-/** An image at most `side` pixels on its long side (sips, as harvest.py), in its own format: no other compression. */
-function shrunk(file, side) {
-  if (file.endsWith('.svg') || !side) return file
-  const dims = execFileSync('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', file], { encoding: 'utf8' }).match(/\d+/g).slice(-2).map(Number)
-  if (Math.max(...dims) <= side) return file
-  const out = path.join(SHRUNK, `${side}-${path.basename(file)}`)
-  if (!fs.existsSync(out)) execFileSync('sips', ['-Z', String(side), file, '--out', out], { stdio: 'ignore' })
-  return out
-}
-
-/** Images of the output frames as data: URIs (the SVG loads nothing), each `sideOf(file)` pixels at most. */
-function inlineImages(xml, base, sideOf = () => undefined) {
+/** Local images as data URIs, so the SVG loads nothing. */
+function inlineImages(xml, base) {
   return xml.replace(/src="([^"]+)"/g, (all, url) => {
     if (!url.startsWith(base)) return all
-    const source = path.join(DATA, decodeURIComponent(url.slice(base.length)))
-    const file = shrunk(source, sideOf(source))
+    const file = path.join(DATA, decodeURIComponent(url.slice(base.length)))
     const bytes = fs.readFileSync(file)
     const type = file.endsWith('.svg') ? 'image/svg+xml' : bytes[0] === 0x89 ? 'image/png' : 'image/jpeg'
     return `src="data:${type};base64,${bytes.toString('base64')}"`
@@ -318,17 +304,7 @@ function replay(data, view, compact, kind = compact ? 'tile' : 'large', only, dr
     css.push(keyframes(name, shown, starts, total), `.${name}{animation-name:${name}}`)
     return `<div class="tp-l ${name}${shown.has(last) ? ' tp-fin' : ''}" style="${style}">${body}</div>`
   }
-  // A tile's images at twice the size its output frame has in it (a Retina screen at the tile's own size), no larger.
-  // The zoom, from a Card's header (CardGeometry.header: 32 units): a small Canvas has no dot grid to read it from.
-  const header = Number(pieces.map((p) => p.xml.match(/class="cv-card-header" style="height:([\d.]+)px/)?.[1]).find(Boolean) ?? 0)
-  const zoomed = header / 32
-  const sideOf = (file) => {
-    if (!compact) return undefined
-    const id = Object.keys(data.outputs).find((k) => data.outputs[k].src && file.endsWith(data.outputs[k].src.replace(/^assets\//, '')))
-    const f = data.frames[id] ?? {}
-    return Math.max(160, Math.ceil(2 * Math.max(f.width ?? 320, f.height ?? 170) * (zoomed || 1)))
-  }
-  const surface = `${shell.open}${pieces.map((p, i) => layer(p.shown, `k${i}`, inlineImages(p.xml, base, sideOf), `z-index:${p.layer}`)).join('')}${shell.close}`
+  const surface = `${shell.open}${pieces.map((p, i) => layer(p.shown, `k${i}`, inlineImages(p.xml, base), `z-index:${p.layer}`)).join('')}${shell.close}`
   const anim = () => `.tp-l{position:absolute;inset:0;opacity:0;animation:${total}ms step-end infinite both}.tp-l.tp-fin{opacity:1}${css.join('')}`
     + '@media (prefers-reduced-motion:reduce){.tp-l{animation:none!important}}'
   /** What a function of the frame draws, each distinct drawing as one layer. */
@@ -535,11 +511,9 @@ function tileSvg(id) {
 
 /** The window of the README's screenshots (docs/assets/screenshots, ui/macos/tools/screenshots/readme.ui): 1440 × 900, the chat column on the right. */
 const WIN = { width: 1440, height: 900, bar: 52, chat: 344 }
-/** Where the Cas A Canvas has the Cards, output frames and the note: the screenshots' arrangement (Cards in one row, the
- *  spectrum above, the band table and the RGB image below), with the Cards the demo has now (including ciao). */
+/** Where the Cas A Canvas has the Cards and note in the app window. */
 const WINDOW_LAYOUT = {
   cards: { start: [0, 484], load: [230, 484], ciao: [230, 640], bands: [500, 484], rgb: [850, 484], spectrum: [1110, 484] },
-  displays: { spectrum: [760, 0, 680, 400], bands: [500, 650, 340, 150], rgb: [880, 650, 420, 440] },
   note: [0, 0, 700, 430],
 }
 /** The shell's colors the player's stylesheet has not (ui/web/src/styles/shell.css, dark). */
@@ -575,7 +549,6 @@ function casaInWindow() {
   return {
     ...base,
     cards: base.cards.map((c) => ({ ...c, x: L.cards[c.id]?.[0] ?? c.x, y: L.cards[c.id]?.[1] ?? c.y })),
-    frames: Object.fromEntries(Object.entries(L.displays).map(([k, [x, y, width, height]]) => [k, { x, y, width, height }])),
     notes: base.notes.slice(0, 1).map((n) => ({ ...n, x: L.note[0], y: L.note[1], width: L.note[2], height: L.note[3] })),
   }
 }
@@ -898,7 +871,7 @@ ${lines.slice(first, last).map((l, j) => `<div class="s-line"><span class="s-no"
 <div class="s-title"><span class="w-lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span><b>spectrum — ${esc(data.title)}</b></div>
 <div class="s-side">${categories.map(([k, t, icon]) => `<div class="s-cat${k === 'source' ? ' on' : ''}">${chromeIcon(icon, 15)}<span>${t}</span></div>`).join('')}</div>
 <div class="s-files">${files.map(([icon, name, depth, color, on]) => `<div class="s-file${on ? ' on' : ''}" style="padding-left:${12 + depth * 18}px">${depth ? '' : chromeIcon('chevron.down', 9, 'var(--secondary)')}${chromeIcon(icon, 13, color || 'var(--secondary)')}<span>${esc(name)}</span></div>`).join('')}
-<div class="s-gen secondary">Generated</div>${['_inputs.fbs', '_params.fbs'].map((f) => `<div class="s-file" style="padding-left:12px">${chromeIcon('doc', 13, 'var(--secondary)')}<span>${f}</span><span class="s-ro">RO</span></div>`).join('')}
+<div class="s-gen secondary">Generated</div><div class="s-file" style="padding-left:12px">${chromeIcon('doc', 13, 'var(--secondary)')}<span>_inputs.fbs</span><span class="s-ro">RO</span></div>
 <div class="s-plus secondary">${chromeIcon('plus', 12)}${chromeIcon('minus', 12)}</div></div>
 <div class="s-code">
 <div class="s-head">${chromeIcon('chevron.left.forwardslash.chevron.right', 13)}<b>main.py</b><span class="secondary caption">spectrum › src</span><span style="flex:1"></span><span class="s-btn">Format</span></div>
@@ -941,17 +914,17 @@ function innerDemo(demo, card) {
   const inner = path.join(root, 'externals', ext)
   const portsOf = readJson(path.join(DATA, 'assets', 'ports.json'), {})
   const { doc, wires, cards } = readProject(inner, portsOf[demo], `${card}/`)
-  const layout = readJson(path.join(inner, 'layout.json'), {})
+  const layout = readLayout(inner)
   for (const c of cards) Object.assign(c, layout.cards?.[c.id] ?? { x: 0, y: 0 })
   const recorded = readJson(path.join(DATA, 'assets', `${demo}.run.json`))
   const timeline = Object.fromEntries(Object.entries(recorded.timeline).filter(([k]) => k.startsWith(`${card}/`)).map(([k, v]) => [k.slice(card.length + 1), v]))
   const steps = stepsFromRun(cards, timeline)
   const outer = readDemo(demo)
   return {
-    id: `${demo}-${card}`, title: outer.title, flow: flowOf(layout, cards, wires), draftOnly: false, cards, wires, notes: [], frames: {},
+    id: `${demo}-${card}`, title: outer.title, flow: flowOf(layout, cards, wires), draftOnly: false, cards, wires, notes: [],
     // The run control shows the whole run's time at its end, as the app does inside a Card in Card.
     run: { ...outer.run, totalMs: outer.run.totalMs }, steps: steps.map((s) => ({ ...s, say: '' })), final: finalsFromRun(cards, timeline), outputs: {},
-    boundary: Object.fromEntries(Object.entries(doc.boundary ?? {}).map(([side, ports]) => [side, Object.fromEntries(Object.entries(ports).map(([name, v]) => [name, { ...v,
+    boundary: Object.fromEntries(Object.entries(doc.boundary ?? {}).map(([side, ports]) => [side, Object.fromEntries(ports.map(({ name, ...v }) => [name, { ...v,
       type: (side === 'inputs' ? outer.cards.find((c) => c.id === card)?.inputs : outer.cards.find((c) => c.id === card)?.outputs)?.find((p) => p.name === name)?.typeName }]))])),
     outer, card,
   }

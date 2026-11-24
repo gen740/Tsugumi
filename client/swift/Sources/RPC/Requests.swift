@@ -120,7 +120,7 @@ public extension RPCClient {
   func logRange(runId: String, card: [String]?, invocation: UInt64?, stream: Tsugumi_Data_LogStream,
                 offset: UInt64 = 0, tail: Bool = false, limit: UInt32 = 65536,
                 before: UInt64? = nil,
-                terminal: Bool = false, terminalSince: UInt64? = nil) async throws -> Tsugumi_RPC_LogSliceT {
+                terminal: Bool = false, terminalSince: UInt64? = nil, live: Bool = false) async throws -> Tsugumi_RPC_LogSliceT {
     let r = Tsugumi_RPC_LogRangeRequestT()
     r.runId = runId
     r.card = card.map { cardPath($0) }
@@ -130,6 +130,7 @@ public extension RPCClient {
     r.before = before
     r.terminal = terminal
     r.terminalSince = terminalSince
+    r.live = live
     r.tail = tail
     r.limitBytes = limit
     return try await call(.lograngerequest, r)
@@ -167,6 +168,36 @@ public extension RPCClient {
     return out
   }
 
+  /// One page of the file of entry `index` of a Card's views list, which must be named `name`.
+  func readCardView(card: [String], index: Int, name: String, offset: UInt64) async throws -> Tsugumi_RPC_FileContentT {
+    let r = Tsugumi_RPC_CardViewReadRequestT()
+    r.card = cardPath(card)
+    r.index = UInt32(index)
+    r.name = name
+    r.offset = offset
+    r.limitBytes = 1 << 20
+    return try await call(.cardviewreadrequest, r)
+  }
+
+  func sendView(card: [String], view: String, bytes: Data) async throws {
+    let r = Tsugumi_RPC_ViewSendRequestT()
+    r.card = cardPath(card)
+    r.view = view
+    r.bytes = Array(bytes)
+    let _: Tsugumi_RPC_AckT = try await call(.viewsendrequest, r)
+  }
+
+  func returnViewCredit(subscription: String, card: [String], view: String,
+                        bytes: UInt32, creditId: UInt64) async throws {
+    let r = Tsugumi_RPC_ViewCreditRequestT()
+    r.subscriptionId = subscription
+    r.card = cardPath(card)
+    r.view = view
+    r.bytes = bytes
+    r.creditId = creditId
+    let _: Tsugumi_RPC_AckT = try await call(.viewcreditrequest, r)
+  }
+
   func setVisible(subscription: String, cards: [[String]], enabled: Bool = true) async throws {
     let r = Tsugumi_RPC_ViewSetVisibleRequestT()
     r.subscriptionId = subscription
@@ -175,29 +206,21 @@ public extension RPCClient {
     let _: Tsugumi_RPC_AckT = try await call(.viewsetvisiblerequest, r)
   }
 
-  func saveView(viewId: UUID, baseRev: UInt64, view: String) async throws -> Tsugumi_RPC_ViewSaveResultT {
+  func saveView(viewId: UUID, baseRev: UInt64, view: [UInt8]) async throws -> Tsugumi_RPC_ViewSaveResultT {
     let r = Tsugumi_RPC_ViewSaveRequestT()
     r.viewId = viewId.uuidString.lowercased()
     r.baseViewRev = baseRev
-    r.viewJson = view
+    r.view = view
     return try await call(.viewsaverequest, r)
   }
 
-  /// Generates the Card's contracts (_inputs.fbs, _outputs.fbs, _params.fbs)
-  /// for one revision and returns the file list when ready.
-  func generatedContracts(card: [String], atRev: UInt64) async throws -> [Tsugumi_RPC_SDKFileT] {
-    let r = Tsugumi_RPC_CardSDKPrepareRequestT()
+  func evaluateNix(card: [String], expression: String, build: Bool = false, atRev: UInt64? = nil) async throws -> Tsugumi_RPC_EvaluateNixResultT {
+    let r = Tsugumi_RPC_EvaluateNixRequestT()
     r.card = cardPath(card)
+    r.expression = expression
+    r.build = build
     r.atRev = atRev
-    r.opId = UUID().uuidString.lowercased()
-    var res: Tsugumi_RPC_CardSDKPrepareResultT = try await call(.cardsdkpreparerequest, r)
-    for _ in 0..<100 where res.state == .pending {
-      try await Task.sleep(for: .milliseconds(100))
-      let s = Tsugumi_RPC_CardSDKStatusRequestT()
-      s.opId = res.opId
-      res = try await call(.cardsdkstatusrequest, s)
-    }
-    return res.files.compactMap { $0 }
+    return try await call(.evaluatenixrequest, r)
   }
 
   /// Each Card's latest invocation of a run.
@@ -205,13 +228,6 @@ public extension RPCClient {
     let r = Tsugumi_RPC_RunLatestInvocationsRequestT()
     r.runId = runId
     return try await call(.runlatestinvocationsrequest, r)
-  }
-
-  /// Looks a flake up for nixSources (nothing is saved).
-  func resolveNixSource(ref: String) async throws -> Tsugumi_RPC_NixSourceResolvedT {
-    let r = Tsugumi_RPC_NixSourceResolveRequestT()
-    r.ref = ref
-    return try await call(.nixsourceresolverequest, r)
   }
 
   /// Deletes the project's build caches; documents and history are kept.
@@ -283,30 +299,31 @@ public extension RPCClient {
 
   /// The types of an _outputs.fbs text as the core compiles them (bfbs); with
   /// a port and a type, also the text with that port changed. Saves nothing.
-  func outputTypes(text: String, port: String? = nil, typeName: String? = nil,
-                   kind: Tsugumi_Data_PortKind = .flatbuffer) async throws -> Tsugumi_RPC_OutputTypesResultT {
+  func outputTypes(text: String, port: String? = nil, typeName: String? = nil) async throws -> Tsugumi_RPC_OutputTypesResultT {
     let r = Tsugumi_RPC_OutputTypesRequestT()
     r.text = text
     r.port = port
     r.typeName = typeName
-    if port != nil { r.kind = kind }
     return try await call(.outputtypesrequest, r)
   }
 }
 
 /// DocumentChange builders.
 public enum Change {
-  public static func setLayout(_ json: String) -> Tsugumi_RPC_DocumentChangeT {
+  public static func setLayout(_ bytes: [UInt8]) -> Tsugumi_RPC_DocumentChangeT {
     let v = Tsugumi_RPC_SetLayoutT()
-    v.json = json
+    v.layout = bytes
     return wrap(v, .setlayout)
   }
 
-  public static func putDefinition(id: String, cardJSON: String, metaJSON: String?) -> Tsugumi_RPC_DocumentChangeT {
+  public static func putDefinition(id: String, cardJSON: String, readme: String? = nil, commentsJSON: String? = nil, keepNotes: Bool = false) -> Tsugumi_RPC_DocumentChangeT {
     let v = Tsugumi_RPC_PutDefinitionT()
     v.id = id
     v.cardJson = cardJSON
-    v.metaJson = metaJSON
+    v.readme = readme
+    v.commentsJson = commentsJSON
+    v.keepReadme = keepNotes
+    v.keepComments = keepNotes
     return wrap(v, .putdefinition)
   }
 

@@ -1,4 +1,4 @@
 namespace collatz;
-table Number { value:ulong; }
-table Outputs { value:Number (required); }
+table Initial { seed:ulong; }
+table Outputs { value:Initial (required); }
 root_type Outputs;

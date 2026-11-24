@@ -65,8 +65,9 @@ inline auto AgentReferences(const std::string& raw) -> std::string {
           it->second = shorten(it->second);
       } else if (key != "bytes" && key != "stdout_bytes" &&
                  key != "stderr_bytes" && key != "project_json" &&
-                 key != "layout_json" && key != "card_json" &&
-                 key != "meta_json" && key != "text" && key != "record_json") {
+                 key != "layout" && key != "card_json" && key != "readme" &&
+                 key != "comments_json" && key != "text" &&
+                 key != "record_json") {
         it->second = AgentReferences(it->second);
       }
       ++it;

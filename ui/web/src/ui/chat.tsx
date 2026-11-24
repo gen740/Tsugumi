@@ -581,7 +581,7 @@ export function toolStep(name: string, args: string, display = (k: CardKey) => k
   const [running, done] =
     n === 'project_reload' ? [L('プロジェクトを再読込しています'), L('プロジェクトを再読込')]
     : n === 'project_shell' ? [L('シェルコマンドを実行しています'), L('シェルコマンドを実行')]
-    : n === 'card_s_d_k_prepare' ? [L('Card SDK を準備しています'), L('Card SDK を準備')]
+    : n === 'evaluate_nix' ? [L('Nix 式を評価しています'), L('Nix 式を評価')]
     : n === 'layout_arrange' || n === 'layout_untangle' ? [L('配置を整えています'), L('配置を整理')]
     : n === 'project_cache_clear' ? [L('ビルドキャッシュを削除しています'), L('ビルドキャッシュを削除')]
     : n === 'version_find' ? [L('過去の試行を探しています'), L('過去の試行を探しました')]
@@ -595,7 +595,7 @@ export function toolStep(name: string, args: string, display = (k: CardKey) => k
     : n === 'guide_show' ? [L('案内を表示しています'), L('案内を表示')]
     : n === 'delegate' ? [L('手分けして進めています'), L('手分けして進めました')]
     : n === 'web_search' ? [L('Web を検索しています'), L('Web を検索')]
-    : ['project_file_stat', 'output_types', 'version_graph', 'version_canvas', 'version_diff', 'nix_source_resolve', 'project_cache_usage'].includes(n) ? [L('確認しています'), L('確認')]
+    : ['project_file_stat', 'output_types', 'version_graph', 'version_canvas', 'version_diff', 'project_cache_usage'].includes(n) ? [L('確認しています'), L('確認')]
     : n.includes('save') || n.includes('put') || n.includes('write') ? [L('変更を保存しています'), L('変更を保存')]
     : n.includes('run') && !n.includes('status') ? [L('実行しています'), L('実行')]
     : n.includes('read') || n.includes('inspect') || n.includes('get') ? [L('確認しています'), L('確認')]
