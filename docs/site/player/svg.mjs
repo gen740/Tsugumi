@@ -63,7 +63,7 @@ import { BoundaryBarView } from './cardNode'
 import { WireLayer } from './cardNode'
 import { CardGeometry, WireRouter, fitCamera, union } from '../model/canvasKit'
 import { pathToScreen } from '../model/canvas'
-import { cardState, KIND_ICON } from '../model/session'
+import { cardIcon, cardState } from '../model/session'
 const stepsOf = (data) => {
   const m = new Map()
   data.steps.forEach((s, i) => s.cards.forEach((c) => m.set(c, i)))
@@ -75,7 +75,7 @@ export function cardStates(data, frame) {
   return data.cards.map((doc) => {
     const n = nodeData(data, stepOf, doc, frame)
     const st = n.state === undefined ? undefined : cardState(n.state)
-    return { id: doc.id, icon: doc.symbol ?? KIND_ICON[doc.kind], invocation: Number(n.invocation), state: st }
+    return { id: doc.id, icon: cardIcon(doc.kind, doc.symbol), invocation: Number(n.invocation), state: st }
   })
 }
 /** A Card in Card's inner Workflow: the player's Canvas with the boundary bars above and below its Cards and their wires,

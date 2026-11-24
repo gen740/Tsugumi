@@ -29,10 +29,17 @@ for (const value of recordSettings) {
 }
 const bits = [0, 63]
 editor.setSetting('workerCapabilities', bits.map(num))
-editor.setSetting('system', 'x86_64-linux')
+editor.setSystemEnabled('aarch64-linux', false)
+assert.deepEqual(editor.systems, ['aarch64-linux'], 'the last system cannot be disabled')
+editor.setSystemEnabled('x86_64-linux', true)
+editor.setSystemEnabled('aarch64-darwin', true)
+editor.setSystemEnabled('aarch64-darwin', true)
+editor.setEmulationFallback('x86_64-linux')
+editor.setSystemEnabled('aarch64-darwin', false)
 assert.ok(await editor.apply())
 
 const def = session.cardDefinition(card)
+assert.deepEqual(get(def, 'systems'), ['x86_64-linux', 'aarch64-linux'])
 for (const field of ['timeoutSeconds', 'buildTimeoutSeconds']) assert.equal(numText(get(def, field)), '0')
 assert.equal(Number(numText(get(def, 'sandbox', 'limits', 'cpu'))), 0)
 assert.equal(numText(get(def, 'sandbox', 'limits', 'memoryMiB')), '0')

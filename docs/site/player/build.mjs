@@ -155,6 +155,7 @@ function readCard(root, id, ports, wires) {
   }
 }
 
+// Draft ends have no port. The player resolves them to Card anchors.
 function readWires(doc) {
   return (doc.canvas?.connections ?? []).map((c) => ({ from: c.from.card, fromPort: c.from.port, to: c.to.card, toPort: c.to.port }))
 }

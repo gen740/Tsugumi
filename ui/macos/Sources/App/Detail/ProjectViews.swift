@@ -42,7 +42,7 @@ struct CardDatabaseView: View {
         List(ids, id: \.self, selection: $selected) { id in
           let def = session.definitions[id]
           HStack {
-            Image(systemName: def?["symbol"]?.string ?? "xmark.octagon").foregroundStyle(.secondary).frame(width: 16)
+            Image(systemName: definitionIcon(def)).foregroundStyle(.secondary).frame(width: 16)
             VStack(alignment: .leading) {
               Text(session.displayName(key([id])))
               Text(definitionKind(def).label + (session.unplacedDefinitions.contains(id) ? String(localized: " · 未配置") : ""))
@@ -375,7 +375,7 @@ private struct GeneralProjectSettings: View {
         }
         TrustedFoldersSettings()
         LabeledContent("場所", value: session.identity.url.path)
-        LabeledContent("Tsugumi のバージョン", value: session.project["tsugumiVersion"]?.string ?? "")
+        LabeledContent("ファイル形式", value: session.project["formatVersion"]?.numberText ?? "")
         NixPathSettings(session: session)
       }
       .formStyle(.grouped)

@@ -15,7 +15,7 @@ const session = operationFixture(new ProjectSession('/templates', 'templates', '
   'templates/example/tsugumi.json': projectFixture({
     canvas: {
       cards: [{ id: 'start' }, { id: 'plan' }],
-      connections: [{ from: { card: 'start', port: 'out' }, to: { card: 'plan', port: '' } }],
+      connections: [{ from: { card: 'start', port: 'out' }, to: { card: 'plan' } }],
     },
   }),
   'templates/example/layout.bin': '{"cards":{"start":{"x":0,"y":0},"plan":{"x":250,"y":30}}}',

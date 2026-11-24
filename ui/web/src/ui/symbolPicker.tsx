@@ -43,7 +43,7 @@ export const CARD_SYMBOLS: { symbol: string; label: string }[] = ([
   ['moon', L('夜 月')], ['bird', L('鳥 つぐみ')],
 ] as [string, string][]).map(([symbol, label]) => ({ symbol, label }))
 
-export function SymbolPicker({ symbol, onChange }: { symbol: string; onChange: (s: string) => void }) {
+export function SymbolPicker({ symbol, defaultIcon, onChange }: { symbol: string; defaultIcon: string; onChange: (s: string) => void }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const anchor = useRef<HTMLSpanElement>(null)
@@ -54,11 +54,14 @@ export function SymbolPicker({ symbol, onChange }: { symbol: string; onChange: (
     <div className="row gap8 center">
       <span ref={anchor}>
         <Button onClick={() => setOpen(!open)} help={L('アイコンを選ぶ')}>
-          <span className="row gap6 center"><Icon name={current} size={16} />{L('アイコンを選ぶ…')}</span>
+          <span className="row gap6 center"><Icon name={current === 'none' ? defaultIcon : current} size={16} />{L('アイコンを選ぶ…')}</span>
         </Button>
       </span>
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor}>
         <div className="symbol-picker">
+          <Button onClick={() => { onChange('none'); setOpen(false) }}>
+            <span className="row gap6 center"><Icon name={defaultIcon} size={16} />{L('種類の既定')}</span>
+          </Button>
           <TextField value={search} onChange={setSearch} placeholder={L('探す（例: 計算、表、画像）')} autoFocus />
           <div className="symbol-grid" role="listbox" aria-label={L('アイコン')}>
             {shown.map((s) => (

@@ -27,7 +27,7 @@ for (const id of ids) {
     for (const [id, port, direction] of [[w.from, w.fromPort, 'outputs'], [w.to, w.toPort, 'inputs']] as const) {
       const c = cards.get(id)
       assert.ok(c, `${d.id}: missing Card ${id}`)
-      assert.ok(c.kind === 'draft' ? port === '' : port !== '' && c[direction].some(p => p.name === port), `${d.id}: ${id}.${port}`)
+      assert.ok(c.kind === 'draft' ? port === undefined : !!port && c[direction].some(p => p.name === port), `${d.id}: ${id}.${port}`)
     }
   }
   const rects = d.cards.map((c: CardNodeData & { id: string; x: number; y: number }) => {

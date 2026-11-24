@@ -1,5 +1,5 @@
 import { validWorkerBits } from '../../shared/workerBits'
-import { implementedCard, recordSettings } from '../model/cardFields'
+import { CARD_SYSTEMS, implementedCard, recordSettings } from '../model/cardFields'
 import { nextInputName, validName } from '../model/names'
 import { WorkerBitsEditor } from './workerBits'
 // Card settings: a local working copy of one Card's settings (its
@@ -82,6 +82,21 @@ export class CardEditorModel extends Observable {
     return path(this.cardKey).pop()
   }
   get kind() { return definitionKind(this.definition) }
+  get systems(): string[] {
+    return (arr(get(this.definition, 'systems')) ?? []).map(system => str(system) ?? '')
+  }
+
+  setSystemEnabled(system: string, enabled: boolean) {
+    const systems = this.systems
+    if (enabled && !systems.includes(system)) this.setSetting('systems', [...systems, system])
+    if (!enabled && systems.length > 1) this.setSetting('systems', systems.filter(value => value !== system))
+  }
+
+  setEmulationFallback(system: string) {
+    const systems = this.systems
+    if (systems.includes(system)) this.setSetting('systems', [system, ...systems.filter(value => value !== system)])
+  }
+
   get exists() {
     return this.session.instance(this.cardKey) !== undefined
   }
@@ -96,23 +111,18 @@ export class CardEditorModel extends Observable {
 
   rebindings = new Map<string, string>()
 
-  /** Incident wires and boundary ends; every choice starts empty. */
+  /** Incident wires; every choice starts empty. */
   get draftEnds() {
     if (this.session.kind(this.cardKey) !== 'draft' || this.kind === 'draft') return []
     const scope = path(this.cardKey).slice(0, -1), id = path(this.cardKey).pop()
-    const ends: { id: string; label: string; side: string; index?: number; boundary?: string }[] = []
+    const ends: { id: string; label: string; side: string; index: number }[] = []
     this.session.connections(scope).forEach((c, index) => {
       for (const side of ['from', 'to']) if (str(get(c, side, 'card')) === id) {
-        const label = `${str(get(c, 'from', 'card'))}.${str(get(c, 'from', 'port'))} → ${str(get(c, 'to', 'card'))}.${str(get(c, 'to', 'port'))}`
+        const endpoint = (side: string) => [str(get(c, side, 'card')), str(get(c, side, 'port'))].filter(Boolean).join('.')
+        const label = `${endpoint('from')} → ${endpoint('to')}`
         ends.push({ id: `${index}:${side}:${serialize(c, false)}`, label, side, index })
       }
     })
-    const boundary = scope.length ? this.session.boundary(key(scope)) : undefined
-    for (const side of ['inputs', 'outputs']) {
-      const ports = get(boundary, side)
-      if (isObj(ports)) for (const [name, ep] of ports.entries()) if (str(get(ep, 'card')) === id)
-        ends.push({ id: `${side}:${name}:${serialize(ep, false)}`, label: `${side}.${name} → ${id}`, side, boundary: name })
-    }
     return ends
   }
 
@@ -126,9 +136,9 @@ export class CardEditorModel extends Observable {
   implementAs(value: string) {
     const kind = value === 'input_bool' ? 'input' : value as keyof typeof KIND_ICON
     const native = s(this.session.executionServices.find(service => s(service.id) === 'local')?.nativeSystem)
-    const symbol = kind === 'draft' ? str(get(this.baseDefinition, 'symbol')) ?? KIND_ICON.draft : KIND_ICON[kind]
+    const symbol = str(get(this.definition, 'symbol')) ?? 'none'
     const system = native.replace(/-darwin$/, '-linux')
-    this.definition = implementedCard(kind, symbol, system.endsWith('-linux') ? system : '')
+    this.definition = implementedCard(kind, symbol, CARD_SYSTEMS.includes(system) ? [system] : [])
     if (kind === 'input') {
       const type = value === 'input_bool' ? 'bool' : 'double'
       this.preset('_outputs.fbs', `namespace card;\ntable Value { value:${type}; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n`)
@@ -411,10 +421,12 @@ export class CardEditorModel extends Observable {
       || executable && (!uint(get(definition, 'timeoutSeconds')) || !uint(get(definition, 'buildTimeoutSeconds'))
         || !(cpu >= 0 && cpu <= 256) || !uint(get(limits, 'memoryMiB'), 0n, 1048576n))
     const bits = (arr(get(definition, 'workerCapabilities')) ?? []).map(bit => Number(numText(bit)))
+    const systems = this.systems
     const error = title !== undefined && !title.trim() ? L('Card 名を入力してください。')
       : inputNames.some(name => !validName(name)) || new Set(inputNames).size !== inputNames.length || this.kind === 'merge' && !inputNames.length ? L('有効な入力ポート名を指定してください。')
       : secrets.some(name => !validName(str(name) ?? '')) ? L('有効なシークレット名を指定してください。')
-      : executable && !str(get(definition, 'system')) ? L('CPU アーキテクチャを選択してください。')
+      : executable && (!systems.length || new Set(systems).size !== systems.length ||
+        systems.some(system => !CARD_SYSTEMS.includes(system))) ? L('対応システムを重複なしで 1 つ以上選択してください。')
       : executable && !validWorkerBits(bits) ? L('ワーカーのビットは 0〜63 の範囲で重複なしに指定してください。')
       : invalidNumber ? L('設定の数値を有効な範囲で入力してください。')
       : undefined
@@ -454,20 +466,13 @@ export class CardEditorModel extends Observable {
       }
       x.appendEdits(edits)
       const scope = path(k).slice(0, -1)
-      if (ends.some(e => e.index !== undefined)) x.updateGraph(scope, g => {
+      if (ends.length) x.updateGraph(scope, g => {
         const conns = arr(g.get('connections')) ?? []
-        for (const e of ends) if (e.index !== undefined) {
+        for (const e of ends) {
           const ep = get(conns[e.index], e.side)
           if (isObj(ep)) ep.set('port', bindings.get(e.id)!.trim())
         }
       })
-      if (ends.some(e => e.boundary !== undefined)) x.updateExternal(x.projectPrefix(scope)!, ext => {
-        for (const e of ends) if (e.boundary !== undefined) {
-          const ep = arr(get(ext.project, 'boundary', e.side))?.find(port => str(get(port, 'name')) === e.boundary)
-          if (isObj(ep)) ep.set('port', bindings.get(e.id)!.trim())
-        }
-      })
-
     })
     if (!ok) { this.applying = false; this.changed(); return false }
     const laterDef = clone(this.definition), laterMeta = clone(this.meta)
@@ -682,10 +687,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
   const hasMaxRuns = executable || kind === 'merge' || kind === 'collect'
   const params = kind === session.kind(model.cardKey) ? session.resolution.get(model.cardKey)?.parameters ?? [] : []
   const diags = session.diagnostics.filter(d => d.card?.join('/') === model.cardKey)
-  const system = str(get(def, 'system')) ?? ''
-  const systems = [...new Set(['aarch64-linux', 'x86_64-linux',
-    ...session.executionServices.flatMap(entry => entry.systems.map(s)).filter(Boolean),
-    ...(system ? [system] : [])])]
+  const systems = model.systems
   const sandbox = get(def, 'sandbox')
   const grants = get(def, 'grants')
   const limits = get(sandbox, 'limits')
@@ -711,7 +713,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
         <Value label={L('種類')} value={KIND_LABEL[kind]} />
         {def !== undefined && (
           <Row label={L('アイコン')}>
-            <SymbolPicker symbol={str(get(def, 'symbol')) ?? ''}
+            <SymbolPicker symbol={str(get(def, 'symbol')) ?? 'none'} defaultIcon={KIND_ICON[kind]}
               onChange={(v) => model.setSetting('symbol', v)} />
           </Row>
         )}
@@ -740,12 +742,20 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
           {executable && <>
             {numberField('timeoutSeconds', L('実行の期限（秒）'), L('0 = 上限なし'))}
             {numberField('buildTimeoutSeconds', L('ビルドの期限（秒）'), L('0 = 上限なし'))}
-            <Row label={L('CPU アーキテクチャ')}>
-              <Select value={system} onChange={value => model.setSetting('system', value)} options={[
-                ...(!system ? [{ value: '', label: L('CPU アーキテクチャを選択してください。'), disabled: true }] : []),
-                ...systems.map(value => ({ value, label: value })),
-              ]} />
+            <Row label={L('対応システム')}>
+              <div className="col gap6">
+                {CARD_SYSTEMS.map(system => (
+                  <Toggle key={system} kind="checkbox" label={system} checked={systems.includes(system)}
+                    disabled={systems.length === 1 && systems[0] === system}
+                    onChange={enabled => model.setSystemEnabled(system, enabled)} />
+                ))}
+                <span className="caption secondary">{L('対応するワーカーはネイティブで実行し、それ以外は先頭のシステムをエミュレートします。')}</span>
+              </div>
             </Row>
+            {systems.length > 0 && <Row label={L('エミュレーション時のシステム')}>
+              <Select value={systems[0]} onChange={value => model.setEmulationFallback(value)}
+                options={systems.map(value => ({ value, label: value }))} />
+            </Row>}
             <Row label={L('ワーカーの必須ビット')} help={L('指定したすべてのビットを持つワーカーで実行します。')}>
               <WorkerBitsEditor bits={(arr(get(def, 'workerCapabilities')) ?? []).map(bit => Number(numText(bit)))}
                 onChange={bits => model.setSetting('workerCapabilities', bits.map(num))} />

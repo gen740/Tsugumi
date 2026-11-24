@@ -70,7 +70,7 @@ function scene(name: string, dir: string, flow: FlowDirection | undefined, moved
     const p = saved(id)
     return grid ? { x: snapToGrid(p.x, grid), y: snapToGrid(p.y, grid) } : p
   }
-  const conns: { from: { card: string; port: string }; to: { card: string; port: string } }[] = project.canvas.connections
+  const conns: { from: { card: string; port?: string }; to: { card: string; port?: string } }[] = project.canvas.connections
   if (!flow) {
     if (layout.flow === 'topToBottom' || layout.flow === 'leftToRight') flow = layout.flow
     else {
@@ -89,12 +89,12 @@ function scene(name: string, dir: string, flow: FlowDirection | undefined, moved
   }))
   const geos = new Map(ids.map((id) => [id, new CardGeometry(datas.get(id)!, flow!)]))
   const cardRect = (id: string): Rect => ({ ...place(id), ...geos.get(id)!.size })
-  const port = (id: string, p: string, output: boolean): Pt => {
-    const o = place(id), q = geos.get(id)!.port(p, output)
+  const port = (id: string, p: string | undefined, output: boolean): Pt => {
+    const o = place(id), q = geos.get(id)!.port(p ?? '', output)
     return { x: o.x + q.x, y: o.y + q.y }
   }
   const obstacles = ids.map(cardRect)
-  const wires: Wire[] = conns.map((c) => ({ a: port(c.from.card, c.from.port, true), b: port(c.to.card, c.to.port, false), name: `${c.from.card}.${c.from.port}>${c.to.card}.${c.to.port}` }))
+  const wires: Wire[] = conns.map((c) => ({ a: port(c.from.card, c.from.port, true), b: port(c.to.card, c.to.port, false), name: `${[c.from.card, c.from.port].filter(Boolean).join('.')}>${[c.to.card, c.to.port].filter(Boolean).join('.')}` }))
   type End = { name: string; card: string; port: string }
   const ends = (list: End[] = []) => list.map(end => [end.name, end] as const)
   const bi = ends(project.boundary?.inputs), bo = ends(project.boundary?.outputs)

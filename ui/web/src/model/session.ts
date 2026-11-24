@@ -2019,8 +2019,9 @@ export class ProjectSession extends Observable {
         inputs: ports(this.kind(k) === 'draft' ? [''] : g.inputs, false), outputs: ports(this.kind(k) === 'draft' ? [''] : g.outputs, true) }
     })
     const wires = this.connections(scope).flatMap((c) => {
-      const from = str(get(c, 'from', 'card')), fromPort = str(get(c, 'from', 'port')), to = str(get(c, 'to', 'card')), toPort = str(get(c, 'to', 'port'))
-      return from && fromPort !== undefined && to && toPort !== undefined ? [{ from, fromPort, to, toPort }] : []
+      const from = str(get(c, 'from', 'card')), to = str(get(c, 'to', 'card'))
+      const fromPort = str(get(c, 'from', 'port')) ?? '', toPort = str(get(c, 'to', 'port')) ?? ''
+      return from && to ? [{ from, fromPort, to, toPort }] : []
     })
     const notes = this.notes(scope).flatMap((n) => {
       const id = str(get(n, 'id'))
@@ -2030,7 +2031,10 @@ export class ProjectSession extends Observable {
       if (!scope.length) return undefined
       const list = get(this.boundary(key(scope)), side)
       return {
-        ends: isObj(list) ? list.entries().map(([name, v]) => ({ name, card: str(get(v, 'card')) ?? '', port: str(get(v, 'port')) ?? '' })) : [],
+        ends: isObj(list) ? list.entries().flatMap(([name, v]) => {
+          const card = str(get(v, 'card')), port = str(get(v, 'port'))
+          return card && port ? [{ name, card, port }] : []
+        }) : [],
         at: this.boundaryPosition(scope, side),
       }
     }
@@ -2341,13 +2345,12 @@ export class ProjectSession extends Observable {
     // definition cannot be read, what the core says about it.
     if (kind === 'draft') summary = str(get(m, 'content')) || summary
     if (kind === 'invalid') summary = diags.find((x) => x.error)?.message ?? L('Card の定義を読めません')
-    const sym = str(get(def, 'symbol'))
     const title = str(get(m, 'title'))
     const editing = kind === 'draft' && this.inlineDraft?.card === k
     const pending = state?.executionState === D.RemoteExecutionState.queued || state?.executionState === D.RemoteExecutionState.disconnected ||
       state?.executionState === D.RemoteExecutionState.cancelling ? remoteExecutionLabel(state.executionState) : undefined
     return {
-      title: title?.trim() ? title : this.displayName(k), kind, runMark: state || batch ? runMark(this.runStatus) : undefined, symbol: kind === 'invalid' ? undefined : sym || undefined, summary: summary || undefined,
+      title: title?.trim() ? title : this.displayName(k), kind, runMark: state || batch ? runMark(this.runStatus) : undefined, symbol: cardIcon(kind, str(get(def, 'symbol'))), summary: summary || undefined,
       inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k),
       result: state?.transfer ?? pending ?? (!state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
       state: kind === 'subgraph' ? this.compositeState(k) : this.canvasCardState(k), stage: empty ? undefined : this.stageProgress(k), executionList,
@@ -2444,6 +2447,14 @@ export const KIND_ICON: Record<CardKind, string> = {
   trigger: 'play.circle', input: 'slider.horizontal.3',
   merge: 'arrow.triangle.merge', collect: 'line.3.horizontal.decrease', draft: 'pencil.and.outline', subgraph: 'link',
   code: 'chevron.left.forwardslash.chevron.right', invalid: 'xmark.octagon',
+}
+
+export function cardIcon(kind: CardKind, symbol?: string): string {
+  return kind === 'invalid' || !symbol || symbol === 'none' ? KIND_ICON[kind] : symbol
+}
+
+export function definitionIcon(def: J | undefined): string {
+  return cardIcon(definitionKind(def), str(get(def, 'symbol')))
 }
 
 /** A kind by its _card.json "type" name (also VersionCanvasCard.kind, empty

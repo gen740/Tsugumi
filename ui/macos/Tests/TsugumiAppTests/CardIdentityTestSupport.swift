@@ -48,20 +48,14 @@ import TsugumiLauncher
 }
 
 func fixtureCardJSON(_ kind: CardKind, _ fields: [(String, JSONValue)] = []) -> String {
-  var definition = implementedCard(kind, symbol: kind.symbol, system: "aarch64-linux")
+  var definition = implementedCard(kind, symbol: "none", systems: ["aarch64-linux"])
   for (key, value) in fields { definition[key] = value }
   return definition.serialized()
 }
 
-private let fixtureTsugumiVersion: String = {
-  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-  return try! String(contentsOf: root.appendingPathComponent("VERSION"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
-}()
-
 func fixtureProjectJSON(_ fields: String = "{}") -> String {
   var project: JSONValue = .object([
-    ("tsugumiVersion", .string(fixtureTsugumiVersion)), ("name", .string("t")), ("nixPath", .array([])),
+    ("formatVersion", .int(1)), ("name", .string("t")), ("nixPath", .array([])),
     ("trackedPaths", .array([])), ("agentExclude", .array([])), ("recordLogs", .bool(true)), ("recordIO", .bool(false)),
     ("logLimitBytes", .int(134217728)), ("outputLimitBytes", .int(68719476736)), ("outputLimitEntries", .int(1000)),
     ("canvas", .object([("cards", .array([])), ("connections", .array([]))])),

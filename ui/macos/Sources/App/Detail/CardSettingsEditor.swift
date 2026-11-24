@@ -46,6 +46,11 @@ final class CardEditorModel {
   /// The Card's definition folder name (its id).
   var definitionId: String? { path(cardKey).last }
   var kind: CardKind { definitionKind(definition) }
+  var systems: [String] {
+    get { (definition?["systems"]?.array ?? []).map { $0.string ?? "" } }
+    set { definition?["systems"] = .array(newValue.map(JSONValue.string)) }
+  }
+
   var exists: Bool { session.instance(cardKey) != nil }
   private var prefix: String { session.definitionDir(cardKey) ?? "" }
 
@@ -59,24 +64,20 @@ final class CardEditorModel {
     var id: String
     var label: String
     var side: String
-    var index: Int?
-    var boundary: String?
+    var index: Int
   }
-  /// Incident wires and boundary ends. No port is selected implicitly.
+  /// Incident wires. No port is selected implicitly.
   var draftEnds: [DraftEnd] {
     guard session.kind(cardKey) == .draft, kind != .draft, let id = path(cardKey).last else { return [] }
     let scope = Array(path(cardKey).dropLast())
     var ends: [DraftEnd] = []
     for (index, c) in session.connections(in: scope).enumerated() {
       for side in ["from", "to"] where c[side]?["card"]?.string == id {
-        let label = "\(c["from"]?["card"]?.string ?? "").\(c["from"]?["port"]?.string ?? "") → \(c["to"]?["card"]?.string ?? "").\(c["to"]?["port"]?.string ?? "")"
+        func endpoint(_ side: String) -> String {
+          [c[side]?["card"]?.string, c[side]?["port"]?.string].compactMap { $0 }.joined(separator: ".")
+        }
+        let label = "\(endpoint("from")) → \(endpoint("to"))"
         ends.append(DraftEnd(id: "\(index):\(side):\(c.serialized(pretty: false))", label: label, side: side, index: index))
-      }
-    }
-    let boundary = scope.isEmpty ? nil : session.boundary(key(scope))
-    for side in ["inputs", "outputs"] {
-      for (name, ep) in boundary?[side]?.object ?? [] where ep["card"]?.string == id {
-        ends.append(DraftEnd(id: "\(side):\(name):\(ep.serialized(pretty: false))", label: "\(side).\(name) → \(id)", side: side, boundary: name))
       }
     }
     return ends
@@ -104,8 +105,8 @@ final class CardEditorModel {
       if system.hasSuffix("-darwin") { return String(system.dropLast("-darwin".count)) + "-linux" }
       return nil
     } ?? native
-    let symbol = kind == .draft ? baseDefinition?["symbol"]?.string ?? kind.symbol : kind.symbol
-    definition = implementedCard(kind, symbol: symbol, system: system)
+    let symbol = definition?["symbol"]?.string ?? "none"
+    definition = implementedCard(kind, symbol: symbol, systems: [system])
     if kind == .input {
       let boolean = value == DefinitionTemplate.booleanInput.rawValue
       let type = boolean ? "bool" : "double"
@@ -354,6 +355,10 @@ final class CardEditorModel {
     }
     let executable = [.code, .input].contains(kind)
     let hasMaxRuns = executable || [.merge, .collect].contains(kind)
+    if executable && (systems.isEmpty || Set(systems).count != systems.count || !systems.allSatisfy(cardSystems.contains)) {
+      message = String(localized: "対応システムを重複なしで 1 つ以上選択してください。")
+      return false
+    }
     let limits = definition?["sandbox"]?["limits"]
     func uint(_ value: JSONValue?, min: UInt64 = 0, max: UInt64 = .max) -> Bool {
       guard let text = value?.numberText, let number = UInt64(text) else { return false }
@@ -401,27 +406,15 @@ final class CardEditorModel {
       }
       s.appendEdits(edits)
       let scope = Array(path(k).dropLast())
-      if ends.contains(where: { $0.index != nil }) {
+      if !ends.isEmpty {
         s.updateGraph(scope) { g in
           var conns = g["connections"]?.array ?? []
           for e in ends {
-            if let i = e.index { conns[i][e.side]?["port"] = .string(bindings[e.id]!.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            conns[e.index][e.side]?["port"] = .string(bindings[e.id]!.trimmingCharacters(in: .whitespacesAndNewlines))
           }
           g["connections"] = .array(conns)
         }
       }
-      if ends.contains(where: { $0.boundary != nil }), let prefix = s.projectPrefix(scope) {
-        s.updateExternal(prefix) { ext in
-          for e in ends {
-            if let name = e.boundary, var ports = ext.project["boundary"]?[e.side]?.array,
-               let i = ports.firstIndex(where: { $0["name"]?.string == name }) {
-              ports[i]["port"] = .string(bindings[e.id]!.trimmingCharacters(in: .whitespacesAndNewlines))
-              ext.project["boundary"]?[e.side] = .array(ports)
-            }
-          }
-        }
-      }
-
     }
     guard ok else { return false }
     message = String(localized: "適用しました。")
@@ -655,8 +648,8 @@ private struct GeneralCategory: View {
         LabeledContent("種類", value: model.kind.label)
         if model.definition != nil {
           LabeledContent("アイコン") {
-            SymbolPicker(symbol: Binding(get: { model.definition?["symbol"]?.string ?? "" },
-                                         set: { model.definition?["symbol"] = .string($0) }))
+            SymbolPicker(symbol: Binding(get: { model.definition?["symbol"]?.string ?? "none" },
+                                         set: { model.definition?["symbol"] = .string($0) }), defaultIcon: model.kind.symbol)
           }
         }
         TextField("Card 名", text: metaString("title"))
@@ -743,13 +736,30 @@ private struct GeneralCategory: View {
   }
 
   @ViewBuilder private var executionSettings: some View {
-    let selected = model.definition?["system"]?.string ?? ""
-    let supported = model.session.executionServices.flatMap { $0.systems.compactMap { $0 } }
-    let systems = Set(["aarch64-linux", "x86_64-linux"] + supported + [selected])
-      .filter { !$0.isEmpty }.sorted()
-    Picker("CPU アーキテクチャ", selection: Binding(
-      get: { selected }, set: { model.definition?["system"] = .string($0) })) {
-      ForEach(systems, id: \.self) { Text(verbatim: $0).tag($0) }
+    LabeledContent("対応システム") {
+      VStack(alignment: .leading, spacing: 5) {
+        ForEach(cardSystems, id: \.self) { system in
+          Toggle(isOn: Binding(
+            get: { model.systems.contains(system) },
+            set: { enabled in
+              if enabled, !model.systems.contains(system) { model.systems.append(system) }
+              if !enabled, model.systems.count > 1 { model.systems.removeAll { $0 == system } }
+            })) {
+            Text(verbatim: system)
+          }
+          .toggleStyle(.checkbox)
+          .disabled(model.systems == [system])
+        }
+        Text("対応するワーカーはネイティブで実行し、それ以外は先頭のシステムをエミュレートします。")
+          .font(.caption).foregroundStyle(.secondary)
+      }
+    }
+    if let first = model.systems.first {
+      Picker("エミュレーション時のシステム", selection: Binding(
+        get: { model.systems.first ?? first },
+        set: { system in model.systems = [system] + model.systems.filter { $0 != system } })) {
+        ForEach(model.systems, id: \.self) { Text(verbatim: $0).tag($0) }
+      }
     }
     LabeledContent("ワーカーの必須ビット") {
       WorkerBitsEditor(bits: Binding(
