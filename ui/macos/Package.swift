@@ -3,6 +3,10 @@
 import Foundation
 import PackageDescription
 
+let clientLib = ProcessInfo.processInfo.environment["TSUGUMI_CLIENT_LIB_DIR"]
+  ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    .appendingPathComponent("../../build/client").standardizedFileURL.path
+
 let package = Package(
   name: "Tsugumi",
   platforms: [.macOS("26.0")],
@@ -35,6 +39,7 @@ let package = Package(
     .package(url: "https://github.com/mgriebling/SwiftMath.git", exact: "1.7.3"),
   ],
   targets: [
+    .systemLibrary(name: "TsugumiViewHostC", path: "Sources/ViewHostC"),
     // macOS adapters for the shared host service.
     .target(
       name: "TsugumiAgentClient",
@@ -72,7 +77,7 @@ let package = Package(
       name: "TsugumiApp",
       dependencies: [
         .product(name: "TsugumiRPC", package: "swift"), "TsugumiLauncher",
-        "TsugumiAgentClient",
+        "TsugumiAgentClient", "TsugumiViewHostC",
         .product(name: "SwiftTreeSitter", package: "SwiftTreeSitter"),
         .product(name: "TreeSitterC", package: "tree-sitter-c"),
         .product(name: "TreeSitterCPP", package: "tree-sitter-cpp"),
@@ -90,7 +95,12 @@ let package = Package(
       path: "Sources/App",
       exclude: ["Resources/TreeSitter/SOURCES.md"],
       resources: [.copy("Resources/TreeSitter")],
-      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error, .when(configuration: .debug))]),
+      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error, .when(configuration: .debug))],
+      linkerSettings: [
+        .unsafeFlags(["-L", clientLib, "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
+        .linkedFramework("Metal"), .linkedFramework("QuartzCore"), .linkedFramework("IOSurface"),
+        .linkedFramework("IOKit"), .linkedFramework("CoreGraphics"), .linkedFramework("Foundation"),
+      ]),
     .target(name: "TsugumiSecretStoreIsolation", path: "Tests/SecretStoreIsolation"),
     .target(name: "TsugumiTestSupport", dependencies: ["TsugumiSecretStoreIsolation"], path: "Tests/Support",
             swiftSettings: [.treatAllWarnings(as: .error, .when(configuration: .debug))]),
@@ -101,6 +111,7 @@ let package = Package(
       dependencies: [.product(name: "TsugumiVMRuntime", package: "TsugumiVM"), .product(name: "TsugumiRPC", package: "swift"), "TsugumiLauncher", "TsugumiApp", "TsugumiAgentClient", "TsugumiTestSupport",
                      .product(name: "SwiftTerm", package: "SwiftTerm")],
       path: "Tests/TsugumiAppTests",
-      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error, .when(configuration: .debug))]),
+      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error, .when(configuration: .debug))],
+      linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", clientLib])]),
   ]
 )
