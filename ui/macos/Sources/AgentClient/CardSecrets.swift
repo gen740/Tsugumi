@@ -27,8 +27,9 @@ public enum CardSecrets {
     let reply: Tsugumi_Host_CardSecretListT = try await CoreHostClient.shared.hostCall(.cardsecretsetrequest, request)
     return reply.names.compactMap { $0 }
   }
-  /// The same rule as a Card's `secrets` entries: [a-z][a-z0-9_]{0,63}.
-  public static func validName(_ name: String) -> Bool {
-    name.range(of: "^[a-z][a-z0-9_]{0,63}$", options: .regularExpression) != nil
-  }
+}
+
+/// The document rule for Card ids, port names, and secret names.
+public func validName(_ name: String) -> Bool {
+  name.wholeMatch(of: #/^[a-z][a-z0-9_]{0,63}$/#) != nil
 }

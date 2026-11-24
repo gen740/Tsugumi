@@ -647,11 +647,11 @@ struct GraphCanvas: View {
   private func boundaryBars(_ b: Boundary) -> some View {
     let z = CGFloat(camera.zoom)
     return ZStack(alignment: .topLeading) {
-      BoundaryBarView(title: String(localized: "この Card の入力"), ports: b.inputs, input: true, zoom: z, rect: b.top)
+      BoundaryBarView(title: String(localized: "この Card の入力"), ports: b.inputs, input: true, zoom: z, rect: b.top, cardTitle: session.displayName)
         .placeScaled(at: screen(b.top.origin), size: b.top.size, zoom: camera.zoom, pixel: displayScale)
         .gesture(boundaryMove(input: true, from: undragged(b.top.origin, input: true)))
         .help("ドラッグで移動できます")
-      BoundaryBarView(title: String(localized: "この Card の出力"), ports: b.outputs, input: false, zoom: z, rect: b.bottom)
+      BoundaryBarView(title: String(localized: "この Card の出力"), ports: b.outputs, input: false, zoom: z, rect: b.bottom, cardTitle: session.displayName)
         .placeScaled(at: screen(b.bottom.origin), size: b.bottom.size, zoom: camera.zoom, pixel: displayScale)
         .gesture(boundaryMove(input: false, from: undragged(b.bottom.origin, input: false)))
         .help("ドラッグで移動できます")
@@ -1061,7 +1061,7 @@ struct GraphCanvas: View {
       if let id = session.currentRunId, d.invocation > 0 {
         status += String(localized: "（Run \(String(id.prefix(8))) の中でこの Card の \(d.invocation) 回目の実行）")
       }
-      return .init(title: d.title, subtitle: d.kind.label, symbol: d.symbol ?? d.kind.symbol, lines: lines,
+      return .init(title: d.title, subtitle: d.kind.label, symbol: d.symbol ?? "xmark.octagon", lines: lines,
                    status: status, problems: d.errors + (d.failure.map { [$0] } ?? []), warnings: d.warnings)
     case .wire(let i):
       let conns = session.connections(in: tab.scope)
@@ -1398,6 +1398,7 @@ struct BoundaryBarView: View {
   let input: Bool
   let zoom: CGFloat
   let rect: CGRect
+  let cardTitle: (CardKey) -> String
 
   var body: some View {
     ZStack(alignment: .topLeading) {
@@ -1414,7 +1415,7 @@ struct BoundaryBarView: View {
         }
         .frame(width: 104 * zoom)
         .position(x: x, y: rect.height * zoom / 2 + 5 * zoom)
-        .help(p.inner.map { String(localized: "内部の接続先: \(String($0.0.split(separator: "/").last ?? "")).\($0.1)") }
+        .help(p.inner.map { String(localized: "内部の接続先: \(cardTitle($0.0)).\($0.1)") }
               ?? String(localized: "内部の接続先が未設定です"))
         Group {
           if input { Circle().fill(Color.accentColor) } else {

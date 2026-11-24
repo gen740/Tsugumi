@@ -1127,7 +1127,7 @@ struct CardNodeView: View {
 
   private var header: some View {
     HStack(spacing: s(6)) {
-      Image(systemName: data.symbol ?? data.kind.symbol).font(font(12)).foregroundStyle(.secondary).frame(width: s(15))
+      Image(systemName: data.symbol ?? "xmark.octagon").font(font(12)).foregroundStyle(.secondary).frame(width: s(15))
       Text(verbatim: data.untitled && edit == nil ? data.summary?.split(separator: "\n").first.map(String.init) ?? data.title : data.title)
         .font(font(12, .semibold)).lineLimit(1).truncationMode(.tail)
       if edit == nil { Spacer(minLength: s(2)) }
@@ -1197,10 +1197,10 @@ struct CardNodeView: View {
 
   // MARK: Routing Card
 
-  /// Only the kind's icon, coloured by the state; name and details on hover.
+  /// The Card's icon, coloured by the state; name and details on hover.
   private func routingBody(_ g: CardGeometry, outline: CGRect) -> some View {
     let center = g.iconCenter(in: outline)
-    return Image(systemName: data.kind.symbol)
+    return Image(systemName: data.symbol ?? "xmark.octagon")
       .font(font(10, .semibold))
       .foregroundStyle(data.state.map { $0 == .notStarted ? Color.secondary : $0.color } ?? .secondary)
       .position(center)

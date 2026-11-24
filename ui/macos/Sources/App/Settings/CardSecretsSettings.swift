@@ -65,7 +65,7 @@ struct CardSecretsSettings: View {
             }
           }
           .buttonStyle(.borderedProminent)
-          .disabled(!CardSecrets.validName(name) || value.isEmpty)
+          .disabled(!validName(name) || value.isEmpty)
           if busy { ProgressView().controlSize(.small) }
         }
       } header: {

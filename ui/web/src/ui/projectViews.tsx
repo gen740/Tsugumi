@@ -5,8 +5,8 @@ import { app } from '../model/app'
 import { nixPathLockStatus } from '../model/nixPath'
 import { useObserve } from '../model/observable'
 import { FLOW_LABELS, FlowDirection } from '../model/prefs'
-import { definitionKind, errorText, formatBytes, key, KIND_ICON, KIND_LABEL, path, ProjectSession } from '../model/session'
-import { arr, bool, clone, get, isObj, J, num, numText, obj, parse, serialize, str } from '../../shared/json'
+import { definitionKind, errorText, formatBytes, key, KIND_LABEL, path, ProjectSession } from '../model/session'
+import { arr, bool, clone, get, isObj, J, JNum, numText, obj, parse, serialize, str } from '../../shared/json'
 import { R, s } from '../wire/rpc'
 import { DEFINITION_DRAG } from './actions'
 import { Button, Confirm, Empty, Form, HSplit, InfoButton, MenuButton, Row, Section, Select, Spinner, TextField, Toggle, Value } from './controls'
@@ -135,7 +135,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
                 <div key={id} role="option" aria-selected={id === selected} className={`list-row clickable def-row${id === selected ? ' selected' : ''}`}
                   draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', DEFINITION_DRAG + id); e.dataTransfer.effectAllowed = 'copy' }}
                   onClick={() => { if (!revisionEdit.applying) setSelected(id) }}>
-                  <Icon name={KIND_ICON[kind]} className="secondary" />
+                  <Icon name={str(get(session.definitions.get(id), 'symbol')) ?? 'xmark.octagon'} className="secondary" />
                   <div className="col min0">
                     <span className="ellipsis">{session.displayName(key([id]))}</span>
                     <span className="caption secondary">{KIND_LABEL[kind] + (unplaced.has(id) ? L(' · 未配置') : '')}</span>
@@ -299,55 +299,58 @@ function NixPathRows({ session, prefix }: { session: ProjectSession; prefix: str
   </div>
 }
 
-const recordingDefaults = {
-  recordLogs: true,
-  recordIO: false,
-}
-type RecordingKey = keyof typeof recordingDefaults
-const recordingKeys = Object.keys(recordingDefaults) as RecordingKey[]
+const recordingKeys = ['recordLogs', 'recordIO'] as const
 function projectRecording(project: J) {
-  return Object.fromEntries(recordingKeys.map(k => [k, bool(get(project, k)) ?? recordingDefaults[k]])) as typeof recordingDefaults
+  return { recordLogs: bool(get(project, 'recordLogs'))!, recordIO: bool(get(project, 'recordIO'))! }
 }
-const projectLogLimit = (project: J) => numText(get(project, 'logLimitBytes')) ?? '134217728'
+const limitFields = [
+  ['logLimitBytes', L('呼び出しごとのログ上限（バイト）'), 1073741824n],
+  ['outputLimitBytes', L('出力の保存上限（バイト）'), 18446744073709551615n],
+  ['outputLimitEntries', L('出力の保存件数上限'), 18446744073709551615n],
+] as const
+type LimitKey = typeof limitFields[number][0]
+const projectLimits = (project: J) => Object.fromEntries(
+  limitFields.map(([key]) => [key, numText(get(project, key)) ?? ''])) as Record<LimitKey, string>
 
 function GeneralProjectSettings({ session }: { session: ProjectSession }) {
   const [selectedProject, setSelectedProject] = useState(() => clone(session.project))
   const [name, setName] = useState(str(get(session.project, 'name')) ?? '')
-  const savedPaths = (arr(get(session.project, 'versionPaths')) ?? []).map(x => str(x) ?? '').join('\n')
-  const [versionPaths, setVersionPaths] = useState(savedPaths)
-  const excludeText = (project: J) => (arr(get(project, 'agentExclude')) ?? app.status?.agentExclude ?? []).map(x => typeof x === 'string' ? x : str(x) ?? '').join('\n')
+  const savedPaths = (arr(get(session.project, 'trackedPaths')) ?? []).map(x => str(x) ?? '').join('\n')
+  const [trackedPaths, setTrackedPaths] = useState(savedPaths)
+  const excludeText = (project: J) => (arr(get(project, 'agentExclude')) ?? []).map(x => str(x) ?? '').join('\n')
   const [agentExclude, setAgentExclude] = useState(() => excludeText(session.project))
   const [recording, setRecording] = useState(() => projectRecording(session.project))
-  const [logLimit, setLogLimit] = useState(() => projectLogLimit(session.project))
+  const [limits, setLimits] = useState(() => projectLimits(session.project))
   const savedRecording = projectRecording(selectedProject)
   const changedRecording = recordingKeys.filter(k => recording[k] !== savedRecording[k])
-  const changedLogLimit = logLimit !== projectLogLimit(selectedProject)
-  const validLogLimit = /^\d+$/.test(logLimit) && Number(logLimit) <= 1073741824
+  const savedLimits = projectLimits(selectedProject)
+  const changedLimits = limitFields.filter(([key]) => limits[key] !== savedLimits[key])
+  const validLimits = limitFields.every(([key, , max]) => /^\d+$/.test(limits[key]) && BigInt(limits[key]) <= max)
   const [message, setMessage] = useState<string>()
   const [revisionEdit] = useState(() => { const e = new RevisionEdit(); e.reload(session.rev); return e })
   useObserve(revisionEdit)
-  const initialPaths = (arr(get(selectedProject, 'versionPaths')) ?? []).map(x => str(x) ?? '').join('\n')
-  const changed = name !== (str(get(selectedProject, 'name')) ?? '') || versionPaths !== initialPaths || agentExclude !== excludeText(selectedProject) || changedRecording.length > 0 || changedLogLimit
+  const initialPaths = (arr(get(selectedProject, 'trackedPaths')) ?? []).map(x => str(x) ?? '').join('\n')
+  const changed = name !== (str(get(selectedProject, 'name')) ?? '') || trackedPaths !== initialPaths || agentExclude !== excludeText(selectedProject) || changedRecording.length > 0 || changedLimits.length > 0
   const load = () => {
     setSelectedProject(clone(session.project))
     setName(str(get(session.project, 'name')) ?? '')
-    setVersionPaths(savedPaths)
+    setTrackedPaths(savedPaths)
     setAgentExclude(excludeText(session.project))
     setRecording(projectRecording(session.project))
-    setLogLimit(projectLogLimit(session.project))
+    setLimits(projectLimits(session.project))
     revisionEdit.reload(session.rev)
   }
   const save = async (overwrite = false) => {
-    if (!validLogLimit) return
-    const paths = versionPaths.split(/\r?\n/).filter(x => x.length > 0)
+    if (!validLimits) return
+    const paths = trackedPaths.split(/\r?\n/).filter(x => x.length > 0)
     const before = revisionEdit.jsonBase('tsugumi.json', selectedProject, overwrite)
     const after = clone(before)
     if (!isObj(after)) return
     if (name !== (str(get(selectedProject, 'name')) ?? '')) after.set('name', name)
-    if (versionPaths !== initialPaths) after.set('versionPaths', paths)
+    if (trackedPaths !== initialPaths) after.set('trackedPaths', paths)
     if (agentExclude !== excludeText(selectedProject)) after.set('agentExclude', agentExclude.split(/\r?\n/).filter(x => x.length > 0))
     for (const k of changedRecording) after.set(k, recording[k])
-    if (changedLogLimit) after.set('logLimitBytes', num(Number(logLimit)))
+    for (const [key] of changedLimits) after.set(key, new JNum(String(BigInt(limits[key]))))
     if (!await revisionEdit.apply(session, x => x.appendEdits([x.jsonEdit('tsugumi.json', before, after)]))) return
     setSelectedProject(after)
     const saved = projectRecording(after)
@@ -356,8 +359,13 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
       for (const k of recordingKeys) if (current[k] === recording[k]) next[k] = saved[k]
       return next
     })
-    setLogLimit(current => current === logLimit ? projectLogLimit(after) : current)
-    setVersionPaths(current => current === versionPaths ? paths.join('\n') : current)
+    const savedLimits = projectLimits(after)
+    setLimits(current => {
+      const next = { ...current }
+      for (const [key] of limitFields) if (current[key] === limits[key]) next[key] = savedLimits[key]
+      return next
+    })
+    setTrackedPaths(current => current === trackedPaths ? paths.join('\n') : current)
     setMessage(L('保存しました。'))
   }
   return (
@@ -370,8 +378,8 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
           <Section>
             <Row label={L('プロジェクト名')}><TextField value={name} onChange={setName} style={{ width: 260 }} /></Row>
           </Section>
-          <Section info={L('定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。')}>
-            <Row label={L('版に含める追加パス')}><TextField value={versionPaths} onChange={setVersionPaths} multiline rows={5} style={{ width: 320 }} /></Row>
+          <Section info={L('Tsugumi のプロジェクトの版に追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します。Git の追跡には影響しません。ワイルドカード、.tsugumi/、.git/、シンボリックリンクは指定できません。')}>
+            <Row label={L('Tsugumi の版に含める追加パス')}><TextField value={trackedPaths} onChange={setTrackedPaths} multiline rows={5} style={{ width: 320 }} /></Row>
           </Section>
           <Section info={L('Agent が参照できないパスを 1 行に 1 つ指定します。プロジェクトからの相対パス、または絶対パスで、ファイルと配下の全体を対象にします。人の画面には表示されます。')}>
             <Row label={L('Agent から除外するパス')}><TextField value={agentExclude} onChange={setAgentExclude} multiline rows={5} style={{ width: 320 }} /></Row>
@@ -382,25 +390,26 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
           <Section title={L('記録の既定値')}>
             <Row label={L('標準出力と標準エラーを記録')}><Toggle checked={recording.recordLogs} onChange={recordLogs => setRecording({ ...recording, recordLogs })} /></Row>
             <Row label={L('入出力の値を記録')}><Toggle checked={recording.recordIO} onChange={recordIO => setRecording({ ...recording, recordIO })} /></Row>
-            <Row label={L('呼び出しごとのログ上限（バイト）')}>
-              <TextField value={logLimit} onChange={setLogLimit} mono />
-            </Row>
-            <Row><span className={validLogLimit ? 'secondary caption' : 'callout'}>{L('0〜1073741824。0 の場合もログは実行中に表示されます。')}</span></Row>
+            {limitFields.map(([key, label]) => <Row key={key} label={label}
+              help={key === 'logLimitBytes' ? L('0〜1073741824。0 の場合もログは実行中に表示されます。') : undefined}>
+              <TextField value={limits[key]} onChange={value => setLimits(current => ({ ...current, [key]: value }))} mono />
+            </Row>)}
           </Section>
           <TrustedFoldersSettings />
           <NixPathSettings session={session} />
           <Section>
             <Value label={L('場所')} value={session.dir} />
+            <Value label={L('Tsugumi のバージョン')} value={str(get(session.project, 'tsugumiVersion')) ?? ''} />
           </Section>
         </Form>
       </div>
-      <RevisionEditNotice edit={revisionEdit} text={() => [`name: ${name}`, `versionPaths:\n${versionPaths}`, `agentExclude:\n${agentExclude}`,
-        ...recordingKeys.map(k => `${k}: ${recording[k]}`), `logLimitBytes: ${logLimit}`].join('\n')}
+      <RevisionEditNotice edit={revisionEdit} text={() => [`name: ${name}`, `trackedPaths:\n${trackedPaths}`, `agentExclude:\n${agentExclude}`,
+        ...recordingKeys.map(k => `${k}: ${recording[k]}`), ...limitFields.map(([key]) => `${key}: ${limits[key]}`)].join('\n')}
         overwrite={() => void save(true)} reload={load} />
       <div className="detail-foot">
         {message && <span className="callout secondary selectable">{message}</span>}
         <span className="spacer" />
-        <Button kind="prominent" disabled={!changed || !validLogLimit || revisionEdit.applying || !session.isEditable} onClick={() => void save()}>{L('保存')}</Button>
+        <Button kind="prominent" disabled={!changed || !validLimits || revisionEdit.applying || !session.isEditable} onClick={() => void save()}>{L('保存')}</Button>
       </div>
     </div>
   )

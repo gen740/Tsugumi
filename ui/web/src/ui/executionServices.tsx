@@ -1,3 +1,5 @@
+import { validWorkerBits } from '../../shared/workerBits'
+import { WorkerBitsEditor } from './workerBits'
 import { useEffect, useState } from 'react'
 import { L } from '../i18n'
 import * as H from '../../shared/gen/tsugumi/host'
@@ -9,11 +11,11 @@ import { Button, Form, Row, Section, Spinner, TextField, Value } from './control
 const executionServices = (type: H.RequestPayload, value: H.RequestT['value']) =>
   hostCall<H.ExecutionServicesT>(type, value, H.ReplyPayload.ExecutionServices)
 
-interface Registration { id: string; name: string; endpoint: string; workerPublicKey: string; grade: string }
+interface Registration { id: string; name: string; endpoint: string; workerPublicKey: string; workerCapabilities: number[] }
 
 const registration = (entry: H.ExecutionServiceT): Registration => ({
   id: s(entry.id), name: s(entry.name), endpoint: s(entry.endpoint),
-  workerPublicKey: s(entry.workerPublicKey), grade: String(entry.grade),
+  workerPublicKey: s(entry.workerPublicKey), workerCapabilities: entry.workerCapabilities,
 })
 
 export function ExecutionServicesSettings({ changed }: { changed: () => void }) {
@@ -28,13 +30,13 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
   useEffect(() => { void executionServices(H.RequestPayload.ExecutionServicesRequest, new H.ExecutionServicesRequestT()).then(adopt, (e) => setProblem(errorText(e))) }, [])
 
   function choose(entry: Registration, id?: string) {
-    const { name, endpoint, workerPublicKey, grade, id: serviceId } = entry
-    setEdit({ id: serviceId, name, endpoint, workerPublicKey, grade })
+    const { name, endpoint, workerPublicKey, workerCapabilities, id: serviceId } = entry
+    setEdit({ id: serviceId, name, endpoint, workerPublicKey, workerCapabilities })
     setOriginal(id)
     setProblem(undefined)
     setMessage(undefined)
   }
-  function update(field: keyof Registration, value: string | number) {
+  function update(field: keyof Registration, value: string | number[]) {
     setEdit((previous) => previous && {
       ...previous,
       [field]: value,
@@ -53,7 +55,7 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
   const sameEndpoint = !!saved && s(saved.endpoint) === edit?.endpoint.trim()
   const caps = sameEndpoint && saved.capabilities?.serverId ? saved.capabilities : undefined
   const valid = !!edit && [edit.id, edit.name, ...(edit.id === 'local' ? [] : [edit.endpoint, edit.workerPublicKey])].every((value) => value.trim())
-    && /^(0x[0-9a-f]+|[0-9]+)$/i.test(edit.grade) && BigInt(edit.grade) <= 0xffffffffffffffffn
+    && validWorkerBits(edit.workerCapabilities)
 
   return <Form>
     <Section title={L('このホストの公開鍵')} info={L('ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。')}>
@@ -65,12 +67,14 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
         <Button kind="borderless" disabled={busy} onClick={() => choose(registration(entry), s(entry.id))}>{s(entry.name)} ({s(entry.id)})</Button>
         <span className="secondary">{s(entry.capabilities!.nativeSystem)}</span>
       </Row>)}
-      <Row><Button icon="plus" disabled={busy} onClick={() => choose({ id: '', name: '', endpoint: '', workerPublicKey: '', grade: '1' })}>{L('実行サービスを追加')}</Button></Row>
+      <Row><Button icon="plus" disabled={busy} onClick={() => choose({ id: '', name: '', endpoint: '', workerPublicKey: '', workerCapabilities: [] })}>{L('実行サービスを追加')}</Button></Row>
     </Section>
     {edit && <Section>
       <Row label={L('名前')}><TextField value={edit.name} disabled={busy} onChange={(value) => update('name', value)} /></Row>
       <Row label={L('サービス ID')}><TextField value={edit.id} mono disabled={busy || !!original} onChange={(value) => update('id', value)} /></Row>
-      <Row label={L('ワーカーの grade')} help={L('64 bit の符号なし整数（10 進数または 0x から始まる 16 進数）です。条件を満たす空きワーカーのうち、最小の値を選びます。')}><TextField value={edit.grade} mono disabled={busy} onChange={(value) => update('grade', value)} /></Row>
+      <Row label={L('ワーカーの対応ビット')} help={L('このワーカーが持つビットを 0〜63 から選びます。')}>
+        <WorkerBitsEditor bits={edit.workerCapabilities} disabled={busy} onChange={bits => update('workerCapabilities', bits)} />
+      </Row>
       <Row label={L('実行デーモンの接続先')} help={L('TLS 接続先を入力してください（例: tls://worker.example:8765）。')}>
         <TextField value={edit.endpoint} placeholder="tls://worker.example:8765" mono disabled={busy || edit.id === 'local'} onChange={(value) => update('endpoint', value)} />
       </Row>
@@ -86,14 +90,14 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
       <Row>
         <Button kind="prominent" disabled={!valid || busy} onClick={() => void perform(async () => {
           const next = await executionServices(H.RequestPayload.ExecutionServicePutRequest,
-            new H.ExecutionServicePutRequestT(edit.id, edit.name, edit.endpoint, edit.workerPublicKey, !!original, BigInt(edit.grade)))
+            new H.ExecutionServicePutRequestT(edit.id, edit.name, edit.endpoint, edit.workerPublicKey, !!original && edit.id !== 'local', edit.workerCapabilities))
           const registered = next.services.find((entry) => s(entry.id) === edit.id)
           if (!registered) throw Error(L('実行サービスを登録できませんでした。'))
           adopt(next)
           choose(registration(registered), s(registered.id))
-          setMessage(original ? L('接続を確認しました。') : L('公開鍵を登録しました。authorized_keys にホストの公開鍵を追加してから接続を確認してください。'))
+          setMessage(edit.id === 'local' ? L('保存しました。') : original ? L('接続を確認しました。') : L('公開鍵を登録しました。authorized_keys にホストの公開鍵を追加してから接続を確認してください。'))
           changed()
-        })}>{original ? L('接続を確認して更新') : L('登録')}</Button>
+        })}>{edit.id === 'local' ? L('保存') : original ? L('接続を確認して更新') : L('登録')}</Button>
         {original && original !== 'local' && <Button kind="destructive" disabled={busy} onClick={() => void perform(async () => {
           adopt(await executionServices(H.RequestPayload.ExecutionServiceRemoveRequest, new H.ExecutionServiceRemoveRequestT(original)))
           setEdit(undefined)

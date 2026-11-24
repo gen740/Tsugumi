@@ -26,9 +26,9 @@ function node(dir: string, id: string): CardNodeData {
   const typed = fs.existsSync(fbs)
     ? [...(/table Outputs\s*\{([^}]*)\}/.exec(fs.readFileSync(fbs, 'utf8').replace(/\/\*.*?\*\//gs, ''))?.[1] ?? '').matchAll(/(\w+)\s*:/g)].map((m) => ({ name: m[1] }))
     : []
-  const blank = { summary: meta?.description || undefined, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, title: id }
+  const blank = { summary: meta?.description || undefined, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, title: meta?.title ?? id }
   if (def?.type === 'subgraph') {
-    const b = read(path.join(dir, 'externals', def.external, 'tsugumi.json'))?.boundary ?? {}
+    const b = read(path.join(dir, 'externals', id, 'tsugumi.json'))?.boundary ?? {}
     return { ...blank, kind: 'subgraph', inputs: named(b.inputs), outputs: named(b.outputs) }
   }
   const declared = named(def?.inputs)
@@ -41,8 +41,7 @@ function node(dir: string, id: string): CardNodeData {
     case 'collect': return { ...blank, kind: 'collect', inputs: [{ name: 'in' }], outputs: [{ name: 'out' }] }
     case 'code': return { ...blank, kind: 'code', inputs: declared, outputs: typed }
     case 'draft': {
-      const untitled = /^draft(-[0-9]+)?$/.test(id)
-      return { ...blank, kind: 'draft', summary: meta.body || blank.summary, untitled, inputs: [], outputs: [] }
+      return { ...blank, kind: 'draft', summary: meta?.body || blank.summary, inputs: [], outputs: [] }
     }
     default: throw new Error(`type ${def?.type}`)
   }

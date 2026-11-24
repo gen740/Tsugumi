@@ -220,7 +220,7 @@ import TsugumiTestSupport
   defer { try? FileManager.default.removeItem(at: dir) }
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   let (start, log, draft) = ("start", "log", "plan")
-  let s = try offlineSession(dir, cards: [(start, #"{"type":"trigger"}"#), (log, #"{"type":"code"}"#), (draft, #"{"type":"draft"}"#)])
+  let s = try offlineSession(dir, cards: [(start, fixtureCardJSON(.trigger)), (log, fixtureCardJSON(.code)), (draft, fixtureCardJSON(.draft))])
 
   #expect(s.isDraftWire(from: draft, to: log), "from a Draft")
   #expect(s.isDraftWire(from: start, to: draft), "to a Draft")
@@ -232,7 +232,7 @@ import TsugumiTestSupport
   // Once the Card is implemented, endpoint styling becomes solid.
   let implemented = Tsugumi_RPC_DocumentDeltaT()
   implemented.baseRev = 0; implemented.rev = 1; implemented.origin = "agent"
-  let definition = Tsugumi_RPC_DefinitionT(); definition.id = draft; definition.cardJson = #"{"type":"code"}"#
+  let definition = Tsugumi_RPC_DefinitionT(); definition.id = draft; definition.cardJson = fixtureCardJSON(.code)
   implemented.definitionsUpsert = [definition]
   s.applyDelta(implemented)
   #expect(s.kind(draft) == .code)
@@ -247,8 +247,7 @@ import TsugumiTestSupport
   #expect(abs(dots - dots.rounded()) < 1e-9, "a whole number of dots per period")
 }
 
-/// A Card whose _card.json has no type, an unknown one, or one that does not
-/// match `external` is a definition error, not a Draft: drawn as a failure with
+/// A Card whose _card.json has no type or an unknown one is drawn as a failure with
 /// the core's diagnostic, no ports and no run. The web checks the same
 /// (ui/web/tests/definitionErrors.tsx).
 @MainActor @Test func cardsWithoutAKnownTypeAreDefinitionErrors() async throws {
@@ -258,25 +257,22 @@ import TsugumiTestSupport
   let s = try offlineSession(dir, cards: [
     ("old", #"{"inputs":[{"name":"in"}]}"#),
     ("future", #"{"type":"something new","inputs":[{"name":"in"}]}"#),
-    ("loose", #"{"type":"code","external":"lib"}"#),
-    ("plan", #"{"type":"draft"}"#),
-    ("step", #"{"type":"code"}"#),
+    ("plan", fixtureCardJSON(.draft)),
+    ("step", fixtureCardJSON(.code)),
   ])
   #expect(s.kind("old") == .invalid)
   #expect(s.kind("future") == .invalid)
-  #expect(s.kind("loose") == .invalid)
   #expect(s.kind("plan") == .draft, "a Draft stays a Draft")
   #expect(s.kind("step") == .code)
   #expect(definitionKind(nil) == .invalid, "a Card without a definition")
-  #expect(definitionKind(try JSONValue.parse(#"{"type":"subgraph","external":"lib"}"#)) == .subgraph)
-  #expect(definitionKind(try JSONValue.parse(#"{"type":"subgraph"}"#)) == .invalid)
+  #expect(definitionKind(try JSONValue.parse(fixtureCardJSON(.subgraph))) == .subgraph)
   #expect(definitionKind(try JSONValue.parse(#"{"type":"invalid"}"#)) == .invalid, "not a type name")
 
   // The core's diagnostic (file and message) is what the Card says.
   let missing = #"definitions/old/_card.json: "type" is required (one of code, draft, trigger, input, merge, collect, subgraph)"#
   let delta = Tsugumi_RPC_DocumentDeltaT()
   delta.baseRev = 0; delta.rev = 1; delta.origin = "agent"
-  delta.resolution = ["old", "future", "loose", "plan", "step"].map { id in
+  delta.resolution = ["old", "future", "plan", "step"].map { id in
     let r = Tsugumi_RPC_ResolvedCardT(); r.card = cardPath([id])
     let out = Tsugumi_Data_PortT(); out.name = "out"; r.outputs = [out]
     if id == "old" {
@@ -721,11 +717,11 @@ private final class CountingRuler: LineNumberRuler {
   let dir = try SyncTests.project()
   defer { try? FileManager.default.removeItem(at: dir) }
   let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
-  let document = try JSONValue.parse(#"{"canvas":{"cards":[{"id":"plan"},{"id":"start"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},{"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}]}}"#)
+  let document = try JSONValue.parse(fixtureProjectJSON(#"{"canvas":{"cards":[{"id":"plan"},{"id":"start"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},{"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}]}}"#))
   let snapshot = Tsugumi_RPC_ProjectSnapshotT()
   snapshot.projectJson = document.serialized(); snapshot.layout = []
   snapshot.definitions = ["plan", "next"].map { id in
-    let definition = Tsugumi_RPC_DefinitionT(); definition.id = id; definition.cardJson = #"{"type":"draft"}"#
+    let definition = Tsugumi_RPC_DefinitionT(); definition.id = id; definition.cardJson = fixtureCardJSON(.draft)
     return definition
   }
   session.prepareLayout = { _, layout, _ in layout }
@@ -749,7 +745,7 @@ private final class CountingRuler: LineNumberRuler {
   let dir = testTemporaryDirectory.appendingPathComponent(UUID().uuidString)
   defer { try? FileManager.default.removeItem(at: dir) }
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-  try "{}".write(to: dir.appendingPathComponent("tsugumi.json"), atomically: true, encoding: .utf8)
+  try fixtureProjectJSON().write(to: dir.appendingPathComponent("tsugumi.json"), atomically: true, encoding: .utf8)
   let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
   let model = CardEditorModel(session: session, cardKey: "notebook")
   let source = "definitions/notebook/src/notebook.py"

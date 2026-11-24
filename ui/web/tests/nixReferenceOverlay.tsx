@@ -1,3 +1,4 @@
+import { projectFixture } from './documentFixture'
 // The Nix reference overlay as the canvas uses it: what a saved source change
 // from the core does to it, and what the toggle, a click on a link and
 // hovering a Card show.
@@ -22,7 +23,7 @@ const resolved = (id: string, refs: Ref[] = []) => ({
 }) as unknown as R.ResolvedCardT
 
 const session = new ProjectSession('/p', 'k', 'p')
-const project = '{"name":"t","canvas":{"cards":[{"id":"source"},{"id":"analysis"},{"id":"report"},{"id":"other"}],"connections":[]}}'
+const project = projectFixture({"name":"t","canvas":{"cards":[{"id":"source"},{"id":"analysis"},{"id":"report"},{"id":"other"}],"connections":[]}})
 const inner = session as unknown as { applyDelta(d: R.DocumentDeltaT): void; apply(snapshot: R.ProjectSnapshotT, reset: boolean): void }
 const delta = (resolution: R.ResolvedCardT[]) => {
   const d = Object.assign(new R.DocumentDeltaT(), { baseRev: session.rev, rev: session.rev + 1n, resolution, diagnostics: [] })

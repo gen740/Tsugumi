@@ -6,6 +6,7 @@ layoutHost.complete = async (_project, layout) => layout
 // Agent recovery, images, references, approvals and compaction run through
 // protocol/agent.fbs in tests/core/agent_rpc_test.cc. These are UI behaviors.
 
+await import("./documentContract")
 await import("./clientViewState")
 await import("./serviceProtocol")
 await import("./agentRequests")

@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { api, FolderListing } from '../api'
 import { app } from '../model/app'
 import { useObserve } from '../model/observable'
-import { CardKey, cardState, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, path, ProjectSession } from '../model/session'
+import { CardKey, cardState, errorText, key, KIND_LABEL, path, ProjectSession } from '../model/session'
 import { canvasFor } from '../model/canvas'
 import { Workspace, WorkflowTab } from '../model/workspace'
 import { arr, get, str } from '../../shared/json'
@@ -14,7 +14,6 @@ import { Button, showMenu, Sheet, Spinner, TextField } from './controls'
 import { Icon } from './icons'
 import { L } from '../i18n'
 
-const kindIcon = (k: string) => KIND_ICON[k as keyof typeof KIND_ICON] ?? 'circle'
 
 /** Where a Card added from the sidebar goes: near the top left of what the canvas shows. */
 function dropPoint(session: ProjectSession, tab: WorkflowTab) {
@@ -118,20 +117,21 @@ function Definitions({ session, tab }: { session: ProjectSession; tab: WorkflowT
         </div>
       )}
       {exts.map((prefix) => {
-        const name = prefix.split('/').filter(Boolean).pop() ?? prefix
+        const subgraph = prefix.split('/').filter(Boolean).pop() ?? prefix
+        const name = session.displayName(key([subgraph]))
         const e = session.external(prefix)
-        const ids = [...(e?.definitions.keys() ?? [])].sort().filter((id) => !search || has(id) || has(id) || has(name))
+        const ids = [...(e?.definitions.keys() ?? [])].sort().filter((id) => !search || has(id) || has(session.displayName(key([subgraph, id]))) || has(name))
         return (
           <div key={prefix}>
             <TreeHead open={isOpen(prefix)} onToggle={() => toggle(prefix)} icon="shippingbox" label={name} />
             {isOpen(prefix) && (
               <>
-                <DefinitionRow session={session} icon={KIND_ICON.subgraph} title={L('{0} 全体（Card in Card）', name)} drag={EXTERNAL_DRAG + prefix}
+                <DefinitionRow session={session} icon={str(get(session.definitions.get(subgraph), 'symbol')) ?? 'xmark.octagon'} title={L('{0} 全体（Card in Card）', name)} drag={EXTERNAL_DRAG + prefix}
                   help={L('このプロジェクト全体のコピーを Card in Card として置きます')} onAdd={() => void placeExternal(prefix)} />
                 {ids.map((id) => {
                   const d = e?.definitions.get(id)
                   return (
-                    <DefinitionRow key={id} session={session} icon={kindIcon(definitionKind(d?.card))} title={id}
+                    <DefinitionRow key={id} session={session} icon={str(get(d?.card, 'symbol')) ?? 'xmark.octagon'} title={session.displayName(key([subgraph, id]))}
                       drag={EXTERNAL_DEFINITION_DRAG + prefix + '\n' + id} help={L('定義をこのプロジェクトの definitions にコピーして Card を置きます')}
                       onAdd={() => void placeCopy(prefix, id)} />
                   )
@@ -145,7 +145,7 @@ function Definitions({ session, tab }: { session: ProjectSession; tab: WorkflowT
         <div>
           <TreeHead open={isOpen('unplaced')} onToggle={() => toggle('unplaced')} icon="tray" label={L('配置されていない定義')} secondary />
           {isOpen('unplaced') && unplaced.map((id) => (
-            <DefinitionRow key={id} session={session} icon={kindIcon(definitionKind(session.definitions.get(id)))} title={session.displayName(key([id]))} drag={DEFINITION_DRAG + id}
+            <DefinitionRow key={id} session={session} icon={str(get(session.definitions.get(id), 'symbol')) ?? 'xmark.octagon'} title={session.displayName(key([id]))} drag={DEFINITION_DRAG + id}
               help={L('ダブルクリックまたは Canvas へドラッグして配置')} onAdd={() => place(id)}
               menu={[
                 { label: L('Canvas に配置'), action: () => place(id), disabled: !session.isEditable },
@@ -260,7 +260,7 @@ function VisibleCardRow({ session, tab, cardKey, indent }: { session: ProjectSes
         tab.setSelection([cardKey])
         canvasFor(session, tab).reveal(cardKey)
       }}>
-      <Icon name={kindIcon(kind)} className={selected ? '' : 'secondary'} size={13} />
+      <Icon name={str(get(session.cardDefinition(cardKey), 'symbol')) ?? 'xmark.octagon'} className={selected ? '' : 'secondary'} size={13} />
       <span className="ellipsis flex1">{session.displayName(cardKey)}</span>
       {errors > 0 && <Icon name="exclamationmark.triangle.fill" style={{ color: 'var(--yellow)' }} title={L('問題 {0} 件', errors)} />}
       {st && cs && (

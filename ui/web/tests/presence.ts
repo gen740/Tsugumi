@@ -1,3 +1,4 @@
+import { projectFixture } from './documentFixture'
 import assert from 'node:assert/strict'
 import { connectionKey, SavePresence, SAVE_CUE_SECONDS } from '../src/model/presence'
 import { parse } from '../shared/json'
@@ -21,7 +22,7 @@ assert.equal(presence.step?.wires.size, 0, 'source edits do not reconnect existi
   const R = await import('../shared/gen/tsugumi/rpc')
   const D = await import('../shared/gen/tsugumi/data')
   const s = new ProjectSession('/presence', 'k', 'presence')
-  s.project = s.confirmedProject = parse('{"canvas":{"cards":[],"connections":[]}}')
+  s.project = s.confirmedProject = parse(projectFixture({"canvas":{"cards":[],"connections":[]},"name":"t"}))
   const adapter = s as unknown as { applyDelta(d: InstanceType<typeof R.DocumentDeltaT>): void; applyRunEvent(e: InstanceType<typeof R.RunEventT>): void }
   const delta = Object.assign(new R.DocumentDeltaT(), { baseRev: s.rev, rev: s.rev + 1n, origin: 'agent',
     projectJson: JSON.stringify({ canvas: { cards: [], connections: [{ from: { card: 'a', port: 'o' }, to: { card: 'b', port: 'i' } }] } }) })

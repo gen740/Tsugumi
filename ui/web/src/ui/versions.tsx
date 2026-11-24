@@ -111,7 +111,7 @@ const MAP_W = 284
 const MAP_H = 132
 
 /** A version's Cards and how they connect; those it changed stand out. */
-function MiniMap({ canvas, changed }: { canvas: H.VersionCanvasT; changed: string[] }) {
+function MiniMap({ canvas, changed, cardTitle }: { canvas: H.VersionCanvasT; changed: string[]; cardTitle: (id: string) => string }) {
   const cards = canvas.cards.filter((c): c is H.VersionCanvasCardT => !!c)
     .map((c) => ({ id: str(c.id), x: c.x, y: c.y, kind: cardKindNamed(str(c.kind)), fan: c.fan, collapsed: c.collapsed }))
   const map = miniMapLayout(cards, str(canvas.flow) === 'topToBottom' ? 'topToBottom' : 'leftToRight', MAP_W, MAP_H)
@@ -123,15 +123,25 @@ function MiniMap({ canvas, changed }: { canvas: H.VersionCanvasT; changed: strin
         const a = at.get(str(w?.from)), b = at.get(str(w?.to))
         return a && b ? <line key={i} x1={a.x + a.w / 2} y1={a.y + a.h / 2} x2={b.x + b.w / 2} y2={b.y + b.h / 2} stroke="var(--secondary)" strokeWidth={1} /> : null
       })}
-      {map.cards.map((c) => (
-        <g key={c.id}>
+      {map.cards.map((c) => {
+        const title = cardTitle(c.id)
+        return <g key={c.id}>
+          <title>{title}</title>
           <path d={c.outline} className="ground" />
           <path d={c.outline} className={[touched.has(c.id) && 'changed', c.invalid && 'invalid'].filter(Boolean).join(' ')} strokeDasharray={c.draft ? '3 2' : undefined} />
-          {map.named && (c.shape === 'card' || c.shape === 'start') && <text x={c.x + c.w / 2} y={c.y + c.h / 2 + 3} textAnchor="middle">{c.id.length * 5 > c.w ? `${c.id.slice(0, Math.max(1, Math.floor(c.w / 5) - 1))}…` : c.id}</text>}
+          {map.named && (c.shape === 'card' || c.shape === 'start') && <text x={c.x + c.w / 2} y={c.y + c.h / 2 + 3} textAnchor="middle">{title.length * 5 > c.w ? title.slice(0, Math.max(1, Math.floor(c.w / 5) - 1)) + '…' : title}</text>}
         </g>
-      ))}
+      })}
+
     </svg>
   )
+}
+
+/** The clean head is the version whose README files are available in this session. */
+function versionCardTitle(session: ProjectSession, commit: string, card: string): string {
+  const graph = session.versionGraph
+  return graph && str(graph.head) === commit && !graph.dirty && !session.dirty && card
+    ? session.displayPath(card.split('/')) : card
 }
 
 /** What shows while the pointer is on a version: what it changed, in a model's
@@ -146,7 +156,7 @@ function VersionHover({ session, commit, top }: { session: ProjectSession; commi
         : session.versionNoteBusy.has(id) ? <div className="secondary">{L('ノートを読み込んでいます…')}</div>
           : <div>{str(commit.summary)}</div>}
       {error && <div className="caption" style={{ color: 'var(--red)' }}>{L('ノートを読み込めませんでした: {0}', error)}</div>}
-      {canvas && canvas.cards.length > 0 && <MiniMap canvas={canvas} changed={list(commit.changed)} />}
+      {canvas && canvas.cards.length > 0 && <MiniMap canvas={canvas} changed={list(commit.changed)} cardTitle={card => versionCardTitle(session, id, card)} />}
     </div>
   )
 }
@@ -285,7 +295,7 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
                     </div>
                     <div className="row gap8 caption">
                       {last && <span style={{ color: stateColor(str(last.state)) }}>{L('実行 {0} 回（成功 {1}・失敗 {2}）· 最後: {3}', runs.length, ok, ng, stateLabel(str(last.state)))}</span>}
-                      {list(c.changed).length > 0 && <span className="secondary ellipsis">{changedText(list(c.changed))}</span>}
+                      {list(c.changed).length > 0 && <span className="secondary ellipsis">{changedText(list(c.changed).map(card => versionCardTitle(session, id, card)))}</span>}
                     </div>
                   </div>
                 )
@@ -311,16 +321,16 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
               )}
               <div className="caption mono">版 {str(sel.id).slice(0, 12)}</div>
               <div className="caption">{new Date(Number(sel.time ?? 0n)).toLocaleString()}</div>
-              {list(sel.changed).length > 0 && <div className="caption">{changedText(list(sel.changed))}</div>}
+              {list(sel.changed).length > 0 && <div className="caption">{changedText(list(sel.changed).map(card => versionCardTitle(session, str(sel.id), card)))}</div>}
               {(session.versionComments.get(str(sel.id)) ?? []).length > 0 && (
                 <>
                   <div style={{ fontWeight: 600 }}>{L('コメント')}</div>
                   {(session.versionComments.get(str(sel.id)) ?? []).filter((x): x is VersionCommentT => !!x).map((c, i) => (
                     <div key={i} className="col caption">
-                      <div className="secondary">{str(c.card)} · {commentChange(str(c.change), str(c.by) || undefined)}</div>
+                      <div className="secondary">{versionCardTitle(session, str(sel.id), str(c.card))} · {commentChange(str(c.change), str(c.by) || undefined)}</div>
                       <div className="selectable" style={{ whiteSpace: 'pre-wrap' }}>{str(c.text)}</div>
                       {str(c.resolution) && <div className="secondary selectable">{str(c.resolution)}</div>}
-                      {list(c.cards).length > 0 && <div className="secondary selectable">{L('変更した Card: {0}', list(c.cards).join(L('、')))}</div>}
+                      {list(c.cards).length > 0 && <div className="secondary selectable">{L('変更した Card: {0}', list(c.cards).map(card => versionCardTitle(session, str(sel.id), card)).join(L('、')))}</div>}
                     </div>
                   ))}
                 </>

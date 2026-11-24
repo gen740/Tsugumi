@@ -6,8 +6,8 @@ import Testing
 @MainActor struct RunComparisonTests {
   @Test func equalNamesDoNotMergeDifferentRunTargets() {
     let left = Tsugumi_RPC_RunSummaryT(), right = Tsugumi_RPC_RunSummaryT()
-    left.target = cardPath(["aggregate-7k2q"])
-    right.target = cardPath(["aggregate-9m3r"])
+    left.target = cardPath(["aggregate"])
+    right.target = cardPath(["aggregate_2"])
     left.propagate = true
     right.propagate = true
     let named = RunComparison.scope(left, right, displayPath: { _ in "Aggregate" })

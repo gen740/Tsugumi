@@ -1,3 +1,4 @@
+import { validWorkerBits } from '../../shared/workerBits'
 import * as H from '../../shared/gen/tsugumi/host'
 import { ModelSelectionRequestT } from '../../shared/gen/tsugumi/host/model-selection-request'
 import { RuntimeAction } from '../../shared/gen/tsugumi/host/runtime-action'
@@ -118,6 +119,12 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'SignInBeginRequest': return new HSignInBeginRequest(v.profile, v.client_id, v.consent, v.issuer, v.resource)
     case 'SignInActionRequest': return new HSignInActionRequest(v.profile, v.attempt_id, v.action, v.client_id)
     case 'SignInStatusRequest': return new HSignInStatusRequest(v.profile, v.attempt_id)
+    case 'ExecutionServicesRequest': return new H.ExecutionServicesRequestT()
+    case 'ExecutionServicePutRequest':
+      if (!Array.isArray(v.worker_capabilities) || !validWorkerBits(v.worker_capabilities))
+        throw new Error('Expected distinct worker capability bits (0–63)')
+      return new H.ExecutionServicePutRequestT(v.id, v.name, v.endpoint, v.workerPublicKey, v.verify, v.worker_capabilities)
+    case 'ExecutionServiceRemoveRequest': return new H.ExecutionServiceRemoveRequestT(v.id)
     case 'ExecutionProjectAuthorizeRequest': return new ExecutionProjectAuthorizeRequestT(v.project_id, v.path, v.control_dir, v.guest)
     case 'ExecutionProjectRevokeRequest': return new ExecutionProjectRevokeRequestT(v.project_id)
 
@@ -195,7 +202,7 @@ function view(value: any): any {
   const names: Record<string, string> = { projectId: 'project_id', resourceId: 'resource_id', conversationId: 'conversation_id', projectPath: 'project_path',
     trustedFolder: 'trusted_folder', sourceFolder: 'source_folder', attachmentFolder: 'attachment_folder', eventSeq: 'event_seq', nextSeq: 'next_seq', callId: 'call_id', contextSummary: 'contextSummary',
     inputJson: 'input', argumentsJson: 'arguments', resultJson: 'result', inputSchemaJson: 'inputSchema',
-    contentJson: 'content', providerContentJson: 'providerContent', providerApi: 'providerApi', mediaType: 'media_type', clientId: 'client_id', attemptId: 'attempt_id', valueJson: 'value_json', capabilityFile: 'capability_file' }
+    contentJson: 'content', providerContentJson: 'providerContent', providerApi: 'providerApi', mediaType: 'media_type', clientId: 'client_id', attemptId: 'attempt_id', valueJson: 'value_json', capabilityFile: 'capability_file', workerCapabilities: 'worker_capabilities' }
   for (const [key, v] of Object.entries(value)) {
     const name = key === 'clientId' && 'signedIn' in value ? 'clientId' : names[key] ?? key
     if (v === null || v === undefined) {
@@ -205,7 +212,6 @@ function view(value: any): any {
     }
     if (key === 'resultJson' && 'callId' in value) { out[name] = JSON.parse(String(v)); continue }
     if (key === 'nextCursor') { out.next_cursor = String(v); continue }
-    if (key === 'grade') { out[name] = String(v); continue }
     if (key === 'access') { out[name] = Access[v as number]; continue }
     out[name] = ['seq', 'eventSeq', 'nextSeq'].includes(key) ? v : ['contentJson', 'providerContentJson', 'inputSchemaJson'].includes(key) ? JSON.parse(String(v)) : view(v)
   }
