@@ -252,7 +252,6 @@ def test_empty_batch_is_delivered_to_collect_without_starting_a_worker(core_fact
 def test_singleton_run_list_and_vector_value_have_different_execution_shapes(core_factory, project, tmp_path):
     """A vector remains one value, while a singleton run list stays a one-item execution batch."""
     from harness.native_card import STATIC_RESULT_ENTRY, native_card
-    from harness.values import encode_message
 
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project)

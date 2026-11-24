@@ -16,8 +16,6 @@ NUM = "namespace t; table Num { value:ulong; } table Outputs { out:Num (required
 TXT = "namespace t; table Txt { value:string; } table Outputs { out:Txt (required); } root_type Outputs;"
 
 
-FLAG = "namespace t; table Flag { value:bool; } table Outputs { flag:Flag (required); } root_type Outputs;"
-
 PYTHON_BINDINGS = """  pkgs = import <nixpkgs> { };
   sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };"""
 
