@@ -53,7 +53,6 @@ export interface PortInfo {
   name: string
   rootType?: string
   mergeMemberTypes?: string[]
-  executionShape?: D.ExecutionShape
 }
 
 export function portTypeName(port?: PortInfo): string | undefined {
@@ -475,8 +474,7 @@ export class ProjectSession extends Observable {
     const batch = output ? this.executionBatch(card) : undefined
     const emitted = batch?.outputs.find((item) => s(item.port) === port)
     if (emitted) return { executionList: emitted.executionList, count: emitted.executionList ? emitted.count : undefined }
-    const shape = this.resolution.get(card)?.[output ? 'outputs' : 'inputs'].find((item) => item.name === port)?.executionShape
-    return { executionList: shape === D.ExecutionShape.list || (batch?.executionList === true && this.kind(card) !== 'collect') }
+    return { executionList: batch?.executionList === true && this.kind(card) !== 'collect' }
   }
 
   get rpc(): RPCClient | undefined {
@@ -831,7 +829,7 @@ export class ProjectSession extends Observable {
     const r = new Map<CardKey, ResolvedCard>()
     const all = diags.map(diag)
     const port = (x: D.PortT): PortInfo => ({
-      name: s(x.name), rootType: sOpt(x.rootType), executionShape: x.executionShape,
+      name: s(x.name), rootType: sOpt(x.rootType),
       mergeMemberTypes: x.mergeMemberTypes.map(s),
     })
     for (const rc of res) {

@@ -220,11 +220,12 @@ auto value_json(nix::EvalState& state, nix::Value& value) -> std::string {
       throw std::logic_error("literal parameter has an unexpected Nix value");
   }
 }
-}  // namespace
 
 auto read_params_nix(nix::EvalState& state, std::string_view text,
                      const std::string& origin) -> std::string {
   try {
+    if (text.size() > kMaxDocumentJsonBytes)
+      fail(origin, "exceeds the 8 MiB document limit");
     scan_literals(text, origin);
     auto* expr =
         state.parseExprFromString(std::string(text), state.rootPath("/"));
@@ -245,15 +246,17 @@ auto read_params_nix(nix::EvalState& state, std::string_view text,
                       ",\"type\":" + json::Quote(type) +
                       ",\"value\":" + value_json(state, *param) + "}");
     }
-    return json::Encode(items);
+    auto result = json::Encode(items);
+    if (result.size() > kMaxDocumentJsonBytes)
+      fail(origin, "params.nix values exceed 8 MiB");
+    return result;
   } catch (const nix::BaseError& error) {
     throw std::runtime_error(origin + ": " +
                              nix::filterANSIEscapes(error.what(), true));
   }
 }
-namespace {
-// Prepared runtimes and document operations can parse a literal without
-// importing files or using a real Nix store.
+
+// Parameter literals do not need project files or a real Nix store.
 auto with_literal_state(
     const std::function<std::string(nix::EvalState&)>& evaluate)
     -> std::string {

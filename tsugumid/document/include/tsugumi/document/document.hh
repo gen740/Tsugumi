@@ -139,8 +139,6 @@ struct ParsedDocument {
 auto parse_project_json(const std::string& text) -> ParsedDocument;
 auto parse_project_lock(const std::string& path, const std::string& text)
     -> ParsedDocument;
-auto lock_source_document(const std::string& path, std::string bytes)
-    -> SourceEntry;
 auto valid_nix_path_name(std::string_view name) -> bool;
 auto parse_card_json(const std::string& id, const std::string& text)
     -> ParsedDocument;

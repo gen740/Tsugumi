@@ -77,7 +77,6 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
   EXPECT_EQ(result.inputs[0]->state, "resolved");
   EXPECT_EQ(result.inputs[0]->source_card->segments, (CardPath{"src"}));
   EXPECT_EQ(result.inputs[0]->source_port, "out");
-  EXPECT_EQ(result.inputs[0]->kind, "value");
   EXPECT_NE(result.inputs[0]->definition.find("noise_sd:double"),
             std::string::npos);
   EXPECT_NE(result.inputs[0]->definition.find("title:string"),
@@ -87,7 +86,6 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
   EXPECT_TRUE(types::schema_bfbs(result.inputs[0]->definition, &root, &error))
       << error;
   EXPECT_EQ(root, "inputs.data.sample.Message");
-  EXPECT_EQ(result.inputs[1]->kind, "value");
   EXPECT_EQ(result.inputs[1]->state, "resolved");
   EXPECT_NE(result.inputs[1]->definition.find("body:string"),
             std::string::npos);

@@ -25,6 +25,7 @@ class HelperScope {
   auto authorization() const -> const std::optional<host::TurnAuthorization>& {
     return authorization_;
   }
+  auto Require(const std::string& card, bool writing) const -> void;
   auto RequireRun(const std::string& card) const -> void;
   auto Ran(const std::string& run_id, const std::string& card) -> void;
   static auto Validate(const json::Members& task, bool allow_unscoped) -> void;
@@ -65,7 +66,6 @@ class HelperScope {
   }
 
  private:
-  auto Require(const std::string& card, bool writing) const -> void;
   auto File(const std::string& path, bool writing, const Reader& read) const
       -> void;
   auto Root(const std::string& card, const Reader& read,

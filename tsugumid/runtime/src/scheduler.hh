@@ -66,7 +66,6 @@ class Scheduler {
   static RunPlanData plan(const Resolution& res, const CardPath& card,
                           bool propagate);
   /// Drafts and the Cards that need their outputs (they do not run).
-  static std::set<size_t> draft_waiting(const Resolution& res);
   // Accepts a run (durable before returning) and starts it. Returns the
   // OperationReceipt bytes of the RunAccepted result.
   std::string accept(DocumentPtr doc, const RunParams& p);

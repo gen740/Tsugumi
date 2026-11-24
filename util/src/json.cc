@@ -199,14 +199,6 @@ hosq::json::GenericDom<> string_value(const std::string& s) {
   return capture(encode(str));
 }
 
-std::string object_text(
-    const std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>>&
-        members) {
-  v::Mapping<v::String, Json> m;
-  for (const auto& [k, val] : members) m.value().emplace_back(k, *val);
-  return encode(m);
-}
-
 std::string pretty_text(std::string_view compact) {
   std::string out;
   size_t depth = 0;

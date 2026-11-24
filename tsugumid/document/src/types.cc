@@ -8,10 +8,8 @@
 #include <sstream>
 
 #include "tsugumi/document/input_schema.hh"
-#include "tsugumi/document/schema_id.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/json_object.hh"
-#include "tsugumi/util/flatbuffer_schema.hh"
 
 namespace tsugumi::types {
 
@@ -30,9 +28,7 @@ flatbuffers::IDLOptions idl_options() {
 }
 
 std::unique_ptr<flatbuffers::Parser> make_parser() {
-  auto p = std::make_unique<flatbuffers::Parser>(idl_options());
-  p->known_attributes_["tsugumi"] = true;
-  return p;
+  return std::make_unique<flatbuffers::Parser>(idl_options());
 }
 
 auto serialize_schema(flatbuffers::Parser& parser) -> void {
@@ -152,7 +148,7 @@ class Renderer {
     order_.push_back({false, index});
   }
 
-  void emit(std::string& out) {
+  void emit(std::string& out, const std::string& schema_id = {}) {
     for (auto [is_obj, index] : order_) {
       std::string full =
           is_obj ? s_.objects()->Get(index)->name()->str()
@@ -165,17 +161,18 @@ class Renderer {
       std::string text;
       if (!qns.empty()) text += "namespace " + qns + ";\n";
       if (is_obj)
-        emit_object(*s_.objects()->Get(index), base, text);
+        emit_object(*s_.objects()->Get(index), base, schema_id, text);
       else
         emit_enum(*s_.enums()->Get(index), base, text);
       if (declarations_) {
         const auto name = qualified(full);
-        auto [entry, added] = declarations_->types.try_emplace(name);
+        const auto [entry, added] =
+            declarations_->types.try_emplace(name, std::move(text));
         if (added) {
-          entry->second.text = std::move(text);
           declarations_->order.push_back(name);
-        } else if (entry->second.text != text) {
-          throw std::runtime_error("conflicting input schema declarations for " + name);
+        } else if (entry->second != text) {
+          throw std::runtime_error(
+              "conflicting input schema declarations for " + name);
         }
       } else {
         out += text;
@@ -251,10 +248,13 @@ class Renderer {
   }
 
   void emit_object(const reflection::Object& o, const std::string& name,
-                   std::string& out) {
+                   const std::string& schema_id, std::string& out) {
     out += o.is_struct() ? "struct " : "table ";
     out += name;
-    emit_attributes(copied_attributes(o.attributes()), out);
+    auto attributes = copied_attributes(o.attributes());
+    if (!schema_id.empty() && &o == s_.root_table())
+      attributes.push_back("tsugumi_schema: \"" + schema_id + "\"");
+    emit_attributes(attributes, out);
     out += " {\n";
     std::vector<const reflection::Field*> fields(o.fields()->begin(),
                                                  o.fields()->end());
@@ -657,6 +657,7 @@ std::string render_closure(const Type& t, const std::string& prefix,
 }
 
 auto render_input_candidate(const Type& type, const std::string& prefix,
+                            const std::string& schema_id,
                             InputDeclarations& declarations) -> std::string {
   const auto& schema = *type.schema();
   Renderer renderer(schema, prefix, &declarations);
@@ -665,14 +666,7 @@ auto render_input_candidate(const Type& type, const std::string& prefix,
   for (flatbuffers::uoffset_t i = 0; i < schema.objects()->size(); ++i)
     if (schema.objects()->Get(i) == root) renderer.object(static_cast<int>(i));
   std::string unused;
-  renderer.emit(unused);
-  if (const auto it = declarations.types.find(name); it != declarations.types.end()) {
-    auto& id = it->second.schema;
-    const auto candidate_id = schema_id(type);
-    if (!id.empty() && id != candidate_id)
-      throw std::runtime_error("conflicting input schema ids for " + name);
-    id = candidate_id;
-  }
+  renderer.emit(unused, schema_id);
   return name;
 }
 
@@ -680,43 +674,6 @@ TypeRef empty_type() {
   static TypeRef t = make_builtin("namespace tsugumi.builtin; table Empty {}",
                                   "tsugumi.builtin.Empty");
   return t;
-}
-
-namespace {
-
-std::unique_ptr<flatbuffers::Parser> parser_from_type(const Type& t,
-                                                      std::string* error) {
-  auto p = make_parser();
-  if (!p->Deserialize(reinterpret_cast<const uint8_t*>(t.bfbs.data()),
-                      t.bfbs.size())) {
-    *error = "cannot load schema: " + p->error_;
-    return nullptr;
-  }
-  if (!p->SetRootType(t.root_type.c_str())) {
-    *error = "unknown root type " + t.root_type;
-    return nullptr;
-  }
-  flatbuffer_schema::restore_reflection_fields(*p, *t.schema(),
-                                               /*restore_deprecated=*/true);
-  return p;
-}
-
-}  // namespace
-
-bool json_to_flatbuffer(const Type& t, const std::string& json,
-                        std::string* out, std::string* error,
-                        bool force_defaults) {
-  auto p = parser_from_type(t, error);
-  if (!p) return false;
-  p->opts.force_defaults = force_defaults;
-  p->builder_.ForceDefaults(force_defaults);
-  if (!p->ParseJson(json.c_str())) {
-    *error = p->error_;
-    return false;
-  }
-  out->assign(reinterpret_cast<const char*>(p->builder_.GetBufferPointer()),
-              p->builder_.GetSize());
-  return true;
 }
 
 }  // namespace tsugumi::types

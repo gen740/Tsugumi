@@ -185,7 +185,7 @@ auto recorded_params(const std::vector<ParamDef>& params)
     -> std::vector<std::pair<std::string, std::string>> {
   std::vector<std::pair<std::string, std::string>> result;
   for (const auto& param : params)
-    if (param.data) result.emplace_back(param.name, *param.data);
+    result.emplace_back(param.name, param.data);
   return result;
 }
 
@@ -229,7 +229,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         summary_(std::move(summary)),
         plan_(std::move(plan)) {
     run_id_ = *summary_.status.run_id;
-    run_dir_ = svc_.store().state_dir() / "runs" / run_id_;
   }
 
   void start() {
@@ -751,7 +750,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   }
 
   void main() {
-    stdfs::create_directories(run_dir_);
     {
       std::lock_guard lock(mu_);
       prepare_graph();
@@ -1978,7 +1976,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   RunSummaryData summary_;
   const RunPlanData plan_;
   std::string run_id_;
-  stdfs::path run_dir_;
   std::thread thread_;
   std::mutex mu_;
   std::condition_variable cv_;
@@ -2155,9 +2152,7 @@ auto find_draft_waiting(const Resolution& res, const PlanEdges& edges)
 
 }  // namespace
 
-std::set<size_t> Scheduler::draft_waiting(const Resolution& res) {
-  return find_draft_waiting(res, PlanEdges(res));
-}
+
 
 RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
                             bool propagate) {

@@ -259,7 +259,6 @@ table ProjectCopyItem {
   y:double;
   demo:string;
   folder:string;
-  /// Explicit choice when the source Card has no evaluation record.
 }
 table ProjectCopy { project_path:string; items:[ProjectCopyItem]; copy_connections:bool; }
 table ProjectImport { project_path:string; path:string (required); id:string (required); x:double; y:double; }
@@ -400,8 +399,7 @@ table LayoutCard {
   /// In the order drawn.
   inputs:[LayoutPort] (id: 5);
   outputs:[LayoutPort] (id: 6);
-  /// Its ports may be drawn in another order (not those of a branch
-  /// and the like, whose places have a meaning).
+  /// Its ports may be drawn in another order.
   reorderable:bool (id: 7);
 }
 
@@ -462,11 +460,9 @@ table VersionCanvasCard {
   id:string (id: 0, required);
   x:double (id: 1);
   y:double (id: 2);
-  /// What it is, which decides its shape: trigger, input, branch, fork,
-  /// merge, draft, subgraph or code.
+  /// The Card type that determines its shape.
   kind:string (id: 3, required);
-  /// The inputs of a Merge or the outputs of a Fork, which decide its width;
-  /// 0 for others.
+  /// The number of inputs of a Merge, or 0 for other Cards.
   fan:uint32 (id: 4);
   /// Folded on the canvas: only its header shows.
   collapsed:bool (id: 5);
@@ -524,8 +520,6 @@ table InputType {
   port:string (required);
   source_card:Tsugumi.Data.CardPath;
   source_port:string;
-  /// value or path; empty when unresolved.
-  kind:string;
   /// no_source, unresolved or resolved.
   state:string (required);
   /// Complete .fbs schema when resolved.

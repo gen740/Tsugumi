@@ -48,7 +48,6 @@ buildNpmPackage {
         ../third-party/emscripten
         ../third-party/flatbuffers
         ../demos
-        ../flake.lock
         ../VERSION
         ../docs/site/player/build.mjs
         ../docs/site/player/narration.json
@@ -97,7 +96,7 @@ buildNpmPackage {
         share=$out/share/tsugumi
         mkdir -p $share/ui/web $testSupport
         cp -R ui/web/dist $share/ui/web/dist
-        cp -R demos flake.lock VERSION $share/
+        cp -R demos VERSION $share/
         # Checks reuse installation and generated bindings, without putting the
         # development tools in the distributed Web output's runtime closure.
         cp -R ui/web/node_modules $testSupport/node_modules

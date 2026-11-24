@@ -8,18 +8,13 @@ table Initialize {
   epoch:ulong;
 }
 
-table ProjectScope {
-  project:string;
-  entries:[Tsugumi.Document.LockEntry];
-}
 table DefinitionScope {
   directory:string (required);
   card:string (required);
-  project:string;
 }
 table Scope {
   definitions:[DefinitionScope];
-  projects:[ProjectScope];
+  entries:[Tsugumi.Document.LockEntry];
 }
 table Evaluate {
   scope:Scope (required);
@@ -47,9 +42,8 @@ table Expression {
 }
 
 table LockSource { url:string (required); }
-table CheckParamsValue { text:string (required); origin:string (required); }
 
-union RequestBody { Initialize, Evaluate, Reuse, Expression, LockSource, CheckParamsValue }
+union RequestBody { Initialize, Evaluate, Reuse, Expression, LockSource }
 
 table Request {
   system:string;
@@ -70,7 +64,6 @@ table ExpressionValue {
   drv:string;
   output_name:string;
 }
-table ParamsValue { json:string (required); }
 table ResolvedSource { rev:string; narHash:string (required); }
 table Log { line:string; }
 // Size-prefixed stdout frames from the build client.
@@ -78,5 +71,5 @@ table BuildLog { line:string; truncated:bool; }
 table Build { drv:string (required); active:bool; }
 table Error { message:string; limit:bool; }
 
-union ReplyBody { Evaluation, Reusable, ExpressionValue, ResolvedSource, ParamsValue, Log, Build, Error }
+union ReplyBody { Evaluation, Reusable, ExpressionValue, ResolvedSource, Log = 6, Build, Error }
 table Reply { body:ReplyBody (required); }

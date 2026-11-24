@@ -76,8 +76,7 @@ auto UpdatedLock(const std::string& path, const std::string& project,
     throw Failure("not_found", "Undeclared nixPath name " + name);
   std::map<std::string, std::string> locked;
   if (old) {
-    const auto parsed = parse_project_lock(path, *old);
-    for (auto& raw : json::Array(json::Object(parsed.text).at("entries"))) {
+    for (auto& raw : json::Array(json::Object(*old).at("entries"))) {
       const auto key = json::Text(json::Object(raw), "name");
       if (declarations.contains(key)) locked.emplace(key, std::move(raw));
     }
@@ -218,11 +217,24 @@ auto Prepare(
                                   {"literal", json::Quote(parameter->literal)},
                                   {"at_rev", at_rev}}));
     const auto file = json::Text(rewritten, "path");
-    if (crypto::sha256_hex(required(file)) !=
-        json::Text(rewritten, "base_hash"))
+    if (authorize) authorize(file);
+    const auto hash = json::Text(rewritten, "base_hash");
+    const auto same_source = [&](const std::string& raw) {
+      const auto source = json::Object(raw);
+      return json::Text(source, "path") == file &&
+             json::Text(source, "hash") == hash;
+    };
+    if (hash.empty() || !std::ranges::any_of(
+                            json::Array(json::Get(base.snapshot, "sources", "[]")),
+                            same_source))
       throw Failure("source_changed", file + " changed during the edit");
-    put(file, json::Text(rewritten, "text"));
-    return ProjectSaveChanges(base, originals, staged, {});
+    const auto replacement = json::Text(rewritten, "text");
+    std::vector<std::string> changes;
+    if (crypto::sha256_hex(replacement) != hash)
+      changes.push_back(Change("PutSource", {{"path", json::Quote(file)},
+                                             {"base_hash", json::Quote(hash)},
+                                             {"bytes", json::Quote(replacement)}}));
+    return {{"base_rev", at_rev}, {"changes", json::Encode(changes)}};
   } else if (const auto* add = body.AsTemplateAdd()) {
     if (!TemplateName(add->name) || !context.read_template_source)
       throw Failure("invalid_request", "Cannot add this template");

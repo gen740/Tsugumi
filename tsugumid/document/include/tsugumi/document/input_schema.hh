@@ -14,11 +14,7 @@ namespace types {
 struct Type;
 
 struct InputDeclarations {
-  struct TypeDeclaration {
-    std::string text;
-    std::string schema;
-  };
-  std::map<std::string, TypeDeclaration> types;
+  std::map<std::string, std::string> types;
   std::vector<std::string> order;
   std::set<std::string> attributes;
   bool artifact = false;
@@ -26,6 +22,7 @@ struct InputDeclarations {
 
 // Adds a candidate and its reachable declarations under the port namespace.
 auto render_input_candidate(const Type& type, const std::string& prefix,
+                            const std::string& schema_id,
                             InputDeclarations& declarations) -> std::string;
 
 }  // namespace types

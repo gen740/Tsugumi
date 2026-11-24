@@ -392,19 +392,6 @@ def test_card_in_card_definition_rejects_execution_settings(tmp_path, core_facto
         assert c.call("ProjectInspectRequest").rev == before.rev
 
 
-def test_display_mode_setting(tmp_path, core_factory):
-    """Presentation modes do not participate in core validation."""
-    for value, reuse_worker, valid in (("update", False, True), ("live", True, True), ("smooth", True, True)):
-        root = tmp_path / value
-        builtin_project(root)
-        card = json.loads((root / "definitions" / "out" / "_card.json").read_text())
-        card["displayMode"] = value
-        card["reuseWorker"] = reuse_worker
-        put(root / "definitions" / "out" / "_card.json", json.dumps(card))
-        c = core_factory(project_root=root).connect()
-        assert ("invalid_setting" not in diagnostics(c, ["out"])) == valid, value
-
-
 def test_output_types_lists_and_rewrites_a_port(tmp_path, core_factory):
     """Output type edits preserve unrelated schema text and reject incompatible types."""
     root = tmp_path / "p"

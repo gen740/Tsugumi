@@ -15,7 +15,7 @@
 namespace tsugumi::client {
 namespace {
 
-enum class Kind { Request, Reply, Event };
+enum class Kind { Reply, Event };
 struct Envelope {
   Kind kind;
   uint64_t id;
@@ -27,11 +27,8 @@ auto KnownPayload(Tag tag) -> bool {
 }
 
 template <class Message>
-auto RequestReply(const Message* message) -> std::optional<Envelope> {
+auto InspectReply(const Message* message) -> std::optional<Envelope> {
   const auto id = message->request_id();
-  if (id && message->payload_as_Request() &&
-      KnownPayload(message->payload_as_Request()->value_type()))
-    return Envelope{Kind::Request, id};
   if (id && message->payload_as_Reply() &&
       KnownPayload(message->payload_as_Reply()->value_type()))
     return Envelope{Kind::Reply, id};
@@ -89,11 +86,6 @@ auto Inspect(Protocol protocol, std::span<const uint8_t> bytes) -> Envelope {
     const auto* message = R::GetMessage(bytes.data());
     const auto id = message->request_id().value_or(0);
     switch (message->payload_type()) {
-      case R::Payload::Request:
-        if (id && message->payload_as_Request() &&
-            KnownPayload(message->payload_as_Request()->value_type()))
-          return {Kind::Request, id};
-        break;
       case R::Payload::Reply:
         if (id && message->payload_as_Reply() &&
             KnownPayload(message->payload_as_Reply()->value_type()))
@@ -112,13 +104,13 @@ auto Inspect(Protocol protocol, std::span<const uint8_t> bytes) -> Envelope {
     if (!A::VerifyMessageBuffer(verifier))
       throw std::runtime_error("invalid Agent RPC buffer");
     const auto* message = A::GetMessage(bytes.data());
-    if (auto envelope = RequestReply(message)) return *envelope;
+    if (auto envelope = InspectReply(message)) return *envelope;
   } else if (protocol == Protocol::Host) {
     namespace A = Tsugumi::Host;
     if (!A::VerifyMessageBuffer(verifier))
       throw std::runtime_error("invalid Host RPC buffer");
     const auto* message = A::GetMessage(bytes.data());
-    if (auto envelope = RequestReply(message)) return *envelope;
+    if (auto envelope = InspectReply(message)) return *envelope;
     if (!message->request_id() && message->payload_as_Event() &&
         KnownPayload(message->payload_as_Event()->value_type()))
       return {Kind::Event, 0};
@@ -211,8 +203,6 @@ struct Connection::State {
     Envelope envelope;
     try {
       envelope = Inspect(options.protocol, bytes);
-      if (envelope.kind == Kind::Request)
-        throw std::runtime_error("server sent a request");
     } catch (const std::exception& error) {
       End({ErrorCode::Protocol, error.what()});
       if (auto current = transport.lock()) current->Close();

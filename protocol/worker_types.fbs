@@ -24,8 +24,6 @@ table Port {
   name:string (id: 0, required);
   schema_bfbs:[ubyte] (id: 1);
   root_type:string (id: 2);
-  /// Static execution shape when known without evaluating Nix.
-  execution_shape:ExecutionShape (id: 3);
   /// Member type names for the UI when a port carries a Merge union.
-  merge_member_types:[string] (id: 4);
+  merge_member_types:[string] (id: 3);
 }

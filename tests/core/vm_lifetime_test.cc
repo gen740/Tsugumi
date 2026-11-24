@@ -228,7 +228,6 @@ TEST(VMLifetimeLane, QueuedAndRunningTasksCountAsWork) {
     std::unique_lock lock(mutex);
     changed.wait(lock, [&] { return started; });
   }
-  EXPECT_EQ(lane.queued(), 0);
   EXPECT_EQ(lane.pending(), 1);
   EXPECT_FALSE(lane.idle());
   EXPECT_TRUE(lane.submit([]() {}));

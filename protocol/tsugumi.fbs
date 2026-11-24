@@ -575,7 +575,7 @@ table InputTypesResult {
   inputs:[InputType] (id: 1);
 }
 
-/// -> OutputTypesResult. Compile _outputs.fbs text to reflection schema; port and type_name optionally set an output's type and kind in returned text.
+/// -> OutputTypesResult. Compile _outputs.fbs text to reflection schema; port and type_name optionally set an output's type in returned text.
 table OutputTypesRequest {
   text:string (id: 0, required);
   port:string (id: 1);
@@ -1170,7 +1170,7 @@ table InvocationSummary {
   /// The invocation omitted log output at this combined limit, in bytes.
   log_truncated_at_bytes:uint64 = null (id: 30);
   /// Human-readable name of the implementation: a `label` of a Nix run list
-  /// entry, or the swept parameter values of an Input Card (`name=value`).
+  /// entry.
   /// Absent when the implementation has no label; implementation_index still
   /// identifies it.
   implementation_label:string (id: 31);

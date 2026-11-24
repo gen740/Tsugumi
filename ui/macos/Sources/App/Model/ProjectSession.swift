@@ -37,7 +37,6 @@ struct PortInfo: Hashable {
     if !mergeMemberTypes.isEmpty { return mergeMemberTypes.joined(separator: " | ") }
     return rootType
   }
-  var executionShape: Tsugumi_Data_ExecutionShape = .unspecified
 }
 
 struct ResolvedCard {
@@ -743,7 +742,7 @@ final class ProjectSession {
     for rc in res {
       let p = rc.card.path
       let port = { (x: Tsugumi_Data_PortT) -> PortInfo in
-        PortInfo(name: x.name, rootType: x.rootType, mergeMemberTypes: x.mergeMemberTypes.compactMap { $0 }, executionShape: x.executionShape)
+        PortInfo(name: x.name, rootType: x.rootType, mergeMemberTypes: x.mergeMemberTypes.compactMap { $0 })
       }
       let d = rc.diagnostics.compactMap { $0 }.map(Diagnostic.init)
       r[key(p)] = ResolvedCard(path: p, inputs: rc.inputs.compactMap { $0 }.map(port),
@@ -817,9 +816,7 @@ final class ProjectSession {
     if let emitted = batch?.outputs.compactMap({ $0 }).first(where: { $0.port == port }) {
       return (emitted.executionList, emitted.executionList ? emitted.count : nil)
     }
-    let ports = output ? resolution[card]?.outputs : resolution[card]?.inputs
-    let knownList = ports?.first(where: { $0.name == port })?.executionShape == .list
-    return (knownList || (batch?.executionList == true && kind(card) != .collect), nil)
+    return (batch?.executionList == true && kind(card) != .collect, nil)
   }
 
   /// The Cards of the last run, for a project just opened: their notifications were sent before it was.

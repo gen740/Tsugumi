@@ -43,7 +43,6 @@ def test_presentation_saves_while_busy_keep_execution_revision_and_run_source_ha
         document["name"] = "Renamed"
         definition = next(d for d in before.definitions if text(d.id) == "work")
         settings = json.loads(text(definition.cardJson))
-        settings["displayMode"] = "live"
         result = save(client, [change("SetProject", json=json.dumps(document)),
             change("PutDefinition", id="work", cardJson=json.dumps(settings), readme="Updated description")])
         assert result.executionRev == before.executionRev

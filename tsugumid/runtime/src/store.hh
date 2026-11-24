@@ -81,7 +81,6 @@ struct StoreOptions {
   // Fault injection for tests ("" disables): after_prepare, partial_apply,
   // before_commit.
   std::string fault;
-  ParamsReader read_params = {};
 };
 
 class Store {
@@ -91,7 +90,7 @@ class Store {
   Store& operator=(const Store&) = delete;
 
   // Recovers pending writes and loads the document. Throws on failure.
-  void open(const std::function<void()>& before_resolve = {});
+  void open();
 
   DocumentPtr current() const;
   auto allocate_card_id(const std::string& stem,

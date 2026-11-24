@@ -166,6 +166,28 @@ TEST_F(DocumentStorage, CheckedParamsPreserveLiteralTypes) {
   EXPECT_EQ(params[3].data, "0.0");
 }
 
+TEST(ParamsNix, RejectsOversizedSourceAndValues) {
+  const std::string source(kMaxDocumentJsonBytes + 1, ' ');
+  try {
+    evaluate_literal_params("definitions/work/", source);
+    FAIL() << "oversized parameter source was accepted";
+  } catch (const std::runtime_error& error) {
+    EXPECT_STREQ(error.what(),
+                 "definitions/work/params.nix: exceeds the 8 MiB document limit");
+  }
+
+  // The Nix source can contain literal tabs, which JSON encodes as two bytes.
+  const auto values = "{ value = \"" +
+                      std::string(kMaxDocumentJsonBytes / 2, '\t') + "\"; }";
+  try {
+    evaluate_literal_params("definitions/work/", values);
+    FAIL() << "oversized parameter JSON was accepted";
+  } catch (const std::runtime_error& error) {
+    EXPECT_STREQ(error.what(),
+                 "definitions/work/params.nix: params.nix values exceed 8 MiB");
+  }
+}
+
 TEST_F(DocumentStorage, LockIsCarriedAndConflictsWithDiskEdits) {
   const std::string lock =
       R"({"entries":[{"name":"source","url":"github:org/repo","rev":"0123456789012345678901234567890123456789","narHash":"sha256-123"}]})";
@@ -258,7 +280,7 @@ TEST_F(DocumentStorage,
   ChangeIn card{};
   card.kind = ChangeIn::Kind::PutDefinition;
   card.id = "start";
-  card.json = R"({"displayMode":"live", "type": "trigger"})";
+  card.json = R"({ "type": "trigger" })";
   auto after = commit(store, {project, card});
   EXPECT_EQ(after->execution_fingerprint, before->execution_fingerprint);
   EXPECT_EQ(after->execution_rev, before->execution_rev);
@@ -299,8 +321,6 @@ TEST_F(DocumentStorage, ExternalPresentationUsesTheSameBoundaryAndPendingBytes) 
       store,
       {put("externals/library/tsugumi.json",
            R"({"name":"Renamed","canvas":{"cards":[{"id":"start"}],"connections":[]},"boundary":{"inputs":[],"outputs":[]}})"),
-       put("externals/library/definitions/start/_card.json",
-           R"({"type":"trigger","displayMode":"live"})"),
        put("externals/library/definitions/start/README.md",
            "Updated description")});
   EXPECT_EQ(after->execution_fingerprint, before->execution_fingerprint);
@@ -332,40 +352,6 @@ TEST_F(DocumentStorage, DraftHasNoPortsFromMetadataOrSchema) {
   put.readme = "A future port called different.";
   auto after = commit(store, {put});
   EXPECT_EQ(after->resolution, before->resolution);
-}
-
-TEST_F(DocumentStorage, NixExportsAreTransitiveAndStopAtMerge) {
-  fs::write_atomic(root / "tsugumi.json", R"({
-    "canvas": {
-      "cards": [{"id":"A"},{"id":"B"},{"id":"C"},{"id":"merge"},{"id":"D"}],
-      "connections": [
-        {"from":{"card":"A","port":"out"},"to":{"card":"B","port":"in"}},
-        {"from":{"card":"B","port":"out"},"to":{"card":"C","port":"in"}},
-        {"from":{"card":"A","port":"out"},"to":{"card":"merge","port":"a"}},
-        {"from":{"card":"merge","port":"out"},"to":{"card":"D","port":"in"}}
-      ]
-    }
-  })");
-  for (const auto* id : {"A", "B", "C", "D"}) {
-    const auto dir = root / "definitions" / id;
-    fs::write_atomic(dir / "_card.json",
-                     R"({"type":"code","inputs":[{"name":"in"}]})");
-    fs::write_atomic(
-        dir / "_outputs.fbs",
-        "table M { value:string; } table O { out:M; } root_type O;");
-  }
-  fs::write_atomic(root / "definitions/merge/_card.json",
-                   R"({"type":"merge","inputs":[{"name":"a"}]})");
-  Store store({root, ""});
-  store.open();
-  const auto& graph = *store.current()->resolution;
-  const auto& refs = graph.find({"C"})->nix_references;
-  ASSERT_EQ(refs.size(), 2u);
-  EXPECT_EQ(refs[0].name, "A");
-  EXPECT_EQ(refs[0].target, CardPath{"A"});
-  EXPECT_EQ(refs[1].name, "B");
-  EXPECT_EQ(refs[1].target, CardPath{"B"});
-  EXPECT_TRUE(graph.find({"D"})->nix_references.empty());
 }
 
 TEST_F(DocumentStorage, ASecondWireSuggestsMerge) {

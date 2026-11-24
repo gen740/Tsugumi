@@ -99,15 +99,6 @@ Listing list_beneath(const stdfs::path& root, const stdfs::path& rel,
 // Whether `rel` below root is a directory (true) or a regular file (false),
 // opened without following links. Anything else throws Error.
 bool directory_beneath(const stdfs::path& root, const stdfs::path& rel);
-// Copies one regular file, or a whole tree of directories and regular files,
-// from `rel` below root to `destination`, deciding which from lstat. Links and
-// special files in a tree throw Error. copy_file(from, to) copies one regular
-// file (`from` relative to root). Returns true for a directory.
-bool copy_path_beneath(
-    const stdfs::path& root, const stdfs::path& rel,
-    const stdfs::path& destination,
-    const std::function<void(const stdfs::path&, const stdfs::path&)>&
-        copy_file);
 
 // Exclusive advisory lock held for the lifetime of the object.
 class FileLock {

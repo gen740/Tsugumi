@@ -43,24 +43,11 @@ let
   ) (builtins.attrNames self);
   run = self.run or (throw "a Card needs run");
   executionList = viewsOnly || builtins.isList run;
-  entries =
-    if viewsOnly then
-      [ ]
-    else if executionList then
-      run
-    else
-      [ run ];
   isDerivation = v: builtins.isAttrs v && (v.type or null) == "derivation";
-  normalize =
+  checkEntry =
     entry:
-    if isDerivation entry then
-      {
-        label = "";
-        run = entry;
-      }
-    else if
-      executionList
-      && builtins.isAttrs entry
+    if
+      builtins.isAttrs entry
       &&
         builtins.attrNames entry == [
           "label"
@@ -71,8 +58,21 @@ let
     then
       entry
     else
-      throw "each run implementation must be a derivation; only run list entries can have labels";
-  runs = map normalize entries;
+      throw "each run list entry must have a string label and a derivation";
+  runs =
+    if viewsOnly then
+      [ ]
+    else if executionList then
+      map checkEntry run
+    else if isDerivation run then
+      [
+        {
+          label = "";
+          inherit run;
+        }
+      ]
+    else
+      throw "run must be a derivation or a list of labelled derivations";
   declarations = self.views or [ ];
   viewOf =
     view:
@@ -121,7 +121,7 @@ else if !builtins.isList declarations then
 else
   {
     inherit executionList;
-    implementationCount = builtins.length entries;
+    implementationCount = builtins.length runs;
     implementationLabels = builtins.unsafeDiscardStringContext (
       builtins.toJSON (map (r: r.label) runs)
     );
