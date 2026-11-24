@@ -173,36 +173,35 @@ private func viewDocument(_ out: Outside) -> String {
   #expect(presentation.hasPanels)
 }
 
-// Hand-encoded Wasm. One page of memory and four exports, each returning i32.const 0.
+// A small Wasm module with one page of memory and the required view exports.
 @MainActor @Test func dawnModuleChecksAllowedImportsWithoutAGPU() throws {
-  let valid: [UInt8] = [
-    0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
-    // Types: abi, start, resize, draw.
-    1, 0x1b, 4,
-    0x60, 0, 1, 0x7f,
-    0x60, 6, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7d, 1, 0x7f,
-    0x60, 3, 0x7f, 0x7f, 0x7d, 1, 0x7f,
-    0x60, 1, 0x7f, 1, 0x7f,
-    3, 5, 4, 0, 1, 2, 3,
-    5, 3, 1, 0, 1,
-    // Exports: memory, tsugumi_view_abi/start/resize/draw.
-    7, 0x5c, 5,
-    6, 0x6d, 0x65, 0x6d, 0x6f, 0x72, 0x79, 2, 0,
-    16, 0x74, 0x73, 0x75, 0x67, 0x75, 0x6d, 0x69, 0x5f, 0x76, 0x69, 0x65, 0x77, 0x5f, 0x61, 0x62, 0x69, 0, 0,
-    18, 0x74, 0x73, 0x75, 0x67, 0x75, 0x6d, 0x69, 0x5f, 0x76, 0x69, 0x65, 0x77, 0x5f, 0x73, 0x74, 0x61, 0x72, 0x74, 0, 1,
-    19, 0x74, 0x73, 0x75, 0x67, 0x75, 0x6d, 0x69, 0x5f, 0x76, 0x69, 0x65, 0x77, 0x5f, 0x72, 0x65, 0x73, 0x69, 0x7a, 0x65, 0, 2,
-    17, 0x74, 0x73, 0x75, 0x67, 0x75, 0x6d, 0x69, 0x5f, 0x76, 0x69, 0x65, 0x77, 0x5f, 0x64, 0x72, 0x61, 0x77, 0, 3,
-    10, 21, 4, 4, 0, 0x41, 0, 0x0b, 4, 0, 0x41, 0, 0x0b,
-               4, 0, 0x41, 0, 0x0b, 4, 0, 0x41, 0, 0x0b,
+  func section(_ id: UInt8, _ data: [UInt8]) -> [UInt8] {
+    [id, UInt8(data.count)] + data
+  }
+  func name(_ text: String) -> [UInt8] { [UInt8(text.utf8.count)] + Array(text.utf8) }
+  let parameters: [[UInt8]] = [
+    [],
+    [0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7d],
+    [0x7f, 0x7f, 0x7d, 0x7e],
+    [0x7f, 0x7e],
   ]
-  #expect(dawnModuleError(valid) == nil)
-
-  // Insert env.x as an imported function and shift the function export indices by one.
-  let forbiddenImport: [UInt8] = [2, 9, 1, 3, 0x65, 0x6e, 0x76, 1, 0x78, 0, 0]
-  var forbidden = valid
-  for index in [79, 100, 122, 142] { forbidden[index] += 1 }
-  forbidden.insert(contentsOf: forbiddenImport, at: 37)
-  let diagnostic = try #require(dawnModuleError(forbidden))
+  let types: [UInt8] = [4] + parameters.flatMap { [0x60, UInt8($0.count)] + $0 + [1, 0x7f] }
+  func module(forbiddenImport: Bool) -> [UInt8] {
+    var bytes: [UInt8] = [0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]
+    bytes += section(1, types)
+    if forbiddenImport { bytes += section(2, [1] + name("env") + name("x") + [0, 0]) }
+    bytes += section(3, [4, 0, 1, 2, 3])
+    bytes += section(5, [1, 0, 1])
+    var exports: [UInt8] = [5] + name("memory") + [2, 0]
+    for (index, member) in ["abi", "start", "resize", "draw"].enumerated() {
+      exports += name("tsugumi_view_" + member) + [0, UInt8(index + (forbiddenImport ? 1 : 0))]
+    }
+    bytes += section(7, exports)
+    bytes += section(10, [4] + Array(repeating: [4, 0, 0x41, 0, 0x0b], count: 4).flatMap { $0 })
+    return bytes
+  }
+  #expect(dawnModuleError(module(forbiddenImport: false)) == nil)
+  let diagnostic = try #require(dawnModuleError(module(forbiddenImport: true)))
   #expect(diagnostic.contains("env"))
 }
 

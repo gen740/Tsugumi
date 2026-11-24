@@ -1,7 +1,6 @@
 # The core and the language SDKs
 
 **Status** — decided by the owner on 2026-11-13 through 2026-11-23.
-Points that are not decided yet are listed under [Open](#open).
 
 The Card ABI that connects the two is in [Card ABI](CardABI.md), and what a Card sees when it runs is in [The sandbox contract](SandboxContract.md).
 
@@ -116,7 +115,7 @@ in
 - Each entry is `{ name; type; blob; }`. `type` is `html` or `dawn`. `blob` is one file in the Nix store: a self-contained HTML file for `html`, a Wasm binary for `dawn`.
 - Include SDK-provided views explicitly with `sdk.views`. LineChart and Points are HTML views in the SDK. Custom HTML can include its own JS and Wasm.
 - The Card calls `view_open` by name to create a window. Each open creates a session and an opener route. A Card that receives a session from a port can send to that window and register its own route to receive responses.
-- PANEL opens in the project window on macOS and over the canvas on the Web. WINDOW opens a separate window and accepts an optional initial content size. FULLSCREEN opens a native fullscreen window on macOS and a browser child window with a fullscreen button on the Web. A packed app presents PANEL in its main window.
+- PANEL opens in the project window on macOS and over the canvas on the Web. WINDOW opens a separate window and accepts an optional initial content size. FULLSCREEN opens a native fullscreen window on macOS and a browser child window with a fullscreen button on the Web. If the browser blocks a requested popup, the canvas panel offers **Open in a window**. A packed app presents PANEL in its main window and requires macOS 26 or later.
 - Messages travel to one session or one route through the worker, core and UI. The relay uses [ABI backpressure](CardABI.md#display-messages). A window retains its last frame after its routes go away. Closing the window gives every live route a close event.
 - View traffic is live. Use output ports and artifacts for results that people will inspect later. [Run history](RunHistory.md)
 
@@ -149,29 +148,51 @@ A dawn view is a wasm32 module that draws to one WebGPU surface. Its contract is
   Built with clang for wasm32, the header turns a function outside the list into an
   undefined symbol at link time.
 - **Exports:** `memory`, `tsugumi_view_abi`, `tsugumi_view_start`, `tsugumi_view_resize`
-  and `tsugumi_view_draw` are required; `tsugumi_view_message`, `tsugumi_view_pointer`
-  and `tsugumi_view_key` are optional.
+  and `tsugumi_view_draw` are required. Views may export callbacks for messages,
+  audio, pointer, keys, committed text, IME composition and standard-layout gamepads.
 - **Calls:** the host checks the imports and exports, calls `abi` (it must return 0),
   then `start` and one `draw`. It draws again on the next display frame only when
-  `draw` returns bit 0, and otherwise only after an event (message, resize, pointer,
-  key). `read` copies the current message only inside `message(size)`.
+  `draw` returns bit 0, and otherwise after an event.
+  `read` copies incoming bytes during `message`, `text` or `composition`.
   `tsugumi_view_send(route, data, size)` takes a 16-byte route. An all-zero route
   addresses the opener. Sending is nonblocking. The host rejects routes from
   other windows and drops traffic for dead routes. A negative callback return
   or a trap drops the instance and shows the error.
-  All calls come from one thread; there is one instance per view.
+  Each instance runs all its calls on its own thread.
+- The view clock is an unsigned count of 48 kHz frames since the view started.
+  Input timestamps are translated from the host clock. Draw receives the
+  projected presentation time. Audio provides 48 kHz interleaved stereo float32
+  frames and receives the projected playback time of the first sample, including
+  output latency. Return a null audio pointer for silence.
+- After drawing, the host queries the view's logical text area
+  for IME placement. A null pointer indicates inactive text input. Committed
+  text and composition use UTF-8. The composition cursor is a byte offset.
 
 Both UIs translate the module's 32-bit descriptors with code generated at build time
 from webgpu-headers' `webgpu.yml` by one generator ([ui/shared/dawn](../ui/shared/dawn/README.md)):
 
 - **Mac app:** native Dawn and wasmtime inside the app process, drawing into a
-  `CAMetalLayer` view in the SwiftUI canvas, paced by `CADisplayLink`.
-- **Web UI:** the same module in the page, with the imports implemented on
-  `navigator.gpu` and paced by `requestAnimationFrame`.
+  `CAMetalLayer` view in the SwiftUI canvas. A dedicated view thread produces
+  frames and supplies audio through a ring buffer.
+- **Web UI:** a Worker owns the module, WebGPU and its `OffscreenCanvas`. The
+  page relays input, and an AudioWorklet plays audio supplied by the worker.
+
+When a callback takes more than half a second, the UI shows a waiting overlay
+with a Stop button. The view keeps running until the callback returns or the
+user stops it.
 
 The kit's `sdk.dawnView { name; src; }` builds a view from C sources (freestanding,
 no libc), and its `dawn-view` template is a minimal example. The `point-cloud` demo
-sends a point cloud to a dawn view.
+sends a point cloud to a dawn view. A view can opt into the kit's embedded Japanese
+glyph atlas and upload it as a WebGPU texture.
+
+### Agent and client access
+
+The host lists open view sessions for a project. Clients and the Agent can send
+pointer, key, text and gamepad input to a dawn view by its session UUID. The
+presenting host delivers those events to the same exports as physical input.
+It can also render the current view into an offscreen texture and return a
+PNG through the same Host API. The Agent receives that PNG as an image.
 
 ## Value mapping in the default SDKs
 
@@ -196,7 +217,3 @@ These hold through the whole change ([Philosophy](Philosophy.md#a-laboratory-not
 - Definitions (code and environment) may be shared by the machine.
 
 See [Remote execution](RemoteExecution.md#data-left-on-a-worker) and [Where data is kept](security.md#8-where-data-is-kept-and-how-to-delete-it).
-
-## Open
-
-TODO(open): PNG snapshots of Dawn views for the Agent.

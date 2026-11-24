@@ -85,7 +85,7 @@ auto run(const Card::Inputs&) -> Card::Output {
   static const auto points =
       make_cloud(count, static_cast<uint32_t>(Card::params.seed));
   const auto opened =
-      card::display::view_open("points", TSUGUMI_VIEW_WINDOW, 960, 720);
+      card::display::view_open("points", TSUGUMI_VIEW_WINDOW, 0, 960, 720);
   send_cloud(opened.session, points);
   return {};
 }

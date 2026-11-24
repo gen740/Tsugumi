@@ -167,7 +167,54 @@ table FolderListing { path:string (required); parent:string; project:bool; entri
 table PageShow { project:string (required); card:string; page:string; }
 // To every page: no page shows the project any more.
 table PageClosed { project:string (required); }
-union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged, ProviderChanged, SignInChanged, TraceChanged:Tsugumi.Trace.TraceChanged, ConversationChanged, PageShow, PageClosed }
+// The presenting UI reports the sessions it owns. Closing a session or
+// disconnecting the presenting connection withdraws it from the host.
+table ViewWindow {
+  session:string (required);
+  card:Tsugumi.Data.CardPath (required);
+  name:string (required);
+  type:string (required);
+  mode:uint;
+  width:uint;
+  height:uint;
+  flags:uint;
+}
+/// -> Acknowledgement. Register or withdraw a window on its presenting connection.
+table ViewPresentationRequest { project_id:string (required); window:ViewWindow (required); closed:bool; }
+/// -> ViewWindows. List the windows currently presented for one project.
+table ViewWindowsRequest { project_id:string (required); }
+table ViewWindows { windows:[ViewWindow]; }
+
+table ViewPointer { kind:uint; x:float; y:float; buttons:uint; wheel_x:float; wheel_y:float; modifiers:uint; }
+table ViewKey { kind:uint; code:uint; modifiers:uint; }
+table ViewText { text:string (required, trace_secret); }
+table ViewGamepad { pad:uint; kind:uint; buttons:uint; lx:float; ly:float; rx:float; ry:float; lt:float; rt:float; }
+table ViewSnapshot {}
+union ViewAction { ViewPointer, ViewKey, ViewText, ViewGamepad, ViewSnapshot }
+/// -> ViewActionResult. Send one input event or capture an offscreen PNG of a window.
+table ViewActionRequest {
+  project_id:string (required);
+  session:string (required);
+  action:ViewAction (required);
+}
+table ViewActionResult { png:[ubyte] (trace_secret); }
+// The request UUID belongs to this delivery and may be answered once by the
+// connection that reported the window.
+table ViewActionDispatch {
+  request:string (required);
+  project_id:string (required);
+  session:string (required);
+  action:ViewAction (required);
+}
+/// -> Acknowledgement. Complete a delivery on the presenting connection.
+table ViewActionCompleteRequest {
+  request:string (required);
+  session:string (required);
+  png:[ubyte] (trace_secret);
+  error:string;
+}
+
+union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged, ProviderChanged, SignInChanged, TraceChanged:Tsugumi.Trace.TraceChanged, ConversationChanged, PageShow, PageClosed, ViewActionDispatch }
 table Event { value:EventPayload; }
 table RegisterProjectRequest { project_id:string (required); endpoint:string (required); token:string (trace_secret); title:string; path:string; }
 // One host operation: validate the batch, update shares, await the new core,
@@ -566,6 +613,7 @@ union RequestPayload {
   CardSecretListRequest, CardSecretSetRequest,
   RunCategoryDeleteRequest,
   TemplateListRequest, HostTemplateAddRequest,
+  ViewWindowsRequest, ViewActionRequest, ViewPresentationRequest, ViewActionCompleteRequest,
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -582,6 +630,7 @@ union ReplyPayload {
   CardSecretList,
   RunCategoryDeleteResult:Tsugumi.RPC.RunCategoryDeleteResult,
   TemplateList,
+  ViewWindows, ViewActionResult,
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

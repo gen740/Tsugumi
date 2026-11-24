@@ -28,51 +28,22 @@ export async function checkCardViewsInChromium(browser, web, directory) {
   console.log('Chromium Card views: sessions, popups, exact bytes, fullscreen control, sandbox and teardown passed')
 }
 
-export async function checkChildWebGpuInChromium(browser, directory) {
-  const html = path.join(directory, 'child-webgpu.html')
-  await fs.writeFile(html, `<!doctype html><meta charset="utf-8"><script>
-    globalThis.childWebGpuResult = (async () => {
-      const adapter = await navigator.gpu?.requestAdapter()
-      if (!adapter) throw new Error('No WebGPU adapter in the opener')
-      const device = await adapter.requestDevice()
-      const child = window.open('', '_blank', 'popup,width=320,height=240')
-      if (!child || child.opener !== window) throw new Error('No same-origin child window')
-      try {
-        const format = navigator.gpu.getPreferredCanvasFormat()
-        const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC
-        const makeCanvas = doc => {
-          const canvas = doc.createElement('canvas')
-          canvas.width = canvas.height = 4
-          doc.body.append(canvas)
-          const context = canvas.getContext('webgpu')
-          context.configure({ device, format, usage })
-          return context.getCurrentTexture()
-        }
-        device.pushErrorScope('validation')
-        makeCanvas(document)
-        const texture = makeCanvas(child.document)
-        const encoder = device.createCommandEncoder()
-        const pass = encoder.beginRenderPass({ colorAttachments: [{
-          view: texture.createView(), clearValue: [1, 0, 0.25, 1], loadOp: 'clear', storeOp: 'store',
-        }] })
-        pass.end()
-        const buffer = device.createBuffer({ size: 1024, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST })
-        encoder.copyTextureToBuffer({ texture }, { buffer, bytesPerRow: 256 }, [4, 4, 1])
-        device.queue.submit([encoder.finish()])
-        const invalid = await device.popErrorScope()
-        if (invalid) throw new Error(invalid.message)
-        await buffer.mapAsync(GPUMapMode.READ)
-        return { format, pixel: Array.from(new Uint8Array(buffer.getMappedRange(), 0, 4)) }
-      } finally {
-        child.close()
-        device.destroy()
-      }
-    })()
-  </script>`)
-  const result = await runInChromium(browser, html, 'globalThis.childWebGpuResult', [
-    '--enable-unsafe-webgpu', '--disable-popup-blocking',
+export async function checkChildWebGpuInChromium(browser, web, directory) {
+  const html = path.join(directory, 'dawn-worker.html')
+  await esbuild.build({
+    entryPoints: {
+      'dawn-worker-test': path.join(web, 'tests/dawnWorkerBrowser.tsx'),
+      'dawn-view-worker': path.join(web, 'src/dawn/viewWorker.ts'),
+      'dawn-view-audio': path.join(web, 'src/dawn/audioWorklet.ts'),
+    },
+    outdir: directory, platform: 'browser', format: 'esm', bundle: true, jsx: 'automatic',
+    loader: { '.md': 'text' }, logLevel: 'warning',
+  })
+  await fs.writeFile(html, '<!doctype html><script type="module" src="dawn-worker-test.js"></script>')
+  const result = await runInChromium(browser, html, 'globalThis.dawnWorkerResult', [
+    '--enable-unsafe-webgpu', '--disable-popup-blocking', '--allow-file-access-from-files',
+    '--autoplay-policy=no-user-gesture-required',
   ])
-  assert.ok(['rgba8unorm', 'bgra8unorm'].includes(result.format), result.format)
-  assert.deepEqual(result.pixel, result.format === 'bgra8unorm' ? [64, 0, 255, 255] : [255, 0, 64, 255])
-  console.log(`Chromium WebGPU: child canvas rendered with the opener device (${result.format}, ${result.pixel})`)
+  assert.equal(result, null)
+  console.log('Chromium Dawn views: child OffscreenCanvas, IME, AudioWorklet, PNG snapshot, waiting overlay and Stop passed')
 }

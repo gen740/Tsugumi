@@ -29,12 +29,17 @@ enum {
   TSUGUMI_VIEW_FULLSCREEN = 2,
 };
 
+enum {
+  TSUGUMI_VIEW_HIDE_CURSOR = 1u << 0,
+  TSUGUMI_VIEW_LOCK_POINTER = 1u << 1,
+};
+
 typedef struct tsugumi_effects {
   /* View effects are valid from any thread for the life of the process. */
   /* Open a declared view. 0 ok, <0 error. Both dimensions may be nonzero
    * only in WINDOW mode and are in logical pixels. 0,0 lets the UI choose. */
-  int (*view_open)(void* host, const char* view, uint32_t mode, uint32_t width,
-                   uint32_t height, tsugumi_route* route,
+  int (*view_open)(void* host, const char* view, uint32_t mode, uint32_t flags,
+                   uint32_t width, uint32_t height, tsugumi_route* route,
                    tsugumi_view_session* session);
   /* Register a mailbox for a session, or drop a route. 0 ok, <0 error. */
   int (*route_register)(void* host, const tsugumi_view_session* session,

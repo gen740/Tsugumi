@@ -39,6 +39,7 @@
 #include "host/store.hh"
 #include "host/templates.hh"
 #include "host/versions.hh"
+#include "host/view_relay.hh"
 #include "host/web_pages.hh"
 #include "host/wire_helpers.hh"
 #include "tsugumi/rpc/lanes.hh"
@@ -102,7 +103,9 @@ struct Service::State {
         wait_requests(4),
         terminal_requests(1),
         terminal_closes(1),
-        environment_stops(2) {
+        environment_stops(2),
+        view_requests(4),
+        view_updates(1) {
     host_settings = std::make_unique<host::Settings>(
         options.state_dir, credentials,
         nullptr,
@@ -174,7 +177,13 @@ struct Service::State {
                        const auto& task, auto stop, const auto& authorization) {
                   return helpers->RunHelper(id, call, index, task, stop,
                                             authorization);
-                }});
+                },
+            .view_windows = [this](const auto& project) {
+              return views.List(project);
+            },
+            .view_action = [this](const auto& request, auto stop) {
+              return ExecuteViewAction(request, stop);
+            }});
     helpers = std::make_unique<Helpers>(
         state_gate, *conversations, *providers, *host_settings, *tools, *turns,
         *access,
@@ -345,6 +354,24 @@ struct Service::State {
   // A close must wake an input blocked by terminal backpressure.
   Lane terminal_closes;
   Lane environment_stops;
+  ViewRelay views;
+  Lane view_requests;
+  Lane view_updates;
+  std::map<ConnId, std::stop_source> host_connection_stops;
+
+  auto ExecuteViewAction(const H::ViewActionRequestT& request,
+                         std::stop_token stop) -> H::ViewActionResultT {
+    std::stop_source delivery;
+    std::stop_callback cancelled(stop, [&] { delivery.request_stop(); });
+    std::stop_callback closing(shutdown.get_token(),
+                               [&] { delivery.request_stop(); });
+    return views.Execute(
+        request,
+        [this](ConnId owner, H::ViewActionDispatchT event) {
+          events->host_server->reply(owner, wire::HostEvent(std::move(event)));
+        },
+        delivery.get_token());
+  }
 
   auto TraceTargets() -> DebugTrace::Targets {
     DebugTrace::Targets targets;
@@ -622,6 +649,31 @@ struct Service::State {
     const auto* r = H::GetMessage(request.frame->data())->payload_as_Request();
     std::unique_lock lock(mutex);
     if (stopping) throw Failure("unavailable", "Host service is stopping");
+    if (const auto* report = r->value_as_ViewPresentationRequest()) {
+      if (!events->host_connections.contains(request.conn))
+        throw Failure("disconnected", "View presentation connection closed");
+      if (!report->closed()) registry.Root(report->project_id()->str());
+      views.Report(request.conn, *report);
+      return wire::HostReply(request.request_id, S::AcknowledgementT{});
+    }
+    if (const auto* complete = r->value_as_ViewActionCompleteRequest()) {
+      views.Complete(request.conn, *complete);
+      return wire::HostReply(request.request_id, S::AcknowledgementT{});
+    }
+    if (const auto* windows = r->value_as_ViewWindowsRequest()) {
+      registry.Root(windows->project_id()->str());
+      lock.unlock();
+      return wire::HostReply(request.request_id,
+                             views.List(windows->project_id()->str()));
+    }
+    if (const auto* action = r->value_as_ViewActionRequest()) {
+      registry.Root(action->project_id()->str());
+      const auto input = std::unique_ptr<H::ViewActionRequestT>(action->UnPack());
+      lock.unlock();
+      return wire::HostReply(
+          request.request_id,
+          ExecuteViewAction(*input, request.connection_stop));
+    }
     if (const auto* debug = r->value_as_HostTraceRequest()) {
       if (!trace::LaunchEnabled())
         throw Failure("permission_denied",
@@ -995,6 +1047,8 @@ auto Service::Shutdown() -> void {
   state_->terminal_requests.stop();
   state_->terminal_closes.stop();
   state_->environment_stops.stop();
+  state_->view_requests.stop();
+  state_->view_updates.stop();
   for (const auto& job : jobs)
     if (job->joinable()) job->join();
   state_->host_settings.reset();
@@ -1023,6 +1077,7 @@ auto Service::hello(const RequestIn& request) -> std::pair<std::string, bool> {
     if (host) {
       if (p->client() != Tsugumi::Trace::Client::Trace)
         state_->events->host_connections.insert(request.conn);
+      state_->host_connection_stops.try_emplace(request.conn);
     } else {
       state_->events->principals[request.conn] = human;
       state_->connection_stops.try_emplace(request.conn);
@@ -1069,6 +1124,14 @@ auto Service::dispatch(RequestIn request) -> void {
       waiting = name == "run" || name == "run_status";
     }
   }
+  const auto* host_request =
+      host ? H::GetMessage(request.frame->data())->payload_as_Request()
+           : nullptr;
+  if (host_request && host_request->value_as_ViewActionRequest()) {
+    std::lock_guard lock(state_->mutex);
+    request.connection_stop =
+        state_->host_connection_stops.at(request.conn).get_token();
+  }
   auto* server = host ? state_->events->host_server : state_->server;
   const auto fail = host ? HostFailed : Failed;
   auto task = [this, request, human, host, server, fail, tool_stop]() {
@@ -1104,15 +1167,18 @@ auto Service::dispatch(RequestIn request) -> void {
     }
     server->reply(request.conn, std::move(bytes));
   };
-  const auto* host_request =
-      host ? H::GetMessage(request.frame->data())->payload_as_Request()
-           : nullptr;
   const auto* terminal =
       host_request ? host_request->value_as_HostTerminalRequest() : nullptr;
   const auto* environment =
       host_request ? host_request->value_as_EnvironmentRequest() : nullptr;
   auto& lane =
-      host_request && host_request->value_as_HostTraceRequest()
+      host_request && host_request->value_as_ViewActionRequest()
+          ? state_->view_requests
+      : host_request && (host_request->value_as_ViewPresentationRequest() ||
+                         host_request->value_as_ViewActionCompleteRequest() ||
+                         host_request->value_as_ViewWindowsRequest())
+          ? state_->view_updates
+      : host_request && host_request->value_as_HostTraceRequest()
           ? state_->trace_requests
       : environment && environment->action() == H::EnvironmentAction::Stop
           ? state_->environment_stops
@@ -1141,7 +1207,16 @@ auto Service::disconnected(ConnId connection) -> void {
   state_->events->Disconnected(connection);
 }
 auto Service::host_disconnected(ConnId connection) -> void {
-  state_->events->HostDisconnected(connection);
+  {
+    std::lock_guard lock(state_->mutex);
+    state_->events->HostDisconnected(connection);
+    if (auto stop = state_->host_connection_stops.find(connection);
+        stop != state_->host_connection_stops.end()) {
+      stop->second.request_stop();
+      state_->host_connection_stops.erase(stop);
+    }
+    state_->views.Disconnect(connection);
+  }
   if (state_->web) state_->web->Disconnected(connection);
   if (trace::LaunchEnabled())
     state_->trace_requests.submit(

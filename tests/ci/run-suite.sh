@@ -35,6 +35,7 @@ native_agent=(
   'AgentFixture.HostRejectsTheExternalAgentCredentialOnBothTransports'
   'AgentFixture.UnixAndWebSocketExposeTheSameAgentProtocol'
   'AgentFixture.ProviderSetAndStatusNeverReturnTheSecretAndKeepItInHostd'
+  'ViewRpcFixture.*'
   'ConversationStoreFixture.ASecondHostCannotWriteTheSameProjectUntilTheFirstStops'
   'ConversationStoreFixture.ProjectStateSymlinksAreRejected'
   'AgentProjectFixture.*Shell*' 'NestedFileFixture.NestedScratchIsPrivateToEachHelperAtEveryDepth'

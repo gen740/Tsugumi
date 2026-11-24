@@ -14,9 +14,10 @@ public struct CardViewOpening: Identifiable {
   public let mode: CardViewMode
   public let width: UInt32
   public let height: UInt32
+  public let flags: UInt32
 
   public init(id: UUID, card: [String], name: String, type: String, mode: CardViewMode,
-              width: UInt32, height: UInt32) {
+              width: UInt32, height: UInt32, flags: UInt32 = 0) {
     self.id = id
     self.card = card
     self.name = name
@@ -24,7 +25,15 @@ public struct CardViewOpening: Identifiable {
     self.mode = mode
     self.width = width
     self.height = height
+    self.flags = flags
   }
+}
+
+public enum CardViewInput: Sendable {
+  case pointer(kind: UInt32, x: Float, y: Float, buttons: UInt32, wheelX: Float, wheelY: Float, modifiers: UInt32)
+  case key(kind: UInt32, code: UInt32, modifiers: UInt32)
+  case text(String)
+  case gamepad(pad: UInt32, kind: UInt32, buttons: UInt32, lx: Float, ly: Float, rx: Float, ry: Float, lt: Float, rt: Float)
 }
 
 let openerViewRoute = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
@@ -133,7 +142,6 @@ enum CardViewFileError: LocalizedError {
   }
 
   init(_ opening: CardViewOpening, files: CardViewFiles,
-       acceptsRoute: @escaping @MainActor (UUID) -> Bool,
        send: @escaping @MainActor (UUID, Data) async throws -> Void,
        close: @escaping @MainActor () async throws -> Void) {
     self.opening = opening
@@ -149,7 +157,7 @@ enum CardViewFileError: LocalizedError {
         try Task.checkCancellation()
         guard let self else { return }
         if opening.type == "dawn" {
-          dawn = DawnViewHost(wasm: file, acceptsRoute: acceptsRoute, sendToCard: send)
+          dawn = DawnViewHost(wasm: file, flags: opening.flags, routes: routes, sendToCard: send)
         } else {
           guard let source = String(data: file, encoding: .utf8) else { throw CardViewFileError.notText }
           let host = HTMLViewHost(sendToCard: send)
@@ -203,7 +211,21 @@ enum CardViewFileError: LocalizedError {
     if let view {
       VStack(spacing: 0) {
         if let dawn = view.dawn {
-          DawnViewRepresentable(host: dawn).frame(maxWidth: .infinity, maxHeight: .infinity)
+          DawnViewRepresentable(host: dawn)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay {
+              if dawn.waiting {
+                ZStack {
+                  Color.black.opacity(0.4)
+                  VStack(spacing: 12) {
+                    Text("ビューの応答を待っています")
+                    Button("停止") { dawn.stop() }
+                  }
+                  .padding(20)
+                  .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                }
+              }
+            }
         } else if let html = view.html {
           HTMLViewRepresentable(host: html).frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if view.error == nil {
@@ -248,9 +270,7 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
                    send: @escaping @MainActor (UUID, Data) async throws -> Void,
                    close: @escaping @MainActor () async throws -> Void) {
     guard views[opening.id] == nil else { return }
-    let view = OpenCardView(opening, files: files, acceptsRoute: { [weak self] route in
-      self?.acceptsRoute(route, session: opening.id) == true
-    }, send: send, close: close)
+    let view = OpenCardView(opening, files: files, send: send, close: close)
     views[opening.id] = view
     switch opening.mode {
     case .panel:
@@ -264,6 +284,7 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
   /// A route remains associated with its session even if the receiver ends.
   public func registerRoute(_ route: UUID, session: UUID) {
     views[session]?.routes.insert(route)
+    views[session]?.dawn?.registerRoute(route)
   }
 
   func acceptsRoute(_ route: UUID, session: UUID) -> Bool {
@@ -273,6 +294,18 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
   public func receive(_ session: UUID, bytes: Data, complete: @escaping () -> Void = {}) {
     guard let view = views[session] else { complete(); return }
     view.receive(.data(bytes), complete: complete)
+  }
+
+  public func sendInput(_ input: CardViewInput, session: UUID) async throws {
+    guard let dawn = views[session]?.dawn else { throw DawnViewError.unavailable }
+    try await dawn.sendInput(input)
+  }
+
+  public func snapshot(session: UUID) async throws -> Data {
+    guard let view = views[session] else { throw DawnViewError.unavailable }
+    if let dawn = view.dawn { return try await dawn.snapshot() }
+    if let html = view.html { return try await html.snapshot() }
+    throw DawnViewError.unavailable
   }
 
   public func close(_ id: UUID) { close(id, windowIsClosing: false) }

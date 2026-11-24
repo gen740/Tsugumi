@@ -19,7 +19,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     tsugumi_route route;
     tsugumi_view_session session;
     if (call->effects->view_open(call->host, "page", TSUGUMI_VIEW_PANEL,
-                                 0, 0, &route, &session))
+                                 0, 0, 0, &route, &session))
         return 1;
     return write_result(result, result_bytes, sizeof(result_bytes));
 }

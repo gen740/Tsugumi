@@ -316,6 +316,7 @@ final class ProjectSession {
   }
   private(set) var cardStates: [CardKey: CardRunState] = [:]
   let cardViews = CardViewPresentation()
+  @ObservationIgnored private var viewEventsTask: Task<Void, Never>?
   private(set) var lastFinished: Date?
   private(set) var remoteHistoryRevision = 0
   private(set) var recordingRevision = 0
@@ -401,7 +402,10 @@ final class ProjectSession {
   }
 
   private func setConnected(_ value: Bool) {
-    if !value { documentRevisions.disconnect(RPCError.disconnected) }
+    if !value {
+      documentRevisions.disconnect(RPCError.disconnected)
+      cardViews.closeAll()
+    }
     connected = value
     terminals.environment(connected: value)
   }
@@ -411,6 +415,7 @@ final class ProjectSession {
   func close() async {
     closed = true
     cardViews.closeAll()
+    viewEventsTask?.cancel()
     startTask?.cancel()
     terminals.closeAll()
     listenTask?.cancel()
@@ -448,6 +453,13 @@ final class ProjectSession {
       let c = try await reach(ep)
       if Task.isCancelled || closed { await c.close(); return }
       let opened = try await c.open(viewId: viewId)
+      if Task.isCancelled || closed { await c.close(); return }
+      if endpointOverride == nil, viewEventsTask == nil {
+        let events = await CoreHostClient.shared.viewEvents()
+        viewEventsTask = Task { [weak self] in
+          for await event in events { self?.applyHostViewEvent(event) }
+        }
+      }
       if Task.isCancelled || closed { await c.close(); return }
       client = c
       receiveProjectSnapshot(opened.snapshot, projectId: ep.projectId)
@@ -577,6 +589,7 @@ final class ProjectSession {
   func endForQuit() {
     closed = true
     cardViews.closeAll()
+    viewEventsTask?.cancel()
     startTask?.cancel()
     listenTask?.cancel()
     reconnectTask?.cancel()
@@ -659,6 +672,61 @@ final class ProjectSession {
     return true
   }
 
+  private func applyHostViewEvent(_ event: HostViewEvent) {
+    guard !closed, connected, let project = projectId else { return }
+    switch event {
+    case .connected:
+      for opening in cardViews.openings {
+        Task { await reportView(opening, project: project) }
+      }
+    case .command(let command):
+      guard command.project == project, cardViews.openings.contains(where: { $0.id == command.session }) else { return }
+      Task {
+        let png: Data?
+        do {
+          switch command.action {
+          case .snapshot:
+            png = try await cardViews.snapshot(session: command.session)
+          case .input(let input):
+            let event: CardViewInput
+            switch input {
+            case let .pointer(kind, x, y, buttons, wheelX, wheelY, modifiers):
+              event = .pointer(kind: kind, x: x, y: y, buttons: buttons, wheelX: wheelX, wheelY: wheelY, modifiers: modifiers)
+            case let .key(kind, code, modifiers):
+              event = .key(kind: kind, code: code, modifiers: modifiers)
+            case let .text(text):
+              event = .text(text)
+            case let .gamepad(pad, kind, buttons, lx, ly, rx, ry, lt, rt):
+              event = .gamepad(pad: pad, kind: kind, buttons: buttons, lx: lx, ly: ly, rx: rx, ry: ry, lt: lt, rt: rt)
+            }
+            try await cardViews.sendInput(event, session: command.session)
+            png = nil
+          }
+        } catch {
+          try? await CoreHostClient.shared.completeViewCommand(command, error: error.localizedDescription)
+          return
+        }
+        try? await CoreHostClient.shared.completeViewCommand(command, png: png)
+      }
+    }
+  }
+
+  private func reportView(_ opening: CardViewOpening, project: String, closed: Bool = false) async {
+    let window = Tsugumi_Host_ViewWindowT()
+    window.session = opening.id.uuidString.lowercased()
+    window.card.segments = opening.card.map(Optional.some)
+    window.name = opening.name; window.type = opening.type; window.mode = opening.mode.rawValue
+    window.width = opening.width; window.height = opening.height; window.flags = opening.flags
+    let host = CoreHostClient.shared
+    if !closed && !cardViews.openings.contains(where: { $0.id == opening.id }) { return }
+    try? await host.reportView(project: project, window: window, closed: closed)
+    if !closed && !cardViews.openings.contains(where: { $0.id == opening.id }) {
+      // A close can race connection establishment. Withdraw the registration
+      // after it settled, even if the initial close reached hostd first.
+      try? await host.reportView(project: project, window: window, closed: true)
+    }
+  }
+
   private func applyViewNotification(_ payload: Tsugumi_RPC_NotificationPayloadUnion) {
     guard let client, let subscription else { return }
     switch payload.type {
@@ -666,16 +734,19 @@ final class ProjectSession {
       guard let u = payload.value as? Tsugumi_RPC_ViewOpenedT,
             let id = UUID(uuidString: u.session), let mode = CardViewMode(rawValue: u.mode) else { return }
       let opening = CardViewOpening(id: id, card: u.card.path, name: u.name, type: u.type,
-                                    mode: mode, width: u.width, height: u.height)
+                                    mode: mode, width: u.width, height: u.height, flags: u.flags)
+      let hostProject = endpointOverride == nil ? projectId : nil
       let files = CardViewFiles { session, offset in
         let page = try await client.readCardView(session: session, offset: offset)
         return CardViewFilePage(bytes: Data(page.bytes), eof: page.eof == true, nextOffset: page.nextOffset)
       }
       cardViews.open(opening, files: files, send: { route, bytes in
         try await client.sendView(session: id, route: route, bytes: bytes)
-      }, close: {
+      }, close: { [weak self] in
+        if let hostProject { await self?.reportView(opening, project: hostProject, closed: true) }
         try await client.closeView(session: id)
       })
+      if let hostProject { Task { await reportView(opening, project: hostProject) } }
     case .viewrouteregistered:
       guard let registered = payload.value as? Tsugumi_RPC_ViewRouteRegisteredT,
             let session = UUID(uuidString: registered.session),

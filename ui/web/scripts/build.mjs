@@ -43,7 +43,11 @@ copy()
 installViewer(viewer, path.join(out, 'public', 'modules'))
 
 const client = {
-  entryPoints: { app: path.join(root, 'src', 'main.tsx') },
+  entryPoints: {
+    app: path.join(root, 'src', 'main.tsx'),
+    'dawn-view-worker': path.join(root, 'src', 'dawn', 'viewWorker.ts'),
+    'dawn-view-audio': path.join(root, 'src', 'dawn', 'audioWorklet.ts'),
+  },
   outdir: path.join(out, 'public'),
   metafile: true, bundle: true, platform: 'browser', format: 'esm', target: 'es2022', sourcemap: watch, legalComments: 'none', minify: !watch,
   loader: { '.css': 'css' }, jsx: 'automatic', logLevel: 'info',

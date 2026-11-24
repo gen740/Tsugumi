@@ -33,6 +33,7 @@ add_library(tsugumi_host_core STATIC
   ${PROJECT_SOURCE_DIR}/hostd/src/guide.cc
   ${PROJECT_SOURCE_DIR}/hostd/src/service.cc
   ${PROJECT_SOURCE_DIR}/hostd/src/events.cc
+  ${PROJECT_SOURCE_DIR}/hostd/src/view_relay.cc
   ${PROJECT_SOURCE_DIR}/hostd/src/models.cc
   ${PROJECT_SOURCE_DIR}/hostd/src/skills_service.cc
   ${PROJECT_SOURCE_DIR}/hostd/src/skills.cc

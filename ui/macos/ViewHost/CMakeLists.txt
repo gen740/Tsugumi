@@ -12,7 +12,7 @@ tsugumi_generate_webgpu_imports(
   VIEW_HEADER "${PROJECT_SOURCE_DIR}/protocol/include/tsugumi/tsugumi_view.h"
 )
 
-add_library(tsugumi-view-host STATIC runtime.cc ${TSUGUMI_WEBGPU_GEN_SOURCES})
+add_library(tsugumi-view-host STATIC runtime.cc audio_ring.cc ${TSUGUMI_WEBGPU_GEN_SOURCES})
 add_dependencies(tsugumi-view-host tsugumi-webgpu-generated)
 set_target_properties(tsugumi-view-host PROPERTIES
   TSUGUMI_OWNER view_host

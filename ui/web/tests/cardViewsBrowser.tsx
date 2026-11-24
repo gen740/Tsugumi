@@ -111,7 +111,7 @@ async function test() {
   render()
   await until(() => !!document.querySelector('[role=status]'), 'popup blocker fallback')
   equal(credits, [1, 2], 'A blocked popup holds its first message')
-  const retry = [...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === '別ウィンドウで表示')!
+  const retry = [...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'ウィンドウで開く')!
   blocked = false
   retry.click()
   await until(() => !!child && replies.some(([session, , bytes]) => session === 'popup' && bytes[0] === 91), 'child HTML messages')

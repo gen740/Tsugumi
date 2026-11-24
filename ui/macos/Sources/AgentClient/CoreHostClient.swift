@@ -121,7 +121,7 @@ public actor CoreHostClient {
     return stream
   }
 
-  private func removeHostObserver(_ observer: UUID) {
+  func removeHostObserver(_ observer: UUID) {
     hostObservers.removeValue(forKey: observer)
   }
 

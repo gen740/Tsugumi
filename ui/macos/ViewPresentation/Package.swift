@@ -18,5 +18,6 @@ let package = Package(
         .unsafeFlags(["-L", hostLib]),
         .linkedFramework("Metal"), .linkedFramework("QuartzCore"), .linkedFramework("IOSurface"),
         .linkedFramework("IOKit"), .linkedFramework("CoreGraphics"), .linkedFramework("Foundation"),
+        .linkedFramework("AVFAudio"), .linkedFramework("GameController"), .linkedFramework("ImageIO"),
       ]),
   ])
