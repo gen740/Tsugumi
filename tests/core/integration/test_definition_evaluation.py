@@ -53,6 +53,18 @@ def definition(**extra):
     return {"type": "code", "sandbox": {"filesystem": False}, "reuseWorker": True, **extra}
 
 
+@pytest.mark.parametrize("kind", ["code", "input"])
+def test_missing_params_file_evaluates_to_empty_set(core_factory, project, kind):
+    client = core_factory().connect()
+    Project(project).card("work", {"type": kind}, outputs=EMPTY_OUTPUTS, sources={
+        "default.nix": "{ params, inputs }: { run = throw \"unused run\"; }",
+    }).save(client)
+    assert not (project / "definitions/work/params.nix").exists()
+    result = client.call("EvaluateNixRequest", card=path("work"), expression="params")
+    assert result.failure is None, result.failure and text(result.failure.diagnostic)
+    assert json.loads(text(result.json)) == {}
+
+
 @pytest.mark.parametrize("changed_input", [
     "entry", "import", "read-file", "file-added", "file-removed", "nix-param",
     "param-name", "output-schema",
@@ -244,7 +256,8 @@ def test_run_and_explicit_views_are_in_the_plan_closure(core_factory, project, l
     library = synthetic_run('"views"')
     # A passthru entry would fail if the evaluator tried to read or merge it.
     library = "(" + library + ').overrideAttrs (_: { passthru.views = throw "implicit views"; })'
-    body = '[ { label = "first"; run = library; } library ]' if list_run else 'library'
+    body = ('[ { label = "first"; run = library; } { label = "second"; run = library; } ]'
+            if list_run else 'library')
     views = """[
       { name = "second"; type = "html"; blob = ./notes.html; }
       { name = "first"; type = "dawn"; blob = pkgs.writeText "view.wasm" "opaque"; }
@@ -266,7 +279,7 @@ def test_run_and_explicit_views_are_in_the_plan_closure(core_factory, project, l
     if list_run:
         assert Path(plan["views"][0]["blob"]).read_text() == "<!doctype html><p>View</p>"
         records = client.call("RunInvocationsRequest", runId=run_id, card=path("work")).records
-        assert [text(row.implementationLabel) or "" for row in records] == ["first", ""]
+        assert [text(row.implementationLabel) or "" for row in records] == ["first", "second"]
     paths = client.call("RunEnvironmentPathsRequest", runId=run_id, environmentId=text(environment.id),
                         limit=500).paths
     assert {str(plan_path), *plan["runs"], *(view["blob"] for view in plan["views"])} <= set(map(text, paths))
@@ -322,9 +335,8 @@ def test_a_failed_view_evaluation_is_relayed_apart_from_an_empty_list(core_facto
 
 @pytest.mark.parametrize("body, message", [
     ('run = "echo legacy";', "must be a derivation"),
+    ('run = [ (pkgs.writeText "bare" "run") ];', "each run list entry"),
     ('run = "legacy"; preRun = "true";', "unknown Card attributes: preRun"),
-    ('run = "legacy"; postRun = "true";', "unknown Card attributes: postRun"),
-    ('run = "legacy"; sdk = {};', "unknown Card attributes: sdk"),
     ('run = []; views = {};', "Card views must be a list"),
     ('run = []; views = [{ name = "x"; type = "js"; blob = ./default.nix; }];',
      "a Card view must declare"),

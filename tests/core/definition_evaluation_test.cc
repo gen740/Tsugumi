@@ -55,8 +55,7 @@ class DefinitionEvaluation : public ::testing::Test {
     call.system = native_system();
     call.card = "work";
     call.definition_dir = root / "source";
-    call.definitions = {{call.definition_dir.string(), call.card, ""}};
-    call.projects.emplace("", LockedNixPath{});
+    call.definitions = {{call.definition_dir.string(), call.card}};
     call.args =
         "{ root = /. + " + json::Quote(call.definition_dir.string()) + "; }";
     call.root_dir = root / "roots";
@@ -217,7 +216,7 @@ TEST_F(DefinitionEvaluation, SearchPathIsCatchableAndHostPathIsEmpty) {
     then builtins.baseNameOf <local/flake.nix>
     else throw "external search path was visible"
   )");
-  call.projects.at("").emplace("local", pins.at("nixpkgs"));
+  call.locked_nix_path.emplace("local", pins.at("nixpkgs"));
   auto eval = evaluator("import (args.root + \"/default.nix\")");
   auto result = eval->realise_native(call, eval->evaluate(call));
   EXPECT_EQ(fs::read_file(result.derivation.output), "flake.nix");
@@ -231,31 +230,6 @@ TEST_F(DefinitionEvaluation, SearchPathIsCatchableAndHostPathIsEmpty) {
             .find("undeclared nixPath name 'misspelled' (declared: local)"),
         std::string::npos);
   }
-}
-
-TEST_F(DefinitionEvaluation, NameResolutionFollowsImportedDefinitionOrigin) {
-  const auto external = root / "external";
-  const std::string imported = R"(builtins.hashFile "sha256" <dep/flake.nix>)";
-  for (const auto& dir : {root / "source", external}) {
-    std::filesystem::create_directories(dir / "inner");
-    fs::write_atomic(dir / "inner" / "lookup.nix", imported);
-  }
-  call.definitions.push_back(
-      {external.string(), "outer/work", "externals/outer/"});
-  call.projects.at("").emplace("dep", pins.at("nixpkgs"));
-  call.projects["externals/outer/"].emplace("dep", pins.at("tsugumi-kit"));
-  call.args = "{ root = /. + " + json::Quote((root / "source").string()) +
-              "; ext = /. + " + json::Quote(external.string()) + "; }";
-  auto eval = evaluator(R"(
-    let a = import (args.root + "/inner/lookup.nix");
-        b = import (args.ext + "/inner/lookup.nix");
-    in if a != b then "different projects" else throw "shared search path"
-  )");
-  auto first = eval->realise_native(call, eval->evaluate(call));
-  EXPECT_EQ(fs::read_file(first.derivation.output), "different projects");
-
-  call.projects["externals/outer/"]["dep"] = pins.at("nixpkgs");
-  EXPECT_THROW(eval->evaluate(call), std::runtime_error);
 }
 
 TEST_F(DefinitionEvaluation, FetchPrimopsAndImportFromDerivationAreDenied) {
@@ -293,7 +267,7 @@ TEST_F(DefinitionEvaluation, ExpressionUsesTheCardDirectoryAndProject) {
   fs::write_atomic(dir / "default.nix",
                    "{ params, inputs }: { api = params.value; }");
   fs::write_atomic(dir / "relative", "from the Card");
-  call.projects.at("").emplace("dep", pins.at("nixpkgs"));
+  call.locked_nix_path.emplace("dep", pins.at("nixpkgs"));
   NixEvaluator eval("args: { params.value = 42; inputs = {}; }");
   const auto result = eval.expression(
       call,
@@ -314,7 +288,7 @@ TEST_F(DefinitionEvaluation, ExpressionUsesTheCardDirectoryAndProject) {
 }
 
 TEST_F(DefinitionEvaluation, ExpressionBuildReturnsFilesAndFailureLog) {
-  call.projects.at("").emplace("dep", pins.at("nixpkgs"));
+  call.locked_nix_path.emplace("dep", pins.at("nixpkgs"));
   NixEvaluator eval("args: { params = {}; inputs = {}; }");
   fs::write_atomic(call.definition_dir / "default.nix", R"(
     { params, inputs }:
@@ -353,7 +327,7 @@ TEST_F(DefinitionEvaluation, ExpressionBuildReturnsFilesAndFailureLog) {
 }
 
 TEST_F(DefinitionEvaluation, ExpressionBuildBoundsDirectoryEntriesAndBytes) {
-  call.projects.at("").emplace("dep", pins.at("nixpkgs"));
+  call.locked_nix_path.emplace("dep", pins.at("nixpkgs"));
   NixEvaluator eval("args: { params = {}; inputs = {}; }");
   const auto entries = eval.expression(call, R"(
     let pkgs = import <dep> {};

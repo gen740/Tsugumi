@@ -16,7 +16,6 @@
 #include <utility>
 
 #include "nix_eval.hh"
-#include "nix_params.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json.hh"
@@ -257,12 +256,6 @@ auto NixEvaluator::lock_source(const std::string&) -> NixSource {
 auto NixEvaluator::expression(const NixCall&, const std::string&, bool)
     -> ExpressionResult {
   throw std::runtime_error("the mock evaluator cannot evaluate expressions");
-}
-
-auto NixEvaluator::check_params_value(const NixCall&, std::string_view text,
-                                      const std::string& origin) -> std::string {
-  return evaluate_literal_params(
-      std::filesystem::path(origin).parent_path().generic_string() + '/', text);
 }
 
 auto NixStore::rooted_usage(const std::vector<std::vector<std::string>>& roots)

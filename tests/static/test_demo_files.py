@@ -49,5 +49,5 @@ def test_demo_locks_and_input_definitions(language):
             assert not {"sweeps", "retainArtifact", "artifactOutput"} & card.keys(), definition
             assert card["type"] in {"code", "draft", "trigger", "input", "merge", "collect", "subgraph"}, definition
             if card["type"] == "input":
-                for name in ("default.nix", "params.nix", "_outputs.fbs"):
+                for name in ("default.nix", "_outputs.fbs"):
                     assert definition.with_name(name).is_file(), (definition, name)

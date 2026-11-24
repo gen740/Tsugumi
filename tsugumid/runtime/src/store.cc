@@ -274,7 +274,7 @@ auto refresh_input_files(Document& doc, std::vector<FileOp>& ops)
 
 }  // namespace
 
-void Store::open(const std::function<void()>& before_resolve) {
+void Store::open() {
   stdfs::create_directories(state_dir());
   // Project identity: a short reference persisted in internal state, never in
   // the root files.
@@ -295,7 +295,6 @@ void Store::open(const std::function<void()>& before_resolve) {
   auto loaded = load_document(opts_.root);
   loaded->rev = rev;
   loaded->execution_rev = exec_rev;
-  if (before_resolve) before_resolve();
   auto doc = finalize(loaded);
   std::vector<FileOp> generated;
   refresh_input_files(*doc, generated);
@@ -348,8 +347,7 @@ std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc,
   }
   doc->resolution =
       resolve(*doc, source_reader(opts_.root, *doc, pending),
-              opts_.read_params ? opts_.read_params
-                                : ParamsReader(evaluate_literal_params));
+              evaluate_literal_params);
   return doc;
 }
 
@@ -635,7 +633,7 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
           break;
         }
         wrap([&] {
-          doc->sources[c.path] = lock_source_document(c.path, *c.lock_json);
+          doc->sources[c.path] = external_document_source(c.path, *c.lock_json);
           files[c.path] = *c.lock_json;
         });
         break;
@@ -954,8 +952,7 @@ Store::Staged Store::stage_reload(const std::string& op_id,
   if (!checkout.empty()) {
     doc->resolution =
         resolve(*doc, source_reader(checkout, *doc),
-                opts_.read_params ? opts_.read_params
-                                  : ParamsReader(evaluate_literal_params));
+                evaluate_literal_params);
     doc->resolution_key = doc->execution_fingerprint;
     for (const auto& diagnostic : doc->resolution->all_diagnostics(false))
       if (diagnostic.code == "invalid_document")

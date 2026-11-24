@@ -257,26 +257,18 @@ Service::Service(ServiceOptions opts) : opts_(std::move(opts)) {
 Service::~Service() { shutdown(); }
 
 void Service::open() {
-  store_ = std::make_unique<Store>(
-      StoreOptions{opts_.root, opts_.fault, [&](const auto& dir, auto text) {
-                     if (!opts_.prepared_cards.empty())
-                       return evaluate_literal_params(dir, text);
-                     return nix_->check_params_value(dir, text);
-                   }});
-  stdfs::path scratch;
-  store_->open([&] {
-    scratch =
-        opts_.scratch_dir.empty()
-            ? stdfs::temp_directory_path() / ("tsugumi-" + store_->project_id())
-            : opts_.scratch_dir;
-    nix_ = std::make_unique<NixRunner>(*this, scratch / "nix");
-  });
+  store_ = std::make_unique<Store>(StoreOptions{opts_.root, opts_.fault});
+  store_->open();
+  const auto scratch =
+      opts_.scratch_dir.empty()
+          ? stdfs::temp_directory_path() / ("tsugumi-" + store_->project_id())
+          : opts_.scratch_dir;
+  nix_ = std::make_unique<NixRunner>(*this, scratch / "nix");
   history_ = std::make_unique<History>(store_->state_dir() / "runs.sqlite",
                                        opts_.fault);
   versions_ = std::make_unique<Versions>(opts_.root);
 
   substituters_ = configured_substituters(opts_.substituters_file);
-  stdfs::create_directories(store_->state_dir() / "runs");
   run_scratch_ = disk_scratch_path(opts_.run_scratch_dir.empty()
                                        ? default_run_scratch(opts_.root)
                                        : opts_.run_scratch_dir);
@@ -2254,7 +2246,6 @@ void Service::history_delete(RequestIn& req) {
         files += fs::directory_size(detached);
         stdfs::remove_all(detached);
       }
-      stdfs::remove_all(store_->state_dir() / "runs" / id);
     }
     uint64_t after = sizes();
     FBB b;

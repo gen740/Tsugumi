@@ -35,7 +35,6 @@ using LockedNixPath = std::map<std::string, NixSource>;
 struct NixDefinitionScope {
   std::string directory;
   std::string card;
-  std::string project;
   auto operator<=>(const NixDefinitionScope&) const = default;
 };
 
@@ -50,10 +49,10 @@ struct NixCall {
   // Confirmed definition sources, also available to alternative build backends
   // without parsing the Nix expression above.
   std::filesystem::path definition_dir;
-  std::string definition_key;  // content, project scopes and build arguments
+  std::string definition_key;  // content, project lock and build arguments
   std::string card;
   std::vector<NixDefinitionScope> definitions;
-  std::map<std::string, LockedNixPath> projects;
+  LockedNixPath locked_nix_path;
   std::string system;
   bool needs_worker = false;
   // GC root created for the result: <root_dir>/<root_prefix><result name>, a
@@ -127,8 +126,6 @@ class NixEvaluator {
   auto expression(const NixCall& call, const std::string& expression,
                   bool build) -> ExpressionResult;
   auto lock_source(const std::string& url) -> NixSource;
-  auto check_params_value(const NixCall& call, std::string_view text,
-                          const std::string& origin) -> std::string;
 
  private:
   struct Impl;

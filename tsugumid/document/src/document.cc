@@ -122,14 +122,13 @@ auto external_document_source(const std::string& path, std::string bytes,
                               bool canonicalize)
     -> SourceEntry {
   const auto local = local_document_path(path);
-  if (local == "tsugumi.lock")
-    return lock_source_document(path, std::move(bytes));
   if (local != "layout.bin" && !text::valid_utf8(bytes))
     throw DocumentError("invalid_document", path + ": expected UTF-8 text",
                         {{"path", path}});
   auto check = [&](ParsedDocument parsed) {
     if (canonicalize) bytes = std::move(parsed.text);
   };
+  if (local == "tsugumi.lock") parse_project_lock(path, bytes);
   if (local == "tsugumi.json") check(parse_external_project(path, bytes));
   if (local.ends_with("/_card.json"))
     check(parse_card_json(stdfs::path(path).parent_path().filename().string(),
@@ -317,31 +316,17 @@ auto parse_project_lock(const std::string& path, const std::string& text)
   return {buffer, document_text::print(Schema::Lock, buffer)};
 }
 
-auto lock_source_document(const std::string& path, std::string bytes)
-    -> SourceEntry {
-  parse_project_lock(path, bytes);
-  return {crypto::sha256_hex(bytes), bytes.size(),
-          std::make_shared<const std::string>(std::move(bytes))};
-}
-
 auto parse_project_json(const std::string& text) -> ParsedDocument {
-  auto doc = parsed(Schema::Project, "tsugumi.json", text);
-  const auto& p = document_text::root<D::Project>(doc.buffer);
-  check_nix_path(p.nixPath(), "tsugumi.json");
-  check_version_paths(p);
-  check_log_limit(p, "tsugumi.json");
-  check_graph_shape(*p.canvas(), "tsugumi.json canvas");
-  check_boundary(p, "tsugumi.json");
-  return doc;
+  return parse_external_project("tsugumi.json", text);
 }
 
 auto parse_external_project(const std::string& rel, const std::string& text)
     -> ParsedDocument {
   auto doc = parsed(Schema::Project, rel, text);
   const auto& p = document_text::root<D::Project>(doc.buffer);
-  check_log_limit(p, rel);
   check_nix_path(p.nixPath(), rel);
   check_version_paths(p);
+  check_log_limit(p, rel);
   check_graph_shape(*p.canvas(), rel + " canvas");
   check_boundary(p, rel);
   return doc;
@@ -366,12 +351,11 @@ auto parse_card_json(const std::string& id, const std::string& text)
     if (!valid_id(external->str()))
       invalid(rel + ": \"external\" must name a folder of externals/",
               {{"path", rel}});
-    // A Card in Card has only its kind, its project and its display mode.
+    // A Card in Card has only its kind and its project.
     D::CardT rest;
     card.UnPackTo(&rest);
     rest.type.reset();
     rest.external.clear();
-    rest.displayMode.clear();
     const auto fields = document_text::pack<D::Card>(rest);
     if (fields != document_text::pack<D::Card>(D::CardT{}))
       invalid(rel + ": execution fields on a Card in Card: " +
@@ -442,8 +426,7 @@ void check_structure(const Document& doc) {
 
 namespace {
 // What of a project or Card document identifies a run: its text without the
-// presentation fields (a project's name and Agent exclusions, a Card's
-// display mode).
+// presentation fields (a project's name and Agent exclusions).
 auto execution_text(Schema schema, const std::string& buffer) -> std::string {
   if (schema == Schema::Project) {
     D::ProjectT p;
@@ -452,10 +435,7 @@ auto execution_text(Schema schema, const std::string& buffer) -> std::string {
     p.agentExclude.clear();
     return document_text::print(schema, document_text::pack<D::Project>(p));
   }
-  D::CardT c;
-  document_text::root<D::Card>(buffer).UnPackTo(&c);
-  c.displayMode.clear();
-  return document_text::print(schema, document_text::pack<D::Card>(c));
+  return document_text::print(schema, buffer);
 }
 }  // namespace
 
@@ -520,7 +500,7 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
                          bytes.append(chunk);
                        });
     doc->sources.emplace(
-        "tsugumi.lock", lock_source_document("tsugumi.lock", std::move(bytes)));
+        "tsugumi.lock", external_document_source("tsugumi.lock", std::move(bytes)));
   }
 
   if (auto layout = fs::read_file(root / "layout.bin")) {

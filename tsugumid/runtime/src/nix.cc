@@ -200,14 +200,6 @@ auto NixRunner::lock_source(const std::string& url) -> NixSource {
   return evaluator().lock_source(url);
 }
 
-auto NixRunner::check_params_value(const stdfs::path& def_dir,
-                                   std::string_view text) -> std::string {
-  NixCall call;
-  call.system = native_system();
-  return evaluator().check_params_value(
-      call, text, (def_dir / "params.nix").generic_string());
-}
-
 NixEvaluator& NixRunner::evaluator() {
   std::lock_guard<std::mutex> l(eval_mu_);
   if (!evaluator_) {
@@ -296,7 +288,7 @@ auto NixRunner::configure_call(NixCall& call, const Document& doc,
                                const Node& node, bool expression_only) -> void {
   const auto& graph = *doc.resolution;
   auto [entries, project_key] = project_pins(doc, svc_.store(), node);
-  call.projects.emplace(node.project_dir, std::move(entries));
+  call.locked_nix_path = std::move(entries);
 
   crypto::Sha256 key;
   const auto prepare = [&](const Node& owner) -> json::Members {
@@ -318,13 +310,9 @@ auto NixRunner::configure_call(NixCall& call, const Document& doc,
       source_hash.update(json::Quote(rel));
       source_hash.update(it->second.hash);
     }
-    const auto params = owner.def_dir + "params.nix";
-    if (const auto source = doc.sources.find(params);
-        source != doc.sources.end()) {
-      if (source->second.size > kMaxDocumentJsonBytes)
-        throw std::runtime_error(params + ": exceeds the 8 MiB document limit");
-      check_params_value(owner.def_dir, store.read_source(doc, params));
-    }
+    for (const auto& diagnostic : owner.diags)
+      if (diagnostic.code == "invalid_param")
+        throw std::runtime_error(diagnostic.message);
     for (const auto& diagnostic : owner.exec_diags)
       if (diagnostic.code == "invalid_inputs")
         throw std::runtime_error(diagnostic.message);
@@ -343,7 +331,7 @@ auto NixRunner::configure_call(NixCall& call, const Document& doc,
     std::vector<std::string> deps;
     for (const auto& ref : owner.nix_references)
       deps.push_back(json::Quote(ref.name));
-    call.definitions.push_back({definition.string(), card, owner.project_dir});
+    call.definitions.push_back({definition.string(), card});
     key.update(digest);
     key.update(json::Encode(deps));
     return {{"id", json::Quote(owner.path.back())},
@@ -584,20 +572,6 @@ CacheClearOutcome NixRunner::clear_cache() {
     if (n) out.deleted.push_back("build-roots");
   }
   remove(state / "cache", "build-cache");
-  std::error_code ec;
-  if (stdfs::is_directory(state / "runs", ec)) {
-    // A folder going away meanwhile (a run's files deleted) ends the listing,
-    // never the clearing.
-    for (const auto& run : stdfs::directory_iterator(state / "runs", ec)) {
-      remove(run.path() / "build",
-             "runs/" + run.path().filename().string() + "/build");
-      remove(run.path() / "defs",
-             "runs/" + run.path().filename().string() + "/defs");
-      if (stdfs::exists(run.path() / "artifacts", ec))
-        out.retained.push_back("runs/" + run.path().filename().string() +
-                               "/artifacts");
-    }
-  }
   out.retained.push_back("history");
   out.retained.push_back("document");
   return out;
