@@ -13,6 +13,12 @@
     flake = false;
   };
 
+  # Match the wasm32 WebGPU ABI in protocol/include/tsugumi/tsugumi_view.h.
+  inputs.webgpu-headers = {
+    url = "github:webgpu-native/webgpu-headers/a1dc77409bb2b8bd80540cbf4b8db219e123e909";
+    flake = false;
+  };
+
   inputs.flake-parts = {
     url = "github:hercules-ci/flake-parts";
     inputs.nixpkgs-lib.follows = "nixpkgs";

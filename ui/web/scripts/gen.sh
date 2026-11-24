@@ -17,3 +17,8 @@ for schema in tsugumi agent host; do
   flatc --ts --gen-all --gen-object-api --ts-no-import-ext -I "$root/protocol" -o "$out" "$root/protocol/$schema.fbs"
   flatc -b --schema --bfbs-comments --bfbs-builtins -I "$root/protocol" -o "$out" "$root/protocol/$schema.fbs"
 done
+
+python3 "$root/ui/shared/dawn/gen_webgpu.py" \
+  --webgpu-yml "${TSUGUMI_WEBGPU_HEADERS:?Run this script inside nix develop}/webgpu.yml" \
+  --view-header "$root/protocol/include/tsugumi/tsugumi_view.h" \
+  --js "$out/webgpu_imports.gen.js"

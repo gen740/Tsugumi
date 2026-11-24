@@ -58,7 +58,8 @@
         "flake-parts": "flake-parts",
         "hosq": "hosq",
         "nixpkgs": "nixpkgs",
-        "tsugumi-kit": "tsugumi-kit"
+        "tsugumi-kit": "tsugumi-kit",
+        "webgpu-headers": "webgpu-headers"
       }
     },
     "tsugumi-kit": {
@@ -71,17 +72,34 @@
         ]
       },
       "locked": {
-        "lastModified": 1795508345,
-        "narHash": "sha256-o2Uq9RcdDrX7aHNVRUIRODnCHzXN5HwRFJykk47ZdO8=",
+        "lastModified": 1795510923,
+        "narHash": "sha256-hPxHwoVfR3IGUaizTDNLeEiUXdQkS8OtcsCLiyGeZAk=",
         "owner": "gen740",
         "repo": "tsugumi-kit",
-        "rev": "8fa919875e3ffa14aace1e3aa346502e78f10c30",
+        "rev": "4eb5445926a794f695c975c8ed04b130859fcb99",
         "type": "github"
       },
       "original": {
         "owner": "gen740",
         "ref": "main",
         "repo": "tsugumi-kit",
+        "type": "github"
+      }
+    },
+    "webgpu-headers": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790653795,
+        "narHash": "sha256-hkwn8AMzkjF6j2J5qJo8FYAoMeBc0DjU0/FQddSgg/s=",
+        "owner": "webgpu-native",
+        "repo": "webgpu-headers",
+        "rev": "a1dc77409bb2b8bd80540cbf4b8db219e123e909",
+        "type": "github"
+      },
+      "original": {
+        "owner": "webgpu-native",
+        "repo": "webgpu-headers",
+        "rev": "a1dc77409bb2b8bd80540cbf4b8db219e123e909",
         "type": "github"
       }
     }

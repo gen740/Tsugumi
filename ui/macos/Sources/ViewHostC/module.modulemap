@@ -1,0 +1,7 @@
+module TsugumiViewHostC [system] {
+  header "../../ViewHost/include/tsugumi_view_host.h"
+  link "tsugumi-view-host"
+  link "wasmtime"
+  link "c++"
+  export *
+}

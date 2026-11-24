@@ -52,6 +52,8 @@ linux_job() {
   step "Web UI typecheck and behavior contracts"
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 --no-link \
     ".#checks.$system.web-typecheck" ".#checks.$system.web"
+  step "Dawn view ABI layout and generator"
+  nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 --no-link ".#checks.$system.view-abi"
   if [[ "${TSUGUMI_LOCAL_REMOTE:-1}" == 1 ]]; then
     step "Real remote worker execution"
     bash tests/ci-remote-worker.sh

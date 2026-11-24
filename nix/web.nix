@@ -8,6 +8,7 @@
   flatbuffers,
   python3,
   client-wasm,
+  webgpu-headers,
   typecheckOnly ? false,
 }:
 buildNpmPackage {
@@ -37,6 +38,8 @@ buildNpmPackage {
         ../hostd/agent/Shared/agent.json
         ../hostd/agent/Shared/demo-skill.md
         ../ui/shared/i18n/en.json
+        ../ui/shared/dawn
+        ../protocol/include/tsugumi/tsugumi_view.h
         ../ui/shared/modules
         (lib.fileset.fileFilter (file: file.hasExt "fbs") ../protocol)
       ]
@@ -63,8 +66,9 @@ buildNpmPackage {
   npmConfigHook = importNpmLock.npmConfigHook;
   nativeBuildInputs = [
     flatbuffers
-    python3
+    (python3.withPackages (ps: [ ps.pyyaml ]))
   ];
+  TSUGUMI_WEBGPU_HEADERS = webgpu-headers;
   TSUGUMI_WASM_CLIENT_DIR = if typecheckOnly then null else "${client-wasm}/share/tsugumi/client";
   buildPhase =
     if typecheckOnly then

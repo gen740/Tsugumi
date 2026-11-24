@@ -920,10 +920,11 @@ auto WorkerProc::set_display(DisplaySink display) -> void {
 }
 
 auto WorkerProc::ViewReceiver::send(const WorkerDisplayData& message,
-                                    DisplayCredit complete) -> bool {
+                                    DisplayCredit complete) -> ViewDelivery {
   std::lock_guard lock(mutex);
-  return remote ? remote(message)
-                : worker && worker->send_display(message, std::move(complete));
+  if (remote) return remote(message);
+  return worker ? worker->send_display(message, std::move(complete))
+                : ViewDelivery::closed;
 }
 
 auto WorkerProc::view_receiver() -> std::weak_ptr<ViewReceiver> {
@@ -935,18 +936,18 @@ auto WorkerProc::view_receiver() -> std::weak_ptr<ViewReceiver> {
 }
 
 auto WorkerProc::send_display(const WorkerDisplayData& display,
-                              DisplayCredit complete) -> bool {
+                              DisplayCredit complete) -> ViewDelivery {
   if (display.bytes.size() > TSUGUMI_MESSAGE_MAX || display.view.empty())
-    return false;
+    return ViewDelivery::full;
   std::lock_guard lock(display_mutex_);
-  if (data_stop_.stop_requested()) return false;
+  if (data_stop_.stop_requested()) return ViewDelivery::closed;
   auto& view = control_views_[display.view];
   if (view.pending_bytes > workerd::kViewBudget - TSUGUMI_MESSAGE_MAX)
-    return false;
+    return ViewDelivery::full;
   view.pending.emplace_back(display.bytes, std::move(complete));
   view.pending_bytes += workerd::message_cost(display.bytes.size());
   display_ready_.notify_one();
-  return true;
+  return ViewDelivery::accepted;
 }
 
 auto WorkerProc::return_display_credit(const std::string& view, size_t bytes)

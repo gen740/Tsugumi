@@ -1,0 +1,5 @@
+add_executable(tsugumi-view-load-tests tests/load_test.cc)
+target_include_directories(tsugumi-view-load-tests SYSTEM PRIVATE "${TSUGUMI_WASMTIME_DEV}/include")
+target_link_libraries(tsugumi-view-load-tests PRIVATE tsugumi-view-host GTest::gtest_main)
+add_test(NAME tsugumi-view-load-tests COMMAND tsugumi-view-load-tests)
+install(TARGETS tsugumi-view-load-tests RUNTIME DESTINATION libexec/tsugumi-tests)

@@ -1,0 +1,4 @@
+namespace point_cloud;
+
+table Outputs {}
+root_type Outputs;
