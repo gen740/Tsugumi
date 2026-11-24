@@ -21,14 +21,13 @@ function simulate!(counts, rng, birth, death, times)
 end
 
 # Several single runs over the rate equation dn/dt = kV - gamma n, n(0) = 0.
-function main(inputs, report)
-    m = params
-    k, gamma, volume, runs = m["synthesis"], m["degradation"], m["volume"], Int(m["runs"])
-    shown = Int(params["shown_runs"])
+function main(_input::Inputs)
+    k, gamma, volume, runs = params.synthesis, params.degradation, params.volume, Int(params.runs)
+    shown = Int(params.shown_runs)
     birth = k * volume
     t_end = 5 / gamma
     times = collect(range(0.0, t_end; length=201))
-    rng = Xoshiro(m["seed"])
+    rng = Xoshiro(params.seed)
 
     ode(t) = birth / gamma * (1 - exp(-gamma * t))
     counts = zeros(Int, length(times), runs)
@@ -37,14 +36,14 @@ function main(inputs, report)
     end
     average = vec(mean(counts; dims=2))
     deviation = maximum(abs.(average .- ode.(times)))
-    report.log(string(@sprintf("largest gap between the mean of %d runs and the rate equation: %.3f molecules", runs, deviation)))
+    println(string(@sprintf("largest gap between the mean of %d runs and the rate equation: %.3f molecules", runs, deviation)))
 
     paths = [Dict("t" => times[i], "n" => counts[i, r], "run" => r) for r in 1:min(shown, runs) for i in eachindex(times)]
     curves = [Dict("t" => t, "n" => round(y; digits=3), "line" => name)
               for (name, ys) in (("Rate equation (deterministic)", ode.(times)), ("Mean of $runs runs", average)) for (t, y) in zip(times, ys)]
     band = [Dict("t" => t, "low" => max(0.0, ode(t) - sqrt(ode(t))), "high" => ode(t) + sqrt(ode(t))) for t in times]
 
-    report.vegalite(Dict(
+    send(VegaLite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("anchor" => "start", "text" => "Each run fluctuates; the mean follows the rate equation",
@@ -64,7 +63,7 @@ function main(inputs, report)
                                                     "legend" => Dict("orient" => "bottom-right")),
                                     "strokeDash" => Dict("field" => "line", "type" => "nominal", "legend" => nothing,
                                                          "scale" => Dict("domain" => ["Rate equation (deterministic)", "Mean of $runs runs"], "range" => [[1, 0], [5, 3]])))),
-        ]))
+        ])))
 
-    return nothing
+    return (;)
 end

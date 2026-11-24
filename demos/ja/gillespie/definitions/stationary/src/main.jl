@@ -16,14 +16,13 @@ end
 
 # The stationary distribution: each run gives one independent sample long after
 # the start, and theory says Poisson with mean kV / gamma (so the Fano factor is 1).
-function main(inputs, report)
+function main(_input::Inputs)
     outputs = Dict{String,Any}()
-    m = params
-    k, gamma, volume, runs = m["synthesis"], m["degradation"], m["volume"], Int(m["runs"])
+    k, gamma, volume, runs = params.synthesis, params.degradation, params.volume, Int(params.runs)
     birth = k * volume
     expected = birth / gamma
     t_end = 12 / gamma
-    rng = Xoshiro(m["seed"] + 1)
+    rng = Xoshiro(params.seed + 1)
     samples = [final_count(rng, birth, gamma, t_end) for _ in 1:runs]
 
     average, variance = mean(samples), var(samples)
@@ -32,7 +31,7 @@ function main(inputs, report)
     se_mean = sqrt(expected / runs)
     se_var = sqrt((expected + 2 * expected^2) / runs)
     se_fano = sqrt(2 / runs)
-    report.log(string(@sprintf("mean %.3f (theory %.3f), variance %.3f (theory %.3f), Fano %.4f", average, expected, variance, expected, fano)))
+    println(string(@sprintf("mean %.3f (theory %.3f), variance %.3f (theory %.3f), Fano %.4f", average, expected, variance, expected, fano)))
     outputs["stationary"] = Dict("mean" => average, "variance" => variance, "fano" => fano, "theory" => expected,
                                    "se_mean" => se_mean, "se_variance" => se_var, "se_fano" => se_fano, "runs" => runs)
 
@@ -48,7 +47,7 @@ function main(inputs, report)
     hist = [Dict("from" => n - 0.45, "to" => n + 0.45, "p" => count(==(n), samples) / runs) for n in bottom:top]
     xscale = Dict("domain" => [bottom - 0.6, top + 0.6], "nice" => false)
 
-    report.vegalite(Dict(
+    send(VegaLite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("anchor" => "start", "text" => "定常分布はポアソン分布",
@@ -62,7 +61,7 @@ function main(inputs, report)
                  "encoding" => Dict("x" => Dict("field" => "n", "type" => "quantitative", "scale" => xscale), "y" => Dict("field" => "p", "type" => "quantitative"),
                                     "color" => Dict("field" => "line", "type" => "nominal", "title" => nothing, "scale" => Dict("range" => ["#eb6834"]),
                                                     "legend" => Dict("orient" => "top-right")))),
-        ]))
+        ])))
 
     return outputs
 end
