@@ -149,10 +149,6 @@ auto GitTemplate(const H::TemplateGitT& source, std::stop_token stop)
 }
 }  // namespace
 
-auto CardReadme(const std::string& id) -> std::string {
-  return "---\ntitle: " + id + "\ndescription:\n---\n";
-}
-
 auto BuiltinCard(H::BuiltinCard kind, const std::string& id) -> TemplateFiles {
   if (!valid_name(id)) throw Failure("invalid_request", "Invalid Card id");
   const auto card = [&](std::string_view definition) -> TemplateFiles {

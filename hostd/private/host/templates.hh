@@ -21,7 +21,10 @@ struct DocumentTemplate {
   std::vector<std::string> cards;
 };
 
-auto CardReadme(const std::string& id) -> std::string;
+// The README.md a new Card gets: its id as the title, an empty description.
+inline auto CardReadme(const std::string& id) -> std::string {
+  return "---\ntitle: " + id + "\ndescription:\n---\n";
+}
 auto BuiltinCard(Tsugumi::Host::BuiltinCard kind, const std::string& id)
     -> TemplateFiles;
 auto TemplateName(const std::string& name) -> bool;
