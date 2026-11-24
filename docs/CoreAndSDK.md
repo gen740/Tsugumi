@@ -32,7 +32,7 @@ The core calls a Card's `default.nix` with `{ params, inputs }`. The Card import
 - `params` is the evaluated literal attrset from [params.nix](CardGuide.md#parameters), or `{ }` when the Card has no params.nix. The SDK embeds it at build time.
 - `inputs` contains Nix exports from the guaranteed upstream Cards, by Card ID. In `A → B → C`, C gets both `inputs.A` and `inputs.B`. TODO(open): Exports through graph boundaries.
 
-Import a language builder from `<tsugumi-kit/sdk/cpp>` or another SDK entry point with `{ inherit pkgs; }`. Pass evaluated `params`, the generated `_inputs.fbs` as the builder's `inputs` (or `null` when absent), and the authored `_outputs.fbs` as `outputs`. Run and API builders share code generation. See the [temperature example](CardGuide.md#the-files) and the [kit builder contract](https://github.com/gen740/tsugumi-kit/blob/main/docs/sdk-contract.md).
+Import a language builder from `<tsugumi-kit/sdk/cpp>` or another SDK entry point with `{ inherit pkgs; }`. Pass evaluated `params`, the generated `_inputs.fbs` as the builder's `inputs`, and the authored `_outputs.fbs` as `outputs`. Run and API builders share code generation. See the [temperature example](CardGuide.md#the-files) and the [kit builder contract](https://github.com/gen740/tsugumi-kit/blob/main/docs/sdk-contract.md).
 
 ### The generated API (`share/tsugumi/api/`)
 
@@ -68,7 +68,7 @@ What a language SDK might otherwise have described lives elsewhere:
 
 ### Port schemas
 
-The core generates one `_inputs.fbs` per wired Card. It contains the connected ports and namespaced copies of their upstream types. The generated `tsugumi_schema` attributes let the SDK select a candidate by the ID in the port envelope. The file is versioned and refreshed when wiring or upstream schemas change.
+The core generates one `_inputs.fbs` per Code or Input Card. The schema describes the connected ports and contains namespaced copies of their upstream types. Cards with no connected inputs get an empty `Inputs` table. The generated `tsugumi_schema` attributes let the SDK select a candidate by the ID in the port envelope. The file is versioned and refreshed when wiring or upstream schemas change.
 
 Merge forwards each envelope unchanged. A Merge-fed port with one distinct schema has that type. With several distinct schemas, its generated input schema declares a union. The UI displays the candidate type names as `A | B`. Collect feeds a fixed `Collected` table with opaque members.
 
@@ -100,7 +100,7 @@ let
   sdk = import <tsugumi-kit/sdk/cpp> { inherit pkgs; };
   common = {
     inherit params;
-    inputs = if builtins.pathExists ./_inputs.fbs then ./_inputs.fbs else null;
+    inputs = ./_inputs.fbs;
     outputs = ./_outputs.fbs;
   };
 in
@@ -128,15 +128,40 @@ draws its empty state and handles resize. SDK views reassemble their own chunks.
 
 ### dawn views
 
-A Dawn module draws to one WebGPU canvas. The [host header](../protocol/include/tsugumi/tsugumi_view.h)
-defines the exports for startup, resize and draw and the optional message, pointer
-and key callbacks. Imports are the WebGPU subset and `tsugumi_view_send` /
-`tsugumi_view_read`. The view allocates its own read buffer. The host draws
-immediately after startup, runs all callbacks on one thread and owns one instance
-per view.
+A dawn view is a wasm32 module that draws to one WebGPU surface. Its contract is the
+[view header](../protocol/include/tsugumi/tsugumi_view.h) (dawn view ABI 0):
 
-TODO(open): Dawn host, exact WebGPU imports and pinned headers. The UIs currently
-show a placeholder for Dawn views.
+- **Imports:** only the WebGPU functions listed in `TSUGUMI_VIEW_WEBGPU_IMPORTS`
+  (49 functions of `webgpu.h` from webgpu-headers at the revision the header pins),
+  plus `tsugumi_view_send` and `tsugumi_view_read`. No WASI, files or clock. WebGPU
+  handles are host-owned ids. No imported function writes into the module's memory
+  or takes a callback; the only chained struct is WGSL source on a shader module.
+  Built with clang for wasm32, the header turns a function outside the list into an
+  undefined symbol at link time.
+- **Exports:** `memory`, `tsugumi_view_abi`, `tsugumi_view_start`, `tsugumi_view_resize`
+  and `tsugumi_view_draw` are required; `tsugumi_view_message`, `tsugumi_view_pointer`
+  and `tsugumi_view_key` are optional.
+- **Calls:** the host checks the imports and exports, calls `abi` (it must return 0),
+  then `start` and one `draw`. It draws again on the next display frame only when
+  `draw` returns bit 0, and otherwise only after an event (message, resize, pointer,
+  key). `read` copies the current message only inside `message(size)`. `send` never
+  blocks; it returns negative when the host cannot take the bytes, and the bytes go to
+  the Card's `recv`. A negative return or a trap drops the instance and shows the error.
+  All calls come from one thread; there is one instance per view.
+
+Both UIs translate the module's 32-bit descriptors with code generated at build time
+from webgpu-headers' `webgpu.yml` by one generator ([ui/shared/dawn](../ui/shared/dawn/README.md)):
+
+- **Mac app:** native Dawn and wasmtime inside the app process, drawing into a
+  `CAMetalLayer` view in the SwiftUI canvas, paced by `CADisplayLink`.
+- **Web UI:** the same module in the page, with the imports implemented on
+  `navigator.gpu` and paced by `requestAnimationFrame`.
+
+The kit's `sdk.dawnView { name; src; }` builds a view from C sources (freestanding,
+no libc), and its `dawn-view` template is a minimal example. The `point-cloud` demo
+sends a point cloud to a dawn view.
+
+TODO(open): PNG snapshots of dawn views for the Agent.
 
 ## Value mapping in the default SDKs
 

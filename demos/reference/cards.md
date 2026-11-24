@@ -166,7 +166,8 @@ The returned diagnostics and project_validate check the saved graph; run_record 
 Declare input names in _card.json and add one wire per input. Use Merge when joining sources.
 Each output is a table field in the root of _outputs.fbs. Mark outputs every call must emit with
 (required). Omitted outputs can cause downstream Cards to skip. Tsugumi generates _inputs.fbs
-from wiring and upstream schemas. Pass that schema to the SDK builder.
+from wiring and upstream schemas, with an empty Inputs table when no inputs are connected.
+Pass it to the SDK builder with `inputs = ./_inputs.fbs;`.
 
 Edit values in params.nix, a flat literal attrset such as `{ seed = 7; tariff = "spot"; }`.
 A Card without params has no params.nix.

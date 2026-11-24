@@ -4,6 +4,7 @@ import type { CardLiveViews } from '../model/liveViews'
 import { useObserve } from '../model/observable'
 import { path, type CardKey, type ProjectSession } from '../model/session'
 import { Empty } from './controls'
+import { DawnViewCanvas, type ReadDawnView } from './dawnViewCanvas'
 import { HtmlViewFrame, type ReadHtmlView, type SendHtmlView } from './htmlViewFrame'
 
 export function CardViewsWindow({ session, cardKey }: { session: ProjectSession; cardKey: CardKey }) {
@@ -14,17 +15,21 @@ export function CardViewsWindow({ session, cardKey }: { session: ProjectSession;
     if (!client) throw new Error(L('接続していません'))
     return await client.readCardView(path(cardKey), view.index, view.declaration.name, signal)
   }, [client, cardKey])
+  const readBytes: ReadDawnView = useCallback(async (view, signal) => {
+    if (!client) throw new Error(L('接続していません'))
+    return await client.readCardViewBytes(path(cardKey), view.index, view.declaration.name, signal)
+  }, [client, cardKey])
   const send: SendHtmlView = useCallback(async (view, bytes) => {
     if (!client) throw new Error(L('接続していません'))
     return await client.sendView(path(cardKey), view.declaration.name, bytes)
   }, [client, cardKey])
   return <div className="col fill pad16 gap8">
     <span className="title2">{session.displayName(cardKey)}</span>
-    <CardViewsPanel card={session.liveViews.get(cardKey)} read={read} send={send} />
+    <CardViewsPanel card={session.liveViews.get(cardKey)} read={read} readBytes={readBytes} send={send} />
   </div>
 }
 
-export function CardViewsPanel({ card, read, send }: { card?: CardLiveViews; read: ReadHtmlView; send: SendHtmlView }) {
+export function CardViewsPanel({ card, read, readBytes, send }: { card?: CardLiveViews; read: ReadHtmlView; readBytes: ReadDawnView; send: SendHtmlView }) {
   if (card?.failure !== undefined)
     return <div className="card-views">
       <p className="caption" role="alert">{L('ビューの宣言を評価できませんでした: {0}', card.failure)}</p>
@@ -34,11 +39,10 @@ export function CardViewsPanel({ card, read, send }: { card?: CardLiveViews; rea
   return <div className="card-views">
     {card.views.map(view => {
       const { name, type, blob } = view.declaration
-      return <section className={type === 'html' ? 'card-view card-view-html' : 'card-view'} key={JSON.stringify([view.index, name, type, blob])}>
+      return <section className={type === 'html' || type === 'dawn' ? `card-view card-view-${type}` : 'card-view'} key={JSON.stringify([view.index, name, type, blob])}>
         <h3>{name}</h3>
         {type === 'html' ? <HtmlViewFrame view={view} card={card} read={read} send={send} />
-          // TODO(open): dawn host
-          : type === 'dawn' ? <p className="caption secondary">{L('Dawn ビューはまだ利用できません。')}</p>
+          : type === 'dawn' ? <DawnViewCanvas view={view} read={readBytes} send={send} />
           : <p className="caption" role="alert">{L('未対応のビュー形式: {0}', type)}</p>}
       </section>
     })}

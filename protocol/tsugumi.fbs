@@ -814,7 +814,7 @@ table ViewSetVisibleRequest {
   enabled:bool = null (id: 2);
 }
 
-/// -> Ack. Send opaque bytes from an open view to its Card process.
+/// -> Ack. Send opaque bytes from an open view to its Card process. With no live Card process the bytes are dropped and the reply is still Ack.
 table ViewSendRequest {
   card:Tsugumi.Data.CardPath (required);
   view:string (required);

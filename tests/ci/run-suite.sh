@@ -72,6 +72,10 @@ case "$suite" in
     if $full; then run python3 -m pytest -q tests/python/test_host_projects_rpc.py; fi
     ;;
   core)
+    if [[ "$system" == aarch64-darwin ]]; then
+      run "$bin/tsugumi-view-load-tests"
+      run "$bin/tsugumi-view-decode-tests"
+    fi
     (export TSUGUMI_RPC_TRACE=1; run "$bin/tsugumi_rpc_trace_tests")
     run "$bin/tsugumi_rpc_frame_tests"
     run "$bin/tsugumi_rpc_cli_tests"

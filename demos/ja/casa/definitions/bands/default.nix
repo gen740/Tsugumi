@@ -4,7 +4,7 @@ let
   sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
   common = {
     params = params // { ciao_root = toString inputs.ciao.ciao; };
-    inputs = if builtins.pathExists ./_inputs.fbs then ./_inputs.fbs else null;
+    inputs = ./_inputs.fbs;
     outputs = ./_outputs.fbs;
   };
 in

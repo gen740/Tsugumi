@@ -1,7 +1,6 @@
 #pragma once
 
 #include <map>
-#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -27,9 +26,9 @@ auto render_input_candidate(const Type& type, const std::string& prefix,
 
 }  // namespace types
 
-// No file when there are no connected inputs with a known type. An error
+// Inputs is empty when no connected input has a known type. An error
 // (e.g. conflicting candidate declarations) is a definition diagnostic.
 auto generated_input_schema(const Resolution& graph, const Node& node)
-    -> std::optional<std::string>;
+    -> std::string;
 
 }  // namespace tsugumi

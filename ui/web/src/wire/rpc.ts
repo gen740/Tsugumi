@@ -293,10 +293,13 @@ export class RPCClient {
     const out = concat(parts)
     return out
   }
-  /** The file of entry `index` of the Card's views list; `name` guards against a changed list. */
   async readCardView(card: string[], index: number, name: string, signal: AbortSignal): Promise<string> {
-    const decoder = new TextDecoder()
-    const parts: string[] = []
+    return new TextDecoder().decode(await this.readCardViewBytes(card, index, name, signal))
+  }
+
+  /** The file of entry `index` of the Card's views list; `name` guards against a changed list. */
+  async readCardViewBytes(card: string[], index: number, name: string, signal: AbortSignal): Promise<Uint8Array<ArrayBuffer>> {
+    const parts: Uint8Array[] = []
     let offset = 0n
     for (;;) {
       signal.throwIfAborted()
@@ -306,8 +309,8 @@ export class RPCClient {
       const next = page.nextOffset ?? offset
       if (!page.eof && next <= offset)
         throw new RPCError('protocol', L('ビューの内容を最後まで読み込めませんでした。'))
-      parts.push(decoder.decode(Uint8Array.from(page.bytes), { stream: !page.eof }))
-      if (page.eof) return parts.join('')
+      parts.push(Uint8Array.from(page.bytes))
+      if (page.eof) return concat(parts)
       offset = next
     }
   }
@@ -372,7 +375,7 @@ export const cardPath = (segments: string[]) => new D.CardPathT([...segments])
 export const segs = (p: D.CardPathT | null | undefined): string[] => (p?.segments ?? []).map((x) => s(x))
 
 /** DocumentChange builders. */
-export function concat(parts: Uint8Array[]): Uint8Array {
+export function concat(parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
   const n = parts.reduce((a, p) => a + p.length, 0)
   const out = new Uint8Array(n)
   let o = 0

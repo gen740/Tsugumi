@@ -2851,13 +2851,18 @@ void Service::view_send(RequestIn& req) {
         if (auto active = route.lock()) receivers.push_back(std::move(active));
       }
   }
-  if (receivers.empty())
-    throw Failed(FailureKind::not_found, "no Card process is listening");
+  // With no live Card process the message has no receiver: it is dropped,
+  // and the view is not told (the host took the bytes).
+  using Delivery = WorkerProc::ViewDelivery;
   const WorkerDisplayData message{name, std::string(bytes->begin(), bytes->end())};
   bool delivered = false;
-  for (const auto& receiver : receivers)
-    if (receiver->send(message)) delivered = true;
-  if (!delivered)
+  bool full = false;
+  for (const auto& receiver : receivers) {
+    const auto delivery = receiver->send(message);
+    delivered |= delivery == Delivery::accepted;
+    full |= delivery == Delivery::full;
+  }
+  if (!delivered && full)
     throw Failed(FailureKind::busy, "the Card cannot accept a view message");
   FBB b;
   const auto ack = R::CreateAck(b);
