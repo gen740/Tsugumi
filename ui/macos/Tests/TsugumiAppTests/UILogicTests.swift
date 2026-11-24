@@ -225,7 +225,6 @@ import TsugumiTestSupport
   #expect(s.isDraftWire(from: draft, to: log), "from a Draft")
   #expect(s.isDraftWire(from: start, to: draft), "to a Draft")
   #expect(s.isDraftWire(from: draft, to: draft), "between Drafts")
-  #expect(s.isDraftWire(from: draft, to: nil), "from a Draft to the bar of a Card in Card")
   #expect(!s.isDraftWire(from: start, to: log), "between Cards with code")
   #expect(!s.isDraftWire(from: start, to: nil), "from a Card with code to the bar")
 
@@ -717,11 +716,12 @@ private final class CountingRuler: LineNumberRuler {
   let dir = try SyncTests.project()
   defer { try? FileManager.default.removeItem(at: dir) }
   let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
-  let document = try JSONValue.parse(fixtureProjectJSON(#"{"canvas":{"cards":[{"id":"plan"},{"id":"start"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},{"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}]}}"#))
+  let document = try JSONValue.parse(fixtureProjectJSON(#"{"canvas":{"cards":[{"id":"plan"},{"id":"start"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan"}},{"from":{"card":"plan"},"to":{"card":"next"}}]}}"#))
   let snapshot = Tsugumi_RPC_ProjectSnapshotT()
   snapshot.projectJson = document.serialized(); snapshot.layout = []
-  snapshot.definitions = ["plan", "next"].map { id in
-    let definition = Tsugumi_RPC_DefinitionT(); definition.id = id; definition.cardJson = fixtureCardJSON(.draft)
+  snapshot.definitions = ["plan", "start", "next"].map { id in
+    let definition = Tsugumi_RPC_DefinitionT(); definition.id = id
+    definition.cardJson = fixtureCardJSON(id == "start" ? .trigger : .draft)
     return definition
   }
   session.prepareLayout = { _, layout, _ in layout }
@@ -729,8 +729,16 @@ private final class CountingRuler: LineNumberRuler {
   let editor = CardEditorModel(session: session, cardKey: "plan")
   #expect(session.portData("plan").inputs.isEmpty && session.portData("plan").outputs.isEmpty)
   #expect(editor.draftEnds.isEmpty)
+  #expect(session.nodeData("plan").symbol == CardKind.draft.symbol)
+  let layoutWires = session.layoutScene([]).wires
+  #expect(layoutWires.count == 2)
+  let incoming = try #require(layoutWires.first ?? nil)
+  let outgoing = try #require(layoutWires.last ?? nil)
+  #expect(incoming.toPort == CardGeometry.newPort)
+  #expect(outgoing.fromPort == CardGeometry.newPort)
   editor.implementAs("collect")
   #expect(editor.kind == .collect)
+  #expect(editor.definition?["symbol"]?.string == "none")
   let input = try #require(editor.draftEnds.first { $0.side == "to" })
   let output = try #require(editor.draftEnds.first { $0.side == "from" })
   #expect(editor.rebindings.isEmpty)

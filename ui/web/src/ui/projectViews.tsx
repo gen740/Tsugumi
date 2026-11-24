@@ -5,7 +5,7 @@ import { app } from '../model/app'
 import { nixPathLockStatus } from '../model/nixPath'
 import { useObserve } from '../model/observable'
 import { FLOW_LABELS, FlowDirection } from '../model/prefs'
-import { definitionKind, errorText, formatBytes, key, KIND_LABEL, path, ProjectSession } from '../model/session'
+import { definitionIcon, definitionKind, errorText, formatBytes, key, KIND_LABEL, path, ProjectSession } from '../model/session'
 import { arr, bool, clone, get, isObj, J, JNum, numText, obj, parse, serialize, str } from '../../shared/json'
 import { R, s } from '../wire/rpc'
 import { DEFINITION_DRAG } from './actions'
@@ -135,7 +135,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
                 <div key={id} role="option" aria-selected={id === selected} className={`list-row clickable def-row${id === selected ? ' selected' : ''}`}
                   draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', DEFINITION_DRAG + id); e.dataTransfer.effectAllowed = 'copy' }}
                   onClick={() => { if (!revisionEdit.applying) setSelected(id) }}>
-                  <Icon name={str(get(session.definitions.get(id), 'symbol')) ?? 'xmark.octagon'} className="secondary" />
+                  <Icon name={definitionIcon(session.definitions.get(id))} className="secondary" />
                   <div className="col min0">
                     <span className="ellipsis">{session.displayName(key([id]))}</span>
                     <span className="caption secondary">{KIND_LABEL[kind] + (unplaced.has(id) ? L(' · 未配置') : '')}</span>
@@ -399,7 +399,7 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
           <NixPathSettings session={session} />
           <Section>
             <Value label={L('場所')} value={session.dir} />
-            <Value label={L('Tsugumi のバージョン')} value={str(get(session.project, 'tsugumiVersion')) ?? ''} />
+            <Value label={L('ファイル形式')} value={numText(get(session.project, 'formatVersion')) ?? ''} />
           </Section>
         </Form>
       </div>

@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
 import { implementedCard } from '../src/model/cardFields'
 import { serialize } from '../shared/json'
 import { Builder } from 'flatbuffers'
@@ -35,20 +33,13 @@ export function layoutFixture(text: string) {
 export const layoutBytes = (text: string) => layoutFixture(text).bytes
 
 export function projectFixture(fields: object = {}): string {
-  const root = process.argv[2] ?? process.cwd()
-  const tsugumiVersion = readFileSync(path.resolve(root, 'VERSION'), 'utf8').trim()
-  return JSON.stringify({ tsugumiVersion, name: 't', nixPath: [], trackedPaths: [], agentExclude: [],
+  return JSON.stringify({ formatVersion: 1, name: 't', nixPath: [], trackedPaths: [], agentExclude: [],
     recordLogs: true, recordIO: false, logLimitBytes: 134217728, outputLimitBytes: 68719476736,
     outputLimitEntries: 1000, canvas: { cards: [], connections: [] }, ...fields })
 }
 
 export function cardFixture(kind: string, fields: object = {}): string {
-  const symbols: Record<string, string> = {
-    code: 'chevron.left.forwardslash.chevron.right', input: 'slider.horizontal.3',
-    merge: 'arrow.triangle.merge', collect: 'line.3.horizontal.decrease',
-    draft: 'pencil.and.outline', trigger: 'play.circle', subgraph: 'link',
-  }
-  return JSON.stringify({ ...JSON.parse(serialize(implementedCard(kind, symbols[kind], 'aarch64-linux'))), ...fields })
+  return JSON.stringify({ ...JSON.parse(serialize(implementedCard(kind, 'none', ['aarch64-linux']))), ...fields })
 }
 
 export function definitionFixture(id: string, cardJson: string, notesJson?: string) {
