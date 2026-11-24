@@ -52,14 +52,11 @@ while read -r p; do cp -a "$p" "$stage/nix/store/"; done < "$work/payload-paths"
 mkdir -p "$stage/project"
 (cd /pack/project && tar -cf - --exclude=./.tsugumi .) | tar -xf - -C "$stage/project"
 cp "$out/cards.bin" "$stage/cards.bin"
-jq '(.settings // []) | map({key: .card, value: (.parameters // [])}) | from_entries' \
-  "$work/cards.json" > "$stage/parameters.json"
 rm -f "$out/payload.erofs"
 mkfs.erofs -zlz4hc -T0 --all-root "$out/payload.erofs" "$stage" >/dev/null
 jq -n --argjson cards "$(jq '(.cards // []) | map(del(.closure, .key))' "$work/cards.json")" \
   --arg paths "$(wc -l < "$work/payload-paths")" \
   --arg bytes "$(stat -c %s "$out/payload.erofs")" \
-  --slurpfile parameters "$stage/parameters.json" \
-  '{cards: $cards, parameters: $parameters[0], payload_paths: ($paths | tonumber), payload_bytes: ($bytes | tonumber)}' > "$out/export.json"
+  '{cards: $cards, payload_paths: ($paths | tonumber), payload_bytes: ($bytes | tonumber)}' > "$out/export.json"
 find "$work" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 echo "payload.erofs: $(($(stat -c %s "$out/payload.erofs") >> 20)) MiB"

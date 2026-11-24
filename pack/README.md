@@ -37,7 +37,7 @@ come later.
 4. **Write the app.** `Contents/MacOS/<Name>` is a copy of the signed
    `tsugumi-pack` executable; `Contents/Resources` holds `vmlinux`,
    `rootfs.erofs` (the runner image), `payload.erofs` and `pack.json` (the
-   exported workflow entry points and parameter metadata).
+   exported workflow entry points).
 
 The app, when run, boots the runner image with **no network device**. The
 payload's store is laid over the image's (a read-only overlay), the
@@ -87,9 +87,11 @@ and removes the run's temporary folder and scratch disk.
   over `request.json` and moves the results folder out. Viewing is left to
   the files it writes (an image viewer, a text editor): there is no viewer in
   this path.
-- **Prepared definitions.** Export packages the existing build results of
-  all participating definitions. Code Card parameters and Input Card values
-  are fixed by the prepared builds.
+- **Values fixed at export.** Export packages the existing build results of
+  all participating definitions, so every Card's params and every Input
+  Card's values are those of the exported Project. The app takes no
+  parameters or files from the recipient: to run other values, change the
+  Project and export it again.
 - **Values are recorded in the app.** Record I/O is off by default, which
   would leave the recipient without recorded output values. The app's copy turns it on
   for every Code Card; it is a setting, outside what a build evaluates.
@@ -162,7 +164,6 @@ shared, so nothing was brought to the front).
 
 ## Not done yet
 
-- TODO(open): Recipient-supplied values and artifacts for prepared definitions.
 - hostd integration and the UI's export action (the tool's progress lines
   are already one per stage).
 - Progress in the Finder: an app opened there shows nothing until its

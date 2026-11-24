@@ -1,16 +1,14 @@
 """Run an exported Project once, inside the pack guest, and write its results.
 
 Called by the guest's /init in run mode. The Project is a copy of what the
-author exported; the recipient's input values are saved to that copy before
-the Workflow runs. The run is an ordinary run of the Workflow
-from its trigger. Nothing here schedules Cards: tsugumid does, through the
+author exported and runs with the values fixed at export time. The run is an
+ordinary run of the Workflow from its trigger. Nothing here schedules Cards: tsugumid does, through the
 same RPC the apps use (tsugumi-rpc, one JSON request per line).
 
     python3 run.py PROJECT REQUEST RESULT
 
 PROJECT  writable copy of the exported Project
-REQUEST  request.json from the Mac: {"start": "<trigger>", "params": {"<card>": {"<name>": value}},
-         "files": {"<input card>": "<file name in inputs/<card>/ beside request.json>"}}
+REQUEST  request.json from the Mac: {"start": "<trigger>"}
 RESULT   folder for summary.json and cards/<card>/<invocation>/...
 
 The copy records every Code Card's inputs and outputs (recordIO), whatever the
@@ -18,7 +16,6 @@ author chose: the recipient gets the values back. recordIO is
 a setting, so this changes no build.
 """
 
-import base64
 import json
 import os
 import shutil
@@ -29,8 +26,6 @@ import uuid
 from pathlib import Path
 
 ENDED = {"succeeded", "failed", "cancelled"}
-# Card kinds that expose editable values in the exported app.
-SETTABLE = {"input"}
 
 
 def stage(text):
@@ -76,70 +71,6 @@ class Rpc:
         self.process.stdin.close()
         self.process.wait(timeout=10)
 
-
-def definition_of(project, card):
-    path = project / "definitions" / card / "_card.json"
-    if not path.is_file():
-        raise SystemExit(f"no Card {card} in this Project")
-    return path, json.loads(path.read_text())
-
-
-def apply_request(project, request, inputs, parameters):
-    """Copy recipient files before opening the project and collect edits."""
-    edits = {}
-    for card, name in request.get("files", {}).items():
-        _, definition = definition_of(project, card)
-        spec = next((p for p in parameters.get(card, []) if p["name"] == "value"), None)
-        if (definition.get("type") != "input" or not spec
-                or spec["type"] != "string"):
-            raise SystemExit(f"{card} is not an input Card with a file")
-        source = inputs / card / name
-        target = project / "definitions" / card / "recipient" / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
-        edits[card, "value"] = f"recipient/{name}"
-    for card, values in request.get("params", {}).items():
-        _, definition = definition_of(project, card)
-        if definition.get("type") not in SETTABLE:
-            raise SystemExit(f"{card} is a {definition.get('type')} Card: its parameters shape the Workflow")
-        declarations = {p["name"]: p for p in parameters.get(card, [])}
-        for name, value in values.items():
-            if name not in declarations:
-                raise SystemExit(f"Card {card} has no parameter {name}")
-            edits[card, name] = value
-    return edits
-
-
-def nix_literal(value, type_name):
-    if isinstance(value, list) and type_name.startswith("["):
-        items = [nix_literal(v, type_name[1:-1]) for v in value]
-        return "[ " + " ".join(f"({v})" if v.startswith("-") else v for v in items) + " ]"
-    if isinstance(value, str):
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("$" + "{", "\\$" + "{")
-        return '"' + escaped + '"'
-    text = json.dumps(value, allow_nan=False)
-    mantissa, exponent, power = text.partition("e")
-    if type_name == "float" and type(value) in (float, int) and "." not in mantissa:
-        return mantissa + ".0" + exponent + power
-    return text
-
-
-def save_params(rpc, revision, edits, parameters):
-    for (card, name), value in edits.items():
-        type_name = next(p["type"] for p in parameters[card] if p["name"] == name)
-        rewritten = rpc.call("RewriteParamLiteralRequest", {
-            "card": {"segments": [card]}, "name": name, "at_rev": revision,
-            "literal": nix_literal(value, type_name),
-        })
-        result = rpc.call("ProjectSaveRequest", {
-            "base_rev": revision, "op_id": str(uuid.uuid4()), "origin": "pack",
-            "changes": [{"value_type": "PutSource", "value": {
-                "path": rewritten["path"], "base_hash": rewritten["base_hash"],
-                "bytes": {"base64": base64.b64encode(rewritten["text"].encode()).decode()},
-            }}],
-        })
-        revision = result["rev"]
-    return revision
 
 def record_all(project):
     """recordIO on for every Code Card of the copy."""
@@ -312,8 +243,6 @@ def main():
     project, request_path, result = (Path(a) for a in sys.argv[1:4])
     work = Path(os.environ.get("PACK_WORK", "/work"))
     request = json.loads(request_path.read_text()) if request_path.is_file() else {}
-    parameters = json.loads(Path(os.environ["PACK_PARAMETERS"]).read_text())
-    edits = apply_request(project, request, request_path.parent / "inputs", parameters)
     record_all(project)
     found = triggers(project)
     start = request.get("start") or (found[0] if found else None)
@@ -323,11 +252,10 @@ def main():
     began = time.monotonic()
     core, socket = start_core(project, work)
     rpc = Rpc(f"unix:{socket}", os.environ["TSUGUMI_SCHEMA"])
-    summary = {"start": start, "triggers": found, "params": request.get("params", {})}
+    summary = {"start": start, "triggers": found}
     try:
         rpc.call("SessionHelloRequest", {})
-        snapshot = rpc.call("ProjectInspectRequest", {})
-        revision = save_params(rpc, snapshot["rev"], edits, parameters)
+        revision = rpc.call("ProjectInspectRequest", {})["rev"]
         stage("run")
         accepted = rpc.call("RunRequest", {"base_rev": revision, "op_id": str(uuid.uuid4()), "origin": "pack",
                                           "card": {"segments": [start]},

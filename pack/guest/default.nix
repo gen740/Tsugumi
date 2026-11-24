@@ -207,7 +207,7 @@ let
       mkdir -p /pack/result
       cp -a /mnt/payload/project /work/project
       chmod -R u+w /work/project
-      PACK_WORK=/work PACK_PREPARED=/mnt/payload/cards.bin PACK_PARAMETERS=/mnt/payload/parameters.json \
+      PACK_WORK=/work PACK_PREPARED=/mnt/payload/cards.bin \
         python3 ${./run.py} /work/project /pack/request.json /pack/result 2>&1 | tee /pack/result/run.log
       status=''${PIPESTATUS[0]}
     ''

@@ -155,36 +155,20 @@ struct Export {
     try fm.moveItem(at: staging, to: output)
   }
 
-  /// What the launcher shows and accepts: the trigger, and each Card's
-  /// parameters. Prepared Code Cards retain the values used for their build.
+  /// What the launcher shows and accepts: the triggers and the Cards. The
+  /// exported app runs with the values fixed at export time.
   private func writeManifest(to url: URL, name: String, export: [String: Any]) throws {
     let document = try JSONSerialization.jsonObject(with: Data(contentsOf: project.appendingPathComponent("tsugumi.json"))) as? [String: Any] ?? [:]
     let canvas = (document["canvas"] as? [String: Any])?["cards"] as? [[String: Any]] ?? []
     var cards: [[String: Any]] = []
     var triggers: [String] = []
-    let parameters = export["parameters"] as? [String: [[String: Any]]] ?? [:]
     for card in canvas {
       guard let id = card["id"] as? String else { continue }
       let file = project.appendingPathComponent("definitions/\(id)/_card.json")
       let definition = (try? JSONSerialization.jsonObject(with: Data(contentsOf: file))) as? [String: Any] ?? [:]
       let type = definition["type"] as? String ?? ""
       if type == "trigger" { triggers.append(id) }
-      let params = (parameters[id] ?? []).map { p -> [String: Any] in
-        var entry: [String: Any] = ["name": p["name"] ?? "", "type": p["type"] ?? ""]
-        if let raw = p["effective_json"] as? String {
-          entry["default"] = try? JSONSerialization.jsonObject(with: Data(raw.utf8), options: .fragmentsAllowed)
-        }
-        if type != "input" { entry["fixed"] = true }
-        return entry
-      }
-      var entry: [String: Any] = ["id": id, "type": type, "params": params]
-      // An input Card whose output is a File: the recipient may give another file.
-      let outputs = (try? String(contentsOf: project.appendingPathComponent("definitions/\(id)/_outputs.fbs"), encoding: .utf8)) ?? ""
-      if type == "input",
-         outputs.range(of: #"tsugumi\s*:\s*"path""#, options: .regularExpression) != nil {
-        entry["file"] = true
-      }
-      cards.append(entry)
+      cards.append(["id": id, "type": type])
     }
     let manifest: [String: Any] = [
       "name": name, "project": document["name"] ?? name, "triggers": triggers, "cards": cards,
