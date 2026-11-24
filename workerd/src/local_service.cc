@@ -53,7 +53,6 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
           spawn.ro_paths = source.ro_paths;
           spawn.artifacts_root = source.artifacts_root;
           spawn.hidden_paths = source.hidden_paths;
-          spawn.card = request.card;
           if (source.uid) spawn.uid = *source.uid;
           if (source.gid) spawn.gid = *source.gid;
           for (const auto& bind : source.binds)

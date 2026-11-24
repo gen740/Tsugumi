@@ -692,7 +692,10 @@ def test_the_usual_port_taken_means_another_port(tmp_path):
 
 @needs_cli
 def test_lock_update_pins_a_local_archive_through_the_agent_tool(tmp_path):
+    from harness.daemon import Daemon
+    from harness.definition_evaluation import EMPTY_OUTPUTS
     from test_claude_code_plugin import UserAgent
+    from tsugumi_client import path, text
 
     project = tmp_path / "project"
     contents = tmp_path / "library"
@@ -705,8 +708,13 @@ def test_lock_update_pins_a_local_archive_through_the_agent_tool(tmp_path):
     write_project(project, {
         "name": "locked fixture",
         "nixPath": [{"name": "lib", "url": url}],
-        "canvas": {"cards": [], "connections": []},
+        "canvas": {"cards": [{"id": "work"}], "connections": []},
     })
+    definition = project / "definitions/work"
+    definition.mkdir(parents=True)
+    (definition / "_card.json").write_text('{"type":"code"}')
+    (definition / "_outputs.fbs").write_text(EMPTY_OUTPUTS)
+    (definition / "default.nix").write_text("{ params, inputs }: { }")
     env = isolated_environment(tmp_path, TSUGUMI_NIX_DIR=str(NIX.resolve()))
 
     def update(*args):
@@ -741,3 +749,9 @@ def test_lock_update_pins_a_local_archive_through_the_agent_tool(tmp_path):
         assert lock.stat().st_mtime_ns == instant
     finally:
         stop_resident_services(tmp_path)
+
+    with Daemon(project) as daemon:
+        result = daemon.connect().call("EvaluateNixRequest", card=path("work"),
+                                       expression="import <lib>")
+        assert result.failure is None, result.failure and text(result.failure.diagnostic)
+        assert json.loads(text(result.json)) == "from the fixture archive"

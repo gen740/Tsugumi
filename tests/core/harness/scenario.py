@@ -53,12 +53,10 @@ class Project:
         definition = dict(definition)
         if "_params" in definition:
             files["params.nix"] = definition.pop("_params")
-        if "params" in definition:
-            files["params.nix"] = params_nix(definition.pop("params"))
+        if values := definition.pop("params", {}):
+            files["params.nix"] = params_nix(values)
         if outputs is not None:
             files["_outputs.fbs"] = outputs
-        if "sdk.pythonCard" in files.get("default.nix", ""):
-            files.setdefault("params.nix", "{ }\n")
         if plan is not None:
             # This source is interpreted only by the test build adapter.
             files["default.nix"] = "{ params, inputs }: { }"

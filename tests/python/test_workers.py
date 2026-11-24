@@ -111,11 +111,12 @@ def test_evaluator_errors_and_timeouts_leave_tsugumid_working(env):
     """The evaluator runs inside tsugumid: endless recursion is an error of
     the Card (never a crash), buildTimeoutSeconds stops a build, and the next
     Card evaluates and runs as before."""
-    loop_nix = '''{ pkgs, params, inputs, schemas }:
+    loop_nix = '''{ params, inputs }:
 let f = x: f (x + 1); in { run = f 0; }
 '''
-    slow_nix = ('''{ pkgs, params, inputs, schemas }:
-{ run = pkgs.runCommand "tsugumi-test-slow-${toString builtins.currentTime}" { } '''
+    slow_nix = ('''{ params, inputs }:
+let pkgs = import <nixpkgs> { }; in
+{ run = pkgs.runCommand "tsugumi-test-slow" { } '''
                 '''"sleep 60; mkdir -p $out/lib"; }
 ''')
     c = load(env, {"trigger": {"type": "trigger"},

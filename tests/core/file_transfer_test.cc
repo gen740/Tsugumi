@@ -37,8 +37,8 @@ class Scratch {
 
 auto large_file(const fs::path& root, bool sparse) -> void {
   const auto output = root / "worker-out";
-  fs::create_directory(output);
-  const auto source = output / "data";
+  fs::create_directories(output / "artifact");
+  const auto source = output / "artifact/data";
   const uint64_t size = sparse ? (uint64_t{2} << 30) + 131 : 3 * 65536 + 17;
   {
     std::ofstream file(source, std::ios::binary);
@@ -79,12 +79,13 @@ auto large_file(const fs::path& root, bool sparse) -> void {
   expect(directory >= 0, "open worker output");
   const std::atomic<bool> cancel = false;
   const auto saved = root / "saved";
-  tsugumi::fs::copy_staging_output(directory, "data", saved, cancel);
+  tsugumi::fs::OutputBudget budget;
+  tsugumi::fs::copy_staging_artifact(directory, "artifact", saved, cancel, budget);
   ::close(directory);
-  check(saved);
-  // The next Card's input uses copy_beneath, just like keep_file_value.
+  check(saved / "data");
+  // The next Card can copy the forwarded artifact member as input.
   const auto next = root / "next-input";
-  expect(tsugumi::fs::copy_beneath(root, "saved", next, {}) == size,
+  expect(tsugumi::fs::copy_beneath(root, "saved/data", next, {}) == size,
          "input copy count");
   check(next);
 }
@@ -124,16 +125,17 @@ auto shrinking_source(const fs::path& root, bool sparse) -> void {
 }
 auto transfer_progress(const fs::path& root) -> void {
   const std::string bytes(200000, 'x');
-  tsugumi::fs::write_atomic(root / "data", bytes);
+  tsugumi::fs::write_atomic(root / "artifact/data", bytes);
   const int directory = ::open(root.c_str(), O_RDONLY | O_DIRECTORY);
   expect(directory >= 0, "open progress input");
   std::atomic<bool> cancel = false;
   uint64_t previous = 0;
   size_t calls = 0;
-  tsugumi::fs::copy_staging_output(
-      directory, "data", root / "copy", cancel,
+  tsugumi::fs::OutputBudget budget;
+  tsugumi::fs::copy_staging_artifact(
+      directory, "artifact", root / "copy", cancel, budget,
       [&](const fs::path& name, uint64_t done, uint64_t total) {
-        expect(name == "data", "progress lost the current filename");
+        expect(name == "artifact/data", "progress lost the current filename");
         expect(total == bytes.size() && done >= previous && done <= total,
                "invalid byte progress");
         if (!calls)
@@ -143,7 +145,7 @@ auto transfer_progress(const fs::path& root) -> void {
       });
   ::close(directory);
   expect(calls != 0 && previous == bytes.size(), "progress missed completion");
-  expect(tsugumi::fs::read_file_or_throw(root / "copy") == bytes,
+  expect(tsugumi::fs::read_file_or_throw(root / "copy/data") == bytes,
          "progress changed the copied file");
 }
 }  // namespace

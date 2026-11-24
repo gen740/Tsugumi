@@ -16,8 +16,6 @@ NUM = "namespace t; table Num { value:ulong; } table Outputs { out:Num (required
 TXT = "namespace t; table Txt { value:string; } table Outputs { out:Txt (required); } root_type Outputs;"
 
 
-FLAG = "namespace t; table Flag { value:bool; } table Outputs { flag:Flag (required); } root_type Outputs;"
-
 PYTHON_BINDINGS = """  pkgs = import <nixpkgs> { };
   sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };"""
 
@@ -76,11 +74,6 @@ def python_nix(main: str, *, values: dict | None = None, let: str = "", tools: s
     """default.nix of a Card whose run is python_run(main, ...)."""
     return ("{ params, inputs }:\nlet\n" + PYTHON_BINDINGS + f"\n{let}\nin\n"
             + "{ run = " + python_run(main, values=values, tools=tools) + "; " + extra + "}\n")
-
-
-def printing_run(text_nix: str) -> str:
-    """A run that prints the value of the Nix string expression `text_nix`."""
-    return python_run(PRINT_MAIN, values={"PRINTED": text_nix})
 
 
 def python_card(main: str, *, outputs=NUM, inputs=(), values=None, let="", tools="", extra="", **settings) -> dict:

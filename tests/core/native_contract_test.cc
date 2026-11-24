@@ -12,24 +12,9 @@ namespace {
 
 class NativeContract : public testing::Test {
  protected:
-  flatbuffers::FlatBufferBuilder request_buffer;
   flatbuffers::FlatBufferBuilder card_buffer;
   flatbuffers::FlatBufferBuilder response;
-  const W::WorkerCall* request = nullptr;
   Host host;
-
-  auto SetUp() -> void override {
-    W::WorkerCallT call;
-    for (const std::string name : {"first", "second"}) {
-      auto port = std::make_unique<W::WorkerPortT>();
-      port->name = name;
-      port->required = name == "first";
-      call.outputs.push_back(std::move(port));
-    }
-    request_buffer.Finish(W::WorkerCall::Pack(request_buffer, &call));
-    request =
-        flatbuffers::GetRoot<W::WorkerCall>(request_buffer.GetBufferPointer());
-  }
 
   auto port(const char* name, std::string_view bytes,
             const std::vector<tsugumi::ArtifactId>& artifacts = {})
@@ -54,38 +39,21 @@ class NativeContract : public testing::Test {
   }
 };
 
-TEST_F(NativeContract, OpaqueBytesAndGrantedArtifactPassThrough) {
+TEST_F(NativeContract, PacksOpaqueBytesAndArtifactIds) {
   const ArtifactId id{1, 2, 3};
-  host.granted.emplace(id, "/artifact");
   const std::string bytes("\x01\x02 not a table", 14);
   const auto& result = finish({port(
       "first", bytes, {tsugumi::ArtifactId(flatbuffers::span<const uint8_t, 16>(id))})});
-  ASSERT_FALSE(make_result(result, *request, host, 1, response));
+  ASSERT_FALSE(make_result(result, host, 1, response));
   EXPECT_EQ(output()->name()->str(), "first");
   EXPECT_EQ(std::string(output()->bytes()->begin(), output()->bytes()->end()), bytes);
   EXPECT_EQ(id_bytes(*output()->artifacts()->Get(0)), id);
 }
 
-TEST_F(NativeContract, RejectsUngrantableArtifact) {
-  const auto& result = finish({port("first", "", {tsugumi::ArtifactId()})});
-  const auto failure = make_result(result, *request, host, 1, response);
-  ASSERT_TRUE(failure);
-  EXPECT_EQ(failure->kind, D::FailureKind::output_invalid);
-}
-
-TEST_F(NativeContract, RequiredOutputFailureIdentifiesThePort) {
-  const auto failure = make_result(finish({}), *request, host, 1, response);
-  ASSERT_TRUE(failure);
-  EXPECT_EQ(failure->kind, D::FailureKind::output_invalid);
-  ASSERT_EQ(failure->args.size(), 1u);
-  EXPECT_EQ(failure->args.front(),
-            std::make_pair(std::string("port"), std::string("first")));
-}
-
 TEST_F(NativeContract, CombinedOutputsMustFitOneWorkerResultFrame) {
   const std::string bytes(9u << 20, 'x');
   const auto& result = finish({port("first", bytes), port("second", bytes)});
-  const auto failure = make_result(result, *request, host, 1, response);
+  const auto failure = make_result(result, host, 1, response);
   ASSERT_TRUE(failure);
   EXPECT_EQ(failure->kind, D::FailureKind::output_invalid);
 }

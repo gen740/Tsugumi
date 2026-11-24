@@ -94,7 +94,7 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
         d = c.get("definition")
         body = copy.deepcopy(defs[d]) if d else {"type": "draft"}
         outputs, nix = body.pop("_outputs", None), body.pop("_nix", None)
-        params = body.pop("_params", "{ }\n" if nix and "sdk.pythonCard" in nix else None)
+        params = body.pop("_params", None)
         for k, v in c.items():
             if k not in ("id", "definition", "params"):
                 body[k] = v

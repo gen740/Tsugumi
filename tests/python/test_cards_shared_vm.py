@@ -1,7 +1,7 @@
 """Code Card behaviour in the real environment (TSUGUMI_TEST_SHARED_VM=1; the
 shared VM): backpressure stalls, cancellation, isolation, delegated limits,
 Nix upstream references, stages and caching, the process a Card runs in,
-unselected branches and worker crashes. The Cards are small Python
+skipped Cards and worker crashes. The Cards are small Python
 Cards; what an SDK offers is checked in the kit."""
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import pytest
 
 from conftest import real_environment
 from harness.observations import decode_scalar, read_output
-from harness.real_cards import (ENVIRONMENT_MAIN, FLAG, NUM, ONE_MAIN, TXT, check_process_environment, log,
+from harness.real_cards import (ENVIRONMENT_MAIN, NUM, ONE_MAIN, TXT, check_process_environment, log,
                                 python_card, txt_main)
 from projects import card, conn, run_and_wait, start_run, wait_for_log, wait_run, write_nix_project as write
 from tsugumi_client import RpcFailure, new_id, path, text
@@ -69,24 +69,22 @@ def shown(c, run_id, name="show"):
 
 
 def test_backpressure_stall_ends_the_run(env):
-    """loop(any) -> step -> loop (feedback); step also feeds wait.value, whose
-    condition never arrives: its queue fills, everything stops, the run ends."""
+    """A feedback producer fills wait.value while wait.condition awaits the
+    same join, so the run reports the full queue."""
     defs = {
         "trigger": {"type": "trigger"},
         "seed": python_card(ONE_MAIN),
         "loop": {"type": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 1000},
         "step": python_card(ONE_MAIN, inputs=["x"], maxRuns=1000, reuseWorker=True),
-        "flag": {"type": "input", "params": {"value": False}, "_params": '{ value = false; }', "_outputs": FLAG},
-        "branch": {"type": "branch"},
+        "wait": python_card(ONE_MAIN, inputs=["value", "condition"]),
+        "gate": python_card(ONE_MAIN, inputs=["x"]),
     }
     c = load(env, defs,
-             [card("start", "trigger"), card("seed", "seed"), card("loop", "loop"), card("step", "step"),
-              card("never", "flag"), card("gate", "branch"),
-              card("wait", "branch")],
-             [conn("seed", "out", "loop", "init"), conn("loop", "out", "step", "x"), conn("step", "out", "loop", "again"),
-              conn("step", "out", "wait", "value"),
-              conn("never", "flag", "gate", "value"),
-              conn("never", "flag", "gate", "condition"), conn("gate", "a", "wait", "condition")])
+             [card(name, name) for name in ("seed", "loop", "step", "wait", "gate")]
+             + [card("start", "trigger")],
+             [conn("seed", "out", "loop", "init"), conn("loop", "out", "step", "x"),
+              conn("step", "out", "loop", "again"), conn("step", "out", "wait", "value"),
+              conn("wait", "out", "gate", "x"), conn("gate", "out", "wait", "condition")])
     run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.failed
     assert st.failure.kind == FailureKind.execution_limit
@@ -229,7 +227,7 @@ def run(input):
 
 def test_nix_connected_exports(env):
     a = python_card(ONE_MAIN, extra='exports = { greet = name: "hello ${name}"; }; ')
-    b = python_card(GREETING_MAIN, inputs=["x"], values={"GREETING": 'inputs.x.greet "b"'})
+    b = python_card(GREETING_MAIN, inputs=["x"], values={"GREETING": 'inputs.a.greet "b"'})
     defs = {"trigger": {"type": "trigger"}, "a": a, "b": b}
     c = load(env, defs, [card("start", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
     run_id, st = run_and_wait(c, "start")
@@ -307,24 +305,16 @@ def test_python_card_environment_lives_with_its_process(env):
     check_process_environment(*seen)
 
 
-def test_unselected_branch_is_not_evaluated(env):
-    """An unselected branch's throwing Nix expression is never evaluated.
-
-    Concurrency limits are exercised with explicit gates in test_run_lists.py;
-    inferring concurrency from wall-clock invocation spans was timing evidence.
-    """
+def test_skipped_card_is_not_evaluated(env):
+    """The consumer never evaluates Nix when its connected output is omitted."""
     broken = {"type": "code", "inputs": [{"name": "in"}], "_outputs": NUM,
-              "_nix": '''{ pkgs, params, inputs, schemas }:
-{ run = builtins.throw "must never be evaluated"; }
-'''}
-    defs = {"trigger": {"type": "trigger"},
-            "flag": {"type": "input", "params": {"value": False}, "_params": '{ value = false; }', "_outputs": FLAG},
-            "branch": {"type": "branch"}, "broken": broken}
+              "_nix": '{ params, inputs }: { run = builtins.throw "must never be evaluated"; }'}
+    omit = python_card("from card import Output\n\ndef run(input):\n    return Output()\n",
+                       outputs=NUM.replace(" (required)", ""))
+    defs = {"trigger": {"type": "trigger"}, "omit": omit, "broken": broken}
     c = load(env, defs,
-             [card("start", "trigger"),
-              card("cond", "flag"), card("gate", "branch"), card("never", "broken")],
-             [conn("cond", "flag", "gate", "value"),
-              conn("cond", "flag", "gate", "condition"), conn("gate", "a", "never", "in")])
+             [card("start", "trigger"), card("omit", "omit"), card("never", "broken")],
+             [conn("omit", "out", "never", "in")])
     snap = c.call("ProjectInspectRequest")
     acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("start"), maxConcurrency=2)
     run_id = text(acc.run.runId)

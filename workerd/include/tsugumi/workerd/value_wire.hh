@@ -22,6 +22,4 @@ auto artifact_id(const ::tsugumi::ArtifactId& id) -> ArtifactKey;
 auto artifact_ids(const ArtifactIdVector* ids) -> std::vector<ArtifactKey>;
 auto artifact_struct(const ArtifactKey& id) -> ::tsugumi::ArtifactId;
 auto artifact_ids(FBB& b, std::span<const ArtifactKey> ids) -> Off<ArtifactIdVector>;
-
-Off<D::Port> port(FBB& b, const types::PortType& p);
 }  // namespace tsugumi::wire

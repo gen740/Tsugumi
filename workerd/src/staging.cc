@@ -13,7 +13,6 @@
 #include <string>
 #include <system_error>
 #include <utility>
-#include <vector>
 
 #include "tsugumi/util/sparse.hh"
 
@@ -114,9 +113,7 @@ auto clear_directory(int source, const std::filesystem::path& path,
   }
 }
 
-// Every source component is opened without following links. Relative links are
-// expanded in userspace against a stack of pinned directories rooted at this
-// one declared output, never by the kernel against the host namespace.
+// Open source entries without following links.
 class Handle {
  public:
   explicit Handle(int fd) : fd_(fd) {}
@@ -194,8 +191,7 @@ auto copy_entry(int source, const std::filesystem::path& label,
     const auto total = static_cast<uint64_t>(st.st_size);
     if (total > budget.bytes)
       reject(label, "regular file", "output byte budget exceeded");
-    // Overlapping declared outputs can copy a file twice. The destination is
-    // core-owned, contains no symlinks, and is never exposed to the worker.
+    // The destination is core-owned and is never exposed to the worker.
     const int fd =
         ::open(destination.c_str(),
                O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
@@ -281,32 +277,19 @@ auto clear_staging(const std::filesystem::path& path,
   ::close(directory);
 }
 
-auto copy_staging_output(int staging, const std::filesystem::path& relative,
-                         const std::filesystem::path& destination,
-                         const std::atomic<bool>& cancel,
-                         const TransferProgress& progress, OutputBudget* budget)
-    -> void {
-  if (relative.empty() || relative.is_absolute())
-    reject(relative, "output path", "expected a path relative to staging");
-  std::vector<Handle> parents;
-  parents.push_back(open_entry(staging, ".", relative));
-  for (const auto& part : relative) {
-    check_copy_cancel(cancel);
-    if (part == "." || part.empty()) continue;
-    if (part == "..")
-      reject(relative, "output path", "parent components are not allowed");
-    parents.push_back(
-        open_entry(parents.back().get(), part.string(), relative));
-  }
-  const int source = parents.back().get();
-  const auto st = status_of(source, relative);
-  if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode))
-    reject(relative, entry_kind(st.st_mode),
-           "expected a regular file or a directory");
+auto copy_staging_artifact(int staging, const std::filesystem::path& name,
+                           const std::filesystem::path& destination,
+                           const std::atomic<bool>& cancel, OutputBudget& budget,
+                           const TransferProgress& progress) -> void {
+  if (name.empty() || name.has_parent_path() || name == "." || name == "..")
+    reject(name, "artifact name", "expected one directory component");
+  check_copy_cancel(cancel);
+  const auto source = open_entry(staging, name.string(), name);
+  const auto status = status_of(source.get(), name);
+  if (!S_ISDIR(status.st_mode))
+    reject(name, entry_kind(status.st_mode), "artifact must be a directory");
   std::filesystem::create_directories(destination.parent_path());
-  OutputBudget defaults;
-  copy_entry(source, relative, destination, cancel, progress,
-             budget ? *budget : defaults);
+  copy_entry(source.get(), name, destination, cancel, progress, budget);
 }
 
 }  // namespace tsugumi::fs

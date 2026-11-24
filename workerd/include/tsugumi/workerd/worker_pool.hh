@@ -24,14 +24,9 @@ struct WorkerLimits {
   size_t max_standby = 32;              // idle and pending fresh workers
 };
 
-// Remote supervised jobs acquire exactly one worker at the existing scratch
-// path, on the invocation thread, with no standby or resident preparation.
-enum class WorkerPoolMode { standby, one_shot };
-
 class WorkerPool {
  public:
-  WorkerPool(std::filesystem::path scratch_root, WorkerLimits limits = {},
-             WorkerPoolMode mode = WorkerPoolMode::standby);
+  WorkerPool(std::filesystem::path scratch_root, WorkerLimits limits = {});
   ~WorkerPool();  // ends every worker (the project stops)
 
   struct Lease {
@@ -69,7 +64,6 @@ class WorkerPool {
 
   std::filesystem::path root_;
   WorkerLimits limits_;
-  WorkerPoolMode mode_;
   std::mutex mu_;
   std::condition_variable cv_;
   std::vector<Idle> resident_;
