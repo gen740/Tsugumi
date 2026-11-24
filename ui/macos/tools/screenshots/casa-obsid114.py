@@ -4,10 +4,8 @@ import json
 import sys
 from pathlib import Path
 
-card = Path(sys.argv[1]) / "definitions/load/_card.json"
-d = json.loads(card.read_text())
+params = Path(sys.argv[1]) / "definitions/load/params.nix"
 values = {"obsid": "114", "file": "acisf00114N006_evt2.fits.gz",
           "hash": "sha256-l7CCu8BibZmfu8QyVF5yC7OQjkrwbnkW5AvWlWcyK/Y="}
-for p in d["params"]:
-    p["data"] = values[p["name"]]
-card.write_text(json.dumps(d, ensure_ascii=False, indent=2) + "\n")
+params.write_text("{\n" + "".join(f"  {name} = {json.dumps(value)};\n"
+                                  for name, value in sorted(values.items())) + "}\n")

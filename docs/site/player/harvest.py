@@ -42,6 +42,8 @@ from Tsugumi.Data.CardState import CardState  # noqa: E402
 from Tsugumi.Data.Phase import Phase  # noqa: E402
 from Tsugumi.Data.RunState import RunState  # noqa: E402
 from Tsugumi.Data.StageOutcome import StageOutcome  # noqa: E402
+from Tsugumi.RPC.NotificationPayload import NotificationPayload  # noqa: E402
+from Tsugumi.Trace.Client import Client  # noqa: E402
 
 OUT = ROOT / "docs" / "site" / "player-data" / "assets"
 STATE = {v: k for k, v in vars(CardState).items() if not k.startswith("_")}
@@ -114,8 +116,24 @@ def harvest(demo: str, tmp: Path, sandbox: bool, timeout: float) -> dict:
     daemon = Daemon(root).start()
     began = time.time()
     try:
-        c = daemon.connect()
-        run_id = start_run(c, ["start"], concurrency=4)
+        c = daemon.connect(client=Client.Web)
+        snapshot = c.call("ProjectInspectRequest")
+        trigger = next(text(d.id) for d in snapshot.definitions
+                       if json.loads(text(d.cardJson))["type"] == "trigger")
+        if demo == "live-stream":
+            subscription = text(c.open().subscriptionId)
+            c.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("settings")])
+        run_id = start_run(c, [trigger], concurrency=4)
+        if demo == "live-stream":
+            ready = c.wait_notification(
+                lambda event: event.valueType == NotificationPayload.DisplayUpdated
+                and text(event.value.display.view) == "seed"
+                and bytes(event.value.display.bytes) == b"\x01",
+                timeout=timeout,
+            ).value.display
+            c.call("ViewCreditRequest", subscriptionId=subscription, card=ready.card,
+                   view="seed", bytes=1, creditId=ready.creditId)
+            c.call("ViewSendRequest", card=path("settings"), view="seed", bytes=[10])
         status = wait_run(c, run_id, timeout=timeout)
         if status.state != RunState.succeeded:
             state = RUN.get(status.state, str(status.state))
