@@ -60,7 +60,7 @@ RUN_LIST_REMOTE = {
 def write(project, definitions, cards, connections, *, files=None):
     remote_system = os.environ["TSUGUMI_TEST_REMOTE_SYSTEM"]
     definitions = {
-        key: {"system": remote_system, **body} if body.get("workerCapabilities") else body
+        key: {"systems": [remote_system], **body} if body.get("workerCapabilities") else body
         for key, body in definitions.items()
     }
     write_nix_project(project, definitions, cards, connections, files=files)

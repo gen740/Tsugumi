@@ -105,8 +105,8 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
 TEST(InputTypes, DistinctUnnamedDraftEndsKeepTheirSourceTypes) {
   const auto graph = Graph(
       R"([{"id":"src"},{"id":"draft"},{"id":"other"}])",
-      R"([{"from":{"card":"src","port":"out"},"to":{"card":"draft","port":""}},
-          {"from":{"card":"other","port":"out"},"to":{"card":"draft","port":""}}])",
+      R"([{"from":{"card":"src","port":"out"},"to":{"card":"draft"}},
+          {"from":{"card":"other","port":"out"},"to":{"card":"draft"}}])",
       {{"definitions/src/_card.json", test::card_json(R"({"type":"code"})")},
        {"definitions/src/_outputs.fbs", kSchema},
        {"definitions/other/_card.json",
@@ -360,7 +360,7 @@ TEST(InputTypes, LargeDefinitionAndModelResultAreNeverClipped) {
   schema += "}\n";
   const auto graph = Graph(
       R"([{"id":"src"},{"id":"draft"}])",
-      R"([{"from":{"card":"src","port":"out"},"to":{"card":"draft","port":""}}])",
+      R"([{"from":{"card":"src","port":"out"},"to":{"card":"draft"}}])",
       {{"definitions/src/_card.json", test::card_json(R"({"type":"code"})")},
        {"definitions/src/_outputs.fbs",
         schema + "table Outputs { out:Large; } root_type Outputs;"}});

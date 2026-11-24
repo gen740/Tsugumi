@@ -116,9 +116,9 @@ bool valid_id(const std::string& id);
 // with PATH, HOME, LANG or the TSUGUMI_* variables a worker sets.
 bool valid_name(std::string_view name);
 
-// This Tsugumi's version (VERSION): written into every tsugumi.json it creates
-// or saves, and required of every tsugumi.json it loads.
-extern const char* const kTsugumiVersion;
+// The project file format this Tsugumi reads and writes (tsugumi.json
+// formatVersion). It changes only when the project file format changes.
+inline constexpr uint32_t kProjectFormatVersion = 1;
 
 class DocumentError : public std::runtime_error {
  public:

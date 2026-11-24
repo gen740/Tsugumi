@@ -539,8 +539,8 @@ struct GraphCanvas: View {
     var ends: [(a: CGPoint, b: CGPoint)] = []
     var out: [RoutedWire] = []
     for (i, c) in session.connections(in: tab.scope).enumerated() {
-      guard let fc = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
-            let tc = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { continue }
+      guard let fc = c["from"]?["card"]?.string, let tc = c["to"]?["card"]?.string else { continue }
+      let fp = c["from"]?["port"]?.string ?? "", tp = c["to"]?["port"]?.string ?? ""
       let fk = key(tab.scope + [fc]), tk = key(tab.scope + [tc])
       let batch = session.executionWire(fk, fp)
       ends.append((portWorld(fk, fp, output: true), portWorld(tk, tp, output: false)))
@@ -966,7 +966,7 @@ struct GraphCanvas: View {
       ForEach(findMatches.prefix(8), id: \.self) { k in
         Button { pick(k) } label: {
           HStack {
-            Image(systemName: session.kind(k).symbol).frame(width: 16)
+            Image(systemName: definitionIcon(session.cardDefinition(k))).frame(width: 16)
             Text(session.displayName(k))
             Spacer()
             Text(session.kind(k).label).font(.caption).foregroundStyle(.secondary)
@@ -1064,21 +1064,21 @@ struct GraphCanvas: View {
     case .wire(let i):
       let conns = session.connections(in: tab.scope)
       let symbol = "point.topleft.down.to.point.bottomright.curvepath"
-      guard i < conns.count, let fc = conns[i]["from"]?["card"]?.string, let fp = conns[i]["from"]?["port"]?.string,
-            let tc = conns[i]["to"]?["card"]?.string, let tp = conns[i]["to"]?["port"]?.string else {
+      guard i < conns.count, let fc = conns[i]["from"]?["card"]?.string, let tc = conns[i]["to"]?["card"]?.string else {
         return .init(title: String(localized: "接続"), subtitle: "", symbol: symbol)
       }
       let fk = key(tab.scope + [fc]), tk = key(tab.scope + [tc])
+      let fp = conns[i]["from"]?["port"]?.string, tp = conns[i]["to"]?["port"]?.string
       let out = session.resolution[fk]?.outputs.first { $0.name == fp }
       let inp = session.resolution[tk]?.inputs.first { $0.name == tp }
-      var lines = ["\(session.displayName(fk)).\(fp)  →  \(session.displayName(tk)).\(tp)"]
-      if debug.showKeys { lines.append("connection #\(i): \(fk).\(fp) → \(tk).\(tp)") }
+      func label(_ card: String, _ port: String?) -> String { card + (port.map { ".\($0)" } ?? "") }
+      var lines = ["\(label(session.displayName(fk), fp))  →  \(label(session.displayName(tk), tp))"]
+      if debug.showKeys { lines.append("connection #\(i): \(label(fk, fp)) → \(label(tk, tp))") }
       lines.append(String(localized: "型: ") + (out?.typeName ?? inp?.typeName ?? String(localized: "未解決")))
       var status = String(localized: "この Run ではまだ値が通っていません")
-      let batch = session.executionWire(fk, fp)
-      if batch.executionList {
+      if let batch = fp.map({ session.executionWire(fk, $0) }), batch.executionList {
         status = batch.count.map { String(localized: "実行リスト") + " ×\($0)" } ?? String(localized: "実行リスト（件数未確定）")
-      } else if let st = session.cardStates[fk], st.sentInRun.contains(fp), let id = session.currentRunId {
+      } else if let fp, let st = session.cardStates[fk], st.sentInRun.contains(fp), let id = session.currentRunId {
         status = String(localized: "Run \(String(id.prefix(8))) で値が通りました（送信元の最新は実行 #\(st.invocation)）")
       }
       return .init(title: String(localized: "接続"), subtitle: "", symbol: symbol, lines: lines, status: status)

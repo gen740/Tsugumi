@@ -1,4 +1,4 @@
-"""A Card's "system": built and run for another Nix system under an emulator
+"""A Card's "systems": built and run for another Nix system under an emulator
 the kernel has registered (binfmt_misc). Which systems a Card may name (Cards
 of every language may), and what a run says when no emulator is there.
 
@@ -102,7 +102,7 @@ def registered_remote(monkeypatch, resource_limits):
      False),
     (True, {"workerCapabilities": [1], "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}},
      False),
-    (True, {"workerCapabilities": [63], "system": NATIVE.split("-")[0] + "-linux",
+    (True, {"workerCapabilities": [63], "systems": [NATIVE.split("-")[0] + "-linux"],
       "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, True),
     (True, {"workerCapabilities": [63], "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, True),
     (False, {"workerCapabilities": [63], "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, False),
@@ -170,9 +170,9 @@ def test_which_systems_and_cards(tmp_path):
     root = tmp_path / "p"
     defs = {"py": {"type": "code"}, "cc": {"type": "code"}, "sh": {"type": "code"},
             "r": {"type": "code"}}
-    cards = [card("py", "py", system=FOREIGN),
-             card("cc", "cc", system=FOREIGN), card("sh", "sh", system=FOREIGN), card("r", "r", system=FOREIGN)]
-    cards.append(card("native", "py", system=NATIVE))
+    cards = [card("py", "py", systems=[FOREIGN]),
+             card("cc", "cc", systems=[FOREIGN]), card("sh", "sh", systems=[FOREIGN]), card("r", "r", systems=[FOREIGN])]
+    cards.append(card("native", "py", systems=[NATIVE]))
     write(root, defs, cards, [])
     with Daemon(root) as daemon:
         c = daemon.connect()
@@ -184,9 +184,9 @@ def test_which_systems_and_cards(tmp_path):
         assert "invalid_setting" not in diagnostics(c, "native")
 
 
-@pytest.mark.parametrize("system", ["", "riscv64-linux"])
-def test_invalid_system_stops_document_load(project, core_factory, system):
-    write(project, {"work": {"type": "code", "system": system}},
+@pytest.mark.parametrize("systems", [[], ["riscv64-linux"], ["x86_64-linux", "x86_64-linux"]])
+def test_invalid_systems_stop_document_load(project, core_factory, systems):
+    write(project, {"work": {"type": "code", "systems": systems}},
           [card("work", "work")], [])
     with pytest.raises(StartupFailure) as failure:
         core_factory()
@@ -201,7 +201,7 @@ def test_an_unavailable_foreign_system_stops_the_run(tmp_path):
             "sh": {"type": "code", "inputs": [{"name": "in"}],
                    "_outputs": MSG_FBS,
                    "_nix": '{ pkgs, inputs, params, ... }:\n{ run = "uname -m"; }\n'}}
-    write(root, defs, [card("start", "trigger"), card("x", "sh", system=FOREIGN)], [conn("start", "out", "x", "in")])
+    write(root, defs, [card("start", "trigger"), card("x", "sh", systems=[FOREIGN])], [conn("start", "out", "x", "in")])
     with Daemon(root) as daemon:
         c = daemon.connect()
         run_id, status = run_and_wait(c, "start")

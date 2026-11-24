@@ -73,7 +73,7 @@ TEST_F(AgentProjectFixture,
   Write(root / "definitions/start/_card.json",
         R"({"type":"trigger","symbol":"play.circle"})");
   Write(root / "definitions/plan/_card.json",
-        R"({"type":"draft","symbol":"pencil.and.outline"})");
+        R"({"type":"draft","symbol":"none"})");
   const std::string readme =
       "---\ntitle: plan\ndescription: Make a greeting\n---\n\nReturn hello.";
   Write(root / "definitions/plan/README.md", readme);
@@ -81,7 +81,7 @@ TEST_F(AgentProjectFixture,
         R"({"type":"draft","symbol":"pencil.and.outline"})");
   StartProject(
       false,
-      R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},{"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}]}})");
+      R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan"}},{"from":{"card":"plan"},"to":{"card":"next"}}]}})");
   const auto conversation = Conversation("reference-draft-edit");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -100,7 +100,14 @@ TEST_F(AgentProjectFixture,
   EXPECT_NE(project.find(R"("nixPath": [])"), std::string::npos);
   EXPECT_EQ(JsonString(project, "/canvas/connections/0/to/port"), "start");
   EXPECT_EQ(JsonString(project, "/canvas/connections/1/from/port"), "result");
-  EXPECT_EQ(JsonString(project, "/canvas/connections/1/to/port"), "");
+  // next stays a Draft, so its end keeps no port.
+  EXPECT_FALSE(json::Object(json::Get(
+                   json::Object(json::Array(json::Get(
+                                    json::Object(json::Get(
+                                        json::Object(project), "canvas")),
+                                    "connections"))[1]),
+                   "to"))
+                   .contains("port"));
   EXPECT_EQ(Read(root / "definitions/plan/README.md"), readme);
   const auto definition = Read(root / "definitions/plan/_card.json");
   EXPECT_EQ(JsonString(definition, "/type"), "code");

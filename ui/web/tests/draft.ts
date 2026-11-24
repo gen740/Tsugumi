@@ -5,7 +5,7 @@ import { cardIds } from './cardIds'
 // and it is written on its Card.
 import assert from 'node:assert/strict'
 import type { ProjectSession as Session } from '../src/model/session'
-import { get, parse, str } from '../shared/json'
+import { get, parse, serialize, str } from '../shared/json'
 
 // The session's module reads the page when it loads, and listens to the server.
 const page = globalThis as Record<string, unknown>
@@ -23,8 +23,6 @@ const session = () => {
   s.connected = true
   return s
 }
-const wires = (s: Session) => s.connections([]).map((c) =>
-  `${str(get(c, 'from', 'card'))}.${str(get(c, 'from', 'port'))}>${str(get(c, 'to', 'card'))}.${str(get(c, 'to', 'port'))}`)
 const ports = (s: Session, k: string) => {
   const d = s.portData(k)
   return [d.inputs.map((p) => p.name), d.outputs.map((p) => p.name)]
@@ -37,7 +35,9 @@ const ports = (s: Session, k: string) => {
 
   // Dropped anywhere on a Draft: both ends name the Card itself.
   await s.connect([a, NEW_PORT], [b, NEW_PORT], [])
-  assert.deepEqual(wires(s), ['draft.>draft_2.'])
+  assert.deepEqual(s.connections([]).map(c => JSON.parse(serialize(c))), [{ from: { card: 'draft' }, to: { card: 'draft_2' } }])
+  assert.equal(s.nodeData(a).symbol, 'pencil.and.outline')
+  assert.deepEqual(s.layoutScene([]).wires, [{ from: a, fromPort: NEW_PORT, to: b, toPort: NEW_PORT }])
   assert.deepEqual(ports(s, a), [[], []])
   assert.deepEqual(ports(s, b), [[], []])
 

@@ -24,7 +24,7 @@ The Trigger starts the run. The Code Card `convert` reads the temperature from i
 
 ```json
 {
-  "tsugumiVersion": "0.9.4",
+  "formatVersion": 1,
   "name": "Temperature conversion",
   "nixPath": [
     {
@@ -71,7 +71,7 @@ The Trigger starts the run. The Code Card `convert` reads the temperature from i
 }
 ```
 
-Use the version of Tsugumi you run as `tsugumiVersion`. See [Project files](Reference.md) for the complete format.
+`formatVersion` is the project file format (currently `1`), not the Tsugumi version. See [Project files](Reference.md) for the complete format.
 
 The lock below is an example of the pins for these declarations. Use an explicit update to resolve new pins for your own declarations. [Project Nix search path](features.md#project-nix-search-path)
 
@@ -147,7 +147,11 @@ description: Start a run.
     "network": false,
     "gui": false
   },
-  "system": "aarch64-linux",
+  "systems": [
+    "aarch64-linux",
+    "x86_64-linux",
+    "aarch64-darwin"
+  ],
   "workerCapabilities": []
 }
 ```
@@ -265,8 +269,9 @@ See [Views](CoreAndSDK.md#views) for the display protocol and Dawn contract.
 ## Worker state
 
 With `reuseWorker: false`, each call starts with a fresh worker. Set `reuseWorker: true` to keep one worker for the Card: memory, loaded libraries and files in its working directory survive across calls and runs. One worker takes one call at a time. There is no hook at the start of a run, so a Card that keeps state decides from its inputs when to reset it, for example starting over when a loop's initial value arrives. Resident workers have no count, idle-time or memory eviction limit, including workers used for monitoring. They live until the project's environment stops or the Card's definition, SDK, grants or a secret value changes; a call already running when the definition changes finishes on the old version. A failed, cancelled or timed-out call always discards its worker; the next call starts fresh and logs the reason, as it does after a crash. Each invocation records whether its worker already held state (`worker_reused`). Ordinary fresh workers prepared for speed remain limited to 32, ten minutes idle and 2 GiB each.
-A call granted a project artifact uses a fresh worker. A worker that creates
-a project artifact retires when the call returns.
+A resident worker can open and create artifacts. When a call returns, the
+paths of its artifacts are gone, and the next call opens its own
+([artifact access](SandboxContract.md#artifact-access)).
 
 | Location | Use | Lifetime |
 | --- | --- | --- |
@@ -315,7 +320,7 @@ A Code Card has `"type": "code"`. Declare input port names in `inputs`. The conn
 
 Set `grants.network` to true to allow network access. TLS uses the Nix `cacert` bundle through `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
 
-Write the target Nix system in `system` and any required worker capability bits in `workerCapabilities`. See [Worker selection](RemoteExecution.md#worker-selection). Write all four isolation flags and both resource limits in `sandbox`. Use zero for an unlimited CPU or memory budget. A Linux worker with delegated cgroup v2 applies nonzero limits to the Card's process.
+List the Nix systems the Card works on in `systems` and any required worker capability bits in `workerCapabilities`. A worker whose native system is listed builds and runs the Card natively; any other worker runs the first entry under an emulator. See [Worker selection](RemoteExecution.md#worker-selection). Write all four isolation flags and both resource limits in `sandbox`. Use zero for an unlimited CPU or memory budget. A Linux worker with delegated cgroup v2 applies nonzero limits to the Card's process.
 
 Set `grants.network` or `grants.gui` to enable that access on a supported worker. Add named paths with `grants.hostPaths` entries containing `name`, an absolute `path` and an optional `write` flag. The Card reads the worker-visible path from `TSUGUMI_GRANT_<NAME>`, using uppercase letters and underscores in place of other separators. For example, `sample-data` becomes `TSUGUMI_GRANT_SAMPLE_DATA`.
 
@@ -354,7 +359,12 @@ of their derivation inputs.
 
 Set `exports` to publish Nix values to guaranteed downstream Cards. A downstream
 definition reads them as `inputs.<card_id>.<attr>`. For example, C can see both
-A and B in `A → B → C`. TODO(open): Exports across Merge, Collect, feedback and Drafts. A subgraph upstream contributes no `inputs` key for the subgraph or its inner producer and does not pass through its own upstreams. Cards inside a child project likewise receive no parent `inputs` keys.
+A and B in `A → B → C`. A subgraph upstream appears as `inputs.<subgraph Card id>`,
+holding the merged exports of the inner Cards wired to its outputs; inner ids
+never appear outside, and Cards inside a child project receive no parent `inputs`.
+Merge passes on only the exports all its inputs share, Collect those of the Card
+it collects from, and feedback wires and Drafts nothing. See
+[Nix inputs across Cards](Reference.md#nix-inputs-across-cards).
 
 ### Data fixed by Nix
 
@@ -396,8 +406,8 @@ is described in the kit.
 
 A Draft (`_card.json` with `"type": "draft"`) has no input or output ports,
 including when `_outputs.fbs` exists.
-A connection attaches directly to the Draft with `{"card":"plan","port":""}`.
-The `port` field is required; the empty string is reserved for Draft ends.
+A connection attaches directly to the Draft with `{"card":"plan"}`, without a
+`port`. Every other end needs a `port`; either mistake is a load error.
 Any number of wires can enter or leave a Draft, including wires between Drafts.
 A real Card's endpoint still names an existing input or output. The other end's
 port name and the Draft's content explain the planned connection.
@@ -410,7 +420,7 @@ When implementing a Draft, explicitly rebind **every** incoming wire to a real
 input and every outgoing wire to a real output in the **same save** as the new
 definition. Include `SetProject` in `project_save`; inside a Card in Card, update
 its project's `tsugumi.json` and any boundary endpoints too. Ends on other Drafts
-stay empty. A single possible port is still an explicit choice. A save leaving
+stay without a port. A single possible port is still an explicit choice. A save leaving
 a wire on a non-existent port of a real Card fails with `validation_failed`
 and names the wire. No endpoint is inferred or migrated.
 

@@ -36,7 +36,11 @@ fi
 # The Web UI, built reproducibly from the pinned Nix package.
 web_out="$(cd "$repo" && nix build --no-link --print-out-paths '.#web^out')"
 
-"$repo/hostd/tools/build-macos.sh"
+if [ "$release" -eq 1 ]; then
+  "$repo/hostd/tools/build-macos.sh" --release
+else
+  "$repo/hostd/tools/build-macos.sh"
+fi
 
 # As for the app: Apple's toolchain in a clean environment, only flatc from Nix.
 flatc_bin="$(cd "$repo" && nix build --no-link --print-out-paths .#flatc)/bin"

@@ -325,9 +325,8 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorSavesGraphWithoutWritingLayout) {
   ASSERT_FALSE(id.empty());
   const auto added = json::Encode(json::Members{{"id", json::Quote(id)}});
   const auto wire = json::Encode(json::Members{
-      {"from", R"({"card":"upstream","port":""})"},
-      {"to", json::Encode(json::Members{{"card", json::Quote(id)},
-                                        {"port", json::Quote("")}})}});
+      {"from", R"({"card":"upstream"})"},
+      {"to", json::Encode(json::Members{{"card", json::Quote(id)}})}});
   const auto edit = [&](const std::string& member, const std::string& value) {
     return json::Encode(json::Members{
         {"file_path", json::Quote("externals/outer/tsugumi.json")},

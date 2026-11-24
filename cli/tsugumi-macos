@@ -1,8 +1,9 @@
 #!/bin/sh
 # The `tsugumi` command on a Mac: a client of the host the desktop app also
 # uses, with its projects in the app's shared Linux VM. The same VM, store,
-# control folders, recent projects and settings as the release app
-# (docs/WebUI.md). `tsugumi` alone prints its usage.
+# control folders, recent projects and settings as the app of its channel:
+# the release app for a release, Tsugumi Dev otherwise (docs/WebUI.md).
+# `tsugumi` alone prints its usage.
 set -eu
 
 self="$0"
@@ -15,7 +16,6 @@ while [ -L "$self" ]; do
 done
 root="$(cd "$(dirname "$self")" && pwd -P)"
 
-export TSUGUMI_SUPPORT_DIR="${TSUGUMI_SUPPORT_DIR:-$HOME/Library/Application Support/Tsugumi}"
 export TSUGUMI_VMHOST="$root/bin/tsugumi-vmhost"
 export TSUGUMI_VM_IMAGE="$root/vm"
 export TSUGUMI_REPO="$root"

@@ -17,6 +17,7 @@ lib.fileset.toSource {
       ../hostd/CMakeLists.txt
       ../hostd/cmake
       ../hostd/src
+      ../hostd/cache
       ../hostd/private
       ../hostd/agent/src
       ../hostd/agent/private

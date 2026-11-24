@@ -376,8 +376,8 @@ TEST(HostCardPlacement, ConnectedIsolatedAndBulkCardsGetFreePlaces) {
   for (
       const auto* connections :
       {"[]",
-       R"([{"from":{"card":"fixed","port":""},"to":{"card":"new","port":""}}])",
-       R"([{"from":{"card":"fixed","port":""},"to":{"card":"new","port":""}},{"from":{"card":"other","port":""},"to":{"card":"new","port":""}}])"}) {
+       R"([{"from":{"card":"fixed"},"to":{"card":"new"}}])",
+       R"([{"from":{"card":"fixed"},"to":{"card":"new"}},{"from":{"card":"other"},"to":{"card":"new"}}])"}) {
     std::vector<std::string> cards{R"({"id":"fixed"})", R"({"id":"other"})",
                                    R"({"id":"new"})"};
     for (int i = 0; i < 12; ++i)

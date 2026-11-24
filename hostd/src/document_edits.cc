@@ -14,9 +14,11 @@ namespace tsugumi::host {
 namespace {
 namespace json = ::tsugumi::json;
 
+// A Draft end has no port: an empty port leaves the field out.
 auto Endpoint(const std::string& card, const std::string& port) -> std::string {
-  return json::Encode(
-      json::Members{{"card", json::Quote(card)}, {"port", json::Quote(port)}});
+  json::Members end{{"card", json::Quote(card)}};
+  if (!port.empty()) end["port"] = json::Quote(port);
+  return json::Encode(end);
 }
 
 // Reuse a boundary port when several wires name the same inner endpoint.
@@ -82,6 +84,12 @@ auto MakeSubgraph(const std::string& project,
       inner_wires.push_back(raw);
       continue;
     }
+    // A boundary port names a port, and a Draft has none.
+    if ((f && !from.contains("port")) || (t && !to.contains("port")))
+      throw std::runtime_error(
+          "A Draft wired to a Card outside the selection cannot be on a Card "
+          "in Card's boundary");
+
     if (f) wire["from"] = Endpoint(id, BoundaryPort(outputs, wire.at("from")));
     if (t) wire["to"] = Endpoint(id, BoundaryPort(inputs, wire.at("to")));
     outer_wires.push_back(json::Encode(wire));
@@ -120,7 +128,7 @@ auto MakeSubgraph(const std::string& project,
   result.project_json = json::Encode(outer);
   result.external_json = json::Encode(inner);
   result.card_json = json::Encode(json::Members{
-      {"type", json::Quote("subgraph")}, {"symbol", json::Quote("link")}});
+      {"type", json::Quote("subgraph")}, {"symbol", json::Quote("none")}});
   return result;
 }
 auto CopyDocuments(const std::string& state,

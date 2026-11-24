@@ -1,5 +1,5 @@
 {
-  "tsugumiVersion": "0.9.4",
+  "formatVersion": 1,
   "name": "集計と層別で逆転する相関",
   "nixPath": [
     {

@@ -1,5 +1,5 @@
 {
-  "tsugumiVersion": "0.9.4",
+  "formatVersion": 1,
   "name": "力学系ギャラリー",
   "nixPath": [
     {
@@ -52,8 +52,7 @@
           "port": "out"
         },
         "to": {
-          "card": "lorenz",
-          "port": ""
+          "card": "lorenz"
         }
       },
       {
@@ -62,8 +61,7 @@
           "port": "out"
         },
         "to": {
-          "card": "mandelbrot",
-          "port": ""
+          "card": "mandelbrot"
         }
       },
       {
@@ -72,8 +70,7 @@
           "port": "out"
         },
         "to": {
-          "card": "logistic",
-          "port": ""
+          "card": "logistic"
         }
       },
       {
@@ -82,8 +79,7 @@
           "port": "out"
         },
         "to": {
-          "card": "life",
-          "port": ""
+          "card": "life"
         }
       },
       {
@@ -92,8 +88,7 @@
           "port": "out"
         },
         "to": {
-          "card": "grayscott",
-          "port": ""
+          "card": "grayscott"
         }
       },
       {
@@ -102,8 +97,7 @@
           "port": "out"
         },
         "to": {
-          "card": "pendulum",
-          "port": ""
+          "card": "pendulum"
         }
       }
     ]

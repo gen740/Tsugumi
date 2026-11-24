@@ -76,12 +76,19 @@ struct Settings {
   CardGrants grants;
   bool reuse_worker = false;
   uint64_t worker_capabilities = 0;
-  std::string system;  // "" = the execution service's native system
+  // The Nix systems the Card works on, in the document's order. Empty only for
+  // Cards that never run on a worker.
+  std::vector<std::string> systems;
   // Card secret names, in declaration order: [a-z][a-z0-9_]{0,63}, each the
   // name of the environment variable that carries its value.
   std::vector<std::string> secrets;
   std::vector<ParamDef> params;  // with their values in data
 };
+
+// The system a worker builds and runs the Card as: its own native system when
+// the Card lists it, otherwise the Card's first system (run emulated).
+auto run_system(const Settings& settings, std::string_view native)
+    -> std::string;
 
 struct NixPathEntry {
   std::string name;

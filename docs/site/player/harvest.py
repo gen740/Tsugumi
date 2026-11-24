@@ -58,11 +58,7 @@ def guide_files() -> dict[str, str]:
     files: dict[str, dict[str, str]] = {}
     for m in re.finditer(r"^`([^`\n]+)`(?:（([^）\n]+)）)?\n\n```\w*\n(.*?)^```", page, flags=re.M | re.S):
         files.setdefault(m.group(2) or "", {})[m.group(1)] = m.group(3)
-    project = files[""]
-    manifest = json.loads(project["tsugumi.json"])
-    manifest["tsugumiVersion"] = (ROOT / "VERSION").read_text().strip()
-    project["tsugumi.json"] = json.dumps(manifest, indent=2) + "\n"
-    return project
+    return files[""]
 
 
 def project_copy(demo: str, tmp: Path, sandbox: bool) -> Path:

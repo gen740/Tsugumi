@@ -50,7 +50,6 @@ struct WorkerSpawn {
   // Hide the store and private staging even through overlapping host grants.
   std::string artifact_store;
   std::filesystem::path artifact_staging;
-  bool artifact_inputs = false;
   // Covered with an empty tmpfs for sandbox: false Cards (the control folder
   // with the RPC token, tsugumid's state); ro paths and the scratch folder
   // inside them are bound again on top.

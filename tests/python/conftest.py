@@ -29,7 +29,7 @@ HOSTD = Path(os.environ.get("TSUGUMI_HOSTD", BUILD / "hostd" / "tsugumi-hostd"))
 WEB_ROOT = WEB_DIST / "public"
 
 EMPTY_PROJECT = {
-    "tsugumiVersion": (ROOT / "VERSION").read_text().strip(),
+    "formatVersion": 1,
     "name": "test",
     "nixPath": [],
     "trackedPaths": [],
@@ -65,7 +65,7 @@ def write_card(definition: Path, kind: str = "code", **settings) -> dict:
             sandbox={"filesystem": True, "pid": True, "ipc": True, "identity": True,
                      "limits": {"cpu": 0, "memoryMiB": 0}},
             grants={"network": False, "gui": False},
-            system="aarch64-linux" if os.uname().machine in {"arm64", "aarch64"} else "x86_64-linux",
+            systems=["aarch64-linux" if os.uname().machine in {"arm64", "aarch64"} else "x86_64-linux"],
             workerCapabilities=[],
         )
     card.update(settings)

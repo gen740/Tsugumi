@@ -1,5 +1,5 @@
 {
-  "tsugumiVersion": "0.9.4",
+  "formatVersion": 1,
   "name": "Cas A · Chandra RGB",
   "nixPath": [
     {
@@ -43,28 +43,23 @@
           "port": "out"
         },
         "to": {
-          "card": "load",
-          "port": ""
+          "card": "load"
         }
       },
       {
         "from": {
-          "card": "load",
-          "port": ""
+          "card": "load"
         },
         "to": {
-          "card": "bands",
-          "port": ""
+          "card": "bands"
         }
       },
       {
         "from": {
-          "card": "bands",
-          "port": ""
+          "card": "bands"
         },
         "to": {
-          "card": "rgb",
-          "port": ""
+          "card": "rgb"
         }
       }
     ]

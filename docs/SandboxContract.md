@@ -73,14 +73,27 @@ Bubblewrap mounts those inputs read-only. On native macOS the supervisor
 clones files, and Seatbelt denies writes and metadata changes to the inputs.
 The supervisor installs created outputs under
 `.tsugumi/artifacts/<run>/<card path>/@<invocation index>/<counter>/` and
-seals each tree. Linux workers with PID isolation retire the writing process
-namespace before renaming the output. Native macOS and Linux workers without
-PID isolation snapshot the output before installing it.
+seals each tree. A fresh Linux worker is retired before its output is
+renamed into the store; with PID isolation that stops every process the Card
+started, and without it nothing is guaranteed about a process that outlives
+the call. Native macOS has no PID namespace, so it seals a `clonefile(2)`
+clone of the output: new inodes that share blocks copy-on-write, out of reach
+of any writer that outlived the call. The project must be on APFS there; on
+another filesystem the call fails instead of copying. A resident
+(`reuseWorker`) keeps running, so its outputs are also sealed as new inodes:
+a clone on macOS, and on Linux a reflink (`FICLONE`) where the filesystem has
+one and a copy otherwise. In the shared VM the store is a Mac folder seen
+through virtiofs, which has no reflinks, so a resident's outputs are copied.
 
-A call with a project artifact grant uses a fresh worker. A call that creates
-an artifact retires its worker after completion. Remote workers stage grants
-and return newly created artifacts with the result. These access guarantees
-require filesystem isolation.
+When a call returns, the supervisor removes its input and output directories
+from the worker's private artifact directory. That directory is bound once,
+at a fixed path, into the worker's sandbox, so the removal takes the paths out
+of a resident's view without remounting, and the next call's directories
+appear in the same place. Descriptors opened during a call cannot be revoked:
+a leftover input descriptor only reads data that was granted, and a leftover
+output descriptor points at an inode the sealed artifact has superseded.
+Remote workers stage grants and return newly created artifacts with the result.
+These access guarantees require filesystem isolation.
 
 ## Grants
 

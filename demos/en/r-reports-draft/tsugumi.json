@@ -1,5 +1,5 @@
 {
-  "tsugumiVersion": "0.9.4",
+  "formatVersion": 1,
   "name": "R reports: R Markdown and Quarto (Draft)",
   "nixPath": [
     {
@@ -46,48 +46,39 @@
           "port": "out"
         },
         "to": {
-          "card": "aggregate",
-          "port": ""
+          "card": "aggregate"
         }
       },
       {
         "from": {
-          "card": "rmarkdown",
-          "port": ""
+          "card": "rmarkdown"
         },
         "to": {
-          "card": "archive",
-          "port": ""
+          "card": "archive"
         }
       },
       {
         "from": {
-          "card": "quarto",
-          "port": ""
+          "card": "quarto"
         },
         "to": {
-          "card": "archive",
-          "port": ""
+          "card": "archive"
         }
       },
       {
         "from": {
-          "card": "aggregate",
-          "port": ""
+          "card": "aggregate"
         },
         "to": {
-          "card": "rmarkdown",
-          "port": ""
+          "card": "rmarkdown"
         }
       },
       {
         "from": {
-          "card": "aggregate",
-          "port": ""
+          "card": "aggregate"
         },
         "to": {
-          "card": "quarto",
-          "port": ""
+          "card": "quarto"
         }
       }
     ]

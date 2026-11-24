@@ -1,6 +1,6 @@
 # Binary caches
 
-A binary cache supplies already-built Nix store paths. Tsugumi verifies their signatures using the public keys you register. This is useful for sharing package builds through Attic, Cachix or another Nix binary cache.
+A binary cache supplies already-built Nix store paths. Tsugumi verifies their signatures using the public keys you register. This is useful for sharing package builds through Attic, Cachix or another Nix binary cache. Tsugumi's own cache server is one more such cache: see [BinaryCacheServer.md](BinaryCacheServer.md).
 
 ## Mac shared execution environment
 

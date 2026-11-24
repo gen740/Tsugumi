@@ -12,6 +12,7 @@
 #include "store.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/log.hh"
+#include "tsugumi/util/system.hh"
 #include "tsugumi/workerd/protocol.hh"
 #include "tsugumi/workerd/store.hh"
 #include "tsugumi/workerd/worker_execution.hh"
@@ -75,7 +76,8 @@ auto LocalExecutionService::prepare(const Node& node,
                  "grants.gui requires a native Linux worker with an available "
                  "GUI socket");
   static const SharedStoreDerivationTransport transport;
-  build.target = {WorkerKind::native, node.settings.system};
+  build.target = {WorkerKind::native,
+                  run_system(node.settings, native_system())};
   build.transport = &transport;
   return std::make_unique<PreparedLocalExecution>(*this);
 }
@@ -212,7 +214,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     sp.binds.push_back({source, "/host/" + f.name, f.write, f.name});
   }
 
-  sp.artifact_inputs = !artifacts.empty();
   const auto destination = service_.artifact_destination(s);
   sp.artifact_store = (state_dir / "artifacts").string();
   sp.artifact_staging = state_dir / "artifact-invocations";
@@ -231,8 +232,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
       "|" + std::to_string(build.implementation_index) + "|" + secret_version;
   for (const auto& b : sp.binds)
     key += "|" + b.source + ">" + b.target + (b.write ? "w" : "r");
-  // The sandbox must not preserve a past invocation's input descriptors.
-  const bool reuse = node.settings.reuse_worker && !sp.artifact_inputs;
+  const bool reuse = node.settings.reuse_worker;
   const auto worker_card =
       card_key + "|" + std::to_string(build.implementation_index);
   auto lease = workers_.acquire(worker_card, key, sp, reuse);
@@ -249,12 +249,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   invocation.outputs = node.outputs;
   invocation.artifact_directory = destination;
   invocation.artifact_sequence = s.artifact_sequence;
-  invocation.artifact_inputs = sp.artifact_inputs;
-#ifdef __APPLE__
-  invocation.artifact_snapshot_root = sp.artifact_staging;
-#else
-  if (!sp.sandbox.pid) invocation.artifact_snapshot_root = sp.artifact_staging;
-#endif
   invocation.grants = std::move(artifacts);
   invocation.output_budget = {node.settings.output_limit_bytes,
                               node.settings.output_limit_entries};

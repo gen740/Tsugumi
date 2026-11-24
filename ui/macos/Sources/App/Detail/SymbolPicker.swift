@@ -44,6 +44,7 @@ enum CardSymbols {
 /// Picks a Card's icon from a grid (search by words; no symbol names).
 struct SymbolPicker: View {
   @Binding var symbol: String
+  let defaultIcon: String
   @State private var open = false
   @State private var search = ""
 
@@ -52,7 +53,7 @@ struct SymbolPicker: View {
     HStack(spacing: 8) {
       Button { open = true } label: {
         HStack(spacing: 6) {
-          Image(systemName: current).frame(width: 18)
+          Image(systemName: current == "none" ? defaultIcon : current).frame(width: 18)
           Text("アイコンを選ぶ…")
         }
       }
@@ -65,6 +66,10 @@ struct SymbolPicker: View {
   private func grid(_ current: String) -> some View {
     let shown = CardSymbols.all.filter { search.isEmpty || $0.label.localizedCaseInsensitiveContains(search) }
     return VStack(alignment: .leading, spacing: 8) {
+      Button { symbol = "none"; open = false } label: {
+        Label("種類の既定", systemImage: defaultIcon)
+      }
+      .accessibilityAddTraits(current == "none" ? .isSelected : [])
       TextField("探す（例: 計算、表、画像）", text: $search).textFieldStyle(.roundedBorder)
       ScrollView {
         LazyVGrid(columns: Array(repeating: GridItem(.fixed(34), spacing: 4), count: 9), spacing: 4) {

@@ -31,7 +31,14 @@ class Scratch {
     if (!made) throw std::runtime_error("mkdtemp failed");
     path = made;
   }
-  ~Scratch() { fs::remove_all(path); }
+  ~Scratch() {
+    // Installed artifacts are sealed read-only.
+    try {
+      tsugumi::fs::clear_staging(path);
+      fs::remove(path);
+    } catch (...) {
+    }
+  }
   fs::path path;
 };
 
@@ -57,6 +64,8 @@ auto large_file(const fs::path& root, bool sparse) -> void {
     }
     expect(static_cast<bool>(file), "write large file");
   }
+  // Linux moves the staged file into the store.
+  const auto expected = sparse ? std::string() : tsugumi::fs::sha256_file(source);
   const auto check = [&](const fs::path& path) {
     expect(fs::file_size(path) == size, "staging truncated a large file");
     if (sparse) {
@@ -71,17 +80,29 @@ auto large_file(const fs::path& root, bool sparse) -> void {
       expect(file.gcount() == 4 && std::string_view(tail, 4) == "tail",
              "lost data beyond 2 GiB");
     } else {
-      expect(tsugumi::fs::sha256_file(path) == tsugumi::fs::sha256_file(source),
+      expect(tsugumi::fs::sha256_file(path) == expected,
              "staging changed file content");
     }
   };
   const int directory = ::open(output.c_str(), O_RDONLY | O_DIRECTORY);
   expect(directory >= 0, "open worker output");
-  const std::atomic<bool> cancel = false;
   const auto saved = root / "saved";
   tsugumi::fs::OutputBudget budget;
-  tsugumi::fs::copy_staging_artifact(directory, "artifact", saved, cancel, budget);
+#ifdef __APPLE__
+  // macOS installs a clone of the staged tree.
+  const auto clones = root / "clones";
+  fs::create_directory(clones);
+  tsugumi::fs::clone_staging_artifact(directory, "artifact", clones / "artifact",
+                                      budget);
   ::close(directory);
+  const int cloned = ::open(clones.c_str(), O_RDONLY | O_DIRECTORY);
+  expect(cloned >= 0, "open clones");
+  tsugumi::fs::move_staging_artifact(cloned, "artifact", saved, budget);
+  ::close(cloned);
+#else
+  tsugumi::fs::move_staging_artifact(directory, "artifact", saved, budget);
+  ::close(directory);
+#endif
   check(saved / "data");
   // The next Card can copy the forwarded artifact member as input.
   const auto next = root / "next-input";
@@ -123,31 +144,6 @@ auto shrinking_source(const fs::path& root, bool sparse) -> void {
   if (sparse)
     expect(!fs::exists(root / "failed-copy"), "published an incomplete copy");
 }
-auto transfer_progress(const fs::path& root) -> void {
-  const std::string bytes(200000, 'x');
-  tsugumi::fs::write_atomic(root / "artifact/data", bytes);
-  const int directory = ::open(root.c_str(), O_RDONLY | O_DIRECTORY);
-  expect(directory >= 0, "open progress input");
-  std::atomic<bool> cancel = false;
-  uint64_t previous = 0;
-  size_t calls = 0;
-  tsugumi::fs::OutputBudget budget;
-  tsugumi::fs::copy_staging_artifact(
-      directory, "artifact", root / "copy", cancel, budget,
-      [&](const fs::path& name, uint64_t done, uint64_t total) {
-        expect(name == "artifact/data", "progress lost the current filename");
-        expect(total == bytes.size() && done >= previous && done <= total,
-               "invalid byte progress");
-        if (!calls)
-          expect(done == 0, "progress did not announce transfer start");
-        previous = done;
-        ++calls;
-      });
-  ::close(directory);
-  expect(calls != 0 && previous == bytes.size(), "progress missed completion");
-  expect(tsugumi::fs::read_file_or_throw(root / "copy/data") == bytes,
-         "progress changed the copied file");
-}
 }  // namespace
 
 auto main(int argc, char** argv) -> int {
@@ -155,9 +151,7 @@ auto main(int argc, char** argv) -> int {
     expect(argc == 2, "expected large, sparse, shrink-stream or shrink-sparse");
     Scratch scratch;
     const std::string test = argv[1];
-    if (test == "progress")
-      transfer_progress(scratch.path);
-    else if (test == "large" || test == "sparse")
+    if (test == "large" || test == "sparse")
       large_file(scratch.path, test == "sparse");
     else if (test == "shrink-stream" || test == "shrink-sparse")
       shrinking_source(scratch.path, test == "shrink-sparse");

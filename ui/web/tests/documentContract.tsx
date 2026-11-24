@@ -18,9 +18,9 @@ assert.equal(parseReadme('---\ntitle: Results\ndescription:missing space\n---\n'
 assert.equal(parseReadme('---\ntitle: Results\ndescription: \nunknown: value\n---\n'), undefined)
 
 const executable = ['type', 'symbol', 'inputs', 'maxRuns', 'reuseWorker', 'timeoutSeconds',
-  'buildTimeoutSeconds', 'recordLogs', 'recordIO', 'sandbox', 'grants', 'system', 'workerCapabilities'].sort()
+  'buildTimeoutSeconds', 'recordLogs', 'recordIO', 'sandbox', 'grants', 'systems', 'workerCapabilities'].sort()
 for (const kind of ['code']) {
-  const def = implementedCard(kind, 'star', 'aarch64-linux')
+  const def = implementedCard(kind, 'star', ['aarch64-linux'])
   assert.deepEqual(def.keys().sort(), executable)
   assert.equal(str(get(def, 'recordIO')), 'project')
   assert.equal(str(get(def, 'recordLogs')), 'project')
@@ -36,7 +36,7 @@ for (const [kind, keys] of Object.entries({
   draft: ['type', 'symbol'],
   trigger: ['type', 'symbol'],
   subgraph: ['type', 'symbol'],
-})) assert.deepEqual(implementedCard(kind, 'star', '').keys().sort(), keys.sort())
+})) assert.deepEqual(implementedCard(kind, 'star', []).keys().sort(), keys.sort())
 assert.deepEqual(recordSettings, ['project', 'on', 'off'])
 
 const bits = toggleWorkerBit(toggleWorkerBit([], 63), 0)

@@ -1,5 +1,5 @@
 {
-  "tsugumiVersion": "0.9.4",
+  "formatVersion": 1,
   "name": "Kepler-6 b · 系外惑星トランジット",
   "nixPath": [
     {
@@ -43,28 +43,23 @@
           "port": "out"
         },
         "to": {
-          "card": "load",
-          "port": ""
+          "card": "load"
         }
       },
       {
         "from": {
-          "card": "load",
-          "port": ""
+          "card": "load"
         },
         "to": {
-          "card": "detrend",
-          "port": ""
+          "card": "detrend"
         }
       },
       {
         "from": {
-          "card": "detrend",
-          "port": ""
+          "card": "detrend"
         },
         "to": {
-          "card": "fold",
-          "port": ""
+          "card": "fold"
         }
       }
     ]

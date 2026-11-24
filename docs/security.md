@@ -47,7 +47,7 @@ There are four boundaries, from the innermost outwards.
 | Store disk | `~/Library/Application Support/Tsugumi/vm/store.img` (the Nix store shared by all projects; for a development build from source, under `Tsugumi-dev/`, and likewise below) | Yes |
 | virtiofs (per slot) | The open project's folder (`project`) and its control folder (`control`) | Yes |
 | virtiofs (same slot, only when specified) | Mac folders specified in a Card's settings (`host-<tag>`) and Mac folders attached to the chat (`chat-<tag>`) | `host-` only with `write: true`; `chat-` read-only |
-| virtiofs `rosetta` (only when Rosetta is installed) | Rosetta for Linux (`VZLinuxRosettaDirectoryShare`), for Cards with `"system": "x86_64-linux"`; registered with binfmt_misc by the VM's supervisor (`vm/guest/vm-system.nix`) | Read-only |
+| virtiofs `rosetta` (only when Rosetta is installed) | Rosetta for Linux (`VZLinuxRosettaDirectoryShare`), for Cards run as `x86_64-linux`; registered with binfmt_misc by the VM's supervisor (`vm/guest/vm-system.nix`) | Read-only |
 | vsock | The control channel (1024) and the RPC relay (1025) | — |
 | Network | NAT (`VZNATNetworkDeviceAttachment`) | — |
 
@@ -112,7 +112,7 @@ Native macOS reports partial filesystem and network guarantees through Seatbelt.
 
 The workspace and `HOME` are private to the process and survive calls of a resident worker. The worker clears temporary files between calls. Where remapping is available, `/tmp` is backed by the worker's disk scratch. With filesystem isolation enabled, the project artifact root is exposed read-only at sandbox startup. Its holding directories allow exact-name traversal and deny listing. The core checks invocation grants for `artifact_open`, and a Card that already knows an exact path can read that artifact directly. [Artifact access](SandboxContract.md#artifact-access)
 
-The worker builds the process environment at launch and fixes it for the life of the process. The Card gets no implicit shell or `PATH`; the tools a Card declares to its SDK's builder are its `PATH`, and Nix `cacert` is used for certificate verification. The worker loads the Card's `lib/main.so` and calls it through [Card ABI](CardABI.md). Created artifact directories are snapshotted and sealed read-only before passing outputs downstream. [Card ABI](CardABI.md#artifacts) A failed call keeps its failure record and discards its outputs.
+The worker builds the process environment at launch and fixes it for the life of the process. The Card gets no implicit shell or `PATH`; the tools a Card declares to its SDK's builder are its `PATH`, and Nix `cacert` is used for certificate verification. The worker loads the Card's `lib/main.so` and calls it through [Card ABI](CardABI.md). Created artifact directories are sealed read-only before passing outputs downstream. [Card ABI](CardABI.md#artifacts) A failed call keeps its failure record and discards its outputs.
 
 ### Showing Card views
 

@@ -218,7 +218,7 @@ TEST(NixPathOperation, ParamRewriteUsesTheConfirmedSourceAndRevision) {
       {"project_json",
        R"("{\"canvas\":{\"cards\":[{\"id\":\"a\"}],\"connections\":[]}}")"},
       {"definitions",
-       R"([{"id":"a","card_json":"{\"type\":\"code\",\"symbol\":\"chevron.left.forwardslash.chevron.right\",\"inputs\":[],\"maxRuns\":1,\"reuseWorker\":false,\"timeoutSeconds\":0,\"buildTimeoutSeconds\":0,\"recordLogs\":\"project\",\"recordIO\":\"project\",\"sandbox\":{\"filesystem\":true,\"pid\":true,\"ipc\":true,\"identity\":true,\"limits\":{\"cpu\":0,\"memoryMiB\":0}},\"grants\":{\"network\":false,\"gui\":false},\"system\":\"aarch64-linux\",\"workerCapabilities\":[]}"}])"},
+       R"([{"id":"a","card_json":"{\"type\":\"code\",\"symbol\":\"chevron.left.forwardslash.chevron.right\",\"inputs\":[],\"maxRuns\":1,\"reuseWorker\":false,\"timeoutSeconds\":0,\"buildTimeoutSeconds\":0,\"recordLogs\":\"project\",\"recordIO\":\"project\",\"sandbox\":{\"filesystem\":true,\"pid\":true,\"ipc\":true,\"identity\":true,\"limits\":{\"cpu\":0,\"memoryMiB\":0}},\"grants\":{\"network\":false,\"gui\":false},\"systems\":[\"aarch64-linux\"],\"workerCapabilities\":[]}"}])"},
       {"sources",
        json::Encode(std::vector<std::string>{json::Encode(json::Members{
            {"path", json::Quote("definitions/a/params.nix")},
@@ -290,19 +290,26 @@ TEST(NixPathOperation, CardCopyDoesNotCarryPinsOrBlockOnNames) {
   EXPECT_TRUE(core.calls.empty());
 }
 
+// An empty port is a Draft end, which has no port field.
 auto WirePort(const std::string& from, const std::string& to,
               const std::string& from_port, const std::string& to_port,
               const std::string& side, const std::string& value)
     -> H::ProjectFieldEditT {
-  auto edit = Field({"canvas", "connections"},
-                    json::Quote(side == "from" ? from_port : to_port),
+  const auto& old_port = side == "from" ? from_port : to_port;
+  auto edit = Field({"canvas", "connections"}, json::Quote(old_port),
                     json::Quote(value));
+  edit.old_value->present = !old_port.empty();
+  if (old_port.empty()) edit.old_value->json.clear();
+  edit.new_value->present = !value.empty();
+  if (value.empty()) edit.new_value->json.clear();
+  const auto end = [](const std::string& card, const std::string& port) {
+    json::Members members{{"card", json::Quote(card)}};
+    if (!port.empty()) members["port"] = json::Quote(port);
+    return json::Encode(members);
+  };
   auto match = std::make_unique<H::ProjectSelectorT>();
-  match->match_json = json::Encode(json::Members{
-      {"from", json::Encode(json::Members{{"card", json::Quote(from)},
-                                          {"port", json::Quote(from_port)}})},
-      {"to", json::Encode(json::Members{{"card", json::Quote(to)},
-                                        {"port", json::Quote(to_port)}})}});
+  match->match_json = json::Encode(
+      json::Members{{"from", end(from, from_port)}, {"to", end(to, to_port)}});
   edit.selector.push_back(std::move(match));
   for (const auto& key : {side, std::string("port")}) {
     auto step = std::make_unique<H::ProjectSelectorT>();
@@ -321,7 +328,7 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
   base.snapshot["rev"] = "7";
   const std::string before =
       test::FixtureProjectDocument(
-          R"({"canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":""},"to":{"card":"compare","port":""}}]}})");
+          R"({"canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn"},"to":{"card":"compare"}}]}})");
   base.files["tsugumi.json"] = before;
   base.files["definitions/knn/_card.json"] =
       R"({"type":"draft","symbol":"pencil.and.outline"})";
@@ -362,7 +369,7 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
             "\"project\",\"recordIO\":\"project\",\"sandbox\":{\"filesystem\":"
             "true,\"pid\":true,\"ipc\":true,\"identity\":true,\"limits\":{"
             "\"cpu\":0,\"memoryMiB\":0}},\"grants\":{\"network\":false,\"gui\":"
-            "false},\"system\":\"aarch64-linux\",\"workerCapabilities\":[]}"},
+            "false},\"systems\":[\"aarch64-linux\"],\"workerCapabilities\":[]}"},
         {"compare",
          "{\"type\":\"draft\",\"symbol\":\"pencil.and.outline\"}"}}) {
     DefinitionDoc definition;
@@ -423,6 +430,7 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
   EXPECT_EQ(json::Text(json::Object(saved.json), "reply"), "SaveResult");
   EXPECT_EQ(saves, 1);
 
+  edits.edits.back()->value.AsProjectFieldEdit()->old_value->present = true;
   edits.edits.back()->value.AsProjectFieldEdit()->old_value->json = "\"stale\"";
   request.body.Set(edits);
   // UI conflicts are typed replies; Agent conflicts still throw. Neither
@@ -452,7 +460,7 @@ TEST(ProjectEdit, BindsOnlyAnUnambiguousUnmentionedInputOnDraftImplementation) {
     SaveBase base;
     base.snapshot["rev"] = "7";
     base.files[prefix + "tsugumi.json"] =
-        R"({ "canvas": {"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":"out"},"to":{"card":"compare","port":""}}]} })";
+        R"({ "canvas": {"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":"out"},"to":{"card":"compare"}}]} })";
     const auto definition = prefix + "definitions/compare/_card.json";
     base.files[definition] =
         std::string(variant) == "already_code"
@@ -792,7 +800,7 @@ TEST(ProjectEdit, HostConflictsUseTheTypedOperationOutcome) {
             R"({"reply":"OperationResult","value":{"state":"unknown"}})", {}};
       EXPECT_EQ(method, "project_inspect");
       return OperationReply{
-          R"({"reply":"ProjectSnapshot","value":{"rev":0,"project_json":"{}","layout":[],"definitions":[{"id":"a","card_json":"{\"type\":\"code\",\"symbol\":\"chevron.left.forwardslash.chevron.right\",\"inputs\":[],\"maxRuns\":1,\"reuseWorker\":false,\"timeoutSeconds\":0,\"buildTimeoutSeconds\":0,\"recordLogs\":\"project\",\"recordIO\":\"project\",\"sandbox\":{\"filesystem\":true,\"pid\":true,\"ipc\":true,\"identity\":true,\"limits\":{\"cpu\":0,\"memoryMiB\":0}},\"grants\":{\"network\":false,\"gui\":false},\"system\":\"aarch64-linux\",\"workerCapabilities\":[]}","comments_json":"{\"comments\":[{\"id\":\"current\",\"text\":\"current\"}]}"}]}})",
+          R"({"reply":"ProjectSnapshot","value":{"rev":0,"project_json":"{}","layout":[],"definitions":[{"id":"a","card_json":"{\"type\":\"code\",\"symbol\":\"chevron.left.forwardslash.chevron.right\",\"inputs\":[],\"maxRuns\":1,\"reuseWorker\":false,\"timeoutSeconds\":0,\"buildTimeoutSeconds\":0,\"recordLogs\":\"project\",\"recordIO\":\"project\",\"sandbox\":{\"filesystem\":true,\"pid\":true,\"ipc\":true,\"identity\":true,\"limits\":{\"cpu\":0,\"memoryMiB\":0}},\"grants\":{\"network\":false,\"gui\":false},\"systems\":[\"aarch64-linux\"],\"workerCapabilities\":[]}","comments_json":"{\"comments\":[{\"id\":\"current\",\"text\":\"current\"}]}"}]}})",
           {}};
     };
     const auto conflict =

@@ -566,6 +566,25 @@ def test_bare_tsugumi_prints_its_usage(tmp_path):
     stop_resident_services(tmp_path)
 
 
+@needs_cli
+@pytest.mark.skipif(sys.platform != "darwin", reason="the Mac support folders")
+def test_a_build_from_source_uses_the_dev_apps_support_folder(tmp_path):
+    """Like the app built from source (AppChannel.swift), only a release shares the release app's folder."""
+    env = isolated_environment(tmp_path, TSUGUMI_WEB_ROOT=str(tmp_path / "page"), TSUGUMI_HOSTD=str(tmp_path / "hostd"))
+    for key in ("TSUGUMI_HOST_STATE", "TSUGUMI_SUPPORT_DIR", "TSUGUMI_WEB_DATA"):
+        env.pop(key)
+    (tmp_path / "page").mkdir()
+    (tmp_path / "page" / "index.html").write_text("")
+    # A stand-in host that records how it was started and never becomes ready.
+    executable(tmp_path / "hostd", f'#!/bin/sh\nprintf "%s\\n" "$@" > "{tmp_path / "args"}"\n')
+    r = subprocess.run([str(CLI), "web", "--no-browser"], capture_output=True, text=True, env=env)
+    assert r.returncode != 0 and "did not start" in r.stderr
+    args = (tmp_path / "args").read_text().splitlines()
+    support = Path(env["HOME"]) / "Library/Application Support"
+    assert args[args.index("--state-dir") + 1] == str(support / "Tsugumi-dev/host-core")
+    assert not (support / "Tsugumi").exists()
+
+
 @needs_server
 def test_a_copy_of_a_read_only_demo_can_be_edited(tmp_path):
     from contextlib import closing

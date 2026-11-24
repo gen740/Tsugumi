@@ -9,9 +9,9 @@ import { createRoot } from 'react-dom/client'
 import { pathToScreen, WireStyle } from '../model/canvas'
 import {
   applicableStages, Camera, CardGeometry, CardNodeData, fitCamera, mergeStageStatus, ParamData, PortData, Pt, Rect, Stage, StageItem, stageParts,
-  isDraftWire, StageProgress, StageStatus, union, WireRouter,
+  isDraftWire, NEW_PORT, StageProgress, StageStatus, union, WireRouter,
 } from '../model/canvasKit'
-import { cardState, formatDuration, KIND_LABEL } from '../model/session'
+import { cardIcon, cardState, formatDuration, KIND_LABEL } from '../model/session'
 import { permissionInfo, PermissionKind } from '../model/permissions'
 import { D } from '../wire/rpc'
 import { CardNodeView, drive, gridStyle, WireDraw, WireLayer } from './cardNode'
@@ -39,7 +39,7 @@ interface CardDoc {
   files: SourceFile[]
   inner?: InnerCard[]
 }
-interface WireDoc { from: string; fromPort: string; to: string; toPort: string }
+interface WireDoc { from: string; fromPort?: string; to: string; toPort?: string }
 interface NoteDoc { id: string; x: number; y: number; width: number; height: number; color: string; fontSize: number; html: string }
 interface StageRecord { phase: string; outcome: string; ms?: number | null }
 interface FinalState { state: keyof typeof D.CardState; count: number; sent: string[]; stages: StageRecord[]; ms?: number }
@@ -171,7 +171,7 @@ function phaseOf(stepOf: Map<string, number>, id: string, fr: Frame): 'before' |
 
 export function nodeData(data: DemoData, stepOf: Map<string, number>, c: CardDoc, fr: Frame): CardNodeData {
   const base: CardNodeData = {
-    title: c.title ?? c.id, kind: c.kind, symbol: c.symbol, summary: c.summary, inputs: c.inputs, outputs: c.outputs, invocation: 0n,
+    title: c.title ?? c.id, kind: c.kind, symbol: cardIcon(c.kind, c.symbol), summary: c.summary, inputs: c.inputs, outputs: c.outputs, invocation: 0n,
     runContinues: fr.mode === 'playing', errors: [], warnings: [], collapsed: false, permissions: c.permissions,
   }
   const f = data.final[c.id]
@@ -196,7 +196,7 @@ export function nodeData(data: DemoData, stepOf: Map<string, number>, c: CardDoc
 /** As Scene.style in model/canvas.ts: a value on its way moves, one that arrived stays coloured. */
 function wireStyle(data: DemoData, stepOf: Map<string, number>, w: WireDoc, fr: Frame): WireStyle {
   const f = data.final[w.from]
-  if (!f || !f.sent.includes(w.fromPort)) return 'normal'
+  if (w.fromPort === undefined || !f || !f.sent.includes(w.fromPort)) return 'normal'
   const from = phaseOf(stepOf, w.from, fr)
   if (from === 'before') return 'normal'
   if (from === 'running' && !(f.count > 1 && fr.sub >= 1) && !(fr.sub >= 2)) return 'normal'
@@ -267,11 +267,11 @@ export function Canvas({ data, frame, compact, selected, onSelect, motion, view,
 
   const z = camera.zoom
   const router = new WireRouter(data.flow, placed.map(rectOf))
-  const point = (id: string, port: string, output: boolean): Pt => {
+  const point = (id: string, port: string | undefined, output: boolean): Pt => {
     const p = byId.get(id)
     if (!p) return { x: 0, y: 0 }
-    // An empty Draft endpoint uses the Card's side anchor in this geometry.
-    const at = p.geometry.port(port, output)
+    // A Draft endpoint uses the Card's side anchor in this geometry.
+    const at = p.geometry.port(port ?? NEW_PORT, output)
     return { x: p.doc.x + at.x, y: p.doc.y + at.y }
   }
   const draws: WireDraw[] = data.wires.map((w) => ({
@@ -372,7 +372,7 @@ function SidePanel({ data, card, reached, base, onClose }: { data: DemoData; car
   return (
     <aside className="tp-panel material selectable" aria-label={L('Card {0} の中身', card.title ?? card.id)} onPointerDown={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       <header className="tp-panel-head">
-        <Icon name={card.symbol ?? 'xmark.octagon'} size={14} />
+        <Icon name={cardIcon(card.kind, card.symbol)} size={14} />
         <strong className="cv-ellipsis">{card.title ?? card.id}</strong>
         <span className="secondary caption nowrap">{KIND_LABEL[card.kind]}</span>
         <span style={{ flex: 1 }} />

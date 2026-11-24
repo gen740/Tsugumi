@@ -191,7 +191,7 @@ extension ProjectSession {
     let editing = kind == .draft && inlineDraft?.card == k
     return CardNodeData(
       title: title, kind: kind,
-      symbol: kind == .invalid ? nil : (def?["symbol"]?.string).flatMap { $0.isEmpty ? nil : $0 },
+      symbol: kind.displaySymbol(def?["symbol"]?.string),
       summary: summary, inputs: visualPorts(k, ports.inputs, output: false), outputs: visualPorts(k, outputs ?? ports.outputs, output: true),
       result: state?.transfer ?? state?.executionState?.pendingLabel ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
       state: kind == .subgraph ? compositeState(k) : canvasCardState(k), executionList: executionList, stage: empty ? nil : stageProgress(k),

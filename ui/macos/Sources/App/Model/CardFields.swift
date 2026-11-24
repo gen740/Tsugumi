@@ -4,8 +4,10 @@ enum RecordSetting: String, CaseIterable {
   case project, on, off
 }
 
+let cardSystems = ["aarch64-linux", "x86_64-linux", "aarch64-darwin", "x86_64-darwin"]
+
 /// Values written when converting a Draft in the editor.
-func implementedCard(_ kind: CardKind, symbol: String, system: String) -> JSONValue {
+func implementedCard(_ kind: CardKind, symbol: String, systems: [String]) -> JSONValue {
   var definition: JSONValue = .object([("type", .string(kind.rawValue)), ("symbol", .string(symbol))])
   if [.code, .merge, .collect].contains(kind) {
     definition["maxRuns"] = .number("1")
@@ -25,7 +27,7 @@ func implementedCard(_ kind: CardKind, symbol: String, system: String) -> JSONVa
       ("limits", .object([("cpu", .number("0")), ("memoryMiB", .number("0"))])),
     ])
     definition["grants"] = .object([("network", .bool(false)), ("gui", .bool(false))])
-    definition["system"] = .string(system)
+    definition["systems"] = .array(systems.map(JSONValue.string))
     definition["workerCapabilities"] = .array([])
   }
   return definition

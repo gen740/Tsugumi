@@ -19,6 +19,10 @@ enum CardKind: String {
     types.first { $0.rawValue == name } ?? .invalid
   }
 
+  func displaySymbol(_ custom: String?) -> String {
+    guard self != .invalid, let custom, !custom.isEmpty, custom != "none" else { return symbol }
+    return custom
+  }
 
   var label: String {
     switch self {
@@ -48,6 +52,10 @@ enum CardKind: String {
 /// A Card’s kind comes from its _card.json type.
 func definitionKind(_ def: JSONValue?) -> CardKind {
   CardKind.named(def?["type"]?.string)
+}
+
+func definitionIcon(_ def: JSONValue?) -> String {
+  definitionKind(def).displaySymbol(def?["symbol"]?.string)
 }
 
 /// What a new Card starts from: a built-in Card or a scaffold. Every Card
@@ -587,10 +595,10 @@ extension ProjectSession {
       return c
     }
     scene.wires = connections(in: scope).compactMap { c in
-      guard let f = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
-            let t = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { return nil }
+      guard let from = c["from"]?["card"]?.string, let to = c["to"]?["card"]?.string else { return nil }
       let w = Tsugumi_Host_LayoutWireT()
-      w.from = f; w.fromPort = fp; w.to = t; w.toPort = tp
+      w.from = from; w.fromPort = c["from"]?["port"]?.string ?? ""
+      w.to = to; w.toPort = c["to"]?["port"]?.string ?? ""
       return w
     }
     scene.notes = notes(in: scope).compactMap { n in
@@ -603,9 +611,10 @@ extension ProjectSession {
     func bar(_ side: String) -> Tsugumi_Host_LayoutBarT? {
       guard !scope.isEmpty else { return nil }
       let b = Tsugumi_Host_LayoutBarT()
-      b.ends = (boundary(key(scope))?[side]?.object ?? []).map { name, endpoint in
+      b.ends = (boundary(key(scope))?[side]?.object ?? []).compactMap { name, endpoint in
+        guard let card = endpoint["card"]?.string, let port = endpoint["port"]?.string else { return nil }
         let e = Tsugumi_Host_LayoutBarEndT()
-        e.name = name; e.card = endpoint["card"]?.string ?? ""; e.port = endpoint["port"]?.string ?? ""
+        e.name = name; e.card = card; e.port = port
         return e
       }
       let at = boundaryPosition(scope, side)

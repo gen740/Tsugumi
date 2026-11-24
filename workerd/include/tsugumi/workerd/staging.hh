@@ -2,16 +2,12 @@
 // removal.
 #pragma once
 
-#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <string_view>
 
 namespace tsugumi::fs {
-using TransferProgress =
-    std::function<void(const std::filesystem::path&, uint64_t, uint64_t)>;
-
 // Empty an existing directory without replacing it (it may be mounted in a
 // resident worker). Follow no symlinks. Restore owner permissions on opened
 // directories, since Cards can copy read-only trees from the Nix store.
@@ -30,12 +26,21 @@ struct OutputBudget {
   uint64_t entries = 1000;
 };
 
-// Copy a new artifact directory from the pinned staging directory. The
-// artifact name is a single component and links inside it are rejected.
-auto copy_staging_artifact(int staging, const std::filesystem::path& name,
-                           const std::filesystem::path& destination,
-                           const std::atomic<bool>& cancel, OutputBudget& budget,
-                           const TransferProgress& progress = {}) -> void;
+// Clone a new artifact directory from the pinned staging directory. Each file
+// of the clone is a new inode, so a writer that outlived the call cannot
+// change it. macOS uses clonefile(2), which shares blocks copy-on-write and
+// needs the destination on the same APFS volume; another filesystem fails the
+// transfer. Linux uses a reflink (FICLONE) where the filesystem supports one
+// and copies the file otherwise. The artifact name is a single component, and
+// links inside it are rejected. The budget is checked, not consumed.
+auto clone_staging_artifact(int staging, const std::filesystem::path& name,
+                            const std::filesystem::path& destination,
+                            OutputBudget budget) -> void;
+
+// Remove an artifact directory from the pinned staging directory without
+// following links. Throws std::system_error like clear_staging.
+auto remove_staging_artifact(int staging, const std::filesystem::path& name)
+    -> void;
 
 // Materialize the granted tree in a directory writable only by the supervisor.
 auto link_artifact(const std::filesystem::path& source,

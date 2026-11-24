@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { api, FolderListing } from '../api'
 import { app } from '../model/app'
 import { useObserve } from '../model/observable'
-import { CardKey, cardState, errorText, key, KIND_LABEL, path, ProjectSession } from '../model/session'
+import { CardKey, cardState, definitionIcon, errorText, key, KIND_LABEL, path, ProjectSession } from '../model/session'
 import { canvasFor } from '../model/canvas'
 import { Workspace, WorkflowTab } from '../model/workspace'
 import { arr, get, str } from '../../shared/json'
@@ -126,12 +126,12 @@ function Definitions({ session, tab }: { session: ProjectSession; tab: WorkflowT
             <TreeHead open={isOpen(prefix)} onToggle={() => toggle(prefix)} icon="shippingbox" label={name} />
             {isOpen(prefix) && (
               <>
-                <DefinitionRow session={session} icon={str(get(session.definitions.get(subgraph), 'symbol')) ?? 'xmark.octagon'} title={L('{0} 全体（Card in Card）', name)} drag={EXTERNAL_DRAG + prefix}
+                <DefinitionRow session={session} icon={definitionIcon(session.definitions.get(subgraph))} title={L('{0} 全体（Card in Card）', name)} drag={EXTERNAL_DRAG + prefix}
                   help={L('このプロジェクト全体のコピーを Card in Card として置きます')} onAdd={() => void placeExternal(prefix)} />
                 {ids.map((id) => {
                   const d = e?.definitions.get(id)
                   return (
-                    <DefinitionRow key={id} session={session} icon={str(get(d?.card, 'symbol')) ?? 'xmark.octagon'} title={session.displayName(key([subgraph, id]))}
+                    <DefinitionRow key={id} session={session} icon={definitionIcon(d?.card)} title={session.displayName(key([subgraph, id]))}
                       drag={EXTERNAL_DEFINITION_DRAG + prefix + '\n' + id} help={L('定義をこのプロジェクトの definitions にコピーして Card を置きます')}
                       onAdd={() => void placeCopy(prefix, id)} />
                   )
@@ -145,7 +145,7 @@ function Definitions({ session, tab }: { session: ProjectSession; tab: WorkflowT
         <div>
           <TreeHead open={isOpen('unplaced')} onToggle={() => toggle('unplaced')} icon="tray" label={L('配置されていない定義')} secondary />
           {isOpen('unplaced') && unplaced.map((id) => (
-            <DefinitionRow key={id} session={session} icon={str(get(session.definitions.get(id), 'symbol')) ?? 'xmark.octagon'} title={session.displayName(key([id]))} drag={DEFINITION_DRAG + id}
+            <DefinitionRow key={id} session={session} icon={definitionIcon(session.definitions.get(id))} title={session.displayName(key([id]))} drag={DEFINITION_DRAG + id}
               help={L('ダブルクリックまたは Canvas へドラッグして配置')} onAdd={() => place(id)}
               menu={[
                 { label: L('Canvas に配置'), action: () => place(id), disabled: !session.isEditable },
@@ -260,7 +260,7 @@ function VisibleCardRow({ session, tab, cardKey, indent }: { session: ProjectSes
         tab.setSelection([cardKey])
         canvasFor(session, tab).reveal(cardKey)
       }}>
-      <Icon name={str(get(session.cardDefinition(cardKey), 'symbol')) ?? 'xmark.octagon'} className={selected ? '' : 'secondary'} size={13} />
+      <Icon name={definitionIcon(session.cardDefinition(cardKey))} className={selected ? '' : 'secondary'} size={13} />
       <span className="ellipsis flex1">{session.displayName(cardKey)}</span>
       {errors > 0 && <Icon name="exclamationmark.triangle.fill" style={{ color: 'var(--yellow)' }} title={L('問題 {0} 件', errors)} />}
       {st && cs && (

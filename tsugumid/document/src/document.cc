@@ -56,7 +56,6 @@ bool valid_id(const std::string& id) {
   return true;
 }
 
-const char* const kTsugumiVersion = TSUGUMI_VERSION_TEXT;
 
 bool valid_name(std::string_view name) {
   if (name.empty() || name.size() > 64 || name[0] < 'a' || name[0] > 'z')
@@ -251,8 +250,7 @@ void check_graph_shape(const D::Graph& g, const std::string& where) {
   for (const auto* wire : *g.connections()) {
     for (const auto* end : {wire->from(), wire->to()}) {
       check_name(end->card()->string_view(), where + ".connections card");
-      // A wire to a Draft may end on the Card itself, with no port.
-      if (end->port()->size())
+      if (end->port())
         check_name(end->port()->string_view(), where + ".connections port");
     }
   }
@@ -268,8 +266,7 @@ void check_boundary(const D::Project& p, const std::string& where) {
     for (const auto* port : *side) {
       check_name(port->name()->string_view(), where + " boundary name");
       check_name(port->card()->string_view(), where + " boundary card");
-      if (port->port()->size())
-        check_name(port->port()->string_view(), where + " boundary port");
+      check_name(port->port()->string_view(), where + " boundary port");
       if (!names.insert(port->name()->str()).second)
         invalid(where + " boundary: duplicate port " + port->name()->str());
     }
@@ -318,7 +315,7 @@ auto initial_project_json(const std::string& name,
   for (const auto& path : agent_exclude)
     exclude += (exclude.empty() ? "" : ",") + json::Quote(path);
   return parse_project_json(
-             "{\"tsugumiVersion\":" + json::Quote(kTsugumiVersion) +
+             "{\"formatVersion\":" + std::to_string(kProjectFormatVersion) +
              ",\"name\":" + json::Quote(name) +
              R"(,"nixPath":[],"trackedPaths":[],"agentExclude":[)" + exclude +
              R"(],"recordLogs":true,"recordIO":false,"logLimitBytes":)" +
@@ -366,10 +363,16 @@ auto parse_external_project(const std::string& rel, const std::string& text)
     -> ParsedDocument {
   auto doc = parsed(Schema::Project, rel, text);
   const auto& p = document_text::root<D::Project>(doc.buffer);
-  const auto saved_version = p.tsugumiVersion()->str();
-  if (saved_version != kTsugumiVersion)
-    invalid(rel + " was saved by Tsugumi " + saved_version +
-                "; this is Tsugumi " + kTsugumiVersion +
+  require_field(p.formatVersion().has_value(), rel, "formatVersion");
+  // The check is on the file format, not on the Tsugumi version that wrote the
+  // project. Tsugumi is designed so that the same project gives the same
+  // processing on any version, so the app version that ran it does not
+  // matter; only the format of the files does. Checking the app version would
+  // also force rewriting every demo, template and fixture on each release.
+  if (*p.formatVersion() != kProjectFormatVersion)
+    invalid(rel + " has project format " +
+                std::to_string(*p.formatVersion()) + "; this Tsugumi reads " +
+                "format " + std::to_string(kProjectFormatVersion) +
                 "; there is no migration before v1.0",
             {{"path", rel}});
   require_field(p.recordLogs().has_value(), rel, "recordLogs");
@@ -407,7 +410,7 @@ auto parse_card_json(const std::string& id, const std::string& text,
   }
   if (executable)
     required.insert({"reuseWorker", "timeoutSeconds", "buildTimeoutSeconds",
-                     "recordLogs", "sandbox", "grants", "system",
+                     "recordLogs", "sandbox", "grants", "systems",
                      "workerCapabilities"});
   for (const auto field : required)
     require_field(json::Get(fields, field) != "null", rel, field);
@@ -489,11 +492,20 @@ auto parse_card_json(const std::string& id, const std::string& text,
           invalid(rel + ": duplicate grants.hostPaths variable for " + name);
       }
     }
-    const auto system = card.system()->string_view();
-    if (system != "x86_64-linux" && system != "aarch64-linux" &&
-        system != native_system())
-      invalid(rel + ": system must be x86_64-linux, aarch64-linux or " +
-              native_system());
+    if (card.systems()->size() == 0)
+      invalid(rel + ": systems needs at least one entry", {{"path", rel}});
+    std::set<std::string_view> systems;
+    for (const auto* entry : *card.systems()) {
+      const auto system = entry->string_view();
+      if (system != "x86_64-linux" && system != "aarch64-linux" &&
+          system != "x86_64-darwin" && system != "aarch64-darwin")
+        invalid(rel + ": systems entries must be x86_64-linux, aarch64-linux, "
+                      "x86_64-darwin or aarch64-darwin",
+                {{"path", rel}});
+      if (!systems.insert(system).second)
+        invalid(rel + ": duplicate systems entry " + std::string(system),
+                {{"path", rel}});
+    }
     std::set<uint8_t> bits;
     for (auto bit : *card.workerCapabilities()) {
       if (bit >= 64)
@@ -616,8 +628,27 @@ auto check_scope(const Document& doc, const D::Project& project,
       if (!cards.contains(card))
         invalid(prefix + "connection refers to unknown card " + card,
                 {{"card", card}});
+      // A Draft has no named ports: a wire ends on the Draft itself.
+      const bool draft = cards.at(card) == D::CardType::draft;
+      if (draft && ep->port())
+        invalid(prefix + "a connection end on Draft " + card +
+                    " must not name a port",
+                {{"card", card}});
+      if (!draft && !ep->port())
+        invalid(prefix + "a connection end on " + card + " needs a port",
+                {{"card", card}});
     }
   }
+  if (const auto* boundary = project.boundary())
+    for (const auto* side : {boundary->inputs(), boundary->outputs()})
+      for (const auto* port : *side) {
+        const auto it = cards.find(port->card()->str());
+        if (it != cards.end() && it->second == D::CardType::draft)
+          invalid(prefix + "boundary " + port->name()->str() +
+                      " is on Draft " + it->first +
+                      ", which has no ports",
+                  {{"card", it->first}});
+      }
   for (const auto& id : folders_at(doc, root, externals)) {
     check_name(id, externals + " folder name");
     if (!cards.contains(id) || cards.at(id) != D::CardType::subgraph)

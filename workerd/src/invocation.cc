@@ -361,7 +361,6 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
       grants.push_back({std::move(id), source.string()});
     }
   }
-  spawn.artifact_inputs = !grants.empty();
   stdfs::create_directories(outputs_root);
   auto worker = std::make_unique<WorkerProc>(spawn);
   InvocationDisplay display(worker->view_receiver());
@@ -374,7 +373,6 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   request.outputs = std::move(outputs);
   request.artifact_directory = outputs_root;
   request.artifact_sequence = call.invocation_sequence();
-  request.artifact_inputs = spawn.artifact_inputs;
   request.grants = std::move(grants);
   request.output_budget = {job.output_limit_bytes, job.output_limit_entries};
   if (call.deadline_ms()) request.timeout_ms = *call.deadline_ms();

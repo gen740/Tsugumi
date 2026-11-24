@@ -57,7 +57,7 @@ func batchExecutionUsesRecordedWireCountsAndSelectsExactInvocations(count: Int) 
   #else
   let native = "x86_64-darwin"
   #endif
-  var definition = implementedCard(.code, symbol: CardKind.code.symbol, system: native)
+  var definition = implementedCard(.code, symbol: CardKind.code.symbol, systems: [native])
   definition["sandbox"]?["filesystem"] = .bool(false)
   definition["recordIO"] = .string("on")
   try Data(definition.serialized().utf8)

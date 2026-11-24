@@ -237,25 +237,22 @@ TEST_F(DocumentStorage, PortAndParamDiagnosticsNameWhatFixesThem) {
   EXPECT_TRUE(param);
 }
 TEST_F(DocumentStorage,
-       AnEmptyEndOnAnImplementedCardAsksForAPortNotAnInputsEntry) {
+       AnEndWithoutAPortOnAnImplementedCardIsALoadError) {
   fs::write_atomic(
       root / "tsugumi.json",
       test::project_json(
-          R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":""}}]}})"));
+          R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b"}}]}})"));
   test::write_card(root / "definitions/b/_card.json",
                    test::card_json(R"({"type":"code"})"));
   Store store({root, ""});
-  store.open();
-  const auto* node = store.current()->resolution->find({"b"});
-  ASSERT_NE(node, nullptr);
-  bool port = false;
-  for (const auto& d : node->diags)
-    if (d.code == "unknown_port") {
-      port = true;
-      EXPECT_EQ(d.message.find("{\"name\": \"\"}"), std::string::npos)
-          << d.message;
-    }
-  EXPECT_TRUE(port);
+  try {
+    store.open();
+    FAIL() << "a port-less end on a Code Card must not load";
+  } catch (const std::exception& error) {
+    EXPECT_NE(std::string_view(error.what()).find("needs a port"),
+              std::string_view::npos)
+        << error.what();
+  }
 }
 TEST_F(DocumentStorage, ProjectNameDoesNotChangeExecution) {
   Store store({root, ""});
@@ -371,7 +368,7 @@ TEST_F(DocumentStorage, ASecondWireSuggestsMerge) {
       root / "tsugumi.json",
       test::project_json(
           R"({"nixPath":[],"canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"sink"}],"connections":[
-    {"from":{"card":"plan","port":""},"to":{"card":"sink","port":"in"}},
+    {"from":{"card":"plan"},"to":{"card":"sink","port":"in"}},
     {"from":{"card":"start","port":"out"},"to":{"card":"sink","port":"in"}}
   ]}})"));
   test::write_card(root / "definitions/plan/_card.json",
@@ -393,8 +390,8 @@ TEST_F(DocumentStorage,
        ImplementingRequiresExplicitInputAndOutputInTheSameSave) {
   const std::string project = test::project_json(
       R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"next"}],"connections":[
-    {"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},
-    {"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}
+    {"from":{"card":"start","port":"out"},"to":{"card":"plan"}},
+    {"from":{"card":"plan"},"to":{"card":"next"}}
   ]}})");
   fs::write_atomic(root / "tsugumi.json", project);
   test::write_card(root / "definitions/plan/_card.json",
@@ -413,7 +410,7 @@ TEST_F(DocumentStorage,
     commit(store, {implementation});
     FAIL() << "Even the only input must be stated";
   } catch (const Failed& error) {
-    EXPECT_EQ(error.failure.kind, FailureKind::validation_failed);
+    EXPECT_EQ(error.failure.kind, FailureKind::invalid_document);
   }
   EXPECT_EQ(store.current(), before);
   EXPECT_EQ(fs::read_file(root / "definitions/plan/_card.json"),
@@ -421,69 +418,49 @@ TEST_F(DocumentStorage,
   ChangeIn wiring{};
   wiring.kind = ChangeIn::Kind::SetProject;
   wiring.json = project;
-  const auto input = wiring.json.find(R"("card":"plan","port":"")");
-  wiring.json.replace(input, std::string(R"("card":"plan","port":"")").size(),
-                      R"("card":"plan","port":"in")");
+  const auto input = wiring.json.find(R"("card":"plan"})");
+  wiring.json.replace(input, std::string(R"("card":"plan"})").size(),
+                      R"("card":"plan","port":"in"})");
   try {
     commit(store, {implementation, wiring});
     FAIL() << "The output must also be stated";
   } catch (const Failed& error) {
-    EXPECT_EQ(error.failure.kind, FailureKind::validation_failed);
+    EXPECT_EQ(error.failure.kind, FailureKind::invalid_document);
   }
-  const auto output = wiring.json.find(R"("card":"plan","port":"")");
-  wiring.json.replace(output, std::string(R"("card":"plan","port":"")").size(),
-                      R"("card":"plan","port":"out")");
+  const auto output = wiring.json.find(R"("card":"plan"})");
+  wiring.json.replace(output, std::string(R"("card":"plan"})").size(),
+                      R"("card":"plan","port":"out"})");
   auto after = commit(store, {implementation, wiring});
   EXPECT_EQ(after->resolution->edges.size(), 2);
   EXPECT_EQ(after->resolution->find({"plan"})->kind, CardType::Collect);
   EXPECT_TRUE(after->resolution->find({"next"})->inputs.empty());
 }
 
-TEST_F(DocumentStorage, NestedImplementationRebindsBoundaryEndsAtomically) {
+TEST_F(DocumentStorage, ADraftCannotBeOnABoundary) {
   fs::write_atomic(
       root / "tsugumi.json",
       test::project_json(
-          R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"outer"},{"id":"next"}],"connections":[
-    {"from":{"card":"start","port":"out"},"to":{"card":"outer","port":"in"}},
-    {"from":{"card":"outer","port":"out"},"to":{"card":"next","port":""}}
-  ]}})"));
+          R"({"nixPath": [],"canvas":{"cards":[{"id":"outer"}],"connections":[]}})"));
+  std::filesystem::remove_all(root / "definitions/start");
   test::write_card(root / "definitions/outer/_card.json",
                    test::card_json(R"({"type":"subgraph"})"));
-  test::write_card(root / "definitions/next/_card.json",
-                   test::card_json(R"({"type":"draft"})"));
   fs::write_atomic(
       root / "externals/outer/tsugumi.json",
       test::project_json(
-          R"({"canvas":{"cards":[{"id":"plan"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"plan","port":""}],"outputs":[{"name":"out","card":"plan","port":""}]}})"));
+          R"({"canvas":{"cards":[{"id":"plan"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"plan","port":"in"}],"outputs":[]}})"));
   test::write_card(root / "externals/outer/definitions/plan/_card.json",
                    test::card_json(R"({"type":"draft"})"));
+  fs::write_atomic(root / "externals/outer/definitions/plan/README.md",
+                   test::readme("plan"));
   Store store({root, ""});
-  store.open();
-  ASSERT_EQ(store.current()->resolution->edges.size(), 2);
-  ChangeIn implementation{};
-  implementation.kind = ChangeIn::Kind::PutSource;
-  implementation.path = "externals/outer/definitions/plan/_card.json";
-  implementation.base_hash =
-      store.current()->sources.at(implementation.path).hash;
-  implementation.bytes = test::card_json(R"({"type":"collect"})");
   try {
-    commit(store, {implementation});
-    FAIL();
-  } catch (const Failed& error) {
-    EXPECT_EQ(error.failure.kind, FailureKind::validation_failed);
+    store.open();
+    FAIL() << "a boundary on a Draft must not load";
+  } catch (const std::exception& error) {
+    EXPECT_NE(std::string_view(error.what()).find("which has no ports"),
+              std::string_view::npos)
+        << error.what();
   }
-  EXPECT_EQ(store.current()->resolution->find({"outer", "plan"})->kind,
-            CardType::Draft);
-  ChangeIn wiring{};
-  wiring.kind = ChangeIn::Kind::PutSource;
-  wiring.path = "externals/outer/tsugumi.json";
-  wiring.base_hash = store.current()->sources.at(wiring.path).hash;
-  wiring.bytes = test::project_json(
-      R"({"canvas":{"cards":[{"id":"plan"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"plan","port":"in"}],"outputs":[{"name":"out","card":"plan","port":"out"}]}})");
-  const auto after = commit(store, {implementation, wiring});
-  EXPECT_EQ(after->resolution->edges.size(), 2);
-  EXPECT_EQ(after->resolution->find({"outer", "plan"})->kind,
-            CardType::Collect);
 }
 
 TEST_F(DocumentStorage, NamedDraftEndIsRejectedAndIdentifiesTheWire) {
@@ -501,7 +478,7 @@ TEST_F(DocumentStorage, NamedDraftEndIsRejectedAndIdentifiesTheWire) {
     commit(store, {wiring});
     FAIL();
   } catch (const Failed& error) {
-    EXPECT_EQ(error.failure.kind, FailureKind::validation_failed);
+    EXPECT_EQ(error.failure.kind, FailureKind::invalid_document);
   }
 }
 }  // namespace

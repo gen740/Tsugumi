@@ -157,15 +157,15 @@ auto BuiltinCard(H::BuiltinCard kind, const std::string& id) -> TemplateFiles {
   };
   switch (kind) {
     case H::BuiltinCard::Draft:
-      return card(R"({"type":"draft","symbol":"pencil.and.outline"})");
+      return card(R"({"type":"draft","symbol":"none"})");
     case H::BuiltinCard::Trigger:
-      return card(R"({"type":"trigger","symbol":"play.circle"})");
+      return card(R"({"type":"trigger","symbol":"none"})");
     case H::BuiltinCard::Merge:
       return card(
-          R"({"type":"merge","symbol":"arrow.triangle.merge","inputs":[{"name":"a"},{"name":"b"}],"maxRuns":1,"recordIO":"project"})");
+          R"({"type":"merge","symbol":"none","inputs":[{"name":"a"},{"name":"b"}],"maxRuns":1,"recordIO":"project"})");
     case H::BuiltinCard::Collect:
       return card(
-          R"({"type":"collect","symbol":"line.3.horizontal.decrease","maxRuns":1,"recordIO":"project"})");
+          R"({"type":"collect","symbol":"none","maxRuns":1,"recordIO":"project"})");
   }
   throw Failure("invalid_request", "Unknown built-in Card kind");
 }

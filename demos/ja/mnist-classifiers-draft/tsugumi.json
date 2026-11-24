@@ -1,5 +1,5 @@
 {
-  "tsugumiVersion": "0.9.4",
+  "formatVersion": 1,
   "name": "MNIST · 手書き数字の分類器くらべ",
   "nixPath": [
     {
@@ -84,38 +84,15 @@
           "port": "subset"
         },
         "to": {
-          "card": "knn",
-          "port": ""
+          "card": "knn"
         }
       },
       {
         "from": {
-          "card": "knn",
-          "port": ""
+          "card": "knn"
         },
         "to": {
-          "card": "compare",
-          "port": ""
-        }
-      },
-      {
-        "from": {
-          "card": "prepare",
-          "port": "subset"
-        },
-        "to": {
-          "card": "logistic",
-          "port": ""
-        }
-      },
-      {
-        "from": {
-          "card": "logistic",
-          "port": ""
-        },
-        "to": {
-          "card": "compare",
-          "port": ""
+          "card": "compare"
         }
       },
       {
@@ -124,38 +101,15 @@
           "port": "subset"
         },
         "to": {
-          "card": "svm",
-          "port": ""
+          "card": "logistic"
         }
       },
       {
         "from": {
-          "card": "svm",
-          "port": ""
+          "card": "logistic"
         },
         "to": {
-          "card": "compare",
-          "port": ""
-        }
-      },
-      {
-        "from": {
-          "card": "prepare",
-          "port": "subset"
-        },
-        "to": {
-          "card": "forest",
-          "port": ""
-        }
-      },
-      {
-        "from": {
-          "card": "forest",
-          "port": ""
-        },
-        "to": {
-          "card": "compare",
-          "port": ""
+          "card": "compare"
         }
       },
       {
@@ -164,38 +118,15 @@
           "port": "subset"
         },
         "to": {
-          "card": "boosting",
-          "port": ""
+          "card": "svm"
         }
       },
       {
         "from": {
-          "card": "boosting",
-          "port": ""
+          "card": "svm"
         },
         "to": {
-          "card": "compare",
-          "port": ""
-        }
-      },
-      {
-        "from": {
-          "card": "prepare",
-          "port": "subset"
-        },
-        "to": {
-          "card": "mlp",
-          "port": ""
-        }
-      },
-      {
-        "from": {
-          "card": "mlp",
-          "port": ""
-        },
-        "to": {
-          "card": "compare",
-          "port": ""
+          "card": "compare"
         }
       },
       {
@@ -204,18 +135,15 @@
           "port": "subset"
         },
         "to": {
-          "card": "cnn",
-          "port": ""
+          "card": "forest"
         }
       },
       {
         "from": {
-          "card": "cnn",
-          "port": ""
+          "card": "forest"
         },
         "to": {
-          "card": "compare",
-          "port": ""
+          "card": "compare"
         }
       },
       {
@@ -224,8 +152,58 @@
           "port": "subset"
         },
         "to": {
-          "card": "compare",
-          "port": ""
+          "card": "boosting"
+        }
+      },
+      {
+        "from": {
+          "card": "boosting"
+        },
+        "to": {
+          "card": "compare"
+        }
+      },
+      {
+        "from": {
+          "card": "prepare",
+          "port": "subset"
+        },
+        "to": {
+          "card": "mlp"
+        }
+      },
+      {
+        "from": {
+          "card": "mlp"
+        },
+        "to": {
+          "card": "compare"
+        }
+      },
+      {
+        "from": {
+          "card": "prepare",
+          "port": "subset"
+        },
+        "to": {
+          "card": "cnn"
+        }
+      },
+      {
+        "from": {
+          "card": "cnn"
+        },
+        "to": {
+          "card": "compare"
+        }
+      },
+      {
+        "from": {
+          "card": "prepare",
+          "port": "subset"
+        },
+        "to": {
+          "card": "compare"
         }
       }
     ]

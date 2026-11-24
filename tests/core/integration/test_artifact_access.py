@@ -102,3 +102,25 @@ def test_invocation_can_open_only_its_read_only_artifact_grants(core_factory, pr
                               restrictToRunIds=True, runIds=[run_id])
         assert removed.deletedRuns == 1
         assert not run_root.exists()
+
+
+@pytest.mark.environment
+@pytest.mark.skipif(sys.platform != "linux", reason="macOS seals clones")
+def test_without_pid_isolation_outputs_are_renamed(core_factory, project):
+    """With PID isolation off nothing is guaranteed about lingering writers,
+    so the staged tree is renamed into the store as it is."""
+    source = native_card(r"""
+        tsugumi_artifact_id id;
+        const auto directory = fs::path(create_artifact(call, id));
+        std::ofstream(directory / "report.txt") << "renamed";
+        struct stat status{};
+        if (stat((directory / "report.txt").c_str(), &status) != 0) return 1;
+        std::ofstream(directory / "inode") << status.st_ino;
+        out.artifact(id);
+    """, outputs=DIRECTORY, sandbox={"pid": False})
+    write_nix_project(project, {"source": source}, [card("source", "source")], [])
+    client = core_factory(project_root=project).connect()
+    run_id, status = run_and_wait(client, "source")
+    assert status.state == RunState.succeeded, log(client, run_id, "source")
+    saved = project.resolve() / ".tsugumi/artifacts" / run_id / "source/@1/0"
+    assert (saved / "report.txt").stat().st_ino == int((saved / "inode").read_text())

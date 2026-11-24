@@ -279,8 +279,8 @@ auto NixRunner::declared_views(const BuildRequest& req)
   view_request.target = {WorkerKind::native, native_system()};
   view_request.transport = &transport;
   // Exported projects get their declarations from the prepared plan.
-  if (prepared_ && !req.node->settings.system.empty())
-    view_request.target.system = req.node->settings.system;
+  if (prepared_ && !req.node->settings.systems.empty())
+    view_request.target.system = run_system(req.node->settings, native_system());
   return build_plan(view_request, !prepared_).common.views;
 }
 
@@ -328,21 +328,38 @@ auto NixRunner::configure_call(NixCall& call, const Document& doc,
       return files;
     });
 
-    std::vector<std::string> deps;
+    // inputs.<name>: the exports of one or more Cards, merged.
+    std::map<std::string, std::vector<std::string>> merged;
     for (const auto& ref : owner.nix_references)
-      deps.push_back(json::Quote(ref.name));
+      merged[ref.name].push_back(json::Quote(path_key(ref.target)));
+    std::vector<std::string> deps;
+    for (const auto& [name, keys] : merged)
+      deps.push_back(json::Encode(json::Members{
+          {"name", json::Quote(name)}, {"keys", json::Encode(keys)}}));
     call.definitions.push_back({definition.string(), card});
     key.update(digest);
     key.update(json::Encode(deps));
-    return {{"id", json::Quote(owner.path.back())},
+    return {{"key", json::Quote(card)},
             {"definition", json::Quote(definition.string())},
             {"deps", json::Encode(deps)}};
   };
 
   const auto self = prepare(node);
+  // Every Card whose exports reach this one, directly or through the Cards it
+  // reads from.
   std::vector<std::string> cards;
-  for (const auto& ref : node.nix_references)
-    cards.push_back(json::Encode(prepare(*graph.find(ref.target))));
+  std::set<std::string> seen;
+  std::vector<const Node*> pending{&node};
+  while (!pending.empty()) {
+    const auto* owner = pending.back();
+    pending.pop_back();
+    for (const auto& ref : owner->nix_references) {
+      if (!seen.insert(path_key(ref.target)).second) continue;
+      const auto* target = graph.find(ref.target);
+      cards.push_back(json::Encode(prepare(*target)));
+      pending.push_back(target);
+    }
+  }
   call.definition_dir = json::Text(self, "definition");
   call.card = path_key(node.path);
   call.args =
