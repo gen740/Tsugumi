@@ -4,23 +4,18 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <exception>
 #include <initializer_list>
-#include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "tsugumi_view_host.h"
-
-#if __has_include("webgpu_imports.gen.h")
 #include "webgpu_imports.gen.h"
-#else
-#include "imports_stub.hh"
-#endif
 
 namespace {
 
@@ -170,10 +165,13 @@ auto dawn_message(WGPUStringView message) -> std::string_view {
 }
 
 auto wait_for(WGPUInstance instance, WGPUFuture future) -> void {
+  constexpr uint64_t kWaitNanoseconds = 1'000'000'000;
   WGPUFutureWaitInfo wait{future, false};
-  if (wgpuInstanceWaitAny(instance, 1, &wait,
-                          std::numeric_limits<uint64_t>::max()) !=
-      WGPUWaitStatus_Success) {
+  WGPUWaitStatus status;
+  do {
+    status = wgpuInstanceWaitAny(instance, 1, &wait, kWaitNanoseconds);
+  } while (status == WGPUWaitStatus_TimedOut);
+  if (status != WGPUWaitStatus_Success) {
     throw TrapError("Dawn could not wait for the request");
   }
 }
@@ -196,6 +194,7 @@ const Export kPointer{"tsugumi_view_pointer",
 const Export kKey{"tsugumi_view_key", {I32, I32, I32}};
 
 struct Gpu {
+  mutable std::mutex error_mutex;
   std::string error;
   Owned<WGPUInstanceImpl, wgpuInstanceRelease> instance;
   Owned<WGPUSurfaceImpl, wgpuSurfaceRelease> surface;
@@ -227,13 +226,18 @@ struct Gpu {
   auto record_error(std::string_view prefix, WGPUStringView message) noexcept
       -> void {
     try {
-      if (error.empty()) {
-        error = prefix;
-        error += dawn_message(message);
-      }
+      // Dawn's uncaptured-error callback can be spontaneous.
+      const std::lock_guard lock(error_mutex);
+      if (error.empty())
+        error = std::string(prefix).append(dawn_message(message));
     } catch (const std::exception&) {
       // Never unwind across a Dawn callback.
     }
+  }
+
+  auto first_error() const -> const char* {
+    const std::lock_guard lock(error_mutex);
+    return error.empty() ? nullptr : error.c_str();
   }
 
   auto open(void* layer) -> void {
@@ -270,7 +274,10 @@ struct Gpu {
     };
     wait_for(instance.get(),
              wgpuInstanceRequestAdapter(instance.get(), &opts, adapter_cb));
-    if (!adapter) throw TrapError(error.empty() ? "No Metal adapter" : error);
+    if (!adapter) {
+      const auto* failure = first_error();
+      throw TrapError(failure ? failure : "No Metal adapter");
+    }
 
     WGPUDeviceDescriptor device_desc = WGPU_DEVICE_DESCRIPTOR_INIT;
     device_desc.deviceLostCallbackInfo.mode =
@@ -304,7 +311,10 @@ struct Gpu {
     };
     wait_for(instance.get(),
              wgpuAdapterRequestDevice(adapter.get(), &device_desc, device_cb));
-    if (!device) throw TrapError(error.empty() ? "No Dawn device" : error);
+    if (!device) {
+      const auto* error = first_error();
+      throw TrapError(error ? error : "No Dawn device");
+    }
     queue.reset(wgpuDeviceGetQueue(device.get()));
     if (!queue) throw TrapError("Could not get the Dawn queue");
   }
@@ -332,7 +342,7 @@ struct tsugumi_view_host {
   Owned<wasmtime_store_t, wasmtime_store_delete> store;
   wasmtime_context_t* context = nullptr;
   wasmtime_instance_t instance{};
-  wasmtime_func_t start{}, resize{}, draw{};
+  wasmtime_func_t abi{}, start{}, resize{}, draw{};
   std::optional<wasmtime_func_t> message, pointer, key;
   std::optional<std::span<const uint8_t>> current_message;
   tsugumi_view_host_send_fn send = nullptr;
@@ -344,6 +354,7 @@ struct tsugumi_view_host {
   auto release_handles() -> void;
 
   auto load(const uint8_t* wasm, size_t size) -> void;
+  auto check_abi() -> void;
   auto call(const char* name, const wasmtime_func_t& func,
             std::initializer_list<wasmtime_val_t> args) -> int32_t;
 
@@ -499,13 +510,16 @@ auto tsugumi_view_host::load(const uint8_t* wasm, size_t size) -> void {
   if (!memory_type || wasmtime_memorytype_is64(memory_type)) {
     throw TrapError("Expected a wasm32 memory export");
   }
-  const auto abi = *export_func(kAbi);
+  abi = *export_func(kAbi);
   start = *export_func(kStart);
   resize = *export_func(kResize);
   draw = *export_func(kDraw);
   message = export_func(kMessage, false);
   pointer = export_func(kPointer, false);
   key = export_func(kKey, false);
+}
+
+auto tsugumi_view_host::check_abi() -> void {
   const auto version = call(kAbi.name, abi, {});
   if (version != TSUGUMI_VIEW_ABI) {
     throw TrapError("Unsupported view ABI " + std::to_string(version));
@@ -597,6 +611,7 @@ auto tsugumi_view_host_check(const uint8_t* wasm, size_t size, char* error,
   try {
     tsugumi_view_host host;
     host.load(wasm, size);
+    host.check_abi();
     copy_error(error, error_size, "");
     return 0;
   } catch (const std::exception& failure) {
@@ -618,6 +633,10 @@ auto tsugumi_view_host_create(const uint8_t* wasm, size_t size,
     host->send_context = send_context;
     host->gpu.open(metal_layer);
     host->gpu.configure(width, height);
+    host->gpu.process_events();
+    if (const auto* failure = host->gpu.first_error()) throw TrapError(failure);
+    host->check_abi();
+    host->gpu.process_events();
     const auto device = host->handles.add(Kind::Device, host->gpu.device.get());
     const auto queue = host->handles.add(Kind::Queue, host->gpu.queue.get());
     host->call(kStart.name, host->start,
@@ -720,7 +739,7 @@ auto tsugumi_view_host_accepts(const tsugumi_view_host* host) -> uint32_t {
 
 auto tsugumi_view_host_error(const tsugumi_view_host* host) -> const char* {
   if (!host->dropped.empty()) return host->dropped.c_str();
-  return host->gpu.error.empty() ? nullptr : host->gpu.error.c_str();
+  return host->gpu.first_error();
 }
 
 auto tsugumi_view_host_destroy(tsugumi_view_host* host) -> void { delete host; }

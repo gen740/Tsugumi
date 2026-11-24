@@ -27,6 +27,7 @@ run() {
 run "$cmake_path" --fresh -S "$repo" -B "$repo/build-host" -G Ninja \
   -DTSUGUMI_FORMAT_NIX="@bundle/nixfmt" -DTSUGUMI_TEMPLATE_GIT="@bundle/git" \
   -DTSUGUMI_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release \
+  -DPython3_EXECUTABLE="$(command -v python3)" \
   -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_OSX_SYSROOT="$sdk_path" \
   -Dflatbuffers_DIR="$flatbuffers_root/lib/cmake/flatbuffers" \
   -DTSUGUMI_CLIENT_CURL_LIBRARY="$sdk_path/usr/lib/libcurl.tbd" \

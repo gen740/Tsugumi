@@ -1,19 +1,21 @@
+# The root's boundary checker covers this target and its test binaries.
+set(roots_view_host ui/macos/ViewHost PARENT_SCOPE)
+set(allowed_view_host view_host protocol PARENT_SCOPE)
 set(view_dir "${CMAKE_CURRENT_SOURCE_DIR}")
 set(view_gen_dir "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(dawn_archive "${TSUGUMI_DAWN_DIR}/lib/libwebgpu_dawn.a")
 set(wasmtime_dylib "${TSUGUMI_WASMTIME_LIB}/lib/libwasmtime.dylib")
-set(webgpu_gen "${PROJECT_SOURCE_DIR}/ui/shared/dawn/webgpu_gen.cmake")
-if(EXISTS "${webgpu_gen}")
-  include("${webgpu_gen}")
-  tsugumi_generate_webgpu_imports(
-    OUT_DIR "${view_gen_dir}"
-    WEBGPU_YML "${TSUGUMI_WEBGPU_HEADERS}/webgpu.yml"
-    VIEW_HEADER "${PROJECT_SOURCE_DIR}/protocol/include/tsugumi/tsugumi_view.h"
-  )
-endif()
+include("${PROJECT_SOURCE_DIR}/ui/shared/dawn/webgpu_gen.cmake")
+tsugumi_generate_webgpu_imports(
+  OUT_DIR "${view_gen_dir}"
+  WEBGPU_YML "${TSUGUMI_WEBGPU_HEADERS}/webgpu.yml"
+  VIEW_HEADER "${PROJECT_SOURCE_DIR}/protocol/include/tsugumi/tsugumi_view.h"
+)
 
 add_library(tsugumi-view-host STATIC runtime.cc ${TSUGUMI_WEBGPU_GEN_SOURCES})
+add_dependencies(tsugumi-view-host tsugumi-webgpu-generated)
 set_target_properties(tsugumi-view-host PROPERTIES
+  TSUGUMI_OWNER view_host
   CXX_VISIBILITY_PRESET hidden
   VISIBILITY_INLINES_HIDDEN ON
   ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/client"
@@ -51,8 +53,10 @@ install(FILES include/tsugumi_view_host.h DESTINATION include/tsugumi)
 if(TSUGUMI_BUILD_VIEW_HOST_TESTS)
   find_package(GTest CONFIG REQUIRED)
   include(tests/load.cmake)
+  set_property(TARGET tsugumi-view-load-tests PROPERTY TSUGUMI_OWNER view_host)
   if(EXISTS "${view_dir}/tests/CMakeLists.txt")
     add_subdirectory(tests)
+    set_property(TARGET tsugumi-view-decode-tests PROPERTY TSUGUMI_OWNER view_host)
     install(TARGETS tsugumi-view-decode-tests RUNTIME DESTINATION libexec/tsugumi-tests)
   endif()
 endif()

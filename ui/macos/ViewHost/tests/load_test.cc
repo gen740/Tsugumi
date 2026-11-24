@@ -84,6 +84,16 @@ TEST(ViewLoad, AllowsListedWebGpuImport) {
       R"((import "webgpu" "wgpuDeviceCreateBuffer" (func (param i32 i32) (result i32))))"));
 }
 
+TEST(ViewLoad, WebGpuCallDuringAbiTrapsWithoutADevice) {
+  auto exports = kExports;
+  exports[1] = R"((func (export "tsugumi_view_abi") (result i32)
+    i32.const 0 i32.const 0 call $createBuffer))";
+  check(module(R"((import "webgpu" "wgpuDeviceCreateBuffer"
+      (func $createBuffer (param i32 i32) (result i32))))",
+               exports),
+        "wgpuDeviceCreateBuffer");
+}
+
 TEST(ViewLoad, RejectsMemoryImportEvenWithAllowedName) {
   check(module(R"((import "tsugumi" "tsugumi_view_read" (memory 1)))"),
         "tsugumi_view_read");
