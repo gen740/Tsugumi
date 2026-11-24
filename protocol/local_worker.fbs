@@ -14,7 +14,7 @@ table Spawn {
   cpu_millis:ulong; memory_bytes:ulong; network:bool; gui:bool;
   ro_paths:[string]; hidden_paths:[string]; binds:[Bind]; uid:uint = null; gid:uint = null;
   artifact_store:string;
-  artifact_inputs:bool; artifact_staging:string;
+  artifact_staging:string;
 }
 table Message {
   action:Action; card:string; key:string (trace_secret); spawn:Spawn; reuse:bool;

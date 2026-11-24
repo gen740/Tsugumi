@@ -422,8 +422,6 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
         } else {
           store_target = source.string();
         }
-      } else {
-        spawn.artifact_inputs = true;
       }
       grants.push_back(
           {std::move(id), source.string(), {}, std::move(store_target)});
@@ -441,7 +439,6 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   request.outputs = std::move(outputs);
   request.artifact_directory = outputs_root;
   request.artifact_sequence = call.invocation_sequence();
-  request.artifact_inputs = spawn.artifact_inputs;
   request.grants = std::move(grants);
   request.output_budget = {job.output_limit_bytes, job.output_limit_entries};
   if (call.deadline_ms()) request.timeout_ms = *call.deadline_ms();

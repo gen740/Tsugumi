@@ -370,10 +370,10 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
                      "chown " + path + ": " + std::strerror(error));
       }
     }
-  if (!artifact_scratch_.empty())
+  if (!artifact_scratch_.empty()) {
     std::filesystem::create_directories(artifact_scratch_ / "outputs");
-  if (sp.artifact_inputs)
     std::filesystem::create_directory(artifact_scratch_ / "inputs");
+  }
   proc::Spec spec;
   std::string certificate = TSUGUMI_CACERT;
   std::string temporary = tmp_dir();
@@ -820,8 +820,10 @@ void WorkerProc::clear_scratch() {
     return;
   }
   try {
-    if (!artifact_scratch_.empty())
+    if (!artifact_scratch_.empty()) {
       fs::clear_staging(artifact_scratch_ / "outputs", recover_permissions_);
+      fs::clear_staging(artifact_scratch_ / "inputs", recover_permissions_);
+    }
     fs::clear_staging(tmp_dir(), recover_permissions_,
                       x11_mounted_ ? ".X11-unix" : "");
   } catch (const std::system_error& error) {

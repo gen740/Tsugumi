@@ -121,7 +121,6 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
   target->network = spawn.network;
   target->ro_paths = spawn.ro_paths;
   target->artifact_store = spawn.artifact_store;
-  target->artifact_inputs = spawn.artifact_inputs;
   target->artifact_staging = spawn.artifact_staging.string();
   target->hidden_paths = spawn.hidden_paths;
   if (spawn.uid) target->uid = *spawn.uid;
