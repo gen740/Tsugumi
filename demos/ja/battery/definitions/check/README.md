@@ -1,4 +1,5 @@
 ---
+title: check
 description: 全探索・上限・刻みで確かめる
 ---
 

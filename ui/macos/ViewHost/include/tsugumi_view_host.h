@@ -11,7 +11,9 @@ typedef struct tsugumi_view_host tsugumi_view_host;
 
 /* Called during a Wasm export on the calling thread. Return 0 after copying
  * the bytes, or a negative value if they could not be accepted. */
-typedef int32_t (*tsugumi_view_host_send_fn)(void* context, const uint8_t* bytes, uint32_t size);
+/* route points to the 16 network-order bytes of a route UUID. */
+typedef int32_t (*tsugumi_view_host_send_fn)(void* context, const uint8_t* route,
+                                            const uint8_t* bytes, uint32_t size);
 
 /* Compile and validate the view, including abi(), without a GPU. */
 __attribute__((visibility("default")))

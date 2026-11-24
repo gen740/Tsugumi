@@ -161,7 +161,6 @@ Every native core suite runs all four `tsugumi_file_transfer_tests` scenarios
 (`large`, `sparse`, `shrink-stream`, `shrink-sparse`). Core pytest discovers
 `tests/core/test_short_identifiers.py`.
 
-`tsugumi_worker_condition_tests` runs with the canonical core suite;
 `tsugumi_definition_evaluation_tests` runs on x86_64 Linux and macOS to
 validate embedded Nix dependencies and filesystem invalidation.
 

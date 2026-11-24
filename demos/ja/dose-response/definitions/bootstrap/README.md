@@ -1,4 +1,5 @@
 ---
+title: bootstrap
 description: EC50 と Hill 勾配の信頼区間
 ---
 

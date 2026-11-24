@@ -1,4 +1,5 @@
 ---
+title: compare
 description: 化合物の比較（相対力価）
 ---
 

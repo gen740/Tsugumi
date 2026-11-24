@@ -1,4 +1,5 @@
 {
+  "formatVersion": 1,
   "name": "Dynamical systems gallery",
   "nixPath": [
     {
@@ -10,13 +11,20 @@
       "url": "github:gen740/tsugumi-kit/main"
     }
   ],
+  "trackedPaths": [],
+  "agentExclude": [
+    ".git",
+    ".DS_Store"
+  ],
+  "recordLogs": true,
+  "recordIO": false,
+  "logLimitBytes": 134217728,
+  "outputLimitBytes": 68719476736,
+  "outputLimitEntries": 1000,
   "canvas": {
     "cards": [
       {
         "id": "start"
-      },
-      {
-        "id": "settings"
       },
       {
         "id": "lorenz"
@@ -44,68 +52,52 @@
           "port": "out"
         },
         "to": {
-          "card": "settings",
-          "port": "start"
+          "card": "lorenz"
         }
       },
       {
         "from": {
-          "card": "settings",
-          "port": "config"
+          "card": "start",
+          "port": "out"
         },
         "to": {
-          "card": "lorenz",
-          "port": ""
+          "card": "mandelbrot"
         }
       },
       {
         "from": {
-          "card": "settings",
-          "port": "config"
+          "card": "start",
+          "port": "out"
         },
         "to": {
-          "card": "mandelbrot",
-          "port": ""
+          "card": "logistic"
         }
       },
       {
         "from": {
-          "card": "settings",
-          "port": "config"
+          "card": "start",
+          "port": "out"
         },
         "to": {
-          "card": "logistic",
-          "port": ""
+          "card": "life"
         }
       },
       {
         "from": {
-          "card": "settings",
-          "port": "config"
+          "card": "start",
+          "port": "out"
         },
         "to": {
-          "card": "life",
-          "port": ""
+          "card": "grayscott"
         }
       },
       {
         "from": {
-          "card": "settings",
-          "port": "config"
+          "card": "start",
+          "port": "out"
         },
         "to": {
-          "card": "grayscott",
-          "port": ""
-        }
-      },
-      {
-        "from": {
-          "card": "settings",
-          "port": "config"
-        },
-        "to": {
-          "card": "pendulum",
-          "port": ""
+          "card": "pendulum"
         }
       }
     ]

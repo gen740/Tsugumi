@@ -64,7 +64,7 @@ auto DescribeFileMiss(const std::string& path, const json::Members& snapshot,
     out += " (" + std::to_string(files.size()) + " files total)";
   const auto file = path.substr(root.size());
   if (file == "_inputs.fbs" || file == "_outputs.fbs") {
-    if (kind != "code" && kind != "input") {
+    if (kind != "code") {
       out += "; " + kind + " Cards have no " + file +
              "; project_inspect reports resolved port types in "
              "resolution[].inputs/outputs"

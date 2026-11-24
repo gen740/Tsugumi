@@ -1,3 +1,4 @@
 ---
+title: readings
 description: C++ で 1.25、2.5、3.75 の3点を作成
 ---

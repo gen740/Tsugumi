@@ -1,4 +1,5 @@
 ---
+title: funnel
 description: Funnel plot
 ---
 

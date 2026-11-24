@@ -4,7 +4,7 @@ chat show
 wait 3
 run
 waitrun
-enter collatz-cpp
+enter collatz_cpp
 wait 1
 fit
 wait 2

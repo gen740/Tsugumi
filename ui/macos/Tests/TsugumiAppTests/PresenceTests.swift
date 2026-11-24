@@ -14,7 +14,7 @@ import SwiftUI
   #expect(PresenceEvents.look(tool: "run", arguments: "not json") == nil)
   // The CardPath as the model writes it (the tools' schema), also in Card.
   #expect(PresenceEvents.look(tool: "run", arguments: #"{"base_rev": "3", "card": {"segments": ["start"]}}"#) == .run(["start"]))
-  #expect(PresenceEvents.look(tool: "run_record", arguments: #"{"run_id": "r", "card": {"segments": ["collatz-cpp", "check"]}}"#) == .visit(["collatz-cpp", "check"]))
+  #expect(PresenceEvents.look(tool: "run_record", arguments: #"{"run_id": "r", "card": {"segments": ["collatz_cpp", "check"]}}"#) == .visit(["collatz_cpp", "check"]))
   #expect(PresenceEvents.look(tool: "log_range", arguments: #"{"run_id": "r", "card": {"segments": []}}"#) == nil)
 }
 

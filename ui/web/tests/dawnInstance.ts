@@ -18,9 +18,7 @@ const device = {
   queue: {},
   lost: new Promise<{ message: string }>(resolve => { loseDevice = resolve }),
   onuncapturederror: null as null | ((event: { error: { message: string } }) => void),
-  destroy() { ++destroyed },
 }
-let destroyed = 0
 let configs = 0
 let draws = 0
 const context = {
@@ -41,7 +39,10 @@ const canvas = Object.assign(new EventTarget(), {
 let deviceRequests = 0
 const globals = {
   navigator: { gpu: {
-    requestAdapter: async () => ({ requestDevice: async () => { ++deviceRequests; return device } }),
+    requestAdapter: async () => ({ requestDevice: async () => {
+      if (deviceRequests++) device.lost = new Promise(() => {})
+      return device
+    } }),
     getPreferredCanvasFormat: () => 'bgra8unorm',
   } },
   window,
@@ -52,6 +53,12 @@ const globals = {
   },
   cancelAnimationFrame: (id: number) => frames.delete(id),
 }
+
+Object.assign(window, {
+  requestAnimationFrame: globals.requestAnimationFrame, cancelAnimationFrame: globals.cancelAnimationFrame,
+  ResizeObserver: Observer,
+})
+Object.assign(canvas, { ownerDocument: { defaultView: window } })
 
 const stepFrame = () => {
   assert.equal(frames.size, 1)
@@ -71,7 +78,7 @@ const constant = (n: number) => {
   }
   return [0x41, ...bytes]
 }
-const send = (ptr: number, size: number) => [...constant(ptr), ...constant(size), 0x10, 0]
+const send = (ptr: number, size: number, route = 128) => [...constant(route), ...constant(ptr), ...constant(size), 0x10, 0]
 const read = (ptr: number, size: number) => [...constant(ptr), ...constant(size), 0x10, 1]
 const expect = (expression: number[], expected: number) =>
   [...expression, ...constant(expected), 0x47, 0x04, 0x40, 0x00, 0x0b]
@@ -82,7 +89,7 @@ const mark = (value: number) => [...store(0, constant(value)), ...expect(send(0,
 const max = 1 << 24
 const { module } = await loadView(encodeView({
   imports: [
-    { module: 'tsugumi', name: 'tsugumi_view_send', params: [i32, i32] },
+    { module: 'tsugumi', name: 'tsugumi_view_send', params: [i32, i32, i32] },
     { module: 'tsugumi', name: 'tsugumi_view_read', params: [i32, i32] },
     { module: 'webgpu', name: 'wgpuTextureViewRelease', params: [i32], results: [] },
   ],
@@ -115,8 +122,9 @@ const { module } = await loadView(encodeView({
         ...expect(read(4, 0), -1), ...expect(read(-1, 1), -1), ...expect(read(4, 1), 0),
         ...load(4), ...constant(255), 0x46, 0x04, 0x40, 0x00, 0x0b,
         ...load(4), ...constant(10), 0x46, 0x04, 0x40,
-        ...expect(send(-1, 1), -1), ...expect(send(0, max + 1), -1),
-        ...expect(send(4, max), 0), ...expect(send(4, max), 0), ...expect(send(0, 1), -1),
+        ...expect(send(-1, 1), -1), ...expect(send(0, 1, -1), -1), ...expect(send(0, max + 1), -1),
+        ...store(128, constant(171)), ...expect(send(4, max), 0),
+        ...store(128, constant(205)), ...expect(send(4, max), 0), ...expect(send(0, 1), -1),
         0x0b,
         ...constant(0),
       ],
@@ -126,12 +134,14 @@ const { module } = await loadView(encodeView({
 
 const sent: [number, number][] = []
 const fatal: unknown[] = []
+const routes: number[][] = []
 const gpuErrors: string[] = []
 let release = () => {}
 let hold = false
 const sendErrors: unknown[] = []
 const host = {
-  send: async (bytes: Uint8Array) => {
+  send: async (bytes: Uint8Array, route: Uint8Array) => {
+    routes.push([...route])
     sent.push([bytes.length, bytes[0]])
     if (hold) {
       hold = false
@@ -152,6 +162,7 @@ try {
   assert.equal(deviceRequests, 1)
   assert.equal(configs, 1)
   assert.deepEqual(sent, [[1, 1], [1, 2], [1, 3]])
+  assert.deepEqual(routes, Array.from({ length: 3 }, () => Array(16).fill(0)))
   assert.equal(draws, 1)
   stepFrame()
   assert.equal(draws, 2)
@@ -181,8 +192,9 @@ try {
   assert.equal(frames.size, 0)
   await tick()
   assert.deepEqual(sent.slice(-4), [[max, 10], [max, 10], [1, 4], [1, 3]])
-  assert.deepEqual(sendErrors.slice(0, 3), [undefined, undefined, undefined])
-  assert.match(String(sendErrors[3]), /send failed/)
+  assert.deepEqual(routes.slice(-4).map(route => route[0]), [171, 205, 205, 205])
+  assert.deepEqual(sendErrors.slice(0, 4), [undefined, undefined, undefined, undefined])
+  assert.match(String(sendErrors[4]), /send failed/)
   assert.equal(fatal.length, 0)
 
   device.onuncapturederror?.({ error: { message: 'validation' } })
@@ -196,12 +208,10 @@ try {
   assert.ok(fatal[0] instanceof WebAssembly.RuntimeError)
   assert.equal(frames.size, 0)
   assert.equal(configs, 0)
-  assert.equal(destroyed, 1)
   message(10)
   assert.equal(completed, 5)
   assert.equal(frames.size, 0)
   mounted.dispose()
-  assert.equal(destroyed, 1)
 
   const { module: optionalAbsent } = await loadView(encodeView())
   const fallback = await DawnViewInstance.mount(optionalAbsent, canvas as unknown as HTMLCanvasElement, host, new AbortController().signal)
@@ -227,6 +237,7 @@ try {
     callbacks: { key: { params: [i32, i32, i32], code: constant(0) } },
   }))
   const typing = await DawnViewInstance.mount(keyed, canvas as unknown as HTMLCanvasElement, host, new AbortController().signal)
+  assert.equal(deviceRequests, 2, 'all mounts after device loss share the replacement device')
   assert.deepEqual([...attributes], [viewKeysAttribute])
   const focused = (owner: boolean) => ({ closest: (selector: string) => owner && selector === `[${viewKeysAttribute}]` ? {} : null })
   assert.equal(viewOwnsKeys(focused(true)), true)

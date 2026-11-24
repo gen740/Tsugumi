@@ -1,5 +1,5 @@
-// A Card whose _card.json has no type, an unknown one, or one that does not
-// match `external` is a definition error, not a Draft: drawn as a failure with
+import { cardFixture, projectFixture } from './documentFixture'
+// A Card whose _card.json has no type or an unknown one is drawn as a failure with
 // the core's diagnostic, no ports and no run. The Mac app checks the same
 // (UILogicTests: cardsWithoutAKnownTypeAreDefinitionErrors).
 import assert from 'node:assert/strict'
@@ -18,7 +18,7 @@ const { CardNodeView, idleText } = await import('../src/ui/cardNode')
 const { miniMapLayout } = await import('../src/ui/versions')
 const { parse } = await import('../shared/json')
 
-const missing = 'definitions/old/_card.json: "type" is required (one of code, draft, trigger, input, merge, collect, subgraph)'
+const missing = 'definitions/old/_card.json: "type" is required (one of code, draft, trigger, merge, collect, subgraph)'
 const diagnostic = (id: string, message: string) => Object.assign(new DT.DiagnosticT(), {
   severity: DT.Severity.error, code: 'invalid_document', message, card: Object.assign(new DT.CardPathT(), { segments: [id] }),
   path: `definitions/${id}/_card.json`,
@@ -31,26 +31,22 @@ const s = new ProjectSession('/p', 'k', 'p')
 const inner = s as unknown as { apply(snapshot: R.ProjectSnapshotT, reset: boolean): void }
 inner.apply(Object.assign(new R.ProjectSnapshotT(), {
   rev: 1n, layout: [],
-  projectJson: '{"name":"t","canvas":{"cards":[{"id":"old"},{"id":"future"},{"id":"loose"},{"id":"plan"},{"id":"step"}],"connections":[]}}',
+  projectJson: projectFixture({"name":"t","canvas":{"cards":[{"id":"old"},{"id":"future"},{"id":"plan"},{"id":"step"}],"connections":[]}}),
   definitions: [
     definition('old', '{"inputs":[{"name":"in"}]}'),
     definition('future', '{"type":"something new","inputs":[{"name":"in"}]}'),
-    definition('loose', '{"type":"code","external":"lib"}'),
-    definition('plan', '{"type":"draft"}'),
-    definition('step', '{"type":"code"}'),
+    definition('plan', cardFixture('draft')),
+    definition('step', cardFixture('code')),
   ],
-  resolution: [resolved('old', [diagnostic('old', missing)]), resolved('future'), resolved('loose'), resolved('plan'), resolved('step')],
+  resolution: [resolved('old', [diagnostic('old', missing)]), resolved('future'), resolved('plan'), resolved('step')],
 }), true)
 
-// No type, an unknown one and a type that does not match `external` are errors.
 assert.equal(s.kind('old'), 'invalid')
 assert.equal(s.kind('future'), 'invalid')
-assert.equal(s.kind('loose'), 'invalid')
 assert.equal(s.kind('plan'), 'draft', 'a Draft stays a Draft')
 assert.equal(s.kind('step'), 'code')
 assert.equal(definitionKind(undefined), 'invalid', 'a Card without a definition')
-assert.equal(definitionKind(parse('{"type":"subgraph","external":"lib"}')), 'subgraph')
-assert.equal(definitionKind(parse('{"type":"subgraph"}')), 'invalid')
+assert.equal(definitionKind(parse('{"type":"subgraph","symbol":"link"}')), 'subgraph')
 
 for (const id of ['old', 'future']) {
   const d = s.nodeData(id)

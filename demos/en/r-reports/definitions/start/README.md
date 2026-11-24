@@ -1,3 +1,4 @@
 ---
+title: start
 description: Start aggregation and render both report formats.
 ---

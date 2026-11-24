@@ -1,4 +1,5 @@
 ---
+title: naive
 description: 素朴な逆解は発散する
 ---
 

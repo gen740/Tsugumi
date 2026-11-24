@@ -10,6 +10,7 @@
 
 #include "tsugumi/document/definition_values.hh"
 #include "tsugumi/document/types.hh"
+#include "tsugumi/workerd/view.hh"
 namespace tsugumi {
 using FailureKind = Tsugumi::Data::FailureKind;
 using RunState = Tsugumi::Data::RunState;
@@ -65,11 +66,6 @@ struct Value {
   types::TypeRef type;
   std::string bytes;
   std::string schema;
-};
-
-struct WorkerDisplayData {
-  std::string view;
-  std::string bytes;
 };
 
 }  // namespace tsugumi

@@ -1,3 +1,4 @@
+import { validName } from './names'
 /** Project-local evidence addresses. Never accept hosts, project paths or arbitrary query fields. */
 export type Evidence = { kind: 'card' | 'run' | 'log' | 'artifact'; card?: string[]; run?: string; invocation?: bigint; stream?: 'stdout' | 'stderr' | 'build' | 'journal'; offset?: bigint; artifact?: string; member?: string; file?: string; lineStart?: number; lineEnd?: number }
 const runNumber = /^[1-9][0-9]{0,18}$/
@@ -8,7 +9,7 @@ export function parseEvidence(href: string): Evidence | undefined {
   if (!match) return
   const [, kind, address, query, fragment] = match
   const parts = address.split('/')
-  const card = (values: string[]) => values.length > 0 && values.every(v => /^[A-Za-z0-9_.-]+$/.test(v) && v !== '.' && v !== '..' && v.length <= 128)
+  const card = (values: string[]) => values.length > 0 && values.every(validName)
   try { if (query !== undefined) decodeURIComponent(query.replace(/\+/g, ' ')) } catch { return }
   const q = new URLSearchParams(query)
   if ([...q.keys()].some((k, i, all) => all.indexOf(k) !== i)) return

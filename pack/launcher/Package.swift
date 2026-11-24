@@ -3,10 +3,12 @@ import PackageDescription
 
 // tsugumi-pack: exports a Project into an app, and is that app's launcher.
 let package = Package(
-  name: "TsugumiPack", platforms: [.macOS("14.0")],
+  name: "TsugumiPack", platforms: [.macOS("26.0")],
   products: [.executable(name: "tsugumi-pack", targets: ["TsugumiPack"])],
+  dependencies: [.package(path: "../../ui/macos/ViewPresentation")],
   targets: [
     .executableTarget(
-      name: "TsugumiPack", path: "Sources/TsugumiPack",
+      name: "TsugumiPack", dependencies: [.product(name: "TsugumiViewPresentation", package: "ViewPresentation")],
+      path: "Sources/TsugumiPack",
       swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error)])
   ])

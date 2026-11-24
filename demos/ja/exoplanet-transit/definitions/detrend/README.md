@@ -1,4 +1,5 @@
 ---
+title: detrend
 description: トレンド除去と周期探索
 ---
 

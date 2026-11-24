@@ -1,3 +1,4 @@
 ---
-description: Sends the report's settings (settings) to start
+title: start
+description: Start generating the sales table
 ---

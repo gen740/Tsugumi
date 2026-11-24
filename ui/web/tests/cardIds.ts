@@ -1,3 +1,5 @@
+import { cardStem } from '../src/model/names'
+import { cardFixture } from './documentFixture'
 import { operationFixture } from './operationFixture'
 // A deterministic RPC double for presentation tests. Identity behavior itself
 // is checked against the core; unrelated fixtures keep their readable keys.
@@ -8,13 +10,13 @@ export function cardIds<T extends ProjectSession>(s: T): T {
   s.connected = true // This boundary stands in for the connected core.
   const issued = new Set<string>()
   s.cardIdProvider = async (name, prefix) => {
-    const stem = name.toLowerCase().replace(/[^a-z0-9_-]/g, '-') || 'card'
+    const stem = cardStem(name)
     const scope = [...s.effectiveExternals].find(([p]) => p === prefix)?.[1]
     const used = new Set(prefix ? [...(scope?.definitions.keys() ?? [])] : [
       ...s.definitionDrafts.keys(), ...s.cards([]).map((c) => str(get(c, 'id')) ?? ''),
     ])
     let id = stem
-    for (let n = 2; used.has(id) || issued.has(prefix + id); n++) id = `${stem}-${n}`
+    for (let n = 2; used.has(id) || issued.has(prefix + id); n++) id = stem.slice(0, 63 - String(n).length) + '_' + n
     issued.add(prefix + id)
     return id
   }
@@ -39,10 +41,7 @@ export const hostEdits = operationFixture
 export async function addCodeCard(s: ProjectSession, at: { x: number; y: number }, name = 'card') {
   const card = await s.addCard('draft', [], at, name)
   await s.applyMutation(session => {
-    session.updateCard(card, definition => {
-      definition.set('type', 'code')
-      definition.set('inputs', parse('[{"name":"in"}]'))
-    })
+    session.setCardDefinition(card, { card: parse(cardFixture('code', { inputs: [{ name: 'in' }] })), meta: session.cardMeta(card) })
   })
   return card
 }

@@ -1,0 +1,4 @@
+---
+title: collatz_r
+description: Child Workflow that finds the sequence with an R loop (only values below 2^53)
+---

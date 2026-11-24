@@ -1,5 +1,9 @@
 """A one-compartment oral model of a fictional drug, solved numerically dose by
 dose. Teaching model only: not medical advice or dosing guidance."""
+
+from card import Input, Output, params
+from pk.Curves import CurvesT
+
 import math
 
 import numpy as np
@@ -7,7 +11,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.integrate import solve_ivp
 
-from tsugumi import Failure
+from tsugumi import Failure, Plotly, send
 
 STEP_H = 0.1
 PLOT_EVERY = 3  # 0.3 h on the plot keeps the figure's JSON small
@@ -41,16 +45,16 @@ def simulate(dose, tau, ke, ka, volume, fraction, t_grid):
     return conc, troughs[0], troughs[doses - 2], last_dose
 
 
-def main(inputs, report):
-    s = inputs.settings
-    doses = s.dosesMg
-    intervals = s.intervalsH
+def run(_input: Input) -> Output:
+    s = params
+    doses = s.doses_mg
+    intervals = np.asarray(s.intervals_h)
     if len(doses) != len(intervals) or len(doses) == 0:
         raise Failure("output_invalid", "doses_mg and intervals_h must have the same length, at least 1")
-    if np.any(intervals <= 0) or s.halfLifeH <= 0:
+    if np.any(intervals <= 0) or s.half_life_h <= 0:
         raise Failure("output_invalid", "intervals and the half-life must be positive")
-    ke = math.log(2) / s.halfLifeH
-    ka, volume, fraction = s.kaPerH, s.volumeL, s.bioavailability
+    ke = math.log(2) / s.half_life_h
+    ka, volume, fraction = s.ka_per_h, s.volume_l, s.bioavailability
     end = s.days * 24
     if end < 2 * intervals.max():
         raise Failure("output_invalid", f"days must cover two of the longest interval ({intervals.max()} h)")
@@ -63,7 +67,7 @@ def main(inputs, report):
         first.append(a)
         last.append(b)
         last_dose.append(d)
-        report.log(f"dose={dose} tau={tau} doses_given={int(d / tau) + 1} first_trough={a:.5f} last_trough={b:.5f} peak={c.max():.5f}")
+        print(f"dose={dose} tau={tau} doses_given={int(d / tau) + 1} first_trough={a:.5f} last_trough={b:.5f} peak={c.max():.5f}")
     curves = np.array(curves)
 
     rows = (len(doses) + 1) // 2
@@ -76,28 +80,28 @@ def main(inputs, report):
                                  hovertemplate="%{x:.1f} 時間: %{y:.2f} mg/L<extra></extra>"),
                       row=k // 2 + 1, col=k % 2 + 1)
     # After the traces: Plotly skips the subplots that are still empty.
-    fig.add_hrect(y0=s.lowMgL, y1=s.highMgL, row="all", col="all", fillcolor="#3a9a4a", opacity=0.14, line_width=0)
+    fig.add_hrect(y0=s.low_mg_l, y1=s.high_mg_l, row="all", col="all", fillcolor="#3a9a4a", opacity=0.14, line_width=0)
     fig.update_xaxes(title_text="時間 (h)", row=rows)
-    fig.update_yaxes(range=[0, 1.05 * max(curves.max(), s.highMgL)])  # the same scale in every panel
+    fig.update_yaxes(range=[0, 1.05 * max(curves.max(), s.high_mg_l)])  # the same scale in every panel
     fig.update_yaxes(title_text="濃度 (mg/L)", col=1)
     fig.update_layout(
-        title=dict(text=f"架空の薬物ツグミシンの濃度（半減期 {s.halfLifeH:g} 時間、緑は作り物の有効域 {s.lowMgL:g}–{s.highMgL:g} mg/L）", font=dict(size=14)),
+        title=dict(text=f"架空の薬物ツグミシンの濃度（半減期 {s.half_life_h:g} 時間、緑は作り物の有効域 {s.low_mg_l:g}–{s.high_mg_l:g} mg/L）", font=dict(size=14)),
         template="plotly_white", margin=dict(l=60, r=20, t=70, b=50))
-    report.figure(fig)
+    send(Plotly(fig))
     vec = {'doses': np.asarray(doses, dtype=np.float64), 'intervals': np.asarray(intervals, dtype=np.float64), 't': t, 'conc': curves.ravel(), 'first': np.array(first), 'last': np.array(last), 'last_dose': np.array(last_dose)}
-    return {'curves': {
-        'doses_mg': vec['doses'],
-        'intervals_h': vec['intervals'],
-        'half_life_h': s.halfLifeH,
-        'ka_per_h': ka,
-        'volume_l': volume,
-        'bioavailability': fraction,
-        'low_mg_l': s.lowMgL,
-        'high_mg_l': s.highMgL,
-        'days': s.days,
-        't_h': vec['t'],
-        'conc': vec['conc'],
-        'first_trough': vec['first'],
-        'last_trough': vec['last'],
-        'last_dose_h': vec['last_dose'],
-    }}
+    return Output(curves=CurvesT(
+        dosesMg=vec['doses'],
+        intervalsH=vec['intervals'],
+        halfLifeH=s.half_life_h,
+        kaPerH=ka,
+        volumeL=volume,
+        bioavailability=fraction,
+        lowMgL=s.low_mg_l,
+        highMgL=s.high_mg_l,
+        days=s.days,
+        tH=vec['t'],
+        conc=vec['conc'],
+        firstTrough=vec['first'],
+        lastTrough=vec['last'],
+        lastDoseH=vec['last_dose'],
+    ))

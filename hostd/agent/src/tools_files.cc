@@ -26,13 +26,17 @@ auto CardRoot(const std::string& path) -> std::string {
   size_t prefix = 0;
   while (rest.starts_with("externals/")) {
     const auto end = rest.find('/', 10);
-    if (end == std::string::npos) return {};
+    if (end == std::string::npos ||
+        !valid_name(std::string_view(rest).substr(10, end - 10)))
+      return {};
     prefix += end + 1;
     rest.erase(0, end + 1);
   }
   if (!rest.starts_with("definitions/")) return {};
   const auto end = rest.find('/', 12);
-  if (end == std::string::npos || end == 12) return {};
+  if (end == std::string::npos ||
+      !valid_name(std::string_view(rest).substr(12, end - 12)))
+    return {};
   return path.substr(0, prefix + end);
 }
 auto SourcePath(const std::string& path, bool shell = false) -> bool {

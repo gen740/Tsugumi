@@ -24,6 +24,7 @@
 #include <sys/vfs.h>
 #endif
 
+#include "display_channel.hh"
 #include "tsugumi/protocol/trace_codec.hh"
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/rpc/frame.hh"
@@ -962,12 +963,24 @@ auto WorkerProc::set_display(DisplaySink display) -> void {
   display_ = std::move(sink);
 }
 
-auto WorkerProc::ViewReceiver::send(const WorkerDisplayData& message,
+auto WorkerProc::set_view_control(ViewControl control) -> void {
+  auto handler =
+      control ? std::make_shared<ViewControl>(std::move(control)) : nullptr;
+  std::lock_guard lock(data_mutex_);
+  view_control_ = std::move(handler);
+}
+
+auto WorkerProc::ViewReceiver::send(const WorkerViewEvent& event,
                                     DisplayCredit complete) -> ViewDelivery {
   std::lock_guard lock(mutex);
-  if (remote) return remote(message);
-  return worker ? worker->send_display(message, std::move(complete))
+  if (remote) return remote(event, std::move(complete));
+  return worker ? worker->send_display(event, std::move(complete))
                 : ViewDelivery::closed;
+}
+
+auto WorkerProc::ViewReceiver::reply(const WorkerViewReply& reply) -> bool {
+  std::lock_guard lock(mutex);
+  return worker && worker->reply_view(reply);
 }
 
 auto WorkerProc::view_receiver() -> std::weak_ptr<ViewReceiver> {
@@ -978,85 +991,100 @@ auto WorkerProc::view_receiver() -> std::weak_ptr<ViewReceiver> {
   return view_receiver_;
 }
 
-auto WorkerProc::send_display(const WorkerDisplayData& display,
+auto WorkerProc::send_display(const WorkerViewEvent& event,
                               DisplayCredit complete) -> ViewDelivery {
-  if (display.bytes.size() > TSUGUMI_MESSAGE_MAX || display.view.empty())
-    return ViewDelivery::full;
+  if (!workerd::valid_view_event(event)) return ViewDelivery::full;
   std::lock_guard lock(display_mutex_);
   if (data_stop_.stop_requested()) return ViewDelivery::closed;
-  auto& view = control_views_[display.view];
-  if (view.pending_bytes > workerd::kViewBudget - TSUGUMI_MESSAGE_MAX)
-    return ViewDelivery::full;
-  view.pending.emplace_back(display.bytes, std::move(complete));
-  view.pending_bytes += workerd::message_cost(display.bytes.size());
+  auto& route = control_views_[event.route];
+  if (route.closed) return ViewDelivery::closed;
+  if (event.kind == ViewEventKind::close) {
+    route.closed = true;
+  } else {
+    if (route.pending_bytes > workerd::kViewBudget - TSUGUMI_MESSAGE_MAX)
+      return ViewDelivery::full;
+    route.pending_bytes += workerd::message_cost(event.bytes.size());
+  }
+  route.pending.emplace_back(event, std::move(complete));
   display_ready_.notify_one();
   return ViewDelivery::accepted;
 }
 
-auto WorkerProc::return_display_credit(const std::string& view, size_t bytes)
+auto WorkerProc::reply_view(const WorkerViewReply& reply) -> bool {
+  std::lock_guard lock(display_mutex_);
+  if (data_stop_.stop_requested() || !awaiting_view_reply_ ||
+      view_request_id_ != reply.request_id || view_reply_)
+    return false;
+  view_reply_ = reply;
+  display_ready_.notify_one();
+  return true;
+}
+
+auto WorkerProc::return_display_credit(const ViewUuid& session, size_t bytes)
     -> void {
   std::lock_guard lock(display_mutex_);
   if (data_stop_.stop_requested()) return;
-  control_views_[view].forward_credit += bytes;
+  forward_credits_[session] += bytes;
   display_ready_.notify_one();
 }
 
 auto WorkerProc::write_display() -> void {
-  std::string previous;
+  ViewUuid previous{};
+  const auto has_capacity = [](const ControlView& route) {
+    return route.reverse_credit <= workerd::kViewBudget - TSUGUMI_MESSAGE_MAX;
+  };
+  const auto ready = [&](const auto& entry) {
+    const auto& route = entry.second;
+    return !route.pending.empty() &&
+           (route.pending.front().first.kind == ViewEventKind::close ||
+            has_capacity(route));
+  };
   try {
     for (;;) {
-      std::unique_lock lock(display_mutex_);
-      const auto ready = [](const auto& entry) {
-        const auto& view = entry.second;
-        return view.forward_credit ||
-               (!view.pending.empty() &&
-                view.reverse_credit <=
-                    workerd::kViewBudget - TSUGUMI_MESSAGE_MAX);
-      };
-      display_ready_.wait(lock, [&] {
-        return data_stop_.stop_requested() ||
-               std::ranges::any_of(control_views_, ready);
-      });
-      if (data_stop_.stop_requested()) return;
-      const auto end = control_views_.end();
-      auto next =
-          std::find_if(control_views_.upper_bound(previous), end, ready);
-      if (next == end) next = std::find_if(control_views_.begin(), end, ready);
-      previous = next->first;
-      auto& view = next->second;
-      const auto credit = std::exchange(view.forward_credit, 0);
-      std::string bytes;
-      DisplayCredit complete;
-      if (!credit) {
-        std::tie(bytes, complete) = std::move(view.pending.front());
-        view.pending.pop_front();
-        const auto charge = workerd::message_cost(bytes.size());
-        view.pending_bytes -= charge;
-        view.reverse_credit += charge;
-      }
-      lock.unlock();
-
       flatbuffers::FlatBufferBuilder b;
-      const auto name = b.CreateString(previous);
-      auto type = W::WorkerPayload::WorkerDisplay;
-      flatbuffers::Offset<void> body;
-      if (credit) {
-        type = W::WorkerPayload::WorkerDisplayCredit;
-        body = W::CreateWorkerDisplayCredit(b, name, credit).Union();
-      } else {
-        body =
-            W::CreateWorkerDisplay(
-                b, name,
-                b.CreateVector(reinterpret_cast<const uint8_t*>(bytes.data()),
-                               bytes.size()))
-                .Union();
-      }
-      W::FinishWorkerMessageBuffer(b, W::CreateWorkerMessage(b, 0, type, body));
+      DisplayCredit complete;
       {
+        std::unique_lock lock(display_mutex_);
+        display_ready_.wait(lock, [&] {
+          return data_stop_.stop_requested() || view_reply_ ||
+                 !forward_credits_.empty() ||
+                 std::ranges::any_of(control_views_, ready);
+        });
+        if (data_stop_.stop_requested()) break;
+        if (view_reply_) {
+          workerd::build_view_reply(b, *view_reply_);
+          view_reply_.reset();
+          awaiting_view_reply_ = false;
+        } else if (!forward_credits_.empty()) {
+          auto credit = forward_credits_.extract(forward_credits_.begin());
+          workerd::build_display_credit(b, credit.key(), credit.mapped());
+        } else {
+          const auto end = control_views_.end();
+          auto next =
+              std::find_if(control_views_.upper_bound(previous), end, ready);
+          if (next == end)
+            next = std::find_if(control_views_.begin(), end, ready);
+          previous = next->first;
+          auto& route = next->second;
+          auto [event, done] = std::move(route.pending.front());
+          route.pending.pop_front();
+          if (event.kind == ViewEventKind::message) {
+            const auto charge = workerd::message_cost(event.bytes.size());
+            route.pending_bytes -= charge;
+            route.reverse_credit += charge;
+          }
+          complete = std::move(done);
+          workerd::build_view_event(b, event);
+        }
+      }
+      try {
         std::lock_guard write(control_mutex_);
         send(control_fd_,
              {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()},
              false);
+      } catch (const std::exception&) {
+        if (complete) complete();
+        throw;
       }
       if (complete) complete();
     }
@@ -1068,6 +1096,14 @@ auto WorkerProc::write_display() -> void {
     ::shutdown(control_fd_, SHUT_RDWR);
     ::shutdown(data_fd_, SHUT_RDWR);
   }
+  std::map<ViewUuid, ControlView> discarded;
+  {
+    std::lock_guard lock(display_mutex_);
+    discarded.swap(control_views_);
+  }
+  for (auto& [address, route] : discarded)
+    for (auto& [event, done] : route.pending)
+      if (done) done();
 }
 
 auto WorkerProc::read_data() -> void {
@@ -1105,7 +1141,8 @@ auto WorkerProc::read_data() -> void {
       }
       const auto* message = W::GetWorkerMessage(frame.data());
       if (const auto* update = message->value_as_WorkerDisplay()) {
-        if (message->call_id() != 0 || update->view()->size() == 0 ||
+        if (message->call_id() != 0 ||
+            workerd::view_uuid(update->session()) == ViewUuid{} ||
             update->bytes()->size() > TSUGUMI_MESSAGE_MAX)
           throw Failed(FailureKind::worker_failed, "invalid worker display message");
         std::shared_ptr<DisplaySink> sink;
@@ -1114,25 +1151,26 @@ auto WorkerProc::read_data() -> void {
           sink = display_;
         }
         auto credit = [receiver = std::weak_ptr(view_receiver_),
-                       view = update->view()->str(),
+                       session = workerd::view_uuid(update->session()),
                        cost = workerd::message_cost(update->bytes()->size())] {
           if (const auto target = receiver.lock()) {
             std::lock_guard lock(target->mutex);
             if (target->worker)
-              target->worker->return_display_credit(view, cost);
+              target->worker->return_display_credit(session, cost);
           }
         };
         if (!sink)
           credit();
         else
-          (*sink)({update->view()->str(), std::string(update->bytes()->begin(),
-                                                      update->bytes()->end())},
+          (*sink)({workerd::view_uuid(update->session()),
+                   workerd::view_bytes(update->bytes())},
                   std::move(credit));
         continue;
       }
       if (const auto* update = message->value_as_WorkerDisplayCredit()) {
         std::lock_guard lock(display_mutex_);
-        const auto found = control_views_.find(update->view()->str());
+        const auto found =
+            control_views_.find(workerd::view_uuid(update->address()));
         if (message->call_id() != 0 || found == control_views_.end() ||
             update->bytes() > found->second.reverse_credit)
           throw Failed(FailureKind::worker_failed, "invalid worker display credit");
@@ -1140,6 +1178,36 @@ auto WorkerProc::read_data() -> void {
         display_ready_.notify_one();
         continue;
       }
+      if (const auto* raw = message->value_as_WorkerViewRequest()) {
+        const auto request = workerd::view_request(*raw);
+        {
+          std::lock_guard lock(display_mutex_);
+          if (message->call_id() != 0 || awaiting_view_reply_ ||
+              request.request_id <= view_request_id_ ||
+              raw->kind() > W::ViewControlKind::Unregister)
+            throw Failed(FailureKind::worker_failed,
+                         "invalid worker view request");
+          view_request_id_ = request.request_id;
+          awaiting_view_reply_ = true;
+        }
+        std::shared_ptr<ViewControl> handler;
+        {
+          std::lock_guard lock(data_mutex_);
+          handler = view_control_;
+        }
+        auto reply =
+            handler ? (*handler)(request)
+                    : std::optional{WorkerViewReply{request.request_id, false}};
+        if (reply) {
+          reply->request_id = request.request_id;
+          reply_view(*reply);
+        }
+        continue;
+      }
+      if (message->value_as_WorkerViewEvent() ||
+          message->value_as_WorkerViewReply())
+        throw Failed(FailureKind::worker_failed,
+                     "unexpected worker view relay direction");
       std::unique_lock lock(data_mutex_);
       if (!awaiting_ || message->call_id() != awaiting_ || pending_) {
         log::warn("discarding a worker reply for inactive call " +
@@ -1217,6 +1285,7 @@ auto WorkerProc::read_data() -> void {
     std::lock_guard lock(data_mutex_);
     data_closed_ = true;
     display_.reset();
+    view_control_.reset();
     if (awaiting_ && !pending_) {
       pending_.emplace();
       pending_->failure =

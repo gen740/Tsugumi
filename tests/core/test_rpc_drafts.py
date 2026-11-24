@@ -3,7 +3,7 @@
 import json
 
 from tsugumi_client import change, new_id, text
-from harness.document import layout_bytes
+from harness.document import card_document, card_readme, layout_bytes
 
 
 def test_wired_drafts_can_be_saved_written(client, daemon):
@@ -13,9 +13,9 @@ def test_wired_drafts_can_be_saved_written(client, daemon):
     project["canvas"] = {
         "cards": [{"id": id_} for id_ in ("p", "q", "r")],
         "connections": [
-            {"from": {"card": "p", "port": ""}, "to": {"card": "q", "port": ""}},
-            {"from": {"card": "p", "port": ""}, "to": {"card": "r", "port": ""}},
-            {"from": {"card": "r", "port": ""}, "to": {"card": "q", "port": ""}},
+            {"from": {"card": "p"}, "to": {"card": "q"}},
+            {"from": {"card": "p"}, "to": {"card": "r"}},
+            {"from": {"card": "r"}, "to": {"card": "q"}},
         ],
     }
     cards = {
@@ -23,10 +23,11 @@ def test_wired_drafts_can_be_saved_written(client, daemon):
         "q": {"type": "draft"},
         "r": {"type": "draft"},
     }
+    cards = {id_: card_document(body) for id_, body in cards.items()}
     layout = layout_bytes({"cards": {"p": {"x": 0, "y": 0}, "q": {"x": 300, "y": 0},
                                       "r": {"x": 600, "y": 0}}})
     changes = [change("SetLayout", layout=layout), change("SetProject", json=json.dumps(project))]
-    changes += [change("PutDefinition", id=id_, cardJson=json.dumps(card))
+    changes += [change("PutDefinition", id=id_, cardJson=json.dumps(card), readme=card_readme(id_))
                 for id_, card in cards.items()]
     op = new_id()
     saved = client.call("ProjectSaveRequest", baseRev=before.rev, opId=op, origin="ui:test", changes=changes)
@@ -48,10 +49,10 @@ def test_wired_drafts_can_be_saved_written(client, daemon):
     project["canvas"]["connections"] = project["canvas"]["connections"][1:2]
     saved = client.call("ProjectSaveRequest", baseRev=saved.rev, opId=new_id(), origin="ui:test", changes=[
         change("SetProject", json=json.dumps(project)),
-        *[change("PutDefinition", id=id_, cardJson=json.dumps(card))
+        *[change("PutDefinition", id=id_, cardJson=json.dumps(card), readme=card_readme(id_))
           for id_, card in cards.items()],
     ])
-    readmes = {"p": "Count words.", "q": "---\ndescription: 日本語\n---\n"}
+    readmes = {"p": card_readme("P", body="Count words."), "q": card_readme("Q", "日本語")}
     saved = client.call("ProjectSaveRequest", baseRev=saved.rev, opId=new_id(), origin="ui:test", changes=[
         change("PutDefinition", id=id_, cardJson=json.dumps(cards[id_]), readme=readme)
         for id_, readme in readmes.items()
@@ -65,6 +66,6 @@ def test_wired_drafts_can_be_saved_written(client, daemon):
     definitions = {text(d.id): d for d in after.definitions}
     for id_ in cards:
         assert json.loads(text(definitions[id_].cardJson)) == cards[id_]
-        assert text(definitions[id_].readme) == readmes.get(id_)
+        assert text(definitions[id_].readme) == readmes.get(id_, card_readme(id_))
     assert {text(card.card.segments[0]) for card in after.resolution} == {"p", "q", "r"}
     assert all(not card.inputs and not card.outputs for card in after.resolution)

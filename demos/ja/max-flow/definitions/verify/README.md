@@ -1,4 +1,5 @@
 ---
+title: verify
 description: 別の方法で確かめる
 ---
 

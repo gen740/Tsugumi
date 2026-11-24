@@ -1,18 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
 import { L } from '../i18n'
-import type { CardLiveViews, LiveView, ViewMessage } from '../model/liveViews'
+import type { LiveView, ViewMessage } from '../model/liveViews'
 import { errorText } from '../model/session'
 
-export type SendHtmlView = (view: LiveView, bytes: Uint8Array<ArrayBuffer>) => Promise<unknown>
+export type SendHtmlView = (view: LiveView, bytes: Uint8Array<ArrayBuffer>, route: Uint8Array<ArrayBuffer>) => Promise<unknown>
 export type ReadHtmlView = (view: LiveView, signal: AbortSignal) => Promise<string>
 
 /** Each mount owns both frame contexts and the subscription to its view. */
-export function HtmlViewFrame({ view, card, read, send }: { view: LiveView; card: CardLiveViews; read: ReadHtmlView; send: SendHtmlView }) {
+export function HtmlViewFrame({ view, read, send, child }: { view: LiveView; read: ReadHtmlView; send: SendHtmlView; child: boolean }) {
   const frame = useRef<HTMLIFrameElement>(null)
+  const url = child ? new URL('./modules/viewer.html?child=1', document.baseURI).href : './modules/viewer.html'
   const [error, setError] = useState('')
   const [messageError, setMessageError] = useState('')
   useEffect(() => {
     const target = frame.current
+    const owner = target?.ownerDocument.defaultView
+    if (!target || !owner) return
     const loading = new AbortController()
     let html: string | undefined
     let ready = false
@@ -23,7 +26,7 @@ export function HtmlViewFrame({ view, card, read, send }: { view: LiveView; card
     const outstanding = new Map<number, () => void>()
     const messageMax = 1 << 24
     let reverseBytes = 0
-    const reverse: Uint8Array<ArrayBuffer>[] = []
+    const reverse: { bytes: Uint8Array<ArrayBuffer>; route: Uint8Array<ArrayBuffer> }[] = []
     let sending = false
     const release = () => {
       for (const message of pending) message.complete?.()
@@ -35,7 +38,7 @@ export function HtmlViewFrame({ view, card, read, send }: { view: LiveView; card
       target?.contentWindow?.postMessage({ tsugumi: 'view', message }, '*', transfer)
     const flush = () => {
       scheduled = false
-      if (loading.signal.aborted || card.views[view.index] !== view || !ready || html === undefined) return
+      if (loading.signal.aborted || !ready || html === undefined) return
       if (!mounted) {
         post({ type: 'mount', html })
         mounted = true
@@ -61,13 +64,14 @@ export function HtmlViewFrame({ view, card, read, send }: { view: LiveView; card
       if (sending || loading.signal.aborted) return
       sending = true
       while (reverse.length && !loading.signal.aborted) {
-        const bytes = reverse.shift()!
+        const { bytes, route } = reverse.shift()!
         try {
-          await send(view, bytes)
+          await send(view, bytes, route)
         } catch (cause) {
           if (!loading.signal.aborted) setMessageError(errorText(cause))
         } finally {
           reverseBytes -= Math.max(1, bytes.length)
+          if (!loading.signal.aborted) post({ type: 'reverseCredit', size: bytes.length })
         }
       }
       sending = false
@@ -83,19 +87,20 @@ export function HtmlViewFrame({ view, card, read, send }: { view: LiveView; card
         outstanding.delete(data.ticket)
       } else if (data?.tsugumi === 'messageDropped') {
         setMessageError(L('ビューのメッセージを送信できませんでした'))
-      } else if (data?.tsugumi === 'send' && data.bytes instanceof ArrayBuffer) {
+      } else if (data?.tsugumi === 'send' && data.bytes instanceof owner.ArrayBuffer &&
+        data.route instanceof owner.ArrayBuffer && data.route.byteLength === 16) {
         const bytes = new Uint8Array(data.bytes)
         if (bytes.length > messageMax || reverseBytes > messageMax) {
           setMessageError(L('ビューのメッセージを送信できませんでした'))
+          post({ type: 'reverseCredit', size: bytes.length })
         } else {
           reverseBytes += Math.max(1, bytes.length)
-          reverse.push(bytes)
+          reverse.push({ bytes, route: new Uint8Array(data.route) })
           void flushReverse()
         }
-        post({ type: 'reverseCredit', size: bytes.length })
       }
     }
-    window.addEventListener('message', receive)
+    owner.addEventListener('message', receive)
     target?.contentWindow?.postMessage({ tsugumi: 'probe' }, '*')
     setError('')
     setMessageError('')
@@ -113,13 +118,13 @@ export function HtmlViewFrame({ view, card, read, send }: { view: LiveView; card
       loading.abort()
       release()
       stop()
-      window.removeEventListener('message', receive)
+      owner.removeEventListener('message', receive)
       post({ type: 'dispose' })
     }
-  }, [view, card, read, send])
+  }, [view, read, send, url])
 
   return <>
-    <iframe ref={frame} sandbox="allow-scripts" src="./modules/viewer.html" title={view.declaration.name} hidden={!!error} />
+    <iframe ref={frame} sandbox="allow-scripts" src={url} title={view.name} hidden={!!error} />
     {messageError && <p className="caption" role="alert">{messageError}</p>}
     {error && <p className="caption" role="alert">{L('ビューを読み込めません: {0}', error)}</p>}
   </>

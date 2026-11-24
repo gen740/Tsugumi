@@ -46,7 +46,7 @@
       "id": "signal-sweep",
       "title": "信号の検出しきい値を比較",
       "field": "基本の機能を知る",
-      "description": "Input Card から 3 つの信号強度を送り、名前を付けた 2 つの検出しきい値と比較し、6 件の履歴を確認・比較して結果を集約する。",
+      "description": "3 つの信号強度と 2 つの検出しきい値をラベル付きの run リストで組み合わせ、6 件の結果を Collect で集約する。",
       "path": "signal-sweep",
       "tags": [
         "Bash",

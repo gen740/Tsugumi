@@ -54,7 +54,7 @@ final class UIScript {
   static let shared = UIScript()
 
   enum Request: Equatable {
-    case card(CardRef), visual(CardRef), definitions(ProjectRef), versions(ProjectRef), workflowSettings(ProjectRef), settings, explainer, debug
+    case card(CardRef), definitions(ProjectRef), versions(ProjectRef), workflowSettings(ProjectRef), settings, explainer, debug
     case project(URL), newProject
   }
 
@@ -177,7 +177,6 @@ final class UIScript {
         case "card":
           let cat = CardEditorCategory(rawValue: w.count > 3 ? w[3] : "general") ?? .general
           request = .card(CardRef(path: ref.path, card: w[2], category: cat))
-        case "visual": request = .visual(CardRef(path: ref.path, card: w[2]))
         case "definitions": request = .definitions(ref)
         case "versions": request = .versions(ref)
         case "workflow-settings": request = .workflowSettings(ref)
@@ -323,9 +322,9 @@ final class UIScript {
           p.turnStarted()
           let written = order.filter { s.kind(key(t.scope + [$0])) != .trigger }.map { (key(t.scope + [$0]), reveal: true) }
           let wires = s.connections(in: t.scope).compactMap { c -> AgentPresence.Wire? in
-            guard let from = c["from"]?["card"]?.string, let to = c["to"]?["card"]?.string,
-                  let fp = c["from"]?["port"]?.string, let tp = c["to"]?["port"]?.string else { return nil }
-            return AgentPresence.Wire(from: key(t.scope + [from]), fromPort: fp, to: key(t.scope + [to]), toPort: tp)
+            guard let wire = PresenceEvents.Connection(c) else { return nil }
+            return AgentPresence.Wire(from: key(t.scope + [wire.from]), fromPort: wire.fromPort,
+                                      to: key(t.scope + [wire.to]), toPort: wire.toPort)
           }
           p.saved(written: written, wires: wires)
           if w.count > 1 && w[1] == "thought" { p.think(String(localized: "変更を保存しています")) }

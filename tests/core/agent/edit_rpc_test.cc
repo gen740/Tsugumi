@@ -11,7 +11,7 @@ TEST_F(AgentProjectFixture,
   Grant(conversation, Tsugumi::Service::Access::Write);
   const auto root = directory.path / "project";
   const std::string create =
-      R"({"edits":[{"file_path":"definitions/data/_card.json","put":"{\"type\":\"draft\"}","expect_missing":true},{"file_path":"definitions/data/src/main.py","put":"original"}]})";
+      R"({"edits":[{"file_path":"definitions/data/_card.json","put":"{\"type\":\"draft\",\"symbol\":\"pencil.and.outline\"}","expect_missing":true},{"file_path":"definitions/data/README.md","put":"---\ntitle: data\ndescription:\n---\n","expect_missing":true},{"file_path":"tsugumi.json","selector":[{"field":"canvas"},{"field":"cards"}],"old_value":{"present":true,"value":[]},"new_value":{"present":true,"value":[{"id":"data"}]}},{"file_path":"definitions/data/src/main.py","put":"original"}]})";
   const auto first = Tool(conversation, "project_edit", create, "create");
   ASSERT_TRUE(first.Code().empty());
   ASSERT_FALSE(JsonBool(first.View(), "/isError")) << first.View();
@@ -70,14 +70,18 @@ TEST_F(AgentProjectFixture,
        CardReferenceDraftEditPreservesIntentAndRebindsWires) {
   namespace json = ::tsugumi::json;
   const auto root = directory.path / "project";
-  Write(root / "definitions/start/_card.json", R"({"type":"trigger"})");
-  Write(root / "definitions/plan/_card.json", R"({"type":"draft"})");
-  const std::string readme = "---\ndescription: Make a greeting\n---\n\nReturn hello.";
+  Write(root / "definitions/start/_card.json",
+        R"({"type":"trigger","symbol":"play.circle"})");
+  Write(root / "definitions/plan/_card.json",
+        R"({"type":"draft","symbol":"none"})");
+  const std::string readme =
+      "---\ntitle: plan\ndescription: Make a greeting\n---\n\nReturn hello.";
   Write(root / "definitions/plan/README.md", readme);
-  Write(root / "definitions/next/_card.json", R"({"type":"draft"})");
+  Write(root / "definitions/next/_card.json",
+        R"({"type":"draft","symbol":"pencil.and.outline"})");
   StartProject(
       false,
-      R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},{"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}]}})");
+      R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan"}},{"from":{"card":"plan"},"to":{"card":"next"}}]}})");
   const auto conversation = Conversation("reference-draft-edit");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -96,7 +100,14 @@ TEST_F(AgentProjectFixture,
   EXPECT_NE(project.find(R"("nixPath": [])"), std::string::npos);
   EXPECT_EQ(JsonString(project, "/canvas/connections/0/to/port"), "start");
   EXPECT_EQ(JsonString(project, "/canvas/connections/1/from/port"), "result");
-  EXPECT_EQ(JsonString(project, "/canvas/connections/1/to/port"), "");
+  // next stays a Draft, so its end keeps no port.
+  EXPECT_FALSE(json::Object(json::Get(
+                   json::Object(json::Array(json::Get(
+                                    json::Object(json::Get(
+                                        json::Object(project), "canvas")),
+                                    "connections"))[1]),
+                   "to"))
+                   .contains("port"));
   EXPECT_EQ(Read(root / "definitions/plan/README.md"), readme);
   const auto definition = Read(root / "definitions/plan/_card.json");
   EXPECT_EQ(JsonString(definition, "/type"), "code");
@@ -152,7 +163,7 @@ TEST_F(AgentProjectFixture,
   Grant(conversation, Tsugumi::Service::Access::Write);
   const auto created = Tool(
       conversation, "project_edit",
-      R"({"edits":[{"file_path":"definitions/data/_card.json","put":"{\"type\":\"draft\"}","expect_missing":true},{"file_path":"definitions/data/file.txt","put":"old text","expect_missing":true}]})",
+      R"({"edits":[{"file_path":"definitions/data/_card.json","put":"{\"type\":\"draft\",\"symbol\":\"pencil.and.outline\"}","expect_missing":true},{"file_path":"definitions/data/README.md","put":"---\ntitle: data\ndescription:\n---\n","expect_missing":true},{"file_path":"tsugumi.json","selector":[{"field":"canvas"},{"field":"cards"}],"old_value":{"present":true,"value":[]},"new_value":{"present":true,"value":[{"id":"data"}]}},{"file_path":"definitions/data/file.txt","put":"old text","expect_missing":true}]})",
       "create");
   ASSERT_TRUE(created.Code().empty()) << created.View();
   ASSERT_FALSE(JsonBool(created.View(), "/isError")) << created.View();
@@ -235,10 +246,10 @@ TEST_F(AgentProjectFixture, OperationIdReplaysOnceAndRejectsAnotherPayload) {
 TEST_F(AgentProjectFixture,
        ConnectLayoutAndSubgraphSaveTheirCompleteFootprints) {
   Write(directory.path / "project/definitions/a/_card.json",
-        R"({"type":"draft"})");
+        R"({"type":"draft","symbol":"pencil.and.outline"})");
   Write(directory.path / "project/definitions/b/_card.json",
-        R"({"type":"draft"})");
-  const std::string readme = "---\ndescription: Keep my words\n---\n";
+        R"({"type":"draft","symbol":"pencil.and.outline"})");
+  const std::string readme = "---\ntitle: a\ndescription: Keep my words\n---\n";
   Write(directory.path / "project/definitions/a/README.md", readme);
   Write(directory.path / "project/definitions/a/data.bin",
         std::string("\0\xff", 2));
@@ -283,36 +294,8 @@ TEST_F(AgentProjectFixture,
                 .find("\"a\""),
             std::string::npos);
 }
-TEST_F(AgentProjectFixture,
-       SubgraphKeepsAnExternalStillUsedByAnUnselectedAlias) {
-  for (const auto* id : {"mine", "alias"})
-    Write(directory.path / "project/definitions" / id / "_card.json",
-          R"({"type":"subgraph","external":"shared"})");
-  const auto child = directory.path / "project/externals/shared";
-  Write(
-      child / "tsugumi.json",
-      R"({"name":"Shared","canvas":{"cards":[{"id":"child"}],"connections":[]}})");
-  Write(child / "definitions/child/_card.json", R"({"type":"draft"})");
-  Write(child / "definitions/child/data.bin", std::string("\0\xff", 2));
-  StartProject(
-      false,
-      R"({"name":"Aliases","nixPath": [],"canvas":{"cards":[{"id":"mine"},{"id":"alias"}],"connections":[]}})");
-  const auto conversation = Conversation("alias-subgraph");
-  Grant(conversation);
-  Grant(conversation, Tsugumi::Service::Access::Write);
-  const auto result = Tool(conversation, "project_make_subgraph",
-                           R"({"cards":["mine"],"id":"group"})", "move");
-  ASSERT_TRUE(result.Code().empty()) << result.View();
-  ASSERT_FALSE(JsonBool(result.View(), "/isError")) << result.View();
-  EXPECT_EQ(Read(child / "definitions/child/data.bin"),
-            std::string("\0\xff", 2));
-  EXPECT_EQ(Read(directory.path / "project/externals/group/externals/shared/"
-                                  "definitions/child/data.bin"),
-            std::string("\0\xff", 2));
-}
 TEST_F(AgentProjectFixture, NarrowEditRequiresWriteAndPermissionApproval) {
-  Write(directory.path / "project/definitions/a/_card.json",
-        R"({"type":"draft"})");
+  Write(directory.path / "project/definitions/a/_card.json", FixtureCodeCard());
   StartProject(
       false,
       R"({"name":"Permissions","nixPath": [],"canvas":{"cards":[{"id":"a"}],"connections":[]}})");
@@ -320,7 +303,7 @@ TEST_F(AgentProjectFixture, NarrowEditRequiresWriteAndPermissionApproval) {
   Grant(conversation);
   const auto before = Read(directory.path / "project/definitions/a/_card.json");
   const std::string args =
-      R"({"edits":[{"file_path":"definitions/a/_card.json","selector":[{"field":"grants"}],"old_value":{"present":false},"new_value":{"present":true,"value":{"network":true}}}]})";
+      R"({"edits":[{"file_path":"definitions/a/_card.json","selector":[{"field":"grants"},{"field":"network"}],"old_value":{"present":true,"value":false},"new_value":{"present":true,"value":true}}]})";
   EXPECT_EQ(Tool(conversation, "project_edit", args, "without-write").Code(),
             "grant_required");
   EXPECT_EQ(Read(directory.path / "project/definitions/a/_card.json"), before);

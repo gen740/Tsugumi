@@ -1,3 +1,4 @@
 ---
-description: settings の状態を流してストリームを始める
+title: start
+description: seed ビューからの開始値を待つ
 ---

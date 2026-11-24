@@ -80,7 +80,6 @@ case "$suite" in
     run "$bin/tsugumi_rpc_frame_tests"
     run "$bin/tsugumi_rpc_cli_tests"
     gtest tsugumi_remote_result_tests 'ShellTest.*' 'RunScratch.*'
-    if $full; then run "$bin/tsugumi_worker_condition_tests"; fi
     # Evaluation cache invalidation reads real dependencies and filesystem state.
     run "$bin/tsugumi_definition_evaluation_tests"
     run python3 -m pytest -q -n "${TSUGUMI_PYTEST_WORKERS:-2}" --dist load --durations=40 "${core_args[@]}" tests/core

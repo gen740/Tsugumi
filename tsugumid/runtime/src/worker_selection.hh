@@ -1,16 +1,16 @@
 #pragma once
 
 #include <algorithm>
+#include <bit>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string_view>
 
-#include "tsugumi/document/worker_condition.hh"
-
 namespace tsugumi {
 struct WorkerCandidate {
   std::string_view id;
-  uint64_t grade;
+  uint64_t capabilities;
   bool free;
   bool supported = true;
 };
@@ -18,29 +18,32 @@ struct WorkerSelection {
   bool matches = false;
   std::optional<size_t> index;
 };
-// Input order is registration order. Unavailable/busy workers still count as
-// registered matches; their absence is different from an impossible condition.
+
+constexpr auto matches_capabilities(uint64_t card, uint64_t worker) -> bool {
+  return (card & ~worker) == 0;
+}
+
+// Input order breaks ties. Busy workers still count as registered matches.
 inline auto select_worker(std::span<const WorkerCandidate> workers,
-                          const worker_condition::Condition* condition,
-                          std::string_view service = "auto",
-                          std::string_view resident = {}) -> WorkerSelection {
-  WorkerSelection result;
+                          uint64_t capabilities, std::string_view resident = {})
+    -> WorkerSelection {
+  const auto matches = [&](const WorkerCandidate& worker) {
+    return worker.supported &&
+           matches_capabilities(capabilities, worker.capabilities);
+  };
   const bool keep_resident =
       !resident.empty() &&
-      std::any_of(workers.begin(), workers.end(), [&](const auto& worker) {
-        return worker.supported && worker.id == resident &&
-               (service == "auto" || service == worker.id) &&
-               (!condition || condition->matches(worker.grade));
+      std::ranges::any_of(workers, [&](const auto& worker) {
+        return worker.id == resident && matches(worker);
       });
+  WorkerSelection result;
   for (size_t i = 0; i < workers.size(); ++i) {
     const auto& worker = workers[i];
-    if (!worker.supported) continue;
-    if (service != "auto" && service != worker.id) continue;
-    if (keep_resident && resident != worker.id) continue;
-    if (condition && !condition->matches(worker.grade)) continue;
+    if (!matches(worker) || (keep_resident && resident != worker.id)) continue;
     result.matches = true;
     if (!worker.free) continue;
-    if (!result.index || worker.grade < workers[*result.index].grade)
+    if (!result.index || std::popcount(worker.capabilities) <
+                             std::popcount(workers[*result.index].capabilities))
       result.index = i;
   }
   return result;

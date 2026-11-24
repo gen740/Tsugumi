@@ -32,13 +32,12 @@ function concentration_path(rng, birth, death, volume, times)
 end
 
 # Fewer molecules, more noise: the coefficient of variation is 1 / sqrt(mean).
-function main(inputs, report)
+function main(_input::Inputs)
     outputs = Dict{String,Any}()
-    m = inputs.settings
-    k, gamma, runs = m["synthesis"], m["degradation"], Int(m["runs"])
-    volumes = sort(Float64.(inputs.params["volumes"]))
-    shown = Float64.(inputs.params["shown_volumes"])
-    rng = Xoshiro(m["seed"] + 2)
+    k, gamma, runs = params.synthesis, params.degradation, Int(params.runs)
+    volumes = sort!(collect(Float64, params.volumes))
+    shown = Float64.(params.shown_volumes)
+    rng = Xoshiro(params.seed + 2)
     t_end = 8 / gamma
 
     means = Float64[]
@@ -47,7 +46,7 @@ function main(inputs, report)
         samples = [final_count(rng, k * volume, gamma, t_end) for _ in 1:runs]
         push!(means, mean(samples))
         push!(cvs, std(samples) / mean(samples))
-        report.log(string(@sprintf("V = %g: mean %.2f, CV %.4f, 1/sqrt(mean) %.4f", volume, means[end], cvs[end], 1 / sqrt(k * volume / gamma))))
+        println(string(@sprintf("V = %g: mean %.2f, CV %.4f, 1/sqrt(mean) %.4f", volume, means[end], cvs[end], 1 / sqrt(k * volume / gamma))))
     end
     theory_mean = k .* volumes ./ gamma
     # The relative standard error of a sample standard deviation is about 1 / sqrt(2 runs)
@@ -67,7 +66,7 @@ function main(inputs, report)
     end
     rate = [Dict("t" => t, "c" => k / gamma * (1 - exp(-gamma * t))) for t in times]
 
-    report.vegalite(Dict(
+    send(VegaLite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("text" => "分子が少ないほどゆらぎは大きい（CV ∝ 1/√N）",
@@ -101,7 +100,7 @@ function main(inputs, report)
                      Dict("data" => Dict("values" => points), "mark" => Dict("type" => "point", "filled" => true, "size" => 60, "color" => "#2a78d6"),
                           "encoding" => Dict("x" => Dict("field" => "N", "type" => "quantitative"), "y" => Dict("field" => "cv", "type" => "quantitative"))),
                  ]),
-        ]))
+        ])))
 
     return outputs
 end

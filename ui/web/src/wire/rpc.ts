@@ -1,3 +1,4 @@
+import { cardStem } from '../model/names'
 // Typed project operations. The shared C++ client owns transport, validation,
 // request correlation, deadlines and disconnect handling (Wasm in the browser).
 import { Builder, ByteBuffer, Encoding } from 'flatbuffers'
@@ -65,9 +66,14 @@ export interface Transport {
 
 export interface LiveDisplayUpdate {
   creditId?: bigint
-  card: string[]
-  view: string
+  session: string
   bytes: Uint8Array<ArrayBuffer>
+}
+
+function viewRouteUuid(route: Uint8Array): string {
+  if (route.byteLength !== 16) throw new RangeError('View routes must contain 16 bytes')
+  const hex = Array.from(route, byte => byte.toString(16).padStart(2, '0')).join('')
+  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join('-')
 }
 
 export interface NotificationEvent {
@@ -128,10 +134,8 @@ export class RPCClient {
       if (raw.valueType() === R.NotificationPayload.DisplayUpdated) {
         const update = raw.value(new R.DisplayUpdated()) as R.DisplayUpdated
         const display = update.display()!
-        const card = display.card()!
         const value: LiveDisplayUpdate = {
-          card: Array.from({ length: card.segmentsLength() }, (_, i) => s(card.segments(i))),
-          view: s(display.view()),
+          session: s(display.session()),
           creditId: display.creditId() ?? undefined,
           bytes: display.bytesArray()?.slice() ?? new Uint8Array(),
         }
@@ -302,17 +306,16 @@ export class RPCClient {
     const out = concat(parts)
     return out
   }
-  async readCardView(card: string[], index: number, name: string, signal: AbortSignal): Promise<string> {
-    return new TextDecoder().decode(await this.readCardViewBytes(card, index, name, signal))
+  async readCardView(session: string, signal: AbortSignal): Promise<string> {
+    return new TextDecoder().decode(await this.readCardViewBytes(session, signal))
   }
 
-  /** The file of entry `index` of the Card's views list; `name` guards against a changed list. */
-  async readCardViewBytes(card: string[], index: number, name: string, signal: AbortSignal): Promise<Uint8Array<ArrayBuffer>> {
+  async readCardViewBytes(session: string, signal: AbortSignal): Promise<Uint8Array<ArrayBuffer>> {
     const parts: Uint8Array[] = []
     let offset = 0n
     for (;;) {
       signal.throwIfAborted()
-      const request = Object.assign(new R.CardViewReadRequestT(), { card: cardPath(card), name, offset, index })
+      const request = Object.assign(new R.CardViewReadRequestT(), { session, offset })
       const page = await this.call<R.FileContentT>(RequestPayload.CardViewReadRequest, request)
       signal.throwIfAborted()
       const next = page.nextOffset ?? offset
@@ -323,25 +326,25 @@ export class RPCClient {
       offset = next
     }
   }
-  sendView(card: string[], view: string, bytes: Uint8Array) {
-    const value = new R.ViewSendRequestT(cardPath(card), view)
+
+  sendView(session: string, route: Uint8Array, bytes: Uint8Array) {
+    const address = viewRouteUuid(route)
+    const value = new R.ViewSendRequestT(session, address)
     value.pack = builder => R.ViewSendRequest.createViewSendRequest(
-      builder, value.card!.pack(builder), builder.createString(view),
+      builder, builder.createString(session), builder.createString(address),
       R.ViewSendRequest.createBytesVector(builder, bytes),
     )
     return this.call<R.AckT>(RequestPayload.ViewSendRequest, value)
   }
 
-  viewCredit(subscriptionId: string, card: string[], view: string, bytes: number, creditId: bigint) {
-    return this.call<R.AckT>(RequestPayload.ViewCreditRequest, new R.ViewCreditRequestT(subscriptionId, cardPath(card), view, bytes, creditId))
+  viewCredit(subscriptionId: string, session: string, bytes: number, creditId: bigint) {
+    return this.call<R.AckT>(RequestPayload.ViewCreditRequest, new R.ViewCreditRequestT(subscriptionId, session, bytes, creditId))
   }
 
-  setVisible(subscriptionId: string, cards: string[][], enabled = true) {
-    return this.call<R.AckT>(
-      RequestPayload.ViewSetVisibleRequest,
-      Object.assign(new R.ViewSetVisibleRequestT(), { subscriptionId, cards: cards.map(cardPath), enabled }),
-    )
+  closeView(session: string) {
+    return this.call<R.AckT>(RequestPayload.ViewCloseRequest, new R.ViewCloseRequestT(session))
   }
+
   saveView(viewId: string, baseViewRev: bigint, view: number[]) {
     return this.call<R.ViewSaveResultT>(RequestPayload.ViewSaveRequest, Object.assign(new R.ViewSaveRequestT(), { viewId, baseViewRev, view }))
   }
@@ -457,9 +460,4 @@ export async function webSocketTransport(url: string, signal?: AbortSignal, prot
   } finally {
     signal?.removeEventListener('abort', release)
   }
-}
-
-/** Presentation choice made by the caller; core only reserves the id. */
-export function cardStem(name: string): string {
-  return name.replace(/[A-Z]/g, c => c.toLowerCase()).replace(/[^a-z0-9]+/g, '-').replace(/^-/, '').slice(0, 123).replace(/-$/, '') || 'card'
 }

@@ -1,3 +1,4 @@
 ---
-description: 投与計画（settings）から計算を始める
+title: start
+description: simulate のパラメータで計算を始める
 ---

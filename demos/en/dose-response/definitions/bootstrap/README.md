@@ -1,4 +1,5 @@
 ---
+title: bootstrap
 description: Confidence intervals of the EC50 and the Hill slope
 ---
 

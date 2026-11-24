@@ -54,7 +54,7 @@ struct WorkerSpawn {
   // with the RPC token, tsugumid's state); ro paths and the scratch folder
   // inside them are bound again on top.
   std::vector<std::string> hidden_paths;
-  // Experimental, per Card: outside network (otherwise the worker has its
+  // Per Card: outside network (otherwise the worker has its
   // own network namespace with nothing in it) and folders of the Mac.
   bool network = false;
   bool gui = false;
@@ -98,15 +98,18 @@ class WorkerProc {
       std::function<void(LogStream stream, const std::string& text)>;
   using DisplayCredit = std::function<void()>;
   using DisplaySink = std::function<void(WorkerDisplayData, DisplayCredit)>;
+  using ViewControl =
+      std::function<std::optional<WorkerViewReply>(const WorkerViewRequest&)>;
   // What became of a view message offered to a Card process: `closed` means
   // no live process takes view messages (the message is dropped).
   enum class ViewDelivery { accepted, full, closed };
   struct ViewReceiver {
     std::mutex mutex;
     WorkerProc* worker = nullptr;
-    std::function<ViewDelivery(const WorkerDisplayData&)> remote;
-    auto send(const WorkerDisplayData& display, DisplayCredit complete = {})
+    std::function<ViewDelivery(const WorkerViewEvent&, DisplayCredit)> remote;
+    auto send(const WorkerViewEvent& event, DisplayCredit complete = {})
         -> ViewDelivery;
+    auto reply(const WorkerViewReply& reply) -> bool;
   };
 
   // Throws Failed(permission_denied) when the sandbox cannot be applied.
@@ -150,9 +153,10 @@ class WorkerProc {
   // The sink may run on the reader thread between invocations. It must own
   // its captures and return promptly.
   auto set_display(DisplaySink display) -> void;
-  // Admits one reverse message; returns its credit after forwarding.
-  auto send_display(const WorkerDisplayData& display,
-                    DisplayCredit complete = {}) -> ViewDelivery;
+  auto set_view_control(ViewControl control) -> void;
+  // Admits one reverse event; returns its credit after forwarding.
+  auto send_display(const WorkerViewEvent& event, DisplayCredit complete = {})
+      -> ViewDelivery;
   auto view_receiver() -> std::weak_ptr<ViewReceiver>;
   auto resume_logs() -> void;
   // Where the worker's output goes while it serves the current call.
@@ -172,7 +176,8 @@ class WorkerProc {
   auto stop_data_reader() -> void;
   auto read_data() -> void;
   auto write_display() -> void;
-  auto return_display_credit(const std::string& view, size_t bytes) -> void;
+  auto return_display_credit(const ViewUuid& session, size_t bytes) -> void;
+  auto reply_view(const WorkerViewReply& reply) -> bool;
   auto stop_log_reader() -> void;
   void read_logs(bool drain);
   void send(int fd, const std::string& frame, bool observe = true);
@@ -193,14 +198,18 @@ class WorkerProc {
   std::mutex data_mutex_;
   std::mutex control_mutex_;
   struct ControlView {
-    std::deque<std::pair<std::string, DisplayCredit>> pending;
+    std::deque<std::pair<WorkerViewEvent, DisplayCredit>> pending;
     size_t pending_bytes = 0;
     size_t reverse_credit = 0;
-    size_t forward_credit = 0;
+    bool closed = false;
   };
   std::mutex display_mutex_;
   std::condition_variable display_ready_;
-  std::map<std::string, ControlView> control_views_;
+  std::map<ViewUuid, ControlView> control_views_;
+  std::map<ViewUuid, size_t> forward_credits_;
+  uint64_t view_request_id_ = 0;
+  bool awaiting_view_reply_ = false;
+  std::optional<WorkerViewReply> view_reply_;
   std::thread display_writer_;
   std::condition_variable data_ready_;
   std::thread data_thread_;
@@ -214,6 +223,7 @@ class WorkerProc {
   bool create_artifacts_ = false;
   std::vector<CreatedArtifact> created_artifacts_;
   std::shared_ptr<DisplaySink> display_;
+  std::shared_ptr<ViewControl> view_control_;
   LogSink logs_;
   std::mutex log_mu_;
   text::Utf8Decoder out_dec_;

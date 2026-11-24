@@ -1,8 +1,7 @@
 // definitions/<id>/README.md: what a Card is for, in Markdown.
 //
-// An optional front matter holds one-line `key: value` strings between two
-// `---` lines; for now the only key is `description`. The rest of the file is
-// the body. The Card id is the Card's only name: a README has no title field.
+// Front matter holds a non-empty title and a description, each on one line.
+// The rest of the file is the Markdown body.
 #pragma once
 
 #include <map>
@@ -24,7 +23,7 @@ auto known_key(std::string_view key) -> bool;
 // one-line `key: value` strings of known keys.
 auto parse(std::string_view text, std::string* error = nullptr)
     -> std::optional<Readme>;
-// The text of a README: the front matter when it has fields, then the body.
+// The text of a README: the front matter, then the body.
 auto print(const Readme& readme) -> std::string;
 
 }  // namespace tsugumi::readme

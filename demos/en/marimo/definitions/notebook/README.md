@@ -1,3 +1,4 @@
 ---
+title: notebook
 description: Multiply the input by factor, save the cells and emit the numeric result once
 ---

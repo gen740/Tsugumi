@@ -74,7 +74,7 @@ def test_invocation_can_open_a_sealed_artifact_by_uuid(core_factory, project):
           closedir(listing);
         }
         out.number(contents.size());
-    """, declarations=declarations, inputs=["doc"], recordIO=True,
+    """, declarations=declarations, inputs=["doc"], recordIO="on",
         grants={"hostPaths": [{"name": "project", "path": str(project), "write": True}]})
     write_nix_project(project, {"source": source, "sink": sink},
                       [card("source", "source"), card("sink", "sink")],

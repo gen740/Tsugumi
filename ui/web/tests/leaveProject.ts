@@ -1,3 +1,4 @@
+import { projectFixture } from './documentFixture'
 import { cardIds } from './cardIds'
 // What the Mac app does and the page must too: leaving a project closes what
 // belongs to it, a project taken in keeps its binary files, the failure of a
@@ -24,8 +25,8 @@ globalThis.fetch = (async (url: string) => {
 
 const session = (dir = '/p', key = 'k') => {
   const s = cardIds(new ProjectSession(dir, key, 'p'))
-  s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
-  s.confirmedProject = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
+  s.project = parse(projectFixture({"name":"t","canvas":{"cards":[],"connections":[]}}))
+  s.confirmedProject = parse(projectFixture({"name":"t","canvas":{"cards":[],"connections":[]}}))
   s.layout = parse('{}')
   s.confirmedLayout = parse('{}')
   return s

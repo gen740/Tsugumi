@@ -55,12 +55,14 @@ TEST_F(NativeContract, CombinedOutputsMustFitOneWorkerResultFrame) {
 
 TEST_F(NativeContract, OversizeFailsImmediatelyAndFullSendCancels) {
   host.call_id = 1;
+  const tsugumi_view_session session{{1}};
   const std::vector<uint8_t> message(TSUGUMI_MESSAGE_MAX, 255);
-  EXPECT_LT(send_display(&host, "view", message.data(), message.size() + 1), 0);
-  ASSERT_EQ(send_display(&host, "view", message.data(), message.size()), 0);
-  ASSERT_EQ(send_display(&host, "view", message.data(), message.size()), 0);
+  EXPECT_LT(send_display(&host, &session, message.data(), message.size() + 1),
+            0);
+  ASSERT_EQ(send_display(&host, &session, message.data(), message.size()), 0);
+  ASSERT_EQ(send_display(&host, &session, message.data(), message.size()), 0);
   auto blocked = std::async(std::launch::async, [&] {
-    return send_display(&host, "view", message.data(), 1);
+    return send_display(&host, &session, message.data(), 1);
   });
   EXPECT_EQ(blocked.wait_for(std::chrono::milliseconds(10)),
             std::future_status::timeout);
@@ -73,28 +75,38 @@ TEST_F(NativeContract, OversizeFailsImmediatelyAndFullSendCancels) {
 }
 
 TEST_F(NativeContract, ReceiveTimeoutAndPerThreadStorage) {
-  {
-    auto& queue = host.views["view"];
-    queue.incoming = {"abc", "xyz"};
-    queue.incoming_bytes = 6;
-  }
-  tsugumi_bytes bytes{};
-  ASSERT_EQ(receive_display(&host, "view", &bytes, 0), 0);
+  const ViewUuid route{1};
+  const ViewUuid session{2};
+  host.incoming = {{ViewEventKind::message, route, session, "abc"},
+                   {ViewEventKind::message, route, session, "xyz"},
+                   {ViewEventKind::close, route, session, {}}};
+  host.routes[route].incoming_bytes = 2 * message_cost(3);
+  tsugumi_view_event event{};
+  ASSERT_EQ(receive_display(&host, &event, 0), 0);
+  EXPECT_EQ(event.kind, static_cast<uint32_t>(ViewEventKind::message));
+  EXPECT_EQ(abi_uuid(event.route.bytes), route);
+  EXPECT_EQ(abi_uuid(event.session.bytes), session);
   auto other = std::async(std::launch::async, [&] {
-    tsugumi_bytes second{};
-    if (receive_display(&host, "view", &second, 0) != 0) return std::string{};
-    return std::string(second.data, second.data + second.size);
+    tsugumi_view_event second{};
+    if (receive_display(&host, &second, 0) != 0) return std::string{};
+    return std::string(second.data.data, second.data.data + second.data.size);
   });
   EXPECT_EQ(other.get(), "xyz");
-  EXPECT_EQ(std::string(bytes.data, bytes.data + bytes.size), "abc");
-  EXPECT_EQ(receive_display(&host, "view", &bytes, 1), 1);
+  EXPECT_EQ(std::string(event.data.data, event.data.data + event.data.size),
+            "abc");
+  ASSERT_EQ(receive_display(&host, &event, 0), 0);
+  EXPECT_EQ(event.kind, static_cast<uint32_t>(ViewEventKind::close));
+  EXPECT_EQ(abi_uuid(event.route.bytes), route);
+  EXPECT_EQ(abi_uuid(event.session.bytes), session);
+  EXPECT_EQ(event.data.size, 0);
+  EXPECT_EQ(receive_display(&host, &event, 1), 1);
   host.cancelled_id = 1;
-  EXPECT_EQ(receive_display(&host, "view", &bytes, 0), 1);
+  EXPECT_EQ(receive_display(&host, &event, 0), 1);
   host.call_id = 1;
-  EXPECT_EQ(receive_display(&host, "view", &bytes, 0), 2);
+  EXPECT_EQ(receive_display(&host, &event, 0), 2);
   host.call_id = 0;
   host.stopping = true;
-  EXPECT_EQ(receive_display(&host, "view", &bytes, -1), 2);
+  EXPECT_EQ(receive_display(&host, &event, -1), 2);
 }
 
 TEST_F(NativeContract, ArtifactEffectsRequireAnActiveCall) {

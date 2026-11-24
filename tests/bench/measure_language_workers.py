@@ -32,7 +32,7 @@ def sequence_length(client, run_id, selected):
 def measure(language, directory, timeout):
     root = directory / f"collatz-{language}"
     shutil.copytree(ROOT / "demos/en/collatz", root)
-    selected = f"collatz-{language}"
+    selected = f"collatz_{language}"
     document = json.loads((root / "tsugumi.json").read_text())
     document["canvas"] = {"cards": [{"id": name} for name in ("start", "initial", selected)], "connections": [
         {"from": {"card": "initial", "port": "value"}, "to": {"card": selected, "port": "n"}},
@@ -46,7 +46,7 @@ def measure(language, directory, timeout):
             shutil.rmtree(external)
     # The sequence is read back as a recorded value.
     collect = root / "externals" / selected / "definitions" / "collect" / "_card.json"
-    collect.write_text(json.dumps({**json.loads(collect.read_text()), "recordIO": True}))
+    collect.write_text(json.dumps({**json.loads(collect.read_text()), "recordIO": "on"}))
     daemon = Daemon(root)
     result = {"path": "local", "scenario": language, "runs": [], "summary": {},
               "project": str(root), "daemon_directory": str(daemon.directory)}

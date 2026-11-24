@@ -4,13 +4,14 @@
 
 #include <map>
 
+#include "document_fixture.hh"
+#include "tsugumi/document/document.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/fs.hh"
 #include "version_facts.hh"
 #include "version_record.hh"
-#include "tsugumi/util/flat_file.hh"
 #include "versions.hh"
-#include "tsugumi/document/document.hh"
 
 namespace tsugumi {
 namespace {
@@ -43,10 +44,11 @@ class VersionNote : public ::testing::Test {
 TEST_F(VersionNote,
        FullTreesDistinguishParametersDefinitionsSourceWiringAndMembership) {
   Put("tsugumi.json",
-      R"({"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})");
-  Put("definitions/a/_card.json", R"({"type":"code"})");
+      test::FixtureProjectDocument(
+          R"({"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})"));
+  Put("definitions/a/_card.json", ::tsugumi::test::FixtureCodeCard());
   Put("definitions/a/params.nix", R"({ secret = "FIRST"; })");
-  Put("definitions/b/_card.json", R"({"type":"code"})");
+  Put("definitions/b/_card.json", ::tsugumi::test::FixtureCodeCard());
   Put("definitions/a/src/main.py", std::string(15000, '#') + "\n");
   Versions versions(root);
   const auto first = versions.init();
@@ -57,17 +59,19 @@ TEST_F(VersionNote,
   ExpectChanges(neutral, {}, {}, {{"a", {"parameters"}}});
   EXPECT_EQ(versions.note(params).facts, neutral);
   EXPECT_EQ(neutral.find("PRIVATE_SENTINEL"), std::string::npos);
-  Put("definitions/a/_card.json", R"({ "type": "code" })");
+  Put("definitions/a/_card.json", " " + ::tsugumi::test::FixtureCodeCard() + "\n");
   const auto formatting = versions.commit_all("Formatting");
   ExpectChanges(versions.note(formatting).facts, {}, {}, {});
   Put("definitions/a/_card.json",
-      R"({"type":"code","grants":{"network":true}})");
+      ::tsugumi::test::FixtureCodeCard(
+          R"({"grants":{"network":true,"gui":false}})"));
   Put("definitions/a/src/main.py",
       "# CHANGED_SOURCE_SENTINEL\n" + std::string(15000, '#'));
-  Put("definitions/c/_card.json", R"({"type":"code"})");
+  Put("definitions/c/_card.json", ::tsugumi::test::FixtureCodeCard());
   std::filesystem::remove_all(root / "definitions/b");
   Put("tsugumi.json",
-      R"({"canvas":{"cards":[{"id":"a"},{"id":"c"}],"connections":[{"from":{"card":"a","port":"out"},"to":{"card":"c","port":"in"}}]}})");
+      test::FixtureProjectDocument(
+          R"({"canvas":{"cards":[{"id":"a"},{"id":"c"}],"connections":[{"from":{"card":"a","port":"out"},"to":{"card":"c","port":"in"}}]}})"));
   auto change = versions.commit_all("Change");
   EXPECT_TRUE(versions.diff(change).truncated);
   ExpectChanges(versions.note(change).facts, {"c"}, {"b"},
@@ -94,10 +98,13 @@ TEST_F(VersionNote,
 }
 TEST_F(VersionNote, NestedCardsAndTheEntryLimitUseTheFullDiff) {
   Put("tsugumi.json",
-      R"({"canvas":{"cards":[{"id":"inner"}],"connections":[]}})");
+      test::FixtureProjectDocument(
+          R"({"canvas":{"cards":[{"id":"inner"}],"connections":[]}})"));
   Put("externals/inner/tsugumi.json",
-      R"({"canvas":{"cards":[{"id":"a"}],"connections":[]}})");
-  Put("externals/inner/definitions/a/_card.json", R"({"type":"code"})");
+      test::FixtureProjectDocument(
+          R"({"canvas":{"cards":[{"id":"a"}],"connections":[]}})"));
+  Put("externals/inner/definitions/a/_card.json",
+      ::tsugumi::test::FixtureCodeCard());
   Versions versions(root);
   versions.init();
   Put("externals/inner/definitions/a/src/main.py", "print('private')");
@@ -105,7 +112,8 @@ TEST_F(VersionNote, NestedCardsAndTheEntryLimitUseTheFullDiff) {
   ExpectChanges(versions.note(commit).facts, {}, {},
                 {{"inner/a", {"source"}}});
   Put("externals/inner/tsugumi.json",
-      R"({"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"},{"id":"e"},{"id":"f"},{"id":"g"},{"id":"h"}],"connections":[]}})");
+      test::FixtureProjectDocument(
+          R"({"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"},{"id":"e"},{"id":"f"},{"id":"g"},{"id":"h"}],"connections":[]}})"));
   commit = versions.commit_all("Many Cards");
   ExpectChanges(versions.note(commit).facts,
                 {"inner/b", "inner/c", "inner/d", "inner/e", "inner/f",
@@ -113,7 +121,7 @@ TEST_F(VersionNote, NestedCardsAndTheEntryLimitUseTheFullDiff) {
                 {}, {});
 }
 TEST_F(VersionNote, NeutralCommitsAndRunNotesSurviveReopening) {
-  Put("tsugumi.json", initial_project_json("test"));
+  Put("tsugumi.json", initial_project_json("test", {".git", ".DS_Store"}));
   Versions versions(root);
   const auto commit = versions.init();
   const auto message = versions.graph(1).commits.front().message;
@@ -131,7 +139,7 @@ TEST_F(VersionNote, NeutralCommitsAndRunNotesSurviveReopening) {
   EXPECT_EQ(facts.commits.front().runs.front().state, "succeeded");
 }
 TEST_F(VersionNote, DiffIncludesTextAcrossTheDefinitionAndExcludesData) {
-  Put("tsugumi.json", initial_project_json("test"));
+  Put("tsugumi.json", initial_project_json("test", {".git", ".DS_Store"}));
   Put("definitions/a/binary", std::string("old\0binary", 10));
   Put("definitions/a/large", std::string(1024 * 1024 + 1, 'x'));
   Versions versions(root);
@@ -155,7 +163,7 @@ TEST_F(VersionNote, DiffIncludesTextAcrossTheDefinitionAndExcludesData) {
   EXPECT_EQ(diff.find("sentinel"), std::string::npos);
 }
 TEST_F(VersionNote, DiffComparesTheChosenVersionsWithoutChangingGit) {
-  Put("tsugumi.json", initial_project_json("test"));
+  Put("tsugumi.json", initial_project_json("test", {".git", ".DS_Store"}));
   Put("definitions/a/src/main.py", "# first\n");
   Put("definitions/a/src/values.csv", "PRIVATE_DATA\n");
   Versions versions(root);
@@ -196,26 +204,26 @@ TEST(VersionText, PublicFactsSeparatePersistenceFromPresentation) {
 }
 TEST_F(VersionNote,
      RecordsFirstParentChangesAndUsesCardIdsAcrossExternalDirectoryAliases) {
-  Put("tsugumi.json", initial_project_json("test"));
-  Put("definitions/outer-id/_card.json", R"({"type":"subgraph","external":"library"})");
-  const auto meta = "externals/library/definitions/inner-id/_comments.json";
+  Put("tsugumi.json", initial_project_json("test", {".git", ".DS_Store"}));
+  Put("definitions/outer_id/_card.json",
+      R"({"type":"subgraph","symbol":"link"})");
+  const auto meta = "externals/outer_id/definitions/inner_id/_comments.json";
   Put(meta, R"({"comments":[{"id":"c1","text":"Ask","author":"user"}]})");
   Versions versions(root);
   const auto first = versions.init();
   auto changes = versions.comment_changes(first);
   ASSERT_EQ(changes.size(), 1u);
-  EXPECT_EQ(changes[0].card, "outer-id/inner-id");
+  EXPECT_EQ(changes[0].card, "outer_id/inner_id");
   EXPECT_EQ(changes[0].change, "added");
   EXPECT_EQ(changes[0].by, "user");
-  Put(
-      meta,
-      R"({"comments":[{"id":"c1","text":"Ask","author":"user","resolved":true,"state_by":"agent","resolution":"Done","cards":["outer-id/inner-id"]}]})");
+  Put(meta,
+      R"({"comments":[{"id":"c1","text":"Ask","author":"user","resolved":true,"state_by":"agent","resolution":"Done","cards":["outer_id/inner_id"]}]})");
   changes = versions.comment_changes(versions.commit_all("Resolve"));
   ASSERT_EQ(changes.size(), 1u);
   EXPECT_EQ(changes[0].change, "resolved");
   EXPECT_EQ(changes[0].by, "agent");
   EXPECT_EQ(changes[0].resolution, "Done");
-  EXPECT_EQ(changes[0].cards, (std::vector<std::string>{"outer-id/inner-id"}));
+  EXPECT_EQ(changes[0].cards, (std::vector<std::string>{"outer_id/inner_id"}));
   std::filesystem::remove(root / meta);
   changes = versions.comment_changes(versions.commit_all("Remove"));
   ASSERT_EQ(changes.size(), 1u);

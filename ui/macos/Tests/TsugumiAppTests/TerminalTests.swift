@@ -11,7 +11,7 @@ private func temporaryProject() throws -> (identity: ProjectIdentity, remove: ()
   let dir = testTemporaryDirectory.appendingPathComponent(UUID().uuidString)
   do {
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    try Data("{}".utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
+    try Data(fixtureProjectJSON().utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
     return (try ProjectIdentity(url: dir), { try? FileManager.default.removeItem(at: dir) })
   } catch {
     try? FileManager.default.removeItem(at: dir)

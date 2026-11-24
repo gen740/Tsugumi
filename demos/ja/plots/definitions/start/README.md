@@ -1,3 +1,4 @@
 ---
-description: 歩き方の設定（settings）から計算を始める
+title: start
+description: simulate のパラメータで計算を始める
 ---

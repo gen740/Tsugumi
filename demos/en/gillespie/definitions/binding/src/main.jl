@@ -42,14 +42,13 @@ end
 
 # A nonlinear reaction: the rate equation is the large-volume limit only. In a
 # small volume the true mean differs from it, and the gap closes as V grows.
-function main(inputs, report)
+function main(_input::Inputs)
     outputs = Dict{String,Any}()
-    m = inputs.settings
-    concentration = inputs.params["concentration"]
-    on, off = inputs.params["on_rate"], inputs.params["off_rate"]
-    volumes = sort(Float64.(inputs.params["volumes"]))
-    replicas = Int(inputs.params["replicas"])
-    rng = Xoshiro(m["seed"] + 3)
+    concentration = params.concentration
+    on, off = params.on_rate, params.off_rate
+    volumes = sort!(collect(Float64, params.volumes))
+    replicas = Int(params.replicas)
+    rng = Xoshiro(params.seed + 3)
 
     rows = Dict{String,Any}[]
     ssa_fraction = Float64[]
@@ -69,7 +68,7 @@ function main(inputs, report)
         push!(ssa_se, std(samples) / sqrt(replicas))
         push!(exact_fraction, exact)
         push!(ode_fraction, ode)
-        report.log(string(@sprintf("V = %g, %d molecules each: SSA %.4f +- %.4f, exact %.4f, rate equation %.4f", volume, total, ssa_fraction[end], ssa_se[end], exact, ode)))
+        println(string(@sprintf("V = %g, %d molecules each: SSA %.4f +- %.4f, exact %.4f, rate equation %.4f", volume, total, ssa_fraction[end], ssa_se[end], exact, ode)))
         push!(rows, Dict("total" => total, "low" => ssa_fraction[end] - 2ssa_se[end], "high" => ssa_fraction[end] + 2ssa_se[end], "ssa" => ssa_fraction[end]))
     end
     outputs["binding"] = Dict("totals" => totals, "ssa" => ssa_fraction, "se" => ssa_se, "exact" => exact_fraction, "ode" => ode_fraction)
@@ -79,7 +78,7 @@ function main(inputs, report)
     x = Dict("field" => "total", "type" => "quantitative", "title" => "Molecules of A and of B (proportional to volume)",
              "scale" => Dict("type" => "log", "nice" => false, "domain" => [totals[1] / 1.2, totals[end] * 1.2]))
     y_scale = Dict("zero" => false)
-    report.vegalite(Dict(
+    send(VegaLite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("anchor" => "start", "text" => "A non-linear reaction A + B ⇌ C: in small volumes it departs from the rate equation",
@@ -95,7 +94,7 @@ function main(inputs, report)
                  "encoding" => Dict("x" => x, "y" => Dict("field" => "low", "type" => "quantitative"), "y2" => Dict("field" => "high"))),
             Dict("data" => Dict("values" => rows), "mark" => Dict("type" => "point", "filled" => true, "size" => 55, "color" => "#2a78d6"),
                  "encoding" => Dict("x" => x, "y" => Dict("field" => "ssa", "type" => "quantitative"))),
-        ]))
+        ])))
 
     return outputs
 end

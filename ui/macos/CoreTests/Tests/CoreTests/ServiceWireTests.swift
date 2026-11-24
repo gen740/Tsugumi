@@ -225,7 +225,7 @@ final class ServiceWireTests: XCTestCase {
   func testExecutionSettingsUseTheHostContract() throws {
     for (method, fields) in [
       ("ExecutionServicesRequest", [:]),
-      ("ExecutionServicePutRequest", ["id": "compute", "name": "Compute", "endpoint": "unix:/tmp/worker", "workerPublicKey": "ed25519:test"]),
+      ("ExecutionServicePutRequest", ["id": "compute", "name": "Compute", "endpoint": "unix:/tmp/worker", "workerPublicKey": "ed25519:test", "worker_capabilities": [0, 63] as [UInt8]]),
       ("ExecutionServiceRemoveRequest", ["id": "compute"]),
       ("ExecutionProjectAuthorizeRequest", ["project_id": "project", "path": "/project", "control_dir": "/control"]),
       ("ExecutionProjectRevokeRequest", ["project_id": "project"]),
@@ -235,6 +235,12 @@ final class ServiceWireTests: XCTestCase {
       var buffer = ByteBuffer(data: bytes)
       let request: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
       XCTAssertEqual(request.requestId, 2)
+      if method == "ExecutionServicePutRequest" {
+        let envelope = Tsugumi_Host_MessageT(request)
+        let body = (envelope.payload?.value as? Tsugumi_Host_RequestT)?.value?.value
+        let service = try XCTUnwrap(body as? Tsugumi_Host_ExecutionServicePutRequestT)
+        XCTAssertEqual(service.workerCapabilities, [0, 63])
+      }
       XCTAssertThrowsError(try ServiceWire.encode(method, fields: fields, id: 2, host: false))
     }
   }

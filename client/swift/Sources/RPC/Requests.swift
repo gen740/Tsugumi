@@ -14,15 +14,20 @@ public extension RPCClient {
     try await call(.projectinspectrequest, Tsugumi_RPC_ProjectInspectRequestT())
   }
 
+  /// A valid stem for the core allocator ([a-z][a-z0-9_]{0,63}), the same rule
+  /// as the Web UI's cardStem. The allocator reserves the final id.
   static func cardStem(_ name: String) -> String {
     var stem = ""
     for byte in name.utf8 {
       let c = byte >= 65 && byte <= 90 ? byte + 32 : byte
-      if (c >= 97 && c <= 122) || (c >= 48 && c <= 57) { stem.append(Character(UnicodeScalar(c))) }
-      else if !stem.isEmpty && !stem.hasSuffix("-") { stem += "-" }
-      if stem.count == 123 { break }
+      let letter = c >= 97 && c <= 122
+      if letter || (!stem.isEmpty && ((c >= 48 && c <= 57) || c == 95)) {
+        stem.append(Character(UnicodeScalar(c)))
+      } else if !stem.isEmpty && !stem.hasSuffix("_") {
+        stem += "_"
+      }
+      if stem.count == 64 { break }
     }
-    while stem.hasSuffix("-") { stem.removeLast() }
     return stem.isEmpty ? "card" : stem
   }
 
@@ -181,42 +186,36 @@ public extension RPCClient {
     return out
   }
 
-  /// One page of the file of entry `index` of a Card's views list, which must be named `name`.
-  func readCardView(card: [String], index: Int, name: String, offset: UInt64) async throws -> Tsugumi_RPC_FileContentT {
+  /// One page of the view file pinned to the open session.
+  func readCardView(session: UUID, offset: UInt64) async throws -> Tsugumi_RPC_FileContentT {
     let r = Tsugumi_RPC_CardViewReadRequestT()
-    r.card = cardPath(card)
-    r.index = UInt32(index)
-    r.name = name
+    r.session = session.uuidString.lowercased()
     r.offset = offset
     r.limitBytes = 1 << 20
     return try await call(.cardviewreadrequest, r)
   }
 
-  func sendView(card: [String], view: String, bytes: Data) async throws {
+  func sendView(session: UUID, route: UUID, bytes: Data) async throws {
     let r = Tsugumi_RPC_ViewSendRequestT()
-    r.card = cardPath(card)
-    r.view = view
+    r.session = session.uuidString.lowercased()
+    r.route = route.uuidString.lowercased()
     r.bytes = Array(bytes)
     let _: Tsugumi_RPC_AckT = try await call(.viewsendrequest, r)
   }
 
-  func returnViewCredit(subscription: String, card: [String], view: String,
-                        bytes: UInt32, creditId: UInt64) async throws {
+  func returnViewCredit(subscription: String, session: UUID, bytes: UInt32, creditId: UInt64) async throws {
     let r = Tsugumi_RPC_ViewCreditRequestT()
     r.subscriptionId = subscription
-    r.card = cardPath(card)
-    r.view = view
+    r.session = session.uuidString.lowercased()
     r.bytes = bytes
     r.creditId = creditId
     let _: Tsugumi_RPC_AckT = try await call(.viewcreditrequest, r)
   }
 
-  func setVisible(subscription: String, cards: [[String]], enabled: Bool = true) async throws {
-    let r = Tsugumi_RPC_ViewSetVisibleRequestT()
-    r.subscriptionId = subscription
-    r.cards = cards.map { cardPath($0) }
-    r.enabled = enabled
-    let _: Tsugumi_RPC_AckT = try await call(.viewsetvisiblerequest, r)
+  func closeView(session: UUID) async throws {
+    let r = Tsugumi_RPC_ViewCloseRequestT()
+    r.session = session.uuidString.lowercased()
+    let _: Tsugumi_RPC_AckT = try await call(.viewcloserequest, r)
   }
 
   func saveView(viewId: UUID, baseRev: UInt64, view: [UInt8]) async throws -> Tsugumi_RPC_ViewSaveResultT {

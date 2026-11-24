@@ -1,4 +1,5 @@
 ---
+title: window
 description: 定常状態の山と谷を有効域と比べる
 ---
 

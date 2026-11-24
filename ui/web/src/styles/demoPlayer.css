@@ -19,7 +19,7 @@
 .tp-compact.tp-root .tp-surface { height: 100%; }
 .tp-compact .cv-port-label, .tp-compact .cv-stage-arrow { display: none; }
 /* In a small thumbnail the Card's text cannot be read and its minimum size runs over the Card: only the shape and the state stay. */
-.tp-small .cv-param-row > *, .tp-small .cv-summary, .tp-small .cv-result > *, .tp-small .cv-stage-row, .tp-small .cv-draft-text span, .tp-small .cv-state .mono-digits { visibility: hidden; }
+.tp-small .cv-summary, .tp-small .cv-result > *, .tp-small .cv-stage-row, .tp-small .cv-draft-text span, .tp-small .cv-state .mono-digits { visibility: hidden; }
 .tp-small .cv-port > span { transform: scale(0.7); }
 .tp-tiny .cv-card-header > *, .tp-tiny .cv-start > *, .tp-tiny .cv-routing-icon { visibility: hidden; }
 .tp-tiny .cv-port > span { transform: scale(0.45); }
@@ -31,7 +31,6 @@
 .tp-surface:active { cursor: grabbing; }
 .tp-root .cv-card-body, .tp-root .cv-routing-icon { cursor: pointer; }
 .tp-compact .cv-card-body { cursor: inherit; }
-.tp-root .cv-param-row { pointer-events: none; }
 .tp-root .cv-wires { z-index: 0; }
 .tp-root .cv-card, .tp-root .tp-note { z-index: 1; }
 @media (prefers-reduced-motion: reduce) {

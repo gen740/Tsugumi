@@ -1,23 +1,27 @@
-"""Shows the most recent `window` samples. This Card sets reuseWorker: true, so
-the worker keeps the window between invocations; each run starts with an empty one."""
+"""Draw a sliding window of samples in the resident plotting worker."""
+
 from collections import deque
 
-
-points = None
-
-
-def on_run_start(inputs):
-    global points
-    points = deque(maxlen=inputs.params.window)
+from card import Input, Output, params
+from tsugumi import LineChart, LineSeries, send, view_open
 
 
-def main(inputs, report):
-    s = inputs.sample
-    points.append((s.index, s.value))
+points = deque(maxlen=params.window)
+session = None
+
+
+def run(inputs: Input) -> Output:
+    global session
+    sample = inputs.require("sample")
+    if not points or sample.index <= points[-1][0]:
+        points.clear()
+        session = view_open("line-chart").session
+    points.append((sample.index, sample.value))
     xs = [float(i) for i, _ in points]
     ys = [v for _, v in points]
     mean = sum(ys) / len(ys)
-    report.line_chart([
-        {"id": "value", "label": "random walk", "x": xs, "y": ys},
-        {"id": "mean", "label": f"mean of last {len(ys)}", "x": [xs[0], xs[-1]], "y": [mean, mean]},
-    ])
+    send(session, LineChart([
+        LineSeries("value", "random walk", xs, ys),
+        LineSeries("mean", f"mean of last {len(ys)}", [xs[0], xs[-1]], [mean, mean]),
+    ]))
+    return Output()

@@ -70,14 +70,15 @@ struct AppRun {
   }
 
   /// Runs once; returns the process exit status.
-  func run() throws -> Int32 {
+  @MainActor func run() throws -> Int32 {
     let fm = FileManager.default
     let began = Date()
     guard !fm.fileExists(atPath: output.path) else { throw PackError("\(output.path) already exists") }
     let share = fm.temporaryDirectory.appendingPathComponent("tsugumi-pack-run-\(UUID().uuidString)")
     try fm.createDirectory(at: share, withIntermediateDirectories: true)
     defer { try? fm.removeItem(at: share) }
-    var request: [String: Any] = [:]
+    let views = PackViewRelay(title: name, share: share)
+    var request: [String: Any] = ["views": true]
     if let start { request["start"] = start }
     try JSONSerialization.data(withJSONObject: request, options: [.prettyPrinted]).write(to: share.appendingPathComponent("request.json"))
     let console = share.appendingPathComponent("console.log")
@@ -94,7 +95,7 @@ struct AppRun {
     let code = Set((manifest["cards"] as? [[String: Any]] ?? []).filter { $0["type"] as? String == "code" }
       .compactMap { $0["id"] as? String })
     var firstResult: TimeInterval?
-    try boot.run { line in
+    try boot.run(views: views) { line in
       let elapsed = Date().timeIntervalSince(began)
       if line.hasPrefix("PACK-CARD ") {
         let words = line.split(separator: " ")
@@ -127,7 +128,9 @@ struct AppRun {
       print("  result \(item["card"] ?? "").\(item["port"] ?? ""): \(item["file"] ?? item["json"] ?? "")")
     }
     print(String(format: "%@: %@ in %.1f s; results in %@", name, status == "0" ? "succeeded" : "failed", total, output.path))
-    if opened { try? shell("/usr/bin/open", [output.path]) }
+    views.disconnect()
+    views.waitForWindows()
+    if opened { try? shell("/usr/bin/open", ["-g", output.path]) }
     return status == "0" ? 0 : 1
   }
 }

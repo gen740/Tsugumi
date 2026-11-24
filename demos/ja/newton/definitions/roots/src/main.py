@@ -1,11 +1,15 @@
 """Reference roots, found without Newton's method: numpy.roots takes the
 eigenvalues of the companion matrix. Roots closer than CLUSTER are one multiple
 root (rounding splits a double root by about 1e-8, a triple one by about 1e-5)."""
+
+from card import Input, Output, params
+from newton.Problem import ProblemT
+
 import json
 
 import numpy as np
 
-from tsugumi import Failure
+from tsugumi import Failure, Markdown, send
 
 CLUSTER = 1e-3
 
@@ -41,8 +45,8 @@ def show(z):
     return f"{z.real:.6g} {'+' if z.imag >= 0 else '-'} {abs(z.imag):.6g}i"
 
 
-def main(inputs, report):
-    s = inputs.settings
+def run(_input: Input) -> Output:
+    s = params
     coeffs = s.coeffs
     if len(coeffs) < 2 or coeffs[0] == 0:
         raise Failure("output_invalid", "coeffs must list a polynomial of degree >= 1, highest power first, leading coefficient not 0")
@@ -81,8 +85,8 @@ def main(inputs, report):
     if critical:
         where = "、".join(f"${show(r)}$" + (f"（重複度 {m}）" if m > 1 else "") for r, m in critical)
         lines += ["", f"**臨界点** $p'(z) = 0$: {where}。ここでは反復の式が割り算できません。"]
-    report.markdown("\n".join(lines))
-    report.log("result: " + json.dumps({"roots": [[r.real, r.imag, m] for r, m in roots],
+    send(Markdown("\n".join(lines)))
+    print("result: " + json.dumps({"roots": [[r.real, r.imag, m] for r, m in roots],
                                    "exact_gap": None if exact_gap is None else float(exact_gap)}))
     label = tex_poly(coeffs)
     vec_coeffs = np.asarray(coeffs, dtype=np.float64)
@@ -91,15 +95,15 @@ def main(inputs, report):
     multiplicity = np.array([m for (_, m) in roots], dtype=np.uint64)
     critical_re = np.array([r.real for (r, _) in critical], dtype=np.float64)
     critical_im = np.array([r.imag for (r, _) in critical], dtype=np.float64)
-    return {'problem': {
-        'label': label,
-        'coeffs': vec_coeffs,
-        'roots_re': roots_re,
-        'roots_im': roots_im,
-        'multiplicity': multiplicity,
-        'critical_re': critical_re,
-        'critical_im': critical_im,
-        'damping': s.damping,
-        'tolerance': s.tolerance,
-        'max_iter': s.maxIter,
-    }}
+    return Output(problem=ProblemT(
+        label=label,
+        coeffs=vec_coeffs,
+        rootsRe=roots_re,
+        rootsIm=roots_im,
+        multiplicity=multiplicity,
+        criticalRe=critical_re,
+        criticalIm=critical_im,
+        damping=s.damping,
+        tolerance=s.tolerance,
+        maxIter=s.max_iter,
+    ))

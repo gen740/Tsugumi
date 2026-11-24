@@ -38,10 +38,12 @@ table SubmitRequest { spec:[ubyte] (required); }
 // received. A reply carries at most
 // log_limit (capped at 256 KiB) bytes from that offset, so a running job's log
 // arrives while it runs. The completed result's logs.jsonl stays authoritative.
-table DisplayCredit { view:string (required); released:ulong; }
+table DisplayCredit { address:Tsugumi.Worker.ViewUuid (required); released:ulong; }
 table StatusRequest {
   log_offset:ulong; log_limit:uint;
   display_after:ulong; display_credits:[DisplayCredit] (trace_secret);
+  // The listener accepts a matching response once, across status retries.
+  view_reply:Tsugumi.Worker.WorkerViewReply (trace_secret);
 }
 // A nonzero log_limit also returns a log slice, as for StatusRequest; it
 // requires the job's submitting core life. Zero cancels from any life.
@@ -64,9 +66,11 @@ table CardSecretsRequest { names:[string] (required); }
 // through memory and keeps no copy; nothing writes them to the journal or any
 // file. A listener restart before delivery fails the job, and nothing resends.
 table JobSecretsRequest { fingerprint:string (required); secrets:[CardSecret] (required); }
-// Transient bytes sent to a running Card in the submitting core life.
+// Transient route events sent to a Card process in the submitting core life.
 table ViewSendRequest {
-  display:Tsugumi.Worker.WorkerDisplay (required); offset:ulong;
+  event:Tsugumi.Worker.WorkerViewEvent (required, trace_secret);
+  // Cumulative charged bytes for this route. Ignored for close.
+  offset:ulong;
 }
 // The core's answer to a running job's `artifact_wanted`: the artifact's
 // files, uploaded as blobs of the job beforehand, or found=false when the id
@@ -88,13 +92,13 @@ table Request {
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  // Zero means no advertised contract. Writers explicitly send contract 18.
+  // Zero means no advertised contract. Writers explicitly send contract 19.
   worker_contract:uint;
   active_jobs:uint;
   requires_filesystem:bool = true; requires_pid:bool = true;
 }
 // The host decides availability and supplies its reason; the core only carries it.
-table Target { id:string (required); available:bool; capabilities:Capabilities (required); grade:ulong; unavailable_reason:string; }
+table Target { id:string (required); available:bool; capabilities:Capabilities (required); worker_capabilities:[ubyte]; unavailable_reason:string; }
 table Catalog { services:[Target] (required); }
 table BlobChunk { digest:string (required); total:ulong; offset:ulong; bytes:[ubyte] (required); }
 table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diagnostic:string; transfer_name:string; transfer_done:ulong; transfer_total:ulong; log_truncated:bool;
@@ -106,13 +110,15 @@ table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diag
   secrets_wanted:bool;
   // Transient view bytes sent since the previous status, in order. Never
   // stored with the job or its result, and never traced by the broker.
-  displays:[Tsugumi.Worker.WorkerDisplay];
+  displays:[Tsugumi.Worker.WorkerDisplay] (trace_secret);
   display_pending:bool; display_sequence:ulong;
   view_input_ready:bool; view_input_credits:[DisplayCredit] (trace_secret);
   // The running Card waits in artifact_open for this artifact id (uuid
   // text). Uploads to the job are accepted while it waits; the core answers
   // with a JobArtifactRequest.
-  artifact_wanted:string; }
+  artifact_wanted:string;
+  // Replayed until a status request includes the matching reply.
+  view_request:Tsugumi.Worker.WorkerViewRequest (trace_secret); }
 table Ack {}
 table Failure { code:ErrorCode; message:string (required); }
 table CardSecrets { secrets:[CardSecret] (required); }

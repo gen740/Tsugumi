@@ -12,6 +12,7 @@
 #include "store.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/log.hh"
+#include "tsugumi/util/system.hh"
 #include "tsugumi/workerd/protocol.hh"
 #include "tsugumi/workerd/store.hh"
 #include "tsugumi/workerd/worker_execution.hh"
@@ -75,9 +76,8 @@ auto LocalExecutionService::prepare(const Node& node,
                  "grants.gui requires a native Linux worker with an available "
                  "GUI socket");
   static const SharedStoreDerivationTransport transport;
-  build.target = {WorkerKind::native, node.settings.system.empty()
-                                          ? native_system()
-                                          : node.settings.system};
+  build.target = {WorkerKind::native,
+                  run_system(node.settings, native_system())};
   build.transport = &transport;
   return std::make_unique<PreparedLocalExecution>(*this);
 }
@@ -217,6 +217,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   sp.artifact_store = (state_dir / "artifacts").string();
   sp.artifact_staging = state_dir / "artifact-invocations";
   std::filesystem::create_directories(sp.artifact_store);
+
   // The resident worker of this Card, if it runs the same build under the same
   // conditions.
   std::string key =
@@ -235,7 +236,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
       card_key + "|" + std::to_string(build.implementation_index);
   auto lease = workers_.acquire(worker_card, key, sp, reuse);
   sp.secrets.reset();
-  service_.set_view_receiver(node.path, lease.worker->view_receiver());
   s.worker_reused = lease.reused;
   if (!lease.replaced.empty() && request.log)
     request.log(
@@ -258,6 +258,12 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   invocation.deadline_grace = std::chrono::milliseconds(500);
   invocation.log = request.log;
   invocation.display = request.display;
+  invocation.view_control = [service = &service_, card = node.path,
+                             views = build.views,
+                             endpoint = lease.worker->view_receiver()](
+                                const WorkerViewRequest& control) {
+    return service->view_control(card, views, endpoint, control);
+  };
   invocation.on_timing = [&](int64_t begin, int64_t end) {
     request.on_timing(begin, end);
   };

@@ -1,4 +1,5 @@
 ---
+title: forward
 description: 順問題: 熱が広がる
 ---
 

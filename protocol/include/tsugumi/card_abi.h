@@ -14,12 +14,39 @@ extern "C" {
 typedef struct tsugumi_bytes { const uint8_t* data; size_t size; } tsugumi_bytes;
 typedef struct { uint8_t bytes[16]; } tsugumi_artifact_id;
 #define TSUGUMI_ARTIFACT_KEEP 1u
+typedef struct { uint8_t bytes[16]; } tsugumi_view_session;
+typedef struct { uint8_t bytes[16]; } tsugumi_route;
+typedef struct {
+  uint32_t kind;                 /* 0 message, 1 close */
+  tsugumi_route route;
+  tsugumi_view_session session;
+  tsugumi_bytes data;            /* empty on close */
+} tsugumi_view_event;
+
+enum {
+  TSUGUMI_VIEW_PANEL = 0,
+  TSUGUMI_VIEW_WINDOW = 1,
+  TSUGUMI_VIEW_FULLSCREEN = 2,
+};
+
 typedef struct tsugumi_effects {
-  /* send/recv: valid for the whole process lifetime, from any thread, also after the call returns. */
-  int (*send)(void* host, const char* view, const uint8_t* bytes, size_t size);
-      /* 0 ok; <0 error (size > TSUGUMI_MESSAGE_MAX errors immediately). Blocks, cancellably, while the worker has no room for one max-size message. */
-  int (*recv)(void* host, const char* view, tsugumi_bytes* out, int64_t timeout_ms);
-      /* 0 message (out valid until the next recv on this thread), 1 timeout, 2 cancelled (outside a call: the process is being stopped), <0 error. timeout_ms < 0 = no timeout. */
+  /* View effects are valid from any thread for the life of the process. */
+  /* Open a declared view. 0 ok, <0 error. Both dimensions may be nonzero
+   * only in WINDOW mode and are in logical pixels. 0,0 lets the UI choose. */
+  int (*view_open)(void* host, const char* view, uint32_t mode, uint32_t width,
+                   uint32_t height, tsugumi_route* route,
+                   tsugumi_view_session* session);
+  /* Register a mailbox for a session, or drop a route. 0 ok, <0 error. */
+  int (*route_register)(void* host, const tsugumi_view_session* session,
+                        tsugumi_route* route);
+  int (*route_unregister)(void* host, const tsugumi_route* route);
+  /* 0 ok (including a closed window), <0 error. Blocks, cancellably, while
+   * the next hop has no room for one max-size message. Oversize is an error. */
+  int (*send)(void* host, const tsugumi_view_session* to, const uint8_t* bytes,
+              size_t size);
+  /* 0 event, 1 timeout, 2 cancelled, <0 error. A negative timeout waits
+   * indefinitely. Event bytes are valid until the next recv on this thread. */
+  int (*recv)(void* host, tsugumi_view_event* out, int64_t timeout_ms);
   /* The rest are valid only during the call. */
   int (*cancelled)(void* host);
   int64_t (*remaining_ms)(void* host);            /* -1 = no deadline */

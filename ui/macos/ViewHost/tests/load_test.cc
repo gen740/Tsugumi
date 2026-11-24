@@ -144,10 +144,10 @@ TEST(ViewLoad, CanCallMessageImportsFromAbiWithoutReadingOrSending) {
   exports[1] = R"((func (export "tsugumi_view_abi") (result i32)
     i32.const 65536 i32.const 1 call $read i32.const -1 i32.ne
     i32.const 0 i32.const 0 call $read i32.const -1 i32.ne i32.or
-    i32.const 0 i32.const 0 call $send i32.const -1 i32.ne i32.or))";
+    i32.const 0 i32.const 0 i32.const 0 call $send i32.const -1 i32.ne i32.or))";
   check(module(R"(
     (import "tsugumi" "tsugumi_view_read" (func $read (param i32 i32) (result i32)))
-    (import "tsugumi" "tsugumi_view_send" (func $send (param i32 i32) (result i32))))",
+    (import "tsugumi" "tsugumi_view_send" (func $send (param i32 i32 i32) (result i32))))",
                exports));
 }
 

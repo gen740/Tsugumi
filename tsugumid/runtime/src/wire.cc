@@ -20,7 +20,7 @@ CardPath card_arg(const D::CardPath* p, const char* field) {
     throw Failed(FailureKind::invalid_request,
                  std::string(field) + " must not be empty");
   for (const auto& s : out)
-    if (!valid_id(s))
+    if (!valid_name(s))
       throw Failed(
           FailureKind::invalid_request,
           std::string(field) + " has an invalid segment \"" + s + "\"");

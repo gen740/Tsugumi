@@ -13,6 +13,7 @@ from pathlib import Path
 from tsugumi_client import Client
 
 from .control import read_ready, read_startup_error
+from .document import project_document
 from .file_events import process_file
 from .nix_path import declarations, write_lock
 
@@ -38,10 +39,7 @@ FAULTS = {
 
 def write_project(root: Path, *, locked=()) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    (root / "tsugumi.json").write_text(json.dumps({
-        "name": "rpc-test", "nixPath": declarations(locked),
-        "canvas": {"cards": [], "connections": []},
-    }))
+    (root / "tsugumi.json").write_text(json.dumps(project_document(name="rpc-test", nixPath=declarations(locked))))
     if locked:
         write_lock(root, locked)
 

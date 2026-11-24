@@ -291,6 +291,13 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
 
 auto Tools::InputTypesQuery(const std::string& project, json::Members args,
                             std::stop_token stop) -> H::InputTypesT {
+  if (args.contains("output_port") &&
+      !valid_name(json::Text(args, "output_port")))
+    throw Failure("invalid_request", "Invalid output port name");
+  const auto card = json::Object(json::Get(args, "card", "{}"));
+  for (const auto& segment : json::Array(json::Get(card, "segments", "[]")))
+    if (!valid_name(json::String(segment)))
+      throw Failure("invalid_request", "Invalid Card id");
   std::string bytes;
   const auto envelope =
       RawProjectCall(project, "input_types", json::Encode(args), stop, &bytes);
@@ -316,7 +323,8 @@ auto Tools::InspectProject(const std::string& project, std::stop_token stop)
 auto Tools::ExclusionsFor(const std::string& project,
                           const host::SaveBase& base) -> host::AgentExclude {
   const auto document = base.files.find("tsugumi.json");
-  const auto json = document == base.files.end() ? "{}" : document->second;
+  const auto json = document == base.files.end() ? R"({"agentExclude":[]})"
+                                                 : document->second;
   if (project.empty())
     return host::AgentExclude(std::filesystem::current_path(), json);
   std::lock_guard lock(mutex);
@@ -382,9 +390,8 @@ auto CheckEvaluationSources(const host::AgentExclude& policy,
       }
       const auto it = base.files.find(definition + "_card.json");
       if (it == base.files.end()) break;
-      const auto external = json::Text(json::Object(it->second), "external");
-      if (external.empty()) break;
-      prefix += "externals/" + external + '/';
+      if (json::Text(json::Object(it->second), "type") != "subgraph") break;
+      prefix += "externals/" + json::String(segments[i]) + '/';
     }
   }
   for (const auto& raw : json::Array(json::Get(snapshot, "sources", "[]"))) {

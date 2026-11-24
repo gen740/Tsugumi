@@ -20,6 +20,24 @@ void check_position(const T& place) {
     throw LayoutFailure("layout: position needs two finite coordinates");
 }
 
+auto check_scope(std::string_view path) -> void {
+  while (!path.empty()) {
+    const auto slash = path.find('/');
+    if (!valid_name(path.substr(0, slash)))
+      throw LayoutFailure("layout: invalid Card path");
+    if (slash == path.npos) return;
+    path.remove_prefix(slash + 1);
+    if (path.empty()) throw LayoutFailure("layout: invalid Card path");
+  }
+}
+
+auto check_ports(const auto* ports) -> void {
+  if (ports)
+    for (const auto* port : *ports)
+      if (!valid_name(port->string_view()))
+        throw LayoutFailure("layout: invalid port name");
+}
+
 void check_coordinates(const Tsugumi::Layout::Layout& layout) {
   const auto boundary = [](const auto* bars) {
     if (!bars) return;
@@ -27,16 +45,40 @@ void check_coordinates(const Tsugumi::Layout::Layout& layout) {
     if (const auto* output = bars->outputs()) check_position(*output);
   };
   if (const auto* cards = layout.cards())
-    for (const auto* card : *cards) check_position(*card);
+    for (const auto* card : *cards) {
+      if (card->key()->size() == 0)
+        throw LayoutFailure("layout: missing Card id");
+      check_scope(card->key()->string_view());
+      check_ports(card->inputOrder());
+      check_ports(card->outputOrder());
+      check_position(*card);
+    }
   if (const auto* notes = layout.notes())
     for (const auto* note : *notes) {
       check_position(*note);
+      if (note->scope()) check_scope(note->scope()->string_view());
       for (const auto size : {note->width(), note->height(), note->fontSize()})
         if (size && !std::isfinite(*size))
           throw LayoutFailure("layout: note sizes must be finite");
     }
   if (const auto* boundaries = layout.boundaries())
-    for (const auto* entry : *boundaries) boundary(entry);
+    for (const auto* entry : *boundaries) {
+      if (entry->scope()) check_scope(entry->scope()->string_view());
+      boundary(entry);
+    }
+  if (const auto* groups = layout.groups())
+    for (const auto* group : *groups) {
+      if (group->scope()) check_scope(group->scope()->string_view());
+      if (const auto* cards = group->cards())
+        for (const auto* card : *cards)
+          if (!valid_name(card->string_view()))
+            throw LayoutFailure("layout: invalid group Card id");
+      if (const auto* outputs = group->outputs())
+        for (const auto* output : *outputs)
+          if (!valid_name(output->card()->string_view()) ||
+              !valid_name(output->port()->string_view()))
+            throw LayoutFailure("layout: invalid group output");
+    }
   boundary(layout.boundary());
 }
 

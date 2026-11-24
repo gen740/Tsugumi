@@ -11,7 +11,8 @@ from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
-from harness.document import params_nix
+from harness.document import card_document, card_readme, params_nix, project_document
+from harness.real_cards import python_nix
 from harness.nix_path import declarations, test_lock_entries, write_lock
 
 MSG_FBS = """
@@ -22,23 +23,15 @@ table Outputs { msg:Msg (required); cond:Cond; }
 root_type Outputs;
 """
 
-# Independent producer fixture: build the two FlatBuffers with flatc using
-# evaluated Nix params, then expose exactly the Input Card output layout.
-MSG_INPUT_NIX = """{ params, inputs }:
-let
-  pkgs = import <nixpkgs> { };
-  msg = pkgs.writeText "msg.json" (builtins.toJSON { inherit (params) text; });
-  cond = pkgs.writeText "cond.json" (builtins.toJSON { inherit (params) value; });
-in {
-  run = pkgs.runCommand "message-input" { nativeBuildInputs = [ pkgs.flatbuffers ]; } ''
-    mkdir -p "$out/share/tsugumi/input/ports"
-    flatc --binary --strict-json --root-type demo.Msg ${./_outputs.fbs} ${msg}
-    flatc --binary --strict-json --root-type demo.Cond ${./_outputs.fbs} ${cond}
-    mv *-msg.bin "$out/share/tsugumi/input/ports/msg"
-    mv *-cond.bin "$out/share/tsugumi/input/ports/cond"
-  '';
-}
-"""
+MSG_SOURCE_NIX = python_nix("""from card import Input, Output, params
+from demo.Msg import MsgT
+from demo.Cond import CondT
+
+
+def run(_input: Input) -> Output:
+    return Output(msg=MsgT(text=params.text), cond=CondT(value=params.value))
+""")
+
 
 SINK = {"type": "collect"}
 
@@ -66,7 +59,10 @@ def card_in_card(id_: str, cards: list, conns: list, boundary: dict) -> dict:
 
 
 def conn(a: str, ap: str, b: str, bp: str) -> dict:
-    return {"from": {"card": a, "port": ap}, "to": {"card": b, "port": bp}}
+    """A wire; an empty port is a Draft end, written without a port."""
+    def end(card, port):
+        return {"card": card, "port": port} if port else {"card": card}
+    return {"from": end(a, ap), "to": end(b, bp)}
 
 
 def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None = None, name: str = "test",
@@ -81,15 +77,18 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
     for c in cards:
         cid = c["id"]
         folder = root / "definitions" / cid
+        put(folder / "README.md", card_readme(cid))
         if "_inner" in c:
             inner = c["_inner"]
             write(root / "externals" / cid, defs, inner["cards"], inner["connections"],
                   {k: v for k, v in files.items() if k.startswith("definitions/")}, name=cid, locked=locked)
             doc = json.loads((root / "externals" / cid / "tsugumi.json").read_text())
-            doc["boundary"] = {side: [dict(name=name, **ep) for name, ep in ports.items()]
-                               for side, ports in inner["boundary"].items()}
+            doc["boundary"] = {
+                side: [dict(name=name, **end) for name, end in inner["boundary"].get(side, {}).items()]
+                for side in ("inputs", "outputs")
+            }
             put(root / "externals" / cid / "tsugumi.json", json.dumps(doc))
-            put(folder / "_card.json", json.dumps({"type": "subgraph", "external": cid}))
+            put(folder / "_card.json", json.dumps(card_document({"type": "subgraph"})))
             continue
         d = c.get("definition")
         body = copy.deepcopy(defs[d]) if d else {"type": "draft"}
@@ -103,7 +102,7 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
             params = params_nix(values)
         # Card-local file parameters need no rewriting when a definition is reused.
         mine, theirs = f"definitions/{cid}/", f"definitions/{d}/"
-        put(folder / "_card.json", json.dumps(body))
+        put(folder / "_card.json", json.dumps(card_document(body)))
         if outputs:
             put(folder / "_outputs.fbs", outputs)
         if nix:
@@ -117,9 +116,9 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
     for rel, data in files.items():
         if not any(rel.startswith(p) for p in defs_names):
             put(root / rel, data)
-    put(root / "tsugumi.json", json.dumps({
-        "name": name, "nixPath": declarations(locked),
-        "canvas": {"cards": [{"id": c["id"]} for c in cards], "connections": conns}}))
+    put(root / "tsugumi.json", json.dumps(project_document(
+        name=name, nixPath=declarations(locked),
+        canvas={"cards": [{"id": c["id"]} for c in cards], "connections": conns})))
     if locked:
         write_lock(root, locked)
 
@@ -130,19 +129,18 @@ def write_nix_project(root, defs, cards, conns, files=None, name="test", *, lock
 
 
 def builtin_project(root: Path, text: str = "hello", extra_cards=(), extra_conns=()) -> None:
-    """An input Card wired to a sink, with a trigger for whole-workflow runs."""
+    """A Code source wired to a sink, with a trigger for whole-workflow runs."""
     defs = {
         "trigger": {"type": "trigger"},
-        "source": {"type": "input", "params": {"text": "x", "value": True},
-                   "_outputs": MSG_FBS, "_nix": MSG_INPUT_NIX},
+        "source": {"type": "code", "params": {"text": "x", "value": True},
+                   "_outputs": MSG_FBS, "_nix": MSG_SOURCE_NIX},
         "sink": SINK,
         "merge": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}]},
     }
-    # The input Card is a start Card (no inputs).
     write(root, defs, [card("start", "trigger"), card("src", "source", params={"text": text}), card("out", "sink"),
                        *extra_cards],
           [conn("src", "msg", "out", "in"), *extra_conns], name="builtin",
-          locked=[entry for entry in test_lock_entries() if entry["name"] == "nixpkgs"])
+          locked=test_lock_entries())
 
 
 def start_run(c, card_path, propagate: bool = True, concurrency: int | None = 4) -> str:
@@ -212,7 +210,7 @@ def wait_invocation(c, run_id, card_path, check):
 
 
 def wait_for_display(c, run_id, check=lambda _: True):
-    """Wait for a display on a visible Card, failing if the run ends first."""
+    """Wait for a display in an open session, failing if the run ends first."""
     def matches(note):
         if note.valueType == NotificationPayload.DisplayUpdated:
             display = note.value.display

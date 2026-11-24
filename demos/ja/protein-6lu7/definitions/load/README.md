@@ -1,4 +1,5 @@
 ---
+title: load
 description: 立体構造を取る
 ---
 

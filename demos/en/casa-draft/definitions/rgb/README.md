@@ -1,4 +1,5 @@
 ---
+title: rgb
 description: Make an RGB image
 ---
 

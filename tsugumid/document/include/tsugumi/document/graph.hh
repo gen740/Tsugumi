@@ -13,7 +13,6 @@
 
 #include "tsugumi/document/document.hh"
 #include "tsugumi/document/types.hh"
-#include "tsugumi/document/worker_condition.hh"
 #include "tsugumi/util/system.hh"
 
 namespace tsugumi {
@@ -21,7 +20,6 @@ namespace tsugumi {
 enum class CardType {
   Code,
   Trigger,
-  Input,
   Merge,
   Collect,
   Subgraph,
@@ -67,24 +65,30 @@ inline constexpr char kLocalExecutionService[] = "local";
 struct Settings {
   std::string name;  // the Card id
   uint64_t max_runs = 1;
-  std::optional<uint64_t> timeout_seconds;        // nullopt = no deadline
-  std::optional<uint64_t> build_timeout_seconds;  // nullopt = no deadline
+  std::optional<uint64_t> timeout_seconds;        // document 0 becomes nullopt
+  std::optional<uint64_t> build_timeout_seconds;  // document 0 becomes nullopt
   bool record_logs = true;
-  uint64_t log_limit_bytes = kDefaultLogLimitBytes;
-  uint64_t output_limit_bytes = kDefaultOutputLimitBytes;
-  uint64_t output_limit_entries = kDefaultOutputLimitEntries;
+  uint64_t log_limit_bytes = 0;
+  uint64_t output_limit_bytes = 0;
+  uint64_t output_limit_entries = 0;
   bool record_io = false;
   SandboxOptions sandbox;
   CardGrants grants;
   bool reuse_worker = false;
-  std::string execution_service = "auto";
-  std::shared_ptr<const worker_condition::Condition> worker_condition;
-  std::string system;  // "" = the execution service's native system
+  uint64_t worker_capabilities = 0;
+  // The Nix systems the Card works on, in the document's order. Empty only for
+  // Cards that never run on a worker.
+  std::vector<std::string> systems;
   // Card secret names, in declaration order: [a-z][a-z0-9_]{0,63}, each the
   // name of the environment variable that carries its value.
   std::vector<std::string> secrets;
   std::vector<ParamDef> params;  // with their values in data
 };
+
+// The system a worker builds and runs the Card as: its own native system when
+// the Card lists it, otherwise the Card's first system (run emulated).
+auto run_system(const Settings& settings, std::string_view native)
+    -> std::string;
 
 struct NixPathEntry {
   std::string name;
@@ -108,8 +112,7 @@ struct Node {
   std::vector<CardNixReference> nix_references;
   std::optional<std::string> generated_inputs;
   std::optional<Tsugumi::Document::BoundaryT>
-      boundary;          // Card in Card: its external's ports
-  std::string external;  // Card in Card: "externals/<p>/" (project relative)
+      boundary;  // Card in Card: its external's ports
   Settings settings;
   std::vector<types::PortType> inputs;
   std::vector<types::PortType> outputs;

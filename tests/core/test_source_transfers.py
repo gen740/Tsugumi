@@ -10,13 +10,18 @@ import pytest
 
 from tsugumi_client import RpcFailure, change, make, new_id, text
 from harness.control import read_startup_error
-from harness.document import build_buffer, layout_bytes
+from harness.document import build_buffer, card_document, card_readme, layout_bytes
 
 
 def setup(project):
     card = project / "definitions/data"
     card.mkdir(parents=True)
-    (card / "_card.json").write_text('{"type":"draft"}')
+    (card / "_card.json").write_text(json.dumps(card_document({"type": "draft"})))
+    (card / "README.md").write_text(card_readme("Data"))
+    config = project / "tsugumi.json"
+    document = json.loads(config.read_text())
+    document["canvas"]["cards"] = [{"id": "data"}]
+    config.write_text(json.dumps(document))
 
 
 def transfer(source, destination="definitions/data/input.csv", **kwargs):
@@ -30,6 +35,9 @@ def save(client, transfers, **kwargs):
 
 
 def test_oversized_save_reply_leaves_transferred_document_unwritten(project, core_factory, tmp_path):
+    from projects import card_in_card, write
+
+    write(project, {}, [card_in_card("inner", [], [], {})], [])
     client = core_factory().connect()
     before = client.call("ProjectInspectRequest")
     source = tmp_path / "layout.bin"
@@ -54,7 +62,10 @@ def test_oversized_save_reply_leaves_transferred_document_unwritten(project, cor
 
 
 def test_accumulating_saves_leave_the_snapshot_openable(project, core_factory):
-    setup(project)
+    from projects import card, card_in_card, write
+
+    names = ("first", "second", "last")
+    write(project, {}, [card("data"), *(card_in_card(name, [], [], {}) for name in names)], [])
     # Long paths consume frame space without counting towards the JSON budget.
     folder = project / "definitions/data"
     for _ in range(7):
@@ -70,10 +81,10 @@ def test_accumulating_saves_leave_the_snapshot_openable(project, core_factory):
     view += bytes((1 << 20) - len(view))
     client.call("ViewSaveRequest", viewId=view_id, baseViewRev=0, view=view)
     rev = before.rev
-    for i in range(2):
+    for name in names[:2]:
         saved = client.call(
             "ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="test",
-            changes=[change("PutSource", path=f"externals/{i}/layout.bin",
+            changes=[change("PutSource", path=f"externals/{name}/layout.bin",
                             bytes=layout_bytes({}) + bytes((3 << 20) - 32))])
         rev = saved.rev
     path = "externals/last/layout.bin"
@@ -242,7 +253,7 @@ def test_host_selected_source_root_and_more_than_1000_files(project, core_factor
 def test_transfer_permission_widening_still_requires_explicit_approval(project, core_factory, tmp_path):
     from projects import SINK, card, card_in_card, conn, write
 
-    write(project, {"src": {"type": "input", "params": {"text": "x", "value": True}, "_params": '{ text = ""; value = false; }',
+    write(project, {"src": {"type": "code", "params": {"text": "x", "value": True}, "_params": '{ text = ""; value = false; }',
         "_outputs": "table Msg { text:string; } table Outputs { msg:Msg (required); } root_type Outputs;"},
         "sink": SINK}, [card_in_card("inner", [card("src", "src"), card("out", "sink")],
             [conn("src", "msg", "out", "in")], {"inputs": {}, "outputs": {}})], [])
@@ -250,7 +261,7 @@ def test_transfer_permission_widening_still_requires_explicit_approval(project, 
     original = (project / path).read_bytes()
     source = tmp_path / "widened.json"
     body = json.loads(original)
-    body["grants"] = {"network": True}
+    body["grants"]["network"] = True
     source.write_text(json.dumps(body))
     client = core_factory().connect()
     item = transfer(source, path, baseHash=hashlib.sha256(original).hexdigest())

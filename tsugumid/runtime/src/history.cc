@@ -1925,7 +1925,6 @@ auto History::delete_category(sql::Db& db, const std::string& run_id,
       db.prepare("DELETE FROM ivalues WHERE run_id=?").bind(1, run_id).run();
       break;
     case R::RunRecordCategory::Artifacts:
-      // TODO: Decide whether to retain a tombstone for deleted artifacts.
       db.prepare("DELETE FROM artifacts WHERE run_id=?").bind(1, run_id).run();
       break;
     default:

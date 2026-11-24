@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,6 @@ class AgentExclude {
       -> bool;
   std::filesystem::path root_;
   std::vector<std::filesystem::path> paths_;
-  ::tsugumi::json::Members links_;
+  std::set<std::string> subgraphs_;
 };
 }  // namespace tsugumi::host

@@ -1,4 +1,5 @@
 ---
+title: spectrum
 description: 特異値の減衰
 ---
 

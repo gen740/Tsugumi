@@ -10,6 +10,6 @@ $$\eta\,p_{\rm 高} > p_{\rm 安}$$
 
 のときだけです。買値と売値が同じ定額料金では $p_{\rm 高}=p_{\rm 安}$ なので、$\eta<1$ である限り動かさないのが最適です（**tariffs** の一番上）。売電が安ければ、昼の余った太陽光を夜に回す分だけ得になります。
 
-**schedule** の tariff、**settings** の capacity_kwh・round_trip_efficiency・export_ratio を変えて試せます。
+**schedule** の tariff、**market** の capacity_kwh・round_trip_efficiency・export_ratio を変えて試せます。
 
 蓄電量は刻み（soc_step_kwh）の上でしか動かせないので、答えは本当の最適より少しだけ悪くなります。その差は **check** の表で分かります。予報の誤差、電池の劣化、機器の代金は入れていません。

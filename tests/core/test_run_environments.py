@@ -14,7 +14,7 @@ from tsugumi_client import RpcFailure, new_id, path, text
 
 def worker_project(client, project, directory, actions):
     Project(project).card(
-        "work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True},
+        "work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": "on"},
         outputs=STRING_OUTPUT, plan=mock_plan(scripted_implementations(directory, [actions])),
     ).save(client)
 
@@ -375,7 +375,7 @@ def test_local_worker_uses_the_recorded_build_plan(core_factory, project, tmp_pa
               views = [{ name = "view"; type = "html"; blob = ./view.html; }];
             }""",
         }
-        graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True,
+        graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": "on",
                             "reuseWorker": True}, outputs=STRING_OUTPUT, sources=sources).save(client)
         for _ in range(2):
             run_id = run(client)

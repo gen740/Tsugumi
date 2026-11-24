@@ -1,4 +1,5 @@
 {
+  "formatVersion": 1,
   "name": "Collatz (C++ / Python / Julia / R)",
   "nixPath": [
     {
@@ -10,25 +11,32 @@
       "url": "github:gen740/tsugumi-kit/main"
     }
   ],
+  "trackedPaths": [],
+  "agentExclude": [
+    ".git",
+    ".DS_Store"
+  ],
+  "recordLogs": true,
+  "recordIO": false,
+  "logLimitBytes": 134217728,
+  "outputLimitBytes": 68719476736,
+  "outputLimitEntries": 1000,
   "canvas": {
     "cards": [
       {
         "id": "start"
       },
       {
-        "id": "initial"
+        "id": "collatz_cpp"
       },
       {
-        "id": "collatz-cpp"
+        "id": "collatz_py"
       },
       {
-        "id": "collatz-py"
+        "id": "collatz_jl"
       },
       {
-        "id": "collatz-jl"
-      },
-      {
-        "id": "collatz-r"
+        "id": "collatz_r"
       },
       {
         "id": "compare"
@@ -44,53 +52,43 @@
           "port": "out"
         },
         "to": {
-          "card": "initial",
+          "card": "collatz_cpp",
           "port": "start"
         }
       },
       {
         "from": {
-          "card": "initial",
-          "port": "value"
+          "card": "start",
+          "port": "out"
         },
         "to": {
-          "card": "collatz-cpp",
-          "port": "n"
+          "card": "collatz_py",
+          "port": "start"
         }
       },
       {
         "from": {
-          "card": "initial",
-          "port": "value"
+          "card": "start",
+          "port": "out"
         },
         "to": {
-          "card": "collatz-py",
-          "port": "n"
+          "card": "collatz_jl",
+          "port": "start"
         }
       },
       {
         "from": {
-          "card": "initial",
-          "port": "value"
+          "card": "start",
+          "port": "out"
         },
         "to": {
-          "card": "collatz-jl",
-          "port": "n"
+          "card": "collatz_r",
+          "port": "start"
         }
       },
       {
         "from": {
-          "card": "initial",
-          "port": "value"
-        },
-        "to": {
-          "card": "collatz-r",
-          "port": "n"
-        }
-      },
-      {
-        "from": {
-          "card": "collatz-cpp",
+          "card": "collatz_cpp",
           "port": "sequence"
         },
         "to": {
@@ -100,7 +98,7 @@
       },
       {
         "from": {
-          "card": "collatz-py",
+          "card": "collatz_py",
           "port": "sequence"
         },
         "to": {
@@ -110,7 +108,7 @@
       },
       {
         "from": {
-          "card": "collatz-jl",
+          "card": "collatz_jl",
           "port": "sequence"
         },
         "to": {
@@ -120,7 +118,7 @@
       },
       {
         "from": {
-          "card": "collatz-r",
+          "card": "collatz_r",
           "port": "sequence"
         },
         "to": {

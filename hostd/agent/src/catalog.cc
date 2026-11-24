@@ -161,6 +161,9 @@ auto ObjectSchema(const reflection::Object& object, int depth, bool top)
     }
     if (field->required()) required.push_back(json::Quote(name));
   }
+  if (object.name()->string_view() == "Tsugumi.Data.CardPath")
+    properties["segments"] =
+        R"({"type":"array","items":{"type":"string","pattern":"^[a-z][a-z0-9_]{0,63}$"}})";
   // Agent save conveniences belong to hostd, not the project protocol.
   if (object.name()->str() == "Tsugumi.RPC.PutDefinition") {
     properties["fill_description"] =
@@ -243,8 +246,9 @@ auto Output(const reflection::Object& object, std::string_view raw)
                      it->second);
     } else if (type.base_type() == reflection::Vector) {
       auto elements = json::Array(it->second);
-      if (type.element() == reflection::UByte ||
-          type.element() == reflection::Byte) {
+      if (field->name()->string_view() != "worker_capabilities" &&
+          (type.element() == reflection::UByte ||
+           type.element() == reflection::Byte)) {
         std::string bytes;
         for (const auto& element : elements)
           bytes += static_cast<char>(std::stoi(element));

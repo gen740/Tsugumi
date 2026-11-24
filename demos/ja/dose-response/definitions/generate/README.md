@@ -1,4 +1,5 @@
 ---
+title: generate
 description: プレートの合成データを作る
 ---
 

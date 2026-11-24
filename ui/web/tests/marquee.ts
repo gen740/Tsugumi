@@ -1,3 +1,4 @@
+import { projectFixture } from './documentFixture'
 import { cardIds } from './cardIds'
 // A marquee selects Cards and sticky notes to move or delete in one edit.
 import assert from 'node:assert/strict'
@@ -19,7 +20,7 @@ prefs.set('showGrid', false)
 
 const setup = async () => {
   const s = cardIds(new ProjectSession('/p', 'k', 'p'))
-  s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
+  s.project = parse(projectFixture({"name":"t","canvas":{"cards":[],"connections":[]}}))
   s.layout = parse('{}')
   const near = await s.addCard('draft', [], { x: 0, y: 0 }), far = await s.addCard('draft', [], { x: 5000, y: 0 })
   const note = await s.addNote([], { x: 100, y: 300 }), farNote = await s.addNote([], { x: 5000, y: 3000 })

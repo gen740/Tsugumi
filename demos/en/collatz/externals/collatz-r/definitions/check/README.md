@@ -1,3 +1,0 @@
----
-description: At 1, outputs nothing and ends the loop; otherwise outputs the value and its parity
----

@@ -2,8 +2,8 @@
 // Frames: 4 byte little-endian length + FlatBuffer.
 //
 // One call at a time per worker. call_id >= 1 and never reused by a worker.
-// A call ends with exactly one WorkerResult or WorkerFailure. WorkerDisplay
-// uses call_id 0 and is independent of calls.
+// A call ends with exactly one WorkerResult or WorkerFailure. View relay
+// messages use call_id 0 and are independent of calls.
 
 include "card.fbs";
 include "worker_types.fbs";
@@ -69,15 +69,45 @@ table WorkerCancel {}
 // A private launch frame sent before the first call when the Card uses secrets.
 table WorkerStart { environment:[EnvVar] (required); }
 
+struct ViewUuid { bytes:[ubyte:16]; }
+enum ViewEventKind:ubyte { Message, Close }
+enum ViewControlKind:ubyte { Open, Register, Unregister }
+
 table WorkerDisplay {
-  view:string (id: 0, required);
-  bytes:[ubyte] (id: 1, required);
+  session:ViewUuid (required);
+  bytes:[ubyte] (required);
 }
 
-// Incremental credit: bytes the receiver has freed for this view.
+table WorkerViewEvent {
+  kind:ViewEventKind;
+  route:ViewUuid (required);
+  session:ViewUuid (required);
+  bytes:[ubyte];
+}
+
+// Incremental credit: bytes freed for an outbound session or inbound route.
 table WorkerDisplayCredit {
-  view:string (required);
+  address:ViewUuid (required);
   bytes:uint32;
+}
+
+// One outstanding request per process. IDs start at 1 and increase.
+table WorkerViewRequest {
+  request_id:ulong;
+  kind:ViewControlKind;
+  view:string;
+  mode:uint;
+  width:uint;
+  height:uint;
+  session:ViewUuid;
+  route:ViewUuid;
+}
+
+table WorkerViewReply {
+  request_id:ulong;
+  ok:bool;
+  session:ViewUuid;
+  route:ViewUuid;
 }
 
 union WorkerPayload {
@@ -90,8 +120,11 @@ union WorkerPayload {
   WorkerDisplayCredit = 7,
   WorkerArtifactOpen = 8,
   WorkerArtifactOpened = 9,
-  WorkerArtifactCreate = 10,
-  WorkerArtifactCreated = 11,
+  WorkerViewEvent = 10,
+  WorkerViewRequest = 11,
+  WorkerViewReply = 12,
+  WorkerArtifactCreate = 13,
+  WorkerArtifactCreated = 14,
 }
 
 table WorkerMessage {

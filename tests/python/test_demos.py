@@ -26,6 +26,7 @@ import pytest
 from conftest import ROOT, Daemon, demo_environment, write_project
 from harness.observations import read_pages
 from harness.values import reference_json
+from harness.views import ZERO_ROUTE
 from projects import start_run, wait_for_display as first_display, wait_invocation, wait_run
 from harness.document import set_param as set_typed_param
 from tsugumi_client import line_chart_series, change, new_id, path, text
@@ -103,14 +104,12 @@ def test_signal_sweep_collects_all_comparisons(tmp_path):
         run_id = start_run(client, ["start"])
         status = wait_run(client, run_id)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-        samples = client.call("RunInvocationsRequest", runId=run_id, card=path("samples"))
-        assert [text(row.implementationLabel) for row in samples.records] == ["value=8", "value=12", "value=16"]
-        sample_batch, = samples.batches
-        assert sample_batch.executionList and sample_batch.invocationCount == 3
         comparisons = client.call("RunInvocationsRequest", runId=run_id, card=path("score"))
-        assert sorted(row.implementationIndex for row in comparisons.records) == [1] * 3 + [2] * 3
-        # Labels come from the Nix run list through the evaluated plan.
-        assert [text(row.implementationLabel) for row in comparisons.records] == ["threshold=10", "threshold=14"] * 3
+        assert [row.implementationIndex for row in comparisons.records] == list(range(1, 7))
+        assert [text(row.implementationLabel) for row in comparisons.records] == [
+            f"value={value}, threshold={threshold}"
+            for value in (8, 12, 16) for threshold in (10, 14)
+        ]
         batch, = comparisons.batches
         assert batch.complete and not batch.failed and batch.invocationCount == 6
         summary = client.call("RunInvocationsRequest", runId=run_id, card=path("summary"))
@@ -127,7 +126,7 @@ def without_julia_and_r(dst):
     """The Collatz demo of C++ and Python alone, as CI runs it: Julia and R (large Nix closures, a process for every
     step) are left out of the copy, and `compare` loses their two inputs but keeps the rest of its code. The four
     languages together are checked by test_demo_collatz.py (TSUGUMI_TEST_DEMO_RUNS=1)."""
-    gone = ("collatz-jl", "collatz-r")
+    gone = ("collatz_jl", "collatz_r")
     project = json.loads((dst / "tsugumi.json").read_text())
     canvas = project["canvas"]
     canvas["cards"] = [c for c in canvas["cards"] if c["id"] not in gone]
@@ -195,11 +194,11 @@ def test_collatz_rejects_overflow(collatz):
     c = connect(collatz)
     # An odd uint64 whose next Collatz value (3n + 1) cannot fit.
     big = 12297829382473034411
-    edit_card(collatz, c, "initial", lambda b: set_param(b, "value", 0),
-              raw=lambda s: s.replace('"data": 0', f'"data": {big}'))
+    for card in ("collatz_cpp", "collatz_py"):
+        set_typed_param(c, card + "/initial", "value", str(big))
     run_id = start_run(c, ["start"])
     assert wait_run(c, run_id).state == RunState.failed
-    triple = c.call("RunRecordRequest", runId=run_id, card=path("collatz-cpp", "triple"))
+    triple = c.call("RunRecordRequest", runId=run_id, card=path("collatz_cpp", "triple"))
     assert triple.status.state == CardState.failed
     assert triple.status.failure.kind == FailureKind.output_invalid
 
@@ -209,7 +208,7 @@ def test_report_uses_the_requested_heading(tmp_path):
     try:
         c = connect(env)
         heading = "Custom heading"
-        edit_card(env, c, "settings", lambda b: set_param(b, "heading", heading))
+        set_typed_param(c, "render", "heading", heading)
         run_id = start_run(c, ["start"])
         assert wait_run(c, run_id).state == RunState.succeeded
         report = next(a for a in c.call("ArtifactListRequest", runId=run_id).artifacts if text(a.output) == "report")
@@ -237,14 +236,29 @@ def live_points(c, rid):
     return [float(x) for x in series[0].x], rec.aggregate.calls
 
 
+def send_stream_seed(client, subscription):
+    session = text(client.wait_notification(
+        lambda note: note.valueType == NotificationPayload.ViewOpened and text(note.value.name) == "seed",
+        timeout=90,
+    ).value.session)
+    ready = client.wait_notification(
+        lambda note: note.valueType == NotificationPayload.DisplayUpdated
+        and text(note.value.display.session) == session
+        and bytes(note.value.display.bytes) == b"\x01",
+        timeout=90,
+    ).value.display
+    client.call("ViewCreditRequest", subscriptionId=subscription, session=session,
+                bytes=1, creditId=ready.creditId)
+    client.call("ViewSendRequest", session=session, route=ZERO_ROUTE, bytes=b"\x0a")
+
+
 def test_live_stream_complete_and_ordered(live):
     c = connect(live)
-    def settings(body):
-        set_param(body, "interval_ms", 0)
-        set_param(body, "samples", 65)
-
-    edit_card(live, c, "settings", settings)
+    set_typed_param(c, "settings", "interval_ms", 0)
+    set_typed_param(c, "settings", "samples", 65)
+    subscription = text(c.open().subscriptionId)
     run_id = start_run(c, ["start"], concurrency=2)
+    send_stream_seed(c, subscription)
     assert wait_run(c, run_id).state == RunState.succeeded
     xs, _ = live_points(c, run_id)
     assert xs == list(range(5, 65))
@@ -253,7 +267,7 @@ def test_live_stream_complete_and_ordered(live):
 def test_live_stream_keeps_chart_on_cancel_and_resets_on_rerun(live):
     c = connect(live)
     opened = c.open()
-    c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("plot")])
+    subscription = text(opened.subscriptionId)
     # Keep the first sample and then wait for cancellation, rather than racing
     # the demo's natural completion on a busy runner.
     source = "definitions/generate/src/card.cc"
@@ -272,6 +286,7 @@ def test_live_stream_keeps_chart_on_cancel_and_resets_on_rerun(live):
                         lambda row: row.state == CardState.running and row.invocation == 2)
 
     rid = start_run(c, ["start"])
+    send_stream_seed(c, subscription)
     wait_for_blocked_sample(rid)
     st = c.call("RunCancelRequest", runId=rid)
     # The reply acknowledges the request before run finalization; it does not
@@ -283,6 +298,7 @@ def test_live_stream_keeps_chart_on_cancel_and_resets_on_rerun(live):
     assert calls == 1 and xs == [0.0]  # the last chart is kept
     # A new run starts the reused plotting worker's series from the beginning.
     rid2 = start_run(c, ["start"])
+    send_stream_seed(c, subscription)
     first = first_display(c, rid2)
     assert line_chart_series(first.value.display.value)[0].x == (0.0,)
     c.call("RunCancelRequest", runId=rid2)
@@ -301,7 +317,8 @@ def test_plots_draw_into_the_displays(plots_demo):
     displays through the SDK backend while the run is active. Plotly and
     Altair send the demo's computed data in their interactive displays."""
     c = connect(plots_demo)
-    edit_card(plots_demo, c, "settings", lambda b: (set_param(b, "walkers", 200), set_param(b, "steps", 80)))
+    set_typed_param(c, "simulate", "walkers", 200)
+    set_typed_param(c, "simulate", "steps", 80)
     edit_card(plots_demo, c, "diffusion", lambda b: set_param(b, "frames", 12))
     opened = c.open()
     c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path(c) for c in ("summary", "diffusion", "explore", "spread")])

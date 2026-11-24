@@ -26,7 +26,7 @@ enum CardSymbols {
     ("exclamationmark.triangle", "警告 注意"), ("lock", "鍵 保護"), ("key", "キー 認証"), ("person", "人 ユーザー"),
     ("cpu", "計算機 CPU"), ("memorychip", "メモリ"), ("bolt", "高速 電気"), ("leaf", "自然 葉"), ("flame", "ホット 炎"),
     ("drop", "水 液体"), ("atom", "科学 原子"), ("waveform", "信号 波形"), ("speaker.wave.2", "音声 スピーカー"),
-    ("music.note", "音楽"), ("film", "動画 映画"), ("paintbrush", "描画 絵"), ("pencil", "編集 書く"),
+    ("music.note", "音楽"), ("film", "動画 映画"), ("paintbrush", "描画 絵"), ("pencil", "編集 書く"), ("pencil.and.outline", "編集 書く"),
     ("scissors", "切り取り 分割"), ("link", "リンク 参照"), ("paperclip", "添付"), ("tag", "タグ ラベル"),
     ("bookmark", "ブックマーク 印"), ("star", "お気に入り 星"), ("heart", "重要 ハート"), ("list.bullet", "リスト 一覧"),
     ("list.number", "番号付き 順番"), ("square.grid.2x2", "グリッド 格子"), ("square.stack.3d.up", "階層 重ねる"),
@@ -43,34 +43,33 @@ enum CardSymbols {
 
 /// Picks a Card's icon from a grid (search by words; no symbol names).
 struct SymbolPicker: View {
-  /// The Card's own choice (nil: the icon of its kind).
-  @Binding var symbol: String?
-  let inherited: String
+  @Binding var symbol: String
+  let defaultIcon: String
   @State private var open = false
   @State private var search = ""
 
   var body: some View {
-    let current = symbol ?? inherited
+    let current = symbol
     HStack(spacing: 8) {
       Button { open = true } label: {
         HStack(spacing: 6) {
-          Image(systemName: current).frame(width: 18)
+          Image(systemName: current == "none" ? defaultIcon : current).frame(width: 18)
           Text("アイコンを選ぶ…")
         }
       }
       // Opens beside the button, where the window leaves it room.
       .popover(isPresented: $open, arrowEdge: .trailing) { grid(current) }
       .accessibilityLabel("アイコンを選ぶ")
-      if symbol != nil {
-        Button("デフォルトに戻す") { symbol = nil }.buttonStyle(.link)
-          .help("Card の種類のアイコンを使います")
-      }
     }
   }
 
   private func grid(_ current: String) -> some View {
     let shown = CardSymbols.all.filter { search.isEmpty || $0.label.localizedCaseInsensitiveContains(search) }
     return VStack(alignment: .leading, spacing: 8) {
+      Button { symbol = "none"; open = false } label: {
+        Label("種類の既定", systemImage: defaultIcon)
+      }
+      .accessibilityAddTraits(current == "none" ? .isSelected : [])
       TextField("探す（例: 計算、表、画像）", text: $search).textFieldStyle(.roundedBorder)
       ScrollView {
         LazyVGrid(columns: Array(repeating: GridItem(.fixed(34), spacing: 4), count: 9), spacing: 4) {
@@ -91,12 +90,6 @@ struct SymbolPicker: View {
       // 9 columns of 34 pt with 4 pt gaps, plus room for the scroll bar.
       .frame(width: 9 * 34 + 8 * 4 + 16, height: 220)
       if shown.isEmpty { Text("一致するアイコンはありません").font(.caption).foregroundStyle(.secondary) }
-      HStack {
-        Button("デフォルトに戻す") { symbol = nil; open = false }.disabled(symbol == nil)
-        Spacer()
-        Image(systemName: inherited).foregroundStyle(.secondary)
-        Text("デフォルト").font(.caption).foregroundStyle(.secondary)
-      }
     }
     .padding(12)
     .fixedSize()

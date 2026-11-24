@@ -5,7 +5,7 @@ import { useObserve } from '../model/observable'
 import { CardSettingsEditor } from './cardSettings'
 import { ChatPanel } from './chat'
 import { CardArtifactsView } from './history'
-import { CardViewsWindow } from './cardViews'
+import { ProjectCardViews } from './cardViews'
 import { Icon } from './icons'
 import { CardDatabaseView, WorkflowSettingsView } from './projectViews'
 import { ApplicationSettings } from './settings'
@@ -24,7 +24,6 @@ function title(w: DetailWindow): string {
     case 'executions': return L('実行履歴 · {0}', name(w.what.card))
     case 'artifacts': return L('成果物 · {0}', name(w.what.card))
     case 'workflowSettings': return L('Workflow 設定 · {0}', s?.scopeName([]) ?? '')
-    case 'visual': return L('可視化 · {0}', name(w.what.card))
     case 'chat': return L('チャット')
     case 'appSettings': return L('設定')
   }
@@ -44,7 +43,6 @@ function Content({ w }: { w: DetailWindow }) {
     case 'executions': return <CardSettingsEditor session={s} card={what.card} initial="executions" onClose={close} />
     case 'artifacts': return <CardArtifactsView session={s} cardKey={what.card} />
     case 'workflowSettings': return <WorkflowSettingsView session={s} />
-    case 'visual': return <CardViewsWindow session={s} cardKey={what.card} />
     case 'chat': return <ChatPanel session={s} chat={app.chat(s)} detached />
   }
 }
@@ -93,5 +91,8 @@ function FloatingWindow({ w }: { w: DetailWindow }) {
 
 export function WindowHost() {
   useObserve(app)
-  return <>{app.windows.map((w) => <FloatingWindow key={w.id} w={w} />)}</>
+  return <>
+    {app.windows.map((w) => <FloatingWindow key={w.id} w={w} />)}
+    {[...app.sessions.values()].map(session => <ProjectCardViews key={session.key} session={session} />)}
+  </>
 }

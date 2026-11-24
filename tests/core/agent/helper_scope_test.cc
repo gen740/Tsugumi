@@ -8,7 +8,7 @@ const HelperScope::Reader kRead = [](const std::string& path) -> std::string {
   if (path == "tsugumi.json")
     return R"({"canvas":{"cards":[{"id":"outer"}],"connections":[]}})";
   if (path == "definitions/outer/_card.json")
-    return R"({"type":"subgraph","external":"storage"})";
+    return R"({"type":"subgraph","symbol":"link"})";
   return "";
 };
 TEST(HelperScope, FailureKeepsInScopeDiagnosticAndTypedFields) {
@@ -45,16 +45,16 @@ TEST(HelperScope, FailureKeepsInScopeDiagnosticAndTypedFields) {
 }
 TEST(HelperScope, FailureRedactsUnreadableCardsAndFilesOnly) {
   HelperScope scope(json::Object(
-      R"({"read_cards":["mine"],"write_cards":["mine","SECRET"],"run_cards":[]})"));
+      R"({"read_cards":["mine"],"write_cards":["mine","secret"],"run_cards":[]})"));
   const auto read = [](const std::string& path) -> std::string {
     if (path == "tsugumi.json")
-      return R"({"canvas":{"cards":[{"id":"mine"},{"id":"SECRET"}]}})";
+      return R"({"canvas":{"cards":[{"id":"mine"},{"id":"secret"}]}})";
     return "";
   };
   for (const auto& diagnostic :
-       {"wire mine -> SECRET: SECRET is still a Draft; write to.port as \"\"",
-        "definitions/mine/main.py: cannot read definitions/SECRET/hidden.csv",
-        "Concurrent edit conflicts at /definitions~1SECRET~1_card.json/name; "
+       {"wire mine -> secret: secret is still a Draft; write to.port as \"\"",
+        "definitions/mine/main.py: cannot read definitions/secret/hidden.csv",
+        "Concurrent edit conflicts at /definitions~1secret~1_card.json/name; "
         "inspect and re-apply",
         "cannot read hidden.csv"}) {
     const auto result = scope.FailureResult(
@@ -64,9 +64,9 @@ TEST(HelperScope, FailureRedactsUnreadableCardsAndFilesOnly) {
                           {"kind", json::Quote("validation_failed")},
                           {"diagnostic", json::Quote(diagnostic)},
                           {"message", json::Quote(diagnostic)},
-                          {"args", R"([{"key":"card","value":"SECRET"}])"}})}}),
+                          {"args", R"([{"key":"card","value":"secret"}])"}})}}),
         read);
-    EXPECT_EQ(result.find("SECRET"), std::string::npos);
+    EXPECT_EQ(result.find("secret"), std::string::npos);
     EXPECT_EQ(result.find("hidden.csv"), std::string::npos);
     EXPECT_NE(result.find("[redacted]"), std::string::npos);
     if (std::string(diagnostic).starts_with("definitions/mine"))
@@ -82,13 +82,13 @@ TEST(HelperScope, FailureKeepsNestedCardAndFileNamesWithinReadScope) {
     if (path == "tsugumi.json")
       return R"({"canvas":{"cards":[{"id":"outer"}]}})";
     if (path == "definitions/outer/_card.json")
-      return R"({"type":"subgraph","external":"storage"})";
-    if (path == "externals/storage/tsugumi.json")
+      return R"({"type":"subgraph","symbol":"link"})";
+    if (path == "externals/outer/tsugumi.json")
       return R"({"canvas":{"cards":[{"id":"child"},{"id":"SECRET"}]}})";
     return "";
   };
   const std::string diagnostic =
-      "outer/child: externals/storage/definitions/child/_card.json inputs need "
+      "outer/child: externals/outer/definitions/child/_card.json inputs need "
       "a name";
   const auto failure = json::Encode(json::Members{
       {"reply", json::Quote("Failure")},
@@ -113,7 +113,7 @@ TEST(HelperScope, ReadsAndWritesAreSeparateExactSetsWithNestedIdentifiers) {
       std::runtime_error);
   EXPECT_NO_THROW(scope.Check(
       "project_file_read",
-      {{"path", json::Quote("externals/storage/definitions/child/_card.json")}},
+      {{"path", json::Quote("externals/outer/definitions/child/_card.json")}},
       kRead));
   EXPECT_THROW(scope.Check("project_file_list",
                            {{"path", json::Quote("externals/storage")}}, kRead),
@@ -122,7 +122,7 @@ TEST(HelperScope, ReadsAndWritesAreSeparateExactSetsWithNestedIdentifiers) {
       scope.Check(
           "project_file_read",
           {{"path",
-            json::Quote("externals/storage/definitions/sibling/_card.json")}},
+            json::Quote("externals/outer/definitions/sibling/_card.json")}},
           kRead),
       std::runtime_error);
   EXPECT_THROW(
@@ -182,7 +182,7 @@ TEST(HelperScope, WireEndEditsDoNotDependOnCardOrConnectionOrder) {
       for (size_t writable = 0; writable < 3; ++writable) {
         const std::string prefix = nested ? "outer/" : "";
         const std::string document =
-            nested ? "externals/storage/tsugumi.json" : "tsugumi.json";
+            nested ? "externals/outer/tsugumi.json" : "tsugumi.json";
         const std::vector<std::string> ids{"alpha", "middle", "zulu"};
         std::vector<std::string> cards{R"({"id":"share"})"}, wires;
         for (const auto& id : ids) {
@@ -299,23 +299,27 @@ TEST(HelperScope, ChangedWiresRequireAssignedEndsAndOneWritableEnd) {
   }
 }
 
-TEST(HelperScope, SharedNestedDefinitionsRequireEveryAliasInTheScope) {
+TEST(HelperScope, NestedDefinitionsBelongToTheirOwnContainer) {
   const HelperScope::Reader read = [](const std::string& path) -> std::string {
-    if (path == "tsugumi.json")
-      return R"({"canvas":{"cards":[{"id":"outer"},{"id":"alias"}]}})";
     if (path == "definitions/outer/_card.json" ||
-        path == "definitions/alias/_card.json")
-      return R"({"type":"subgraph","external":"storage"})";
+        path == "definitions/sibling/_card.json")
+      return R"({"type":"subgraph","symbol":"link"})";
     return "";
   };
-  const auto args = json::Object(
-      R"({"path":"externals/storage/definitions/child/_card.json"})");
-  HelperScope one(json::Object(
+  HelperScope scope(json::Object(
       R"({"read_cards":["outer/child"],"write_cards":[],"run_cards":[]})"));
-  EXPECT_THROW(one.Check("project_file_read", args, read), std::runtime_error);
-  HelperScope both(json::Object(
-      R"({"read_cards":["outer/child","alias/child"],"write_cards":[],"run_cards":[]})"));
-  EXPECT_NO_THROW(both.Check("project_file_read", args, read));
+  EXPECT_NO_THROW(scope.Check(
+      "project_file_read",
+      json::Object(
+          R"({"path":"externals/outer/definitions/child/_card.json"})"),
+      read));
+  EXPECT_THROW(
+      scope.Check(
+          "project_file_read",
+          json::Object(
+              R"({"path":"externals/sibling/definitions/child/_card.json"})"),
+          read),
+      std::runtime_error);
 }
 TEST(HelperScope,
      ContainerChangesAndFailedOwnershipChecksCannotCrossTheBoundary) {
@@ -339,15 +343,15 @@ TEST(HelperScope, NewCardsAreOwnedByTheirCreatorOnly) {
   const auto task =
       json::Object(R"({"read_cards":[],"write_cards":[],"run_cards":[]})");
   HelperScope owner(task), sibling(task);
-  owner.Created("new-card", "", kRead);
-  const auto args = json::Object(R"({"path":"definitions/new-card/src/a.py"})");
+  owner.Created("new_card", "", kRead);
+  const auto args = json::Object(R"({"path":"definitions/new_card/src/a.py"})");
   EXPECT_NO_THROW(owner.Check("project_file_read", args, kRead));
   EXPECT_THROW(sibling.Check("project_file_read", args, kRead),
                std::runtime_error);
   EXPECT_NO_THROW(owner.Check(
       "project_save",
       json::Object(
-          R"({"changes":[{"value_type":"PutSource","value":{"path":"definitions/new-card/src/a.py","bytes":[]}}]})"),
+          R"({"changes":[{"value_type":"PutSource","value":{"path":"definitions/new_card/src/a.py","bytes":[]}}]})"),
       kRead));
 }
 TEST(HelperScope, ExecutionPlanRequiresRunForEveryCard) {
@@ -402,7 +406,7 @@ TEST(HelperScope,
       std::runtime_error);
   EXPECT_NO_THROW(HelperScope::Validate(
       json::Object(
-          R"({"read_cards":["card.v2"],"write_cards":[],"run_cards":[]})"),
+          R"({"read_cards":["card_v2"],"write_cards":[],"run_cards":[]})"),
       false));
 }
 TEST(HelperScope, RunOwnershipComesFromReceiptsEvenAfterTranscriptCompaction) {
@@ -544,19 +548,19 @@ TEST(HelperGraphScope, NestedGraphAndBoundaryRebindingKeepOtherEndpoints) {
     if (path == "tsugumi.json")
       return R"({"canvas":{"cards":[{"id":"outer"}],"connections":[]}})";
     if (path == "definitions/outer/_card.json")
-      return R"({"type":"subgraph","external":"storage"})";
-    if (path == "externals/storage/tsugumi.json")
-      return R"({"boundary":{"inputs":[{"name":"visible","card":"draft","port":""},{"name":"hidden","card":"secret","port":"in"}],"outputs":[]},"canvas":{"cards":[{"id":"draft"},{"id":"secret"}],"connections":[]}})";
+      return R"({"type":"subgraph","symbol":"link"})";
+    if (path == "externals/outer/tsugumi.json")
+      return R"({"boundary":{"inputs":[{"name":"visible","card":"draft","port":"in"},{"name":"hidden","card":"secret","port":"in"}],"outputs":[]},"canvas":{"cards":[{"id":"draft"},{"id":"secret"}],"connections":[]}})";
     return "";
   };
   HelperScope scope(json::Object(
       R"({"read_cards":["outer/draft"],"write_cards":["outer/draft"],"run_cards":[]})"));
-  scope.Created("mine", "externals/storage/", read);
+  scope.Created("mine", "externals/outer/", read);
   EXPECT_NO_THROW(scope.Check(
       "project_file_read",
-      {{"path", json::Quote("externals/storage/tsugumi.json")}}, read));
-  auto graph = json::Object(
-      scope.Graph(read("externals/storage/tsugumi.json"), "outer/"));
+      {{"path", json::Quote("externals/outer/tsugumi.json")}}, read));
+  auto graph =
+      json::Object(scope.Graph(read("externals/outer/tsugumi.json"), "outer/"));
   EXPECT_EQ(json::Encode(graph).find("secret"), std::string::npos);
   graph["boundary"] =
       R"({"inputs":[{"name":"visible","card":"draft","port":"real"}],"outputs":[]})";
@@ -567,10 +571,9 @@ TEST(HelperGraphScope, NestedGraphAndBoundaryRebindingKeepOtherEndpoints) {
       {"changes",
        json::Encode(std::vector<std::string>{json::Encode(json::Members{
            {"value_type", json::Quote("PutSource")},
-           {"value",
-            json::Encode(json::Members{
-                {"path", json::Quote("externals/storage/tsugumi.json")},
-                {"bytes", json::Quote(json::Encode(graph))}})}})})}};
+           {"value", json::Encode(json::Members{
+                         {"path", json::Quote("externals/outer/tsugumi.json")},
+                         {"bytes", json::Quote(json::Encode(graph))}})}})})}};
   EXPECT_NO_THROW(scope.Check("project_save", args, read));
   const auto saved = scope.ExpandSave(args, read);
   const auto value = json::Object(
@@ -579,7 +582,7 @@ TEST(HelperGraphScope, NestedGraphAndBoundaryRebindingKeepOtherEndpoints) {
   const HelperScope::Reader changed =
       [&](const std::string& path) -> std::string {
     return path == "definitions/outer/_card.json"
-               ? R"({"type":"subgraph","external":"elsewhere"})"
+               ? R"({"type":"draft","symbol":"pencil.and.outline"})"
                : read(path);
   };
   EXPECT_THROW(scope.CheckBindings(read, changed), std::runtime_error);

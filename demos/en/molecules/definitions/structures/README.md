@@ -1,4 +1,5 @@
 ---
+title: structures
 description: Lay out the structural formulas
 ---
 

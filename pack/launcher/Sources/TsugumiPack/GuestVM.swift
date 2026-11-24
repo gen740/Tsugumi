@@ -55,6 +55,7 @@ struct GuestBoot {
     let fs = VZVirtioFileSystemDeviceConfiguration(tag: "pack")
     fs.share = VZSingleDirectoryShare(directory: VZSharedDirectory(url: share, readOnly: false))
     c.directorySharingDevices = [fs]
+    if mode == .run { c.socketDevices = [VZVirtioSocketDeviceConfiguration()] }
     c.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
     let serial = VZVirtioConsoleDeviceSerialPortConfiguration()
     serial.attachment = try VZFileSerialPortAttachment(url: consoleLog, append: false)
@@ -64,13 +65,21 @@ struct GuestBoot {
   }
 
   /// Boots, hands each console line to `line` and returns when the guest stopped.
-  func run(line: @escaping (String) -> Void) throws {
+  @MainActor func run(views: PackViewRelay? = nil, line: @escaping (String) -> Void) throws {
     FileManager.default.createFile(atPath: consoleLog.path, contents: nil)
     let config = try configuration()
     let vm = VZVirtualMachine(configuration: config)
     let watcher = StopWatcher()
     vm.delegate = watcher
-    let reader = ConsoleReader(url: consoleLog, line: line)
+    let reader = ConsoleReader(url: consoleLog) { text in
+      if text == "PACK-VIEWS-READY", let views, let socket = vm.socketDevices.first as? VZVirtioSocketDevice {
+        views.connect(socket)
+      } else if text.hasPrefix("PACK-VIEWS-RUN-ENDED "), let views {
+        views.runEnded(String(text.dropFirst("PACK-VIEWS-RUN-ENDED ".count)))
+      } else {
+        line(text)
+      }
+    }
     var startError: Error?
     vm.start { result in
       if case .failure(let e) = result { startError = e; watcher.done = true }
@@ -92,8 +101,9 @@ struct GuestBoot {
     }
     var stopping = false
     while !watcher.done {
-      _ = RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.1))
+      _ = RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(views == nil ? 0.1 : 0.016))
       reader.poll()
+      views?.pollWindows()
       if interrupted, !stopping, vm.canStop {
         stopping = true
         vm.stop { _ in watcher.done = true }

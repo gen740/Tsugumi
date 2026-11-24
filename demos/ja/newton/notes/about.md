@@ -8,6 +8,6 @@ $$z_{k+1} = z_k - \lambda\,\frac{p(z_k)}{p'(z_k)}$$
 
 重複度 $m$ の根では $e_{k+1} \approx (1-\lambda/m)\,e_k$ と 1 次に落ち、$\lambda = m$ で 2 次に戻ります。$p' = 0$ の臨界点の近くでは遠くへ飛ばされ、閉路に入れば収束しません。
 
-**settings** の coeffs を `[1, 0, -3, 2]`（重根）や `[1, 0, -2, 2]`（閉路）に、damping を 0.5 にして全体を実行できます。**orbits** の初期値、**basins** の拡大、**trouble** の offset は、その Card だけを実行し直せます。
+**roots** の coeffs を `[1, 0, -3, 2]`（重根）や `[1, 0, -2, 2]`（閉路）に、damping を 0.5 にして全体を実行できます。**orbits** の初期値、**basins** の拡大、**trouble** の offset は、その Card だけを実行し直せます。
 
 限界: 計算は倍精度なので、重根での誤差はおよそ $\sqrt{\varepsilon} \approx 10^{-8}$ で頭打ちになります。

@@ -3,14 +3,11 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
-#include <cstdio>
 #include <cstring>
 #include <limits>
-#include <mutex>
 #include <numbers>
 #include <random>
 #include <stdexcept>
-#include <thread>
 #include <vector>
 
 namespace {
@@ -60,7 +57,8 @@ auto make_cloud(int64_t count, uint32_t seed) -> std::vector<Point> {
   return points;
 }
 
-auto send_cloud(const std::vector<Point>& points) -> void {
+auto send_cloud(const tsugumi_view_session& session,
+                const std::vector<Point>& points) -> void {
   std::vector<uint8_t> bytes(kChunkBytes);
   for (size_t offset = 0; offset < points.size(); offset += kPointsPerChunk) {
     const auto count = std::min(kPointsPerChunk, points.size() - offset);
@@ -69,8 +67,8 @@ auto send_cloud(const std::vector<Point>& points) -> void {
     const auto payload = count * sizeof(Point);
     std::memcpy(bytes.data(), &header, sizeof(header));
     std::memcpy(bytes.data() + sizeof(header), points.data() + offset, payload);
-    if (card::display::send_raw("points",
-                            {bytes.data(), sizeof(header) + payload}) != 0) {
+    if (card::display::send_raw(
+            session, {bytes.data(), sizeof(header) + payload}) != 0) {
       throw std::runtime_error("Could not send the point cloud");
     }
   }
@@ -86,26 +84,8 @@ auto run(const Card::Inputs&) -> Card::Output {
   // These parameters belong to the build. A changed build starts a new worker.
   static const auto points =
       make_cloud(count, static_cast<uint32_t>(Card::params.seed));
-  static std::mutex sending;
-  {
-    const std::lock_guard lock(sending);
-    send_cloud(points);
-  }
-  static const std::jthread replies([](std::stop_token stop) {
-    using namespace card::display;
-    try {
-      while (!stop.stop_requested()) {
-        const auto reply = recv("points", 250);
-        if (reply.status == ReceiveStatus::kCancelled) return;
-        if (reply.status == ReceiveStatus::kMessage &&
-            reply.bytes.size() == 1 && reply.bytes.front() == 1) {
-          const std::lock_guard lock(sending);
-          send_cloud(points);
-        }
-      }
-    } catch (const std::exception& error) {
-      std::fprintf(stderr, "%s\n", error.what());
-    }
-  });
+  const auto opened =
+      card::display::view_open("points", TSUGUMI_VIEW_WINDOW, 960, 720);
+  send_cloud(opened.session, points);
   return {};
 }

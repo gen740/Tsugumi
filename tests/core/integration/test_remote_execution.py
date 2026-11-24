@@ -28,6 +28,7 @@ from harness.file_events import process_file
 from harness.host import Host
 from harness.real_cards import PYTHON_BINDINGS, log, python_run
 from harness.values import collected_items
+from harness.views import open_view, return_credit
 from projects import (
     card,
     conn,
@@ -36,7 +37,7 @@ from projects import (
     wait_for_display,
     wait_invocation,
     wait_run,
-    write_nix_project as write,
+    write_nix_project,
 )
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
@@ -44,6 +45,7 @@ from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
 from Tsugumi.Data.RunState import RunState
+from Tsugumi.Trace.Client import Client
 from tsugumi_client import path, text
 
 pytestmark = pytest.mark.environment
@@ -52,9 +54,19 @@ RUN_LIST_OUTPUT = 'table Number { value:ulong; } table Outputs { out:Number (req
 # Each remote job realizes its dependencies in a private store, even during a batch.
 RUN_LIST_TIMEOUT_SECONDS = 1200
 RUN_LIST_REMOTE = {
-    "type": "code", "recordIO": True, "executionService": "remote-test",
+    "type": "code", "recordIO": "on", "workerCapabilities": [63],
     "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS, "_outputs": RUN_LIST_OUTPUT,
 }
+
+
+def write(project, definitions, cards, connections, *, files=None):
+    remote_system = os.environ["TSUGUMI_TEST_REMOTE_SYSTEM"]
+    definitions = {
+        key: {"systems": [remote_system], **body} if body.get("workerCapabilities") else body
+        for key, body in definitions.items()
+    }
+    write_nix_project(project, definitions, cards, connections, files=files)
+
 
 @pytest.fixture(scope="session")
 def remote_store_seed(tmp_path_factory):
@@ -158,7 +170,11 @@ def remote_broker(project, tmp_path, monkeypatch, remote_daemon):
             added_key = public
             external_authorized.write_text(previous.rstrip("\n") + "\n" + public + "\n")
         host.call("ExecutionServicePutRequest", id="remote-test", name="Remote test",
-                  endpoint=endpoint, workerPublicKey=Path(key_file).read_text().strip(), verify=True)
+                  endpoint=endpoint, workerPublicKey=Path(key_file).read_text().strip(), verify=True,
+                  workerCapabilities=[63])
+        service = next(value for value in host.call("ExecutionServicesRequest").services
+                       if text(value.id) == "remote-test")
+        monkeypatch.setenv("TSUGUMI_TEST_REMOTE_SYSTEM", text(service.capabilities.nativeSystem))
 
         def authorize(folder, name):
             control = tmp_path / name
@@ -300,22 +316,18 @@ def run(input):
     print("remote-card-stdout")
     return Output(doc=TextT(value=input.require("in").value))
 """
-    source = {"type": "input", "_params": '{ value = "remote-input-roundtrip"; }',
-              "_outputs": schema, "_nix": """
-{ params, inputs }:
-let
-  pkgs = import <nixpkgs> { };
-  sdk = import <tsugumi-kit/sdk/input> { inherit pkgs; };
-in {
-  run = sdk.input {
-    outputs = ./_outputs.fbs;
-    values.doc.value = params.value;
-  };
-}
-"""}
+    source = {"type": "code", "_params": '{ value = "remote-input-roundtrip"; }',
+              "_outputs": schema, "_nix": entry(python_run("""
+from card import Output, params
+from Text import TextT
+
+
+def run(input):
+    return Output(doc=TextT(value=params.value))
+"""))}
     settings = {
         "type": "code", "inputs": [{"name": "in"}], "_outputs": schema,
-        "executionService": "remote-test", "recordIO": True, "timeoutSeconds": 600,
+        "workerCapabilities": [63], "recordIO": "on", "timeoutSeconds": 600,
     }
     definitions = {
         "input": source,
@@ -374,33 +386,29 @@ from card import Output
 import tsugumi
 
 def run(input):
-    tsugumi.send("notes", {payload!r})
+    tsugumi.send(tsugumi.view_open("notes").session, {payload!r})
     wait_for_release()
     return Output()
 """
     views = 'views = [{ name = "notes"; type = "html"; blob = ./notes.html; }];'
-    definition = {"type": "code", "executionService": "remote-test",
+    definition = {"type": "code", "workerCapabilities": [63],
                   "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS,
                   "_outputs": "table Outputs {} root_type Outputs;",
                   "_nix": entry(python_run(source), views)}
     write(project, {"work": definition}, [card("work", "work")], [],
-          {"definitions/work/notes.html": "<!doctype html><p>Empty view</p>"})
-    client = core_factory().connect()
+          files={"definitions/work/notes.html": "<!doctype html><p>Empty view</p>"})
+    client = core_factory().connect(client=Client.Web)
     subscription = text(client.open().subscriptionId)
-    client.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("work")])
-    declared = client.wait_notification(lambda n: n.valueType == NotificationPayload.CardViewsUpdated,
-                                        timeout=RUN_LIST_TIMEOUT_SECONDS).value
-    note, = declared.views
-    assert text(note.name) == "notes" and text(note.type) == "html"
-    assert Path(text(note.blob)).is_file()
-
     run_id = start_run(client, "work")
     active = wait_invocation(client, run_id, "work", lambda row: row.executionState == RemoteExecutionState.running)
-    shown = wait_for_display(client, run_id).value.display
-    assert shown.card.segments == [b"work"] and text(shown.view) == "notes"
-    chunk = bytes(shown.bytes)
-    assert struct.unpack_from("<4I", chunk) == (0x4D475354, 0, 0, 1)
-    assert chunk[16:] == payload
+    note = open_view(client, timeout=RUN_LIST_TIMEOUT_SECONDS)
+    assert note.card.segments == [b"work"]
+    assert text(note.name) == "notes" and text(note.type) == "html"
+    session = text(note.session)
+    assert b"Empty view" in bytes(client.call("CardViewReadRequest", session=session).bytes)
+    shown = wait_for_display(client, run_id, lambda update: text(update.session) == session).value.display
+    return_credit(client, subscription, shown)
+    assert bytes(shown.bytes) == payload
     remote_gates(active)
     status = wait_run(client, run_id)
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
@@ -440,7 +448,7 @@ def run(input):
         "source": {"type": "code", "_outputs": RUN_LIST_OUTPUT, "_nix": numbers([10, 20])},
         "work": {**RUN_LIST_REMOTE, "inputs": [{"name": "in"}],
                  "_nix": numbers([100, 200], 'input.require("in").value + ')},
-        "collect": {"type": "collect", "recordIO": True},
+        "collect": {"type": "collect", "recordIO": "on"},
     }
     write(project, definitions, [card(name, name) for name in definitions],
           [conn("source", "out", "work", "in"), conn("work", "out", "collect", "in")])
@@ -473,7 +481,7 @@ def run(input):
         variants.append(f'{{ label = "{message}"; run = {program}; }}')
     definitions = {
         "fails": {**RUN_LIST_REMOTE, "_nix": entry("[ " + " ".join(variants) + " ]")},
-        "collect": {"type": "collect", "recordIO": True},
+        "collect": {"type": "collect", "recordIO": "on"},
     }
     write(project, definitions, [card(name, name) for name in definitions],
           [conn("fails", "out", "collect", "in")])
@@ -501,7 +509,7 @@ def run(input):
 
 
 def test_call_timeout_is_separate_from_build_and_transfers(project, core_factory, remote_broker):
-    definition = {"type": "code", "executionService": "remote-test", "timeoutSeconds": 1,
+    definition = {"type": "code", "workerCapabilities": [63], "timeoutSeconds": 1,
                   "buildTimeoutSeconds": 600, "_outputs": "table Outputs {} root_type Outputs;",
                   "_nix": entry(python_run(GATE_HELPER + "\ndef run(input): wait_for_release()\n"))}
     write(project, {"deadline": definition}, [card("deadline", "deadline")], [])
@@ -531,7 +539,7 @@ def run(input):
 
 @pytest.fixture
 def secret_project(project):
-    """The hostd project id the broker binds this project's Card secrets to."""
+    """Write the hostd project id before the broker captures it on authorization."""
     (project / ".tsugumi").mkdir(exist_ok=True)
     (project / ".tsugumi/project-id").write_text(SECRET_PROJECT)
     return SECRET_PROJECT

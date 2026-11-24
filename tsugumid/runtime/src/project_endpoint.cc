@@ -24,11 +24,11 @@ auto ProjectEndpoint(ServerOptions& options) -> void {
         r->value_type() > R::RequestPayload::MAX)
       return std::nullopt;
     const auto* hello = r->value_as_SessionHelloRequest();
-    // Neither trace records the display path: view visibility and view file
+    // Neither trace records the display path: view lifecycle and view file
     // reads stay out of it like the live display notifications, and their
     // replies follow the request.
     const auto type = r->value_type();
-    const bool display = type == R::RequestPayload::ViewSetVisibleRequest ||
+    const bool display = type == R::RequestPayload::ViewCloseRequest ||
                          type == R::RequestPayload::CardViewReadRequest ||
                          type == R::RequestPayload::ViewSendRequest ||
                          type == R::RequestPayload::ViewCreditRequest;

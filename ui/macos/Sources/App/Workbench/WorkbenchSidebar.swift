@@ -78,19 +78,20 @@ struct WorkbenchSidebar: View {
         .selectionDisabled()
     }
     ForEach(exts, id: \.self) { prefix in
-      let name = prefix.split(separator: "/").last.map(String.init) ?? prefix
+      let subgraph = prefix.split(separator: "/").last.map(String.init) ?? prefix
+      let name = session.displayName(key([subgraph]))
       let ids = (session.external(prefix)?.definitions.keys.sorted() ?? [])
-        .filter { defSearch.isEmpty || $0.localizedCaseInsensitiveContains(defSearch) || name.localizedCaseInsensitiveContains(defSearch) }
+        .filter { defSearch.isEmpty || $0.localizedCaseInsensitiveContains(defSearch) || session.displayName(key([subgraph, $0])).localizedCaseInsensitiveContains(defSearch) || name.localizedCaseInsensitiveContains(defSearch) }
       DisclosureGroup(isExpanded: Binding(get: { expanded.contains(prefix) || !defSearch.isEmpty },
                                           set: { if $0 { expanded.insert(prefix) } else { expanded.remove(prefix) } })) {
-        row(symbol: CardKind.subgraph.symbol, title: String(localized: "\(name) 全体（Card in Card）"),
+        row(symbol: definitionIcon(session.cardDefinition(key([subgraph]))), title: String(localized: "\(name) 全体（Card in Card）"),
             drag: DefinitionDrag.externalPrefix + prefix,
             help: String(localized: "このプロジェクト全体のコピーを Card in Card として置きます")) {
           Task { await placeExternal(prefix) }
         }
         ForEach(ids, id: \.self) { id in
           let d = session.external(prefix)?.definitions[id]
-          row(symbol: definitionKind(d?.card).symbol, title: session.displayName(key([id])),
+          row(symbol: definitionIcon(d?.card), title: session.displayName(key([subgraph, id])),
               drag: DefinitionDrag.externalDefinitionPrefix + prefix + "\n" + id,
               help: String(localized: "定義をこのプロジェクトの definitions にコピーして Card を置きます")) {
             Task { await placeCopy(prefix, id) }
@@ -107,7 +108,7 @@ struct WorkbenchSidebar: View {
       DisclosureGroup(isExpanded: Binding(get: { expanded.contains("unplaced") || !defSearch.isEmpty },
                                           set: { if $0 { expanded.insert("unplaced") } else { expanded.remove("unplaced") } })) {
         ForEach(unplaced, id: \.self) { id in
-          row(symbol: definitionKind(session.definitions[id]).symbol, title: session.displayName(key([id])), drag: DefinitionDrag.prefix + id,
+          row(symbol: definitionIcon(session.definitions[id]), title: session.displayName(key([id])), drag: DefinitionDrag.prefix + id,
               help: String(localized: "ダブルクリックまたは Canvas へドラッグして配置")) { place(id) }
             .contextMenu {
               Button("Canvas に配置") { place(id) }.disabled(!session.isEditable)
@@ -263,7 +264,8 @@ struct VisibleCardRow: View {
     let errors = session.resolution[cardKey]?.diagnostics.filter(\.error).count ?? 0
     let kind = session.kind(cardKey)
     HStack(spacing: 6) {
-      Image(systemName: kind.symbol).foregroundStyle(.secondary).frame(width: 14)
+      Image(systemName: definitionIcon(session.cardDefinition(cardKey)))
+        .foregroundStyle(.secondary).frame(width: 14)
       Text(session.displayName(cardKey)).lineLimit(1)
       Spacer()
       if errors > 0 {

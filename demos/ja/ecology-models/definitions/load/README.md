@@ -1,4 +1,5 @@
 ---
+title: load
 description: 毛皮の記録を読む
 ---
 

@@ -1,4 +1,5 @@
 ---
+title: mlp
 description: Tell the digits apart with a multilayer perceptron
 ---
 

@@ -1,4 +1,5 @@
 ---
+title: load
 description: 本物の MNIST を Nix で固定する
 ---
 

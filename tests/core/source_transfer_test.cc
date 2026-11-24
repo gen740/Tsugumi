@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "store.hh"
+#include "test_document.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 
@@ -13,10 +14,12 @@ TEST(SourceTransfer, StreamsFixedChunksAndDiscardsAnInterruptedImport) {
     std::filesystem::path root;
     ~Cleanup() { std::filesystem::remove_all(root); }
   } cleanup{root};
-  fs::write_atomic(root / "tsugumi.json",
-                   R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
-  fs::write_atomic(root / "definitions/data/_card.json",
-                   R"({"type":"draft"})");
+  fs::write_atomic(
+      root / "tsugumi.json",
+      test::project_json(
+          R"({"nixPath": [],"canvas":{"cards":[{"id":"data"}],"connections":[]}})"));
+  test::write_card(root / "definitions/data/_card.json",
+                   test::card_json(R"({"type":"draft"})"));
   std::string bytes(128 * 1024 + 1, 'x');
   bytes.back() = 'z';
   fs::write_atomic(root / "input.csv", bytes);

@@ -1,4 +1,5 @@
 ---
+title: fit
 description: Fit a 4PL curve
 ---
 

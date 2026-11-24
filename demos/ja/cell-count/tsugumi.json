@@ -1,4 +1,5 @@
 {
+  "formatVersion": 1,
   "name": "細胞画像の計数",
   "nixPath": [
     {
@@ -10,10 +11,20 @@
       "url": "github:gen740/tsugumi-kit/main"
     }
   ],
+  "trackedPaths": [],
+  "agentExclude": [
+    ".git",
+    ".DS_Store"
+  ],
+  "recordLogs": true,
+  "recordIO": false,
+  "logLimitBytes": 134217728,
+  "outputLimitBytes": 68719476736,
+  "outputLimitEntries": 1000,
   "canvas": {
     "cards": [
       {
-        "id": "start"
+        "id": "mitosis"
       },
       {
         "id": "generate"
@@ -31,30 +42,17 @@
         "id": "sweep"
       },
       {
-        "id": "mitosis"
-      },
-      {
         "id": "real"
       }
     ],
     "connections": [
       {
         "from": {
-          "card": "start",
+          "card": "mitosis",
           "port": "out"
         },
         "to": {
           "card": "generate",
-          "port": "start"
-        }
-      },
-      {
-        "from": {
-          "card": "start",
-          "port": "out"
-        },
-        "to": {
-          "card": "mitosis",
           "port": "start"
         }
       },
@@ -111,11 +109,11 @@
       {
         "from": {
           "card": "mitosis",
-          "port": "image"
+          "port": "out"
         },
         "to": {
           "card": "real",
-          "port": "image"
+          "port": "start"
         }
       }
     ]

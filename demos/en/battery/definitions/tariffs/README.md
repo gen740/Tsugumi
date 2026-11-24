@@ -1,4 +1,5 @@
 ---
+title: tariffs
 description: The shape of the tariff, and operation
 ---
 

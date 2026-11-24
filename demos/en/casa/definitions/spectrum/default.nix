@@ -3,7 +3,7 @@ let
   pkgs = import <nixpkgs> { };
   sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
   common = {
-    inherit params;
+    params = params // { events_file = toString inputs.load.events; };
     inputs = ./_inputs.fbs;
     outputs = ./_outputs.fbs;
   };

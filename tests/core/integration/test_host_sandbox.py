@@ -225,7 +225,7 @@ def test_a_reused_worker_keeps_its_process_environment(core_factory, tmp_path):
     environment, and what a run changes is still there in the next run of
     the reused worker: nothing is reset per call."""
     root = tmp_path / "p"
-    show = python_card(ENVIRONMENT_MAIN, outputs=TXT, inputs=["start"], reuseWorker=True, recordIO=True)
+    show = python_card(ENVIRONMENT_MAIN, outputs=TXT, inputs=["start"], reuseWorker=True, recordIO="on")
     write(root, {"start": {"type": "trigger"}, "show": show},
           [card("start", "start"), card("show", "show")], [conn("start", "out", "show", "start")])
     c = core_factory(project_root=root).connect()

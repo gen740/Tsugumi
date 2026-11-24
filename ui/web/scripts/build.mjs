@@ -20,7 +20,7 @@ fs.cpSync(path.join(root, 'third-party'), path.join(out, 'licenses'), { recursiv
 for (const component of ['flatbuffers', 'emscripten']) {
   fs.cpSync(path.join(root, '../../third-party', component), path.join(out, 'licenses', component), { recursive: true })
 }
-// The trusted bridge is a self-contained page shared with WKWebView.
+// The Web bridge is inlined into the shared sandbox page template.
 const viewer = path.join(root, '..', 'shared', 'modules')
 // The demo player's data (ui/demoPlayer.tsx, Home's thumbnails): each demo and the
 // images it names, without what only builds that data.

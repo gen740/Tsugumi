@@ -1,3 +1,4 @@
 ---
-description: Starts the computation from the reaction rates and volume (settings)
+title: start
+description: Run the simulations with their own parameters
 ---

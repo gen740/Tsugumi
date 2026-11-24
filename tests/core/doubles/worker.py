@@ -28,7 +28,9 @@ from tsugumi.Artifact import ArtifactT
 from tsugumi.ArtifactId import ArtifactIdT
 from Tsugumi.Worker.WorkerArtifactCreate import WorkerArtifactCreateT
 from Tsugumi.Worker.WorkerArtifactOpen import WorkerArtifactOpenT
+from Tsugumi.Worker.ViewControlKind import ViewControlKind
 from Tsugumi.Worker.WorkerDisplay import WorkerDisplayT
+from Tsugumi.Worker.WorkerViewRequest import WorkerViewRequestT
 from Tsugumi.Worker.WorkerFailure import WorkerFailureT
 from Tsugumi.Worker.WorkerMessage import WorkerMessage, WorkerMessageT
 from Tsugumi.Worker.WorkerOutput import WorkerOutputT
@@ -118,6 +120,8 @@ class Worker:
         self.cancelled = set()
         self.calls = 0
         self.call_id = 0
+        self.view_request_id = 0
+        self.view_reply = None
         self.call = None
         self.created = []
 
@@ -127,6 +131,10 @@ class Worker:
                 if message.valueType == WorkerPayload.WorkerCancel:
                     with self.condition:
                         self.cancelled.add(message.callId)
+                        self.condition.notify_all()
+                elif message.valueType == WorkerPayload.WorkerViewReply:
+                    with self.condition:
+                        self.view_reply = message.value
                         self.condition.notify_all()
         except (EOFError, OSError, ValueError):
             pass
@@ -257,8 +265,21 @@ class Worker:
                 root = Path(text(self.call.artifactDirectory)) / str(self.created[-1])
                 (root / action["name"]).symlink_to(action["target"])
             elif operation == "display_text":
-                display = WorkerDisplayT(view="test", bytes=action["text"].encode())
-                self.data.send(0, WorkerPayload.WorkerDisplay, display)
+                self.view_request_id += 1
+                self.data.send(0, WorkerPayload.WorkerViewRequest, WorkerViewRequestT(
+                    requestId=self.view_request_id, kind=ViewControlKind.Open,
+                    view=action.get("view", "test"),
+                ))
+                with self.condition:
+                    self.condition.wait_for(
+                        lambda: self.call_id in self.cancelled or
+                        (self.view_reply and self.view_reply.requestId == self.view_request_id)
+                    )
+                    self.check_cancel()
+                    reply, self.view_reply = self.view_reply, None
+                if reply.ok:
+                    display = WorkerDisplayT(session=reply.session, bytes=action["text"].encode())
+                    self.data.send(0, WorkerPayload.WorkerDisplay, display)
             else:
                 raise ValueError(f"unknown worker action: {operation}")
         return True

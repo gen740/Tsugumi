@@ -1,3 +1,4 @@
 ---
+title: diffusion
 description: 歩く人が広がる様子を FuncAnimation で動かす
 ---

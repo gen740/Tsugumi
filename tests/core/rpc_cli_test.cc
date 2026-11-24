@@ -9,9 +9,9 @@
 #include <array>
 #include <chrono>
 #include <csignal>
-#include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <optional>
 #include <sstream>
@@ -19,6 +19,7 @@
 #include <thread>
 
 #include "agent_fixture_server.hh"
+#include "test_document.hh"
 #include "tsugumi/rpc/unix_socket.hh"
 
 extern char** environ;
@@ -146,7 +147,8 @@ class RpcCli : public ::testing::TestWithParam<bool> {
 TEST_P(RpcCli, OrdersUnionsWithinProjectChangeArrays) {
   Write(
       directory.path / "project/tsugumi.json",
-      R"({"name":"Before","nixPath": [],"canvas":{"cards":[],"connections":[]}})");
+      tsugumi::test::project_json(
+          R"({"name":"Before","nixPath": [],"canvas":{"cards":[],"connections":[]}})"));
   project.Start({TSUGUMI_PROJECT_BINARY, "--scratch-dir",
                  (directory.path / "scratch").string(), "--run-scratch-dir",
                  (directory.path / "run-scratch").string(), "--project",
@@ -170,8 +172,8 @@ TEST_P(RpcCli, OrdersUnionsWithinProjectChangeArrays) {
             "ProjectSnapshot")
       << inspect.replies[1];
   const auto revision = JsonUInt(inspect.replies[1], "/payload/value/rev");
-  const std::string document =
-      R"({"name":"After 日本語","nixPath": [],"canvas":{"cards":[],"connections":[]}})";
+  const std::string document = tsugumi::test::project_json(
+      R"({"name":"After 日本語","nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto save =
       "{\"changes\":[{\"value\":{\"json\":" + Quote(document) +
       "},\"value_type\":\"SetProject\"}],\"origin\":\"user\",\"op_id\":"
@@ -222,7 +224,8 @@ TEST_P(RpcCliDeepSocket, ServesAndConnectsInAFolderDeeperThanSunPath) {
   ASSERT_GT(socket.size(), sizeof(sockaddr_un::sun_path));
   Write(
       directory.path / "project/tsugumi.json",
-      R"({"name":"Deep","nixPath": [],"canvas":{"cards":[],"connections":[]}})");
+      tsugumi::test::project_json(
+          R"({"name":"Deep","nixPath": [],"canvas":{"cards":[],"connections":[]}})"));
   project.Start(
       {TSUGUMI_PROJECT_BINARY, "--scratch-dir",
        (directory.path / "scratch").string(), "--run-scratch-dir",

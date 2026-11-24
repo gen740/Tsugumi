@@ -1,3 +1,4 @@
 ---
+title: record
 description: Writes the sequence and parities to collatz.csv and keeps it as an artifact
 ---

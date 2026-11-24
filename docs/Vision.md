@@ -56,7 +56,7 @@ For example, have AI implement the aggregation logic using only dummy records an
 Limit what is fed back to the AI, too, to the statistics and error structure needed for checking, not raw data.
 For that, it is not enough to visualise the flow of data; the system has to be able to enforce read permissions and the extent of outside transmission.
 
-Tsugumi today has per-Card isolation with a Linux VM and bubblewrap, and the network cut off by default.
+Tsugumi today has per-Card isolation with a Linux VM and bubblewrap, and a per-Card setting for network access.
 On the other hand, the source code, logs and input and output values the Agent reads through its tools are sent to the connected LLM provider.
 **There is not yet a mechanism that automatically hides or masks confidential data from the Agent to prevent it from being sent.**
 Building this data boundary into the design as types and permissions is the next important problem before extending to business automation in earnest.

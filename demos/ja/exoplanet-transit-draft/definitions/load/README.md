@@ -1,4 +1,5 @@
 ---
+title: load
 description: ライトカーブを取る
 ---
 
