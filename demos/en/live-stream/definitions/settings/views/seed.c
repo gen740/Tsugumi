@@ -77,7 +77,10 @@ int32_t tsugumi_view_pointer(uint32_t kind, float x, float y, uint32_t buttons,
   const float position = (x * scale / width - 0.10f) / 0.80f;
   const float fraction = position < 0 ? 0 : position > 1 ? 1 : position;
   const uint8_t value = (uint8_t)(fraction * 20 + 0.5f);
-  if (tsugumi_view_send(&value, sizeof(value)) == 0) choice = value;
+  if (tsugumi_view_send(&value, sizeof(value)) == 0) {
+    choice = value;
+    ready = 0;
+  }
   return 0;
 }
 
