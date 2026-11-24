@@ -1,6 +1,6 @@
 # The sandbox contract
 
-**Status.** The owner decided this contract on 2026-11-13 and 2026-11-21. The P1 sandbox work and the Card ABI cutover implement it.
+**Status.** The owner decided this contract on 2026-11-13 and 2026-11-21 and clarified the effects of the isolation flags on 2026-11-25. The P1 sandbox work and the Card ABI cutover implement it.
 Each **Before P1** note records the behavior at `24fc2d2c`, the revision the contract was written against, as evidence of what changed. [Security §4](security.md#4-card-worker--tsugumid) describes the current implementation. [Open](#open) lists the remaining decision.
 
 ## The worker builds what the Card sees
@@ -124,15 +124,15 @@ isolation.
   | --- | --- |
   | `filesystem` | Only the Nix closure, scratch, inputs and enabled host paths are visible |
   | `network` | Network access |
-  | `pid` | A separate PID namespace |
-  | `ipc` | A separate IPC namespace |
-  | `identity` | uid 65534, with capabilities dropped |
+  | `pid` | The Card cannot list, inspect or signal processes outside its own process tree |
+  | `ipc` | The Card cannot reach host shared memory, semaphores or other IPC endpoints beyond the channels it is given |
+  | `identity` | The Card is kept apart from the user's credentials, including ungranted home and application files, keychain services and user network credentials. Linux also uses uid and gid 65534 with capabilities dropped |
   | `limits` | cgroup v2 CPU and memory limits, on local Linux workers too |
   | host paths | Host paths, read-only or read-write |
   | GUI | The GUI |
 - There is no permission dialog.
 - A grant that is off (network, a host path, the GUI) makes the operation fail inside the Card.
-- An isolation option that is off (`filesystem`, `pid`, `ipc`, `identity`, `limits`) removes that restriction.
+- The enabled isolation options apply together. Disabling one option leaves any restrictions required by the others in effect.
 - There is no "declared but not granted" state.
 - Turning every isolation option off means no sandbox; there is no separate no-sandbox mode.
 - The options belong to the worker, and they are part of the contract.
@@ -140,6 +140,30 @@ isolation.
 - These worker invariants hold even with every option off:
   - in the VM, hostd's tokens are hidden from the Card;
   - the Card's processes are killed as a process group.
+
+Linux uses bubblewrap mount, PID and IPC namespaces and a mapped uid and gid
+for identity. Filesystem and network grants also determine which pathname
+and abstract Unix sockets are reachable.
+
+Native macOS uses Seatbelt rules for these effects. For `pid`, the profile
+allows process inspection and signals only for the Card and its children.
+It blocks system-wide process listing and process-related sysctl queries.
+For `ipc`, it blocks POSIX shared memory and named semaphores, System V
+shared memory, semaphores and message queues, and Unix socket connections.
+The worker communicates over two inherited Unix socket pairs. Mach service
+lookup is restricted to `com.apple.trustd.agent` for TLS certificate
+validation when the network grant is on. The system DNS resolver needs the
+mDNSResponder Unix socket, which is available with network granted and
+`ipc` off. For `identity`, the worker starts with its own environment and
+home, applies the file allowlist even with `filesystem` off, and blocks the
+user's Mach services and local credential sockets. The worker retains its
+launch uid on macOS.
+
+Seatbelt filesystem isolation is reported as partial. The Card can see
+host file metadata, read the full Nix store and selected system paths, and
+access grants at their original paths. Bubblewrap exposes only the realized
+closure and remaps the granted filesystem views. Seatbelt applies read and
+write rules to the original host paths.
 
 **Before P1 (`24fc2d2c`).**
 

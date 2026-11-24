@@ -99,17 +99,66 @@ auto send_frame(trace::Link& link, int fd, const std::string& frame,
 }
 
 #ifdef __APPLE__
-// Seatbelt profile for sandbox: true Cards when tsugumid runs directly on a
-// macOS host (sandbox-exec is deprecated but still the system's process
-// sandbox). As under bubblewrap: no network unless the Card allows it,
-// /nix/store, staged invocation inputs and system libraries read-only, writes
-// only to the worker's own scratch folder and writable grants. Paths
-// are matched after symlink resolution (/tmp -> /private/tmp).
+// Seatbelt checks host paths after symlink resolution (/tmp -> /private/tmp).
 auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
                       const std::filesystem::path& artifacts) -> std::string {
-  if (!sp.sandbox.filesystem)
-    return sp.network ? std::string{}
-                      : "(version 1)\n(allow default)\n(deny network*)\n";
+  const bool restrict_files = sp.sandbox.filesystem || sp.sandbox.identity;
+  const bool restrict_processes = sp.sandbox.pid || sp.sandbox.identity;
+  const bool restrict_services =
+      restrict_files || restrict_processes || sp.sandbox.ipc;
+  if (!restrict_services && sp.network) return {};
+
+  std::string profile = "(version 1)\n";
+  if (restrict_files) {
+    profile +=
+        "(deny default)\n"
+        "(allow process-fork sysctl-read file-read-metadata)\n"
+        "(allow signal (target same-sandbox))\n"
+        "(allow ipc-posix-shm)\n";
+  } else {
+    profile += "(allow default)\n";
+  }
+  if (!sp.network) {
+    profile += "(deny network*)\n";
+  } else if (restrict_services) {
+    profile += "(allow network*)\n";
+    if (restrict_files)
+      profile += "(deny network-outbound (remote ip \"localhost:*\"))\n";
+  }
+  if (restrict_services) {
+    profile += "(deny mach-lookup mach-register)\n";
+    if (sp.network)
+      profile +=
+          "(allow mach-lookup (global-name \"com.apple.trustd.agent\"))\n";
+  }
+  if (restrict_files || sp.sandbox.ipc) {
+    profile += "(deny network-outbound (remote unix-socket))\n";
+    // The worker's data and control sockets are inherited socketpairs. The
+    // resolver needs a host socket only when IPC isolation is disabled.
+    if (sp.sandbox.ipc)
+      profile += "(deny network-bind (local unix-socket))\n";
+    else if (sp.network)
+      profile +=
+          "(allow network-outbound (remote unix-socket "
+          "(path-literal \"/private/var/run/mDNSResponder\")))\n";
+  }
+  if (restrict_processes) {
+    profile +=
+        "(deny process-info* signal mach-task* system-socket)\n"
+        "(allow process-info* signal (target self) (target children))\n"
+        "(deny process-info-listpids)\n"
+        "(deny sysctl-read (sysctl-name-prefix \"kern.proc\" \"net.local\" "
+        "\"net.inet.tcp.pcblist\" \"net.inet.udp.pcblist\"))\n"
+        "(allow syscall-unix)\n"
+        "(deny syscall-unix (syscall-number SYS_getppid SYS_getpgid "
+        "SYS_getsid))\n";
+  }
+  if (sp.sandbox.ipc)
+    profile +=
+        "(deny ipc-posix-shm* ipc-posix-sem* "
+        "ipc-sysv-shm ipc-sysv-sem ipc-sysv-msg)\n";
+  if (!restrict_files) return profile;
+
   auto real = [](const std::string& p) {
     std::error_code ec;
     auto c = std::filesystem::weakly_canonical(p, ec);
@@ -128,9 +177,17 @@ auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
   // files in its own folders and grants.
   std::string read =
       "(literal \"/\") (subpath \"/nix/store\") (subpath \"/usr/lib\") "
-      "(subpath \"/usr/share\")"
-      " (subpath \"/System\") (subpath \"/private/etc\")"
-      " (subpath \"/private/var/db/timezone\") (subpath \"/dev\")";
+      "(subpath \"/usr/share\") (subpath \"/System/Library\")"
+      " (subpath \"/private/var/db/timezone\")";
+  std::string devices;
+  for (const auto* p :
+       {"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom"})
+    devices += " (literal " + quote(p) + ")";
+  read += devices;
+  for (const auto* p :
+       {"/etc/hosts", "/etc/resolv.conf", "/etc/protocols", "/etc/services",
+        "/etc/group", "/etc/passwd", "/etc/localtime"})
+    read += " (literal " + quote(p) + ")";
   std::string exec = "(subpath \"/nix/store\") (literal " +
                      quote(sp.worker_binary) + ") (subpath " + quote(scratch) +
                      ")";
@@ -139,8 +196,7 @@ auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
   read += " (literal " + quote(sp.worker_binary) + ") (subpath " +
           quote(scratch) + ")";
   std::string write =
-      "(literal \"/dev/null\") (literal \"/dev/tty\") (subpath " +
-      quote(scratch) + ")";
+      "(literal \"/dev/null\") (subpath " + quote(scratch) + ")";
   for (const auto& p : sp.ro_paths) {
     read += " (subpath " + quote(p) + ")";
     exec += " (subpath " + quote(p) + ")";
@@ -173,36 +229,13 @@ auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
     else
       read_only_grants += rule;
   }
-  return "(version 1)\n(deny default)\n"
-         "(allow process-fork)\n(allow process-exec " +
-         exec +
-         ")\n(allow signal (target "
-         "same-sandbox))\n"
-         "(allow sysctl-read)\n(allow ipc-posix-shm)\n(allow "
-         "file-read-metadata)\n"
-         "(allow file-read* " +
-         read + ")\n(allow file-write* " + write + ")\n" +
+  return profile + "(allow process-exec " + exec + ")\n(allow file-read* " +
+         read + ")\n(allow file-write* " + write + ")\n(allow file-ioctl " +
+         devices + ")\n" +
          (read_only_grants.empty()
               ? ""
               : "(deny file-write* " + read_only_grants + ")\n") +
-         private_paths + "(allow file-ioctl (subpath \"/dev\"))\n" +
-         // With the network allowed, still nothing on this host: tsugumid's
-         // own ports and sockets, the web server, other local services. For
-         // Seatbelt "localhost" is every address of this host (LAN, VPN,
-         // 0.0.0.0), not only loopback; it accepts no other host, so other
-         // machines cannot be denied one by one. The one exception is
-         // mDNSResponder: getaddrinfo asks its socket for every name not in
-         // /etc/hosts. The last matching rule wins, so it comes after the
-         // denial. Of the Mach services only trustd: Security.framework (Go,
-         // NSURLSession) verifies certificates through it. The others are the
-         // user's session: the clipboard, LaunchServices, Apple events.
-         (sp.network ? "(allow network*)\n(allow mach-lookup (global-name "
-                       "\"com.apple.trustd.agent\"))\n"
-                       "(deny network-outbound (remote ip \"localhost:*\"))\n"
-                       "(deny network-outbound (remote unix-socket))\n"
-                       "(allow network-outbound (remote unix-socket "
-                       "(path-literal \"/private/var/run/mDNSResponder\")))\n"
-                     : "");
+         private_paths;
 }
 #else
 auto delegated_root() -> std::filesystem::path {
@@ -265,6 +298,12 @@ auto worker_has_bwrap() -> bool {
   return false;
 #endif
 }
+
+#ifdef __APPLE__
+auto worker_has_seatbelt() -> bool {
+  return ::access("/usr/bin/sandbox-exec", X_OK) == 0;
+}
+#endif
 
 auto worker_limits_available() -> bool {
 #ifdef __linux__
@@ -386,7 +425,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     throw Failed(FailureKind::unsupported,
                  "native macOS does not support GUI grants or sandbox limits");
   if (!profile.empty()) {
-    if (::access("/usr/bin/sandbox-exec", X_OK) != 0)
+    if (!worker_has_seatbelt())
       throw Failed(FailureKind::permission_denied, "Seatbelt is unavailable");
     spec.argv = {"/usr/bin/sandbox-exec", "-p", profile};
   }

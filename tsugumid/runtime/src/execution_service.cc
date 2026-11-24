@@ -22,7 +22,9 @@ namespace tsugumi {
 namespace {
 
 // The unprivileged identity for Card processes.
+#ifdef __linux__
 constexpr uid_t kCardUid = 65534;
+#endif
 
 class PreparedLocalExecution final : public PreparedExecution {
  public:
@@ -150,13 +152,13 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     throw;
   }
 
-  // Cards run as nobody: switched to by root (container), or mapped in
-  // bubblewrap's user namespace when tsugumid is not root (shared VM).
-  std::optional<uid_t> uid;
+  WorkerSpawn sp;
+#ifdef __linux__
+  // Linux identity isolation uses a dedicated uid in bubblewrap.
   if (node.settings.sandbox.identity &&
       (::geteuid() == 0 || worker_has_bwrap()))
-    uid = kCardUid;
-  WorkerSpawn sp;
+    sp.uid = sp.gid = kCardUid;
+#endif
   // A package of another system is loaded by the worker its build made for
   // that system, which the kernel runs under the emulator.
   sp.worker_binary = build.worker.empty()
@@ -182,8 +184,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     }
   }
 #endif
-  sp.uid = uid;
-  sp.gid = uid;
   const std::filesystem::path state_dir = service_.store().state_dir();
   // Another system's binaries run with the emulator the kernel opened when it
   // was registered; Rosetta also reads its own folder while it runs.
@@ -226,9 +226,10 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
       std::to_string(sp.sandbox.identity) + "|" +
       std::to_string(sp.sandbox.limits.cpu_millis) + "|" +
       std::to_string(sp.sandbox.limits.memory_bytes) + "|" +
-      std::to_string(sp.gui) + "|" + (uid ? std::to_string(*uid) : "-") + "|" +
-      (sp.network ? "n" : "-") + "|" + sp.worker_binary + "|" + build.key +
-      "|" + std::to_string(build.implementation_index) + "|" + secret_version;
+      std::to_string(sp.gui) + "|" + (sp.uid ? std::to_string(*sp.uid) : "-") +
+      "|" + (sp.network ? "n" : "-") + "|" + sp.worker_binary + "|" +
+      build.key + "|" + std::to_string(build.implementation_index) + "|" +
+      secret_version;
   for (const auto& b : sp.binds)
     key += "|" + b.source + ">" + b.target + (b.write ? "w" : "r");
   const bool reuse = node.settings.reuse_worker;

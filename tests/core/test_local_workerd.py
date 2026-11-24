@@ -6,7 +6,7 @@ import sys
 import pytest
 
 from harness.daemon import WORKERD
-from harness.fixtures import mock_plan
+from harness.fixtures import SCRIPTED_WORKER_SANDBOX, mock_plan
 from harness.file_events import wait_for_exit
 from harness.scenario import Gate, Project, run, wait_run
 from tsugumi_client import RpcFailure, path, text
@@ -40,7 +40,7 @@ def test_core_crash_ends_the_service_owning_an_active_worker(core_factory, proje
     client = daemon.connect()
     gate = Gate(tmp_path, "active")
     Project(project).card(
-        "work", {"type": "code", "sandbox": {"filesystem": False}, "reuseWorker": resident},
+        "work", {"type": "code", "sandbox": SCRIPTED_WORKER_SANDBOX, "reuseWorker": resident},
         outputs="table Outputs {} root_type Outputs;", plan=mock_plan([str(project / "definitions/work")]),
         sources={"scenario.json": json.dumps({"actions": [gate.action()]})},
     ).save(client)
@@ -65,7 +65,7 @@ def test_resident_connection_returns_with_its_call_counter(core_factory, project
     gate = Gate(tmp_path, "resident")
     gate.release()
     Project(project).card(
-        "work", {"type": "code", "sandbox": {"filesystem": False}, "reuseWorker": True},
+        "work", {"type": "code", "sandbox": SCRIPTED_WORKER_SANDBOX, "reuseWorker": True},
         outputs="table Outputs {} root_type Outputs;", plan=mock_plan([str(project / "definitions/work")]),
         sources={"scenario.json": json.dumps({"actions": [gate.action()]})},
     ).save(client)
@@ -96,7 +96,7 @@ def test_running_card_rejects_definition_edit_and_retires_after_save(core_factor
     daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     gate = Gate(tmp_path, "retired")
-    definition = {"type": "code", "sandbox": {"filesystem": False}, "reuseWorker": True}
+    definition = {"type": "code", "sandbox": SCRIPTED_WORKER_SANDBOX, "reuseWorker": True}
 
     def project_with(script):
         return Project(project).card(

@@ -344,6 +344,12 @@ auto unsupported_local_option(const Settings& settings,
     if (settings.sandbox.identity)
       return "sandbox.identity requires a Linux worker with bubblewrap";
   }
+#elif defined(__APPLE__)
+  if ((settings.sandbox.filesystem || settings.sandbox.pid ||
+       settings.sandbox.ipc || settings.sandbox.identity ||
+       !settings.grants.network) &&
+      !worker_has_seatbelt())
+    return "the requested Card isolation requires Seatbelt";
 #endif
   if (settings.sandbox.limits.limited() && !target.resource_limits)
     return "sandbox.limits requires a delegated cgroup v2 subtree";
@@ -353,10 +359,13 @@ auto unsupported_local_option(const Settings& settings,
   return {};
 }
 
-auto effective_local_options(const Settings& settings,
-                             const RemoteTarget& target) -> std::string {
+auto effective_local_options(const Settings& settings) -> std::string {
   std::vector<std::string_view> notes;
-  if (!settings.sandbox.filesystem) {
+  if (!settings.sandbox.filesystem
+#ifdef __APPLE__
+      && !settings.sandbox.identity
+#endif
+  ) {
     notes.push_back(
         "host paths and GUI endpoints can be visible with filesystem isolation "
         "off");
@@ -366,16 +375,16 @@ auto effective_local_options(const Settings& settings,
           "network isolation does not hide filesystem Unix sockets");
 #endif
   }
-  (void)target;
 #ifdef __APPLE__
   if (settings.sandbox.filesystem)
-    notes.push_back("Seatbelt filesystem isolation is partial");
-  if (settings.sandbox.pid) notes.push_back("PID isolation unavailable");
-  if (settings.sandbox.ipc) notes.push_back("IPC isolation unavailable");
-  if (settings.sandbox.identity)
-    notes.push_back("identity isolation unavailable");
-  if (settings.grants.network && settings.sandbox.filesystem)
+    notes.push_back(
+        "Seatbelt allows host file metadata and reads of the "
+        "full Nix store and selected system paths");
+  if (settings.grants.network &&
+      (settings.sandbox.filesystem || settings.sandbox.identity))
     notes.push_back("Seatbelt still restricts access to the local host");
+  if (settings.grants.network && settings.sandbox.ipc)
+    notes.push_back("Seatbelt IPC isolation blocks the system DNS resolver");
 #endif
   std::string message;
   for (const auto note : notes) {
@@ -575,8 +584,7 @@ auto Service::execution_diagnostic(const Node& node,
     if (auto message = unsupported_local_option(settings, target);
         !message.empty())
       return error(std::move(message));
-    if (auto message = effective_local_options(settings, target);
-        !message.empty())
+    if (auto message = effective_local_options(settings); !message.empty())
       return Diag{false,
                   "sandbox_effective_settings",
                   std::move(message),
@@ -1234,20 +1242,21 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
   for (const auto& target : targets) {
     const bool remote = target.id != kLocalExecutionService;
     using Guarantee = R::IsolationGuarantee;
-    const auto namespaces = remote || target.namespace_isolation
-                                ? Guarantee::enforced
-                                : Guarantee::unavailable;
-    auto filesystem = namespaces;
-    auto network = namespaces;
+    auto isolation = remote || target.namespace_isolation
+                         ? Guarantee::enforced
+                         : Guarantee::unavailable;
+    auto filesystem = isolation;
+    auto network = isolation;
     bool host_paths = !remote && target.namespace_isolation;
 #ifdef __APPLE__
-    if (!remote) {
+    if (!remote && worker_has_seatbelt()) {
+      isolation = Guarantee::enforced;
       network = filesystem = Guarantee::partial;
       host_paths = true;
     }
 #endif
     const auto sandbox = R::CreateSandboxCapabilities(
-        b, filesystem, namespaces, namespaces, namespaces, network, target.gui,
+        b, filesystem, isolation, isolation, isolation, network, target.gui,
         host_paths, remote, remote);
     std::vector<uint8_t> bits;
     for (uint8_t bit = 0; bit < 64; ++bit)

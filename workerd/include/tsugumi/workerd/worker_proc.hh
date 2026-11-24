@@ -85,6 +85,9 @@ struct WorkerOutcome {
 // then handed to that uid when tsugumid is root): not under bubblewrap, whose
 // user namespace maps the Card's uid to tsugumid's own.
 auto worker_has_bwrap() -> bool;
+#ifdef __APPLE__
+auto worker_has_seatbelt() -> bool;
+#endif
 auto worker_limits_available() -> bool;
 auto worker_gui_available() -> bool;
 auto remove_card_cgroup(const std::filesystem::path& path) -> void;
