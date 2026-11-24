@@ -21,6 +21,9 @@ import pytest
 from harness import remote_worker as R
 from Tsugumi.RemoteWorker.WorkerReady import WorkerReady
 from Tsugumi.RemoteWorker.DisplayCredit import DisplayCreditT
+from Tsugumi.RemoteWorker.JobStatus import JobStatus
+from Tsugumi.RemoteWorker.Reply import Reply
+from Tsugumi.RemoteWorker.ViewSendRequest import ViewSendRequestT
 from harness import peer_tls as TLS
 from harness.file_events import process_file, wait_for_exit
 from Tsugumi.Data.FailureKind import FailureKind
@@ -108,7 +111,8 @@ class Worker:
         assert record is not None, (self.root / "worker.log").read_text()
         return record
 
-    def call(self, kind, body, *, job=None, scoped=True, unix=False, identity=None, **routing):
+    def call(self, kind, body, *, job=None, scoped=True, unix=False, identity=None,
+             read_reply=lambda stream: R.read(stream).payload, **routing):
         fields = {}
         if scoped:
             fields.update(projectScope=self.scope, coreLifeId=self.core_life_id)
@@ -125,7 +129,7 @@ class Worker:
             with context.wrap_socket(peer, server_hostname=None) as secure:
                 secure.sendall(R.frame(request))
                 with secure.makefile("rb") as stream:
-                    return R.read(stream).payload
+                    return read_reply(stream)
 
     def upload(self, job, data):
         digest = hashlib.sha256(data).hexdigest()
@@ -414,19 +418,30 @@ def test_remote_display_credit_and_reverse_messages_share_the_channel(worker):
     credits = []
     deadline = time.monotonic() + 300
 
+    def read_status(stream):
+        # Sample each maximum-size payload without unpacking its entire vector.
+        payload = R.read_message(stream).Payload()
+        reply = Reply()
+        reply.Init(payload.Bytes, payload.Pos)
+        assert reply.BodyType() == R.ReplyBody.JobStatus
+        body = reply.Body()
+        status = JobStatus()
+        status.Init(body.Bytes, body.Pos)
+        return status
+
     def poll_until(done):
         nonlocal sequence
         while time.monotonic() < deadline:
             query = R.StatusRequestT(displayAfter=sequence, displayCredits=credits)
-            response = worker.call(R.RequestBody.StatusRequest, query, job=job)
-            assert response.bodyType == R.ReplyBody.JobStatus, vars(response.body)
-            status = response.body
-            assert status.state in (R.JobState.Queued, R.JobState.Running,
-                                    R.JobState.Succeeded), vars(status)
-            if status.displaySequence > sequence:
-                sequence = status.displaySequence
-                messages.extend((R.string(message.view), len(message.bytes), int(message.bytes[0]))
-                                for message in status.displays)
+            status = worker.call(R.RequestBody.StatusRequest, query, job=job,
+                                 read_reply=read_status)
+            assert status.State() in (R.JobState.Queued, R.JobState.Running,
+                                      R.JobState.Succeeded), status.Diagnostic()
+            if status.DisplaySequence() > sequence:
+                sequence = status.DisplaySequence()
+                for index in range(status.DisplaysLength()):
+                    display = status.Displays(index)
+                    messages.append((R.string(display.View()), display.BytesLength(), display.Bytes(0)))
             if done(status):
                 return
             time.sleep(0.05)
@@ -434,17 +449,17 @@ def test_remote_display_credit_and_reverse_messages_share_the_channel(worker):
 
     try:
         maximum = 1 << 24
-        poll_until(lambda status: len(messages) >= 2 and status.viewInputReady)
+        poll_until(lambda status: len(messages) >= 2 and status.ViewInputReady())
         assert messages == [("data", maximum, 1), ("data", maximum, 2)]
         message = WorkerDisplayT(view="control", bytes=[42])
         sent = worker.call(R.RequestBody.ViewSendRequest,
-                           R.ViewSendRequestT(display=message, offset=0), job=job)
+                           ViewSendRequestT(display=message, offset=0), job=job)
         assert sent.bodyType == R.ReplyBody.Ack, vars(sent.body)
         # The reverse message and its echo cross while the data window is full.
         poll_until(lambda _: len(messages) >= 3)
         assert messages[2:] == [("control", 1, 42)]
         credits.append(DisplayCreditT(view="data", released=maximum))
-        poll_until(lambda status: status.state == R.JobState.Succeeded and not status.displayPending)
+        poll_until(lambda status: status.State() == R.JobState.Succeeded and not status.DisplayPending())
         assert messages[3:] == [("data", maximum, 3)]
     finally:
         worker.call(R.RequestBody.CancelRequest, R.CancelRequestT(), job=job)
