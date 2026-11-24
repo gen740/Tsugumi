@@ -19,6 +19,7 @@ let package = Package(
   ],
   dependencies: [
     .package(path: "../../client/swift"),
+    .package(path: "ViewPresentation"),
     .package(name: "TsugumiVM", path: "../../vm/macos/runtime"),
     .package(url: "https://github.com/google/flatbuffers.git", exact: "25.12.19"),
     // Editor syntax colors (UI only; Cards and SDKs never use these).
@@ -39,7 +40,6 @@ let package = Package(
     .package(url: "https://github.com/mgriebling/SwiftMath.git", exact: "1.7.3"),
   ],
   targets: [
-    .systemLibrary(name: "TsugumiViewHostC", path: "Sources/ViewHostC"),
     // macOS adapters for the shared host service.
     .target(
       name: "TsugumiAgentClient",
@@ -77,7 +77,7 @@ let package = Package(
       name: "TsugumiApp",
       dependencies: [
         .product(name: "TsugumiRPC", package: "swift"), "TsugumiLauncher",
-        "TsugumiAgentClient", "TsugumiViewHostC",
+        "TsugumiAgentClient", .product(name: "TsugumiViewPresentation", package: "ViewPresentation"),
         .product(name: "SwiftTreeSitter", package: "SwiftTreeSitter"),
         .product(name: "TreeSitterC", package: "tree-sitter-c"),
         .product(name: "TreeSitterCPP", package: "tree-sitter-cpp"),
@@ -108,7 +108,7 @@ let package = Package(
     // package CoreTests/ (they build without the app).
     .testTarget(
       name: "TsugumiAppTests",
-      dependencies: [.product(name: "TsugumiVMRuntime", package: "TsugumiVM"), .product(name: "TsugumiRPC", package: "swift"), "TsugumiLauncher", "TsugumiApp", "TsugumiAgentClient", "TsugumiTestSupport",
+      dependencies: [.product(name: "TsugumiVMRuntime", package: "TsugumiVM"), .product(name: "TsugumiRPC", package: "swift"), "TsugumiLauncher", "TsugumiApp", "TsugumiAgentClient", "TsugumiTestSupport", .product(name: "TsugumiViewPresentation", package: "ViewPresentation"),
                      .product(name: "SwiftTerm", package: "SwiftTerm")],
       path: "Tests/TsugumiAppTests",
       swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error, .when(configuration: .debug))],

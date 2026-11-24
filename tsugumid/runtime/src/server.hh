@@ -15,10 +15,9 @@ struct Note {
   using Build = std::function<
       std::pair<Tsugumi::RPC::NotificationPayload, flatbuffers::Offset<void>>(
           flatbuffers::FlatBufferBuilder&)>;
-  enum class Kind { Doc, Run, Log, CardViews, Display };
+  enum class Kind { Doc, Run, Log, ViewControl, Display };
   Kind kind = Kind::Doc;
   std::string coalesce_key;  // Same key replaces an unsent note
-  std::string card_key;      // Target of a live view notification
   std::shared_ptr<const Build> build;
   size_t approx_bytes = 256;
 };
@@ -35,18 +34,20 @@ class Server {
   // Thread safe commands. All are applied in posting order.
   void reply(ConnId conn, std::string bytes);
   void subscribe(ConnId conn, std::string sub_id, std::string open_reply);
-  void set_visible(ConnId conn, std::string sub_id, std::set<std::string> cards,
-                   bool enabled, std::string ack, std::vector<Note> initial);
+  auto open_view(ConnId conn, const std::string& subscription,
+                 const std::string& session, Note note) -> void;
+  auto view_note(ConnId conn, const std::string& subscription, Note note)
+      -> void;
+  auto close_view(ConnId conn, const std::string& session) -> void;
   static auto notification(flatbuffers::FlatBufferBuilder& b,
                            std::string_view subscription, uint64_t seq,
                            Tsugumi::RPC::NotificationPayload type,
                            flatbuffers::Offset<void> value) -> std::string;
   void broadcast(Note note);
-  auto display(const CardPath& card, std::string view, std::string bytes,
+  auto display(ConnId conn, const std::string& session, std::string bytes,
                std::function<void()> credit) -> void;
-  auto return_view_credit(ConnId conn, const std::string& subscription,
-                          const CardPath& card, const std::string& view,
-                          uint64_t id, size_t bytes) -> void;
+  auto return_view_credit(ConnId conn, const std::string& session, uint64_t id,
+                          size_t bytes) -> void;
   void close(ConnId conn);
 
  private:

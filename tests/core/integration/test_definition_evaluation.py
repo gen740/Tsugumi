@@ -21,7 +21,6 @@ from projects import card, card_in_card, conn, write_nix_project as write
 from tsugumi_client import change, new_id, path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
-from Tsugumi.RPC.NotificationPayload import NotificationPayload
 
 ARGUMENTS = "{ params, inputs }: let pkgs = import <nixpkgs> { }; in "
 
@@ -285,59 +284,12 @@ def test_run_and_explicit_views_are_in_the_plan_closure(core_factory, project, l
     assert {str(plan_path), *plan["runs"], *(view["blob"] for view in plan["views"])} <= set(map(text, paths))
 
 
-def test_declared_views_are_available_without_a_run_build(core_factory, project):
-    """Visible Cards publish their ordered declarations without evaluating run."""
-    client = core_factory().connect()
-    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
-        "default.nix": ARGUMENTS + """{
-          run = throw "run must stay lazy";
-          views = [
-            { name = "scene"; type = "dawn"; blob = pkgs.writeText "scene.wasm" "opaque"; }
-            { name = "notes"; type = "html"; blob = ./notes.html; }
-          ];
-        }""",
-        "notes.html": "<p>Available before a run</p>",
-    }).save(client)
-    opened = client.open()
-    client.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("work")])
-    update = client.wait_notification(
-        lambda note: note.valueType == NotificationPayload.CardViewsUpdated
-        and note.value.card.segments == [b"work"] and bool(note.value.views)
-    ).value
-    assert [(text(view.name), text(view.type)) for view in update.views] == [("scene", "dawn"), ("notes", "html")]
-    assert Path(text(update.views[0].blob)).read_text() == "opaque"
-    assert Path(text(update.views[1].blob)).read_text() == "<p>Available before a run</p>"
-
-
-def test_a_failed_view_evaluation_is_relayed_apart_from_an_empty_list(core_factory, project):
-    """A broken declaration says why; a Card that declares nothing sends no failure."""
-    client = core_factory().connect()
-    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
-        "default.nix": ARGUMENTS + '{ run = []; views = throw "views are broken"; }',
-    }).save(client)
-    opened = client.open()
-    client.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("work")])
-    failed = client.wait_notification(
-        lambda note: note.valueType == NotificationPayload.CardViewsUpdated and note.value.failure
-    ).value
-    assert not failed.views
-    assert failed.failure.kind != FailureKind.unspecified
-    assert "views are broken" in text(failed.failure.diagnostic)
-
-    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
-        "default.nix": ARGUMENTS + "{ run = []; views = [ ]; }",
-    }).save(client)
-    empty = client.wait_notification(
-        lambda note: note.valueType == NotificationPayload.CardViewsUpdated and not note.value.failure
-    ).value
-    assert not empty.views
-
-
 @pytest.mark.parametrize("body, message", [
     ('run = "echo legacy";', "must be a derivation"),
     ('run = [ (pkgs.writeText "bare" "run") ];', "each run list entry"),
     ('run = "legacy"; preRun = "true";', "unknown Card attributes: preRun"),
     ('run = []; views = {};', "Card views must be a list"),
+    ('run = []; views = throw "views are broken";', "views are broken"),
     ('run = []; views = [{ name = "x"; type = "js"; blob = ./default.nix; }];',
      "a Card view must declare"),
 ])

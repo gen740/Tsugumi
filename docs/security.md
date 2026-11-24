@@ -116,7 +116,9 @@ The worker builds the process environment at launch and fixes it for the life of
 
 ### Showing Card views
 
-A Card declares its views in `default.nix`; each is one immutable file in the Nix store. The project core sends the declarations to the UIs and relays the opaque bytes a Card sends, without loading view files, checking view names or reading the bytes. Nothing on this path is recorded. The UI matches each message to a declared view and hosts it by type: an `html` view in an isolated, network-disabled frame that receives data over a transferred `MessagePort`, and a `dawn` view as a Wasm module whose only imports are the listed WebGPU functions and the two message functions, so it reaches nothing else: in the Mac app it runs in the app process on wasmtime with native Dawn, in the Web UI in the page with WebGPU ([Views](CoreAndSDK.md#views)).
+A Card declares its views in `default.nix`. Each is one immutable file in the Nix store. When a Card opens a declared view, the project core pins the file and binds a random session UUID to the presenting subscription. Other Card processes can send opaque bytes to the window if they know its session. The presenting host sends to one route of that window. The core checks the route's membership and drops sends to dead routes. View traffic is transient.
+
+The host loads an `html` view in an isolated frame and carries its data over a transferred `MessagePort`. A `dawn` view is a Wasm module that imports the listed WebGPU and message functions. The Mac app runs it in its app process on wasmtime with native Dawn. The Web UI runs it in the page with WebGPU. [Views](CoreAndSDK.md#views)
 
 - Web UI: `/modules/viewer.html` is put in an iframe. Its response's CSP is `sandbox allow-scripts` (without `allow-same-origin`), so the component runs in an opaque origin and can use neither cookies nor `/api/`. With `default-src 'none'` and `connect-src 'none'` it loads nothing and connects nowhere. With `frame-src 'none'` the Card's inner frame (a `srcdoc` document) cannot navigate itself to any URL either. Its script is embedded in the page; the parent page hands over the declared view's HTML, which the host puts in the inner frame, and then the `MessagePort` for its data. This is the only route that may be embedded (`frame-ancestors 'self'`); every other response forbids embedding.
 - macOS app: the trusted host is loaded as HTML in a nonpersistent WKWebView without a file read grant. Card code runs in its opaque inner frame. Content rules block network/file resources, a navigation delegate denies external navigation, and native message handlers reject messages from subframes.
@@ -245,7 +247,7 @@ A setting that lets the Agent search the web at its own discretion ("Web search"
 
   | Requests | Why they remain outside the Agent catalog |
   | --- | --- |
-  | `ViewSave`, `ViewSetVisible` | A person's selection, camera and visible Display subscriptions belong to the UI. |
+  | `ViewSave`, `ViewSend`, `ViewClose` | A person's selection, camera and open Card views belong to the presenting UI. |
   | `SessionHello`, `ProjectOpen` | Connection and subscription lifecycle belongs to the client, rather than model tools. |
 
 - **External reloads require permission approval.** `project_reload` compares every Card's permissions, including nested Cards and Nix sources, with the accepted document. With `check_permissions: true`, it returns `approval_required` with every unapproved widening and accepts only a request listing all of those in `approved_permissions`, regardless of origin. The host always selects this check for the Agent, and the UIs select it for external reloads. Rejection leaves the accepted revision and externally edited files unchanged. Agent clients supply approvals only after the user grants them; the model cannot set that field.

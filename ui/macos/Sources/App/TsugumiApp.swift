@@ -77,12 +77,6 @@ struct TsugumiApp: App {
     .defaultSize(width: 900, height: 560)
     .restorationBehavior(.disabled)
 
-    WindowGroup("可視化", id: "visual", for: CardRef.self) { $ref in
-      if let ref { DetailHost(path: ref.path) { VisualizationWindow(session: $0, cardKey: ref.card) } }
-    }
-    .defaultSize(width: 900, height: 600)
-    .restorationBehavior(.disabled)
-
     Window("実行環境のコンソール", id: "console") {
       VMConsoleView().environment(model).environment(prefs)
     }

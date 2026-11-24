@@ -1,104 +1,70 @@
 import type { CardKey } from './session'
 
-export interface ViewDeclaration {
-  name: string
-  type: string
-  blob: string
-}
+export const ViewMode = { panel: 0, window: 1, fullscreen: 2 } as const
 
 export type ViewMessage = { bytes: Uint8Array<ArrayBuffer>; complete?: () => void }
 
-/** One entry of a Card's views list. Its index is how the core serves its file. */
 export class LiveView {
-  private readonly listeners = new Set<(message: ViewMessage) => void>()
+  private receive?: (message: ViewMessage) => void
+  private readonly pending: ViewMessage[] = []
+  private readonly routes = new Set<string>()
+  private closed = false
 
-  constructor(readonly declaration: ViewDeclaration, readonly index: number) {}
+  constructor(
+    readonly session: string, readonly card: CardKey, readonly name: string,
+    readonly type: string, readonly mode: number, readonly width: number, readonly height: number,
+  ) {}
 
+  registerRoute(route: string) {
+    this.routes.add(route.replaceAll('-', ''))
+  }
+
+  acceptsRoute(route: Uint8Array) {
+    if (this.closed || route.length !== 16) return false
+    if (route.every(byte => byte === 0)) return true
+    const hex = Array.from(route, byte => byte.toString(16).padStart(2, '0')).join('')
+    return this.routes.has(hex)
+  }
+
+  // The relay bounds the outstanding messages by credit. Keep the first
+  // messages until the presentation mounts, including while a popup is blocked.
   listen(receive: (message: ViewMessage) => void): () => void {
-    this.listeners.add(receive)
-    return () => { this.listeners.delete(receive) }
+    if (this.closed) return () => {}
+    this.receive = receive
+    for (const message of this.pending.splice(0)) receive(message)
+    return () => {
+      if (this.receive === receive) this.receive = message => message.complete?.()
+    }
   }
 
   deliver(message: ViewMessage) {
-    const listeners = [...this.listeners]
-    let remaining = listeners.length
-    if (!remaining) message.complete?.()
-    for (const receive of listeners)
-      receive(message.complete ? {
-        ...message,
-        complete: () => { if (--remaining === 0) message.complete?.() },
-      } : message)
+    if (this.closed) message.complete?.()
+    else if (this.receive) this.receive(message)
+    else this.pending.push(message)
+  }
+
+  close() {
+    this.closed = true
+    this.routes.clear()
+    this.receive = undefined
+    for (const message of this.pending.splice(0)) message.complete?.()
   }
 }
 
-export class CardLiveViews {
-  /** The declarations in the order the core sent them; names may repeat. */
-  views: LiveView[] = []
-  /** Names data arrived for that no declaration has. */
-  readonly unknown = new Set<string>()
-  /** Names more than one declaration has: data sent to them reaches no view. */
-  ambiguous = new Set<string>()
-  /** Why evaluating the declarations failed; unset when they were evaluated, even to an empty list. */
-  failure?: string
-  /** Whether the core has sent the declarations (or their failure); until then they are being evaluated. */
-  declared = false
-  viewers = 0
-
-  declare(declarations: ViewDeclaration[], failure?: string) {
-    this.declared = true
-    this.failure = failure
-    const prior = this.views
-    this.views = declarations.map((declaration, index) => {
-      const { name, type, blob } = declaration
-      const same = prior[index]?.declaration
-      return same?.name === name && same.type === type && same.blob === blob ? prior[index] : new LiveView(declaration, index)
-    })
-    const seen = new Set<string>()
-    this.ambiguous = new Set()
-    for (const { name } of declarations) {
-      if (seen.has(name)) this.ambiguous.add(name)
-      seen.add(name)
-      this.unknown.delete(name)
-    }
+export class LiveViews extends Map<string, LiveView> {
+  open(view: LiveView) {
+    if (!this.has(view.session)) this.set(view.session, view)
   }
 
-  data(name: string, bytes: Uint8Array<ArrayBuffer>, complete?: () => void) {
-    const matching = this.views.filter(view => view.declaration.name === name)
-    if (matching.length === 1) matching[0].deliver(complete ? { bytes, complete } : { bytes })
-    else {
-      if (!matching.length) this.unknown.add(name)
-      complete?.()
-    }
-  }
-
-  clear() {
-    this.views = []
-    this.unknown.clear()
-    this.ambiguous = new Set()
-    this.failure = undefined
-    this.declared = false
-  }
-}
-
-/** Only Cards with an open viewer have live state. */
-export class LiveViews extends Map<CardKey, CardLiveViews> {
-  observe(card: CardKey, visibilityChanged: () => void): () => void {
-    let entry = this.get(card)
-    if (!entry) {
-      entry = new CardLiveViews()
-      this.set(card, entry)
-    }
-    const observed = entry
-    if (++observed.viewers === 1) visibilityChanged()
-    return () => {
-      if (--observed.viewers > 0 || this.get(card) !== observed) return
-      observed.clear()
-      this.delete(card)
-      visibilityChanged()
-    }
+  close(session: string) {
+    const view = this.get(session)
+    if (!view) return false
+    this.delete(session)
+    view.close()
+    return true
   }
 
   reset() {
-    for (const entry of this.values()) entry.clear()
+    for (const session of this.keys()) this.close(session)
   }
 }

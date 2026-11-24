@@ -793,7 +793,6 @@ export function cardMenu(workspace: Workspace, session: ProjectSession, tab: Wor
     { label: L('設定…'), action: () => app.openWindow(session, { kind: 'card', card: k }) },
     { label: L('コメント…'), action: () => app.openWindow(session, { kind: 'card', card: k, category: 'notes' }) },
     { label: L('実行履歴…'), action: () => app.openWindow(session, { kind: 'executions', card: k }) },
-    kind === 'code' && { label: L('可視化を開く'), action: () => app.openWindow(session, { kind: 'visual', card: k }) },
     { label: L('成果物…'), action: () => app.openWindow(session, { kind: 'artifacts', card: k }) },
     { label: L('ログを表示'), action: () => showLog(workspace, k) },
     { label: L('Skill を実行'), submenu: app.chat(session).skills.filter(s => s.scoped).map(s => ({ label: `$${s.name} (${s.scope?.join(', ') ?? ''})`, disabled: app.chat(session).busy, action: () => {

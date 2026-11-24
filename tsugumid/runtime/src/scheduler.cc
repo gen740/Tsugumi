@@ -1638,10 +1638,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
          [&](LogStream stream, const std::string& text) {
            card_log(node.path, inv, stream, text);
          },
-         [server = svc_.server(), card = node.path](
-             WorkerDisplayData display, WorkerProc::DisplayCredit credit) {
-           server->display(card, std::move(display.view),
-                           std::move(display.bytes), std::move(credit));
+         [service = &svc_](WorkerDisplayData display,
+                           WorkerProc::DisplayCredit credit) {
+           service->display(std::move(display), std::move(credit));
          },
          [&](int64_t begin, int64_t end) {
            svc_.server()->broadcast(timeline_note(

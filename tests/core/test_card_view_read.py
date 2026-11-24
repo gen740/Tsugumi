@@ -1,140 +1,114 @@
-"""CardViewRead serves the bytes of a declared view file in pages, and nothing else."""
+"""The presenting subscription reads pages from the pinned view blob."""
 
 import pytest
 
 from harness.fixtures import mock_plan
-from harness.scenario import Project
-from tsugumi_client import RpcFailure, path, text
-from Tsugumi.RPC.NotificationPayload import NotificationPayload
+from harness.native_card import native_card
+from harness.scenario import Project, run
+from harness.views import EMPTY_OUTPUTS, NATIVE_VIEW_SETTINGS, declaration, open_view
+from projects import wait_run
+from Tsugumi.Data.LogStream import LogStream
+from Tsugumi.Data.RunState import RunState
+from Tsugumi.Trace.Client import Client
+from tsugumi_client import RpcFailure, new_id, path, text
 
-# NUL, non-UTF-8 and HTML bytes: the core relays them without looking.
 CONTENT = b"<!doctype html>\x00\xff\xfe" + bytes(range(256)) * 9
 
-
-def read_view(client, name, *, limit, index=0):
-    pieces, offset = [], 0
-    while True:
-        page = client.call("CardViewReadRequest", card=path("work"), name=name, index=index,
-                           offset=offset, limitBytes=limit)
-        assert len(page.bytes) <= limit and page.offset == offset
-        pieces.append(bytes(page.bytes))
-        if page.eof:
-            return b"".join(pieces), page.sizeBytes
-        assert page.nextOffset == offset + len(page.bytes)
-        offset = page.nextOffset
-
-
-def store_env(tmp_path):
-    """The mocked builds treat this folder as the Nix store."""
-    return {"TSUGUMI_MOCK_STORE": str(tmp_path / "store")}
+OPEN = """
+int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
+    tsugumi_route route;
+    tsugumi_view_session session;
+    if (call->effects->view_open(call->host, "page", TSUGUMI_VIEW_PANEL,
+                                 0, 0, &route, &session))
+        return 1;
+    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
+    return 0;
+}
+"""
 
 
-def rejected(client, kind, **fields):
+def rejected(client, kind, session, **fields):
     with pytest.raises(RpcFailure) as failure:
-        client.call("CardViewReadRequest", card=path("work"), **{"index": 0, **fields})
+        client.call("CardViewReadRequest", session=session, **fields)
     assert failure.value.kind == kind
 
 
-def test_files_that_were_not_declared_are_not_served(project, core_factory):
-    """A Card's own files and absolute paths are not views unless declared."""
-    client = core_factory().connect()
-    Project(project).card("work", {"type": "code"},
-                          sources={"page.html": "<p>not declared</p>"}).save(client)
-    for name in ("page.html", "definitions/work/page.html",
-                 str(project / "definitions" / "work" / "page.html")):
-        rejected(client, "not_found", name=name)
-
-
-def test_declared_view_is_served_in_pages(project, tmp_path, core_factory):
-    """The declared blob is read by name in pages; other names stay rejected."""
-    blob = tmp_path / "store" / "page.html"
-    blob.parent.mkdir()
-    blob.write_bytes(CONTENT)
-    other = tmp_path / "store" / "other.html"
-    other.write_bytes(b"not declared")
-    package = tmp_path / "package"
-    package.mkdir()
-    client = core_factory(mocked_builds=True, env=store_env(tmp_path)).connect()
-    Project(project).card("work", {"type": "code"}, outputs="table Outputs {} root_type Outputs;",
-                          plan=mock_plan([str(package)], views=[
-                              {"blob": str(blob), "name": "page", "type": "html"}])).save(client)
-    opened = client.open()
-    client.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId),
-                cards=[path("work")])
-    client.wait_notification(lambda n: n.valueType == NotificationPayload.CardViewsUpdated
-                             and n.value.views, timeout=20)
-
-    whole = client.call("CardViewReadRequest", card=path("work"), name="page", index=0)
-    assert bytes(whole.bytes) == CONTENT and whole.sizeBytes == len(CONTENT) and whole.eof
-    assert text(whole.name) == "page" and text(whole.hash) == str(blob)
-    assert read_view(client, "page", limit=1000) == (CONTENT, len(CONTENT))
-    tail = client.call("CardViewReadRequest", card=path("work"), name="page", index=0,
-                       offset=len(CONTENT) - 3, limitBytes=1000)
-    assert bytes(tail.bytes) == CONTENT[-3:] and tail.eof
-    end = client.call("CardViewReadRequest", card=path("work"), name="page", index=0,
-                      offset=len(CONTENT))
-    assert bytes(end.bytes) == b"" and end.eof and end.sizeBytes == len(CONTENT)
-
-    rejected(client, "invalid_range", name="page", offset=len(CONTENT) + 1)
-    rejected(client, "invalid_request", name="page", limitBytes=0)
-    rejected(client, "invalid_request", name="page", limitBytes=(1 << 20) + 1)
-    for name in ("other", "Page", str(blob), str(other)):
-        rejected(client, "not_found", name=name)
-    rejected(client, "not_found", name="page", index=1)
-    with pytest.raises(RpcFailure) as failure:
-        client.call("CardViewReadRequest", card=path("work"), name="page")
-    assert failure.value.kind == "invalid_request"
-
-
-def test_repeated_names_are_served_by_the_selected_declaration(project, tmp_path, core_factory):
-    """Two declarations with one name keep their own blobs; the index selects one."""
+def test_window_pins_the_declaration_and_blob_after_the_process_ends(project, tmp_path, core_factory):
     store = tmp_path / "store"
     store.mkdir()
-    blobs = [store / "first.html", store / "second.html"]
-    blobs[0].write_bytes(b"first declaration")
-    blobs[1].write_bytes(b"second declaration")
-    package = tmp_path / "package"
-    package.mkdir()
-    client = core_factory(mocked_builds=True, env=store_env(tmp_path)).connect()
-    Project(project).card("work", {"type": "code"}, outputs="table Outputs {} root_type Outputs;",
-                          plan=mock_plan([str(package)], views=[
-                              {"blob": str(blob), "name": "page", "type": "html"} for blob in blobs])).save(client)
-    opened = client.open()
-    client.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId),
-                cards=[path("work")])
-    update = client.wait_notification(lambda n: n.valueType == NotificationPayload.CardViewsUpdated
-                                      and n.value.views, timeout=20)
-    assert [text(v.name) for v in update.value.views] == ["page", "page"]
-    for index, blob in enumerate(blobs):
-        assert read_view(client, "page", limit=1000, index=index) == (blob.read_bytes(), blob.stat().st_size)
-    rejected(client, "not_found", name="page", index=2)
+    blob = store / "page.html"
+    blob.write_bytes(CONTENT)
+    package = native_card(tmp_path / "card", OPEN)
+    daemon = core_factory(mocked_builds=True, env={"TSUGUMI_MOCK_STORE": str(store)})
+    client = daemon.connect(client=Client.Web)
+    graph = Project(project)
+    graph.card("work", NATIVE_VIEW_SETTINGS,
+               outputs=EMPTY_OUTPUTS, plan=mock_plan([package], views=[declaration(blob)])).save(client)
+    client.open()
+    run_id = run(client)
+    session = text(open_view(client).session)
+    assert wait_run(client, run_id).state == RunState.succeeded
+
+    other = daemon.connect()
+    other.open()
+    rejected(other, "permission_denied", session)
+    rejected(client, "not_found", new_id())
+    rejected(client, "invalid_request", str(blob))
+    rejected(client, "invalid_request", session, limitBytes=0)
+    rejected(client, "invalid_request", session, limitBytes=(1 << 20) + 1)
+    rejected(client, "invalid_range", session, offset=len(CONTENT) + 1)
+
+    # Simulate a definition change and removal of the old store entry. The
+    # session still serves its original bytes through the open descriptor.
+    new_blob = store / "replacement.html"
+    new_blob.write_bytes(b"replacement")
+    graph.card("work", NATIVE_VIEW_SETTINGS, outputs=EMPTY_OUTPUTS,
+               plan=mock_plan([package], views=[declaration(new_blob)])).save(client)
+    blob.unlink()
+    pieces = []
+    offset = 0
+    while True:
+        page = client.call("CardViewReadRequest", session=session, offset=offset, limitBytes=1000)
+        assert len(page.bytes) <= 1000 and page.offset == offset
+        assert text(page.name) == "page" and text(page.hash) == str(blob)
+        assert page.sizeBytes == len(CONTENT)
+        pieces.append(bytes(page.bytes))
+        if page.eof:
+            break
+        assert page.nextOffset == offset + len(page.bytes)
+        offset = page.nextOffset
+    assert b"".join(pieces) == CONTENT
+    end = client.call("CardViewReadRequest", session=session, offset=len(CONTENT))
+    assert bytes(end.bytes) == b"" and end.eof
+
+    client.call("ViewCloseRequest", session=session)
+    rejected(client, "not_found", session)
 
 
-def test_a_view_file_is_served_only_from_inside_the_store(project, tmp_path, core_factory):
-    """Links inside the store are followed; a link leading out of it, a folder
-    and a file outside the store are not served."""
+@pytest.mark.parametrize("invalid", ["outside", "symlink", "directory", "duplicate"])
+def test_view_open_rejects_unserveable_declarations(project, tmp_path, core_factory, invalid):
     store = tmp_path / "store"
-    (store / "object").mkdir(parents=True)
-    (store / "object" / "page.html").write_bytes(b"inside")
-    (store / "joined.html").symlink_to(store / "object" / "page.html")
+    store.mkdir()
     outside = tmp_path / "outside.html"
-    outside.write_bytes(b"outside the store")
-    (store / "escape.html").symlink_to(outside)
-    (store / "escape-dir").symlink_to(tmp_path)
-    package = tmp_path / "package"
-    package.mkdir()
-    blobs = [store / "joined.html", store / "escape.html", store / "escape-dir" / "outside.html",
-             store / "object", outside]
-    client = core_factory(mocked_builds=True, env=store_env(tmp_path)).connect()
-    Project(project).card("work", {"type": "code"}, outputs="table Outputs {} root_type Outputs;",
-                          plan=mock_plan([str(package)], views=[
-                              {"blob": str(blob), "name": f"v{index}", "type": "html"}
-                              for index, blob in enumerate(blobs)])).save(client)
-    opened = client.open()
-    client.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId),
-                cards=[path("work")])
-    client.wait_notification(lambda n: n.valueType == NotificationPayload.CardViewsUpdated
-                             and n.value.views, timeout=20)
-    assert read_view(client, "v0", limit=1000, index=0) == (b"inside", 6)
-    for index in range(1, len(blobs)):
-        rejected(client, "not_found", name=f"v{index}", index=index)
+    outside.write_bytes(b"outside")
+    escaped = store / "escaped.html"
+    escaped.symlink_to(outside)
+    inside = store / "page.html"
+    inside.write_bytes(CONTENT)
+    # Let the invocation succeed only when the requested view cannot open.
+    package = native_card(tmp_path / "card", OPEN.replace("if (call->", "if (!call->"))
+    daemon = core_factory(mocked_builds=True, env={"TSUGUMI_MOCK_STORE": str(store)})
+    client = daemon.connect(client=Client.Web)
+    blob = {"outside": outside, "symlink": escaped, "directory": store, "duplicate": inside}[invalid]
+    views = [declaration(blob)] * (2 if invalid == "duplicate" else 1)
+    Project(project).card("work", NATIVE_VIEW_SETTINGS,
+                          outputs=EMPTY_OUTPUTS, plan=mock_plan([package], views=views)).save(client)
+    client.open()
+    run_id = run(client)
+    status = wait_run(client, run_id)
+    if status.state != RunState.succeeded:
+        record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
+        failure = record.summary.failure or status.failure
+        stderr = client.call("LogRangeRequest", runId=run_id, card=path("work"),
+                             invocation=1, stream=LogStream.standard_error)
+        pytest.fail(f"{failure and text(failure.diagnostic)}: {text(stderr.text)}")

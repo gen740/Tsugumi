@@ -6,7 +6,7 @@ import { readViewState, writeViewState } from '../../shared/clientViewState'
 import { layoutHost, H, sceneRequest } from '../wire/hostLayout'
 import { VersionCommentT } from '../../shared/gen/tsugumi/rpc/version-comment'
 import { RevisionEdit } from '../ui/revisionEdit'
-import { LiveViews } from './liveViews'
+import { LiveView, LiveViews } from './liveViews'
 // One open project: shared by every view showing it. Owns the RPC
 // connection, the confirmed document (from tsugumid), the local draft with
 // undo/redo, run progress, displays and logs. Every edit is saved at once:
@@ -550,7 +550,7 @@ export class ProjectSession extends Observable {
         await c.versionInit(uuid(), 'ui').catch(() => {})
       }
       this.changed()
-      await Promise.all([this.refreshVisibleDisplays(), this.restoreCardStates(c)])
+      await this.restoreCardStates(c)
     } catch (e) {
       if (epoch !== this.connectionEpoch || this.closed) return
       this.connected = false
@@ -750,20 +750,24 @@ export class ProjectSession extends Observable {
         if (d) this.applyDelta(d)
         break
       }
-      case R.NotificationPayload.CardViewsUpdated: {
-        const { card, views, failure } = e.value as R.CardViewsUpdatedT
-        this.liveViews.get(key(segs(card)))?.declare(views.map(v => ({ name: s(v.name), type: s(v.type), blob: s(v.blob) })),
-          failure ? s(failure.diagnostic) || (D.FailureKind[failure.kind] ?? String(failure.kind)) : undefined)
+      case R.NotificationPayload.ViewOpened: {
+        const { session, card, name, type, mode, width, height } = e.value as R.ViewOpenedT
+        this.liveViews.open(new LiveView(s(session), key(segs(card)), s(name), s(type), mode, width, height))
+        break
+      }
+      case R.NotificationPayload.ViewRouteRegistered: {
+        const { session, route } = e.value as R.ViewRouteRegisteredT
+        this.liveViews.get(s(session))?.registerRoute(s(route))
         break
       }
       case R.NotificationPayload.DisplayUpdated: {
-        const { card, view, bytes, creditId } = e.value as LiveDisplayUpdate
+        const { session, bytes, creditId } = e.value as LiveDisplayUpdate
         const client = this.client
         const complete = creditId === undefined ? undefined : () => {
-          void client?.viewCredit(e.subscriptionId, card, view, bytes.length, creditId).catch(() => {})
+          void client?.viewCredit(e.subscriptionId, session, bytes.length, creditId).catch(() => {})
         }
-        const views = this.liveViews.get(key(card))
-        if (views) views.data(view, bytes, complete)
+        const view = this.liveViews.get(session)
+        if (view) view.deliver({ bytes, complete })
         else complete?.()
         break
       }
@@ -844,9 +848,6 @@ export class ProjectSession extends Observable {
           return [{ name: s(p.name), type: s(p.type), value }]
         }) })
       all.push(...d)
-    }
-    for (const [card, views] of this.liveViews) {
-      if (this.resolution.has(card) && !r.has(card)) views.clear()
     }
     this.resolution = r
     this.diagnostics = all
@@ -1170,15 +1171,10 @@ export class ProjectSession extends Observable {
     }, 600)
   }
 
-  /** Subscribe only while at least one live viewer for a Card is open. */
-  observeDisplay(card: CardKey): () => void {
-    return this.liveViews.observe(card, () => { void this.refreshVisibleDisplays() })
-  }
-
-  private async refreshVisibleDisplays() {
-    if (!this.client || !this.subscription) return
-    const cards = [...this.liveViews.keys()].sort().map(path)
-    await this.client.setVisible(this.subscription, cards, cards.length > 0).catch(() => {})
+  closeLiveView(session: string) {
+    if (!this.liveViews.close(session)) return
+    void this.client?.closeView(session).catch(() => {})
+    this.changed()
   }
 
   // ---- Runs --------------------------------------------------------------------
@@ -1741,7 +1737,6 @@ export class ProjectSession extends Observable {
 
   /** A new Card must not display the result or run state of a previous owner of its ID. */
   private forgetResult(k: CardKey) {
-    this.liveViews.get(k)?.clear()
     this.cardStates.delete(k)
     this.changed()
   }

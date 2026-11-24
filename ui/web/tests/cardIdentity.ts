@@ -1,5 +1,6 @@
 import { cardFixture, projectFixture } from './documentFixture'
 import { hostEdits } from './cardIds'
+import { LiveView } from '../src/model/liveViews'
 import assert from 'node:assert/strict'
 import { Builder, ByteBuffer } from 'flatbuffers'
 import { R, RPCClient, RequestPayload, s as text } from '../src/wire/rpc'
@@ -39,10 +40,8 @@ assert.equal(session.displayName(b), str(get(session.cardMeta(b), 'title')))
 await session.connect([a, 'out'], [b, 'in'], [])
 await session.save()
 const project = serialize(session.project), layout = serialize(session.layout), dir = session.definitionDir(a)
-const closeView = session.liveViews.observe(a, () => {})
-const views = session.liveViews.get(a)!
-views.declare([{ name: 'chart', type: 'html', blob: '/nix/store/chart' }])
-const originalView = views.views[0]
+const originalView = new LiveView('00000000-0000-4000-8000-000000000001', a, 'chart', 'html', 0, 0, 0)
+session.liveViews.open(originalView)
 await session.applyMutation(x => x.updateMeta(a, m => {
   m.set('title', '集計')
   m.set('description', '集計の説明')
@@ -55,8 +54,8 @@ assert.equal(session.nodeData(a, { meta: parse('{"title":""}') }).title, '集計
 assert.equal(serialize(session.project), project)
 assert.equal(serialize(session.layout), layout)
 assert.equal(session.definitionDir(a), dir)
-assert.equal(views.views[0], originalView)
-closeView()
+assert.equal(session.liveViews.get(originalView.session), originalView)
+session.liveViews.close(originalView.session)
 assert.equal(text(requests[0].name), 'aggregate')
 assert.ok(saves >= 2)
 

@@ -1,14 +1,11 @@
-# For checking the live view: the plot Card's view window while the random walk streams, and when it is done
+# Capture the plot panel during the random walk and after it ends.
 size 1440 900
 chat hide
 wait 2
 fit
-open visual plot
-open visual settings
-wait 2
 run
 wait 12
-capture live-stream plot
+capture live-stream
 waitrun
 wait 1
-capture live-stream-done plot
+capture live-stream-done

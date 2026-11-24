@@ -141,7 +141,7 @@ void Service::evaluate_nix(RequestIn& req) {
   std::stop_source stop;
   std::stop_callback disconnected(req.connection_stop,
                                   [&] { stop.request_stop(); });
-  std::stop_callback shutdown(card_views_shutdown_.get_token(),
+  std::stop_callback shutdown(shutdown_stop_.get_token(),
                               [&] { stop.request_stop(); });
   constexpr size_t kLogLimit = 256u << 10;
   std::mutex log_mutex;
@@ -1061,52 +1061,22 @@ void Service::artifact_read(RequestIn& req) {
                              fs::sha256_file(file)));
 }
 
-auto Service::set_card_views(const CardPath& card,
-                             std::vector<DeclaredView> views) -> void {
-  std::lock_guard<std::mutex> l(view_files_mu_);
-  if (views.empty())
-    view_files_.erase(path_key(card));
-  else
-    view_files_[path_key(card)] = std::move(views);
-}
-
-// Transport only: the file comes from the Card's own declaration, and its
-// bytes are neither checked nor interpreted.
 void Service::card_view_read(RequestIn& req) {
   const auto* r = project_request(req)->value_as_CardViewReadRequest();
-  auto card = wire::card_arg(r->card());
-  std::string name = r->name()->str();
-  if (!r->index())
-    throw Failed(FailureKind::invalid_request, "index is required");
-  const auto index = *r->index();
-  std::string blob;
+  const auto session = view_uuid(*r->session());
+  std::shared_ptr<const ViewBlob> blob;
+  std::string name;
   {
-    // The declaration the UI selected, never one chosen by name: names may
-    // repeat. A name that differs means the list changed since it was sent.
-    std::lock_guard<std::mutex> l(view_files_mu_);
-    if (auto found = view_files_.find(path_key(card));
-        found != view_files_.end() && index < found->second.size() &&
-        found->second[index].name == name)
-      blob = found->second[index].blob;
+    std::lock_guard lock(subs_mu_);
+    const auto* view = owned_view(req, session);
+    if (!view) throw Failed(FailureKind::not_found, "unknown view session");
+    blob = view->blob;
+    name = view->name;
   }
-  if (blob.empty())
-    throw Failed(FailureKind::not_found,
-                 "the Card declares no view " + name + " at index " +
-                     std::to_string(index),
-                 {{"name", name}, {"index", std::to_string(index)}});
-  uint64_t offset = r->offset().value_or(0);
-  uint64_t limit = content_limit(r->limit_bytes());
-  // One descriptor, opened only when the file resolves inside the store.
-  const auto page =
-      fs::read_range_inside(NixStore::store_dir(), blob, offset, limit);
-  if (!page)
-    throw Failed(FailureKind::not_found,
-                 "the view file is missing or outside the Nix store",
-                 {{"name", name}});
-  if (offset > page->size)
-    throw Failed(FailureKind::invalid_range, "offset is past the end");
-  reply(req, wire::file_page(req.request_id, name, page->bytes, offset,
-                             page->size, blob));
+  const auto offset = r->offset().value_or(0);
+  const auto bytes = blob->read(offset, content_limit(r->limit_bytes()));
+  reply(req, wire::file_page(req.request_id, name, bytes, offset, blob->size,
+                             blob->path));
 }
 
 void Service::log_range(RequestIn& req) {

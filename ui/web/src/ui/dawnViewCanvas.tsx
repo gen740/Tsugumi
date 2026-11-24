@@ -18,7 +18,7 @@ export function DawnViewCanvas({ view, read, send }: { view: LiveView; read: Rea
 
   useEffect(() => {
     const target = canvas.current
-    if (!target) return
+    if (!target) return view.listen(message => message.complete?.())
     const loading = new AbortController()
     const { signal } = loading
     let instance: DawnViewInstance | undefined
@@ -38,7 +38,8 @@ export function DawnViewCanvas({ view, read, send }: { view: LiveView; read: Rea
       const { module } = await loadView(await read(view, signal))
       signal.throwIfAborted()
       const ready = await DawnViewInstance.mount(module, target, {
-        send: bytes => send(view, bytes),
+        send: (bytes, route) => send(view, bytes, route),
+        acceptsRoute: route => view.acceptsRoute(route),
         onFatal: cause => { if (!signal.aborted) setError(errorText(cause)) },
         onGpuError: message => { if (!signal.aborted) setGpuError(message) },
         onSendError: cause => {
@@ -71,7 +72,7 @@ export function DawnViewCanvas({ view, read, send }: { view: LiveView; read: Rea
 
   return <>
     <div className="dawn-view-surface">
-      <canvas ref={canvas} tabIndex={0} aria-label={view.declaration.name} />
+      <canvas ref={canvas} tabIndex={0} aria-label={view.name} />
     </div>
     {error && <p className="caption" role="alert">{L('Dawn ビューのエラー: {0}', error)}</p>}
     {gpuError && <p className="caption" role="alert">{L('WebGPU エラー: {0}', gpuError)}</p>}

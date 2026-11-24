@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 
-export async function runInChromium(browser, html, expression) {
+export async function runInChromium(browser, html, expression, flags = ['--disable-gpu']) {
   const proc = spawn(browser, [
-    '--headless', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-first-run',
+    '--headless', '--no-sandbox', ...flags, '--disable-dev-shm-usage', '--no-first-run',
     '--no-default-browser-check', '--disable-background-networking', '--use-mock-keychain',
     `--user-data-dir=${html + '.profile'}`, '--remote-debugging-pipe', 'about:blank',
   ], { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] })
@@ -43,7 +43,7 @@ export async function runInChromium(browser, html, expression) {
   const stopped = new Promise((_, reject) => {
     watchdog = setTimeout(() => reject(new Error(`Chromium test did not finish\n${stderr}`)), 45000)
     proc.once('error', reject)
-    proc.once('exit', (code) => reject(new Error(`Chromium exited with ${code}\n${stderr}`)))
+    proc.once('exit', (code, signal) => reject(new Error(`Chromium exited with ${signal ?? code}\n${stderr}`)))
     proc.stdio[3].on('error', reject)
   })
   try {

@@ -26,6 +26,7 @@ import pytest
 from conftest import ROOT, Daemon, demo_environment, write_project
 from harness.observations import read_pages
 from harness.values import reference_json
+from harness.views import ZERO_ROUTE
 from projects import start_run, wait_for_display as first_display, wait_invocation, wait_run
 from harness.document import set_param as set_typed_param
 from tsugumi_client import line_chart_series, change, new_id, path, text
@@ -236,15 +237,19 @@ def live_points(c, rid):
 
 
 def send_stream_seed(client, subscription):
+    session = text(client.wait_notification(
+        lambda note: note.valueType == NotificationPayload.ViewOpened and text(note.value.name) == "seed",
+        timeout=90,
+    ).value.session)
     ready = client.wait_notification(
         lambda note: note.valueType == NotificationPayload.DisplayUpdated
-        and text(note.value.display.view) == "seed"
+        and text(note.value.display.session) == session
         and bytes(note.value.display.bytes) == b"\x01",
         timeout=90,
     ).value.display
-    client.call("ViewCreditRequest", subscriptionId=subscription, card=ready.card,
-                view="seed", bytes=1, creditId=ready.creditId)
-    client.call("ViewSendRequest", card=path("settings"), view="seed", bytes=[10])
+    client.call("ViewCreditRequest", subscriptionId=subscription, session=session,
+                bytes=1, creditId=ready.creditId)
+    client.call("ViewSendRequest", session=session, route=ZERO_ROUTE, bytes=b"\x0a")
 
 
 def test_live_stream_complete_and_ordered(live):
@@ -252,7 +257,6 @@ def test_live_stream_complete_and_ordered(live):
     set_typed_param(c, "settings", "interval_ms", 0)
     set_typed_param(c, "settings", "samples", 65)
     subscription = text(c.open().subscriptionId)
-    c.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("settings")])
     run_id = start_run(c, ["start"], concurrency=2)
     send_stream_seed(c, subscription)
     assert wait_run(c, run_id).state == RunState.succeeded
@@ -264,7 +268,6 @@ def test_live_stream_keeps_chart_on_cancel_and_resets_on_rerun(live):
     c = connect(live)
     opened = c.open()
     subscription = text(opened.subscriptionId)
-    c.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("settings"), path("plot")])
     # Keep the first sample and then wait for cancellation, rather than racing
     # the demo's natural completion on a busy runner.
     source = "definitions/generate/src/card.cc"

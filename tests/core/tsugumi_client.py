@@ -110,10 +110,10 @@ def decode_message(buf: bytes) -> MessageT:
             update.Init(value.Bytes, value.Pos)
             display = update.Display()
             table = display._tab
-            offset = table.Offset(8)  # Display.bytes, field id 2
+            offset = table.Offset(6)  # Display.bytes, field id 1
             start = table.Vector(offset)
             data = buf[start:start + table.VectorLen(offset)]
-            decoded = DisplayT(card=CardPathT.InitFromObj(display.Card()), view=display.View(),
+            decoded = DisplayT(session=display.Session(),
                                bytes=data, creditId=display.CreditId())
             note = NotificationT(subscriptionId=notification.SubscriptionId(), seq=notification.Seq(),
                                  valueType=notification.ValueType(), value=DisplayUpdatedT(display=decoded))

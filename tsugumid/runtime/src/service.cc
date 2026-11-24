@@ -1,10 +1,14 @@
 #include "service.hh"
 
+#include <fcntl.h>
 #include <flatbuffers/reflection.h>
+#include <limits.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <fstream>
 #include <iterator>
 #include <set>
@@ -251,7 +255,6 @@ Service::Service(ServiceOptions opts) : opts_(std::move(opts)) {
   // Plan requests can occupy every reader while the execution broker is down.
   cancel_lane_ = std::make_unique<Lane>(1);
   shell_lane_ = std::make_unique<Lane>(2);
-  card_views_lane_ = std::make_unique<Lane>(1);
 }
 
 Service::~Service() { shutdown(); }
@@ -608,7 +611,7 @@ auto Service::execution_diagnostic(const Node& node,
 
 void Service::shutdown() {
   remote_jobs_.stop();
-  card_views_shutdown_.request_stop();
+  shutdown_stop_.request_stop();
   {
     std::lock_guard lock(cancellations_mu_);
     shell_stopping_ = true;
@@ -620,7 +623,6 @@ void Service::shutdown() {
   if (shell_lane_) shell_lane_->stop();
   if (cancel_lane_) cancel_lane_->stop();
   if (scheduler_) scheduler_->shutdown();
-  if (card_views_lane_) card_views_lane_->stop();
   execution_service_.reset();  // the project's resident and standby workers end
   // Queued history writes announce themselves through the server, which
   // outlives the service only until it is closed.
@@ -667,7 +669,7 @@ std::vector<std::string> Service::capabilities() {
                                    "ArtifactList",
                                    "ArtifactRead",
                                    "LogRange",
-                                   "ViewSetVisible",
+                                   "ViewClose",
                                    "ViewSend",
                                    "ViewCredit",
                                    "ViewSave",
@@ -744,7 +746,7 @@ void Service::disconnected(ConnId conn) {
   }
   std::lock_guard<std::mutex> l(subs_mu_);
   subscriptions_.erase(conn);
-  visible_cards_.erase(conn);
+  end_views(conn);
   ui_connections_.erase(conn);
   if (ui_owner_ == conn) ui_owner_.reset();
 }
@@ -951,8 +953,8 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::view_send);
     case P::ViewCreditRequest:
       return on_lane(r, std::move(req), &Service::view_credit);
-    case P::ViewSetVisibleRequest:
-      return on_lane(r, std::move(req), &Service::view_set_visible);
+    case P::ViewCloseRequest:
+      return on_lane(r, std::move(req), &Service::view_close);
     case P::ViewSaveRequest:
       return on_lane(r, std::move(req), &Service::view_save);
     case P::CardViewReadRequest:
@@ -1468,16 +1470,17 @@ void Service::open_project(RequestIn& req) {
                                      view ? &*view : nullptr);
   {
     std::lock_guard<std::mutex> l(subs_mu_);
+    if (req.connection_stop.stop_requested()) return;
     if (ui_connections_.contains(req.conn)) {
       if (ui_owner_ && ui_owner_ != req.conn)
         throw Failed(FailureKind::project_in_use,
                      "the project is open in another UI connection");
       ui_owner_ = req.conn;
     }
+    end_views(req.conn);
     subscriptions_[req.conn] = sub;
-    visible_cards_.erase(req.conn);
+    server_->subscribe(req.conn, sub, std::move(bytes));
   }
-  server_->subscribe(req.conn, sub, std::move(bytes));
 }
 
 namespace {
@@ -1700,8 +1703,6 @@ void Service::complete_save(RequestIn& req, const std::string& op_id,
   reply(req, receipt_reply(req.request_id, response.receipt, false));
   if (staged.delta.doc) {
     publish_delta(staged.delta, response.notification_bytes);
-    if (staged.delta.doc->execution_rev != base.execution_rev)
-      refresh_card_views(staged.delta.doc);
   }
   finish_op(op_id, response.receipt);
 }
@@ -1985,12 +1986,7 @@ void Service::cache_clear(RequestIn& req) {
       std::lock_guard lock(worker_selection_mutex_);
       resident_targets_.clear();
     }
-    card_views_cancel_.request_stop();
-    card_views_rev_.reset();
-    const auto result = [&] {
-      std::lock_guard lock(card_views_build_mu_);
-      return nix_->clear_cache();
-    }();
+    const auto result = nix_->clear_cache();
     const auto roots = opts_.gcroots_dir.empty()
                            ? store_->state_dir() / "cache" / "gcroots"
                            : opts_.gcroots_dir;
@@ -2708,31 +2704,55 @@ void Service::view_save(RequestIn& req) {
 
 namespace {
 
-auto card_views_note(CardPath card, std::vector<schema::CardView> views,
-                     std::optional<FailureData> failure = std::nullopt)
+auto parse_view_uuid(std::string_view text) -> ViewUuid {
+  ViewUuid result{};
+  size_t i = 0;
+  for (const char c : text) {
+    if (c == '-') continue;
+    auto& byte = result[i / 2];
+    byte =
+        static_cast<uint8_t>((byte << 4) | (c <= '9' ? c - '0' : c - 'a' + 10));
+    ++i;
+  }
+  return result;
+}
+
+auto view_text(const ViewUuid& uuid) -> std::string {
+  auto text = crypto::hex(uuid.data(), uuid.size());
+  for (const auto offset : {20, 16, 12, 8}) text.insert(offset, 1, '-');
+  return text;
+}
+
+auto view_opened_note(std::string session, CardPath card, std::string name,
+                      std::string type, uint32_t mode, uint32_t width,
+                      uint32_t height) -> Note {
+  Note note;
+  note.kind = Note::Kind::ViewControl;
+  note.approx_bytes +=
+      path_key(card).size() + name.size() + type.size() + session.size();
+  note.build = std::make_shared<const Note::Build>(
+      [session = std::move(session), card = std::move(card),
+       name = std::move(name), type = std::move(type), mode, width,
+       height](FBB& b) {
+        const auto value = R::CreateViewOpened(
+            b, b.CreateString(session), wire::path(b, card),
+            b.CreateString(name), b.CreateString(type), mode, width, height);
+        return std::make_pair(R::NotificationPayload::ViewOpened,
+                              value.Union());
+      });
+  return note;
+}
+
+auto view_route_registered_note(std::string session, std::string route)
     -> Note {
   Note note;
-  note.kind = Note::Kind::CardViews;
-  note.card_key = path_key(card);
-  for (const auto& view : views)
-    note.approx_bytes +=
-        view.name->size() + view.type->size() + view.blob->size() + 64;
-  if (failure)
-    note.approx_bytes += failure->diagnostic.value_or("").size() + 64;
+  note.kind = Note::Kind::ViewControl;
+  note.approx_bytes += session.size() + route.size();
   note.build = std::make_shared<const Note::Build>(
-      [card = std::move(card), views = std::move(views),
-       failure = std::move(failure)](FBB& b) {
-        std::vector<flatbuffers::Offset<D::CardView>> declarations;
-        declarations.reserve(views.size());
-        for (const auto& view : views)
-          declarations.push_back(D::CreateCardView(
-              b, b.CreateString(*view.name), b.CreateString(*view.type),
-              b.CreateString(*view.blob)));
-        const auto reason = failure ? wire::failure(b, *failure)
-                                    : flatbuffers::Offset<D::Failure>{};
-        const auto value = R::CreateCardViewsUpdated(
-            b, wire::path(b, card), b.CreateVector(declarations), reason);
-        return std::make_pair(R::NotificationPayload::CardViewsUpdated,
+      [session = std::move(session), route = std::move(route)](FBB& b) {
+        const auto value = R::CreateViewRouteRegistered(
+            b, b.CreateString(session), b.CreateString(route));
+        return std::make_pair(R::NotificationPayload::ViewRouteRegistered,
                               value.Union());
       });
   return note;
@@ -2740,181 +2760,260 @@ auto card_views_note(CardPath card, std::vector<schema::CardView> views,
 
 }  // namespace
 
-auto Service::refresh_card_views(DocumentPtr doc) -> void {
-  if (card_views_shutdown_.stop_requested()) return;
-  if (card_views_rev_ != doc->execution_rev) {
-    card_views_cancel_.request_stop();
-    card_views_cancel_ = std::stop_source{};
-    card_views_rev_ = doc->execution_rev;
-    card_views_.clear();
-  }
-  std::set<std::string> visible;
-  {
-    std::lock_guard lock(subs_mu_);
-    for (const auto& [conn, cards] : visible_cards_)
-      visible.insert(cards.begin(), cards.end());
-  }
-  for (const auto& key : visible) {
-    const auto [cached, inserted] = card_views_.try_emplace(key);
-    if (!inserted) continue;
-    auto card = path_from_key(key);
-    const auto* node = doc->resolution->find(card);
-    if (!node || node->kind != CardType::Code) {
-      set_card_views(card, {});
-      cached->second = card_views_note(std::move(card), {});
-      server_->broadcast(*cached->second);
-      continue;
-    }
-    // Build only the declared immutable paths on the native store serving
-    // the UI. Evaluation belongs to the confirmed document snapshot.
-    card_views_lane_->submit([this, doc, node, card = std::move(card), key,
-                              cancel = card_views_cancel_]() mutable {
-      std::stop_callback shutdown(card_views_shutdown_.get_token(),
-                                  [&] { cancel.request_stop(); });
-      const auto stop = cancel.get_token();
-      if (stop.stop_requested()) return;
-      std::vector<schema::CardView> views;
-      std::optional<FailureData> failure;
-      try {
-        std::lock_guard lock(card_views_build_mu_);
-        if (stop.stop_requested()) return;
-        BuildRequest request;
-        request.node = node;
-        request.doc = doc;
-        request.cancel = stop;
-        request.timeout_seconds = node->settings.build_timeout_seconds;
-        views = nix_->declared_views(request);
-      } catch (const Failed& e) {
-        failure = e.failure;
-      } catch (const std::exception& e) {
-        failure = FailureData::make(FailureKind::nix_failed, e.what());
-      }
-      if (stop.stop_requested()) return;
-      // A failed evaluation clears the previous list and says why, so the
-      // UI can tell it from a Card that declares no views.
-      std::vector<DeclaredView> files;
-      files.reserve(views.size());
-      for (const auto& view : views) files.push_back({*view.name, *view.blob});
-      auto note = card_views_note(card, std::move(views), std::move(failure));
-      mutation_lane_->submit([this, key, stop, card = std::move(card),
-                              files = std::move(files),
-                              note = std::move(note)]() mutable {
-        if (stop.stop_requested()) return;
-        card_views_.at(key) = note;
-        // CardViewRead serves exactly the list this notification sends.
-        set_card_views(card, std::move(files));
-        server_->broadcast(note);
-      });
-    });
-  }
+Service::ViewBlob::ViewBlob(int fd, uint64_t size, std::string path)
+    : fd(fd), size(size), path(std::move(path)) {}
+
+Service::ViewBlob::~ViewBlob() { ::close(fd); }
+
+auto Service::ViewBlob::open(const std::string& path)
+    -> std::shared_ptr<const ViewBlob> {
+  if (!stdfs::path(path).is_absolute()) return {};
+  const int fd =
+      ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOCTTY);
+  if (fd < 0) return {};
+  const auto close = [](const int* fd) { ::close(*fd); };
+  std::unique_ptr<const int, decltype(close)> guard(&fd, close);
+  struct stat st{};
+  if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size < 0)
+    return {};
+  // Check the resolved descriptor, so a declaration can never serve a file
+  // reached through a symlink out of the store.
+#ifdef F_GETPATH
+  char resolved[PATH_MAX];
+  if (::fcntl(fd, F_GETPATH, resolved) != 0) return {};
+#else
+  std::error_code ec;
+  const auto resolved =
+      stdfs::read_symlink("/proc/self/fd/" + std::to_string(fd), ec);
+  if (ec) return {};
+#endif
+  std::error_code store_error;
+  const auto store =
+      stdfs::canonical(NixStore::store_dir(), store_error).string();
+  if (store_error || !std::string_view(stdfs::path(resolved).native())
+                          .starts_with(store + "/"))
+    return {};
+  auto blob = std::make_shared<const ViewBlob>(fd, st.st_size, path);
+  guard.release();
+  return blob;
 }
 
-auto Service::set_view_receiver(
-    const CardPath& card, std::weak_ptr<WorkerProc::ViewReceiver> receiver) -> void {
-  std::lock_guard lock(view_routes_mu_);
-  auto& routes = view_routes_[path_key(card)];
-  std::erase_if(routes, [](const auto& route) { return route.expired(); });
-  const auto current = receiver.lock();
-  if (std::ranges::none_of(routes, [&](const auto& route) {
-        return route.lock() == current;
-      }))
-    routes.push_back(std::move(receiver));
+auto Service::ViewBlob::read(uint64_t offset, uint64_t limit) const
+    -> std::string {
+  if (offset > size)
+    throw Failed(FailureKind::invalid_range, "offset is past the end");
+  std::string bytes(std::min(limit, size - offset), '\0');
+  for (size_t got = 0; got < bytes.size();) {
+    const auto count = ::pread(fd, bytes.data() + got, bytes.size() - got,
+                               static_cast<off_t>(offset + got));
+    if (count < 0 && errno == EINTR) continue;
+    if (count <= 0)
+      throw Failed(FailureKind::not_found,
+                   "the pinned view file could not be read");
+    got += static_cast<size_t>(count);
+  }
+  return bytes;
+}
+
+auto Service::view_uuid(const flatbuffers::String& value) -> ViewUuid {
+  const auto text = value.string_view();
+  if (!crypto::is_uuid(text) ||
+      text.find_first_of("ABCDEF") != std::string_view::npos)
+    throw Failed(FailureKind::invalid_request,
+                 "view IDs must use canonical UUID text");
+  return parse_view_uuid(text);
+}
+
+auto Service::view_control(
+    const CardPath& card, const std::vector<schema::CardView>& views,
+    const std::weak_ptr<WorkerProc::ViewReceiver>& endpoint,
+    const WorkerViewRequest& request) -> WorkerViewReply {
+  WorkerViewReply reply{.request_id = request.request_id, .ok = false};
+  if (!request.request_id || endpoint.expired()) return reply;
+  switch (request.kind) {
+    case ViewControlKind::open: {
+      if (request.mode > 2 || (request.width == 0) != (request.height == 0) ||
+          (request.mode != 1 && request.width != 0))
+        return reply;
+      const auto matches = [&](const auto& view) {
+        return *view.name == request.view;
+      };
+      const auto found = std::ranges::find_if(views, matches);
+      if (request.view.empty() || found == views.end() ||
+          std::ranges::find_if(
+              std::ranges::subrange(std::next(found), views.end()), matches) !=
+              views.end() ||
+          (*found->type != "html" && *found->type != "dawn"))
+        return reply;
+      auto blob = ViewBlob::open(*found->blob);
+      if (!blob) return reply;
+
+      std::lock_guard lock(subs_mu_);
+      if (!ui_owner_) return reply;
+      const auto conn = *ui_owner_;
+      const auto subscriber = subscriptions_.find(conn);
+      if (subscriber == subscriptions_.end()) return reply;
+      do {
+        reply.session = parse_view_uuid(crypto::uuid4());
+      } while (view_sessions_.contains(reply.session));
+      reply.route = parse_view_uuid(crypto::uuid4());
+      const auto session = view_text(reply.session);
+      view_sessions_.emplace(reply.session,
+                             ViewSession{conn,
+                                         subscriber->second,
+                                         request.view,
+                                         std::move(blob),
+                                         reply.route,
+                                         {{reply.route, endpoint}}});
+      server_->open_view(
+          conn, subscriber->second, session,
+          view_opened_note(session, card, request.view, *found->type,
+                           request.mode, request.width, request.height));
+      server_->view_note(
+          conn, subscriber->second,
+          view_route_registered_note(session, view_text(reply.route)));
+      reply.ok = true;
+      return reply;
+    }
+    case ViewControlKind::register_route: {
+      std::lock_guard lock(subs_mu_);
+      const auto found = view_sessions_.find(request.session);
+      if (found == view_sessions_.end()) return reply;
+      auto& routes = found->second.routes;
+      do {
+        reply.route = parse_view_uuid(crypto::uuid4());
+      } while (routes.contains(reply.route));
+      routes.emplace(reply.route, endpoint);
+      const auto& view = found->second;
+      server_->view_note(view.conn, view.subscription,
+                         view_route_registered_note(view_text(request.session),
+                                                    view_text(reply.route)));
+      reply.ok = true;
+      return reply;
+    }
+    case ViewControlKind::unregister_route: {
+      std::lock_guard lock(subs_mu_);
+      for (auto& [session, view] : view_sessions_) {
+        const auto found = view.routes.find(request.route);
+        if (found == view.routes.end()) continue;
+        if (auto target = found->second.lock();
+            target && target == endpoint.lock()) {
+          found->second.reset();
+          reply.ok = true;
+        }
+        break;
+      }
+      return reply;
+    }
+  }
+  return reply;
+}
+
+auto Service::display(WorkerDisplayData display,
+                      WorkerProc::DisplayCredit credit) -> void {
+  std::lock_guard lock(subs_mu_);
+  const auto found = view_sessions_.find(display.session);
+  if (found == view_sessions_.end()) {
+    if (credit) credit();
+    return;
+  }
+  server_->display(found->second.conn, view_text(display.session),
+                   std::move(display.bytes), std::move(credit));
+}
+
+auto Service::owned_view(const RequestIn& req, const ViewUuid& session)
+    -> ViewSession* {
+  const auto found = view_sessions_.find(session);
+  if (found == view_sessions_.end()) return nullptr;
+  const auto& view = found->second;
+  const auto subscriber = subscriptions_.find(req.conn);
+  if (view.conn != req.conn || subscriber == subscriptions_.end() ||
+      subscriber->second != view.subscription)
+    throw Failed(FailureKind::permission_denied,
+                 "the view belongs to another subscription");
+  return &found->second;
+}
+
+auto Service::end_view(const ViewUuid& session, const ViewSession& view)
+    -> void {
+  server_->close_view(view.conn, view_text(session));
+  for (const auto& [route, endpoint] : view.routes)
+    if (auto receiver = endpoint.lock())
+      receiver->send({ViewEventKind::close, route, session, {}});
+}
+
+auto Service::end_views(ConnId conn) -> void {
+  std::erase_if(view_sessions_, [&](auto& entry) {
+    if (entry.second.conn != conn) return false;
+    end_view(entry.first, entry.second);
+    return true;
+  });
+}
+
+void Service::reply_view_ack(const RequestIn& req) {
+  FBB b;
+  const auto ack = R::CreateAck(b);
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::Ack, ack.Union()));
 }
 
 void Service::view_send(RequestIn& req) {
   const auto* r = project_request(req)->value_as_ViewSendRequest();
-  const auto card = wire::card_arg(r->card());
-  const auto key = path_key(card);
-  const auto name = r->view()->str();
+  const auto session = view_uuid(*r->session());
+  auto route = view_uuid(*r->route());
   const auto* bytes = r->bytes();
-  if (bytes->size() > TSUGUMI_MESSAGE_MAX || name.empty())
-    throw Failed(FailureKind::invalid_request, "invalid view message");
+  if (bytes->size() > TSUGUMI_MESSAGE_MAX)
+    throw Failed(FailureKind::invalid_request,
+                 "view message exceeds the size limit");
   {
     std::lock_guard lock(subs_mu_);
-    const auto visible = visible_cards_.find(req.conn);
-    if (ui_owner_ != req.conn || visible == visible_cards_.end() ||
-        !visible->second.contains(key))
-      throw Failed(FailureKind::permission_denied, "the view is not open");
+    auto* view = owned_view(req, session);
+    if (!view) throw Failed(FailureKind::not_found, "unknown view session");
+    if (route == ViewUuid{}) route = view->opener;
+    const auto found = view->routes.find(route);
+    if (found == view->routes.end())
+      throw Failed(FailureKind::invalid_request,
+                   "route is not bound to this session");
+    if (auto receiver = found->second.lock()) {
+      const auto delivery =
+          receiver->send({ViewEventKind::message, route, session,
+                          std::string(bytes->begin(), bytes->end())});
+      if (delivery == WorkerProc::ViewDelivery::full)
+        throw Failed(FailureKind::busy,
+                     "the Card cannot accept a view message");
+    }
   }
-  {
-    std::lock_guard lock(view_files_mu_);
-    const auto views = view_files_.find(key);
-    if (views == view_files_.end() ||
-        std::ranges::count(views->second, name, &DeclaredView::name) != 1)
-      throw Failed(FailureKind::invalid_request, "unknown or duplicate view name");
-  }
-  std::vector<std::shared_ptr<WorkerProc::ViewReceiver>> receivers;
-  {
-    std::lock_guard lock(view_routes_mu_);
-    if (const auto routes = view_routes_.find(key); routes != view_routes_.end())
-      for (const auto& route : routes->second) {
-        if (auto active = route.lock()) receivers.push_back(std::move(active));
-      }
-  }
-  // With no live Card process the message has no receiver: it is dropped,
-  // and the view is not told (the host took the bytes).
-  using Delivery = WorkerProc::ViewDelivery;
-  const WorkerDisplayData message{name, std::string(bytes->begin(), bytes->end())};
-  bool delivered = false;
-  bool full = false;
-  for (const auto& receiver : receivers) {
-    const auto delivery = receiver->send(message);
-    delivered |= delivery == Delivery::accepted;
-    full |= delivery == Delivery::full;
-  }
-  if (!delivered && full)
-    throw Failed(FailureKind::busy, "the Card cannot accept a view message");
-  FBB b;
-  const auto ack = R::CreateAck(b);
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::Ack, ack.Union()));
+  reply_view_ack(req);
 }
 
 void Service::view_credit(RequestIn& req) {
   const auto* r = project_request(req)->value_as_ViewCreditRequest();
+  const auto session = view_uuid(*r->session());
   if (!r->credit_id() || r->bytes() > TSUGUMI_MESSAGE_MAX)
     throw Failed(FailureKind::invalid_request, "invalid view credit");
-  server_->return_view_credit(req.conn, r->subscription_id()->str(),
-                              wire::card_arg(r->card()), r->view()->str(),
-                              *r->credit_id(), r->bytes());
-  FBB b;
-  const auto ack = R::CreateAck(b);
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::Ack, ack.Union()));
-}
-
-void Service::view_set_visible(RequestIn& req) {
-  const auto* r = project_request(req)->value_as_ViewSetVisibleRequest();
-  std::set<std::string> cards;
-  for (const auto* c : *r->cards())
-    cards.insert(path_key(wire::card_arg(c, "cards")));
-  const bool enabled = r->enabled().value_or(true);
-  const std::string id = r->subscription_id()->str();
-  bool matches;
   {
     std::lock_guard lock(subs_mu_);
-    const auto sub = subscriptions_.find(req.conn);
-    matches = sub != subscriptions_.end() && sub->second == id;
-    if (matches) {
-      if (enabled)
-        visible_cards_[req.conn] = cards;
-      else
-        visible_cards_.erase(req.conn);
+    if (const auto* view = owned_view(req, session)) {
+      if (view->subscription != r->subscription_id()->string_view())
+        throw Failed(FailureKind::permission_denied,
+                     "invalid presenting subscription");
+      server_->return_view_credit(req.conn, view_text(session), *r->credit_id(),
+                                  r->bytes());
     }
   }
-  const auto doc = store_->current();
-  std::vector<Note> initial;
-  if (enabled && matches && card_views_rev_ == doc->execution_rev) {
-    for (const auto& key : cards)
-      if (auto cached = card_views_.find(key);
-          cached != card_views_.end() && cached->second)
-        initial.push_back(*cached->second);
+  reply_view_ack(req);
+}
+
+void Service::view_close(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_ViewCloseRequest();
+  const auto session = view_uuid(*r->session());
+  {
+    std::lock_guard lock(subs_mu_);
+    if (auto* view = owned_view(req, session)) {
+      end_view(session, *view);
+      view_sessions_.erase(session);
+    }
   }
-  FBB b;
-  auto ack = R::CreateAck(b);
-  auto ack_bytes =
-      wire::reply(b, req.request_id, R::ReplyPayload::Ack, ack.Union());
-  server_->set_visible(req.conn, id, std::move(cards), enabled,
-                       std::move(ack_bytes), std::move(initial));
-  if (enabled && matches) refresh_card_views(doc);
+  reply_view_ack(req);
 }
 
 }  // namespace tsugumi

@@ -127,8 +127,7 @@ def test_cartesian_order_is_saved_and_replayed(core_factory, project, tmp_path):
     consumer(graph, implementations=numeric_implementations(tmp_path, [101, 202]))
     connect_collect(graph)
     graph.save(client)
-    opened = client.open()
-    client.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("work")])
+    client.open()
 
     run_id = run(client, "start", propagate=True)
     assert wait_run(client, run_id).state == RunState.succeeded
@@ -184,9 +183,7 @@ def test_empty_batch_is_delivered_to_collect_without_starting_a_worker(core_fact
     connect_collect(graph)
     graph.save(client)
 
-    opened = client.open()
-    client.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId),
-                cards=[path("left"), path("work")])
+    client.open()
 
     run_id = run(client, "start", propagate=True)
     assert wait_run(client, run_id).state == RunState.succeeded

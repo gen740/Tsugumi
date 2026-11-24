@@ -119,6 +119,7 @@ auto run_invocation(const ReleaseWorker& release_worker,
   };
   try {
     worker.set_display(invocation.display);
+    worker.set_view_control(invocation.view_control);
     std::optional<StagingHandle> stage;
     stdfs::path stage_path;
     if (!invocation.artifact_directory.empty()) {

@@ -18,7 +18,6 @@ export type WindowKind =
   | { kind: 'executions'; card: CardKey }
   | { kind: 'artifacts'; card: CardKey }
   | { kind: 'workflowSettings' }
-  | { kind: 'visual'; card: CardKey }
   | { kind: 'chat' }
   | { kind: 'appSettings' }
 
@@ -35,7 +34,7 @@ export interface DetailWindow {
 
 const SIZES: Record<WindowKind['kind'], [number, number]> = {
   evidence: [900, 600], card: [860, 620], definitions: [900, 600], versions: [980, 620], executions: [900, 560], artifacts: [900, 560],
-  workflowSettings: [680, 480], visual: [900, 600], chat: [460, 720], appSettings: [760, 520],
+  workflowSettings: [680, 480], chat: [460, 720], appSettings: [760, 520],
 }
 
 export class AppModel extends Observable {

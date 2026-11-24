@@ -7,16 +7,19 @@ auto run(const Card::Inputs&) -> Card::Output {
   constexpr std::array<uint8_t, 1> ready{1};
   constexpr std::array<uint8_t, 1> accepted{0};
 
+  const auto view = view_open("seed");
   while (!card::cancelled()) {
-    // The view may be opened after the run starts.
-    send_raw("seed", ready);
-    const auto reply = recv("seed", 1000);
+    send_raw(view.session, ready);
+    const auto reply = recv(1000);
     if (reply.status == ReceiveStatus::kCancelled) break;
+    if (reply.status == ReceiveStatus::kClose)
+      throw tsugumi::Failure(Tsugumi::Data::FailureKind::cancelled,
+                             "the seed view was closed");
     if (reply.status != ReceiveStatus::kMessage || reply.bytes.size() != 1 ||
         reply.bytes.front() > 20)
       continue;
 
-    send_raw("seed", accepted);
+    send_raw(view.session, accepted);
     Card::Output output;
     auto& state = output.state.emplace();
     state.index = Card::params.index;

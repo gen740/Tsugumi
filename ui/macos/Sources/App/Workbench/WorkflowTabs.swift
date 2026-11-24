@@ -1,3 +1,4 @@
+import TsugumiViewPresentation
 import AppKit
 import SwiftUI
 import TsugumiLauncher
@@ -20,19 +21,11 @@ struct WorkflowTabs: View {
     "\(session.connected)|\(session.currentRunId ?? "")|\(session.runStatus.map { String(describing: $0.state) } ?? "")"
   }
 
-  var body: some View {
-    // Sidebar, title and toolbar come from the split view so they never overlap,
-    // whatever the window size, sidebar width or project name.
-    NavigationSplitView(columnVisibility: $workspace.columns) {
-      if let tab = workspace.active {
-        WorkbenchSidebar(workspace: workspace, session: session, tab: tab)
-          .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 380)
-      }
-    } detail: {
-      if EnvironmentOverlay.hasProblem(session) {
-        // Nothing of the canvas stays behind the problem: it replaces the content.
-        EnvironmentProblemView(session: session, onSwitchProject: onSwitchProject)
-      } else {
+  @ViewBuilder private var projectContent: some View {
+    if EnvironmentOverlay.hasProblem(session) {
+      // Nothing of the canvas stays behind the problem: it replaces the content.
+      EnvironmentProblemView(session: session, onSwitchProject: onSwitchProject)
+    } else {
       ChatSplit(width: chatWidth) {
         VStack(spacing: 0) {
           if workspace.tabs.count > 1 { tabBar }
@@ -52,6 +45,24 @@ struct WorkflowTabs: View {
           }
         }
       }
+    }
+  }
+
+  var body: some View {
+    // Sidebar, title and toolbar come from the split view so they never overlap,
+    // whatever the window size, sidebar width or project name.
+    NavigationSplitView(columnVisibility: $workspace.columns) {
+      if let tab = workspace.active {
+        WorkbenchSidebar(workspace: workspace, session: session, tab: tab)
+          .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 380)
+      }
+    } detail: {
+      HSplitView {
+        projectContent.frame(minWidth: 360)
+        if onSwitchProject != nil, session.cardViews.hasPanels {
+          CardViewPanels(presentation: session.cardViews)
+            .frame(minWidth: 250, idealWidth: 400)
+        }
       }
     }
     .tsugumiLoading(EnvironmentOverlay.loading(session), onCancel: EnvironmentOverlay.canCancel(session)
