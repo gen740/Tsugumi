@@ -1430,20 +1430,6 @@ export class ProjectSession extends Observable {
     await this.applyMutation(x => x.changeComments(k, list => [...list, obj([['id', id], ['text', t], ['author', 'user'], ['finding', finding]])]))
   }
 
-  setCommentText(k: CardKey, id: string, text: string) {
-    const t = text.trim()
-    if (t) this.changeComments(k, (list) => {
-      if (!list.some((c) => str(get(c, 'id')) === id)) return [...list, obj([['id', id], ['text', t], ['author', 'user']])]
-      return list.map((c) => {
-        if (str(get(c, 'id')) === id && isObj(c)) {
-          c.set('text', t)
-          c.set('edited_by', 'user')
-        }
-        return c
-      })
-    })
-  }
-
   /** Marks a comment by hand. Opening one again takes back what was said about it. */
   setCommentResolved(k: CardKey, id: string, resolved: boolean) {
     this.editComments(k, (list) => list.map((c) => {

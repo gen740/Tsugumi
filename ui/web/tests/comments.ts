@@ -44,12 +44,7 @@ const session = () => {
   assert.ok(s.cardDetails(k).some((l) => l.includes('y 軸を対数に')), 'the hover says what is asked')
 
   await s.addComment(k, '軸に名前を')
-  s.edit((x) => x.setCommentText(k, first.id, '両軸を対数に'))
-  await s.save()
-  assert.deepEqual(s.comments(k).map((c) => c.text), ['両軸を対数に', '軸に名前を'])
-  s.edit((x) => x.setCommentText(k, first.id, '  '))
-  await s.save()
-  assert.equal(s.comments(k)[0].text, '両軸を対数に', 'a comment keeps its text rather than going blank')
+  assert.deepEqual(s.comments(k).map((c) => c.text), ['y 軸を対数に', '軸に名前を'])
 
   // The Agent's line goes away when the comment is opened again.
   s.updateMeta(k, (m) => {
@@ -113,9 +108,6 @@ const session = () => {
   await s.addComment(k, 'mine')
   const [c] = s.comments(k)
   assert.equal(c.author, 'user')
-  s.edit((x) => x.setCommentText(k, c.id, 'mine, reworded'))
-  await s.save()
-  assert.equal(s.comments(k)[0].editedBy, 'user')
   s.setCommentResolved(k, c.id, true)
   await s.save()
   assert.equal(s.comments(k)[0].stateBy, 'user')
