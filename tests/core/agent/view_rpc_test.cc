@@ -12,8 +12,8 @@ namespace {
 
 constexpr auto kViewSession = "eb560243-b30c-4510-aaac-1b2ad4fedf38";
 constexpr auto kPng =
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/"
-    "x8AAwMCAO+aTioAAAAASUVORK5CYII=";
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMICAj4DwAD1AHw41"
+    "0Q2gAAAABJRU5ErkJggg==";
 constexpr auto kText = "日本語";
 
 class ViewRpcFixture : public AgentProjectFixture {
