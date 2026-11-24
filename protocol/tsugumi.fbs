@@ -556,7 +556,7 @@ table ProjectFileReadRequest {
   limit_bytes:uint32 = null (id: 4);
 }
 
-/// -> InputTypesResult. Read resolved incoming sources, port kinds and full types. output_port selects an upstream output instead.
+/// -> InputTypesResult. Read resolved incoming sources and full types. output_port selects an upstream output instead.
 table InputTypesRequest {
   card:Tsugumi.Data.CardPath (id: 0, required);
   output_port:string (id: 1);
