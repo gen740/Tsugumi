@@ -40,9 +40,12 @@ export class CardLiveViews {
   ambiguous = new Set<string>()
   /** Why evaluating the declarations failed; unset when they were evaluated, even to an empty list. */
   failure?: string
+  /** Whether the core has sent the declarations (or their failure); until then they are being evaluated. */
+  declared = false
   viewers = 0
 
   declare(declarations: ViewDeclaration[], failure?: string) {
+    this.declared = true
     this.failure = failure
     const prior = this.views
     this.views = declarations.map((declaration, index) => {
@@ -73,6 +76,7 @@ export class CardLiveViews {
     this.unknown.clear()
     this.ambiguous = new Set()
     this.failure = undefined
+    this.declared = false
   }
 }
 

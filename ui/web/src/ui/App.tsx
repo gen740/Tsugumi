@@ -19,6 +19,7 @@ import { FolderPicker } from './sidebar'
 import { WindowHost } from './windows'
 import { WorkflowTabs } from './workbench'
 import { L } from '../i18n'
+import { viewOwnsKeys } from '../dawn/input'
 
 const isTextInput = (el: Element | null) =>
   !!el && (el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !['checkbox', 'radio', 'range', 'button'].includes(el.type)) ||
@@ -166,6 +167,8 @@ export function App() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (document.body.dataset.recording) return
+      // A focused view that takes keys gets them all; its window's close button still closes it.
+      if (viewOwnsKeys(document.activeElement)) return
       const b = eventBinding(e)
       const textFocused = isTextInput(document.activeElement)
       if (b.command && !b.option && !b.control && !b.shift && b.key === ',') {

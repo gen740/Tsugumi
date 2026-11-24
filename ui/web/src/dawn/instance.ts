@@ -1,6 +1,6 @@
 import { Handles, textureFormatValue, webgpuImports } from '../../shared/gen/webgpu_imports.gen.js'
 import type { ViewMessage } from '../model/liveViews'
-import { keyUsage, modifiers, wheelPixels } from './input'
+import { keyUsage, modifiers, viewKeysAttribute, wheelPixels } from './input'
 import { checkViewAbi, viewExport, type ViewCallback } from './loadView'
 
 const messageMax = 1 << 24
@@ -213,10 +213,15 @@ export class DawnViewInstance {
     if (this.callback('key')) {
       const key = (event: KeyboardEvent, kind: number) => {
         const usage = keyUsage(event.code)
-        if (usage !== undefined) this.event('key', kind, usage, modifiers(event))
+        if (usage === undefined) return
+        // Space and the arrows would scroll the page; Tab still moves the focus, and ⌘ keys stay the browser's.
+        if (event.code !== 'Tab' && !event.metaKey) event.preventDefault()
+        this.event('key', kind, usage, modifiers(event))
       }
       canvas.addEventListener('keydown', event => key(event, 0), { signal })
       canvas.addEventListener('keyup', event => key(event, 1), { signal })
+      // While the canvas has the focus, the app's own shortcuts (Esc included) leave its keys alone.
+      canvas.setAttribute(viewKeysAttribute, '')
     }
   }
 
@@ -293,6 +298,7 @@ export class DawnViewInstance {
     if (this.stopped) return
     this.stopped = true
     this.events.abort()
+    this.canvas.removeAttribute(viewKeysAttribute)
     this.observer?.disconnect()
     if (this.frame !== undefined) cancelAnimationFrame(this.frame)
     this.exports = undefined
