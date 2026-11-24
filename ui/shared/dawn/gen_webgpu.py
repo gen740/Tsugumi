@@ -39,6 +39,7 @@ COUNT_NAMES = {"entries": "entry"}
 # The pin represents nullable pipeline-layout array elements in prose.
 NULLABLE_ELEMENTS = {("pipeline_layout_descriptor", "bind_group_layouts")}
 DATA_SIZES = {"wgpuQueueWriteBuffer": "size", "wgpuQueueWriteTexture": "data_size"}
+WHOLE_SIZE_FUNCTIONS = {"wgpuRenderPassEncoderSetIndexBuffer", "wgpuRenderPassEncoderSetVertexBuffer"}
 
 
 def pascal(name):
@@ -242,10 +243,7 @@ class Model:
             return 4, 4
         if category == "enum" and name in self.enum_defs:
             if name not in self.enums:
-                self.enums[name] = {
-                    entry["name"]: self.enum_prefix << 16 | index
-                    for index, entry in enumerate(self.enum_defs[name]["entries"]) if entry
-                }
+                self.enums[name] = self.enum_values(name)
             return 4, 4
         if category == "bitflag" and name in self.flag_defs:
             if name not in self.flags:
@@ -256,20 +254,36 @@ class Model:
             return struct.size, struct.alignment
         raise ValueError(f"unsupported ABI type {type_name}")
 
-    def flag_values(self, name):
+    def enum_values(self, name):
         values = {}
-        bit = 1
-        for entry in self.flag_defs[name]["entries"]:
+        for index, entry in enumerate(self.enum_defs[name]["entries"]):
+            if entry is None:
+                continue
+            value = entry.get("value", index)
+            if entry.get("namespace") or not 0 <= value <= 0xFFFF:
+                raise ValueError(f"{name}.{entry['name']}: unsupported enum namespace or value")
+            values[entry["name"]] = self.enum_prefix << 16 | value
+        return values
+
+    def flag_values(self, name):
+        entries = self.flag_defs[name]["entries"]
+        base = {}
+        for index, entry in enumerate(entries):
+            if "value_combination" in entry:
+                if "value" in entry:
+                    raise ValueError(f"{name}.{entry['name']}: two bitflag value definitions")
+                continue
+            raw = entry.get("value", 0 if index == 0 else 1 << (index - 1))
+            value = int(raw, 0) if isinstance(raw, str) else raw
+            if not 0 <= value < 2**64 or value.bit_count() > 1:
+                raise ValueError(f"{name}.{entry['name']}: unsupported bitflag value")
+            base[entry["name"]] = value
+        values = {}
+        for entry in entries:
             key = entry["name"]
-            if key == "none":
-                value = 0
-            elif "value_combination" in entry:
-                value = 0
-                for flag in entry["value_combination"]:
-                    value |= values[flag]
-            else:
-                value = bit
-                bit <<= 1
+            value = base.get(key, 0)
+            for flag in entry.get("value_combination", ()):
+                value |= base[flag]
             values[key] = value
         return values
 
@@ -375,9 +389,6 @@ def layout_check(model):
     return "\n".join(lines) + "\n"
 
 
-WHOLE_SIZE_FUNCTIONS = {"wgpuRenderPassEncoderSetIndexBuffer", "wgpuRenderPassEncoderSetVertexBuffer"}
-
-
 def cpp_type(type_name):
     if type_name in SCALARS:
         return SCALARS[type_name][1]
@@ -444,7 +455,9 @@ def cpp_array(model, member, address, count, field):
 def cpp_pointer(member, address, field):
     name = pascal(member.type.split(".")[1])
     method = f"read_{name}(reader, arena, {address}, {field})"
-    return f"copy_{'optional' if member.optional else 'required'}(arena, {address}, [&] {{ return {method}; }})"
+    if member.optional:
+        return f"copy_optional(arena, {address}, [&] {{ return {method}; }})"
+    return f"copy_descriptor(arena, [&] {{ return {method}; }})"
 
 
 def cpp_decode(model, struct):
@@ -569,25 +582,6 @@ def cpp_outputs(model):
 
     cc = [f"// {BANNER}", '#include "webgpu_imports.gen.h"', "",
           (HERE / "cpp_reader.inc").read_text().rstrip(), ""]
-    if any(member.pointer and not member.array and member.type.startswith("struct.")
-           for struct in model.structs.values() for member in struct.members) or any(
-        member.pointer and not member.array and member.type.startswith("struct.")
-        for fn in model.functions for member in fn.args
-    ):
-        cc += [
-            "template <class Decode>",
-            "auto copy_required(Arena& arena, uint32_t, Decode decode) {",
-            "  auto value = decode();",
-            "  auto* storage = arena.allocate<decltype(value)>();",
-            "  *storage = value;",
-            "  return storage;",
-            "}", "",
-            "template <class Decode>",
-            "auto copy_optional(Arena& arena, uint32_t address, Decode decode) -> decltype(copy_required(arena, address, decode)) {",
-            "  if (address == 0) return nullptr;",
-            "  return copy_required(arena, address, decode);",
-            "}", "",
-        ]
     for name, values in model.enums.items():
         if name != "s_type":
             cc += cpp_enum(name, values) + [""]
@@ -791,12 +785,12 @@ def js_decode(model, struct):
             "  if (resources.filter(resource => resource !== undefined).length !== 1) {",
             "    reader.fail('WGPUBindGroupEntry.resource', 'expected exactly one binding resource')",
             "  }",
-            "  const resource = member_buffer === undefined ? member_sampler ?? member_textureView : {",
+            "  const resource = member_buffer === undefined ? member_sampler ?? member_textureView : dictionary({",
             "    buffer: member_buffer, offset: member_offset, size: member_size,",
-            "  }",
+            "  })",
         ]
         output.append("resource")
-    lines.append(f"  return {{ {', '.join(output)} }}")
+    lines.append(f"  return dictionary({{ {', '.join(output)} }})")
     return lines + ["}"]
 
 

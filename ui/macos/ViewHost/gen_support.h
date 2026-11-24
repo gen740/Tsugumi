@@ -58,8 +58,10 @@ class Handles {
 
   auto get(Kind kind, uint32_t id) const -> void* {
     const auto it = entries_.find(id);
-    if (it == entries_.end()) throw TrapError("unknown WebGPU handle id " + std::to_string(id));
-    if (it->second.kind != kind) throw TrapError("wrong kind for WebGPU handle id " + std::to_string(id));
+    if (it == entries_.end())
+      throw TrapError("unknown WebGPU handle id " + std::to_string(id));
+    if (it->second.kind != kind)
+      throw TrapError("wrong kind for WebGPU handle id " + std::to_string(id));
     return it->second.native;
   }
 

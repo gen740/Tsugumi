@@ -37,6 +37,13 @@ const NOT_USED = Symbol('bindingNotUsed')
 const decoder = new TextDecoder('utf-8', { ignoreBOM: true })
 const U64_MAX = 0xffffffffffffffffn
 
+function dictionary(value) {
+  for (const key of Object.keys(value)) {
+    if (value[key] === undefined) delete value[key]
+  }
+  return value
+}
+
 class Reader {
   #view
 
