@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { DawnViewInstance } from '../src/dawn/instance'
+import { viewKeysAttribute, viewOwnsKeys } from '../src/dawn/input'
 import { loadView } from '../src/dawn/loadView'
 import { encodeView, f32, i32, uleb } from './dawnLoad'
 
@@ -30,8 +31,11 @@ const context = {
   unconfigure() { --configs },
   getCurrentTexture() { return { createView() { ++draws; return {} } } },
 }
+const attributes = new Set<string>()
 const canvas = Object.assign(new EventTarget(), {
   width: 300, height: 150, clientWidth: 400, clientHeight: 200,
+  setAttribute: (name: string) => { attributes.add(name) },
+  removeAttribute: (name: string) => { attributes.delete(name) },
   getContext: (name: string) => name === 'webgpu' ? context : null,
 })
 let deviceRequests = 0
@@ -216,6 +220,26 @@ try {
   assert.match(String(fatal.at(-1)), /tsugumi_view_resize returned -1/)
   assert.equal(frames.size, 0)
   negative.dispose()
+
+  // A view that takes keys owns them while its canvas has the focus; one without key does not.
+  assert.equal(attributes.size, 0)
+  const { module: keyed } = await loadView(encodeView({
+    callbacks: { key: { params: [i32, i32, i32], code: constant(0) } },
+  }))
+  const typing = await DawnViewInstance.mount(keyed, canvas as unknown as HTMLCanvasElement, host, new AbortController().signal)
+  assert.deepEqual([...attributes], [viewKeysAttribute])
+  const focused = (owner: boolean) => ({ closest: (selector: string) => owner && selector === `[${viewKeysAttribute}]` ? {} : null })
+  assert.equal(viewOwnsKeys(focused(true)), true)
+  assert.equal(viewOwnsKeys(focused(false)), false)
+  assert.equal(viewOwnsKeys(null), false)
+  const space = Object.assign(new Event('keydown', { cancelable: true }), { code: 'Space', metaKey: false, shiftKey: false, ctrlKey: false, altKey: false })
+  canvas.dispatchEvent(space)
+  assert.equal(space.defaultPrevented, true, 'Space does not scroll the page')
+  const tab = Object.assign(new Event('keydown', { cancelable: true }), { code: 'Tab', metaKey: false, shiftKey: false, ctrlKey: false, altKey: false })
+  canvas.dispatchEvent(tab)
+  assert.equal(tab.defaultPrevented, false, 'Tab still moves the focus')
+  typing.dispose()
+  assert.equal(attributes.size, 0)
 } finally {
   for (const [name, descriptor] of original) {
     if (descriptor) Object.defineProperty(globalThis, name, descriptor)

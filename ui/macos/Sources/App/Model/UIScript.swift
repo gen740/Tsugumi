@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Foundation
 import Observation
 import SwiftUI
@@ -21,7 +22,9 @@ import TsugumiAgentClient
 ///   panel log|timeline              details <card path>
 ///   click <x> <y> [window title]    move <x> <y> [window title]
 ///   drag <x1> <y1> <x2> <y2> [window title]
-///   save                            key delete|forwarddelete|escape
+///   save                            key <name> [up|down] (a-z, 0-9, space, return, tab,
+///                                   left, right, up, down, delete, forwarddelete, escape;
+///                                   a press and release, or only the one half)
 ///   winsize <w> <h> <window title>  home | demos (Home's demo list)
 ///   open versions                   makerepo (the project becomes a repository)
 ///   hoverversion <row>              (what the pointer on that row of the version tree opens)
@@ -54,6 +57,24 @@ final class UIScript {
     case card(CardRef), visual(CardRef), definitions(ProjectRef), versions(ProjectRef), workflowSettings(ProjectRef), settings, explainer, debug
     case project(URL), newProject
   }
+
+  /// The keys `key` can press, by name: virtual key codes of the ANSI layout.
+  static let keyCodes: [String: CGKeyCode] = {
+    var codes: [String: Int] = [
+      "space": kVK_Space, "return": kVK_Return, "tab": kVK_Tab,
+      "left": kVK_LeftArrow, "right": kVK_RightArrow, "up": kVK_UpArrow, "down": kVK_DownArrow,
+      "delete": kVK_Delete, "forwarddelete": kVK_ForwardDelete, "escape": kVK_Escape,
+    ]
+    let letters = [kVK_ANSI_A, kVK_ANSI_B, kVK_ANSI_C, kVK_ANSI_D, kVK_ANSI_E, kVK_ANSI_F, kVK_ANSI_G,
+      kVK_ANSI_H, kVK_ANSI_I, kVK_ANSI_J, kVK_ANSI_K, kVK_ANSI_L, kVK_ANSI_M, kVK_ANSI_N, kVK_ANSI_O,
+      kVK_ANSI_P, kVK_ANSI_Q, kVK_ANSI_R, kVK_ANSI_S, kVK_ANSI_T, kVK_ANSI_U, kVK_ANSI_V, kVK_ANSI_W,
+      kVK_ANSI_X, kVK_ANSI_Y, kVK_ANSI_Z]
+    for (letter, code) in zip("abcdefghijklmnopqrstuvwxyz", letters) { codes[String(letter)] = code }
+    let digits = [kVK_ANSI_0, kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4,
+      kVK_ANSI_5, kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9]
+    for (digit, code) in zip("0123456789", digits) { codes[String(digit)] = code }
+    return codes.mapValues { CGKeyCode($0) }
+  }()
 
   var request: Request?
   /// Whether a canvas has the keyboard focus (reported by `state`).
@@ -569,15 +590,18 @@ final class UIScript {
         }
         if let u = event(.leftMouseUp, x2, y2) { win.sendEvent(u) }
       case "key":
-        // key delete | forwarddelete | escape: a key press to this app
-        let codes: [String: CGKeyCode] = ["delete": 51, "forwarddelete": 117, "escape": 53]
-        if let code = codes[w[1]] {
-          say("key \(w[1]): canvas focused \(canvasFocused), selected wire \(workspace?.active?.selectedConnection.map(String.init) ?? "-")")
-          // Through the window server to this process, as a real key press.
-          for down in [true, false] {
-            CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)?.postToPid(getpid())
-            try? await Task.sleep(for: .milliseconds(40))
-          }
+        // key <name> [down|up]: a key press (or one half of it, to hold a key) to this app
+        guard w.count > 1, let code = Self.keyCodes[w[1]] else { say("unknown " + line); break }
+        let halves: [Bool] = switch w.count > 2 ? w[2] : "" {
+        case "down": [true]
+        case "up": [false]
+        default: [true, false]
+        }
+        say("key \(w[1]): canvas focused \(canvasFocused), selected wire \(workspace?.active?.selectedConnection.map(String.init) ?? "-")")
+        // Through the window server to this process, as a real key press.
+        for down in halves {
+          CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)?.postToPid(getpid())
+          try? await Task.sleep(for: .milliseconds(40))
         }
       case "selection":
         // What a click picked: the selected Cards and wire, and the windows open.

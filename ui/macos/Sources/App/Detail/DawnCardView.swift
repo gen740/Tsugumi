@@ -188,13 +188,13 @@ private struct DawnViewRepresentable: NSViewRepresentable {
     if self.native == native { finish(result, native: native) }
   }
 
-  func pointer(_ event: NSEvent, kind: UInt32, at point: CGPoint) {
+  func pointer(_ event: NSEvent, kind: UInt32, buttons: UInt32, at point: CGPoint) {
     guard let native, accepts & 2 != 0 else { return }
     // AppKit reports content displacement. DOM wheel deltas have the opposite sign.
     let x = kind == 3 ? -Float(event.scrollingDeltaX) : 0
     let y = kind == 3 ? -Float(event.scrollingDeltaY) : 0
     let result = tsugumi_view_host_pointer(native, kind, Float(point.x), Float(point.y),
-      UInt32(NSEvent.pressedMouseButtons & 7), x, y, dawnModifiers(event.modifierFlags))
+      buttons, x, y, dawnModifiers(event.modifierFlags))
     finish(result, native: native)
   }
 
@@ -244,6 +244,8 @@ private struct DawnViewRepresentable: NSViewRepresentable {
   private weak var host: DawnViewHost?
   private var dimensions: (width: UInt32, height: UInt32, scale: Float)?
   private var pointerTracking: NSTrackingArea?
+  /// The buttons held, as the events this view received say (bit 0 primary, 1 secondary, 2 middle).
+  private var buttons: UInt32 = 0
 
   fileprivate init(host: DawnViewHost) {
     self.host = host
@@ -257,6 +259,8 @@ private struct DawnViewRepresentable: NSViewRepresentable {
   override func makeBackingLayer() -> CALayer { CAMetalLayer() }
   override var isFlipped: Bool { true }
   override var acceptsFirstResponder: Bool { host?.acceptsKeys == true }
+  // The click that brings the window forward is also the view's, as a press and release.
+  override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
@@ -315,8 +319,9 @@ private struct DawnViewRepresentable: NSViewRepresentable {
 
   private func pointer(_ event: NSEvent, kind: UInt32) {
     if kind == 1, acceptsFirstResponder { window?.makeFirstResponder(self) }
+    buttons = DawnPointer.buttons(after: event.type, buttonNumber: event.buttonNumber, held: buttons)
     let point = convert(event.locationInWindow, from: nil)
-    host?.pointer(event, kind: kind, at: CGPoint(x: point.x - bounds.minX, y: point.y - bounds.minY))
+    host?.pointer(event, kind: kind, buttons: buttons, at: CGPoint(x: point.x - bounds.minX, y: point.y - bounds.minY))
   }
 
   override func mouseMoved(with event: NSEvent) { pointer(event, kind: 0) }
@@ -348,6 +353,27 @@ private func dawnModifiers(_ flags: NSEvent.ModifierFlags) -> UInt32 {
   if flags.contains(.option) { bits |= 4 }
   if flags.contains(.command) { bits |= 8 }
   return bits
+}
+
+enum DawnPointer {
+  /// The buttons held after an event, from the event itself rather than the global mouse
+  /// state: a press adds its button, a release removes it, a drag holds its button and a
+  /// plain move holds none. Bits as the view ABI has them: 0 primary, 1 secondary, 2 middle.
+  static func buttons(after type: NSEvent.EventType, buttonNumber: Int, held: UInt32) -> UInt32 {
+    let bit: UInt32 = switch type {
+    case .leftMouseDown, .leftMouseUp, .leftMouseDragged: 1
+    case .rightMouseDown, .rightMouseUp, .rightMouseDragged: 2
+    case .otherMouseDown, .otherMouseUp, .otherMouseDragged: buttonNumber == 2 ? 4 : 0
+    default: 0
+    }
+    switch type {
+    case .leftMouseDown, .rightMouseDown, .otherMouseDown,
+         .leftMouseDragged, .rightMouseDragged, .otherMouseDragged: return held | bit
+    case .leftMouseUp, .rightMouseUp, .otherMouseUp: return held & ~bit
+    case .mouseMoved: return 0
+    default: return held
+    }
+  }
 }
 
 enum DawnKeys {

@@ -3,7 +3,7 @@ import { L } from '../i18n'
 import type { CardLiveViews } from '../model/liveViews'
 import { useObserve } from '../model/observable'
 import { path, type CardKey, type ProjectSession } from '../model/session'
-import { Empty } from './controls'
+import { Empty, Spinner } from './controls'
 import { DawnViewCanvas, type ReadDawnView } from './dawnViewCanvas'
 import { HtmlViewFrame, type ReadHtmlView, type SendHtmlView } from './htmlViewFrame'
 
@@ -34,7 +34,10 @@ export function CardViewsPanel({ card, read, readBytes, send }: { card?: CardLiv
     return <div className="card-views">
       <p className="caption" role="alert">{L('ビューの宣言を評価できませんでした: {0}', card.failure)}</p>
     </div>
-  if (!card || (!card.views.length && !card.unknown.size))
+  // Until the core has evaluated the declarations, there is nothing to say about them yet.
+  if (!card?.declared)
+    return <div className="center-fill"><Spinner /></div>
+  if (!card.views.length && !card.unknown.size)
     return <Empty title={L('表示するビューがありません')} icon="chart.xyaxis.line" />
   return <div className="card-views">
     {card.views.map(view => {

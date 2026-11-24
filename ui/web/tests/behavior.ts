@@ -65,6 +65,7 @@ await import("./freeSpot")
 
 
 await import("./liveViews")
+await import("./cardViewStates")
 await import("./definitionErrors")
 
 await import("./nixPath")

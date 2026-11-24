@@ -297,3 +297,30 @@ private func viewDocument(_ out: Outside) -> String {
   #expect(DawnKeys.usage(UInt16(kVK_ANSI_KeypadEnter)) == 0x58)
   #expect(DawnKeys.usage(.max) == nil)
 }
+
+@Test func dawnTakesPointerButtonsFromTheEvent() {
+  let b = DawnPointer.buttons
+  #expect(b(.leftMouseDown, 0, 0) == 1)
+  #expect(b(.rightMouseDown, 1, 1) == 3)
+  #expect(b(.otherMouseDown, 2, 0) == 4)
+  #expect(b(.otherMouseDown, 3, 0) == 0, "buttons past middle have no bit")
+  #expect(b(.leftMouseUp, 0, 3) == 2)
+  #expect(b(.rightMouseUp, 1, 2) == 0)
+  #expect(b(.otherMouseUp, 2, 5) == 1)
+  // A drag holds its button even when the press was not seen (a first click elsewhere).
+  #expect(b(.leftMouseDragged, 0, 0) == 1)
+  #expect(b(.rightMouseDragged, 1, 1) == 3)
+  #expect(b(.mouseMoved, 0, 7) == 0, "a plain move holds no button")
+  #expect(b(.scrollWheel, 0, 2) == 2)
+  #expect(b(.mouseExited, 0, 1) == 1)
+}
+
+@MainActor @Test func uiScriptKeysReachDawnUsages() {
+  let usage = { (name: String) in UIScript.keyCodes[name].flatMap { DawnKeys.usage($0) } }
+  #expect(usage("p") == 0x13)
+  #expect(usage("a") == 0x04 && usage("z") == 0x1d)
+  #expect(usage("1") == 0x1e && usage("0") == 0x27)
+  #expect(usage("space") == 0x2c && usage("return") == 0x28 && usage("escape") == 0x29)
+  #expect(usage("left") == 0x50 && usage("right") == 0x4f && usage("up") == 0x52 && usage("down") == 0x51)
+  #expect(UIScript.keyCodes["f13"] == nil)
+}
