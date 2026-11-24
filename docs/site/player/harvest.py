@@ -33,12 +33,11 @@ ROOT = Path(__file__).resolve().parents[3]
 BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build"))
 os.environ["TSUGUMI_BUILD_DIR"] = str(BUILD)
 os.environ.setdefault("TSUGUMI_PY_BINDINGS", str(BUILD / "generated" / "python"))
-sys.path.insert(0, str(ROOT / "tests" / "python"))
+sys.path.insert(0, str(ROOT / "tests" / "core"))
 
-from conftest import Daemon  # noqa: E402
+from harness.daemon import Daemon  # noqa: E402
 from projects import start_run, wait_run  # noqa: E402
 from tsugumi_client import RpcFailure, path, text  # noqa: E402
-from Tsugumi.Data.PortKind import PortKind
 from Tsugumi.Data.CardState import CardState  # noqa: E402
 from Tsugumi.Data.Phase import Phase  # noqa: E402
 from Tsugumi.Data.RunState import RunState  # noqa: E402
@@ -52,7 +51,7 @@ RUN = {v: k for k, v in vars(RunState).items() if not k.startswith("_")}
 
 
 def guide_files() -> dict[str, str]:
-    """The Python Card of docs/CardGuide.md, parsed as tests/python/test_sdk_examples.py does."""
+    """The project files in named code blocks in docs/CardGuide.md."""
     page = (ROOT / "docs" / "CardGuide.md").read_text()
     files: dict[str, dict[str, str]] = {}
     for m in re.finditer(r"^`([^`\n]+)`(?:（([^）\n]+)）)?\n\n```\w*\n(.*?)^```", page, flags=re.M | re.S):
@@ -112,8 +111,7 @@ def harvest(demo: str, tmp: Path, sandbox: bool, timeout: float) -> dict:
     daemon = Daemon(root).start()
     began = time.time()
     try:
-        c = daemon.client()
-        c.hello()
+        c = daemon.connect()
         run_id = start_run(c, ["start"], concurrency=4)
         status = wait_run(c, run_id, timeout=timeout)
         if status.state != RunState.succeeded:
@@ -150,7 +148,7 @@ def harvest(demo: str, tmp: Path, sandbox: bool, timeout: float) -> dict:
                 "sent": sorted({text(p) for r in recs for p in (r.outputsSent or [])}),
             }
         for a in c.call("ArtifactListRequest", runId=run_id, limit=50).artifacts:
-            artifacts.append({"card": "/".join(text(s) for s in a.card.segments), "output": text(a.output), "name": text(a.name),
+            artifacts.append({"card": "/".join(text(s) for s in a.card.segments), "output": text(a.artifactId), "name": text(a.artifactId),
                               "members": [{"path": text(m.path), "size": int(m.sizeBytes or 0)} for m in a.members]})
         return {
             "graphId": graph_id,
@@ -162,7 +160,7 @@ def harvest(demo: str, tmp: Path, sandbox: bool, timeout: float) -> dict:
             "timeline": timeline, "outputs": {}, "artifacts": artifacts,
         }
     finally:
-        daemon.cleanup()
+        daemon.close()
 
 
 def resolved_ports() -> dict:
@@ -173,17 +171,16 @@ def resolved_ports() -> dict:
         with tempfile.TemporaryDirectory(prefix="tsg-harvest-") as tmp:
             daemon = Daemon(project_copy(demo, Path(tmp), True)).start()
             try:
-                c = daemon.client()
-                c.hello()
+                c = daemon.connect()
 
                 def port(p):
                     members = [text(name) for name in p.mergeMemberTypes or []]
-                    type_name = "Path" if p.kind == PortKind.Path else " | ".join(members) or text(p.rootType or b"")
+                    type_name = " | ".join(members) or text(p.rootType or b"")
                     return {"name": text(p.name), "rootType": type_name}
                 out[demo] = {"/".join(text(s) for s in r.card.segments): {"inputs": [port(p) for p in r.inputs], "outputs": [port(p) for p in r.outputs]}
                              for r in c.call("ProjectInspectRequest").resolution}
             finally:
-                daemon.cleanup()
+                daemon.close()
         print(f"{demo}: {len(out[demo])} Cards", flush=True)
     return out
 

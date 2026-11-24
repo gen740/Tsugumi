@@ -1,4 +1,6 @@
+include "tsugumi/artifact.fbs";
+
 namespace cells;
-table RealImage { path:string; source:string; }
+table RealImage { file:tsugumi.Artifact (required); source:string; }
 table Outputs { image:RealImage (required); }
 root_type Outputs;

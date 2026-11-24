@@ -1,112 +1,49 @@
-"""Public RPC regressions for saved inputs and cancellation."""
+"""Public RPC regressions for run persistence and typed values."""
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from harness.observations import decode_scalar
-from projects import FILE_FBS, SINK, card, conn, run_and_wait, write
-from tsugumi_client import RpcFailure, new_id, path, text
+from projects import SINK, card, conn, run_and_wait, write, write_nix_project
+from tsugumi_client import RpcFailure, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
-from Tsugumi.RPC.RunRecordCategory import RunRecordCategory
-
-def file_fanout_project(root: Path) -> None:
-    write(root,
-          defs={"trigger": {"type": "trigger"},
-                "doc": {"type": "input", "params": [{"name": "value", "type": "string", "data": {"string": "data/report.txt"}}],
-                        "_outputs": FILE_FBS, "retainArtifact": True},
-                "sink": dict(SINK, retainArtifact=True)},
-          cards=[card("src", "doc"), card("a", "sink"), card("b", "sink")],
-          conns=[conn("src", "doc", "a", "in"), conn("src", "doc", "b", "in")],
-          files={"definitions/doc/data/report.txt": "quarterly numbers\n"})
-
 
 def test_history_write_failure_fails_the_run(tmp_path, core_factory):
     """A run cannot succeed when its invocation record could not be saved."""
     root = tmp_path / "p"
-    file_fanout_project(root)
+    write(root, defs={"start": {"type": "trigger"}}, cards=[card("src", "start")], conns=[])
     d = core_factory(project_root=root, fault="invocation_record")
     c = d.connect()
     _, st = run_and_wait(c, "src")
     assert st.state == RunState.failed
     assert st.failure.kind == FailureKind.persistence_failed
-    for k in ("src", "a", "b"):
-        try:
-            page = c.call("RunInvocationsRequest", runId=text(st.runId), card=path(k))
-        except RpcFailure as e:
-            assert e.kind == "not_found"  # nothing recorded for it
-            continue
-        assert all(r.state != CardState.succeeded for r in page.records)  # nothing unrecorded claims success
-
-
-def test_saved_file_inputs_survive_cache_clear_and_restart(tmp_path, core_factory):
-    """Partial runs reuse saved file inputs after cache clearing and restart."""
-    root = tmp_path / "p"
-    file_fanout_project(root)
-    d = core_factory(project_root=root)
-    c = d.connect()
-    _, missing = run_and_wait(c, "b", propagate=False)
-    assert missing.failure.kind == FailureKind.input_missing
-    first, st = run_and_wait(c, "src")
-    assert st.state == RunState.succeeded
-    for branch in ("a", "b"):
-        record = c.call("RunRecordRequest", runId=first, card=path(branch), invocation=1).record
-        value = next(value for value in record.inputs if text(value.name) == "in")
-        assert Path(text(value.filePath)).read_text() == "quarterly numbers\n"
-
-    c.call("RunCategoryDeleteRequest", runId=first, category=RunRecordCategory.Files, opId=new_id())
-    c.call("ProjectCacheClearRequest", opId=new_id())
-    _, st2 = run_and_wait(c, "b", propagate=False)
-    assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)
-    c.call("RunScratchDeleteRequest", opId=new_id(), paths=[f"runs/{first}"])
-    d.stop()
-    d.start()
-    c = d.connect()
-    _, st3 = run_and_wait(c, "b", propagate=False)
-    assert st3.state == RunState.succeeded, st3.failure and text(st3.failure.diagnostic)
-    # The downstream Card also kept its own saved input.
-    _, st4 = run_and_wait(c, "a", propagate=False)
-    assert st4.state == RunState.succeeded
-
-
-def test_rerun_from_saved_file_inputs_with_much_shorter_paths(tmp_path, core_factory):
-    """A partial merge run preserves a saved file value from a long source name."""
-    # A long producer name exercises a saved Path value whose path must change.
-    src = "source-" + "x" * 80
-    root = tmp_path / "p"
-    write(root,
-          defs={"doc": {"type": "input", "params": [{"name": "value", "type": "string", "data": {"string": "report.txt"}}],
-                        "_outputs": FILE_FBS, "retainArtifact": True},
-                "join": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}]},
-                "sink": dict(SINK, retainArtifact=True)},
-          cards=[card(src, "doc"), card("join", "join"), card("out", "sink")],
-          conns=[conn(src, "doc", "join", "a"), conn("join", "out", "out", "in")],
-          files={"definitions/doc/report.txt": "quarterly numbers\n"})
-    d = core_factory(project_root=root)
-    c = d.connect()
-    _, st = run_and_wait(c, src)
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    # The merge reruns from its saved value; the sink records the path it received.
-    run_id, st2 = run_and_wait(c, "join")
-    assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)
-    record = c.call("RunRecordRequest", runId=run_id, card=path("out"), invocation=1).record
-    received, = record.inputs
-    assert Path(text(received.filePath)).name == "report.txt"
-    assert Path(text(received.filePath)).read_text() == "quarterly numbers\n"
-
-
+    try:
+        page = c.call("RunInvocationsRequest", runId=text(st.runId), card=path("src"))
+    except RpcFailure as e:
+        assert e.kind == "not_found"
+    else:
+        assert all(r.state != CardState.succeeded for r in page.records)
 
 
 def test_direct_fanout_preserves_precise_numbers(tmp_path, core_factory):
     """Both branches retain small and precise typed floating-point values."""
     root = tmp_path / "p"
-    write(root,
+    write_nix_project(root,
           defs={"trigger": {"type": "trigger"},
                 "reading": {"type": "input",
-                            "params": [{"name": "rate", "type": "double", "data": {"double": 0.042169650342858}},
-                                       {"name": "tiny", "type": "double", "data": {"double": 1e-20}}],
+                            "_params": '{ rate = 0.042169650342858; tiny = 1.0e-20; }',
+                            "_nix": """{ params, inputs }:
+let
+  pkgs = import <nixpkgs> { };
+  reading = pkgs.writeText "reading.json" (builtins.toJSON params);
+in {
+  run = pkgs.runCommand "reading-input" { nativeBuildInputs = [ pkgs.flatbuffers ]; } ''
+    mkdir -p "$out/share/tsugumi/input/ports"
+    flatc --binary --strict-json --root-type nums.Reading ${./_outputs.fbs} ${reading}
+    mv *-reading.bin "$out/share/tsugumi/input/ports/reading"
+  '';
+}""",
                             "_outputs": """
 namespace nums;
 table Reading { rate:double; tiny:double; }

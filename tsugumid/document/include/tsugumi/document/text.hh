@@ -10,12 +10,13 @@
 #include "tsugumi/protocol/comments_document_generated.h"
 #include "tsugumi/protocol/layout_document_generated.h"
 #include "tsugumi/protocol/project_document_generated.h"
+#include "tsugumi/protocol/project_lock_generated.h"
 
 namespace tsugumi::document_text {
 
 namespace D = Tsugumi::Document;
 
-enum class Schema { Project, Card, Comments, Layout };
+enum class Schema { Project, Card, Comments, Layout, Lock };
 
 // Parses JSON text into a FlatBuffer of the schema. Throws
 // DocumentError(invalid_document) naming `path`, the line and the column.

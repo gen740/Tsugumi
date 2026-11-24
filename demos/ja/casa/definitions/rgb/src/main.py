@@ -1,6 +1,6 @@
 """Assigns the three band images to R, G and B with an asinh stretch per
 channel and shows the PNG. Not exposure corrected: a picture, not a flux map."""
-from tsugumi import contract
+from card import Artifact, Input, Output, params
 import hashlib
 import json
 import shutil
@@ -11,13 +11,12 @@ from astropy.io import fits
 from PIL import Image
 
 
-def main(inputs, report, run):
-    source = Path(contract.input_object(inputs, "input").value.decode())
-    p = inputs.params
+def run(input: Input) -> Output:
+    source = input.require("input").open()
+    p = params
     percentile, q = p.percentile, p.q
     assert 90 <= percentile <= 100 and q > 0
-    dest = Path(run.output_directory) / "rgb"
-    dest.mkdir(parents=True, exist_ok=True)
+    artifact, dest = Artifact.dir()
     manifest = json.loads((source / "provenance.json").read_text())
     channels, scales, shape = [], [], None
     for color in ["red", "green", "blue"]:
@@ -36,7 +35,6 @@ def main(inputs, report, run):
     digest = hashlib.sha256(png.read_bytes()).hexdigest()
     manifest["display"] = {"stretch": "asinh", "q": q, "percentile": percentile, "scales": scales, "png_sha256": digest}
     (dest / "provenance.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
-    report.log(f"casa-rgb.png sha256 {digest}")
-    report.image(png.read_bytes())
-    s = str(dest)
-    return {'rgb': {'value': s}}
+    print(f"casa-rgb.png sha256 {digest}")
+    # TODO(open): Port the demo display.
+    return Output(rgb=artifact)

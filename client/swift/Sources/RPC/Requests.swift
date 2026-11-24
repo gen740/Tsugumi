@@ -179,6 +179,25 @@ public extension RPCClient {
     return try await call(.cardviewreadrequest, r)
   }
 
+  func sendView(card: [String], view: String, bytes: Data) async throws {
+    let r = Tsugumi_RPC_ViewSendRequestT()
+    r.card = cardPath(card)
+    r.view = view
+    r.bytes = Array(bytes)
+    let _: Tsugumi_RPC_AckT = try await call(.viewsendrequest, r)
+  }
+
+  func returnViewCredit(subscription: String, card: [String], view: String,
+                        bytes: UInt32, creditId: UInt64) async throws {
+    let r = Tsugumi_RPC_ViewCreditRequestT()
+    r.subscriptionId = subscription
+    r.card = cardPath(card)
+    r.view = view
+    r.bytes = bytes
+    r.creditId = creditId
+    let _: Tsugumi_RPC_AckT = try await call(.viewcreditrequest, r)
+  }
+
   func setVisible(subscription: String, cards: [[String]], enabled: Bool = true) async throws {
     let r = Tsugumi_RPC_ViewSetVisibleRequestT()
     r.subscriptionId = subscription
@@ -195,13 +214,13 @@ public extension RPCClient {
     return try await call(.viewsaverequest, r)
   }
 
-  /// Builds the saved Card from its current wiring and returns the files its
-  /// builder placed under share/tsugumi/api/, or the build failure and log.
-  func cardApi(card: [String], atRev: UInt64) async throws -> Tsugumi_RPC_CardApiResultT {
-    let r = Tsugumi_RPC_CardApiRequestT()
+  func evaluateNix(card: [String], expression: String, build: Bool = false, atRev: UInt64? = nil) async throws -> Tsugumi_RPC_EvaluateNixResultT {
+    let r = Tsugumi_RPC_EvaluateNixRequestT()
     r.card = cardPath(card)
+    r.expression = expression
+    r.build = build
     r.atRev = atRev
-    return try await call(.cardapirequest, r)
+    return try await call(.evaluatenixrequest, r)
   }
 
   /// Each Card's latest invocation of a run.
@@ -209,13 +228,6 @@ public extension RPCClient {
     let r = Tsugumi_RPC_RunLatestInvocationsRequestT()
     r.runId = runId
     return try await call(.runlatestinvocationsrequest, r)
-  }
-
-  /// Looks a flake up for nixSources (nothing is saved).
-  func resolveNixSource(ref: String) async throws -> Tsugumi_RPC_NixSourceResolvedT {
-    let r = Tsugumi_RPC_NixSourceResolveRequestT()
-    r.ref = ref
-    return try await call(.nixsourceresolverequest, r)
   }
 
   /// Deletes the project's build caches; documents and history are kept.
@@ -287,13 +299,11 @@ public extension RPCClient {
 
   /// The types of an _outputs.fbs text as the core compiles them (bfbs); with
   /// a port and a type, also the text with that port changed. Saves nothing.
-  func outputTypes(text: String, port: String? = nil, typeName: String? = nil,
-                   kind: Tsugumi_Data_PortKind = .flatbuffer) async throws -> Tsugumi_RPC_OutputTypesResultT {
+  func outputTypes(text: String, port: String? = nil, typeName: String? = nil) async throws -> Tsugumi_RPC_OutputTypesResultT {
     let r = Tsugumi_RPC_OutputTypesRequestT()
     r.text = text
     r.port = port
     r.typeName = typeName
-    if port != nil { r.kind = kind }
     return try await call(.outputtypesrequest, r)
   }
 }

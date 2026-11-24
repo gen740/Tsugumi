@@ -15,15 +15,15 @@ import { api, onServerEvent } from '../api'
 import { projectHost } from '../wire/projectHost'
 import { hostCall, onHostEvent } from '../wire/host'
 import { environmentHost, environmentProgress, environmentState, type EnvPublicState } from '../wire/environment'
-import { parse, arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../../shared/json'
-import { D, R, LiveDisplayUpdate, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../wire/rpc'
+import { parse, arr, bool, clone, dbl, get, isObj, J, jeq, JObj, numText, obj, real, serialize, str, tryParse } from '../../shared/json'
+import { cardPath, D, R, LiveDisplayUpdate, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../wire/rpc'
 import {
   applicableStages, CardGeometry, CardNodeData, mergeStageStatus, orderedPorts, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
   snapToGrid,
 } from './canvasKit'
 import type { LayoutBar, LayoutScene } from '../../shared/layoutScene'
 import { cloneDef, cloneExternal, defEq } from './documentValues'
-import { cardNotes, layoutView, noteId, paramData, paramValue, parseReadme, printReadme, splitCardNotes } from './documents'
+import { cardNotes, layoutView, noteId, parseReadme, printReadme, splitCardNotes } from './documents'
 import { Observable } from './observable'
 import { FlowDirection, prefs } from './prefs'
 import { runMark } from './runMark'
@@ -51,15 +51,32 @@ const diag = (d: D.DiagnosticT): Diagnostic => ({
 
 export interface PortInfo {
   name: string
-  kind: D.PortKind
   rootType?: string
   mergeMemberTypes?: string[]
-  executionShape?: D.ExecutionShape
 }
 
 export function portTypeName(port?: PortInfo): string | undefined {
   if (port?.mergeMemberTypes?.length) return port.mergeMemberTypes.join(' | ')
-  return port?.kind === D.PortKind.Path ? 'Path' : port?.rootType
+  return port?.rootType
+}
+
+export interface CardParameter {
+  name: string
+  type: string
+  value: J
+}
+
+function parameterLiteral(value: J, type: string): string {
+  if (Array.isArray(value) && type.startsWith('[')) {
+    const items = value.map(item => parameterLiteral(item, type.slice(1, -1)))
+    return '[ ' + items.map(item => item.startsWith('-') ? '(' + item + ')' : item).join(' ') + ' ]'
+  }
+  if (typeof value === 'string') {
+    return '"' + value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$\{/g, '\\$' + '{') + '"'
+  }
+  const literal = serialize(value, false)
+  if (type === 'float') return literal.replace(/^(-?\d+)(?=[eE]|$)/, '$1.0')
+  return literal
 }
 
 export interface ResolvedCard {
@@ -68,6 +85,7 @@ export interface ResolvedCard {
   outputs: PortInfo[]
   diagnostics: Diagnostic[]
   nixReferences: { target: string[]; name: string }[]
+  parameters?: CardParameter[]
 }
 
 /** One stage of an invocation as the core recorded it (core clock, ms). */
@@ -299,7 +317,7 @@ export class ProjectSession extends Observable {
   layout: J = obj()
   /** The Draft being written on the canvas (geometry opens its Card up). */
   inlineDraft?: InlineDraft
-  private draftFinishTask?: Promise<CardKey | undefined>
+  private draftFinishTask?: Promise<void>
   get hasUnsavedEdits() {
     const e = this.inlineDraft
     return this.dirty || !!this.draftFinishTask || !!e && e.content !== e.initialContent
@@ -456,8 +474,7 @@ export class ProjectSession extends Observable {
     const batch = output ? this.executionBatch(card) : undefined
     const emitted = batch?.outputs.find((item) => s(item.port) === port)
     if (emitted) return { executionList: emitted.executionList, count: emitted.executionList ? emitted.count : undefined }
-    const shape = this.resolution.get(card)?.[output ? 'outputs' : 'inputs'].find((item) => item.name === port)?.executionShape
-    return { executionList: shape === D.ExecutionShape.list || (batch?.executionList === true && this.kind(card) !== 'collect') }
+    return { executionList: batch?.executionList === true && this.kind(card) !== 'collect' }
   }
 
   get rpc(): RPCClient | undefined {
@@ -739,15 +756,14 @@ export class ProjectSession extends Observable {
         break
       }
       case R.NotificationPayload.DisplayUpdated: {
-        const { card, view, bytes } = e.value as LiveDisplayUpdate
-        this.liveViews.get(key(card))?.data(view, bytes)
-        break
-      }
-      case R.NotificationPayload.DisplayRunStateChanged: {
-        const { card, runId, state } = e.value as R.DisplayRunStateChangedT
-        const view = this.liveViews.get(key(segs(card)))
-        if (state === D.DisplayRunState.started) view?.run(s(runId), 'started')
-        if (state === D.DisplayRunState.ended) view?.run(s(runId), 'ended')
+        const { card, view, bytes, creditId } = e.value as LiveDisplayUpdate
+        const client = this.client
+        const complete = creditId === undefined ? undefined : () => {
+          void client?.viewCredit(e.subscriptionId, card, view, bytes.length, creditId).catch(() => {})
+        }
+        const views = this.liveViews.get(key(card))
+        if (views) views.data(view, bytes, complete)
+        else complete?.()
         break
       }
       case R.NotificationPayload.RunEvent:
@@ -813,14 +829,19 @@ export class ProjectSession extends Observable {
     const r = new Map<CardKey, ResolvedCard>()
     const all = diags.map(diag)
     const port = (x: D.PortT): PortInfo => ({
-      name: s(x.name), kind: x.kind, rootType: sOpt(x.rootType), executionShape: x.executionShape,
+      name: s(x.name), rootType: sOpt(x.rootType),
       mergeMemberTypes: x.mergeMemberTypes.map(s),
     })
     for (const rc of res) {
       const p = segs(rc.card)
       const d = rc.diagnostics.map(diag)
       r.set(key(p), { path: p, inputs: rc.inputs.map(port), outputs: rc.outputs.map(port), diagnostics: d,
-        nixReferences: rc.nixReferences.map(r => ({ target: segs(r.target), name: s(r.name) })) })
+        nixReferences: rc.nixReferences.map(r => ({ target: segs(r.target), name: s(r.name) })),
+        parameters: (rc.parameters ?? []).flatMap(p => {
+          const value = tryParse(s(p.valueJson))
+          if (value === undefined) return []
+          return [{ name: s(p.name), type: s(p.type), value }]
+        }) })
       all.push(...d)
     }
     for (const [card, views] of this.liveViews) {
@@ -1407,20 +1428,6 @@ export class ProjectSession extends Observable {
     await this.applyMutation(x => x.changeComments(k, list => [...list, obj([['id', id], ['text', t], ['author', 'user'], ['finding', finding]])]))
   }
 
-  setCommentText(k: CardKey, id: string, text: string) {
-    const t = text.trim()
-    if (t) this.changeComments(k, (list) => {
-      if (!list.some((c) => str(get(c, 'id')) === id)) return [...list, obj([['id', id], ['text', t], ['author', 'user']])]
-      return list.map((c) => {
-        if (str(get(c, 'id')) === id && isObj(c)) {
-          c.set('text', t)
-          c.set('edited_by', 'user')
-        }
-        return c
-      })
-    })
-  }
-
   /** Marks a comment by hand. Opening one again takes back what was said about it. */
   setCommentResolved(k: CardKey, id: string, resolved: boolean) {
     this.editComments(k, (list) => list.map((c) => {
@@ -1438,11 +1445,6 @@ export class ProjectSession extends Observable {
 
   removeComment(k: CardKey, id: string) {
     this.editComments(k, (list) => list.filter((c) => str(get(c, 'id')) !== id))
-  }
-
-  /** A setting of the Card (its _card.json). */
-  cardSetting(k: CardKey, name: string): J | undefined {
-    return get(this.cardDefinition(k), name)
   }
 
   derivedLayouts = new Map<string, J>()
@@ -1771,32 +1773,29 @@ export class ProjectSession extends Observable {
     this.changed()
   }
 
-  /** Keeps what was written. A name the Card cannot take stays as it was, with
-   *  a notice. The Card's permanent key when its name changed. */
-  async finishDraftEdit(overwrite = false): Promise<CardKey | undefined> {
+  /** Saves the Draft text and keeps the edit open if saving fails. */
+  async finishDraftEdit(overwrite = false): Promise<void> {
     if (this.draftFinishTask) return this.draftFinishTask
-    if (!this.inlineDraft) return undefined
+    if (!this.inlineDraft) return
     const task = (async () => {
-      let renamed: CardKey | undefined
       do {
-        renamed = await this.finishDraftEditOnce(overwrite) ?? renamed
+        await this.finishDraftEditOnce(overwrite)
         const current = this.inlineDraft
         if (!current || current.revision.conflictRev !== undefined || current.revision.error) break
       } while (true)
-      return renamed
     })()
     this.draftFinishTask = task
     try { return await task } finally { this.draftFinishTask = undefined; this.changed() }
   }
 
-  private async finishDraftEditOnce(overwrite: boolean): Promise<CardKey | undefined> {
+  private async finishDraftEditOnce(overwrite: boolean): Promise<void> {
     const e = this.inlineDraft
-    if (!e) return undefined
+    if (!e) return
     if (!this.instance(e.card) || e.content === e.initialContent) {
-      this.inlineDraft = undefined; this.changed(); return undefined
+      this.inlineDraft = undefined; this.changed(); return
     }
     const dir = this.definitionDir(e.card)
-    if (!dir) return undefined
+    if (!dir) return
     // The README.md as it was when writing began (or as the conflict found it).
     const base = e.revision.jsonBase(dir + 'README.md', e.initialReadme, overwrite)
     const before = typeof base === 'string' ? base : undefined
@@ -1808,7 +1807,6 @@ export class ProjectSession extends Observable {
       else this.inlineDraft = { ...this.inlineDraft, initialContent: e.content, initialReadme: after }
     }
     this.changed()
-    return undefined
   }
 
   deleteCards(keys: Set<CardKey>, scope: string[]) {
@@ -1850,24 +1848,9 @@ export class ProjectSession extends Observable {
     })).catch(e => this.cardEditFailed(e))
   }
 
-  /** Mutates the value inside the caller's transaction, without an autosave. */
-  updateParam(k: CardKey, name: string, value: J | undefined, initial?: { parameter?: J }) {
-    if (initial) {
-      const dir = this.definitionDir(k)
-      if (dir) {
-        const selector = ['params', obj([['name', name]])]
-        const type = str(get(initial.parameter, 'type'))
-        this.appendEdits([this.fieldEdit(dir + '_card.json', [...selector, 'data'], get(initial.parameter, 'data'),
-          value === undefined ? undefined : paramValue(type, value))])
-      }
-      return
-    }
-    this.updateCard(k, (c) => {
-      const params = (arr(c.get('params')) ?? []).map((p) => clone(p))
-      const p = params.find((p) => str(get(p, 'name')) === name)
-      if (isObj(p)) p.set('data', value === undefined ? undefined : paramValue(str(p.get('type')), value))
-      c.set('params', params)
-    })
+  async setParam(k: CardKey, name: string, literal: string, expectedRev: bigint) {
+    const edit = new H.ProjectRewriteParamLiteralT(cardPath(path(k)), name, literal, expectedRev)
+    return (await this.operate(H.ProjectOperationBody.ProjectRewriteParamLiteral, edit)).rev ?? this.rev
   }
 
   /** The host moves the complete selected definition/external closure. */
@@ -2064,18 +2047,15 @@ export class ProjectSession extends Observable {
     this.selectOperation(H.ProjectSelectionAction.DeleteDefinitions, [], [key([id])])
   }
 
-  /** Why a Card that ran has no result to show. */
-  noResultNote(k: CardKey): string | undefined {
-    switch (this.cardStates.get(k)?.state) {
-      case D.CardState.failed: return L('失敗したので結果はありません')
-      case D.CardState.blocked: return L('上流の Card が失敗したので実行していません')
-      default: return undefined
-    }
+  async updateNixPathLock(prefix: string, name?: string) {
+    await this.operate(H.ProjectOperationBody.ProjectUpdateNixPathLock,
+      new H.ProjectUpdateNixPathLockT(prefix ? prefix.slice(0, -1) : null, name ?? null), false)
   }
 
-  async resolveNixSource(ref: string): Promise<R.NixSourceResolvedT> {
-    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
-    return this.client.resolveNixSource(ref)
+  nixPathLock(prefix: string): J | undefined {
+    const text = this.carriedText(prefix + 'tsugumi.lock')
+    try { return text === undefined ? undefined : parse(text) }
+    catch { return undefined }
   }
 
   async refreshCacheUsage() {
@@ -2194,13 +2174,6 @@ export class ProjectSession extends Observable {
     return result
   }
 
-  async runFileReferences(runId: string): Promise<string[]> {
-    if (!this.projectId || !this.connected) throw new RPCError('disconnected', L('接続していません'))
-    const reply = await hostCall<R.RunFileReferencesT>(H.RequestPayload.RunFileReferencesRequest,
-      new H.RunFileReferencesRequestT(this.projectId, runId), H.ReplyPayload.RunFileReferences)
-    return reply.runIds.map(s)
-  }
-
   async deleteRunCategory(runId: string, category: R.RunRecordCategory) {
     if (!this.projectId || !this.connected) throw new RPCError('disconnected', L('接続していません'))
     await hostCall<R.RunCategoryDeleteResultT>(H.RequestPayload.RunCategoryDeleteRequest,
@@ -2220,45 +2193,36 @@ export class ProjectSession extends Observable {
     return { inputs: d.inputs.map((p) => p.name), outputs: d.outputs.map((p) => p.name) }
   }
 
-  portData(k: CardKey, definition?: J, meta?: J): { inputs: PortData[]; outputs: PortData[] } {
+  portData(k: CardKey, definition?: J): { inputs: PortData[]; outputs: PortData[] } {
     const def = definition ?? this.cardDefinition(k)
-    const m = meta ?? this.cardMeta(k)
-    // Ports have no notes of their own: a Card's README.md describes them.
-    const note = (_list: string, _name: string): string | undefined => (void m, undefined)
     const r = this.resolution.get(k)
     if (definitionKind(def) === 'collect') return {
-      inputs: [{ name: 'in', typeName: portTypeName(r?.inputs.find((p) => p.name === 'in')), note: note('inputs', 'in') }],
-      outputs: [{ name: 'out', typeName: portTypeName(r?.outputs.find((p) => p.name === 'out')), note: note('outputs', 'out') }],
+      inputs: [{ name: 'in', typeName: portTypeName(r?.inputs.find((p) => p.name === 'in')) }],
+      outputs: [{ name: 'out', typeName: portTypeName(r?.outputs.find((p) => p.name === 'out')) }],
     }
     const kind = definitionKind(def)
     const draft = kind === 'draft'
     if (draft || kind === 'invalid') return { inputs: [], outputs: [] }
     if (definition === undefined && r && !draft) {
       return {
-        inputs: r.inputs.map((p) => ({ name: p.name, typeName: portTypeName(p), note: note('inputs', p.name) })),
-        outputs: r.outputs.map((p) => ({ name: p.name, typeName: portTypeName(p), note: note('outputs', p.name) })),
+        inputs: r.inputs.map((p) => ({ name: p.name, typeName: portTypeName(p) })),
+        outputs: r.outputs.map((p) => ({ name: p.name, typeName: portTypeName(p) })),
       }
     }
     // Not resolved yet (unsaved) or a working copy: declared ports.
     const ins = (arr(get(def, 'inputs')) ?? []).flatMap((i) => {
       const n = str(get(i, 'name'))
-      return n ? [{ name: n, typeName: portTypeName(r?.inputs.find((p) => p.name === n)), note: note('inputs', n) }] : []
+      return n ? [{ name: n, typeName: portTypeName(r?.inputs.find((p) => p.name === n)) }] : []
     })
-    const outs: PortData[] = (r?.outputs ?? []).map((p) => ({ name: p.name, typeName: portTypeName(p), note: note('outputs', p.name) }))
+    const outs: PortData[] = (r?.outputs ?? []).map((p) => ({ name: p.name, typeName: portTypeName(p) }))
     return { inputs: ins, outputs: outs }
   }
 
-  /** Params edited directly on Input Cards. */
-  inlineParams(k: CardKey, definition?: J): ParamData[] {
-    const def = definition ?? this.cardDefinition(k)
-    if (this.kind(k) !== 'input' || def === undefined) return []
-    return (arr(get(def, 'params')) ?? []).flatMap((p) => {
-      const name = str(get(p, 'name')), type = str(get(p, 'type'))
-      if (!name || !type || !['int64', 'uint64', 'double', 'bool', 'string'].includes(type)) return []
-      // Swept values are edited in the Card's settings, where the list is visible.
-      if (get(p, 'sweep') !== undefined) return []
-      return [{ name, type, value: paramText(paramData(get(p, 'data'), type)) }]
-    })
+  /** Scalar parameters editable on Input Cards. */
+  inlineParams(k: CardKey): ParamData[] {
+    if (this.kind(k) !== 'input') return []
+    return (this.resolution.get(k)?.parameters ?? []).filter(p => !p.type.startsWith('['))
+      .map(p => ({ name: p.name, type: p.type, value: paramText(p.value) }))
   }
 
   cardDescription(k: CardKey): string | undefined {
@@ -2372,7 +2336,7 @@ export class ProjectSession extends Observable {
     const executionList = batch?.executionList === true
     const empty = executionList && batch.complete && !batch.failed && batch.invocationCount === 0
     const diags = this.resolution.get(k)?.diagnostics ?? []
-    const ports = this.portData(k, opts.definition, opts.meta)
+    const ports = this.portData(k, opts.definition)
     const def = opts.definition ?? this.cardDefinition(k)
     const m = opts.meta ?? this.cardMeta(k)
     let summary = str(get(m, 'description'))
@@ -2386,7 +2350,7 @@ export class ProjectSession extends Observable {
       state?.executionState === D.RemoteExecutionState.cancelling ? remoteExecutionLabel(state.executionState) : undefined
     return {
       title: path(k).pop() || k, kind, runMark: state || batch ? runMark(this.runStatus) : undefined, symbol: kind === 'invalid' ? undefined : sym || undefined, summary: summary || undefined,
-      inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k, opts.definition),
+      inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k),
       result: state?.transfer ?? pending ?? (!state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
       state: kind === 'subgraph' ? this.compositeState(k) : this.canvasCardState(k), stage: empty ? undefined : this.stageProgress(k), executionList,
       invocation: empty ? 0n : state?.invocation ?? 0n, runContinues: this.runActive,
@@ -2469,17 +2433,17 @@ export class ProjectSession extends Observable {
 /** What a Card is, for choosing what the canvas and the editor offer.
  *  `invalid`: its _card.json has no type or one this build does not know (or
  *  one that does not match `external`), a definition error the core reports. */
-export type CardKind = 'trigger' | 'input' | 'branch' | 'fork' | 'merge' | 'collect' | 'draft' | 'subgraph' | 'code' | 'invalid'
+export type CardKind = 'trigger' | 'input' | 'merge' | 'collect' | 'draft' | 'subgraph' | 'code' | 'invalid'
 /** The _card.json "type" names. */
-const KINDS: CardKind[] = ['trigger', 'input', 'branch', 'fork', 'merge', 'collect', 'draft', 'subgraph', 'code']
+const KINDS: CardKind[] = ['trigger', 'input', 'merge', 'collect', 'draft', 'subgraph', 'code']
 
 export const KIND_LABEL: Record<CardKind, string> = {
-  trigger: L('開始'), input: L('入力'), branch: L('分岐'), fork: L('分配'), merge: L('合流'), collect: L('収集'),
+  trigger: L('開始'), input: L('入力'), merge: L('合流'), collect: L('収集'),
   draft: 'Draft', subgraph: 'Card in Card', code: L('処理'), invalid: L('定義エラー'),
 }
 
 export const KIND_ICON: Record<CardKind, string> = {
-  trigger: 'play.circle', input: 'slider.horizontal.3', branch: 'arrow.triangle.swap', fork: 'arrow.triangle.branch',
+  trigger: 'play.circle', input: 'slider.horizontal.3',
   merge: 'arrow.triangle.merge', collect: 'line.3.horizontal.decrease', draft: 'pencil.and.outline', subgraph: 'link',
   code: 'chevron.left.forwardslash.chevron.right', invalid: 'xmark.octagon',
 }
@@ -2502,8 +2466,6 @@ const BUILTIN_CARDS = {
   trigger: H.BuiltinCard.Trigger,
   input: H.BuiltinCard.InputValue,
   input_bool: H.BuiltinCard.BooleanInput,
-  branch: H.BuiltinCard.Branch,
-  fork: H.BuiltinCard.Fork,
   merge: H.BuiltinCard.Merge,
   collect: H.BuiltinCard.Collect,
 }
@@ -2513,8 +2475,6 @@ export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   { id: 'trigger', label: L('トリガー') },
   { id: 'input', label: L('入力値') },
   { id: 'input_bool', label: L('真偽値の入力') },
-  { id: 'branch', label: L('分岐') },
-  { id: 'fork', label: L('分配') },
   { id: 'merge', label: L('合流') },
   { id: 'collect', label: L('収集') },
 ]
@@ -2576,22 +2536,16 @@ export function formatBytes(n: number | bigint | null | undefined): string {
 
 /** Integers keep their exact decimal spelling (64 bit safe); the core
  *  validates types and ranges and reports what it rejects. */
-export function parseParam(text: string, type: string): J {
-  const t = text.trim()
-  switch (type) {
-    case 'int64': case 'uint64': return /^-?[0-9]+$/.test(t) ? num(t) : t
-    case 'double': return t !== '' && /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/.test(t) ? num(t) : t
-    case 'bool': return t === 'true'
-    case 'string': return text
-    default: return tryParse(t) ?? text
-  }
+export function parameterInputLiteral(text: string, type: string): string {
+  if (type.startsWith('[')) return text
+  return parameterLiteral(type === 'string' ? text : tryParse(text) ?? text, type)
 }
 
-export const paramText = (v: J | undefined): string => {
+export const paramText = (v: J | undefined, type = ''): string => {
+  if (Array.isArray(v)) return parameterLiteral(v, type)
   if (typeof v === 'string') return v
   const n = numText(v)
   if (n !== undefined) return n
   if (typeof v === 'boolean') return v ? 'true' : 'false'
-  if (Array.isArray(v)) return serialize(v, false)
   return ''
 }

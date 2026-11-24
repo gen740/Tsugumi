@@ -5,6 +5,7 @@
 #include <set>
 #include <thread>
 
+#include "nix_params.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/text.hh"
@@ -33,7 +34,8 @@ std::string def_dir(const std::string& id) { return "definitions/" + id + "/"; }
 // .tsugumi/ or a path leaving the project.
 bool writable(const stdfs::path& root, const std::string& rel) {
   return fs::valid_relative_path(rel) &&
-         (Document::is_document_file(rel) || Document::is_source_area(rel)) &&
+         (Document::is_document_file(rel) || Document::is_source_area(rel) ||
+          Document::is_lock_file(rel)) &&
          fs::resolves_inside(root, root / rel);
 }
 
@@ -237,6 +239,41 @@ std::optional<Receipt> Store::receipt(const std::string& op_id) const {
                  statement.blob(2)};
 }
 
+namespace {
+
+// Compare against the staged document and keep the generated source and its
+// journaled write in the same transaction as the wiring or schema change.
+auto refresh_input_files(Document& doc, std::vector<FileOp>& ops)
+    -> std::vector<std::string> {
+  std::map<std::string, std::optional<std::string>> files;
+  for (const auto& [path, _] : doc.sources)
+    if (Document::is_generated_input_file(path)) files[path] = std::nullopt;
+  for (const auto& node : doc.resolution->nodes)
+    if (node.generated_inputs)
+      files[node.def_dir + "_inputs.fbs"] = node.generated_inputs;
+  std::vector<std::string> changed;
+  for (auto& [path, contents] : files) {
+    const auto old = doc.sources.find(path);
+    if (contents) {
+      const auto hash = crypto::sha256_hex(*contents);
+      if (old != doc.sources.end() && old->second.hash == hash) continue;
+      const auto child = doc.sources.lower_bound(path + '/');
+      if (child != doc.sources.end() && child->first.starts_with(path + '/'))
+        throw Failed(FailureKind::invalid_path, path + " is a generated file");
+      doc.sources.insert_or_assign(path, SourceEntry{hash, contents->size()});
+    } else {
+      if (old == doc.sources.end()) continue;
+      doc.sources.erase(old);
+    }
+    std::erase_if(ops, [&](const FileOp& op) { return op.path == path; });
+    ops.push_back({path, std::move(contents)});
+    changed.push_back(path);
+  }
+  return changed;
+}
+
+}  // namespace
+
 void Store::open() {
   stdfs::create_directories(state_dir());
   // Project identity: a short reference persisted in internal state, never in
@@ -259,6 +296,9 @@ void Store::open() {
   loaded->rev = rev;
   loaded->execution_rev = exec_rev;
   auto doc = finalize(loaded);
+  std::vector<FileOp> generated;
+  refresh_input_files(*doc, generated);
+  apply_ops(generated, false);
   std::lock_guard<std::mutex> l(mu_);
   doc_ = doc;
 }
@@ -305,7 +345,9 @@ std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc,
     doc->resolution = base->resolution;
     return doc;
   }
-  doc->resolution = resolve(*doc, source_reader(opts_.root, *doc, pending));
+  doc->resolution =
+      resolve(*doc, source_reader(opts_.root, *doc, pending),
+              evaluate_literal_params);
   return doc;
 }
 
@@ -442,12 +484,15 @@ void Store::apply_ops(const std::vector<FileOp>& ops, bool inject) {
   }
 }
 
-void Store::check_disk_unchanged(const Document& base,
-                                 const std::vector<FileOp>& ops) const {
+void Store::check_disk_unchanged(
+    const Document& base, const std::vector<FileOp>& ops,
+    const std::map<std::string, std::optional<std::string>>& expectations) const {
   for (const auto& op : ops) {
     const auto target = opts_.root / op.path;
     std::optional<std::string> expected;
-    if (Document::is_document_file(op.path)) {
+    if (const auto it = expectations.find(op.path); it != expectations.end()) {
+      expected = it->second;
+    } else if (Document::is_document_file(op.path)) {
       auto it = base.disk_hashes.find(op.path);
       if (it != base.disk_hashes.end()) expected = it->second;
     } else {
@@ -565,6 +610,34 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
           doc->project_json = std::move(parsed.text);
         });
         break;
+      case K::SetProjectLock: {
+        if (!Document::is_lock_file(c.path) || !writable(opts_.root, c.path))
+          throw Failed(FailureKind::invalid_path,
+                       "invalid lock path " + c.path);
+        const auto project = c.path.substr(0, c.path.size() - 4) + "json";
+        if (project == "tsugumi.json" || base->sources.contains(project))
+          check_disk_unchanged(*base, {{project, std::nullopt}});
+        check_disk_unchanged(*base, {{c.path, std::nullopt}});
+        const auto old = base->sources.find(c.path);
+        const auto expected = old == base->sources.end()
+                                  ? std::nullopt
+                                  : std::optional(old->second.hash);
+        if (expected != c.base_hash)
+          throw hash_conflict(c.path, c.base_hash.value_or(""),
+                              expected.value_or(""));
+        if (!c.lock_json) {
+          if (old != base->sources.end()) {
+            doc->sources.erase(c.path);
+            files[c.path] = std::nullopt;
+          }
+          break;
+        }
+        wrap([&] {
+          doc->sources[c.path] = external_document_source(c.path, *c.lock_json);
+          files[c.path] = *c.lock_json;
+        });
+        break;
+      }
       case K::SetLayout:
         wrap([&] {
           check_layout("layout.bin", c.json);
@@ -693,6 +766,12 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
       }
     }
   }
+  for (const auto& [path, _] : doc->sources)
+    if (path != "tsugumi.lock" && Document::is_lock_file(path) &&
+        !doc->sources.contains(path.substr(0, path.size() - 4) + "json"))
+      throw Failed(FailureKind::invalid_document,
+                   path + " has no project document");
+
   // Sources under a definition need the definition in the final document.
   for (const auto& [path, _] : doc->sources) {
     if (!path.starts_with("definitions/")) continue;
@@ -706,9 +785,11 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
   wrap([&] { check_structure(*doc); });
 
   // Files carried with their bytes: nested projects' documents and notes.
-  const auto carried = [](const std::string& path, std::string bytes) {
+  const auto carried = [&](const std::string& path, std::string bytes) {
+    const bool preserve =
+        path.ends_with("/tsugumi.json") && !base->sources.contains(path);
     return Document::is_external_document_file(path)
-               ? external_document_source(path, std::move(bytes), true)
+               ? external_document_source(path, std::move(bytes), !preserve)
                : note_source(path, std::move(bytes));
   };
   for (auto& [path, content] : files) {
@@ -869,13 +950,26 @@ Store::Staged Store::stage_reload(const std::string& op_id,
   auto base = current();
   auto doc = load_document(checkout.empty() ? opts_.root : checkout);
   if (!checkout.empty()) {
-    doc->resolution = resolve(*doc, source_reader(checkout, *doc));
+    doc->resolution =
+        resolve(*doc, source_reader(checkout, *doc),
+                evaluate_literal_params);
     doc->resolution_key = doc->execution_fingerprint;
     for (const auto& diagnostic : doc->resolution->all_diagnostics(false))
       if (diagnostic.code == "invalid_document")
         throw Failed(FailureKind::invalid_document, diagnostic.message);
   }
   Staged st;
+  if (!doc->resolution) finalize(doc, nullptr, base.get());
+  std::map<std::string, std::string> prior_inputs;
+  for (const auto& [path, source] : doc->sources)
+    if (Document::is_generated_input_file(path))
+      prior_inputs.emplace(path, source.hash);
+  for (const auto& path : refresh_input_files(*doc, st.ops)) {
+    const auto old = prior_inputs.find(path);
+    st.disk_expectations.emplace(path, old == prior_inputs.end()
+                                           ? std::nullopt
+                                           : std::optional(old->second));
+  }
   st.delta.base_rev = base->rev;
   st.delta.op_id = op_id;
   st.delta.origin = origin;
@@ -903,6 +997,7 @@ Store::Staged Store::stage_reload(const std::string& op_id,
                  !st.delta.definitions_removed.empty() ||
                  !st.delta.sources_upsert.empty() ||
                  !st.delta.sources_removed.empty();
+  st.effective |= !st.ops.empty();
   // Disk hashes always follow what is on disk now, even without effective
   // changes.
   doc->rev = base->rev;
@@ -918,6 +1013,21 @@ void Store::prepare_delta(Staged& st) const {
   doc->rev = base->rev + 1;
   finalize(doc, &st.ops, base.get());
   check_ports(*doc->resolution);
+  for (const auto& path : refresh_input_files(*doc, st.ops)) {
+    std::erase(st.delta.sources_upsert, path);
+    std::erase(st.delta.sources_removed, path);
+    const auto before = base->sources.find(path);
+    const auto after = doc->sources.find(path);
+    if (after == doc->sources.end()) {
+      if (before != base->sources.end()) st.delta.sources_removed.push_back(path);
+      else std::erase_if(st.ops, [&](const FileOp& op) { return op.path == path; });
+    } else if (before == base->sources.end() ||
+               before->second.hash != after->second.hash) {
+      st.delta.sources_upsert.push_back(path);
+    } else {
+      std::erase_if(st.ops, [&](const FileOp& op) { return op.path == path; });
+    }
+  }
   doc->execution_rev = doc->execution_fingerprint != base->execution_fingerprint
                            ? base->execution_rev + 1
                            : base->execution_rev;
@@ -951,8 +1061,8 @@ void Store::commit(Staged& st, const std::string& kind,
     st.doc = nullptr;
     return;
   }
-  check_disk_unchanged(*base, st.ops);
   prepare_delta(st);
+  check_disk_unchanged(*base, st.ops, st.disk_expectations);
   auto doc = st.doc;
   Receipt receipt{st.delta.op_id, kind, digest, make_receipt(&st.delta)};
   check_cancelled();

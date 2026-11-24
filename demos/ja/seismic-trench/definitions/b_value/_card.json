@@ -1,21 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "mc",
-      "type": "double",
-      "data": {
-        "double": 4.5
-      }
-    },
-    {
-      "name": "bin_width",
-      "type": "double",
-      "data": {
-        "double": 0.1
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "section"

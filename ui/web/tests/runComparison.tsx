@@ -59,8 +59,6 @@ for (const name of ['low', 'boundary']) assert.equal(byName(comparedParams(unrec
 const v = Object.assign(new D.NamedValueT(), { name: 'photons', rootType: 'Counts', inlineBytes: [1, 2, 3], sizeBytes: 3n })
 a.record!.outputs = [v]; b.record!.outputs = [Object.assign(new D.NamedValueT(), v, { inlineBytes: [1, 2, 4] })]
 assert.equal(comparedValues('outputs', a, b)[0].difference, 'changed')
-b.record!.outputs = [Object.assign(new D.NamedValueT(), v, { artifactId: 'another-retained-copy' })]
-assert.equal(comparedValues('outputs', a, b)[0].difference, 'same', 'retention identity alone does not change the value')
 
 // A value the response left out (too large to inline) is never reported as unchanged.
 const omitted = (hash: string | null = null, size = 9000000n) => Object.assign(new D.NamedValueT(), { name: 'photons', rootType: 'Counts', inlineBytes: [], sizeBytes: size, contentHash: hash })
@@ -87,18 +85,16 @@ assert.equal(valueDifference(v, undefined), 'unknown')
   } finally { view.unmount() }
 }
 
-// Files compare their recorded content, never the serialized storage path.
+// Opaque values also compare the artifact capabilities they carry.
 {
-  const file = (path: string, digest: string | null) => Object.assign(new D.NamedValueT(), {
-    name: 'file', kind: D.PortKind.Path,
-    inlineBytes: [...new TextEncoder().encode(path)], contentHash: path, fileContentHash: digest,
+  const value = (id: string) => Object.assign(new D.NamedValueT(), {
+    name: 'value', contentHash: 'bytes', artifacts: [new D.ValueArtifactT(id, 1n)],
   })
-  const x = file('/runs/left/value', 'bytes'), y = file('/runs/right/value', 'bytes')
+  const x = value('id'), y = value('id')
   assert.equal(valueDifference(x, y), 'same')
-  y.fileContentHash = 'other'; assert.equal(valueDifference(x, y), 'changed')
-  y.fileContentHash = null; assert.equal(valueDifference(x, y), 'unknown')
-  assert.equal(valueDifference(file('/same/path', null), file('/same/path', null)), 'unknown')
-  y.fileContentHash = 'bytes'; y.fileMissing = true; assert.equal(valueDifference(x, y), 'same')
+  y.artifacts = [new D.ValueArtifactT('other', 1n)]
+  assert.equal(valueDifference(x, y), 'changed')
+  y.artifacts = x.artifacts
   y.rootType = 'Other'; assert.equal(valueDifference(x, y), 'changed')
   assert.equal(valueDifference(x, undefined), 'unknown')
   assert.equal(valueDifference(undefined, x), 'unknown')
@@ -264,8 +260,8 @@ assert.equal(valueDifference(v, undefined), 'unknown')
   ])
   assert.equal(memberName(member('left', 1n, 1, null, 2)), L('実装 {0}', 2))
   assert.ok(inBatch(member('left', 1n, 1, null)) && !inBatch(summary('left', 'single')))
-  const one = Object.assign(member('left', 1n, 1, 'value=5'), { batchSize: 1 })
-  assert.ok(inBatch(one), 'a one-member sweep is still a named batch member')
+  const one = Object.assign(member('left', 1n, 1, 'threshold 5'), { batchSize: 1 })
+  assert.ok(inBatch(one), 'a one-entry run list is still a named batch member')
 
   const pages: string[] = []
   const all = await batchMembers({

@@ -47,9 +47,25 @@ class VersionFiles : public ::testing::Test {
   std::filesystem::path root;
 };
 
+TEST_F(VersionFiles, LockDocumentsAreTrackedWithTheirProjects) {
+  Put("tsugumi.json", initial_project_json("root"));
+  Put("externals/sub/tsugumi.json", initial_project_json("sub"));
+  Put("tsugumi.lock", R"({"entries":[]})");
+  Put("externals/sub/tsugumi.lock", R"({"entries":[]})");
+  const auto loaded = load_from_disk(root);
+  Versions versions(root);
+  const auto commit = versions.init();
+  const auto paths = Paths(commit);
+  EXPECT_TRUE(paths.contains("tsugumi.lock"));
+  EXPECT_TRUE(paths.contains("externals/sub/tsugumi.lock"));
+  EXPECT_EQ(Versions::card_of("tsugumi.lock"), "");
+  EXPECT_EQ(Versions::card_of("externals/sub/tsugumi.lock"), "sub");
+  EXPECT_EQ(*loaded->sources.at("tsugumi.lock").document, R"({"entries":[]})");
+}
+
 TEST_F(VersionFiles, DefinitionsTemplatesAndLiteralOptInsShareOneSelection) {
   Put("tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]},"versionPaths":["inputs/reference.csv","chosen folder","missing","literal[1].csv"]})");
+      R"({"nixPath": [],"canvas":{"cards":[],"connections":[]},"versionPaths":["inputs/reference.csv","chosen folder","missing","literal[1].csv"]})");
   const std::set<std::string> definitions = {
       "layout.bin",
       "definitions/a/_card.json",
@@ -113,7 +129,8 @@ TEST_F(VersionFiles, DefinitionsTemplatesAndLiteralOptInsShareOneSelection) {
 
 TEST_F(VersionFiles,
        InternalStateAndUnselectedIndexEntriesNeverEnterTheNextVersion) {
-  Put("tsugumi.json", R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]},"versionPaths":["result.csv"]})");
+  Put("tsugumi.json",
+      R"({"nixPath": [],"canvas":{"cards":[],"connections":[]},"versionPaths":["result.csv"]})");
   Put(".gitignore", "# Existing ignore file does not exclude state\n");
   Put("result.csv");
   Put("stray.csv");
@@ -133,7 +150,7 @@ TEST_F(VersionFiles,
   git_repository_free(repo);
   // Also defend direct callers against an unvalidated internal-state opt-in.
   Put("tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]},"versionPaths":[".tsugumi",".git","externals/inner/.tsugumi"]})");
+      R"({"nixPath": [],"canvas":{"cards":[],"connections":[]},"versionPaths":[".tsugumi",".git","externals/inner/.tsugumi"]})");
   const auto next = versions.mark("definitions", "Keep as Version");
   EXPECT_EQ(Paths(next), (std::set<std::string>{"tsugumi.json"}));
   EXPECT_EQ(fs::read_file(root / "result.csv"), "content");
@@ -146,7 +163,7 @@ TEST_F(VersionFiles,
 
 TEST_F(VersionFiles, ProjectValidationRejectsEscapesAndInternalPaths) {
   const std::string prefix =
-      R"({"name":"p","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]},"versionPaths":[)";
+      R"({"name":"p","nixPath": [],"canvas":{"cards":[],"connections":[]},"versionPaths":[)";
   for (const auto& path :
        {"../outside", "/outside", ".", "", "a/../b", "a//b", ".tsugumi",
         "a/.tsugumi/state", ".git/config", ".TSUGUMI/state"}) {
@@ -159,13 +176,14 @@ TEST_F(VersionFiles, ProjectValidationRejectsEscapesAndInternalPaths) {
       prefix + R"("inputs/reference.csv","chosen folder","missing"]})"));
   EXPECT_THROW(
       parse_project_json(
-          R"({"name":"p","pkgsPath":"x","canvas":{"cards":[],"connections":[]},"versionPaths":"result.csv"})"),
+          R"({"name":"p","nixPath": [],"canvas":{"cards":[],"connections":[]},"versionPaths":"result.csv"})"),
       DocumentError);
 }
 
 TEST_F(VersionFiles,
        ImportedDemoDifferencesCannotAddInternalOrUnselectedFiles) {
-  Put("tsugumi.json", R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]},"versionPaths":["chosen.csv"]})");
+  Put("tsugumi.json",
+      R"({"nixPath": [],"canvas":{"cards":[],"connections":[]},"versionPaths":["chosen.csv"]})");
   Put("definitions/a/_card.json", R"({"type":"code"})");
   Put(".tsugumi/state");
   Put("result.csv");

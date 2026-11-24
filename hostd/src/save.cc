@@ -97,8 +97,8 @@ auto SourcePatches::Project(std::string_view source,
 
 auto CaptureSaveBase(const json::Members& snapshot) -> SaveBase {
   SaveBase base;
-  for (const auto* key :
-       {"rev", "project_json", "layout", "definitions", "sources"})
+  for (const auto* key : {"rev", "project_json", "layout", "definitions",
+                          "sources", "resolution"})
     if (snapshot.contains(key)) base.snapshot[key] = snapshot.at(key);
   base.files["tsugumi.json"] = json::Text(snapshot, "project_json", "{}");
   for (const auto& raw :

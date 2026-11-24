@@ -1,14 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "ligand_chain",
-      "type": "string",
-      "data": {
-        "string": "C"
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "data"

@@ -1,3 +1,4 @@
+from card import Artifact, Input, Output, params as card_params
 import os
 
 import numpy as np
@@ -13,20 +14,21 @@ def parse(path):
     return atoms
 
 
-def main(inputs, report, run):
-    p = inputs.params
-    folder = inputs.data.value.decode()
+def run(inputs: Input) -> Output:
+    artifact, directory = Artifact.dir()
+    p = card_params
+    folder = inputs.require("data").open()
     atoms = parse(os.path.join(folder, sorted(os.listdir(folder))[0]))
-    lig_chain = p.ligandChain.decode()
+    lig_chain = p.ligand_chain
     ligand = [a for a in atoms if a["chain"] == lig_chain and a["resn"] != "HOH"]
     protein = [a for a in atoms if a["rec"] == "ATOM" and a["chain"] != lig_chain]
     ca = [a for a in protein if a["name"] == "CA"]
     chains = sorted({a["chain"] for a in atoms if a["resn"] != "HOH"})
     for c in chains:
         res = {(a["resi"], a["resn"]) for a in atoms if a["chain"] == c and a["resn"] != "HOH"}
-        report.log(f"chain {c}: {len(res)} residues, {sum(a['chain'] == c for a in atoms)} atoms"
+        print(f"chain {c}: {len(res)} residues, {sum(a['chain'] == c for a in atoms)} atoms"
               + (" (ligand)" if c == lig_chain else ""))
-    np.savez(os.path.join(run.output_directory, "structure.npz"),
+    np.savez(os.path.join(directory, "structure.npz"),
              protein_xyz=np.array([a["xyz"] for a in protein]),
              protein_res=np.array([f"{a['resn']}{a['resi']}" for a in protein]),
              ligand_xyz=np.array([a["xyz"] for a in ligand]),
@@ -34,5 +36,5 @@ def main(inputs, report, run):
              ca_res=np.array([f"{a['resn']}{a['resi']}" for a in ca]))
     pts = [a["xyz"] for a in ca] + [a["xyz"] for a in ligand]
     colors = [0x4A90D9] * len(ca) + [0xE5484D] * len(ligand)
-    report.points([x for x, _, _ in pts], [y for _, y, _ in pts], [z for _, _, z in pts], colors)
-    return {'atoms': {"value": run.output_directory}}
+    # TODO(open): Port the demo display.
+    return Output(atoms=artifact)

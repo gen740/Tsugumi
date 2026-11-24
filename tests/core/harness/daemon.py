@@ -14,6 +14,7 @@ from tsugumi_client import Client
 
 from .control import read_ready, read_startup_error
 from .file_events import process_file
+from .nix_path import declarations, write_lock
 
 ROOT = Path(__file__).resolve().parents[3]
 BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build")).resolve()
@@ -35,12 +36,14 @@ FAULTS = {
 }
 
 
-def write_project(root: Path) -> None:
+def write_project(root: Path, *, locked=()) -> None:
     root.mkdir(parents=True, exist_ok=True)
     (root / "tsugumi.json").write_text(json.dumps({
-        "name": "rpc-test", "pkgsPath": "tsugumi:default",
+        "name": "rpc-test", "nixPath": declarations(locked),
         "canvas": {"cards": [], "connections": []},
     }))
+    if locked:
+        write_lock(root, locked)
 
 
 class StartupFailure(RuntimeError):
@@ -107,13 +110,13 @@ class Daemon:
             self.close()
             raise
 
-    def connect(self, *, websocket=False, unix=None):
+    def connect(self, *, websocket=False, unix=None, client=0):
         if websocket:
             c = Client(ws=self.ready["endpoint"], origin="http://rpc.test")
         else:
             c = Client(unix=unix or self.unix)
         self.clients.append(c)
-        c.hello(token=self.ready["token"] if websocket else None)
+        c.hello(token=self.ready["token"] if websocket else None, client=client)
         return c
 
     def diagnostics(self):

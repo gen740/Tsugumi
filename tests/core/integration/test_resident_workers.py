@@ -9,8 +9,8 @@ from harness.file_events import wait_for_file
 from harness.observations import decode_scalar, read_output
 from harness.real_cards import log
 from harness.scenario import Project
-from projects import FILE_FBS, card, conn, run_and_wait, start_run, wait_run, write
-from test_worker_loading import native_card
+from projects import card, conn, run_and_wait, start_run, wait_run, write_nix_project as write
+from test_worker_loading import DIRECTORY, native_card
 from tsugumi_client import path
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
@@ -79,14 +79,15 @@ def test_failed_resident_is_discarded(core_factory, tmp_path, crashes):
 def test_output_transfer_failure_keeps_living_resident_state(core_factory, tmp_path):
     definition = native_card(r'''
         static unsigned calls;
+        tsugumi_artifact_id id;
+        const auto file = fs::path(create_artifact(call, id)) / "result";
         if (++calls == 1) {
-          if (mkfifo("result", 0600)) return 1;
+          if (mkfifo(file.c_str(), 0600)) return 1;
         } else {
-          fs::remove("result");
-          std::ofstream("result") << "recovered";
+          std::ofstream(file) << "recovered";
         }
-        out.path("result");
-    ''', outputs=FILE_FBS, reuseWorker=True)
+        out.artifact(id);
+    ''', outputs=DIRECTORY, reuseWorker=True)
     write(tmp_path / "p", {"resident": definition}, [card("resident", "resident")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
     first, state = run_and_wait(c, "resident")
@@ -138,15 +139,22 @@ def test_stopped_resident_can_interrupt_a_large_send(core_factory, tmp_path, sto
           close(open("sending", O_WRONLY | O_CREAT, 0600));
           _exit(0);
         }
-        std::ofstream("marker") << "test";
-        out.path("marker");
+        out.number(1);
         printf("%s/stop\n", std::getenv("HOME"));
     ''', declarations="#include <sys/socket.h>", inputs=["data"],
-        outputs=FILE_FBS, reuseWorker=True, recordIO=True)
+        reuseWorker=True, recordIO=True)
     if stop == "deadline":
         definition["timeoutSeconds"] = 5
-    payload = {"type": "input", "params": [{"name": "value", "type": "string", "data": {"string": "x" * (4 << 20)}}],
-               "_outputs": 'table Text { value:string; } table Outputs { data:Text (required); } root_type Outputs;'}
+    payload = {
+        "type": "input",
+        "_outputs": 'table Text { value:string; } table Outputs { data:Text (required); } root_type Outputs;',
+        "_nix": """{ params, inputs }: let pkgs = import <nixpkgs> { }; in {
+          run = pkgs.runCommand "large-input-fixture" { } ''
+            mkdir -p "$out/share/tsugumi/input/ports"
+            head -c 4194304 /dev/zero > "$out/share/tsugumi/input/ports/data"
+          '';
+        }""",
+    }
     root = tmp_path / "p"
     write(root, {"payload": payload, "resident": definition},
           [card("source", "payload"), card("resident", "resident")],

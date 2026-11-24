@@ -252,10 +252,17 @@ table ProjectConnect {
 table ProjectMakeSubgraph { project_path:string; cards:[string]; id:string (required); }
 // Source paths name a definition or an external folder in the current project.
 // The host copies its complete document/source closure and places the new Card.
-table ProjectCopyItem { from:string (required); id:string (required); x:double; y:double; demo:string; folder:string; }
+table ProjectCopyItem {
+  from:string (required);
+  id:string (required);
+  x:double;
+  y:double;
+  demo:string;
+  folder:string;
+}
 table ProjectCopy { project_path:string; items:[ProjectCopyItem]; copy_connections:bool; }
 table ProjectImport { project_path:string; path:string (required); id:string (required); x:double; y:double; }
-enum BuiltinCard:ubyte { Draft, Trigger, InputValue, BooleanInput, Branch, Fork, Merge, Collect }
+enum BuiltinCard:ubyte { Draft, Trigger, InputValue, BooleanInput, Merge, Collect }
 table ProjectCreateCard { project_path:string; id:string (required); kind:BuiltinCard; x:double; y:double; automatic_placement:bool; }
 enum ProjectLayoutAction:ubyte { Arrange, Untangle }
 table ProjectLayout {
@@ -288,7 +295,19 @@ table HostTemplateAddRequest { addition:TemplateAdd (required); }
 table ProjectTemplateCopy {
   project_path:string; store:TemplateStore; name:string (required); x:double; y:double;
 }
-union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout, ProjectCopy, ProjectImport, ProjectCreateCard, ProjectMove, ProjectReplaceDocuments, ProjectSelection, ProjectReload, ProjectTemplateCopy, TemplateAdd }
+table ProjectUpdateNixPathLock {
+  project_path:string;
+  /// Omitted locks every declared name and removes obsolete lines.
+  name:string;
+}
+table ProjectRewriteParamLiteral {
+  card:Tsugumi.Data.CardPath (required);
+  name:string (required);
+  /// One Nix value of the same type as the current literal.
+  literal:string (required);
+  expected_rev:uint64 = null;
+}
+union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout, ProjectCopy, ProjectImport, ProjectCreateCard, ProjectMove, ProjectReplaceDocuments, ProjectSelection, ProjectReload, ProjectTemplateCopy, TemplateAdd, ProjectUpdateNixPathLock, ProjectRewriteParamLiteral }
 table ProjectOperateRequest {
   project_id:string (required);
   op_id:string (required);
@@ -302,7 +321,6 @@ table RunCategoryDeleteRequest {
   category:Tsugumi.RPC.RunRecordCategory;
   op_id:string (required);
 }
-table RunFileReferencesRequest { project_id:string (required); run_id:string (required); }
 
 // Host policy owns the permission catalog. Unknown ids must still be displayed
 // verbatim by clients, and cannot become standing approvals implicitly.
@@ -347,7 +365,7 @@ table ExecutionService { id:string (required); name:string (required); endpoint:
 table ExecutionServices { services:[ExecutionService]; host_public_key:string (required); }
 table ExecutionAuthorization { endpoint:string (required); capability_file:string (required); available:bool; }
 
-table ProjectDefaults { nixpkgs_pin:string (required); agent_exclude:[string]; }
+table ProjectDefaults { agent_exclude:[string]; }
 table ProjectInfo { path:string (required); name:string (required); }
 table ProjectLocation { path:string (required); }
 // opened_at is Unix epoch milliseconds. Forget never removes project folders.
@@ -381,8 +399,7 @@ table LayoutCard {
   /// In the order drawn.
   inputs:[LayoutPort] (id: 5);
   outputs:[LayoutPort] (id: 6);
-  /// Its ports may be drawn in another order (not those of a branch
-  /// and the like, whose places have a meaning).
+  /// Its ports may be drawn in another order.
   reorderable:bool (id: 7);
 }
 
@@ -443,11 +460,9 @@ table VersionCanvasCard {
   id:string (id: 0, required);
   x:double (id: 1);
   y:double (id: 2);
-  /// What it is, which decides its shape: trigger, input, branch, fork,
-  /// merge, draft, subgraph or code.
+  /// The Card type that determines its shape.
   kind:string (id: 3, required);
-  /// The inputs of a Merge or the outputs of a Fork, which decide its width;
-  /// 0 for others.
+  /// The number of inputs of a Merge, or 0 for other Cards.
   fan:uint32 (id: 4);
   /// Folded on the canvas: only its header shows.
   collapsed:bool (id: 5);
@@ -505,8 +520,6 @@ table InputType {
   port:string (required);
   source_card:Tsugumi.Data.CardPath;
   source_port:string;
-  /// value or path; empty when unresolved.
-  kind:string;
   /// no_source, unresolved or resolved.
   state:string (required);
   /// Complete .fbs schema when resolved.
@@ -549,7 +562,7 @@ union RequestPayload {
   HostTraceRequest:Tsugumi.Trace.HostTraceRequest, HostPageRequest,
   HostHomeRequest, HostRevealRequest, HostFolderListRequest, HostFolderCreateRequest,
   CardSecretListRequest, CardSecretSetRequest,
-  RunCategoryDeleteRequest, RunFileReferencesRequest,
+  RunCategoryDeleteRequest,
   TemplateListRequest, HostTemplateAddRequest,
 }
 table Request { value:RequestPayload; }
@@ -566,7 +579,6 @@ union ReplyPayload {
   HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList, HostHome, FolderListing,
   CardSecretList,
   RunCategoryDeleteResult:Tsugumi.RPC.RunCategoryDeleteResult,
-  RunFileReferences:Tsugumi.RPC.RunFileReferences,
   TemplateList,
 }
 table Reply { value:ReplyPayload; }

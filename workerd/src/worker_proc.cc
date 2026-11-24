@@ -54,8 +54,8 @@ void close_fd(int& fd) {
 
 auto send_frame(trace::Link& link, int fd, const std::string& frame,
                 const std::atomic<bool>* cancel,
-                std::optional<std::chrono::steady_clock::time_point> deadline)
-    -> void {
+                std::optional<std::chrono::steady_clock::time_point> deadline,
+                bool observe = true) -> void {
   rpc::frame::CheckSize(frame.size(), workerd::kMaxWorkerFrameBytes);
   const auto prefix =
       rpc::frame::EncodePrefix(static_cast<uint32_t>(frame.size()));
@@ -89,8 +89,9 @@ auto send_frame(trace::Link& link, int fd, const std::string& frame,
     }
     throw Failed(FailureKind::worker_failed, "worker connection broken");
   }
-  trace::Observe(link, "project core", "Card worker", true, frame,
-                 &trace::kFlatBufferCodec);
+  if (observe)
+    trace::Observe(link, "project core", "Card worker", true, frame,
+                   &trace::kFlatBufferCodec);
 }
 
 #ifdef __APPLE__
@@ -141,6 +142,11 @@ auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch)
     exec += " (subpath " + quote(p) + ")";
   }
   std::string read_only_grants;
+  if (!sp.artifacts_root.empty()) {
+    const auto rule = " (subpath " + quote(sp.artifacts_root) + ")";
+    read += rule;
+    read_only_grants += rule;
+  }
   for (const auto& bind : sp.binds) {
     const auto rule = " (subpath " + quote(bind.source) + ")";
     read += rule;
@@ -159,10 +165,10 @@ auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch)
          "file-read-metadata)\n"
          "(allow file-read* " +
          read + ")\n(allow file-write* " + write +
-         ")\n"
-         "(deny file-write* (subpath " +
-         quote(scratch + "/inputs") + ")" + read_only_grants +
-         ")\n"
+         ")\n" +
+         (read_only_grants.empty()
+              ? ""
+              : "(deny file-write* " + read_only_grants + ")\n") +
          "(allow file-ioctl (subpath \"/dev\"))\n" +
          // With the network allowed, still nothing on this host: tsugumid's
          // own ports and sockets, the web server, other local services. For
@@ -328,7 +334,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
           "cannot restore staging directory permissions: " + target.string());
   };
 #endif
-  for (const char* d : {"work", "tmp", "inputs"})
+  for (const char* d : {"work", "tmp"})
     std::filesystem::create_directories(std::filesystem::path(scratch_) / d);
   if (::geteuid() == 0 && sp.uid && worker_uid_on_host())
     for (const char* d : {"work", "tmp"}) {
@@ -431,13 +437,36 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     if (filesystem || !sp.hidden_paths.empty())
       argv.insert(argv.end(), {"--bind", scratch_, scratch_});
     if (filesystem) {
-      argv.insert(argv.end(), {"--ro-bind", inputs_dir(), inputs_dir()});
-      read_only_inputs_ =
-          sp.sandbox.ipc &&
-          std::ranges::none_of(sp.binds, &WorkerSpawn::Bind::write);
-      for (const auto& bind : sp.binds)
-        argv.insert(argv.end(), {bind.write ? "--bind" : "--ro-bind",
-                                 bind.source, bind.target});
+      for (const auto& bind : sp.binds) {
+        bool writable = bind.write;
+        std::filesystem::path protected_subtree;
+        if (writable && !sp.artifacts_root.empty()) {
+          const auto source = std::filesystem::canonical(bind.source);
+          const auto root = std::filesystem::canonical(sp.artifacts_root);
+          const auto relative = source.lexically_relative(root);
+          if (!relative.empty() && *relative.begin() != "..") {
+            writable = false;
+          } else {
+            const auto child = root.lexically_relative(source);
+            if (!child.empty() && *child.begin() != "..")
+              protected_subtree = std::filesystem::path(bind.target) / child;
+          }
+        }
+        argv.insert(argv.end(), {writable ? "--bind" : "--ro-bind", bind.source,
+                                 bind.target});
+        if (!protected_subtree.empty())
+          argv.insert(argv.end(), {"--ro-bind", sp.artifacts_root,
+                                   protected_subtree.string()});
+      }
+      if (!sp.artifacts_root.empty()) {
+        // Keep search-only directories unreadable even with identity off.
+        // The Card must not be able to regain capabilities in a user namespace.
+        argv.push_back("--disable-userns");
+        argv.insert(argv.end(),
+                    {"--ro-bind", sp.artifacts_root, kSandboxArtifactsRoot});
+        if (!sp.sandbox.identity)
+          argv.insert(argv.end(), {"--cap-drop", "ALL"});
+      }
       if (sp.network)
         for (const char* path :
              {"/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf"})
@@ -521,7 +550,8 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
 #ifdef __linux__
     if (sp.sandbox.filesystem) path = bind.target;
 #endif
-    spec.env.push_back(grant_environment(bind.name) + "=" + path);
+    if (!bind.name.empty())
+      spec.env.push_back(grant_environment(bind.name) + "=" + path);
   }
   spec.env.insert(spec.env.end(), gui_env.begin(), gui_env.end());
   if (trace::LaunchEnabled())
@@ -621,7 +651,6 @@ WorkerProc::WorkerProc(Borrowed borrowed)
       err_fd_(borrowed.descriptors[3]),
       alive_(true),
       scratch_(std::move(borrowed.scratch)),
-      read_only_inputs_(borrowed.read_only_inputs),
       call_id_(borrowed.call_id),
       borrowed_(true),
       lease_id_(borrowed.lease),
@@ -687,6 +716,10 @@ auto WorkerProc::hand_over() -> std::array<int, 4> {
 }
 
 WorkerProc::~WorkerProc() {
+  if (view_receiver_) {
+    std::lock_guard lock(view_receiver_->mutex);
+    view_receiver_->worker = nullptr;
+  }
   if (borrowed_) {
     stop_data_reader();
     stop_log_reader();
@@ -752,7 +785,6 @@ void WorkerProc::clear_scratch() {
   try {
     fs::clear_staging(tmp_dir(), recover_permissions_,
                       x11_mounted_ ? ".X11-unix" : "");
-    fs::clear_staging(inputs_dir(), recover_permissions_);
   } catch (const std::system_error& error) {
     throw Failed(FailureKind::worker_failed,
                  "cannot clear the worker's invocation staging: " +
@@ -792,6 +824,10 @@ std::optional<uint64_t> WorkerProc::rss_bytes() const {
 }
 
 void WorkerProc::terminate(bool force) {
+  if (view_receiver_) {
+    std::lock_guard lock(view_receiver_->mutex);
+    view_receiver_->worker = nullptr;
+  }
   stop_data_reader();
   if (borrowed_) {
     if (alive_) {
@@ -841,21 +877,30 @@ void WorkerProc::read_logs(bool drain) {
   }
 }
 
-void WorkerProc::send(int fd, const std::string& frame) {
+void WorkerProc::send(int fd, const std::string& frame, bool observe) {
   // A stopped worker may also stop draining control messages. Never let the
   // cancellation notification delay escalation to killing the process group.
   send_frame(trace_link_, fd, frame, nullptr,
-             std::chrono::steady_clock::now() + std::chrono::milliseconds(100));
+             std::chrono::steady_clock::now() + std::chrono::milliseconds(100),
+             observe);
 }
 
 auto WorkerProc::start_data_reader() -> void {
   if (::pipe(data_wake_.data()) != 0)
     throw std::runtime_error("cannot create worker data wake pipe");
   for (const int fd : data_wake_) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+  view_receiver();
+  display_writer_ = std::thread([this] { write_display(); });
   data_thread_ = std::thread([this] { read_data(); });
 }
 
 auto WorkerProc::stop_data_reader() -> void {
+  {
+    std::lock_guard lock(display_mutex_);
+    data_stop_.request_stop();
+  }
+  display_ready_.notify_all();
+  if (display_writer_.joinable()) display_writer_.join();
   if (data_thread_.joinable()) {
     const char wake = 0;
     ssize_t written;
@@ -872,6 +917,113 @@ auto WorkerProc::set_display(DisplaySink display) -> void {
       display ? std::make_shared<DisplaySink>(std::move(display)) : nullptr;
   std::lock_guard lock(data_mutex_);
   display_ = std::move(sink);
+}
+
+auto WorkerProc::ViewReceiver::send(const WorkerDisplayData& message,
+                                    DisplayCredit complete) -> bool {
+  std::lock_guard lock(mutex);
+  return remote ? remote(message)
+                : worker && worker->send_display(message, std::move(complete));
+}
+
+auto WorkerProc::view_receiver() -> std::weak_ptr<ViewReceiver> {
+  if (!view_receiver_) {
+    view_receiver_ = std::make_shared<ViewReceiver>();
+    view_receiver_->worker = this;
+  }
+  return view_receiver_;
+}
+
+auto WorkerProc::send_display(const WorkerDisplayData& display,
+                              DisplayCredit complete) -> bool {
+  if (display.bytes.size() > TSUGUMI_MESSAGE_MAX || display.view.empty())
+    return false;
+  std::lock_guard lock(display_mutex_);
+  if (data_stop_.stop_requested()) return false;
+  auto& view = control_views_[display.view];
+  if (view.pending_bytes > workerd::kViewBudget - TSUGUMI_MESSAGE_MAX)
+    return false;
+  view.pending.emplace_back(display.bytes, std::move(complete));
+  view.pending_bytes += workerd::message_cost(display.bytes.size());
+  display_ready_.notify_one();
+  return true;
+}
+
+auto WorkerProc::return_display_credit(const std::string& view, size_t bytes)
+    -> void {
+  std::lock_guard lock(display_mutex_);
+  if (data_stop_.stop_requested()) return;
+  control_views_[view].forward_credit += bytes;
+  display_ready_.notify_one();
+}
+
+auto WorkerProc::write_display() -> void {
+  std::string previous;
+  try {
+    for (;;) {
+      std::unique_lock lock(display_mutex_);
+      const auto ready = [](const auto& entry) {
+        const auto& view = entry.second;
+        return view.forward_credit ||
+               (!view.pending.empty() &&
+                view.reverse_credit <=
+                    workerd::kViewBudget - TSUGUMI_MESSAGE_MAX);
+      };
+      display_ready_.wait(lock, [&] {
+        return data_stop_.stop_requested() ||
+               std::ranges::any_of(control_views_, ready);
+      });
+      if (data_stop_.stop_requested()) return;
+      const auto end = control_views_.end();
+      auto next =
+          std::find_if(control_views_.upper_bound(previous), end, ready);
+      if (next == end) next = std::find_if(control_views_.begin(), end, ready);
+      previous = next->first;
+      auto& view = next->second;
+      const auto credit = std::exchange(view.forward_credit, 0);
+      std::string bytes;
+      DisplayCredit complete;
+      if (!credit) {
+        std::tie(bytes, complete) = std::move(view.pending.front());
+        view.pending.pop_front();
+        const auto charge = workerd::message_cost(bytes.size());
+        view.pending_bytes -= charge;
+        view.reverse_credit += charge;
+      }
+      lock.unlock();
+
+      flatbuffers::FlatBufferBuilder b;
+      const auto name = b.CreateString(previous);
+      auto type = W::WorkerPayload::WorkerDisplay;
+      flatbuffers::Offset<void> body;
+      if (credit) {
+        type = W::WorkerPayload::WorkerDisplayCredit;
+        body = W::CreateWorkerDisplayCredit(b, name, credit).Union();
+      } else {
+        body =
+            W::CreateWorkerDisplay(
+                b, name,
+                b.CreateVector(reinterpret_cast<const uint8_t*>(bytes.data()),
+                               bytes.size()))
+                .Union();
+      }
+      W::FinishWorkerMessageBuffer(b, W::CreateWorkerMessage(b, 0, type, body));
+      {
+        std::lock_guard write(control_mutex_);
+        send(control_fd_,
+             {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()},
+             false);
+      }
+      if (complete) complete();
+    }
+  } catch (const std::exception&) {
+    {
+      std::lock_guard lock(display_mutex_);
+      data_stop_.request_stop();
+    }
+    ::shutdown(control_fd_, SHUT_RDWR);
+    ::shutdown(data_fd_, SHUT_RDWR);
+  }
 }
 
 auto WorkerProc::read_data() -> void {
@@ -909,20 +1061,39 @@ auto WorkerProc::read_data() -> void {
       }
       const auto* message = W::GetWorkerMessage(frame.data());
       if (const auto* update = message->value_as_WorkerDisplay()) {
+        if (message->call_id() != 0 || update->view()->size() == 0 ||
+            update->bytes()->size() > TSUGUMI_MESSAGE_MAX)
+          throw Failed(FailureKind::worker_failed, "invalid worker display message");
         std::shared_ptr<DisplaySink> sink;
         {
           std::lock_guard lock(data_mutex_);
           sink = display_;
         }
-        if (sink && message->call_id() == 0) {
-          try {
-            (*sink)(
-                {update->view()->str(), std::string(update->bytes()->begin(),
-                                                    update->bytes()->end())});
-          } catch (const std::exception&) {
-            // A presentation consumer cannot fail or stop a Card invocation.
+        auto credit = [receiver = std::weak_ptr(view_receiver_),
+                       view = update->view()->str(),
+                       cost = workerd::message_cost(update->bytes()->size())] {
+          if (const auto target = receiver.lock()) {
+            std::lock_guard lock(target->mutex);
+            if (target->worker)
+              target->worker->return_display_credit(view, cost);
           }
-        }
+        };
+        if (!sink)
+          credit();
+        else
+          (*sink)({update->view()->str(), std::string(update->bytes()->begin(),
+                                                      update->bytes()->end())},
+                  std::move(credit));
+        continue;
+      }
+      if (const auto* update = message->value_as_WorkerDisplayCredit()) {
+        std::lock_guard lock(display_mutex_);
+        const auto found = control_views_.find(update->view()->str());
+        if (message->call_id() != 0 || found == control_views_.end() ||
+            update->bytes() > found->second.reverse_credit)
+          throw Failed(FailureKind::worker_failed, "invalid worker display credit");
+        found->second.reverse_credit -= update->bytes();
+        display_ready_.notify_one();
         continue;
       }
       std::lock_guard lock(data_mutex_);
@@ -935,18 +1106,17 @@ auto WorkerProc::read_data() -> void {
                      &trace::kFlatBufferCodec);
       WorkerOutcome outcome;
       if (const auto* result = message->value_as_WorkerResult()) {
-        const auto text = [](const flatbuffers::String* value) {
-          return value ? value->str() : std::string();
-        };
+        outcome.created = wire::artifact_ids(result->created());
         for (const auto* output : *result->outputs()) {
           const auto* bytes = output->bytes();
           outcome.outputs.push_back(
               {output->name()->str(),
                bytes ? std::string(bytes->begin(), bytes->end()) : "",
-               text(output->path()), text(output->forwarded_from())});
+               wire::artifact_ids(output->artifacts())});
         }
       } else if (const auto* failure = message->value_as_WorkerFailure()) {
         outcome.failure = wire::failure(failure->failure());
+        outcome.created = wire::artifact_ids(failure->created());
       } else {
         diagnostic = "unexpected message from worker";
         break;
@@ -967,6 +1137,11 @@ auto WorkerProc::read_data() -> void {
           FailureData::make(FailureKind::worker_failed, diagnostic);
     }
   }
+  {
+    std::lock_guard lock(display_mutex_);
+    data_stop_.request_stop();
+  }
+  display_ready_.notify_all();
   data_ready_.notify_one();
 }
 
@@ -1037,6 +1212,7 @@ WorkerOutcome WorkerProc::call(
           b, W::CreateWorkerMessage(b, call_id, W::WorkerPayload::WorkerCancel,
                                     value.Union()));
       try {
+        std::lock_guard lock(control_mutex_);
         send(control_fd_, {reinterpret_cast<const char*>(b.GetBufferPointer()),
                            b.GetSize()});
       } catch (const Failed&) {
@@ -1051,9 +1227,11 @@ WorkerOutcome WorkerProc::call(
 }
 
 std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
-                              const std::string& params,
                               const std::vector<types::PortType>& outputs,
-                              std::optional<uint64_t> deadline_ms) {
+                              std::optional<uint64_t> deadline_ms,
+                              const std::filesystem::path& artifact_directory,
+                              std::span<const ArtifactGrant> grants,
+                              bool drain_display) {
   flatbuffers::FlatBufferBuilder b(64 * 1024);
   // The Card reads each nested message in place.
   auto message = [&](const std::string& s) {
@@ -1063,25 +1241,33 @@ std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
                           s.size());
   };
   std::vector<flatbuffers::Offset<C::CardPort>> ins;
-  for (const auto& v : inputs) {
-    const bool path = v.kind == PortKind::Path;
-    auto payload = path ? flatbuffers::Offset<flatbuffers::Vector<uint8_t>>()
-                        : message(v.bytes);
-    auto location = path ? b.CreateString(v.path)
-                         : flatbuffers::Offset<flatbuffers::String>();
-    ins.push_back(C::CreateCardPort(b, b.CreateString(v.name), v.kind, payload,
-                                    location));
-  }
+  for (const auto& v : inputs)
+    ins.push_back(C::CreateCardPort(b, b.CreateString(v.name),
+                                    b.CreateString(v.schema), message(v.bytes),
+                                    wire::artifact_ids(b, v.artifacts)));
   auto insv = b.CreateVector(ins);
-  auto pdata = message(params);
   std::vector<flatbuffers::Offset<W::WorkerPort>> outs;
   for (const auto& p : outputs)
-    outs.push_back(
-        W::CreateWorkerPort(b, b.CreateString(p.name), p.kind, p.required));
+    outs.push_back(W::CreateWorkerPort(b, b.CreateString(p.name), p.required));
+  std::vector<flatbuffers::Offset<W::ArtifactGrant>> grant_offsets;
+  for (const auto& grant : grants) {
+    const auto id = wire::artifact_struct(grant.id);
+    const auto store = grant.store_path.empty()
+                           ? flatbuffers::Offset<flatbuffers::String>{}
+                           : b.CreateString(grant.store_path);
+    grant_offsets.push_back(
+        W::CreateArtifactGrant(b, &id, b.CreateString(grant.path), store));
+  }
+  const auto grant_vector = b.CreateVector(grant_offsets);
+  const auto artifact_root = artifact_directory.empty()
+                                 ? flatbuffers::Offset<flatbuffers::String>{}
+                                 : b.CreateString(artifact_directory.string());
   auto outsv = b.CreateVector(outs);
   W::WorkerCallBuilder cb(b);
   cb.add_inputs(insv);
-  cb.add_params(pdata);
+  cb.add_grants(grant_vector);
+  cb.add_artifact_directory(artifact_root);
+  cb.add_drain_display(drain_display);
   cb.add_outputs(outsv);
   if (deadline_ms) cb.add_deadline_ms(*deadline_ms);
   auto call = cb.Finish();
@@ -1091,7 +1277,7 @@ std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
   mb.add_value(call.Union());
   W::FinishWorkerMessageBuffer(b, mb.Finish());
   if (b.GetSize() > workerd::kMaxWorkerFrameBytes)
-    throw Failed(FailureKind::resource_limit, "the worker call exceeds 16 MiB");
+    throw Failed(FailureKind::resource_limit, "the worker call exceeds the frame limit");
   return std::string(reinterpret_cast<const char*>(b.GetBufferPointer()),
                      b.GetSize());
 }

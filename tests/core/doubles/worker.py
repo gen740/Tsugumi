@@ -23,7 +23,7 @@ import flatbuffers
 
 from Tsugumi.Data.Failure import FailureT
 from Tsugumi.Data.FailureKind import FailureKind
-from Tsugumi.Data.PortKind import PortKind
+from tsugumi.ArtifactId import ArtifactIdT
 from Tsugumi.Worker.WorkerDisplay import WorkerDisplayT
 from Tsugumi.Worker.WorkerFailure import WorkerFailureT
 from Tsugumi.Worker.WorkerMessage import WorkerMessage, WorkerMessageT
@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from harness.file_events import wait_for_file  # noqa: E402
 
 
-MAX_FRAME = 16 << 20
+MAX_FRAME = (16 << 20) + 65536
 
 
 def text(value):
@@ -115,6 +115,7 @@ class Worker:
         self.calls = 0
         self.call_id = 0
         self.call = None
+        self.created = []
 
     def control_loop(self):
         try:
@@ -164,15 +165,7 @@ class Worker:
 
     def failure(self, kind, message):
         failure = FailureT(kind=getattr(FailureKind, kind), args=[], diagnostic=message)
-        self.data.send(self.call_id, WorkerPayload.WorkerFailure, WorkerFailureT(failure=failure))
-
-    def output_path(self, relative):
-        if self.call is None:
-            raise ValueError("file actions require a File or Directory output")
-        relative = Path(relative)
-        if relative.is_absolute() or ".." in relative.parts:
-            raise ValueError("output action path must stay inside the output directory")
-        return Path.cwd() / relative
+        self.data.send(self.call_id, WorkerPayload.WorkerFailure, WorkerFailureT(failure=failure, created=self.created))
 
     def actions(self, actions, outputs):
         for action in actions:
@@ -209,28 +202,33 @@ class Worker:
                 outputs[action["port"]] = WorkerOutputT(name=action["port"], bytes=scalar(action["type"], value))
             elif operation == "echo":
                 value = next(v for v in self.call.inputs if text(v.name) == action["input"])
-                # A Path input is returned unchanged; a FlatBuffer one by its bytes.
-                if value.kind == PortKind.Path:
-                    outputs[action["port"]] = WorkerOutputT(
-                        name=action["port"], path=text(value.path), forwardedFrom=text(value.name))
-                else:
-                    outputs[action["port"]] = WorkerOutputT(name=action["port"], bytes=bytes(value.bytes))
+                outputs[action["port"]] = WorkerOutputT(
+                    name=action["port"], bytes=bytes(value.bytes) if value.bytes is not None else b"",
+                    artifacts=value.artifacts)
             elif operation in ("file", "directory"):
-                destination = self.output_path(action["path"])
+                artifact_key = os.urandom(16)
+                artifact = ArtifactIdT(bytes=list(artifact_key))
+                self.created.append(artifact)
+                root = Path(text(self.call.artifactDirectory)) / artifact_key.hex()
+                destination = root / action["path"]
+                if not destination.is_relative_to(root) or ".." in destination.parts:
+                    raise ValueError("artifact member escapes staging")
                 if operation == "file":
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     destination.write_text(action.get("text", ""))
                 else:
                     destination.mkdir(parents=True, exist_ok=True)
                     for relative, contents in action.get("files", {}).items():
-                        member = self.output_path(str(Path(action["path"]) / relative))
+                        member = destination / relative
+                        if not member.is_relative_to(root) or ".." in member.parts:
+                            raise ValueError("artifact member escapes staging")
                         member.parent.mkdir(parents=True, exist_ok=True)
                         member.write_text(contents)
-                outputs[action["port"]] = WorkerOutputT(name=action["port"], path=str(destination))
-            elif operation == "symlink":
-                destination = self.output_path(action["path"])
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.symlink_to(action["target"])
+                outputs[action["port"]] = WorkerOutputT(name=action["port"], artifacts=[artifact])
+            elif operation == "artifact_symlink":
+                artifact = self.created[-1]
+                root = Path(text(self.call.artifactDirectory)) / bytes(artifact.bytes).hex()
+                (root / action["name"]).symlink_to(action["target"])
             elif operation == "display_text":
                 display = WorkerDisplayT(view="test", bytes=action["text"].encode())
                 self.data.send(0, WorkerPayload.WorkerDisplay, display)
@@ -252,11 +250,12 @@ class Worker:
                     raise ValueError("expected a worker call")
                 self.call_id = message.callId
                 self.call = message.value
+                self.created = []
                 self.calls += 1
                 outputs = {}
                 if self.actions(self.scenario.get("actions", []), outputs):
                     self.check_cancel()
-                    result = WorkerResultT(outputs=list(outputs.values()))
+                    result = WorkerResultT(outputs=list(outputs.values()), created=self.created)
                     self.data.send(self.call_id, WorkerPayload.WorkerResult, result)
             except Cancelled:
                 self.failure("cancelled", "scripted worker observed cancellation")

@@ -1,21 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "window_hours",
-      "type": "double",
-      "data": {
-        "double": 8.0
-      }
-    },
-    {
-      "name": "core_fraction",
-      "type": "double",
-      "data": {
-        "double": 0.5
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "detrended"

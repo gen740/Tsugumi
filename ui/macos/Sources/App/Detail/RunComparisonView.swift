@@ -47,7 +47,7 @@ struct ComparedRunField: Identifiable {
   private static func names<V>(_ a: [String: V], _ b: [String: V]) -> [String] { Set(a.keys).union(b.keys).sorted() }
 
   /// What names a member of an execution list: its implementation label (a run
-  /// list entry's `label`, an Input sweep's `name=value`), else its number.
+  /// list entry's `label`), else its number.
   static func memberName(_ i: Tsugumi_RPC_InvocationSummaryT) -> String {
     if let label = i.implementationLabel, !label.isEmpty { return label }
     if let index = i.implementationIndex { return String(localized: "実装 \(index)") }
@@ -142,11 +142,8 @@ struct ComparedRunField: Identifiable {
   /// Compares the type and content digest, or the payload when both are available.
   static func valueDifference(_ a: Tsugumi_Data_NamedValueT?, _ b: Tsugumi_Data_NamedValueT?) -> ComparedDifference {
     guard let a, let b else { return a == nil && b == nil ? .same : .unknown }
-    if a.kind != b.kind || a.rootType != b.rootType || a.schemaBfbs != b.schemaBfbs { return .changed }
-    if a.kind == .path {
-      guard let x = a.fileContentHash, !x.isEmpty, let y = b.fileContentHash, !y.isEmpty else { return .unknown }
-      return x == y ? .same : .changed
-    }
+    if a.rootType != b.rootType || a.schemaBfbs != b.schemaBfbs { return .changed }
+    if Set(a.artifacts.compactMap { $0?.id }) != Set(b.artifacts.compactMap { $0?.id }) { return .changed }
     if let x = a.contentHash, !x.isEmpty, let y = b.contentHash, !y.isEmpty { return x == y ? .same : .changed }
     if omitted(a) || omitted(b) { return .unknown }
     return a.inlineBytes == b.inlineBytes ? .same : .changed

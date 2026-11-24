@@ -1,31 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "fdrs",
-      "type": "double[]",
-      "data": {
-        "doubles": [
-          0.1,
-          0.05,
-          0.01,
-          0.001
-        ]
-      }
-    },
-    {
-      "name": "lfcs",
-      "type": "double[]",
-      "data": {
-        "doubles": [
-          0.0,
-          0.5,
-          1.0,
-          2.0
-        ]
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "results"

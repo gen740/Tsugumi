@@ -37,14 +37,16 @@ TEST(HostProjectFiles, CreationUsesTheCoreInitialDocumentAndCopiesPreserveIt) {
                         ->payload_as_Reply()
                         ->value_as_ProjectDefaults();
   ASSERT_NE(pin, nullptr);
-  EXPECT_EQ(
-      pin->nixpkgs_pin()->str(),
-      document_text::root<Tsugumi::Document::Project>(
-      parse_project_json(Read(source / "tsugumi.json")).buffer).pkgsPath()->str());
+  const auto initial = parse_project_json(Read(source / "tsugumi.json"));
+  EXPECT_EQ(document_text::root<Tsugumi::Document::Project>(initial.buffer)
+                .nixPath()
+                ->size(),
+            0u);
+
   EXPECT_NE(Read(source / "layout.bin").find("leftToRight"),
             std::string::npos);
   const std::string custom =
-      R"({"name":"custom","pkgsPath":"explicit-pin","canvas":{"cards":[],"connections":[]}})";
+      R"({"name":"custom","nixPath":[{"name":"custom","url":"github:org/project"}],"canvas":{"cards":[],"connections":[]}})";
   Write(source / "tsugumi.json", custom);
   H::HostProjectDuplicateRequestT duplicate;
   duplicate.path = source.string();
@@ -58,10 +60,9 @@ TEST(HostProjectFiles, DemoCopyKeepsItsDocumentInBothLanguages) {
   TemporaryDirectory dir;
   for (const auto& language : {"ja", "en"}) {
     const auto demos = dir.path / "demos";
-    auto document = initial_project_json(language);
-    const auto pin = document_text::root<Tsugumi::Document::Project>(
-        parse_project_json(document).buffer).pkgsPath()->str();
-    document.replace(document.find(pin), pin.size(), "demo-specific-pin");
+    const std::string document =
+        R"({"name":"sample","nixPath":[{"name":"demo","url":"github:org/demo"}],"canvas":{"cards":[],"connections":[]}})";
+
     Write(demos / language / "sample/tsugumi.json", document);
     Write(demos / language / "index.json",
           R"({"demos":[{"id":"sample","path":"sample","title":"Sample"}]})");

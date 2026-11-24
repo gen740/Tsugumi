@@ -2,6 +2,7 @@
 
 The ABI is card.fbs, every schema it includes (transitively) and card_abi.h.
 The kit vendors exactly these files, under the same names, in abi/.
+This includes artifact.fbs, which is also installed for user schemas.
 """
 
 import re
@@ -37,6 +38,7 @@ def schemas(directory, name, seen=None):
 
 def main(protocol, kit):
     names = schemas(protocol, "card.fbs")
+    assert "artifact.fbs" in names, "the Card ABI must include artifact.fbs"
     assert schemas(kit, "card.fbs") == names, "kit card.fbs includes a different set of schemas"
     vendored = {path.name for path in kit.iterdir()}
     expected = set(names) | {"card_abi.h"}

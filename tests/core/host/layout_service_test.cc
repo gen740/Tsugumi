@@ -483,8 +483,7 @@ TEST(HostCardPlacement, DisplayRpcCompletesMissingPositions) {
   namespace json = ::tsugumi::json;
   const std::string project =
       R"({"canvas":{"cards":[{"id":"wide"},{"id":"new"}],"connections":[]}})";
-  const std::string definition =
-      R"({"params":[{},{},{}],"inputs":[{},{},{},{},{},{},{},{}]})";
+  const std::string definition = R"({"inputs":[{},{},{},{},{},{},{},{}]})";
   flatbuffers::FlatBufferBuilder builder;
   const auto input = H::CreateLayoutCompleteRequest(
       builder, builder.CreateString(project), builder.CreateString("{}"),

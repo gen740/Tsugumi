@@ -1,4 +1,4 @@
-# Build the worker against the same package set and system as the Card.
+# Build the worker with the core's pinned package set for the Card's system.
 { pkgs }:
 pkgs.stdenv.mkDerivation {
   name = "tsugumi-worker";

@@ -7,9 +7,9 @@ Draft entries with a finished counterpart declare both language-qualified counte
 
 Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of execution are in [Features](features.md#2-cards-and-workflows).
 
-## TODO: port the demos to the current Card ABI
+## Demo status
 
-The demos under `demos/en` and `demos/ja`, including the Drafts, are still written for the previous Card ABI: Bash bodies, the `Report` object, run-start hooks, an output directory and displays kept in the run history. They do not build with the current language SDKs, and the descriptions below are of that version. They will be ported once the recording of displays is designed. Until then, nothing in the display path is recorded ([Views](CardGuide.md#views)), and no output port is added to the demos to carry what used to live only in a display.
+The demos and Drafts in `demos/en` and `demos/ja` declare their Nix sources in `tsugumi.json` and pin them in `tsugumi.lock`. The project files use the current contracts. TODO(open): Port the demo displays and finish exercising Card bodies against the pinned SDKs. Demo execution stays skipped in tests. The site player uses recorded material where available.
 
 | Demo | Subject | What it shows |
 | --- | --- | --- |
@@ -39,8 +39,8 @@ The demos under `demos/en` and `demos/ja`, including the Drafts, are still writt
 | [Dynamical systems gallery](#dynamical-systems-gallery-dynamics-draft) | Six dynamical systems | The Agent splits independent Drafts among helpers and implements them at the same time |
 | [MNIST · comparing classifiers (Draft)](#mnist--comparing-classifiers-draft-mnist-classifiers-draft) | Classifying handwritten digits (seven methods) | From a plan implemented up to the data, helpers implement seven classifiers at the same time and the Agent puts the comparison together |
 
-The arrows in the diagrams are a Card's wires (`output port → input port`). The kinds of Card are trigger (where a run starts), input (an input whose value is edited on the Canvas), branch (conditional branching), fork (the same value to several Cards), merge, subgraph (Card in Card) and code Cards ([supported languages](CardGuide.md#inputs-and-outputs)).
-Every Card has a summary in `README.md`, readable on the Canvas (by hovering, for trigger, merge and branch) and in the Card's settings.
+The arrows in the diagrams are a Card's wires (`output port → input port`). The kinds of Card are trigger (where a run starts), input (an input whose value is edited on the Canvas), merge, collect, subgraph (Card in Card) and code Cards ([supported languages](CardGuide.md#inputs-and-outputs)).
+Every Card has a summary in `README.md`, readable on the Canvas (by hovering, for trigger and merge) and in the Card's settings.
 
 ## The basics
 
@@ -49,8 +49,7 @@ Every Card has a summary in `README.md`, readable on the Canvas (by hovering, fo
 Python emits the `value` parameter (21). Ruby multiplies it by `factor` (2), displays
 input / factor / result in a table, and sends the typed result to C++. Its display
 reads `C++ received 42`. Change Ruby's factor and rerun it to reuse the saved Python
-input. Ruby's `on_run_start` counts Runs in its resident Card instance and writes that
-count to the log; turn off worker reuse to start with fresh state.
+input. A resident worker can keep state across invocations. Turn off worker reuse to start with fresh state.
 
 ### Data to report (`report`)
 
@@ -78,22 +77,21 @@ The iteration itself is drawn with the Cards' wires, so the behaviour of branche
 - Set `initial` to a large value such as 2^60: R's `check` fails, saying it is "not below 2^53" (Julia, C++ and Python return 61 values).
 - Open `collatz-jl` or `collatz-r` and look at the record of `collect`: each invocation's display is the sequence so far.
 
-### Signal detection sweep (`signal-sweep`)
+### Signal detection variants (`signal-sweep`)
 
 Run **start** to compare three signal strengths (8, 12, 16) with two detection
-thresholds (10, 14). **samples** is an Input Card whose `value` parameter is a
-value sweep: it hands on each signal in its own invocation, named `value=8`,
+thresholds (10, 14). **samples** is an Input Card which maps its `values` parameter to a Nix run list. It emits each signal in its own invocation, named `value=8`,
 `value=12` and `value=16`. **score** has a run list of two implementations named
 `threshold=10` and `threshold=14`, and makes six comparisons. Open its batch
 history to see which signal and threshold each invocation used.
 
-**collect** turns the six results into one typed vector. **summary** reads the
+**collect** turns the six results into one `Collected` value. **summary** reads the
 vector and shows three detections out of six comparisons.
 
 **Try**
-- In the settings of **samples**, add a value to the sweep, for example `[8, 12, 16, 20]`, and run from **start** again.
+- In the settings of **samples**, add a value to `values`, for example `[8, 12, 16, 20]`, and run from **start** again.
 - Add a threshold such as `12` in `score/default.nix`, run again and compare the two runs. Each comparison pairs members by name, so `threshold=14` is still compared with `threshold=14`.
-- Turn off **One invocation per value**: the Card hands on one value and **score** runs twice.
+- Set `values` to `[ 8 ]` to emit one signal and run **score** twice.
 
 [Run lists and Collect](features.md#run-lists-and-collect)
 

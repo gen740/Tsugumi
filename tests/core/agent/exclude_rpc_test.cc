@@ -31,8 +31,6 @@ auto DocumentBytes(const std::string& path, const std::string& text) -> std::str
   using namespace document_text;
   if (path.ends_with("/_card.json"))
     return print(Schema::Card, parse(Schema::Card, path, text));
-  if (path.ends_with("tsugumi.json"))
-    return print(Schema::Project, parse(Schema::Project, path, text));
   return text;
 }
 
@@ -110,7 +108,7 @@ class AgentExclusionRPC : public AgentProjectFixture {
     for (const auto& path : excluded) entries.push_back(Quote(path));
     StartProject(shell, j::Encode(j::Members{
                             {"name", "\"Project\""},
-                            {"pkgsPath", "\"tsugumi:default\""},
+                            {"nixPath", "[]"},
                             {"agentExclude", j::Encode(entries)},
                             {"canvas", R"({"cards":[],"connections":[]})"}}));
     const auto conversation = Conversation("exclusion");
@@ -124,7 +122,7 @@ TEST_F(AgentExclusionRPC,
        AttachedProjectImportIncludesNestedExternalsAndBinarySources) {
   const auto folder = directory.path / "RCW 86";
   const std::string project =
-      R"({"name":"RCW 86","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"sub"}],"connections":[]}})";
+      R"({"name":"RCW 86","nixPath": [],"canvas":{"cards":[{"id":"sub"}],"connections":[]}})";
   const std::map<std::string, std::string> files{
       {"tsugumi.json", project},
       {"layout.bin", document_text::parse(document_text::Schema::Layout, "layout.bin",
@@ -269,7 +267,7 @@ TEST_F(AgentExclusionRPC,
        AttachedCardCopyIncludesNestedExternalsAndBinarySources) {
   const auto folder = directory.path / "attached";
   const std::string project =
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})";
+      R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})";
   const std::string binary("\0\xff\x80\n", 4);
   Write(folder / "tsugumi.json", project);
   Write(folder / "definitions/sub/_card.json", R"({"type":"subgraph","external":"inner"})");
@@ -392,16 +390,15 @@ TEST_F(AgentExclusionRPC, FileReadListWriteAndPolicyChangesAreEnforcedByHost) {
   EXPECT_EQ(
       Error(Tool(
           c, "project_save",
-          R"({"base_rev":"0","changes":[{"value_type":"SetProject","value":{"json":"{\"name\":\"Project\",\"pkgsPath\":\"tsugumi:default\",\"agentExclude\":[],\"canvas\":{\"cards\":[],\"connections\":[]}}"}}]})")),
+          R"({"base_rev":"0","changes":[{"value_type":"SetProject","value":{"json":"{\"name\":\"Project\",\"nixPath\":[],\"agentExclude\":[],\"canvas\":{\"cards\":[],\"connections\":[]}}"}}]})")),
       "permission_denied");
   EXPECT_FALSE(std::filesystem::exists(directory.path /
                                        "project/definitions/hidden/new.txt"));
 }
 TEST_F(AgentExclusionRPC, DemoReadListCopyAndHelpersCannotReachExcludedDemo) {
   const auto demo = directory.path / "demos/ja/finished";
-  Write(
-      demo / "tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  Write(demo / "tsugumi.json",
+        R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   Write(demo / "definitions/step/_card.json", R"({"type":"draft"})");
   Write(demo / "definitions/step/src/note.txt", "EXCLUDED_DEMO_SENTINEL");
   Write(
@@ -438,9 +435,8 @@ TEST_F(AgentExclusionRPC, DemoReadListCopyAndHelpersCannotReachExcludedDemo) {
 }
 TEST_F(AgentExclusionRPC, DemoCardCopySavesItsDefinitionAndSources) {
   const auto demo = directory.path / "demos/en/source";
-  Write(
-      demo / "tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  Write(demo / "tsugumi.json",
+        R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   Write(demo / "definitions/step/_card.json", R"({"type":"draft"})");
   Write(demo / "definitions/step/README.md",
         "---\ndescription: Keep description\n---\n");

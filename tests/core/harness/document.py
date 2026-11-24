@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 
 from Tsugumi.Layout.Layout import Layout
+from tsugumi_client import change, new_id, path, text
 
 PROTOCOL = Path(__file__).resolve().parents[3] / "protocol"
 
@@ -48,6 +49,30 @@ def positions(buffer):
     return {card.Key().decode(): {"x": card.X(), "y": card.Y()} for card in cards}
 
 
-def set_param(body, name, value):
-    param = next(p for p in body["params"] if p["name"] == name)
-    param["data"] = {param["type"].replace("[]", "s"): value}
+def nix_literal(value):
+    if isinstance(value, str):
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("$" + "{", "\\$" + "{")
+        return '"' + escaped + '"'
+    if isinstance(value, list):
+        items = [nix_literal(item) for item in value]
+        return "[ " + " ".join(f"({item})" if item.startswith("-") else item
+                               for item in items) + " ]"
+    literal = json.dumps(value)
+    mantissa, exponent, power = literal.partition("e")
+    if type(value) is float and exponent and "." not in mantissa:
+        return mantissa + ".0e" + power
+    return literal
+
+
+def params_nix(values):
+    return "{\n" + "".join(f"  {nix_literal(name)} = {nix_literal(value)};\n"
+                           for name, value in sorted(values.items())) + "}\n"
+
+
+def set_param(client, card, name, value):
+    rev = client.call("ProjectInspectRequest").rev
+    rewritten = client.call("RewriteParamLiteralRequest", card=path(*card.split("/")),
+                            name=name, literal=nix_literal(value), atRev=rev)
+    client.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="ui:test",
+                changes=[change("PutSource", path=text(rewritten.path),
+                                baseHash=text(rewritten.baseHash), bytes=rewritten.text)])

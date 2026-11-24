@@ -1,14 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "factor",
-      "type": "int64",
-      "data": {
-        "int64": 2
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "number"

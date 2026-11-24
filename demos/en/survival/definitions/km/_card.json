@@ -1,19 +1,8 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "group",
-      "type": "string",
-      "data": {
-        "string": "sex"
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "cohort"
     }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "km"
+  ]
 }

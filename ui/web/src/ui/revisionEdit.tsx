@@ -1,5 +1,5 @@
 import { splitCardNotes } from '../model/documents'
-import { arr, clone, get, J, jeq, JObj, str } from '../../shared/json'
+import { arr, clone, get, J, jeq, JObj } from '../../shared/json'
 import { L } from '../i18n'
 import { Observable, useObserve } from '../model/observable'
 import { errorText, ProjectSession } from '../model/session'
@@ -66,11 +66,14 @@ export class RevisionEdit extends Observable {
     this.changed()
   }
   async apply(session: ProjectSession, change: (s: ProjectSession) => void): Promise<boolean> {
+    return this.applyOperation(session, () => session.applyMutation(change))
+  }
+  async applyOperation(session: ProjectSession, operation: () => Promise<bigint>): Promise<boolean> {
     if (this.applying) return false
     this.applying = true
     this.changed()
     try {
-      this.savedRev = await session.applyMutation(change)
+      this.savedRev = await operation()
       this.reload(this.savedRev ?? session.rev)
       return true
     } catch (e) {
@@ -83,21 +86,9 @@ export class RevisionEdit extends Observable {
       this.changed()
     }
   }
-  async replaceDocuments(session: ProjectSession, documents: [string, J | undefined][], overwrite = false): Promise<boolean> {
-    if (this.applying) return false
-    this.applying = true; this.changed()
-    try {
-      this.savedRev = await session.replaceDocuments(overwrite ? this.conflictRev ?? this.baseRev : this.baseRev, documents)
-      this.reload(this.savedRev)
-      return true
-    } catch (e) {
-      if (e instanceof RPCFailure && (e.kind === D.FailureKind.revision_conflict || e.kind === D.FailureKind.hash_conflict || e.kind === D.FailureKind.value_conflict || e.kind === D.FailureKind.source_changed)) this.recordConflict(session)
-      else this.error = errorText(e)
-      return false
-    }
-    finally { this.applying = false; this.changed() }
+  replaceDocuments(session: ProjectSession, documents: [string, J | undefined][], overwrite = false): Promise<boolean> {
+    return this.applyOperation(session, () => session.replaceDocuments(overwrite ? this.conflictRev ?? this.baseRev : this.baseRev, documents))
   }
-
 }
 
 export function RevisionEditNotice({ edit, text, overwrite, reload }: { edit: RevisionEdit; text: () => string; overwrite: () => void; reload: () => void }) {
@@ -118,7 +109,6 @@ export function RevisionEditNotice({ edit, text, overwrite, reload }: { edit: Re
 /** The value and revision actually visible when an inline edit starts. */
 export class InlineParamEdit extends RevisionEdit {
   initial = ''
-  paramBase?: { parameter?: J }
   private fieldBase?: { file: string; selector: (string | JObj)[]; value?: J }
   beginField(text: string, session: ProjectSession, file: string, selector: (string | JObj)[], value: J | undefined) {
     this.begin(text, session.rev)
@@ -140,11 +130,9 @@ export class InlineParamEdit extends RevisionEdit {
     if (ok && this.fieldBase === base) this.fieldBase = { ...base, value: clone(after) }
     return ok
   }
-  parameterBase(session: ProjectSession, card: string, name: string, overwrite: boolean) {
-    if (!overwrite) return this.paramBase
-    const dir = session.definitionDir(card)
-    const definition = this.jsonBase(dir + '_card.json', undefined, true)
-    return { parameter: arr(get(definition, 'params'))?.find(p => str(get(p, 'name')) === name) }
+  async commitParam(session: ProjectSession, card: string, name: string, literal: string, overwrite: boolean) {
+    const expectedRev = overwrite ? this.conflictRev ?? this.baseRev : this.baseRev
+    return this.applyOperation(session, () => session.setParam(card, name, literal, expectedRev))
   }
   begin(value: string, rev: bigint) { this.initial = value; this.reload(rev) }
   async commit(session: ProjectSession, text: string, change: (s: ProjectSession) => void) {

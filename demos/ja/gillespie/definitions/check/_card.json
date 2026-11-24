@@ -1,14 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "limit_sigma",
-      "type": "double",
-      "data": {
-        "double": 4.0
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "stationary"

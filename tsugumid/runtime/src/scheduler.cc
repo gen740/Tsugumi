@@ -10,6 +10,7 @@
 #include <future>
 #include <iterator>
 #include <set>
+#include <sstream>
 #include <stop_token>
 
 #include "collect_value.hh"
@@ -19,11 +20,15 @@
 #include "remote_execution_service.hh"
 #include "run_scratch.hh"
 #include "service.hh"
+#include "tsugumi/document/schema_id.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/log.hh"
+#include "tsugumi/util/system.hh"
 #include "tsugumi/workerd/log.hh"
+#include "tsugumi/workerd/store.hh"
 #include "wire.hh"
 
 namespace tsugumi {
@@ -180,9 +185,7 @@ auto recorded_params(const std::vector<ParamDef>& params)
     -> std::vector<std::pair<std::string, std::string>> {
   std::vector<std::pair<std::string, std::string>> result;
   for (const auto& param : params)
-    if (param.data)
-      result.emplace_back(param.name,
-                          param_value_json(param.type, *param.data));
+    result.emplace_back(param.name, param.data);
   return result;
 }
 
@@ -226,7 +229,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         summary_(std::move(summary)),
         plan_(std::move(plan)) {
     run_id_ = *summary_.status.run_id;
-    run_dir_ = svc_.store().state_dir() / "runs" / run_id_;
   }
 
   void start() {
@@ -269,7 +271,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
  private:
   struct Token {
-    Value value;
+    std::shared_ptr<const Value> value;
+    std::string port;
     CardPath from;
     uint64_t from_inv = 0;
   };
@@ -310,6 +313,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     uint64_t recorded_invocations = 0;
     uint64_t activations = 0;
     bool running = false;
+    // No future arrival can enable another activation.
+    bool closed = false;
+    bool blocked_input = false;
+    bool empty_collect_ready = false;
     bool halted = false;  // failed hard (e.g. maxRuns) and no longer scheduled
     bool saved_inputs =
         false;  // some of its inputs are saved values, not this run's
@@ -334,8 +341,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::shared_ptr<BatchCancellation> cancellation;
     std::optional<InvocationSummaryData> prepared;
     const CardBuild* implementation = nullptr;
-    // The member of an Input Card's value sweep this invocation hands on.
-    std::optional<uint64_t> sweep_index;
     PreparedExecution* execution = nullptr;
     std::optional<uint32_t> batch_index, batch_size;
     bool execution_list = false;
@@ -543,27 +548,17 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   auto saved_group(const NodeRt& node, const SavedInputGroup& saved,
                    uint64_t activation) -> TokenGroup {
-    const auto* port = node.node->input(saved.port);
-    if (!port || !port->resolved())
+    if (!node.node->input(saved.port))
       throw Failed(FailureKind::input_missing,
                    "saved input no longer matches " + saved.port);
     TokenGroup group{saved.port, saved.execution_list, {}, ++token_seq_};
     group.partial_result = true;
     group.saved_input = true;
     group.saved_partial_result = saved.partial_result;
-    for (const auto& value : saved.values) {
-      if (value.kind != port->kind)
-        throw Failed(FailureKind::input_missing,
-                     "saved input no longer matches " + saved.port);
-      if (value.kind == PortKind::Path) {
-        std::error_code ec;
-        if (value.path.empty() || !stdfs::exists(value.path, ec))
-          throw Failed(
-              FailureKind::input_missing,
-              "the saved file for " + saved.port + " no longer exists");
-      }
-      group.members.push_back({value, {}, activation});
-    }
+    (void)svc_.artifact_grants(saved.values);
+    for (const auto& value : saved.values)
+      group.members.push_back(
+          {std::make_shared<const Value>(value), saved.port, {}, activation});
     return group;
   }
 
@@ -639,18 +634,69 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       auto it = out_edges_.find({n.idx, out.name});
       if (it == out_edges_.end()) continue;
       for (const auto& [to, port] : it->second)
-        if (nodes_[to].in_targets &&
+        if (nodes_[to].in_targets && !nodes_[to].closed &&
             nodes_[to].queues[port].size() >= kQueueCapacity)
           return false;
     }
     return true;
   }
 
+  // Close exhausted streams before dispatch so a skipped join cannot hold
+  // up a producer that still has work for a different consumer.
+  auto close_exhausted_inputs() -> void {
+    const auto& incoming = doc_->resolution->incoming;
+    for (bool changed = true; changed;) {
+      changed = false;
+      for (auto& node : nodes_) {
+        if (!node.in_targets || node.running || node.closed) continue;
+        const auto kind = node.node->kind;
+        const bool starts_without_input =
+            node.start && !node.start_fired &&
+            (kind != CardType::Merge || !node.queues.empty());
+        if ((!node.halted && starts_without_input) || node.empty_collect_ready)
+          continue;
+        size_t exhausted = 0;
+        bool failed = false;
+        for (const auto& [port, queue] : node.queues) {
+          if (!queue.empty()) continue;
+          const auto& producer = nodes_[incoming[node.idx].at(port)];
+          if (producer.in_targets && !producer.closed) continue;
+          ++exhausted;
+          failed |= producer.last == CardState::failed ||
+                    producer.last == CardState::cancelled ||
+                    producer.blocked_input;
+        }
+        if (!node.halted) {
+          if (kind == CardType::Merge ? exhausted != node.queues.size()
+                                     : exhausted == 0 && !node.queues.empty())
+            continue;
+          if (kind == CardType::Collect && node.activations == 0 && !failed) {
+            node.empty_collect_ready = true;
+            changed = true;
+            continue;
+          }
+        }
+        node.closed = true;
+        node.blocked_input = failed;
+        changed = true;
+      }
+    }
+  }
+
   std::optional<Work> take_ready(NodeRt& n) {
-    if (!n.in_targets || n.running || n.halted || n.node->is_virtual)
+    if (!n.in_targets || n.running || n.halted || n.closed || n.node->is_virtual)
       return std::nullopt;
     Work w;
     w.node = n.idx;
+    if (n.empty_collect_ready) {
+      if (!downstream_has_space(n)) return std::nullopt;
+      n.empty_collect_ready = false;
+      if (!n.queues.empty()) {
+        // Save the empty input group so this Collect can replay that batch.
+        w.groups.push_back({n.queues.begin()->first, true, {}});
+      }
+      return w;
+    }
     if (n.start && !n.start_fired) {
       if (!downstream_has_space(n)) return std::nullopt;
       n.start_fired = true;
@@ -704,7 +750,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   }
 
   void main() {
-    stdfs::create_directories(run_dir_);
     {
       std::lock_guard lock(mu_);
       prepare_graph();
@@ -725,6 +770,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       while (true) {
         bool dispatched = false;
         if (!cancel_) {
+          close_exhausted_inputs();
           bool progressed = true;
           while (progressed && running_ < p_.max_concurrency) {
             progressed = false;
@@ -766,13 +812,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   FailureData stall_reason_locked() {
     for (auto& n : nodes_) {
-      if (!n.in_targets || n.running || n.halted || n.node->is_virtual)
+      if (!n.in_targets || n.running || n.halted || n.closed || n.node->is_virtual)
         continue;
       for (const auto& out : n.node->outputs) {
         auto it = out_edges_.find({n.idx, out.name});
         if (it == out_edges_.end()) continue;
         for (const auto& [to, port] : it->second)
-          if (nodes_[to].in_targets &&
+          if (nodes_[to].in_targets && !nodes_[to].closed &&
               nodes_[to].queues[port].size() >= kQueueCapacity)
             return FailureData::make(
                 FailureKind::execution_limit,
@@ -788,9 +834,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   bool any_ready_locked() {
     for (auto& n : nodes_) {
-      if (!n.in_targets || n.running || n.halted || n.node->is_virtual)
+      if (!n.in_targets || n.running || n.halted || n.closed || n.node->is_virtual)
         continue;
-      if (n.start && !n.start_fired) return true;
+      if (n.empty_collect_ready || (n.start && !n.start_fired)) return true;
       if (n.queues.empty()) continue;
       if (n.node->kind == CardType::Merge) {
         for (auto& [_, q] : n.queues)
@@ -870,8 +916,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }));
   }
 
-  auto prepare_code(NodeRt& rt, Work& work, uint32_t max_implementations,
-                    uint32_t lane, std::unique_ptr<PreparedExecution>& prepared)
+  auto prepare_build(NodeRt& rt, Work& work, uint32_t max_implementations,
+                     uint32_t lane,
+                     std::unique_ptr<PreparedExecution>& prepared)
       -> const CardBuildPlan& {
     const auto& node = *rt.node;
     auto& s = *work.prepared;
@@ -884,9 +931,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     request.timeout_seconds = node.settings.build_timeout_seconds;
     request.max_implementations = max_implementations;
     request.cancel = work.cancellation->stop_event.get_token();
-    // Resolve worker kind and system before any Card or source evaluation.
-    prepared = svc_.prepare_execution(
-        node, invocation_dir(node, work.invocation), request);
+    // Input Cards produce immutable store output; no worker starts for them.
+    const SharedStoreDerivationTransport transport;
+    if (node.kind == CardType::Input) {
+      request.target = {WorkerKind::native, native_system()};
+      request.transport = &transport;
+    } else {
+      prepared = svc_.prepare_execution(
+          node, invocation_dir(node, work.invocation), request);
+    }
     const bool reuses_builds = request.target.kind == WorkerKind::native;
     if (rt.build && reuses_builds && rt.build_target &&
         rt.build_target->kind == request.target.kind &&
@@ -1004,9 +1057,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     size_t bytes = 0;
     for (const auto& group : groups) {
       for (const auto& member : group.members) {
-        if (member.value.bytes.size() > kMaxBatchBytes - bytes)
+        if (member.value->bytes.size() > kMaxBatchBytes - bytes)
           throw batch_limit(node, "input batch exceeds 32 MiB");
-        bytes += member.value.bytes.size();
+        bytes += member.value->bytes.size();
       }
     }
     if (node.kind == CardType::Collect) return 1;
@@ -1046,8 +1099,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     for (const auto& group : batch.groups) {
       SavedInputGroup values{
           group.port, group.execution_list, {}, group.partial_result};
-      for (const auto& member : group.members)
-        values.values.push_back(member.value);
+      for (const auto& member : group.members) {
+        values.values.push_back(*member.value);
+        values.values.back().name = group.port;
+      }
       rt.last_port_inputs[group.port] =
           std::make_pair(batch.activation, values);
       saved.push_back(std::move(values));
@@ -1059,7 +1114,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                    const std::vector<Produced>& members, uint64_t first,
                    bool partial_result) -> void {
     for (const auto& output : batch.outputs) {
-      if (!output.execution_list && output.count == 0) continue;
       const auto edge = out_edges_.find({rt.idx, output.port});
       if (edge == out_edges_.end()) continue;
       TokenGroup group{output.port, output.execution_list, {}};
@@ -1068,13 +1122,16 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         const auto value = std::ranges::find(members[index].outputs,
                                              output.port, &Value::name);
         if (value != members[index].outputs.end())
-          group.members.push_back({*value, rt.node->path, first + index});
+          group.members.push_back({std::make_shared<const Value>(*value),
+                                   output.port, rt.node->path, first + index});
       }
       for (const auto& [to, port] : edge->second) {
-        if (!nodes_[to].in_targets) continue;
+        if (!nodes_[to].in_targets || nodes_[to].closed) continue;
+        if (group.members.empty() && nodes_[to].node->kind != CardType::Collect)
+          continue;
         group.port = port;
         group.seq = ++token_seq_;
-        for (auto& member : group.members) member.value.name = port;
+        for (auto& member : group.members) member.port = port;
         nodes_[to].queues.at(port).push_back(group);
       }
     }
@@ -1113,13 +1170,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     uint32_t count = 0;
     bool reserved = false;
     const bool code = node.kind == CardType::Code;
-    // An Input Card's value sweep multiplies like a run list: its values are
-    // the Card's own implementations of the arriving combination.
-    const bool sweep =
-        node.kind == CardType::Input && has_value_sweep(node.settings);
-    const auto sweep_size =
-        sweep ? static_cast<uint32_t>(value_sweep_size(node.settings)) : 1u;
-    batch.execution_list |= sweep;
+    const bool builds = code || node.kind == CardType::Input;
     std::optional<FailureData> failure;
     try {
       if (work.activation > node.settings.max_runs)
@@ -1130,18 +1181,12 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
              {"max_runs", std::to_string(node.settings.max_runs)}});
       count = input_combinations(node, work.groups);
       remember_inputs(rt, work);
-      if (sweep) {
-        if (count != 0 && sweep_size > kMaxExecutionBatchSize / count)
-          throw batch_limit(
-              node, "input and value sweep expansion exceeds 256 combinations");
-        count *= sweep_size;
-      }
-      if (code && count != 0) {
+      if (builds && count != 0) {
         work.prepared = new_invocation(work);
         auto& s = *work.prepared;
         s.state = CardState::running;
         stage_begin(s, Phase::prepare);
-        const auto& plan = prepare_code(
+        const auto& plan = prepare_build(
             rt, work, kMaxExecutionBatchSize / count, lane, prepared);
         batch.execution_list |= plan.execution_list;
         for (size_t index = 0; index < plan.implementations.size(); ++index)
@@ -1184,14 +1229,12 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       member.execution = prepared.get();
       member.execution_list = batch.execution_list;
       if (index == 0) member.prepared = std::move(work.prepared);
-      if (code)
+      if (builds)
         member.implementation =
             &implementations.at(index % implementations.size());
-      if (sweep) member.sweep_index = index % sweep_size;
       const auto inputs_index =
-          code    ? index / static_cast<uint32_t>(implementations.size())
-          : sweep ? index / sweep_size
-                  : index;
+          builds ? index / static_cast<uint32_t>(implementations.size())
+                 : index;
       member.inputs = batch_inputs(node, work.groups, inputs_index);
       auto produced = invoke(member, worker_lane);
       {
@@ -1337,19 +1380,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       s.implementation_index = w.implementation->implementation_index;
       s.implementation_label = w.implementation->implementation_label;
     }
-    if (w.sweep_index) {
-      // The record shows the values this member handed on.
-      auto member = value_sweep_member(node.settings, *w.sweep_index);
-      s.implementation_index = static_cast<uint32_t>(*w.sweep_index + 1);
-      s.implementation_label = std::move(member.label);
-      s.params = recorded_params(member.params);
-    }
     std::vector<Value> inputs;
     std::vector<InputSourceData> sources;
     for (const auto& t : w.inputs) {
-      inputs.push_back(t.value);
+      inputs.push_back(*t.value);
+      inputs.back().name = t.port;
       if (!t.from.empty())
-        sources.push_back({t.value.name, t.from, t.from_inv});
+        sources.push_back({t.port, t.from, t.from_inv});
     }
     Produced out;
     if (w.preparation_failure) {
@@ -1357,7 +1394,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     } else {
       s.state = CardState::running;
       if (!prepared) {
-        if (node.kind == CardType::Code) {
+        if (node.kind == CardType::Code || node.kind == CardType::Input) {
           stage_begin(s, Phase::prepare, StageOutcome::reused);
           stage_begin(s, Phase::evaluate, StageOutcome::reused);
           stage_begin(s, Phase::build, StageOutcome::reused);
@@ -1375,7 +1412,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         if (node.kind == CardType::Code)
           out = run_code(rt, w, s, inputs, sources, lane);
         else {
-          svc_.server()->start_display_run(node.path, run_id_);
           out = run_builtin(rt, w, s, inputs);
         }
       } catch (const ExecutionDetached&) {
@@ -1391,7 +1427,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         stage_begin(s, Phase::validate);
         const auto started = now_ms();
         try {
-          validate_outputs(node, w, out.outputs, inputs);
+          validate_outputs(node, out.outputs);
         } catch (const Failed& f) {
           out.failure = f.failure;
           out.outputs.clear();
@@ -1431,59 +1467,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       card_status(s);
       s.state = CardState::succeeded;
     }
-    std::optional<ArtifactData> artifact;
-    if (!out.failure) {
-      const auto base = run_dir_ / "values" / path_key(node.path) /
-                        std::to_string(w.invocation);
-      try {
-        const std::atomic<bool> recording_stop{false};
-        for (auto& value : out.outputs) {
-          if (value.kind == PortKind::FlatBuffer) continue;
-          // Transport still uses the accepted staging path. Only history
-          // and the next rerun snapshot carry the retained file's identity.
-          if (auto source = std::ranges::find_if(inputs, [&](const Value& input) {
-                return input.kind == value.kind && input.path == value.path;
-              }); source != inputs.end())
-            value.recorded_path = source->recorded_path;
-          if (!node.settings.retain_artifact) continue;
-          if (value.name == node.settings.artifact_output) {
-            artifact = retain_artifact(node, w.invocation, value, recording_stop);
-            if (!value.recorded_path) {
-              auto path = run_dir_ / "artifacts" / artifact->artifact_id;
-              if (!artifact->directory) path /= artifact->name;
-              value.recorded_path = path.lexically_relative(svc_.store().state_dir()).generic_string();
-            }
-          }
-          if (!value.recorded_path) {
-            const auto kept = svc_.keep_file_value(
-                value, base / "output" / value.name, recording_stop);
-            value.recorded_path = stdfs::path(kept.path)
-                .lexically_relative(svc_.store().state_dir()).generic_string();
-          }
-        }
-      } catch (const std::exception& error) {
-        std::error_code ignored;
-        stdfs::remove_all(base, ignored);
-        if (artifact)
-          stdfs::remove_all(run_dir_ / "artifacts" / artifact->artifact_id, ignored);
-        artifact.reset();
-        s.state = CardState::failed;
-        s.failure = FailureData::make(
-            FailureKind::persistence_failed,
-            std::string("keeping recorded files failed: ") + error.what());
-        rec.summary = s;
-        out.failure = s.failure;
-        out.outputs.clear();
-        s.outputs_sent.clear();
-      }
+    if (rec.record_io) {
+      if (node.kind != CardType::Collect || inputs.size() <= 1)
+        rec.inputs = inputs;
+      rec.outputs = out.outputs;
     }
-    const auto recorded = [&](const Value& value) {
-      return value.kind == PortKind::FlatBuffer ? rec.record_io
-                                                : node.settings.retain_artifact;
-    };
-    if (node.kind != CardType::Collect || inputs.size() <= 1)
-      std::ranges::copy_if(inputs, std::back_inserter(rec.inputs), recorded);
-    std::ranges::copy_if(out.outputs, std::back_inserter(rec.outputs), recorded);
     // The completion is durable before it is announced or its outputs move on.
     // The record holds the save stage as done; a failed write reports it
     // failed.
@@ -1517,7 +1505,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         }
         std::map<LogStream, std::vector<LogEnd>> logs;
         h.write_sync([&](sql::Db& db) {
-          if (artifact) History::put_artifact(db, *artifact);
           for (const auto& [stream, text] : out.auxiliary_logs)
             logs[stream] = History::append_log(
                 db, s.run_id, s.card, s.invocation, stream, text);
@@ -1564,166 +1551,32 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       const std::map<std::string, std::pair<uint64_t, SavedInputGroup>>& ports)
       -> void {
     if (cancel_.load()) return;
-    const auto base = svc_.store().state_dir() / "inputs" / path_key(node.path);
-    const auto snapshot = run_id_ + "-" + std::to_string(inv);
-    const auto directory = base / snapshot;
-    std::vector<SavedInputGroup> saved;
-    std::vector<std::pair<uint64_t, SavedInputGroup>> per_port;
-    std::vector<stdfs::path> port_copies;
-    const auto remove_candidates =
-        [](const stdfs::path& main,
-           const std::vector<stdfs::path>& candidates) {
-          std::error_code error;
-          stdfs::remove_all(main, error);
-          for (const auto& candidate : candidates)
-            stdfs::remove_all(candidate, error);
-        };
-    const auto check_cancel = [&] {
-      if (cancel_.load())
-        throw Failed(FailureKind::cancelled, "saving inputs was cancelled");
-    };
-    const auto copy_into = [&](const Value& value,
-                               const stdfs::path& where) -> Value {
-      check_cancel();
-      if (value.kind == PortKind::FlatBuffer) return value;
-      if (value.path.empty())
-        throw Failed(FailureKind::output_invalid,
-                     "input " + value.name + " has no path");
-      const auto [root, rel] = beneath(value.path);
-      const auto destination = where / rel.filename();
-      try {
-        fs::copy_path_beneath(
-            root, rel, destination,
-            [&](const stdfs::path& file, const stdfs::path& to) {
-              check_cancel();
-              fs::copy_beneath(root, file, to,
-                               [&](std::string_view) { check_cancel(); });
-            });
-      } catch (const fs::Error& error) {
-        throw Failed(FailureKind::output_invalid,
-                     std::string("saved input: ") + error.what());
-      }
-      auto copy = value;
-      copy.path = destination.string();
-      return copy;
-    };
-    const auto copy_group = [&](const SavedInputGroup& group,
-                                const stdfs::path& where) -> SavedInputGroup {
-      SavedInputGroup result{
-          group.port, group.execution_list, {}, group.partial_result};
-      for (size_t index = 0; index < group.values.size(); ++index)
-        result.values.push_back(
-            copy_into(group.values[index], where / std::to_string(index)));
-      return result;
-    };
-    try {
-      for (const auto& group : inputs)
-        saved.push_back(copy_group(group, directory / group.port));
-      for (const auto& [name, p] : ports) {
-        auto& candidate =
-            port_copies.emplace_back(base / ("port-" + name) / snapshot);
-        per_port.emplace_back(p.first, copy_group(p.second, candidate));
-      }
-      check_cancel();
-    } catch (const std::exception& error) {
-      remove_candidates(directory, port_copies);
-      if (!cancel_.load())
-        persistence_lost("saved inputs of " + path_key(node.path) + ": " +
-                         error.what());
-      return;
-    }
     const auto card = node.path;
     const auto run = run_id_;
     svc_.history().submit(
-        [card, run, inv, saved = std::move(saved),
-         per_port = std::move(per_port)](sql::Db& db) {
-          History::put_last_input(db, card, run, inv, saved);
-          for (const auto& [activation, group] : per_port)
-            History::put_last_port_input(db, card, run, activation, group);
+        [card, run, inv, inputs, ports](sql::Db& db) {
+          History::put_last_input(db, card, run, inv, inputs);
+          for (const auto& [_, entry] : ports)
+            History::put_last_port_input(db, card, run, entry.first, entry.second);
         },
-        [self = shared_from_this(), card, base, directory,
-         port_copies = std::move(port_copies), remove_candidates](bool ok) {
-          if (!ok) {
-            remove_candidates(directory, port_copies);
-            self->persistence_lost("saved inputs of " + path_key(card));
-            return;
-          }
-          // Prior snapshots may still be read until the history commits.
-          std::error_code error;
-          for (const auto& entry : stdfs::directory_iterator(base, error))
-            if (entry.path() != directory &&
-                !entry.path().filename().string().starts_with("port-"))
-              stdfs::remove_all(entry.path(), error);
-          for (const auto& candidate : port_copies)
-            for (const auto& entry :
-                 stdfs::directory_iterator(candidate.parent_path(), error))
-              if (entry.path() != candidate)
-                stdfs::remove_all(entry.path(), error);
+        [self = shared_from_this(), card](bool ok) {
+          if (!ok) self->persistence_lost("saved inputs of " + path_key(card));
         });
   }
 
-  auto validate_outputs(const Node& node, const Work& w,
-                        std::vector<Value>& outputs,
-                        const std::vector<Value>& inputs) -> void {
-    // Paths received as inputs may be passed on unchanged (branch, fork, a
-    // Card forwarding its input); anything else must be newly produced in the
-    // invocation's own output directory. The bytes are never opened.
-    std::set<std::string> forwarded;
-    for (const auto& in : inputs)
-      if (in.kind == PortKind::Path && !in.path.empty())
-        forwarded.insert(stdfs::path(in.path).lexically_normal().string());
+  auto validate_outputs(const Node& node, std::vector<Value>& outputs) -> void {
+    if (node.kind == CardType::Code || node.kind == CardType::Collect ||
+        node.kind == CardType::Merge)
+      return;
     std::set<std::string> seen;
-    for (auto& v : outputs) {
-      if (node.kind != CardType::Code && node.kind != CardType::Collect) {
-        const auto* port = node.output(v.name);
-        if (!port)
-          throw Failed(FailureKind::output_invalid, "unknown output " + v.name,
-                       {{"port", v.name}});
-        if (!seen.insert(v.name).second)
-          throw Failed(FailureKind::output_invalid,
-                       "output " + v.name + " produced twice",
-                       {{"port", v.name}});
-        if (v.kind != port->kind)
-          throw Failed(FailureKind::output_invalid,
-                       "output " + v.name + " has the wrong kind",
-                       {{"port", v.name}});
-        v.type = port->type;
-      }
-      if (v.kind == PortKind::Path) {
-        const auto& p = v.path;
-        auto out_dir = invocation_dir(node, w.invocation) / "out";
-        std::error_code ec;
-        bool is_forward =
-            !p.empty() &&
-            forwarded.count(stdfs::path(p).lexically_normal().string());
-        if (p.empty() || !stdfs::path(p).is_absolute() ||
-            (!is_forward && !fs::resolves_inside(out_dir, p)))
-          throw Failed(
-              FailureKind::output_invalid,
-              "output " + v.name +
-                  " must point inside the output directory or forward an input",
-              {{"port", v.name}});
-        auto st = stdfs::symlink_status(p, ec);
-        if (!stdfs::is_regular_file(st) && !stdfs::is_directory(st))
-          throw Failed(FailureKind::output_invalid,
-                       "output " + v.name +
-                           " is neither a regular file nor a directory",
-                       {{"port", v.name}});
-      }
+    for (auto& value : outputs) {
+      const auto* port = node.output(value.name);
+      if (!port || !seen.insert(value.name).second)
+        throw Failed(FailureKind::output_invalid,
+                     "unknown or duplicate output " + value.name,
+                     {{"port", value.name}});
+      value.type = port->type;
     }
-  }
-
-  // A Path value's path below the trees tsugumid keeps them in
-  // (the runs, the saved inputs): read from there without following links,
-  // since the worker that wrote it may still be running.
-  std::pair<stdfs::path, stdfs::path> beneath(const std::string& p) const {
-    for (const auto& root : svc_.file_roots()) {
-      auto rel = stdfs::path(p).lexically_normal().lexically_relative(root);
-      if (!rel.empty() && *rel.begin() != ".." && rel != ".")
-        return {root, rel};
-    }
-    throw Failed(FailureKind::output_invalid,
-                 "a file value outside the run's folders: " + p);
   }
 
   stdfs::path invocation_dir(const Node& node, uint64_t inv) {
@@ -1731,147 +1584,95 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
            "work" / path_key(node.path) / std::to_string(inv);
   }
 
-  auto retain_artifact(const Node& node, uint64_t inv, Value& v,
-                       const std::atomic<bool>& stop) -> ArtifactData {
-    if (v.path.empty())
-      throw Failed(FailureKind::output_invalid, "artifact output has no path");
-    ArtifactData a;
-    a.artifact_id = run_id_ + "/" + path_key(node.path) + "/" +
-                    std::to_string(inv) + "/" + v.name;
-    a.run_id = run_id_;
-    a.card = node.path;
-    a.invocation = inv;
-    a.output = v.name;
-    a.name = stdfs::path(v.path).filename().string();
-    const auto destination = run_dir_ / "artifacts" / a.artifact_id;
-    const auto [root, rel] = beneath(v.path);
-    const auto check_cancel = [&] {
-      if (stop.load())
-        throw Failed(FailureKind::cancelled,
-                     "retaining artifact was cancelled");
-    };
-    try {
-      // A regular file is kept as artifacts/<id>/<name>; a directory's tree
-      // becomes artifacts/<id>/.
-      a.directory = fs::directory_beneath(root, rel);
-      fs::copy_path_beneath(
-          root, rel, a.directory ? destination : destination / a.name,
-          [&](const stdfs::path& file, const stdfs::path& to) {
-            check_cancel();
-            if (a.members.size() >= 1000)
-              throw Failed(FailureKind::resource_limit,
-                           "artifact directory exceeds 1,000 files");
-            crypto::Sha256 hash;
-            const auto size =
-                fs::copy_beneath(root, file, to, [&](std::string_view chunk) {
-                  check_cancel();
-                  hash.update(chunk);
-                });
-            a.members.push_back(
-                {to.lexically_relative(destination).generic_string(), size,
-                 hash.finish_hex()});
-          });
-      check_cancel();
-    } catch (const fs::Error& error) {
-      std::error_code ignored;
-      stdfs::remove_all(destination, ignored);
-      throw Failed(FailureKind::output_invalid,
-                   std::string("artifact: ") + error.what());
-    } catch (...) {
-      std::error_code error;
-      stdfs::remove_all(destination, error);
-      throw;
-    }
-    v.artifact_id = a.artifact_id;
-    return a;
-  }
-
   // ---- builtins
   // --------------------------------------------------------------
 
-  const Value* input(const std::vector<Value>& in, const std::string& name) {
-    for (const auto& v : in)
-      if (v.name == name) return &v;
-    return nullptr;
-  }
-
-  // A value passed on unchanged under another output port.
-  static auto forwarded(const Value& value, const std::string& port) -> Value {
-    Value out{port, value.kind, value.type, value.bytes, {}};
-    out.path = value.path;
-    return out;
-  }
-
-  // Branch's condition, the core-defined
-  // `table tsugumi.builtin.Condition { value:bool (id: 0); }`: field 0 of the
-  // arriving buffer's root table, read by that fixed layout.
-  static auto condition_value(const Value& condition) -> bool {
-    constexpr flatbuffers::voffset_t kValue = 4;  // field id 0
-    const auto* data =
-        reinterpret_cast<const uint8_t*>(condition.bytes.data());
-    flatbuffers::Verifier verifier(data, condition.bytes.size());
-    if (condition.kind != PortKind::FlatBuffer ||
-        condition.bytes.size() < sizeof(flatbuffers::uoffset_t) ||
-        !verifier.VerifyOffset<flatbuffers::uoffset_t>(0))
-      throw Failed(FailureKind::input_missing,
-                   "branch condition is not a Condition buffer");
-    const auto* root = flatbuffers::GetRoot<flatbuffers::Table>(data);
-    if (!root->VerifyTableStart(verifier) ||
-        !root->VerifyField<uint8_t>(verifier, kValue, sizeof(uint8_t)))
-      throw Failed(FailureKind::input_missing,
-                   "branch condition is not a Condition buffer");
-    return root->GetField<uint8_t>(kValue, 0) != 0;
-  }
-
-  // An Input Card's Path output: the project file or folder its `value`
-  // parameter names, copied into the run before use.
-  auto input_source(const Node& node, uint64_t invocation,
-                    const types::PortType& port,
-                    const std::vector<ParamDef>& params) -> Value {
-    const auto parameter = std::ranges::find(params, "value", &ParamDef::name);
-    if (parameter == params.end() || !parameter->data ||
-        parameter->type != ParamType::String)
-      throw Failed(FailureKind::invalid_path,
-                   "input " + port.name + " needs a path string `value`");
-    const std::string& relv = parameter->data->string;
-    // Card-local by default; project: explicitly selects the Card's own
-    // project, including when that project is an external.
-    const bool project_relative = relv.starts_with("project:");
-    const std::string file = project_relative ? relv.substr(8) : relv;
-    const std::string rel =
-        (project_relative ? node.project_dir : node.def_dir) + file;
-    // A folder is every project source below it.
-    std::vector<std::string> sources;
-    if (fs::valid_relative_path(file)) {
-      if (doc_->sources.count(rel)) {
-        sources.push_back(rel);
-      } else {
-        const auto prefix = rel + "/";
-        for (auto it = doc_->sources.lower_bound(prefix);
-             it != doc_->sources.end() && it->first.starts_with(prefix); ++it)
-          sources.push_back(it->first);
+  auto input_ports(const Node& node, const Work& work) -> std::vector<Value> {
+    const stdfs::path package(work.implementation->package);
+    const stdfs::path store = NixStore::store_dir();
+    const auto invalid = [](const std::string& reason) {
+      return Failed(FailureKind::output_invalid, reason);
+    };
+    if (package.parent_path() != store)
+      throw invalid("Input Card run output must be in the Nix store");
+    // Open each path beneath the store without following directory symlinks.
+    const auto prefix = package.filename() / "share/tsugumi/input";
+    const auto read = [&](const stdfs::path& relative, uint64_t limit) {
+      std::string contents;
+      fs::stream_beneath(store, prefix / relative, limit,
+                         [&](std::string_view part) { contents += part; });
+      return contents;
+    };
+    const auto exists = [&](const stdfs::path& relative) {
+      std::error_code error;
+      const auto found =
+          stdfs::symlink_status(store / prefix / relative, error);
+      if (error && error != std::errc::no_such_file_or_directory)
+        throw invalid("cannot inspect Input Card output " + relative.string());
+      return stdfs::exists(found);
+    };
+    std::vector<Value> outputs;
+    std::map<std::string, stdfs::path> artifacts;
+    uint64_t remaining =
+        std::min<uint64_t>(node.settings.output_limit_bytes, kMaxBatchBytes);
+    try {
+      for (const auto& port : node.outputs) {
+        if (!valid_id(port.name) || port.name.ends_with(".artifacts"))
+          throw invalid("invalid Input Card output port " + port.name);
+        const auto file = stdfs::path("ports") / port.name;
+        if (!exists(file)) {
+          if (port.required)
+            throw invalid("required output " + port.name + " is missing");
+          continue;
+        }
+        if (!port.type) throw invalid("output " + port.name + " has no type");
+        if (outputs.size() >= node.settings.output_limit_entries)
+          throw invalid("Input Card exceeds its output entry limit");
+        Value value{port.name, port.type, read(file, remaining),
+                    schema_id(*port.type)};
+        remaining -= value.bytes.size();
+        const auto listing = file.string() + ".artifacts";
+        if (exists(listing)) {
+          // Artifact ids are lowercase hex in the file and binary in the
+          // envelope. The file is bounded separately from the port payload.
+          std::istringstream lines(read(listing, kMaxBatchBytes));
+          std::set<std::string> port_artifacts;
+          for (std::string hex; std::getline(lines, hex);) {
+            const auto digit = [](char c) -> int {
+              if (c >= '0' && c <= '9') return c - '0';
+              if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+              return -1;
+            };
+            if (hex.size() != 32)
+              throw invalid("invalid artifact ID on output " + port.name);
+            std::string id;
+            for (size_t i = 0; i < hex.size(); i += 2) {
+              const int high = digit(hex[i]), low = digit(hex[i + 1]);
+              if (high < 0 || low < 0)
+                throw invalid("invalid artifact ID on output " + port.name);
+              id += static_cast<char>(high * 16 + low);
+            }
+            if (!port_artifacts.insert(id).second) continue;
+            const auto entry = prefix / "artifacts" / hex;
+            if (!artifacts.contains(id)) {
+              if (artifacts.size() >= node.settings.output_limit_entries ||
+                  !fs::directory_beneath(store, entry))
+                throw invalid("invalid artifact directory on output " +
+                              port.name);
+              artifacts.emplace(id, store / entry);
+            }
+            value.artifacts.push_back(std::move(id));
+          }
+        }
+        outputs.push_back(std::move(value));
       }
+    } catch (const fs::Error& error) {
+      throw invalid(error.what());
     }
-    if (sources.empty())
-      throw Failed(FailureKind::invalid_path,
-                   "input path " + rel +
-                       " is not a project source or folder; use a path "
-                       "relative to the Card's definition folder, or "
-                       "project:<path> for its project root",
-                   {{"path", rel}});
-    const auto destination = invocation_dir(node, invocation) / "out" /
-                             stdfs::path(rel).filename();
-    for (const auto& source : sources) {
-      auto data = svc_.store().read_source(*doc_, source);
-      const auto below = source == rel
-                             ? stdfs::path()
-                             : stdfs::path(source.substr(rel.size() + 1));
-      fs::write_atomic(below.empty() ? destination : destination / below, data,
-                       0644);
-    }
-    Value value{port.name, PortKind::Path, port.type, {}, {}};
-    value.path = destination.string();
-    return value;
+    for (const auto& [id, path] : artifacts)
+      svc_.register_store_artifact(run_id_, node.path, work.invocation, id,
+                                   path);
+    return outputs;
   }
 
   auto run_builtin(NodeRt& rt, const Work& w, InvocationSummaryData& s,
@@ -1885,68 +1686,16 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         b.Finish(flatbuffers::Offset<void>(b.EndTable(b.StartTable())));
         p.outputs.push_back(
             {"out",
-             PortKind::FlatBuffer,
              types::empty_type(),
              std::string(reinterpret_cast<const char*>(b.GetBufferPointer()),
                          b.GetSize()),
-             {}});
+             schema_id(*types::empty_type())});
         break;
       }
-      case CardType::Input: {
-        const auto params =
-            w.sweep_index
-                ? value_sweep_member(node.settings, *w.sweep_index).params
-                : node.settings.params;
-        for (const auto& port : node.outputs) {
-          if (port.kind == PortKind::Path) {
-            p.outputs.push_back(input_source(node, s.invocation, port, params));
-            continue;
-          }
-          if (!port.type)
-            throw Failed(FailureKind::validation_failed,
-                         "output " + port.name + " has no type");
-          // Message fields are filled from params of the same name.
-          const auto* root = port.type->root();
-          std::vector<ParamDef> fields;
-          for (const auto& prm : params)
-            if (root->fields()->LookupByKey(prm.name.c_str()))
-              fields.push_back(prm);
-          std::string bytes;
-          std::string err;
-          if (!types::json_to_flatbuffer(
-                  *port.type, NixRunner::params_json(fields, false), &bytes,
-                  &err))
-            throw Failed(FailureKind::output_invalid,
-                         "input " + port.name + ": " + err);
-          p.outputs.push_back(
-              {port.name, port.kind, port.type, std::move(bytes), {}});
-        }
+      case CardType::Input:
+        stage_begin(s, Phase::execute);
+        p.outputs = input_ports(node, w);
         break;
-      }
-      case CardType::Branch: {
-        const Value* v = input(in, "value");
-        const Value* c = input(in, "condition");
-        if (!v || !c)
-          throw Failed(FailureKind::input_missing,
-                       "branch needs value and condition");
-        const bool cond = condition_value(*c);
-        p.outputs.push_back(forwarded(*v, cond ? "a" : "b"));
-        card_log(node.path, s.invocation, LogStream::standard_output,
-                 std::string("branch -> ") + (cond ? "a" : "b") + "\n");
-        break;
-      }
-      case CardType::Fork: {
-        const Value* v = input(in, "value");
-        if (!v) throw Failed(FailureKind::input_missing, "fork needs value");
-        std::string sent;
-        for (const auto& port : node.outputs) {
-          p.outputs.push_back(forwarded(*v, port.name));
-          sent += (sent.empty() ? "" : ", ") + port.name;
-        }
-        card_log(node.path, s.invocation, LogStream::standard_output,
-                 "fork -> " + sent + "\n");
-        break;
-      }
       case CardType::Collect:
         p.outputs.push_back(collect_values(node.outputs.front(), in,
                                            w.cancellation->stop));
@@ -1955,18 +1704,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         if (in.size() != 1)
           throw Failed(FailureKind::input_missing,
                        "merge consumes exactly one arrival");
-        const Value& v = in.front();
-        const auto& out = node.outputs.front();
-        if (!out.resolved())
-          throw Failed(FailureKind::output_invalid,
-                       "merge: the output type is not resolved");
-        auto value = v;
-        value.name = out.name;
-        value.type = out.type;
-        value.artifact_id.reset();
-        value.recorded_path.reset();
-        if (!node.merge_tags.empty())
-          value.bytes = types::wrap_in_union(node.merge_tags.at(v.name), v.bytes);
+        auto value = in.front();
+        value.name = node.outputs.front().name;
         p.outputs.push_back(std::move(value));
         break;
       }
@@ -2000,9 +1739,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
          [&](LogStream stream, const std::string& text) {
            card_log(node.path, inv, stream, text);
          },
-         [server = svc_.server(),
-          card = node.path](const WorkerDisplayData& display) {
-           server->display(card, display.view, display.bytes);
+         [server = svc_.server(), card = node.path](
+             WorkerDisplayData display, WorkerProc::DisplayCredit credit) {
+           server->display(card, std::move(display.view),
+                           std::move(display.bytes), std::move(credit));
          },
          [&](int64_t begin, int64_t end) {
            svc_.server()->broadcast(timeline_note(
@@ -2016,7 +1756,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
            });
            card_status(s);
            set_state(RunState::running);
-           svc_.server()->start_display_run(node.path, run_id_);
          },
          [&] { card_status(s); },
          [&](workerd::InvocationResult& completed) {
@@ -2028,7 +1767,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                                                     started, now_ms()));
            };
            try {
-             validate_outputs(node, w, completed.outputs, in);
+             validate_outputs(node, completed.outputs);
            } catch (...) {
              trace_validation();
              throw;
@@ -2061,7 +1800,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     p.failure = std::move(result.failure);
     p.auxiliary_logs = std::move(result.auxiliary_logs);
     p.auxiliary_logs_truncated = result.auxiliary_logs_truncated;
-    if (!p.failure) p.outputs = std::move(result.outputs);
+    if (!p.failure) {
+      for (auto& value : result.outputs)
+        value.schema = schema_id(*value.type);
+      p.outputs = std::move(result.outputs);
+    }
     return p;
   }
 
@@ -2111,8 +1854,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       final[n.idx] =
           n.activations > 0 || n.halted ? n.last : CardState::skipped;
     }
-    // Never invoked: blocked when an upstream failed/blocked, or partial inputs
-    // arrived.
+    // Missing inputs from failed producers block their consumers. A missing
+    // output from a successful producer, including a skipped chain, does not.
     for (bool changed = true; changed;) {
       changed = false;
       for (auto& n : nodes_) {
@@ -2122,16 +1865,19 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         if (final[n.idx] == CardState::blocked ||
             final[n.idx] == CardState::cancelled)
           continue;
-        bool partial = false;
-        for (auto& [_, q] : n.queues) partial |= !q.empty();
-        bool upstream_bad = false;
+        bool upstream_bad = n.blocked_input;
         for (const auto& e : res.edges)
-          if (e.to == n.idx && nodes_[e.from].in_targets &&
+          if (e.to == n.idx && n.queues.at(e.to_port).empty() &&
+              nodes_[e.from].in_targets &&
               (final[e.from] == CardState::failed ||
                final[e.from] == CardState::blocked ||
                final[e.from] == CardState::cancelled))
             upstream_bad = true;
-        if (partial || upstream_bad) {
+        const bool has_partial_inputs =
+            std::ranges::any_of(n.queues, [](const auto& port) {
+              return !port.second.empty();
+            });
+        if (upstream_bad || (cancel_ && has_partial_inputs)) {
           final[n.idx] = cancel_ ? CardState::cancelled : CardState::blocked;
           changed = true;
         }
@@ -2166,6 +1912,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       rec.summary.params = recorded_params(n.node->settings.params);
       rec.summary.invocation = n.invocations + 1;
       rec.summary.state = st;
+      rec.summary.ended_at = now_ms();
       rec.summary.waiting = waiting[n.idx];
       History& h = svc_.history();
       h.submit([&h, rec](sql::Db& db) { h.complete_invocation(db, rec); },
@@ -2229,7 +1976,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   RunSummaryData summary_;
   const RunPlanData plan_;
   std::string run_id_;
-  stdfs::path run_dir_;
   std::thread thread_;
   std::mutex mu_;
   std::condition_variable cv_;
@@ -2383,6 +2129,9 @@ auto find_draft_waiting(const Resolution& res, const PlanEdges& edges)
     if (res.nodes[i].kind == CardType::Draft) {
       waits.insert(i);
       waiting.push_back(i);
+    } else if (res.nodes[i].kind == CardType::Collect) {
+      // Collect can emit an empty batch even if its producer never runs.
+      remaining[i] = edges.incoming[i].size() + 1;
     } else if (res.nodes[i].kind == CardType::Merge) {
       remaining[i] = edges.incoming[i].size();
     } else {
@@ -2403,9 +2152,7 @@ auto find_draft_waiting(const Resolution& res, const PlanEdges& edges)
 
 }  // namespace
 
-std::set<size_t> Scheduler::draft_waiting(const Resolution& res) {
-  return find_draft_waiting(res, PlanEdges(res));
-}
+
 
 RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
                             bool propagate) {
@@ -2496,7 +2243,8 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
   std::erase_if(seeds, [&](size_t i) { return !targets.count(i); });
   for (size_t i : targets) {
     out.targets.push_back(res.nodes[i].path);
-    if (res.nodes[i].kind == CardType::Code)
+    if (res.nodes[i].kind == CardType::Code ||
+        res.nodes[i].kind == CardType::Input)
       out.build_candidates.push_back(res.nodes[i].path);
     out.diagnostics.insert(out.diagnostics.end(), res.nodes[i].diags.begin(),
                            res.nodes[i].diags.end());
@@ -2511,7 +2259,7 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
   }
   // A Card further down that waits for all its inputs would never run without
   // the ports nothing in this run feeds; a port something in this run feeds
-  // gets that value alone, and an `any` Card runs on what arrives.
+  // gets that value alone. Merge runs on what arrives.
   std::set<size_t> given(starts.begin(), starts.end());
   given.insert(seeds.begin(), seeds.end());
   for (size_t i : targets) {
@@ -2600,7 +2348,6 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
     History::put_substituters(db, *s.status.run_id, svc_.substituters());
     History::put_receipt(db, p.op_id, "run", p.digest, receipt);
   });
-  svc_.server()->begin_display_run(*s.status.run_id);
   svc_.server()->broadcast(status_note(s.status, true));
   active_ = std::make_shared<RunExec>(svc_, *this, doc, p, s, std::move(plan));
   active_->start();
@@ -2698,7 +2445,6 @@ auto Scheduler::finished(RunSummaryData sum, std::string record) -> void {
                                              "saving the run result failed");
     }
   }
-  svc_.server()->end_display_run(*sum.status.run_id);
   svc_.server()->broadcast(status_note(sum.status, false));
   svc_.server()->broadcast(finished_note(sum));
   reapers_.emplace_back([this, done = std::move(done), status = sum.status,

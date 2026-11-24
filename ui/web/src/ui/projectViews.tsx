@@ -2,11 +2,11 @@
 import { splitCardNotes } from '../model/documents'
 import { useEffect, useState } from 'react'
 import { app } from '../model/app'
-import { shortCommit, sourceName, unlockedRef } from '../model/nixSources'
+import { nixPathLockStatus } from '../model/nixPath'
 import { useObserve } from '../model/observable'
 import { FLOW_LABELS, FlowDirection } from '../model/prefs'
 import { definitionKind, errorText, formatBytes, key, KIND_ICON, KIND_LABEL, path, ProjectSession } from '../model/session'
-import { arr, bool, clone, get, isObj, J, JObj, num, numText, obj, parse, serialize, str } from '../../shared/json'
+import { arr, bool, clone, get, isObj, J, num, numText, obj, parse, serialize, str } from '../../shared/json'
 import { R, s } from '../wire/rpc'
 import { DEFINITION_DRAG } from './actions'
 import { Button, Confirm, Empty, Form, HSplit, InfoButton, MenuButton, Row, Section, Select, Spinner, TextField, Toggle, Value } from './controls'
@@ -91,7 +91,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
           {unapplied && <span className="label" style={{ color: 'var(--orange)' }}><Icon name="pencil.circle.fill" />{L('未適用の変更')}</span>}
         </div>
         <div className="callout secondary">{L('Card「{0}」の定義（definitions/{0}/）です。', id)}</div>
-        <div className="headline">{L('_card.json（設定・params・入力）')}</div>
+        <div className="headline">{L('_card.json（設定・入力）')}</div>
         <CodeEditor text={cardText} onChange={setCardText} language="json" documentId={`db:${id}/_card.json`} style={{ flex: 2, minHeight: 180 }} />
         <div className="headline">{L('README.md（説明と内容、任意）')}</div>
         <CodeEditor text={metaText} onChange={setMetaText} language="md" documentId={`db:${id}/README.md`} style={{ flex: 1, minHeight: 80, maxHeight: 140 }} />
@@ -191,99 +191,117 @@ export function WorkflowSettingsView({ session, initial }: { session: ProjectSes
   )
 }
 
-/** Flakes this project opts in to: an address gives its commit, hash and packages, which Cards read as inputs. */
-function NixSourceSettings({ session }: { session: ProjectSession }) {
-  useObserve(session)
-  const baseRev = session.rev
-  const selectedProject = clone(session.project)
-  const sources = arr(get(session.project, 'nixSources')) ?? []
-  const [address, setAddress] = useState('')
-  const [found, setFound] = useState<{ name: string; ref: string; packages: string[] }>()
+function NixPathSettings({ session }: { session: ProjectSession }) {
+  const [selected, setSelected] = useState('')
+  const projects = [...session.externals.keys()].sort()
+  const prefix = projects.includes(selected) ? selected : ''
+  return (
+    <Section title={L('Nix 検索パス')} info={L('Card は <名前/パス> でソースを参照します。「更新」で追加または URL が変わったソースを固定し、削除したソースの固定を外します。')}>
+      {projects.length > 0 && <Row label={L('対象プロジェクト')}>
+        <Select value={prefix} onChange={setSelected} options={[
+          { value: '', label: L('ルートプロジェクト') },
+          ...projects.map(value => ({ value, label: value.slice(0, -1) })),
+        ]} />
+      </Row>}
+      <NixPathRows key={prefix} session={session} prefix={prefix} />
+    </Section>
+  )
+}
+
+function NixPathRows({ session, prefix }: { session: ProjectSession; prefix: string }) {
+  const file = prefix + 'tsugumi.json'
+  const project = prefix ? session.externals.get(prefix)?.project : session.project
+  const entries = arr(get(project, 'nixPath')) ?? []
+  const lock = session.nixPathLock(prefix)
+  const [draft, setDraft] = useState<{ original?: J; editing?: string; name: string; url: string }>()
   const [working, setWorking] = useState(false)
   const [message, setMessage] = useState<string>()
   const [revisionEdit] = useState(() => new RevisionEdit())
   const [pending, setPending] = useState<J[]>()
   useObserve(revisionEdit)
-  const resolve = async (ref: string) => {
-    revisionEdit.reload(baseRev)
+
+  const disabled = working || revisionEdit.applying || !session.isEditable
+  const close = () => {
+    setDraft(undefined)
+    setPending(undefined)
+    revisionEdit.reload(session.rev)
+  }
+  const start = (entry?: J) => {
+    const name = str(get(entry, 'name'))
+    const next = { original: clone(get(project, 'nixPath')), editing: name, name: name ?? '', url: str(get(entry, 'url')) ?? '' }
+    setDraft(next)
+    setPending(undefined)
+    revisionEdit.reload(session.rev)
+  }
+  const save = async (list: J[], original: J | undefined) => {
+    setPending(list)
+    if (await revisionEdit.apply(session, x => x.appendEdits([x.fieldEdit(file, ['nixPath'], original, list)]))) close()
+  }
+  const update = async (name?: string) => {
     setWorking(true)
     setMessage(undefined)
-    try {
-      const r = await session.resolveNixSource(ref)
-      return { ref: String(r.ref), packages: r.packages.map(String) }
-    } catch (e) {
-      setMessage(L('取得できませんでした: {0}', errorText(e)))
-      return undefined
-    } finally {
-      setWorking(false)
-    }
+    try { await session.updateNixPathLock(prefix, name) }
+    catch (e) { setMessage(errorText(e)) }
+    finally { setWorking(false) }
   }
-  const save = async (list: J[], overwrite = false) => {
-    setPending(list)
-    const before = revisionEdit.jsonBase('tsugumi.json', selectedProject, overwrite)
-    const after = clone(before)
-    if (!isObj(after)) return
-    after.set('nixSources', list)
-    if (await revisionEdit.apply(session, x => x.appendEdits([x.jsonEdit('tsugumi.json', before, after)]))) setPending(undefined)
+  const saveDraft = () => {
+    if (!draft) return
+    const entry = obj([['name', draft.name], ['url', draft.url.trim()]])
+    const original = arr(draft.original) ?? []
+    const next = draft.editing === undefined ? [...original, entry]
+      : original.map(row => str(get(row, 'name')) === draft.editing ? entry : row)
+    void save(next, draft.original)
   }
-  const entry = (name: string, ref: string) => obj([['name', name], ['type', 'flake'], ['ref', ref]])
-  const look = async () => {
-    const r = await resolve(address.trim())
-    if (r) setFound({ name: sourceName(address.trim()), ...r })
-  }
-  const add = async () => {
-    if (!found) return
-    await save([...sources, entry(found.name, found.ref)])
-    setFound(undefined)
-    setAddress('')
-  }
-  const update = async (name: string, ref: string) => {
-    const r = await resolve(unlockedRef(ref))
-    if (r) await save(sources.map((s) => {
-      if (str(get(s, 'name')) !== name || !isObj(s)) return s
-      const updated = new JObj(s.entries())
-      updated.set('ref', r.ref)
-      return updated
-    }))
-  }
-  const taken = found !== undefined && sources.some((s) => str(get(s, 'name')) === found.name)
-  return (
-    <Section title={L('外部ソース')} info={L('追加した flake の package は、Card の default.nix で inputs.sources.ciao.packages.ciao のように使えます。コミットと hash で固定します。追加・更新・削除はすぐに保存されます。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。')}>
-      {sources.map((s) => {
-        const name = str(get(s, 'name')) ?? ''
-        const ref = str(get(s, 'ref')) ?? ''
-        return (
-          <Row key={name} label={name}>
-            <code className="secondary" title={ref}>{unlockedRef(ref)} {shortCommit(ref)}</code>
-            <Button disabled={working || !session.isEditable} onClick={() => void update(name, ref)}>{L('更新')}</Button>
-            <Button kind="destructive" disabled={working || !session.isEditable} onClick={() => { revisionEdit.reload(baseRev); void save(sources.filter((x) => x !== s)) }}>{L('削除')}</Button>
-          </Row>
-        )
-      })}
-      <Row label="flake">
-        <TextField value={address} onChange={(v) => { setAddress(v); setFound(undefined) }} placeholder="github:owner/repo" mono style={{ width: 260 }} disabled={working || !session.isEditable} />
-        <Button disabled={working || !address.trim() || !session.isEditable} onClick={() => void look()}>{L('取得')}</Button>
-        {working && <Spinner small />}
+
+  return <div data-nix-path>
+    {entries.map(entry => {
+      const name = str(get(entry, 'name')) ?? ''
+      const url = str(get(entry, 'url')) ?? ''
+      const status = nixPathLockStatus(lock, name, url)
+      const statusText = status.kind === 'unlocked' ? L('未ロック') :
+        status.kind === 'urlChanged' ? L('URL が変更されました') :
+        status.pin
+      return (
+        <Row key={name} label={name}>
+          <div className="col"><code className="secondary">{url}</code><span className="caption secondary">{statusText}</span></div>
+          <Button disabled={disabled} onClick={() => start(entry)}>{L('編集')}</Button>
+          <Button disabled={disabled} onClick={() => void update(name)}>{L('更新')}</Button>
+          <Button kind="destructive" disabled={disabled} onClick={() => {
+            const original = clone(get(project, 'nixPath'))
+            close()
+            void save(entries.filter(row => str(get(row, 'name')) !== name), original)
+          }}>{L('削除')}</Button>
+        </Row>
+      )
+    })}
+    {draft && <>
+      <Row label={L('名前')}>
+        <TextField value={draft.name} onChange={name => setDraft({ ...draft, name })} mono disabled={disabled} />
       </Row>
-      {found && (
-        <>
-          <Row label={L('名前')}><TextField value={found.name} onChange={(name) => setFound({ ...found, name })} mono style={{ width: 160 }} /></Row>
-          <Row label={L('コミット')}><code className="secondary" title={found.ref}>{shortCommit(found.ref) ?? found.ref}</code></Row>
-          <Row label="package"><code className="secondary">{found.packages.join(', ') || L('この環境の package はありません')}</code></Row>
-          <Row><Button disabled={taken || !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(found.name)} onClick={() => void add()}>{L('追加')}</Button>{taken && <span className="secondary caption">{L('同じ名前があります')}</span>}</Row>
-        </>
-      )}
-      <RevisionEditNotice edit={revisionEdit} text={() => serialize(pending ?? [])}
-        overwrite={() => { if (pending) void save(pending, true) }} reload={() => { setPending(undefined); revisionEdit.reload(baseRev) }} />
-      {message && <Row><span className="label caption" style={{ color: 'var(--orange)', whiteSpace: 'normal' }}>{message}</span></Row>}
-    </Section>
-  )
+      <Row label="URL">
+        <TextField value={draft.url} onChange={url => setDraft({ ...draft, url })} placeholder="github:owner/repo" mono disabled={disabled} />
+      </Row>
+      <Row>
+        <Button disabled={disabled || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(draft.name) || !draft.url.trim() ||
+          entries.some(row => str(get(row, 'name')) === draft.name && draft.name !== draft.editing)}
+          onClick={saveDraft}>{draft.editing === undefined ? L('追加') : L('保存')}</Button>
+        <Button disabled={disabled} onClick={close}>{L('キャンセル')}</Button>
+      </Row>
+    </>}
+    <Row>
+      {!draft && <Button disabled={disabled} onClick={() => start()}>{L('追加')}</Button>}
+      <Button disabled={disabled} onClick={() => void update()}>{L('すべて更新')}</Button>
+      {working && <Spinner small />}
+    </Row>
+    <RevisionEditNotice edit={revisionEdit} text={() => serialize(pending ?? [])}
+      overwrite={() => { if (pending) void save(pending, get(revisionEdit.jsonBase(file, undefined, true), 'nixPath')) }} reload={close} />
+    {message && <Row><span className="callout selectable" style={{ color: 'var(--red)' }}>{message}</span></Row>}
+  </div>
 }
 
 const recordingDefaults = {
   recordLogs: true,
   recordIO: false,
-  retainArtifact: false,
 }
 type RecordingKey = keyof typeof recordingDefaults
 const recordingKeys = Object.keys(recordingDefaults) as RecordingKey[]
@@ -295,7 +313,6 @@ const projectLogLimit = (project: J) => numText(get(project, 'logLimitBytes')) ?
 function GeneralProjectSettings({ session }: { session: ProjectSession }) {
   const [selectedProject, setSelectedProject] = useState(() => clone(session.project))
   const [name, setName] = useState(str(get(session.project, 'name')) ?? '')
-  const [pkgs, setPkgs] = useState(str(get(session.project, 'pkgsPath')) ?? '')
   const savedPaths = (arr(get(session.project, 'versionPaths')) ?? []).map(x => str(x) ?? '').join('\n')
   const [versionPaths, setVersionPaths] = useState(savedPaths)
   const excludeText = (project: J) => (arr(get(project, 'agentExclude')) ?? app.status?.agentExclude ?? []).map(x => typeof x === 'string' ? x : str(x) ?? '').join('\n')
@@ -309,13 +326,11 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
   const [message, setMessage] = useState<string>()
   const [revisionEdit] = useState(() => { const e = new RevisionEdit(); e.reload(session.rev); return e })
   useObserve(revisionEdit)
-  const pin = app.status?.nixpkgsPin ?? undefined
   const initialPaths = (arr(get(selectedProject, 'versionPaths')) ?? []).map(x => str(x) ?? '').join('\n')
-  const changed = name !== (str(get(selectedProject, 'name')) ?? '') || pkgs !== (str(get(selectedProject, 'pkgsPath')) ?? '') || versionPaths !== initialPaths || agentExclude !== excludeText(selectedProject) || changedRecording.length > 0 || changedLogLimit
+  const changed = name !== (str(get(selectedProject, 'name')) ?? '') || versionPaths !== initialPaths || agentExclude !== excludeText(selectedProject) || changedRecording.length > 0 || changedLogLimit
   const load = () => {
     setSelectedProject(clone(session.project))
     setName(str(get(session.project, 'name')) ?? '')
-    setPkgs(str(get(session.project, 'pkgsPath')) ?? '')
     setVersionPaths(savedPaths)
     setAgentExclude(excludeText(session.project))
     setRecording(projectRecording(session.project))
@@ -329,7 +344,6 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
     const after = clone(before)
     if (!isObj(after)) return
     if (name !== (str(get(selectedProject, 'name')) ?? '')) after.set('name', name)
-    if (pkgs !== (str(get(selectedProject, 'pkgsPath')) ?? '')) after.set('pkgsPath', pkgs || 'tsugumi:default')
     if (versionPaths !== initialPaths) after.set('versionPaths', paths)
     if (agentExclude !== excludeText(selectedProject)) after.set('agentExclude', agentExclude.split(/\r?\n/).filter(x => x.length > 0))
     for (const k of changedRecording) after.set(k, recording[k])
@@ -343,26 +357,18 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
       return next
     })
     setLogLimit(current => current === logLimit ? projectLogLimit(after) : current)
-    setPkgs(current => current === pkgs ? str(get(after, 'pkgsPath')) ?? '' : current)
     setVersionPaths(current => current === versionPaths ? paths.join('\n') : current)
     setMessage(L('保存しました。'))
   }
   return (
     <div className="col fill" onKeyDown={(e) => {
       // Return saves (the default action).
-      if (e.key === 'Enter' && !e.nativeEvent.isComposing && changed && session.isEditable && (e.target as HTMLElement).tagName === 'INPUT') void save()
+      if (e.key === 'Enter' && !e.nativeEvent.isComposing && changed && session.isEditable && (e.target as HTMLElement).tagName === 'INPUT' && !(e.target as HTMLElement).closest('[data-nix-path]')) void save()
     }}>
       <div className="scroll flex1">
         <Form>
-          <Section info={L('このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。')}>
+          <Section>
             <Row label={L('プロジェクト名')}><TextField value={name} onChange={setName} style={{ width: 260 }} /></Row>
-            <Row label={L('実行環境（Nixpkgs）')}><TextField value={pkgs} onChange={setPkgs} placeholder={pin ?? 'tsugumi:default'} style={{ width: 260 }} /></Row>
-            {(!pkgs || pkgs === 'tsugumi:default') && (
-              <Row><span className="label caption" style={{ color: 'var(--orange)', whiteSpace: 'normal' }}><Icon name="exclamationmark.triangle" />{L('Nixpkgs が固定されていません。Tsugumi を更新すると、このプロジェクトの Card のパッケージも変わります。')}</span></Row>
-            )}
-            {pin && pkgs !== pin && (
-              <Row><Button onClick={() => setPkgs(pin)}>{!pkgs || pkgs === 'tsugumi:default' ? L('この Tsugumi の Nixpkgs に固定') : L('この Tsugumi の Nixpkgs に更新')}</Button></Row>
-            )}
           </Section>
           <Section info={L('定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。')}>
             <Row label={L('版に含める追加パス')}><TextField value={versionPaths} onChange={setVersionPaths} multiline rows={5} style={{ width: 320 }} /></Row>
@@ -376,20 +382,19 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
           <Section title={L('記録の既定値')}>
             <Row label={L('標準出力と標準エラーを記録')}><Toggle checked={recording.recordLogs} onChange={recordLogs => setRecording({ ...recording, recordLogs })} /></Row>
             <Row label={L('入出力の値を記録')}><Toggle checked={recording.recordIO} onChange={recordIO => setRecording({ ...recording, recordIO })} /></Row>
-            <Row label={L('出力ファイルと成果物を保持')}><Toggle checked={recording.retainArtifact} onChange={retainArtifact => setRecording({ ...recording, retainArtifact })} /></Row>
             <Row label={L('呼び出しごとのログ上限（バイト）')}>
               <TextField value={logLimit} onChange={setLogLimit} mono />
             </Row>
             <Row><span className={validLogLimit ? 'secondary caption' : 'callout'}>{L('0〜1073741824。0 の場合もログは実行中に表示されます。')}</span></Row>
           </Section>
           <TrustedFoldersSettings />
-          <NixSourceSettings session={session} />
+          <NixPathSettings session={session} />
           <Section>
             <Value label={L('場所')} value={session.dir} />
           </Section>
         </Form>
       </div>
-      <RevisionEditNotice edit={revisionEdit} text={() => [`name: ${name}`, `pkgsPath: ${pkgs}`, `versionPaths:\n${versionPaths}`, `agentExclude:\n${agentExclude}`,
+      <RevisionEditNotice edit={revisionEdit} text={() => [`name: ${name}`, `versionPaths:\n${versionPaths}`, `agentExclude:\n${agentExclude}`,
         ...recordingKeys.map(k => `${k}: ${recording[k]}`), `logLimitBytes: ${logLimit}`].join('\n')}
         overwrite={() => void save(true)} reload={load} />
       <div className="detail-foot">
@@ -447,7 +452,7 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
     <div className="col fill">
       <div className="scroll flex1">
         <Form>
-          <Section title={L('削除')} info={L('実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、.tsugumi/runs.sqlite から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。')}>
+          <Section title={L('削除')} info={L('実行記録、保存した値、ログ、実行が所有する成果物（.tsugumi/artifacts/<run>）と scratch を削除します。実行中は削除できません。')}>
             <Row label={L('対象')}>
               <Select<'before' | 'all'> value={scope} onChange={setScope}
                 options={[{ value: 'before', label: L('指定した日時より前に終わった実行') }, { value: 'all', label: L('すべての実行') }]} />

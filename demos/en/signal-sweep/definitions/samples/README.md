@@ -1,3 +1,3 @@
 ---
-description: Hands on three signal strengths, one invocation each (a value sweep)
+description: Hands on three signal strengths, one invocation each (Nix run variants)
 ---

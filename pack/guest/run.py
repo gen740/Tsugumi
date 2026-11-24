@@ -1,16 +1,14 @@
 """Run an exported Project once, inside the pack guest, and write its results.
 
 Called by the guest's /init in run mode. The Project is a copy of what the
-author exported; the recipient's request (parameter values) is applied to that
-copy before tsugumid opens it, so the run is an ordinary run of the Workflow
-from its trigger. Nothing here schedules Cards: tsugumid does, through the
+author exported and runs with the values fixed at export time. The run is an
+ordinary run of the Workflow from its trigger. Nothing here schedules Cards: tsugumid does, through the
 same RPC the apps use (tsugumi-rpc, one JSON request per line).
 
     python3 run.py PROJECT REQUEST RESULT
 
 PROJECT  writable copy of the exported Project
-REQUEST  request.json from the Mac: {"start": "<trigger>", "params": {"<card>": {"<name>": value}},
-         "files": {"<input card>": "<file name in inputs/<card>/ beside request.json>"}}
+REQUEST  request.json from the Mac: {"start": "<trigger>"}
 RESULT   folder for summary.json and cards/<card>/<invocation>/...
 
 The copy records every Code Card's inputs and outputs (recordIO), whatever the
@@ -28,8 +26,6 @@ import uuid
 from pathlib import Path
 
 ENDED = {"succeeded", "failed", "cancelled"}
-# Card kinds that expose editable values in the exported app.
-SETTABLE = {"code", "input"}
 
 
 def stage(text):
@@ -74,43 +70,6 @@ class Rpc:
     def close(self):
         self.process.stdin.close()
         self.process.wait(timeout=10)
-
-
-def definition_of(project, card):
-    path = project / "definitions" / card / "_card.json"
-    if not path.is_file():
-        raise SystemExit(f"no Card {card} in this Project")
-    return path, json.loads(path.read_text())
-
-
-def apply_request(project, request, inputs):
-    """Set the recipient's parameter values and files in the Cards' _card.json."""
-    for card, name in request.get("files", {}).items():
-        path, definition = definition_of(project, card)
-        values = [p for p in definition.get("params", []) if p["name"] == "value"]
-        if definition.get("type") != "input" or not values:
-            raise SystemExit(f"{card} is not an input Card with a file")
-        # An input Card's file is a source of its own folder: the core copies
-        # it into the run from there.
-        source = inputs / card / name
-        target = project / "definitions" / card / "recipient" / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
-        values[0]["data"] = {"string": f"recipient/{name}"}
-        path.write_text(json.dumps(definition, indent=2, ensure_ascii=False) + "\n")
-    for card, values in request.get("params", {}).items():
-        path, definition = definition_of(project, card)
-        if definition.get("type") not in SETTABLE:
-            raise SystemExit(f"{card} is a {definition.get('type')} Card: its parameters shape the Workflow")
-        params = {p["name"]: p for p in definition.get("params", [])}
-        for name, value in values.items():
-            if name not in params:
-                raise SystemExit(f"Card {card} has no parameter {name} (it has {', '.join(params) or 'none'})")
-            if params[name].get("nix"):
-                raise SystemExit(f"{card}.{name} is fixed at export: it changes the Card's build")
-            field = params[name]["type"].replace("[]", "s")
-            params[name]["data"] = {field: value}
-        path.write_text(json.dumps(definition, indent=2, ensure_ascii=False) + "\n")
 
 
 def record_all(project):
@@ -166,23 +125,12 @@ def decode_value(value, folder):
     name = value["name"]
     data = bytes(value.get("inline_bytes", []))
     if not data:
-        return None
+        artifacts = value.get("artifacts", [])
+        return {"artifacts": artifacts} if artifacts else None
     raw = folder / f"{name}.bin"
     raw.write_bytes(data)
     entry = {"bytes": f"{name}.bin"}
-    if value.get("kind") in ("File", "Directory"):
-        # The content itself, from where the core keeps it.
-        kept = value.get("file_path")
-        if kept and os.path.exists(kept):
-            target = folder / name / os.path.basename(kept.rstrip("/"))
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if os.path.isdir(kept):
-                shutil.copytree(kept, target, symlinks=True)
-            else:
-                shutil.copyfile(kept, target)
-            entry["file"] = str(target.relative_to(folder))
-        else:
-            entry["file_missing"] = True
+    entry["artifacts"] = value.get("artifacts", [])
     schema = folder / f".{name}.bfbs"
     schema.write_bytes(bytes(value.get("schema_bfbs", [])))
     result = subprocess.run(
@@ -195,12 +143,6 @@ def decode_value(value, folder):
         entry["decode_error"] = result.stderr.strip()
     else:
         entry["json"] = f"{name}.json"
-        if "file" in entry:
-            # The path inside the guest means nothing outside it: name the copy.
-            decoded = json.loads(produced.read_text())
-            if isinstance(decoded, dict) and isinstance(decoded.get("value"), str):
-                decoded["value"] = entry["file"]
-                produced.write_text(json.dumps(decoded, indent=2, ensure_ascii=False) + "\n")
     return entry
 
 
@@ -214,6 +156,44 @@ def read_log(rpc, run_id, card, invocation, stream):
         if not part.get("text") or following is None or following <= offset or following >= part.get("size_bytes", 0):
             return text
         offset = following
+
+
+def export_artifacts(rpc, run_id, result):
+    cursor = None
+    while True:
+        request = {"run_id": run_id}
+        if cursor:
+            request["cursor"] = cursor
+        page = rpc.call("ArtifactListRequest", request)
+        for artifact in page.get("artifacts", []):
+            artifact_id = artifact["artifact_id"]
+            if len(artifact_id) != 32 or any(c not in "0123456789abcdef" for c in artifact_id):
+                raise ValueError("malformed artifact id")
+            root = result / "artifacts" / artifact_id
+            root.mkdir(parents=True, exist_ok=True)
+            for member in artifact.get("members", []):
+                relative = Path(member["path"])
+                if relative.is_absolute() or ".." in relative.parts:
+                    raise ValueError("artifact member escapes the export directory")
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with target.open("wb") as output:
+                    offset = 0
+                    while True:
+                        part = rpc.call("ArtifactReadRequest", {
+                            "artifact_id": artifact_id, "member": relative.as_posix(),
+                            "offset": offset, "limit_bytes": 1 << 20,
+                        })
+                        output.write(bytes(part.get("bytes", [])))
+                        if part.get("eof"):
+                            break
+                        next_offset = part.get("next_offset")
+                        if next_offset is None or next_offset <= offset:
+                            raise ValueError("artifact read did not advance")
+                        offset = next_offset
+        cursor = page.get("next_cursor")
+        if not cursor:
+            return
 
 
 def collect(rpc, run_id, result, wired):
@@ -263,7 +243,6 @@ def main():
     project, request_path, result = (Path(a) for a in sys.argv[1:4])
     work = Path(os.environ.get("PACK_WORK", "/work"))
     request = json.loads(request_path.read_text()) if request_path.is_file() else {}
-    apply_request(project, request, request_path.parent / "inputs")
     record_all(project)
     found = triggers(project)
     start = request.get("start") or (found[0] if found else None)
@@ -273,12 +252,12 @@ def main():
     began = time.monotonic()
     core, socket = start_core(project, work)
     rpc = Rpc(f"unix:{socket}", os.environ["TSUGUMI_SCHEMA"])
-    summary = {"start": start, "triggers": found, "params": request.get("params", {})}
+    summary = {"start": start, "triggers": found}
     try:
         rpc.call("SessionHelloRequest", {})
-        snapshot = rpc.call("ProjectInspectRequest", {})
+        revision = rpc.call("ProjectInspectRequest", {})["rev"]
         stage("run")
-        accepted = rpc.call("RunRequest", {"base_rev": snapshot["rev"], "op_id": str(uuid.uuid4()), "origin": "pack",
+        accepted = rpc.call("RunRequest", {"base_rev": revision, "op_id": str(uuid.uuid4()), "origin": "pack",
                                           "card": {"segments": [start]},
                                           "max_concurrency": min(64, max(1, os.cpu_count() or 1))})
         run_id = accepted["run"]["run_id"]
@@ -300,6 +279,7 @@ def main():
         if status.get("failure"):
             summary["failure"] = status["failure"]
         stage("results")
+        export_artifacts(rpc, run_id, result)
         summary["cards"] = collect(rpc, run_id, result, wired_outputs(project))
         summary["results"] = [{"card": c["card"], "invocation": c["invocation"], "port": port,
                                **{k: f"{c['folder']}/{v}" for k, v in value.items() if k in ("json", "file")}}

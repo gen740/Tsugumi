@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -31,19 +32,22 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <sstream>
 #include <thread>
 #include <utility>
 #include <vector>
 
+#include "display_channel.hh"
 #include "journal.hh"
 #include "tsugumi/rpc/frame.hh"
 #include "tsugumi/rpc/peer_tls.hh"
 #include "tsugumi/rpc/unix_socket.hh"
-#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/workerd/worker_proc.hh"
 
@@ -68,87 +72,206 @@ struct Fd {
     if (value >= 0) ::close(value);
   }
 };
-// One socket carries only transient view bytes from the job's adapter.
+// The adapter and the project each have an independent credit window per view.
 class DisplayChannel {
  public:
-  using Batch = std::vector<std::unique_ptr<Tsugumi::Worker::WorkerDisplayT>>;
-
   explicit DisplayChannel(Fd&& descriptor)
-      : socket_(std::move(descriptor)), thread_([this] { read(); }) {}
+      : socket_(std::move(descriptor)), reader_([this] { read(); }) {
+    try {
+      writer_ = std::thread([this] { write(); });
+    } catch (...) {
+      ::shutdown(socket_.value, SHUT_RDWR);
+      reader_.join();
+      throw;
+    }
+  }
   ~DisplayChannel() {
     ::shutdown(socket_.value, SHUT_RDWR);
-    join();
+    reader_.join();
+    writer_.join();
   }
 
-  auto take(bool finished) -> Batch {
-    // The supervisor has waited for the adapter, so EOF follows its final
-    // bytes even if the listener's reader has not caught up yet.
-    if (finished) join();
+  auto take(R::JobStatusT& status, const R::StatusRequestT& query) -> void {
     std::lock_guard lock(mutex_);
-    Batch batch;
-    batch.reserve(pending_.size());
-    for (auto& entry : pending_) batch.push_back(std::move(entry.value));
-    pending_.clear();
-    size_ = 0;
-    return batch;
+    if (query.display_after == sequence_) replay_.reset();
+    for (const auto& credit : query.display_credits) {
+      const auto view = outbound_.find(credit->view);
+      if (view != outbound_.end() && credit->released <= view->second.sent)
+        view->second.released =
+            std::max(view->second.released, credit->released);
+    }
+    if (!replay_) {
+      const auto next = std::ranges::find_if(pending_, [&](const auto& item) {
+        const auto& view = outbound_.at(item.view);
+        return view.sent - view.released <= kViewBudget - TSUGUMI_MESSAGE_MAX;
+      });
+      if (next != pending_.end()) {
+        auto& view = outbound_.at(next->view);
+        const auto size = message_cost(next->bytes.size());
+        view.queued -= size;
+        view.sent += size;
+        if (!closed_) {
+          view.credit += size;
+          ready_.notify_all();
+        }
+        replay_.emplace(std::move(*next));
+        pending_.erase(next);
+        ++sequence_;
+      }
+    }
+    if (replay_) {
+      status.displays.push_back(std::make_unique<W::WorkerDisplayT>(*replay_));
+      status.display_sequence = sequence_;
+    }
+    status.view_input_ready = input_ready_ && !closed_;
+    for (const auto& [name, view] : inbound_) {
+      auto credit = std::make_unique<R::DisplayCreditT>();
+      credit->view = name;
+      credit->released = view.released;
+      status.view_input_credits.push_back(std::move(credit));
+    }
+    status.display_pending =
+        !pending_.empty() ||
+        (status.state == R::JobState::Succeeded && !closed_);
+  }
+
+  auto send(const R::ViewSendRequestT& request) -> bool {
+    const auto& message = *request.display;
+    if (message.view.empty() || message.bytes.size() > TSUGUMI_MESSAGE_MAX)
+      return false;
+    std::lock_guard lock(mutex_);
+    if (!input_ready_ || closed_) return false;
+    auto& view = inbound_[message.view];
+    if (request.offset < view.accepted)
+      return true;  // Retried after a lost reply.
+    if (request.offset != view.accepted ||
+        view.queued > kViewBudget - TSUGUMI_MESSAGE_MAX)
+      return false;
+    view.pending.emplace_back(message.bytes.begin(), message.bytes.end());
+    const auto cost = message_cost(message.bytes.size());
+    view.queued += cost;
+    view.accepted += cost;
+    ready_.notify_all();
+    return true;
   }
 
   auto expired() -> bool {
     std::lock_guard lock(mutex_);
-    return closed_ && std::chrono::steady_clock::now() - *closed_ > 10s;
+    return closed_ && std::chrono::steady_clock::now() - *closed_ > 10s &&
+           pending_.empty() && !replay_;
   }
 
  private:
-  struct Entry {
-    std::unique_ptr<Tsugumi::Worker::WorkerDisplayT> value;
-    size_t size;
+  struct Outbound {
+    size_t queued = 0;
+    size_t credit = 0;
+    uint64_t sent = 0;
+    uint64_t released = 0;
+  };
+  struct Inbound {
+    std::deque<std::string> pending;
+    size_t queued = 0;
+    size_t in_flight = 0;
+    uint64_t accepted = 0, released = 0;
   };
 
-  auto join() -> void {
-    std::lock_guard lock(join_mutex_);
-    if (thread_.joinable()) thread_.join();
-  }
-
   auto read() -> void {
-    using Tsugumi::Worker::WorkerDisplay;
     try {
-      while (auto frame =
-                 rpc::frame::Read(socket_.value, kRemoteDisplayBytes)) {
-        flatbuffers::Verifier verifier(
-            reinterpret_cast<const uint8_t*>(frame->data()), frame->size());
-        if (!verifier.VerifyBuffer<WorkerDisplay>(nullptr)) continue;
-        auto value = std::unique_ptr<Tsugumi::Worker::WorkerDisplayT>(
-            flatbuffers::GetRoot<WorkerDisplay>(frame->data())->UnPack());
-        std::lock_guard lock(mutex_);
-        const auto old =
-            std::ranges::find_if(pending_, [&](const Entry& entry) {
-              return entry.value->view == value->view;
-            });
-        if (old != pending_.end()) {
-          size_ -= old->size;
-          pending_.erase(old);
+      char ready = 0;
+      if (::read(socket_.value, &ready, 1) == 1 && ready == 1) {
+        {
+          std::lock_guard lock(mutex_);
+          input_ready_ = true;
         }
-        while (size_ + frame->size() > kRemoteDisplayBytes) {
-          size_ -= pending_.front().size;
-          pending_.pop_front();
+        while (auto frame = read_display(socket_.value)) {
+          const auto* envelope = W::GetWorkerMessage(frame->data());
+          std::lock_guard lock(mutex_);
+          if (const auto* credit = envelope->value_as_WorkerDisplayCredit()) {
+            const auto view = inbound_.find(credit->view()->str());
+            if (view == inbound_.end() || credit->bytes() > view->second.in_flight)
+              break;
+            view->second.in_flight -= credit->bytes();
+            ready_.notify_all();
+            continue;
+          }
+          const auto* message = envelope->value_as_WorkerDisplay();
+          if (!message || !message->view()->size() ||
+              message->bytes()->size() > TSUGUMI_MESSAGE_MAX)
+            break;
+          const auto size = message_cost(message->bytes()->size());
+          auto& view = outbound_[message->view()->str()];
+          if (view.queued > kViewBudget - TSUGUMI_MESSAGE_MAX) break;
+          view.queued += size;
+          pending_.emplace_back();
+          message->UnPackTo(&pending_.back());
         }
-        size_ += frame->size();
-        pending_.push_back({std::move(value), frame->size()});
       }
     } catch (const std::exception&) {
-      ::shutdown(socket_.value, SHUT_RD);
     }
     std::lock_guard lock(mutex_);
     closed_ = std::chrono::steady_clock::now();
+    ready_.notify_all();
+    ::shutdown(socket_.value, SHUT_RDWR);
+  }
+
+  auto write() -> void {
+    std::string last;
+    const auto has_credit = [](const auto& entry) {
+      return entry.second.credit != 0;
+    };
+    const auto can_send = [](const auto& entry) {
+      const auto& view = entry.second;
+      return !view.pending.empty() &&
+             view.in_flight <= kViewBudget - TSUGUMI_MESSAGE_MAX;
+    };
+    try {
+      for (;;) {
+        std::unique_lock lock(mutex_);
+        ready_.wait(lock, [&] {
+          return closed_ || std::ranges::any_of(outbound_, has_credit) ||
+                 std::ranges::any_of(inbound_, can_send);
+        });
+        if (closed_) return;
+        // Credit can unblock the other direction even when data cannot move.
+        const auto credit_entry = std::ranges::find_if(outbound_, has_credit);
+        if (credit_entry != outbound_.end()) {
+          const auto view = credit_entry->first;
+          const auto credit = std::exchange(credit_entry->second.credit, 0);
+          lock.unlock();
+          write_display_credit(socket_.value, view, credit);
+          continue;
+        }
+        const auto end = inbound_.end();
+        auto next = std::find_if(inbound_.upper_bound(last), end, can_send);
+        if (next == end) next = std::find_if(inbound_.begin(), end, can_send);
+        last = next->first;
+        auto& view = next->second;
+        auto bytes = std::move(view.pending.front());
+        view.pending.pop_front();
+        const auto cost = message_cost(bytes.size());
+        view.queued -= cost;
+        view.released += cost;
+        view.in_flight += cost;
+        lock.unlock();
+        write_display(socket_.value, last, bytes);
+      }
+    } catch (const std::exception&) {
+      ::shutdown(socket_.value, SHUT_RDWR);
+    }
   }
 
   Fd socket_;
   std::mutex mutex_;
-  std::deque<Entry> pending_;
-  size_t size_ = 0;
+  std::condition_variable ready_;
+  std::deque<W::WorkerDisplayT> pending_;
+  std::optional<W::WorkerDisplayT> replay_;
+  uint64_t sequence_ = 0;
+  std::map<std::string, Outbound> outbound_;
+  std::map<std::string, Inbound> inbound_;
+  bool input_ready_ = false;
   std::optional<std::chrono::steady_clock::time_point> closed_;
-  std::mutex join_mutex_;
-  std::thread thread_;
+  std::thread reader_;
+  std::thread writer_;
 };
 
 auto log(const std::string& line) -> void {
@@ -379,6 +502,14 @@ class Daemon {
         return reply(
             journal->submit(q.job_id, data, *spec, q.core_life_id).status());
       }
+      case R::RequestBody::ViewSendRequest: {
+        const auto record = journal->status(q.job_id, q.core_life_id);
+        const auto channel = display_channel(*journal, q.job_id);
+        if (record.state != R::JobState::Running || !channel ||
+            !channel->send(*q.body.AsViewSendRequest()))
+          throw Error(R::ErrorCode::Rejected, "the Card cannot accept a view message");
+        return reply(R::AckT{});
+      }
       case R::RequestBody::StatusRequest: {
         auto status =
             with_log_status(journal->status(q.job_id, q.core_life_id).status());
@@ -399,9 +530,8 @@ class Daemon {
             status.transfer_total = progress->total;
           }
         }
-        const bool finished = status.state == R::JobState::Succeeded;
         if (const auto channel = display_channel(*journal, q.job_id))
-          status.displays = channel->take(finished);
+          channel->take(status, query);
         return reply(std::move(status));
       }
       case R::RequestBody::CancelRequest: {
@@ -624,12 +754,12 @@ class Daemon {
     int pair[2];
     if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) != 0)
       return false;
-    Fd display_reader(pair[0]), display_writer(pair[1]);
-    Fd adapter_display(::fcntl(display_writer.value, F_DUPFD_CLOEXEC, 10));
+    Fd listener_display(pair[0]), job_display(pair[1]);
+    Fd adapter_display(::fcntl(job_display.value, F_DUPFD_CLOEXEC, 10));
     if (adapter_display.value < 0) return false;
     std::shared_ptr<DisplayChannel> display;
     try {
-      display = std::make_shared<DisplayChannel>(std::move(display_reader));
+      display = std::make_shared<DisplayChannel>(std::move(listener_display));
     } catch (const std::exception&) {
       return false;
     }

@@ -1,3 +1,5 @@
-def main(inputs):
+from card import Input, Output
+from collatz.Number import NumberT
+def run(inputs: Input) -> Output:
     n = inputs.number.value
-    return {'next': {'value': n // 2}}
+    return Output(next=NumberT(value=n // 2))

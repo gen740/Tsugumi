@@ -13,9 +13,8 @@ TEST(SourceTransfer, StreamsFixedChunksAndDiscardsAnInterruptedImport) {
     std::filesystem::path root;
     ~Cleanup() { std::filesystem::remove_all(root); }
   } cleanup{root};
-  fs::write_atomic(
-      root / "tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  fs::write_atomic(root / "tsugumi.json",
+                   R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   fs::write_atomic(root / "definitions/data/_card.json",
                    R"({"type":"draft"})");
   std::string bytes(128 * 1024 + 1, 'x');

@@ -102,13 +102,13 @@
     "finale": "In the app you can change the band of latitude or mc and rerun only the analysis Cards, without fetching again."
   },
   "card-guide": {
-    "intro": "The smallest Workflow, made in the chapter on writing Cards by hand.",
+    "intro": "Follow a temperature from the Input Card to the C++ conversion Card.",
     "cards": {
       "start": "The run begins at the start Card.",
-      "settings": "Sends the number 21, which you can edit on the Canvas.",
-      "multiply": "Multiplies the number it receives by factor, outputs the result and shows it on the Card."
+      "settings": "Sends a temperature of 20 °C. Edit the value on the Canvas.",
+      "convert": "Applies the scale and offset, sends 68 °F to the live view and returns the Fahrenheit value."
     },
-    "finale": "The result appeared in multiply's display. Inputs and outputs are in the record, and you can change factor and rerun only multiply."
+    "finale": "Change the offset and rerun only convert to try a different condition with the saved input."
   },
   "draft": {
     "intro": "A Draft is a Card that says in words what it receives, what it does and what it passes on. It has no code yet. With \"Generate Cards\" in the app, the Agent writes code from these words, runs it and checks."

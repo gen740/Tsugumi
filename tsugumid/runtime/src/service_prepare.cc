@@ -22,8 +22,8 @@ auto Service::prepare_cards(std::ostream& out) -> bool {
   bool all = true;
   Tsugumi::State::PreparedCardsT manifest;
   for (const auto& node : graph.nodes) {
-    if (node.kind != CardType::Code || node.is_virtual) continue;
     const auto card = path_key(node.path);
+    if (node.kind != CardType::Code || node.is_virtual) continue;
     BuildRequest request;
     request.node = &node;
     request.doc = doc;

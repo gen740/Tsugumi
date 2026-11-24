@@ -1,14 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "measurement",
-      "type": "double",
-      "data": {
-        "double": 7.0
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "start"

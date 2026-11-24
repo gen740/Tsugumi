@@ -4,7 +4,6 @@
 #include <unistd.h>
 
 #include <fstream>
-#include <regex>
 #include <sstream>
 
 #include "nix_eval.hh"
@@ -88,10 +87,37 @@ std::string root_prefix(const CardPath& card) {
   return out + "-" + crypto::sha256_hex(k).substr(0, 8) + "--";
 }
 
-auto dep_json(const CardPath& target, const std::string& name) -> std::string {
-  auto key = schema::string_value(path_key(target));
-  auto port = schema::string_value(name);
-  return schema::object_text({{"key", &key}, {"name", &port}});
+auto project_pins(const Document& doc, const Store& store, const Node& node)
+    -> std::pair<LockedNixPath, std::string> {
+  const auto path = node.project_dir + "tsugumi.lock";
+  LockedNixPath entries;
+  if (doc.sources.contains(path)) {
+    const auto lock = parse_project_lock(path, store.read_source(doc, path));
+    const auto& object =
+        document_text::root<Tsugumi::Document::ProjectLock>(lock.buffer);
+    for (const auto* entry : *object.entries())
+      entries.emplace(entry->name()->str(),
+                      NixSource{entry->url()->str(),
+                                document_text::str(entry->rev()),
+                                entry->narHash()->str()});
+  }
+
+  LockedNixPath result;
+  json::Members identity;
+  for (const auto& declaration : node.nix_path) {
+    const auto& name = declaration.name;
+    const auto line = entries.find(name);
+    if (line == entries.end() || line->second.url != declaration.url)
+      throw std::runtime_error("nixPath " + json::Quote(name) +
+                               " needs an update to " + path +
+                               "; run tsugumi lock update");
+    const auto& source = line->second;
+    result.emplace(name, source);
+    identity.emplace(name, json::Encode(std::vector<std::string>{
+                               json::Quote(source.url), json::Quote(source.rev),
+                               json::Quote(source.nar_hash)}));
+  }
+  return {std::move(result), json::Encode(identity)};
 }
 
 }  // namespace
@@ -170,23 +196,8 @@ auto NixRunner::prepared(const std::string& card, const std::string& key,
 
 NixRunner::~NixRunner() { evaluator_.reset(); }
 
-FlakeInfo NixRunner::resolve_flake(const std::string& ref) {
-  static const std::regex page(
-      R"(^https://github\.com/([^/\s]+)/([^/\s]+?)(\.git)?/?$)");
-  static const std::regex allowed(
-      R"(^(github:|gitlab:|sourcehut:|git\+https://|https://)[^\s"\\$]+$)");
-  std::smatch m;
-  std::string flake = std::regex_match(ref, m, page)
-                          ? "github:" + m[1].str() + "/" + m[2].str()
-                          : ref;
-  if (!std::regex_match(flake, allowed))
-    throw Failed(FailureKind::validation_failed,
-                 "not a flake reference Tsugumi reads: " + ref);
-  try {
-    return evaluator().flake(NixCall{}, flake);
-  } catch (const std::runtime_error& e) {
-    throw Failed(FailureKind::nix_failed, e.what());
-  }
+auto NixRunner::lock_source(const std::string& url) -> NixSource {
+  return evaluator().lock_source(url);
 }
 
 NixEvaluator& NixRunner::evaluator() {
@@ -196,13 +207,7 @@ NixEvaluator& NixRunner::evaluator() {
     if (!entry)
       throw std::runtime_error("cannot read the Card evaluator in " +
                                nix_dir_.string());
-    std::vector<std::string> allowed{nix_dir_.string()};
-    std::error_code ec;
-    const auto kit = stdfs::canonical(nix_dir_ / "kit", ec);
-    if (!ec) allowed.push_back(kit.string());
-    allowed.push_back(eval_dir_.string());
-    evaluator_ =
-        std::make_unique<NixEvaluator>(std::move(*entry), std::move(allowed));
+    evaluator_ = std::make_unique<NixEvaluator>(std::move(*entry));
   }
   return *evaluator_;
 }
@@ -216,92 +221,12 @@ stdfs::path NixRunner::gcroots_dir() const {
   return d.empty() ? cache_dir() / "gcroots" : d;
 }
 
-// nixpkgs.json is read by the Card's Nix evaluation.
-struct NixpkgsPin {
-  schema::t::String<"url"> url;
-  schema::t::String<"narHash"> nar_hash;
-};
-
-static auto nixpkgs_pin(const std::string& pkgs) -> NixpkgsPin {
-  std::string url;
-  std::string hash;
-  if (pkgs == "tsugumi:default") {
-    std::string rev = TSUGUMI_CARD_NIXPKGS_REV;
-    hash = TSUGUMI_CARD_NIXPKGS_NARHASH;
-    if (rev.empty() || hash.empty())
-      throw Failed(FailureKind::nix_failed,
-                   "this build of tsugumid has no default nixpkgs pin");
-    url = "https://github.com/NixOS/nixpkgs/archive/" + rev + ".tar.gz";
-  } else {
-    static const std::regex re(
-        R"(^(https://github\.com/NixOS/nixpkgs/archive/[0-9a-f]{40}\.tar\.gz)#(sha256-[A-Za-z0-9+/=]{44})$)");
-    std::smatch m;
-    if (!std::regex_match(pkgs, m, re))
-      throw Failed(FailureKind::nix_failed,
-                   "pkgsPath must be tsugumi:default or a pinned nixpkgs "
-                   "archive URL with #sha256-<hash>");
-    url = m[1];
-    hash = m[2];
-  }
-  NixpkgsPin pin;
-  *pin.url = url;
-  *pin.nar_hash = hash;
-  return pin;
-}
-
-types::TypeRef NixRunner::params_type(const Node& node) {
-  std::vector<std::pair<std::string, std::string>> fields;
-  for (const auto& p : node.settings.params)
-    fields.emplace_back(p.name, param_fbs_type(p.type));
-  std::string err;
-  auto t =
-      types::compile(types::params_schema(fields), "parameters.Params", &err);
-  if (!t) throw Failed(FailureKind::validation_failed, "params schema: " + err);
-  return *t;
-}
-
-std::string NixRunner::params_json(const Node& node, bool nix_only) {
-  return params_json(node.settings.params, nix_only);
-}
-
-std::string NixRunner::params_json(const std::vector<ParamDef>& params,
-                                   bool nix_only) {
-  // The params, in their declared order, as the JSON default.nix reads.
-  std::string out = "{";
-  for (const auto& p : params) {
-    if ((nix_only && !p.nix) || !p.data) continue;
-    if (out.size() > 1) out += ',';
-    out += json::Quote(p.name) + ':' + param_value_json(p.type, *p.data);
-  }
-  return out + '}';
-}
-
-std::string NixRunner::params_buffer(const Node& node) {
-  auto t = params_type(node);
-  std::string out;
-  std::string err;
-  if (!types::json_to_flatbuffer(*t, params_json(node, false), &out, &err))
-    throw Failed(FailureKind::validation_failed, "params: " + err);
-  return out;
-}
-
-std::map<std::string, std::string> NixRunner::generate(const Node& node) {
-  std::map<std::string, std::string> files;
-  files["_inputs.fbs"] = types::card_catalog(node.inputs, true);
-  std::vector<std::pair<std::string, std::string>> pf;
-  for (const auto& p : node.settings.params)
-    pf.emplace_back(p.name, param_fbs_type(p.type));
-  files["_params.fbs"] = types::params_schema(pf);
-  files["_outputs.fbs"] = types::card_catalog(node.outputs, false);
-  return files;
-}
-
 // A folder of the evaluation area named after its contents: written once,
 // then reused by every later Card and run with the same contents.
 stdfs::path NixRunner::content_dir(
     const char* kind, const std::string& digest,
     const std::function<std::map<std::string, std::string>()>& files) {
-  auto dir = eval_dir_ / kind / digest.substr(0, 32);
+  auto dir = eval_dir_ / kind / digest;
   std::lock_guard<std::mutex> l(dirs_mu_);
   if (written_.count(dir.string())) return dir;
   std::error_code ec;
@@ -312,7 +237,10 @@ stdfs::path NixRunner::content_dir(
     for (const auto& [name, content] : files()) {
       auto p = tmp / name;
       stdfs::create_directories(p.parent_path());
-      std::ofstream(p, std::ios::binary | std::ios::trunc) << content;
+      std::ofstream output(p, std::ios::binary | std::ios::trunc);
+      output.exceptions(std::ios::badbit | std::ios::failbit);
+      output.write(content.data(), content.size());
+      output.close();
     }
     stdfs::create_directories(tmp);
     stdfs::rename(tmp, dir);
@@ -356,67 +284,109 @@ auto NixRunner::declared_views(const BuildRequest& req)
   return build_plan(view_request, !prepared_).common.views;
 }
 
+auto NixRunner::configure_call(NixCall& call, const Document& doc,
+                               const Node& node, bool expression_only) -> void {
+  const auto& graph = *doc.resolution;
+  auto [entries, project_key] = project_pins(doc, svc_.store(), node);
+  call.locked_nix_path = std::move(entries);
+
+  crypto::Sha256 key;
+  const auto prepare = [&](const Node& owner) -> json::Members {
+    const auto card = path_key(owner.path);
+    auto& store = svc_.store();
+    crypto::Sha256 source_hash;
+    source_hash.update(json::Quote(card));
+    source_hash.update(json::Quote(owner.project_dir));
+    source_hash.update(project_key);
+    std::vector<std::string> paths;
+    for (auto it = doc.sources.lower_bound(owner.def_dir);
+         it != doc.sources.end() && it->first.starts_with(owner.def_dir);
+         ++it) {
+      const auto rel = it->first.substr(owner.def_dir.size());
+      if (rel == "_card.json" || rel == "README.md" ||
+          rel == "_comments.json" || rel == "_inputs.fbs")
+        continue;
+      paths.push_back(it->first);
+      source_hash.update(json::Quote(rel));
+      source_hash.update(it->second.hash);
+    }
+    for (const auto& diagnostic : owner.diags)
+      if (diagnostic.code == "invalid_param")
+        throw std::runtime_error(diagnostic.message);
+    for (const auto& diagnostic : owner.exec_diags)
+      if (diagnostic.code == "invalid_inputs")
+        throw std::runtime_error(diagnostic.message);
+    if (owner.generated_inputs) source_hash.update(*owner.generated_inputs);
+    const auto digest = source_hash.finish_hex();
+    const auto definition = content_dir("defs", digest, [&] {
+      std::map<std::string, std::string> files;
+      for (const auto& path : paths)
+        files.emplace(path.substr(owner.def_dir.size()),
+                      store.read_source(doc, path));
+      if (owner.generated_inputs)
+        files.emplace("_inputs.fbs", *owner.generated_inputs);
+      return files;
+    });
+
+    std::vector<std::string> deps;
+    for (const auto& ref : owner.nix_references)
+      deps.push_back(json::Quote(ref.name));
+    call.definitions.push_back({definition.string(), card});
+    key.update(digest);
+    key.update(json::Encode(deps));
+    return {{"id", json::Quote(owner.path.back())},
+            {"definition", json::Quote(definition.string())},
+            {"deps", json::Encode(deps)}};
+  };
+
+  const auto self = prepare(node);
+  std::vector<std::string> cards;
+  for (const auto& ref : node.nix_references)
+    cards.push_back(json::Encode(prepare(*graph.find(ref.target))));
+  call.definition_dir = json::Text(self, "definition");
+  call.card = path_key(node.path);
+  call.args =
+      "{ scope = builtins.fromJSON " +
+      nix_quote(json::Encode(json::Members{{"cards", json::Encode(cards)},
+                                           {"self", json::Encode(self)}})) +
+      (call.views_only ? "; viewsOnly = true" : "") +
+      (expression_only ? "; expressionOnly = true" : "") + "; }";
+  call.nix_dir = nix_dir_;
+  call.core_nixpkgs = {"github:NixOS/nixpkgs", TSUGUMI_CARD_NIXPKGS_REV,
+                       TSUGUMI_CARD_NIXPKGS_NARHASH};
+  key.update(json::Quote(call.core_nixpkgs.rev));
+  key.update(json::Quote(call.core_nixpkgs.nar_hash));
+  key.update(call.needs_worker ? "worker" : "no-worker");
+  key.update(call.views_only ? "views" : "plan");
+  call.definition_key = key.finish_hex();
+}
+
+auto NixRunner::evaluate_expression(const ExpressionRequest& req)
+    -> ExpressionResult {
+  if (!req.doc || !req.doc->resolution)
+    throw std::runtime_error("Card expression requires a resolved project");
+  const auto* node = req.doc->resolution->find(req.card);
+  if (!node || (node->kind != CardType::Code && node->kind != CardType::Draft &&
+                node->kind != CardType::Input))
+    throw std::runtime_error("unknown definition for Card " +
+                             path_key(req.card));
+  if (req.expression.size() > kMaxDocumentJsonBytes)
+    throw std::runtime_error("Nix expression exceeds 8 MiB");
+  NixCall call;
+  call.system = native_system();
+  call.cancel = req.cancel;
+  call.deadline = req.deadline;
+  call.log = req.log;
+  configure_call(call, *req.doc, *node, true);
+  return evaluator().expression(call, req.expression, req.build);
+}
+
 auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
     -> CardBuildPlan {
   const Node& node = *req.node;
   if (req.target.system.empty())
     throw Failed(FailureKind::unsupported,
                  "execution target system is unknown");
-  // Definition sources from the confirmed snapshot. _card.json, README.md and
-  // _comments.json are not part of it: Nix gets what it needs from them
-  // through the generated files, and settings or descriptions never
-  // re-evaluate.
-  auto definition_dir = [&](const std::string& prefix) {
-    crypto::Sha256 h;
-    std::vector<std::string> paths;
-    for (const auto& [path, entry] : req.doc->sources) {
-      if (!path.starts_with(prefix)) continue;
-      auto rel = path.substr(prefix.size());
-      if (rel == "_card.json" || rel == "README.md" || rel == "_comments.json")
-        continue;
-      paths.push_back(path);
-      h.update(rel);
-      h.update(entry.hash);
-    }
-    return content_dir("defs", h.finish_hex(), [&] {
-      std::map<std::string, std::string> m;
-      for (const auto& p : paths)
-        m[p.substr(prefix.size())] = svc_.store().read_source(*req.doc, p);
-      return m;
-    });
-  };
-  auto generated_dir = [&](const std::map<std::string, std::string>& files) {
-    crypto::Sha256 h;
-    for (const auto& [name, content] : files) {
-      h.update(name);
-      h.update(std::to_string(content.size()));
-      h.update(content);
-    }
-    return content_dir("gen", h.finish_hex(), [&] { return files; });
-  };
-  // The port schemas, the Nix-visible params and the project's declared
-  // nixSources. A source is evaluated only when the Card's evaluation forces
-  // it; the declarations are what the project's permissions approved.
-  auto with_sources = [&](const Node& n) {
-    std::map<std::string, std::string> generated;
-    for (auto& [name, content] : generate(n))
-      generated.emplace("schemas/" + name, std::move(content));
-    generated["params-nix.json"] = params_json(n, true);
-    std::string sources = "[";
-    for (const auto& s : n.nix_sources) {
-      auto name = schema::string_value(s.name);
-      auto type = schema::string_value(s.type);
-      auto ref = schema::string_value(s.ref);
-      auto overrides = schema::string_value(s.overrides);
-      if (sources.size() > 1) sources += ",";
-      sources += schema::object_text({{"name", &name},
-                                      {"type", &type},
-                                      {"ref", &ref},
-                                      {"overrides", &overrides}});
-    }
-    generated["sources.json"] = sources + "]";
-    return generated;
-  };
   // Another system's binaries run through the kernel's binfmt_misc: without
   // an entry for it, Nix would refuse the build with a less helpful message.
   std::string emulator;
@@ -433,71 +403,16 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
               "on NixOS, set boot.binfmt.emulatedSystems",
           {{"system", req.target.system}});
   }
-  auto files = with_sources(node);
-  const auto pin = nixpkgs_pin(node.pkgs_path);
-  files["nixpkgs.json"] = schema::encode(pin);
-  // Only wired, guaranteed producers can supply Nix exports.
-  const auto& graph = *req.doc->resolution;
-  std::set<size_t> allowed;
-  auto visit = [&](auto&& walk, const Node& owner) -> void {
-    for (const auto& [_, producer] : owner.nix_inputs)
-      if (allowed.insert(producer).second) walk(walk, graph.nodes[producer]);
-  };
-  visit(visit, node);
-  const auto dependencies = [&](const Node& owner) {
-    std::string json = "[";
-    for (const auto& [name, producer] : owner.nix_inputs) {
-      if (json.size() > 1) json += ",";
-      json += dep_json(graph.nodes[producer].path, name);
-    }
-    return json + "]";
-  };
-  std::string cards_json = "[";
-  for (const size_t index : allowed) {
-    const Node& u = graph.nodes[index];
-    auto ugen = schema::string_value(generated_dir(with_sources(u)).string());
-    auto udef = schema::string_value(definition_dir(u.def_dir).string());
-    auto k = schema::string_value(path_key(u.path));
-    auto deps = schema::capture(dependencies(u));
-    if (cards_json.size() > 1) cards_json += ",";
-    cards_json += schema::object_text(
-        {{"key", &k}, {"gen", &ugen}, {"def", &udef}, {"deps", &deps}});
-  }
-  cards_json += "]";
-  const auto deps_json = dependencies(node);
-  std::string upstream_json;
-  {
-    auto c = schema::capture(cards_json);
-    auto d = schema::capture(deps_json);
-    upstream_json = schema::object_text({{"cards", &c}, {"deps", &d}});
-  }
-  // The upstream references hold this evaluator's folder paths: a folder of
-  // their own, so the generated contract (a build input) depends on contents
-  // only and builds are shared by copies of a project.
-  crypto::Sha256 uh;
-  uh.update(upstream_json);
-  auto upstream = content_dir("up", uh.finish_hex(), [&] {
-    return std::map<std::string, std::string>{{"upstream.json", upstream_json}};
-  });
-  auto gen = generated_dir(files);
-  auto def = definition_dir(node.def_dir);
   NixCall call;
-  call.pin_url = *pin.url;
-  call.pin_hash = *pin.nar_hash;
   call.system = req.target.system;
   call.jobs = req.jobs;
   call.cores = req.cores;
   call.max_implementations = req.max_implementations;
   call.views_only = views_only;
-  call.definition_dir = def;
-  const bool needs_worker = req.target.kind == WorkerKind::remote ||
-                            req.target.system != native_system();
-  call.args = "{ nixDir = /. + " + nix_quote(nix_dir_.string()) +
-              "; gen = /. + " + nix_quote(gen.string()) + "; upstream = /. + " +
-              nix_quote((upstream / "upstream.json").string()) +
-              "; card = /. + " + nix_quote(def.string()) +
-              (needs_worker ? "; needsWorker = true" : "") +
-              (views_only ? "; viewsOnly = true; }" : "; }");
+  const bool needs_worker =
+      node.kind != CardType::Input && (req.target.kind == WorkerKind::remote ||
+                                       req.target.system != native_system());
+  call.needs_worker = needs_worker && !views_only;
   call.cancel = req.cancel;
   const auto budget_start = std::chrono::steady_clock::now();
   std::chrono::steady_clock::duration transfer_time{};
@@ -511,9 +426,16 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
   const std::string prefix =
       (views_only ? "views-" : "") + root_prefix(node.path);
   NixResult res;
+  try {
+    configure_call(call, *req.doc, node);
+  } catch (const Failed&) {
+    throw;
+  } catch (const std::exception& error) {
+    throw Failed(FailureKind::nix_failed, error.what(),
+                 {{"card", path_key(node.path)}, {"system", call.system}});
+  }
   const auto key = call.evaluation_key();
-  const auto key_text = std::get<0>(key) + "\n" + std::get<1>(key) + "\n" +
-                        std::get<2>(key) + "\n" + std::get<3>(key);
+  const auto key_text = std::get<0>(key) + "\n" + std::get<1>(key);
   if (prepared_) {
     if (req.on_phase) req.on_phase(Phase::evaluate);
     res = prepared(path_key(node.path), key_text, call.max_implementations);
@@ -522,16 +444,16 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
     try {
       call.root_dir = gcroots_dir();
       call.root_prefix = prefix;
-      // Paths in args name content-addressed sources, generated contracts/Nix
-      // params, and the transitive upstream definitions and flake products.
+      // Paths in args name content-addressed sources of the selected Card
+      // and its guaranteed upstream Cards.
       // The evaluator validates its settings epoch and observed filesystem
       // reads.
-      const auto card = path_key(node.path);
+      const auto card = std::pair{call.card, call.system};
       std::optional<NixResult> earlier;
       {
         std::lock_guard l(evaluations_mu_);
         std::erase_if(evaluations_, [&](const auto& item) {
-          return !graph.index.contains(item.first);
+          return !req.doc->resolution->index.contains(item.first.first);
         });
         auto found = evaluations_.find(card);
         if (!views_only && found != evaluations_.end() &&
@@ -567,9 +489,6 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
       if (req.target.kind == WorkerKind::native)
         res = evaluator().realise_native(call, std::move(res));
       std::lock_guard l(evaluations_mu_);
-      std::erase_if(evaluations_, [&](const auto& item) {
-        return item.second.second.evaluation_epoch != res.evaluation_epoch;
-      });
       if (!views_only && res.evaluation_epoch) {
         if (evaluations_.size() >= 256 && !evaluations_.contains(card))
           evaluations_.erase(evaluations_.begin());
@@ -653,20 +572,6 @@ CacheClearOutcome NixRunner::clear_cache() {
     if (n) out.deleted.push_back("build-roots");
   }
   remove(state / "cache", "build-cache");
-  std::error_code ec;
-  if (stdfs::is_directory(state / "runs", ec)) {
-    // A folder going away meanwhile (a run's files deleted) ends the listing,
-    // never the clearing.
-    for (const auto& run : stdfs::directory_iterator(state / "runs", ec)) {
-      remove(run.path() / "build",
-             "runs/" + run.path().filename().string() + "/build");
-      remove(run.path() / "defs",
-             "runs/" + run.path().filename().string() + "/defs");
-      if (stdfs::exists(run.path() / "artifacts", ec))
-        out.retained.push_back("runs/" + run.path().filename().string() +
-                               "/artifacts");
-    }
-  }
   out.retained.push_back("history");
   out.retained.push_back("document");
   return out;

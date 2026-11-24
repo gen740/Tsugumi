@@ -8,10 +8,10 @@ import TsugumiRPC
 /// `invalid`: its _card.json has no type or one this build does not know (or
 /// one that does not match `external`), a definition error the core reports.
 enum CardKind: String {
-  case trigger, input, branch, fork, merge, collect, draft, subgraph, code, invalid
+  case trigger, input, merge, collect, draft, subgraph, code, invalid
 
   /// The _card.json "type" names.
-  static let types: [CardKind] = [.trigger, .input, .branch, .fork, .merge, .collect, .draft, .subgraph, .code]
+  static let types: [CardKind] = [.trigger, .input, .merge, .collect, .draft, .subgraph, .code]
 
   /// A kind by its _card.json "type" name (also VersionCanvasCard.kind, empty
   /// for a definition the daemon cannot read). Anything else is `invalid`: the
@@ -26,8 +26,6 @@ enum CardKind: String {
     switch self {
     case .trigger: return String(localized: "開始")
     case .input: return String(localized: "入力")
-    case .branch: return String(localized: "分岐")
-    case .fork: return String(localized: "分配")
     case .merge: return String(localized: "合流")
     case .collect: return String(localized: "収集")
     case .draft: return "Draft"
@@ -41,8 +39,6 @@ enum CardKind: String {
     switch self {
     case .trigger: return "play.circle"
     case .input: return "slider.horizontal.3"
-    case .branch: return "arrow.triangle.swap"
-    case .fork: return "arrow.triangle.branch"
     case .merge: return "arrow.triangle.merge"
     case .collect: return "line.3.horizontal.decrease"
     case .draft: return "pencil.and.outline"
@@ -65,7 +61,7 @@ func definitionKind(_ def: JSONValue?) -> CardKind {
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
   case draft, trigger, input
   case booleanInput = "input_bool"
-  case branch, fork, merge, collect
+  case merge, collect
 
   var id: String { rawValue }
   var kind: Tsugumi_Host_BuiltinCard {
@@ -74,8 +70,6 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .trigger: .trigger
     case .input: .inputvalue
     case .booleanInput: .booleaninput
-    case .branch: .branch
-    case .fork: .fork
     case .merge: .merge
     case .collect: .collect
     }
@@ -86,8 +80,6 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .trigger: String(localized: "トリガー")
     case .input: String(localized: "入力値")
     case .booleanInput: String(localized: "真偽値の入力")
-    case .branch: String(localized: "分岐")
-    case .fork: String(localized: "分配")
     case .merge: String(localized: "合流")
     case .collect: String(localized: "収集")
     }
@@ -402,35 +394,14 @@ extension ProjectSession {
     }
   }
 
-  func setParam(_ k: CardKey, _ name: String, _ value: JSONValue?) {
-    guard let dir = definitionDir(k) else { return }
-    queueFields { [self] in
-      let definition = cardDefinition(k), match = JSONValue.object([("name", .string(name))])
-      if let param = (definition?["params"]?.array ?? []).first(where: { $0["name"]?.string == name }) {
-        return [fieldEdit(dir + "_card.json", [.string("params"), match, .string("data")], old: param["data"],
-                          new: value.map { Documents.paramValue(param["type"]?.string, $0) })]
-      }
-      throw RPCFailure(kind: .invalidRequest, diagnostic: "Unknown param: \(name)")
-    }
-  }
-
-  /// Mutates the value inside the caller's transaction, without an autosave.
-  func updateParam(_ k: CardKey, _ name: String, _ value: JSONValue?, initial: InlineParamEdit.ParamBase? = nil) {
-    if let initial {
-      if let dir = definitionDir(k) {
-        let selector: [JSONValue] = [.string("params"), .object([("name", .string(name))])]
-        appendEdits([fieldEdit(dir + "_card.json", selector + [.string("data")], old: initial.parameter?["data"],
-                                      new: value.map { Documents.paramValue(initial.parameter?["type"]?.string, $0) })])
-      }
-      return
-    }
-    updateCard(k) { c in
-      var params = c["params"]?.array ?? []
-      if let i = params.firstIndex(where: { $0["name"]?.string == name }) {
-        params[i]["data"] = value.map { Documents.paramValue(params[i]["type"]?.string, $0) }
-      }
-      c["params"] = .array(params)
-    }
+  @discardableResult
+  func setParam(_ k: CardKey, _ name: String, _ literal: String, expectedRev: UInt64) async throws -> UInt64 {
+    let edit = Tsugumi_Host_ProjectRewriteParamLiteralT()
+    edit.card = cardPath(path(k))
+    edit.name = name
+    edit.literal = literal
+    edit.expectedRev = expectedRev
+    return try await operate(.projectrewriteparamliteral, body: edit).rev ?? rev
   }
 
   /// Moves the selected Cards into a new Card in Card: a new external project
@@ -715,15 +686,6 @@ extension ProjectSession {
     let result = try await rpc.deleteRunScratch(opId: UUID(), paths: paths)
     await refreshCacheUsage()
     return result
-  }
-
-  func runFileReferences(_ runId: String) async throws -> [String] {
-    guard connected, let projectId else { throw RPCError.disconnected }
-    let request = Tsugumi_Host_RunFileReferencesRequestT()
-    request.projectId = projectId
-    request.runId = runId
-    let reply: Tsugumi_RPC_RunFileReferencesT = try await CoreHostClient.shared.hostCall(.runfilereferencesrequest, request)
-    return reply.runIds.compactMap { $0 }
   }
 
   func deleteRunCategory(_ runId: String, _ category: Tsugumi_RPC_RunRecordCategory) async throws {

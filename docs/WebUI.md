@@ -78,7 +78,7 @@ The command finds `tsugumi-hostd`, `tsugumid`, the worker and the page (`ui/web/
 | Environment variable | Meaning |
 | --- | --- |
 | `TSUGUMID` / `TSUGUMI_WORKER` | Project daemon and worker locations (defaults under `build/`) |
-| `TSUGUMI_NIX_DIR` | The core's Nix files used to evaluate Cards (default `share/tsugumi/nix` beside the installed binaries). The language SDKs come from the tsugumi-kit revision pinned in `flake.lock` |
+| `TSUGUMI_NIX_DIR` | The core's Nix files used to evaluate Cards (default `share/tsugumi/nix` beside the installed binaries). Cards obtain SDKs from their project’s [Nix search path](features.md#project-nix-search-path) |
 | `TSUGUMI_HOSTD` / `TSUGUMI_HOST_STATE` | Host service binary and its state folder (defaults chosen by `cli/src/launch.cc`) |
 | `TSUGUMI_WEB_ROOT` / `TSUGUMI_WEB_PORT` | The built page hostd serves and the port it asks for |
 | `TSUGUMI_VM_X86=qemu` | The Mac's shared VM runs x86_64-linux Cards with qemu instead of Rosetta (by default Rosetta when it is installed; [Another system](features.md#another-system-x86_64-linux)). Also read by the desktop app |
@@ -93,9 +93,7 @@ Starting the repository's daemon directly on a Mac uses Seatbelt. Review its [we
 
 ## Several projects
 
-Each browser tab can open a different project (how this corresponds to the app's windows: [Several projects](Usage.md#several-projects)). ⌘O, demos and duplicates from a project's tab open in a new tab, and "Open Home in a New Tab" on the Canvas adds a Home tab. A browser cannot bring another tab to the front, though, so the same project can be open in two tabs (equal clients of the same `tsugumid`; a save in one shows in the other). Going back Home closes that project's windows, such as Card settings. If no other tab shows the project, its terminal tabs and chat observation close; hostd, the project daemon and active core conversations continue. Reopening the project reconnects to them.
-
-hostd manages one `tsugumid` per project. Each page reports what it shows on its Host connection (`HostPageRequest`; the Mac app's main windows share one connection and each names its page), so a project the user or Claude Code shows goes to a tab or window showing it or to one on Home, and one showing another project is not switched.
+Each browser tab can open a different project. Opening a project in a second UI connection returns `project_in_use` while the first UI is connected. Opening another project, a demo or a duplicate can use a new tab. Returning Home closes project windows and observation. Reopening the project reconnects to the project daemon and active conversations.
 
 ## Shortcuts
 

@@ -1,56 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "seed",
-      "type": "uint64",
-      "data": {
-        "uint64": 7
-      }
-    },
-    {
-      "name": "size",
-      "type": "uint64",
-      "data": {
-        "uint64": 400
-      }
-    },
-    {
-      "name": "cells",
-      "type": "uint64",
-      "data": {
-        "uint64": 80
-      }
-    },
-    {
-      "name": "touching_pairs",
-      "type": "uint64",
-      "data": {
-        "uint64": 16
-      }
-    },
-    {
-      "name": "noise",
-      "type": "double",
-      "data": {
-        "double": 0.1
-      }
-    },
-    {
-      "name": "unevenness",
-      "type": "double",
-      "data": {
-        "double": 0.5
-      }
-    },
-    {
-      "name": "radius",
-      "type": "double",
-      "data": {
-        "double": 9.0
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "start"

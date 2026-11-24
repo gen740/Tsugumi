@@ -1,4 +1,6 @@
 """Gradient boosting: each round adds small trees that correct what the earlier ones got wrong."""
+from card import Input, Output, params
+from mnist.Result import ResultT
 import os
 
 # One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
@@ -26,21 +28,21 @@ def confusions(ax, y, pred):
 def result(name, settings, digest, y, pred, fit, predict):
     model = name
     predictions = pred.astype(np.uint8)
-    return {'result': {
-        'model': model,
-        'settings': settings,
-        'digest': digest,
-        'accuracy': float(np.mean(pred == y)),
-        'fit_seconds': fit,
-        'predict_seconds': predict,
-        'predictions': predictions,
-    }}
+    return Output(result=ResultT(
+        model=model,
+        settings=settings,
+        digest=digest,
+        accuracy=float(np.mean(pred == y)),
+        fitSeconds=fit,
+        predictSeconds=predict,
+        predictions=predictions,
+    ))
 
 
-def main(inputs, report):
+def run(inputs: Input) -> Output:
     params = inputs.params
-    rounds, max_depth, eta, seed = params.rounds, params.maxDepth, params.eta, params.seed
-    data = np.load(inputs.data.value.decode())
+    rounds, max_depth, eta, seed = params.rounds, params.max_depth, params.eta, params.seed
+    data = np.load(inputs.require("data").open() / "subset.npz")
     train_x, train_y, test_x, test_y = data["train_images"], data["train_labels"], data["test_images"], data["test_labels"]
 
     settings = {"objective": "multi:softprob", "num_class": 10, "max_depth": max_depth, "eta": eta,
@@ -54,7 +56,7 @@ def main(inputs, report):
     pred = model.predict(test).argmax(axis=1)
     predict = time.process_time() - start
     accuracy = np.mean(pred == test_y)
-    report.log(f"boosting rounds={rounds} depth={max_depth} eta={eta}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s")
+    print(f"boosting rounds={rounds} depth={max_depth} eta={eta}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s")
 
     # The test error after each round, read back from the finished model (outside the timers).
     upto = np.unique(np.geomspace(1, rounds, 20).astype(int))
@@ -66,6 +68,6 @@ def main(inputs, report):
     right.set(xlabel="回数", ylabel="テスト誤り率", ylim=(0, None), title="回数を重ねると誤りが減る")
     right.grid(alpha=0.3)
     fig.suptitle(f"勾配ブースティング {rounds} 回、深さ {max_depth}、η={eta:g}: 正解率 {accuracy:.4f}、学習 {fit:.2f} 秒、予測 {predict:.3f} 秒", fontsize=11)
-    report.figure()
+    # TODO(open): Port the demo display.
 
     return result('boosting', f'rounds={rounds}, depth={max_depth}, eta={eta:g}', str(data['digest']), test_y, pred, fit, predict)

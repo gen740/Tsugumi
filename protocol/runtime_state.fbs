@@ -4,6 +4,7 @@
 // file of its control folder. Nothing here is a project document.
 
 include "data.fbs";
+include "artifact.fbs";
 
 namespace Tsugumi.State;
 
@@ -126,22 +127,12 @@ table InputSources {
   sources:[InputSource];
 }
 
-table ArtifactMember {
-  path:string;
-  size:ulong;
-  hash:string;
-}
-/// artifacts.members.
-table ArtifactMembers {
-  members:[ArtifactMember];
-}
-
 table SavedInput {
-  kind:int;
   schema:string;
   root_type:string;
   data:[ubyte];
-  recorded_path:string;
+  schema_id:string;
+  artifacts:[tsugumi.ArtifactId];
 }
 table SavedInputGroup {
   port:string;

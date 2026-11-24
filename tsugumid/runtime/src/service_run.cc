@@ -1,4 +1,4 @@
-// Run, Card API, history, value, artifact, declared view file and log handlers.
+// Run, Nix evaluation, history, value, artifact, declared view file and log handlers.
 #include <sys/stat.h>
 
 #include <algorithm>
@@ -15,6 +15,7 @@
 #include "tsugumi/util/log.hh"
 #include "tsugumi/util/system.hh"
 #include "tsugumi/util/text.hh"
+#include "tsugumi/workerd/staging.hh"
 #include "tsugumi/workerd/store.hh"
 #include "version_record.hh"
 
@@ -51,55 +52,6 @@ auto require_run_id(const flatbuffers::String& s, const char* what) -> void {
   if (!crypto::is_run_id(s.string_view()))
     throw Failed(FailureKind::invalid_request,
                  std::string(what) + " must be a positive project run number");
-}
-
-constexpr size_t kCardApiEntryLimit = 2000;
-constexpr uint64_t kCardApiByteLimit = 8u << 20;
-constexpr std::string_view kCardApiDirectory = "share/tsugumi/api";
-
-auto card_api_files(const CardBuildPlan& plan, const std::string& package,
-                    size_t& entries_left, uint64_t& bytes_left, FBB& b)
-    -> std::vector<flatbuffers::Offset<R::CardApiFile>> {
-  // Only paths in the realised plan's store closure are eligible. Walk from
-  // the store so links in the package or above the API directory are rejected.
-  if (std::ranges::find(plan.common.environment.paths, package) ==
-      plan.common.environment.paths.end())
-    throw Failed(FailureKind::nix_failed,
-                 "run output is outside the build closure");
-  const auto store = stdfs::path(plan.common.derivation.output).parent_path();
-  auto base = stdfs::path(package).lexically_relative(store);
-  if (base.empty() || base.has_parent_path())
-    throw Failed(FailureKind::nix_failed,
-                 "run output is outside the Nix store");
-  for (const auto& component : stdfs::path(kCardApiDirectory)) {
-    base /= component;
-    std::error_code ec;
-    const auto status = stdfs::symlink_status(store / base, ec);
-    if (status.type() == stdfs::file_type::not_found) return {};
-    if (ec)
-      throw fs::Error("cannot inspect " + (store / base).string() + ": " +
-                      ec.message());
-    if (!stdfs::is_directory(status)) return {};
-  }
-  const auto listing = fs::list_beneath(store, base, entries_left);
-  entries_left -= listing.files.size() + listing.directories.size() +
-                  listing.links.size() + listing.special.size();
-  std::vector<flatbuffers::Offset<R::CardApiFile>> files;
-  for (const auto& path : listing.files) {
-    if (path.size() > bytes_left)
-      throw Failed(FailureKind::resource_limit,
-                   "share/tsugumi/api/ exceeds 8 MiB");
-    bytes_left -= path.size();
-    std::string content;
-    bytes_left -=
-        fs::stream_beneath(store, base / path, bytes_left,
-                           [&](std::string_view chunk) { content += chunk; });
-    files.push_back(R::CreateCardApiFile(
-        b, b.CreateString(path),
-        b.CreateVector(reinterpret_cast<const uint8_t*>(content.data()),
-                       content.size())));
-  }
-  return files;
 }
 
 }  // namespace
@@ -164,8 +116,8 @@ void Service::run(RequestIn& req) {
 // ---------------------------------------------------------------------------
 // Read pool
 
-void Service::card_api(RequestIn& req) {
-  const auto* r = project_request(req)->value_as_CardApiRequest();
+void Service::evaluate_nix(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_EvaluateNixRequest();
   auto doc = store_->current();
   check_at_rev(r->at_rev(), *doc);
   auto card = wire::card_arg(r->card());
@@ -173,77 +125,101 @@ void Service::card_api(RequestIn& req) {
   if (!node)
     throw Failed(FailureKind::not_found, "unknown card " + path_key(card),
                  {{"card", path_key(card)}});
-  if (node->kind != CardType::Code)
+  if (node->kind != CardType::Code && node->kind != CardType::Draft &&
+      node->kind != CardType::Input)
     throw Failed(FailureKind::invalid_request,
-                 "only a Code Card has a builder and its API",
+                 "Nix evaluation requires a Code, Input or Draft Card",
                  {{"card", path_key(card)}});
-  // Use the normal build with the local store and the Card's target system.
-  const SharedStoreDerivationTransport transport;
-  BuildRequest build;
-  build.node = node;
-  build.doc = doc;
-  build.target = {WorkerKind::native, node->settings.system.empty()
-                                          ? native_system()
-                                          : node->settings.system};
-  build.transport = &transport;
-  build.timeout_seconds = node->settings.build_timeout_seconds;
+  if (r->expression()->size() == 0)
+    throw Failed(FailureKind::invalid_request, "expression is empty");
+
   std::stop_source stop;
   std::stop_callback disconnected(req.connection_stop,
                                   [&] { stop.request_stop(); });
   std::stop_callback shutdown(card_views_shutdown_.get_token(),
                               [&] { stop.request_stop(); });
-  build.cancel = stop.get_token();
-  // The end of the build output, for a failure.
   constexpr size_t kLogLimit = 256u << 10;
-  std::string log;
-  std::mutex log_mu;
-  build.log = [&](proc::LineChunk chunk) {
-    std::lock_guard lock(log_mu);
-    for (const auto& line : chunk.lines) {
-      log += line;
-      if (!line.ends_with('\n')) log += '\n';
-    }
-    if (log.size() > kLogLimit) log.erase(0, log.size() - kLogLimit);
+  std::mutex log_mutex;
+  std::string log_tail;
+  const auto append_log = [&](std::string_view line) {
+    line = line.substr(line.size() > kLogLimit ? line.size() - kLogLimit : 0);
+    if (log_tail.size() + line.size() > kLogLimit)
+      log_tail.erase(0, log_tail.size() + line.size() - kLogLimit);
+    log_tail.append(line);
   };
-  FBB b;
-  std::vector<flatbuffers::Offset<R::CardApiImplementation>> implementations;
-  flatbuffers::Offset<D::Failure> failure;
+  ExpressionRequest call{
+      .doc = doc,
+      .card = std::move(card),
+      .expression = r->expression()->str(),
+      .build = r->build(),
+      .cancel = stop.get_token(),
+      .deadline = std::nullopt,
+      .log =
+          [&](proc::LineChunk chunk) {
+            std::lock_guard lock(log_mutex);
+            for (const auto& line : chunk.lines) {
+              append_log(line);
+              if (!line.ends_with('\n')) append_log("\n");
+            }
+          },
+  };
+  if (auto timeout = node->settings.build_timeout_seconds) {
+    const auto now = std::chrono::steady_clock::now();
+    const auto remaining = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::time_point::max() - now);
+    call.deadline = *timeout > static_cast<uint64_t>(remaining.count())
+                        ? std::chrono::steady_clock::time_point::max()
+                        : now + std::chrono::seconds(*timeout);
+  }
+
+  ExpressionResult result;
+  auto failure_kind = FailureKind::nix_failed;
   try {
-    const auto plan = nix_->build(build);
-    size_t entries_left = kCardApiEntryLimit;
-    uint64_t bytes_left = kCardApiByteLimit;
-    for (size_t i = 0; i < plan.implementations.size(); ++i) {
-      const auto& package = plan.implementations[i];
-      const auto files =
-          card_api_files(plan, package, entries_left, bytes_left, b);
-      const auto label = i < plan.implementation_labels.size()
-                             ? plan.implementation_labels[i]
-                             : std::string();
-      implementations.push_back(R::CreateCardApiImplementation(
-          b, static_cast<uint32_t>(i + 1),
-          label.empty() ? 0 : b.CreateString(label), b.CreateString(package),
-          b.CreateVector(files)));
+    result = nix_->evaluate_expression(call);
+  } catch (const NixInterrupted& e) {
+    if (!e.timed_out) throw Failed(FailureKind::cancelled, e.what());
+    failure_kind = FailureKind::timeout;
+    result.build_error = e.what();
+  } catch (const Failed&) {
+    throw;
+  } catch (const std::exception& e) {
+    result.build_error = e.what();
+  }
+
+  FBB b;
+  std::vector<flatbuffers::Offset<R::NixOutputFile>> files;
+  files.reserve(result.files.size());
+  for (const auto& file : result.files) {
+    // Wire paths are UTF-8. Skip names that cannot be represented losslessly.
+    if (text::replace_invalid_utf8(file.path) != file.path) {
+      result.truncated = true;
+      continue;
     }
-  } catch (const Failed& f) {
-    if (stop.stop_requested()) throw;
-    implementations.clear();
-    b.Clear();
-    failure = wire::failure(b, f.failure);
-  } catch (const fs::Error& e) {
-    implementations.clear();
-    b.Clear();
+    files.push_back(R::CreateNixOutputFile(
+        b, b.CreateString(file.path),
+        b.CreateVector(reinterpret_cast<const uint8_t*>(file.bytes.data()),
+                       file.bytes.size())));
+  }
+  flatbuffers::Offset<D::Failure> failure;
+  flatbuffers::Offset<flatbuffers::String> log;
+  if (result.build_error) {
     failure =
-        wire::failure(b, FailureData::make(FailureKind::nix_failed, e.what()));
+        wire::failure(b, FailureData::make(failure_kind, *result.build_error));
+    std::lock_guard lock(log_mutex);
+    auto tail = text::replace_invalid_utf8(
+        result.log_tail.empty() ? log_tail : result.log_tail);
+    if (tail.size() > kLogLimit) {
+      auto start = tail.size() - kLogLimit;
+      while ((static_cast<unsigned char>(tail[start]) & 0xc0) == 0x80) ++start;
+      tail.erase(0, start);
+    }
+    if (!tail.empty()) log = b.CreateString(tail);
   }
-  std::string build_log;
-  {
-    std::lock_guard lock(log_mu);
-    build_log = text::replace_invalid_utf8(log);
-  }
-  auto res = R::CreateCardApiResult(
-      b, doc->rev, b.CreateVector(implementations), failure,
-      failure.IsNull() ? 0 : b.CreateString(build_log));
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::CardApiResult,
+  auto res = R::CreateEvaluateNixResult(
+      b, doc->rev, result.json ? b.CreateString(*result.json) : 0,
+      call.build && failure.IsNull() ? b.CreateVector(files) : 0,
+      result.truncated, failure, log);
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::EvaluateNixResult,
                          res.Union()));
 }
 
@@ -789,54 +765,20 @@ void Service::run_record(RequestIn& req) {
         } else {
           truncated = true;
         }
-        auto art = m.artifact_id ? b.CreateString(*m.artifact_id)
-                                 : flatbuffers::Offset<flatbuffers::String>();
-        auto hash = m.hash.empty() ? flatbuffers::Offset<flatbuffers::String>()
-                                   : b.CreateString(m.hash);
-        auto file_hash = m.file_content_hash.empty()
-                             ? flatbuffers::Offset<flatbuffers::String>()
-                             : b.CreateString(m.file_content_hash);
-        flatbuffers::Offset<flatbuffers::String> file_path;
-        bool file_missing = false;
-        bool file_deleted = false;
-        // A Path value's recorded bytes are its state-relative path.
-        if (m.kind == PortKind::Path) {
-          file_missing = true;
-          const auto& recorded = data[i];
-          const auto root = store_->state_dir() / "runs";
-          const auto rel = stdfs::path(recorded).lexically_relative("runs");
-          const auto content = root / rel;
-          std::error_code error;
-          if (!recorded.empty() &&
-              fs::valid_relative_path(rel.generic_string()) &&
-              fs::resolves_inside(root, content)) {
-            const auto status = stdfs::symlink_status(content, error);
-            file_missing = error || (!stdfs::is_regular_file(status) &&
-                                     !stdfs::is_directory(status));
-            if (!file_missing) {
-              file_path = b.CreateString(content.string());
-            } else {
-              const auto owner = rel.begin()->string();
-              if (owner != run_id && crypto::is_run_id(owner))
-                file_deleted = history_->read([&](sql::Db& db) {
-                  return !History::owns_recorded_file(db, owner, recorded);
-                });
-            }
-          }
-        }
+        std::vector<flatbuffers::Offset<D::ValueArtifact>> artifacts;
+        for (const auto& [id, size] : m.artifacts)
+          artifacts.push_back(D::CreateValueArtifact(
+              b, b.CreateString(crypto::hex(id.data(), id.size())), size));
+        const auto ids = b.CreateVector(artifacts);
+        const auto hash = b.CreateString(m.hash);
         D::NamedValueBuilder nb(b);
         nb.add_name(name);
-        nb.add_kind(m.kind);
         nb.add_schema_bfbs(bfbs);
         nb.add_root_type(root);
         nb.add_size_bytes(m.size_bytes);
         if (include) nb.add_inline_bytes(inl);
-        if (m.artifact_id) nb.add_artifact_id(art);
-        if (!hash.IsNull()) nb.add_content_hash(hash);
-        if (!file_hash.IsNull()) nb.add_file_content_hash(file_hash);
-        if (!file_path.IsNull()) nb.add_file_path(file_path);
-        nb.add_file_missing(file_missing);
-        nb.add_file_deleted(file_deleted);
+        nb.add_artifacts(ids);
+        nb.add_content_hash(hash);
         v.push_back(nb.Finish());
       }
       return b.CreateVector(v);
@@ -929,6 +871,157 @@ void Service::run_value_read(RequestIn& req) {
                              page.size, page.hash));
 }
 
+namespace {
+auto artifact_holders(const std::string& run, const CardPath& card,
+                      uint64_t invocation) -> stdfs::path {
+  stdfs::path relative = run;
+  for (const auto& segment : card) relative /= segment;
+  return relative / ("@" + std::to_string(invocation));
+}
+
+auto artifact_location(const stdfs::path& project, const ArtifactData& artifact)
+    -> stdfs::path {
+  if (artifact.origin == "store") {
+    const stdfs::path path(artifact.location);
+    if (path.is_absolute() && fs::resolves_inside(NixStore::store_dir(), path))
+      return path;
+  } else if (artifact.origin == "created" &&
+             artifact.location.starts_with(".tsugumi/artifacts/") &&
+             fs::valid_relative_path(artifact.location)) {
+    const auto path = project / artifact.location;
+    if (fs::resolves_inside(project / ".tsugumi/artifacts", path)) return path;
+  }
+  throw Failed(FailureKind::integrity_error, "invalid artifact location");
+}
+
+auto artifact_key(std::string_view hex) -> ArtifactKey {
+  constexpr std::string_view alphabet = "0123456789abcdef";
+  if (hex.size() != 32)
+    throw Failed(FailureKind::invalid_request, "invalid artifact id");
+  ArtifactKey id;
+  for (size_t offset = 0; offset < hex.size(); offset += 2) {
+    const auto high = alphabet.find(hex[offset]);
+    const auto low = alphabet.find(hex[offset + 1]);
+    if (high == alphabet.npos || low == alphabet.npos)
+      throw Failed(FailureKind::invalid_request, "invalid artifact id");
+    id.push_back(static_cast<char>((high << 4) | low));
+  }
+  return id;
+}
+}  // namespace
+
+auto Service::artifact_grants(std::span<const Value> inputs)
+    -> std::vector<ArtifactGrant> {
+  std::set<ArtifactKey> ids;
+  for (const auto& input : inputs)
+    ids.insert(input.artifacts.begin(), input.artifacts.end());
+  if (ids.empty()) return {};
+  return history_->read([&](sql::Db& db) {
+    std::vector<ArtifactGrant> grants;
+    for (const auto& id : ids) {
+      const auto record = History::artifact(db, id);
+      if (!record || !record->sealed_ms)
+        throw Failed(FailureKind::input_missing, "an input artifact is unavailable");
+      const auto path = artifact_location(opts_.root, *record);
+      if (!stdfs::is_directory(stdfs::symlink_status(path)))
+        throw Failed(FailureKind::input_missing, "an input artifact directory is missing");
+      if (record->origin == "store") {
+        grants.push_back({id, path.string(),
+                          artifact_holders(record->run_id, record->card,
+                                           record->invocation) /
+                              crypto::hex(id.data(), id.size()),
+                          path.string()});
+      } else {
+        grants.push_back(
+            {id, path.string(),
+             path.lexically_relative(store_->state_dir() / "artifacts")});
+      }
+    }
+    return grants;
+  });
+}
+
+auto Service::seal_artifacts(const InvocationSummaryData& invocation,
+                             const stdfs::path& staging,
+                             std::span<const ArtifactKey> ids) -> void {
+  if (ids.empty()) return;
+  const auto root = store_->state_dir() / "artifacts";
+  const auto relative = artifact_holders(invocation.run_id, invocation.card,
+                                         invocation.invocation);
+  const auto destination = root / relative;
+  if (!fs::resolves_inside(store_->state_dir(), destination))
+    throw Failed(FailureKind::invalid_path, "artifact destination escapes the project");
+  fs::create_artifact_holders(root, relative);
+  for (const auto& id : ids) {
+    if (id.size() != 16)
+      throw Failed(FailureKind::output_invalid, "invalid created artifact id");
+    const auto name = crypto::hex(id.data(), id.size());
+    const auto target = destination / name;
+    // The worker's private snapshot can live on a different filesystem.
+    // Build the sealed directory beside its final name.
+    const auto temporary = destination / ("." + name + "-" + crypto::uuid4());
+    const auto remove_write = [](const auto& path) {
+      constexpr auto write = stdfs::perms::owner_write | stdfs::perms::group_write |
+                             stdfs::perms::others_write;
+      stdfs::permissions(path, write, stdfs::perm_options::remove);
+    };
+    const auto cleanup = [&] (const auto& path) {
+      std::error_code error;
+      if (!stdfs::is_directory(stdfs::symlink_status(path, error))) return;
+      stdfs::permissions(path, stdfs::perms::owner_write,
+                         stdfs::perm_options::add, error);
+      for (const auto& entry : stdfs::recursive_directory_iterator(path))
+        if (stdfs::is_directory(entry.symlink_status()))
+          stdfs::permissions(entry.path(), stdfs::perms::owner_write,
+                             stdfs::perm_options::add, error);
+      stdfs::remove_all(path, error);
+    };
+    bool installed = false;
+    try {
+      if (stdfs::exists(stdfs::symlink_status(target)))
+        throw Failed(FailureKind::output_invalid, "artifact id already exists");
+      stdfs::copy(staging / name, temporary, stdfs::copy_options::recursive);
+      const auto size = fs::directory_size(temporary);
+      const auto hash = "tree:" + fs::sha256_tree(temporary);
+      for (const auto& entry : stdfs::recursive_directory_iterator(temporary))
+        remove_write(entry.path());
+      remove_write(temporary);
+      stdfs::rename(temporary, target);
+      installed = true;
+      const auto sealed = now_ms();
+      const ArtifactData record{id, invocation.run_id, invocation.card,
+          invocation.invocation, "created",
+          target.lexically_relative(opts_.root).generic_string(),
+          invocation.started_at.value_or(sealed), sealed, size, hash};
+      history_->write_sync([&](sql::Db& db) { History::put_artifact(db, record); });
+    } catch (...) {
+      cleanup(installed ? target : temporary);
+      throw;
+    }
+  }
+}
+
+auto Service::register_store_artifact(const std::string& run, const CardPath& card,
+                                      uint64_t invocation, const ArtifactKey& id,
+                                      const stdfs::path& store_path) -> void {
+  const auto created = now_ms();
+  ArtifactData record{id, run, card, invocation, "store", store_path.string(),
+                      created, created, std::nullopt, std::nullopt};
+  const auto path = artifact_location(opts_.root, record);
+  if (id.size() != 16 || !stdfs::is_directory(stdfs::symlink_status(path)))
+    throw Failed(FailureKind::output_invalid, "invalid store artifact");
+  record.size_bytes = fs::directory_size(path);
+  record.tree_hash = "tree:" + fs::sha256_tree(path);
+  history_->write_sync([&](sql::Db& db) {
+    // A deterministic store id may be emitted again on a later run.
+    const auto existing = History::artifact(db, id);
+    if (existing && (existing->origin != record.origin ||
+                     existing->tree_hash != record.tree_hash))
+      throw Failed(FailureKind::output_invalid, "store artifact id collision");
+    if (!History::artifact(db, id, run)) History::put_artifact(db, record);
+  });
+}
+
 void Service::artifact_list(RequestIn& req) {
   const auto* r = project_request(req)->value_as_ArtifactListRequest();
   require_run_id(*r->run_id(), "run_id");
@@ -952,15 +1045,17 @@ void Service::artifact_list(RequestIn& req) {
   FBB b;
   std::vector<flatbuffers::Offset<R::ArtifactInfo>> out;
   for (const auto& a : rows) {
-    std::vector<flatbuffers::Offset<R::ArtifactMember>> mem;
-    for (const auto& m : a.members)
-      mem.push_back(R::CreateArtifactMember(
-          b, b.CreateString(m.path), m.size_bytes, b.CreateString(m.hash)));
-    auto mv = b.CreateVector(mem);
+    std::vector<flatbuffers::Offset<R::ArtifactMember>> members;
+    const auto path = artifact_location(opts_.root, a);
+    for (const auto& name : fs::list_beneath(path, "").files) {
+      const auto size = stdfs::file_size(path / name);
+      members.push_back(R::CreateArtifactMember(
+          b, b.CreateString(name), size, b.CreateString(fs::sha256_file(path / name))));
+    }
     out.push_back(R::CreateArtifactInfo(
-        b, b.CreateString(a.artifact_id), b.CreateString(a.run_id),
-        wire::path(b, a.card), a.invocation, b.CreateString(a.output), a.directory,
-        b.CreateString(a.name), mv));
+        b, b.CreateString(crypto::hex(a.id.data(), a.id.size())),
+        b.CreateString(a.run_id), wire::path(b, a.card), a.invocation, a.size_bytes,
+        a.tree_hash ? b.CreateString(*a.tree_hash) : 0, b.CreateVector(members)));
   }
   auto v = b.CreateVector(out);
   flatbuffers::Offset<flatbuffers::String> cur;
@@ -971,7 +1066,7 @@ void Service::artifact_list(RequestIn& req) {
                   static_cast<unsigned long long>(l.invocation));
     cur = b.CreateString(
         history_->make_cursor(0, path_key(l.card) + "\x1f" + inv_buf + "\x1f" +
-                                     l.output + "\x1f" + l.artifact_id));
+                                     crypto::hex(l.id.data(), l.id.size())));
   }
   R::ArtifactPageBuilder pb(b);
   pb.add_artifacts(v);
@@ -983,68 +1078,31 @@ void Service::artifact_list(RequestIn& req) {
 
 void Service::artifact_read(RequestIn& req) {
   const auto* r = project_request(req)->value_as_ArtifactReadRequest();
-  if (!fs::valid_relative_path(r->artifact_id()->str()))
-    throw Failed(FailureKind::invalid_request, "invalid artifact_id");
-  auto a = history_->read([&](sql::Db& db) {
-    return History::artifact(db, r->artifact_id()->str());
-  });
-  if (!a || a->members.empty())
+  const auto id = artifact_key(r->artifact_id()->string_view());
+  auto a = history_->read([&](sql::Db& db) { return History::artifact(db, id); });
+  if (!a || !a->sealed_ms)
     throw Failed(FailureKind::not_found, "unknown artifact");
-  const ArtifactMemberData* member = nullptr;
-  if (!a->directory) {
-    if (r->member())
-      throw Failed(FailureKind::invalid_request,
-                   "a file artifact has no members");
-    member = &a->members.front();
-  } else {
-    if (!r->member())
-      throw Failed(FailureKind::invalid_request,
-                   "member is required for a directory artifact");
-    std::string m = r->member()->str();
-    if (!fs::valid_relative_path(m))
-      throw Failed(FailureKind::invalid_path, "invalid member path");
-    for (const auto& x : a->members)
-      if (x.path == m) member = &x;
-    if (!member) throw Failed(FailureKind::not_found, "no member " + m);
-  }
-  auto file = store_->state_dir() / "runs" / a->run_id / "artifacts" /
-              a->artifact_id / member->path;
+  if (!r->member() || !fs::valid_relative_path(r->member()->string_view()))
+    throw Failed(FailureKind::invalid_path, "invalid artifact member");
+  const auto root = artifact_location(opts_.root, *a);
+  const auto member = r->member()->str();
+  const auto file = root / member;
+  if (!fs::resolves_inside(root, file))
+    throw Failed(FailureKind::invalid_path, "invalid artifact member");
+
   uint64_t offset = r->offset().value_or(0);
   uint64_t limit = content_limit(r->limit_bytes());
-  struct stat st{};
-  if (::stat(file.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+  const auto page = fs::read_range_inside(root, file, offset, limit);
+  if (!page)
     throw Failed(FailureKind::not_found, "the artifact content is missing");
-  auto size = static_cast<uint64_t>(st.st_size);
-  int64_t mtime = static_cast<int64_t>(st.st_mtime) * 1000000000 +
-#ifdef __APPLE__
-                  st.st_mtimespec.tv_nsec;
-#else
-                  st.st_mtim.tv_nsec;
-#endif
-  // The whole content is checked against its hash once (streamed); while the
-  // file keeps that size and time, later pages read their range only.
-  bool checked;
-  {
-    std::lock_guard<std::mutex> l(verified_mu_);
-    auto v = verified_.find(file.string());
-    checked = v != verified_.end() && v->second == std::make_pair(size, mtime);
-  }
-  if (!checked) {
-    if (fs::sha256_file(file) != member->hash)
-      throw Failed(FailureKind::integrity_error,
-                   "the artifact content is corrupt");
-    std::lock_guard<std::mutex> l(verified_mu_);
-    verified_[file.string()] = {size, mtime};
-  }
-  if (offset > size)
+  if (offset > page->size)
     throw Failed(FailureKind::invalid_range, "offset is past the end");
-  auto slice =
-      fs::read_range(file, offset, std::min<uint64_t>(limit, size - offset));
-  if (!slice)
-    throw Failed(FailureKind::not_found, "the artifact content is missing");
+  if (!a->tree_hash || *a->tree_hash != "tree:" + fs::sha256_tree(root))
+    throw Failed(FailureKind::integrity_error, "the artifact content is corrupt");
   reply(req, wire::file_page(req.request_id,
-                             stdfs::path(member->path).filename().string(),
-                             *slice, offset, size, member->hash));
+                             stdfs::path(member).filename().string(),
+                             page->bytes, offset, page->size,
+                             fs::sha256_file(file)));
 }
 
 auto Service::set_card_views(const CardPath& card,

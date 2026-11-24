@@ -147,11 +147,11 @@ struct EvidenceView: View {
         artifactMember = member
         let request = Tsugumi_RPC_ArtifactReadRequestT()
         request.artifactId = a.artifactId
-        request.member = a.directory ? member : nil
+        request.member = member
         request.limitBytes = 65536
         let data: Tsugumi_RPC_FileContentT = try await rpc.call(.artifactreadrequest, request)
         if data.eof == true { preview = NSImage(data: Data(data.bytes)) }
-        bodyText = "\(session.displayPath(a.card.path)) · \(a.output)\n\(member ?? "")\n\n" + (preview == nil ? (String(bytes: data.bytes, encoding: .utf8) ?? String(localized: "バイナリの成果物です")) : "")
+        bodyText = "\(session.displayPath(a.card.path)) · \(a.artifactId)\n\(member ?? "")\n\n" + (preview == nil ? (String(bytes: data.bytes, encoding: .utf8) ?? String(localized: "バイナリの成果物です")) : "")
         if data.eof != true { bodyText += "\n" + String(localized: "先頭 64 KiB を表示") }
       } else if let card = target.card {
         let r = try await rpc.record(runId: run, card: card, invocation: target.invocation)
@@ -182,7 +182,7 @@ struct EvidenceView: View {
       guard await target.exists(in: session) else {
         exportError = String(localized: "このプロジェクトに根拠の記録がありません"); return
       }
-      let data = try await rpc.readArtifact(id: artifact.artifactId, member: artifact.directory ? member : nil)
+      let data = try await rpc.readArtifact(id: artifact.artifactId, member: member)
       try data.write(to: url, options: .atomic)
     } catch { exportError = String(describing: error) }
   }

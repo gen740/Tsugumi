@@ -11,11 +11,11 @@ from projects import wait_run as wait_run
 from tsugumi_client import RpcFailure, change, new_id, path, text
 
 from .daemon import BUILD, ROOT
+from .document import params_nix
 from .file_events import wait_for_file
 
 STRING_OUTPUT = 'table Value { value:string; } table Outputs { out:Value; } root_type Outputs;'
-FILE_OUTPUT = ('attribute "tsugumi"; '
-               'table Outputs { doc:string (tsugumi: "path"); } root_type Outputs;')
+FILE_OUTPUT = 'table Document {} table Outputs { doc:Document; } root_type Outputs;'
 
 
 class Gate:
@@ -50,11 +50,16 @@ class Project:
 
     def card(self, name, definition, *, outputs=None, plan=None, sources=None):
         files = dict(sources or {})
+        definition = dict(definition)
+        if "_params" in definition:
+            files["params.nix"] = definition.pop("_params")
+        if values := definition.pop("params", {}):
+            files["params.nix"] = params_nix(values)
         if outputs is not None:
             files["_outputs.fbs"] = outputs
         if plan is not None:
             # This source is interpreted only by the test build adapter.
-            files["default.nix"] = "{ pkgs, inputs, params, ... }: { }"
+            files["default.nix"] = "{ params, inputs }: { }"
             files["mock-build.json"] = json.dumps(plan)
         self.cards[name] = (definition, files)
         return self

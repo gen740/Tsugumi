@@ -16,11 +16,11 @@ GROUPS = [
     ("Projects and saving", ["ProjectOpen", "ProjectInspect", "ProjectHostRequirements", "CardId", "ProjectSave", "ProjectReload",
                        "ProjectValidate", "ProjectShell", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "OperationGet"]),
     ("Files", ["ProjectFileList", "ProjectFileStat", "ProjectFileRead"]),
-    ("Card API and types", ["CardApi", "InputTypes", "OutputTypes", "NixSourceResolve"]),
+    ("Nix evaluation and Card types", ["EvaluateNix", "NixPathLockSource", "RewriteParamLiteral", "InputTypes", "OutputTypes"]),
     ("Running", ["RunPlan", "Run", "RunCancel", "RunStatus"]),
-    ("History and artifacts", ["RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "RunCategoryDelete", "RunFileReferences", "RunHistoryDelete",
+    ("History and artifacts", ["RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "RunCategoryDelete", "RunHistoryDelete",
                  "RunDefinitionPaths", "ArtifactList", "ArtifactRead", "LogRange", "RunEnvironments", "RunEnvironmentPaths", "RunEnvironmentUses"]),
-    ("Views", ["ViewSetVisible", "ViewSave", "CardViewRead"]),
+    ("Views", ["ViewSetVisible", "ViewSave", "CardViewRead", "ViewSend", "ViewCredit"]),
     ("Versions", ["VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionNote", "VersionDiff", "VersionComments"]),
 ]
 

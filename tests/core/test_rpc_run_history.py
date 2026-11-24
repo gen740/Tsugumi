@@ -1,7 +1,10 @@
 """History portability and deletion, checked through public RPC."""
 
+import os
 import shutil
+import stat
 from contextlib import closing
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +22,34 @@ from Tsugumi.RPC.RunRecordCategory import RunRecordCategory
 CONTENTS = "retained history 日本語\n" * 500
 
 
+def copy_closed_project(source, destination):
+    """Model an offline backup that can read the execute-only artifact holders."""
+    root = source / ".tsugumi/artifacts"
+    modes = {}
+
+    def allow_read(directory):
+        mode = stat.S_IMODE(directory.stat().st_mode)
+        if not mode & stat.S_IRUSR:
+            modes[directory.relative_to(source)] = mode
+            directory.chmod(mode | stat.S_IRUSR)
+
+    try:
+        if root.is_dir():
+            allow_read(root)
+            for parent, children, _ in os.walk(root):
+                for child in children:
+                    directory = Path(parent) / child
+                    if not directory.is_symlink():
+                        allow_read(directory)
+        shutil.copytree(source, destination, symlinks=True)
+    finally:
+        for relative, mode in reversed(modes.items()):
+            (source / relative).chmod(mode)
+            copied = destination / relative
+            if copied.is_dir():
+                copied.chmod(mode)
+
+
 def listed(client):
     return [text(run.status.runId) for run in client.call("RunHistoryRequest", limit=100).runs]
 
@@ -27,7 +58,7 @@ def prepare_history(client, project, directory):
     worker_project(client, project, directory, [
         {"op": "log", "stream": "stdout", "text": "a recorded log"},
         {"op": "file", "port": "doc", "path": "report.txt", "text": CONTENTS},
-    ], outputs=FILE_OUTPUT, recordIO=True, retainArtifact=True, artifactOutput="doc")
+    ], outputs=FILE_OUTPUT, recordIO=True)
 
 
 def successful_run(client):
@@ -52,7 +83,7 @@ def test_project_copy_restores_history_and_merges_new_runs(core_factory, project
     original.stop()
 
     copied_project = tmp_path / "copy"
-    shutil.copytree(project, copied_project, symlinks=True)
+    copy_closed_project(project, copied_project)
     copied = core_factory(project_root=copied_project, mocked_builds=True, mocked_worker=True)
     client = copied.connect()
     assert listed(client) == list(reversed(run_ids))
@@ -61,14 +92,14 @@ def test_project_copy_restores_history_and_merges_new_runs(core_factory, project
                             invocation=1, stream=1).text) == "a recorded log\n"
     artifact = client.call("ArtifactListRequest", runId=run_ids[0], card=path("work")).artifacts[0]
     assert read_pages(client, "ArtifactReadRequest", page_bytes=4096, verify_integrity=True,
-                      artifactId=text(artifact.artifactId)).decode() == CONTENTS
+                      artifactId=text(artifact.artifactId), member="report.txt").decode() == CONTENTS
     new_run, _ = successful_run(client)
     copied.stop()
 
     # This models moving the user's complete project back, without depending
     # on the names, schema, or layout of core's private history files.
-    shutil.rmtree(project)
-    shutil.copytree(copied_project, project, symlinks=True)
+    project.rename(tmp_path / "previous-project")
+    copy_closed_project(copied_project, project)
     original.start()
     assert set(listed(original.connect())) == set(run_ids + [new_run])
     # Copy/import order never changes which local scratch is protected.
@@ -86,8 +117,9 @@ def test_deleting_history_removes_records_and_artifacts_without_resurrection(cor
     run_ids = [run_id for run_id, _ in runs]
     artifacts = [client.call("ArtifactListRequest", runId=run_id).artifacts[0] for run_id in run_ids]
     artifact_ids = [text(artifact.artifactId) for artifact in artifacts]
-    assert artifact_ids == [f"{run_id}/work/1/doc" for run_id in run_ids]
-    assert all(text(artifact.name) == "report.txt" for artifact in artifacts)
+    assert len(set(artifact_ids)) == len(run_ids)
+    assert all(len(bytes.fromhex(artifact_id)) == 16 for artifact_id in artifact_ids)
+    assert all(text(artifact.members[0].path) == "report.txt" for artifact in artifacts)
 
     environment, = client.call("RunEnvironmentsRequest", runId=run_ids[0]).environments
     environment_id = text(environment.id)
@@ -105,7 +137,7 @@ def test_deleting_history_removes_records_and_artifacts_without_resurrection(cor
             client.call("ArtifactReadRequest", artifactId=artifact_id)
         assert failure.value.kind == "not_found"
     assert read_pages(client, "ArtifactReadRequest", page_bytes=4096,
-                      artifactId=artifact_ids[2]).decode() == CONTENTS
+                      artifactId=artifact_ids[2], member="report.txt").decode() == CONTENTS
 
     replay = client.call("RunHistoryDeleteRequest", opId=operation, endedBefore=cutoff)
     assert replay.deletedRuns == 2
@@ -114,7 +146,7 @@ def test_deleting_history_removes_records_and_artifacts_without_resurrection(cor
     assert listed(daemon.connect()) == []
     daemon.stop()
     copied_project = tmp_path / "copy"
-    shutil.copytree(project, copied_project, symlinks=True)
+    copy_closed_project(project, copied_project)
     restored = core_factory(project_root=copied_project)
     client = restored.connect()
     assert listed(client) == []
@@ -134,7 +166,7 @@ def test_history_deletion_keeps_a_run_that_finished_after_selection(core_factory
     worker_project(client, project, tmp_path / "second", [
         gate.action(),
         {"op": "file", "port": "doc", "path": "report.txt", "text": CONTENTS},
-    ], outputs=FILE_OUTPUT, recordIO=True, retainArtifact=True, artifactOutput="doc")
+    ], outputs=FILE_OUTPUT, recordIO=True)
     second = run(client)
     gate.wait()
     selected = [text(row.status.runId) for row in client.call("RunHistoryRequest", limit=100).runs
@@ -165,11 +197,11 @@ def test_history_deletion_keeps_a_run_that_finished_after_selection(core_factory
     daemon.restart()
     client = daemon.connect()
     assert listed(client) == [second]
-    assert read_output(client, second, port="doc")
-    assert read_pages(client, "ArtifactReadRequest", artifactId=second_artifact).decode() == CONTENTS
+    assert read_output(client, second, port="doc") == b""
+    assert read_pages(client, "ArtifactReadRequest", artifactId=second_artifact, member="report.txt").decode() == CONTENTS
     daemon.stop()
     copied_project = tmp_path / "copy"
-    shutil.copytree(project, copied_project, symlinks=True)
+    copy_closed_project(project, copied_project)
     restored = core_factory(project_root=copied_project)
     assert listed(restored.connect()) == [second]
 
@@ -201,31 +233,14 @@ def test_immediate_reruns_after_finished_keep_accepting(core_factory, project, t
         assert note.value.value.summary.status.state == RunState.succeeded
 
 
-def test_category_deletion_through_host_keeps_summaries_and_marks_forwarded_files(core_factory, project, tmp_path):
+def test_category_deletion_keeps_artifact_directories_and_run_summaries(core_factory, project, tmp_path):
     daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
-    graph = Project(project)
-    outputs = FILE_OUTPUT.replace("table Outputs", "table Label { value:string; } table Outputs").replace(
-        'doc:string (tsugumi: "path");', 'doc:string (tsugumi: "path"); label:Label;')
-    add_worker(graph, "work", tmp_path / "package", [
-        {"op": "log", "stream": "stdout", "text": "recorded"},
-        {"op": "file", "port": "doc", "path": "report.txt", "text": CONTENTS},
-        {"op": "output", "port": "label", "type": "string", "value": "keep its summary"},
-    ], outputs=outputs, retainArtifact=True, artifactOutput="doc")
-    graph.card("fork", {"type": "fork", "retainArtifact": True})
-    graph.connect("work", "doc", "fork", "value").save(client)
-    source = run(client, propagate=True)
-    assert wait_run(client, source).state == RunState.succeeded
-    forwarded = run(client, card="fork", propagate=False)
-    assert wait_run(client, forwarded).state == RunState.succeeded
+    prepare_history(client, project, tmp_path)
+    source, _ = successful_run(client)
+    before = client.call("RunRecordRequest", runId=source, card=path("work")).record
+    assert before.outputs and before.outputs[0].artifacts
     project_id = daemon.ready["project_id"]
-
-    def record(run_id, card="work"):
-        return client.call("RunRecordRequest", runId=run_id, card=path(card)).record
-
-    before = record(source)
-    owner = next(v for v in before.outputs if text(v.name) == "doc")
-    assert all(v.filePath == owner.filePath for v in record(forwarded, "fork").outputs)
 
     with closing(Host(tmp_path / "host")) as host:
         with pytest.raises(HostFailure) as denied:
@@ -233,28 +248,15 @@ def test_category_deletion_through_host_keeps_summaries_and_marks_forwarded_file
         assert denied.value.code == "permission_denied"
         host.call("RegisterProjectRequest", projectId=project_id, endpoint=f"unix:{daemon.unix}")
         args = dict(projectId=project_id, runId=source)
-        refs = host.call("RunFileReferencesRequest", **args)
-        assert list(map(text, refs.runIds)) == [forwarded]
+        host.call("RunCategoryDeleteRequest", **args, category=RunRecordCategory.Values, opId=new_id())
+        host.call("RunCategoryDeleteRequest", **args, category=RunRecordCategory.Logs, opId=new_id())
 
-        def delete(category, op=None):
-            return host.call("RunCategoryDeleteRequest", **args, category=category, opId=op or new_id())
-
-        delete(RunRecordCategory.Values)
-        assert [text(v.name) for v in record(source).outputs] == ["doc"]
-        delete(RunRecordCategory.Logs)
-        assert not client.call("LogRangeRequest", runId=source, stream=1).exists
-        assert client.call("LogRangeRequest", runId=source, stream=3).exists
-
-        operation = new_id()
-        assert text(delete(RunRecordCategory.Files, operation).runId) == source
-        assert text(delete(RunRecordCategory.Files, operation).runId) == source
-        assert not client.call("ArtifactListRequest", runId=source).artifacts
-        assert not record(source).outputs
-        assert record(source).summary.state == before.summary.state
-        assert record(source).summary.durationMs == before.summary.durationMs
-        assert all(v.fileDeleted and not v.filePath for v in record(forwarded, "fork").outputs)
-
-    daemon.restart()
-    client = daemon.connect()
-    assert listed(client) == [forwarded, source]
-    assert all(v.fileDeleted for v in record(forwarded, "fork").outputs)
+    assert not client.call("LogRangeRequest", runId=source, stream=1).exists
+    assert client.call("LogRangeRequest", runId=source, stream=3).exists
+    artifact, = client.call("ArtifactListRequest", runId=source).artifacts
+    assert read_pages(client, "ArtifactReadRequest", artifactId=text(artifact.artifactId),
+                      member="report.txt").decode() == CONTENTS
+    after = client.call("RunRecordRequest", runId=source, card=path("work")).record
+    assert not after.outputs
+    assert after.summary.state == before.summary.state
+    assert after.summary.durationMs == before.summary.durationMs

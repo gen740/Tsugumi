@@ -1,5 +1,5 @@
-attribute "tsugumi";
+include "tsugumi/artifact.fbs";
+
 namespace collatz;
-table CsvFile { value:string; }
-table Outputs { table:CsvFile (required, tsugumi: "file"); }
+table Outputs { table:tsugumi.Artifact (required); }
 root_type Outputs;

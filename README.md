@@ -117,7 +117,7 @@ Tsugumi is a **macOS app for assembling computation and data processing as a gra
 
 ## Splitting the processing finely, without making trial and error heavy
 
-The more finely you split processing into pieces you can work on, the more effort goes into types and environments, and the more time goes into starting and recording. Tsugumi takes this on with the Agent and its runtime. From a Draft, the Agent writes the code, the output types and the Nix environment; changing a condition does not trigger a rebuild; a partial run reruns only the Cards you chose, with saved inputs; and a run is reported as finished only after its record is saved.
+The more finely you split processing into pieces you can work on, the more effort goes into types and environments, and the more time goes into starting and recording. Tsugumi takes this on with the Agent and its runtime. From a Draft, the Agent writes the code, the output types and the Nix environment; Nix rebuilds the derivations that use a changed parameter; a partial run reruns only the Cards you chose, with saved inputs; and a run is reported as finished only after its record is saved.
 
 **The structure a person draws, the structure the Agent implements and the structure that runs are the same.**
 The generated code stays as ordinary files, and a finished Workflow runs without an LLM. Why these measures were taken, and where their code and tests are, is in [Measures that keep trial and error light](docs/Rationale.md#measures-that-keep-trial-and-error-light).

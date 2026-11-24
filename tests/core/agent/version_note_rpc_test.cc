@@ -12,7 +12,7 @@ TEST_F(AgentProjectFixture,
        VersionNotesAreTheChangeRecordAndTheAgentReadsTheDiffWhenAsked) {
   StartProject(
       false,
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("version-notes");
   Grant(conversation, Tsugumi::Service::Access::Read);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -74,7 +74,7 @@ TEST_F(AgentProjectFixture,
        HostGraphsRenderOneCommitInBothLanguagesAndAgentFormattingStaysOnHost) {
   StartProject(
       false,
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("host-presentation");
   Grant(conversation, Tsugumi::Service::Access::Read);
   Grant(conversation, Tsugumi::Service::Access::Write);

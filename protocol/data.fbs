@@ -36,40 +36,31 @@ table Diagnostic {
   offset:uint64 = null (id: 5);
 }
 
+table ValueArtifact {
+  id:string (required);
+  size_bytes:uint64 = null;
+}
+
 table NamedValue {
   name:string (id: 0, required);
-  kind:PortKind (id: 1);
-  schema_bfbs:[ubyte] (id: 2, required);
-  root_type:string (id: 3, required);
-  size_bytes:uint64 = null (id: 4);
-  inline_bytes:[ubyte] (id: 5);
-  artifact_id:string (id: 6);
-  /// SHA-256 (hex) of a recorded value's bytes, present on values read from
-  /// the run history; it tells two values apart when inline_bytes is omitted.
-  content_hash:string (id: 7);
-  /// Current location of the independently kept Path content.
-  /// Separate from the original recorded bytes, so copied projects retain
-  /// the evidence's hash while reporting the content's actual location.
-  file_path:string (id: 8);
-  file_missing:bool (id: 9);
-  /// SHA-256 (hex) of a recorded Path's file content, or tree:<hex> for a
-  /// directory. Kept with the record independently of the storage path.
-  file_content_hash:string (id: 10);
-  /// The run that owned this forwarded file no longer has its file record.
-  file_deleted:bool (id: 11);
+  schema_bfbs:[ubyte] (id: 1, required);
+  root_type:string (id: 2, required);
+  size_bytes:uint64 = null (id: 3);
+  inline_bytes:[ubyte] (id: 4);
+  artifacts:[ValueArtifact] (id: 5);
+  /// SHA-256 (hex) of a recorded value's bytes.
+  content_hash:string (id: 6);
 }
 
 // ---- Display ---------------------------------------------------------------
 
-/// A live opaque message. run_id is absent when there is no active run.
+/// A live opaque message.
 table Display {
   card:CardPath (id: 0, required);
-  run_id:string (id: 1);
-  view:string (id: 2, required);
-  bytes:[ubyte] (id: 3, required);
+  view:string (id: 1, required);
+  bytes:[ubyte] (id: 2, required);
+  credit_id:uint64 = null (id: 3);
 }
-
-enum DisplayRunState:ubyte { unspecified, started, ended }
 
 /// One view declared in a Card's definition. Type and blob are relayed unchanged.
 table CardView {

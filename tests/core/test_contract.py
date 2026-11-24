@@ -37,7 +37,7 @@ def project_json(snapshot) -> dict:
 
 
 def save_name(c: Client, rev: int, name: str, op: str | None = None, base_doc: dict | None = None):
-    doc = dict(base_doc or {"pkgsPath": "tsugumi:default",
+    doc = dict(base_doc or {"nixPath": [],
                             "canvas": {"cards": [], "connections": []}})
     doc["name"] = name
     return c.call("ProjectSaveRequest", baseRev=rev, opId=op or new_id(), origin="test",
@@ -262,11 +262,11 @@ def test_document_validation(client):
     """Invalid document fields, card paths and connections cannot be saved."""
     snap = client.open().snapshot
     bad = [
-        '{"name":"a","name":"b","pkgsPath":"x","canvas":{"cards":[],"connections":[]}}',
-        '{"name":"a","pkgsPath":"x","canvas":{"cards":[],"connections":[]},"typo":1}',
-        '{"name":"a","pkgsPath":"x","canvas":{"cards":[{"id":"a/b"}],"connections":[]}}',
-        '{"name":"a","pkgsPath":"x","canvas":{"cards":[{"id":"x","definition":"nope"}],"connections":[]}}',
-        '{"name":"a","pkgsPath":"x","canvas":{"cards":[],"connections":[{"from":{"card":"q","port":"o"},"to":{"card":"r","port":"i"}}]}}',
+        '{"name":"a","name":"b","nixPath": [],"canvas":{"cards":[],"connections":[]}}',
+        '{"name":"a","nixPath": [],"canvas":{"cards":[],"connections":[]},"typo":1}',
+        '{"name":"a","nixPath": [],"canvas":{"cards":[{"id":"a/b"}],"connections":[]}}',
+        '{"name":"a","nixPath": [],"canvas":{"cards":[{"id":"x","definition":"nope"}],"connections":[]}}',
+        '{"name":"a","nixPath": [],"canvas":{"cards":[],"connections":[{"from":{"card":"q","port":"o"},"to":{"card":"r","port":"i"}}]}}',
     ]
     for j in bad:
         with pytest.raises(RpcFailure) as e:
@@ -387,27 +387,26 @@ def test_ui_layout_fields_and_draft_outputs(client):
     assert "draft" in [text(d.code) for d in v.diagnostics]
 
 
-def test_uint64_max_and_original_spelling_preserved(builtin_client):
-    """Unsigned 64-bit values retain their exact spelling and overflow is diagnosed."""
+def test_int64_values_preserve_precision_and_report_overflow(builtin_client):
     c = builtin_client
     snap = c.open().snapshot
     doc = project_json(snap)
     doc["canvas"]["cards"].append({"id": "b"})
-    raw = '{"type": "input", "params": [{"name": "n", "type": "uint64", "data": {"uint64": 18446744073709551615}}]}'
+    raw = b"{ n = 9223372036854775807; }"
+    source = "definitions/b/params.nix"
     res = c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
-                 changes=[change("SetProject", json=json.dumps(doc)), change("PutDefinition", id="b", cardJson=raw)])
-    assert "18446744073709551615" in text(next(x for x in res.delta.definitionsUpsert if text(x.id) == "b").cardJson)
-    diags = [text(x.code) for r in res.delta.resolution for x in r.diagnostics
-             if text(r.card.segments[0]) == "b"]
-    assert "invalid_param" not in diags
-    # The document parser rejects a value outside the schema's ulong range.
-    raw2 = raw.replace("18446744073709551615", "18446744073709551616")
-    with pytest.raises(RpcFailure) as error:
-        c.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t",
-               changes=[change("PutDefinition", id="b", cardJson=raw2)])
-    assert error.value.kind == "invalid_document"
-    assert "18446744073709551616" in str(error.value)
-    assert c.call("ProjectInspectRequest").rev == res.rev
+                 changes=[change("SetProject", json=json.dumps(doc)),
+                          change("PutDefinition", id="b", cardJson='{"type":"input"}'),
+                          change("PutSource", path=source, bytes=raw)])
+    node = next(r for r in res.delta.resolution if text(r.card.segments[0]) == "b")
+    assert "invalid_param" not in [text(x.code) for x in node.diagnostics]
+    assert json.loads(text(node.parameters[0].valueJson)) == 9223372036854775807
+    base = c.call("ProjectFileStatRequest", path=source)
+    raw = raw.replace(b"9223372036854775807", b"9223372036854775808")
+    bad = c.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t",
+                 changes=[change("PutSource", path=source, baseHash=text(base.hash), bytes=raw)])
+    node = next(r for r in bad.delta.resolution if text(r.card.segments[0]) == "b")
+    assert "invalid_param" in [text(x.code) for x in node.diagnostics]
 
 
 def test_explicit_false_is_not_omitted(builtin_client):
@@ -449,19 +448,19 @@ def test_history_pagination_and_cursor_checks(builtin_client):
     assert e.value.kind == "invalid_cursor"
 
 
-def test_card_api_needs_a_code_card_at_the_current_revision(builtin_client):
-    """The Card API builds only a Code Card, at the revision asked for; nothing is kept."""
+def test_evaluate_nix_needs_a_definition_at_the_current_revision(builtin_client):
+    """Nix evaluation requires a definition at the revision requested."""
     c = builtin_client
     rev = c.call("ProjectInspectRequest").rev
-    for card, kind in ((path("missing"), "not_found"), (path("src"), "invalid_request"),
+    for card, kind in ((path("missing"), "not_found"), (path("start"), "invalid_request"),
                        (path("merge"), "not_found")):
         with pytest.raises(RpcFailure) as e:
-            c.call("CardApiRequest", card=card, atRev=rev)
+            c.call("EvaluateNixRequest", expression="1", card=card, atRev=rev)
         assert e.value.kind == kind
     op = new_id()
     save_name(c, rev, "changed", op)
     with pytest.raises(RpcFailure) as e:
-        c.call("CardApiRequest", card=path("src"), atRev=rev)
+        c.call("EvaluateNixRequest", expression="1", card=path("src"), atRev=rev)
     assert e.value.kind == "revision_conflict"
     got = c.call("OperationGetRequest", opId=op)
     assert got.state == OperationState.completed and got.receipt is not None

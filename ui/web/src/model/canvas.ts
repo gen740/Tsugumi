@@ -219,7 +219,7 @@ export class Scene {
   }
 
   /** A wire is colored only when a value really went through it in this run
-   *  (a branch colors only the side it chose), and animated while the value
+   *  and animated while the value
    *  is on its way to a Card that has not finished with it yet. */
   style(from: CardKey, port: string, to: CardKey | undefined): WireStyle {
     const s = this.session

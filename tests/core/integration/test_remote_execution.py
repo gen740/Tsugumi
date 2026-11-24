@@ -8,7 +8,6 @@ Use tsugumi-test-env and pytest -m environment.
 """
 
 import errno
-import hashlib
 import json
 import os
 import secrets
@@ -27,10 +26,9 @@ from harness import remote_worker as R
 from Tsugumi.RemoteWorker.WorkerReady import WorkerReady
 from harness.file_events import process_file
 from harness.host import Host
-from harness.real_cards import log, python_run
+from harness.real_cards import PYTHON_BINDINGS, log, python_run
 from harness.values import collected_items
 from projects import (
-    FILE_FBS,
     card,
     conn,
     run_and_wait,
@@ -38,7 +36,7 @@ from projects import (
     wait_for_display,
     wait_invocation,
     wait_run,
-    write,
+    write_nix_project as write,
 )
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
@@ -250,7 +248,7 @@ def wait_for_release():
 
 
 def entry(run, extra=""):
-    return "{ pkgs, params, inputs, schemas }: { run = " + run + "; " + extra + " }"
+    return "{ params, inputs }: let " + PYTHON_BINDINGS + " in { run = " + run + "; " + extra + " }"
 
 
 @pytest.fixture
@@ -286,12 +284,13 @@ def remote_gates(tmp_path, remote_daemon):
 
 
 def fixture(project):
+    schema = "table Text { value:string; } table Outputs { doc:Text (required); } root_type Outputs;"
     body = GATE_HELPER + """
 import os
 import platform
 from pathlib import Path
-from shutil import copyfile
 from card import Output
+from Text import TextT
 
 def run(input):
     wait_for_release()
@@ -299,24 +298,31 @@ def run(input):
     assert not Path("/etc/hostname").exists()
     assert "TSUGUMI_REMOTE_PRIVATE_KEY" not in os.environ
     print("remote-card-stdout")
-    output = Path("copied.txt")
-    copyfile(input.in_, output)
-    return Output(doc=output)
+    return Output(doc=TextT(value=input.require("in").value))
 """
-    source = {"type": "input", "params": [{"name": "value", "type": "string", "data": {"string": "payload.txt"}}],
-              "_outputs": FILE_FBS}
+    source = {"type": "input", "_params": '{ value = "remote-input-roundtrip"; }',
+              "_outputs": schema, "_nix": """
+{ params, inputs }:
+let
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/input> { inherit pkgs; };
+in {
+  run = sdk.input {
+    outputs = ./_outputs.fbs;
+    values.doc.value = params.value;
+  };
+}
+"""}
     settings = {
-        "type": "code", "inputs": [{"name": "in"}], "_outputs": FILE_FBS,
-        "executionService": "remote-test",
-        "retainArtifact": True, "artifactOutput": "doc", "recordIO": True, "timeoutSeconds": 600,
+        "type": "code", "inputs": [{"name": "in"}], "_outputs": schema,
+        "executionService": "remote-test", "recordIO": True, "timeoutSeconds": 600,
     }
     definitions = {
         "input": source,
         "slow": {**settings, "_nix": entry(python_run(body))},
     }
     write(project, definitions, [card("source", "input"), card("slow", "slow")],
-          [conn("source", "doc", "slow", "in")],
-          {"definitions/input/payload.txt": "remote-input-roundtrip\n"})
+          [conn("source", "doc", "slow", "in")])
 
 
 def check_success(client, run_id, name, system):
@@ -326,12 +332,9 @@ def check_success(client, run_id, name, system):
     assert summary.executionState == RemoteExecutionState.succeeded
     assert text(summary.executionService) == "remote-test"
     assert text(summary.executionSystem) == system
-    artifacts = client.call("ArtifactListRequest", runId=run_id, card=path(name)).artifacts
-    assert len(artifacts) == 1
-    content = client.call("ArtifactReadRequest", artifactId=text(artifacts[0].artifactId), limitBytes=1024)
-    assert bytes(content.bytes) == b"remote-input-roundtrip\n"
-    member, = artifacts[0].members
-    assert text(member.hash) == hashlib.sha256(bytes(content.bytes)).hexdigest()
+    received, = record.inputs
+    sent, = record.outputs
+    assert bytes(sent.inlineBytes) == bytes(received.inlineBytes)
     logs = client.call("LogRangeRequest", runId=run_id, card=path(name), invocation=1, stream=LogStream.standard_output)
     assert text(logs.text) == "remote-card-stdout\n"
     environments = client.call("RunEnvironmentsRequest", runId=run_id).environments
@@ -395,7 +398,9 @@ def run(input):
     active = wait_invocation(client, run_id, "work", lambda row: row.executionState == RemoteExecutionState.running)
     shown = wait_for_display(client, run_id).value.display
     assert shown.card.segments == [b"work"] and text(shown.view) == "notes"
-    assert bytes(shown.bytes) == payload
+    chunk = bytes(shown.bytes)
+    assert struct.unpack_from("<4I", chunk) == (0x4D475354, 0, 0, 1)
+    assert chunk[16:] == payload
     remote_gates(active)
     status = wait_run(client, run_id)
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
@@ -419,19 +424,22 @@ def test_remote_card_cancels_a_running_job(project, core_factory, remote_broker)
 
 def test_remote_run_list_preserves_implementation_order(project, core_factory, remote_broker, tmp_path):
     def numbers(values, value=""):
-        programs = [python_run(f"""
+        variants = []
+        for number in values:
+            program = python_run(f"""
 from card import Output
-from outputs.out.Number import NumberT
+from Number import NumberT
 
 def run(input):
     return Output(out=NumberT(value={value}{number}))
-""") for number in values]
-        return entry("[ " + " ".join(programs) + " ]")
+""")
+            variants.append(f'{{ label = "{number}"; run = {program}; }}')
+        return entry("[ " + " ".join(variants) + " ]")
 
     definitions = {
         "source": {"type": "code", "_outputs": RUN_LIST_OUTPUT, "_nix": numbers([10, 20])},
         "work": {**RUN_LIST_REMOTE, "inputs": [{"name": "in"}],
-                 "_nix": numbers([100, 200], "input.in_.value + ")},
+                 "_nix": numbers([100, 200], 'input.require("in").value + ')},
         "collect": {"type": "collect", "recordIO": True},
     }
     write(project, definitions, [card(name, name) for name in definitions],
@@ -452,16 +460,19 @@ def run(input):
 def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, remote_broker, remote_gates):
     if remote_gates is None:
         pytest.skip("requires a disposable worker to synchronize both jobs")
-    programs = [python_run(GATE_HELPER + f"""
+    variants = []
+    for message in ("expected-batch-member-failure", "unexpected-sibling-completion"):
+        program = python_run(GATE_HELPER + f"""
 import sys
 
 def run(input):
     wait_for_release()
     print({message!r}, file=sys.stderr)
     raise RuntimeError({message!r})
-""") for message in ("expected-batch-member-failure", "unexpected-sibling-completion")]
+""")
+        variants.append(f'{{ label = "{message}"; run = {program}; }}')
     definitions = {
-        "fails": {**RUN_LIST_REMOTE, "_nix": entry("[ " + " ".join(programs) + " ]")},
+        "fails": {**RUN_LIST_REMOTE, "_nix": entry("[ " + " ".join(variants) + " ]")},
         "collect": {"type": "collect", "recordIO": True},
     }
     write(project, definitions, [card(name, name) for name in definitions],
@@ -489,42 +500,6 @@ def run(input):
     assert blocked.state == CardState.blocked and not downstream.batches
 
 
-@pytest.mark.parametrize("link", [False, True])
-def test_remote_snapshots_only_declared_regular_outputs(project, core_factory, remote_broker, tmp_path, link):
-    body = rf"""
-import os
-from pathlib import Path
-from card import Output
-
-def run(input):
-    report = Path("report")
-    report.mkdir()
-    (report / "data").write_text("safe\n")
-    if {link!r}:
-        (report / "link").symlink_to("data")
-    os.mkfifo("undeclared-fifo")
-    Path("undeclared-file").write_text("unused")
-    return Output(doc=report)
-"""
-    schema = FILE_FBS
-    definition = {"type": "code", "executionService": "remote-test", "retainArtifact": True,
-                  "recordIO": True, "timeoutSeconds": 600, "_outputs": schema,
-                  "_nix": entry(python_run(body))}
-    write(project, {"copy": definition}, [card("copy", "copy")], [])
-    scratch = tmp_path / "scratch"
-    c = core_factory(args=["--run-scratch-dir", str(scratch)]).connect()
-    run_id, st = run_and_wait(c, "copy")
-    if link:
-        assert st.state == RunState.failed and st.failure.kind == FailureKind.output_invalid
-        return
-    assert st.state == RunState.succeeded, log(c, run_id, "copy", 2)
-    record = c.call("RunRecordRequest", runId=run_id, card=path("copy")).record
-    saved = Path(text(record.outputs[0].filePath))
-    assert (saved / "data").read_text() == "safe\n"
-    invocation = scratch / "runs" / run_id / "work/copy/1"
-    assert not list(invocation.rglob("undeclared-*"))
-
-
 def test_call_timeout_is_separate_from_build_and_transfers(project, core_factory, remote_broker):
     definition = {"type": "code", "executionService": "remote-test", "timeoutSeconds": 1,
                   "buildTimeoutSeconds": 600, "_outputs": "table Outputs {} root_type Outputs;",
@@ -544,7 +519,7 @@ SECRET_PROJECT = "a2b3c4"
 USES_SECRET = """
 import os
 from card import Output
-from outputs.out.Number import NumberT
+from Number import NumberT
 
 def run(input):
     value = os.environ["database_password"]

@@ -63,21 +63,6 @@ import Testing
     #expect(missing[2].difference == .unknown && missing[2].right == nil)
   }
 
-  @Test func retainedCopyIdentityDoesNotChangeTheRecordedValue() {
-    func record(_ id: String, _ bytes: [UInt8]) -> ComparedRunCard {
-      let value = Tsugumi_Data_NamedValueT()
-      value.name = "photons"; value.rootType = "Counts"; value.inlineBytes = bytes; value.artifactId = id
-      let result = Tsugumi_RPC_RecordResultT()
-      result.record = Tsugumi_RPC_InvocationRecordT()
-      result.record?.outputs = [value]
-      return ComparedRunCard(summary: Tsugumi_RPC_InvocationSummaryT(), record: result)
-    }
-    let a = record("copy-left", [1, 2]), b = record("copy-right", [1, 2])
-    #expect(RunComparison.values(true, a, b).first?.changed == false)
-    #expect(a.record?.record?.outputs.first??.artifactId == "copy-left")
-    b.record?.record?.outputs.first??.inlineBytes = [1, 3]
-    #expect(RunComparison.values(true, a, b).first?.changed == true)
-  }
   @Test func omittedValuesCompareByContentHashAndType() {
     let a = Tsugumi_Data_NamedValueT(), b = Tsugumi_Data_NamedValueT()
     a.sizeBytes = 4096; b.sizeBytes = 4096
@@ -96,22 +81,22 @@ import Testing
 
 }
 
-@MainActor @Test func filesCompareRecordedContentAndOneSidedValuesAreNotComparable() {
-  func file(_ path: String, _ digest: String?) -> Tsugumi_Data_NamedValueT {
+@MainActor @Test func artifactIdsParticipateInValueComparison() {
+  func value(_ id: String) -> Tsugumi_Data_NamedValueT {
     let v = Tsugumi_Data_NamedValueT()
-    v.name = "file"; v.kind = .path
-    v.inlineBytes = Array(path.utf8); v.contentHash = path; v.fileContentHash = digest
+    v.name = "value"
+    v.contentHash = "bytes"
+    let artifact = Tsugumi_Data_ValueArtifactT()
+    artifact.id = id
+    artifact.sizeBytes = 1
+    v.artifacts = [artifact]
     return v
   }
-  let a = file("/runs/left/value", "bytes"), b = file("/runs/right/value", "bytes")
+  let a = value("id"), b = value("id")
   #expect(RunComparison.valueDifference(a, b) == .same)
-  b.fileContentHash = "other"
+  b.artifacts = value("other").artifacts
   #expect(RunComparison.valueDifference(a, b) == .changed)
-  b.fileContentHash = nil
-  #expect(RunComparison.valueDifference(a, b) == .unknown)
-  #expect(RunComparison.valueDifference(file("/same/path", nil), file("/same/path", nil)) == .unknown)
-  b.fileContentHash = "bytes"; b.fileMissing = true
-  #expect(RunComparison.valueDifference(a, b) == .same)
+  b.artifacts = a.artifacts
   b.rootType = "Other"
   #expect(RunComparison.valueDifference(a, b) == .changed)
   #expect(RunComparison.valueDifference(a, nil) == .unknown)

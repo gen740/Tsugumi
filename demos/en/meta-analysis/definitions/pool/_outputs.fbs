@@ -1,5 +1,5 @@
-attribute "tsugumi";
+include "tsugumi/artifact.fbs";
+
 namespace bcg;
-table Pooled { value:string; }
-table Outputs { pooled:Pooled (required, tsugumi: "file"); }
+table Outputs { pooled:tsugumi.Artifact (required); }
 root_type Outputs;

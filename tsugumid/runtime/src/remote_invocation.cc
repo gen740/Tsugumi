@@ -10,6 +10,7 @@
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/log.hh"
 #include "wire.hh"
 
@@ -22,7 +23,7 @@ namespace {
 
 constexpr uint64_t kMaxBlobBytes = uint64_t{64} << 30;
 constexpr uint64_t kMaxManifestBytes = uint64_t{8} << 20;
-constexpr uint64_t kMaxWorkerBytes = uint64_t{16} << 20;
+constexpr uint64_t kMaxWorkerBytes = workerd::kMaxWorkerFrameBytes;
 constexpr size_t kMaxInputBlobs = 1024;
 
 auto upload(const RemoteJobClient& client, const std::string& service,
@@ -47,22 +48,6 @@ auto download(const RemoteJobClient& client, const std::string& service,
   client.get_blob(service, instance, job_id, digest, bytes, limit,
                   expected_size, stop);
   return bytes.str();
-}
-
-auto input_location(const std::vector<stdfs::path>& file_roots,
-                    const std::string& path)
-    -> std::pair<stdfs::path, stdfs::path> {
-  for (const auto& root : file_roots) {
-    auto rel = stdfs::path(path).lexically_normal().lexically_relative(root);
-    if (!rel.empty() && rel != "." && *rel.begin() != "..") return {root, rel};
-  }
-  throw std::runtime_error("remote file input is outside the run's folders");
-}
-
-auto staged_input_path(size_t index, const stdfs::path& name) -> stdfs::path {
-  return remote::relative_path(
-      (stdfs::path("inputs") / std::to_string(index) / name.filename())
-          .generic_string());
 }
 
 auto import_logs(const stdfs::path& path, const RemoteLogPrefix& recorded,
@@ -120,7 +105,7 @@ auto stage_remote_invocation(const RemoteJobClient& client,
                              const std::string& service,
                              const std::string& instance,
                              const std::string& job_id,
-                             const std::vector<stdfs::path>& file_roots,
+                             std::vector<ArtifactGrant> grants,
                              const std::string& archive_digest,
                              const ExecutionRequest& request) -> std::string {
   remote::RW::InvocationT invocation;
@@ -174,41 +159,30 @@ auto stage_remote_invocation(const RemoteJobClient& client,
     file->size = size;
     files.push_back(std::move(file));
   };
-  std::vector<Value> inputs = request.inputs;
-  for (size_t i = 0; i < inputs.size(); ++i) {
-    auto& input = inputs[i];
-    if (input.kind == PortKind::FlatBuffer) continue;
-    if (input.path.empty())
-      throw std::runtime_error("remote Path input has no path");
-    const auto [root, rel] = input_location(file_roots, input.path);
-    const auto destination = staged_input_path(i, rel);
-    if (!fs::directory_beneath(root, rel)) {
-      stage_file(root, rel, destination);
-    } else {
-      const auto listing = fs::list_beneath(root, rel, kMaxInputBlobs * 2);
-      if (!listing.links.empty() || !listing.special.empty())
-        throw std::runtime_error(
-            "remote directory input contains a symlink or special file");
-      dirs.push_back(destination.generic_string());
-      for (const auto& child : listing.directories)
-        dirs.push_back(
-            remote::relative_path((destination / child).generic_string())
-                .generic_string());
-      for (const auto& name : listing.files)
-        stage_file(root, rel / name, destination / name);
-    }
-    input.path = destination.generic_string();
+  for (auto& grant : grants) {
+    const auto root = stdfs::path(grant.path);
+    const auto destination = stdfs::path("artifacts") / grant.location;
+    const auto listing = fs::list_beneath(root, "", kMaxInputBlobs * 2);
+    if (!listing.links.empty() || !listing.special.empty())
+      throw Failed(FailureKind::input_missing,
+                   "remote artifact contains a symlink or special file");
+    dirs.push_back(destination.generic_string());
+    for (const auto& child : listing.directories)
+      dirs.push_back(remote::relative_path((destination / child).generic_string())
+                         .generic_string());
+    for (const auto& name : listing.files)
+      stage_file(root, name, destination / name);
+    grant.path = grant.location.generic_string();
   }
   if (request.stop.stop_requested())
     throw Failed(FailureKind::cancelled,
                  "run cancelled before external submission");
-  const auto params = NixRunner::params_buffer(request.node);
   auto call = worker_call_frame(
-      1, inputs, params, request.node.outputs,
+      1, request.inputs, request.node.outputs,
       request.node.settings.timeout_seconds
           ? std::optional<uint64_t>(*request.node.settings.timeout_seconds *
                                     1000)
-          : std::nullopt);
+          : std::nullopt, {}, grants);
   invocation.call_sha256 =
       upload(client, service, instance, job_id, call, request.stop);
   blobs.insert(invocation.call_sha256);
@@ -297,6 +271,21 @@ auto import_remote_result(
     }
   } remove{temp};
   std::set<stdfs::path> written;
+  const auto* failure = message->value_as_WorkerFailure();
+  const auto* worker = message->value_as_WorkerResult();
+  if (!failure && !worker)
+    throw std::runtime_error("remote worker did not send a result or failure");
+  const auto started = now_ms();
+  result.created = wire::artifact_ids(failure ? failure->created() : worker->created());
+  std::set<stdfs::path> declared;
+  for (const auto& id : result.created)
+    if (!declared.insert(crypto::hex(id.data(), id.size())).second)
+      throw Failed(FailureKind::output_invalid, "duplicate remote artifact id");
+  const auto permitted = [&](const stdfs::path& relative, bool allow_root) {
+    auto part = relative.begin();
+    if (part == relative.end() || *part++ != "artifacts") return false;
+    return part == relative.end() ? allow_root : declared.contains(*part);
+  };
   auto output_bytes = job->output_limit_bytes;
   auto output_entries = job->output_limit_entries;
   const auto count_entry = [&] {
@@ -310,7 +299,8 @@ auto import_remote_result(
     const auto digest = file->sha256()->str();
     const auto size = file->size();
     const auto rel = remote::relative_path(name);
-    const bool output_file = name.starts_with("files/out/");
+    const bool output_file = *rel.begin() == "files" &&
+        permitted(rel.lexically_relative("files"), false);
     if (!output_file && name != "environment" && name != "logs")
       throw std::runtime_error("unexpected remote result member");
     if (output_file) {
@@ -344,88 +334,39 @@ auto import_remote_result(
   if (!environment) throw std::runtime_error("invalid remote build environment");
   result.built = environment->built;
   result.environment.paths = environment->paths;
-  if (const auto* failure = message->value_as_WorkerFailure()) {
+  std::vector<RawOutput> raw;
+  if (failure) {
     result.failure = wire::failure(failure->failure());
-  } else if (const auto* worker = message->value_as_WorkerResult()) {
-    const auto started = now_ms();
-    // Paths are job-relative: out/... for a new output, or the staged path of
-    // the input that forwarded_from names, returned unchanged.
-    std::vector<RawOutput> raw;
-    const auto text = [](const flatbuffers::String* value) {
-      return value ? value->str() : std::string();
-    };
+  } else {
     for (const auto* output : *worker->outputs()) {
       const auto* bytes = output->bytes();
-      raw.push_back(
-          {output->name()->str(),
-           bytes ? std::string(reinterpret_cast<const char*>(bytes->data()),
-                               bytes->size())
-                 : std::string(),
-           text(output->path()), text(output->forwarded_from())});
+      raw.push_back({output->name()->str(),
+                     bytes ? std::string(bytes->begin(), bytes->end()) : "",
+                     wire::artifact_ids(output->artifacts())});
     }
-    std::map<std::string, std::string> forwards;
-    for (const auto& output : raw)
-      if (!output.forwarded_from.empty())
-        forwards.emplace(output.name, output.forwarded_from);
-    result.outputs = workerd::accept_outputs(std::move(raw), outputs);
-    std::vector<stdfs::path> returned_paths;
-    for (auto& value : result.outputs) {
-      const auto forward = forwards.find(value.name);
-      if (value.kind == PortKind::FlatBuffer && forward == forwards.end())
-        continue;
-      const auto invalid = [&](std::string message) {
-        return Failed(FailureKind::output_invalid, std::move(message),
-                      {{"port", value.name}});
-      };
-      if (value.kind == PortKind::FlatBuffer)
-        throw invalid("a FlatBuffer output cannot forward a path");
-      if (value.path.empty()) throw invalid("missing remote output path");
-      const auto rel = remote::relative_path(value.path);
-      if (forward != forwards.end()) {
-        const auto input =
-            std::ranges::find(inputs, forward->second, &Value::name);
-        if (input == inputs.end() || input->kind != PortKind::Path)
-          throw invalid("remote output forwards an unknown input");
-        if (input->path.empty() ||
-            rel != staged_input_path(input - inputs.begin(), input->path))
-          throw invalid("remote output does not match the forwarded input");
-        value.path = input->path;
-        continue;
-      }
-      if (*rel.begin() != "out")
-        throw invalid("remote output is outside its output folder");
-      returned_paths.push_back(rel);
-      value.path = (directory / rel).string();
-    }
-    std::set<stdfs::path> directories;
-    for (const auto& dir : environment->directories) {
-      const auto rel = remote::relative_path(dir);
-      if (*rel.begin() != "out" || !directories.insert(rel).second)
-        throw std::runtime_error("invalid remote result directory");
-      if (rel != "out" ||
-          std::ranges::find(returned_paths, rel) != returned_paths.end())
-        count_entry();
-      stdfs::create_directories(temp / "files" / rel);
-    }
-    for (const auto& rel : returned_paths) {
-      const auto status = stdfs::symlink_status(temp / "files" / rel);
-      if (!stdfs::is_regular_file(status) && !stdfs::is_directory(status))
-        throw Failed(FailureKind::output_invalid,
-                     "remote output is missing or is neither a regular file "
-                     "nor a directory");
-    }
-    if (stop.stop_requested())
-      throw BrokerDisconnected("remote result import stopped");
-    const auto staged = temp / "files" / "out";
-    if (stdfs::is_directory(staged)) {
-      const auto target = directory / "out";
-      stdfs::remove_all(target);
-      stdfs::rename(staged, target);
-    }
-    if (on_validation) on_validation(started, now_ms());
-  } else {
-    throw std::runtime_error("remote worker did not send a result or failure");
   }
+  result.outputs = workerd::accept_outputs(
+      std::move(raw), failure ? std::span<const types::PortType>{} : outputs,
+      inputs, result.created);
+  std::set<stdfs::path> directories;
+  for (const auto& dir : environment->directories) {
+    const auto rel = remote::relative_path(dir);
+    if (!permitted(rel, true) || !directories.insert(rel).second)
+      throw std::runtime_error("invalid remote artifact directory");
+    if (rel != "artifacts") count_entry();
+    stdfs::create_directories(temp / "files" / rel);
+  }
+  const auto staged = temp / "files" / "artifacts";
+  for (const auto& id : declared)
+    if (!stdfs::is_directory(staged / id))
+      throw Failed(FailureKind::output_invalid, "remote artifact directory is missing");
+  if (stop.stop_requested())
+    throw BrokerDisconnected("remote result import stopped");
+  if (stdfs::is_directory(staged)) {
+    const auto target = directory / "artifacts";
+    stdfs::rename(staged, target);
+  }
+  if (on_validation) on_validation(started, now_ms());
   import_logs(temp / "logs", recorded, log, result);
   return result;
 }

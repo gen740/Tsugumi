@@ -51,8 +51,8 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
           spawn.gui = source.gui;
           spawn.network = source.network;
           spawn.ro_paths = source.ro_paths;
+          spawn.artifacts_root = source.artifacts_root;
           spawn.hidden_paths = source.hidden_paths;
-          spawn.card = request.card;
           if (source.uid) spawn.uid = *source.uid;
           if (source.gid) spawn.gid = *source.gid;
           for (const auto& bind : source.binds)
@@ -62,7 +62,6 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
               pool.acquire(request.card, request.key, spawn, request.reuse);
           reply.lease = ++sequence;
           reply.reused = lease.reused;
-          reply.read_only_inputs = lease.worker->read_only_inputs();
           reply.replaced = lease.replaced;
           reply.scratch = std::filesystem::path(lease.worker->work_dir())
                               .parent_path()

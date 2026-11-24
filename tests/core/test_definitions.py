@@ -9,10 +9,11 @@ from pathlib import Path
 import pytest
 
 from harness.values import recorded_input_json
-from projects import MSG_FBS, SINK, builtin_project, card, conn, put, run_and_wait
+from projects import MSG_FBS, MSG_INPUT_NIX, SINK, builtin_project, card, conn, put, run_and_wait
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
-from harness.document import layout_bytes, write_layout
+from harness.document import layout_bytes, params_nix, write_layout
+from harness.nix_path import declarations, test_lock_entries as fixture_locks, write_lock
 
 
 def project_json(c) -> tuple[int, dict]:
@@ -31,13 +32,15 @@ def diagnostics(c, card: list[str]) -> list[str]:
 def external(root: Path, name: str, text_value: str) -> None:
     """externals/<name>: an Input with its message as the boundary output."""
     ext = root / "externals" / name
+    pins = [entry for entry in fixture_locks() if entry["name"] == "nixpkgs"]
     put(ext / "tsugumi.json", json.dumps({
-        "name": name, "pkgsPath": "tsugumi:default",
+        "name": name, "nixPath": declarations(pins),
         "canvas": {"cards": [{"id": "say"}], "connections": []},
         "boundary": {"inputs": [], "outputs": [{"name": "said", "card": "say", "port": "msg"}]}}))
-    put(ext / "definitions" / "say" / "_card.json", json.dumps(
-        {"type": "input", "params": [{"name": "text", "type": "string", "data": {"string": text_value}},
-                                         {"name": "value", "type": "bool", "data": {"bool": True}}]}))
+    write_lock(ext, pins)
+    put(ext / "definitions" / "say" / "default.nix", MSG_INPUT_NIX)
+    put(ext / "definitions" / "say" / "_card.json", json.dumps({"type": "input"}))
+    put(ext / "definitions" / "say" / "params.nix", params_nix({"text": text_value, "value": True}))
     put(ext / "definitions" / "say" / "_outputs.fbs", MSG_FBS)
 
 
@@ -315,10 +318,9 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     assert {"greet", "greet/say"} <= cards
     assert any(text(x.id) == "greet" and json.loads(text(x.cardJson)).get("external") == "greeting" for x in snap.definitions)
     first = c.call("VersionInitRequest", opId=new_id(), origin="test")
-    source = "externals/greeting/definitions/say/_card.json"
-    body = json.loads((root / source).read_text())
-    body["params"][0]["data"] = {"string": "changed on disk"}
-    put(root / source, json.dumps(body))
+    source = "externals/greeting/definitions/say/params.nix"
+    edited = params_nix({"text": "changed on disk", "value": True})
+    put(root / source, edited)
     with pytest.raises(RpcFailure) as error:
         c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="test", card=path("greet"))
     assert error.value.kind == "external_change"
@@ -331,7 +333,8 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     committed = subprocess.check_output(
         ["git", "-C", root, "show", f"{text(st.commit)}:{source}"], text=True)
     result = recorded_input_json(c, tmp_path / "decode", run_id, "show")
-    assert result["text"] == json.loads(committed)["params"][0]["data"]["string"] == "changed on disk"
+    assert committed == edited
+    assert result["text"] == "changed on disk"
     # The external is this project's copy: its files change here like any other.
     rev = reloaded.rev
     c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="t",
@@ -389,19 +392,6 @@ def test_card_in_card_definition_rejects_execution_settings(tmp_path, core_facto
         assert c.call("ProjectInspectRequest").rev == before.rev
 
 
-def test_display_mode_setting(tmp_path, core_factory):
-    """Presentation modes do not participate in core validation."""
-    for value, reuse_worker, valid in (("update", False, True), ("live", True, True), ("smooth", True, True)):
-        root = tmp_path / value
-        builtin_project(root)
-        card = json.loads((root / "definitions" / "out" / "_card.json").read_text())
-        card["displayMode"] = value
-        card["reuseWorker"] = reuse_worker
-        put(root / "definitions" / "out" / "_card.json", json.dumps(card))
-        c = core_factory(project_root=root).connect()
-        assert ("invalid_setting" not in diagnostics(c, ["out"])) == valid, value
-
-
 def test_output_types_lists_and_rewrites_a_port(tmp_path, core_factory):
     """Output type edits preserve unrelated schema text and reject incompatible types."""
     root = tmp_path / "p"
@@ -412,13 +402,12 @@ def test_output_types_lists_and_rewrites_a_port(tmp_path, core_factory):
            "table Outputs { msg:Msg (required); /* note */ other:Msg; }\nroot_type Outputs;\n")
     res = c.call("OutputTypesRequest", text=fbs)
     assert text(res.rootType) == "demo.Outputs" and len(bytes(res.bfbs)) > 0 and res.text is None
-    changed = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Path", kind=1)  # Path
+    changed = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Path")
     out = text(changed.text)
-    assert 'msg:string (required, tsugumi: "path");' in out and "other:Msg;" in out and "// kept" in out
-    assert 'attribute "tsugumi";' in out
+    assert "msg:Path (required);" in out and "other:Msg;" in out and "// kept" in out
     bad = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Missing")
     assert bad.text is None and bad.error
-    restored = c.call("OutputTypesRequest", text=out, port="msg", typeName="demo.Msg", kind=2)
+    restored = c.call("OutputTypesRequest", text=out, port="msg", typeName="demo.Msg")
     assert 'msg:Msg (required);' in text(restored.text)
 
 

@@ -3,7 +3,7 @@
 # The document schemas, compiled by the FlatBuffers parser that reads the
 # documents' JSON text.
 set(_document_schema_sources "")
-foreach(schema ${TSUGUMI_DOCUMENT_SCHEMAS})
+foreach(schema ${TSUGUMI_DOCUMENT_SCHEMAS} artifact card)
   set(_output ${CMAKE_CURRENT_BINARY_DIR}/${schema}_fbs.cc)
   add_custom_command(
     OUTPUT ${_output}
@@ -24,6 +24,9 @@ add_library(tsugumi_document STATIC
   ${PROJECT_SOURCE_DIR}/tsugumid/document/src/graph.cc
   ${PROJECT_SOURCE_DIR}/tsugumid/document/src/worker_condition.cc
   ${PROJECT_SOURCE_DIR}/tsugumid/document/src/input_types.cc
+  ${PROJECT_SOURCE_DIR}/tsugumid/document/src/input_schema.cc
+  ${PROJECT_SOURCE_DIR}/tsugumid/document/src/schema_id.cc
+  ${PROJECT_SOURCE_DIR}/tsugumid/document/src/schema_sources.cc
   ${PROJECT_SOURCE_DIR}/tsugumid/document/src/collect_type.cc
   ${PROJECT_SOURCE_DIR}/tsugumid/document/src/host_requirements.cc)
 target_include_directories(tsugumi_document PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -32,7 +35,3 @@ target_link_libraries(tsugumi_document PUBLIC tsugumi_protocol tsugumi_json
 
 set_source_files_properties(${PROJECT_SOURCE_DIR}/tsugumid/document/src/worker_condition.cc PROPERTIES
   COMPILE_OPTIONS "-Wall;-Wextra;-Werror;-Wformat=2;-Wimplicit-fallthrough")
-
-target_compile_definitions(tsugumi_document PRIVATE
-  TSUGUMI_CARD_NIXPKGS_REV="${TSUGUMI_CARD_NIXPKGS_REV}"
-  TSUGUMI_CARD_NIXPKGS_NARHASH="${TSUGUMI_CARD_NIXPKGS_NARHASH}")

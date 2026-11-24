@@ -86,11 +86,13 @@ In Tsugumi you can run only the Cards you choose, or from there downstream, with
 
 Processing is split into small Cards so that people can understand the decisions along the way and work on them. To run repeatedly at that granularity, the cost of preparing, starting and saving, and the handling of inputs in partial runs, are designed in too.
 
-### Not rebuilding the same code every time a condition changes
+### Rebuilding the derivations affected by a parameter change
 
-In analysis you often try a threshold or a display condition over and over without changing the code. If all of these were build inputs, splitting the processing finely would mean waiting for rebuilds.
-
-Tsugumi passes Nix only the parameters marked `nix: true` (`params` of `default.nix`) and keeps run-time-only parameters out of the build inputs; the others reach the Card as its params buffer when it runs. `README.md` and `_card.json`, which hold a Card's description and settings, are not passed whole either; the build gets the sources, types and Nix parameters it needs. Reusing build results is left to Nix's derivations and store.
+`params.nix` holds the Card's current values. The editor rewrites a literal
+in place. The SDK generates the interface from parameter names and types and
+embeds the evaluated values when it builds the Card. Nix reuses derivations
+whose inputs stayed the same. Changing a value sent along a wire need only
+rerun the receiving Card against the new data.
 
 The layout on screen is kept apart from the computation's definition, too: a save that changes the computation while a run is going is refused, but moving Cards is accepted. **Trying a condition, changing code and tidying the screen each cause only the work they need.**
 
@@ -98,7 +100,7 @@ The layout on screen is kept apart from the computation's definition, too: a sav
 
 If a computation of a few lines split into a Card started the Nix evaluator or a language runtime every time, preparation would take longer than the computation.
 
-The Nix evaluator is built into `tsugumid`, and the evaluated state of nixpkgs and the daemon connection are reused across Cards and runs. Every Code Card is a shared library, `lib/main.so`, called by a worker that loads it, whatever its language. By default each invocation gets a fresh worker, so that a Card keeps no hidden state, and the next worker is started and its library loaded ahead of time; a Card that sets `reuseWorker: true` keeps one resident worker, with its interpreter and module state, across invocations.
+The Nix evaluator is built into `tsugumid`, and the daemon connection is reused and evaluation caches are scoped by system and locked sources. Every Code Card is a shared library, `lib/main.so`, called by a worker that loads it, whatever its language. By default each invocation gets a fresh worker, so that a Card keeps no hidden state, and the next worker is started and its library loaded ahead of time; a Card that sets `reuseWorker: true` keeps one resident worker, with its interpreter and module state, across invocations.
 
 A reused worker's state carries across runs; there is no run-start hook, so a Card that keeps state resets it from its inputs. On failure, cancellation, a deadline or a memory limit, the worker is ended. **The cost of starting is lowered, while computations that keep state, and when they initialise, stay explicit.**
 
@@ -120,9 +122,9 @@ Tsugumi saves the full set of inputs of the latest invocation and the latest inp
 
 If downstream steps went ahead as soon as a step returned a value, a later failure to save the record would leave a run that shows as successful on screen but cannot be traced.
 
-Tsugumi validates the outputs, keeps the artifacts the settings ask for and saves the record of the invocation's completion before it announces completion and passes values downstream. A value whose save failed is not passed on. The input and output values recorded keep the type schema of that moment. The stages shown on screen are not guessed from the final state either; they come from the stages the core actually recorded: evaluation, build, run, validation and saving.
+Tsugumi validates the outputs, seals the artifacts created by the call and saves the record of the invocation's completion before it announces completion and passes values downstream. A value whose save failed is not passed on. The input and output values recorded keep the type schema of that moment. The stages shown on screen are not guessed from the final state either; they come from the stages the core actually recorded: evaluation, build, run, validation and saving.
 
-**How far a run got and where it failed are seen on screen and in the run history from the same evidence.** The full history of input and output values and the keeping of artifacts are settings, so the amount recorded can be tuned to the analysis.
+**How far a run got and where it failed are seen on screen and in the run history from the same evidence.** Recording settings control the full history of input and output values.
 
 ### Keeping Nix dependencies consistent with a Workflow that branches
 
@@ -130,7 +132,6 @@ When a Card refers to an upstream Card's Nix definition, being reachable by foll
 
 Say A branches to B or C, and D runs on whichever result arrives. The code Card that always precedes D is A. One of B and C does not run, so if D could refer to both definitions unconditionally, the dependencies would disagree with the execution path drawn on screen.
 
-A Fork is different: every one of its outputs runs downstream each time. When A forks to B and C and D waits for both, B and C always precede D, and D may refer to either of them.
 
 [Nix reference rules](features.md#sharing-nix-exports-through-connections) describe which upstream definitions are available.
 

@@ -2,6 +2,7 @@
 #pragma once
 #include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <utility>
@@ -16,7 +17,6 @@ using CardState = Tsugumi::Data::CardState;
 using Phase = Tsugumi::Data::Phase;
 using StageOutcome = Tsugumi::Data::StageOutcome;
 using LogStream = Tsugumi::Data::LogStream;
-using PortKind = Tsugumi::Data::PortKind;
 using RemoteExecutionState = Tsugumi::Data::RemoteExecutionState;
 
 int64_t now_ms();
@@ -53,18 +53,24 @@ class Failed : public std::exception {
   FailureData failure;
 };
 
-// A value travelling on a port. A FlatBuffer value carries `bytes` of the
-// port message `type`; the core never opens them. A Path value carries `path`
-// (a regular file or a directory, decided from lstat when needed) and no bytes.
+// Artifact ids in C++ are binary (exactly 16 bytes). Paths travel only
+// in private grant messages.
+using ArtifactKey = std::string;
+struct ArtifactGrant {
+  ArtifactKey id;
+  std::string path;
+  // Core-side holding layout used to stage the grant on a remote worker.
+  std::filesystem::path location = {};
+  // On the remote staging wire, the original path of an Input Card artifact.
+  std::string store_path = {};
+};
+
 struct Value {
-  std::string name;  // port name
-  PortKind kind = PortKind::FlatBuffer;
+  std::string name;
   types::TypeRef type;
   std::string bytes;
-  std::optional<std::string> artifact_id;
-  // Project state-relative history path, carried independently of staging.
-  std::optional<std::string> recorded_path = std::nullopt;
-  std::string path = {};
+  std::string schema;
+  std::vector<ArtifactKey> artifacts = {};
 };
 
 struct WorkerDisplayData {

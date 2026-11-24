@@ -1,4 +1,6 @@
 """A support vector machine with an RBF kernel: decides by similarity to a few training digits."""
+from card import Input, Output, params
+from mnist.Result import ResultT
 import os
 
 # One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
@@ -26,20 +28,20 @@ def confusions(ax, y, pred):
 def result(name, settings, digest, y, pred, fit, predict):
     model = name
     predictions = pred.astype(np.uint8)
-    return {'result': {
-        'model': model,
-        'settings': settings,
-        'digest': digest,
-        'accuracy': float(np.mean(pred == y)),
-        'fit_seconds': fit,
-        'predict_seconds': predict,
-        'predictions': predictions,
-    }}
+    return Output(result=ResultT(
+        model=model,
+        settings=settings,
+        digest=digest,
+        accuracy=float(np.mean(pred == y)),
+        fitSeconds=fit,
+        predictSeconds=predict,
+        predictions=predictions,
+    ))
 
 
-def main(inputs, report):
-    c, gamma = inputs.params.c, inputs.params.gamma
-    data = np.load(inputs.data.value.decode())
+def run(inputs: Input) -> Output:
+    c, gamma = params.c, params.gamma
+    data = np.load(inputs.require("data").open() / "subset.npz")
     train_x, train_y, test_x, test_y = data["train_images"], data["train_labels"], data["test_images"], data["test_labels"]
 
     model = SVC(C=c, gamma=gamma, kernel="rbf")
@@ -50,7 +52,7 @@ def main(inputs, report):
     pred = model.predict(test_x)
     predict = time.process_time() - start
     accuracy = np.mean(pred == test_y)
-    report.log(f"svm C={c} gamma={gamma}: accuracy {accuracy:.4f}, {model.n_support_.sum()} support vectors, "
+    print(f"svm C={c} gamma={gamma}: accuracy {accuracy:.4f}, {model.n_support_.sum()} support vectors, "
           f"fit {fit:.3f} s, predict {predict:.3f} s")
 
     fig, (left, right) = plt.subplots(1, 2, figsize=(9, 4.2), layout="constrained")
@@ -63,6 +65,6 @@ def main(inputs, report):
     right.set_ylim(0, 1.2 * train_counts.max())
     right.legend(fontsize=8, loc="upper center", ncols=2)
     fig.suptitle(f"SVM (RBF) C={c:g}, γ={gamma:g}: accuracy {accuracy:.4f}, training {fit:.2f} s, prediction {predict:.2f} s", fontsize=11)
-    report.figure()
+    # TODO(open): Port the demo display.
 
     return result('svm', f'C={c:g}, gamma={gamma:g}', str(data['digest']), test_y, pred, fit, predict)

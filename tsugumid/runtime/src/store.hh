@@ -28,6 +28,7 @@ struct SourcePatchIn {
 struct ChangeIn {
   enum class Kind {
     SetProject,
+    SetProjectLock,
     SetLayout,
     PutDefinition,
     RemoveDefinition,
@@ -44,7 +45,8 @@ struct ChangeIn {
   bool keep_readme = false;
   std::optional<std::string> comments_json;
   bool keep_comments = false;
-  std::string path;   // sources
+  std::optional<std::string> lock_json;
+  std::string path;   // sources and lock documents
   std::string bytes;  // PutSource
   std::optional<std::string> base_hash;
   std::vector<SourcePatchIn> patches;
@@ -103,6 +105,9 @@ class Store {
   struct Staged {
     std::shared_ptr<Document> doc;
     std::vector<FileOp> ops;
+    // Generated writes during Reload use the just-read working tree as
+    // their baseline, including files that had changed outside Tsugumi.
+    std::map<std::string, std::optional<std::string>> disk_expectations;
     Delta delta;
     bool effective = false;
   };
@@ -152,8 +157,9 @@ class Store {
       std::shared_ptr<Document> doc,
       const std::vector<FileOp>* pending = nullptr,
       const Document* base = nullptr) const;
-  void check_disk_unchanged(const Document& base,
-                            const std::vector<FileOp>& ops) const;
+  void check_disk_unchanged(
+      const Document& base, const std::vector<FileOp>& ops,
+      const std::map<std::string, std::optional<std::string>>& expectations = {}) const;
   void fault(const char* point) const;
 
   StoreOptions opts_;

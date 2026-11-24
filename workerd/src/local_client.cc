@@ -120,6 +120,7 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
   target->gui = spawn.gui;
   target->network = spawn.network;
   target->ro_paths = spawn.ro_paths;
+  target->artifacts_root = spawn.artifacts_root;
   target->hidden_paths = spawn.hidden_paths;
   if (spawn.uid) target->uid = *spawn.uid;
   if (spawn.gid) target->gid = *spawn.gid;
@@ -145,7 +146,6 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
       message.scratch,
       message.call_id,
       message.lease,
-      message.read_only_inputs,
       [this, id = message.lease] { command(L::Action::ClearScratch, id); },
       [this, id = message.lease](bool force) {
         command(L::Action::Terminate, id, force);

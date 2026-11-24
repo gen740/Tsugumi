@@ -1,36 +1,16 @@
-// FlatBuffer payloads of the Card entry point.
 include "card_enums.fbs";
-
+include "artifact.fbs";
 namespace Tsugumi.Card;
-
 table CardPort {
   name:string (id: 0, required);
-  kind:Tsugumi.Data.PortKind (id: 1);
-  // FlatBuffer port: one buffer whose root is the port's type. Empty for Path.
+  schema:string (id: 1);          // §2.1; the core stamps it, the SDK may leave it empty in results
   bytes:[ubyte] (id: 2);
-  // Path port: a regular file or a directory. In CardInput, the staged
-  // absolute path. In CardResult, a path under the call's working directory
-  // (relative to it, or absolute), or an input path returned unchanged.
-  path:string (id: 3);
+  artifacts:[tsugumi.ArtifactId] (id: 3);
 }
+table CardInput { inputs:[CardPort] (id: 0); }   // arrived connected inputs only; no params
+table CardFailure { kind:Tsugumi.Data.FailureKind (id: 0); message:string (id: 1); source:string (id: 2); line:uint32 (id: 3); cell:string (id: 4); }
+table CardResult { outputs:[CardPort] (id: 0); failure:CardFailure (id: 1); }
 
-table CardInput {
-  // Only connected inputs that arrived; an unconnected input is absent.
-  inputs:[CardPort] (id: 0);
-  // A FlatBuffer of the generated parameters.Params table.
-  params:[ubyte] (id: 1);
-}
-
-table CardFailure {
-  kind:Tsugumi.Data.FailureKind (id: 0);
-  message:string (id: 1);
-  // Optional Card-definition-relative source and one-based line.
-  source:string (id: 2);
-  line:uint32 (id: 3);
-  cell:string (id: 4);
-}
-
-table CardResult {
-  outputs:[CardPort] (id: 0);
-  failure:CardFailure (id: 1);
-}
+namespace tsugumi.builtin;
+table Envelope { schema:string; bytes:[ubyte]; artifacts:[tsugumi.ArtifactId]; }
+table Collected { items:[Envelope] (id: 0); }

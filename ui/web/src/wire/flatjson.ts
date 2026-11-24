@@ -111,19 +111,16 @@ export function describeValue(v: {
   name: string
   rootType: string
   sizeBytes: bigint | null
-  artifactId: string | null
-  filePath?: string | null
-  fileMissing?: boolean
-  fileDeleted?: boolean
+  artifacts?: { id: string; sizeBytes: bigint | null }[]
   inlineBytes: number[]
   schemaBfbs: number[]
 }): string {
   let head = `${v.name} : ${v.rootType}`
   if (v.sizeBytes !== null) head += ` · ${v.sizeBytes} bytes`
-  if (v.artifactId) head += L(' · 成果物 {0}', v.artifactId)
-  if (v.fileDeleted) head += '\n' + L('参照先のファイルは削除されました。')
-  else if (v.fileMissing) head += L('\n保持したファイルの内容がありません（scratch は保持履歴ではありません）。')
-  else if (v.filePath) head += L('\n保持したファイル: {0}', v.filePath)
+  for (const artifact of v.artifacts ?? []) {
+    head += '\n' + L('成果物 {0}', artifact.id)
+    if (artifact.sizeBytes !== null) head += ` · ${artifact.sizeBytes} bytes`
+  }
   if (!v.inlineBytes.length) return head + L('\n（内容は記録されていません）')
   const hex = () => v.inlineBytes.slice(0, 256).map((x) => x.toString(16).padStart(2, '0')).join(' ')
   try {

@@ -1,4 +1,9 @@
 {
-  "type": "branch",
-  "maxRuns": 100000
+  "type": "code",
+  "maxRuns": 100000,
+  "inputs": [
+    {
+      "name": "value"
+    }
+  ]
 }

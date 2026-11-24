@@ -1,8 +1,8 @@
 library(ggplot2)
 
 # r per stratum for all three stratifying variables, side by side.
-main <- function(inputs, report) {
-  d <- read.csv(inputs$path("penguins"))
+main <- function(inputs) {
+  d <- read.csv(file.path(artifact_open(inputs$penguins), "penguins.csv"))
   overall <- cor(d$bill_length_mm, d$bill_depth_mm)
   rows <- lapply(c("species", "sex", "island"), function(by) {
     x <- d[!is.na(d[[by]]), ]
@@ -17,7 +17,7 @@ main <- function(inputs, report) {
   rows$side <- ifelse(sign(rows$r) != sign(overall), "opposite to all", "same direction as all")
   rows$label <- sprintf("%s (n=%d)", rows$stratum, rows$n)
   verdict <- tapply(rows$side == "opposite to all", rows$by, sum)
-  report$log(paste0("strata reversed: ", paste(names(verdict), verdict, collapse = ", ")))
+  message(paste0("strata reversed: ", paste(names(verdict), verdict, collapse = ", ")))
   figure <- ggplot(rows, aes(r, reorder(label, r), colour = side)) +
     geom_vline(xintercept = 0, colour = "grey60") +
     geom_vline(xintercept = overall, linetype = "dashed") +
@@ -29,7 +29,7 @@ main <- function(inputs, report) {
          title = sprintf("Whether it reverses depends on the stratifying variable: the dashed line is all, r = %.2f", overall)) +
     theme_minimal(base_size = 13) +
     theme(legend.position = "top")
-  report$figure(print(figure), alt = "Correlation in each stratum for species, sex and island", width = 7.5, height = 5.2)
+  # TODO(open): Port the demo display.
 
   invisible(NULL)
 }

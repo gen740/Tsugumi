@@ -1,9 +1,11 @@
 #include <gtest/gtest.h>
 
+#include "nix_params.hh"
 #include "scheduler.hh"
 #include "store.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi {
 namespace {
@@ -14,7 +16,7 @@ class DocumentStorage : public ::testing::Test {
   auto SetUp() -> void override {
     fs::write_atomic(
         root / "tsugumi.json",
-        R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"}],"connections":[]}})");
+        R"({"nixPath": [],"canvas":{"cards":[{"id":"start"}],"connections":[]}})");
     fs::write_atomic(root / "definitions/start/_card.json",
                      R"({"type":"trigger"})");
   }
@@ -49,31 +51,159 @@ TEST_F(DocumentStorage, EditingReadmeAndCommentsKeepsExecutionIdentity) {
 
 TEST_F(DocumentStorage, CanonicalTextPreservesWhitespaceInsideStrings) {
   const auto parsed = parse_project_json(
-      R"({"name":"[ ] { } [\" ]","canvas":{"connections":[],"cards":[]},"pkgsPath":"tsugumi:default"})");
+      R"({"name":"[ ] { } [\" ]","canvas":{"connections":[],"cards":[]},"nixPath": []})");
   EXPECT_EQ(parse_project_json(parsed.text).text, parsed.text);
   EXPECT_EQ(document_text::root<Tsugumi::Document::Project>(parsed.buffer).name()->str(),
             R"([ ] { } [" ])");
 }
 
-TEST_F(DocumentStorage, ResolvedNixSourceKeepsCanonicalOverrideBytes) {
+TEST_F(DocumentStorage, ResolvedNixPathUsesTheCardsProject) {
   fs::write_atomic(
       root / "tsugumi.json",
-      R"({
-        "pkgsPath": "tsugumi:default",
-        "canvas": {"cards": [{"id": "start"}], "connections": []},
-        "nixSources": [{
-          "name": "science",
-          "type": "flake",
-          "ref": "github:org/science/revision?narHash=sha256-pin",
-          "overrides": [{"package":"tool","override":{"z":[1.5,1,null],"a":"b"}}]
-        }]
-      })");
+      R"({"canvas":{"cards":[{"id":"start"}],"connections":[]},"nixPath":[{"name":"science","url":"github:org/science"}]})");
   Store store({root, ""});
   store.open();
-  const auto& sources = store.current()->resolution->nodes.front().nix_sources;
+  const auto& sources = store.current()->resolution->nodes.front().nix_path;
   ASSERT_EQ(sources.size(), 1u);
-  EXPECT_EQ(sources.front().overrides,
-            R"({"tool":{"override":{ "a": "b", "z": [ 1.5, 1, null ] }}})");
+  EXPECT_EQ(sources.front().name, "science");
+  EXPECT_EQ(sources.front().url, "github:org/science");
+}
+
+TEST(NixParams, AcceptsTypedLiteralsAndSortsByName) {
+  const auto actual = evaluate_literal_params("definitions/a/", R"nix(
+    {
+      z = -3;
+      zero = 0.0;
+      int = 10;
+      float = 10.0;
+      exp = 1.0e3;
+      negative = -0.5;
+      flag = true;
+      text = "quoted\ntext";
+      indented = ''indented'';
+      ints = [ 1 (-2) ];
+      floats = [ 1.0 (-2.0) ];
+      bools = [ false true ];
+      strings = [ "" "x" ];
+      flag2 = false;
+    }
+  )nix");
+  EXPECT_EQ(
+      actual,
+      R"([{"name":"bools","type":"[bool]","value":[false,true]},{"name":"exp","type":"float","value":1000.0},{"name":"flag","type":"bool","value":true},{"name":"flag2","type":"bool","value":false},{"name":"float","type":"float","value":10.0},{"name":"floats","type":"[float]","value":[1.0,-2.0]},{"name":"indented","type":"string","value":"indented"},{"name":"int","type":"int","value":10},{"name":"ints","type":"[int]","value":[1,-2]},{"name":"negative","type":"float","value":-0.5},{"name":"strings","type":"[string]","value":["","x"]},{"name":"text","type":"string","value":"quoted\ntext"},{"name":"z","type":"int","value":-3},{"name":"zero","type":"float","value":0.0}])");
+  EXPECT_EQ(evaluate_literal_params("definitions/a/",
+                                    "{ max = 9223372036854775807; }"),
+            R"([{"name":"max","type":"int","value":9223372036854775807}])");
+  EXPECT_EQ(evaluate_literal_params("definitions/a/", "{ }"), R"([])");
+}
+
+TEST(NixParams, RejectsExpressionsAndInvalidDeclarations) {
+  for (const auto* source : {
+           "{ a = []; }",
+           "{ a = [ 1 2.0 ]; }",
+           "{ a = [[1]]; }",
+           "{ a = { x = 1; }; }",
+           "{ a = null; }",
+           "{ a = ./data; }",
+           "{ a = import ./data; }",
+           "{ a = __sub 0 1; }",
+           "{ a = 0 - 1; }",
+           "{ a = 1 + 2; }",
+           "{ a = \"$"
+           "{true}\"; }",
+           "{ a = ''$"
+           "{\"x\"}''; }",
+           "{ $"
+           "{\"a\"} = 0; }",
+           "{ run = let x = 1; in { a = x; }; }",
+           "{ run = with builtins; { a = 0; }; }",
+           "{ run = rec { a = 0; }; }",
+           "{ inherit (builtins) true; }",
+           "{ inherit; }",
+           "{ a = 0; a = 1; }",
+           "{ a = 0; }; build = { a = 1; }",
+           "{ runtime = {}; }",
+           "{ \"a/b\" = 1; }",
+       }) {
+    SCOPED_TRACE(source);
+    try {
+      evaluate_literal_params("definitions/a/", source);
+      FAIL() << "accepted a nonliteral or invalid declaration";
+    } catch (const std::exception& error) {
+      EXPECT_TRUE(std::string_view(error.what())
+                      .starts_with("definitions/a/params.nix:"));
+    }
+  }
+}
+
+TEST(NixParams, RewriteKeepsCommentsInsideAList) {
+  const std::string source = "{ items = [ 1 /* keep */ 2 # line\n 3 ]; }";
+  const auto edited =
+      rewrite_param_literal("params.nix", source, "items", "[ 7 ]");
+  EXPECT_EQ(edited, "{ items = [ 7 ]  /* keep */  # line\n  ; }");
+  EXPECT_EQ(evaluate_literal_params("", edited),
+            R"([{"name":"items","type":"[int]","value":[7]}])");
+}
+
+TEST_F(DocumentStorage, CheckedParamsPreserveLiteralTypes) {
+  fs::write_atomic(
+      root / "tsugumi.json",
+      R"({"canvas":{"cards":[{"id":"start"},{"id":"a"}],"connections":[]}})");
+  fs::write_atomic(root / "definitions/a/_card.json", R"({"type":"code"})");
+  fs::write_atomic(root / "definitions/a/params.nix",
+                   "{ z = 0.0; a = false; count = -5; preset = 5.0; }");
+  Store store({root, ""});
+  store.open();
+  const auto* node = store.current()->resolution->find({"a"});
+  ASSERT_NE(node, nullptr);
+  EXPECT_TRUE(node->diags.empty());
+  const auto& params = node->settings.params;
+  ASSERT_EQ(params.size(), 4u);
+  EXPECT_EQ(params[0].data, "false");
+  EXPECT_EQ(params[1].data, "-5");
+  EXPECT_EQ(params[2].type, ParamType::Double);
+  EXPECT_EQ(params[2].data, "5.0");
+  EXPECT_EQ(params[3].data, "0.0");
+}
+
+TEST(ParamsNix, RejectsOversizedSourceAndValues) {
+  const std::string source(kMaxDocumentJsonBytes + 1, ' ');
+  try {
+    evaluate_literal_params("definitions/work/", source);
+    FAIL() << "oversized parameter source was accepted";
+  } catch (const std::runtime_error& error) {
+    EXPECT_STREQ(error.what(),
+                 "definitions/work/params.nix: exceeds the 8 MiB document limit");
+  }
+
+  // The Nix source can contain literal tabs, which JSON encodes as two bytes.
+  const auto values = "{ value = \"" +
+                      std::string(kMaxDocumentJsonBytes / 2, '\t') + "\"; }";
+  try {
+    evaluate_literal_params("definitions/work/", values);
+    FAIL() << "oversized parameter JSON was accepted";
+  } catch (const std::runtime_error& error) {
+    EXPECT_STREQ(error.what(),
+                 "definitions/work/params.nix: params.nix values exceed 8 MiB");
+  }
+}
+
+TEST_F(DocumentStorage, LockIsCarriedAndConflictsWithDiskEdits) {
+  const std::string lock =
+      R"({"entries":[{"name":"source","url":"github:org/repo","rev":"0123456789012345678901234567890123456789","narHash":"sha256-123"}]})";
+  Store store({root, ""});
+  store.open();
+  EXPECT_FALSE(store.current()->sources.contains("tsugumi.lock"));
+  ChangeIn change{};
+  change.kind = ChangeIn::Kind::SetProjectLock;
+  change.path = "tsugumi.lock";
+  change.lock_json = parse_project_lock(change.path, lock).text;
+  const auto after = commit(store, {change});
+  EXPECT_EQ(*after->sources.at(change.path).document, *change.lock_json);
+  EXPECT_EQ(fs::read_file(root / change.path), change.lock_json);
+  change.base_hash = after->sources.at(change.path).hash;
+  fs::write_atomic(root / change.path, lock);
+  EXPECT_THROW(store.stage({change}, crypto::uuid4(), "ui"), Failed);
 }
 
 TEST_F(DocumentStorage, PortAndParamDiagnosticsNameWhatFixesThem) {
@@ -82,10 +212,9 @@ TEST_F(DocumentStorage, PortAndParamDiagnosticsNameWhatFixesThem) {
   // line.
   fs::write_atomic(
       root / "tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":"config"}}]}})");
-  fs::write_atomic(
-      root / "definitions/b/_card.json",
-      R"({"type":"code","params":[{"name":"x","type":"float","data":{"double":1}}]})");
+      R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":"config"}}]}})");
+  fs::write_atomic(root / "definitions/b/_card.json", R"({"type":"code"})");
+  fs::write_atomic(root / "definitions/b/params.nix", "{ x = null; }");
   Store store({root, ""});
   store.open();
   const auto doc = store.current();
@@ -103,7 +232,7 @@ TEST_F(DocumentStorage,
        AnEmptyEndOnAnImplementedCardAsksForAPortNotAnInputsEntry) {
   fs::write_atomic(
       root / "tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":""}}]}})");
+      R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":""}}]}})");
   fs::write_atomic(root / "definitions/b/_card.json",
                    R"({"type":"code"})");
   Store store({root, ""});
@@ -126,7 +255,7 @@ TEST_F(DocumentStorage, ProjectNameDoesNotChangeExecution) {
   ChangeIn project{};
   project.kind = ChangeIn::Kind::SetProject;
   project.json =
-      R"({"name":"Renamed","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"}],"connections":[]}})";
+      R"({"name":"Renamed","nixPath": [],"canvas":{"cards":[{"id":"start"}],"connections":[]}})";
   auto after = commit(store, {project});
   EXPECT_EQ(after->execution_rev, before->execution_rev);
   EXPECT_EQ(after->execution_fingerprint, before->execution_fingerprint);
@@ -147,11 +276,11 @@ TEST_F(DocumentStorage,
   ChangeIn project{};
   project.kind = ChangeIn::Kind::SetProject;
   project.json =
-      R"({ "canvas": { "connections": [ ], "cards": [ { "id": "start" } ] }, "name": "Renamed", "pkgsPath": "tsugumi:default" })";
+      R"({ "canvas": { "connections": [ ], "cards": [ { "id": "start" } ] }, "name": "Renamed", "nixPath": [] })";
   ChangeIn card{};
   card.kind = ChangeIn::Kind::PutDefinition;
   card.id = "start";
-  card.json = R"({"displayMode":"live", "type": "trigger"})";
+  card.json = R"({ "type": "trigger" })";
   auto after = commit(store, {project, card});
   EXPECT_EQ(after->execution_fingerprint, before->execution_fingerprint);
   EXPECT_EQ(after->execution_rev, before->execution_rev);
@@ -166,7 +295,7 @@ TEST_F(DocumentStorage, ReadmeAndCommentsValidateTheirFormats) {
 TEST_F(DocumentStorage, ExternalPresentationUsesTheSameBoundaryAndPendingBytes) {
   fs::write_atomic(
       root / "tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"outer"}],"connections":[]}})");
+      R"({"nixPath": [],"canvas":{"cards":[{"id":"outer"}],"connections":[]}})");
   std::filesystem::remove_all(root / "definitions/start");
   fs::write_atomic(root / "definitions/outer/_card.json",
                    R"({"type":"subgraph","external":"library"})");
@@ -192,8 +321,6 @@ TEST_F(DocumentStorage, ExternalPresentationUsesTheSameBoundaryAndPendingBytes) 
       store,
       {put("externals/library/tsugumi.json",
            R"({"name":"Renamed","canvas":{"cards":[{"id":"start"}],"connections":[]},"boundary":{"inputs":[],"outputs":[]}})"),
-       put("externals/library/definitions/start/_card.json",
-           R"({"type":"trigger","displayMode":"live"})"),
        put("externals/library/definitions/start/README.md",
            "Updated description")});
   EXPECT_EQ(after->execution_fingerprint, before->execution_fingerprint);
@@ -227,100 +354,30 @@ TEST_F(DocumentStorage, DraftHasNoPortsFromMetadataOrSchema) {
   EXPECT_EQ(after->resolution, before->resolution);
 }
 
-TEST_F(DocumentStorage, DraftEndsAcceptManyWiresAndCarryEmptyWithoutPorts) {
+TEST_F(DocumentStorage, ASecondWireSuggestsMerge) {
   fs::write_atomic(
       root / "tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"condition"},{"id":"plan"},{"id":"next"},{"id":"branch"},{"id":"collect"}],"connections":[
-    {"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},
-    {"from":{"card":"condition","port":"value"},"to":{"card":"plan","port":""}},
-    {"from":{"card":"plan","port":""},"to":{"card":"next","port":""}},
-    {"from":{"card":"plan","port":""},"to":{"card":"branch","port":"condition"}},
-    {"from":{"card":"plan","port":""},"to":{"card":"branch","port":"value"}},
-    {"from":{"card":"next","port":""},"to":{"card":"collect","port":"in"}}
+      R"({"nixPath":[],"canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"sink"}],"connections":[
+    {"from":{"card":"plan","port":""},"to":{"card":"sink","port":"in"}},
+    {"from":{"card":"start","port":"out"},"to":{"card":"sink","port":"in"}}
   ]}})");
-  fs::write_atomic(root / "definitions/condition/_card.json",
-                   R"({"type":"input"})");
-  fs::write_atomic(root / "definitions/condition/_outputs.fbs",
-                   "table Condition { value:bool; } table Outputs { "
-                   "value:Condition; } root_type Outputs;");
-  fs::write_atomic(root / "definitions/plan/_card.json",
-                   R"({"type":"draft","inputs":[{"name":"ignored"}]})");
-  fs::write_atomic(root / "definitions/next/_card.json",
-                   R"({"type":"draft"})");
-  fs::write_atomic(root / "definitions/branch/_card.json",
-                   R"({"type":"branch"})");
-  fs::write_atomic(root / "definitions/collect/_card.json",
-                   R"({"type":"collect"})");
-  Store store({root, ""});
-  store.open();
-  const auto& resolution = *store.current()->resolution;
-  EXPECT_EQ(resolution.edges.size(), 6);
-  const auto waiting = Scheduler::draft_waiting(resolution);
-  for (const auto* id : {"plan", "next", "branch", "collect"})
-    EXPECT_TRUE(waiting.contains(resolution.index.at(id)));
-  EXPECT_FALSE(waiting.contains(resolution.index.at("start")));
-  EXPECT_TRUE(resolution.find({"plan"})->inputs.empty());
-  EXPECT_TRUE(resolution.find({"plan"})->outputs.empty());
-  EXPECT_TRUE(resolution.find({"next"})->inputs.empty());
-  EXPECT_EQ(resolution.find({"branch"})->input("condition")->type,
-            types::empty_type());
-  for (const auto& diagnostic : resolution.all_diagnostics(false))
-    ADD_FAILURE() << diagnostic.code << ": " << diagnostic.message;
-}
-
-TEST_F(DocumentStorage, BranchConditionInheritsItsUpstreamSchema) {
-  fs::write_atomic(
-      root / "tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"branch"}],"connections":[
-    {"from":{"card":"start","port":"out"},"to":{"card":"branch","port":"condition"}},
-    {"from":{"card":"plan","port":""},"to":{"card":"branch","port":"value"}}
-  ]}})");
-  fs::write_atomic(root / "definitions/plan/_card.json",
-                   R"({"type":"draft"})");
-  fs::write_atomic(root / "definitions/branch/_card.json",
-                   R"({"type":"branch"})");
+  fs::write_atomic(root / "definitions/plan/_card.json", R"({"type":"draft"})");
+  fs::write_atomic(root / "definitions/sink/_card.json",
+                   R"({"type":"merge","inputs":[{"name":"in"}]})");
   Store store({root, ""});
   store.open();
   const auto& graph = *store.current()->resolution;
-  const auto* branch = graph.find({"branch"});
-  EXPECT_EQ(branch->input("condition")->type,
-            graph.find({"start"})->output("out")->type);
-  EXPECT_TRUE(branch->diags.empty());
-}
-
-TEST_F(DocumentStorage, ADraftAndARealSourceCannotShareAnInput) {
-  fs::write_atomic(
-      root / "tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"plan"},{"id":"sink"},{"id":"relay"},{"id":"condition"}],"connections":[
-    {"from":{"card":"plan","port":""},"to":{"card":"sink","port":"value"}},
-    {"from":{"card":"relay","port":"a"},"to":{"card":"sink","port":"value"}},
-    {"from":{"card":"condition","port":"value"},"to":{"card":"relay","port":"value"}},
-    {"from":{"card":"condition","port":"value"},"to":{"card":"relay","port":"condition"}},
-    {"from":{"card":"condition","port":"value"},"to":{"card":"sink","port":"condition"}}
-  ]}})");
-  fs::write_atomic(root / "definitions/plan/_card.json",
-                   R"({"type":"draft"})");
-  fs::write_atomic(root / "definitions/sink/_card.json",
-                   R"({"type":"branch"})");
-  fs::write_atomic(root / "definitions/relay/_card.json",
-                   R"({"type":"branch"})");
-  fs::write_atomic(root / "definitions/condition/_card.json",
-                   R"({"type":"input"})");
-  fs::write_atomic(root / "definitions/condition/_outputs.fbs",
-                   "table Condition { value:bool; } table Outputs { "
-                   "value:Condition; } root_type Outputs;");
-  Store store({root, ""});
-  store.open();
-  const auto* sink = store.current()->resolution->find({"sink"});
-  EXPECT_EQ(sink->input("value")->type, types::empty_type());
-  ASSERT_EQ(sink->diags.size(), 1);
-  EXPECT_EQ(sink->diags.front().code, "multiple_input_wires");
+  ASSERT_EQ(graph.edges.size(), 1u);
+  const auto& diagnostics = graph.find({"sink"})->diags;
+  ASSERT_EQ(diagnostics.size(), 1u);
+  EXPECT_EQ(diagnostics.front().code, "input_already_connected");
+  EXPECT_NE(diagnostics.front().message.find("Merge"), std::string::npos);
 }
 
 TEST_F(DocumentStorage,
        ImplementingRequiresExplicitInputAndOutputInTheSameSave) {
   const std::string project =
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"next"}],"connections":[
+      R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"next"}],"connections":[
     {"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},
     {"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}
   ]}})";
@@ -369,7 +426,7 @@ TEST_F(DocumentStorage,
 TEST_F(DocumentStorage, NestedImplementationRebindsBoundaryEndsAtomically) {
   fs::write_atomic(
       root / "tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"outer"},{"id":"next"}],"connections":[
+      R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"outer"},{"id":"next"}],"connections":[
     {"from":{"card":"start","port":"out"},"to":{"card":"outer","port":"in"}},
     {"from":{"card":"outer","port":"out"},"to":{"card":"next","port":""}}
   ]}})");
@@ -419,7 +476,7 @@ TEST_F(DocumentStorage, NamedDraftEndIsRejectedAndIdentifiesTheWire) {
   ChangeIn wiring{};
   wiring.kind = ChangeIn::Kind::SetProject;
   wiring.json =
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"plan"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":"in"}}]}})";
+      R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"plan"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":"in"}}]}})";
   try {
     commit(store, {wiring});
     FAIL();

@@ -349,12 +349,13 @@ def test_dependency_search_is_literal_case_insensitive_and_paginated(core_factor
 
 def test_local_worker_uses_the_recorded_build_plan(core_factory, project, tmp_path):
     """Each package and its declared view are in the recorded closure."""
-    from harness.daemon import ROOT
+    from harness.daemon import ROOT, write_project
     from harness.native_card import STATIC_RESULT_ENTRY, card_source
+    from harness.nix_path import test_lock_entries as fixture_locks
     from harness.observations import decode_scalar, read_output
     from harness.values import encode_message
-    from Tsugumi.Data.PortKind import PortKind
 
+    write_project(project, locked=fixture_locks())
     client = core_factory().connect()
     graph = Project(project)
     inventories = []
@@ -364,9 +365,9 @@ def test_local_worker_uses_the_recorded_build_plan(core_factory, project, tmp_pa
                                  root_type="Value")
         sources = {
             "tsugumi/card_abi.h": abi_header,
-            "main.c": card_source(STATIC_RESULT_ENTRY, [("out", PortKind.FlatBuffer, message)]),
+            "main.c": card_source(STATIC_RESULT_ENTRY, [("out", message)]),
             "view.html": "<p>Version " + version + "</p>",
-            "default.nix": """{ pkgs, ... }: {
+            "default.nix": """{ params, inputs }: let pkgs = import <nixpkgs> { }; in {
               run = pkgs.runCommandCC "recorded-plan-card" { } ''
                 mkdir -p "$out/lib"
                 "$CC" -shared -fPIC -I${./.} ${./main.c} -o "$out/lib/main.so"

@@ -6,10 +6,12 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <iterator>
 #include <set>
 
 #include "execution_service.hh"
 #include "nix.hh"
+#include "nix_params.hh"
 #include "permissions.hh"
 #include "remote_execution_service.hh"
 #include "run_scratch.hh"
@@ -23,6 +25,7 @@
 #include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
+#include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/store.hh"
 #include "version_facts.hh"
 #include "worker_selection.hh"
@@ -256,19 +259,16 @@ Service::~Service() { shutdown(); }
 void Service::open() {
   store_ = std::make_unique<Store>(StoreOptions{opts_.root, opts_.fault});
   store_->open();
-  history_ = std::make_unique<History>(store_->state_dir() / "runs.sqlite",
-                                       opts_.fault);
-  versions_ = std::make_unique<Versions>(opts_.root);
-  // Local folders (never the project share): the evaluator's inputs by
-  // content and the workers' own folders.
-  auto scratch =
+  const auto scratch =
       opts_.scratch_dir.empty()
           ? stdfs::temp_directory_path() / ("tsugumi-" + store_->project_id())
           : opts_.scratch_dir;
   nix_ = std::make_unique<NixRunner>(*this, scratch / "nix");
+  history_ = std::make_unique<History>(store_->state_dir() / "runs.sqlite",
+                                       opts_.fault);
+  versions_ = std::make_unique<Versions>(opts_.root);
+
   substituters_ = configured_substituters(opts_.substituters_file);
-  for (const char* d : {"runs", "inputs"})
-    stdfs::create_directories(store_->state_dir() / d);
   run_scratch_ = disk_scratch_path(opts_.run_scratch_dir.empty()
                                        ? default_run_scratch(opts_.root)
                                        : opts_.run_scratch_dir);
@@ -291,55 +291,6 @@ void Service::open() {
       cache_usage_ = std::make_unique<CacheUsage>(opts_.usage_roots_dir,
                                                   opts_.usage_scratch_dir);
   }
-}
-
-auto Service::file_roots() const -> std::vector<stdfs::path> {
-  return {store_->state_dir() / "runs", store_->state_dir() / "inputs",
-          run_scratch_ / "runs"};
-}
-
-auto Service::keep_file_value(
-    const Value& value, const stdfs::path& directory,
-    const std::atomic<bool>& stop,
-    const std::function<void(std::string_view, uint64_t, uint64_t)>& progress)
-    -> Value {
-  if (value.kind == PortKind::FlatBuffer) return value;
-  if (value.path.empty())
-    throw Failed(FailureKind::output_invalid, "Path value has no path");
-  for (const auto& root : file_roots()) {
-    const auto rel =
-        stdfs::path(value.path).lexically_normal().lexically_relative(root);
-    if (!fs::valid_relative_path(rel.generic_string())) continue;
-    const auto check = [&] {
-      if (stop.load())
-        throw Failed(FailureKind::cancelled,
-                     "keeping file value was cancelled");
-    };
-    const auto destination = directory / rel.filename();
-    const auto copy = [&](const stdfs::path& from, const stdfs::path& to) {
-      check();
-      const auto total = stdfs::file_size(root / from);
-      uint64_t done = 0;
-      if (progress) progress(from.generic_string(), 0, total);
-      fs::copy_beneath(root, from, to, [&](std::string_view chunk) {
-        check();
-        done += chunk.size();
-        if (progress) progress(from.generic_string(), done, total);
-      });
-    };
-    try {
-      fs::copy_path_beneath(root, rel, destination, copy);
-    } catch (const fs::Error& error) {
-      throw Failed(FailureKind::output_invalid,
-                   std::string("kept path: ") + error.what());
-    }
-    check();
-    auto kept = value;
-    kept.path = destination.string();
-    return kept;
-  }
-  throw Failed(FailureKind::output_invalid,
-               "Path value is outside the run's folders: " + value.path);
 }
 
 auto Service::invalidate_resident(const std::string& card) -> void {
@@ -719,14 +670,13 @@ std::vector<std::string> Service::capabilities() {
                                    "RunScratchDelete",
                                    "RunHistoryDelete",
                                    "RunCategoryDelete",
-                                   "RunFileReferences",
                                    "OperationGet",
                                    "ProjectFileList",
                                    "ProjectFileStat",
                                    "ProjectFileRead",
                                    "OutputTypes",
                                    "InputTypes",
-                                   "CardApi",
+                                   "EvaluateNix",
                                    "RunPlan",
                                    "Run",
                                    "RunCancel",
@@ -744,9 +694,12 @@ std::vector<std::string> Service::capabilities() {
                                    "ArtifactRead",
                                    "LogRange",
                                    "ViewSetVisible",
+                                   "ViewSend",
+                                   "ViewCredit",
                                    "ViewSave",
                                    "CardViewRead",
-                                   "NixSourceResolve",
+                                   "NixPathLockSource",
+                                   "RewriteParamLiteral",
                                    "VersionInit",
                                    "VersionMark",
                                    "VersionCheckout",
@@ -792,9 +745,14 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
   auto r = R::CreateHelloResult(b, b.CreateString(store_->project_id()),
                                 b.CreateString(opts_.server_instance_id),
                                 b.CreateVector(cv));
-  return {
-      wire::reply(b, in.request_id, R::ReplyPayload::HelloResult, r.Union()),
-      true};
+  auto response = wire::reply(b, in.request_id, R::ReplyPayload::HelloResult,
+                              r.Union());
+  if (h->client() == Tsugumi::Trace::Client::MacOS ||
+      h->client() == Tsugumi::Trace::Client::Web) {
+    std::lock_guard lock(subs_mu_);
+    ui_connections_.insert(in.conn);
+  }
+  return {std::move(response), true};
 }
 
 void Service::disconnected(ConnId conn) {
@@ -813,6 +771,8 @@ void Service::disconnected(ConnId conn) {
   std::lock_guard<std::mutex> l(subs_mu_);
   subscriptions_.erase(conn);
   visible_cards_.erase(conn);
+  ui_connections_.erase(conn);
+  if (ui_owner_ == conn) ui_owner_.reset();
 }
 
 void Service::on_lane(Lane& lane, RequestIn req,
@@ -938,8 +898,6 @@ void Service::dispatch(RequestIn req) {
       return on_lane(m, std::move(req), &Service::scratch_delete);
     case P::RunCategoryDeleteRequest:
       return on_lane(m, std::move(req), &Service::history_category_delete);
-    case P::RunFileReferencesRequest:
-      return on_lane(r, std::move(req), &Service::history_file_references);
     case P::RunHistoryDeleteRequest:
       return on_lane(m, std::move(req), &Service::history_delete);
     case P::RunRequest:
@@ -976,10 +934,13 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::input_types);
     case P::OutputTypesRequest:
       return on_lane(r, std::move(req), &Service::output_types);
-    case P::NixSourceResolveRequest:
-      return on_lane(r, std::move(req), &Service::nix_source_resolve);
-    case P::CardApiRequest:
-      return on_lane(r, std::move(req), &Service::card_api);
+    case P::NixPathLockSourceRequest:
+      return on_lane(r, std::move(req), &Service::nix_path_lock_source);
+    case P::RewriteParamLiteralRequest:
+      return on_lane(r, std::move(req),
+                     &Service::rewrite_param_literal_request);
+    case P::EvaluateNixRequest:
+      return on_lane(r, std::move(req), &Service::evaluate_nix);
     case P::RunPlanRequest:
       return on_lane(r, std::move(req), &Service::run_plan);
     case P::RunCancelRequest:
@@ -1012,6 +973,10 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::artifact_read);
     case P::LogRangeRequest:
       return on_lane(r, std::move(req), &Service::log_range);
+    case P::ViewSendRequest:
+      return on_lane(r, std::move(req), &Service::view_send);
+    case P::ViewCreditRequest:
+      return on_lane(r, std::move(req), &Service::view_credit);
     case P::ViewSetVisibleRequest:
       return on_lane(r, std::move(req), &Service::view_set_visible);
     case P::ViewSaveRequest:
@@ -1525,6 +1490,12 @@ void Service::open_project(RequestIn& req) {
                                      view ? &*view : nullptr);
   {
     std::lock_guard<std::mutex> l(subs_mu_);
+    if (ui_connections_.contains(req.conn)) {
+      if (ui_owner_ && ui_owner_ != req.conn)
+        throw Failed(FailureKind::project_in_use,
+                     "the project is open in another UI connection");
+      ui_owner_ = req.conn;
+    }
     subscriptions_[req.conn] = sub;
     visible_cards_.erase(req.conn);
   }
@@ -1544,6 +1515,14 @@ std::vector<ChangeIn> decode_changes(
         ch.kind = ChangeIn::Kind::SetProject;
         ch.json = c->value_as_SetProject()->json()->str();
         break;
+      case R::DocumentChangeValue::SetProjectLock: {
+        const auto* lock = c->value_as_SetProjectLock();
+        ch.kind = ChangeIn::Kind::SetProjectLock;
+        ch.path = lock->path()->str();
+        if (lock->json()) ch.lock_json = lock->json()->str();
+        if (lock->base_hash()) ch.base_hash = lock->base_hash()->str();
+        break;
+      }
       case R::DocumentChangeValue::SetLayout:
         ch.kind = ChangeIn::Kind::SetLayout;
         if (const auto* bytes = c->value_as_SetLayout()->layout())
@@ -2168,8 +2147,7 @@ void Service::history_category_delete(RequestIn& req) {
     if (!crypto::is_run_id(run_id))
       throw Failed(FailureKind::invalid_request, "invalid run id");
     if (category != R::RunRecordCategory::Logs &&
-        category != R::RunRecordCategory::Values &&
-        category != R::RunRecordCategory::Files)
+        category != R::RunRecordCategory::Values)
       throw Failed(FailureKind::invalid_request, "invalid run record category");
     if (scheduler_->active_status() || history_->read(History::has_remote_jobs))
       throw Failed(FailureKind::busy,
@@ -2180,16 +2158,7 @@ void Service::history_category_delete(RequestIn& req) {
     if (!run) throw Failed(FailureKind::not_found, "unknown run");
     if (!run->status.terminal())
       throw Failed(FailureKind::busy, "the run has not finished");
-    if (category == R::RunRecordCategory::Files) {
-      const auto runs = store_->state_dir() / "runs";
-      const auto dir = runs / run_id;
-      // Unlink owned files first. A partial filesystem failure leaves the
-      // indexes in place, and a new operation can retry the same removal.
-      if (stdfs::is_symlink(runs) || stdfs::is_symlink(dir))
-        throw Failed(FailureKind::invalid_path, "run history is a symbolic link");
-      for (const auto* name : {"values", "artifacts"})
-        stdfs::remove_all(dir / name);
-    }
+    // TODO(open): decide whether artifacts have a separate recording category.
     FBB b;
     const auto result = R::CreateRunCategoryDeleteResult(
         b, b.CreateString(run_id), category);
@@ -2216,22 +2185,6 @@ void Service::history_category_delete(RequestIn& req) {
     store_failure_receipt(op_id, kind, digest, failure);
     throw Failed(failure);
   }
-}
-
-void Service::history_file_references(RequestIn& req) {
-  const auto* r = project_request(req)->value_as_RunFileReferencesRequest();
-  const auto id = r->run_id()->str();
-  if (!crypto::is_run_id(id))
-    throw Failed(FailureKind::invalid_request, "invalid run id");
-  const auto refs = history_->read([&](sql::Db& db) {
-    if (!History::run(db, id))
-      throw Failed(FailureKind::not_found, "unknown run");
-    return History::file_referencing_runs(db, id);
-  });
-  FBB b;
-  auto result = R::CreateRunFileReferences(b, b.CreateVectorOfStrings(refs));
-  reply(req, wire::reply(b, req.request_id,
-                        R::ReplyPayload::RunFileReferences, result.Union()));
 }
 
 void Service::history_delete(RequestIn& req) {
@@ -2271,20 +2224,28 @@ void Service::history_delete(RequestIn& req) {
     const auto scratch_after = fs::directory_size(run_scratch_ / "runs");
     files +=
         scratch_before > scratch_after ? scratch_before - scratch_after : 0;
-    // The runs' kept files: recorded values and declared artifacts.
     for (const auto& id : ids) {
       if (!crypto::is_run_id(id))
         continue;  // a run id from a copy names no folder of ours
-      auto dir = store_->state_dir() / "runs" / id;
-      std::error_code ec;
-      if (!stdfs::is_directory(dir, ec)) continue;
-      for (auto it = stdfs::recursive_directory_iterator(dir, ec);
-           !ec && it != stdfs::recursive_directory_iterator(); it.increment(ec))
-        if (it->is_regular_file(ec)) files += it->file_size(ec);
-      stdfs::remove_all(dir, ec);
-      if (ec)
-        log::warn("history: cannot remove " + dir.string() + ": " +
-                  ec.message());
+      const auto artifacts = store_->state_dir() / "artifacts";
+      const auto dir = artifacts / id;
+      if (stdfs::is_symlink(artifacts) || stdfs::is_symlink(dir))
+        throw Failed(FailureKind::invalid_path, "artifact storage is a symbolic link");
+      if (stdfs::is_directory(dir)) {
+        // Take the run out of the sandbox-visible tree before making any
+        // holding directory readable for deletion.
+        const auto detached =
+            store_->state_dir() / (".artifact-delete-" + crypto::uuid4());
+        stdfs::rename(dir, detached);
+        stdfs::permissions(detached, stdfs::perms::owner_all,
+                           stdfs::perm_options::add);
+        for (const auto& entry : stdfs::recursive_directory_iterator(detached))
+          if (stdfs::is_directory(entry.symlink_status()))
+            stdfs::permissions(entry.path(), stdfs::perms::owner_all,
+                               stdfs::perm_options::add);
+        files += fs::directory_size(detached);
+        stdfs::remove_all(detached);
+      }
     }
     uint64_t after = sizes();
     FBB b;
@@ -2608,19 +2569,53 @@ void Service::file_read(RequestIn& req) {
                              bytes->size(), hash));
 }
 
-void Service::nix_source_resolve(RequestIn& req) {
-  auto info = nix_->resolve_flake(
-      project_request(req)->value_as_NixSourceResolveRequest()->ref()->str());
+void Service::nix_path_lock_source(RequestIn& req) {
+  const auto url =
+      project_request(req)->value_as_NixPathLockSourceRequest()->url()->str();
+  const auto locked = nix_->lock_source(url);
   FBB b;
-  std::vector<flatbuffers::Offset<flatbuffers::String>> packages;
-  for (const auto& p : info.packages) packages.push_back(b.CreateString(p));
-  auto ref = b.CreateString(info.ref);
-  auto rev = b.CreateString(info.rev);
-  auto hash = b.CreateString(info.nar_hash);
-  auto res =
-      R::CreateNixSourceResolved(b, ref, rev, hash, b.CreateVector(packages));
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::NixSourceResolved,
-                         res.Union()));
+  const auto source = R::CreateNixPathLockedSource(
+      b, locked.rev.empty() ? 0 : b.CreateString(locked.rev),
+      b.CreateString(locked.nar_hash));
+  reply(req, wire::reply(b, req.request_id,
+                         R::ReplyPayload::NixPathLockedSource, source.Union()));
+}
+
+void Service::rewrite_param_literal_request(RequestIn& req) {
+  const auto* request =
+      project_request(req)->value_as_RewriteParamLiteralRequest();
+  const auto doc = store_->current();
+  check_at_rev(request->at_rev(), *doc);
+  const auto card = wire::card_arg(request->card());
+  const auto* node = doc->resolution->find(card);
+  if (!node || node->is_virtual)
+    throw Failed(FailureKind::not_found, "unknown Card " + path_key(card));
+  const auto path = node->def_dir + "params.nix";
+  const auto source = doc->sources.find(path);
+  if (source == doc->sources.end())
+    throw Failed(FailureKind::not_found, path + " does not exist");
+  if (source->second.size > kMaxDocumentJsonBytes ||
+      request->literal()->size() > kMaxDocumentJsonBytes)
+    throw Failed(FailureKind::invalid_request, path + " exceeds 8 MiB");
+  const auto bytes = store_->read_source(*doc, path);
+  std::string rewritten;
+  try {
+    rewritten =
+        rewrite_param_literal(path, bytes, request->name()->string_view(),
+                              request->literal()->string_view());
+  } catch (const std::exception& error) {
+    throw Failed(FailureKind::validation_failed, error.what(),
+                 {{"path", path}});
+  }
+  if (rewritten.size() > kMaxDocumentJsonBytes)
+    throw Failed(FailureKind::invalid_request, path + " would exceed 8 MiB");
+  FBB b;
+  const auto result = R::CreateRewrittenParamLiteral(
+      b, b.CreateString(path), b.CreateString(source->second.hash),
+      b.CreateString(rewritten));
+  reply(req,
+        wire::reply(b, req.request_id, R::ReplyPayload::RewrittenParamLiteral,
+                    result.Union()));
 }
 
 void Service::input_types(RequestIn& req) {
@@ -2667,8 +2662,6 @@ void Service::output_types(RequestIn& req) {
   if (bfbs && r->port() && r->type_name()) {
     changed = types::set_catalog_port(
         text, r->port()->str(), r->type_name()->str(),
-        r->kind() == D::PortKind::unspecified ? D::PortKind::FlatBuffer
-                                              : r->kind(),
         &err);
     if (changed) bfbs = types::schema_bfbs(*changed, &root, &err);
   }
@@ -2836,6 +2829,73 @@ auto Service::refresh_card_views(DocumentPtr doc) -> void {
       });
     });
   }
+}
+
+auto Service::set_view_receiver(
+    const CardPath& card, std::weak_ptr<WorkerProc::ViewReceiver> receiver) -> void {
+  std::lock_guard lock(view_routes_mu_);
+  auto& routes = view_routes_[path_key(card)];
+  std::erase_if(routes, [](const auto& route) { return route.expired(); });
+  const auto current = receiver.lock();
+  if (std::ranges::none_of(routes, [&](const auto& route) {
+        return route.lock() == current;
+      }))
+    routes.push_back(std::move(receiver));
+}
+
+void Service::view_send(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_ViewSendRequest();
+  const auto card = wire::card_arg(r->card());
+  const auto key = path_key(card);
+  const auto name = r->view()->str();
+  const auto* bytes = r->bytes();
+  if (bytes->size() > TSUGUMI_MESSAGE_MAX || name.empty())
+    throw Failed(FailureKind::invalid_request, "invalid view message");
+  {
+    std::lock_guard lock(subs_mu_);
+    const auto visible = visible_cards_.find(req.conn);
+    if (ui_owner_ != req.conn || visible == visible_cards_.end() ||
+        !visible->second.contains(key))
+      throw Failed(FailureKind::permission_denied, "the view is not open");
+  }
+  {
+    std::lock_guard lock(view_files_mu_);
+    const auto views = view_files_.find(key);
+    if (views == view_files_.end() ||
+        std::ranges::count(views->second, name, &DeclaredView::name) != 1)
+      throw Failed(FailureKind::invalid_request, "unknown or duplicate view name");
+  }
+  std::vector<std::shared_ptr<WorkerProc::ViewReceiver>> receivers;
+  {
+    std::lock_guard lock(view_routes_mu_);
+    if (const auto routes = view_routes_.find(key); routes != view_routes_.end())
+      for (const auto& route : routes->second) {
+        if (auto active = route.lock()) receivers.push_back(std::move(active));
+      }
+  }
+  if (receivers.empty())
+    throw Failed(FailureKind::not_found, "no Card process is listening");
+  const WorkerDisplayData message{name, std::string(bytes->begin(), bytes->end())};
+  bool delivered = false;
+  for (const auto& receiver : receivers)
+    if (receiver->send(message)) delivered = true;
+  if (!delivered)
+    throw Failed(FailureKind::busy, "the Card cannot accept a view message");
+  FBB b;
+  const auto ack = R::CreateAck(b);
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::Ack, ack.Union()));
+}
+
+void Service::view_credit(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_ViewCreditRequest();
+  if (!r->credit_id() || r->bytes() > TSUGUMI_MESSAGE_MAX)
+    throw Failed(FailureKind::invalid_request, "invalid view credit");
+  server_->return_view_credit(req.conn, r->subscription_id()->str(),
+                              wire::card_arg(r->card()), r->view()->str(),
+                              *r->credit_id(), r->bytes());
+  FBB b;
+  const auto ack = R::CreateAck(b);
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::Ack, ack.Union()));
 }
 
 void Service::view_set_visible(RequestIn& req) {

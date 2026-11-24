@@ -8,7 +8,7 @@ from tsugumi_client import change, new_id, text
 def test_host_requirements_follow_acceptance_and_keep_card_identity(tmp_path, core_factory):
     root = tmp_path / "project"
     put(root / "tsugumi.json", json.dumps({
-        "pkgsPath": "tsugumi:default",
+        "nixPath": [],
         "canvas": {"cards": [{"id": "a"}], "connections": []},
     }))
     card = {"type": "code", "grants": {"hostPaths": [{"name": "data", "path": "/data"}]}}

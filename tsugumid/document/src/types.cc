@@ -7,8 +7,9 @@
 #include <set>
 #include <sstream>
 
+#include "tsugumi/document/input_schema.hh"
 #include "tsugumi/util/crypto.hh"
-#include "tsugumi/util/flatbuffer_schema.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::types {
 
@@ -27,9 +28,7 @@ flatbuffers::IDLOptions idl_options() {
 }
 
 std::unique_ptr<flatbuffers::Parser> make_parser() {
-  auto p = std::make_unique<flatbuffers::Parser>(idl_options());
-  p->known_attributes_["tsugumi"] = true;
-  return p;
+  return std::make_unique<flatbuffers::Parser>(idl_options());
 }
 
 auto serialize_schema(flatbuffers::Parser& parser) -> void {
@@ -114,28 +113,22 @@ bool is_float(BaseType t) {
 // Renders reachable declarations of a schema under a namespace prefix.
 class Renderer {
  public:
-  // `nested`: the closure becomes a member of a merged type. A member that is
-  // itself a merged type has its own tsugumi.merge namespaces renamed to
-  // "nested", so no dotted name of one level can be read as another level's
-  // (FlatBuffers also tries shorter namespace prefixes when it resolves a
-  // name). Member types that are not merged keep their names.
-  Renderer(const reflection::Schema& s, std::string prefix, bool nested = false)
-      : s_(s), prefix_(std::move(prefix)), nested_(nested) {}
-
-  std::string original(const std::string& full) const {
-    static const std::string merge = "tsugumi.merge";
-    if (nested_ && (full == merge || full.rfind(merge + ".", 0) == 0))
-      return "nested" + full.substr(merge.size());
-    return full;
-  }
+  Renderer(const reflection::Schema& s, std::string prefix,
+           InputDeclarations* declarations = nullptr)
+      : s_(s), prefix_(std::move(prefix)), declarations_(declarations) {}
 
   std::string qualified(const std::string& name) const {
-    return prefix_.empty() ? original(name) : prefix_ + "." + original(name);
+    if (declarations_ && artifact(name)) return name;
+    return prefix_.empty() ? name : prefix_ + "." + name;
   }
 
   void object(int index) {
     if (!objs_.insert(index).second) return;
     const auto* o = s_.objects()->Get(index);
+    if (declarations_ && artifact(o->name()->string_view())) {
+      declarations_->artifact = true;
+      return;
+    }
     for (const auto* f : *o->fields()) {
       deps(*f->type());
       if (const auto* nested = nested_root(*f))
@@ -155,25 +148,76 @@ class Renderer {
     order_.push_back({false, index});
   }
 
-  void emit(std::string& out) {
+  void emit(std::string& out, const std::string& schema_id = {}) {
     for (auto [is_obj, index] : order_) {
       std::string full =
-          original(is_obj ? s_.objects()->Get(index)->name()->str()
-                          : s_.enums()->Get(index)->name()->str());
+          is_obj ? s_.objects()->Get(index)->name()->str()
+                 : s_.enums()->Get(index)->name()->str();
       auto dot = full.rfind('.');
       std::string ns = dot == std::string::npos ? "" : full.substr(0, dot);
       std::string base = dot == std::string::npos ? full : full.substr(dot + 1);
       std::string qns =
           prefix_.empty() ? ns : (ns.empty() ? prefix_ : prefix_ + "." + ns);
-      out += "namespace " + qns + ";\n";
+      std::string text;
+      if (!qns.empty()) text += "namespace " + qns + ";\n";
       if (is_obj)
-        emit_object(*s_.objects()->Get(index), base, out);
+        emit_object(*s_.objects()->Get(index), base, schema_id, text);
       else
-        emit_enum(*s_.enums()->Get(index), base, out);
+        emit_enum(*s_.enums()->Get(index), base, text);
+      if (declarations_) {
+        const auto name = qualified(full);
+        const auto [entry, added] =
+            declarations_->types.try_emplace(name, std::move(text));
+        if (added) {
+          declarations_->order.push_back(name);
+        } else if (entry->second != text) {
+          throw std::runtime_error(
+              "conflicting input schema declarations for " + name);
+        }
+      } else {
+        out += text;
+      }
     }
   }
 
  private:
+  static auto artifact(std::string_view name) -> bool {
+    return name == "tsugumi.Artifact" || name == "tsugumi.ArtifactId";
+  }
+
+  using Attributes = flatbuffers::Vector<flatbuffers::Offset<reflection::KeyValue>>;
+  auto copied_attributes(const Attributes* attributes,
+                         std::string_view handled = "") -> std::vector<std::string> {
+    std::vector<std::string> items;
+    if (!declarations_ || !attributes) return items;
+    static const flatbuffers::Parser parser;
+    for (const auto* attr : *attributes) {
+      const auto key = attr->key()->str();
+      if (key == "tsugumi_schema" ||
+          handled.find(" " + key + " ") != std::string_view::npos)
+        continue;
+      const bool known = parser.known_attributes_.contains(key);
+      if (!known) declarations_->attributes.insert(key);
+      const auto value = attr->value() ? attr->value()->str() : "";
+      if (value.empty() || (known && value == "0"))
+        items.push_back(key);
+      else if (known)
+        items.push_back(key + ": " + value);
+      else
+        items.push_back(key + ": " + json::Quote(value));
+    }
+    return items;
+  }
+
+  static auto emit_attributes(const std::vector<std::string>& attrs,
+                              std::string& out) -> void {
+    if (attrs.empty()) return;
+    out += " (";
+    for (size_t i = 0; i < attrs.size(); ++i)
+      out += (i ? ", " : "") + attrs[i];
+    out += ")";
+  }
+
   auto nested_root(const reflection::Field& field) const
       -> const reflection::Object* {
     if (const auto* attrs = field.attributes())
@@ -204,17 +248,22 @@ class Renderer {
   }
 
   void emit_object(const reflection::Object& o, const std::string& name,
-                   std::string& out) {
+                   const std::string& schema_id, std::string& out) {
     out += o.is_struct() ? "struct " : "table ";
-    out += name + " {\n";
+    out += name;
+    auto attributes = copied_attributes(o.attributes());
+    if (!schema_id.empty() && &o == s_.root_table())
+      attributes.push_back("tsugumi_schema: \"" + schema_id + "\"");
+    emit_attributes(attributes, out);
+    out += " {\n";
     std::vector<const reflection::Field*> fields(o.fields()->begin(),
                                                  o.fields()->end());
     std::sort(fields.begin(), fields.end(),
               [](auto* a, auto* b) { return a->id() < b->id(); });
     for (const auto* f : fields) {
       const auto& t = *f->type();
-      if (t.base_type() == BaseType::UType)
-        continue;  // implicit union type field
+      if (t.base_type() == BaseType::UType || t.element() == BaseType::UType)
+        continue;  // implicit union discriminator, including vectors of unions
       std::string tn;
       if (t.base_type() == BaseType::Vector ||
           t.base_type() == BaseType::Vector64)
@@ -244,22 +293,18 @@ class Renderer {
           out += " = " + std::to_string(f->default_integer());
         }
       }
-      std::vector<std::string> attrs;
+      auto attrs = copied_attributes(f->attributes(), " id required deprecated key nested_flatbuffer ");
       if (!o.is_struct()) {
         // Union value fields occupy two ids; the declared id is the value one.
         attrs.push_back("id: " + std::to_string(f->id()));
       }
       if (f->required()) attrs.push_back("required");
       if (f->deprecated()) attrs.push_back("deprecated");
+      if (declarations_ && f->key()) attrs.push_back("key");
       if (const auto* nested = nested_root(*f))
         attrs.push_back("nested_flatbuffer: \"" +
                         qualified(nested->name()->str()) + "\"");
-      if (!attrs.empty()) {
-        out += " (";
-        for (size_t i = 0; i < attrs.size(); ++i)
-          out += (i ? ", " : "") + attrs[i];
-        out += ")";
-      }
+      emit_attributes(attrs, out);
       out += ";\n";
     }
     out += "}\n";
@@ -268,34 +313,40 @@ class Renderer {
   void emit_enum(const reflection::Enum& e, const std::string& name,
                  std::string& out) {
     if (e.is_union()) {
-      out += "union " + name + " { ";
+      out += "union " + name;
+      emit_attributes(copied_attributes(e.attributes()), out);
+      out += " { ";
       bool first = true;
       for (const auto* v : *e.values()) {
         if (v->value() == 0) continue;
         if (!first) out += ", ";
         first = false;
         out += v->name()->str() + ": " +
-               qualified(
-                   s_.objects()->Get(v->union_type()->index())->name()->str()) +
+               type_name(*v->union_type(), v->union_type()->base_type()) +
                " = " + std::to_string(v->value());
+        emit_attributes(copied_attributes(v->attributes()), out);
       }
       out += " }\n";
       return;
     }
     out += "enum " + name + " : " +
-           scalar_name(e.underlying_type()->base_type()) + " { ";
+           scalar_name(e.underlying_type()->base_type());
+    // Values in reflection already use their wire bit masks.
+    emit_attributes(copied_attributes(e.attributes(), " bit_flags "), out);
+    out += " { ";
     bool first = true;
     for (const auto* v : *e.values()) {
       if (!first) out += ", ";
       first = false;
       out += v->name()->str() + " = " + std::to_string(v->value());
+      emit_attributes(copied_attributes(v->attributes()), out);
     }
     out += " }\n";
   }
 
   const reflection::Schema& s_;
   std::string prefix_;
-  bool nested_ = false;
+  InputDeclarations* declarations_;
   std::set<int> objs_;
   std::set<int> enums_;
   std::vector<std::pair<bool, int>> order_;
@@ -319,7 +370,7 @@ const reflection::Object* Type::root() const { return schema()->root_table(); }
 std::optional<TypeRef> compile(const std::string& fbs_text,
                                const std::string& root, std::string* error) {
   auto parser = make_parser();
-  if (!parser->Parse(fbs_text.c_str(), nullptr, "schema.fbs")) {
+  if (!parse_schema(*parser, fbs_text, "schema.fbs", {})) {
     *error = parser->error_;
     return std::nullopt;
   }
@@ -339,7 +390,7 @@ std::optional<TypeRef> compile(const std::string& fbs_text,
 std::optional<std::string> schema_bfbs(const std::string& fbs_text,
                                        std::string* root, std::string* error) {
   auto parser = make_parser();
-  if (!parser->Parse(fbs_text.c_str(), nullptr, "_outputs.fbs")) {
+  if (!parse_schema(*parser, fbs_text, "_outputs.fbs", {})) {
     *error = parser->error_;
     return std::nullopt;
   }
@@ -456,9 +507,9 @@ auto catalog_fields(std::string_view text, const std::vector<Tok>& tok,
 std::optional<std::string> set_catalog_port(const std::string& fbs_text,
                                             const std::string& port,
                                             const std::string& type_name,
-                                            PortKind kind, std::string* error) {
+                                            std::string* error) {
   auto parser = make_parser();
-  if (!parser->Parse(fbs_text.c_str(), nullptr, "_outputs.fbs")) {
+  if (!parse_schema(*parser, fbs_text, "_outputs.fbs", {})) {
     *error = parser->error_;
     return std::nullopt;
   }
@@ -467,26 +518,23 @@ std::optional<std::string> set_catalog_port(const std::string& fbs_text,
     *error = "root_type (the port catalog) is required";
     return std::nullopt;
   }
-  std::string written = "string";
-  if (kind != PortKind::Path) {
-    // Use the short name for a type in the catalog's namespace.
-    const flatbuffers::StructDef* type = nullptr;
-    for (const auto* sd : parser->structs_.vec) {
-      auto full = sd->defined_namespace->GetFullyQualifiedName(sd->name);
-      if (!sd->fixed && sd != catalog &&
-          (full == type_name || sd->name == type_name)) {
-        type = sd;
-        if (full == type_name) break;
-      }
+  // Use the short name for a type in the catalog's namespace.
+  const flatbuffers::StructDef* type = nullptr;
+  for (const auto* sd : parser->structs_.vec) {
+    auto full = sd->defined_namespace->GetFullyQualifiedName(sd->name);
+    if (!sd->fixed && sd != catalog &&
+        (full == type_name || sd->name == type_name)) {
+      type = sd;
+      if (full == type_name) break;
     }
-    if (!type) {
-      *error = "no table " + type_name + " in the schema";
-      return std::nullopt;
-    }
-    written = type->defined_namespace == catalog->defined_namespace
-                  ? type->name
-                  : type->defined_namespace->GetFullyQualifiedName(type->name);
   }
+  if (!type) {
+    *error = "no table " + type_name + " in the schema";
+    return std::nullopt;
+  }
+  const auto written = type->defined_namespace == catalog->defined_namespace
+                ? type->name
+                : type->defined_namespace->GetFullyQualifiedName(type->name);
   const auto& s = fbs_text;
   const auto t = tokens(s);
   const auto fields = catalog_fields(s, t, *catalog);
@@ -498,10 +546,7 @@ std::optional<std::string> set_catalog_port(const std::string& fbs_text,
   }
   const auto field = declaration->field;
   const auto semi = declaration->semi;
-  auto text_of = [&](const Tok& k) {
-    return std::string_view(s).substr(k.begin, k.end - k.begin);
-  };
-  // Attributes kept as written, except tsugumi.
+  // Preserve the field attributes as written.
   std::vector<std::string> attrs;
   for (size_t i = field; i < semi; ++i) {
     if (t[i].punct != '(') continue;
@@ -509,8 +554,7 @@ std::optional<std::string> set_catalog_port(const std::string& fbs_text,
     for (size_t k = start; k < semi; ++k) {
       if (t[k].punct == ',' || t[k].punct == ')') {
         if (k > start) {
-          auto item = s.substr(t[start].begin, t[k - 1].end - t[start].begin);
-          if (text_of(t[start]) != "tsugumi") attrs.push_back(item);
+          attrs.push_back(s.substr(t[start].begin, t[k - 1].end - t[start].begin));
         }
         start = k + 1;
         if (t[k].punct == ')') break;
@@ -518,7 +562,6 @@ std::optional<std::string> set_catalog_port(const std::string& fbs_text,
     }
     break;
   }
-  if (kind == PortKind::Path) attrs.push_back("tsugumi: \"path\"");
   std::string decl = port + ":" + written;
   if (!attrs.empty()) {
     decl += " (";
@@ -528,10 +571,6 @@ std::optional<std::string> set_catalog_port(const std::string& fbs_text,
   }
   std::string out =
       s.substr(0, t[field].begin) + decl + s.substr(t[semi].begin);
-  // The tsugumi attribute needs its declaration.
-  if (kind != PortKind::FlatBuffer &&
-      out.find("attribute \"tsugumi\"") == std::string::npos)
-    out += "attribute \"tsugumi\";\n";
   auto check = parse_catalog(out, "_outputs.fbs");
   if (!check.errors.empty()) {
     *error = check.errors.front();
@@ -541,10 +580,11 @@ std::optional<std::string> set_catalog_port(const std::string& fbs_text,
 }
 
 CatalogResult parse_catalog(const std::string& fbs_text,
-                            const std::string& filename) {
+                            const std::string& filename,
+                            const SchemaSourceReader& read) {
   CatalogResult r;
   auto parser = make_parser();
-  if (!parser->Parse(fbs_text.c_str(), nullptr, filename.c_str())) {
+  if (!parse_schema(*parser, fbs_text, filename, read)) {
     r.errors.push_back(parser->error_);
     return r;
   }
@@ -579,19 +619,6 @@ CatalogResult parse_catalog(const std::string& fbs_text,
     PortType port;
     port.name = field->name;
     port.required = field->IsRequired();
-    if (const auto* attr = field->attributes.Lookup("tsugumi")) {
-      if (attr->constant != "path") {
-        r.errors.push_back(filename + ": unknown tsugumi attribute \"" +
-                           attr->constant + "\"");
-      } else if (field->value.type.base_type != flatbuffers::BASE_TYPE_STRING) {
-        r.errors.push_back(filename + ": Path port " + field->name +
-                           " must have type string");
-      } else {
-        port.kind = PortKind::Path;
-        r.ports.push_back(std::move(port));
-        continue;
-      }
-    }
     if (field->value.type.base_type != flatbuffers::BASE_TYPE_STRUCT ||
         field->value.type.struct_def->fixed) {
       r.errors.push_back(filename + ": port " + field->name +
@@ -618,189 +645,35 @@ CatalogResult parse_catalog(const std::string& fbs_text,
 }
 
 std::string render_closure(const Type& t, const std::string& prefix,
-                           std::string& out, bool nested) {
+                           std::string& out) {
   const auto* s = t.schema();
   int root = -1;
   for (flatbuffers::uoffset_t i = 0; i < s->objects()->size(); ++i)
     if (s->objects()->Get(i) == s->root_table()) root = static_cast<int>(i);
-  Renderer r(*s, prefix, nested);
+  Renderer r(*s, prefix);
   r.object(root);
   r.emit(out);
   return r.qualified(s->root_table()->name()->str());
 }
 
-auto card_catalog(const std::vector<PortType>& ports, bool inputs)
-    -> std::string {
-  const std::string side = inputs ? "inputs" : "outputs";
-  const std::string table = inputs ? "Inputs" : "Outputs";
-  std::string types = "attribute \"tsugumi\";\n";
-  std::string catalog = "namespace " + side + ";\ntable " + table + " {\n";
-  int id = 0;
-  for (const auto& port : ports) {
-    if (!port.resolved()) continue;
-    const bool path = port.kind == PortKind::Path;
-    const auto root =
-        path ? "string"
-             : render_closure(*port.type, side + "." + port.name, types);
-    catalog += "  " + port.name + ":" + root + " (id: " + std::to_string(id++) +
-               (path ? ", tsugumi: \"path\"" : "") +
-               (!inputs && port.required ? ", required" : "") + ");\n";
-  }
-  return types + catalog + "}\nroot_type " + table + ";\n";
+auto render_input_candidate(const Type& type, const std::string& prefix,
+                            const std::string& schema_id,
+                            InputDeclarations& declarations) -> std::string {
+  const auto& schema = *type.schema();
+  Renderer renderer(schema, prefix, &declarations);
+  const auto* root = schema.root_table();
+  const auto name = renderer.qualified(root->name()->str());
+  for (flatbuffers::uoffset_t i = 0; i < schema.objects()->size(); ++i)
+    if (schema.objects()->Get(i) == root) renderer.object(static_cast<int>(i));
+  std::string unused;
+  renderer.emit(unused, schema_id);
+  return name;
 }
 
 TypeRef empty_type() {
   static TypeRef t = make_builtin("namespace tsugumi.builtin; table Empty {}",
                                   "tsugumi.builtin.Empty");
   return t;
-}
-
-auto merged_type(const std::vector<const PortType*>& inputs, std::string* error)
-    -> std::optional<MergeType> {
-  if (inputs.empty()) {
-    *error = "a Merge needs at least one connected input";
-    return std::nullopt;
-  }
-  if (std::ranges::any_of(inputs, [](const auto* port) {
-        return port->kind == PortKind::Path;
-      })) {
-    if (!std::ranges::all_of(inputs, [](const auto* port) {
-          return port->kind == PortKind::Path;
-        })) {
-      *error = "Path and FlatBuffer inputs cannot share a Merge output";
-      return std::nullopt;
-    }
-    return MergeType{};
-  }
-  std::map<std::string, size_t> seen;
-  std::vector<const PortType*> members;
-  MergeType result;
-  for (const auto* port : inputs) {
-    std::string closure;
-    const auto root = render_closure(*port->type, "type", closure);
-    const auto [entry, inserted] =
-        seen.try_emplace(closure + root, members.size());
-    if (inserted) members.push_back(port);
-    if (members.size() > UINT8_MAX) {
-      *error = "a Merge supports at most 255 distinct FlatBuffer types";
-      return std::nullopt;
-    }
-    result.tags.emplace(port->name, static_cast<uint8_t>(entry->second + 1));
-  }
-  if (members.size() == 1)
-    return MergeType{
-        members.front()->type, {}, members.front()->merge_member_types};
-
-  std::string text;
-  std::string boxes = "namespace tsugumi.merge;\n";
-  std::string arrival = "union Arrival { ";
-  std::set<std::string> names;
-  std::map<std::string, size_t> short_name_counts;
-  auto short_name = [](const std::string& full) {
-    return full.substr(full.find_last_of('.') + 1);
-  };
-  for (const auto* member : members)
-    ++short_name_counts[short_name(member->type->root_type)];
-  for (size_t i = 0; i < members.size(); ++i) {
-    const auto& member = *members[i];
-    const auto& full = member.type->root_type;
-    const auto short_type = short_name(full);
-    const auto base = short_type + "Box";
-    std::string box = base;
-    for (size_t suffix = 2; !names.insert(box).second; ++suffix)
-      box = base + std::to_string(suffix);
-    const auto root =
-        render_closure(*member.type, "tsugumi.merge.t" + std::to_string(i),
-                       text, /*nested=*/true);
-    boxes += "table " + box + " { bytes:[ubyte] (id: 0, nested_flatbuffer: \"" +
-             root + "\"); }\n";
-    arrival += (i ? ", " : "") + box;
-    if (member.merge_member_types.empty()) {
-      result.member_types.push_back(
-          short_name_counts.at(short_type) > 1 ? full : short_type);
-    } else {
-      result.member_types.insert(result.member_types.end(),
-                                 member.merge_member_types.begin(),
-                                 member.merge_member_types.end());
-    }
-  }
-  text += boxes + arrival + " }\ntable Merged { value:Arrival (id: 1); }\n";
-  auto type = compile(text, "tsugumi.merge.Merged", error);
-  if (!type) return std::nullopt;
-  result.type = *type;
-  return result;
-}
-
-namespace {
-
-std::unique_ptr<flatbuffers::Parser> parser_from_type(const Type& t,
-                                                      std::string* error) {
-  auto p = make_parser();
-  if (!p->Deserialize(reinterpret_cast<const uint8_t*>(t.bfbs.data()),
-                      t.bfbs.size())) {
-    *error = "cannot load schema: " + p->error_;
-    return nullptr;
-  }
-  if (!p->SetRootType(t.root_type.c_str())) {
-    *error = "unknown root type " + t.root_type;
-    return nullptr;
-  }
-  flatbuffer_schema::restore_reflection_fields(*p, *t.schema(),
-                                               /*restore_deprecated=*/true);
-  return p;
-}
-
-}  // namespace
-
-auto wrap_in_union(uint8_t tag, const std::string& bytes) -> std::string {
-  flatbuffers::FlatBufferBuilder b(bytes.size() + 64);
-  b.ForceVectorAlignment(bytes.size(), sizeof(uint8_t),
-                         FLATBUFFERS_MAX_ALIGNMENT);
-  auto nested = b.CreateVector(reinterpret_cast<const uint8_t*>(bytes.data()),
-                               bytes.size());
-  auto start = b.StartTable();
-  b.AddOffset(flatbuffers::FieldIndexToOffset(0), nested);  // Box.bytes, id 0
-  auto box = flatbuffers::Offset<flatbuffers::Table>(b.EndTable(start));
-  start = b.StartTable();
-  b.AddElement<uint8_t>(flatbuffers::FieldIndexToOffset(0), tag,
-                        0);  // Merged.value_type, id 0
-  b.AddOffset(flatbuffers::FieldIndexToOffset(1), box);  // Merged.value, id 1
-  b.Finish(flatbuffers::Offset<flatbuffers::Table>(b.EndTable(start)));
-  return std::string(reinterpret_cast<const char*>(b.GetBufferPointer()),
-                     b.GetSize());
-}
-
-bool verify(const Type& t, const std::string& bytes) {
-  return flatbuffers::Verify(*t.schema(), *t.root(),
-                             reinterpret_cast<const uint8_t*>(bytes.data()),
-                             bytes.size());
-}
-
-bool json_to_flatbuffer(const Type& t, const std::string& json,
-                        std::string* out, std::string* error) {
-  auto p = parser_from_type(t, error);
-  if (!p) return false;
-  if (!p->ParseJson(json.c_str())) {
-    *error = p->error_;
-    return false;
-  }
-  out->assign(reinterpret_cast<const char*>(p->builder_.GetBufferPointer()),
-              p->builder_.GetSize());
-  return true;
-}
-
-std::string params_schema(
-    const std::vector<std::pair<std::string, std::string>>& fields) {
-  std::string text = "namespace parameters;\ntable Params {\n";
-  int id = 0;
-  for (const auto& [name, type] : fields) {
-    bool scalar =
-        type == "bool" || type == "long" || type == "ulong" || type == "double";
-    text += "  " + name + ":" + type + (scalar ? " = null" : "") +
-            " (id: " + std::to_string(id++) + ");\n";
-  }
-  text += "}\nroot_type Params;\n";
-  return text;
 }
 
 }  // namespace tsugumi::types

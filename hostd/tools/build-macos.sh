@@ -13,7 +13,6 @@ cmake_path=$(command -v cmake)
 run() {
   env -i HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" \
     TSUGUMI_FLATBUFFERS_SOURCE="${TSUGUMI_FLATBUFFERS_SOURCE:?}" \
-    TSUGUMI_KIT_DIR="${TSUGUMI_KIT_DIR:?}" \
     HOSQ_INCLUDE_DIR="$HOSQ_INCLUDE_DIR" \
     TSUGUMI_CACERT="${TSUGUMI_CACERT:?}" \
     TSUGUMI_CARD_NIXPKGS_REV="${TSUGUMI_CARD_NIXPKGS_REV:?}" \

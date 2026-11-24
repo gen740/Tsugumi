@@ -64,11 +64,15 @@ final class RevisionEdit {
   }
 
   func apply(_ session: ProjectSession, _ change: (ProjectSession) -> Void) async -> Bool {
+    await applyOperation(session) { try await session.applyMutation(change) }
+  }
+
+  func applyOperation(_ session: ProjectSession, _ operation: () async throws -> UInt64) async -> Bool {
     guard !applying else { return false }
     applying = true
     defer { applying = false }
     do {
-      savedRev = try await session.applyMutation(change)
+      savedRev = try await operation()
       reload(savedRev ?? session.rev)
       return true
     } catch let failure as RPCFailure where failure.kind == .revisionConflict || failure.kind == .hashConflict || failure.kind == .valueConflict || failure.kind == .sourceChanged {
@@ -79,19 +83,8 @@ final class RevisionEdit {
     return false
   }
   func replaceDocuments(_ session: ProjectSession, overwrite: Bool = false, _ documents: [(String, JSONValue?)]) async -> Bool {
-    guard !applying else { return false }
-    applying = true
-    defer { applying = false }
-    do {
-      savedRev = try await session.replaceDocuments(overwrite ? (conflictRev ?? baseRev) : baseRev, documents)
-      reload(savedRev ?? session.rev)
-      return true
-    } catch let failure as RPCFailure where failure.kind == .revisionConflict || failure.kind == .hashConflict || failure.kind == .valueConflict || failure.kind == .sourceChanged {
-      recordConflict(session)
-      return false
-    } catch { self.error = String(describing: error); return false }
+    await applyOperation(session) { try await session.replaceDocuments(overwrite ? (conflictRev ?? baseRev) : baseRev, documents) }
   }
-
 }
 
 struct RevisionEditNotice: View {
@@ -128,8 +121,6 @@ struct RevisionEditNotice: View {
 final class InlineParamEdit {
   let revision = RevisionEdit()
   private(set) var initial = ""
-  struct ParamBase { let parameter: JSONValue? }
-  var paramBase: ParamBase?
   private struct FieldBase: Equatable {
     let file: String
     let selector: [JSONValue]
@@ -164,11 +155,11 @@ final class InlineParamEdit {
     return ok
   }
 
-  func parameterBase(_ session: ProjectSession, _ card: CardKey, _ name: String, overwrite: Bool) -> ParamBase? {
-    guard overwrite, let dir = session.definitionDir(card) else { return paramBase }
-    let definition = revision.jsonBase(dir + "_card.json", initial: nil, overwrite: true)
-    return ParamBase(parameter: definition?["params"]?.array?.first { $0["name"]?.string == name })
+  func commitParam(_ session: ProjectSession, card: CardKey, name: String, literal: String, overwrite: Bool) async -> Bool {
+    let expectedRev = overwrite ? (revision.conflictRev ?? revision.baseRev) : revision.baseRev
+    return await revision.applyOperation(session) { try await session.setParam(card, name, literal, expectedRev: expectedRev) }
   }
+
   func begin(_ value: String, rev: UInt64) { initial = value; revision.reload(rev) }
   func commit(_ session: ProjectSession, text: String,
               _ change: (ProjectSession) -> Void) async -> Bool {

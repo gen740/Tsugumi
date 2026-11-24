@@ -1,23 +1,8 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "covariates",
-      "type": "string[]",
-      "data": {
-        "strings": [
-          "female",
-          "age",
-          "ph.ecog"
-        ]
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "cohort"
     }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "fit"
+  ]
 }

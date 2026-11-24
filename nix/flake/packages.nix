@@ -3,12 +3,29 @@
 { inputs, ... }:
 let
   inherit (inputs) nixpkgs hosq;
-  # The nixpkgs revision Cards build against unless a project pins another.
-  # Recorded so that the core can fetch it in pure evaluation mode.
+  # The core's own package set, used to build plans and target workers.
   cardNixpkgs = {
     rev = nixpkgs.rev or "dirty";
     narHash = nixpkgs.narHash;
   };
+  lock = builtins.fromJSON (builtins.readFile ../../flake.lock);
+  testNixPathLock.entries =
+    map
+      (
+        name:
+        let
+          inherit (lock.nodes.${lock.nodes.root.inputs.${name}}) locked original;
+        in
+        {
+          inherit name;
+          inherit (locked) rev narHash;
+          url = "${original.type}:${original.owner}/${original.repo}/${original.ref}";
+        }
+      )
+      [
+        "nixpkgs"
+        "tsugumi-kit"
+      ];
 in
 {
   perSystem =
@@ -19,8 +36,7 @@ in
     }:
     let
       core = pkgs.callPackage ../core.nix {
-        inherit cardNixpkgs hosq;
-        kitSource = inputs.tsugumi-kit;
+        inherit cardNixpkgs hosq testNixPathLock;
       };
       ci-runtime = pkgs.callPackage ../ci-runtime.nix { inherit core; };
       ci-core = pkgs.callPackage ../core-tests.nix {
@@ -80,7 +96,7 @@ in
         ci-arm-shell = ci-core.override { target = "tsugumi_arm_shell_tests"; };
         # The guest of tsugumi-pack and of the apps it exports (pack/).
         pack-guest = pkgs.callPackage ../../pack/guest {
-          inherit kernel cardNixpkgs;
+          inherit kernel;
           tsugumid = guestCore;
         };
         # One distributable image; the helper extracts its VZ attachments.

@@ -151,7 +151,7 @@ TEST(HelperScope, ReadsAndWritesAreSeparateExactSetsWithNestedIdentifiers) {
 TEST(HelperScope,
      ExecutorChecksTheCompleteGraphWithoutRewritingUntouchedBytes) {
   const std::string before =
-      R"({"name": "workflow", "pkgsPath":"tsugumi:default", "canvas":{"cards":[{"id":"writer"},{"id":"other"}],"connections":[]}})";
+      R"({"name": "workflow", "nixPath": [], "canvas":{"cards":[{"id":"writer"},{"id":"other"}],"connections":[]}})";
   const auto reader = [&](const std::string& path) {
     return path == "tsugumi.json" ? before : "";
   };
@@ -428,11 +428,14 @@ TEST(HelperScope, WriteDoesNotGrantRunAndReadRunDoesNotGrantWrite) {
       R"({"read_cards":["a"],"write_cards":["a"],"run_cards":[]})"));
   HelperScope runner(json::Object(
       R"({"read_cards":["a"],"write_cards":[],"run_cards":["a"]})"));
-  const auto card = json::Object(R"({"card":{"segments":["a"]}})");
-  for (const auto* tool : {"run", "card_api"}) {
+  const auto card = json::Object(R"({"card":{"segments":["a"]},"build":true})");
+  for (const auto* tool : {"run", "evaluate_nix"}) {
     EXPECT_THROW(writer.Check(tool, card, kRead), std::runtime_error);
     EXPECT_NO_THROW(runner.Check(tool, card, kRead));
   }
+  EXPECT_NO_THROW(writer.Check("evaluate_nix",
+                               json::Object(R"({"card":{"segments":["a"]}})"),
+                               kRead));
   EXPECT_THROW(
       runner.Check(
           "project_save",
@@ -514,7 +517,7 @@ TEST(HelperGraphScope, AddsOnlyOwnedCardsAndKeepsTheHiddenGraph) {
   project["canvas"] = json::Encode(canvas);
   EXPECT_THROW(scope.Check("project_save", args(json::Encode(project)), read),
                std::runtime_error);
-  project["pkgsPath"] = json::Quote("changed");
+  project["nixPath"] = R"([{"name":"science","url":"github:org/science"}])";
   EXPECT_THROW(scope.Check("project_save", args(json::Encode(project)), read),
                std::runtime_error);
 }

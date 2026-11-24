@@ -44,28 +44,24 @@ TEST_F(VersionNote,
        FullTreesDistinguishParametersDefinitionsSourceWiringAndMembership) {
   Put("tsugumi.json",
       R"({"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})");
-  Put("definitions/a/_card.json",
-      R"({"type":"code","params":[{"name":"secret","type":"string","data":{"string":"FIRST"}}]})");
+  Put("definitions/a/_card.json", R"({"type":"code"})");
+  Put("definitions/a/params.nix", R"({ secret = "FIRST"; })");
   Put("definitions/b/_card.json", R"({"type":"code"})");
   Put("definitions/a/src/main.py", std::string(15000, '#') + "\n");
   Versions versions(root);
   const auto first = versions.init();
   ExpectChanges(versions.note(first).facts, {"a", "b"}, {}, {});
-  Put("definitions/a/_card.json",
-      R"({"type":"code","params":[{"name":"secret","type":"string","data":{"string":"PRIVATE_SENTINEL"}}]})");
+  Put("definitions/a/params.nix", R"({ secret = "PRIVATE_SENTINEL"; })");
   const auto params = versions.commit_all("Parameters");
   const auto neutral = versions.note(params).facts;
   ExpectChanges(neutral, {}, {}, {{"a", {"parameters"}}});
   EXPECT_EQ(versions.note(params).facts, neutral);
   EXPECT_EQ(neutral.find("PRIVATE_SENTINEL"), std::string::npos);
-  Put("definitions/a/_card.json",
-      "{ \"params\": [ { \"data\": { \"string\": \"PRIVATE_SENTINEL\" }, \"name\": \"secret\", \"type\": \"string\" "
-      "} ], \"type\": \"code\" "
-      "}");
+  Put("definitions/a/_card.json", R"({ "type": "code" })");
   const auto formatting = versions.commit_all("Formatting");
   ExpectChanges(versions.note(formatting).facts, {}, {}, {});
   Put("definitions/a/_card.json",
-      R"({"type":"code","grants":{"network":true},"params":[{"name":"secret","type":"string","data":{"string":"PRIVATE_SENTINEL"}}]})");
+      R"({"type":"code","grants":{"network":true}})");
   Put("definitions/a/src/main.py",
       "# CHANGED_SOURCE_SENTINEL\n" + std::string(15000, '#'));
   Put("definitions/c/_card.json", R"({"type":"code"})");

@@ -20,7 +20,6 @@ class Lane {
   // Returns false after shutdown.
   bool submit(Task t);
   void stop();
-  size_t queued() const;
   auto idle() const -> bool;
   auto pending() const -> size_t;
 

@@ -47,24 +47,29 @@ FailureData failure(const D::Failure* f) {
   return out;
 }
 
-Off<D::Port> port(FBB& b, const types::PortType& p) {
-  auto name = b.CreateString(p.name);
-  Off<flatbuffers::Vector<uint8_t>> bfbs;
-  Off<flatbuffers::String> root;
-  if (p.type) {
-    bfbs = b.CreateVector(reinterpret_cast<const uint8_t*>(p.type->bfbs.data()),
-                          p.type->bfbs.size());
-    root = b.CreateString(p.type->root_type);
-  }
-  D::PortBuilder pb(b);
-  pb.add_name(name);
-  pb.add_kind(p.kind);
-  pb.add_execution_shape(p.execution_shape);
-  if (p.type) {
-    pb.add_schema_bfbs(bfbs);
-    pb.add_root_type(root);
-  }
-  return pb.Finish();
+auto artifact_id(const ::tsugumi::ArtifactId& id) -> ArtifactKey {
+  return {reinterpret_cast<const char*>(id.bytes()->data()), id.bytes()->size()};
+}
+
+auto artifact_ids(const ArtifactIdVector* ids) -> std::vector<ArtifactKey> {
+  std::vector<ArtifactKey> result;
+  if (ids)
+    for (const auto* id : *ids) result.push_back(artifact_id(*id));
+  return result;
+}
+
+auto artifact_struct(const ArtifactKey& id) -> ::tsugumi::ArtifactId {
+  if (id.size() != 16)
+    throw Failed(FailureKind::internal_error, "an artifact id is not 16 bytes");
+  return ::tsugumi::ArtifactId(flatbuffers::span<const uint8_t, 16>(
+      reinterpret_cast<const uint8_t*>(id.data()), id.size()));
+}
+
+auto artifact_ids(FBB& b, std::span<const ArtifactKey> ids) -> Off<ArtifactIdVector> {
+  std::vector<::tsugumi::ArtifactId> encoded;
+  encoded.reserve(ids.size());
+  for (const auto& id : ids) encoded.push_back(artifact_struct(id));
+  return b.CreateVectorOfStructs(encoded);
 }
 
 }  // namespace wire

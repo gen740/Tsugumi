@@ -80,7 +80,7 @@ class AgentProjectFixture : public AgentFixture {
   auto StartProject(
       bool shell = false,
       const std::string& document =
-          R"({"name":"PRIVATE_PROJECT_SENTINEL","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})",
+          R"({"name":"PRIVATE_PROJECT_SENTINEL","nixPath": [],"canvas":{"cards":[],"connections":[]}})",
       const std::string& layout = "{}") -> void {
     Write(directory.path / "project/tsugumi.json", document);
     const auto layout_path = directory.path / "project/layout.bin";

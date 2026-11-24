@@ -1,7 +1,5 @@
 #include "host/project_operations.hh"
 
-#include "host/layout_file.hh"
-
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -12,10 +10,12 @@
 #include "agent/save_policy.hh"
 #include "host/document_edits.hh"
 #include "host/failure.hh"
+#include "host/layout_file.hh"
 #include "host/layout_service.hh"
 #include "host/projects.hh"
 #include "host/templates.hh"
 #include "tsugumi/document/document.hh"
+#include "tsugumi/document/graph.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 
@@ -60,6 +60,45 @@ auto Intent(const H::ProjectOperateRequestT& operation,
   hash.update(builder.GetBufferPointer(), builder.GetSize());
   return hash.finish_hex();
 }
+auto NixPath(std::string_view document) -> json::Members {
+  json::Members entries;
+  for (const auto& raw :
+       json::Array(json::Get(json::Object(document), "nixPath", "[]")))
+    entries.emplace(json::Text(json::Object(raw), "name"), raw);
+  return entries;
+}
+
+auto UpdatedLock(const std::string& path, const std::string& project,
+                 const std::optional<std::string>& old, const std::string& name,
+                 const OperationCall& call) -> std::string {
+  const auto declarations = NixPath(project);
+  if (!name.empty() && !declarations.contains(name))
+    throw Failure("not_found", "Undeclared nixPath name " + name);
+  std::map<std::string, std::string> locked;
+  if (old) {
+    for (auto& raw : json::Array(json::Object(*old).at("entries"))) {
+      const auto key = json::Text(json::Object(raw), "name");
+      if (declarations.contains(key)) locked.emplace(key, std::move(raw));
+    }
+  }
+  for (const auto& [key, entry] : declarations) {
+    if (!name.empty() && name != key) continue;
+    const auto url = json::Object(entry).at("url");
+    if (const auto found = locked.find(key);
+        found != locked.end() &&
+        json::Text(json::Object(found->second), "url") == json::String(url))
+      continue;
+    auto source = Value(call("nix_path_lock_source", {{"url", url}}));
+    source.emplace("name", json::Quote(key));
+    source.emplace("url", url);
+    locked[key] = json::Encode(source);
+  }
+  std::vector<std::string> entries;
+  for (auto& [_, entry] : locked) entries.push_back(std::move(entry));
+  return parse_project_lock(path, "{\"entries\":" + json::Encode(entries) + "}")
+      .text;
+}
+
 // Expand transformations into guarded file edits against this inspection only.
 auto Prepare(
     const H::ProjectOperationBodyUnion& body, const SaveBase& base,
@@ -158,7 +197,45 @@ auto Prepare(
     prefix = Prefix(create->project_path);
   else if (const auto* copy = body.AsProjectTemplateCopy())
     prefix = Prefix(copy->project_path);
-  else if (const auto* add = body.AsTemplateAdd()) {
+  else if (const auto* update = body.AsProjectUpdateNixPathLock())
+    prefix = Prefix(update->project_path);
+  else if (const auto* parameter = body.AsProjectRewriteParamLiteral()) {
+    const auto at_rev = json::Get(base.snapshot, "rev");
+    const auto rev = json::UInt(json::String(at_rev, at_rev));
+    if (!parameter->expected_rev || *parameter->expected_rev != rev)
+      throw Failure("revision_conflict", "Card settings revision changed");
+    if (!parameter->card || parameter->card->segments.empty())
+      throw Failure("invalid_request", "Choose a Card");
+    std::vector<std::string> segments;
+    for (const auto& segment : parameter->card->segments)
+      segments.push_back(json::Quote(segment));
+    const auto card =
+        json::Encode(json::Members{{"segments", json::Encode(segments)}});
+    const auto rewritten = Value(call(
+        "rewrite_param_literal", {{"card", card},
+                                  {"name", json::Quote(parameter->name)},
+                                  {"literal", json::Quote(parameter->literal)},
+                                  {"at_rev", at_rev}}));
+    const auto file = json::Text(rewritten, "path");
+    if (authorize) authorize(file);
+    const auto hash = json::Text(rewritten, "base_hash");
+    const auto same_source = [&](const std::string& raw) {
+      const auto source = json::Object(raw);
+      return json::Text(source, "path") == file &&
+             json::Text(source, "hash") == hash;
+    };
+    if (hash.empty() || !std::ranges::any_of(
+                            json::Array(json::Get(base.snapshot, "sources", "[]")),
+                            same_source))
+      throw Failure("source_changed", file + " changed during the edit");
+    const auto replacement = json::Text(rewritten, "text");
+    std::vector<std::string> changes;
+    if (crypto::sha256_hex(replacement) != hash)
+      changes.push_back(Change("PutSource", {{"path", json::Quote(file)},
+                                             {"base_hash", json::Quote(hash)},
+                                             {"bytes", json::Quote(replacement)}}));
+    return {{"base_rev", at_rev}, {"changes", json::Encode(changes)}};
+  } else if (const auto* add = body.AsTemplateAdd()) {
     if (!TemplateName(add->name) || !context.read_template_source)
       throw Failure("invalid_request", "Cannot add this template");
     const auto destination = "templates/" + add->name + '/';
@@ -169,6 +246,12 @@ auto Prepare(
   } else
     throw Failure("invalid_request", "missing operation body");
   const auto project = required(prefix + "tsugumi.json");
+  if (const auto* update = body.AsProjectUpdateNixPathLock()) {
+    const auto path = prefix + "tsugumi.lock";
+    const auto previous = get(path);
+    put(path, UpdatedLock(path, project, previous, update->name, call));
+    return ProjectSaveChanges(base, originals, staged, {});
+  }
   const auto layout_path = prefix + "layout.bin";
   auto read_layout = [&] { return get(layout_path).value_or("{}"); };
   auto read_geometry =
@@ -737,6 +820,8 @@ auto Prepare(
     put(prefix + "tsugumi.json", nested.project_json);
     put(destination + "tsugumi.json",
         PreserveProjectBytes(project, nested.external_json));
+    if (const auto lock = get(prefix + "tsugumi.lock"))
+      put(destination + "tsugumi.lock", *lock);
     put(prefix + "definitions/" + subgraph->id + "/_card.json",
         nested.card_json);
     auto outer_layout = json::Object(read_layout(), layout_path);
@@ -1034,7 +1119,8 @@ auto ProjectOperations::Execute(const H::ProjectOperateRequestT& operation,
           prepared["check_permissions"] =
               context.origin == "agent" ? "true" : "false";
           prepared["save_intent"] = json::Quote(intent);
-          if (context.origin == "ui") {
+          if (context.origin == "ui" &&
+              !operation.body.AsProjectUpdateNixPathLock()) {
             // Opaque to the core, carried in its save reply and replay.
             const auto inverse = ReverseProjectChanges(prepared, base, read);
             flatbuffers::FlatBufferBuilder undo;

@@ -1,5 +1,5 @@
-attribute "tsugumi";
+include "tsugumi/artifact.fbs";
+
 namespace exo;
-table LightCurveFiles { value:string; }
-table Outputs { data:LightCurveFiles (required, tsugumi: "directory"); }
+table Outputs { data:tsugumi.Artifact (required); }
 root_type Outputs;

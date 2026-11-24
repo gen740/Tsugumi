@@ -69,6 +69,7 @@ runCommand "tsugumi-ci-runtime"
       --set TSUGUMI_RPC_CLIENT ${core}/bin/tsugumi-rpc \
       --set TSUGUMI_CLI ${core}/bin/tsugumi \
       --set TSUGUMI_NIX_DIR ${core}/share/tsugumi/nix \
+      --set TSUGUMI_TEST_NIX_LOCK ${lib.escapeShellArg core.devEnv.TSUGUMI_TEST_NIX_LOCK} \
       --set TSUGUMI_AGENT_SCHEMA ${core}/share/tsugumi/protocol/agent.bfbs \
       --set TSUGUMI_PROJECT_SCHEMA ${core}/share/tsugumi/protocol/tsugumi.bfbs \
       --set TSUGUMI_PY_BINDINGS ${core.testSupport}/python \

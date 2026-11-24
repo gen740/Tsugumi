@@ -173,7 +173,6 @@ struct StageProgress: Equatable {
 struct PortData: Hashable {
   var name: String
   var typeName: String?
-  var note: String?
 }
 
 struct ParamData: Hashable {
@@ -239,7 +238,6 @@ struct CardNodeData: Equatable {
   var outputs: [PortData]
   var params: [ParamData] = []
   var result: String?
-  var resultFailed = false
   var state: Tsugumi_Data_CardState?
   var executionList = false
   var stage: StageProgress?
@@ -264,7 +262,7 @@ struct CardNodeData: Equatable {
   var openComments = 0
 
   var isDraft: Bool { kind == .draft }
-  var isRouting: Bool { kind == .branch || kind == .fork || kind == .merge || kind == .collect }
+  var isRouting: Bool { kind == .merge || kind == .collect }
 
   /// "Invocation #3 · Succeeded" and the like; nil before the first invocation.
   var runText: String? {
@@ -291,13 +289,11 @@ struct CardNodeData: Equatable {
 
 /// Outline of a Card on the canvas.
 enum CardShape {
-  case card, branch, fork, merge, collect, start
+  case card, merge, collect, start
 
   init(_ kind: CardKind) {
     switch kind {
     case .trigger: self = .start
-    case .branch: self = .branch
-    case .fork: self = .fork
     case .merge: self = .merge
     case .collect: self = .collect
     default: self = .card
@@ -385,15 +381,6 @@ struct CardGeometry {
   private var routingSize: CGSize {
     switch shape {
     // Small marks: what they do is plain from the shape (details on hover).
-    case .branch:
-      // Its ports are at a quarter and three quarters of this.
-      if let grid { return CGSize(width: 4 * Self.rowPitch(grid), height: 48) }
-      return CGSize(width: 60, height: 48)
-    case .fork:
-      // A Branch's diamond, widened by its outputs: two of them sit where a Branch's a and b do.
-      let n = CGFloat(max(outputs.count, 1))
-      let width = grid.map { 2 * n * Self.rowPitch($0) } ?? max(60, 30 * n)
-      return CGSize(width: width, height: max(48, width * 0.4))
     case .merge: return CGSize(width: fanWidth(inputs.count), height: fanLength(inputs.count))
     case .collect: return CGSize(width: grid.map { Self.gridLength(atLeast: 64, $0) } ?? 64, height: 44)
     // The start Card: its name and a run button, nothing more.
@@ -538,7 +525,7 @@ struct CardGeometry {
     return CGRect(x: 30, y: 0, width: s.width - 60, height: s.height)
   }
 
-  /// The outline itself (Card box, diamond, fan or funnel) inside `r`.
+  /// The outline itself (Card box, fan or funnel) inside `r`.
   /// `cornerScale` shrinks the corners that stay the same at every zoom, for a
   /// drawing much smaller than the canvas.
   func outline(in r: CGRect, cornerScale: CGFloat = 1) -> Path {
@@ -547,18 +534,6 @@ struct CardGeometry {
       return Path(roundedRect: r, cornerRadius: 9 * cornerScale)
     case .start:
       return Path(roundedRect: r, cornerRadius: r.height / 2)
-    case .branch:
-      return roundedPolygon([CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.midY),
-                             CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)], radius: 6 * cornerScale)
-    case .fork:
-      // A diamond whose corners along the flow stay sharp (listed twice): value
-      // is on the upstream one, and an odd number of outputs puts one on the other.
-      // The side corners shrink with the zoom, as `r` does.
-      let radius = 6 * (flow == .topToBottom ? r.height : r.width) / routingSize.height
-      let top = CGPoint(x: r.midX, y: r.minY), right = CGPoint(x: r.maxX, y: r.midY)
-      let bottom = CGPoint(x: r.midX, y: r.maxY), left = CGPoint(x: r.minX, y: r.midY)
-      return flow == .topToBottom ? roundedPolygon([top, top, right, bottom, bottom, left], radius: radius)
-                                  : roundedPolygon([top, right, right, bottom, left, left], radius: radius)
     case .collect:
       func point(_ across: CGFloat, _ along: CGFloat) -> CGPoint {
         flow == .topToBottom ? CGPoint(x: r.minX + r.width * across, y: r.minY + r.height * along)
@@ -594,7 +569,7 @@ struct CardGeometry {
   /// range at a fixed y).
   private func edgeSpan(input: Bool) -> (start: CGFloat, width: CGFloat, at: CGFloat) {
     switch shape {
-    case .card, .branch, .fork, .start:
+    case .card, .start:
       let s = shape == .card ? CGSize(width: cardWidth, height: collapsed ? Self.header : 0) : routingSize
       return (0, s.width, 0)
     case .merge, .collect:
@@ -608,7 +583,6 @@ struct CardGeometry {
   func spacing(input: Bool) -> CGFloat {
     let list = input ? inputs : outputs
     guard !list.isEmpty else { return 0 }
-    if shape == .branch { return routingSize.width / 2 - 8 }
     let span = edgeSpan(input: input)
     // A single label may be as wide as the Card; several share the edge
     // without overlapping their neighbours.
@@ -626,9 +600,8 @@ struct CardGeometry {
     if draft { return false }
     if shape == .card && collapsed { return false }
     if shape == .start { return false }
-    // Routing marks name their ports on hover; a branch marks only T / F.
-    if shape == .merge || shape == .collect || shape == .fork { return false }
-    if shape == .branch { return true }
+    // Routing marks name their ports on hover.
+    if shape == .merge || shape == .collect { return false }
     return spacing(input: input) >= Self.minLabel
   }
 
@@ -656,22 +629,6 @@ struct CardGeometry {
     if shape == .start {
       // Its one output, in the middle of the downstream edge.
       return flow == .topToBottom ? CGPoint(x: r.midX, y: r.maxY) : CGPoint(x: r.maxX, y: r.midY)
-    }
-    if shape == .branch {
-      // value / condition on the two upper edges, a / b on the two lower edges.
-      let first = index == 0
-      if flow == .topToBottom {
-        return CGPoint(x: r.minX + r.width * (first ? 0.25 : 0.75), y: r.minY + r.height * (output ? 0.75 : 0.25))
-      }
-      return CGPoint(x: r.minX + r.width * (output ? 0.75 : 0.25), y: r.minY + r.height * (first ? 0.25 : 0.75))
-    }
-    if shape == .fork {
-      // value on the upstream corner; the outputs spread over the two downstream
-      // edges, at the middles of their shares of the width (on the grid: odd rows).
-      let across = output ? (2 * i + 1) / (2 * n) : 0.5
-      let along = output ? 1 - abs(across - 0.5) : 0
-      return flow == .topToBottom ? CGPoint(x: r.minX + r.width * across, y: r.minY + r.height * along)
-                                  : CGPoint(x: r.minX + r.width * along, y: r.minY + r.height * across)
     }
     switch flow {
     case .topToBottom:
@@ -1238,7 +1195,7 @@ struct CardNodeView: View {
     .frame(width: outline.width, height: outline.height)
   }
 
-  // MARK: Routing Card (branch, merge)
+  // MARK: Routing Card
 
   /// Only the kind's icon, coloured by the state; name and details on hover.
   private func routingBody(_ g: CardGeometry, outline: CGRect) -> some View {
@@ -1278,13 +1235,7 @@ struct CardNodeView: View {
   private func label(_ p: PortData, _ g: CardGeometry, output: Bool) -> some View {
     let pt = g.port(p.name, output: output)
     let w = g.spacing(input: !output)
-    var text = p.name
-    if data.kind == .branch {
-      // Which output is true / false, and which input is the boolean condition.
-      if output { text = p.name == "a" ? "a (T)" : p.name == "b" ? "b (F)" : p.name }
-      else if p.name == "condition" { text = "bool" }
-    }
-    let label = Text(text).font(font(9.5)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+    let label = Text(p.name).font(font(9.5)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
     if g.shape == .card {
       // Inside an ordinary Card: below its input, above its output.
       let half = CardGeometry.portRow / 2 + 0.5
@@ -1292,8 +1243,8 @@ struct CardNodeView: View {
     }
     // Beside the port of a routing Card, so the wire (vertical at the port)
     // never runs through the name: right of it, or left on the left half.
-    let left = pt.x < g.outlineRect.midX - 1 && (data.kind == .branch || g.spacing(input: !output) < 70)
-    let lw: CGFloat = data.kind == .branch ? 40 : max(CardGeometry.minLabel, min(w, 80))
+    let left = pt.x < g.outlineRect.midX - 1 && g.spacing(input: !output) < 70
+    let lw: CGFloat = max(CardGeometry.minLabel, min(w, 80))
     let dy: CGFloat = output ? CardGeometry.portRow / 2 : -CardGeometry.portRow / 2
     let x = left ? pt.x - 6 - lw / 2 : pt.x + 6 + lw / 2
     return AnyView(label.frame(width: s(lw), alignment: left ? .trailing : .leading)
@@ -1309,13 +1260,10 @@ struct CardNodeView: View {
     return ZStack(alignment: .topLeading) {
       ForEach(data.inputs, id: \.name) { p in
         let pt = g.port(p.name, output: false)
-        // A branch's condition is a boolean: a small diamond instead of a square.
-        let condition = data.kind == .branch && p.name == "condition"
         RoundedRectangle(cornerRadius: max(1, s(1.5)))
-          .fill(condition ? Color.green.opacity(0.35) : Color(nsColor: .controlBackgroundColor))
-          .overlay(RoundedRectangle(cornerRadius: max(1, s(1.5))).strokeBorder(condition ? Color.green : Color.secondary, lineWidth: 1.4))
+          .fill(Color(nsColor: .controlBackgroundColor))
+          .overlay(RoundedRectangle(cornerRadius: max(1, s(1.5))).strokeBorder(.secondary, lineWidth: 1.4))
           .frame(width: mark, height: mark)
-          .rotationEffect(.degrees(condition ? 45 : 0))
           .frame(width: hit, height: hit)
           .contentShape(Rectangle())
           .position(x: s(pt.x), y: s(pt.y))
@@ -1358,14 +1306,7 @@ struct CardNodeView: View {
 
   private func portHelp(_ p: PortData, output: Bool) -> String {
     var s = (output ? String(localized: "出力 ") : String(localized: "入力 ")) + p.name
-    if data.kind == .branch {
-      if p.name == "condition" { s += String(localized: "（bool: true なら a、false なら b へ value を送る）") }
-      if p.name == "a" { s += String(localized: "（condition が true のとき）") }
-      if p.name == "b" { s += String(localized: "（condition が false のとき）") }
-    }
-    if data.kind == .fork && output { s += String(localized: "（value をそのまま送る）") }
     if let t = p.typeName { s += " : \(t)" }
-    if let n = p.note, !n.isEmpty { s += "\n" + n }
     return s
   }
 
@@ -1636,7 +1577,7 @@ struct WireRouter {
     let (c1, c2) = controls(a, b)
     let x0 = min(a.x, b.x, c1.x, c2.x), x1 = max(a.x, b.x, c1.x, c2.x)
     let y0 = min(a.y, b.y, c1.y, c2.y), y1 = max(a.y, b.y, c1.y, c2.y)
-    // A port sits on its Card's edge: only the inside counts. A branch's port is
+    // A port sits on its Card's edge: only the inside counts. A routing port is
     // inside its box, and the wire has to get out of there anyway.
     func inside(_ o: CGRect, _ p: CGPoint) -> Bool { p.x > o.minX + 2 && p.x < o.maxX - 2 && p.y > o.minY + 2 && p.y < o.maxY - 2 }
     let near = obstacles.filter { x0 < $0.maxX && x1 > $0.minX && y0 < $0.maxY && y1 > $0.minY && !inside($0, a) && !inside($0, b) }
@@ -2259,7 +2200,7 @@ enum PreviewSamples {
     func port(_ n: String) -> PortData { PortData(name: n, typeName: "t.Number") }
     let input = CardNodeData(title: String(localized: "初期値"), kind: .input, summary: nil,
                              inputs: [port("start")], outputs: [port("value")],
-                             params: [ParamData(name: "value", type: "uint64", value: "27")],
+                             params: [ParamData(name: "value", type: "int", value: "27")],
                              state: .succeeded, invocation: 1)
     var step = CardNodeData(title: String(localized: "n / 2"), kind: .code,
                             summary: String(localized: "偶数を半分にする"), inputs: [port("number")], outputs: [port("next")],
@@ -2267,8 +2208,8 @@ enum PreviewSamples {
     step.stage = StageProgress(items: [
       .init(stage: .build, status: .reused), .init(stage: .execute, status: .running), .init(stage: .validate, status: .pending),
     ], workerReused: true)
-    let gate = CardNodeData(title: String(localized: "偶数？"), kind: .branch, summary: nil,
-                            inputs: [port("value"), port("condition")], outputs: [port("a"), port("b")])
+    let gate = CardNodeData(title: String(localized: "合流"), kind: .merge, summary: nil,
+                            inputs: [port("value"), port("next")], outputs: [port("out")])
     let out = CardNodeData(title: String(localized: "結果"), kind: .code, summary: nil,
                            inputs: [port("in")], outputs: [], state: .succeeded, invocation: 1)
     return [
@@ -2282,7 +2223,6 @@ enum PreviewSamples {
   static let wires = [
     CanvasWire(from: "input", fromPort: "value", to: "step", toPort: "number", active: true),
     CanvasWire(from: "step", fromPort: "next", to: "gate", toPort: "value"),
-    CanvasWire(from: "gate", fromPort: "a", to: "out", toPort: "in"),
-    CanvasWire(from: "gate", fromPort: "b", to: "step", toPort: "number"),
+    CanvasWire(from: "gate", fromPort: "out", to: "out", toPort: "in"),
   ]
 }

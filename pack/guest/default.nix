@@ -30,7 +30,6 @@
   erofs-utils,
   kernel,
   tsugumid,
-  cardNixpkgs,
   flatbuffers,
   nix,
   cacert,
@@ -174,7 +173,6 @@ let
   exportInit = writeShellScript "tsugumi-pack-export-init" (
     boot "export" exportTools ''
       export NIX_SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt
-      export CARD_NIXPKGS_REV=${cardNixpkgs.rev} CARD_NIXPKGS_NARHASH=${cardNixpkgs.narHash}
       # What an app's runner image already holds: the payload leaves it out.
       export RUN_STORE_PATHS=${runRegistration}/store-paths
       if ! blkid -p /dev/vdb >/dev/null 2>&1; then

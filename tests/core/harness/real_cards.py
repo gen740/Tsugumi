@@ -1,5 +1,7 @@
-"""Small Card fixtures (built with the kit's pythonCard) shared by host
-and VM integration scenarios."""
+"""Small Card fixtures shared by host and VM integration scenarios.
+
+Python builders here require the redesigned kit pin with sdk/python/default.nix.
+"""
 
 import json
 import socket
@@ -14,8 +16,8 @@ NUM = "namespace t; table Num { value:ulong; } table Outputs { out:Num (required
 TXT = "namespace t; table Txt { value:string; } table Outputs { out:Txt (required); } root_type Outputs;"
 
 
-FLAG = "namespace t; table Flag { value:bool; } table Outputs { flag:Flag (required); } root_type Outputs;"
-
+PYTHON_BINDINGS = """  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };"""
 
 def accept_in_background(listener: socket.socket) -> list:
     """Record accepted peers without leaking sockets or a blocking accept thread."""
@@ -58,22 +60,20 @@ def python_run(main: str, *, values: dict | None = None, tools: str = "") -> str
     """The Nix expression of a run whose main.py is `main`, built with
     the kit's pythonCard. `values` binds Python names to Nix string expressions
     (store paths, evaluated names); their string context builds them into the
-    Card's closure. `tools` is a Nix list of packages for subprocesses."""
+    Card's closure. The core writes the input catalog only for wired Cards.
+    `tools` is a Nix list of packages for subprocesses."""
     parts = [f'"{name} = " (builtins.toJSON ({expr})) "\\n"' for name, expr in (values or {}).items()]
     source = "(builtins.concatStringsSep \"\" [ " + " ".join(parts + [nix_string(main)]) + " ])"
     options = f" tools = {tools};" if tools else ""
-    return "(inputs.tsugumi.pythonSdk.pythonCard { inherit schemas; src = pkgs.writeTextDir \"main.py\" " + source + ";" + options + " })"
+    return ("(sdk.pythonCard { inherit params; outputs = ./_outputs.fbs;"
+            " inputs = if builtins.pathExists ./_inputs.fbs then ./_inputs.fbs else null;"
+            " src = pkgs.writeTextDir \"main.py\" " + source + ";" + options + " })")
 
 
 def python_nix(main: str, *, values: dict | None = None, let: str = "", tools: str = "", extra: str = "") -> str:
     """default.nix of a Card whose run is python_run(main, ...)."""
-    return ("{ pkgs, params, inputs, schemas }:\n" + (f"let\n{let}\nin\n" if let else "")
+    return ("{ params, inputs }:\nlet\n" + PYTHON_BINDINGS + f"\n{let}\nin\n"
             + "{ run = " + python_run(main, values=values, tools=tools) + "; " + extra + "}\n")
-
-
-def printing_run(text_nix: str) -> str:
-    """A run that prints the value of the Nix string expression `text_nix`."""
-    return python_run(PRINT_MAIN, values={"PRINTED": text_nix})
 
 
 def python_card(main: str, *, outputs=NUM, inputs=(), values=None, let="", tools="", extra="", **settings) -> dict:
@@ -85,13 +85,13 @@ def python_card(main: str, *, outputs=NUM, inputs=(), values=None, let="", tools
 
 def txt_main(body: str) -> str:
     """main.py running `body` (Python, indented by 4) and returning out = RESULT."""
-    return ("from card import Output\nfrom outputs.out.t.Txt import TxtT\n\ndef run(input):\n"
+    return ("from card import Output\nfrom t.Txt import TxtT\n\ndef run(input):\n"
             + body + "\n    return Output(out=TxtT(value=RESULT))\n")
 
 
 # main.py returning out = Num(1).
 ONE_MAIN = """from card import Output
-from outputs.out.t.Num import NumT
+from t.Num import NumT
 
 def run(input):
     return Output(out=NumT(value=1))
@@ -108,7 +108,7 @@ def log(c, run_id, card_id, stream=1, inv=1):
 # os.environ and the C environment (what native libraries read).
 ENVIRONMENT_MAIN = """import ctypes, json, os
 from card import Output
-from outputs.out.t.Txt import TxtT
+from t.Txt import TxtT
 
 AT_LOAD = os.getcwd()
 os.environ["FROM_TOP"] = "top"
@@ -147,7 +147,7 @@ def check_process_environment(first: dict, second: dict) -> None:
 # bin directory on PATH, so jq resolves there and nothing else does.
 DEFINITION_TOOLS_MAIN = """import os, shutil, subprocess
 from card import Output
-from outputs.out.t.Txt import TxtT
+from t.Txt import TxtT
 
 def run(input):
     jq = shutil.which("jq")

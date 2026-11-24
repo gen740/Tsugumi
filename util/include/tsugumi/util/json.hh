@@ -92,10 +92,6 @@ auto canonical_text(const hosq::json::GenericDom<>& value) -> std::string;
 hosq::json::GenericDom<> capture(std::string_view json_text);
 // Captures a string value.
 hosq::json::GenericDom<> string_value(const std::string& s);
-// JSON object text from (key, captured value) pairs, in the given order.
-std::string object_text(
-    const std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>>&
-        members);
 // The form the clients write document files in: two spaces, a final newline.
 // `compact` is validated JSON without whitespace between its tokens.
 std::string pretty_text(std::string_view compact);

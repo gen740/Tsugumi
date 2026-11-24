@@ -28,6 +28,267 @@ auto Field(std::vector<std::string> fields, std::string old_value,
   edit.new_value->json = std::move(new_value);
   return edit;
 }
+TEST(NixPathDocument, ValidatesNamesAndUrlsAndSortsLockLines) {
+  const auto project = [](std::string entries) {
+    return "{\"nixPath\":" + entries +
+           ",\"canvas\":{\"cards\":[],\"connections\":[]}}";
+  };
+  EXPECT_NO_THROW(parse_project_json(
+      project(R"([{"name":"9.compile_x-1","url":"github:org/repo"}])")));
+  for (
+      const auto* entries : {
+          R"([{"name":"_bad","url":"github:org/repo"}])",
+          R"([{"name":"ok","url":"github:org/repo"},{"name":"ok","url":"gitlab:org/repo"}])",
+          R"([{"name":"ok"}])",
+          R"([{"name":"ok","url":"invalid url"}])",
+      })
+    EXPECT_THROW(parse_project_json(project(entries)), DocumentError);
+  const auto lock = parse_project_lock("tsugumi.lock", R"({"entries":[
+    {"name":"z","url":"git+https://example.com/z","rev":"0123456789012345678901234567890123456789","narHash":"sha256-z"},
+    {"name":"a","url":"https://example.com/a.tar.gz","narHash":"sha256-a"}
+  ]})");
+  EXPECT_LT(lock.text.find("\"a\""), lock.text.find("\"z\""));
+  EXPECT_THROW(
+      parse_project_lock("tsugumi.lock", R"({"entries":[{"name":"a","url":"github:org/a"}]})"),
+      DocumentError);
+  EXPECT_THROW(parse_project_lock("tsugumi.lock", R"({"entries":[true]})"),
+               DocumentError);
+  EXPECT_EQ(parse_project_lock("tsugumi.lock", lock.text).text, lock.text);
+}
+
+struct FakeNixPathCore {
+  json::Members snapshot;
+  json::Members save;
+  std::vector<std::string> calls;
+  bool stale_param_hash = false;
+  bool fail_param = false;
+  bool fail_lock = false;
+
+  auto Call(const std::string& method, const json::Members& args)
+      -> OperationReply {
+    json::Members value;
+    std::string reply;
+    if (method == "operation_get") {
+      reply = "OperationResult";
+      value = {{"state", "\"unknown\""}};
+    } else if (method == "project_inspect") {
+      reply = "ProjectSnapshot";
+      value = snapshot;
+    } else if (method == "nix_path_lock_source") {
+      const auto url = json::Text(args, "url");
+      calls.push_back(url);
+      if (fail_lock) {
+        reply = "Failure";
+        value = {{"kind", "\"nix_failed\""}, {"diagnostic", "\"lock failed\""}};
+      } else {
+        reply = "NixPathLockedSource";
+        value = {{"rev", json::Quote("0123456789012345678901234567890123456789")},
+                 {"narHash", json::Quote("sha256-new")}};
+      }
+    } else if (method == "rewrite_param_literal") {
+      EXPECT_EQ(json::Text(args, "name"), "scale");
+      EXPECT_EQ(json::Text(args, "literal"), "10.0");
+      EXPECT_EQ(json::Text(args, "at_rev"), "7");
+      if (fail_param) {
+        reply = "Failure";
+        value = {{"kind", json::Quote("validation_failed")},
+                 {"diagnostic", json::Quote("parameter scale expects float")}};
+      } else {
+        reply = "RewrittenParamLiteral";
+        value = {
+            {"path", json::Quote("definitions/a/params.nix")},
+            {"base_hash",
+             json::Quote(stale_param_hash
+                             ? "other"
+                             : crypto::sha256_hex("{ scale = 2.0; # keep\n}"))},
+            {"text", json::Quote("{ scale = 10.0; # keep\n}")}};
+      }
+    } else if (method == "project_file_read") {
+      EXPECT_EQ(json::Text(args, "path"), "definitions/a/params.nix");
+      reply = "FilePage";
+      value = {{"bytes", json::Quote("{ scale = 2.0; # keep\n}")},
+               {"eof", "true"}};
+    } else {
+      EXPECT_EQ(method, "project_save");
+      reply = "SaveResult";
+      value = {{"rev", "\"8\""}};
+      save = args;
+    }
+    return {json::Encode(json::Members{{"reply", json::Quote(reply)},
+                                       {"value", json::Encode(value)}}),
+            {}};
+  }
+
+  auto Execute(const H::ProjectOperateRequestT& operation) -> OperationReply {
+    save.clear();
+    calls.clear();
+    return ProjectOperations().Execute(
+        operation, {"ui", {}, {}, {}},
+        [this](const auto& method, const auto& args) {
+          return Call(method, args);
+        });
+  }
+
+  auto ReadChange(const std::string& kind) const -> json::Members {
+    for (const auto& raw : json::Array(json::Get(save, "changes", "[]"))) {
+      const auto change = json::Object(raw);
+      if (json::Text(change, "value_type") == kind)
+        return json::Object(change.at("value"));
+    }
+    return {};
+  }
+};
+
+auto SourceDoc(const std::string& path, const std::string& bytes)
+    -> std::string {
+  return json::Encode(
+      json::Members{{"path", json::Quote(path)},
+                    {"hash", json::Quote(crypto::sha256_hex(bytes))},
+                    {"document", json::Quote(bytes)}});
+}
+
+TEST(NixPathOperation, RootAndExternalLocksUpdateOneAndAllAtomically) {
+  const std::string project =
+      R"({"nixPath":[{"name":"used","url":"github:org/repo"}],"canvas":{"cards":[],"connections":[]}})";
+  const std::string old =
+      R"({"entries":[{"name":"stale","url":"github:org/stale","narHash":"sha256-old"}]})";
+  FakeNixPathCore core;
+  core.snapshot = {
+      {"rev", "\"7\""},
+      {"project_json", json::Quote(project)},
+      {"sources", json::Encode(std::vector<std::string>{
+                      SourceDoc("tsugumi.lock", old),
+                      SourceDoc("externals/sub/tsugumi.json", project),
+                      SourceDoc("externals/sub/tsugumi.lock", old)})}};
+  H::ProjectOperateRequestT operation;
+  operation.project_id = "p";
+  operation.op_id = "update";
+  H::ProjectUpdateNixPathLockT update;
+  update.name = "used";
+  operation.body.Set(update);
+  core.Execute(operation);
+  auto change = core.ReadChange("SetProjectLock");
+  EXPECT_EQ(json::Text(change, "path"), "tsugumi.lock");
+  EXPECT_EQ(json::Text(change, "base_hash"), crypto::sha256_hex(old));
+  EXPECT_EQ(core.calls, (std::vector<std::string>{"github:org/repo"}));
+  EXPECT_EQ(json::Text(change, "json").find("stale"), std::string::npos);
+  update.project_path = "externals/sub";
+  update.name.clear();
+  operation.body.Set(update);
+  core.Execute(operation);
+  change = core.ReadChange("SetProjectLock");
+  EXPECT_EQ(json::Text(change, "path"), "externals/sub/tsugumi.lock");
+  EXPECT_EQ(json::Text(change, "json").find("stale"), std::string::npos);
+  EXPECT_NE(json::Text(change, "json").find("sha256-new"), std::string::npos);
+  core.fail_lock = true;
+  EXPECT_THROW(core.Execute(operation), Failure);
+  EXPECT_TRUE(core.save.empty());
+}
+
+TEST(NixPathOperation, KeepsMatchingEntriesAndResolvesChangedURLs) {
+  const std::string project =
+      R"({"nixPath":[{"name":"fixed","url":"https://example.com/a.tgz"},{"name":"changed","url":"github:org/repo/new-ref"},{"name":"missing","url":"git+https://example.com/repo"}]})";
+  const std::string old =
+      R"({"entries":[{"name":"fixed","url":"https://example.com/a.tgz","narHash":"sha256-keep"},{"name":"changed","url":"github:org/repo/old-ref","narHash":"sha256-outdated"}]})";
+  FakeNixPathCore core;
+  core.snapshot = {
+      {"rev", "\"7\""},
+      {"project_json", json::Quote(project)},
+      {"sources", json::Encode(std::vector<std::string>{
+                      SourceDoc("tsugumi.lock", old)})}};
+  H::ProjectOperateRequestT operation;
+  operation.project_id = "p";
+  operation.op_id = "update";
+  operation.body.Set(H::ProjectUpdateNixPathLockT{});
+  core.Execute(operation);
+  EXPECT_EQ(core.calls, (std::vector<std::string>{
+                            "github:org/repo/new-ref",
+                            "git+https://example.com/repo"}));
+  const auto text = json::Text(core.ReadChange("SetProjectLock"), "json");
+  EXPECT_NE(text.find("sha256-keep"), std::string::npos);
+  EXPECT_EQ(text.find("sha256-outdated"), std::string::npos);
+  EXPECT_NE(text.find("github:org/repo/new-ref"), std::string::npos);
+}
+
+TEST(NixPathOperation, ParamRewriteUsesTheConfirmedSourceAndRevision) {
+  FakeNixPathCore core;
+  const std::string source = "{ scale = 2.0; # keep\n}";
+  core.snapshot = {
+      {"rev", "\"7\""},
+      {"project_json",
+       R"("{\"canvas\":{\"cards\":[{\"id\":\"a\"}],\"connections\":[]}}")"},
+      {"definitions", R"([{"id":"a","card_json":"{\"type\":\"code\"}"}])"},
+      {"sources",
+       json::Encode(std::vector<std::string>{json::Encode(json::Members{
+           {"path", json::Quote("definitions/a/params.nix")},
+           {"hash", json::Quote(crypto::sha256_hex(source))}})})}};
+  H::ProjectOperateRequestT operation;
+  operation.project_id = "p";
+  operation.op_id = "edit";
+  H::ProjectRewriteParamLiteralT set;
+  set.card = std::make_unique<Tsugumi::Data::CardPathT>();
+  set.card->segments = {"a"};
+  set.name = "scale";
+  set.expected_rev = 7;
+  set.literal = "10.0";
+  operation.body.Set(set);
+  core.Execute(operation);
+  const auto change = core.ReadChange("PutSource");
+  EXPECT_EQ(json::Text(change, "path"), "definitions/a/params.nix");
+  EXPECT_EQ(json::Text(change, "base_hash"), crypto::sha256_hex(source));
+  EXPECT_TRUE(core.ReadChange("PutDefinition").empty());
+
+  core.stale_param_hash = true;
+  const auto conflict = json::Object(core.Execute(operation).json);
+  EXPECT_EQ(json::Text(json::Object(conflict.at("value")), "kind"),
+            "source_changed");
+  EXPECT_TRUE(core.save.empty());
+  core.stale_param_hash = false;
+
+  core.fail_param = true;
+  EXPECT_THROW(core.Execute(operation), Failure);
+  EXPECT_TRUE(core.save.empty());
+  core.fail_param = false;
+
+  set.expected_rev = 6;
+  operation.body.Set(set);
+  EXPECT_THROW(core.Execute(operation), Failure);
+  EXPECT_TRUE(core.save.empty());
+}
+
+TEST(NixPathOperation, CardCopyDoesNotCarryPinsOrBlockOnNames) {
+  const std::string source =
+      R"({"nixPath":[{"name":"used","url":"github:org/repo"}],"canvas":{"cards":[{"id":"source"}],"connections":[]}})";
+  const std::string pin =
+      R"({"entries":[{"name":"used","url":"github:org/repo","rev":"0123456789012345678901234567890123456789","narHash":"sha256-old"}]})";
+  const std::string destination =
+      R"({"nixPath":[{"name":"used","url":"github:other/repo"}],"canvas":{"cards":[],"connections":[]}})";
+  FakeNixPathCore core;
+  core.snapshot = {
+      {"rev", "\"7\""},
+      {"project_json", json::Quote(source)},
+      {"definitions",
+       R"([{"id":"source","card_json":"{\"type\":\"draft\"}"}])"},
+      {"sources", json::Encode(std::vector<std::string>{
+                      SourceDoc("tsugumi.lock", pin),
+                      SourceDoc("externals/sub/tsugumi.json", destination)})}};
+  H::ProjectOperateRequestT operation;
+  operation.project_id = "p";
+  operation.op_id = "copy";
+  H::ProjectCopyT copy;
+  copy.project_path = "externals/sub";
+  auto item = std::make_unique<H::ProjectCopyItemT>();
+  item->from = "definitions/source/";
+  item->id = "copy";
+  copy.items.push_back(std::move(item));
+  operation.body.Set(copy);
+
+  EXPECT_EQ(json::Text(json::Object(core.Execute(operation).json), "reply"),
+            "SaveResult");
+  EXPECT_TRUE(core.ReadChange("SetProjectLock").empty());
+  EXPECT_TRUE(core.calls.empty());
+}
+
 auto WirePort(const std::string& from, const std::string& to,
               const std::string& from_port, const std::string& to_port,
               const std::string& side, const std::string& value)
@@ -58,7 +319,7 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
   SaveBase base;
   base.snapshot["rev"] = "7";
   const std::string before =
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":""},"to":{"card":"compare","port":""}}]}})";
+      R"({"nixPath": [],"canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":""},"to":{"card":"compare","port":""}}]}})";
   base.files["tsugumi.json"] = before;
   base.files["definitions/knn/_card.json"] = R"({"type":"draft"})";
   H::ProjectEditsT edits;
@@ -230,7 +491,7 @@ TEST(ProjectEditDiagnostics, NamesTheWireEndAndTheDefinitionFieldsToWrite) {
     SCOPED_TRACE(scenario);
     Document doc;
     doc.project_json =
-        R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":"out"},"to":{"card":"compare","port":"source"}}]}})";
+        R"({"nixPath": [],"canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":"out"},"to":{"card":"compare","port":"source"}}]}})";
     doc.project_buffer = parse_project_json(doc.project_json).buffer;
     const auto add = [&](const std::string& id, const std::string& raw) {
       DefinitionDoc definition;
@@ -242,10 +503,15 @@ TEST(ProjectEditDiagnostics, NamesTheWireEndAndTheDefinitionFieldsToWrite) {
     add("compare",
         std::string(scenario) == "draft" ? R"({"type":"draft"})"
         : std::string(scenario) == "unknown_param"
-            ? R"({"type":"code","inputs":[{"name":"source"}],"params":[{"name":"k","type":"number","data":{"double":3}}]})"
+            ? R"({"type":"code","inputs":[{"name":"source"}]})"
             : R"({"type":"code","inputs":[]})");
+    if (std::string_view(scenario) == "unknown_param")
+      doc.sources["definitions/compare/params.nix"] = {};
     const auto resolved = resolve(
-        doc, [](const auto&) -> std::optional<std::string> { return {}; });
+        doc, [](const auto&) -> std::optional<std::string> { return "{ k = []; }"; },
+        [](const auto&, auto) -> std::string {
+          throw std::runtime_error("empty lists are not allowed");
+        });
     bool found = false;
     for (const auto& diagnostic : resolved->all_diagnostics(false)) {
       if (diagnostic.code != (std::string(scenario) == "unknown_param"
@@ -260,13 +526,13 @@ TEST(ProjectEditDiagnostics, NamesTheWireEndAndTheDefinitionFieldsToWrite) {
     EXPECT_TRUE(found);
   }
 }
-TEST(ProjectEdit,
-     PreservesEveryUntouchedByteIncludingPinsHashesAndUint64Spelling) {
+TEST(ProjectEdit, PreservesEveryUntouchedByteIncludingNixPath) {
   const std::string before =
-      "{\n  \"name\": \"before\",\n  \"pkgsPath\": \"nixpkgs-stable\",\n"
-      "  \"nixSources\": { \"pin\": {\"hash\": \"sha256-ExactBytes=\", "
-      "\"rev\": 18446744073709551615} },\n"
+      "{\n  \"name\": \"before\",\n"
+      "  \"nixPath\": [ {\"name\": \"science\", \"url\": "
+      "\"github:org/science\"} ],\n"
       "  \"canvas\": {\"cards\":[],\"connections\":[]}\n}\n";
+
   auto edit = Field({"name"}, "\"before\"", "\"after\"");
   auto expected = before;
   expected.replace(expected.find("before"), 6, "after");

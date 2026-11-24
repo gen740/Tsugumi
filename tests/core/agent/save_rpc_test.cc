@@ -14,7 +14,7 @@ TEST_F(AgentProjectFixture,
         R"({"comments":[{"id":"c1","text":"Ask","author":"user"}]})");
   StartProject(
       false,
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("save-policy");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -121,13 +121,14 @@ TEST_F(AgentProjectFixture, ExclusionsUseAcceptedAndRecordedDefinitionPaths) {
   Write(link, R"({"type":"subgraph","external":"private"})");
   for (const auto* name : {"private", "public"}) {
     const auto folder = root / "externals" / name;
-    Write(folder / "tsugumi.json",
-          R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"leaf"}],"connections":[]}})");
+    Write(
+        folder / "tsugumi.json",
+        R"({"nixPath": [],"canvas":{"cards":[{"id":"leaf"}],"connections":[]}})");
     Write(folder / "definitions/leaf/_card.json", R"({"type":"trigger"})");
   }
   StartProject(
       false,
-      R"({"pkgsPath":"tsugumi:default","agentExclude":["externals/private/definitions/leaf/_card.json"],"canvas":{"cards":[{"id":"group"}],"connections":[]}})");
+      R"({"nixPath": [],"agentExclude":["externals/private/definitions/leaf/_card.json"],"canvas":{"cards":[{"id":"group"}],"connections":[]}})");
   const auto conversation = Conversation("confirmed-exclusions");
   for (const auto access :
        {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Run})
@@ -429,7 +430,7 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorSavesGraphWithoutWritingLayout) {
   namespace json = ::tsugumi::json;
   const auto nested = directory.path / "project/externals/storage";
   const std::string document =
-      R"({"name":"Nested","pkgsPath":"tsugumi:default","boundary":{"inputs":[],"outputs":[]},"canvas":{"cards":[{"id":"upstream"},{"id":"secret"}],"connections":[]}})";
+      R"({"name":"Nested","nixPath": [],"boundary":{"inputs":[],"outputs":[]},"canvas":{"cards":[{"id":"upstream"},{"id":"secret"}],"connections":[]}})";
   Write(nested / "tsugumi.json", document);
   Write(nested / "definitions/upstream/_card.json", R"({"type":"draft"})");
   Write(nested / "definitions/secret/_card.json", R"({"type":"draft"})");
@@ -441,7 +442,7 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorSavesGraphWithoutWritingLayout) {
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
                 "value"));
   const auto root =
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"outer"}],"connections":[]}})";
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","nixPath": [],"canvas":{"cards":[{"id":"outer"}],"connections":[]}})";
   const auto seeded = Tool(
       conversation, "project_save",
       json::Encode(json::Members{
@@ -537,7 +538,7 @@ class ScopedSourceOperation : public AgentProjectFixture,
 TEST_P(ScopedSourceOperation, SourceEditsLeaveLayoutsUntouched) {
   const auto root = directory.path / "project";
   const std::string graph =
-      R"({"name":"Nested","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})";
+      R"({"name":"Nested","nixPath": [],"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})";
   for (const auto& prefix : {std::string{}, std::string{"externals/assigned/"},
                              std::string{"externals/unrelated/"}}) {
     for (const auto* id : {"a", "b"})
@@ -551,7 +552,7 @@ TEST_P(ScopedSourceOperation, SourceEditsLeaveLayoutsUntouched) {
   Write(root / "definitions/outer/_card.json", R"({"type":"subgraph","external":"assigned"})");
   StartProject(
       false,
-      R"({"name":"Scoped","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"outer"}],"connections":[]}})");
+      R"({"name":"Scoped","nixPath": [],"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"outer"}],"connections":[]}})");
   const auto conversation = Conversation("source-only-scoped");
   Grant(conversation);
   // A read grant never authorizes a save.

@@ -28,6 +28,7 @@ TEST_F(AgentProjectFixture,
   const auto snapshot = json::Object(
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
                 "value"));
+  const auto sources = json::Array(snapshot.at("sources"));
   auto project = json::Object(document);
   auto canvas = json::Object(project.at("canvas"));
   auto cards = json::Array(canvas.at("cards"));
@@ -79,10 +80,7 @@ TEST_F(AgentProjectFixture,
     for (const auto& name : inputs)
       input_defs.push_back(json::Encode(json::Members{{"name", Quote(name)}}));
     const auto definition = json::Encode(json::Members{
-        {"type", Quote("code")},
-        {"inputs", json::Encode(input_defs)},
-        {"params",
-         R"([{"name":"rate","type":"double","data":{"double":0.001}},{"name":"regularization","type":"double","data":{"double":1.0}}])"}});
+        {"type", Quote("code")}, {"inputs", json::Encode(input_defs)}});
     change("PutDefinition", {{"id", Quote(id)},
                              {"readme", Quote(readme)},
                              {"card_json", Quote(definition)}});
@@ -95,6 +93,20 @@ TEST_F(AgentProjectFixture,
             {"bytes", Quote("def main(inputs, report):\n    return {}\n")}});
     change("PutSource", {{"path", Quote("definitions/" + id + "/_outputs.fbs")},
                          {"bytes", Quote(output_schema)}});
+    const auto params_path = "definitions/" + id + "/params.nix";
+    json::Members params{
+        {"path", Quote(params_path)},
+        {"bytes", Quote("{ rate = 0.001; regularization = 1.0; }")}};
+    // The bundled Drafts already have params.nix. Replacing one needs its
+    // snapshot hash; the new report Card creates the file without a hash.
+    for (const auto& raw_source : sources) {
+      const auto source = json::Object(raw_source);
+      if (json::Text(source, "path") == params_path) {
+        params["base_hash"] = source.at("hash");
+        break;
+      }
+    }
+    change("PutSource", std::move(params));
   }
   // The bundled Japanese text exercises multibyte clipping in tool events.
   const auto read_arguments = R"({"path":"definitions/boosting/README.md"})";
@@ -111,6 +123,10 @@ TEST_F(AgentProjectFixture,
                   .Code()
                   .empty());
   WaitUntilIdle(conversation);
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 4u);
+  ASSERT_FALSE(JsonBool(requests.back(), "/messages/6/content/0/is_error"))
+      << JsonString(requests.back(), "/messages/6/content/0/content");
   const auto after = json::Object(
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
                 "value"));
@@ -130,9 +146,8 @@ TEST_F(AgentProjectFixture,
     SCOPED_TRACE(id);
     const auto definition = Read(root / "definitions" / id / "_card.json");
     EXPECT_EQ(JsonString(definition, "/type"), "code");
-    const auto params = json::Array(json::Object(definition).at("params"));
-    const auto rate = json::Object(params.front());
-    EXPECT_DOUBLE_EQ(std::stod(json::Object(rate.at("data")).at("double")), 0.001);
+    EXPECT_EQ(Read(root / "definitions" / id / "params.nix"),
+              "{ rate = 0.001; regularization = 1.0; }");
   }
 }
 }  // namespace

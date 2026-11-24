@@ -3,14 +3,21 @@
 
 #include <fcntl.h>
 #include <poll.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <mutex>
 #include <set>
+#include <thread>
 
+#include "display_channel.hh"
 #include "nix_store.hh"
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/rpc/frame.hh"
@@ -22,6 +29,7 @@
 #include "tsugumi/workerd/log.hh"
 #include "tsugumi/workerd/log_limits.hh"
 #include "tsugumi/workerd/protocol.hh"
+#include "tsugumi/workerd/staging.hh"
 #include "tsugumi/workerd/store_result.hh"
 #include "tsugumi/workerd/value_wire.hh"
 #include "tsugumi/workerd/worker_execution.hh"
@@ -131,32 +139,19 @@ auto make_result(const workerd::InvocationResult& outcome) -> std::string {
   if (outcome.failure) {
     kind = W::WorkerPayload::WorkerFailure;
     body =
-        W::CreateWorkerFailure(b, wire::failure(b, *outcome.failure)).Union();
+        W::CreateWorkerFailure(b, wire::failure(b, *outcome.failure),
+                               wire::artifact_ids(b, outcome.created)).Union();
   } else {
-    // Paths are job-relative: out/... for new outputs, inputs/... for an
-    // input returned unchanged, which forwarded_from names as on the
-    // local path.
     std::vector<flatbuffers::Offset<W::WorkerOutput>> outputs;
-    for (const auto& value : outcome.outputs) {
-      const bool path = value.kind == PortKind::Path;
-      auto data =
-          path ? flatbuffers::Offset<flatbuffers::Vector<uint8_t>>()
-               : b.CreateVector(
-                     reinterpret_cast<const uint8_t*>(value.bytes.data()),
-                     value.bytes.size());
-      auto location = path ? b.CreateString(value.path)
-                           : flatbuffers::Offset<flatbuffers::String>();
-      const auto forward =
-          std::ranges::find(outcome.forwards, value.name,
-                            &std::pair<std::string, std::string>::first);
-      auto forwarded = forward == outcome.forwards.end()
-                           ? flatbuffers::Offset<flatbuffers::String>()
-                           : b.CreateString(forward->second);
-      outputs.push_back(W::CreateWorkerOutput(b, b.CreateString(value.name),
-                                              data, location, forwarded));
-    }
+    for (const auto& value : outcome.outputs)
+      outputs.push_back(W::CreateWorkerOutput(
+          b, b.CreateString(value.name),
+          b.CreateVector(reinterpret_cast<const uint8_t*>(value.bytes.data()),
+                         value.bytes.size()),
+          wire::artifact_ids(b, value.artifacts)));
     kind = W::WorkerPayload::WorkerResult;
-    body = W::CreateWorkerResult(b, b.CreateVector(outputs)).Union();
+    body = W::CreateWorkerResult(b, b.CreateVector(outputs),
+                                 wire::artifact_ids(b, outcome.created)).Union();
   }
   W::FinishWorkerMessageBuffer(b, W::CreateWorkerMessage(b, 1, kind, body));
   if (b.GetSize() > kWorkerLimit)
@@ -164,25 +159,141 @@ auto make_result(const workerd::InvocationResult& outcome) -> std::string {
   return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};
 }
 
-auto relay_display(const WorkerDisplayData& display) -> void {
-  if (display.view.size() > workerd::kRemoteDisplayBytes ||
-      display.bytes.size() > workerd::kRemoteDisplayBytes - display.view.size())
-    return;
-  flatbuffers::FlatBufferBuilder b;
-  const auto message = W::CreateWorkerDisplay(
-      b, b.CreateString(display.view),
-      b.CreateVector(reinterpret_cast<const uint8_t*>(display.bytes.data()),
-                     display.bytes.size()));
-  b.Finish(message);
-  try {
-    rpc::frame::Write(
-        workerd::kDisplayChannelFd,
-        {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()},
-        workerd::kRemoteDisplayBytes);
-  } catch (const rpc::frame::Error&) {
-    // A lost listener drops live data and leaves the invocation running.
+// The native worker's credit is held until the remote listener forwards the
+// message. Its socket reader never waits for a slow view or a network poll.
+class InvocationDisplay {
+ public:
+  explicit InvocationDisplay(std::weak_ptr<WorkerProc::ViewReceiver> target)
+      : target_(std::move(target)), reader_([this] { read(); }) {
+    try {
+      writer_ = std::thread([this] { write(); });
+    } catch (...) {
+      ::shutdown(workerd::kDisplayChannelFd, SHUT_RDWR);
+      reader_.join();
+      throw;
+    }
   }
-}
+  ~InvocationDisplay() {
+    {
+      std::lock_guard lock(mutex_);
+      stopping_ = true;
+    }
+    ready_.notify_all();
+    writer_.join();
+    ::shutdown(workerd::kDisplayChannelFd, SHUT_RDWR);
+    reader_.join();
+  }
+
+  auto push(WorkerDisplayData display, WorkerProc::DisplayCredit complete)
+      -> void {
+    std::unique_lock lock(mutex_);
+    if (closed_) {
+      lock.unlock();
+      complete();
+      return;
+    }
+    pending_.emplace_back(std::move(display), std::move(complete));
+    ready_.notify_one();
+  }
+
+ private:
+  auto write() -> void {
+    try {
+      const char ready = 1;
+      if (::write(workerd::kDisplayChannelFd, &ready, 1) != 1)
+        throw std::runtime_error("cannot signal remote display readiness");
+      for (;;) {
+        std::unique_lock lock(mutex_);
+        ready_.wait(lock, [&] {
+          return stopping_ || closed_ || !pending_.empty() || !credits_.empty();
+        });
+        if (closed_) return;
+        if (!credits_.empty()) {
+          auto credit = credits_.extract(credits_.begin());
+          lock.unlock();
+          workerd::write_display_credit(workerd::kDisplayChannelFd,
+                                        credit.key(), credit.mapped());
+          continue;
+        }
+        if (stopping_ && pending_.empty()) return;
+        auto [display, complete] = std::move(pending_.front());
+        pending_.pop_front();
+        in_flight_[display.view].emplace_back(
+            workerd::message_cost(display.bytes.size()), std::move(complete));
+        lock.unlock();
+        workerd::write_display(workerd::kDisplayChannelFd, display.view,
+                               display.bytes);
+      }
+    } catch (const std::exception&) {
+      ::shutdown(workerd::kDisplayChannelFd, SHUT_RDWR);
+    }
+  }
+
+  auto read() -> void {
+    try {
+      while (auto frame = workerd::read_display(workerd::kDisplayChannelFd)) {
+        const auto* envelope = W::GetWorkerMessage(frame->data());
+        if (const auto* message = envelope->value_as_WorkerDisplay()) {
+          if (auto worker = target_.lock()) {
+            WorkerDisplayData display{message->view()->str(),
+                                      bytes(message->bytes())};
+            // Once the worker retires, reverse messages may still be in
+            // transit. Keep draining forward credits until the writer stops.
+            if (!worker->send(display, [this, view = display.view,
+                                        cost = workerd::message_cost(
+                                            display.bytes.size())] {
+                  std::lock_guard lock(mutex_);
+                  credits_[view] += cost;
+                  ready_.notify_one();
+                })) {
+              target_.reset();
+            }
+          }
+          continue;
+        }
+        const auto* credit = envelope->value_as_WorkerDisplayCredit();
+        if (!credit) break;
+        size_t bytes = credit->bytes();
+        std::unique_lock lock(mutex_);
+        auto& view = in_flight_[credit->view()->str()];
+        while (bytes) {
+          if (view.empty() || bytes < view.front().first)
+            throw std::runtime_error("invalid remote display credit");
+          auto [cost, complete] = std::move(view.front());
+          view.pop_front();
+          bytes -= cost;
+          lock.unlock();
+          complete();
+          lock.lock();
+        }
+      }
+    } catch (const std::exception&) {
+    }
+    ::shutdown(workerd::kDisplayChannelFd, SHUT_RDWR);
+    std::unique_lock lock(mutex_);
+    closed_ = true;
+    auto in_flight = std::move(in_flight_);
+    auto pending = std::move(pending_);
+    ready_.notify_all();
+    lock.unlock();
+    for (auto& [name, view] : in_flight)
+      for (auto& [cost, complete] : view) complete();
+    for (auto& [display, complete] : pending) complete();
+  }
+
+  std::weak_ptr<WorkerProc::ViewReceiver> target_;
+  std::mutex mutex_;
+  std::condition_variable ready_;
+  std::deque<std::pair<WorkerDisplayData, WorkerProc::DisplayCredit>> pending_;
+  std::map<std::string,
+           std::deque<std::pair<size_t, WorkerProc::DisplayCredit>>>
+      in_flight_;
+  bool stopping_ = false;
+  bool closed_ = false;
+  std::map<std::string, size_t> credits_;
+  std::thread reader_;
+  std::thread writer_;
+};
 
 auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
                 const remote::RW::InvocationT& invocation,
@@ -217,51 +328,80 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
                    {static_cast<uint32_t>(job.cpu_millis), job.memory_bytes}};
   spawn.network = job.network;
   if (spawn.sandbox.identity) spawn.uid = spawn.gid = 65534;
-  spawn.ro_paths = {input.string()};
-  spawn.card = "remote";
 
   std::vector<Value> values;
-  for (const auto* port : *call.inputs()) {
-    Value value{port->name()->str(), port->kind(), nullptr, {}, {}};
-    if (value.kind == PortKind::Path) {
-      if (!port->path())
-        throw std::runtime_error("remote Path input lacks a path");
-      const auto rel = remote::relative_path(port->path()->str());
-      if (*rel.begin() != "inputs")
-        throw std::runtime_error("remote input path is outside staging");
-      value.path = (input / rel).string();
-    } else if (const auto* data = port->bytes()) {
-      value.bytes = bytes(data);
-    }
-    values.push_back(std::move(value));
-  }
+  for (const auto* port : *call.inputs())
+    values.push_back({port->name()->str(), nullptr,
+                      port->bytes() ? bytes(port->bytes()) : "",
+                      port->schema() ? port->schema()->str() : "",
+                      wire::artifact_ids(port->artifacts())});
   std::vector<types::PortType> outputs;
   for (const auto* port : *call.outputs())
-    outputs.push_back(
-        {port->name()->str(), port->kind(), port->required(), nullptr});
-  WorkerPool pool(directory / "scratch", {}, WorkerPoolMode::one_shot);
-  auto lease = pool.acquire(spawn.card, "", spawn, false);
+    outputs.push_back({port->name()->str(), port->required(), nullptr});
+  const auto artifacts_root = input / "artifacts";
+  fs::create_artifact_holders(artifacts_root);
+  if (spawn.sandbox.filesystem) spawn.artifacts_root = artifacts_root.string();
+  std::vector<ArtifactGrant> grants;
+  if (const auto* entries = call.grants()) {
+    for (const auto* entry : *entries) {
+      auto id = wire::artifact_id(*entry->id());
+      const auto hex = crypto::hex(id.data(), id.size());
+      const auto relative = remote::relative_path(entry->path()->string_view());
+      const auto holders = relative.parent_path();
+      const auto invocation_name = holders.filename().string();
+      const auto source = artifacts_root / relative;
+      if (relative.filename() != hex ||
+          !crypto::is_run_id(relative.begin()->string()) ||
+          !invocation_name.starts_with('@') || invocation_name.size() == 1 ||
+          invocation_name.find_first_not_of("0123456789", 1) !=
+              std::string::npos ||
+          !stdfs::is_directory(stdfs::symlink_status(source)))
+        throw Failed(FailureKind::input_missing, "invalid remote artifact grant");
+      fs::create_artifact_holders(artifacts_root, holders);
+      auto target = spawn.sandbox.filesystem
+                        ? stdfs::path(kSandboxArtifactsRoot) / relative
+                        : source;
+      if (const auto* store_path = entry->store_path()) {
+        const stdfs::path path(store_path->str());
+        const stdfs::path store_root = "/nix/store";
+        const auto relative_store_path = path.lexically_relative(store_root);
+        if (relative_store_path.empty() ||
+            !fs::valid_relative_path(relative_store_path.begin()->string()) ||
+            path != store_root / *relative_store_path.begin() /
+                        "share/tsugumi/input/artifacts" / hex)
+          throw Failed(FailureKind::input_missing,
+                       "invalid store artifact path");
+        if (spawn.sandbox.filesystem) {
+          spawn.binds.push_back({source.string(), path.string(), false, ""});
+          target = path;
+        }
+      }
+      grants.push_back({std::move(id), target.string()});
+    }
+  }
+  auto worker = std::make_unique<WorkerProc>(spawn);
+  InvocationDisplay display(worker->view_receiver());
+  // Retire the worker and its pending display callbacks before the relay.
+  WorkerPool::Lease lease;
+  lease.worker = std::move(worker);
   spawn.secrets.reset();
   workerd::Invocation request;
   request.inputs = values;
   request.outputs = std::move(outputs);
-  request.params = bytes(call.params());
-  request.output_directory = directory / "result/files/out";
+  request.artifact_directory = directory / "result/files/artifacts";
+  request.grants = std::move(grants);
   request.output_budget = {job.output_limit_bytes, job.output_limit_entries};
-  request.input_directory = input;
-  request.delivery = workerd::OutputDelivery::transferred_files;
   if (call.deadline_ms()) request.timeout_ms = *call.deadline_ms();
   // Allow the worker to report its own budget failure before escalation.
   request.deadline_grace = std::chrono::milliseconds(500);
   request.log = log;
-  request.display = relay_display;
+  request.display = [&display](auto message, auto complete) {
+    display.push(std::move(message), std::move(complete));
+  };
   request.transfer = progress;
   return workerd::run_invocation(
-      [&](auto worker, bool keep, const auto& reason) {
-        pool.release(spawn.card, lease.generation, std::move(worker), keep,
-                     reason);
-      },
-      lease, false, request);
+      [](std::unique_ptr<WorkerProc>, bool, const std::string&) {}, lease,
+      false, request);
 }
 
 }  // namespace
@@ -378,7 +518,6 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   info.built = environment.built;
   info.log_truncated = invocation_log.truncated();
   const auto files = result_dir / "files";
-  if (outcome.failure) stdfs::remove_all(files);
   if (stdfs::is_directory(files)) {
     for (const auto& entry : stdfs::recursive_directory_iterator(files))
       if (stdfs::is_directory(entry.symlink_status()))

@@ -1,19 +1,16 @@
-"""Writes the sequence a_0 ... a_k to collatz.csv (kept as a File artifact)."""
+"""Writes the sequence a_0 ... a_k to collatz.csv as an Artifact."""
+from card import Artifact, Input, Output
 import os
 
 
-def main(inputs, report, run):
+def run(inputs: Input) -> Output:
+    artifact, directory = Artifact.dir()
     seq = inputs.sequence
     values = [seq.values[i] for i in range(len(seq.values))]
-    path = os.path.join(run.output_directory, "collatz.csv")
+    path = os.path.join(directory, "collatz.csv")
     with open(path, "w") as f:
         f.write("k,a_k,parity\n")
         for k, v in enumerate(values):
             f.write(f"{k},{v},{'even' if v % 2 == 0 else 'odd'}\n")
-    odd = sum(1 for v in values[:-1] if v % 2)
-    report.markdown(
-        f"`collatz.csv`: {len(values)} rows ($k = 0 \\ldots {len(values) - 1}$)\n\n"
-        f"| | count |\n| --- | ---: |\n| $3n+1$ (odd) | {odd} |\n| $n/2$ (even) | {len(values) - 1 - odd} |\n"
-    )
-    p = path
-    return {'table': {'value': p}}
+    # TODO(open): Port the demo display.
+    return Output(table=artifact)

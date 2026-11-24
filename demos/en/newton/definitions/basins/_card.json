@@ -1,35 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "grid",
-      "type": "uint64",
-      "data": {
-        "uint64": 600
-      }
-    },
-    {
-      "name": "center_re",
-      "type": "double",
-      "data": {
-        "double": 0.0
-      }
-    },
-    {
-      "name": "center_im",
-      "type": "double",
-      "data": {
-        "double": 0.0
-      }
-    },
-    {
-      "name": "half_width",
-      "type": "double",
-      "data": {
-        "double": 2.0
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "problem"

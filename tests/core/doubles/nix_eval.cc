@@ -95,7 +95,6 @@ auto plan_text(const BuildPlan& plan, const NixCall& call, NixResult& result)
 struct NixEvaluator::Impl {
   std::filesystem::path control;
   std::filesystem::path products;
-  std::vector<std::string> allowed;
   uint64_t full_evaluations = 0;
   // Evaluations take turns, as on the real evaluator's single thread.
   std::mutex evaluation;
@@ -122,8 +121,7 @@ auto NixStore::closure(const std::string& path) -> std::vector<std::string> {
   return {path};
 }
 
-NixEvaluator::NixEvaluator(std::string, std::vector<std::string> allowed)
-    : impl_(std::make_unique<Impl>()) {
+NixEvaluator::NixEvaluator(std::string) : impl_(std::make_unique<Impl>()) {
   const char* control = std::getenv("TSUGUMI_MOCK_CONTROL");
   if (!control || !*control)
     throw std::runtime_error("tsugumid-mock requires TSUGUMI_MOCK_CONTROL");
@@ -132,7 +130,6 @@ NixEvaluator::NixEvaluator(std::string, std::vector<std::string> allowed)
   std::filesystem::create_directories(control);
   impl_->control = std::filesystem::canonical(control);
   impl_->products = impl_->control / "products";
-  impl_->allowed = std::move(allowed);
 }
 
 NixEvaluator::~NixEvaluator() = default;
@@ -143,10 +140,9 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
   std::lock_guard turn(impl_->evaluation);
   check_interrupted(call);
   if (call.definition_dir.empty() || !call.definition_dir.is_absolute() ||
-      std::none_of(impl_->allowed.begin(), impl_->allowed.end(),
-                   [&](const auto& root) {
-                     return fs::resolves_inside(root, call.definition_dir);
-                   }))
+      std::ranges::none_of(call.definitions, [&](const auto& scope) {
+        return scope.directory == call.definition_dir;
+      }))
     throw std::runtime_error(
         "mock build needs confirmed definition sources inside the evaluation "
         "area");
@@ -253,20 +249,13 @@ auto NixEvaluator::realise_native(const NixCall& call, NixResult result)
   return result;
 }
 
-auto NixEvaluator::flake(const NixCall& call, const std::string& ref)
-    -> FlakeInfo {
-  // Controlled source products, never a fetcher: key tests supply the result
-  // for an exact ref/system/override request in their private control folder.
-  const auto key =
-      crypto::sha256_hex(ref + "|" + call.system + "|" + call.source_overrides);
-  const auto product =
-      fs::read_file(impl_->control / "flakes" / (key + ".json"));
-  if (!product)
-    throw std::runtime_error(
-        "tsugumid-mock does not resolve flakes or contact the network");
-  FlakeInfo result;
-  result.json = *product;
-  return result;
+auto NixEvaluator::lock_source(const std::string&) -> NixSource {
+  throw std::runtime_error("the mock evaluator cannot fetch sources");
+}
+
+auto NixEvaluator::expression(const NixCall&, const std::string&, bool)
+    -> ExpressionResult {
+  throw std::runtime_error("the mock evaluator cannot evaluate expressions");
 }
 
 auto NixStore::rooted_usage(const std::vector<std::vector<std::string>>& roots)

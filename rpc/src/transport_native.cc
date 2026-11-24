@@ -347,9 +347,6 @@ class NativeTransport final : public Transport {
             Write(writing.data() + write_offset, writing.size() - write_offset);
         write_offset += sent;
         if (write_offset != writing.size()) return;
-        {
-          std::lock_guard lock(mutex);
-        }
         writing.clear();
       }
     }

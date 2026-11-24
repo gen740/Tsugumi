@@ -321,6 +321,7 @@ TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
   }
   auto expected_helper_tools = main_tools;
   EXPECT_EQ(expected_helper_tools.erase("delegate"), 1u);
+  EXPECT_EQ(expected_helper_tools.erase("nix_path_lock_update"), 1u);
   EXPECT_EQ(expected_helper_tools.erase("template_list"), 1u);
   EXPECT_EQ(helper_tools, expected_helper_tools);
   EXPECT_TRUE(guide_tools.contains("template_list"));

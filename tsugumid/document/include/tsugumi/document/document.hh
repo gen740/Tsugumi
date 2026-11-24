@@ -94,9 +94,11 @@ struct Document {
   // A Card's README.md or _comments.json: never part of execution.
   static auto is_card_note_file(const std::string& rel) -> bool;
   // notes/<id>.md: a canvas note's Markdown.
+  static auto is_generated_input_file(const std::string& path) -> bool;
   static auto is_note_file(const std::string& rel) -> bool;
   static bool is_document_file(const std::string& rel);
   static auto is_external_document_file(std::string_view path) -> bool;
+  static auto is_lock_file(std::string_view path) -> bool;
   auto check_document_size() const -> void;
   enum class SourcePath { Invalid, Protected, Source };
   static auto classify_source_path(const std::string& rel) -> SourcePath;
@@ -135,6 +137,9 @@ struct ParsedDocument {
 // Parses and checks one document part. Throws DocumentError(invalid_document)
 // naming the file, line and column on errors.
 auto parse_project_json(const std::string& text) -> ParsedDocument;
+auto parse_project_lock(const std::string& path, const std::string& text)
+    -> ParsedDocument;
+auto valid_nix_path_name(std::string_view name) -> bool;
 auto parse_card_json(const std::string& id, const std::string& text)
     -> ParsedDocument;
 auto parse_comments_json(const std::string& rel, const std::string& text)

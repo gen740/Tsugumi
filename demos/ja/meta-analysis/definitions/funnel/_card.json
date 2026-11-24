@@ -1,14 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "method",
-      "type": "string",
-      "data": {
-        "string": "DL"
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "trials"

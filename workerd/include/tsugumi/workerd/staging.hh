@@ -12,6 +12,12 @@ namespace tsugumi::fs {
 using TransferProgress =
     std::function<void(const std::filesystem::path&, uint64_t, uint64_t)>;
 
+// Create a root and its relative run/Card/invocation holding directories.
+// Even a Card running as the owner's UID can only traverse them by name.
+auto create_artifact_holders(const std::filesystem::path& root,
+                             const std::filesystem::path& relative = {})
+    -> void;
+
 // Empty an existing directory without replacing it (it may be mounted in a
 // resident worker). Follow no symlinks. Restore owner permissions on opened
 // directories, since Cards can copy read-only trees from the Nix store.
@@ -30,13 +36,11 @@ struct OutputBudget {
   uint64_t entries = 1000;
 };
 
-// Snapshot one Path output, a regular file or a whole directory as found, from
-// a pinned working directory into private storage. Resolve no symlinks to
-// outside the output and accept only regular files and directories.
-auto copy_staging_output(int staging, const std::filesystem::path& relative,
-                         const std::filesystem::path& destination,
-                         const std::atomic<bool>& cancel,
-                         const TransferProgress& progress = {},
-                         OutputBudget* budget = nullptr) -> void;
+// Copy a new artifact directory from the pinned staging directory. The
+// artifact name is a single component and links inside it are rejected.
+auto copy_staging_artifact(int staging, const std::filesystem::path& name,
+                           const std::filesystem::path& destination,
+                           const std::atomic<bool>& cancel, OutputBudget& budget,
+                           const TransferProgress& progress = {}) -> void;
 
 }  // namespace tsugumi::fs

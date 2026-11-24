@@ -63,8 +63,7 @@ auto resolved_port(FBB& b, const types::PortType& port) -> Off<D::Port> {
   auto members = port.merge_member_types.empty()
                      ? Off<flatbuffers::Vector<Off<flatbuffers::String>>>()
                      : b.CreateVectorOfStrings(port.merge_member_types);
-  return D::CreatePort(b, name, port.kind, bfbs, root, 0,
-                       port.execution_shape, members);
+  return D::CreatePort(b, name, bfbs, root, members);
 }
 
 Off<R::ResolvedCard> resolved(FBB& b, const Node& n) {
@@ -80,9 +79,14 @@ Off<R::ResolvedCard> resolved(FBB& b, const Node& n) {
   for (const auto& ref : n.nix_references)
     refs.push_back(R::CreateCardNixReference(
         b, path(b, ref.target), b.CreateString(ref.name)));
-  return R::CreateResolvedCard(b, path(b, n.path), b.CreateVector(ins),
-                               b.CreateVector(outs), diagnostics(b, diags),
-                               b.CreateVector(refs));
+  std::vector<Off<R::CardParameter>> parameters;
+  for (const auto& param : n.settings.params)
+    parameters.push_back(R::CreateCardParameterDirect(
+        b, param.name.c_str(), param_type_name(param.type),
+        param.data.c_str()));
+  return R::CreateResolvedCard(
+      b, path(b, n.path), b.CreateVector(ins), b.CreateVector(outs),
+      diagnostics(b, diags), b.CreateVector(refs), b.CreateVector(parameters));
 }
 
 Off<flatbuffers::Vector<Off<R::ResolvedCard>>> resolution(FBB& b,

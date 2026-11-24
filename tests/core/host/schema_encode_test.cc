@@ -11,9 +11,8 @@ namespace tsugumi::schema {
 namespace {
 TEST(SchemaDecode, DefinitionLoaderNamesUnknownSettingsAndTheFile) {
   test::TemporaryDirectory directory;
-  fs::write_atomic(
-      directory.path / "tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  fs::write_atomic(directory.path / "tsugumi.json",
+                   R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto file = directory.path / "definitions/x/_card.json";
   std::filesystem::create_directories(file.parent_path());
   for (const auto* member : {"filesystem", "unrecognizedSetting"}) {
@@ -48,8 +47,7 @@ TEST(SchemaDecode, EveryCardStatesAKnownType) {
       EXPECT_EQ(error.args.at("path"), "definitions/x/_card.json");
     }
   }
-  for (const auto* type : {"code", "draft", "trigger", "input", "branch",
-                           "fork", "merge", "collect"})
+  for (const auto* type : {"code", "draft", "trigger", "input", "merge", "collect"})
     EXPECT_NO_THROW(
         parse_card_json("x", std::string(R"({"type":")") + type + "\"}"));
   EXPECT_NO_THROW(
@@ -58,7 +56,7 @@ TEST(SchemaDecode, EveryCardStatesAKnownType) {
 
 TEST(SchemaDecode, NestedUnknownAndWrongTypedSettingsKeepTheirLocation) {
   for (const auto& [text, member] :
-       {std::pair{R"({"type":"code","params":[{"unrecognized":true}]})", "unrecognized"},
+       {std::pair{R"({"type":"code","params":42})", "params"},
         std::pair{R"({"type":"code","sandbox":"yes"})", "sandbox"}}) {
     try {
       parse_card_json("x", text);

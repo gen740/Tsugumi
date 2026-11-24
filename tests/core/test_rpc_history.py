@@ -4,7 +4,7 @@ import pytest
 
 from harness.artifact_faults import corrupt_retained_file
 from harness.fixtures import worker_project
-from harness.observations import read_output, read_pages
+from harness.observations import read_pages
 from harness.scenario import FILE_OUTPUT, run, wait_run
 from projects import builtin_project, run_and_wait
 from tsugumi_client import RpcFailure, new_id, path, text
@@ -15,21 +15,13 @@ from Tsugumi.Data.RunState import RunState
 CONTENTS = "".join(f"line {i:05d} 日本語テキスト\n" for i in range(20000))
 
 
-@pytest.mark.parametrize("record_io,retain", [
-    (False, True), (True, False),
-], ids=["artifact-only", "record-only"])
-def test_record_and_artifact_are_independent(core_factory, project, tmp_path, record_io, retain):
-    """Recording values and retaining artifacts are independent choices.
-
-    Given one retention option enabled at a time,
-    when a file-producing card runs, the cache is cleared, and the daemon restarts,
-    then only the requested records and artifacts remain readable.
-    """
+@pytest.mark.parametrize("record_io", [False, True], ids=["artifact-only", "recorded-value"])
+def test_artifacts_survive_without_value_recording(core_factory, project, tmp_path, record_io):
     daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     worker_project(client, project, tmp_path, [
         {"op": "file", "port": "doc", "path": "big.txt", "text": CONTENTS},
-    ], outputs=FILE_OUTPUT, recordIO=record_io, retainArtifact=retain, artifactOutput="doc")
+    ], outputs=FILE_OUTPUT, recordIO=record_io)
     run_id = run(client)
     assert wait_run(client, run_id).state == RunState.succeeded
     client.call("ProjectCacheClearRequest", opId=new_id())
@@ -37,14 +29,25 @@ def test_record_and_artifact_are_independent(core_factory, project, tmp_path, re
     client = daemon.connect()
     record = client.call("RunRecordRequest", runId=run_id, card=path("work"))
     assert bool(record.recordingDisabled) is not record_io
-    assert len(record.record.outputs) == int(retain)
-    artifacts = client.call("ArtifactListRequest", runId=run_id, card=path("work")).artifacts
-    assert len(artifacts) == int(retain)
-    if retain:
-        contents = read_pages(client, "ArtifactReadRequest", page_bytes=65536,
-                              artifactId=text(artifacts[0].artifactId))
-        assert contents.decode() == CONTENTS
-        assert read_output(client, run_id, port="doc").endswith(b"/big.txt")
+    assert len(record.record.outputs) == int(record_io)
+    artifact, = client.call("ArtifactListRequest", runId=run_id, card=path("work")).artifacts
+    artifact_id = text(artifact.artifactId)
+    assert len(bytes.fromhex(artifact_id)) == 16
+    assert artifact.sizeBytes == len(CONTENTS.encode())
+    assert text(artifact.treeHash).startswith("tree:")
+    directory = project / ".tsugumi" / "artifacts" / run_id / "work" / "@1" / artifact_id
+    assert directory.stat().st_mode & 0o222 == 0
+    assert (directory / "big.txt").stat().st_mode & 0o222 == 0
+    if record_io:
+        value_artifact, = record.record.outputs[0].artifacts
+        assert text(value_artifact.id) == artifact_id
+        assert value_artifact.sizeBytes == artifact.sizeBytes
+    contents = read_pages(client, "ArtifactReadRequest", page_bytes=65536,
+                          artifactId=artifact_id, member="big.txt")
+    assert contents.decode() == CONTENTS
+    assert client.call("RunHistoryDeleteRequest", opId=new_id(),
+                       restrictToRunIds=True, runIds=[run_id]).deletedRuns == 1
+    assert not directory.exists()
 
 
 def test_artifact_members_cannot_escape_the_artifact(core_factory, project, tmp_path):
@@ -52,7 +55,7 @@ def test_artifact_members_cannot_escape_the_artifact(core_factory, project, tmp_
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     worker_project(client, project, tmp_path, [
         {"op": "file", "port": "doc", "path": "report.txt", "text": "retained"},
-    ], outputs=FILE_OUTPUT, retainArtifact=True, artifactOutput="doc")
+    ], outputs=FILE_OUTPUT)
     run_id = run(client)
     assert wait_run(client, run_id).state == RunState.succeeded
     artifact = client.call("ArtifactListRequest", runId=run_id).artifacts[0]
@@ -60,7 +63,7 @@ def test_artifact_members_cannot_escape_the_artifact(core_factory, project, tmp_
     with pytest.raises(RpcFailure) as failure:
         client.call("ArtifactReadRequest", artifactId=text(artifact.artifactId), member="../../outside.txt")
     assert failure.value.kind in {"invalid_path", "invalid_request", "not_found"}
-    assert read_pages(client, "ArtifactReadRequest", artifactId=text(artifact.artifactId)) == b"retained"
+    assert read_pages(client, "ArtifactReadRequest", artifactId=text(artifact.artifactId), member="report.txt") == b"retained"
 
 
 def test_a_corrupted_retained_artifact_is_rejected(core_factory, project, tmp_path):
@@ -74,18 +77,19 @@ def test_a_corrupted_retained_artifact_is_rejected(core_factory, project, tmp_pa
     original = f"unique retained output {new_id()}\n".encode()
     worker_project(client, project, tmp_path, [
         {"op": "file", "port": "doc", "path": "report.txt", "text": original.decode()},
-    ], outputs=FILE_OUTPUT, retainArtifact=True, artifactOutput="doc")
+    ], outputs=FILE_OUTPUT)
     run_id = run(client)
     wait_run(client, run_id)
     artifact = client.call("ArtifactListRequest", runId=run_id).artifacts[0]
     artifact_id = text(artifact.artifactId)
     client.call("ProjectCacheClearRequest", opId=new_id())
-    assert read_pages(client, "ArtifactReadRequest", artifactId=artifact_id) == original
+    assert read_pages(client, "ArtifactReadRequest", artifactId=artifact_id, member="report.txt") == original
 
-    corrupt_retained_file(project, original)
+    corrupt_retained_file(project / ".tsugumi/artifacts" / run_id / "work/@1" / artifact_id,
+                          original)
 
     with pytest.raises(RpcFailure) as failure:
-        client.call("ArtifactReadRequest", artifactId=artifact_id)
+        client.call("ArtifactReadRequest", artifactId=artifact_id, member="report.txt")
     assert failure.value.kind == "integrity_error"
 
 

@@ -1,25 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "urls",
-      "type": "string[]",
-      "data": {
-        "strings": [
-          "https://files.rcsb.org/download/6LU7.pdb"
-        ]
-      }
-    },
-    {
-      "name": "names",
-      "type": "string[]",
-      "data": {
-        "strings": [
-          "6LU7.pdb"
-        ]
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "start"

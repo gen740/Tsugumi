@@ -13,7 +13,7 @@ enum Shared {
     "ProjectFileListRequest",
     "ProjectFileStatRequest",
     "ProjectFileReadRequest",
-    "CardApiRequest",
+    "EvaluateNixRequest",
     "RunPlanRequest",
     "RunRequest",
     "RunCancelRequest",
@@ -29,7 +29,6 @@ enum Shared {
     "InputTypesRequest",
     "VersionGraphRequest",
     "VersionCanvasRequest",
-    "NixSourceResolveRequest",
     "RunLatestInvocationsRequest",
     "RunEnvironmentsRequest",
     "RunEnvironmentPathsRequest",
@@ -37,6 +36,20 @@ enum Shared {
     "ProjectCacheUsageRequest"
   ],
   "hostTools": [
+    {
+      "name": "nix_path_lock_update",
+      "description": "Update tsugumi.lock for the root project, or an external selected by project_path (externals/<id>). Supply name to check one declaration, or omit it to check all declarations. Missing sources and changed URLs are resolved, matching entries are kept, and undeclared entries are removed.",
+      "mutating": true,
+      "approval_required": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_path": {"type": "string"},
+          "name": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
     {
       "name": "version_diff",
       "description": "Read the code and settings diff of a saved version against its first parent, or against from_commit. Covers tsugumi.json, Card definitions and code in src/; data files and layout.bin are left out. Long diffs are cut (truncated).",
@@ -145,7 +158,7 @@ enum Shared {
     {
       "name": "project_copy",
       "mutating": true,
-      "description": "Copy files into Card sources without loading bytes into the model, import an attached project into externals (folder + id), or copy a Card and its complete definition closure from an attached project or bundled demo. source: attached (folder + files, folder + id, or folder + card + id), card or scratch (files), demo (demo = language-qualified demo_list path, card = source Card id, id = destination Card id); Card copies accept optional name; Card copies and project imports accept project_path, x, y. base_rev is the inspected revision.",
+      "description": "Copy files into Card sources without loading bytes into the model, import an attached project into externals (folder + id), or copy a Card and its complete definition closure from an attached project or bundled demo. source: attached (folder + files, folder + id, or folder + card + id), card or scratch (files), demo (demo = language-qualified demo_list path, card = source Card id, id = destination Card id); Card copies and project imports accept project_path, x, y. base_rev is the inspected revision.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -197,9 +210,6 @@ enum Shared {
             "type": "string"
           },
           "id": {
-            "type": "string"
-          },
-          "name": {
             "type": "string"
           },
           "project_path": {
@@ -628,7 +638,7 @@ enum Shared {
   "draftRequest": {
     "root": "the root workflow",
     "child": "the child workflow {scope}",
-    "text": "Implement these Draft Cards in {where}, matching their description, content and existing connections, keeping their ids. Each implementation is one project_edit containing its definition, sources and every incoming, outgoing and boundary wire end rebound to a real port; ends on remaining Drafts stay empty. Preserve the existing README.md description and body, and fill an empty description in that edit. Read demo_read reference/cards.md, the chosen SDK documentation and the Card's generated API (tools family sdk, action api) before writing Card sources. Then check them with project_validate, run the workflow once from its trigger Card and check each Card's result with run_record.\n{list}"
+    "text": "Implement these Draft Cards in {where}, matching their description, content and existing connections, keeping their ids. Each implementation is one project_edit containing its definition, sources and every incoming, outgoing and boundary wire end rebound to a real port; ends on remaining Drafts stay empty. Preserve the existing README.md description and body, and fill an empty description in that edit. Read demo_read reference/cards.md and the SDK guide. Once the wired definition is saved, build its API locally with evaluate_nix using (import ./. { inherit params inputs; }).api and build: true. Then check them with project_validate, run the workflow once from its trigger Card and check each Card's result with run_record.\n{list}"
   },
   "commentRequest": {
     "text": "The user left comments on these Cards in {where}; do what they ask. By default the Card a comment is on changes, keeping its id and wiring; a comment may ask for new Cards or a split (project_edit for the Cards and connections in one atomic save). A Draft among them is implemented following its comments. Comments with finding=true are observations, not change requests. The save that does what a comment asks also resolves it: project_edit of the Card's _comments.json with that comment's \"resolved\": true and a one-line \"resolution\" in the user's language; Tsugumi records which Cards that save changed. How to write code Cards: demo_read reference/cards.md. Then check them with project_validate, run what changed once and check each result with run_record; a result that is not what its comment asks means the work is not done. A comment you cannot do stays open, with the reason in your reply.\n{list}"
@@ -1033,6 +1043,7 @@ enum Shared {
   "modelTools": {
     "core": [
       "project_edit",
+      "nix_path_lock_update",
       "project_copy",
       "project_connect",
       "project_make_subgraph",
@@ -1042,6 +1053,7 @@ enum Shared {
       "project_file_list",
       "project_file_read",
       "input_types",
+      "evaluate_nix",
       "project_validate",
       "run_plan",
       "run",
@@ -1062,9 +1074,7 @@ enum Shared {
         "reload": "project_reload"
       },
       "sdk": {
-        "api": "card_api",
-        "output_types": "output_types",
-        "resolve_source": "nix_source_resolve"
+        "output_types": "output_types"
       },
       "runs": {
         "status": "run_status",
@@ -1130,7 +1140,7 @@ enum Shared {
       "run_value_read",
       "artifact_list",
       "log_range",
-      "card_api",
+      "evaluate_nix",
       "attached_folder_read",
       "project_shell",
       "tool_result_read",

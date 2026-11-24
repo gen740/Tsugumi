@@ -72,14 +72,6 @@ def collected_items(client, directory, run_id, card="collect"):
     if not items:
         return []
     source, = client.call("InputTypesRequest", card=path(card)).inputs
-    result = []
-    for index, item in enumerate(items):
-        if item["kind"] == "Path":
-            assert not item.get("bytes")
-            result.append(item["path"])
-        else:
-            assert item["kind"] == "FlatBuffer"
-            assert "path" not in item
-            result.append(reference_json(directory / str(index), bytes(source.type.schemaBfbs),
-                                         bytes(item["bytes"]), root_type=text(source.type.rootType)))
-    return result
+    return [reference_json(directory / str(index), bytes(source.type.schemaBfbs),
+                           bytes(item["bytes"]), root_type=text(source.type.rootType))
+            for index, item in enumerate(items)]

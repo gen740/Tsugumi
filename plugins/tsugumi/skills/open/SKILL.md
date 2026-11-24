@@ -17,4 +17,5 @@ Work on a Tsugumi project with the Tsugumi MCP tools.
 3. The user watches the web UI while you work: the Cards you save change on the canvas, runs show live, and Tsugumi
    (the bird) flies to the Card you work on. A save that widens what Cards may do (network, folders) waits for the
    user's approval there.
+   The returned rules describe current values in each Card's `params.nix`, the explicit `nix_path_lock_update` operation, generated `_inputs.fbs`, and how to join sources with Merge. Build generated SDK declarations with `evaluate_nix` on the local system, using `(import ./. { inherit params inputs; }).api` and `build: true`.
 4. Report what you changed and ran by the Cards' names, and what the run showed.

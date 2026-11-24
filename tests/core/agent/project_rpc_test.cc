@@ -27,8 +27,8 @@ class CancelledCopy : public AgentProjectFixture,
 TEST_F(AgentProjectFixture, TemplateStoresCopyWholeGraphsWithFreshIds) {
   StartProject();
   const auto folder = directory.path / "sample-template";
-  Write(folder / "start/_card.json",
-        R"({"type":"input","params":[{"name":"value","type":"double","data":{"double":1}}]})");
+  Write(folder / "start/_card.json", R"({"type":"input"})");
+  Write(folder / "start/params.nix", "{ value = 1.0; }");
   Write(folder / "start/_outputs.fbs",
         "namespace sample; table Value { value:double; } "
         "table Outputs { value:Value (required); } root_type Outputs;");
@@ -157,7 +157,7 @@ TEST_F(AgentProjectFixture,
         R"({"type":"trigger"})");
   StartProject(
       false,
-      R"({"name":"Templates","pkgsPath":"tsugumi:default","agentExclude":["templates/private"],"canvas":{"cards":[],"connections":[]}})");
+      R"({"name":"Templates","nixPath": [],"agentExclude":["templates/private"],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("agent-templates");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -2010,7 +2010,7 @@ TEST_F(AgentProjectFixture,
   const auto original = JsonString(Inspect(conversation).View(), "/text");
   const auto initial_revision = JsonString(original, "/value/rev");
   const auto document =
-      R"({"name":"RENAMED_BY_MODEL","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})";
+      R"({"name":"RENAMED_BY_MODEL","nixPath": [],"canvas":{"cards":[],"connections":[]}})";
   const auto arguments =
       "{\"base_rev\":" + Quote(initial_revision) +
       ",\"changes\":[{\"value_type\":\"SetProject\",\"value\":{\"json\":" +
@@ -2507,7 +2507,7 @@ TEST_F(AgentProjectFixture,
   const auto snapshot = JsonString(Inspect(conversation).View(), "/text");
   const auto revision = JsonString(snapshot, "/value/rev");
   const auto document =
-      R"({"name":"Permission test","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"work"}],"connections":[]}})";
+      R"({"name":"Permission test","nixPath": [],"canvas":{"cards":[{"id":"work"}],"connections":[]}})";
   auto save = [&](const std::string& body) {
     return "{\"base_rev\":" + Quote(revision) +
            ",\"changes\":[{\"value_type\":\"SetProject\",\"value\":{\"json\":" +
@@ -2596,7 +2596,7 @@ TEST_F(AgentProjectFixture, ReloadApprovalCannotWidenADifferentPermissionSet) {
       "{\"base_rev\":" + Quote(JsonString(snapshot, "/value/rev")) + "}";
   Write(
       directory.path / "project/tsugumi.json",
-      R"({"name":"External edit","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"work"}],"connections":[]}})");
+      R"({"name":"External edit","nixPath": [],"canvas":{"cards":[{"id":"work"}],"connections":[]}})");
   const auto definition =
       directory.path / "project/definitions/work/_card.json";
   Write(definition, R"({"type":"draft","grants":{"network":true}})");
@@ -2678,7 +2678,7 @@ TEST_F(AgentProjectFixture,
        EveryApprovalOperationIsBoundToOneCallAndArguments) {
   StartProject(
       false,
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("operation-approvals");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -2777,7 +2777,7 @@ TEST_F(AgentProjectFixture,
        DeletingAConversationInvalidatesItsPendingOperationApprovals) {
   StartProject(
       false,
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("deleted-approval");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -2834,7 +2834,7 @@ TEST_F(AgentProjectFixture,
 TEST_F(AgentProjectFixture, ChangedApprovalTargetsNeedANewApproval) {
   StartProject(
       false,
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("changed-approval-targets");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -2853,7 +2853,7 @@ TEST_F(AgentProjectFixture, ChangedApprovalTargetsNeedANewApproval) {
   const auto inspect = JsonString(Inspect(conversation).View(), "/text");
   const auto rev = JsonString(inspect, "/value/rev");
   const auto document =
-      R"({"name":"Changed approval target","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})";
+      R"({"name":"Changed approval target","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})";
   const auto saved = Tool(
       conversation, "project_save",
       "{\"base_rev\":" + Quote(rev) +

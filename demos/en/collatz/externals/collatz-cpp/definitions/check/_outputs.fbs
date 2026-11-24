@@ -1,5 +1,4 @@
 namespace collatz;
 table Number { value:ulong; }
-table Parity { value:bool; }
-table Outputs { value:Number; even:Parity; }
+table Outputs { value:Number; }
 root_type Outputs;

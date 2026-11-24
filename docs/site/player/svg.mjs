@@ -871,7 +871,7 @@ ${lines.slice(first, last).map((l, j) => `<div class="s-line"><span class="s-no"
 <div class="s-title"><span class="w-lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></span><b>spectrum — ${esc(data.title)}</b></div>
 <div class="s-side">${categories.map(([k, t, icon]) => `<div class="s-cat${k === 'source' ? ' on' : ''}">${chromeIcon(icon, 15)}<span>${t}</span></div>`).join('')}</div>
 <div class="s-files">${files.map(([icon, name, depth, color, on]) => `<div class="s-file${on ? ' on' : ''}" style="padding-left:${12 + depth * 18}px">${depth ? '' : chromeIcon('chevron.down', 9, 'var(--secondary)')}${chromeIcon(icon, 13, color || 'var(--secondary)')}<span>${esc(name)}</span></div>`).join('')}
-<div class="s-gen secondary">Generated</div>${['_inputs.fbs', '_params.fbs'].map((f) => `<div class="s-file" style="padding-left:12px">${chromeIcon('doc', 13, 'var(--secondary)')}<span>${f}</span><span class="s-ro">RO</span></div>`).join('')}
+<div class="s-gen secondary">Generated</div><div class="s-file" style="padding-left:12px">${chromeIcon('doc', 13, 'var(--secondary)')}<span>_inputs.fbs</span><span class="s-ro">RO</span></div>
 <div class="s-plus secondary">${chromeIcon('plus', 12)}${chromeIcon('minus', 12)}</div></div>
 <div class="s-code">
 <div class="s-head">${chromeIcon('chevron.left.forwardslash.chevron.right', 13)}<b>main.py</b><span class="secondary caption">spectrum › src</span><span style="flex:1"></span><span class="s-btn">Format</span></div>

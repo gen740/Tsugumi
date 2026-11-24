@@ -1,0 +1,3 @@
+{
+  ligand_chain = "C";
+}

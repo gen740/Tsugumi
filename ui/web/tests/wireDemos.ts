@@ -26,7 +26,7 @@ function node(dir: string, id: string): CardNodeData {
   const typed = fs.existsSync(fbs)
     ? [...(/table Outputs\s*\{([^}]*)\}/.exec(fs.readFileSync(fbs, 'utf8').replace(/\/\*.*?\*\//gs, ''))?.[1] ?? '').matchAll(/(\w+)\s*:/g)].map((m) => ({ name: m[1] }))
     : []
-  const blank = { summary: def?.description || meta?.description || undefined, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, title: id }
+  const blank = { summary: meta?.description || undefined, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, title: id }
   if (def?.type === 'subgraph') {
     const b = read(path.join(dir, 'externals', def.external, 'tsugumi.json'))?.boundary ?? {}
     return { ...blank, kind: 'subgraph', inputs: named(b.inputs), outputs: named(b.outputs) }
@@ -34,11 +34,9 @@ function node(dir: string, id: string): CardNodeData {
   const declared = named(def?.inputs)
   switch (def?.type) {
     case 'trigger': return { ...blank, kind: 'trigger', inputs: [], outputs: [{ name: 'out' }] }
-    case 'input': {
-      const params = (def.params ?? []).filter((p: { type: string }) => ['int64', 'uint64', 'double', 'bool', 'string'].includes(p.type)).map((p: { name: string; type: string }) => ({ ...p, value: '' }))
-      return { ...blank, kind: 'input', params, inputs: [{ name: 'start' }], outputs: typed }
-    }
-    case 'branch': return { ...blank, kind: 'branch', inputs: [{ name: 'value' }, { name: 'condition' }], outputs: [{ name: 'a' }, { name: 'b' }] }
+    // This fixture tests port routing without an evaluator. Parameter rows
+    // from the live resolution are covered in the Input Card behavior tests.
+    case 'input': return { ...blank, kind: 'input', inputs: [{ name: 'start' }], outputs: typed }
     case 'merge': return { ...blank, kind: 'merge', inputs: declared, outputs: [{ name: 'out' }] }
     case 'collect': return { ...blank, kind: 'collect', inputs: [{ name: 'in' }], outputs: [{ name: 'out' }] }
     case 'code': return { ...blank, kind: 'code', inputs: declared, outputs: typed }
@@ -127,8 +125,7 @@ function scopes(name: string, dir: string, grid?: number): Scene[] {
   return out
 }
 
-/** Cards the path enters and leaves again. A branch's port sits inside its box:
- *  a stay that starts or ends the path is the wire reaching its port. */
+/** Counts Cards the path enters and leaves. The wire may start or end at a port inside its Card. */
 function crossed(pts: Pt[], obstacles: Rect[]): number {
   const dense: Pt[] = [pts[0]]
   for (let i = 1; i < pts.length; i++) {

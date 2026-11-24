@@ -592,7 +592,6 @@ enum ServiceWire {
       return out
     case let v as Tsugumi_Host_ProjectDefaultsT:
       var out: [String: Any] = [:]
-      out["nixpkgsPin"] = v.nixpkgsPin
       out["agentExclude"] = v.agentExclude
       return out
     case let v as Tsugumi_Host_ProjectFileT:

@@ -1,26 +1,3 @@
 {
-  "type": "input",
-  "params": [
-    {
-      "name": "seed",
-      "type": "uint64",
-      "data": {
-        "uint64": 7
-      }
-    },
-    {
-      "name": "walkers",
-      "type": "uint64",
-      "data": {
-        "uint64": 400
-      }
-    },
-    {
-      "name": "steps",
-      "type": "uint64",
-      "data": {
-        "uint64": 200
-      }
-    }
-  ]
+  "type": "input"
 }

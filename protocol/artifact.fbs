@@ -1,0 +1,3 @@
+namespace tsugumi;
+struct ArtifactId { bytes:[ubyte:16]; }
+table Artifact { id:ArtifactId (required); }

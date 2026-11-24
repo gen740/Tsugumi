@@ -36,5 +36,5 @@ const builtins: string[] = []
 for (const item of newCardItems(kind => builtins.push(kind), () => { picked = true })) {
   if (typeof item !== 'string' && item) item.action?.()
 }
-assert.deepEqual(builtins, ['draft', 'trigger', 'input', 'input_bool', 'branch', 'fork', 'merge', 'collect'])
+assert.deepEqual(builtins, ['draft', 'trigger', 'input', 'input_bool', 'merge', 'collect'])
 assert.ok(picked)

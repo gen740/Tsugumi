@@ -83,8 +83,6 @@ TEST(BuiltinCard, CreatesOnlyTheLanguageIndependentKinds) {
   EXPECT_EQ(json::Text(json::Object(draft.at("_card.json")), "type"), "draft");
   EXPECT_FALSE(draft.contains("README.md"));
   for (const auto& [kind, type] : {std::pair{Kind::Trigger, "trigger"},
-                                  {Kind::Branch, "branch"},
-                                  {Kind::Fork, "fork"},
                                   {Kind::Collect, "collect"},
                                   {Kind::Merge, "merge"},
                                   {Kind::InputValue, "input"},
@@ -93,24 +91,30 @@ TEST(BuiltinCard, CreatesOnlyTheLanguageIndependentKinds) {
     const auto card = json::Object(files.at("_card.json"));
     EXPECT_EQ(json::Text(card, "type"), type);
     if (kind == Kind::Merge) EXPECT_EQ(json::Array(card.at("inputs")).size(), 2);
-    if (kind == Kind::Fork) EXPECT_EQ(json::Array(card.at("outputs")).size(), 2);
     if (kind == Kind::BooleanInput || kind == Kind::InputValue) {
       const auto schema = files.at("_outputs.fbs");
-      EXPECT_NE(schema.find("namespace new_card_2;"), std::string::npos);
-      EXPECT_NE(schema.find(kind == Kind::BooleanInput ? "value:bool" : "value:double"),
+      const bool boolean = kind == Kind::BooleanInput;
+      EXPECT_NE(schema.find(boolean ? "table Boolean { value:bool; }"
+                                    : "table Number { value:double; }"),
                 std::string::npos);
+      EXPECT_EQ(files.at("params.nix"),
+                boolean ? "{ value = false; }\n" : "{ value = 0.0; }\n");
+      EXPECT_NE(files.at("default.nix").find("run = sdk.input"),
+                std::string::npos);
+    } else {
+      EXPECT_FALSE(files.contains("default.nix"));
     }
-    EXPECT_FALSE(files.contains("default.nix"));
   }
 }
 
 TEST(DocumentCopy, DefinitionKeepsSettingsAndGivesCommentsTheirOwnIdentity) {
   const std::string state =
-      R"({"definitions":{"a":{"card":{"type":"code","params":[{"name":"n","type":"uint64","data":{"uint64":9007199254740993}}],"sandbox":{"filesystem":false},"grants":{"network":true}},"readme":"Plots","comments":{"comments":[{"id":"old","text":"one","author":"user","resolved":true,"cards":["a"]}]}}}})";
+      R"({"definitions":{"a":{"card":{"type":"code","sandbox":{"filesystem":false},"grants":{"network":true}},"readme":"Plots","comments":{"comments":[{"id":"old","text":"one","author":"user","resolved":true,"cards":["a"]}]}}}})";
   const auto edit =
       CopyDocuments(state,
-                    {"definitions/a/src/asset.bin", "definitions/a/_card.json",
-                     "definitions/a/README.md", "definitions/ab/no"},
+                    {"definitions/a/src/asset.bin", "definitions/a/params.nix",
+                     "definitions/a/_card.json", "definitions/a/README.md",
+                     "definitions/ab/no"},
                     "definitions/a/", "definitions/copy/");
   const auto defs =
       json::Object(json::Object(edit.edits_json).at("definitions"));
@@ -127,14 +131,16 @@ TEST(DocumentCopy, DefinitionKeepsSettingsAndGivesCommentsTheirOwnIdentity) {
   EXPECT_EQ(json::Text(comment, "text"), "one");
   EXPECT_EQ(json::Text(comment, "author"), "user");
   EXPECT_EQ(comment.at("resolved"), "true");
-  ASSERT_EQ(edit.files.size(), 1);
+  ASSERT_EQ(edit.files.size(), 2);
   EXPECT_EQ(edit.files[0].from, "definitions/a/src/asset.bin");
   EXPECT_EQ(edit.files[0].to, "definitions/copy/src/asset.bin");
+  EXPECT_EQ(edit.files[1].from, "definitions/a/params.nix");
+  EXPECT_EQ(edit.files[1].to, "definitions/copy/params.nix");
 }
 
 TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
   const std::string state =
-      R"({"definitions":{"a":{"card":{"type":"subgraph","external":"inner"}}},"externals":{"externals/inner/":{"project":{"name":"inner","pkgsPath":"pinned"},"layout":{"cards":{"x":{"x":2}}},"definitions":{"x":{"card":{"type":"draft"},"readme":"unsaved"}}},"externals/inner/externals/grand/":{"project":{"name":"grand"},"layout":{},"definitions":{}}}})";
+      R"({"definitions":{"a":{"card":{"type":"subgraph","external":"inner"}}},"externals":{"externals/inner/":{"project":{"name":"inner","nixPath":[{"name":"pkgs","url":"github:org/pkg"}]},"layout":{"cards":{"x":{"x":2}}},"definitions":{"x":{"card":{"type":"draft"},"readme":"unsaved"}}},"externals/inner/externals/grand/":{"project":{"name":"grand"},"layout":{},"definitions":{}}}})";
   const std::vector<std::string> paths = {
       "externals/inner/tsugumi.json",
       "externals/inner/definitions/x/README.md",
@@ -185,12 +191,12 @@ TEST(DocumentCopy, MissingLinkedProjectCannotProduceAPartialCopy) {
 
 TEST(DocumentSubgraph, PreservesRunConditionsAndBothSidesOfBoundary) {
   const std::string root =
-      R"({"name":"parent","pkgsPath":"pinned","nixSources":[{"name":"science","type":"flake","ref":"locked","overrides":{"p":{"override":{"flag":true}}}}],"settings":{"future":42},"canvas":{"cards":[{"id":"a","sandbox":{"filesystem":false},"grants":{"network":true},"params":[{"name":"value","data":7}]},{"id":"b"},{"id":"c"}],"connections":[{"from":{"card":"a","port":"x"},"to":{"card":"b","port":"in"}},{"from":{"card":"c","port":"out"},"to":{"card":"a","port":"in"}},{"from":{"card":"a","port":"x"},"to":{"card":"c","port":"in"}}]},"boundary":{"inputs":[{"name":"input","card":"a","port":"in"}],"outputs":[{"name":"result","card":"b","port":"out"}]}})";
+      R"({"name":"parent","nixPath":[{"name":"science","url":"github:org/science"}],"settings":{"future":42},"canvas":{"cards":[{"id":"a","sandbox":{"filesystem":false},"grants":{"network":true}},{"id":"b"},{"id":"c"}],"connections":[{"from":{"card":"a","port":"x"},"to":{"card":"b","port":"in"}},{"from":{"card":"c","port":"out"},"to":{"card":"a","port":"in"}},{"from":{"card":"a","port":"x"},"to":{"card":"c","port":"in"}}]},"boundary":{"inputs":[{"name":"input","card":"a","port":"in"}],"outputs":[{"name":"result","card":"b","port":"out"}]}})";
   const auto edit = MakeSubgraph(root, {"a", "b"}, "sub");
   const auto before = json::Object(root),
              outer = json::Object(edit.project_json),
              inner = json::Object(edit.external_json);
-  for (const auto* field : {"pkgsPath", "nixSources", "settings"}) {
+  for (const auto* field : {"nixPath", "settings"}) {
     EXPECT_EQ(before.at(field), inner.at(field));
     EXPECT_EQ(before.at(field), outer.at(field));
   }
@@ -208,10 +214,6 @@ TEST(DocumentSubgraph, PreservesRunConditionsAndBothSidesOfBoundary) {
   const auto grants = json::Object(card_a.at("grants"));
   EXPECT_FALSE(json::Bool(json::Get(sandbox, "filesystem")));
   EXPECT_TRUE(json::Bool(json::Get(grants, "network")));
-  const auto params = json::Array(selected.at("a").at("params"));
-  ASSERT_EQ(params.size(), 1u);
-  EXPECT_EQ(json::Text(json::Object(params.front()), "name"), "value");
-  EXPECT_EQ(json::UInt(json::Object(params.front()).at("data")), 7u);
   EXPECT_TRUE(selected.contains("b"));
   EXPECT_FALSE(selected.contains("c"));
   EXPECT_EQ(json::Array(graph.at("connections")).size(), 1);

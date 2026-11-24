@@ -67,7 +67,7 @@ function EvidenceArtifactExport({ session, target, artifact, member }: { session
     setBusy(true); setError(undefined)
     void (async () => {
       if (!session.rpc || !await resolveEvidence(session, target)) throw new Error(L('このプロジェクトに根拠の記録がありません'))
-      const data = await session.rpc.readArtifact(s(artifact.artifactId), artifact.directory ? member : null)
+      const data = await session.rpc.readArtifact(s(artifact.artifactId), member)
       download(member.split('/').pop() ?? 'artifact', data)
     })().catch(e => setError(String(e.message ?? e))).finally(() => setBusy(false))
   }}>{busy ? L('読み込み中…') : L('書き出す…')}</Button>{error && <p role="alert">{error}</p>}</>
@@ -96,7 +96,7 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
       if (t.kind === 'artifact') {
         const a = (await rpc.artifacts(t.run!)).find(a => s(a.artifactId) === t.artifact)!
         const member = t.member ?? (a.members[0] ? s(a.members[0].path) : undefined)
-        const bytes = member ? await rpc.call<R.FileContentT>(R.RequestPayload.ArtifactReadRequest, Object.assign(new R.ArtifactReadRequestT(), { artifactId: t.artifact, member: a.directory ? member : null, limitBytes: 65536 })) : undefined
+        const bytes = member ? await rpc.call<R.FileContentT>(R.RequestPayload.ArtifactReadRequest, Object.assign(new R.ArtifactReadRequestT(), { artifactId: t.artifact, member: member, limitBytes: 65536 })) : undefined
         let preview: ReactNode = L('バイナリの成果物です')
         if (bytes) {
           const data = Uint8Array.from(bytes.bytes)
@@ -104,7 +104,7 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
           if (mime && bytes.eof === true) preview = <img alt={member} style={{ maxWidth: '100%' }} src={`data:${mime};base64,${btoa(Array.from(data, c => String.fromCharCode(c)).join(''))}`} />
           else { try { preview = <pre className="selectable wrap-pre">{new TextDecoder('utf-8', { fatal: true }).decode(data)}</pre> } catch { /* The binary label remains visible. */ } }
         }
-        return <><p>{session.displayPath(segs(a.card))} · {s(a.output)} · #{String(a.invocation)}</p><p>{member}</p>{member && <EvidenceArtifactExport session={session} target={t} artifact={a} member={member} />}{preview}{bytes && bytes.eof !== true && <p>{L('先頭 64 KiB を表示')}</p>}</>
+        return <><p>{session.displayPath(segs(a.card))} · {s(a.artifactId)} · #{String(a.invocation)}</p><p>{member}</p>{member && <EvidenceArtifactExport session={session} target={t} artifact={a} member={member} />}{preview}{bytes && bytes.eof !== true && <p>{L('先頭 64 KiB を表示')}</p>}</>
       }
       if (t.card) {
         const r = await rpc.record(t.run!, t.card, t.invocation ?? null)
@@ -116,7 +116,7 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
           {summary && <><p>{cardState(summary.state).label}</p><Markdown text={s(summary.failure?.diagnostic)} /></>}
           {record && [[L('入力'), record.inputs], [L('出力'), record.outputs]].map(([label, values], i) => <section key={i}>
             <h4>{label as string}</h4>
-            {(values as D.NamedValueT[]).map((v, j) => <pre key={j} className="selectable wrap-pre">{describeValue({ name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifactId: v.artifactId === null ? null : s(v.artifactId), filePath: v.filePath === null ? null : s(v.filePath), fileMissing: v.fileMissing, fileDeleted: v.fileDeleted, inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs })}</pre>)}
+            {(values as D.NamedValueT[]).map((v, j) => <pre key={j} className="selectable wrap-pre">{describeValue({ name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifacts: v.artifacts.map(a => ({ id: s(a.id), sizeBytes: a.sizeBytes })), inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs })}</pre>)}
           </section>)}
         </>
       }

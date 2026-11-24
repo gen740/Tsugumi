@@ -29,7 +29,7 @@ from Tsugumi.RemoteWorker.Invocation import InvocationT
 from Tsugumi.RemoteWorker.InvocationFile import InvocationFileT
 from Tsugumi.RemoteWorker.JournalState import JournalStateT
 from Tsugumi.RemoteWorker.LogEntry import LogEntryT
-from Tsugumi.RemoteWorker.Message import MessageT
+from Tsugumi.RemoteWorker.Message import Message, MessageT
 from Tsugumi.RemoteWorker.Payload import Payload
 from Tsugumi.RemoteWorker.ProbeRequest import ProbeRequestT
 from Tsugumi.RemoteWorker.PutBlobRequest import PutBlobRequestT
@@ -45,7 +45,7 @@ from Tsugumi.RemoteWorker.StatusRequest import StatusRequestT
 from Tsugumi.RemoteWorker.SubmitRequest import SubmitRequestT
 from Tsugumi.RemoteWorker.Target import TargetT
 
-WORKER_CONTRACT = 15
+WORKER_CONTRACT = 16
 
 __all__ = ['BrokerRequestT', 'AckT', 'BlobChunkT', 'CancelRequestT', 'CapabilitiesT', 'CardSecretT', 'CardSecretsT', 'CatalogRequestT', 'CatalogT', 'ErrorCode', 'FailureT', 'GetBlobRequestT', 'JobSecretsRequestT', 'JobSpecT', 'JobState', 'JobStatusT', 'MessageT', 'Payload', 'ProbeRequestT', 'PutBlobRequestT', 'ReleaseRequestT', 'ReplyBody', 'ReplyT', 'RequestBody', 'RequestT', 'ResultFileT', 'ResultManifestT', 'StatusRequestT', 'SubmitRequestT', 'TargetT', 'broker_request', 'exact', 'failure', 'frame', 'pack', 'read', 'read_broker_request', 'reply', 'request', 'string']
 
@@ -125,9 +125,13 @@ def exact(stream, size):
     return bytes(result)
 
 
-def read(stream):
+def read_message(stream):
     size, = struct.unpack("<I", exact(stream, 4))
-    return MessageT.InitFromPackedBuf(exact(stream, size))
+    return Message.GetRootAs(exact(stream, size), 0)
+
+
+def read(stream):
+    return MessageT.InitFromObj(read_message(stream))
 
 
 def request(body_type, body, **routing):

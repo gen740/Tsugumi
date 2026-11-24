@@ -17,36 +17,24 @@
 
 namespace tsugumi::workerd {
 
-// Local forwards keep original input paths. Transferred results use
-// job-relative paths.
-enum class OutputDelivery { local_paths, transferred_files };
-
 struct InvocationResult {
   std::vector<Value> outputs;
   std::optional<FailureData> failure;
-  // (output, input) pairs: a Path output that returns an input unchanged.
-  std::vector<std::pair<std::string, std::string>> forwards;
+  std::vector<ArtifactKey> created = {};
 };
 
 struct Invocation {
   // Borrowed for this synchronous invocation; never retained by the pool.
   std::span<const Value> inputs;
   std::vector<types::PortType> outputs;
-  // The generated parameters buffer, passed to the Card unopened.
-  std::string params;
-  std::filesystem::path output_directory;
+  std::filesystem::path artifact_directory;
+  std::vector<ArtifactGrant> grants;
   fs::OutputBudget output_budget;
-  OutputDelivery delivery = OutputDelivery::local_paths;
-  // The remote input snapshot root. Local input copies are made by
-  // stage_inputs.
-  std::filesystem::path input_directory;
   const std::atomic<bool>* cancel = nullptr;
   std::optional<uint64_t> timeout_ms;
   std::chrono::milliseconds deadline_grace{0};
   WorkerProc::LogSink log;
   WorkerProc::DisplaySink display;
-  std::function<std::vector<Value>(WorkerProc&)> stage_inputs;
-  std::function<std::string()> prepare_params;
   std::function<void(int64_t, int64_t)> on_timing;
   std::function<void(InvocationResult&)> validate;
   fs::TransferProgress transfer = {};
@@ -64,29 +52,12 @@ auto worker_disposition(bool reuse, bool alive, bool between_calls,
                         const std::optional<FailureData>& failure)
     -> WorkerDisposition;
 
-auto stage_input(const Value& value,
-                 std::span<const std::filesystem::path> roots,
-                 const std::filesystem::path& directory, bool read_only,
-                 const std::atomic<bool>& cancel,
-                 const fs::TransferProgress& progress) -> Value;
-
-// Admit the worker's outputs as port values by name, kind and presence. The
-// bytes are not opened.
+// Admit opaque outputs by declared name, required presence and capability.
 auto accept_outputs(std::vector<RawOutput> raw,
-                    std::span<const types::PortType> ports)
+                    std::span<const types::PortType> ports,
+                    std::span<const Value> inputs = {},
+                    std::span<const ArtifactKey> created = {})
     -> std::vector<Value>;
-
-// Output transfer can fail after a successful ABI call. Transfer failures
-// preserve resident reuse.
-auto stage_outputs(
-    std::span<Value> outputs, std::span<const Value> inputs,
-    std::span<const Value> original_inputs,
-    std::span<const std::pair<std::string, std::string>> forwards,
-    int work_root, const std::filesystem::path& work_path,
-    const std::filesystem::path& input_directory,
-    const std::filesystem::path& destination, OutputDelivery delivery,
-    const std::atomic<bool>& cancel, const fs::TransferProgress& progress = {},
-    fs::OutputBudget budget = {}) -> void;
 
 using ReleaseWorker =
     std::function<void(std::unique_ptr<WorkerProc>, bool, const std::string&)>;

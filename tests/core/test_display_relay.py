@@ -13,7 +13,6 @@ from harness.native_card import native_card
 from harness.proxy import ReplyProxy
 from harness.scenario import Project, run, wait_run
 from tsugumi_client import change, decode_message, encode_request, make, new_id, path, text
-from Tsugumi.Data.DisplayRunState import DisplayRunState
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.Payload import Payload
@@ -29,7 +28,6 @@ VIEWS = [
 ]
 LIVE_NOTES = {
     NotificationPayload.CardViewsUpdated,
-    NotificationPayload.DisplayRunStateChanged,
     NotificationPayload.DisplayUpdated,
 }
 
@@ -76,20 +74,23 @@ def test_views_are_declared_before_a_run_and_replaced_on_definition_change(proje
 
 @pytest.mark.environment
 def test_real_nix_publishes_view_files_without_building_the_card(project, core_factory):
-    client = core_factory().connect()
-    Project(project).card("work", {"type": "code"}, outputs=OUTPUTS, sources={
-        "default.nix": """
-{ pkgs, inputs, params, ... }: {
+    from projects import card, write_nix_project
+
+    definition = {"type": "code", "_outputs": OUTPUTS, "_nix": """
+{ inputs, params }: {
   run = throw "the view build must leave run lazy";
   views = [{ name = "notes"; type = "html"; blob = ./notes.html; }];
 }
-""",
-        "notes.html": "<!doctype html><p>Waiting for data</p>",
-    }).save(client)
+"""}
+    write_nix_project(project, {"work": definition}, [card("work", "work")], [],
+                      {"definitions/work/notes.html": "<!doctype html><p>Waiting for data</p>"})
+    client = core_factory(project_root=project).connect()
     sub = text(client.open().subscriptionId)
     client.call("ViewSetVisibleRequest", subscriptionId=sub, cards=[path("work")])
-    note, = client.wait_notification(lambda n: n.valueType == NotificationPayload.CardViewsUpdated,
-                                     timeout=90).value.views
+    update = client.wait_notification(lambda n: n.valueType == NotificationPayload.CardViewsUpdated,
+                                      timeout=90).value
+    assert not update.failure, update.failure and text(update.failure.diagnostic)
+    note, = update.views
     assert text(note.name) == "notes" and text(note.type) == "html"
     blob = Path(text(note.blob))
     assert blob.is_relative_to("/nix/store")
@@ -143,7 +144,7 @@ def wire_call(connection, request_id, name, **fields):
     return response.payload.value
 
 
-def test_pending_data_keeps_run_boundaries_and_post_return_bytes_are_live(project, tmp_path, core_factory):
+def test_data_is_fifo_and_post_return_bytes_are_live(project, tmp_path, core_factory):
     gate = tmp_path / "after-run"
     source = "#define LATE_GATE " + json.dumps(str(gate)) + "\n" + CARD
     package = native_card(tmp_path / "view-card", source)
@@ -155,7 +156,7 @@ def test_pending_data_keeps_run_boundaries_and_post_return_bytes_are_live(projec
     }}, outputs=OUTPUTS, plan=mock_plan([package], views=VIEWS)).save(client)
 
     # A raw subscriber stops reading. The large first payload fills its socket
-    # so both run boundaries and the small data frames remain queued.
+    # so the small data frames remain queued until the subscriber reads them.
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as slow:
         slow.settimeout(15)
         slow.connect(daemon.unix)
@@ -174,26 +175,17 @@ def test_pending_data_keeps_run_boundaries_and_post_return_bytes_are_live(projec
         gate.touch()
 
         events = []
-        while True:
+        while len(events) < 5:
             note = wire_read(slow).payload
-            if note.valueType == NotificationPayload.DisplayRunStateChanged:
-                assert note.value.card.segments == [b"work"]
-                events.append((note.value.state, text(note.value.runId)))
             if note.valueType == NotificationPayload.DisplayUpdated:
                 display = note.value.display
                 assert display.card.segments == [b"work"]
-                events.append((text(display.view), text(display.runId), bytes(display.bytes)))
-                if display.runId is None:
-                    break
+                assert display.creditId
+                events.append((text(display.view), bytes(display.bytes)))
         opaque = b"live\x00\xff\x80"
-        assert events == [
-            (DisplayRunState.started, run_id),
-            ("padding", run_id, bytes(2 << 20)),
-            ("unknown|view", run_id, opaque),
-            ("plot", run_id, b"different view"),
-            (DisplayRunState.ended, run_id),
-            ("unknown|view", None, opaque),
-        ]
+        assert [data for view, data in events if view == "unknown|view"] == [b"stale", opaque, opaque]
+        assert ("padding", bytes(2 << 20)) in events
+        assert ("plot", b"different view") in events
 
     record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
     assert record is not None and not hasattr(record, "display")
@@ -214,3 +206,156 @@ def test_pending_data_keeps_run_boundaries_and_post_return_bytes_are_live(projec
     assert view_fields(await_views(restarted)) == VIEWS
     restarted.call("ProjectInspectRequest")
     assert not any(n.valueType == NotificationPayload.DisplayUpdated for n in restarted.notifications.copy())
+
+
+def test_view_messages_make_a_round_trip_through_project_rpc(project, tmp_path, core_factory):
+    from Tsugumi.Trace.Client import Client
+
+    source = r"""
+#include <string.h>
+
+int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
+    const tsugumi_effects *effects = call->effects;
+    tsugumi_bytes incoming;
+    if (effects->send(call->host, "notes", NULL, 0) != 0) return 1;
+    if (effects->recv(call->host, "notes", &incoming, 5000) != 0) return 2;
+    if (incoming.size != 4 || memcmp(incoming.data, "\x00\xff\x80v", 4)) return 3;
+    if (effects->send(call->host, "notes", incoming.data, incoming.size) != 0) return 4;
+    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
+    return 0;
+}
+"""
+    package = native_card(tmp_path / "round-trip-card", source)
+    daemon = core_factory(mocked_builds=True)
+    ui = daemon.connect(client=Client.Web)
+    Project(project).card("work", {"type": "code", "sandbox": {
+        "filesystem": False, "pid": False, "ipc": False, "identity": False,
+    }}, outputs=OUTPUTS, plan=mock_plan([package], views=VIEWS)).save(ui)
+    subscription = text(ui.open().subscriptionId)
+    ui.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("work")])
+    assert view_fields(await_views(ui)) == VIEWS
+
+    def message():
+        return ui.wait_notification(
+            lambda note: note.valueType == NotificationPayload.DisplayUpdated, timeout=15,
+        ).value.display
+
+    def release(display):
+        ui.call("ViewCreditRequest", subscriptionId=subscription, card=display.card,
+                view=text(display.view), bytes=len(display.bytes), creditId=display.creditId)
+
+    run_id = run(ui)
+    ready = message()
+    assert ready.bytes is None or len(ready.bytes) == 0
+    # FlatBuffers consumers may decode an empty vector as an absent list.
+    ui.call("ViewCreditRequest", subscriptionId=subscription, card=ready.card,
+            view="notes", bytes=0, creditId=ready.creditId)
+    payload = b"\x00\xff\x80v"
+    ui.call("ViewSendRequest", card=path("work"), view="notes", bytes=list(payload))
+    echoed = message()
+    release(echoed)
+    assert bytes(echoed.bytes) == payload
+    assert wait_run(ui, run_id).state == RunState.succeeded
+
+
+# Eight full-size messages fill the four windows while the UI holds credit.
+# The ninth waits for a credit. A separate thread drives the slow view.
+BURST = r"""
+#include <pthread.h>
+#include <stdatomic.h>
+#include <unistd.h>
+
+static atomic_uint sent;
+static atomic_int failed;
+static const uint8_t bytes[TSUGUMI_MESSAGE_MAX];
+
+static void *burst(void *arg) {
+    const tsugumi_call *call = arg;
+    for (unsigned i = 0; i < 9; ++i) {
+        if (call->effects->send(call->host, "notes", bytes, sizeof(bytes))) {
+            atomic_store(&failed, 1);
+            return NULL;
+        }
+        atomic_fetch_add(&sent, 1);
+    }
+    return NULL;
+}
+
+int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, burst, (void *)call)) return 1;
+    while (atomic_load(&sent) < 8 && !atomic_load(&failed)) usleep(1000);
+    const uint8_t count = atomic_load(&sent);
+    if (call->effects->send(call->host, "plot", &count, 1)) return 2;
+    pthread_join(thread, NULL);
+    if (atomic_load(&failed)) return 3;
+    const uint8_t done = atomic_load(&sent);
+    if (call->effects->send(call->host, "plot", &done, 1)) return 4;
+    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
+    return 0;
+}
+"""
+
+UNISOLATED = {"filesystem": False, "pid": False, "ipc": False, "identity": False}
+
+
+def test_full_view_does_not_block_other_traffic(project, tmp_path, core_factory):
+    from Tsugumi.Trace.Client import Client
+
+    slow = native_card(tmp_path / "slow", BURST)
+    fast = native_card(tmp_path / "fast", r"""
+int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
+    if (call->effects->send(call->host, "plot", (const uint8_t *)"fast", 4)) return 1;
+    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
+    return 0;
+}
+""")
+    client = core_factory(mocked_builds=True).connect(client=Client.Web)
+    graph = Project(project).card("start", {"type": "trigger"})
+    for name, package in (("slow", slow), ("fast", fast)):
+        graph.card(name, {"type": "code", "inputs": [{"name": "trigger"}], "sandbox": UNISOLATED,
+                          "reuseWorker": True, "timeoutSeconds": 30},
+                   outputs=OUTPUTS, plan=mock_plan([package], views=VIEWS))
+        graph.connect("start", "out", name, "trigger")
+    graph.save(client)
+    sub = text(client.open().subscriptionId)
+    client.call("ViewSetVisibleRequest", subscriptionId=sub, cards=[path("slow"), path("fast")])
+    await_views(client)
+    await_views(client)
+
+    def receive(card, view, timeout=15):
+        def matches(note):
+            if note.valueType != NotificationPayload.DisplayUpdated:
+                return False
+            display = note.value.display
+            return display.card.segments == [card.encode()] and text(display.view) == view
+        return client.wait_notification(matches, timeout=timeout).value.display
+
+    def release(display):
+        client.call("ViewCreditRequest", subscriptionId=sub, card=display.card,
+                    view=text(display.view), bytes=len(display.bytes), creditId=display.creditId)
+
+    run_id = run(client, "start")
+    first, second = receive("slow", "notes"), receive("slow", "notes")
+    assert len(first.bytes) == len(second.bytes) == 1 << 24
+    assert bytes(receive("slow", "plot").bytes) == b"\x08"
+    assert bytes(receive("fast", "plot").bytes) == b"fast"
+    with pytest.raises(TimeoutError):
+        receive("slow", "plot", timeout=0.25)
+    release(first)
+    assert bytes(receive("slow", "plot").bytes) == b"\x09"
+    release(second)
+    for _ in range(7):
+        release(receive("slow", "notes"))
+    assert wait_run(client, run_id).state == RunState.succeeded
+
+
+def test_full_burst_is_discarded_without_ui(project, tmp_path, core_factory):
+    package = native_card(tmp_path / "burst", BURST)
+    client = core_factory(mocked_builds=True).connect()
+    Project(project).card("work", {"type": "code", "sandbox": UNISOLATED,
+                                   "timeoutSeconds": 20}, outputs=OUTPUTS,
+                          plan=mock_plan([package], views=VIEWS)).save(client)
+    assert wait_run(client, run(client)).state == RunState.succeeded
+    assert not any(note.valueType == NotificationPayload.DisplayUpdated
+                   for note in client.notifications.copy())

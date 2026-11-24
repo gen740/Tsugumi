@@ -15,7 +15,7 @@ struct Note {
   using Build = std::function<
       std::pair<Tsugumi::RPC::NotificationPayload, flatbuffers::Offset<void>>(
           flatbuffers::FlatBufferBuilder&)>;
-  enum class Kind { Doc, Run, Log, CardViews, Display, DisplayRunState };
+  enum class Kind { Doc, Run, Log, CardViews, Display };
   Kind kind = Kind::Doc;
   std::string coalesce_key;  // Same key replaces an unsent note
   std::string card_key;      // Target of a live view notification
@@ -42,11 +42,11 @@ class Server {
                            Tsugumi::RPC::NotificationPayload type,
                            flatbuffers::Offset<void> value) -> std::string;
   void broadcast(Note note);
-  auto display(const CardPath& card, std::string_view view,
-               std::string_view bytes) -> void;
-  auto begin_display_run(std::string run) -> void;
-  auto start_display_run(const CardPath& card, const std::string& run) -> void;
-  auto end_display_run(const std::string& run) -> void;
+  auto display(const CardPath& card, std::string view, std::string bytes,
+               std::function<void()> credit) -> void;
+  auto return_view_credit(ConnId conn, const std::string& subscription,
+                          const CardPath& card, const std::string& view,
+                          uint64_t id, size_t bytes) -> void;
   void close(ConnId conn);
 
  private:

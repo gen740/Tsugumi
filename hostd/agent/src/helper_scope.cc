@@ -394,7 +394,7 @@ auto HelperScope::Graph(const std::string& text,
                         const std::string& prefix) const -> std::string {
   const auto project = json::Object(text);
   json::Members visible;
-  for (const auto* key : {"name", "pkgsPath"})
+  for (const auto* key : {"name", "nixPath"})
     if (project.contains(key)) visible[key] = project.at(key);
   const auto canvas = json::Object(json::Get(project, "canvas", "{}"));
   visible["canvas"] = json::Encode(
@@ -710,11 +710,12 @@ auto HelperScope::Check(const std::string& tool, const json::Members& args,
     RequireRun(found->second);
     return;
   }
-  if (tool == "run" || tool == "card_api") {
+  if (tool == "run" ||
+      (tool == "evaluate_nix" && json::Bool(json::Get(args, "build")))) {
     RequireRun(Card(json::Get(args, "card", "{}")));
     return;
   }
-  if (tool == "run_plan" || tool == "run_history" ||
+  if (tool == "evaluate_nix" || tool == "run_plan" || tool == "run_history" ||
       tool == "run_invocations" || tool == "run_record" ||
       tool == "run_value_read" || tool == "artifact_list" ||
       tool == "log_range") {

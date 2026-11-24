@@ -14,8 +14,8 @@ import pytest
 
 from harness.daemon import ROOT
 from harness.file_events import wait_for_file
-from projects import SINK, MSG_FBS, builtin_project, card, conn, run_and_wait, write
-from harness.document import set_param as set_typed_param
+from projects import SINK, MSG_FBS, MSG_INPUT_NIX, builtin_project, card, conn, run_and_wait, write, write_nix_project
+from harness.document import params_nix, set_param
 from tsugumi_client import RpcFailure, _request_class, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 from harness.document import build_buffer, positions, write_layout
@@ -41,17 +41,13 @@ def notes(c, root, commit: str, n: int = 0, *, run_ids=()) -> list:
 
 
 def set_text(c, value: str):
-    snap = c.call("ProjectInspectRequest")
-    body = next(json.loads(text(d.cardJson)) for d in snap.definitions if text(d.id) == "src")
-    set_typed_param(body, "text", value)
-    c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test",
-           changes=[change("PutDefinition", id="src", cardJson=json.dumps(body), keepReadme=True, keepComments=True)])
+    set_param(c, "src", "text", value)
 
 
 def src_text(c) -> str:
     snap = c.call("ProjectInspectRequest")
-    body = next(json.loads(text(d.cardJson)) for d in snap.definitions if text(d.id) == "src")
-    return next(p for p in body["params"] if p["name"] == "text")["data"]["string"]
+    node = next(r for r in snap.resolution if r.card.segments == [b"src"])
+    return json.loads(text(next(p.valueJson for p in node.parameters if p.name == b"text")))
 
 
 def test_runs_commit_note_and_branch(tmp_path, core_factory):
@@ -209,7 +205,7 @@ def test_runs_version_definitions_and_explicit_paths_only(tmp_path, core_factory
     second = text(changed.commit)
     assert changed.state == RunState.succeeded and second != first
     assert "reference.csv" in paths(second) and "result.csv" not in paths(second)
-    assert "changed definition" in git(root, "show", second + ":definitions/src/_card.json")
+    assert "changed definition" in git(root, "show", second + ":definitions/src/params.nix")
     assert not any(".tsugumi" in p.split("/") for p in paths(second))
     (root / "reference.csv").write_text("changed chosen input")
     _, chosen = run_and_wait(c, "start")
@@ -231,11 +227,10 @@ def test_a_demo_history_becomes_its_versions(tmp_path, core_factory):
     """An imported project history retains its branches, named versions and run results."""
     root = tmp_path / "p"
     builtin_project(root, text="final")
-    card = json.loads((root / "definitions" / "src" / "_card.json").read_text())
-    tried = dict(card, params=[dict(p, data="tried") if p["name"] == "text" else p for p in card["params"]])
+    tried = params_nix({"text": "tried", "value": True})
     history = {
         "commits": [
-            {"id": "plan", "message": "計画", "time": 1793700000, "files": {"definitions/src/_card.json": json.dumps(tried)}},
+            {"id": "plan", "message": "計画", "time": 1793700000, "files": {"definitions/src/params.nix": tried}},
             {"id": "try", "parents": ["plan"], "message": "別の文を試す", "time": 1793700600,
              "runs": [{"run_id": "11111111-1111-1111-1111-111111111111", "state": "failed", "ended": "2026-11-04T01:10:00Z", "seconds": 2.5}]},
             {"id": "final", "parents": ["plan"], "message": "採用", "time": 1793701200, "tag": "adopted",
@@ -319,9 +314,10 @@ def test_a_run_record_is_independent_of_the_connection(tmp_path, core_factory):
     """Every connection reads the same complete, neutral facts."""
     root = tmp_path / "p"
     independent = [f"more{i}" for i in range(7)]
-    write(root,
+    write_nix_project(root,
           defs={"trigger": {"type": "trigger"},
-                "source": {"type": "input", "params": [{"name": "text", "type": "string", "data": {"string": "first"}}], "_outputs": MSG_FBS},
+                "source": {"type": "input", "params": {"text": "first", "value": True},
+                           "_outputs": MSG_FBS, "_nix": MSG_INPUT_NIX},
                 "merge": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
                 "sink": dict(SINK, maxRuns=4)},
           cards=[card("start", "trigger"), card("src", "source"), card("both", "merge"), card("sink", "sink")] + [card(name, "source") for name in independent],
@@ -385,7 +381,7 @@ def test_a_versions_canvas_says_what_each_card_is(tmp_path, core_factory):
         return git(project, "rev-parse", "HEAD").strip()
 
     root = tmp_path / "p"
-    builtin_project(root, extra_cards=[card("wide", "merge"), card("b", "branch"), card("m", "merge"), card("f", "fork")],
+    builtin_project(root, extra_cards=[card("wide", "merge"), card("m", "merge")],
                     extra_conns=[conn("src", "msg", "m", "a")])
     wide = root / "definitions" / "wide" / "_card.json"
     wide.write_text(json.dumps({"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}, {"name": "c"}]}))
@@ -395,8 +391,8 @@ def test_a_versions_canvas_says_what_each_card_is(tmp_path, core_factory):
     canvas = c.call("VersionCanvasRequest", commit=first)
     cards = {text(k.id): k for k in canvas.cards}
     assert {k: text(v.kind) for k, v in cards.items()} == {
-        "start": "trigger", "src": "input", "out": "collect", "wide": "merge", "b": "branch", "m": "merge", "f": "fork"}
-    assert (cards["wide"].fan, cards["m"].fan, cards["f"].fan, cards["b"].fan, cards["out"].fan) == (3, 2, 2, 0, 0)
+        "start": "trigger", "src": "input", "out": "collect", "wide": "merge", "m": "merge"}
+    assert (cards["wide"].fan, cards["m"].fan, cards["out"].fan) == (3, 2, 0)
     write_layout(root, {"cards": {"out": {"x": 3, "y": 7, "collapsed": True}}})
     assert bytes(c.call("VersionCanvasRequest", commit=commit_all(root)).layout) == (root / "layout.bin").read_bytes()
     # An older version keeps what its Cards were.

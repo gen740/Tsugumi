@@ -405,8 +405,20 @@ def decide_comments(messages, text, start):
             changes.append({"value_type": "PutDefinition", "value": {
                 "id": def_id, "card_json": json.dumps(card), "comments_json": json.dumps(meta), "keep_readme": True}})
         for cid in added:
-            changes.append({"value_type": "PutDefinition", "value": {"id": cid, "card_json": json.dumps(
-                {"type": "input", "params": [{"name": "text", "type": "string", "data": {"string": "x"}}]})}})
+            changes.append({"value_type": "PutDefinition", "value": {
+                "id": cid, "card_json": json.dumps({"type": "input"})}})
+            changes.append({"value_type": "PutSource", "value": {
+                "path": f"definitions/{cid}/params.nix", "bytes": '{ text = "x"; }'}})
+            changes.append({"value_type": "PutSource", "value": {
+                "path": f"definitions/{cid}/default.nix",
+                "bytes": """{ params, inputs }:
+let
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/input> { inherit pkgs; };
+in {
+  run = sdk.input { outputs = ./_outputs.fbs; values.msg = params; };
+}
+"""}})
             changes.append({"value_type": "PutSource", "value": {
                 "path": f"definitions/{cid}/_outputs.fbs",
                 "bytes": "namespace added;\ntable Msg { text:string; }\ntable Outputs { msg:Msg (required); }\nroot_type Outputs;\n"}})
@@ -568,22 +580,34 @@ def decide(messages, system="", tools=()):
     if is_error or "error" in res:
         # A tool that failed ends the task with what it said.
         return ("text", f"{name} failed: {res.get('error', res)}")
+    prefix = "".join(f"externals/{part}/" for part in card_path[:-1])
+    params_path = f"{prefix}definitions/{card_path[-1]}/params.nix"
     if name == "project_inspect":
-        # A Card's settings are its own definition (definitions/<id>/_card.json).
-        d = next(x for x in value_obj["definitions"] if x["id"] == card_path[-1])
-        card = json.loads(d["card_json"])
+        return ("tool", "project_file_read", {"path": params_path})
+    if name == "project_file_read":
+        data = value_obj["bytes"]
+        source = base64.b64decode(data["base64"]).decode() if isinstance(data, dict) else data
+        # This fixture edits one literal binding and leaves surrounding text alone.
+        literal = r'"(?:[^"\\]|\\.)*"|\[(?:[^"\]]|"(?:[^"\\]|\\.)*")*\]|[^;\n]+'
+        matches = list(re.finditer(rf'(?<![\w-]){re.escape(param)}\s*=\s*({literal})(?=\s*;)', source))
+        if len(matches) != 1:
+            return ("text", f"Could not find one binding for {param} in {params_path}.")
+        old = matches[0].group(0)
         try:
-            v = json.loads(value)
+            value_literal = json.loads(value)
         except ValueError:
-            v = value
-        parameter = next(p for p in card["params"] if p["name"] == param)
-        parameter["data"] = {parameter["type"].replace("[]", "s"): v}
-        change = {"id": d["id"], "card_json": json.dumps(card), "keep_readme": True, "keep_comments": True}
-        return ("tool", "project_save", {
-            "base_rev": str(value_obj["rev"]),
-            "changes": [{"value_type": "PutDefinition", "value": change}],
-        })
-    if name == "project_save":
+            value_literal = value
+
+        def nix_literal(item):
+            if isinstance(item, list):
+                return "[ " + " ".join(map(nix_literal, item)) + " ]"
+            return json.dumps(item, ensure_ascii=False).replace("${", r"\${")
+
+        return ("tool", "project_edit", {"edits": [{
+            "file_path": params_path, "old_string": old,
+            "new_string": f"{param} = {nix_literal(value_literal)}",
+        }]})
+    if name == "project_edit":
         inspect = next(r for n, r, _ in reversed(results) if n == "project_inspect")
         trigger = trigger_of(inspect["value"])
         return ("tool", "run", {"base_rev": str(value_obj["rev"]), "card": {"segments": [trigger]}})
@@ -598,8 +622,7 @@ def decide(messages, system="", tools=()):
     if name == "run_record":
         st = value_obj.get("run", {}).get("status", {})
         record = value_obj.get("record") or {}
-        display = (record.get("display") or {}).get("value", {})
-        shown = display.get("text") or json.dumps(display)[:200]
+        shown = json.dumps(record.get("outputs") or [], ensure_ascii=False)[:200]
         return ("text", f"I set {'/'.join(card_path)}.{param} to {value} and ran the graph. "
                         f"Run {st.get('run_id')} {st.get('state')}; {report} shows: {shown}")
     return ("text", "Done.")

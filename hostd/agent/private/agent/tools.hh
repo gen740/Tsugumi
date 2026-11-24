@@ -80,8 +80,8 @@ struct Tools {
                              const std::string& arguments, std::stop_token stop)
       -> std::string;
   auto ProjectCall(const std::string& project, const std::string& name,
-                   const std::string& arguments, std::stop_token stop = {})
-      -> std::string;
+                   const std::string& arguments, std::stop_token stop = {},
+                   const host::SaveBase* inspected = nullptr) -> std::string;
   auto FileOperation(const std::string& conversation,
                      const std::string& project, const std::string& name,
                      json::Members& args, const std::string& operation,

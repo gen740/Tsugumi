@@ -14,7 +14,7 @@ import pytest
 from harness.observations import decode_scalar, read_output
 from harness.real_cards import NUM, ONE_MAIN, TXT, log, python_card, txt_main
 from conftest import real_environment
-from projects import card, conn, run_and_wait, write
+from projects import card, conn, run_and_wait, write_nix_project as write
 from test_cards_shared_vm import load, shown
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
@@ -27,7 +27,7 @@ pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_SHARED_VM") != "1",
 # Identifies the process (PIDs repeat across sandboxes: each has its own PID namespace).
 COUNT_MAIN = """import random
 from card import Output
-from outputs.out.t.Txt import TxtT
+from t.Txt import TxtT
 
 WORKER = random.getrandbits(32)
 calls = 0
@@ -38,43 +38,10 @@ def run(input):
     return Output(out=TxtT(value=f"worker {WORKER} calls {calls}"))
 """
 
-PATH_OUTPUT = 'attribute "tsugumi"; table Outputs { doc:string (tsugumi: "path"); } root_type Outputs;'
-
-# Writes its Path output under the working directory.
-MAKE_MAIN = """import os, random
-from card import Output
-
-def run(input):
-    assert not os.path.exists("/proc/self/fd/900"), "a passed descriptor was left open"
-    with open("a.txt", "w") as f:
-        f.write(f"line {random.getrandbits(32)}\\n")
-    return Output(doc="a.txt")
-"""
-
-# Reads its Path input, keeps every line it saw (state kept by the resident
-# worker) and must not be able to change the input.
-READ_MAIN = """from card import Output
-from outputs.out.t.Num import NumT
-
-lines = []
-
-def run(input):
-    with open(input.doc) as f:
-        lines.append(f.readline())
-    try:
-        with open(input.doc, "a") as f:
-            f.write("x")
-    except OSError:
-        pass
-    else:
-        raise RuntimeError("the input file was writable")
-    return Output(out=NumT(value=len(lines)))
-"""
-
 # Without reuseWorker (the default): a new process per call, each starting with calls = 1.
 FRESH_MAIN = """import random
 from card import Output
-from outputs.again.t.Num import NumT
+from t.Num import NumT
 
 WORKER = random.getrandbits(32)
 calls = 0
@@ -119,23 +86,6 @@ def test_resident_worker_serves_later_runs(env):
     assert invocations(c, second, "count")[0].workerReused
 
 
-def test_path_inputs_keep_the_worker_and_stay_read_only(env):
-    c = load(env, {"trigger": {"type": "trigger"}, "make": python_card(MAKE_MAIN, outputs=PATH_OUTPUT),
-                   "read": python_card(READ_MAIN, inputs=["doc"], reuseWorker=True, recordIO=True)},
-             [card("start", "trigger"), card("make", "make"), card("read", "read")],
-             [conn("make", "doc", "read", "doc")])
-    first, st = run_and_wait(c, "start")
-    detail = {k: c.call("RunRecordRequest", runId=first, card=path(k)).status for k in ("make", "read")}
-    assert st.state == RunState.succeeded, ({k: v.failure and text(v.failure.diagnostic) for k, v in detail.items()},
-                                            log(c, first, "make", 2), log(c, first, "read", 2))
-    second, st = run_and_wait(c, "start")
-    assert st.state == RunState.succeeded, log(c, second, "read", 2)
-    # Another input path (another run's output) and the same worker: the list goes on.
-    assert decode_scalar(read_output(c, second, card="read"), "uint64") == 2
-    assert invocations(c, second, "read")[0].workerReused
-    assert c.call("RunRecordRequest", runId=second, card=path("make")).status.state == CardState.succeeded
-
-
 def test_fresh_worker_per_call(env):
     out = "namespace t; table Num { value:ulong; } table Outputs { again:Num; } root_type Outputs;"
     c = load(env, {"trigger": {"type": "trigger"}, "seed": python_card(SEED_MAIN),
@@ -161,11 +111,12 @@ def test_evaluator_errors_and_timeouts_leave_tsugumid_working(env):
     """The evaluator runs inside tsugumid: endless recursion is an error of
     the Card (never a crash), buildTimeoutSeconds stops a build, and the next
     Card evaluates and runs as before."""
-    loop_nix = '''{ pkgs, params, inputs, schemas }:
+    loop_nix = '''{ params, inputs }:
 let f = x: f (x + 1); in { run = f 0; }
 '''
-    slow_nix = ('''{ pkgs, params, inputs, schemas }:
-{ run = pkgs.runCommand "tsugumi-test-slow-${toString builtins.currentTime}" { } '''
+    slow_nix = ('''{ params, inputs }:
+let pkgs = import <nixpkgs> { }; in
+{ run = pkgs.runCommand "tsugumi-test-slow" { } '''
                 '''"sleep 60; mkdir -p $out/lib"; }
 ''')
     c = load(env, {"trigger": {"type": "trigger"},
@@ -189,7 +140,7 @@ let f = x: f (x + 1); in { run = f 0; }
 # Reach 1.1.1.1:80 over TCP (no DNS).
 REACH_MAIN = """import socket
 from card import Output
-from outputs.out.t.Reach import ReachT
+from t.Reach import ReachT
 
 def run(input):
     try:

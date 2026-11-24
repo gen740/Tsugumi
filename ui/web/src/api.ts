@@ -141,7 +141,6 @@ export interface Status {
   /** Cards can use folders of this host at /host/<name>. */
   hostFolders: boolean
   /** The nixpkgs this Tsugumi builds with (new projects are pinned to it). */
-  nixpkgsPin: string | null
   agentExclude: string[]
   chatAvailable: boolean
   chatError: string | null

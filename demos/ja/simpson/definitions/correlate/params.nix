@@ -1,0 +1,3 @@
+{
+  stratify = "species";
+}

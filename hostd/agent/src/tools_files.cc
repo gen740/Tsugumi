@@ -19,7 +19,7 @@ using host::Failure;
 namespace H = Tsugumi::Host;
 const std::set<std::string> kProtected{
     "tsugumi.json", "layout.bin",   "_card.json",  "README.md",
-    "_comments.json", "_inputs.fbs", "_outputs.fbs", "_params.fbs"};
+    "_comments.json", "_inputs.fbs", "_outputs.fbs"};
 auto CardRoot(const std::string& path) -> std::string {
   if (!fs::valid_relative_path(path)) return {};
   auto rest = path;

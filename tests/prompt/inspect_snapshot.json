@@ -4,12 +4,12 @@
     "project_id": "1ac641fe-18e2-404c-89bc-e7a6bcf7679b",
     "rev": 0,
     "execution_rev": 0,
-    "project_json": "{\"name\": \"probe\", \"pkgsPath\": \"tsugumi:default\", \"canvas\": {\"cards\": [{\"id\": \"initial\"}], \"connections\": []}}",
+    "project_json": "{\"name\": \"probe\", \"nixPath\": [], \"canvas\": {\"cards\": [{\"id\": \"initial\"}], \"connections\": []}}",
     "layout": "{}",
     "definitions": [
       {
         "id": "initial",
-        "card_json": "{\"type\": \"input\", \"params\": [{\"name\": \"value\", \"type\": \"uint64\", \"data\": 43}]}"
+        "card_json": "{\"type\": \"input\"}"
       }
     ],
     "sources": [
@@ -19,6 +19,13 @@
         "exists": true,
         "hash": "7ff875a1dcc50b7acf4350766f2e81f4115a83d16f02edc939d35a1205354603",
         "size_bytes": 111
+      },
+      {
+        "path": "definitions/initial/params.nix",
+        "kind": "file",
+        "exists": true,
+        "hash": "9d0f8ffdf5432eb3ef389bde5c97827337902f9dc976debb0537dcf04cb6ad73",
+        "size_bytes": 16
       }
     ],
     "resolution": [
@@ -30,24 +37,20 @@
         },
         "inputs": [
           {
-            "name": "start",
-            "kind": "FlatBuffer",
-            "optional": true
+            "name": "start"
           }
         ],
         "outputs": [
           {
             "name": "value",
-            "kind": "FlatBuffer",
-            "optional": false,
             "schema_bfbs": {
               "binary_schema_bytes": 364
             },
-            "root_type": "collatz.Number"
+            "root_type": "collatz.Number",
+            "required": true
           }
         ],
-        "diagnostics": [],
-        "nix_references": []
+        "diagnostics": []
       }
     ],
     "diagnostics": [],

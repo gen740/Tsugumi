@@ -194,11 +194,16 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
   });
   if (j->log_bytes.size() > workerd::kLogChunkBytes)
     throw BrokerDisconnected("remote log slice exceeds its limit");
+  if (!j->displays.empty() && (j->displays.size() != 1 || !j->display_sequence))
+    throw BrokerDisconnected("invalid remote view message sequence");
   std::vector<WorkerDisplayData> displays;
   displays.reserve(j->displays.size());
   for (const auto& display : j->displays)
     displays.push_back({display->view, std::string(display->bytes.begin(),
                                                    display->bytes.end())});
+  std::map<std::string, uint64_t> credits;
+  for (const auto& entry : j->view_input_credits)
+    credits.emplace(entry->view, entry->released);
   return {std::move(state),
           j->fingerprint,
           j->result_sha256,
@@ -211,7 +216,11 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
           j->log_size,
           std::string(j->log_bytes.begin(), j->log_bytes.end()),
           j->secrets_wanted,
-          std::move(displays)};
+          std::move(displays),
+          j->display_pending,
+          j->display_sequence,
+          j->view_input_ready,
+          std::move(credits)};
 }
 auto require_ack(const R::ReplyT& reply) -> void {
   if (!reply.body.AsAck())
@@ -256,6 +265,7 @@ auto RemoteJobClient::request(R::RequestT q,
     throw BrokerDisconnected("cannot read execution broker capability");
   R::BrokerRequestT broker;
   broker.capability = *capability;
+  const bool view_message = q.body.AsViewSendRequest() != nullptr;
   broker.request = std::make_unique<R::RequestT>(std::move(q));
   R::MessageT message;
   message.payload.Set(std::move(broker));
@@ -264,8 +274,9 @@ auto RemoteJobClient::request(R::RequestT q,
              workerd::length_prefix(static_cast<uint32_t>(bytes.size())), io);
   send_exact(socket.fd, bytes, io);
   trace::Link link;
-  trace::Observe(link, "project core", "hostd execution broker", true, bytes,
-                 &trace::kFlatBufferCodec);
+  if (!view_message)
+    trace::Observe(link, "project core", "hostd execution broker", true, bytes,
+                   &trace::kFlatBufferCodec);
   std::string prefix(4, '\0');
   read_exact(socket.fd, prefix.data(), prefix.size(), io);
   std::string response(workerd::frame_length(prefix), '\0');
@@ -274,7 +285,7 @@ auto RemoteJobClient::request(R::RequestT q,
   auto* reply = incoming->payload.AsReply();
   if (!reply) throw BrokerDisconnected("expected execution broker reply");
   const auto* status = reply->body.AsJobStatus();
-  if (!status || status->displays.empty())
+  if (!view_message && (!status || status->displays.empty()))
     trace::Observe(link, "hostd execution broker", "project core", false,
                    response, &trace::kFlatBufferCodec);
   if (const auto* error = reply->body.AsFailure()) {
@@ -405,11 +416,32 @@ auto RemoteJobClient::submit(std::string_view service,
   body.spec.assign(spec.begin(), spec.end());
   return job_state(request(command(std::move(body), service, instance, job), stop));
 }
-auto RemoteJobClient::status(std::string_view service,
-                             std::string_view instance,
-                             std::string_view job, uint64_t log_offset,
-                             std::stop_token stop) const -> RemoteJobState {
+auto RemoteJobClient::send_view(std::string_view service,
+                                std::string_view instance,
+                                std::string_view job_id,
+                                const WorkerDisplayData& display,
+                                uint64_t offset, std::stop_token stop) const
+    -> void {
+  R::ViewSendRequestT input;
+  input.offset = offset;
+  input.display = std::make_unique<Tsugumi::Worker::WorkerDisplayT>();
+  input.display->view = display.view;
+  input.display->bytes.assign(display.bytes.begin(), display.bytes.end());
+  require_ack(request(command(std::move(input), service, instance, job_id), stop));
+}
+
+auto RemoteJobClient::status(
+    std::string_view service, std::string_view instance, std::string_view job,
+    uint64_t log_offset, std::stop_token stop, uint64_t display_after,
+    const std::map<std::string, uint64_t>& credits) const -> RemoteJobState {
   R::StatusRequestT body;
+  body.display_after = display_after;
+  for (const auto& [view, released] : credits) {
+    auto entry = std::make_unique<R::DisplayCreditT>();
+    entry->view = view;
+    entry->released = released;
+    body.display_credits.push_back(std::move(entry));
+  }
   body.log_offset = log_offset;
   body.log_limit = workerd::kLogChunkBytes;
   return job_state(

@@ -24,24 +24,23 @@ the person's decision.
 - What you save becomes part of the person's project and its version history, as their work. Analysis done in
   Cards can be followed and rerun by the person.
 - Project edits are atomic; the canvas derives positions for Cards without saved coordinates, and project_validate checks the
-  whole latest revision (types, ports, settings, _outputs.fbs).
-- Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<identifier>"} and its wires,
-  definitions/<id>/_card.json holds its "type" (code, draft, trigger, input, branch, fork, merge, collect or subgraph;
-  every Card states it) and settings such as maxRuns, timeoutSeconds, recordIO, reuseWorker and system.
-  Param data and sweep entries carry one typed field (for example {"data": {"double": 2.5}}).
-  README.md holds the optional one-line description front matter and Markdown body, and _comments.json holds review
-  comments. card_id reserves the permanent Card id, which is also its name. An implemented Draft keeps its id. An output port can feed several inputs; a fork Card ({"type": "fork", "outputs": [{"name": "a"},
-  {"name": "b"}]}) names that split, sending its value on every output. Each input takes one wire and inherits its type from that output.
-  Route multiple sources through Merge. A Code Card waits for its connected inputs; the SDK handles absent inputs.
-- Create custom Card definitions and sources with project_edit. Read demo_read reference/cards.md, the chosen SDK
-  documentation and the Card's generated API: tools family sdk action api builds the saved Card from its current
-  wiring and returns the files its builder places under share/tsugumi/api/. Pass schemas to the SDK builder in
-  default.nix. Use a Path port for a file or folder. SDK guides and starters live in tsugumi-kit.
+  whole latest revision (ports, wiring, settings, _outputs.fbs).
+- The Card id names its definition folder and is its name on the canvas. _card.json declares its type, input names
+  and execution settings. README.md holds its description, and _comments.json holds review comments.
+  An input takes one wire. Use Merge to join sources. Cards wait for every connected input and are skipped when
+  one cannot arrive. Declare outputs in _outputs.fbs and use (required) for outputs every call must emit.
+- Use project_edit for Card files and wiring. Tsugumi generates _inputs.fbs from the connections.
+  Edit the literal in params.nix to change a build-time value; a Card without params has no params.nix. A Code or Input Card's default.nix receives
+  { params, inputs }, where inputs contains upstream Nix exports by Card id. Use Artifact values for files or directories.
+- Declare nixPath names and URLs in tsugumi.json, then use nix_path_lock_update for one name or all names with
+  approval. Each external has its own declarations and lock.
+- evaluate_nix evaluates in the saved Card's directory for the local system, with params and inputs in scope.
+  Use (import ./. { inherit params inputs; }).api with build: true to realise the API derivation and read its files
+  under share/tsugumi/api/. See demo_read reference/cards.md and the SDK guide.
 - template_list returns the visible Project and Host templates. To copy an existing template, use tools family
   templates action copy with the exact store and name. Each copy creates fresh Card IDs and preserves its internal
   wiring. Adding a folder or importing from Git into either store requires the person's approval.
-- What a Card may do beyond computing (sandbox, grants, executionService, and nixSources in
-  tsugumi.json) is the person's: a save that widens it waits for their approval, with your reason. A declined
+- The person decides a Card's sandbox, grants, and executionService. A save that widens access waits for their approval, with your reason. A declined
   widening stays declined: do not reach the same capability another way.
 - A Card in Card is definitions/<id>/_card.json {"type": "subgraph", "external": "<name>"}: the project externals/<name>/ with its own
   tsugumi.json (boundary inputs and outputs are lists of {name, card, port} entries), layout.bin and definitions.
@@ -58,7 +57,7 @@ the person's decision.
 - A project inside a person's registered trusted folder is trusted without a separate question; trust controls
   its Skills, while access and permission grants still apply.
 - tools lists a family's actions and schemas, then calls an action with its arguments. It provides file utilities,
-  the Card API, templates, run status/history/logs, artifacts, versions and maintenance on demand. Destructive maintenance
+  Nix evaluation, templates, run status/history/logs, artifacts, versions and maintenance on demand. Destructive maintenance
   and version changes wait for the person's approval of each call. For a trial the person describes without its run,
   versions action find narrows the history to the versions that changed a Card, their runs and recorded outputs.
 - project_copy copies files into Card sources without their bytes passing through your context; it returns paths,

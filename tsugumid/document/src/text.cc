@@ -2,12 +2,15 @@
 
 #include <flatbuffers/idl.h>
 
+#include <algorithm>
 #include <memory>
 
 #include "tsugumi/document/document.hh"
 
 extern const unsigned char tsugumi_project_document_fbs[];
 extern const unsigned long tsugumi_project_document_fbs_size;
+extern const unsigned char tsugumi_project_lock_fbs[];
+extern const unsigned long tsugumi_project_lock_fbs_size;
 extern const unsigned char tsugumi_card_document_fbs[];
 extern const unsigned long tsugumi_card_document_fbs_size;
 extern const unsigned char tsugumi_comments_document_fbs[];
@@ -34,6 +37,8 @@ auto source(Schema schema) -> std::string_view {
     case Schema::Layout:
       return view(tsugumi_layout_document_fbs,
                   tsugumi_layout_document_fbs_size);
+    case Schema::Lock:
+      return view(tsugumi_project_lock_fbs, tsugumi_project_lock_fbs_size);
   }
   return {};
 }
@@ -41,7 +46,7 @@ auto source(Schema schema) -> std::string_view {
 // One parser per schema and thread: a parser is not shared between threads,
 // and it is reused for every document it reads.
 auto parser(Schema schema) -> flatbuffers::Parser& {
-  thread_local std::unique_ptr<flatbuffers::Parser> parsers[4];
+  thread_local std::unique_ptr<flatbuffers::Parser> parsers[5];
   auto& p = parsers[static_cast<int>(schema)];
   if (!p) {
     flatbuffers::IDLOptions o;
@@ -114,7 +119,7 @@ auto collapse_empty(const std::string& text) -> std::string {
 auto parse(Schema schema, std::string_view path, std::string_view text)
     -> std::string {
   auto& p = parser(schema);
-  const std::string owned(text);
+  std::string owned(text);
   if (owned.find('\0') != std::string::npos || !p.ParseJson(owned.c_str()))
     throw DocumentError("invalid_document",
                         std::string(path) + ": " + describe(p.error_),
@@ -156,6 +161,8 @@ auto verify(Schema schema, std::string_view buffer) -> bool {
       return v.VerifyBuffer<D::Comments>(nullptr);
     case Schema::Layout:
       return Tsugumi::Layout::VerifyLayoutBuffer(v);
+    case Schema::Lock:
+      return v.VerifyBuffer<D::ProjectLock>(nullptr);
   }
   return false;
 }

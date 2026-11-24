@@ -13,6 +13,7 @@
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/workerd/protocol.hh"
+#include "tsugumi/workerd/staging.hh"
 #include "tsugumi/workerd/store.hh"
 #include "tsugumi/workerd/worker_execution.hh"
 
@@ -92,6 +93,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   // Only a salted digest participates in residency. The values are sent
   // through the local launch channel when the process is first started.
   const auto card_key = path_key(node.path);
+  auto artifacts = service_.artifact_grants(request.inputs);
   auto secrets = std::make_shared<WorkerSecrets>();
   try {
     secrets->values = service_.card_secrets(node, request.stop);
@@ -184,7 +186,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
 #endif
   sp.uid = uid;
   sp.gid = uid;
-  // Project data roots are used by the core to stage inputs, never mounted.
   const std::filesystem::path state_dir = service_.store().state_dir();
   // Another system's binaries run with the emulator the kernel opened when it
   // was registered; Rosetta also reads its own folder while it runs.
@@ -200,7 +201,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   if (sp.shared_vm) sp.hidden_paths.push_back(state_dir.string());
   sp.network = node.settings.grants.network;
   sp.gui = node.settings.grants.gui;
-  sp.card = card_key;
   for (const auto& f : node.settings.grants.host_paths) {
     std::string source = f.path;
     if (const auto& root = service_.options().host_folders; !root.empty())
@@ -213,6 +213,23 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
                    "host path grant " + f.name + " is not available: " + f.path,
                    {{"path", f.path}});
     sp.binds.push_back({source, "/host/" + f.name, f.write, f.name});
+  }
+
+  if (sp.sandbox.filesystem) {
+    sp.artifacts_root = (state_dir / "artifacts").string();
+    fs::create_artifact_holders(sp.artifacts_root);
+#ifdef __linux__
+    for (auto& artifact : artifacts) {
+      if (artifact.store_path.empty()) {
+        artifact.path =
+            (std::filesystem::path(kSandboxArtifactsRoot) / artifact.location)
+                .string();
+      } else {
+        // A store artifact may be outside the consuming Card's closure.
+        sp.binds.push_back({artifact.path, artifact.path, false, ""});
+      }
+    }
+#endif
   }
 
   // The resident worker of this Card, if it runs the same build under the same
@@ -233,6 +250,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
       card_key + "|" + std::to_string(build.implementation_index);
   auto lease = workers_.acquire(worker_card, key, sp, reuse);
   sp.secrets.reset();
+  service_.set_view_receiver(node.path, lease.worker->view_receiver());
   s.worker_reused = lease.reused;
   if (!lease.replaced.empty() && request.log)
     request.log(
@@ -242,8 +260,8 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   workerd::Invocation invocation;
   invocation.inputs = request.inputs;
   invocation.outputs = node.outputs;
-  invocation.prepare_params = [&] { return NixRunner::params_buffer(node); };
-  invocation.output_directory = request.directory / "out";
+  invocation.artifact_directory = request.directory / "artifacts";
+  invocation.grants = std::move(artifacts);
   invocation.output_budget = {node.settings.output_limit_bytes,
                               node.settings.output_limit_entries};
   invocation.cancel = &request.cancel;
@@ -254,28 +272,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   invocation.display = request.display;
   invocation.on_timing = [&](int64_t begin, int64_t end) {
     request.on_timing(begin, end);
-  };
-  // The mount stays fixed while each invocation replaces its entries.
-  invocation.stage_inputs = [&](WorkerProc& worker) {
-    auto inputs = request.inputs;
-    const auto roots = service_.file_roots();
-    for (size_t i = 0; i < inputs.size(); ++i) {
-      if (request.cancel.load())
-        throw Failed(FailureKind::cancelled, "staging inputs cancelled");
-      if (inputs[i].kind == PortKind::FlatBuffer) continue;
-      const auto destination =
-          std::filesystem::path(worker.inputs_dir()) / std::to_string(i);
-      std::filesystem::create_directories(destination);
-      inputs[i] = workerd::stage_input(
-          inputs[i], roots, destination, worker.read_only_inputs(),
-          request.cancel,
-          [&](const std::filesystem::path& name, uint64_t done,
-              uint64_t total) {
-            if (request.transfer)
-              request.transfer("copy", name.generic_string(), done, total);
-          });
-    }
-    return inputs;
   };
   invocation.validate = request.validate;
   invocation.transfer = [&](const std::filesystem::path& name, uint64_t done,
@@ -288,6 +284,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
         workers_.release(std::move(worker), keep, reason);
       },
       lease, reuse, invocation);
+  service_.seal_artifacts(s, invocation.artifact_directory, completed.created);
   return {std::move(completed.outputs), std::move(completed.failure)};
 }
 

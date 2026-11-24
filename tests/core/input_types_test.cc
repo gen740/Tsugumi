@@ -7,6 +7,8 @@
 #include "agent/catalog.hh"
 #include "agent/context.hh"
 #include "tsugumi/document/input_types.hh"
+#include "tsugumi/document/input_schema.hh"
+#include "tsugumi/document/schema_id.hh"
 #include "tsugumi/util/crypto.hh"
 #include "wire.hh"
 
@@ -20,9 +22,10 @@ table Outputs { out:Message; } root_type Outputs;)";
 auto Graph(const std::string& cards, const std::string& wires, Files files)
     -> std::shared_ptr<const Resolution> {
   Document doc;
-  doc.project_buffer = parse_project_json(
-      "{\"pkgsPath\":\"tsugumi:default\",\"canvas\":{\"cards\":" + cards +
-      ",\"connections\":" + wires + "}}").buffer;
+  doc.project_buffer =
+      parse_project_json("{\"nixPath\":[],\"canvas\":{\"cards\":" + cards +
+                         ",\"connections\":" + wires + "}}")
+          .buffer;
   for (const auto& [path, text] : files) {
     doc.sources[path] = {crypto::sha256_hex(text), text.size()};
     if (!path.starts_with("definitions/")) continue;
@@ -64,7 +67,7 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
        {"definitions/src/_outputs.fbs", kSchema},
        {"definitions/file/_card.json", R"({"type":"input"})"},
        {"definitions/file/_outputs.fbs",
-        R"(attribute "tsugumi"; table Outputs { out:string (tsugumi:"path"); } root_type Outputs;)"},
+        R"(table Message { body:string; } table Outputs { out:Message; } root_type Outputs;)"},
        {"definitions/dest/_card.json",
         R"({"type":"code","inputs":[{"name":"data"},{"name":"file"},{"name":"missing"}]})"}});
   const auto result = Present(*graph, {"dest"});
@@ -74,7 +77,6 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
   EXPECT_EQ(result.inputs[0]->state, "resolved");
   EXPECT_EQ(result.inputs[0]->source_card->segments, (CardPath{"src"}));
   EXPECT_EQ(result.inputs[0]->source_port, "out");
-  EXPECT_EQ(result.inputs[0]->kind, "value");
   EXPECT_NE(result.inputs[0]->definition.find("noise_sd:double"),
             std::string::npos);
   EXPECT_NE(result.inputs[0]->definition.find("title:string"),
@@ -84,9 +86,9 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
   EXPECT_TRUE(types::schema_bfbs(result.inputs[0]->definition, &root, &error))
       << error;
   EXPECT_EQ(root, "inputs.data.sample.Message");
-  EXPECT_EQ(result.inputs[1]->kind, "path");
   EXPECT_EQ(result.inputs[1]->state, "resolved");
-  EXPECT_TRUE(result.inputs[1]->definition.empty());
+  EXPECT_NE(result.inputs[1]->definition.find("body:string"),
+            std::string::npos);
   EXPECT_EQ(result.inputs[2]->state, "no_source");
   EXPECT_FALSE(result.inputs[2]->source_card);
   EXPECT_TRUE(result.inputs[2]->definition.empty());
@@ -94,23 +96,6 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
   ASSERT_EQ(upstream.inputs.size(), 1u);
   EXPECT_NE(upstream.inputs[0]->definition.find("noise_sd:double"),
             std::string::npos);
-}
-TEST(InputTypes, PathWithoutSchemaIsResolved) {
-  namespace R = Tsugumi::RPC;
-  namespace D = Tsugumi::Data;
-  flatbuffers::FlatBufferBuilder b;
-  const auto type = D::CreatePort(b, b.CreateString("out"), D::PortKind::Path);
-  const auto input = R::CreateInputType(
-      b, b.CreateString("source"), wire::path(b, {"producer"}),
-      b.CreateString("out"), type);
-  const std::vector inputs{input};
-  b.Finish(R::CreateInputTypesResult(b, 3, b.CreateVector(inputs)));
-  const auto result = host::InputTypes(
-      *flatbuffers::GetRoot<R::InputTypesResult>(b.GetBufferPointer()));
-  ASSERT_EQ(result.inputs.size(), 1u);
-  EXPECT_EQ(result.inputs[0]->state, "resolved");
-  EXPECT_EQ(result.inputs[0]->kind, "path");
-  EXPECT_TRUE(result.inputs[0]->definition.empty());
 }
 TEST(InputTypes, DistinctUnnamedDraftEndsKeepTheirSourceTypes) {
   const auto graph = Graph(
@@ -171,29 +156,20 @@ TEST(InputTypes, NestedBoundariesShareTheExecutableEndpointResolution) {
   ASSERT_NE(inputs[0].type, nullptr);
   EXPECT_EQ(inputs[0].type->type, inputs[0].source->output("out")->type);
 }
-TEST(InputTypes, CollectMergeBranchAndInputUseTheResolverTypes) {
+TEST(InputTypes, CollectAndMergeUseTheResolverTypes) {
   const auto graph = Graph(
-      R"([{"id":"src"},{"id":"collect"},{"id":"merge"},{"id":"branch"},{"id":"condition"}])",
+      R"([{"id":"src"},{"id":"collect"},{"id":"merge"}])",
       R"([{"from":{"card":"src","port":"out"},"to":{"card":"collect","port":"in"}},
-          {"from":{"card":"collect","port":"out"},"to":{"card":"merge","port":"items"}},
-          {"from":{"card":"merge","port":"out"},"to":{"card":"branch","port":"value"}},
-          {"from":{"card":"condition","port":"value"},"to":{"card":"branch","port":"condition"}}])",
+          {"from":{"card":"collect","port":"out"},"to":{"card":"merge","port":"items"}}])",
       {{"definitions/src/_card.json", R"({"type":"code"})"},
        {"definitions/src/_outputs.fbs", kSchema},
        {"definitions/collect/_card.json", R"({"type":"collect"})"},
        {"definitions/merge/_card.json",
-        R"({"type":"merge","inputs":[{"name":"items"}]})"},
-       {"definitions/branch/_card.json", R"({"type":"branch"})"},
-       {"definitions/condition/_card.json", R"({"type":"input"})"},
-       {"definitions/condition/_outputs.fbs",
-        "table Condition { value:bool; } table Outputs { value:Condition; } "
-        "root_type Outputs;"}});
+        R"({"type":"merge","inputs":[{"name":"items"}]})"}});
   for (const auto& [card, port] :
        std::vector<std::pair<std::string, std::string>>{
            {"collect", "out"},
-           {"merge", "out"},
-           {"branch", "a"},
-           {"condition", "value"}}) {
+           {"merge", "out"}}) {
     const auto ends = input_types(*graph, {card}, port);
     ASSERT_EQ(ends.size(), 1u);
     ASSERT_TRUE(ends[0].type->type) << card;
@@ -222,54 +198,123 @@ TEST(InputTypes, SecondWireLeavesOnlyTheFirstProducer) {
   EXPECT_EQ(ends[0].type, graph->find({"dest"})->input("in"));
   EXPECT_EQ(ends[0].type->type, graph->find({"first"})->output("out")->type);
 }
-TEST(InputTypes, MergeBoxesOpaqueBytesAndRendersNestedTypes) {
-  std::string error;
-  const auto first = types::compile("table Value { x:int; }", "Value", &error);
-  const auto second =
-      types::compile("table Value { x:long; }", "Value", &error);
-  ASSERT_TRUE(first && second) << error;
-  const types::PortType a{"a", types::PortKind::FlatBuffer, true, *first};
-  const types::PortType b{"b", types::PortKind::FlatBuffer, false, *second};
-  const types::PortType c{"c", types::PortKind::FlatBuffer, false, *first};
-  const types::PortType path{"path", types::PortKind::Path, false, nullptr};
-  const types::PortType unconnected{"unused", types::PortKind::FlatBuffer,
-                                    false, nullptr};
-  const auto same = types::merged_type({&a, &c}, &error);
-  ASSERT_TRUE(same) << error;
-  EXPECT_EQ(same->type, *first);
-  EXPECT_TRUE(same->tags.empty());
+TEST(InputTypes, SchemaIdCanonicalisesReachableTypes) {
+  const auto parse = [](const std::string& text, const std::string& file) {
+    const auto result = types::parse_catalog(text, file);
+    EXPECT_TRUE(result.errors.empty())
+        << (result.errors.empty() ? "" : result.errors.front());
+    if (result.ports.empty() || !result.ports.front().type) return std::string{};
+    return schema_id(*result.ports.front().type);
+  };
+  const std::string first =
+      "namespace example; table Member { x:int = 2; } "
+      "table Message { child:Member; } "
+      "table Outputs { direct:Message; } root_type Outputs;";
+  const std::string second =
+      "namespace example; table AUnrelated { other:long; }\n"
+      "/// Documentation is not part of the type.\n"
+      "table Message { child:Member; } "
+      "table Member { x:int = 2; } "
+      "table Catalogue { another:Message; } root_type Catalogue;";
+  const auto id = parse(first, "definitions/a/_outputs.fbs");
+  ASSERT_EQ(id.size(), 64u);
+  EXPECT_EQ(id, parse(second, "definitions/b/_outputs.fbs"));
+  auto changed = second;
+  changed.replace(changed.find("x:int = 2"), 9, "x:int = 3");
+  EXPECT_NE(id, parse(changed, "definitions/b/_outputs.fbs"));
+}
 
-  const auto mixed = types::merged_type({&a, &b, &c}, &error);
-  ASSERT_TRUE(mixed) << error;
-  EXPECT_EQ(mixed->tags.at("a"), mixed->tags.at("c"));
-  EXPECT_NE(mixed->tags.at("a"), mixed->tags.at("b"));
-  const types::PortType merged{"merged", types::PortKind::FlatBuffer, false,
-                               mixed->type};
-  const auto catalog =
-      types::card_catalog({a, merged, unconnected, path}, /*inputs=*/true);
-  std::string root;
-  ASSERT_TRUE(types::schema_bfbs(catalog, &root, &error)) << error;
-  EXPECT_EQ(root, "inputs.Inputs");
-  EXPECT_NE(catalog.find("table ValueBox2"), std::string::npos);
-  EXPECT_NE(catalog.find(
-                "nested_flatbuffer: \"inputs.merged.tsugumi.merge.t1.Value\""),
-            std::string::npos);
-  EXPECT_NE(catalog.find("path:string (id: 2, tsugumi: \"path\")"),
-            std::string::npos);
-  EXPECT_EQ(catalog.find("unused:"), std::string::npos);
-  EXPECT_EQ(catalog.find("required"), std::string::npos);
+TEST(InputTypes, GeneratedSchemaKeepsMergeCandidatesAndCollectMembers) {
+  for (const bool same : {false, true}) {
+    SCOPED_TRACE(same);
+    const auto graph = Graph(
+        R"([{"id":"a"},{"id":"b"},{"id":"merge"},{"id":"collect"},{"id":"dest"}])",
+        R"([{"from":{"card":"a","port":"out"},"to":{"card":"merge","port":"a"}},
+            {"from":{"card":"b","port":"out"},"to":{"card":"merge","port":"b"}},
+            {"from":{"card":"merge","port":"out"},"to":{"card":"collect","port":"in"}},
+            {"from":{"card":"merge","port":"out"},"to":{"card":"dest","port":"merged"}},
+            {"from":{"card":"collect","port":"out"},"to":{"card":"dest","port":"batch"}}])",
+        {{"definitions/a/_card.json", R"({"type":"code"})"},
+         {"definitions/b/_card.json", R"({"type":"code"})"},
+         {"definitions/a/_outputs.fbs", kSchema},
+         {"definitions/b/_outputs.fbs", same ? kSchema : R"(
+            include "tsugumi/artifact.fbs";
+            namespace sample;
+            table Message { artifact:tsugumi.Artifact; }
+            table Outputs { out:Message; } root_type Outputs;)"},
+         {"definitions/merge/_card.json", R"({"type":"merge","inputs":[{"name":"a"},{"name":"b"}]})"},
+         {"definitions/collect/_card.json", R"({"type":"collect"})"},
+         {"definitions/dest/_card.json",
+          R"({"type":"code","inputs":[{"name":"unwired"},{"name":"merged"},{"name":"batch"}]})"}});
+    const auto* node = graph->find({"dest"});
+    ASSERT_TRUE(node->generated_inputs);
+    const auto& schema = *node->generated_inputs;
+    EXPECT_TRUE(schema.starts_with("// Generated by Tsugumi"));
+    EXPECT_FALSE(schema.contains("unwired:"));
+    const auto id = schema_id(*graph->find({"a"})->output("out")->type);
+    const auto candidate_ns = same ? "" : "s" + id.substr(0, 12) + ".";
+    EXPECT_TRUE(schema.contains("namespace inputs.batch." + candidate_ns +
+                                "sample;"));
+    EXPECT_TRUE(schema.contains("batch: tsugumi.builtin.Collected"));
+    const auto collected_id = schema_id(*graph->find({"collect"})->output("out")->type);
+    EXPECT_TRUE(schema.contains("batch: tsugumi.builtin.Collected (id: " +
+                                std::to_string(same ? 1 : 2) +
+                                ", tsugumi_schema: \"" + collected_id + "\");"));
+    EXPECT_EQ(schema.contains("union merged_candidates"), !same);
+    EXPECT_FALSE(schema.contains("namespace inputs.merged.tsugumi;"));
+    EXPECT_TRUE(schema.contains("tsugumi_schema: \"" + id + "\""));
+    std::string error, root;
+    ASSERT_TRUE(types::schema_bfbs(schema, &root, &error)) << error << '\n'
+                                                           << schema;
+    EXPECT_EQ(root, "inputs.Inputs");
+    const auto collected =
+        types::compile(schema, "tsugumi.builtin.Collected", &error);
+    ASSERT_TRUE(collected) << error;
+    EXPECT_TRUE(schema.contains("batch: tsugumi.builtin.Collected (id: " +
+                                std::to_string(same ? 1 : 2) +
+                                ", tsugumi_schema: \"" +
+                                schema_id(**collected) + "\");"));
+    EXPECT_FALSE(schema.contains("table Collected (tsugumi_schema:"));
+  }
+}
 
-  const std::string bytes{"\xff\x00\xf1", 3};
-  const auto wrapped = types::wrap_in_union(mixed->tags.at("b"), bytes);
-  const auto* value = flatbuffers::GetRoot<flatbuffers::Table>(wrapped.data());
-  EXPECT_EQ(value->GetField<uint8_t>(4, 0), mixed->tags.at("b"));
-  const auto* box = value->GetPointer<const flatbuffers::Table*>(6);
-  ASSERT_NE(box, nullptr);
-  const auto* nested = box->GetPointer<const flatbuffers::Vector<uint8_t>*>(4);
-  ASSERT_NE(nested, nullptr);
-  EXPECT_EQ(std::string_view(reinterpret_cast<const char*>(nested->data()),
-                             nested->size()),
-            bytes);
+TEST(InputTypes, DirectArtifactRootStampsTheSharedTypeOnTheField) {
+  const auto graph = Graph(
+      R"([{"id":"source"},{"id":"dest"}])",
+      R"([{"from":{"card":"source","port":"out"},
+           "to":{"card":"dest","port":"in"}}])",
+      {{"definitions/source/_card.json", R"({"type":"input"})"},
+       {"definitions/source/_outputs.fbs",
+        R"(include "tsugumi/artifact.fbs";
+           table Outputs { out:tsugumi.Artifact; } root_type Outputs;)"},
+       {"definitions/dest/_card.json",
+        R"({"type":"code","inputs":[{"name":"in"}]})"}});
+  const auto& schema = graph->find({"dest"})->generated_inputs;
+  ASSERT_TRUE(schema);
+  const auto id = schema_id(*graph->find({"source"})->output("out")->type);
+  EXPECT_TRUE(schema->contains("include \"tsugumi/artifact.fbs\";"));
+  EXPECT_TRUE(schema->contains("in: tsugumi.Artifact (id: 0, tsugumi_schema: \"" +
+                               id + "\");"));
+  EXPECT_FALSE(schema->contains("table Artifact"));
+  std::string root, error;
+  EXPECT_TRUE(types::schema_bfbs(*schema, &root, &error)) << error;
+}
+
+TEST(InputTypes, OutputIncludesReadOnlyConfirmedDefinitionFiles) {
+  const auto parsed = types::parse_catalog(
+      R"(include "part.fbs";
+      include "tsugumi/artifact.fbs";
+      table Outputs { out:Part; } root_type Outputs;)",
+      "definitions/a/_outputs.fbs",
+      [](const std::string& path) -> std::optional<std::string> {
+        if (path == "definitions/a/part.fbs")
+          return "table Part { mapped:tsugumi.Artifact; }";
+        return std::nullopt;
+      });
+  EXPECT_TRUE(parsed.errors.empty());
+  ASSERT_EQ(parsed.ports.size(), 1u);
+  ASSERT_TRUE(parsed.ports.front().type);
+  EXPECT_EQ(schema_id(*parsed.ports.front().type).size(), 64u);
 }
 
 TEST(InputTypes, CatalogKeepsDeclarationOrderAndNestedBufferReferences) {
@@ -286,16 +331,10 @@ root_type Outputs;)",
   ASSERT_EQ(parsed.ports.size(), 2u);
   EXPECT_EQ(parsed.ports[0].name, "first");
   EXPECT_EQ(parsed.ports[1].name, "second");
-  const auto catalog = types::card_catalog(parsed.ports, /*inputs=*/false);
-  EXPECT_NE(catalog.find("first:outputs.first.Sample.Outer (id: 0)"),
+  std::string rendered;
+  types::render_closure(*parsed.ports[0].type, "inputs.first", rendered);
+  EXPECT_NE(rendered.find("nested_flatbuffer: \"inputs.first.Sample.Inner\""),
             std::string::npos);
-  EXPECT_NE(catalog.find("second:outputs.second.Sample.Inner (id: 1)"),
-            std::string::npos);
-  EXPECT_NE(catalog.find("nested_flatbuffer: \"outputs.first.Sample.Inner\""),
-            std::string::npos);
-  std::string root;
-  std::string error;
-  EXPECT_TRUE(types::schema_bfbs(catalog, &root, &error)) << error;
 }
 
 TEST(InputTypes, LargeDefinitionAndModelResultAreNeverClipped) {

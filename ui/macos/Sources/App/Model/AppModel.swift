@@ -43,7 +43,6 @@ final class AppModel {
   var mainWindows: [Workspace] = []
   /// What the next new main windows do first.
   @ObservationIgnored var pendingWindowIntents: [MainWindowIntent] = []
-  private(set) var nixpkgsPin: String?
   private(set) var agentExcludeDefaults: [String] = []
   private(set) var setup: EnvironmentManager.SetupStatus?
   private(set) var checkingSetup = false
@@ -151,7 +150,6 @@ final class AppModel {
   private func refreshDefaults() async {
     do {
       let defaults = try await hostRequest("HostProjectDefaultsRequest")
-      nixpkgsPin = defaults["nixpkgsPin"] as? String
       agentExcludeDefaults = defaults["agentExclude"] as? [String] ?? []
     }
     catch { self.error = "\(error)" }

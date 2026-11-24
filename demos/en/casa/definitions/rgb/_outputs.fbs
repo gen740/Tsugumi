@@ -1,5 +1,5 @@
-attribute "tsugumi";
+include "tsugumi/artifact.fbs";
+
 namespace casa;
-table RgbDir { value:string; }
-table Outputs { rgb:RgbDir (required, tsugumi: "directory"); }
+table Outputs { rgb:tsugumi.Artifact (required); }
 root_type Outputs;

@@ -49,15 +49,14 @@ A template folder contains one directory per Card, each with the original Card d
 
 ## Canvas tools
 
-Right-click the Canvas and choose **Boolean Input** to create a toggle. Wire its `value` output to a Branch’s `condition` input. Connect the value to route to the Branch’s other input and run with the toggle both ways. The timeline shows which branch ran. The same preset is available when implementing a Draft. [Card types and execution](features.md#2-cards-and-workflows)
+Right-click the Canvas and choose **Boolean Input** to create a toggle. Wire its value to a Code Card that chooses which optional outputs to produce. Use Merge to bring alternative outputs back to one downstream input. The timeline distinguishes skipped Cards. [Card types and execution](features.md#2-cards-and-workflows)
 
-Choose **Fork** to send one value to several Cards as a named step. It starts with outputs `a` and `b`; add or rename outputs under **Ports** in its settings. Unlike a Branch, every output receives the value on every run.
 
 Use **Arrange** to place Cards and reduce wire crossings. Use **Untangle Wires** when the Cards are already where you want them. Both are available from the Canvas context menu and can be undone. Untangling changes the visual order of ports while preserving the connections and the way the Workflow runs.
 
 Select several Cards and choose **Group Selection** to keep them together on the Canvas. To reuse another Workflow, use the import button by **Add Card** in the sidebar. It copies the selected project into `externals` as a Card in Card. Its boundary maps the outer ports to steps inside, which you can open by double-clicking the Card.
 
-Use **Nix references** in the Canvas controls to see the upstream Card exports available to each Card through its input ports. Hover a Card to highlight its links or open **List** to jump to either end or open the consumer's `default.nix`. An input port named `data` is available as `inputs.data` when its producer is known. [Nix reference rules](features.md#sharing-nix-exports-through-connections)
+Use **Nix references** in the Canvas controls to see the upstream Card exports available to each Card through its connections. Hover a Card to highlight its links or open **List** to jump to either end or open the consumer's `default.nix`. An upstream Card `a` that is guaranteed to run first is available as `inputs.a`. [Nix reference rules](features.md#sharing-nix-exports-through-connections)
 
 ## Run from a Card
 
@@ -65,7 +64,7 @@ Run the Workflow once to save its inputs. For example, open a copy of **Visualiz
 
 Use the bottom **Timeline** to see which steps ran. Select a Card there to inspect its log, or open **Card settings → Run History** to choose an earlier invocation. [Run history](RunHistory.md)
 
-A thick wire carries a batch of values. Its count shows how many items are in that batch. Connect it to a Collect Card to pass one vector or Directory to the next step. [Run lists and Collect](features.md#run-lists-and-collect)
+A thick wire carries a batch of values. Its count shows how many items are in that batch. Connect it to a Collect Card to pass one `Collected` list to the next step. [Run lists and Collect](features.md#run-lists-and-collect)
 
 ## Live displays
 
@@ -99,7 +98,7 @@ Opening this Settings pane measures build and scratch usage. Build sizes use NAR
 
 Card names appear on the Canvas and in lists, history, comparisons and chat references. Renaming changes the name only; tools, file paths and connections keep the permanent identifier. A Card without a name shows its identifier.
 
-Open a Card's settings to edit its working copy, then choose **Apply**. Settings JSON, Card settings and project settings use the same revision check. Inline value edits use the revision at which editing began; leaving an unchanged value does not save it. Text entered while Apply or Save is pending stays unapplied after the submitted text is saved. If another save conflicts, choose **Overwrite** or **Keep edits and reload**; the latter keeps your previous text available to reapply. Tabs include Source, Ports, Comments, Nix Definition, Run History and Artifacts; the available tabs depend on the Card's kind. Run history and artifacts remain readable while running, but changes to Cards and closing a running project are blocked.
+Open a Card's settings to edit its working copy, then choose **Apply**. A parameter edit rewrites its current literal in `params.nix` and preserves the surrounding source. Settings JSON, Card settings and project settings use the same revision check. Inline value edits use the revision at which editing began; leaving an unchanged value does not save it. Text entered while Apply or Save is pending stays unapplied after the submitted text is saved. If another save conflicts, choose **Overwrite** or **Keep edits and reload**; the latter keeps your previous text available to reapply. Tabs include Source, Ports, Comments, Nix Definition, Run History and Artifacts; the available tabs depend on the Card's kind. Run history and artifacts remain readable while running, but changes to Cards and closing a running project are blocked.
 
 Use **Reload External Changes** under save/sync to import edits made outside Tsugumi. If those edits widen Card permissions, review the listed permissions and choose **Allow** to finish reloading or **Decline** to leave the loaded project unchanged.
 
@@ -109,11 +108,13 @@ Use the app settings for language, appearance, model connections, Skills and sho
 
 The Mac app shows one project or Home per window. **⌘⇧N** adds a Home window; **⌘N**, **⌘O**, demos and duplicates open in a new window. Opening an already open project brings its window forward. **⌘W** saves and closes that project; **⌘Q** checks unsaved changes across windows. The shared VM supports up to 16 open projects.
 
-Closing a project window leaves its execution environment resident. Stop it explicitly through the environment controls when it should end. Workflows, history, chats and selections are separate; API keys, app settings and the shared VM/store are shared. The Web UI uses [one project per browser tab](WebUI.md#several-projects).
+Closing a project window leaves its execution environment resident. Stop it explicitly through the environment controls when it should end. Workflows, history, chats and selections are separate; API keys, app settings and the shared VM/store are shared. The Web UI uses [one project per browser tab](WebUI.md#several-projects). Only one UI connection can open each project at a time.
 
 ## Working with the Agent
 
-**Project settings → General → Paths excluded from the Agent** edits `agentExclude` in `tsugumi.json`: one project-relative or absolute path per line. Each entry hides a file or its entire tree from Agent tools and helpers; symbolic links are compared on resolved real paths. Lists omit excluded content and direct access returns `not_found`. People retain the complete project view. The absent setting defaults to `.git` (repository internals) and `.DS_Store` (Finder metadata); the settings editor shows these editable entries. An explicit empty list disables the defaults. `.tsugumi` contains the person's run records, conversations and scratch, so it is not a default exclusion. Only a person can change this setting; Agent saves and edits cannot change it. A bundled demo Card can be copied with `project_copy` using `source: "demo"`, its language-qualified demo path, source `card` id and destination `id`; nested definitions and source files follow the Card.
+**Project settings → General → Paths excluded from the Agent** edits `agentExclude` in `tsugumi.json`: one project-relative or absolute path per line. Each entry hides a file or its entire tree from Agent tools and helpers; symbolic links are compared on resolved real paths. Lists omit excluded content and direct access returns `not_found`. People retain the complete project view. The absent setting defaults to `.git` (repository internals) and `.DS_Store` (Finder metadata); the settings editor shows these editable entries. An explicit empty list disables the defaults. `.tsugumi` contains the person's run records, conversations and scratch, so it is not a default exclusion. Only a person can change this setting; Agent saves and edits cannot change it.
+
+Use `project_copy` to copy a bundled demo Card with `source: "demo"`, a language-qualified demo path, the source `card` ID and the destination `id`. The copy includes its definition and source files. Add any required dependencies to the destination's [Nix search path](features.md#project-nix-search-path) and update its lock.
 
 Drafts have no ports; any number of wires can attach to the Card itself. To implement one by hand, choose **Implement Draft by hand** in Card settings → General, then specify every real endpoint under **Ports → Rebind wires** and Apply. Even a single candidate must be stated. The definition and all endpoint choices are saved together.
 

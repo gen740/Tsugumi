@@ -15,7 +15,7 @@ import pytest
 from conftest import SharedVM, VMEnv, write_project
 from harness.host import HostConnection
 from projects import card
-from projects import run_and_wait, start_run, wait_for_log, wait_run, write
+from projects import run_and_wait, start_run, wait_for_log, wait_run, write_nix_project as write
 from harness.real_cards import ONE_MAIN, log, python_card
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.RunState import RunState

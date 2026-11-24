@@ -40,7 +40,7 @@ const session = () => {
 {
   // The small Cards keep their shape: the summary is on hover.
   const s = session()
-  for (const kind of ['trigger', 'merge', 'branch'] as const) {
+  for (const kind of ['trigger', 'merge', 'collect'] as const) {
     const k = await s.addCard(kind, [], { x: 0, y: 0 })
     s.updateMeta(k, (m) => m.set('description', 'what it does'))
     await s.save()

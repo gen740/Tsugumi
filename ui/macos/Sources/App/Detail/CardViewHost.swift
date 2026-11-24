@@ -72,6 +72,7 @@ struct CardViewHost: View {
     case "html":
       HTMLCardView(session: session, cardKey: cardKey, index: index, view: view)
     case "dawn":
+      // TODO(open): dawn host
       ContentUnavailableView("Dawn の表示はまだ使えません", systemImage: "cube.transparent",
                              description: Text(verbatim: view.name))
     default:
@@ -110,7 +111,10 @@ private struct HTMLCardView: View {
   }
 
   private func show() async {
-    let created = HTMLViewHost()
+    let created = HTMLViewHost(sendToCard: { bytes in
+      guard let rpc = session.rpc else { throw CardViewFileError.unavailable }
+      try await rpc.sendView(card: path(cardKey), view: view.name, bytes: bytes)
+    })
     host = created
     error = nil
     var attachment: UUID?
@@ -120,7 +124,10 @@ private struct HTMLCardView: View {
       try Task.checkCancellation()
       try await created.mount(html)
       try Task.checkCancellation()
-      attachment = session.cardViews.attach(cardKey, view: view.name) { [weak created] in created?.send($0) }
+      attachment = session.cardViews.attach(cardKey, view: view.name) { [weak created] message, complete in
+        if let created { created.send(message, complete: complete) }
+        else { complete() }
+      }
       while !Task.isCancelled { try await Task.sleep(for: .seconds(3600)) }
     } catch {
       if !Task.isCancelled { self.error = error.localizedDescription }
@@ -138,8 +145,8 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
 
 /// An isolated WebKit host for one `html` view. The view's document runs in a
 /// sandboxed frame with an opaque origin and no network. It receives a
-/// MessagePort with `{tsugumi: 1, port}`, then `{type: "data", bytes}` and
-/// `{type: "run", state}` on that port, in the order the core sent them.
+/// MessagePort with `{tsugumi: 1, port}`, then `{type: "data", bytes}`
+/// on that port, in the order the core sent them.
 @MainActor @Observable final class HTMLViewHost: NSObject, WKNavigationDelegate {
   /// Inherited by the view's frame and also placed in its document.
   static let policy = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob:; style-src 'unsafe-inline' blob: data:; img-src data: blob:; font-src data: blob:; media-src data: blob:; worker-src blob:; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'"
@@ -160,7 +167,39 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
   <style>html,body{margin:0;height:100%;overflow:hidden}iframe{border:0;display:block;width:100%;height:100%}</style>
   </head><body><script>
   'use strict'
-  let frame, port
+  let frame, port, admission, forwardBytes = 0, reverseBytes = 0
+  const sent = []
+  const max = 1 << 24
+  const credit = `<script>
+    addEventListener('message', event => {
+      if (event.source !== parent || event.data?.tsugumi !== 1) return
+      const port = event.data.port
+      const max = 1 << 24
+      const post = port.postMessage.bind(port)
+      let used = 0, reportedDrop = false
+      port.postMessage = (message, options) => {
+        if (message?.type !== 'data' || !(message.bytes instanceof ArrayBuffer)) return
+        const size = message.bytes.byteLength
+        if (size > max || used > max) {
+          if (!reportedDrop) post({ type: 'dropped' })
+          reportedDrop = true
+          return
+        }
+        post(message, options)
+        used += Math.max(1, size)
+      }
+      port.addEventListener('message', message => {
+        if (message.data?.type === 'reverseCredit') {
+          message.stopImmediatePropagation()
+          used -= Math.max(1, message.data.size)
+          reportedDrop = false
+        } else if (message.data?.type === 'data') {
+          setTimeout(() => post({ type: 'credit' }), 0)
+        }
+      })
+      port.start()
+    }, { once: true })
+  </scr` + `ipt>`
   window.tsugumiMount = html => new Promise(resolve => {
     port?.close(); frame?.remove()
     frame = document.createElement('iframe')
@@ -169,19 +208,59 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
     frame.addEventListener('load', () => {
       const channel = new MessageChannel()
       port = channel.port1
+      port.onmessage = ({ data }) => {
+        if (data?.type === 'credit') {
+          forwardBytes -= sent.shift() ?? 0
+          flush()
+        } else if (data?.type === 'dropped') {
+          webkit.messageHandlers.tsugumiViewInput.postMessage({ dropped: true })
+        } else if (data?.type === 'data' && data.bytes instanceof ArrayBuffer) {
+          const bytes = new Uint8Array(data.bytes)
+          if (bytes.length > max || reverseBytes > max) {
+            webkit.messageHandlers.tsugumiViewInput.postMessage({ dropped: true })
+            port.postMessage({ type: 'reverseCredit', size: bytes.length })
+            return
+          }
+          const parts = []
+          for (let i = 0; i < bytes.length; i += 16384)
+            parts.push(String.fromCharCode(...bytes.subarray(i, i + 16384)))
+          reverseBytes += Math.max(1, bytes.length)
+          webkit.messageHandlers.tsugumiViewInput.postMessage({ bytes: btoa(parts.join('')) })
+        }
+      }
       frame.contentWindow.postMessage({ tsugumi: 1, port: channel.port2 }, '*', [channel.port2])
       resolve(true)
     }, { once: true })
-    frame.srcdoc = html
+    // Insert before Card scripts, after the isolation policy.
+    const end = html.indexOf('>', html.indexOf('<meta')) + 1
+    frame.srcdoc = html.slice(0, end) + credit + html.slice(end)
     document.body.append(frame)
   })
-  window.tsugumiData = text => {
+  function flush() {
+    if (!port || !admission || forwardBytes > max) return
+    const { text, resolve } = admission
+    admission = undefined
     const raw = atob(text), bytes = new Uint8Array(raw.length)
     for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i)
-    port?.postMessage({ type: 'data', bytes: bytes.buffer }, [bytes.buffer])
+    const size = Math.max(1, bytes.length)
+    forwardBytes += size
+    sent.push(size)
+    port.postMessage({ type: 'data', bytes: bytes.buffer }, [bytes.buffer])
+    resolve()
   }
-  window.tsugumiRun = state => port?.postMessage({ type: 'run', state })
-  window.tsugumiClose = () => { port?.close(); frame?.remove(); port = frame = undefined }
+  window.tsugumiData = text => new Promise(resolve => {
+    if (!port) return resolve()
+    admission = { text, resolve }
+    flush()
+  })
+  window.tsugumiReverseCredit = size => {
+    reverseBytes -= Math.max(1, size)
+    port?.postMessage({ type: 'reverseCredit', size })
+  }
+  window.tsugumiClose = () => {
+    admission?.resolve()
+    port?.close(); frame?.remove(); port = frame = admission = undefined
+  }
   </script></body></html>
   """
 
@@ -195,7 +274,19 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
     return compiled
   }
 
+  @MainActor private final class InputHandler: NSObject, WKScriptMessageHandler {
+    weak var host: HTMLViewHost?
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+      if message.frameInfo.isMainFrame { host?.receive(message.body) }
+    }
+  }
+
   let web: WKWebView
+  @ObservationIgnored private let sendToCard: ((Data) async throws -> Void)?
+  @ObservationIgnored private var reverse: [Data] = []
+  @ObservationIgnored private var sendingReverse = false
+  @ObservationIgnored private var reverseBytes = 0
   private(set) var error: String?
   @ObservationIgnored private var outbox = CardViewOutbox()
   @ObservationIgnored private var mounted = false
@@ -204,13 +295,18 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
   @ObservationIgnored private var loaded: CheckedContinuation<Void, Error>?
 
   /// `configure` lets tests add their own observers before anything loads.
-  init(configure: (WKWebViewConfiguration) -> Void = { _ in }) {
+  init(configure: (WKWebViewConfiguration) -> Void = { _ in },
+       sendToCard: ((Data) async throws -> Void)? = nil) {
+    self.sendToCard = sendToCard
     let configuration = WKWebViewConfiguration()
     configuration.websiteDataStore = .nonPersistent()
     configure(configuration)
     web = WKWebView(frame: .zero, configuration: configuration)
     web.allowsLinkPreview = false
     super.init()
+    let input = InputHandler()
+    input.host = self
+    web.configuration.userContentController.add(input, name: "tsugumiViewInput")
     web.navigationDelegate = self
   }
 
@@ -229,9 +325,9 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
     flush()
   }
 
-  func send(_ message: CardViewMessage) {
-    guard !closed else { return }
-    outbox.put(message)
+  func send(_ message: CardViewMessage, complete: @escaping () -> Void = {}) {
+    guard !closed else { complete(); return }
+    outbox.put(message, complete: complete)
     flush()
   }
 
@@ -239,7 +335,9 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
   func close() {
     guard !closed else { return }
     closed = true
-    outbox = CardViewOutbox()
+    outbox.discard()
+    reverse.removeAll()
+    web.configuration.userContentController.removeScriptMessageHandler(forName: "tsugumiViewInput")
     loaded?.resume(throwing: CancellationError())
     loaded = nil
     web.evaluateJavaScript("tsugumiClose()", completionHandler: nil)
@@ -248,17 +346,51 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
   }
 
   private func flush() {
-    guard mounted, !sending, !closed, let message = outbox.take() else { return }
+    guard mounted, !sending, !closed, let (message, complete) = outbox.take() else { return }
     sending = true
     Task {
-      defer { sending = false; flush() }
+      defer { complete(); sending = false; flush() }
       do {
         switch message {
         case .data(let bytes):
-          _ = try await web.callAsyncJavaScript("tsugumiData(text)", arguments: ["text": bytes.base64EncodedString()], contentWorld: .page)
-        case .run(let started):
-          _ = try await web.callAsyncJavaScript("tsugumiRun(state)", arguments: ["state": started ? "started" : "ended"], contentWorld: .page)
+          _ = try await web.callAsyncJavaScript("return await tsugumiData(text)", arguments: ["text": bytes.base64EncodedString()], contentWorld: .page)
         }
+      } catch {
+        if !closed { self.error = error.localizedDescription }
+      }
+    }
+  }
+
+  private func receive(_ body: Any) {
+    guard !closed, let message = body as? [String: Any] else { return }
+    if message["dropped"] as? Bool == true {
+      error = String(localized: "ビューのメッセージを送信できませんでした")
+    } else if let text = message["bytes"] as? String, let bytes = Data(base64Encoded: text),
+              bytes.count <= 1 << 24 {
+      if reverseBytes <= 1 << 24 {
+        reverseBytes += max(1, bytes.count)
+        reverse.append(bytes)
+        flushReverse()
+      } else {
+        error = String(localized: "ビューのメッセージを送信できませんでした")
+      }
+      web.evaluateJavaScript("tsugumiReverseCredit(\(bytes.count))", completionHandler: nil)
+    }
+  }
+
+  private func flushReverse() {
+    guard !closed, !sendingReverse, !reverse.isEmpty else { return }
+    let bytes = reverse.removeFirst()
+    sendingReverse = true
+    Task {
+      defer {
+        reverseBytes -= max(1, bytes.count)
+        sendingReverse = false
+        flushReverse()
+      }
+      do {
+        guard let sendToCard else { throw CardViewFileError.unavailable }
+        try await sendToCard(bytes)
       } catch {
         if !closed { self.error = error.localizedDescription }
       }

@@ -3,6 +3,7 @@
 #include <hosq/hosq.hh>
 #include <hosq/json/dom.hh>
 #include <map>
+#include <regex>
 #include <set>
 
 #include "fixture.hh"
@@ -137,12 +138,11 @@ TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
         if (h.starts_with("param:")) {
           const auto opened = String(step, "/show/open");
           ASSERT_TRUE(opened.starts_with("card:"));
-          const auto card = Parse(ReadResource(
-              dir / "definitions" / opened.substr(5) / "_card.json"));
-          bool found = false;
-          for (const auto& param : Array(card, "/params"))
-            found |= String(param, "/name") == h.substr(6);
-          EXPECT_TRUE(found);
+          const auto params = ReadResource(
+              dir / "definitions" / opened.substr(5) / "params.nix");
+          const std::regex assignment("(^|[;{])\\s*" + h.substr(6) +
+                                      "\\s*=");
+          EXPECT_TRUE(std::regex_search(params, assignment));
         }
       }
       EXPECT_TRUE(

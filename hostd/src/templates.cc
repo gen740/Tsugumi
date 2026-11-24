@@ -156,11 +156,6 @@ auto BuiltinCard(H::BuiltinCard kind, const std::string& id) -> TemplateFiles {
       return {{"_card.json", R"({"type":"draft"})"}};
     case H::BuiltinCard::Trigger:
       return {{"_card.json", R"({"type":"trigger"})"}};
-    case H::BuiltinCard::Branch:
-      return {{"_card.json", R"({"type":"branch"})"}};
-    case H::BuiltinCard::Fork:
-      return {{"_card.json",
-               R"({"type":"fork","outputs":[{"name":"a"},{"name":"b"}]})"}};
     case H::BuiltinCard::Merge:
       return {{"_card.json",
                R"({"type":"merge","inputs":[{"name":"a"},{"name":"b"}]})"}};
@@ -170,17 +165,25 @@ auto BuiltinCard(H::BuiltinCard kind, const std::string& id) -> TemplateFiles {
     case H::BuiltinCard::BooleanInput: {
       const bool boolean = kind == H::BuiltinCard::BooleanInput;
       const std::string type = boolean ? "bool" : "double";
-      const std::string value = boolean ? R"({"bool":false})" : R"({"double":0})";
-      auto ns = id;
-      std::ranges::replace(ns, '-', '_');
-      std::ranges::replace(ns, '.', '_');
-      return {{"_card.json",
-               R"({"type":"input","params":[{"name":"value","type":")" + type +
-                   R"(","data":)" + value + "}]}"},
-              {"_outputs.fbs", "namespace " + ns +
-                                   ";\ntable Value { value:" + type +
-                                   "; }\ntable Outputs { value:Value "
-                                   "(required); }\nroot_type Outputs;\n"}};
+      const std::string value = boolean ? "false" : "0.0";
+      const std::string table = boolean ? "Boolean" : "Number";
+      return {{"_card.json", R"({"type":"input"})"},
+              {"params.nix", "{ value = " + value + "; }\n"},
+              {"_outputs.fbs", "namespace input;\ntable " + table +
+                                   " { value:" + type +
+                                   "; }\ntable Outputs { value:" + table +
+                                   " (required); }\nroot_type Outputs;\n"},
+              {"default.nix", R"nix({ params, inputs }:
+let
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/input> { inherit pkgs; };
+in {
+  run = sdk.input {
+    outputs = ./_outputs.fbs;
+    values.value.value = params.value;
+  };
+}
+)nix"}};
     }
   }
   throw Failure("invalid_request", "Unknown built-in Card kind");

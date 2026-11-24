@@ -1,26 +1,3 @@
 {
-  "type": "input",
-  "params": [
-    {
-      "name": "seed",
-      "type": "uint64",
-      "data": {
-        "uint64": 42
-      }
-    },
-    {
-      "name": "rows",
-      "type": "uint64",
-      "data": {
-        "uint64": 500
-      }
-    },
-    {
-      "name": "heading",
-      "type": "string",
-      "data": {
-        "string": "Quarterly sales"
-      }
-    }
-  ]
+  "type": "input"
 }

@@ -1,5 +1,4 @@
-// Collect Card values into the fixed Collected table, preserving each name,
-// kind and opaque bytes or path.
+// Collect opaque envelopes in arrival order into the fixed Collected table.
 #pragma once
 
 #include <atomic>

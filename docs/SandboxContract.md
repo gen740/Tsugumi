@@ -50,7 +50,7 @@ Each **Before P1** note records the behavior at `24fc2d2c`, the revision the con
 
 Where the worker can remap paths (bubblewrap on Linux, the shared VM and remote workers), `/tmp` is the same place as `TMPDIR`: a disk-backed directory that Tsugumi manages (scratch bound at `/tmp`), not bubblewrap's in-memory tmpfs. Programs that hard-code `/tmp` need no special care there. On native macOS only `TMPDIR` is guaranteed.
 
-New Path outputs are created under the working directory. A Card can also return a staged input path unchanged. [Card ABI](CardABI.md#path-ports)
+New artifacts are created in writable directories supplied by the worker. [Card ABI](CardABI.md#artifacts)
 
 **Before P1 (`24fc2d2c`).**
 
@@ -58,23 +58,27 @@ New Path outputs are created under the working directory. A Card can also return
 - The invocation's input, output, work and temporary slots are emptied after each call (`WorkerProc::clear_scratch`; [pre-P1 isolation](https://github.com/gen740/Tsugumi/blob/24fc2d2c93d607e1aa608cceec444f6b7e92affb/docs/security.md#sandbox-true-the-default)).
 - bubblewrap mounts an in-memory tmpfs at `/tmp`, separate from `TMPDIR` (`workerd/src/worker_proc.cc`).
 
-## Path inputs
+## Artifact access
 
-**Decided.**
+Each invocation receives grants for the artifact IDs listed on its input
+envelopes. The SDK opens a granted artifact as a read-only directory.
+The returned path is scoped to the invocation. Forwarding an ID preserves
+the artifact's identity.
 
-- A Path input holds an absolute path in the ABI envelope. The worker stages a regular file or a whole directory tree according to what exists at run time.
-  - With the `filesystem` option on, the Card's view of the input is read-only.
-  - With `filesystem` off, the input is a copy (below), so the Card can write to that copy. Only the stored original is protected.
-- "Valid for that invocation" is the lifetime of the path. File descriptors that the Card keeps open are not revoked.
-- When hardlinking is possible, the worker links regular files individually, including each file in a directory tree.
-- Inputs are copied instead of hardlinked:
-  - across filesystems;
-  - whenever read-only cannot be enforced. A hardlink shares the inode of the stored run data, so without read-only enforcement the Card could change those data;
-  - always when the `filesystem` option is off, because a hardlink would let the Card own the inode and write to it;
-  - always on native macOS.
-- With `reuseWorker`, the inputs are in a read-only bound directory, and the worker swaps its contents for each invocation.
+Linux bubblewrap mounts the project's artifact root read-only at
+`/tsugumi-artifacts` when the sandbox starts. macOS Seatbelt allows reads at
+the root's project path from startup and denies all writes there, including
+changes to modes and permissions. The root, run, Card and invocation directories
+allow traversal by exact name and deny listing. Created artifact directories
+have unguessable 128-bit names. A Card with the exact path can read a sealed
+artifact directly. `artifact_open` resolves only IDs granted to the call.
+An offline backup that enumerates the artifact tree needs read permission on
+the holding directories.
 
-**Before P1 (`24fc2d2c`).** The core copies the invocation's File and Directory inputs into a fixed, read-only staging area local to the worker ([pre-P1 isolation](https://github.com/gen740/Tsugumi/blob/24fc2d2c93d607e1aa608cceec444f6b7e92affb/docs/security.md#sandbox-true-the-default)).
+Input Card artifacts use their immutable Nix store paths. Remote workers stage
+granted artifacts in the same directory layout and return newly created
+artifacts with the result. Filesystem isolation must be enabled for these access
+guarantees.
 
 ## Grants
 

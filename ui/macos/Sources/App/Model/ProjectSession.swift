@@ -31,14 +31,12 @@ struct Diagnostic: Identifiable, Hashable {
 
 struct PortInfo: Hashable {
   let name: String
-  let kind: Tsugumi_Data_PortKind
   let rootType: String?
   var mergeMemberTypes: [String] = []
   var typeName: String? {
     if !mergeMemberTypes.isEmpty { return mergeMemberTypes.joined(separator: " | ") }
-    return kind == .path ? "Path" : rootType
+    return rootType
   }
-  var executionShape: Tsugumi_Data_ExecutionShape = .unspecified
 }
 
 struct ResolvedCard {
@@ -47,6 +45,7 @@ struct ResolvedCard {
   let outputs: [PortInfo]
   let diagnostics: [Diagnostic]
   var nixReferences: [CardNixReference] = []
+  var parameters: [CardParameter] = []
 }
 
 /// One stage of an invocation as the core recorded it (core clock, ms).
@@ -71,7 +70,7 @@ struct CardRunState: Equatable {
   var cached = false
   var workerReused = false
   /// Outputs the latest invocation sent, and every output that sent a value
-  /// in this run (a branch lists only the side it chose).
+  /// in this run.
   var sent: Set<String> = []
   var sentInRun: Set<String> = []
   var startedAt: Int64?
@@ -468,7 +467,9 @@ final class ProjectSession {
       guard !Task.isCancelled, !closed else { return }
       setConnected(false)
       connectionFailed = error is Unreached
-      connectionMessage = "\(error)"
+      connectionMessage = (error as? RPCFailure)?.kind == .projectInUse
+        ? String(localized: "別の画面でこのプロジェクトを開いています。")
+        : "\(error)"
       if let launcher = error as? LauncherError, case .incompatibleHistory(let issue) = launcher {
         environment = .incompatibleHistory(issue)
       }
@@ -647,7 +648,7 @@ final class ProjectSession {
       if let d = (e.payload.value as? Tsugumi_RPC_DocPatchedT)?.delta { applyDelta(d) }
     case .runevent:
       if let r = e.payload.value as? Tsugumi_RPC_RunEventT { applyRunEvent(r) }
-    case .cardviewsupdated, .displayupdated, .displayrunstatechanged:
+    case .cardviewsupdated, .displayupdated:
       applyViewNotification(e.payload)
     case .runcategorydeleteresult:
       recordingRevision += 1
@@ -661,7 +662,7 @@ final class ProjectSession {
     return true
   }
 
-  /// Declarations, data and run state of Card views, kept only while a window shows the Card.
+  /// Declarations and data of Card views, kept only while a window shows the Card.
   func applyViewNotification(_ payload: Tsugumi_RPC_NotificationPayloadUnion) {
     switch payload.type {
     case .cardviewsupdated:
@@ -670,12 +671,20 @@ final class ProjectSession {
                           failure: u.failure.map { $0.diagnostic ?? "\($0.kind)" })
       }
     case .displayupdated:
-      if let d = (payload.value as? Tsugumi_RPC_DisplayUpdatedT)?.display, viewing(key(d.card.path)) {
-        cardViews.receive(key(d.card.path), view: d.view, bytes: Data(d.bytes))
-      }
-    case .displayrunstatechanged:
-      if let r = payload.value as? Tsugumi_RPC_DisplayRunStateChangedT, viewing(key(r.card.path)), r.state != .unspecified {
-        cardViews.runState(key(r.card.path), runId: r.runId, started: r.state == .started)
+      if let d = (payload.value as? Tsugumi_RPC_DisplayUpdatedT)?.display {
+        let card = d.card.path
+        let view = d.view
+        let size = UInt32(d.bytes.count)
+        let complete = { [client, subscription, credit = d.creditId] in
+          guard let client, let subscription, let credit else { return }
+          Task { try? await client.returnViewCredit(subscription: subscription, card: card,
+                                                    view: view, bytes: size, creditId: credit) }
+        }
+        if viewing(key(card)) {
+          cardViews.receive(key(card), view: view, bytes: Data(d.bytes), complete: complete)
+        } else {
+          complete()
+        }
       }
     default:
       break
@@ -733,14 +742,14 @@ final class ProjectSession {
     for rc in res {
       let p = rc.card.path
       let port = { (x: Tsugumi_Data_PortT) -> PortInfo in
-        PortInfo(name: x.name, kind: x.kind, rootType: x.rootType, mergeMemberTypes: x.mergeMemberTypes.compactMap { $0 }, executionShape: x.executionShape)
+        PortInfo(name: x.name, rootType: x.rootType, mergeMemberTypes: x.mergeMemberTypes.compactMap { $0 })
       }
       let d = rc.diagnostics.compactMap { $0 }.map(Diagnostic.init)
       r[key(p)] = ResolvedCard(path: p, inputs: rc.inputs.compactMap { $0 }.map(port),
                                outputs: rc.outputs.compactMap { $0 }.map(port), diagnostics: d,
                                nixReferences: rc.nixReferences.compactMap { $0 }.map {
                                  CardNixReference(source: key(p), target: key($0.target.path), name: $0.name)
-                               })
+                               }, parameters: rc.parameters.compactMap { $0 }.compactMap(CardParameter.init))
       all += d
     }
     resolution = r
@@ -807,9 +816,7 @@ final class ProjectSession {
     if let emitted = batch?.outputs.compactMap({ $0 }).first(where: { $0.port == port }) {
       return (emitted.executionList, emitted.executionList ? emitted.count : nil)
     }
-    let ports = output ? resolution[card]?.outputs : resolution[card]?.inputs
-    let knownList = ports?.first(where: { $0.name == port })?.executionShape == .list
-    return (knownList || (batch?.executionList == true && kind(card) != .collect), nil)
+    return (batch?.executionList == true && kind(card) != .collect, nil)
   }
 
   /// The Cards of the last run, for a project just opened: their notifications were sent before it was.
@@ -1201,19 +1208,17 @@ final class ProjectSession {
     cardStates[k] = nil
   }
 
-  /// Why a Card that ran has no result to show.
-  func noResultNote(_ k: CardKey) -> String? {
-    switch cardStates[k]?.state {
-    case .failed: return String(localized: "失敗したので結果はありません")
-    case .blocked: return String(localized: "上流の Card が失敗したので実行していません")
-    default: return nil
-    }
+  func updateNixPathLock(prefix: String, name: String? = nil) async throws {
+    let update = Tsugumi_Host_ProjectUpdateNixPathLockT()
+    update.projectPath = prefix.isEmpty ? nil : String(prefix.dropLast())
+    update.name = name
+    try await operate(.projectupdatenixpathlock, body: update, record: false)
   }
 
-  /// Looks a flake up for nixSources (nothing is saved).
-  func resolveNixSource(ref: String) async throws -> Tsugumi_RPC_NixSourceResolvedT {
-    guard let client else { throw RPCError.disconnected }
-    return try await client.resolveNixSource(ref: ref)
+  func nixPathLock(prefix: String) -> JSONValue? {
+    let file = prefix + "tsugumi.lock"
+    guard sources[file] != nil, let text = carriedText(file) else { return nil }
+    return try? JSONValue.parse(text)
   }
 
   /// View traffic is kept only for Cards a window shows.
@@ -1410,22 +1415,6 @@ final class ProjectSession {
     })
   }
 
-  /// Changes a Card's _card.json in the draft.
-  func updateCard(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
-    guard var d = cardDefinitionDraft(k), definitionKind(d.card) != .subgraph else { return }
-    fn(&d.card)
-    setCardDefinition(k, d)
-  }
-
-  /// Changes a Card's notes in the draft.
-  func updateMeta(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
-    guard var d = cardDefinitionDraft(k) else { return }
-    var meta = d.meta ?? .object([])
-    fn(&meta)
-    d.meta = meta
-    setCardDefinition(k, d)
-  }
-
   // MARK: - Comments on a Card (its _comments.json)
 
   /// What the user asks of this Card, in the order written.
@@ -1463,23 +1452,6 @@ final class ProjectSession {
     _ = try await applyMutation { s in s.changeComments(k) { $0 + [.object([("id", .string(id)), ("text", .string(t)), ("author", .string("user")), ("finding", .bool(finding))])] } }
   }
 
-  func setCommentText(_ k: CardKey, id: String, text: String) {
-    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !t.isEmpty else { return }
-    changeComments(k) { list in
-      if !list.contains(where: { $0["id"]?.string == id }) {
-        return list + [.object([("id", .string(id)), ("text", .string(t)), ("author", .string("user"))])]
-      }
-      return list.map { c in
-        guard c["id"]?.string == id else { return c }
-        var n = c
-        n["text"] = .string(t)
-        n["edited_by"] = .string("user")
-        return n
-      }
-    }
-  }
-
   /// Marks a comment by hand. Opening one again takes back what was said about it.
   func setCommentResolved(_ k: CardKey, id: String, _ resolved: Bool) {
     editComments(k) { list in
@@ -1500,9 +1472,6 @@ final class ProjectSession {
   func removeComment(_ k: CardKey, id: String) {
     editComments(k) { $0.filter { $0["id"]?.string != id } }
   }
-
-  /// A setting of the Card (its _card.json).
-  func cardSetting(_ k: CardKey, _ name: String) -> JSONValue? { cardDefinition(k)?[name] }
 
   private(set) var derivedLayouts: [String: JSONValue] = [:]
   @ObservationIgnored private var layoutTasks: [String: Task<Void, Never>] = [:]
