@@ -1,6 +1,7 @@
 #include "history.hh"
 
 #include <fcntl.h>
+#include <flatbuffers/reflection.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -12,8 +13,8 @@
 
 #include "tsugumi/protocol/runtime_state_generated.h"
 #include "tsugumi/util/crypto.hh"
-#include "tsugumi/util/fs.hh"
 #include "tsugumi/util/flat_file.hh"
+#include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
 #include "wire.hh"
 
@@ -473,7 +474,6 @@ CREATE TABLE IF NOT EXISTS )SQL" +
   state INTEGER NOT NULL, rev INTEGER, execution_rev INTEGER,
   accepted_at INTEGER, started_at INTEGER, ended_at INTEGER, failure BLOB,
   source_hash TEXT NOT NULL, target TEXT NOT NULL, propagate INTEGER NOT NULL,
-  has_artifacts INTEGER NOT NULL DEFAULT 0,
   local_run INTEGER NOT NULL DEFAULT 0,
   partial_run INTEGER NOT NULL DEFAULT 0, uses_partial_result INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS )SQL" +
@@ -512,7 +512,7 @@ CREATE TABLE IF NOT EXISTS )SQL" +
          p + R"SQL(ivalues(
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL, side INTEGER NOT NULL,
   port TEXT NOT NULL, schema_hash TEXT NOT NULL, root_type TEXT NOT NULL,
-  size INTEGER NOT NULL, bytes BLOB, hash TEXT NOT NULL, artifacts BLOB,
+  size INTEGER NOT NULL, bytes BLOB, hash TEXT NOT NULL,
   PRIMARY KEY(run_id, card, invocation, side, port));
 CREATE TABLE IF NOT EXISTS )SQL" +
          p + R"SQL(log_truncations(
@@ -543,16 +543,18 @@ CREATE TABLE IF NOT EXISTS )SQL" +
 CREATE TABLE IF NOT EXISTS )SQL" +
          p + R"SQL(artifacts(
   id BLOB NOT NULL, run_id TEXT NOT NULL, card TEXT NOT NULL,
-  invocation INTEGER NOT NULL, origin TEXT NOT NULL, location TEXT NOT NULL,
+  invocation INTEGER NOT NULL, sequence INTEGER NOT NULL, counter INTEGER NOT NULL,
+  keep INTEGER NOT NULL, location TEXT NOT NULL,
   created_ms INTEGER NOT NULL, sealed_ms INTEGER, size_bytes INTEGER, tree_hash TEXT,
-  PRIMARY KEY (run_id, id)) WITHOUT ROWID;
+  PRIMARY KEY (id)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS )SQL" +
-         p + R"SQL(artifacts_id ON artifacts(id);
+         p +
+         R"SQL(artifacts_run ON artifacts(run_id, card, invocation, counter);
 )SQL";
 }
 
 // Version of the local history's tables (PRAGMA user_version).
-constexpr int kHistoryVersion = 22;
+constexpr int kHistoryVersion = 23;
 }  // namespace
 
 auto History::open_live_logs() -> std::unique_ptr<sql::Db> {
@@ -1012,11 +1014,10 @@ void History::complete_invocation(sql::Db& db,
   {
     auto put = [&](const Value& v, int side) {
       const auto schema = v.type ? put_schema(db, *v.type) : "";
-      std::string artifacts;
-      for (const auto& id : v.artifacts) artifacts += id;
-      db.prepare("INSERT OR REPLACE INTO ivalues(run_id, card, invocation, "
-                 "side, port, schema_hash, root_type, size, bytes, hash, artifacts) "
-                 "VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+      db.prepare(
+            "INSERT OR REPLACE INTO ivalues(run_id, card, invocation, "
+            "side, port, schema_hash, root_type, size, bytes, hash) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?)")
           .bind(1, s.run_id)
           .bind(2, key(s.card))
           .bind(3, s.invocation)
@@ -1027,7 +1028,6 @@ void History::complete_invocation(sql::Db& db,
           .bind(8, static_cast<uint64_t>(v.bytes.size()))
           .bind_blob(9, v.bytes)
           .bind(10, crypto::sha256_hex(v.bytes))
-          .bind_blob(11, artifacts)
           .run();
     };
     for (const auto& v : r.inputs) put(v, 0);
@@ -1051,8 +1051,6 @@ auto History::put_last_input(sql::Db& db, const CardPath& card,
       j->root_type = v.type ? v.type->root_type : "";
       j->data.assign(v.bytes.begin(), v.bytes.end());
       j->schema_id = v.schema;
-      for (const auto& id : v.artifacts)
-        j->artifacts.push_back(wire::artifact_struct(id));
       entry->values.push_back(std::move(j));
     }
     list.groups.push_back(std::move(entry));
@@ -1069,21 +1067,22 @@ auto History::put_last_input(sql::Db& db, const CardPath& card,
 
 void History::put_artifact(sql::Db& db, const ArtifactData& a) {
   auto insert = db.prepare(
-      "INSERT INTO artifacts(id, run_id, card, invocation, origin, location, "
-      "created_ms, sealed_ms, size_bytes, tree_hash) VALUES(?,?,?,?,?,?,?,?,?,?)");
+      "INSERT INTO artifacts(id, run_id, card, invocation, sequence, counter, "
+      "keep, location, "
+      "created_ms, sealed_ms, size_bytes, tree_hash) "
+      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
   insert.bind_blob(1, a.id)
       .bind(2, a.run_id)
       .bind(3, key(a.card))
       .bind(4, a.invocation)
-      .bind(5, a.origin)
-      .bind(6, a.location)
-      .bind(7, a.created_ms)
-      .bind(8, a.sealed_ms)
-      .bind(9, a.size_bytes)
-      .bind(10, a.tree_hash)
-      .run();
-  db.prepare("UPDATE runs SET has_artifacts=1 WHERE run_id=?")
-      .bind(1, a.run_id)
+      .bind(5, a.sequence)
+      .bind(6, a.counter)
+      .bind(7, a.keep)
+      .bind(8, a.location)
+      .bind(9, a.created_ms)
+      .bind(10, a.sealed_ms)
+      .bind(11, a.size_bytes)
+      .bind(12, a.tree_hash)
       .run();
 }
 
@@ -1408,12 +1407,92 @@ std::optional<FailureData> History::latest_failure(sql::Db& db,
   return col_failure(st, 0);
 }
 
+namespace {
+
+// Inspect only recorded values for presentation. Scheduling and opening an
+// artifact do not depend on whether its id can be found by reflection.
+auto value_artifact_ids(const std::string& bfbs, const std::string& bytes)
+    -> std::set<ArtifactKey> {
+  const auto* schema_data = reinterpret_cast<const uint8_t*>(bfbs.data());
+  flatbuffers::Verifier verifier(schema_data, bfbs.size());
+  if (!reflection::VerifySchemaBuffer(verifier)) return {};
+  const auto& schema = *reflection::GetSchema(schema_data);
+  const auto* root = schema.root_table();
+  const auto* data = reinterpret_cast<const uint8_t*>(bytes.data());
+  if (!root || !flatbuffers::Verify(schema, *root, data, bytes.size()))
+    return {};
+
+  std::set<ArtifactKey> ids;
+  std::set<std::pair<const uint8_t*, const reflection::Object*>> visited;
+  const auto visit = [&](const auto& self, const reflection::Object& object,
+                         const uint8_t* address) -> void {
+    if (!address || !visited.emplace(address, &object).second) return;
+    const auto* table = reinterpret_cast<const flatbuffers::Table*>(address);
+    if (object.is_struct() && object.bytesize() == 16 &&
+        object.name()->string_view() == "tsugumi.ArtifactId") {
+      ids.emplace(reinterpret_cast<const char*>(address), 16);
+      return;
+    }
+    for (const auto* field : *object.fields()) {
+      if (field->deprecated()) continue;
+      const auto& type = *field->type();
+      if (type.base_type() == reflection::Obj) {
+        const auto& child = *schema.objects()->Get(type.index());
+        if (object.is_struct()) {
+          self(self, child, address + field->offset());
+        } else if (child.is_struct()) {
+          self(self, child, table->GetAddressOf(field->offset()));
+        } else {
+          self(self, child, table->GetPointer<const uint8_t*>(field->offset()));
+        }
+      } else if (type.base_type() == reflection::Array &&
+                 type.element() == reflection::Obj) {
+        const auto& child = *schema.objects()->Get(type.index());
+        for (size_t i = 0; i < type.fixed_length(); ++i)
+          self(self, child, address + field->offset() + i * child.bytesize());
+      } else if (type.base_type() == reflection::Vector &&
+                 type.element() == reflection::Obj) {
+        const auto* vector = flatbuffers::GetFieldAnyV(*table, *field);
+        if (!vector) continue;
+        const auto& child = *schema.objects()->Get(type.index());
+        for (size_t i = 0; i < vector->size(); ++i)
+          self(self, child,
+               child.is_struct()
+                   ? flatbuffers::GetAnyVectorElemAddressOf<const uint8_t>(
+                         vector, i, child.bytesize())
+                   : flatbuffers::GetAnyVectorElemPointer<const uint8_t>(vector,
+                                                                         i));
+      } else if (type.base_type() == reflection::Union) {
+        const auto* tag = object.fields()->LookupByKey(
+            (field->name()->str() + "_type").c_str());
+        if (!tag) continue;
+        const auto* member =
+            schema.enums()
+                ->Get(type.index())
+                ->values()
+                ->LookupByKey(flatbuffers::GetFieldI<uint8_t>(*table, *tag));
+        if (!member || !member->union_type() ||
+            member->union_type()->base_type() != reflection::Obj)
+          continue;
+        self(self, *schema.objects()->Get(member->union_type()->index()),
+             table->GetPointer<const uint8_t*>(field->offset()));
+      }
+    }
+  };
+  visit(visit, *root,
+        reinterpret_cast<const uint8_t*>(
+            flatbuffers::GetRoot<flatbuffers::Table>(data)));
+  return ids;
+}
+
+}  // namespace
+
 std::vector<StoredValueMeta> History::value_metas(sql::Db& db,
                                                   const std::string& run_id,
                                                   const CardPath& card,
                                                   uint64_t n, bool input) {
   auto st = db.prepare(
-      "SELECT v.port, s.bfbs, v.root_type, v.size, v.artifacts, v.hash "
+      "SELECT v.port, s.bfbs, v.root_type, v.size, v.bytes, v.hash "
       "FROM ivalues v "
       "LEFT JOIN schemas s ON s.hash=v.schema_hash WHERE run_id=? AND "
       "card=? AND invocation=? AND side=? "
@@ -1426,14 +1505,18 @@ std::vector<StoredValueMeta> History::value_metas(sql::Db& db,
     if (!st.is_null(1)) m.bfbs = st.blob(1);
     m.root_type = st.text(2);
     m.size_bytes = st.u64(3);
-    const auto ids = st.blob(4);
-    if (ids.size() % 16 != 0) throw sql::Error("invalid value artifact ids");
-    for (size_t offset = 0; offset < ids.size(); offset += 16) {
-      auto id = ids.substr(offset, 16);
-      const auto record = artifact(db, id);
-      m.artifacts.push_back({std::move(id),
-                             record ? record->size_bytes : std::nullopt,
-                             record && record->origin == "store"});
+    if (!st.is_null(4) && m.bfbs.find("tsugumi.ArtifactId") != std::string::npos) {
+      for (const auto& id : value_artifact_ids(m.bfbs, st.blob(4))) {
+        const auto record = artifact(db, id);
+        const bool available = record && record->sealed_ms;
+        m.artifacts.push_back(
+            {id, available ? record->size_bytes : std::nullopt,
+             record ? std::to_string(record->sequence) + "." +
+                          std::to_string(record->counter)
+                    : "",
+             available ? Tsugumi::Data::ArtifactState::available
+                       : Tsugumi::Data::ArtifactState::unavailable});
+      }
     }
     m.hash = st.text(5);
     out.push_back(std::move(m));
@@ -1562,8 +1645,6 @@ std::optional<History::LastInput> History::last_input(sql::Db& db,
       v.name = group.port;
       v.schema = value->schema_id;
       v.bytes.assign(value->data.begin(), value->data.end());
-      for (const auto& id : value->artifacts)
-        v.artifacts.push_back(wire::artifact_id(id));
       if (value->schema.empty()) {
         group.values.push_back(std::move(v));
         continue;
@@ -1595,30 +1676,38 @@ ArtifactData artifact_row(const sql::Stmt& st) {
   a.run_id = st.text(1);
   a.card = unkey(st.text(2));
   a.invocation = st.u64(3);
-  a.origin = st.text(4);
-  a.location = st.text(5);
-  a.created_ms = st.i64(6);
-  if (!st.is_null(7)) a.sealed_ms = st.i64(7);
-  if (!st.is_null(8)) a.size_bytes = st.u64(8);
-  if (!st.is_null(9)) a.tree_hash = st.text(9);
+  a.sequence = st.u64(4);
+  a.counter = st.u64(5);
+  a.keep = st.i64(6) != 0;
+  a.location = st.text(7);
+  a.created_ms = st.i64(8);
+  if (!st.is_null(9)) a.sealed_ms = st.i64(9);
+  if (!st.is_null(10)) a.size_bytes = st.u64(10);
+  if (!st.is_null(11)) a.tree_hash = st.text(11);
   return a;
 }
 }  // namespace
 
 std::optional<ArtifactData> History::artifact(sql::Db& db,
-                                              const std::string& artifact_id,
-                                              std::optional<std::string_view> run_id) {
+                                              const std::string& artifact_id) {
   auto st = db.prepare(
-      "SELECT id, run_id, card, invocation, origin, location, created_ms, "
-      "sealed_ms, size_bytes, tree_hash FROM artifacts WHERE id=?1 "
-      "AND (?2 IS NULL OR run_id=?2) ORDER BY run_id LIMIT 1");
+      "SELECT id, run_id, card, invocation, sequence, counter, keep, location, "
+      "created_ms, sealed_ms, size_bytes, tree_hash FROM artifacts WHERE id=?");
   st.bind_blob(1, artifact_id);
-  if (run_id)
-    st.bind(2, *run_id);
-  else
-    st.bind_null(2);
   if (!st.step()) return std::nullopt;
   return artifact_row(st);
+}
+
+auto History::transient_artifacts(sql::Db& db, const std::string& run_id)
+    -> std::vector<ArtifactData> {
+  auto st = db.prepare(
+      "SELECT id, run_id, card, invocation, sequence, counter, keep, location, "
+      "created_ms, sealed_ms, size_bytes, tree_hash FROM artifacts "
+      "WHERE run_id=? AND keep=0");
+  st.bind(1, run_id);
+  std::vector<ArtifactData> rows;
+  while (st.step()) rows.push_back(artifact_row(st));
+  return rows;
 }
 
 std::vector<ArtifactData> History::artifacts(
@@ -1631,8 +1720,8 @@ std::vector<ArtifactData> History::artifacts(
       "WHERE run_id=?1 AND (?2 IS NULL OR card=?2) AND (?3 IS NULL "
       "OR invocation=?3) AND "
       "(card || '\x1f' || printf('%020d', invocation) || '\x1f' || "
-      "lower(hex(id))) > ?4 "
-      "ORDER BY card, invocation, id LIMIT ?5";
+      "printf('%020d', counter)) > ?4 "
+      "ORDER BY card, invocation, counter LIMIT ?5";
   auto st = db.prepare(q);
   st.bind(1, run_id);
   if (card)
@@ -1657,7 +1746,8 @@ std::vector<RunSummaryData> History::runs_page(sql::Db& db,
                                                std::vector<int64_t>* seqs) {
   std::string q = std::string("SELECT ") + kRunCols +
                   ", seq FROM runs WHERE seq<=?1 AND seq<?2 AND (?3=0 OR "
-                  "has_artifacts=1) AND "
+                  "EXISTS(SELECT 1 FROM artifacts a WHERE a.run_id=runs.run_id "
+                  "AND a.sealed_ms IS NOT NULL AND (?4 IS NULL OR a.card=?4))) AND "
                   "(?4 IS NULL OR target=?4 OR EXISTS(SELECT 1 FROM run_cards "
                   "rc WHERE rc.run_id=runs.run_id AND rc.card=?4)) "
                   "ORDER BY seq DESC LIMIT ?5";
@@ -1835,7 +1925,10 @@ auto History::delete_category(sql::Db& db, const std::string& run_id,
     case R::RunRecordCategory::Values:
       db.prepare("DELETE FROM ivalues WHERE run_id=?").bind(1, run_id).run();
       break;
-    // TODO(open): the former files recording category does not yet apply to artifacts.
+    case R::RunRecordCategory::Artifacts:
+      // TODO: Decide whether to retain a tombstone for deleted artifacts.
+      db.prepare("DELETE FROM artifacts WHERE run_id=?").bind(1, run_id).run();
+      break;
     default:
       throw sql::Error("invalid run record category");
   }

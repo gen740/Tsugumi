@@ -1,5 +1,7 @@
 """Recorded values, artifacts and logs observed through public RPC."""
 
+from uuid import UUID
+
 import pytest
 
 from harness.artifact_faults import corrupt_retained_file
@@ -32,11 +34,12 @@ def test_artifacts_survive_without_value_recording(core_factory, project, tmp_pa
     assert len(record.record.outputs) == int(record_io)
     artifact, = client.call("ArtifactListRequest", runId=run_id, card=path("work")).artifacts
     artifact_id = text(artifact.artifactId)
-    sequence, counter = map(int, artifact_id.split("."))
+    assert UUID(artifact_id).version == 4
+    sequence, counter = map(int, text(artifact.label).split("."))
     assert sequence > 0 and counter == 0
     assert artifact.sizeBytes == len(CONTENTS.encode())
     assert text(artifact.treeHash).startswith("tree:")
-    directory = project / ".tsugumi" / "artifacts" / run_id / "work" / "@1" / artifact_id.split(".")[1]
+    directory = project / ".tsugumi" / "artifacts" / run_id / "work" / "@1" / text(artifact.label).split(".")[1]
     assert directory.stat().st_mode & 0o222 == 0
     assert (directory / "big.txt").stat().st_mode & 0o222 == 0
     if record_io:
@@ -86,7 +89,7 @@ def test_a_corrupted_retained_artifact_is_rejected(core_factory, project, tmp_pa
     client.call("ProjectCacheClearRequest", opId=new_id())
     assert read_pages(client, "ArtifactReadRequest", artifactId=artifact_id, member="report.txt") == original
 
-    corrupt_retained_file(project / ".tsugumi/artifacts" / run_id / "work/@1" / artifact_id.split(".")[1],
+    corrupt_retained_file(project / ".tsugumi/artifacts" / run_id / "work/@1" / text(artifact.label).split(".")[1],
                           original)
 
     with pytest.raises(RpcFailure) as failure:

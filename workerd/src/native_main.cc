@@ -29,7 +29,6 @@
 #include "tsugumi/protocol/card_generated.h"
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/rpc/frame.hh"
-#include "tsugumi/workerd/artifact_id.hh"
 #include "tsugumi/workerd/frame.hh"
 
 namespace C = Tsugumi::Card;
@@ -48,13 +47,7 @@ using tsugumi::workerd::message_cost;
 constexpr size_t kMaxViewName = kMaxFrame - TSUGUMI_MESSAGE_MAX - 1024;
 using Main = decltype(&tsugumi_main);
 using ArtifactId = std::array<uint8_t, 16>;
-using ArtifactIds = flatbuffers::Vector<const tsugumi::ArtifactId*>;
 
-auto id_bytes(const tsugumi::ArtifactId& id) -> ArtifactId {
-  ArtifactId result;
-  std::ranges::copy(*id.bytes(), result.begin());
-  return result;
-}
 
 struct ViewQueue {
   std::deque<std::string> incoming;
@@ -75,9 +68,7 @@ struct Host {
   bool stopping = false;
   std::mutex artifact_mutex;
   std::string artifact_directory;
-  uint64_t invocation_sequence = 0;
-  uint64_t next_artifact = 0;
-  std::map<ArtifactId, std::string> granted;
+  std::map<ArtifactId, std::string> opened;
   std::map<ArtifactId, std::string> created;
   std::atomic<uint64_t> cancelled_id{0};
   std::atomic<uint64_t> call_id{0};
@@ -271,26 +262,39 @@ auto path_bytes(const std::string& path) -> tsugumi_bytes {
   return {reinterpret_cast<const uint8_t*>(path.c_str()), path.size()};
 }
 
-auto create_artifact(void* context, tsugumi_artifact_id* out,
+auto create_artifact(void* context, uint32_t flags, tsugumi_artifact_id* out,
                      tsugumi_bytes* path) -> int {
   if (!out || !path) return -1;
   *path = {};
   auto& host = *static_cast<Host*>(context);
   try {
     std::lock_guard lock(host.artifact_mutex);
-    if (host.artifact_directory.empty()) return -1;
-    if (!host.invocation_sequence || host.next_artifact == UINT64_MAX)
-      return -1;
-    const auto id =
-        tsugumi::make_artifact_id(host.invocation_sequence, host.next_artifact);
+    const auto call_id = host.call_id.load();
+    if (!call_id || host.artifact_directory.empty()) return -1;
+    flatbuffers::FlatBufferBuilder b;
+    const auto request = W::CreateWorkerArtifactCreate(b, flags);
+    W::FinishWorkerMessageBuffer(
+        b, W::CreateWorkerMessage(b, call_id,
+                                  W::WorkerPayload::WorkerArtifactCreate,
+                                  request.Union()));
+    if (!send_frame(host, b)) return -1;
+    const auto reply = read_frame(kData);
+    if (!reply) return -1;
+    flatbuffers::Verifier verify(
+        reinterpret_cast<const uint8_t*>(reply->data()), reply->size());
+    if (!W::VerifyWorkerMessageBuffer(verify)) return -1;
+    const auto* message = W::GetWorkerMessage(reply->data());
+    const auto* created = message->value_as_WorkerArtifactCreated();
+    if (message->call_id() != call_id || !created || !created->id()) return -1;
     const auto directory =
-        host.artifact_directory + "/" + std::to_string(host.next_artifact);
-    if (host.granted.contains(id) || ::mkdir(directory.c_str(), 0700) != 0)
-      return -1;
-    ++host.next_artifact;
-    const auto inserted = host.created.emplace(id, directory);
-    std::ranges::copy(id, out->bytes);
-    *path = path_bytes(inserted.first->second);
+        host.artifact_directory + "/" + std::to_string(created->counter());
+    if (::mkdir(directory.c_str(), 0700) != 0) return -1;
+    ArtifactId key;
+    std::ranges::copy(*created->id()->bytes(), key.begin());
+    const auto [entry, inserted] = host.created.emplace(key, directory);
+    if (!inserted) return -1;
+    std::ranges::copy(key, out->bytes);
+    *path = path_bytes(entry->second);
     return 0;
   } catch (const std::exception&) {
     return -1;
@@ -302,16 +306,19 @@ auto open_artifact(void* context, const tsugumi_artifact_id* id,
   if (!id || !path) return -1;
   *path = {};
   auto& host = *static_cast<Host*>(context);
-  std::lock_guard lock(host.artifact_mutex);
-  ArtifactId key;
-  std::ranges::copy(id->bytes, key.begin());
-  const auto found = host.granted.find(key);
-  if (found == host.granted.end()) return -1;
-  if (found->second.empty()) {
+  try {
+    std::lock_guard lock(host.artifact_mutex);
+    const auto call_id = host.call_id.load();
+    if (!call_id) return -1;
+    ArtifactId key;
+    std::ranges::copy(id->bytes, key.begin());
+    if (const auto found = host.opened.find(key); found != host.opened.end()) {
+      *path = path_bytes(found->second);
+      return 0;
+    }
     flatbuffers::FlatBufferBuilder b;
     const tsugumi::ArtifactId artifact{flatbuffers::span(key)};
     const auto request = W::CreateWorkerArtifactOpen(b, &artifact);
-    const auto call_id = host.call_id.load();
     W::FinishWorkerMessageBuffer(
         b,
         W::CreateWorkerMessage(b, call_id, W::WorkerPayload::WorkerArtifactOpen,
@@ -325,10 +332,12 @@ auto open_artifact(void* context, const tsugumi_artifact_id* id,
     const auto* message = W::GetWorkerMessage(reply->data());
     const auto* opened = message->value_as_WorkerArtifactOpened();
     if (message->call_id() != call_id || !opened || !opened->path()) return -1;
-    found->second = opened->path()->str();
+    *path = path_bytes(
+        host.opened.emplace(key, opened->path()->str()).first->second);
+    return 0;
+  } catch (const std::exception&) {
+    return -1;
   }
-  *path = path_bytes(found->second);
-  return 0;
 }
 
 constexpr tsugumi_effects kEffects{
@@ -396,15 +405,14 @@ auto aligned_payload(flatbuffers::FlatBufferBuilder& b, const Payload& data)
 }
 
 auto failure_frame(flatbuffers::FlatBufferBuilder& b, uint64_t id,
-                   const Failure& failure,
-                   const std::vector<tsugumi::ArtifactId>& created) -> void {
+                   const Failure& failure) -> void {
   std::vector<flatbuffers::Offset<D::KeyValue>> args;
   for (const auto& [key, value] : failure.args)
     args.push_back(
         D::CreateKeyValue(b, b.CreateString(key), b.CreateString(value)));
   const auto encoded = D::CreateFailure(b, failure.kind, b.CreateVector(args),
                                         b.CreateString(failure.message));
-  const auto payload = W::CreateWorkerFailure(b, encoded, b.CreateVectorOfStructs(created));
+  const auto payload = W::CreateWorkerFailure(b, encoded);
   W::FinishWorkerMessageBuffer(
       b, W::CreateWorkerMessage(b, id, W::WorkerPayload::WorkerFailure,
                                 payload.Union()));
@@ -425,21 +433,7 @@ auto card_failure(const C::CardFailure& value) -> Failure {
   return failure;
 }
 
-auto created_ids(const Host& host) -> std::vector<tsugumi::ArtifactId> {
-  std::vector<tsugumi::ArtifactId> created;
-  for (const auto& entry : host.created)
-    created.emplace_back(flatbuffers::span<const uint8_t, 16>(entry.first));
-  return created;
-}
-
-auto copy_ids(flatbuffers::FlatBufferBuilder& b, const ArtifactIds* ids) {
-  std::vector<tsugumi::ArtifactId> copy;
-  if (ids)
-    for (const auto* id : *ids) copy.push_back(*id);
-  return b.CreateVectorOfStructs(copy);
-}
-
-auto make_result(const C::CardResult& result, const Host& host, uint64_t id,
+auto make_result(const C::CardResult& result, uint64_t id,
                  flatbuffers::FlatBufferBuilder& b) -> std::optional<Failure> {
   if (const auto* failure = result.failure()) return card_failure(*failure);
   std::vector<flatbuffers::Offset<W::WorkerOutput>> outputs;
@@ -449,15 +443,13 @@ auto make_result(const C::CardResult& result, const Host& host, uint64_t id,
       flatbuffers::Offset<Payload> bytes;
       if (const auto* value = output->bytes())
         bytes = aligned_payload(b, *value);
-      outputs.push_back(W::CreateWorkerOutput(
-          b, b.CreateString(name), bytes, copy_ids(b, output->artifacts())));
+      outputs.push_back(W::CreateWorkerOutput(b, b.CreateString(name), bytes));
       if (b.GetSize() > kMaxFrame)
         return Failure{D::FailureKind::output_invalid,
                        "outputs exceed the worker frame limit"};
     }
   }
-  const auto payload = W::CreateWorkerResult(
-      b, b.CreateVector(outputs), b.CreateVectorOfStructs(created_ids(host)));
+  const auto payload = W::CreateWorkerResult(b, b.CreateVector(outputs));
   W::FinishWorkerMessageBuffer(
       b, W::CreateWorkerMessage(b, id, W::WorkerPayload::WorkerResult,
                                 payload.Union()));
@@ -483,29 +475,22 @@ auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
   // aligned, never opened.
   flatbuffers::FlatBufferBuilder b;
   std::vector<flatbuffers::Offset<C::CardPort>> inputs;
-  std::set<ArtifactId> requested;
   for (const auto* input : *call.inputs()) {
     flatbuffers::Offset<Payload> bytes;
     if (const auto* payload = input->bytes()) bytes = aligned_payload(b, *payload);
-    if (const auto* ids = input->artifacts())
-      for (const auto* id : *ids) requested.insert(id_bytes(*id));
     const auto schema = input->schema() ? b.CreateString(input->schema()->string_view())
                                         : flatbuffers::Offset<flatbuffers::String>{};
     inputs.push_back(C::CreateCardPort(
-        b, b.CreateString(input->name()->string_view()), schema, bytes,
-        copy_ids(b, input->artifacts())));
+        b, b.CreateString(input->name()->string_view()), schema, bytes));
   }
   b.Finish(C::CreateCardInput(b, b.CreateVector(inputs)));
   {
     std::lock_guard lock(host.artifact_mutex);
     host.created.clear();
-    host.granted.clear();
+    host.opened.clear();
     host.artifact_directory.clear();
     if (const auto* directory = call.artifact_directory())
       host.artifact_directory = directory->str();
-    host.invocation_sequence = call.invocation_sequence();
-    host.next_artifact = 0;
-    for (const auto& id : requested) host.granted.try_emplace(id);
   }
 
   if (auto failure = stop()) return failure;
@@ -527,8 +512,8 @@ auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
   flatbuffers::Verifier verifier(returned.data, returned.size);
   if (!verifier.VerifyBuffer<C::CardResult>(nullptr))
     return Failure{D::FailureKind::output_invalid, "invalid CardResult buffer"};
-  return make_result(*flatbuffers::GetRoot<C::CardResult>(returned.data), host,
-                     id, reply);
+  return make_result(*flatbuffers::GetRoot<C::CardResult>(returned.data), id,
+                     reply);
 }
 
 auto serve(const std::string& package) -> int {
@@ -578,11 +563,15 @@ auto serve(const std::string& package) -> int {
     if (const auto failure = execute(*call, host, last_call, package, entry,
                                      load_error, reply)) {
       reply.Clear();
-      failure_frame(reply, last_call, *failure, created_ids(host));
+      failure_frame(reply, last_call, *failure);
     }
-    if (call->drain_display() || !created_ids(host).empty())
-      flush_display(host, last_call);
-    host.call_id = 0;
+    bool drain = call->drain_display();
+    {
+      std::lock_guard lock(host.artifact_mutex);
+      host.call_id = 0;
+      drain |= !host.created.empty();
+    }
+    if (drain) flush_display(host, last_call);
     std::fflush(stdout);
     std::fflush(stderr);
     if (!send_frame(host, reply)) break;

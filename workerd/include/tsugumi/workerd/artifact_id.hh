@@ -1,46 +1,39 @@
 #pragma once
 
-#include <array>
-#include <cstdint>
-#include <span>
+#include <optional>
+#include <string>
 #include <string_view>
+
+#include "tsugumi/util/crypto.hh"
 
 namespace tsugumi {
 
-using ArtifactIdBytes = std::array<uint8_t, 16>;
-
-// Big-endian words so binary order agrees with invocation and counter order.
-inline auto make_artifact_id(uint64_t invocation, uint64_t counter)
-    -> ArtifactIdBytes {
-  ArtifactIdBytes id;
-  for (int i = 7; i >= 0; --i) {
-    id[i] = static_cast<uint8_t>(invocation);
-    id[i + 8] = static_cast<uint8_t>(counter);
-    invocation >>= 8;
-    counter >>= 8;
+inline auto parse_artifact_id(std::string_view text)
+    -> std::optional<std::string> {
+  if (!crypto::is_uuid(text)) return std::nullopt;
+  const auto digit = [](char c) {
+    if (c <= '9') return c - '0';
+    return (c | 32) - 'a' + 10;
+  };
+  std::string id;
+  for (size_t i = 0; i < text.size();) {
+    if (text[i] == '-') ++i;
+    id.push_back(static_cast<char>((digit(text[i]) << 4) | digit(text[i + 1])));
+    i += 2;
   }
   return id;
 }
 
-inline auto artifact_id_word(std::span<const uint8_t, 8> bytes) -> uint64_t {
-  uint64_t value = 0;
-  for (auto byte : bytes) value = (value << 8) | byte;
-  return value;
-}
-
-inline auto artifact_sequence(std::span<const uint8_t, 16> id) -> uint64_t {
-  return artifact_id_word(id.first<8>());
-}
-
-inline auto artifact_counter(std::span<const uint8_t, 16> id) -> uint64_t {
-  return artifact_id_word(id.last<8>());
-}
-
-// The wire verifier and history both require exactly 16 bytes.
-inline auto artifact_id_bytes(std::string_view id)
-    -> std::span<const uint8_t, 16> {
-  return std::span<const uint8_t, 16>(
-      reinterpret_cast<const uint8_t*>(id.data()), 16);
+inline auto artifact_id_text(std::string_view id) -> std::string {
+  std::string text;
+  constexpr std::string_view digits = "0123456789abcdef";
+  for (size_t i = 0; i < id.size(); ++i) {
+    if (i == 4 || i == 6 || i == 8 || i == 10) text += '-';
+    const auto byte = static_cast<unsigned char>(id[i]);
+    text += digits[byte >> 4];
+    text += digits[byte & 15];
+  }
+  return text;
 }
 
 }  // namespace tsugumi

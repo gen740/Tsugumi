@@ -3,6 +3,7 @@
 import json
 import stat
 import sys
+from uuid import UUID
 
 import pytest
 
@@ -16,7 +17,7 @@ from Tsugumi.Data.RunState import RunState
 
 @pytest.mark.environment
 @pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason="requires Seatbelt or bubblewrap")
-def test_invocation_can_open_only_its_read_only_artifact_grants(core_factory, project):
+def test_invocation_can_open_a_sealed_artifact_by_uuid(core_factory, project):
     stored_root = project.resolve() / ".tsugumi/artifacts"
     declarations = (
         "#include <cerrno>\n#include <dirent.h>\n"
@@ -37,9 +38,10 @@ def test_invocation_can_open_only_its_read_only_artifact_grants(core_factory, pr
     """, declarations=declarations, outputs=DIRECTORY)
     sink = native_card(r"""
         tsugumi_artifact_id ungranted;
-        std::copy_n(in.inputs()->Get(0)->artifacts()->Get(0)->bytes()->data(), 16,
-                    ungranted.bytes);
-        ungranted.bytes[15] = 1;
+        const auto* port = in.inputs()->Get(0);
+        const auto* artifact = fb::GetRoot<tsugumi::Artifact>(port->bytes()->data());
+        std::copy_n(artifact->id()->bytes()->data(), 16, ungranted.bytes);
+        ungranted.bytes[15] ^= 1;
         tsugumi_bytes unused;
         if (call.effects->artifact_open(call.host, &ungranted, &unused) >= 0) return 1;
         const auto directory = fs::path(open_artifact(call, in));
@@ -87,9 +89,10 @@ def test_invocation_can_open_only_its_read_only_artifact_grants(core_factory, pr
         )
         assert decode_scalar(read_output(client, run_id, card="sink"), "uint64") == len("artifact")
         first, second = client.call("ArtifactListRequest", runId=run_id).artifacts
-        sequence, counter = map(int, text(first.artifactId).split("."))
+        sequence, counter = map(int, text(first.label).split("."))
         assert sequence > previous and counter == 0
-        assert text(second.artifactId) == f"{sequence}.1"
+        assert text(second.label) == f"{sequence}.1"
+        assert all(UUID(text(a.artifactId)).version == 4 for a in (first, second))
         previous = sequence
         run_root = stored_root / run_id
         saved = run_root / "source/@1/0"
@@ -102,47 +105,6 @@ def test_invocation_can_open_only_its_read_only_artifact_grants(core_factory, pr
                               restrictToRunIds=True, runIds=[run_id])
         assert removed.deletedRuns == 1
         assert not run_root.exists()
-
-
-@pytest.mark.environment
-@pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason="requires Seatbelt or bubblewrap")
-def test_input_card_artifact_opens_at_its_store_path(core_factory, project):
-    artifact_id = "a1" * 16
-    source = {
-        "type": "input",
-        "_outputs": DIRECTORY,
-        "_nix": r"""
-          { params, inputs }:
-          let pkgs = import <nixpkgs> { };
-          in {
-            run = pkgs.runCommand "artifact-input" { } ''
-              root=$out/share/tsugumi/input
-              mkdir -p "$root/ports" "$root/artifacts/ARTIFACT_ID"
-              printf 'opaque' > "$root/ports/doc"
-              printf '%s\n' ARTIFACT_ID > "$root/ports/doc.artifacts"
-              printf 'store' > "$root/artifacts/ARTIFACT_ID/report.txt"
-            '';
-          }
-        """.replace("ARTIFACT_ID", artifact_id),
-    }
-    sink = native_card(r"""
-        const auto directory = fs::path(open_artifact(call, in));
-        if (!directory.string().starts_with("/nix/store/") ||
-            !directory.string().ends_with("/share/tsugumi/input/artifacts/" ARTIFACT_ID))
-          return 1;
-        std::string contents;
-        std::ifstream(directory / "report.txt") >> contents;
-        if (contents != "store") return 2;
-        out.number(contents.size());
-    """.replace("ARTIFACT_ID", json.dumps(artifact_id)), inputs=["doc"], recordIO=True)
-    write_nix_project(project, {"source": source, "sink": sink},
-                      [card("source", "source"), card("sink", "sink")],
-                      [conn("source", "doc", "sink", "doc")])
-    client = core_factory(project_root=project).connect()
-    run_id, status = run_and_wait(client, "source")
-    assert status.state == RunState.succeeded, vars(status.failure) if status.failure else None
-    assert decode_scalar(read_output(client, run_id, card="sink"), "uint64") == len("store")
-    assert not (project / ".tsugumi/artifacts" / run_id).exists()
 
 
 @pytest.mark.environment

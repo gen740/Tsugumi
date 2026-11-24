@@ -16,14 +16,12 @@ class NativeContract : public testing::Test {
   flatbuffers::FlatBufferBuilder response;
   Host host;
 
-  auto port(const char* name, std::string_view bytes,
-            const std::vector<tsugumi::ArtifactId>& artifacts = {})
+  auto port(const char* name, std::string_view bytes)
       -> flatbuffers::Offset<C::CardPort> {
     return C::CreateCardPort(
         card_buffer, card_buffer.CreateString(name), 0,
         card_buffer.CreateVector(reinterpret_cast<const uint8_t*>(bytes.data()),
-                                 bytes.size()),
-        card_buffer.CreateVectorOfStructs(artifacts));
+                                 bytes.size()));
   }
 
   auto finish(const std::vector<flatbuffers::Offset<C::CardPort>>& ports)
@@ -39,21 +37,18 @@ class NativeContract : public testing::Test {
   }
 };
 
-TEST_F(NativeContract, PacksOpaqueBytesAndArtifactIds) {
-  const ArtifactId id{1, 2, 3};
+TEST_F(NativeContract, PacksOpaqueBytes) {
   const std::string bytes("\x01\x02 not a table", 14);
-  const auto& result = finish({port(
-      "first", bytes, {tsugumi::ArtifactId(flatbuffers::span<const uint8_t, 16>(id))})});
-  ASSERT_FALSE(make_result(result, host, 1, response));
+  const auto& result = finish({port("first", bytes)});
+  ASSERT_FALSE(make_result(result, 1, response));
   EXPECT_EQ(output()->name()->str(), "first");
   EXPECT_EQ(std::string(output()->bytes()->begin(), output()->bytes()->end()), bytes);
-  EXPECT_EQ(id_bytes(*output()->artifacts()->Get(0)), id);
 }
 
 TEST_F(NativeContract, CombinedOutputsMustFitOneWorkerResultFrame) {
   const std::string bytes(9u << 20, 'x');
   const auto& result = finish({port("first", bytes), port("second", bytes)});
-  const auto failure = make_result(result, host, 1, response);
+  const auto failure = make_result(result, 1, response);
   ASSERT_TRUE(failure);
   EXPECT_EQ(failure->kind, D::FailureKind::output_invalid);
 }
@@ -102,36 +97,11 @@ TEST_F(NativeContract, ReceiveTimeoutAndPerThreadStorage) {
   EXPECT_EQ(receive_display(&host, "view", &bytes, -1), 2);
 }
 
-TEST_F(NativeContract, ArtifactsAreNewDirectoriesAndOnlyGrantsCanBeOpened) {
-  char directory[] = "/tmp/tsugumi-native-artifacts-XXXXXX";
-  ASSERT_NE(::mkdtemp(directory), nullptr);
-  struct Removal {
-    const char* directory;
-    ~Removal() { std::filesystem::remove_all(directory); }
-  } cleanup{directory};
-  host.artifact_directory = directory;
-  host.invocation_sequence = 1532;
-  tsugumi_artifact_id first{}, second{};
+TEST_F(NativeContract, ArtifactEffectsRequireAnActiveCall) {
+  tsugumi_artifact_id id{};
   tsugumi_bytes path{};
-  ASSERT_EQ(create_artifact(&host, &first, &path), 0);
-  const std::string created(path.data, path.data + path.size);
-  EXPECT_TRUE(std::filesystem::is_directory(created));
-  EXPECT_EQ(std::filesystem::path(created).filename(), "0");
-  EXPECT_TRUE(
-      std::ranges::equal(first.bytes, tsugumi::make_artifact_id(1532, 0)));
-  EXPECT_EQ(path.data[path.size], 0);
-  ASSERT_EQ(create_artifact(&host, &second, &path), 0);
-  EXPECT_EQ(std::filesystem::path(std::string(path.data, path.data + path.size))
-                .filename(),
-            "1");
-  EXPECT_TRUE(
-      std::ranges::equal(second.bytes, tsugumi::make_artifact_id(1532, 1)));
-  EXPECT_LT(open_artifact(&host, &first, &path), 0);
-  ArtifactId key;
-  std::ranges::copy(first.bytes, key.begin());
-  host.granted.emplace(key, created);
-  ASSERT_EQ(open_artifact(&host, &first, &path), 0);
-  EXPECT_EQ(std::string(path.data, path.data + path.size), created);
+  EXPECT_LT(create_artifact(&host, TSUGUMI_ARTIFACT_KEEP, &id, &path), 0);
+  EXPECT_LT(open_artifact(&host, &id, &path), 0);
 }
 
 }  // namespace

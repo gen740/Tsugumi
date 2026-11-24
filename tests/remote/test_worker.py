@@ -16,6 +16,7 @@ import struct
 import subprocess
 import sys
 import time
+from uuid import UUID, uuid4
 
 import pytest
 from harness import remote_worker as R
@@ -28,9 +29,6 @@ from harness import peer_tls as TLS
 from harness.file_events import process_file, wait_for_exit
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
-from tsugumi.ArtifactId import ArtifactIdT
-from Tsugumi.Card.CardPort import CardPortT
-from Tsugumi.Worker.ArtifactGrant import ArtifactGrantT
 from Tsugumi.Worker.WorkerPort import WorkerPortT
 from test_worker_loading import card_package
 from Tsugumi.Worker.WorkerCall import WorkerCallT
@@ -244,8 +242,8 @@ def test_rejects_unsafe_options_before_listening(tmp_path):
     assert result.returncode != 0
 
 
-def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(), files=(),
-              grants=(), output_budget=None):
+def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(),
+              output_budget=None):
     nix_directory = os.environ.get("TSUGUMI_NIX_DIR")
     if not nix_directory:
         pytest.skip("needs the installed worker build sources")
@@ -285,18 +283,17 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(), files
             peer.put_chunk(job, archive_digest, total, offset, stream.read(1 << 20))
 
     call = WorkerCallT(
-        inputs=list(inputs), outputs=list(outputs), grants=list(grants),
-        deadlineMs=deadline_ms, invocationSequence=5,
+        inputs=list(inputs), outputs=list(outputs), deadlineMs=deadline_ms,
     )
     message = WorkerMessageT(callId=1, valueType=WorkerPayload.WorkerCall, value=call)
     call_digest = peer.upload(job, R.pack(message, b"TSW1"))
     invocation = peer.upload(job, R.pack(R.InvocationT(
         callSha256=call_digest, archiveSha256=archive_digest,
-        files=[R.InvocationFileT(**file) for file in files], implementationIndex=1,
+        implementationIndex=1,
     )))
     return R.pack(R.JobSpecT(
         system=peer.caps.nativeSystem, derivation=derivation, output=output,
-        invocationSha256=invocation, inputBlobs=[archive_digest, call_digest, invocation, *[file["sha256"] for file in files]],
+        invocationSha256=invocation, inputBlobs=[archive_digest, call_digest, invocation],
         logLimitBytes=8 << 20, **(output_budget or {}),
     ))
 
@@ -473,30 +470,25 @@ def test_real_remote_artifact_boundary(worker, case):
     job = "9" * 64
     outputs = [WorkerPortT(name="doc", required=True)]
     inputs = []
-    grants = []
-    files = []
     create = """
       tsugumi_artifact_id id;
       const auto directory = fs::path(create_artifact(call, id));
     """
     if case == "artifact":
-        granted = ArtifactIdT(bytes=list((3).to_bytes(8, "big") + bytes(8)))
-        relative = "1/group/source/@2/0"
+        capability = uuid4()
+        initializer = ",".join(str(byte) for byte in capability.bytes)
         contents = b"staged"
-        files.append({"path": f"artifacts/{relative}/nested/input.txt",
-                      "sha256": worker.upload(job, contents), "size": len(contents)})
-        inputs.append(CardPortT(name="doc", artifacts=[granted]))
-        grants.append(ArtifactGrantT(id=granted, path=relative))
         body = create + """
-          const fs::path granted = open_artifact(call, in);
-          if (granted.filename() != "3.0" ||
+          tsugumi_artifact_id capability{{CAPABILITY}};
+          tsugumi_bytes dir;
+          if (call.effects->artifact_open(call.host, &capability, &dir) != 0) return 1;
+          const fs::path granted{std::string(reinterpret_cast<const char*>(dir.data), dir.size)};
+          if (granted.filename() != "ARTIFACT_UUID" ||
               std::distance(fs::directory_iterator(granted.parent_path()),
                             fs::directory_iterator{}) != 1) return 2;
-          tsugumi_artifact_id ungranted{};
-          ungranted.bytes[7] = 3;
-          ungranted.bytes[15] = 1;
+          capability.bytes[15] ^= 1;
           tsugumi_bytes unused;
-          if (call.effects->artifact_open(call.host, &ungranted, &unused) == 0)
+          if (call.effects->artifact_open(call.host, &capability, &unused) == 0)
             return 3;
           std::string contents;
           const auto input = granted / "nested/input.txt";
@@ -512,6 +504,7 @@ def test_real_remote_artifact_boundary(worker, case):
           std::ofstream("unrelated") << "not an artifact";
           out.artifact(id);
         """
+        body = body.replace("CAPABILITY", initializer).replace("ARTIFACT_UUID", str(capability))
     elif case == "symlink":
         body = create + """
           fs::create_symlink("/etc/passwd", directory / "link");
@@ -529,8 +522,7 @@ def test_real_remote_artifact_boundary(worker, case):
             std::ofstream(directory / std::to_string(i)).close();
           out.artifact(id);
         """
-    spec = card_spec(worker, job, body, outputs=outputs, inputs=inputs,
-                     grants=grants, files=files)
+    spec = card_spec(worker, job, body, outputs=outputs, inputs=inputs)
     fingerprint = hashlib.sha256(spec).hexdigest()
     try:
         response = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
@@ -548,6 +540,18 @@ def test_real_remote_artifact_boundary(worker, case):
             response = worker.call(R.RequestBody.StatusRequest, query, job=job)
             assert response.bodyType == R.ReplyBody.JobStatus, vars(response.body)
             status = response.body
+            if status.artifactWanted:
+                wanted = R.string(status.artifactWanted)
+                found = wanted == str(capability)
+                files = []
+                if found:
+                    files.append(R.InvocationFileT(
+                        path="nested/input.txt", sha256=worker.upload(job, contents),
+                        size=len(contents)))
+                response = worker.call(R.RequestBody.JobArtifactRequest,
+                    R.JobArtifactRequestT(id=wanted, fingerprint=fingerprint, found=found,
+                                         files=files), job=job)
+                assert response.bodyType == R.ReplyBody.Ack, vars(response.body)
             if status.displaySequence > display_after:
                 display_after = status.displaySequence
                 for message in status.displays:
@@ -578,8 +582,9 @@ def test_real_remote_artifact_boundary(worker, case):
             assert displays == [("data", b"\x00\x00"), ("data", b"\x00\xff\x80")]
             created, = result.value.created
             output, = result.value.outputs
-            assert bytes(output.artifacts[0].bytes) == bytes(created.bytes)
-            assert bytes(created.bytes) == (5).to_bytes(8, "big") + bytes(8)
+            assert output.bytes is not None
+            assert UUID(bytes=bytes(created.id.bytes)).version == 4
+            assert created.keep
             artifact_path = "files/artifacts/0/report.txt"
             assert {name for name in entries if name.startswith("files/")} == {artifact_path}
             assert result_bytes(entries[artifact_path]) == b"artifact"

@@ -115,14 +115,15 @@ class Service : public RequestSink {
   }
   auto set_view_receiver(const CardPath& card,
                          std::weak_ptr<WorkerProc::ViewReceiver> receiver) -> void;
-  auto artifact_grants(std::span<const Value> inputs) -> std::vector<ArtifactGrant>;
+  auto resolve_artifact(const ArtifactKey& id) -> std::filesystem::path;
   auto artifact_destination(const InvocationSummaryData& invocation)
       -> std::filesystem::path;
   auto record_artifacts(const InvocationSummaryData& invocation,
-                        std::span<const ArtifactKey> ids) -> void;
-  auto register_store_artifact(const std::string& run, const CardPath& card,
-                               uint64_t invocation, const ArtifactKey& id,
-                               const std::filesystem::path& store_path) -> void;
+                        std::span<const CreatedArtifact> created) -> void;
+  auto expire_artifacts(sql::Db& db, const std::string& run_id) -> void;
+  auto detach_run_artifacts(const std::string& run_id) -> std::filesystem::path;
+  auto recover_artifact_deletions() -> void;
+  auto remove_run_artifacts(const std::string& run_id) -> uint64_t;
   // The backend that runs the Cards naming execution service `id`.
   auto execution_service(const std::string& id) -> ExecutionService&;
   auto invalidate_resident(const std::string& card) -> void;

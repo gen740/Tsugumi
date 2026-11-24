@@ -92,7 +92,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   // Only a salted digest participates in residency. The values are sent
   // through the local launch channel when the process is first started.
   const auto card_key = path_key(node.path);
-  auto artifacts = service_.artifact_grants(request.inputs);
   auto secrets = std::make_shared<WorkerSecrets>();
   try {
     secrets->values = service_.card_secrets(node, request.stop);
@@ -218,15 +217,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   sp.artifact_store = (state_dir / "artifacts").string();
   sp.artifact_staging = state_dir / "artifact-invocations";
   std::filesystem::create_directories(sp.artifact_store);
-#ifdef __linux__
-  if (sp.sandbox.filesystem) {
-    for (const auto& artifact : artifacts) {
-      if (!artifact.store_path.empty())
-        sp.binds.push_back({artifact.path, artifact.store_path, false, ""});
-    }
-  }
-#endif
-
   // The resident worker of this Card, if it runs the same build under the same
   // conditions.
   std::string key =
@@ -257,7 +247,9 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   invocation.outputs = node.outputs;
   invocation.artifact_directory = destination;
   invocation.artifact_sequence = s.artifact_sequence;
-  invocation.grants = std::move(artifacts);
+  invocation.resolve_artifact = [this](const ArtifactKey& id, std::stop_token) {
+    return service_.resolve_artifact(id);
+  };
   invocation.output_budget = {node.settings.output_limit_bytes,
                               node.settings.output_limit_entries};
   invocation.cancel = &request.cancel;

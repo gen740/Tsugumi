@@ -4,6 +4,8 @@ from itertools import product
 import json
 import shutil
 
+from uuid import UUID
+
 import pytest
 
 from projects import wait_invocation
@@ -351,7 +353,7 @@ def test_output_batch_limit_withholds_successful_members(core_factory, project, 
     assert batch.complete and batch.failed and not batch.outputs
 
 
-def test_collected_artifact_members_preserve_batch_order_and_grants(core_factory, project, tmp_path):
+def test_collected_artifact_members_preserve_opaque_payload_order(core_factory, project, tmp_path):
     daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     graph = Project(project)
@@ -380,14 +382,14 @@ def test_collected_artifact_members_preserve_batch_order_and_grants(core_factory
         value, = record(current, "collect").outputs
         envelopes = reference_json(tmp_path / "decode", bytes(value.schemaBfbs), bytes(value.inlineBytes),
                                    root_type="tsugumi.builtin.Collected")["items"]
-        def label(item):
-            key = bytes(item["artifacts"][0]["bytes"])
-            return f"{int.from_bytes(key[:8], 'big')}.{int.from_bytes(key[8:], 'big')}"
-
-        assert [label(item) for item in envelopes] == members
+        assert [bytes(item["bytes"]) for item in envelopes] == [
+            bytes(record(current, "work", index).outputs[0].inlineBytes)
+            for index in (1, 2)
+        ]
+        assert all(UUID(id).version == 4 for id in members)
         received, = record(current, "consumer").inputs
-        assert {text(item.id) for item in value.artifacts} == set(members)
-        assert {text(item.id) for item in received.artifacts} == set(members)
+        assert not value.artifacts
+        assert not received.artifacts
 
     check(client)
     daemon.restart()

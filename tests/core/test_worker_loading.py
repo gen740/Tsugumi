@@ -101,9 +101,9 @@ def worker(package, *, startup=None, arguments=()):
                 print("worker exit", p.returncode, out, err)
 
 
-def send_call(data, tmp_path, call_id=1, *, deadline=None, inputs=(), outputs=(), artifact_directory=None, grants=()):
+def send_call(data, tmp_path, call_id=1, *, deadline=None, inputs=(), outputs=(), artifact_directory=None):
     call = WorkerCallT(inputs=list(inputs), outputs=list(outputs),
-                       artifactDirectory=artifact_directory, grants=list(grants), deadlineMs=deadline)
+                       artifactDirectory=artifact_directory, deadlineMs=deadline)
     send_message(data, WorkerMessageT(
         callId=call_id, valueType=WorkerPayload.WorkerCall, value=call,
     ))
@@ -393,7 +393,7 @@ def test_recv_after_return_and_reverse_credit(tmp_path):
 
 
 NUM = 'table Num { value:ulong; } table Outputs { out:Num (required); } root_type Outputs;'
-DIRECTORY = 'table Document {} table Outputs { doc:Document (required); } root_type Outputs;'
+DIRECTORY = 'include "tsugumi/artifact.fbs"; table Outputs { doc:tsugumi.Artifact (required); } root_type Outputs;'
 
 
 def card_package(body, *, declarations=""):
@@ -449,6 +449,7 @@ def native_card(body, *, inputs=(), outputs=NUM, declarations="", views="[]", **
 _CARD_PREAMBLE = r"""
 #include "card_abi.h"
 #include "card_generated.h"
+#include "artifact_generated.h"
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -491,8 +492,8 @@ struct Result {
 
   void artifact(const tsugumi_artifact_id& id, const char* port = "doc") {
     const tsugumi::ArtifactId fixed(fb::span<const uint8_t, 16>(id.bytes, 16));
-    ports.push_back(C::CreateCardPort(message, message.CreateString(port), 0, 0,
-                                     message.CreateVectorOfStructs(&fixed, 1)));
+    fb::FlatBufferBuilder payload;
+    add(port, payload, tsugumi::CreateArtifact(payload, &fixed).o);
   }
 
   void fail(D::FailureKind kind, const char* error) {
@@ -500,9 +501,10 @@ struct Result {
   }
 };
 
-std::string create_artifact(const tsugumi_call& call, tsugumi_artifact_id& id) {
+std::string create_artifact(const tsugumi_call& call, tsugumi_artifact_id& id,
+                            uint32_t flags = TSUGUMI_ARTIFACT_KEEP) {
   tsugumi_bytes path;
-  if (call.effects->artifact_create(call.host, &id, &path) != 0)
+  if (call.effects->artifact_create(call.host, flags, &id, &path) != 0)
     throw std::runtime_error("artifact_create failed");
   return {reinterpret_cast<const char*>(path.data), path.size};
 }
@@ -510,10 +512,12 @@ std::string create_artifact(const tsugumi_call& call, tsugumi_artifact_id& id) {
 std::string open_artifact(const tsugumi_call& call, const C::CardInput& in,
                           std::string_view name = "doc") {
   for (const auto* port : *in.inputs()) {
-    if (port->name()->string_view() != name || !port->artifacts() ||
-        port->artifacts()->size() == 0) continue;
+    if (port->name()->string_view() != name || !port->bytes()) continue;
+    fb::Verifier verify(port->bytes()->data(), port->bytes()->size());
+    if (!verify.VerifyBuffer<tsugumi::Artifact>()) continue;
+    const auto* artifact = fb::GetRoot<tsugumi::Artifact>(port->bytes()->data());
     tsugumi_artifact_id id;
-    std::copy_n(port->artifacts()->Get(0)->bytes()->data(), 16, id.bytes);
+    std::copy_n(artifact->id()->bytes()->data(), 16, id.bytes);
     tsugumi_bytes path;
     if (call.effects->artifact_open(call.host, &id, &path) == 0)
       return {reinterpret_cast<const char*>(path.data), path.size};

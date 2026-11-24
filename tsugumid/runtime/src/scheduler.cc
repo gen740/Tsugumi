@@ -555,7 +555,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     group.partial_result = true;
     group.saved_input = true;
     group.saved_partial_result = saved.partial_result;
-    (void)svc_.artifact_grants(saved.values);
     for (const auto& value : saved.values)
       group.members.push_back(
           {std::make_shared<const Value>(value), saved.port, {}, activation});
@@ -1612,12 +1611,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       return stdfs::exists(found);
     };
     std::vector<Value> outputs;
-    std::map<std::string, stdfs::path> artifacts;
     uint64_t remaining =
         std::min<uint64_t>(node.settings.output_limit_bytes, kMaxBatchBytes);
     try {
       for (const auto& port : node.outputs) {
-        if (!valid_id(port.name) || port.name.ends_with(".artifacts"))
+        if (!valid_id(port.name))
           throw invalid("invalid Input Card output port " + port.name);
         const auto file = stdfs::path("ports") / port.name;
         if (!exists(file)) {
@@ -1631,47 +1629,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         Value value{port.name, port.type, read(file, remaining),
                     schema_id(*port.type)};
         remaining -= value.bytes.size();
-        const auto listing = file.string() + ".artifacts";
-        if (exists(listing)) {
-          // Artifact ids are lowercase hex in the file and binary in the
-          // envelope. The file is bounded separately from the port payload.
-          std::istringstream lines(read(listing, kMaxBatchBytes));
-          std::set<std::string> port_artifacts;
-          for (std::string hex; std::getline(lines, hex);) {
-            const auto digit = [](char c) -> int {
-              if (c >= '0' && c <= '9') return c - '0';
-              if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-              return -1;
-            };
-            if (hex.size() != 32)
-              throw invalid("invalid artifact ID on output " + port.name);
-            std::string id;
-            for (size_t i = 0; i < hex.size(); i += 2) {
-              const int high = digit(hex[i]), low = digit(hex[i + 1]);
-              if (high < 0 || low < 0)
-                throw invalid("invalid artifact ID on output " + port.name);
-              id += static_cast<char>(high * 16 + low);
-            }
-            if (!port_artifacts.insert(id).second) continue;
-            const auto entry = prefix / "artifacts" / hex;
-            if (!artifacts.contains(id)) {
-              if (artifacts.size() >= node.settings.output_limit_entries ||
-                  !fs::directory_beneath(store, entry))
-                throw invalid("invalid artifact directory on output " +
-                              port.name);
-              artifacts.emplace(id, store / entry);
-            }
-            value.artifacts.push_back(std::move(id));
-          }
-        }
         outputs.push_back(std::move(value));
       }
     } catch (const fs::Error& error) {
       throw invalid(error.what());
     }
-    for (const auto& [id, path] : artifacts)
-      svc_.register_store_artifact(run_id_, node.path, work.invocation, id,
-                                   path);
     return outputs;
   }
 
@@ -2043,6 +2005,7 @@ void Scheduler::recover_interrupted() {
     svc_.history().write_sync([&](sql::Db& db) {
       auto r = History::run(db, run_id);
       if (!r) return;
+      svc_.expire_artifacts(db, run_id);
       r->status.state = RunState::failed;
       r->status.failure =
           FailureData::make(FailureKind::interrupted,
@@ -2427,6 +2390,7 @@ auto Scheduler::finished(RunSummaryData sum, std::string record) -> void {
   auto done = std::move(active_);
   try {
     svc_.history().write_sync([&](sql::Db& db) {
+      svc_.expire_artifacts(db, *sum.status.run_id);
       History::update_run(db, sum.status);
       History::interrupt_batches(db, *sum.status.run_id);
       // Detached external invocations are still pending after the local

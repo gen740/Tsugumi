@@ -144,7 +144,9 @@ struct ArtifactData {
   std::string run_id;
   CardPath card;
   uint64_t invocation = 0;
-  std::string origin;
+  uint64_t sequence = 0;
+  uint64_t counter = 0;
+  bool keep = true;
   std::string location;
   int64_t created_ms = 0;
   std::optional<int64_t> sealed_ms;

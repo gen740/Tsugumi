@@ -12,17 +12,12 @@ from Tsugumi.Data.RunState import RunState
 def test_subgraph_replays_saved_merge_arrival(core_factory, project, tmp_path):
     fixture = Project(project)
     payload = b"opaque saved arrival"
-    artifact_id = "0123456789abcdef" * 2
     store = tmp_path / "store"
     package = store / "source"
     input_root = package / "share/tsugumi/input"
     ports = input_root / "ports"
     ports.mkdir(parents=True)
     (ports / "out").write_bytes(payload)
-    (ports / "out.artifacts").write_text(artifact_id + "\n")
-    artifact = input_root / "artifacts" / artifact_id
-    artifact.mkdir(parents=True)
-    (artifact / "report.txt").write_text("immutable artifact")
     fixture.card("source", {"type": "input"}, outputs=NUMBER,
                  plan=mock_plan([str(package)]))
     source, files = fixture.cards["source"]
@@ -53,9 +48,6 @@ def test_subgraph_replays_saved_merge_arrival(core_factory, project, tmp_path):
         assert status.state == RunState.succeeded, text(status.failure.diagnostic)
         value, = record(client, run, "child/relay").outputs
         assert bytes(value.inlineBytes) == payload
-        assert [text(item.id) for item in value.artifacts] == [artifact_id]
-        row, = client.call("ArtifactListRequest", runId=run).artifacts
-        assert text(row.artifactId) == artifact_id
         source_runs.append(run)
     deleted = client.call("RunHistoryDeleteRequest", restrictToRunIds=True,
                           runIds=source_runs[:1], opId=new_id())
@@ -69,4 +61,3 @@ def test_subgraph_replays_saved_merge_arrival(core_factory, project, tmp_path):
         value, = record(client, run, "child/relay").outputs
         assert text(value.rootType) == "Number"
         assert bytes(value.inlineBytes) == payload
-        assert [text(item.id) for item in value.artifacts] == [artifact_id]

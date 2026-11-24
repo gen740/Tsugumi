@@ -53,6 +53,7 @@ struct RemoteJobState {
   uint64_t display_sequence = 0;
   bool view_input_ready = false;
   std::map<std::string, uint64_t> view_input_credits = {};
+  std::string artifact_wanted = {};
 };
 
 struct RemoteProbe {
@@ -102,6 +103,10 @@ class RemoteJobClient {
   auto submit(std::string_view service, std::string_view instance,
               std::string_view job_id, std::string_view spec,
               std::stop_token stop) const -> RemoteJobState;
+  auto deliver_artifact(std::string_view service, std::string_view instance,
+                        std::string_view job,
+                        Tsugumi::RemoteWorker::JobArtifactRequestT body,
+                        std::stop_token stop) const -> void;
   auto send_view(std::string_view service, std::string_view instance,
                  std::string_view job_id, const WorkerDisplayData& display,
                  uint64_t offset, std::stop_token stop) const -> void;

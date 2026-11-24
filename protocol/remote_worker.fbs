@@ -68,7 +68,16 @@ table JobSecretsRequest { fingerprint:string (required); secrets:[CardSecret] (r
 table ViewSendRequest {
   display:Tsugumi.Worker.WorkerDisplay (required); offset:ulong;
 }
-union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest, StatusRequest, CancelRequest, ReleaseRequest, CatalogRequest, CardSecretsRequest, JobSecretsRequest, ViewSendRequest }
+// The core's answer to a running job's `artifact_wanted`: the artifact's
+// files, uploaded as blobs of the job beforehand, or found=false when the id
+// names no sealed artifact of the project. Accepted once per wanted id, from
+// the submitting core life. The listener checks the blobs and hands the
+// manifest to the job as work/artifact-reply.
+table JobArtifactRequest {
+  fingerprint:string (required); id:string (required); found:bool;
+  files:[InvocationFile]; directories:[string];
+}
+union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest, StatusRequest, CancelRequest, ReleaseRequest, CatalogRequest, CardSecretsRequest, JobSecretsRequest, ViewSendRequest, JobArtifactRequest }
 table Request {
   service:string; instance_id:string;
   project_scope:string; job_id:string;
@@ -79,7 +88,7 @@ table Request {
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  // Zero means no advertised contract. Writers explicitly send contract 17.
+  // Zero means no advertised contract. Writers explicitly send contract 18.
   worker_contract:uint;
   active_jobs:uint;
   requires_filesystem:bool = true; requires_pid:bool = true;
@@ -99,7 +108,11 @@ table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diag
   // stored with the job or its result, and never traced by the broker.
   displays:[Tsugumi.Worker.WorkerDisplay];
   display_pending:bool; display_sequence:ulong;
-  view_input_ready:bool; view_input_credits:[DisplayCredit] (trace_secret); }
+  view_input_ready:bool; view_input_credits:[DisplayCredit] (trace_secret);
+  // The running Card waits in artifact_open for this artifact id (uuid
+  // text). Uploads to the job are accepted while it waits; the core answers
+  // with a JobArtifactRequest.
+  artifact_wanted:string; }
 table Ack {}
 table Failure { code:ErrorCode; message:string (required); }
 table CardSecrets { secrets:[CardSecret] (required); }
@@ -121,7 +134,7 @@ table ResultManifest { invocation_result_sha256:string (required); outputs:[Resu
 table InvocationFile { path:string (required); sha256:string (required); size:ulong; }
 table Invocation {
   call_sha256:string (required); archive_sha256:string (required);
-  files:[InvocationFile]; directories:[string]; implementation_index:ulong;
+  implementation_index:ulong;
 }
 /// work/progress: the input transfer in progress.
 table TransferProgress { name:string; done:ulong; total:ulong; }

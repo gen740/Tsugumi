@@ -313,7 +313,7 @@ auto link_artifact(const std::filesystem::path& source,
                    const std::filesystem::path& destination) -> void {
   namespace fs = std::filesystem;
   if (!fs::is_directory(fs::symlink_status(source)))
-    throw std::runtime_error("artifact grant is not a directory");
+    throw std::runtime_error("artifact is not a directory");
   fs::create_directory(destination);
   try {
     for (const auto& entry : fs::recursive_directory_iterator(source)) {
@@ -323,15 +323,21 @@ auto link_artifact(const std::filesystem::path& source,
         fs::create_directory(target);
       } else if (fs::is_regular_file(status)) {
 #ifdef __APPLE__
-        if (::clonefile(entry.path().c_str(), target.c_str(), CLONE_NOFOLLOW) !=
+        if (::clonefile(entry.path().c_str(), target.c_str(), CLONE_NOFOLLOW) ==
             0)
-          failed("clone artifact member", entry.path());
+          continue;
+        if (errno != EXDEV) failed("clone artifact member", entry.path());
 #else
-        fs::create_hard_link(entry.path(), target);
+        std::error_code error;
+        fs::create_hard_link(entry.path(), target, error);
+        if (!error) continue;
+        if (error != std::errc::cross_device_link)
+          throw fs::filesystem_error("link artifact member", entry.path(),
+                                     target, error);
 #endif
+        fs::copy_file(entry.path(), target);
       } else {
-        throw std::runtime_error(
-            "artifact grant contains an unsupported entry");
+        throw std::runtime_error("artifact contains an unsupported entry");
       }
     }
   } catch (...) {

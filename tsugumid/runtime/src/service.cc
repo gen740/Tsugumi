@@ -277,6 +277,7 @@ void Service::open() {
   remote_execution_ =
       std::make_unique<RemoteExecutionService>(*this, remote_jobs_);
   scheduler_ = std::make_unique<Scheduler>(*this);
+  recover_artifact_deletions();
   scheduler_->recover_interrupted();
   const auto roots = opts_.gcroots_dir.empty()
                          ? store_->state_dir() / "cache" / "gcroots"
@@ -2147,7 +2148,8 @@ void Service::history_category_delete(RequestIn& req) {
     if (!crypto::is_run_id(run_id))
       throw Failed(FailureKind::invalid_request, "invalid run id");
     if (category != R::RunRecordCategory::Logs &&
-        category != R::RunRecordCategory::Values)
+        category != R::RunRecordCategory::Values &&
+        category != R::RunRecordCategory::Artifacts)
       throw Failed(FailureKind::invalid_request, "invalid run record category");
     if (scheduler_->active_status() || history_->read(History::has_remote_jobs))
       throw Failed(FailureKind::busy,
@@ -2158,16 +2160,19 @@ void Service::history_category_delete(RequestIn& req) {
     if (!run) throw Failed(FailureKind::not_found, "unknown run");
     if (!run->status.terminal())
       throw Failed(FailureKind::busy, "the run has not finished");
-    // TODO(open): decide whether artifacts have a separate recording category.
     FBB b;
     const auto result = R::CreateRunCategoryDeleteResult(
         b, b.CreateString(run_id), category);
     const auto receipt = finish_receipt(
         b, op_id, R::ReceiptValue::RunCategoryDeleteResult, result.Union());
     history_->write_sync([&](sql::Db& db) {
+      if (category == R::RunRecordCategory::Artifacts)
+        detach_run_artifacts(run_id);
       History::delete_category(db, run_id, category);
       History::put_receipt(db, op_id, kind, digest, receipt);
     });
+    if (category == R::RunRecordCategory::Artifacts)
+      remove_run_artifacts(run_id);
     Note note;
     note.build = std::make_shared<const Note::Build>([run_id, category](FBB& b) {
       return std::pair(R::NotificationPayload::RunCategoryDeleteResult,
@@ -2227,25 +2232,7 @@ void Service::history_delete(RequestIn& req) {
     for (const auto& id : ids) {
       if (!crypto::is_run_id(id))
         continue;  // a run id from a copy names no folder of ours
-      const auto artifacts = store_->state_dir() / "artifacts";
-      const auto dir = artifacts / id;
-      if (stdfs::is_symlink(artifacts) || stdfs::is_symlink(dir))
-        throw Failed(FailureKind::invalid_path, "artifact storage is a symbolic link");
-      if (stdfs::is_directory(dir)) {
-        // Take the run out of the sandbox-visible tree before making any
-        // holding directory readable for deletion.
-        const auto detached =
-            store_->state_dir() / (".artifact-delete-" + crypto::uuid4());
-        stdfs::rename(dir, detached);
-        stdfs::permissions(detached, stdfs::perms::owner_all,
-                           stdfs::perm_options::add);
-        for (const auto& entry : stdfs::recursive_directory_iterator(detached))
-          if (stdfs::is_directory(entry.symlink_status()))
-            stdfs::permissions(entry.path(), stdfs::perms::owner_all,
-                               stdfs::perm_options::add);
-        files += fs::directory_size(detached);
-        stdfs::remove_all(detached);
-      }
+      files += remove_run_artifacts(id);
     }
     uint64_t after = sizes();
     FBB b;

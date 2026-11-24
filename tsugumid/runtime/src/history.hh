@@ -57,7 +57,8 @@ struct StoredValueMeta {
   struct Artifact {
     ArtifactKey id;
     std::optional<uint64_t> size;
-    bool store;
+    std::string label;
+    Tsugumi::Data::ArtifactState state;
   };
   std::vector<Artifact> artifacts;
   std::string hash;  // SHA-256 of the recorded bytes
@@ -229,8 +230,9 @@ class History {
                                                   const CardPath& card,
                                                   const std::string& port);
   static std::optional<ArtifactData> artifact(sql::Db& db,
-                                              const std::string& artifact_id,
-                                              std::optional<std::string_view> run_id = std::nullopt);
+                                              const std::string& artifact_id);
+  static auto transient_artifacts(sql::Db& db, const std::string& run_id)
+      -> std::vector<ArtifactData>;
   static std::vector<ArtifactData> artifacts(
       sql::Db& db, const std::string& run_id,
       const std::optional<CardPath>& card, std::optional<uint64_t> invocation,

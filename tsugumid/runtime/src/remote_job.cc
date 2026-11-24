@@ -220,7 +220,8 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
           j->display_pending,
           j->display_sequence,
           j->view_input_ready,
-          std::move(credits)};
+          std::move(credits),
+          j->artifact_wanted};
 }
 auto require_ack(const R::ReplyT& reply) -> void {
   if (!reply.body.AsAck())
@@ -415,6 +416,13 @@ auto RemoteJobClient::submit(std::string_view service,
   R::SubmitRequestT body;
   body.spec.assign(spec.begin(), spec.end());
   return job_state(request(command(std::move(body), service, instance, job), stop));
+}
+auto RemoteJobClient::deliver_artifact(std::string_view service,
+                                       std::string_view instance,
+                                       std::string_view job,
+                                       R::JobArtifactRequestT body,
+                                       std::stop_token stop) const -> void {
+  require_ack(request(command(std::move(body), service, instance, job), stop));
 }
 auto RemoteJobClient::send_view(std::string_view service,
                                 std::string_view instance,

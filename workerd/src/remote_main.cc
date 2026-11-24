@@ -519,6 +519,11 @@ class Daemon {
           std::error_code ec;
           status.secrets_wanted = stdfs::exists(
               journal->job_path(q.job_id) / "work" / kSecretsWanted, ec);
+          if (!stdfs::exists(
+                  journal->job_path(q.job_id) / "work/artifact-reply", ec))
+            status.artifact_wanted = fs::read_file(journal->job_path(q.job_id) /
+                                                   "work/artifact-wanted")
+                                         .value_or("");
           const auto bytes =
               fs::read_file(journal->job_path(q.job_id) / "work/progress");
           if (const auto progress =
@@ -551,6 +556,10 @@ class Daemon {
           std::lock_guard guard(channel_mutex_);
           displays_.erase(channel_key(*journal, q.job_id));
         }
+        return reply(R::AckT{});
+      case R::RequestBody::JobArtifactRequest:
+        journal->deliver_artifact(q.job_id, *q.body.AsJobArtifactRequest(),
+                                  q.core_life_id);
         return reply(R::AckT{});
       case R::RequestBody::JobSecretsRequest:
         deliver_secrets(*journal, q.job_id, q.core_life_id,

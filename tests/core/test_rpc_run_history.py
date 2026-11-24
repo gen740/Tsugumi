@@ -13,6 +13,7 @@ from harness.host import Host, HostConnection, HostFailure
 from harness.observations import read_output, read_pages
 from harness.scenario import FILE_OUTPUT, Gate, Project, run, wait_run
 from tsugumi_client import RpcFailure, new_id, path, text
+from Tsugumi.Data.ArtifactState import ArtifactState
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
@@ -118,7 +119,7 @@ def test_deleting_history_removes_records_and_artifacts_without_resurrection(cor
     artifacts = [client.call("ArtifactListRequest", runId=run_id).artifacts[0] for run_id in run_ids]
     artifact_ids = [text(artifact.artifactId) for artifact in artifacts]
     assert len(set(artifact_ids)) == len(run_ids)
-    words = [tuple(map(int, artifact_id.split("."))) for artifact_id in artifact_ids]
+    words = [tuple(map(int, text(artifact.label).split("."))) for artifact in artifacts]
     assert words == sorted(words)
     assert all(sequence > 0 and counter == 0 for sequence, counter in words)
     assert all(text(artifact.members[0].path) == "report.txt" for artifact in artifacts)
@@ -235,7 +236,7 @@ def test_immediate_reruns_after_finished_keep_accepting(core_factory, project, t
         assert note.value.value.summary.status.state == RunState.succeeded
 
 
-def test_category_deletion_keeps_artifact_directories_and_run_summaries(core_factory, project, tmp_path):
+def test_category_deletion_preserves_other_categories_and_summary(core_factory, project, tmp_path):
     daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     prepare_history(client, project, tmp_path)
@@ -250,14 +251,29 @@ def test_category_deletion_keeps_artifact_directories_and_run_summaries(core_fac
         assert denied.value.code == "permission_denied"
         host.call("RegisterProjectRequest", projectId=project_id, endpoint=f"unix:{daemon.unix}")
         args = dict(projectId=project_id, runId=source)
-        host.call("RunCategoryDeleteRequest", **args, category=RunRecordCategory.Values, opId=new_id())
         host.call("RunCategoryDeleteRequest", **args, category=RunRecordCategory.Logs, opId=new_id())
+        assert not client.call("LogRangeRequest", runId=source, stream=1).exists
+        assert client.call("LogRangeRequest", runId=source, stream=3).exists
+        artifact, = client.call("ArtifactListRequest", runId=source).artifacts
+        artifact_id = text(artifact.artifactId)
+        assert read_pages(client, "ArtifactReadRequest", artifactId=artifact_id,
+                          member="report.txt").decode() == CONTENTS
+        assert client.call("RunHistoryRequest", artifactsOnly=True).runs
 
-    assert not client.call("LogRangeRequest", runId=source, stream=1).exists
-    assert client.call("LogRangeRequest", runId=source, stream=3).exists
-    artifact, = client.call("ArtifactListRequest", runId=source).artifacts
-    assert read_pages(client, "ArtifactReadRequest", artifactId=text(artifact.artifactId),
-                      member="report.txt").decode() == CONTENTS
+        host.call("RunCategoryDeleteRequest", **args, category=RunRecordCategory.Artifacts, opId=new_id())
+        assert not (project / ".tsugumi/artifacts" / source).exists()
+        assert not client.call("ArtifactListRequest", artifactIds=[artifact_id]).artifacts
+        assert not client.call("RunHistoryRequest", artifactsOnly=True).runs
+        value, = client.call("RunRecordRequest", runId=source, card=path("work")).record.outputs
+        unavailable, = value.artifacts
+        assert text(unavailable.id) == artifact_id
+        assert unavailable.state == ArtifactState.unavailable
+        assert unavailable.label is None and unavailable.sizeBytes is None
+        with pytest.raises(RpcFailure) as gone:
+            client.call("ArtifactReadRequest", artifactId=artifact_id, member="report.txt")
+        assert gone.value.kind == "not_found"
+        host.call("RunCategoryDeleteRequest", **args, category=RunRecordCategory.Values, opId=new_id())
+
     after = client.call("RunRecordRequest", runId=source, card=path("work")).record
     assert not after.outputs
     assert after.summary.state == before.summary.state
