@@ -498,30 +498,6 @@ bool directory_beneath(const stdfs::path& root, const stdfs::path& rel) {
   return S_ISDIR(st.st_mode);
 }
 
-bool copy_path_beneath(
-    const stdfs::path& root, const stdfs::path& rel,
-    const stdfs::path& destination,
-    const std::function<void(const stdfs::path&, const stdfs::path&)>&
-        copy_file) {
-  if (!directory_beneath(root, rel)) {
-    copy_file(rel, destination);
-    return false;
-  }
-  const auto listing = list_beneath(root, rel);
-  if (!listing.links.empty())
-    throw Error((root / rel).string() + " contains the link " +
-                listing.links.front());
-  if (!listing.special.empty())
-    throw Error((root / rel).string() + " contains the special file " +
-                listing.special.front());
-  stdfs::create_directories(destination);
-  for (const auto& child : listing.directories)
-    stdfs::create_directories(destination / child);
-  for (const auto& child : listing.files)
-    copy_file(rel / child, destination / child);
-  return true;
-}
-
 FileLock::~FileLock() {
   if (fd_ >= 0) ::close(fd_);
 }

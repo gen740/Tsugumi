@@ -33,6 +33,7 @@
 #include "host/templates.hh"
 #include "host/version_text.hh"
 #include "tsugumi/client/client.hh"
+#include "tsugumi/document/document.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
 #include "tsugumi/util/crypto.hh"
 
@@ -398,10 +399,16 @@ auto CheckEvaluationSources(const host::AgentExclude& policy,
 }  // namespace
 
 auto Tools::ProjectCall(const std::string& project, const std::string& name,
-                        const std::string& arguments, std::stop_token stop)
-    -> std::string {
-  const auto inspected = InspectProject(project, stop);
-  const auto base = host::CaptureSaveBase(inspected);
+                        const std::string& arguments, std::stop_token stop,
+                        const host::SaveBase* confirmed) -> std::string {
+  json::Members snapshot;
+  std::optional<host::SaveBase> owned;
+  if (!confirmed) {
+    snapshot = InspectProject(project, stop);
+    owned = host::CaptureSaveBase(snapshot);
+  }
+  const auto& base = confirmed ? *confirmed : *owned;
+  const auto& inspected = confirmed ? base.snapshot : snapshot;
   const auto policy = ExclusionsFor(project, base);
   auto args = json::Object(arguments);
   if (name == "log_range") args.erase("live");
@@ -1260,19 +1267,18 @@ auto Tools::ExecuteTool(const std::string& conversation,
       boundary ? boundary->authorization() : std::nullopt;
   access_service.Require(project, conversation, Tsugumi::Service::Access::Read,
                          wait, stop, "Read project content", authorization);
+  std::optional<host::SaveBase> inspected;
   if (boundary) {
     RequireHelperPermission(*boundary);
-    std::optional<host::SaveBase> inspected;
     std::string revision = json::Get(args, "base_rev", "");
     if (boundary->scoped() &&
         (call.name == "project_file_list" || call.name == "project_file_read" ||
          call.name == "project_file_stat" || call.name == "project_validate" ||
          call.name == "run_plan" || call.name == "evaluate_nix")) {
       revision = json::Get(args, "at_rev", "");
-      if (revision.empty()) {
+      if (revision.empty() || call.name == "evaluate_nix")
         inspected = host::CaptureSaveBase(InspectProject(project, stop));
-        revision = json::Get(inspected->snapshot, "rev");
-      }
+      if (revision.empty()) revision = json::Get(inspected->snapshot, "rev");
       args["at_rev"] = revision;
     }
     // Resolve nested file ownership and read the file at one revision. If
@@ -1287,16 +1293,18 @@ auto Tools::ExecuteTool(const std::string& conversation,
         call.name != "project_make_subgraph" && call.name != "project_layout")
       boundary->Check(call.name, args, read);
     if (boundary->scoped() && call.name == "evaluate_nix") {
-      const auto snapshot = InspectProject(project, stop);
-      const auto rev = json::Get(snapshot, "rev");
-      if (json::String(rev, rev) != json::String(revision, revision))
+      const auto rev = json::Get(inspected->snapshot, "rev");
+      if (json::UInt(json::String(rev, rev)) !=
+          json::UInt(json::String(revision, revision)))
         throw Failure("revision_conflict",
                       "The project changed; read it again");
       for (const auto& card :
-           EvaluationCards(snapshot, json::Get(args, "card", "{}")))
-        boundary->Check(
-            "input_types",
-            {{"card", json::Encode(json::Members{{"segments", card}})}}, read);
+           EvaluationCards(inspected->snapshot, json::Get(args, "card", "{}"))) {
+        CardPath segments;
+        for (const auto& segment : json::Array(card))
+          segments.push_back(json::String(segment));
+        boundary->Require(path_key(segments), false);
+      }
     }
     if (boundary->scoped() && (call.name == "run" || call.name == "run_plan" ||
                                call.name == "evaluate_nix")) {
@@ -1310,7 +1318,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
       else if (args.contains("at_rev"))
         plan["at_rev"] = args.at("at_rev");
       const auto result =
-          ProjectCall(project, "run_plan", json::Encode(plan), stop);
+          ProjectCall(project, "run_plan", json::Encode(plan), stop,
+                      inspected ? &*inspected : nullptr);
       boundary->CheckPlan(
           result, call.name == "run" || (call.name == "evaluate_nix" &&
                                          json::Bool(json::Get(args, "build"))));
@@ -1375,7 +1384,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
   host::StripOwnedFields(call.name, spec->mutating, args);
   if (call.name == "evaluate_nix") {
     // Repeated evaluations use the confirmed revision without a durable tool receipt.
-    auto result = ProjectCall(project, call.name, json::Encode(args), stop);
+    auto result = ProjectCall(project, call.name, json::Encode(args), stop,
+                              inspected ? &*inspected : nullptr);
     const auto envelope = json::Object(result);
     const auto value = json::Object(json::Get(envelope, "value", "{}"));
     const bool error = json::Text(envelope, "reply") == "Failure" ||

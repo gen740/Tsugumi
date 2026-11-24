@@ -21,11 +21,6 @@ void Lane::stop() {
     if (t.joinable()) t.join();
 }
 
-size_t Lane::queued() const {
-  std::lock_guard<std::mutex> l(mu_);
-  return q_.size();
-}
-
 auto Lane::pending() const -> size_t {
   std::lock_guard lock(mu_);
   return q_.size() + running_;
