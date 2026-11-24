@@ -4,6 +4,8 @@ import { LiveView, LiveViews, ViewMode } from '../src/model/liveViews'
 import { Observable } from '../src/model/observable'
 import type { ProjectSession } from '../src/model/session'
 import { ProjectCardViews } from '../src/ui/cardViews'
+import '../src/styles.css'
+import '../src/styles/canvas.css'
 
 const root = createRoot(document.getElementById('root')!)
 const project = Object.assign(new Observable(), { liveViews: new LiveViews(), displayName: () => 'A Card', rpc: {
@@ -26,15 +28,10 @@ const replies: [string, number[], number[]][] = []
 const opener = Array(16).fill(0)
 const addressed = Array.from({ length: 16 }, (_, i) => 0xf0 + i)
 let loadingSignal: AbortSignal | undefined
-const nativeOpen = window.open.bind(window)
-let blocked = false
-let child: Window | null | undefined
-let features: string | undefined
 let openCount = 0
-window.open = (url, target, flags) => {
+window.open = () => {
   ++openCount
-  features = flags
-  return child = blocked ? null : nativeOpen(url, target, flags)
+  return null
 }
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -105,36 +102,86 @@ async function test() {
   assert(reports.filter(r => r.kind === 'empty').every(r => r.origin === 'null' && r.value === 'empty'), 'Opaque frames own their empty state')
   assert(!reports.some(r => r.kind === 'network-open'), 'The frame could not make a network request')
 
-  blocked = true
-  const popup = open('popup', ViewMode.window, 'html', 640, 480)
-  popup.deliver({ bytes: Uint8Array.of(91), complete: () => credits.push(3) })
-  render()
-  await until(() => !!document.querySelector('[role=status]'), 'popup blocker fallback')
-  equal(credits, [1, 2], 'A blocked popup holds its first message')
-  const retry = [...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'ウィンドウで開く')!
-  blocked = false
-  retry.click()
-  await until(() => !!child && replies.some(([session, , bytes]) => session === 'popup' && bytes[0] === 91), 'child HTML messages')
-  assert(child?.document.querySelector('iframe'), 'The HTML sandbox runs inside the child window')
-  equal(features, 'popup,width=640,height=480', 'Specified content size reaches the browser')
-  equal(replies.filter(([session]) => session === 'popup'), [
-    ['popup', opener, [12, 0, 255]], ['popup', addressed, [91]],
-  ], 'The child uses the opener connection and sends explicit routes')
-  equal(credits, [1, 2, 3], 'The child returns outstanding credit')
-  child.close()
-  await until(() => closed.includes('popup'), 'close button or browser close sends the same project close')
-  equal(closed, ['popup'], 'The child closes exactly once')
-  equal(openCount, 2, 'One automatic attempt and one click retry')
+  const frameOf = (session: string) => document.querySelector<HTMLElement>(`[data-view-window="${session}"]`)!
+  const buttonOf = (session: string, label: string) =>
+    frameOf(session).querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!
+  const loads = (session: string) => reports.filter(r => r.session === session && r.kind === 'empty').length
 
+  // Panels dock beside each other; detaching and attaching only moves the frame.
+  assert(frameOf('first').classList.contains('view-window-panel'), 'A panel view docks as a panel')
+  const panelFrame = frameOf('first').querySelector('iframe')!
+  const panelTop = frameOf('first').getBoundingClientRect().top
+  assert(frameOf('second').getBoundingClientRect().top > panelTop, 'Docked panels share the side, one above another')
+  buttonOf('first', 'ウィンドウで表示').click()
+  render()
+  assert(frameOf('first').classList.contains('view-window-window'), 'A panel detaches into a window')
+  assert(frameOf('first').querySelector('iframe') === panelFrame, 'Detaching keeps the same frame element')
+  first.deliver({ bytes: Uint8Array.of(7) })
+  await until(() => replies.some(([session, , bytes]) => session === 'first' && bytes[0] === 7), 'messages after detaching')
+  buttonOf('first', 'パネルで表示').click()
+  render()
+  assert(frameOf('first').classList.contains('view-window-panel'), 'A window attaches back as a panel')
+  assert(frameOf('first').querySelector('iframe') === panelFrame, 'Attaching keeps the same frame element')
+  first.deliver({ bytes: Uint8Array.of(8) })
+  await until(() => replies.some(([session, , bytes]) => session === 'first' && bytes[0] === 8), 'messages after attaching')
+  equal(loads('first'), 1, 'The html view never reloads while it moves')
+
+  // WINDOW: an in-page window with the requested content size, no popup.
+  const win = open('win', ViewMode.window, 'html', 640, 480)
+  win.deliver({ bytes: Uint8Array.of(91), complete: () => credits.push(3) })
+  render()
+  const windowed = frameOf('win')
+  assert(windowed.classList.contains('view-window-window'), 'WINDOW opens an in-page window')
+  const body = windowed.querySelector('.float-body')!.getBoundingClientRect()
+  equal([body.width, Math.round(body.height)], [640, 480], 'The window content has the requested size')
+  await until(() => replies.some(([session, , bytes]) => session === 'win' && bytes[0] === 91), 'window HTML messages')
+  equal(replies.filter(([session]) => session === 'win'), [['win', opener, [12, 0, 255]], ['win', addressed, [91]]],
+    'The window uses the page connection and sends explicit routes')
+  equal(credits, [1, 2, 3], 'The window returns outstanding credit')
+
+  // Focus follows clicks among several windows.
+  const z = (session: string) => Number(frameOf(session).style.zIndex)
+  frameOf('first').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+  render()
+  assert(z('first') > z('win'), 'A click raises its window')
+  windowed.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+  render()
+  assert(z('win') > z('first'), 'A click on the other window raises that one')
+
+  // Minimize keeps the view running; the strip restores it.
+  buttonOf('win', '最小化').click()
+  render()
+  assert(windowed.classList.contains('minimized') && getComputedStyle(windowed).visibility === 'hidden', 'Minimize hides the window')
+  const strip = document.querySelector<HTMLButtonElement>('.view-dock-item')!
+  assert(strip?.textContent?.includes('view'), 'The minimized window waits in the strip')
+  win.deliver({ bytes: Uint8Array.of(92) })
+  await until(() => replies.some(([session, , bytes]) => session === 'win' && bytes[0] === 92), 'a minimized view keeps receiving')
+  strip.click()
+  render()
+  assert(!frameOf('win').classList.contains('minimized') && !document.querySelector('.view-dock-item'), 'The strip restores the window')
+  equal(loads('win'), 1, 'Minimize and restore keep the html state')
+
+  // FULLSCREEN fills the page at once; real full screen waits for a click.
   open('full', ViewMode.fullscreen, 'unsupported')
   render()
-  await until(() => !!child?.document.querySelector('.card-view-fullscreen button'), 'fullscreen requires a child button')
-  const fullDoc = child!.document
+  const page = frameOf('full')
   let requests = 0
-  fullDoc.querySelector('main')!.requestFullscreen = async () => { ++requests }
-  assert(!requests, 'Fullscreen is not requested on open')
-  fullDoc.querySelector<HTMLButtonElement>('.card-view-fullscreen button')!.click()
-  equal(requests, 1, 'The fullscreen button calls the child element API')
+  page.requestFullscreen = async () => { ++requests }
+  const filled = page.getBoundingClientRect()
+  equal([filled.left, filled.top, filled.width, filled.height], [0, 0, innerWidth, innerHeight], 'FULLSCREEN fills the page')
+  assert(!requests, 'Full screen is not requested on open')
+  buttonOf('full', 'フルスクリーンにする').click()
+  equal(requests, 1, 'The full screen button calls the element API')
+  buttonOf('full', 'ウィンドウで表示').click()
+  render()
+  assert(frameOf('full').classList.contains('view-window-window'), 'A full page view can become a window')
+  equal(openCount, 0, 'No view opens a browser popup')
+
+  // Closing the window ends its session.
+  buttonOf('win', '閉じる').click()
+  render()
+  equal(closed, ['win'], 'The close button closes the session once')
+  assert(!frameOf('win'), 'The closed window is gone')
 
   open('waiting', ViewMode.panel)
   render()
@@ -144,7 +191,6 @@ async function test() {
   assert(loadingSignal?.aborted, 'Closing the panel cancels a pending file read')
   flushSync(() => root.unmount())
   assert(!document.querySelector('iframe'), 'Tearing down the project removes frames')
-  assert(child?.closed, 'Tearing down the project closes its child windows')
   return null
 }
 

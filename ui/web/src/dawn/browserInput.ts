@@ -10,8 +10,6 @@ export function observeInput(
   features: ViewFeatures,
   input: (event: DawnInput, at: number) => void,
 ) {
-  const document = canvas.ownerDocument
-  const owner = document.defaultView!
   const events = new AbortController()
   const { signal } = events
   let textArea: TextArea | null = null
@@ -22,7 +20,7 @@ export function observeInput(
   let commitTimer: number | undefined
   let gamepadFrame: number | undefined
 
-  const at = (event: Event) => owner.performance.timeOrigin + event.timeStamp
+  const at = (event: Event) => performance.timeOrigin + event.timeStamp
   const updateComposition = (text: string, timestamp: number) => {
     const offset = textarea.value === text ? textarea.selectionStart : text.length
     const cursor = encoder.encode(text.slice(0, offset)).length
@@ -96,8 +94,8 @@ export function observeInput(
     // Some browsers dispatch the final input event after compositionend.
     committed = event.data
     textarea.value = ''
-    owner.clearTimeout(commitTimer)
-    commitTimer = owner.setTimeout(() => { committed = undefined }, 0)
+    window.clearTimeout(commitTimer)
+    commitTimer = window.setTimeout(() => { committed = undefined }, 0)
   }, { signal })
   textarea.addEventListener('input', event => {
     const change = event as InputEvent
@@ -131,23 +129,23 @@ export function observeInput(
       if (!previous.delete(pad)) return
       input({ type: 'gamepad', pad, kind: 2, buttons: 0, lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0 }, timestamp)
     }
-    owner.addEventListener('gamepadconnected', event => {
+    window.addEventListener('gamepadconnected', event => {
       if (event.gamepad.mapping === 'standard') changed(event.gamepad, at(event))
     }, { signal })
-    owner.addEventListener('gamepaddisconnected', event => disconnected(event.gamepad.index, at(event)), { signal })
+    window.addEventListener('gamepaddisconnected', event => disconnected(event.gamepad.index, at(event)), { signal })
     const gamepads = (timestamp: number) => {
       const seen = new Set<number>()
-      for (const device of owner.navigator.getGamepads?.() ?? []) {
+      for (const device of navigator.getGamepads?.() ?? []) {
         if (!device || device.mapping !== 'standard') continue
         seen.add(device.index)
-        changed(device, owner.performance.timeOrigin + (device.timestamp || timestamp))
+        changed(device, performance.timeOrigin + (device.timestamp || timestamp))
       }
       for (const pad of previous.keys()) {
-        if (!seen.has(pad)) disconnected(pad, owner.performance.timeOrigin + timestamp)
+        if (!seen.has(pad)) disconnected(pad, performance.timeOrigin + timestamp)
       }
-      gamepadFrame = owner.requestAnimationFrame(gamepads)
+      gamepadFrame = requestAnimationFrame(gamepads)
     }
-    gamepadFrame = owner.requestAnimationFrame(gamepads)
+    gamepadFrame = requestAnimationFrame(gamepads)
   }
 
   return {
@@ -167,8 +165,8 @@ export function observeInput(
     },
     dispose() {
       events.abort()
-      owner.clearTimeout(commitTimer)
-      if (gamepadFrame !== undefined) owner.cancelAnimationFrame(gamepadFrame)
+      window.clearTimeout(commitTimer)
+      if (gamepadFrame !== undefined) cancelAnimationFrame(gamepadFrame)
       if (document.pointerLockElement === canvas) document.exitPointerLock()
       for (const target of [canvas, textarea]) target.removeAttribute(viewKeysAttribute)
       textarea.hidden = true

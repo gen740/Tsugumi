@@ -127,14 +127,21 @@
 .cv-surface-zoom { position: absolute; right: 6px; bottom: 6px; display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 6px; }
 
 /* ---- live Card views ---- */
-.card-view-panel { width: min(760px, 85vw); height: min(540px, 75vh); min-width: 240px; min-height: 160px; resize: both; z-index: 1000; }
-.card-view-panel .float-title { touch-action: none; }
-.card-view-panel:focus-within { z-index: 1001; }
+.view-window { min-width: 240px; min-height: 120px; }
+.view-window .float-title { touch-action: none; }
+.view-window .float-title-text { margin-right: 0; }
+.view-window-page, .view-window:fullscreen { inset: 0; width: 100%; height: 100%; border-radius: 0; }
+.view-window.minimized { visibility: hidden; pointer-events: none; }
+.view-window-error { margin: 4px 8px; }
+.view-window-buttons { display: flex; gap: 2px; min-width: 32px; justify-content: flex-end; }
+.view-window-button { width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--secondary); display: flex; align-items: center; justify-content: center; }
+.view-window-button:hover { background: var(--control-bg); color: var(--label); }
+.traffic-minimize { width: 12px; height: 12px; border-radius: 50%; border: 0; background: #febc2e; display: flex; align-items: center; justify-content: center; padding: 0; color: transparent; }
+.traffic-minimize:hover { color: rgba(0,0,0,.6); }
+.view-dock { position: fixed; left: 12px; bottom: 12px; z-index: 7999; display: flex; flex-wrap: wrap; gap: 6px; max-width: calc(100vw - 24px); }
+.view-dock-item { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 10px; border-radius: 6px; border: 0.5px solid var(--separator-strong); background: var(--window-bg); box-shadow: var(--shadow-strong); font-size: 12px; }
 .card-view { display: flex; flex: 1; min-height: 0; flex-direction: column; }
 .card-view p { margin: 4px 8px; }
-.card-view-child { margin: 0; height: 100dvh; }
-.card-view-child-content, .card-view-child-surface { display: flex; flex-direction: column; flex: 1; height: 100%; min-height: 0; }
-.card-view-fullscreen { padding: 8px; }
 .card-view iframe { display: block; border: 0; width: 100%; flex: 1; min-height: 0; }
 .card-view iframe[hidden] { display: none; }
 .dawn-view-surface { position: relative; flex: 1; min-height: 0; }

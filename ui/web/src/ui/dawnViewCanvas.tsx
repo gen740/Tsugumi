@@ -7,9 +7,12 @@ import type { SendHtmlView } from './htmlViewFrame'
 
 export type ReadDawnView = (view: LiveView, signal: AbortSignal) => Promise<Uint8Array<ArrayBuffer>>
 
-export function DawnViewCanvas({ view, read, send }: { view: LiveView; read: ReadDawnView; send: SendHtmlView }) {
+/** `hidden`: the window is minimized. The view keeps running and is not drawn. */
+export function DawnViewCanvas({ view, read, send, hidden = false }: { view: LiveView; read: ReadDawnView; send: SendHtmlView; hidden?: boolean }) {
   const surface = useRef<HTMLDivElement>(null)
   const controller = useRef<BrowserView>()
+  const shown = useRef(!hidden)
+  shown.current = !hidden
   const [error, setError] = useState('')
   const [gpuError, setGpuError] = useState('')
   const [sendError, setSendError] = useState('')
@@ -58,6 +61,7 @@ export function DawnViewCanvas({ view, read, send }: { view: LiveView; read: Rea
       setError(errorText(cause))
       return view.listen(message => message.complete?.())
     }
+    instance.setVisible(shown.current)
     controller.current = instance
     const detach = view.attachRenderer(instance)
     const unlisten = view.listen(message => instance.deliver(message))
@@ -79,6 +83,8 @@ export function DawnViewCanvas({ view, read, send }: { view: LiveView; read: Rea
       controller.current = undefined
     }
   }, [view, read, send, supported])
+
+  useEffect(() => { controller.current?.setVisible(!hidden) }, [hidden])
 
   if (!supported)
     return <p className="caption" role="alert">{L('このブラウザーでは WebGPU を利用できません。')}</p>

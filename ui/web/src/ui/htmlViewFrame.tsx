@@ -7,15 +7,14 @@ export type SendHtmlView = (view: LiveView, bytes: Uint8Array<ArrayBuffer>, rout
 export type ReadHtmlView = (view: LiveView, signal: AbortSignal) => Promise<string>
 
 /** Each mount owns both frame contexts and the subscription to its view. */
-export function HtmlViewFrame({ view, read, send, child }: { view: LiveView; read: ReadHtmlView; send: SendHtmlView; child: boolean }) {
+export function HtmlViewFrame({ view, read, send }: { view: LiveView; read: ReadHtmlView; send: SendHtmlView }) {
   const frame = useRef<HTMLIFrameElement>(null)
-  const url = child ? new URL('./modules/viewer.html?child=1', document.baseURI).href : './modules/viewer.html'
+  const url = './modules/viewer.html'
   const [error, setError] = useState('')
   const [messageError, setMessageError] = useState('')
   useEffect(() => {
     const target = frame.current
-    const owner = target?.ownerDocument.defaultView
-    if (!target || !owner) return
+    if (!target) return
     const loading = new AbortController()
     let html: string | undefined
     let ready = false
@@ -87,8 +86,8 @@ export function HtmlViewFrame({ view, read, send, child }: { view: LiveView; rea
         outstanding.delete(data.ticket)
       } else if (data?.tsugumi === 'messageDropped') {
         setMessageError(L('ビューのメッセージを送信できませんでした'))
-      } else if (data?.tsugumi === 'send' && data.bytes instanceof owner.ArrayBuffer &&
-        data.route instanceof owner.ArrayBuffer && data.route.byteLength === 16) {
+      } else if (data?.tsugumi === 'send' && data.bytes instanceof ArrayBuffer &&
+        data.route instanceof ArrayBuffer && data.route.byteLength === 16) {
         const bytes = new Uint8Array(data.bytes)
         if (bytes.length > messageMax || reverseBytes > messageMax) {
           setMessageError(L('ビューのメッセージを送信できませんでした'))
@@ -100,7 +99,7 @@ export function HtmlViewFrame({ view, read, send, child }: { view: LiveView; rea
         }
       }
     }
-    owner.addEventListener('message', receive)
+    window.addEventListener('message', receive)
     target?.contentWindow?.postMessage({ tsugumi: 'probe' }, '*')
     setError('')
     setMessageError('')
@@ -118,7 +117,7 @@ export function HtmlViewFrame({ view, read, send, child }: { view: LiveView; rea
       loading.abort()
       release()
       stop()
-      owner.removeEventListener('message', receive)
+      window.removeEventListener('message', receive)
       post({ type: 'dispose' })
     }
   }, [view, read, send, url])

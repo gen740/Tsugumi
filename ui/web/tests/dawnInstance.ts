@@ -160,7 +160,7 @@ try {
   for (const [name, value] of Object.entries(globals))
     Object.defineProperty(globalThis, name, { value, configurable: true })
   const mount = (module: WebAssembly.Module) =>
-    DawnViewInstance.mount(module, canvas as unknown as OffscreenCanvas, { width: 800, height: 400, scale: 2 }, host, 1000 / 60)
+    DawnViewInstance.mount(module, canvas as unknown as OffscreenCanvas, { width: 800, height: 400, scale: 2 }, host, 1000 / 60, true)
   const mounted = await mount(module)
   await tick()
   assert.equal(deviceRequests, 1)
@@ -201,6 +201,18 @@ try {
   await tick()
   assert.deepEqual(sent.slice(-3), [[1, 6], [1, 7], [1, 8]])
   stepFrame()
+
+  // A minimized view keeps its calls; drawing pauses and resumes on restore.
+  const shown = draws
+  message(20)
+  assert.equal(frames.size, 1)
+  mounted.setVisible(false)
+  assert.equal(frames.size, 0)
+  message(20)
+  assert.equal(frames.size, 0)
+  assert.equal(draws, shown)
+  mounted.setVisible(true)
+  assert.equal(draws, shown + 1)
 
   device.onuncapturederror?.({ error: { message: 'validation' } })
   loseDevice({ message: 'device lost' })
