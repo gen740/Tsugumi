@@ -99,6 +99,9 @@ jobs:
       - name: Web behavior with the native document edit driver
         if: matrix.checks['web-contracts']
         run: nix build -L --no-link ".#checks.$TSUGUMI_CI_SYSTEM.web"
+      - name: Dawn view ABI layout and generator
+        if: matrix.checks['view-abi']
+        run: nix build -L --no-link ".#checks.$TSUGUMI_CI_SYSTEM.view-abi"
 
       - name: Build and run Cards through loopback tsugumi-workerd
         if: matrix.job == 'remote-execution'

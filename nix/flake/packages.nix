@@ -46,7 +46,10 @@ in
       };
       ci-mock = ci-core.override { target = "tsugumid-mock"; };
       client-wasm = pkgs.callPackage ../client-wasm.nix { };
-      web = pkgs.callPackage ../web.nix { inherit client-wasm; };
+      web = pkgs.callPackage ../web.nix {
+        inherit client-wasm;
+        inherit (inputs) webgpu-headers;
+      };
       kernel = pkgs.callPackage ../../vm/guest/kernel.nix { };
       # Formatting runs on the host; guest binaries need no formatter paths.
       guestCore = core.override { withFormatters = false; };

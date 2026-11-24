@@ -4,6 +4,7 @@
 # and CI runs them outside the build sandbox (.github/workflows/ci-platform.yml).
 { inputs, ... }:
 {
+  imports = [ ./view-abi.nix ];
   perSystem =
     {
       pkgs,

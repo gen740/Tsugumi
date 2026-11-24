@@ -1,5 +1,6 @@
 # devShells.default (`nix develop`): what builds the core (taken from its
 # package), and the tools of the tests, the Web UI and Card formatting.
+{ inputs, ... }:
 {
   perSystem =
     {
@@ -30,6 +31,8 @@
                 ps.matplotlib
                 ps.plotly
                 ps.altair
+                # ui/shared/dawn/gen_webgpu.py reads webgpu.yml.
+                ps.pyyaml
               ]))
               jq
               clang-tools
@@ -39,6 +42,8 @@
             ]
             ++ lib.optionals stdenv.hostPlatform.isLinux [ bubblewrap ];
           MACOSX_DEPLOYMENT_TARGET = "26.0";
+          # webgpu.yml for the dawn view generator (ui/shared/dawn).
+          TSUGUMI_WEBGPU_HEADERS = inputs.webgpu-headers;
         }
         // core.devEnv
         // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {

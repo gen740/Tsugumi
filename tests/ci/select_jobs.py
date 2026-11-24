@@ -18,7 +18,7 @@ SYSTEMS = {
     "aarch64-darwin": "macos-26",
 }
 NATIVE_TESTS = {"agent-rpc", "rpc"}
-CORE = NATIVE_TESTS | {"host", "remote-execution", "adapters", "swift", "vm", "kit"}
+CORE = NATIVE_TESTS | {"host", "remote-execution", "adapters", "swift", "vm", "kit", "view-abi"}
 GUEST = {"vm", "pack-guest"}
 WEB = {"docs", "web-typecheck", "web-contracts", "adapters"}
 ALL = CORE | GUEST | WEB | {"demos", "prompt"}
@@ -100,6 +100,9 @@ def consumers(path):
     if path.startswith("demos/"):
         # Guide and version tests, demo runs, the MCP plugin, and the Web player.
         return {"docs", "web-contracts", "adapters", "demos", "agent-rpc", "rpc"}
+    if path.startswith("ui/shared/dawn/"):
+        # The dawn view generator: its own check, the Mac host and the Web shim.
+        return {"view-abi", "swift"} | WEB
     if path.startswith("ui/shared/"):
         return CORE | GUEST | WEB | {"demos"}
     if path.startswith("client/"):
@@ -160,9 +163,9 @@ def select(paths=None):
     for system, groups in {
         # Linux's host integrations take several minutes. Keep them and their
         # Web consumers parallel to the cold C++ test build and RPC suites.
-        "x86_64-linux": {"native-checks": NATIVE_TESTS, "host-and-web": host_checks,
+        "x86_64-linux": {"native-checks": NATIVE_TESTS | {"view-abi"}, "host-and-web": host_checks,
                          "kit-and-demos": {"kit", "demos"}, "remote-execution": {"remote-execution"}},
-        "aarch64-darwin": {"native-checks": NATIVE_TESTS | {"host"}, "swift": {"swift"}, "kit": {"kit"}},
+        "aarch64-darwin": {"native-checks": NATIVE_TESTS | {"host", "view-abi"}, "swift": {"swift"}, "kit": {"kit"}},
     }.items():
         selected = set().union(*(jobs for path, jobs in changes if system in systems_for(path)))
         lanes = []
