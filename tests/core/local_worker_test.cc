@@ -79,6 +79,7 @@ TEST(LocalWorker, ExceptionalBorrowerExitReturnsTheLeaseAfterClosingChannels) {
   {
     WorkerProc::Borrowed borrowed{descriptors,
                                   {},
+                                  {},
                                   0,
                                   1,
                                   [] {},
@@ -104,7 +105,7 @@ TEST(LocalWorker, DiscardsStaleRepliesAndReceivesDataWhileIdle) {
     ::fcntl(descriptors[i], F_SETFL, O_NONBLOCK);
   }
   std::promise<WorkerDisplayData> received;
-  WorkerProc worker({descriptors, {}, 7, 1, [] {}, [](bool) {}, [] {}});
+  WorkerProc worker({descriptors, {}, {}, 7, 1, [] {}, [](bool) {}, [] {}});
   auto data = received.get_future();
   worker.set_display([&](auto value, auto complete) {
     received.set_value(std::move(value));
