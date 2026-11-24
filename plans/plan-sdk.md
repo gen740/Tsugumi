@@ -1,10 +1,8 @@
 # SDK rebuild plan (decided 2026-11-18)
 
-> **Historical (superseded by the Card ABI, 2026-11-22).** Do not follow this plan. Worker-side JSON conversion, shared built-in views, `Outputs` as one buffer, the worker's side-effect table and the in-tree `sdk/` are gone. The current contracts are [The core and the language SDKs](../docs/CoreAndSDK.md), [Card ABI](../docs/CardABI.md) and [The sandbox contract](../docs/SandboxContract.md); the language SDKs live in [tsugumi-kit](https://github.com/gen740/tsugumi-kit). For the current builder inputs and Nix dependencies, see [The builder interface](../docs/CoreAndSDK.md#the-builder-interface) and [Project Nix search path](../docs/features.md#project-nix-search-path).
+> **Historical (superseded by the Card ABI, 2026-11-22).** Do not follow this plan. Worker-side JSON conversion, shared built-in views, `Outputs` as one buffer, the worker's side-effect table and the in-tree `sdk/` are gone. The current contracts are [The core and the language SDKs](../docs/CoreAndSDK.md), [Card ABI](../docs/CardABI.md) and [The sandbox contract](../docs/SandboxContract.md); the language SDKs live in [tsugumi-kit](https://github.com/gen740/tsugumi-kit). The plan stays as the record of what was decided on 2026-11-18.
 
 ABI 8 supersedes this plan's ABI 7 choice of a single `Outputs` buffer. The worker and language adapters now exchange individual port buffers at the Card ABI boundary.
-
-The current SDK receives the evaluated flat `params` set from `default.nix`. Code generation uses the parameter names and types. `params.nix` holds the values for both Nix evaluation and invocation. [Parameters](../docs/CardGuide.md#parameters)
 
 Goal: adding or changing a Card builds only that Card's share, and every language's Card has the same shape.
 
@@ -23,7 +21,7 @@ Goal: adding or changing a Card builds only that Card's share, and every languag
 | worker (with tsugumid) | the Card host and the side-effect functions (displays, logs, cancellation, deadlines, failures, typed JSON conversion) | yes | tsugumid is rebuilt |
 | per language (once per SDK and language version) | the start-up code (starts Python, Ruby, R, Julia, C# and loads the Card's code: today's `python_main.c` and the like as compiled static libraries); the language module (`tsugumi.py`, `tsugumi.rb`, `tsugumi.R`, `tsugumi.jl`, … wrapping the side-effect and display calls); the compiled common parts of Go, Rust and C++ (the SDK's Go package, Rust crate, flatbuffers libraries, `rust_host.c`, …; for Go also a build cache including the standard library) | yes, once | that language's SDK files or its version change |
 | views (shared) | built-in views and the WebAssembly view base, as today | yes, once | view sources change |
-| per contract | generated from the port and parameter schemas: each language's typed bindings and the source of `main.so`'s entry | no (generation only) | a port's or param's type changes |
+| per contract | generated from `_inputs.fbs`, `_outputs.fbs`, `_params.fbs`: each language's typed bindings and the source of `main.so`'s entry | no (generation only) | a port's or param's type changes |
 | Card environment (per lock) | Python packages, gems, R and Julia packages, cargo, Go and NuGet dependencies, as today | only for native extensions | the lock or the packages change |
 | per Card | compile the generated entry, link it with the language layer and the Card's code into `main.so`. C++, Go, Rust and C# also compile the Card's own code here; Python and the like only write the Card source's location into the entry | only the entry and the Card | the Card's source changes |
 
@@ -36,7 +34,7 @@ Nix rules:
 
 - The per-Card `*-runtime` of Python, Ruby, R, Julia and C# (Card locations baked in with `-D`, compiled per Card).
 - String paths into the SDK, which make any SDK change rebuild every Card.
-- Passing the whole generated folder to the SDK. Keep code-generation inputs scoped to the types the SDK reads.
+- Passing the whole generated folder to the SDK (it captures `params-nix.json` and `sources.json`, so a `nix: true` param value change rebuilds the bindings). Only the four contract files are passed.
 - The `.bfbs` files tsugumid writes (nobody reads them); they are made from `.fbs` where needed.
 - Running `go test` and `cargo test` on every build: only when the Card has test files.
 - Two JSON conversions: Ruby compiles `json_face.cc` per Card while R and Julia use the worker's conversion (`input_json` and the like). Everything uses the worker's conversion and `json_face.cc` goes.
