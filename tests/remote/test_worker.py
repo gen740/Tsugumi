@@ -286,7 +286,7 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(), files
 
     call = WorkerCallT(
         inputs=list(inputs), outputs=list(outputs), grants=list(grants),
-        deadlineMs=deadline_ms,
+        deadlineMs=deadline_ms, invocationSequence=5,
     )
     message = WorkerMessageT(callId=1, valueType=WorkerPayload.WorkerCall, value=call)
     call_digest = peer.upload(job, R.pack(message, b"TSW1"))
@@ -480,25 +480,24 @@ def test_real_remote_artifact_boundary(worker, case):
       const auto directory = fs::path(create_artifact(call, id));
     """
     if case == "artifact":
-        granted = ArtifactIdT(bytes=[3] * 16)
-        relative = f"1/group/source/@2/{bytes(granted.bytes).hex()}"
+        granted = ArtifactIdT(bytes=list((3).to_bytes(8, "big") + bytes(8)))
+        relative = "1/group/source/@2/0"
         contents = b"staged"
         files.append({"path": f"artifacts/{relative}/nested/input.txt",
                       "sha256": worker.upload(job, contents), "size": len(contents)})
         inputs.append(CardPortT(name="doc", artifacts=[granted]))
         grants.append(ArtifactGrantT(id=granted, path=relative))
         body = create + """
-          const fs::path root = "/tsugumi-artifacts";
           const fs::path granted = open_artifact(call, in);
-          if (granted.lexically_relative(root).generic_string() !=
-              "1/group/source/@2/03030303030303030303030303030303") return 2;
-          for (auto holder = granted.parent_path(); ; holder = holder.parent_path()) {
-            std::error_code error;
-            fs::directory_iterator listing(holder, error);
-            if (error != std::errc::permission_denied ||
-                chmod(holder.c_str(), 0700) == 0) return 3;
-            if (holder == root) break;
-          }
+          if (granted.filename() != "3.0" ||
+              std::distance(fs::directory_iterator(granted.parent_path()),
+                            fs::directory_iterator{}) != 1) return 2;
+          tsugumi_artifact_id ungranted{};
+          ungranted.bytes[7] = 3;
+          ungranted.bytes[15] = 1;
+          tsugumi_bytes unused;
+          if (call.effects->artifact_open(call.host, &ungranted, &unused) == 0)
+            return 3;
           std::string contents;
           const auto input = granted / "nested/input.txt";
           std::ifstream(input) >> contents;
@@ -580,8 +579,8 @@ def test_real_remote_artifact_boundary(worker, case):
             created, = result.value.created
             output, = result.value.outputs
             assert bytes(output.artifacts[0].bytes) == bytes(created.bytes)
-            artifact_id = bytes(created.bytes).hex()
-            artifact_path = f"files/artifacts/{artifact_id}/report.txt"
+            assert bytes(created.bytes) == (5).to_bytes(8, "big") + bytes(8)
+            artifact_path = "files/artifacts/0/report.txt"
             assert {name for name in entries if name.startswith("files/")} == {artifact_path}
             assert result_bytes(entries[artifact_path]) == b"artifact"
         else:

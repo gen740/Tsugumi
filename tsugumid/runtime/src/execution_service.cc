@@ -13,7 +13,6 @@
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/workerd/protocol.hh"
-#include "tsugumi/workerd/staging.hh"
 #include "tsugumi/workerd/store.hh"
 #include "tsugumi/workerd/worker_execution.hh"
 
@@ -213,16 +212,11 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     sp.binds.push_back({source, "/host/" + f.name, f.write, f.name});
   }
 
-  if (sp.sandbox.filesystem) {
-    sp.artifacts_root = (state_dir / "artifacts").string();
-    fs::create_artifact_holders(sp.artifacts_root);
-#ifdef __linux__
-    for (auto& artifact : artifacts)
-      artifact.path =
-          (std::filesystem::path(kSandboxArtifactsRoot) / artifact.location)
-              .string();
-#endif
-  }
+  sp.artifact_inputs = !artifacts.empty();
+  const auto destination = service_.artifact_destination(s);
+  sp.artifact_store = (state_dir / "artifacts").string();
+  sp.artifact_staging = state_dir / "artifact-invocations";
+  std::filesystem::create_directories(sp.artifact_store);
 
   // The resident worker of this Card, if it runs the same build under the same
   // conditions.
@@ -237,7 +231,8 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
       "|" + std::to_string(build.implementation_index) + "|" + secret_version;
   for (const auto& b : sp.binds)
     key += "|" + b.source + ">" + b.target + (b.write ? "w" : "r");
-  const bool reuse = node.settings.reuse_worker;
+  // The sandbox must not preserve a past invocation's input descriptors.
+  const bool reuse = node.settings.reuse_worker && !sp.artifact_inputs;
   const auto worker_card =
       card_key + "|" + std::to_string(build.implementation_index);
   auto lease = workers_.acquire(worker_card, key, sp, reuse);
@@ -252,7 +247,14 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   workerd::Invocation invocation;
   invocation.inputs = request.inputs;
   invocation.outputs = node.outputs;
-  invocation.artifact_directory = request.directory / "artifacts";
+  invocation.artifact_directory = destination;
+  invocation.artifact_sequence = s.artifact_sequence;
+  invocation.artifact_inputs = sp.artifact_inputs;
+#ifdef __APPLE__
+  invocation.artifact_snapshot_root = sp.artifact_staging;
+#else
+  if (!sp.sandbox.pid) invocation.artifact_snapshot_root = sp.artifact_staging;
+#endif
   invocation.grants = std::move(artifacts);
   invocation.output_budget = {node.settings.output_limit_bytes,
                               node.settings.output_limit_entries};
@@ -266,17 +268,12 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     request.on_timing(begin, end);
   };
   invocation.validate = request.validate;
-  invocation.transfer = [&](const std::filesystem::path& name, uint64_t done,
-                            uint64_t total) {
-    if (request.transfer)
-      request.transfer("copy", name.generic_string(), done, total);
-  };
   auto completed = workerd::run_invocation(
       [&](auto worker, bool keep, const auto& reason) {
         workers_.release(std::move(worker), keep, reason);
       },
       lease, reuse, invocation);
-  service_.seal_artifacts(s, invocation.artifact_directory, completed.created);
+  service_.record_artifacts(s, completed.created);
   return {std::move(completed.outputs), std::move(completed.failure)};
 }
 

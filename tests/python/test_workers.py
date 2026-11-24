@@ -72,7 +72,7 @@ def invocations(c, run_id, card_id):
 
 def test_resident_worker_serves_later_runs(env):
     c = load(env, {"trigger": {"type": "trigger"},
-                   "count": python_card(COUNT_MAIN, outputs=TXT, reuseWorker=True, recordIO=True)},
+                   "count": python_card(COUNT_MAIN, outputs=TXT, reuseWorker=True, recordIO="on")},
              [card("start", "trigger"), card("count", "count")], [])
     first, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, first, "count", 2)
@@ -158,7 +158,7 @@ def test_network_is_off_unless_the_card_allows_it(env):
     for name, settings in {"closed": {}, "closed_unsandboxed": {"sandbox": {"filesystem": False}},
                            "open": {"grants": {"network": True}},
                            "open_unsandboxed": {"grants": {"network": True}, "sandbox": {"filesystem": False}}}.items():
-        cards[name] = python_card(REACH_MAIN, inputs=["go"], outputs=outputs, recordIO=True, **settings)
+        cards[name] = python_card(REACH_MAIN, inputs=["go"], outputs=outputs, recordIO="on", **settings)
     names = [n for n in cards if n != "trigger"]
     c = load(env, cards, [card("start", "trigger")] + [card(n, n) for n in names],
              [conn("start", "out", n, "go") for n in names])
@@ -194,11 +194,11 @@ def test_mac_folders_are_read_only_unless_written(env, tmp_path):
     shared.mkdir()
     (shared / "hello.txt").write_text("from the Mac")
     probe = txt_main(GRANTS_BODY)
-    read = python_card(probe, outputs=TXT, inputs=["go"], recordIO=True,
+    read = python_card(probe, outputs=TXT, inputs=["go"], recordIO="on",
                        grants={"hostPaths": [{"path": str(shared), "name": "data"}]})
-    write_ = python_card(probe, outputs=TXT, inputs=["go"], recordIO=True,
+    write_ = python_card(probe, outputs=TXT, inputs=["go"], recordIO="on",
                          grants={"hostPaths": [{"path": str(shared), "name": "out", "write": True}]})
-    other = python_card(probe, outputs=TXT, inputs=["go"], recordIO=True)
+    other = python_card(probe, outputs=TXT, inputs=["go"], recordIO="on")
     load(env, {"trigger": {"type": "trigger"}, "read": read, "write": write_, "other": other},
          [card("start", "trigger"), card("read", "read"), card("write", "write"),
           card("other", "other")], [conn("start", "out", n, "go") for n in ("read", "write", "other")])

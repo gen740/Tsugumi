@@ -552,7 +552,7 @@ CREATE INDEX IF NOT EXISTS )SQL" +
 }
 
 // Version of the local history's tables (PRAGMA user_version).
-constexpr int kHistoryVersion = 21;
+constexpr int kHistoryVersion = 22;
 }  // namespace
 
 auto History::open_live_logs() -> std::unique_ptr<sql::Db> {
@@ -607,6 +607,10 @@ CREATE INDEX IF NOT EXISTS logs_card ON logs(run_id, card, stream, card_off);
 CREATE TABLE IF NOT EXISTS run_definition_paths(
   run_id TEXT NOT NULL, card TEXT NOT NULL, path TEXT NOT NULL,
   PRIMARY KEY(run_id, card));
+CREATE TABLE IF NOT EXISTS invocation_sequences(
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
+  UNIQUE(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS active_environments(
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL, environment_id TEXT NOT NULL,
   PRIMARY KEY(run_id, card, invocation));
@@ -666,6 +670,22 @@ void History::flush() {
     write_sync([](sql::Db&) {});
   } catch (const Failed&) {
   }
+}
+
+auto History::allocate_invocation_sequence(
+    const InvocationSummaryData& invocation) -> uint64_t {
+  uint64_t sequence = 0;
+  write_sync([&](sql::Db& db) {
+    auto insert = db.prepare(
+        "INSERT INTO invocation_sequences(run_id,card,invocation) "
+        "VALUES(?,?,?) RETURNING sequence");
+    insert.bind(1, invocation.run_id);
+    insert.bind(2, key(invocation.card));
+    insert.bind(3, static_cast<int64_t>(invocation.invocation));
+    if (!insert.step()) throw std::runtime_error("missing invocation sequence");
+    sequence = static_cast<uint64_t>(insert.i64(0));
+  });
+  return sequence;
 }
 
 void History::write_sync(const Work& work) {
@@ -1408,15 +1428,11 @@ std::vector<StoredValueMeta> History::value_metas(sql::Db& db,
     m.size_bytes = st.u64(3);
     const auto ids = st.blob(4);
     if (ids.size() % 16 != 0) throw sql::Error("invalid value artifact ids");
-    auto size = db.prepare("SELECT size_bytes FROM artifacts WHERE id=?");
     for (size_t offset = 0; offset < ids.size(); offset += 16) {
       auto id = ids.substr(offset, 16);
-      size.reset();
-      size.bind_blob(1, id);
-      const auto value = size.step() && !size.is_null(0)
-                             ? std::optional(size.u64(0))
-                             : std::nullopt;
-      m.artifacts.emplace_back(std::move(id), value);
+      const auto record = artifact(db, id);
+      m.artifacts.push_back({std::move(id),
+                             record ? record->size_bytes : std::nullopt});
     }
     m.hash = st.text(5);
     out.push_back(std::move(m));
@@ -1857,7 +1873,7 @@ std::vector<std::string> History::delete_runs(
          {"runs", "run_cards", "run_batches", "build_environments",
           "environment_paths", "run_substituters", "run_commits", "invocations",
           "ivalues", "logs", "log_terminal_ends", "log_terminal_tiles",
-          "log_truncations", "artifacts", "statuses",
+          "log_truncations", "artifacts", "statuses", "invocation_sequences",
           "active_environments", "run_definition_paths"}) {
       auto remove =
           db.prepare(std::string("DELETE FROM ") + table + " WHERE run_id=?");

@@ -137,7 +137,7 @@ import TsugumiTestSupport
     s.endpointOverride = d.endpoint
     try await Self.connected(s)
     var definition = try #require(s.cardDefinition("a"))
-    definition["grants"] = .object([("network", .bool(true))])
+    definition["grants"] = .object([("network", .bool(true)), ("gui", .bool(false))])
     try definition.serialized().write(to: dir.appendingPathComponent("definitions/a/_card.json"), atomically: true, encoding: .utf8)
     let base = s.rev
     await s.reloadExternal()

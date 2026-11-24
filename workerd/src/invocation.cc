@@ -24,6 +24,7 @@
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/system.hh"
+#include "tsugumi/workerd/artifact_id.hh"
 #include "tsugumi/workerd/card_plan.hh"
 #include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/log.hh"
@@ -300,8 +301,7 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
                 const stdfs::path& input, const stdfs::path& directory,
                 const stdfs::path& store, const stdfs::path& group,
                 const WorkerStoreResult& env, const WorkerProc::LogSink& log,
-                const fs::TransferProgress& progress, Secrets secrets)
-    -> workerd::InvocationResult {
+                Secrets secrets) -> workerd::InvocationResult {
   schema::CardPlan plan;
   if (schema::decode_card_plan(env.plan, plan))
     throw Failed(FailureKind::nix_failed, "invalid remote Card build plan");
@@ -339,31 +339,30 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   for (const auto* port : *call.outputs())
     outputs.push_back({port->name()->str(), port->required(), nullptr});
   const auto artifacts_root = input / "artifacts";
-  fs::create_artifact_holders(artifacts_root);
-  if (spawn.sandbox.filesystem) spawn.artifacts_root = artifacts_root.string();
+  const auto outputs_root = directory / "result/files/artifacts";
+  spawn.artifact_store = outputs_root.string();
+  spawn.artifact_staging = directory / "artifact-invocations";
   std::vector<ArtifactGrant> grants;
   if (const auto* entries = call.grants()) {
     for (const auto* entry : *entries) {
       auto id = wire::artifact_id(*entry->id());
-      const auto hex = crypto::hex(id.data(), id.size());
+      const auto leaf = std::to_string(artifact_counter(artifact_id_bytes(id)));
       const auto relative = remote::relative_path(entry->path()->string_view());
       const auto holders = relative.parent_path();
       const auto invocation_name = holders.filename().string();
       const auto source = artifacts_root / relative;
-      if (relative.filename() != hex ||
+      if (relative.filename() != leaf ||
           !crypto::is_run_id(relative.begin()->string()) ||
           !invocation_name.starts_with('@') || invocation_name.size() == 1 ||
           invocation_name.find_first_not_of("0123456789", 1) !=
               std::string::npos ||
           !stdfs::is_directory(stdfs::symlink_status(source)))
         throw Failed(FailureKind::input_missing, "invalid remote artifact grant");
-      fs::create_artifact_holders(artifacts_root, holders);
-      const auto target = spawn.sandbox.filesystem
-                              ? stdfs::path(kSandboxArtifactsRoot) / relative
-                              : source;
-      grants.push_back({std::move(id), target.string()});
+      grants.push_back({std::move(id), source.string()});
     }
   }
+  spawn.artifact_inputs = !grants.empty();
+  stdfs::create_directories(outputs_root);
   auto worker = std::make_unique<WorkerProc>(spawn);
   InvocationDisplay display(worker->view_receiver());
   // Retire the worker and its pending display callbacks before the relay.
@@ -373,7 +372,9 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   workerd::Invocation request;
   request.inputs = values;
   request.outputs = std::move(outputs);
-  request.artifact_directory = directory / "result/files/artifacts";
+  request.artifact_directory = outputs_root;
+  request.artifact_sequence = call.invocation_sequence();
+  request.artifact_inputs = spawn.artifact_inputs;
   request.grants = std::move(grants);
   request.output_budget = {job.output_limit_bytes, job.output_limit_entries};
   if (call.deadline_ms()) request.timeout_ms = *call.deadline_ms();
@@ -383,7 +384,6 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   request.display = [&display](auto message, auto complete) {
     display.push(std::move(message), std::move(complete));
   };
-  request.transfer = progress;
   return workerd::run_invocation(
       [](std::unique_ptr<WorkerProc>, bool, const std::string&) {}, lease,
       false, request);
@@ -489,7 +489,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
     auto secrets =
         job->secrets.empty() ? Secrets{} : receive_secrets(directory, *job);
     outcome = run_worker(*call, *job, invocation, input, directory, store,
-                         group, environment, log, progress, std::move(secrets));
+                         group, environment, log, std::move(secrets));
   } catch (const Failed& error) {
     outcome.failure = error.failure;
   } catch (const std::exception& error) {

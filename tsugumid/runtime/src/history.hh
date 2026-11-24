@@ -54,7 +54,11 @@ struct StoredValueMeta {
   std::string bfbs;
   std::string root_type;
   uint64_t size_bytes = 0;
-  std::vector<std::pair<ArtifactKey, std::optional<uint64_t>>> artifacts;
+  struct Artifact {
+    ArtifactKey id;
+    std::optional<uint64_t> size;
+  };
+  std::vector<Artifact> artifacts;
   std::string hash;  // SHA-256 of the recorded bytes
 
 };
@@ -93,6 +97,8 @@ class History {
   void submit(Work work, std::function<void(bool ok)> done = {});
   // Synchronous write; throws Failed(persistence_failed) on error.
   void write_sync(const Work& work);
+  auto allocate_invocation_sequence(const InvocationSummaryData& invocation)
+      -> uint64_t;
   // Consistent read transaction on a dedicated reader connection.
   template <class F>
   auto read(F&& f) -> decltype(f(std::declval<sql::Db&>()));

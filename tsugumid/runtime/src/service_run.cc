@@ -2,6 +2,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <charconv>
 #include <mutex>
 #include <set>
 #include <stop_token>
@@ -15,7 +16,7 @@
 #include "tsugumi/util/log.hh"
 #include "tsugumi/util/system.hh"
 #include "tsugumi/util/text.hh"
-#include "tsugumi/workerd/staging.hh"
+#include "tsugumi/workerd/artifact_id.hh"
 #include "tsugumi/workerd/store.hh"
 #include "version_record.hh"
 
@@ -27,6 +28,11 @@ using FBB = flatbuffers::FlatBufferBuilder;
 namespace stdfs = std::filesystem;
 
 namespace {
+auto display_artifact_id(const ArtifactKey& id) -> std::string {
+  const auto bytes = artifact_id_bytes(id);
+  return std::to_string(artifact_sequence(bytes)) + "." +
+         std::to_string(artifact_counter(bytes));
+}
 
 constexpr uint32_t kInlineLimit = 256u << 10;
 constexpr size_t kPagePayload = (1u << 20) - 8192;
@@ -767,7 +773,7 @@ void Service::run_record(RequestIn& req) {
         std::vector<flatbuffers::Offset<D::ValueArtifact>> artifacts;
         for (const auto& [id, size] : m.artifacts)
           artifacts.push_back(D::CreateValueArtifact(
-              b, b.CreateString(crypto::hex(id.data(), id.size())), size));
+              b, b.CreateString(display_artifact_id(id)), size));
         const auto ids = b.CreateVector(artifacts);
         const auto hash = b.CreateString(m.hash);
         D::NamedValueBuilder nb(b);
@@ -871,8 +877,8 @@ void Service::run_value_read(RequestIn& req) {
 }
 
 namespace {
-auto artifact_holders(const std::string& run, const CardPath& card,
-                      uint64_t invocation) -> stdfs::path {
+auto artifact_invocation_path(const std::string& run, const CardPath& card,
+                              uint64_t invocation) -> stdfs::path {
   stdfs::path relative = run;
   for (const auto& segment : card) relative /= segment;
   return relative / ("@" + std::to_string(invocation));
@@ -889,19 +895,23 @@ auto artifact_location(const stdfs::path& project, const ArtifactData& artifact)
   throw Failed(FailureKind::integrity_error, "invalid artifact location");
 }
 
-auto artifact_key(std::string_view hex) -> ArtifactKey {
-  constexpr std::string_view alphabet = "0123456789abcdef";
-  if (hex.size() != 32)
+auto artifact_key(std::string_view text) -> ArtifactKey {
+  const auto separator = text.find('.');
+  if (separator == text.npos)
     throw Failed(FailureKind::invalid_request, "invalid artifact id");
-  ArtifactKey id;
-  for (size_t offset = 0; offset < hex.size(); offset += 2) {
-    const auto high = alphabet.find(hex[offset]);
-    const auto low = alphabet.find(hex[offset + 1]);
-    if (high == alphabet.npos || low == alphabet.npos)
+  const auto number = [](std::string_view part) {
+    uint64_t value = 0;
+    const auto [next, error] =
+        std::from_chars(part.data(), part.data() + part.size(), value);
+    if (error != std::errc{} || next != part.data() + part.size())
       throw Failed(FailureKind::invalid_request, "invalid artifact id");
-    id.push_back(static_cast<char>((high << 4) | low));
-  }
-  return id;
+    return value;
+  };
+  const auto invocation = number(text.substr(0, separator));
+  if (!invocation)
+    throw Failed(FailureKind::invalid_request, "invalid artifact id");
+  const auto id = make_artifact_id(invocation, number(text.substr(separator + 1)));
+  return {reinterpret_cast<const char*>(id.data()), id.size()};
 }
 }  // namespace
 
@@ -928,64 +938,43 @@ auto Service::artifact_grants(std::span<const Value> inputs)
   });
 }
 
-auto Service::seal_artifacts(const InvocationSummaryData& invocation,
-                             const stdfs::path& staging,
-                             std::span<const ArtifactKey> ids) -> void {
-  if (ids.empty()) return;
-  const auto root = store_->state_dir() / "artifacts";
-  const auto relative = artifact_holders(invocation.run_id, invocation.card,
-                                         invocation.invocation);
-  const auto destination = root / relative;
-  if (!fs::resolves_inside(store_->state_dir(), destination))
+auto Service::artifact_destination(const InvocationSummaryData& invocation)
+    -> stdfs::path {
+  const auto state = store_->state_dir();
+  const auto destination =
+      state / "artifacts" /
+      artifact_invocation_path(invocation.run_id, invocation.card,
+                               invocation.invocation);
+  if (!fs::resolves_inside(state, destination))
     throw Failed(FailureKind::invalid_path, "artifact destination escapes the project");
-  fs::create_artifact_holders(root, relative);
+  return destination;
+}
+
+auto Service::record_artifacts(const InvocationSummaryData& invocation,
+                               std::span<const ArtifactKey> ids) -> void {
+  if (ids.empty()) return;
+  const auto destination = artifact_destination(invocation);
+  std::vector<ArtifactData> records;
+  const auto sealed = now_ms();
   for (const auto& id : ids) {
-    if (id.size() != 16)
+    if (id.size() != 16 || artifact_sequence(artifact_id_bytes(id)) !=
+                               invocation.artifact_sequence)
       throw Failed(FailureKind::output_invalid, "invalid created artifact id");
-    const auto name = crypto::hex(id.data(), id.size());
-    const auto target = destination / name;
-    // The worker's private snapshot can live on a different filesystem.
-    // Build the sealed directory beside its final name.
-    const auto temporary = destination / ("." + name + "-" + crypto::uuid4());
-    const auto remove_write = [](const auto& path) {
-      constexpr auto write = stdfs::perms::owner_write | stdfs::perms::group_write |
-                             stdfs::perms::others_write;
-      stdfs::permissions(path, write, stdfs::perm_options::remove);
-    };
-    const auto cleanup = [&] (const auto& path) {
-      std::error_code error;
-      if (!stdfs::is_directory(stdfs::symlink_status(path, error))) return;
-      stdfs::permissions(path, stdfs::perms::owner_write,
-                         stdfs::perm_options::add, error);
-      for (const auto& entry : stdfs::recursive_directory_iterator(path))
-        if (stdfs::is_directory(entry.symlink_status()))
-          stdfs::permissions(entry.path(), stdfs::perms::owner_write,
-                             stdfs::perm_options::add, error);
-      stdfs::remove_all(path, error);
-    };
-    bool installed = false;
-    try {
-      if (stdfs::exists(stdfs::symlink_status(target)))
-        throw Failed(FailureKind::output_invalid, "artifact id already exists");
-      stdfs::copy(staging / name, temporary, stdfs::copy_options::recursive);
-      const auto size = fs::directory_size(temporary);
-      const auto hash = "tree:" + fs::sha256_tree(temporary);
-      for (const auto& entry : stdfs::recursive_directory_iterator(temporary))
-        remove_write(entry.path());
-      remove_write(temporary);
-      stdfs::rename(temporary, target);
-      installed = true;
-      const auto sealed = now_ms();
-      const ArtifactData record{id, invocation.run_id, invocation.card,
-          invocation.invocation, "created",
-          target.lexically_relative(opts_.root).generic_string(),
-          invocation.started_at.value_or(sealed), sealed, size, hash};
-      history_->write_sync([&](sql::Db& db) { History::put_artifact(db, record); });
-    } catch (...) {
-      cleanup(installed ? target : temporary);
-      throw;
-    }
+    const auto target =
+        destination / std::to_string(artifact_counter(artifact_id_bytes(id)));
+    records.push_back(
+        {id, invocation.run_id, invocation.card, invocation.invocation,
+         "created", target.lexically_relative(opts_.root).generic_string(),
+         invocation.started_at.value_or(sealed), sealed,
+         fs::directory_size(target), "tree:" + fs::sha256_tree(target)});
   }
+  history_->write_sync([&](sql::Db& db) {
+    for (const auto& record : records) {
+      if (History::artifact(db, record.id))
+        throw Failed(FailureKind::output_invalid, "artifact id already exists");
+      History::put_artifact(db, record);
+    }
+  });
 }
 
 void Service::artifact_list(RequestIn& req) {
@@ -1019,9 +1008,10 @@ void Service::artifact_list(RequestIn& req) {
           b, b.CreateString(name), size, b.CreateString(fs::sha256_file(path / name))));
     }
     out.push_back(R::CreateArtifactInfo(
-        b, b.CreateString(crypto::hex(a.id.data(), a.id.size())),
-        b.CreateString(a.run_id), wire::path(b, a.card), a.invocation, a.size_bytes,
-        a.tree_hash ? b.CreateString(*a.tree_hash) : 0, b.CreateVector(members)));
+        b, b.CreateString(display_artifact_id(a.id)),
+        b.CreateString(a.run_id), wire::path(b, a.card), a.invocation,
+        a.size_bytes, a.tree_hash ? b.CreateString(*a.tree_hash) : 0,
+        b.CreateVector(members)));
   }
   auto v = b.CreateVector(out);
   flatbuffers::Offset<flatbuffers::String> cur;

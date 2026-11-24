@@ -118,7 +118,9 @@ def test_deleting_history_removes_records_and_artifacts_without_resurrection(cor
     artifacts = [client.call("ArtifactListRequest", runId=run_id).artifacts[0] for run_id in run_ids]
     artifact_ids = [text(artifact.artifactId) for artifact in artifacts]
     assert len(set(artifact_ids)) == len(run_ids)
-    assert all(len(bytes.fromhex(artifact_id)) == 16 for artifact_id in artifact_ids)
+    words = [tuple(map(int, artifact_id.split("."))) for artifact_id in artifact_ids]
+    assert words == sorted(words)
+    assert all(sequence > 0 and counter == 0 for sequence, counter in words)
     assert all(text(artifact.members[0].path) == "report.txt" for artifact in artifacts)
 
     environment, = client.call("RunEnvironmentsRequest", runId=run_ids[0]).environments

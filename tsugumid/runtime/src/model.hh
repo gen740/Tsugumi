@@ -70,6 +70,7 @@ struct BuildEnvironmentData {
 };
 
 struct InvocationSummaryData {
+  uint64_t artifact_sequence = 0;
   std::string run_id;
   CardPath card;
   uint64_t invocation = 0;

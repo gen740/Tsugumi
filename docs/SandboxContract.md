@@ -65,20 +65,22 @@ envelopes. The SDK opens a granted artifact as a read-only directory.
 The returned path is scoped to the invocation. Forwarding an ID preserves
 the artifact's identity.
 
-Linux bubblewrap mounts the project's artifact root read-only at
-`/tsugumi-artifacts` when the sandbox starts. macOS Seatbelt allows reads at
-the root's project path from startup and denies all writes there, including
-changes to modes and permissions. The root, run, Card and invocation directories
-allow traversal by exact name and deny listing. Created artifact directories
-have unguessable 128-bit names. A Card with the exact path can read a sealed
-artifact directly. `artifact_open` resolves only IDs granted to the call.
-An offline backup that enumerates the artifact tree needs read permission on
-the holding directories.
+The artifact store stays outside the sandbox. The worker supervisor creates
+a private invocation directory on the same filesystem and materializes
+granted inputs when the Card calls `artifact_open`. It recreates directory
+trees and hard-links their files on Linux, including in the shared VM.
+Bubblewrap mounts those inputs read-only. On native macOS the supervisor
+clones files, and Seatbelt denies writes and metadata changes to the inputs.
+The supervisor installs created outputs under
+`.tsugumi/artifacts/<run>/<card path>/@<invocation index>/<counter>/` and
+seals each tree. Linux workers with PID isolation retire the writing process
+namespace before renaming the output. Native macOS and Linux workers without
+PID isolation snapshot the output before installing it.
 
-Remote workers stage
-granted artifacts in the same directory layout and return newly created
-artifacts with the result. Filesystem isolation must be enabled for these access
-guarantees.
+A call with a project artifact grant uses a fresh worker. A call that creates
+an artifact retires its worker after completion. Remote workers stage grants
+and return newly created artifacts with the result. These access guarantees
+require filesystem isolation.
 
 ## Grants
 

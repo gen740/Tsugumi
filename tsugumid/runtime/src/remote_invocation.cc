@@ -1,5 +1,8 @@
 #include "remote_invocation.hh"
 
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <cctype>
 #include <fstream>
@@ -10,8 +13,10 @@
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/workerd/artifact_id.hh"
 #include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/log.hh"
+#include "tsugumi/workerd/staging.hh"
 #include "wire.hh"
 
 namespace tsugumi {
@@ -177,12 +182,13 @@ auto stage_remote_invocation(const RemoteJobClient& client,
   if (request.stop.stop_requested())
     throw Failed(FailureKind::cancelled,
                  "run cancelled before external submission");
-  auto call = worker_call_frame(
-      1, request.inputs, request.node.outputs,
-      request.node.settings.timeout_seconds
-          ? std::optional<uint64_t>(*request.node.settings.timeout_seconds *
-                                    1000)
-          : std::nullopt, {}, grants);
+  auto call =
+      worker_call_frame(1, request.inputs, request.node.outputs,
+                        request.node.settings.timeout_seconds
+                            ? std::optional<uint64_t>(
+                                  *request.node.settings.timeout_seconds * 1000)
+                            : std::nullopt,
+                        {}, grants, false, request.summary.artifact_sequence);
   invocation.call_sha256 =
       upload(client, service, instance, job_id, call, request.stop);
   blobs.insert(invocation.call_sha256);
@@ -227,12 +233,10 @@ auto import_remote_result(
     const RemoteJobClient& client, const std::string& service,
     const std::string& instance, const std::string& job_id,
     const std::string& result_digest, const std::string& spec,
-    const stdfs::path& directory,
-    const std::vector<types::PortType>& outputs,
-    const std::vector<Value>& inputs,
-    const RemoteLogPrefix& recorded,
-    const WorkerProc::LogSink& log,
-    std::stop_token stop,
+    const stdfs::path& state_directory, const stdfs::path& artifact_destination,
+    uint64_t sequence, const std::vector<types::PortType>& outputs,
+    const std::vector<Value>& inputs, const RemoteLogPrefix& recorded,
+    const WorkerProc::LogSink& log, std::stop_token stop,
     const std::function<void(std::string_view, uint64_t, uint64_t)>& progress,
     const std::function<void(int64_t, int64_t)>& on_validation)
     -> RemoteInvocationResult {
@@ -261,7 +265,7 @@ auto import_remote_result(
   result.environment.derivation = job->derivation;
   result.environment.manifest = job->output;
   result.environment.system = job->system;
-  const auto temp = directory / (".remote-import-" + crypto::uuid4());
+  const auto temp = state_directory / (".remote-import-" + crypto::uuid4());
   stdfs::create_directories(temp);
   struct Remove {
     stdfs::path path;
@@ -278,9 +282,12 @@ auto import_remote_result(
   const auto started = now_ms();
   result.created = wire::artifact_ids(failure ? failure->created() : worker->created());
   std::set<stdfs::path> declared;
-  for (const auto& id : result.created)
-    if (!declared.insert(crypto::hex(id.data(), id.size())).second)
-      throw Failed(FailureKind::output_invalid, "duplicate remote artifact id");
+  for (size_t counter = 0; counter < result.created.size(); ++counter) {
+    const auto id = artifact_id_bytes(result.created[counter]);
+    if (artifact_sequence(id) != sequence || artifact_counter(id) != counter)
+      throw Failed(FailureKind::output_invalid, "invalid remote artifact id");
+    declared.insert(std::to_string(counter));
+  }
   const auto permitted = [&](const stdfs::path& relative, bool allow_root) {
     auto part = relative.begin();
     if (part == relative.end() || *part++ != "artifacts") return false;
@@ -362,9 +369,17 @@ auto import_remote_result(
       throw Failed(FailureKind::output_invalid, "remote artifact directory is missing");
   if (stop.stop_requested())
     throw BrokerDisconnected("remote result import stopped");
-  if (stdfs::is_directory(staged)) {
-    const auto target = directory / "artifacts";
-    stdfs::rename(staged, target);
+  if (!declared.empty()) {
+    const int fd =
+        ::open(staged.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) throw std::runtime_error("cannot open downloaded artifacts");
+    struct Close {
+      int fd;
+      ~Close() { ::close(fd); }
+    } close{fd};
+    fs::OutputBudget budget{job->output_limit_bytes, job->output_limit_entries};
+    for (const auto& name : declared)
+      fs::move_staging_artifact(fd, name, artifact_destination / name, budget);
   }
   if (on_validation) on_validation(started, now_ms());
   import_logs(temp / "logs", recorded, log, result);

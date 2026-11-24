@@ -47,10 +47,12 @@ directory. Forward a granted ID to pass the same artifact without copying it.
 Listing any ID outside the call's created and granted sets causes
 `output_invalid`. See [storage and retention](RunHistory.md#keep-and-open-artifacts).
 
-The filesystem sandbox exposes the project artifact root read-only at startup.
-The holding directories allow traversal by exact name and deny listing.
-`artifact_open` checks the call's grant and resolves the existing path.
-See
+The core allocates a project-wide invocation sequence and supplies it to the
+worker. A created ID is the sequence followed by the worker's zero-based
+artifact counter, encoded as two big-endian 64-bit integers. It is displayed
+as `<invocation sequence>.<counter>`. Access depends on the recorded grant.
+`artifact_open` checks the call's grant and materializes its directory on
+demand. See
 [artifact access in the sandbox](SandboxContract.md#artifact-access).
 
 ## Effects and their lifetimes
