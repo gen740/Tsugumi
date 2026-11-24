@@ -47,6 +47,7 @@
         }
         // core.devEnv
         // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+          TSUGUMI_WASMTIME_LICENSE = "${pkgs.wasmtime.src}/LICENSE";
           TSUGUMI_TEMPLATE_GIT_SOURCE = pkgs.git.src;
           TSUGUMI_TEMPLATE_GIT_SOURCE_URL = builtins.head pkgs.git.src.urls;
         }

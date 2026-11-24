@@ -17,19 +17,29 @@ run() {
     TSUGUMI_CACERT="${TSUGUMI_CACERT:?}" \
     TSUGUMI_CARD_NIXPKGS_REV="${TSUGUMI_CARD_NIXPKGS_REV:?}" \
     TSUGUMI_CARD_NIXPKGS_NARHASH="${TSUGUMI_CARD_NIXPKGS_NARHASH:?}" \
+    TSUGUMI_DAWN_DIR="${TSUGUMI_DAWN_DIR:?}" \
+    TSUGUMI_WASMTIME_DEV="${TSUGUMI_WASMTIME_DEV:?}" \
+    TSUGUMI_WASMTIME_LIB="${TSUGUMI_WASMTIME_LIB:?}" \
+    TSUGUMI_WEBGPU_HEADERS="${TSUGUMI_WEBGPU_HEADERS:?}" \
     PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-}" \
     CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:-}" "$@"
 }
 run "$cmake_path" --fresh -S "$repo" -B "$repo/build-host" -G Ninja \
   -DTSUGUMI_FORMAT_NIX="@bundle/nixfmt" -DTSUGUMI_TEMPLATE_GIT="@bundle/git" \
   -DTSUGUMI_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release \
+  -DPython3_EXECUTABLE="$(command -v python3)" \
   -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_OSX_SYSROOT="$sdk_path" \
   -Dflatbuffers_DIR="$flatbuffers_root/lib/cmake/flatbuffers" \
   -DTSUGUMI_CLIENT_CURL_LIBRARY="$sdk_path/usr/lib/libcurl.tbd" \
   -DCURL_LIBRARY="$sdk_path/usr/lib/libcurl.tbd" -DCURL_LIBRARY_RELEASE="$sdk_path/usr/lib/libcurl.tbd" \
   -DCURL_LIBRARY_DEBUG="$sdk_path/usr/lib/libcurl.tbd" -DCURL_INCLUDE_DIR="$sdk_path/usr/include" \
   -DTSUGUMI_HOST_SQLITE_LIBRARY="$sdk_path/usr/lib/libsqlite3.tbd"
-run "$cmake_path" --build "$repo/build-host" --target tsugumi-hostd tsugumi
+run "$cmake_path" --build "$repo/build-host" --target tsugumi-hostd tsugumi tsugumi-view-host
+
+view_licenses="$repo/build-host/Resources/view-licenses"
+install -d "$view_licenses/dawn" "$view_licenses/wasmtime"
+install -m 644 "$TSUGUMI_DAWN_DIR/share/licenses/dawn/LICENSE" "$view_licenses/dawn/LICENSE"
+install -m 644 "${TSUGUMI_WASMTIME_LICENSE:?}" "$view_licenses/wasmtime/LICENSE"
 
 # Copy pinned nixfmt and its dylibs for use outside the Nix store.
 # Apple's tools from Xcode: the shell's older SDK strip rejects these dylibs.

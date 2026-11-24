@@ -2,7 +2,11 @@
 # `tsugumi` command and the shared VM's boot disk.
 { inputs, ... }:
 let
-  inherit (inputs) nixpkgs hosq;
+  inherit (inputs)
+    nixpkgs
+    hosq
+    webgpu-headers
+    ;
   # The core's own package set, used to build plans and target workers.
   cardNixpkgs = {
     rev = nixpkgs.rev or "dirty";
@@ -36,7 +40,12 @@ in
     }:
     let
       core = pkgs.callPackage ../core.nix {
-        inherit cardNixpkgs hosq testNixPathLock;
+        inherit
+          cardNixpkgs
+          hosq
+          testNixPathLock
+          webgpu-headers
+          ;
       };
       ci-runtime = pkgs.callPackage ../ci-runtime.nix { inherit core; };
       ci-core = pkgs.callPackage ../core-tests.nix {
@@ -84,7 +93,15 @@ in
         tsugumid = core;
       }
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
-        ci-core-native = ci-core.override { nativeDarwin = true; };
+        ci-core-native = (ci-core.override { nativeDarwin = true; }).overrideAttrs (old: {
+          postInstall = old.postInstall + ''
+            for suite in load decode; do
+              binary="${core}/libexec/tsugumi-tests/tsugumi-view-$suite-tests"
+              test -x "$binary"
+              ln -s "$binary" "$out/libexec/tsugumi-tests/"
+            done
+          '';
+        });
       }
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         workerd = pkgs.callPackage ../workerd.nix { inherit core; };
