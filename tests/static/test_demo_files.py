@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -49,5 +50,10 @@ def test_demo_locks_and_input_definitions(language):
             assert not {"sweeps", "retainArtifact", "artifactOutput"} & card.keys(), definition
             assert card["type"] in {"code", "draft", "trigger", "input", "merge", "collect", "subgraph"}, definition
             if card["type"] == "input":
-                for name in ("default.nix", "params.nix", "_outputs.fbs"):
+                for name in ("default.nix", "_outputs.fbs"):
                     assert definition.with_name(name).is_file(), (definition, name)
+            # A Card without params has no params.nix (a missing file is {}).
+            params = definition.with_name("params.nix")
+            if params.is_file():
+                text = re.sub(r"#[^\n]*", "", params.read_text())
+                assert re.sub(r"\s", "", text) != "{}", params
