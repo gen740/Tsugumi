@@ -16,7 +16,7 @@ trap 'rm -rf "$stage"' EXIT
 # What nix/cli.nix and nix/core.nix read, and the flake itself.
 git -C "$repo" archive --format=tar --prefix=tsugumi/ HEAD \
   flake.nix flake.lock VERSION CMakeLists.txt cmake util rpc tsugumid \
-  hostd/CMakeLists.txt hostd/cmake hostd/src hostd/private hostd/agent/src hostd/agent/private hostd/agent/Shared \
+  hostd/CMakeLists.txt hostd/cmake hostd/src hostd/cache hostd/private hostd/agent/src hostd/agent/private hostd/agent/Shared \
   client/CMakeLists.txt client/cmake client/include client/src cli/CMakeLists.txt cli/src workerd \
   protocol/CMakeLists.txt protocol/include protocol/trace_codec.cc 'protocol/*.fbs' \
   nix/core.nix nix/core-source.nix nix/cli.nix nix/web.nix nix/client-wasm.nix nix/card-entry.nix nix/worker.nix \
