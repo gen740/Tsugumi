@@ -64,7 +64,7 @@ The Mac app, the Web UI and the `tsugumi` command use the same Host environment 
 
 ## 2. Cards and Workflows
 
-Every Card has a permanent id that also serves as its name. The core reserves new ids from a lowercase slug and adds a numeric suffix when needed. Connections and run records refer to these ids.
+Every Card has an id for its definition directory, connections and run records. Host allocates a lowercase id and adds suffixes such as `_2` when needed. The `title` in its README is the display name. See [Card ids and port names](Reference.md#card-ids-and-port-names).
 
 ### Kinds of Card
 
@@ -78,7 +78,7 @@ Every Card states its kind in `_card.json` as `"type"`: `code`, `draft`, `trigge
 | Merge | Forwards every arriving envelope to `out` |
 | Collect | Aggregates a batch into a `Collected` list of envelopes |
 | subgraph (Card in Card) | Handles a child Workflow as one Card. `boundary` maps the outer ports to Cards inside |
-| Draft (`draft`) | An "unimplemented Card": write its name and content directly on the card, and connect it just by dropping a wire on it (it has no ports; the other end names the real port). Draft wire ends use an empty port name. Implementing one requires explicitly rebinding its wires to real ports in the same save. The Agent can later generate its implementation |
+| Draft (`draft`) | An "unimplemented Card": write its name and content directly on the card, and connect it just by dropping a wire on it (it has no ports; the other end names the real port). Draft wire ends use an empty `port` string. Implementing one requires explicitly rebinding its wires to real ports in the same save. The Agent can later generate its implementation |
 
 A Card in Card uses full Card paths to distinguish state and history; visual groups in `layout.bin` do not affect execution.
 
@@ -92,7 +92,7 @@ A Card in Card uses full Card paths to distinguish state and history; visual gro
 ### Execution semantics (scheduler)
 
 - A Card runs when every connected input has arrived. An unconnected input is absent from the call. An arrival is a single value or a batch of values. A Merge consumes one arrival at a time.
-- Bounded queues with backpressure, cancellation and an optional per-invocation deadline (`timeoutSeconds`; none by default for local runs). Each input port holds up to 16 unconsumed groups, and a run that can no longer progress fails with `execution_limit`. A Run can request concurrency from 1 to 64, with up to eight Code workers active at once. The iteration limit (`maxRuns`) counts how often the Card receives a set of inputs that triggers it.
+- Bounded queues with backpressure, cancellation and a per-invocation deadline when `timeoutSeconds` is greater than zero. Each input port holds up to 16 unconsumed groups, and a run that can no longer progress fails with `execution_limit`. A Run can request concurrency from 1 to 64, with up to eight Code workers active at once. The iteration limit (`maxRuns`) counts how often the Card receives a set of inputs that triggers it.
 - When a connected input cannot arrive because its producer omitted the output or skipped, the downstream Card is recorded as `skipped`. Merge skips once all of its inputs are exhausted without any arrival. A Card downstream of a failed, blocked or cancelled Card is `blocked`, with a reason. A Draft, and the Cards that need only its outputs, do not run and get no state; the canvas marks them as not run because of a Draft. Independent paths keep running.
 - A run lives only while the `tsugumid` process that started it lives. Local and remote invocations left unfinished end as `failed` with failure kind `interrupted`; startup never imports old remote results or reruns Cards. Within one core life, remote reconnection resumes the same job. Regular status and log exchanges detect disconnection; there is no heartbeat or silence expiry ([Remote execution](RemoteExecution.md#host-authorization-and-following-a-run)).
 - Partial runs exist only for debugging: AI-written code rarely works on its first attempt. Running one Card or from a Card downstream with saved inputs is not a result of the Workflow. Such a run is marked **Partial run** (Japanese: **部分実行**). Values computed from it carry their provenance downstream, including into later runs that consume them as saved inputs; those runs also show **Uses a partial run's result** (**部分実行の結果を使用**). Running the whole Workflow replaces these values and clears the marks. Explicit **Record I/O** settings still apply, and kept results carry the run's marks. There is no selection of an earlier run as the input source.

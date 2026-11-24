@@ -96,7 +96,7 @@ Opening this Settings pane measures build and scratch usage. Build sizes use NAR
 
 ## Card settings and app settings
 
-Card names appear on the Canvas and in lists, history, comparisons and chat references. Renaming changes the name only; tools, file paths and connections keep the permanent identifier. A Card without a name shows its identifier.
+Card names appear on the Canvas and in lists, history, comparisons and chat references. Editing the display name writes `title` in the Card's README. Tools, file paths and connections identify the Card by its id. The UI shows that id if the README cannot be read.
 
 Open a Card's settings to edit its working copy, then choose **Apply**. A parameter edit rewrites its current literal in `params.nix` and preserves the surrounding source. Settings JSON, Card settings and project settings use the same revision check. Inline value edits use the revision at which editing began; leaving an unchanged value does not save it. Text entered while Apply or Save is pending stays unapplied after the submitted text is saved. If another save conflicts, choose **Overwrite** or **Keep edits and reload**; the latter keeps your previous text available to reapply. Tabs include Source, Ports, Comments, Nix Definition, Run History and Artifacts; the available tabs depend on the Card's kind. Run history and artifacts remain readable while running, but changes to Cards and closing a running project are blocked.
 
