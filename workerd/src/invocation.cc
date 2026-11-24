@@ -239,13 +239,13 @@ class InvocationDisplay {
                                       bytes(message->bytes())};
             // Once the worker retires, reverse messages may still be in
             // transit. Keep draining forward credits until the writer stops.
-            if (!worker->send(display, [this, view = display.view,
+            if (worker->send(display, [this, view = display.view,
                                         cost = workerd::message_cost(
                                             display.bytes.size())] {
                   std::lock_guard lock(mutex_);
                   credits_[view] += cost;
                   ready_.notify_one();
-                })) {
+                }) != WorkerProc::ViewDelivery::accepted) {
               target_.reset();
             }
           }
