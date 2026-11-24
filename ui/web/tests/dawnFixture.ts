@@ -67,4 +67,3 @@ export function encodeView({
     ...section(10, vec(bodies.map(([, { code }]) => [...uleb(code.length + 2), 0, ...code, 0x0b]))),
   ])
 }
-

@@ -184,7 +184,16 @@ user stops it.
 
 The kit's `sdk.dawnView { name; src; }` builds a view from C sources (freestanding,
 no libc), and its `dawn-view` template is a minimal example. The `point-cloud` demo
-sends a point cloud to a dawn view.
+sends a point cloud to a dawn view. A view can opt into the kit's embedded Japanese
+glyph atlas and upload it as a WebGPU texture.
+
+### Agent and client access
+
+The host lists open view sessions for a project. Clients and the Agent can send
+pointer, key, text and gamepad input to a dawn view by its session UUID. The
+presenting host delivers those events to the same exports as physical input.
+It can also render the current view into an offscreen texture and return a
+PNG through the same Host API. The Agent receives that PNG as an image.
 
 ## Value mapping in the default SDKs
 
