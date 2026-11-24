@@ -6,10 +6,12 @@
 #include <unistd.h>
 #ifdef __APPLE__
 #include <sys/clonefile.h>
+#else
+#include <linux/fs.h>
+#include <sys/ioctl.h>
 #endif
 
 #include <algorithm>
-#include <atomic>
 #include <cerrno>
 #include <memory>
 #include <stdexcept>
@@ -176,47 +178,58 @@ auto status_of(int fd, const std::filesystem::path& path) -> struct stat {
   return st;
 }
 
-auto check_copy_cancel(const std::atomic<bool>& cancel) -> void {
-  if (cancel.load()) throw std::runtime_error("output transfer cancelled");
+// Give the destination a new inode with the opened source's contents. Clone
+// the opened inode, never a path the Card could replace.
+auto clone_file(int source, const std::filesystem::path& label,
+                const std::filesystem::path& destination) -> void {
+#ifdef __APPLE__
+  if (::fclonefileat(source, AT_FDCWD, destination.c_str(), 0) == 0) return;
+  const int error = errno;
+  if (error == ENOTSUP || error == EXDEV)
+    throw std::runtime_error(
+        "cannot seal worker output " + label.string() +
+        ": its filesystem cannot clone files (clonefile: " +
+        std::generic_category().message(error) +
+        "); Tsugumi on macOS needs the project on an APFS volume");
+  failed("clone artifact member", label, error);
+#else
+  // The destination is core-owned and is never exposed to the worker.
+  const int fd = ::open(destination.c_str(),
+                        O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                        0600);
+  if (fd < 0) failed("open artifact clone", destination);
+  Handle written(fd);
+  if (::ioctl(fd, FICLONE, source) == 0) return;
+  const int error = errno;
+  // Filesystems without reflinks (ext4, virtiofs, tmpfs) get a plain copy.
+  if (error != EOPNOTSUPP && error != ENOTTY && error != EINVAL &&
+      error != EXDEV && error != ENOSYS)
+    failed("reflink artifact member", label, error);
+  copy_sparse_file(source, fd, label, destination, {});
+#endif
 }
 
-auto copy_entry(int source, const std::filesystem::path& label,
-                const std::filesystem::path& destination,
-                const std::atomic<bool>& cancel,
-                const TransferProgress& progress, OutputBudget& budget)
+auto clone_entry(int source, const std::filesystem::path& label,
+                 const std::filesystem::path& destination, OutputBudget& budget)
     -> void {
-  check_copy_cancel(cancel);
   const auto st = status_of(source, label);
   if (budget.entries == 0)
     reject(label, entry_kind(st.st_mode), "output entry budget exceeded");
   --budget.entries;
   if (S_ISREG(st.st_mode)) {
-    const auto total = static_cast<uint64_t>(st.st_size);
-    if (total > budget.bytes)
+    const auto bytes = static_cast<uint64_t>(st.st_size);
+    if (bytes > budget.bytes)
       reject(label, "regular file", "output byte budget exceeded");
-    // The destination is core-owned and is never exposed to the worker.
-    const int fd =
-        ::open(destination.c_str(),
-               O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
-    if (fd < 0) failed("open destination", destination);
-    Handle written(fd);
-    uint64_t done = 0;
-    if (progress) progress(label, 0, total);
-    copy_sparse_file(
-        source, fd, label, destination, [&](std::string_view chunk) {
-          check_copy_cancel(cancel);
-          if (chunk.size() > budget.bytes)
-            reject(label, "regular file", "output byte budget exceeded");
-          budget.bytes -= chunk.size();
-          done += chunk.size();
-          if (progress) progress(label, done, total);
-        });
+    budget.bytes -= bytes;
+    clone_file(source, label, destination);
     return;
   }
   if (!S_ISDIR(st.st_mode))
     reject(label, entry_kind(st.st_mode),
            "only regular files and directories are allowed");
-  std::filesystem::create_directories(destination);
+  // The destination is core-owned and is never exposed to the worker.
+  if (::mkdir(destination.c_str(), 0700) != 0)
+    failed("mkdir artifact clone", destination);
   const int scan =
       ::openat(source, ".", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
   if (scan < 0) failed("openat", label);
@@ -228,7 +241,6 @@ auto copy_entry(int source, const std::filesystem::path& label,
     failed("fdopendir", label, error);
   }
   for (;;) {
-    check_copy_cancel(cancel);
     errno = 0;
     const auto* entry = ::readdir(entries.get());
     if (!entry) {
@@ -238,8 +250,7 @@ auto copy_entry(int source, const std::filesystem::path& label,
     const std::string name = entry->d_name;
     if (name == "." || name == "..") continue;
     auto child = open_entry(source, name, label / name);
-    copy_entry(child.get(), label / name, destination / name, cancel, progress,
-               budget);
+    clone_entry(child.get(), label / name, destination / name, budget);
   }
 }
 
@@ -259,19 +270,43 @@ auto clear_staging(const std::filesystem::path& path,
   ::close(directory);
 }
 
-auto copy_staging_artifact(int staging, const std::filesystem::path& name,
-                           const std::filesystem::path& destination,
-                           const std::atomic<bool>& cancel, OutputBudget& budget,
-                           const TransferProgress& progress) -> void {
+auto clone_staging_artifact(int staging, const std::filesystem::path& name,
+                            const std::filesystem::path& destination,
+                            OutputBudget budget) -> void {
   if (name.empty() || name.has_parent_path() || name == "." || name == "..")
     reject(name, "artifact name", "expected one directory component");
-  check_copy_cancel(cancel);
   const auto source = open_entry(staging, name.string(), name);
-  const auto status = status_of(source.get(), name);
-  if (!S_ISDIR(status.st_mode))
-    reject(name, entry_kind(status.st_mode), "artifact must be a directory");
-  std::filesystem::create_directories(destination.parent_path());
-  copy_entry(source.get(), name, destination, cancel, progress, budget);
+  if (!S_ISDIR(status_of(source.get(), name).st_mode))
+    reject(name, "artifact", "artifact must be a directory");
+  if (std::filesystem::exists(std::filesystem::symlink_status(destination)))
+    reject(name, "artifact directory", "clone destination already exists");
+  try {
+    clone_entry(source.get(), name, destination, budget);
+  } catch (...) {
+    std::error_code error;
+    std::filesystem::remove_all(destination, error);
+    throw;
+  }
+}
+
+auto remove_staging_artifact(int staging, const std::filesystem::path& name)
+    -> void {
+  if (name.empty() || name.has_parent_path() || name == "." || name == "..")
+    reject(name, "artifact name", "expected one directory component");
+  const int fd = pin_directory(staging, name.c_str(), {});
+  if (fd < 0) {
+    if (errno == ENOENT) return;
+    failed("openat", name);
+  }
+  try {
+    clear_directory(fd, name, {});
+  } catch (...) {
+    ::close(fd);
+    throw;
+  }
+  ::close(fd);
+  if (::unlinkat(staging, name.c_str(), AT_REMOVEDIR) != 0 && errno != ENOENT)
+    failed("unlinkat", name);
 }
 
 auto link_artifact(const std::filesystem::path& source,

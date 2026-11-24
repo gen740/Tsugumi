@@ -237,8 +237,9 @@ See [Views](CoreAndSDK.md#views) for the display protocol and Dawn contract.
 ## Worker state
 
 Cards start a fresh worker for each call by default. Set `reuseWorker: true` to keep one worker for the Card: memory, loaded libraries and files in its working directory survive across calls and runs. One worker takes one call at a time. There is no hook at the start of a run, so a Card that keeps state decides from its inputs when to reset it, for example starting over when a loop's initial value arrives. Resident workers have no count, idle-time or memory eviction limit, including workers used for monitoring. They live until the project's environment stops or the Card's definition, SDK, grants or a secret value changes; a call already running when the definition changes finishes on the old version. A failed, cancelled or timed-out call always discards its worker; the next call starts fresh and logs the reason, as it does after a crash. Each invocation records whether its worker already held state (`worker_reused`). Ordinary fresh workers prepared for speed remain limited to 32, ten minutes idle and 2 GiB each.
-A call granted a project artifact uses a fresh worker. A worker that creates
-a project artifact retires when the call returns.
+A resident worker can open and create artifacts. When a call returns, the
+paths of its artifacts are gone, and the next call opens its own
+([artifact access](SandboxContract.md#artifact-access)).
 
 
 | Location | Use | Lifetime |

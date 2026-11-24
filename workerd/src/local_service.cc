@@ -52,7 +52,6 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
           spawn.network = source.network;
           spawn.ro_paths = source.ro_paths;
           spawn.artifact_store = source.artifact_store;
-          spawn.artifact_inputs = source.artifact_inputs;
           spawn.artifact_staging = source.artifact_staging;
           spawn.hidden_paths = source.hidden_paths;
           if (source.uid) spawn.uid = *source.uid;
