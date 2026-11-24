@@ -72,25 +72,6 @@ auto artifact_ids(FBB& b, std::span<const ArtifactKey> ids) -> Off<ArtifactIdVec
   return b.CreateVectorOfStructs(encoded);
 }
 
-Off<D::Port> port(FBB& b, const types::PortType& p) {
-  auto name = b.CreateString(p.name);
-  Off<flatbuffers::Vector<uint8_t>> bfbs;
-  Off<flatbuffers::String> root;
-  if (p.type) {
-    bfbs = b.CreateVector(reinterpret_cast<const uint8_t*>(p.type->bfbs.data()),
-                          p.type->bfbs.size());
-    root = b.CreateString(p.type->root_type);
-  }
-  D::PortBuilder pb(b);
-  pb.add_name(name);
-  pb.add_execution_shape(p.execution_shape);
-  if (p.type) {
-    pb.add_schema_bfbs(bfbs);
-    pb.add_root_type(root);
-  }
-  return pb.Finish();
-}
-
 }  // namespace wire
 
 std::string FailureData::to_bytes() const {

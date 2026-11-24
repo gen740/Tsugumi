@@ -49,8 +49,6 @@ struct WorkerSpawn {
   std::vector<std::string> ro_paths;
   // Linux mounts this at kSandboxArtifactsRoot. Seatbelt allows it in place.
   std::string artifacts_root;
-  // The Card's key, used by the remote invocation launcher.
-  std::string card;
   // Covered with an empty tmpfs for sandbox: false Cards (the control folder
   // with the RPC token, tsugumid's state); ro paths and the scratch folder
   // inside them are bound again on top.

@@ -201,7 +201,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   if (sp.shared_vm) sp.hidden_paths.push_back(state_dir.string());
   sp.network = node.settings.grants.network;
   sp.gui = node.settings.grants.gui;
-  sp.card = card_key;
   for (const auto& f : node.settings.grants.host_paths) {
     std::string source = f.path;
     if (const auto& root = service_.options().host_folders; !root.empty())

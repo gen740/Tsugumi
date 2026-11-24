@@ -430,46 +430,23 @@ auto copy_ids(flatbuffers::FlatBufferBuilder& b, const ArtifactIds* ids) {
   return b.CreateVectorOfStructs(copy);
 }
 
-auto make_result(const C::CardResult& result, const W::WorkerCall& call,
-                 const Host& host, uint64_t id,
+auto make_result(const C::CardResult& result, const Host& host, uint64_t id,
                  flatbuffers::FlatBufferBuilder& b) -> std::optional<Failure> {
   if (const auto* failure = result.failure()) return card_failure(*failure);
-  std::map<std::string_view, const W::WorkerPort*> missing;
-  for (const auto* port : *call.outputs())
-    missing.emplace(port->name()->string_view(), port);
   std::vector<flatbuffers::Offset<W::WorkerOutput>> outputs;
   if (const auto* ports = result.outputs()) {
     for (const auto* output : *ports) {
       const auto name = output->name()->string_view();
-      const auto invalid = [&](std::string message) {
-        return Failure{D::FailureKind::output_invalid, std::move(message),
-                       {{"port", std::string(name)}}};
-      };
-      const auto found = missing.find(name);
-      if (found == missing.end())
-        return invalid("unknown or duplicate output " + std::string(name));
-      if (const auto* ids = output->artifacts())
-        for (const auto* id : *ids) {
-          const auto key = id_bytes(*id);
-          if (!host.granted.contains(key) && !host.created.contains(key))
-            return invalid("output references an ungranted artifact");
-        }
       flatbuffers::Offset<Payload> bytes;
       if (const auto* value = output->bytes())
         bytes = aligned_payload(b, *value);
       outputs.push_back(W::CreateWorkerOutput(
           b, b.CreateString(name), bytes, copy_ids(b, output->artifacts())));
-      missing.erase(found);
       if (b.GetSize() > kMaxFrame)
         return Failure{D::FailureKind::output_invalid,
                        "outputs exceed the worker frame limit"};
     }
   }
-  for (const auto& [name, port] : missing)
-    if (port->required())
-      return Failure{D::FailureKind::output_invalid,
-                     "required output " + std::string(name) + " is missing",
-                     {{"port", std::string(name)}}};
   const auto payload = W::CreateWorkerResult(
       b, b.CreateVector(outputs), b.CreateVectorOfStructs(created_ids(host)));
   W::FinishWorkerMessageBuffer(
@@ -548,8 +525,8 @@ auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
   flatbuffers::Verifier verifier(returned.data, returned.size);
   if (!verifier.VerifyBuffer<C::CardResult>(nullptr))
     return Failure{D::FailureKind::output_invalid, "invalid CardResult buffer"};
-  return make_result(*flatbuffers::GetRoot<C::CardResult>(returned.data), call,
-                     host, id, reply);
+  return make_result(*flatbuffers::GetRoot<C::CardResult>(returned.data), host,
+                     id, reply);
 }
 
 auto serve(const std::string& package) -> int {

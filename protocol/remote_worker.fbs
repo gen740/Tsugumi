@@ -1,6 +1,6 @@
 // Host <-> remote worker. The broker forwards these generated messages and
 // fills routing/authentication fields; it never interprets job specifications.
-// Any byte stream: uint32 little-endian length, then one FlatBuffer (<= 2 MiB).
+// Any byte stream: uint32 little-endian length, then one FlatBuffer (<= 18 MiB).
 // One request and reply per connection. Transfers use independent <= 1 MiB
 // chunks, with explicit offset/total; no unframed body follows a message.
 // Worker connections use TLS 1.3 with mutually pinned Ed25519 SPKI keys.
@@ -26,7 +26,7 @@ table JobSpec {
   // never part of the spec: they arrive in a JobSecretsRequest just before the
   // process starts and are kept only in memory.
   secrets:[string];
-  // Output budget for new Path outputs (forwards do not count).
+  // Output budget for new artifacts (forwards do not count).
   output_limit_bytes:ulong = 68719476736;
   output_limit_entries:ulong = 1000;
 }

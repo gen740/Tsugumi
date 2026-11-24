@@ -75,25 +75,20 @@ struct Fd {
 // The adapter and the project each have an independent credit window per view.
 class DisplayChannel {
  public:
-  DisplayChannel(Fd&& descriptor, Fd&& reverse)
-      : socket_(std::move(descriptor)),
-        reverse_(std::move(reverse)),
-        reader_([this] { read(); }),
-        reverse_reader_([this] { read_reverse(); }),
-        writer_([this] { write(); }),
-        reverse_writer_([this] { write_reverse(); }) {}
-  ~DisplayChannel() {
-    {
-      std::lock_guard lock(mutex_);
-      stopping_ = true;
+  explicit DisplayChannel(Fd&& descriptor)
+      : socket_(std::move(descriptor)), reader_([this] { read(); }) {
+    try {
+      writer_ = std::thread([this] { write(); });
+    } catch (...) {
+      ::shutdown(socket_.value, SHUT_RDWR);
+      reader_.join();
+      throw;
     }
-    ready_.notify_all();
+  }
+  ~DisplayChannel() {
     ::shutdown(socket_.value, SHUT_RDWR);
-    ::shutdown(reverse_.value, SHUT_RDWR);
     reader_.join();
-    reverse_reader_.join();
     writer_.join();
-    reverse_writer_.join();
   }
 
   auto take(R::JobStatusT& status, const R::StatusRequestT& query) -> void {
@@ -128,7 +123,7 @@ class DisplayChannel {
       status.displays.push_back(std::make_unique<W::WorkerDisplayT>(*replay_));
       status.display_sequence = sequence_;
     }
-    status.view_input_ready = reverse_ready_ && !reverse_closed_;
+    status.view_input_ready = input_ready_ && !closed_;
     for (const auto& [name, view] : inbound_) {
       auto credit = std::make_unique<R::DisplayCreditT>();
       credit->view = name;
@@ -145,7 +140,7 @@ class DisplayChannel {
     if (message.view.empty() || message.bytes.size() > TSUGUMI_MESSAGE_MAX)
       return false;
     std::lock_guard lock(mutex_);
-    if (!reverse_ready_ || reverse_closed_) return false;
+    if (!input_ready_ || closed_) return false;
     auto& view = inbound_[message.view];
     if (request.offset < view.accepted)
       return true;  // Retried after a lost reply.
@@ -182,19 +177,34 @@ class DisplayChannel {
 
   auto read() -> void {
     try {
-      while (auto frame = read_display(socket_.value)) {
-        const auto* message =
-            W::GetWorkerMessage(frame->data())->value_as_WorkerDisplay();
-        if (!message || !message->view()->size() ||
-            message->bytes()->size() > TSUGUMI_MESSAGE_MAX)
-          break;
-        const auto size = message_cost(message->bytes()->size());
-        std::lock_guard lock(mutex_);
-        auto& view = outbound_[message->view()->str()];
-        if (view.queued > kViewBudget - TSUGUMI_MESSAGE_MAX) break;
-        view.queued += size;
-        pending_.emplace_back();
-        message->UnPackTo(&pending_.back());
+      char ready = 0;
+      if (::read(socket_.value, &ready, 1) == 1 && ready == 1) {
+        {
+          std::lock_guard lock(mutex_);
+          input_ready_ = true;
+        }
+        while (auto frame = read_display(socket_.value)) {
+          const auto* envelope = W::GetWorkerMessage(frame->data());
+          std::lock_guard lock(mutex_);
+          if (const auto* credit = envelope->value_as_WorkerDisplayCredit()) {
+            const auto view = inbound_.find(credit->view()->str());
+            if (view == inbound_.end() || credit->bytes() > view->second.in_flight)
+              break;
+            view->second.in_flight -= credit->bytes();
+            ready_.notify_all();
+            continue;
+          }
+          const auto* message = envelope->value_as_WorkerDisplay();
+          if (!message || !message->view()->size() ||
+              message->bytes()->size() > TSUGUMI_MESSAGE_MAX)
+            break;
+          const auto size = message_cost(message->bytes()->size());
+          auto& view = outbound_[message->view()->str()];
+          if (view.queued > kViewBudget - TSUGUMI_MESSAGE_MAX) break;
+          view.queued += size;
+          pending_.emplace_back();
+          message->UnPackTo(&pending_.back());
+        }
       }
     } catch (const std::exception&) {
     }
@@ -205,74 +215,35 @@ class DisplayChannel {
   }
 
   auto write() -> void {
-    try {
-      for (;;) {
-        std::unique_lock lock(mutex_);
-        const auto ready = [](const auto& entry) {
-          return entry.second.credit != 0;
-        };
-        ready_.wait(lock, [&] {
-          return stopping_ || closed_ || std::ranges::any_of(outbound_, ready);
-        });
-        if (stopping_ || closed_) return;
-        const auto next = std::ranges::find_if(outbound_, ready);
-        const auto view = next->first;
-        const auto credit = std::exchange(next->second.credit, 0);
-        lock.unlock();
-        write_display_credit(socket_.value, view, credit);
-      }
-    } catch (const std::exception&) {
-      ::shutdown(socket_.value, SHUT_RDWR);
-    }
-  }
-
-  auto read_reverse() -> void {
-    try {
-      char ready = 0;
-      if (::read(reverse_.value, &ready, 1) == 1 && ready == 1) {
-        {
-          std::lock_guard lock(mutex_);
-          reverse_ready_ = true;
-        }
-        while (auto frame = read_display(reverse_.value)) {
-          const auto* credit = W::GetWorkerMessage(frame->data())
-                                   ->value_as_WorkerDisplayCredit();
-          if (!credit) break;
-          std::lock_guard lock(mutex_);
-          const auto view = inbound_.find(credit->view()->str());
-          if (view == inbound_.end() ||
-              credit->bytes() > view->second.in_flight)
-            break;
-          view->second.in_flight -= credit->bytes();
-          ready_.notify_all();
-        }
-      }
-    } catch (const std::exception&) {
-    }
-    std::lock_guard lock(mutex_);
-    reverse_closed_ = true;
-    ready_.notify_all();
-    ::shutdown(reverse_.value, SHUT_RDWR);
-  }
-
-  auto write_reverse() -> void {
     std::string last;
+    const auto has_credit = [](const auto& entry) {
+      return entry.second.credit != 0;
+    };
+    const auto can_send = [](const auto& entry) {
+      const auto& view = entry.second;
+      return !view.pending.empty() &&
+             view.in_flight <= kViewBudget - TSUGUMI_MESSAGE_MAX;
+    };
     try {
       for (;;) {
         std::unique_lock lock(mutex_);
-        const auto ready = [](const auto& entry) {
-          const auto& view = entry.second;
-          return !view.pending.empty() &&
-                 view.in_flight <= kViewBudget - TSUGUMI_MESSAGE_MAX;
-        };
         ready_.wait(lock, [&] {
-          return stopping_ || reverse_closed_ ||
-                 std::ranges::any_of(inbound_, ready);
+          return closed_ || std::ranges::any_of(outbound_, has_credit) ||
+                 std::ranges::any_of(inbound_, can_send);
         });
-        if (stopping_ || reverse_closed_) return;
+        if (closed_) return;
+        // Credit can unblock the other direction even when data cannot move.
+        const auto credit_entry = std::ranges::find_if(outbound_, has_credit);
+        if (credit_entry != outbound_.end()) {
+          const auto view = credit_entry->first;
+          const auto credit = std::exchange(credit_entry->second.credit, 0);
+          lock.unlock();
+          write_display_credit(socket_.value, view, credit);
+          continue;
+        }
         const auto end = inbound_.end();
-        auto next = std::find_if(inbound_.upper_bound(last), end, ready);
-        if (next == end) next = std::find_if(inbound_.begin(), end, ready);
+        auto next = std::find_if(inbound_.upper_bound(last), end, can_send);
+        if (next == end) next = std::find_if(inbound_.begin(), end, can_send);
         last = next->first;
         auto& view = next->second;
         auto bytes = std::move(view.pending.front());
@@ -282,15 +253,14 @@ class DisplayChannel {
         view.released += cost;
         view.in_flight += cost;
         lock.unlock();
-        write_display(reverse_.value, last, bytes);
+        write_display(socket_.value, last, bytes);
       }
     } catch (const std::exception&) {
-      ::shutdown(reverse_.value, SHUT_RDWR);
+      ::shutdown(socket_.value, SHUT_RDWR);
     }
   }
 
   Fd socket_;
-  Fd reverse_;
   std::mutex mutex_;
   std::condition_variable ready_;
   std::deque<W::WorkerDisplayT> pending_;
@@ -298,14 +268,10 @@ class DisplayChannel {
   uint64_t sequence_ = 0;
   std::map<std::string, Outbound> outbound_;
   std::map<std::string, Inbound> inbound_;
-  bool stopping_ = false;
-  bool reverse_ready_ = false;
-  bool reverse_closed_ = false;
+  bool input_ready_ = false;
   std::optional<std::chrono::steady_clock::time_point> closed_;
   std::thread reader_;
-  std::thread reverse_reader_;
   std::thread writer_;
-  std::thread reverse_writer_;
 };
 
 auto log(const std::string& line) -> void {
@@ -788,18 +754,12 @@ class Daemon {
     int pair[2];
     if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) != 0)
       return false;
-    Fd display_reader(pair[0]), display_writer(pair[1]);
-    Fd adapter_display(::fcntl(display_writer.value, F_DUPFD_CLOEXEC, 10));
+    Fd listener_display(pair[0]), job_display(pair[1]);
+    Fd adapter_display(::fcntl(job_display.value, F_DUPFD_CLOEXEC, 10));
     if (adapter_display.value < 0) return false;
-    if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) != 0)
-      return false;
-    Fd input_writer(pair[0]), input_reader(pair[1]);
-    Fd adapter_input(::fcntl(input_reader.value, F_DUPFD_CLOEXEC, 10));
-    if (adapter_input.value < 0) return false;
     std::shared_ptr<DisplayChannel> display;
     try {
-      display = std::make_shared<DisplayChannel>(std::move(display_reader),
-                                                 std::move(input_writer));
+      display = std::make_shared<DisplayChannel>(std::move(listener_display));
     } catch (const std::exception&) {
       return false;
     }
@@ -808,7 +768,6 @@ class Daemon {
     posix_spawn_file_actions_adddup2(&actions, lock, 5);
     posix_spawn_file_actions_adddup2(&actions, adapter_display.value,
                                      kDisplayChannelFd);
-    posix_spawn_file_actions_adddup2(&actions, adapter_input.value, kViewInputFd);
     if (channel)
       posix_spawn_file_actions_adddup2(&actions, channel_reader.value,
                                        kSecretChannelFd);
@@ -917,7 +876,6 @@ auto supervise(const std::string& self, const stdfs::path& root,
     }
     if (!spec->secrets.empty()) ::close(kSecretChannelFd);
     ::close(kDisplayChannelFd);
-    ::close(kViewInputFd);
     int status = 0;
     for (;;) {
       const auto current = journal.status(job);

@@ -11,7 +11,7 @@ auto encode(R::MessageT message) -> std::string {
   flatbuffers::FlatBufferBuilder b;
   R::FinishMessageBuffer(b, R::Message::Pack(b, &message));
   if (b.GetSize() > kMaxFrame)
-    throw Error(R::ErrorCode::Invalid, "frame exceeds 2 MiB");
+    throw Error(R::ErrorCode::Invalid, "frame exceeds 18 MiB");
   return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};
 }
 auto decode(std::string_view bytes) -> std::unique_ptr<R::MessageT> {

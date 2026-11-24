@@ -21,6 +21,7 @@ TEST(WorkerOutputs, OpaqueBytesAndGrantedArtifactsAreForwarded) {
   const std::string bytes("not a FlatBuffer\0", 17);
   const auto outputs = accept_outputs({{"value", bytes, {id}}}, ports, inputs);
   ASSERT_EQ(outputs.size(), 1u);
+  EXPECT_EQ(outputs[0].name, "value");
   EXPECT_EQ(outputs[0].bytes, bytes);
   EXPECT_EQ(outputs[0].artifacts, std::vector<ArtifactKey>{id});
 }
@@ -29,7 +30,12 @@ TEST(WorkerOutputs, OnlyCreatedAndGrantedArtifactsAreAccepted) {
   const ArtifactKey id(16, 'a');
   const std::vector<ArtifactKey> created{id};
   const std::vector<types::PortType> ports{{"value", false, nullptr}};
-  EXPECT_THROW(accept_outputs({{"value", "", {id}}}, ports), Failed);
+  try {
+    accept_outputs({{"value", "", {id}}}, ports);
+    FAIL() << "accepted an ungranted artifact";
+  } catch (const Failed& error) {
+    EXPECT_EQ(error.failure.kind, FailureKind::output_invalid);
+  }
   EXPECT_NO_THROW(accept_outputs({{"value", "", {id}}}, ports, {}, created));
   const std::vector<ArtifactKey> duplicates{id, id};
   EXPECT_THROW(accept_outputs({{"value", "", {id}}}, ports, {}, duplicates), Failed);
@@ -37,15 +43,20 @@ TEST(WorkerOutputs, OnlyCreatedAndGrantedArtifactsAreAccepted) {
 
 TEST(WorkerOutputs, RejectsUnknownDuplicateAndMissingRequiredOutputs) {
   const std::vector<types::PortType> ports{{"value", true, nullptr}};
-  EXPECT_THROW(accept_outputs({}, ports), Failed);
+  try {
+    accept_outputs({}, ports);
+    FAIL() << "accepted a missing required output";
+  } catch (const Failed& error) {
+    EXPECT_EQ(error.failure.kind, FailureKind::output_invalid);
+    ASSERT_EQ(error.failure.args.size(), 1u);
+    EXPECT_EQ(error.failure.args.front(),
+              std::make_pair(std::string("port"), std::string("value")));
+  }
   EXPECT_THROW(accept_outputs({{"unknown", "", {}}}, ports), Failed);
   EXPECT_THROW(accept_outputs({{"value", "", {}}, {"value", "", {}}}, ports), Failed);
 }
 
-// A supervised job already owns its scratch tree. Merely constructing the
-// one-shot pool must not remove it, including when acquire cannot construct a
-// worker. Ordinary pools retain their existing project-lifetime cleanup.
-TEST(WorkerPoolOwnership, OneShotLeavesJobScratchToTheWorkerAndSupervisor) {
+TEST(WorkerPoolOwnership, ClearsProjectScratch) {
   const auto root = stdfs::canonical(stdfs::temp_directory_path()) /
                     ("tsugumi-pool-" + crypto::uuid4());
   struct Cleanup {
@@ -55,13 +66,6 @@ TEST(WorkerPoolOwnership, OneShotLeavesJobScratchToTheWorkerAndSupervisor) {
       stdfs::remove_all(root, error);
     }
   } cleanup{root};
-  const auto job = root / "job/scratch";
-  fs::write_atomic(job / "work/partial", "job scratch");
-  {
-    WorkerPool pool(job, {}, WorkerPoolMode::one_shot);
-    EXPECT_EQ(fs::read_file(job / "work/partial"), "job scratch");
-  }
-  EXPECT_EQ(fs::read_file(job / "work/partial"), "job scratch");
   const auto project = root / "project/workers";
   fs::write_atomic(project / "stale", "old worker scratch");
   {
