@@ -352,7 +352,7 @@ auto Prepare(
   };
   auto link = [&](const std::string& id) {
     const auto dir = prefix + "definitions/" + id + '/';
-    put(dir + "_card.json", R"({"type":"subgraph","symbol":"link"})");
+    put(dir + "_card.json", R"({"type":"subgraph","symbol":"none"})");
     put(dir + "README.md", CardReadme(id));
   };
   auto document_state = [&](const auto& files) {

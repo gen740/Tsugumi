@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <ranges>
@@ -132,6 +133,14 @@ const Node* Resolution::find(const CardPath& p) const {
   return it == index.end() ? nullptr : &nodes[it->second];
 }
 
+auto run_system(const Settings& settings, std::string_view native)
+    -> std::string {
+  if (settings.systems.empty()) return std::string(native);
+  if (std::ranges::find(settings.systems, native) != settings.systems.end())
+    return std::string(native);
+  return settings.systems.front();
+}
+
 std::vector<Diag> Resolution::all_diagnostics(bool executable) const {
   std::vector<Diag> out = diags;
   for (const auto& n : nodes) {
@@ -233,7 +242,8 @@ class Builder {
     }
     if (const auto* secrets = d.secrets())
       for (const auto* name : *secrets) s.secrets.push_back(name->str());
-    if (const auto* system = d.system()) s.system = system->str();
+    if (const auto* systems = d.systems())
+      for (const auto* system : *systems) s.systems.push_back(system->str());
     if (const auto* bits = d.workerCapabilities())
       for (auto bit : *bits) s.worker_capabilities |= uint64_t{1} << bit;
     if (n.kind != CardType::Subgraph) read_params(n);
@@ -425,9 +435,9 @@ class Builder {
       RawEdge e;
       e.scope = scope_path;
       e.from = c->from()->card()->str();
-      e.from_port = c->from()->port()->str();
+      e.from_port = c->from()->port() ? c->from()->port()->str() : "";
       e.to = c->to()->card()->str();
-      e.to_port = c->to()->port()->str();
+      e.to_port = c->to()->port() ? c->to()->port()->str() : "";
       raw_.push_back(std::move(e));
     }
   }
@@ -655,32 +665,91 @@ class Builder {
     };
     for (auto node : order | std::views::reverse) assign(assign, node, node);
 
-    const auto normal = [](CardType kind) {
-      // TODO(open): exports across Merge, Collect, and Draft Cards.
-      return kind == CardType::Code || kind == CardType::Input ||
-             kind == CardType::Trigger;
+    // What a Card shows to a Card wired from it at the same level:
+    // inputs.<name> -> the Cards whose exports are merged under that name.
+    using Exposed = std::map<std::string, std::set<CardPath>>;
+    std::vector<Exposed> exposed(count);
+    // The Cards whose exports a Card stands for when it feeds a subgraph's
+    // boundary output.
+    std::vector<std::set<CardPath>> own(count);
+    const auto same_level = [](const Node& a, const Node& b) {
+      return a.project_dir == b.project_dir && a.path.size() == b.path.size() &&
+             std::equal(a.path.begin(), a.path.end() - 1, b.path.begin());
+    };
+    // What one wire from source carries to node. A feedback wire carries
+    // nothing. A wire out of a subgraph carries inputs.<subgraph Card id>
+    // with the exports of the inner Card; inner ids never appear outside, and
+    // Cards inside a subgraph get nothing from outside it.
+    const auto carried = [&](size_t index, size_t source) -> Exposed {
+      if (component[index] == component[source]) return {};
+      const auto& node = res_->nodes[index];
+      const auto& producer = res_->nodes[source];
+      if (same_level(producer, node)) return exposed[source];
+      const auto level = node.path.size() - 1;
+      if (producer.path.size() <= node.path.size() ||
+          !std::equal(node.path.begin(), node.path.end() - 1,
+                      producer.path.begin()) ||
+          own[source].empty())
+        return {};
+      return {{producer.path[level], own[source]}};
     };
     for (auto index : order | std::views::reverse) {
       auto& node = res_->nodes[index];
-      if (!normal(node.kind)) continue;
-      std::map<std::string, CardPath> exports;
+      std::vector<Exposed> wires;
+      std::vector<std::set<CardPath>> owns;
       for (const auto& [_, source] : res_->incoming[index]) {
-        const auto& producer = res_->nodes[source];
-        if (!normal(producer.kind)) continue;
-        // TODO(open): exports across feedback wires.
-        if (component[index] == component[source]) continue;
-        // TODO(open): exports across nested and external Card boundaries.
-        if (producer.project_dir != node.project_dir ||
-            producer.path.size() != node.path.size() ||
-            !std::equal(producer.path.begin(), producer.path.end() - 1,
-                        node.path.begin()))
-          continue;
-        exports.emplace(producer.path.back(), producer.path);
-        for (const auto& ref : producer.nix_references)
-          exports.emplace(ref.name, ref.target);
+        wires.push_back(carried(index, source));
+        owns.push_back(component[index] == component[source]
+                           ? std::set<CardPath>{}
+                           : own[source]);
       }
-      for (auto& [id, target] : exports)
-        node.nix_references.push_back({std::move(target), id});
+      switch (node.kind) {
+        case CardType::Code:
+        case CardType::Input:
+        case CardType::Trigger: {
+          Exposed references;
+          for (auto& wire : wires)
+            for (auto& [name, targets] : wire)
+              references[name].insert(targets.begin(), targets.end());
+          for (const auto& [name, targets] : references)
+            for (const auto& target : targets)
+              node.nix_references.push_back({target, name});
+          exposed[index] = std::move(references);
+          exposed[index][node.path.back()] = {node.path};
+          own[index] = {node.path};
+          break;
+        }
+        case CardType::Merge: {
+          // Only what every input exposes, under the same name and Cards.
+          for (size_t i = 0; i < wires.size(); ++i) {
+            if (i == 0) {
+              exposed[index] = wires[i];
+              own[index] = owns[i];
+              continue;
+            }
+            std::erase_if(exposed[index], [&](const auto& entry) {
+              const auto it = wires[i].find(entry.first);
+              return it == wires[i].end() || it->second != entry.second;
+            });
+            std::set<CardPath> common;
+            std::ranges::set_intersection(own[index], owns[i],
+                                          std::inserter(common, common.end()));
+            own[index] = std::move(common);
+          }
+          break;
+        }
+        case CardType::Collect:
+          // The exports of the Card it collects from.
+          for (size_t i = 0; i < wires.size(); ++i) {
+            for (auto& [name, targets] : wires[i])
+              exposed[index][name].insert(targets.begin(), targets.end());
+            own[index].insert(owns[i].begin(), owns[i].end());
+          }
+          break;
+        default:
+          // Drafts expose nothing; a subgraph's wires end on its inner Cards.
+          break;
+      }
     }
   }
 

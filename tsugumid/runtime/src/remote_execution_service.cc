@@ -505,7 +505,7 @@ auto RemoteExecutionService::prepare(const RemoteTarget& target,
   if (build.cancel.stop_requested())
     throw Failed(FailureKind::cancelled, "worker selection cancelled");
   auto probe = client_.probe(target.id, target.server_id, build.cancel);
-  const auto& system = settings.system;
+  const auto system = run_system(settings, probe.native_system);
   if (settings.sandbox.limits.limited() && !probe.resource_limits)
     throw Failed(FailureKind::unsupported,
                  "the remote execution daemon cannot enforce resource limits");

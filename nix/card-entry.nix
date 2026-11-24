@@ -14,15 +14,39 @@ let
     {
       params = if builtins.pathExists file then import file else { };
       inputs = builtins.listToAttrs (
-        map (id: {
-          name = id;
-          value = cards.${id}.exports or { };
+        map (dep: {
+          inherit (dep) name;
+          value = mergeExports dep;
         }) entry.deps
       );
     };
+  # inputs.<name> of a subgraph Card holds the exports of every inner Card
+  # wired to its boundary outputs, merged; one attribute from two of them is
+  # an error.
+  mergeExports =
+    dep:
+    let
+      exports = map (key: cards.${key}.exports or { }) dep.keys;
+    in
+    if builtins.length exports == 1 then
+      builtins.head exports
+    else
+      builtins.foldl' (
+        merged: next:
+        if !(builtins.isAttrs next) then
+          throw "inputs.${dep.name}: the exports of a subgraph's Cards must be attribute sets"
+        else
+          let
+            duplicates = builtins.filter (name: merged ? ${name}) (builtins.attrNames next);
+          in
+          if duplicates != [ ] then
+            throw "inputs.${dep.name}: ${builtins.head duplicates} is exported by more than one Card"
+          else
+            merged // next
+      ) { } exports;
   cards = builtins.listToAttrs (
     map (entry: {
-      name = entry.id;
+      name = entry.key;
       value =
         let
           dir = /. + entry.definition;

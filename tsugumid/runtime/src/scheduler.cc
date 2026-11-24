@@ -934,7 +934,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     // Input Cards produce immutable store output; no worker starts for them.
     const SharedStoreDerivationTransport transport;
     if (node.kind == CardType::Input) {
-      request.target = {WorkerKind::native, node.settings.system};
+      request.target = {WorkerKind::native,
+                        run_system(node.settings, native_system())};
       request.transport = &transport;
     } else {
       prepared = svc_.prepare_execution(

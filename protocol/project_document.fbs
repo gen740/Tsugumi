@@ -13,7 +13,9 @@ namespace Tsugumi.Document;
 
 table Endpoint {
   card:string (required);
-  port:string (required);
+  /// The Card's port. Absent on a Draft end (Drafts have no named ports) and
+  /// required on every other end.
+  port:string;
 }
 
 table Connection {
@@ -52,9 +54,9 @@ table NixPathEntry {
 }
 
 table Project {
-  /// The Tsugumi version that created or last saved the project. The core
-  /// refuses a project whose version differs from its own.
-  tsugumiVersion:string (required);
+  /// The project file format. It changes only when the format changes, and
+  /// the core refuses a project whose format differs from its own.
+  formatVersion:uint = null;
   name:string (required);
   nixPath:[NixPathEntry] (required);
   /// Additional literal project-relative files or folders kept in Tsugumi's
