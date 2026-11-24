@@ -222,9 +222,10 @@ import TsugumiTestSupport
       let body = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
       let edit = try #require(body.edits[0]?.value?.value as? Tsugumi_Host_ProjectJSONEditT)
       let before = try JSONValue.parse(try #require(edit.oldValue.json))
-      let readme = Documents.parseReadme(try #require(before.string))
-      draftBases.append(readme?.body)
-      if readme?.body != "agent" { throw RPCFailure(kind: .valueConflict, diagnostic: "") }
+      let selected = try #require(before.string)
+      let readme = try #require(Documents.parseReadme(selected))
+      draftBases.append(readme.body)
+      if readme.body != "agent" { throw RPCFailure(kind: .valueConflict, diagnostic: "") }
       let after = try JSONValue.parse(try #require(edit.newValue.json))
       #expect(Documents.parseReadme(try #require(after.string))?.description == "unrelated")
       return self.result(unchanged(request.opId))
@@ -575,7 +576,8 @@ extension ProjectOperationTests {
           let body = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
           let json = try #require(body.edits[0]?.value?.value as? Tsugumi_Host_ProjectJSONEditT)
           let before = try JSONValue.parse(try #require(json.oldValue.json))
-          guardValue = Documents.parseReadme(try #require(before.string))?.body
+          let selected = try #require(before.string)
+          guardValue = try #require(Documents.parseReadme(selected)).body
           let written = try JSONValue.parse(try #require(json.newValue.json))
           #expect(Documents.parseReadme(try #require(written.string))?.description == "unrelated")
         } else {
