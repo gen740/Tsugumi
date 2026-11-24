@@ -19,6 +19,7 @@ stdenvNoCC.mkDerivation {
       ../client/include
       ../client/src/client.cc
       ../client/src/client_c.cc
+      ../client/src/host_views.cc
       ../rpc
       ../cmake
       ../client/cmake

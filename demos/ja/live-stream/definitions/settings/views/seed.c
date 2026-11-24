@@ -6,6 +6,9 @@ static WGPURenderPipeline pipeline;
 static uint32_t width, height;
 static float scale = 1;
 static uint32_t choice = 10;
+static float previous_choice = 10;
+static tsugumi_view_time choice_changed;
+static const tsugumi_view_time kSlideTime = TSUGUMI_VIEW_SAMPLE_RATE / 8u;
 static uint8_t ready;
 
 static const char shader_source[] =
@@ -25,7 +28,9 @@ static const char shader_source[] =
 
 int32_t tsugumi_view_abi(void) { return TSUGUMI_VIEW_ABI; }
 
-int32_t tsugumi_view_resize(uint32_t w, uint32_t h, float device_scale) {
+int32_t tsugumi_view_resize(uint32_t w, uint32_t h, float device_scale,
+                            tsugumi_view_time at) {
+  (void)at;
   width = w;
   height = h;
   scale = device_scale;
@@ -37,7 +42,7 @@ int32_t tsugumi_view_start(WGPUDevice gpu, WGPUQueue commands,
                            float device_scale) {
   device = gpu;
   queue = commands;
-  tsugumi_view_resize(w, h, device_scale);
+  tsugumi_view_resize(w, h, device_scale, 0);
 
   WGPUShaderSourceWGSL wgsl = WGPU_SHADER_SOURCE_WGSL_INIT;
   wgsl.code = (WGPUStringView){shader_source, sizeof(shader_source) - 1};
@@ -61,13 +66,22 @@ int32_t tsugumi_view_start(WGPUDevice gpu, WGPUQueue commands,
   return pipeline ? 0 : -1;
 }
 
-int32_t tsugumi_view_message(uint32_t size) {
+int32_t tsugumi_view_message(uint32_t size, tsugumi_view_time at) {
+  (void)at;
   if (size != sizeof(ready)) return -1;
   return tsugumi_view_read(&ready, size);
 }
 
+static float choice_at(tsugumi_view_time time) {
+  const tsugumi_view_time elapsed = time > choice_changed ? time - choice_changed : 0;
+  if (elapsed >= kSlideTime) return choice;
+  const float t = (float)elapsed / kSlideTime;
+  return previous_choice + (choice - previous_choice) * t * t * (3.0f - 2.0f * t);
+}
+
 int32_t tsugumi_view_pointer(uint32_t kind, float x, float y, uint32_t buttons,
-                             float wheel_x, float wheel_y, uint32_t modifiers) {
+                             float wheel_x, float wheel_y, uint32_t modifiers,
+                             tsugumi_view_time at) {
   (void)wheel_x;
   (void)wheel_y;
   (void)modifiers;
@@ -79,6 +93,8 @@ int32_t tsugumi_view_pointer(uint32_t kind, float x, float y, uint32_t buttons,
   const uint8_t value = (uint8_t)(fraction * 20 + 0.5f);
   const uint8_t opener_route[16] = {0};
   if (tsugumi_view_send(opener_route, &value, sizeof(value)) == 0) {
+    previous_choice = choice_at(at);
+    choice_changed = at;
     choice = value;
     ready = 0;
   }
@@ -92,7 +108,7 @@ static void rectangle(WGPURenderPassEncoder pass, float x, float y, float w,
   wgpuRenderPassEncoderDraw(pass, 3, 1, 0, color);
 }
 
-int32_t tsugumi_view_draw(WGPUTextureView target) {
+int32_t tsugumi_view_draw(WGPUTextureView target, tsugumi_view_time present) {
   if (width == 0 || height == 0) return 0;
   WGPURenderPassColorAttachment attachment = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
   attachment.view = target;
@@ -109,12 +125,12 @@ int32_t tsugumi_view_draw(WGPUTextureView target) {
   for (uint32_t tick = 0; tick <= 20; ++tick)
     rectangle(pass, 0.098f + 0.04f * tick, 0.50f, 0.004f,
               tick % 5 == 0 ? 0.13f : 0.07f, 1);
-  rectangle(pass, 0.088f + 0.04f * choice, 0.42f, 0.024f, 0.16f, ready ? 2 : 3);
+  rectangle(pass, 0.088f + 0.04f * choice_at(present), 0.42f, 0.024f, 0.16f, ready ? 2 : 3);
   wgpuRenderPassEncoderEnd(pass);
   wgpuRenderPassEncoderRelease(pass);
   WGPUCommandBuffer commands = wgpuCommandEncoderFinish(encoder, NULL);
   wgpuQueueSubmit(queue, 1, &commands);
   wgpuCommandBufferRelease(commands);
   wgpuCommandEncoderRelease(encoder);
-  return 0;
+  return previous_choice != choice && present < choice_changed + kSlideTime;
 }

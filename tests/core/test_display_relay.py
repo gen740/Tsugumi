@@ -60,12 +60,15 @@ static void *serve(void *unused) {
 int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     effects = call->effects;
     host = call->host;
-    if (effects->view_open(host, "missing", 0, 0, 0, &opener, &left) >= 0 ||
-        effects->view_open(host, "page", 3, 0, 0, &opener, &left) >= 0 ||
-        effects->view_open(host, "page", 0, 800, 600, &opener, &left) >= 0 ||
-        effects->view_open(host, "page", 1, 800, 0, &opener, &left) >= 0 ||
-        effects->view_open(host, "page", 1, 800, 600, &opener, &left) ||
-        effects->view_open(host, "page", 2, 0, 0, &right_route, &right) ||
+    if (effects->view_open(host, "missing", 0, 0, 0, 0, &opener, &left) >= 0 ||
+        effects->view_open(host, "page", 3, 0, 0, 0, &opener, &left) >= 0 ||
+        effects->view_open(host, "page", 0, 0, 800, 600, &opener, &left) >= 0 ||
+        effects->view_open(host, "page", 1, 0, 800, 0, &opener, &left) >= 0 ||
+        effects->view_open(host, "page", 1, 4, 800, 600, &opener, &left) >= 0 ||
+        effects->view_open(host, "page", 1,
+                           TSUGUMI_VIEW_HIDE_CURSOR | TSUGUMI_VIEW_LOCK_POINTER,
+                           800, 600, &opener, &left) ||
+        effects->view_open(host, "page", 2, 0, 0, 0, &right_route, &right) ||
         effects->route_register(host, &left, &dead))
         return 1;
     static const uint8_t oversized[TSUGUMI_MESSAGE_MAX + 1];
@@ -119,6 +122,45 @@ def route_from(data):
     return str(uuid.UUID(bytes=bytes(data)))
 
 
+def test_headless_view_has_routes_and_drops_sends(project, tmp_path, core_factory):
+    store = tmp_path / "store"
+    store.mkdir()
+    blob = store / "page.html"
+    blob.write_text("<p>headless</p>")
+    package = native_card(tmp_path / "headless", r"""
+#include <string.h>
+
+int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
+    const tsugumi_effects *effects = call->effects;
+    void *host = call->host;
+    tsugumi_route opener, second;
+    tsugumi_view_session session;
+    if (effects->view_open(host, "page", TSUGUMI_VIEW_PANEL, 0, 0, 0,
+                           &opener, &session) ||
+        effects->route_register(host, &session, &second) ||
+        memcmp(&opener, &second, sizeof(opener)) == 0)
+        return 1;
+    static const uint8_t payload[TSUGUMI_MESSAGE_MAX];
+    for (int i = 0; i < 5; ++i)
+        if (effects->send(host, &session, payload, sizeof(payload))) return 2;
+    tsugumi_view_event event;
+    if (effects->recv(host, &event, 50) != 1 ||
+        effects->route_unregister(host, &second))
+        return 3;
+    return write_result(result, result_bytes, sizeof(result_bytes));
+}
+""")
+    daemon = core_factory(mocked_builds=True, env={"TSUGUMI_MOCK_STORE": str(store)})
+    client = daemon.connect()
+    Project(project).card("work", NATIVE_VIEW_SETTINGS, outputs=EMPTY_OUTPUTS,
+                          plan=mock_plan([package], views=[declaration(blob)])).save(client)
+    client.open()
+    assert wait_run(client, run(client)).state == RunState.succeeded
+    assert not any(note.valueType in {NotificationPayload.ViewOpened,
+                                      NotificationPayload.DisplayUpdated}
+                   for note in client.notifications.copy())
+
+
 def denied(client, name, **fields):
     with pytest.raises(RpcFailure) as exc:
         client.call(name, **fields)
@@ -138,7 +180,9 @@ def test_routes_are_private_to_the_window_and_close_once_after_return(project, t
     assert left_note.card.segments == [b"work"]
     assert (text(left_note.name), text(left_note.type)) == ("page", "html")
     assert (left_note.mode, left_note.width, left_note.height) == (1, 800, 600)
+    assert left_note.flags == 3
     assert (right_note.mode, right_note.width, right_note.height) == (2, 0, 0)
+    assert right_note.flags == 0
     first = display(ui, left)
     opener = route_from(first.bytes)
     other_route = route_from(display(ui, right).bytes)
@@ -205,8 +249,8 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     effects = call->effects;
     host = call->host;
     tsugumi_route route;
-    if (effects->view_open(host, "page", 0, 0, 0, &route, &slow) ||
-        effects->view_open(host, "page", 0, 0, 0, &route, &fast))
+    if (effects->view_open(host, "page", 0, 0, 0, 0, &route, &slow) ||
+        effects->view_open(host, "page", 0, 0, 0, 0, &route, &fast))
         return 1;
     pthread_t thread;
     if (pthread_create(&thread, NULL, blast, NULL)) return 2;
@@ -256,7 +300,7 @@ def test_another_process_can_take_over_a_window_after_its_opener_exits(
 int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     tsugumi_route route;
     tsugumi_view_session session;
-    if (call->effects->view_open(call->host, "page", 0, 0, 0, &route, &session))
+    if (call->effects->view_open(call->host, "page", 0, 0, 0, 0, &route, &session))
         return 1;
     FILE *file = fopen(CAPABILITY, "wb");
     if (!file || fwrite(&session, sizeof(session), 1, file) != 1 || fclose(file))

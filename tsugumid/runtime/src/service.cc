@@ -2721,18 +2721,19 @@ auto view_text(const ViewUuid& uuid) -> std::string {
 
 auto view_opened_note(std::string session, CardPath card, std::string name,
                       std::string type, uint32_t mode, uint32_t width,
-                      uint32_t height) -> Note {
+                      uint32_t height, uint32_t flags) -> Note {
   Note note;
   note.kind = Note::Kind::ViewControl;
   note.approx_bytes +=
       path_key(card).size() + name.size() + type.size() + session.size();
   note.build = std::make_shared<const Note::Build>(
       [session = std::move(session), card = std::move(card),
-       name = std::move(name), type = std::move(type), mode, width,
-       height](FBB& b) {
-        const auto value = R::CreateViewOpened(
-            b, b.CreateString(session), wire::path(b, card),
-            b.CreateString(name), b.CreateString(type), mode, width, height);
+       name = std::move(name), type = std::move(type), mode, width, height,
+       flags](FBB& b) {
+        const auto value =
+            R::CreateViewOpened(b, b.CreateString(session), wire::path(b, card),
+                                b.CreateString(name), b.CreateString(type),
+                                mode, width, height, flags);
         return std::make_pair(R::NotificationPayload::ViewOpened,
                               value.Union());
       });
@@ -2828,8 +2829,11 @@ auto Service::view_control(
   if (!request.request_id || endpoint.expired()) return reply;
   switch (request.kind) {
     case ViewControlKind::open: {
-      if (request.mode > 2 || (request.width == 0) != (request.height == 0) ||
-          (request.mode != 1 && request.width != 0))
+      if (request.mode > TSUGUMI_VIEW_FULLSCREEN ||
+          (request.flags &
+           ~(TSUGUMI_VIEW_HIDE_CURSOR | TSUGUMI_VIEW_LOCK_POINTER)) ||
+          (request.width == 0) != (request.height == 0) ||
+          (request.mode != TSUGUMI_VIEW_WINDOW && request.width != 0))
         return reply;
       const auto matches = [&](const auto& view) {
         return *view.name == request.view;
@@ -2845,10 +2849,11 @@ auto Service::view_control(
       if (!blob) return reply;
 
       std::lock_guard lock(subs_mu_);
-      if (!ui_owner_) return reply;
-      const auto conn = *ui_owner_;
-      const auto subscriber = subscriptions_.find(conn);
-      if (subscriber == subscriptions_.end()) return reply;
+      const auto subscriber =
+          ui_owner_ ? subscriptions_.find(*ui_owner_) : subscriptions_.end();
+      const auto conn =
+          subscriber == subscriptions_.end() ? std::nullopt : ui_owner_;
+      const auto subscription = conn ? subscriber->second : std::string{};
       do {
         reply.session = parse_view_uuid(crypto::uuid4());
       } while (view_sessions_.contains(reply.session));
@@ -2856,18 +2861,21 @@ auto Service::view_control(
       const auto session = view_text(reply.session);
       view_sessions_.emplace(reply.session,
                              ViewSession{conn,
-                                         subscriber->second,
+                                         subscription,
                                          request.view,
-                                         std::move(blob),
+                                         conn ? std::move(blob) : nullptr,
                                          reply.route,
                                          {{reply.route, endpoint}}});
-      server_->open_view(
-          conn, subscriber->second, session,
-          view_opened_note(session, card, request.view, *found->type,
-                           request.mode, request.width, request.height));
-      server_->view_note(
-          conn, subscriber->second,
-          view_route_registered_note(session, view_text(reply.route)));
+      if (conn) {
+        server_->open_view(
+            *conn, subscription, session,
+            view_opened_note(session, card, request.view, *found->type,
+                             request.mode, request.width, request.height,
+                             request.flags));
+        server_->view_note(
+            *conn, subscription,
+            view_route_registered_note(session, view_text(reply.route)));
+      }
       reply.ok = true;
       return reply;
     }
@@ -2881,9 +2889,11 @@ auto Service::view_control(
       } while (routes.contains(reply.route));
       routes.emplace(reply.route, endpoint);
       const auto& view = found->second;
-      server_->view_note(view.conn, view.subscription,
-                         view_route_registered_note(view_text(request.session),
-                                                    view_text(reply.route)));
+      if (view.conn)
+        server_->view_note(
+            *view.conn, view.subscription,
+            view_route_registered_note(view_text(request.session),
+                                       view_text(reply.route)));
       reply.ok = true;
       return reply;
     }
@@ -2909,11 +2919,11 @@ auto Service::display(WorkerDisplayData display,
                       WorkerProc::DisplayCredit credit) -> void {
   std::lock_guard lock(subs_mu_);
   const auto found = view_sessions_.find(display.session);
-  if (found == view_sessions_.end()) {
+  if (found == view_sessions_.end() || !found->second.conn) {
     if (credit) credit();
     return;
   }
-  server_->display(found->second.conn, view_text(display.session),
+  server_->display(*found->second.conn, view_text(display.session),
                    std::move(display.bytes), std::move(credit));
 }
 
@@ -2932,7 +2942,7 @@ auto Service::owned_view(const RequestIn& req, const ViewUuid& session)
 
 auto Service::end_view(const ViewUuid& session, const ViewSession& view)
     -> void {
-  server_->close_view(view.conn, view_text(session));
+  if (view.conn) server_->close_view(*view.conn, view_text(session));
   for (const auto& [route, endpoint] : view.routes)
     if (auto receiver = endpoint.lock())
       receiver->send({ViewEventKind::close, route, session, {}});

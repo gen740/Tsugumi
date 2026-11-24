@@ -101,6 +101,7 @@ table WorkerViewRequest {
   height:uint;
   session:ViewUuid;
   route:ViewUuid;
+  flags:uint;
 }
 
 table WorkerViewReply {

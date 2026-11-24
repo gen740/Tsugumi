@@ -1,69 +1,82 @@
 import { useEffect, useRef, useState } from 'react'
-import { browserGpu, DawnViewInstance } from '../dawn/instance'
-import { loadView } from '../dawn/loadView'
+import { BrowserView } from '../dawn/browserView'
 import { L } from '../i18n'
-import type { LiveView, ViewMessage } from '../model/liveViews'
+import type { LiveView } from '../model/liveViews'
 import { errorText } from '../model/session'
 import type { SendHtmlView } from './htmlViewFrame'
 
 export type ReadDawnView = (view: LiveView, signal: AbortSignal) => Promise<Uint8Array<ArrayBuffer>>
 
-// TODO(open): Agent PNG snapshots of dawn views.
 export function DawnViewCanvas({ view, read, send }: { view: LiveView; read: ReadDawnView; send: SendHtmlView }) {
-  const canvas = useRef<HTMLCanvasElement>(null)
+  const surface = useRef<HTMLDivElement>(null)
+  const controller = useRef<BrowserView>()
   const [error, setError] = useState('')
   const [gpuError, setGpuError] = useState('')
   const [sendError, setSendError] = useState('')
-  const supported = !!browserGpu()
+  const [audioError, setAudioError] = useState('')
+  const [enableAudio, setEnableAudio] = useState(false)
+  const [waiting, setWaiting] = useState(false)
+  const supported = typeof Worker !== 'undefined' && typeof HTMLCanvasElement !== 'undefined'
+    && typeof HTMLCanvasElement.prototype.transferControlToOffscreen === 'function' && 'gpu' in navigator
 
   useEffect(() => {
-    const target = canvas.current
-    if (!target) return view.listen(message => message.complete?.())
+    const target = surface.current
+    if (!target || !supported) return view.listen(message => message.complete?.())
     const loading = new AbortController()
     const { signal } = loading
-    let instance: DawnViewInstance | undefined
-    const pending: ViewMessage[] = []
-    const stop = view.listen(message => {
-      if (instance) instance.deliver(message)
-      else pending.push(message)
-    })
-    const releasePending = () => {
-      for (const message of pending.splice(0)) message.complete?.()
-    }
-
     setError('')
     setGpuError('')
     setSendError('')
-    void (async () => {
-      const { module } = await loadView(await read(view, signal))
-      signal.throwIfAborted()
-      const ready = await DawnViewInstance.mount(module, target, {
+    setAudioError('')
+    setWaiting(false)
+
+    // A canvas can be transferred just once. Create the presentation elements
+    // for this renderer's lifecycle, including a fresh canvas on remount.
+    const canvas = target.ownerDocument.createElement('canvas')
+    canvas.tabIndex = 0
+    canvas.setAttribute('aria-label', view.name)
+    const textarea = target.ownerDocument.createElement('textarea')
+    textarea.className = 'dawn-view-text'
+    textarea.hidden = true
+    textarea.tabIndex = -1
+    textarea.setAttribute('aria-label', view.name)
+    target.replaceChildren(canvas, textarea)
+
+    let instance: BrowserView
+    try {
+      instance = new BrowserView(canvas, textarea, view.flags, {
         send: (bytes, route) => send(view, bytes, route),
         acceptsRoute: route => view.acceptsRoute(route),
-        onFatal: cause => { if (!signal.aborted) setError(errorText(cause)) },
-        onGpuError: message => { if (!signal.aborted) setGpuError(message) },
-        onSendError: cause => {
-          if (!signal.aborted) setSendError(cause === undefined ? L('ビューのメッセージを送信できませんでした') : errorText(cause))
-        },
-      }, signal)
-      if (signal.aborted) {
-        ready.dispose()
-        return
-      }
-      instance = ready
-      for (const message of pending.splice(0)) instance.deliver(message)
-    })().catch(cause => {
-      if (signal.aborted) return
-      stop()
-      releasePending()
+        fatal: setError,
+        gpuError: setGpuError,
+        sendError: cause => setSendError(cause || L('ビューのメッセージを送信できませんでした')),
+        audioError: setAudioError,
+        waiting: setWaiting,
+        enableAudio: setEnableAudio,
+      })
+    } catch (cause) {
       setError(errorText(cause))
+      return view.listen(message => message.complete?.())
+    }
+    controller.current = instance
+    const detach = view.attachRenderer(instance)
+    const unlisten = view.listen(message => instance.deliver(message))
+    void (async () => {
+      const bytes = await read(view, signal)
+      if (!signal.aborted) instance.start(bytes)
+    })().catch(cause => {
+      if (!signal.aborted) {
+        setError(errorText(cause))
+        instance.dispose()
+      }
     })
 
     return () => {
       loading.abort()
-      stop()
-      releasePending()
-      instance?.dispose()
+      unlisten()
+      detach()
+      target.replaceChildren()
+      controller.current = undefined
     }
   }, [view, read, send, supported])
 
@@ -72,10 +85,21 @@ export function DawnViewCanvas({ view, read, send }: { view: LiveView; read: Rea
 
   return <>
     <div className="dawn-view-surface">
-      <canvas ref={canvas} tabIndex={0} aria-label={view.name} />
+      <div ref={surface} />
+      {enableAudio && !waiting && <button className="dawn-view-audio" type="button" onClick={() => controller.current?.enableAudio()}>
+        {L('音声を有効にする')}
+      </button>}
+      {waiting && <div className="dawn-view-waiting">
+        <p role="status">{L('ビューの応答を待っています')}</p>
+        <button type="button" onClick={() => {
+          controller.current?.dispose()
+          setError(L('ビューを停止しました'))
+        }}>{L('停止')}</button>
+      </div>}
     </div>
     {error && <p className="caption" role="alert">{L('Dawn ビューのエラー: {0}', error)}</p>}
     {gpuError && <p className="caption" role="alert">{L('WebGPU エラー: {0}', gpuError)}</p>}
+    {audioError && <p className="caption" role="alert">{L('音声のエラー: {0}', audioError)}</p>}
     {sendError && <p className="caption" role="alert">{sendError}</p>}
   </>
 }

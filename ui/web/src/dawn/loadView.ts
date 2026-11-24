@@ -4,6 +4,7 @@ const webgpuNames = new Set<string>(importNames)
 const tsugumiNames = new Set(['tsugumi_view_send', 'tsugumi_view_read'])
 
 export type ViewCallback = 'abi' | 'start' | 'resize' | 'draw' | 'message' | 'pointer' | 'key'
+  | 'audio' | 'text' | 'text_input' | 'composition' | 'gamepad'
 export const viewExport = (name: ViewCallback) => `tsugumi_view_${name}`
 
 export function validateViewModule(module: WebAssembly.Module): void {

@@ -1,22 +1,16 @@
 import assert from 'node:assert/strict'
-import { DawnViewInstance } from '../src/dawn/instance'
+import { absoluteNow, DawnViewInstance } from '../src/dawn/instance'
 import { viewKeysAttribute, viewOwnsKeys } from '../src/dawn/input'
 import { loadView } from '../src/dawn/loadView'
-import { encodeView, f32, i32, uleb } from './dawnLoad'
+import { encodeView, f32, i32, i64, uleb } from './dawnFixture'
 
 const frames = new Map<number, FrameRequestCallback>()
 let nextFrame = 0
-const window = Object.assign(new EventTarget(), { devicePixelRatio: 2 })
-let resize!: ResizeObserverCallback
-class Observer {
-  constructor(callback: ResizeObserverCallback) { resize = callback }
-  observe() {}
-  disconnect() {}
-}
 let loseDevice!: (value: { message: string }) => void
 const device = {
   queue: {},
   lost: new Promise<{ message: string }>(resolve => { loseDevice = resolve }),
+  destroy() {},
   onuncapturederror: null as null | ((event: { error: { message: string } }) => void),
 }
 let configs = 0
@@ -29,11 +23,8 @@ const context = {
   unconfigure() { --configs },
   getCurrentTexture() { return { createView() { ++draws; return {} } } },
 }
-const attributes = new Set<string>()
 const canvas = Object.assign(new EventTarget(), {
-  width: 300, height: 150, clientWidth: 400, clientHeight: 200,
-  setAttribute: (name: string) => { attributes.add(name) },
-  removeAttribute: (name: string) => { attributes.delete(name) },
+  width: 300, height: 150,
   getContext: (name: string) => name === 'webgpu' ? context : null,
 })
 let deviceRequests = 0
@@ -45,8 +36,6 @@ const globals = {
     } }),
     getPreferredCanvasFormat: () => 'bgra8unorm',
   } },
-  window,
-  ResizeObserver: Observer,
   requestAnimationFrame: (draw: FrameRequestCallback) => {
     frames.set(++nextFrame, draw)
     return nextFrame
@@ -54,17 +43,11 @@ const globals = {
   cancelAnimationFrame: (id: number) => frames.delete(id),
 }
 
-Object.assign(window, {
-  requestAnimationFrame: globals.requestAnimationFrame, cancelAnimationFrame: globals.cancelAnimationFrame,
-  ResizeObserver: Observer,
-})
-Object.assign(canvas, { ownerDocument: { defaultView: window } })
-
 const stepFrame = () => {
   assert.equal(frames.size, 1)
   const [[id, draw]] = frames
   frames.delete(id)
-  draw(0)
+  draw(performance.now())
 }
 const tick = () => new Promise<void>(resolve => setImmediate(resolve))
 
@@ -105,7 +88,7 @@ const { module } = await loadView(encodeView({
       ],
     },
     draw: {
-      params: [i32],
+      params: [i32, i64],
       code: [
         ...expect([0x20, 0, 0x45], 0), ...expect(read(0, 1), -1), ...mark(3),
         0x20, 0, 0x10, 2,
@@ -114,9 +97,25 @@ const { module } = await loadView(encodeView({
         0x04, i32, ...constant(1), 0x05, ...constant(2), 0x0b,
       ],
     },
-    resize: { params: [i32, i32, f32], code: [...expect([0x20, 0], 841), ...mark(4), ...constant(0)] },
+    resize: { params: [i32, i32, f32, i64], code: [...expect([0x20, 0], 841), ...mark(4), ...constant(0)] },
+    text: { params: [i32, i64], code: [
+      ...expect([0x20, 0], 3), ...expect(read(16, 3), 0),
+      ...expect(load(16), 230), ...expect(load(17), 151), ...expect(load(18), 165),
+      ...mark(6), ...constant(0),
+    ] },
+    composition: { params: [i32, i32, i64], code: [
+      ...expect([0x20, 0], 3), ...expect([0x20, 1], 3), ...expect(read(16, 3), 0),
+      ...mark(7), ...constant(0),
+    ] },
+    audio: { params: [i32, i64], code: [
+      ...expect([0x20, 0], 1), ...expect([0x20, 1, 0x50], 0),
+      ...store(35, constant(63)), ...store(39, constant(191)), ...constant(32),
+    ] },
+    gamepad: { params: [i32, i32, i32, f32, f32, f32, f32, f32, f32, i64], code: [
+      ...expect([0x20, 0], 3), ...expect([0x20, 2], 9), ...mark(8), ...constant(0),
+    ] },
     message: {
-      params: [i32],
+      params: [i32, i64],
       code: [
         ...expect([0x20, 0], 1),
         ...expect(read(4, 0), -1), ...expect(read(-1, 1), -1), ...expect(read(4, 1), 0),
@@ -152,12 +151,17 @@ const host = {
   onSendError: (error: unknown) => { sendErrors.push(error) },
   onGpuError: (message: string) => { gpuErrors.push(message) },
   onFatal: (error: unknown) => { fatal.push(error) },
+  acceptsRoute: () => true,
+  onCall() {},
+  onTextArea() {},
 }
 const original = new Map(Object.keys(globals).map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]))
 try {
   for (const [name, value] of Object.entries(globals))
     Object.defineProperty(globalThis, name, { value, configurable: true })
-  const mounted = await DawnViewInstance.mount(module, canvas as unknown as HTMLCanvasElement, host, new AbortController().signal)
+  const mount = (module: WebAssembly.Module) =>
+    DawnViewInstance.mount(module, canvas as unknown as OffscreenCanvas, { width: 800, height: 400, scale: 2 }, host, 1000 / 60)
+  const mounted = await mount(module)
   await tick()
   assert.equal(deviceRequests, 1)
   assert.equal(configs, 1)
@@ -167,24 +171,17 @@ try {
   stepFrame()
   assert.equal(draws, 2)
   assert.equal(frames.size, 0)
-  const wheel = new Event('wheel', { cancelable: true })
-  canvas.dispatchEvent(wheel)
-  assert.equal(wheel.defaultPrevented, false)
-  assert.equal(frames.size, 0)
-
-  let completed = 0
-  const message = (value: number) => mounted.deliver({ bytes: new Uint8Array([value]), complete: () => { ++completed } })
+  const message = (value: number) => mounted.deliver(Uint8Array.of(value), absoluteNow())
   await tick()
   hold = true
   message(10)
   message(20)
-  assert.equal(completed, 2)
   assert.equal(frames.size, 1)
   await tick()
   assert.deepEqual(sent.slice(-1), [[max, 10]])
   release()
   await tick()
-  resize([{ devicePixelContentBoxSize: [{ inlineSize: 841, blockSize: 420 }] }] as ResizeObserverEntry[], {} as ResizeObserver)
+  mounted.resize({ width: 841, height: 420, scale: 2 }, absoluteNow())
   assert.equal(canvas.width, 841)
   assert.equal(canvas.height, 420)
   stepFrame()
@@ -197,60 +194,57 @@ try {
   assert.match(String(sendErrors[4]), /send failed/)
   assert.equal(fatal.length, 0)
 
+  mounted.input({ type: 'text', text: '日' }, absoluteNow())
+  mounted.input({ type: 'composition', text: '日', cursor: 3 }, absoluteNow())
+  mounted.input({ type: 'gamepad', pad: 3, kind: 1, buttons: 9, lx: 0, ly: 0, rx: 0, ry: 0, lt: 0, rt: 0 }, absoluteNow())
+  assert.deepEqual([...mounted.audio(1, absoluteNow() + 50)!], [0.5, -0.5])
+  await tick()
+  assert.deepEqual(sent.slice(-3), [[1, 6], [1, 7], [1, 8]])
+  stepFrame()
+
   device.onuncapturederror?.({ error: { message: 'validation' } })
   loseDevice({ message: 'device lost' })
   await tick()
   assert.deepEqual(gpuErrors, ['validation', 'device lost'])
   message(20)
   assert.equal(frames.size, 1)
-  message(255)
-  assert.equal(completed, 4)
+  assert.throws(() => message(255), WebAssembly.RuntimeError)
   assert.ok(fatal[0] instanceof WebAssembly.RuntimeError)
   assert.equal(frames.size, 0)
   assert.equal(configs, 0)
-  message(10)
-  assert.equal(completed, 5)
+  assert.throws(() => message(10), /view is closed/)
   assert.equal(frames.size, 0)
   mounted.dispose()
 
   const { module: optionalAbsent } = await loadView(encodeView())
-  const fallback = await DawnViewInstance.mount(optionalAbsent, canvas as unknown as HTMLCanvasElement, host, new AbortController().signal)
+  const fallback = await mount(optionalAbsent)
   stepFrame()
   assert.equal(frames.size, 1)
-  fallback.deliver({ bytes: new Uint8Array([255]), complete: () => { ++completed } })
-  assert.equal(completed, 6)
+  fallback.deliver(Uint8Array.of(255), absoluteNow())
   fallback.dispose()
   assert.equal(frames.size, 0)
 
   const { module: negativeResize } = await loadView(encodeView({
-    callbacks: { resize: { params: [i32, i32, f32], code: constant(-1) } },
+    callbacks: { resize: { params: [i32, i32, f32, i64], code: constant(-1) } },
   }))
-  const negative = await DawnViewInstance.mount(negativeResize, canvas as unknown as HTMLCanvasElement, host, new AbortController().signal)
-  resize([{ devicePixelContentBoxSize: [{ inlineSize: 842, blockSize: 421 }] }] as ResizeObserverEntry[], {} as ResizeObserver)
+  const negative = await mount(negativeResize)
+  assert.throws(() => negative.resize({ width: 842, height: 421, scale: 2 }, absoluteNow()), /returned -1/)
   assert.match(String(fatal.at(-1)), /tsugumi_view_resize returned -1/)
   assert.equal(frames.size, 0)
   negative.dispose()
 
   // A view that takes keys owns them while its canvas has the focus; one without key does not.
-  assert.equal(attributes.size, 0)
   const { module: keyed } = await loadView(encodeView({
-    callbacks: { key: { params: [i32, i32, i32], code: constant(0) } },
+    callbacks: { key: { params: [i32, i32, i32, i64], code: constant(0) } },
   }))
-  const typing = await DawnViewInstance.mount(keyed, canvas as unknown as HTMLCanvasElement, host, new AbortController().signal)
-  assert.equal(deviceRequests, 2, 'all mounts after device loss share the replacement device')
-  assert.deepEqual([...attributes], [viewKeysAttribute])
+  const typing = await mount(keyed)
+  assert.equal(deviceRequests, 4, 'each view owns its own GPU device')
+  assert.equal(typing.features.key, true)
   const focused = (owner: boolean) => ({ closest: (selector: string) => owner && selector === `[${viewKeysAttribute}]` ? {} : null })
   assert.equal(viewOwnsKeys(focused(true)), true)
   assert.equal(viewOwnsKeys(focused(false)), false)
   assert.equal(viewOwnsKeys(null), false)
-  const space = Object.assign(new Event('keydown', { cancelable: true }), { code: 'Space', metaKey: false, shiftKey: false, ctrlKey: false, altKey: false })
-  canvas.dispatchEvent(space)
-  assert.equal(space.defaultPrevented, true, 'Space does not scroll the page')
-  const tab = Object.assign(new Event('keydown', { cancelable: true }), { code: 'Tab', metaKey: false, shiftKey: false, ctrlKey: false, altKey: false })
-  canvas.dispatchEvent(tab)
-  assert.equal(tab.defaultPrevented, false, 'Tab still moves the focus')
   typing.dispose()
-  assert.equal(attributes.size, 0)
 } finally {
   for (const [name, descriptor] of original) {
     if (descriptor) Object.defineProperty(globalThis, name, descriptor)

@@ -296,8 +296,8 @@ No fields.
 | [`RunCategoryDelete`](#runcategorydelete) | RunCategoryDeleteResult | Delete one category from a finished run. |
 | [`RunHistoryDelete`](#runhistorydelete) | RunHistoryDeleteResult | Delete finished runs and their records, values, logs and files. ended_before is a Unix-millisecond cutoff; omitted means all finished runs. |
 | [`RunDefinitionPaths`](#rundefinitionpaths) | RunDefinitionPaths | Accepted definition files for the recorded Card and its enclosing Cards, or for the whole run if card is absent. |
-| [`ArtifactList`](#artifactlist) | ArtifactPage | List run artifacts; invocation requires card. |
-| [`ArtifactRead`](#artifactread) | FileContent | Read artifact bytes; member selects a file within a Directory artifact. |
+| [`ArtifactList`](#artifactlist) | ArtifactPage | List a run's artifacts (invocation requires card), or look up artifact_ids: unknown ids are left out. |
+| [`ArtifactRead`](#artifactread) | FileContent | Read a member of a sealed artifact by its UUID. |
 | [`LogRange`](#logrange) | LogSlice | Read recorded run logs. Select the Card and stream=build for Nix evaluation and build output from its execution target, including failed builds and a build in progress (tail=true for its latest lines). Use run_record for the failure diagnostic. invocation requires card. tail=true reads the end with offset=0. |
 | [`RunEnvironments`](#runenvironments) | BuildEnvironmentPage | Read recorded environments in first-use order; no evaluation. |
 | [`RunEnvironmentPaths`](#runenvironmentpaths) | EnvironmentPathPage | Read a recorded runtime closure in store-path order, including its manifest. |
@@ -376,11 +376,12 @@ No fields.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `run_id` | `string` | yes |  |
+| `run_id` | `string` |  |  |
 | `card` | `CardPath` |  |  |
 | `invocation` | `uint64` |  |  |
 | `cursor` | `string` |  |  |
 | `limit` | `uint32` |  |  |
+| `artifact_ids` | `[string]` |  | uuid text; without run_id. |
 
 ### ArtifactRead
 
@@ -693,5 +694,9 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `RunCategoryDeleteRequest` | `project_id: string` (required), `run_id: string` (required), `category: Tsugumi.RPC.RunRecordCategory`, `op_id: string` (required) |
 | `TemplateListRequest` | `project_id: string` (required) |
 | `HostTemplateAddRequest` | `addition: TemplateAdd` (required) |
+| `ViewWindowsRequest` | `project_id: string` (required) |
+| `ViewActionRequest` | `project_id: string` (required), `session: string` (required), `action: ViewAction` (required) |
+| `ViewPresentationRequest` | `project_id: string` (required), `window: ViewWindow` (required), `closed: bool` |
+| `ViewActionCompleteRequest` | `request: string` (required), `session: string` (required), `png: [ubyte]`, `error: string` |
 
-Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`, `HostHome`, `FolderListing`, `CardSecretList`, `RunCategoryDeleteResult`, `TemplateList`.
+Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`, `HostHome`, `FolderListing`, `CardSecretList`, `RunCategoryDeleteResult`, `TemplateList`, `ViewWindows`, `ViewActionResult`.

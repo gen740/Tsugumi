@@ -42,6 +42,10 @@ struct Tools {
                               const std::string&, std::stop_token,
                               const std::optional<host::TurnAuthorization>&)>
         run_helper;
+    std::function<Tsugumi::Host::ViewWindowsT(const std::string&)> view_windows;
+    std::function<Tsugumi::Host::ViewActionResultT(
+        const Tsugumi::Host::ViewActionRequestT&, std::stop_token)>
+        view_action;
   };
   Tools(host::StateGate& gate, sql::Db& db, ConversationStore& conversations,
         Providers& providers, host::Settings& settings,

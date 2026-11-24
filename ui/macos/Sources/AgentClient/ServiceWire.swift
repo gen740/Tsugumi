@@ -404,6 +404,9 @@ enum ServiceWire {
     case let changed as Tsugumi_Host_SignInChangedT: return ["type": "SignInChanged", "profile": changed.profile]
     case let changed as Tsugumi_Host_SettingsChangedT: return ["type": "SettingsChanged", "revision": changed.revision]
     case let show as Tsugumi_Host_PageShowT: return ["type": "PageShow", "project": show.project, "card": show.card ?? "", "page": show.page ?? ""]
+    case let dispatch as Tsugumi_Host_ViewActionDispatchT:
+      guard let command = HostViewCommand(dispatch) else { throw RPCError.disconnected }
+      return ["type": "ViewActionDispatch", "viewCommand": command]
     default: throw RPCError.disconnected
     }
   }

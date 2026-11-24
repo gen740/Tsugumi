@@ -54,7 +54,8 @@ These are not shortened or rewritten as evidence aliases:
 | Pagination cursor | `History::make_cursor`, base64 JSON + `.` + 32 hex MAC characters; variable length | Signed continuation, not an object to cite. |
 | Integrity digest | `crypto::sha256_hex` and Nix hashing, usually 64 hex or algorithm-tagged base64 | Existing CAS/content verification requires exact bytes. |
 | Provider opaque IDs/signatures | Provider-generated; variable length | Signed provider protocol state cannot be rewritten. |
-| Internal client/view/subscription/turn IDs | Client UUID generation and `Service::view_open`; UUIDs (36), or existing counters/composition | Not sent in the model's tool arguments/results or evidence links. No display namespace is added. |
+| Card view session and route | `Service::view_control`; UUIDs (36) | The Agent's `views` tools take the session UUID as the open window address. Routes address Card mailboxes. |
+| Internal client/subscription/turn IDs | Client UUID generation, counters and derived values | Internal to the transport and Agent runtime. |
 
 
 - Connection/user/external/broker capability tokens, approval request/grant IDs,

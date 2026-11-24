@@ -1357,8 +1357,11 @@ auto Tools::ExecuteTool(const std::string& conversation,
       // rejects a missing or stale revision before executing anything.
     }
   }
+  const bool view_tool = call.name == "view_windows" ||
+                         call.name == "view_input" ||
+                         call.name == "view_snapshot";
   const bool execution =
-      call.name == "run" || call.name == "run_cancel" ||
+      call.name == "view_input" || call.name == "run" || call.name == "run_cancel" ||
       (call.name == "evaluate_nix" && json::Bool(json::Get(args, "build"))) ||
       call.name == "project_shell";
   const bool changes_project =
@@ -1534,7 +1537,57 @@ auto Tools::ExecuteTool(const std::string& conversation,
   // Reissuing it after a daemon restart may execute it a second time.
   std::string result;
   std::vector<std::string> file_resources;
-  if (call.name == "template_list") {
+  if (view_tool) {
+    if (interrupted && call.name == "view_input")
+      throw Failure("outcome_unknown", "The earlier view input may have been delivered");
+    auto windows = dependencies.view_windows(project);
+    const auto policy = Exclusions(project, stop);
+    std::erase_if(windows.windows, [&](const auto& window) {
+      std::vector<std::string> segments;
+      for (const auto& part : window->card->segments)
+        segments.push_back(json::Quote(part));
+      try {
+        policy.CheckRequest("", {{"segments", json::Encode(segments)}});
+        return false;
+      } catch (const Failure&) {
+        return true;
+      }
+    });
+    if (call.name == "view_windows") {
+      result = catalog.HostReply(wire::HostReply(1, std::move(windows)));
+    } else {
+      const auto session = json::Text(args, "session");
+      if (std::ranges::none_of(windows.windows, [&](const auto& window) {
+            return window->session == session;
+          }))
+        throw Failure("not_found", "The Card view is no longer open");
+      const bool snapshot = call.name == "view_snapshot";
+      const auto type = snapshot ? "ViewSnapshot" : json::Text(args, "action_type");
+      if (!snapshot && type != "ViewPointer" && type != "ViewKey" &&
+          type != "ViewText" && type != "ViewGamepad")
+        throw Failure("invalid_request", "Unknown Card view input type");
+      const auto request = catalog.HostRequest(
+          "view_action",
+          json::Encode(json::Members{
+              {"project_id", json::Quote(project)},
+              {"session", json::Quote(session)},
+              {"action_type", json::Quote(type)},
+              {"action", snapshot ? "{}" : json::Get(args, "action")}}),
+          1);
+      const auto action = std::unique_ptr<H::ViewActionRequestT>(
+          H::GetMessage(request.data())->payload_as_Request()
+              ->value_as_ViewActionRequest()->UnPack());
+      const auto response = dependencies.view_action(*action, stop);
+      json::Members value;
+      if (snapshot)
+        value["png"] = json::Encode(json::Members{
+            {"base64", json::Quote(crypto::base64(response.png.data(),
+                                                  response.png.size()))}});
+      result = json::Encode(json::Members{
+          {"reply", json::Quote(snapshot ? "ViewSnapshot" : "Acknowledgement")},
+          {"value", json::Encode(value)}});
+    }
+  } else if (call.name == "template_list") {
     const auto items = ListTemplates(project, true, stop);
     std::vector<std::string> entries;
     for (const auto& item : items.entries)
@@ -1652,7 +1705,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
       result = json::Encode(page);
     }
   }
-  if (!UsesRecordedDefinitions(call.name))
+  if (!view_tool && !UsesRecordedDefinitions(call.name))
     result = Exclusions(project, stop).Filter(result);
   const auto envelope = json::Object(result);
   bool error = json::Text(envelope, "reply") == "Failure";

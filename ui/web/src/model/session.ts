@@ -14,7 +14,8 @@ import { LiveView, LiveViews } from './liveViews'
 // saved (a run in progress, a lost connection).
 import { api, onServerEvent } from '../api'
 import { projectHost } from '../wire/projectHost'
-import { hostCall, onHostEvent } from '../wire/host'
+import { hostCall, onHostEvent, onHostOpen, sharedHost, type HostConnection } from '../wire/host'
+import { decodeViewInput } from '../wire/hostViews'
 import { environmentHost, environmentProgress, environmentState, type EnvPublicState } from '../wire/environment'
 import { parse, arr, bool, clone, dbl, get, isObj, J, jeq, JObj, numText, obj, real, serialize, str, tryParse } from '../../shared/json'
 import { cardPath, D, R, LiveDisplayUpdate, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../wire/rpc'
@@ -405,7 +406,11 @@ export class ProjectSession extends Observable {
     this.offEvents = onServerEvent((e) => {
       if (e.type === 'settingsChanged') void this.refreshProjectTrust().catch(() => {})
     })
-    this.offHost = onHostEvent((event) => {
+    this.offHost = onHostEvent((event, host) => {
+      if (event.valueType === H.EventPayload.ViewActionDispatch) {
+        void this.handleViewAction(event.value as H.ViewActionDispatchT, host)
+        return
+      }
       if (this.closed || this.connected) return
       if (event.valueType === H.EventPayload.EnvironmentState) {
         const state = event.value as H.EnvironmentStateT
@@ -419,6 +424,48 @@ export class ProjectSession extends Observable {
       } else return
       this.changed()
     })
+  }
+
+  private offHostOpen = onHostOpen(host => {
+    for (const view of this.liveViews.values()) this.reportLiveView(view, false, host)
+  })
+
+  private reportLiveView(view: LiveView, closed: boolean, host?: HostConnection) {
+    const project = this.projectId
+    if (!project) return
+    void (async () => {
+      const owner = host ?? await sharedHost()
+      if (!closed && this.liveViews.get(view.session) !== view) return
+      const window = new H.ViewWindowT(view.session, cardPath(path(view.card)), view.name,
+        view.type, view.mode, view.width, view.height, view.flags)
+      await owner.call(H.RequestPayload.ViewPresentationRequest,
+        new H.ViewPresentationRequestT(project, window, closed), H.ReplyPayload.Acknowledgement)
+    })().catch(() => {})
+  }
+
+  private resetLiveViews() {
+    for (const view of this.liveViews.values()) this.reportLiveView(view, true)
+    this.liveViews.reset()
+  }
+
+  private async handleViewAction(event: H.ViewActionDispatchT, host: HostConnection) {
+    if (this.closed || !this.connected || s(event.projectId) !== this.projectId) return
+    const session = s(event.session)
+    const view = this.liveViews.get(session)
+    if (!view) return
+    const result = new H.ViewActionCompleteRequestT(s(event.request), session)
+    try {
+      if (event.actionType === H.ViewAction.ViewSnapshot) {
+        result.png = Array.from(await view.snapshot())
+      } else {
+        const input = decodeViewInput(event.action)
+        if (!input) throw new Error('Invalid Card view input')
+        await view.sendInput(input)
+      }
+    } catch (error) {
+      result.error = error instanceof Error ? error.message : String(error)
+    }
+    await host.call(H.RequestPayload.ViewActionCompleteRequest, result, H.ReplyPayload.Acknowledgement).catch(() => {})
   }
 
   /** The core clock now (ms since 1970), for elapsed times of a running run. */
@@ -541,7 +588,7 @@ export class ProjectSession extends Observable {
         if (this.client !== c) return
         this.documentRevisions.disconnect(new RPCError('disconnected', L('接続していません')))
         this.connected = false
-        this.liveViews.reset()
+        this.resetLiveViews()
         this.changed()
         this.reconnect()
       }
@@ -554,7 +601,7 @@ export class ProjectSession extends Observable {
     } catch (e) {
       if (epoch !== this.connectionEpoch || this.closed) return
       this.connected = false
-      this.liveViews.reset()
+      this.resetLiveViews()
       this.connectionFailed = e instanceof Unreached
       this.connectionMessage = errorText(e instanceof Unreached ? e.cause : e)
       if (this.environment.state === 'starting' || this.environment.state === 'reconnecting') this.environment = { state: 'ready' }
@@ -591,7 +638,7 @@ export class ProjectSession extends Observable {
     this.client = undefined
     old?.close()
     this.connected = false
-    this.liveViews.reset()
+    this.resetLiveViews()
     this.changed()
     void (async () => {
       // The host Start request joins a restart and answers only when ready or
@@ -612,7 +659,7 @@ export class ProjectSession extends Observable {
       this.client = undefined
       old?.close()
       this.connected = false
-      this.liveViews.reset()
+      this.resetLiveViews()
       this.environment = { state: 'starting', message: L('tsugumid の応答を待っています') }
       this.changed()
       try {
@@ -637,12 +684,13 @@ export class ProjectSession extends Observable {
     this.connecting?.abort()
     this.offEvents?.()
     this.offHost?.()
+    this.offHostOpen()
     clearTimeout(this.viewSaveTimer)
     const c = this.client
     this.client = undefined
     c?.close()
     this.connected = false
-    this.liveViews.reset()
+    this.resetLiveViews()
   }
 
   async stopEnvironment() {
@@ -652,7 +700,7 @@ export class ProjectSession extends Observable {
     this.client = undefined
     c?.close()
     this.connected = false
-    this.liveViews.reset()
+    this.resetLiveViews()
     this.changed()
     try { this.environment = await this.environmentHost.stop(this.dir) }
     catch (error) { this.connectionMessage = errorText(error) }
@@ -662,8 +710,9 @@ export class ProjectSession extends Observable {
   dispose() {
     this.offEvents()
     this.offHost()
+    this.offHostOpen()
     this.client?.close()
-    this.liveViews.reset()
+    this.resetLiveViews()
   }
 
   /** Notifications are taken in as they arrive and applied in batches at most
@@ -751,8 +800,10 @@ export class ProjectSession extends Observable {
         break
       }
       case R.NotificationPayload.ViewOpened: {
-        const { session, card, name, type, mode, width, height } = e.value as R.ViewOpenedT
-        this.liveViews.open(new LiveView(s(session), key(segs(card)), s(name), s(type), mode, width, height))
+        const { session, card, name, type, mode, width, height, flags } = e.value as R.ViewOpenedT
+        const view = new LiveView(s(session), key(segs(card)), s(name), s(type), mode, width, height, flags)
+        this.liveViews.open(view)
+        this.reportLiveView(view, false)
         break
       }
       case R.NotificationPayload.ViewRouteRegistered: {
@@ -1172,7 +1223,10 @@ export class ProjectSession extends Observable {
   }
 
   closeLiveView(session: string) {
-    if (!this.liveViews.close(session)) return
+    const view = this.liveViews.get(session)
+    if (!view) return
+    this.liveViews.close(session)
+    this.reportLiveView(view, true)
     void this.client?.closeView(session).catch(() => {})
     this.changed()
   }

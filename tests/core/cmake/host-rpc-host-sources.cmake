@@ -2,6 +2,7 @@ set(_tsugumi_host_rpc_host_sources
   agent/conversation_store_rpc_test.cc
   agent/rpc_test.cc
   agent/host_rpc_test.cc
+  agent/view_rpc_test.cc
   agent/skills_rpc_test.cc
   agent/project_rpc_test.cc
   agent/exclude_rpc_test.cc

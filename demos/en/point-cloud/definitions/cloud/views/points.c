@@ -40,9 +40,11 @@ static WGPUTextureView depth_view;
 static uint32_t width, height;
 static float scale;
 
-// x = yaw, y = pitch. Velocities use radians per frame for inertial orbit.
+// Velocities are radians per 1/60 second, independent of display refresh.
+#define kOrbitStep (TSUGUMI_VIEW_SAMPLE_RATE / 60u)
 static float yaw = 0.45f, pitch = 0.55f, zoom = 1.0f;
 static float yaw_velocity, pitch_velocity, last_x, last_y;
+static tsugumi_view_time last_motion, last_present;
 static bool dragging;
 
 static const char shader_code[] =
@@ -158,12 +160,14 @@ int32_t tsugumi_view_start(WGPUDevice gpu, WGPUQueue commands,
   device = gpu;
   queue = commands;
   if (create_pipeline(format) || create_camera() ||
-      tsugumi_view_resize(w, h, device_scale))
+      tsugumi_view_resize(w, h, device_scale, 0))
     return -1;
   return 0;
 }
 
-int32_t tsugumi_view_resize(uint32_t w, uint32_t h, float device_scale) {
+int32_t tsugumi_view_resize(uint32_t w, uint32_t h, float device_scale,
+                            tsugumi_view_time at) {
+  (void)at;
   scale = device_scale;
   if (w == width && h == height) return 0;
   width = w;
@@ -199,7 +203,8 @@ static Point* reserve_points(uint32_t needed) {
   return (Point*)base;
 }
 
-int32_t tsugumi_view_message(uint32_t size) {
+int32_t tsugumi_view_message(uint32_t size, tsugumi_view_time at) {
+  (void)at;
   if (size < offsetof(Chunk, points) || size > sizeof(message) ||
       tsugumi_view_read((uint8_t*)&message, size))
     return -1;
@@ -264,7 +269,8 @@ static void orbit(float dyaw, float dpitch) {
 }
 
 int32_t tsugumi_view_pointer(uint32_t kind, float x, float y, uint32_t buttons,
-                             float wheel_x, float wheel_y, uint32_t modifiers) {
+                             float wheel_x, float wheel_y, uint32_t modifiers,
+                             tsugumi_view_time at) {
   (void)wheel_x;
   (void)modifiers;
   if (kind == 3) {
@@ -273,15 +279,27 @@ int32_t tsugumi_view_pointer(uint32_t kind, float x, float y, uint32_t buttons,
   } else if (kind == 1 && (buttons & 1)) {
     dragging = true;
     yaw_velocity = pitch_velocity = 0.0f;
+    last_motion = at;
     last_x = x;
     last_y = y;
   } else if (kind == 0 && dragging && (buttons & 1)) {
-    yaw_velocity = clamp((x - last_x) * 0.007f, -0.25f, 0.25f);
-    pitch_velocity = clamp((y - last_y) * 0.007f, -0.25f, 0.25f);
-    orbit(yaw_velocity, pitch_velocity);
+    const float dyaw = clamp((x - last_x) * 0.007f, -0.25f, 0.25f);
+    const float dpitch = clamp((y - last_y) * 0.007f, -0.25f, 0.25f);
+    const float steps = at > last_motion
+                            ? (float)(at - last_motion) / kOrbitStep
+                            : 1.0f;
+    yaw_velocity = clamp(dyaw / steps, -0.25f, 0.25f);
+    pitch_velocity = clamp(dpitch / steps, -0.25f, 0.25f);
+    orbit(dyaw, dpitch);
+    last_motion = at;
     last_x = x;
     last_y = y;
   } else if (kind == 2 || kind == 4 || (kind == 0 && !(buttons & 1))) {
+    if (dragging) {
+      if (at > last_motion && at - last_motion > TSUGUMI_VIEW_SAMPLE_RATE / 10u)
+        yaw_velocity = pitch_velocity = 0.0f;
+      last_present = at;
+    }
     dragging = false;
   }
   return 0;
@@ -312,17 +330,27 @@ static void upload_camera(void) {
   wgpuQueueWriteBuffer(queue, camera_buffer, 0, camera, sizeof(camera));
 }
 
-int32_t tsugumi_view_draw(WGPUTextureView target) {
+int32_t tsugumi_view_draw(WGPUTextureView target, tsugumi_view_time present) {
   if (!depth_view) return 0;
-  if (!dragging) {
-    const float previous_pitch = pitch;
-    orbit(yaw_velocity, pitch_velocity);
-    if (pitch == previous_pitch) pitch_velocity = 0.0f;
-    yaw_velocity *= 0.88f;
-    pitch_velocity *= 0.88f;
+  if (!dragging && present > last_present &&
+      (yaw_velocity != 0.0f || pitch_velocity != 0.0f)) {
+    const float damping = 0.88f;
+    const float steps = clamp((float)(present - last_present) / kOrbitStep, 0, 60);
+    const uint32_t whole_steps = (uint32_t)steps;
+    float retained = 1.0f;
+    for (uint32_t i = 0; i < whole_steps; ++i) retained *= damping;
+    retained *= 1.0f - (1.0f - damping) * (steps - whole_steps);
+
+    const float distance = (1.0f - retained) / (1.0f - damping);
+    orbit(yaw_velocity * distance, pitch_velocity * distance);
+    if (pitch <= -1.5f || pitch >= 1.5f) pitch_velocity = 0.0f;
+    yaw_velocity *= retained;
+    pitch_velocity *= retained;
     if (__builtin_fabsf(yaw_velocity) < 0.001f) yaw_velocity = 0.0f;
     if (__builtin_fabsf(pitch_velocity) < 0.001f) pitch_velocity = 0.0f;
   }
+
+  if (present > last_present) last_present = present;
 
   WGPURenderPassColorAttachment color = WGPU_RENDER_PASS_COLOR_ATTACHMENT_INIT;
   color.view = target;
