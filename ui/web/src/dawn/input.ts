@@ -20,6 +20,13 @@ for (const [index, digit] of [...'1234567890'].entries()) {
 }
 for (let key = 1; key <= 12; ++key) usages.set(`F${key}`, 0x39 + key)
 
+/** Marks a view canvas that takes keys: while it has the focus, every key is the view's. */
+export const viewKeysAttribute = 'data-view-keys'
+
+export function viewOwnsKeys(focused: Pick<Element, 'closest'> | null): boolean {
+  return !!focused?.closest(`[${viewKeysAttribute}]`)
+}
+
 export const keyUsage = (code: string): number | undefined => usages.get(code)
 
 export function modifiers(event: MouseEvent | KeyboardEvent): number {
