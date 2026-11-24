@@ -133,7 +133,9 @@ async function test() {
   const windowed = frameOf('win')
   assert(windowed.classList.contains('view-window-window'), 'WINDOW opens an in-page window')
   const body = windowed.querySelector('.float-body')!.getBoundingClientRect()
-  equal([body.width, Math.round(body.height)], [640, 480], 'The window content has the requested size')
+  // The requested size, kept inside the page (a 12px margin and the 30px title bar).
+  equal([body.width, Math.round(body.height)], [Math.min(640, innerWidth - 24), Math.min(480, innerHeight - 24 - 30)],
+    'The window content has the requested size')
   await until(() => replies.some(([session, , bytes]) => session === 'win' && bytes[0] === 91), 'window HTML messages')
   equal(replies.filter(([session]) => session === 'win'), [['win', opener, [12, 0, 255]], ['win', addressed, [91]]],
     'The window uses the page connection and sends explicit routes')
