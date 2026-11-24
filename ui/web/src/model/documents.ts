@@ -88,9 +88,9 @@ export function parseReadme(text: string): Readme | undefined {
   if (end < 0) return undefined
   const fields = new Map<string, string>()
   for (const line of text.slice(4, end).split('\n')) {
-    const match = /^(title|description): ([^\r]*)$/.exec(line)
+    const match = /^(title|description):(?: ([^\r]*))?$/.exec(line)
     if (!match || fields.has(match[1])) return undefined
-    fields.set(match[1], match[2])
+    fields.set(match[1], match[2] ?? '')
   }
   const title = fields.get('title'), description = fields.get('description')
   if (!title?.trim() || description === undefined) return undefined

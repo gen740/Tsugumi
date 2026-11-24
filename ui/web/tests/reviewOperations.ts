@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { Builder } from 'flatbuffers'
 import * as H from '../shared/gen/tsugumi/host'
 import { D, R, RPCFailure, cardPath } from '../src/wire/rpc'
+import { printReadme, splitCardNotes } from '../src/model/documents'
 import { get, J, num, numText, obj, parse, serialize } from '../shared/json'
 
 const page = globalThis as Record<string, unknown>
@@ -233,7 +234,8 @@ for (const kind of ['note', 'group', 'comment'] as const) {
     const document = (text: string) => obj([[field, [value(text)]]])
     const fields = (text: string) => {
       const encoded = serialize(document(text))
-      if (file !== 'layout.bin') return { definitionsUpsert: [definitionFixture('a', serialize(s.cardDefinition('a')), encoded)] }
+      if (file !== 'layout.bin') return { definitionsUpsert: [definitionFixture('a', serialize(s.cardDefinition('a')),
+        JSON.stringify({ ...JSON.parse(encoded), content: 'before' }))] }
       const { bytes, notes } = layoutFixture(encoded)
       const sourcesUpsert = [...notes].map(([id, contents]) => Object.assign(new R.SourceInfoT(), {
         path: `notes/${id}.md`, document: textBytes(contents),
@@ -266,7 +268,11 @@ for (const kind of ['note', 'group', 'comment'] as const) {
     }
     assert.equal(await save(true), true, kind + ': overwrite must save')
     assert.equal(guards.at(-1), serialize(value(actual)))
-    assert.equal(file === 'layout.bin' ? serialize(s.layout) : serialize(s.cardMeta('a')), serialize(document('mine')))
+    if (kind === 'comment') {
+      const { readme, comments } = splitCardNotes(s.cardMeta('a'))
+      assert.equal(serialize(comments!), serialize(document('mine')))
+      assert.equal(readme, printReadme({ title: 'a', description: '', body: 'before' }))
+    } else assert.equal(serialize(s.layout), serialize(document('mine')))
   }
 }
 
@@ -281,7 +287,7 @@ for (const source of [false, true]) {
     else editor.setSetting('symbol', 'mine')
     const publish = (text: string) => s.applyDelta(Object.assign(new R.DocumentDeltaT(), {
       baseRev: s.rev, rev: s.rev + 1n, origin: 'agent',
-      definitionsUpsert: [definitionFixture('a', serialize(obj([['type', 'input'], ['symbol', text]])), serialize(s.cardMeta('a')))],
+      definitionsUpsert: [definitionFixture('a', cardFixture('input', { symbol: text }), serialize(s.cardMeta('a')))],
       sourcesUpsert: [Object.assign(new R.SourceInfoT(), { path: file, hash: text, sizeBytes: 1n })],
     }))
     publish('agent')
@@ -320,7 +326,8 @@ for (const third of [false, true]) {
     if (body.expectedRev !== s.rev) throw new RPCFailure({ kind: D.FailureKind.revision_conflict })
     return saved(s, request, inverse('raw'), { definitionsUpsert: [definitionFixture('a', cardFixture('draft'), '{"content":"mine"}')] })
   }
-  const save = (overwrite: boolean) => edit.replaceDocuments(s, [['definitions/a/_card.json', parse(cardFixture('draft'))], ['definitions/a/README.md', 'mine']], overwrite)
+  const readme = printReadme({ title: 'a', description: '', body: 'mine' })
+  const save = (overwrite: boolean) => edit.replaceDocuments(s, [['definitions/a/_card.json', parse(cardFixture('draft'))], ['definitions/a/README.md', readme]], overwrite)
   assert.equal(await save(false), false)
   assert.equal(edit.conflictRev, 1n)
   assert.equal(edit.error, undefined)
