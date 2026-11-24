@@ -96,7 +96,11 @@ def test_nested_cards_keep_their_types_and_run_boundaries(core_factory, project)
                                      [conn("source", "out", "child", "in"), conn("child", "out", "sink", "in")], cards)
     assert not codes(resolved["sink"])
     assert not codes(resolved["child/inner"])
-    assert not resolved["sink"].nixReferences
+    # The subgraph appears under its own id with its inner Card's exports;
+    # inner Cards get nothing from outside.
+    reference, = resolved["sink"].nixReferences
+    assert text(reference.name) == "child"
+    assert [text(segment) for segment in reference.target.segments] == ["child", "inner"]
     assert not resolved["child/inner"].nixReferences
     assert text(resolved["sink"].inputs[0].rootType) == "t.Number"
     for target, propagate, expected in [

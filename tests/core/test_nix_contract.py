@@ -19,7 +19,7 @@ def evaluated(client, card, expression, **options):
 
 
 @pytest.mark.environment
-def test_nix_inputs_are_transitive_exports_and_stop_at_merge(client, project):
+def test_nix_inputs_are_transitive_exports_and_merge_passes_on_what_its_inputs_share(client, project):
     graph = Project(project)
     graph.card("a", {"type": "code"}, outputs=OUTPUTS, sources={
         "default.nix": '{ params, inputs }: { exports.message = params.text; }',
@@ -37,7 +37,8 @@ def test_nix_inputs_are_transitive_exports_and_stop_at_merge(client, project):
     assert evaluated(client, "c", "inputs") == {
         "a": {"message": "from A"}, "b": {"message": "from A via B"},
     }
-    assert evaluated(client, "d", "inputs") == {}
+    # The Merge's one input exposes a, so a is common to all its inputs.
+    assert evaluated(client, "d", "inputs") == {"a": {"message": "from A"}}
     assert evaluated(client, "c", "params") == {}
     assert evaluated(client, "c", "null", build=True) is None
 
