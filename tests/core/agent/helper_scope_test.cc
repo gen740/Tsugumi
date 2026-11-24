@@ -45,16 +45,16 @@ TEST(HelperScope, FailureKeepsInScopeDiagnosticAndTypedFields) {
 }
 TEST(HelperScope, FailureRedactsUnreadableCardsAndFilesOnly) {
   HelperScope scope(json::Object(
-      R"({"read_cards":["mine"],"write_cards":["mine","SECRET"],"run_cards":[]})"));
+      R"({"read_cards":["mine"],"write_cards":["mine","secret"],"run_cards":[]})"));
   const auto read = [](const std::string& path) -> std::string {
     if (path == "tsugumi.json")
-      return R"({"canvas":{"cards":[{"id":"mine"},{"id":"SECRET"}]}})";
+      return R"({"canvas":{"cards":[{"id":"mine"},{"id":"secret"}]}})";
     return "";
   };
   for (const auto& diagnostic :
-       {"wire mine -> SECRET: SECRET is still a Draft; write to.port as \"\"",
-        "definitions/mine/main.py: cannot read definitions/SECRET/hidden.csv",
-        "Concurrent edit conflicts at /definitions~1SECRET~1_card.json/name; "
+       {"wire mine -> secret: secret is still a Draft; write to.port as \"\"",
+        "definitions/mine/main.py: cannot read definitions/secret/hidden.csv",
+        "Concurrent edit conflicts at /definitions~1secret~1_card.json/name; "
         "inspect and re-apply",
         "cannot read hidden.csv"}) {
     const auto result = scope.FailureResult(
@@ -64,9 +64,9 @@ TEST(HelperScope, FailureRedactsUnreadableCardsAndFilesOnly) {
                           {"kind", json::Quote("validation_failed")},
                           {"diagnostic", json::Quote(diagnostic)},
                           {"message", json::Quote(diagnostic)},
-                          {"args", R"([{"key":"card","value":"SECRET"}])"}})}}),
+                          {"args", R"([{"key":"card","value":"secret"}])"}})}}),
         read);
-    EXPECT_EQ(result.find("SECRET"), std::string::npos);
+    EXPECT_EQ(result.find("secret"), std::string::npos);
     EXPECT_EQ(result.find("hidden.csv"), std::string::npos);
     EXPECT_NE(result.find("[redacted]"), std::string::npos);
     if (std::string(diagnostic).starts_with("definitions/mine"))
@@ -406,7 +406,7 @@ TEST(HelperScope,
       std::runtime_error);
   EXPECT_NO_THROW(HelperScope::Validate(
       json::Object(
-          R"({"read_cards":["card.v2"],"write_cards":[],"run_cards":[]})"),
+          R"({"read_cards":["card_v2"],"write_cards":[],"run_cards":[]})"),
       false));
 }
 TEST(HelperScope, RunOwnershipComesFromReceiptsEvenAfterTranscriptCompaction) {

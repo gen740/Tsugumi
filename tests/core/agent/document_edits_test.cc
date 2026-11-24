@@ -279,7 +279,7 @@ TEST(DocumentSubgraph, ReusesEndpointsAndDisambiguatesPortNames) {
   std::set<std::string> ports;
   for (const auto& output : json::Array(boundary.at("outputs")))
     ports.insert(json::Text(json::Object(output), "name"));
-  EXPECT_EQ(ports, (std::set<std::string>{"a_b_c", "a_b_c2"}));
+  EXPECT_EQ(ports, (std::set<std::string>{"a_b_c", "a_b_c_2"}));
   const auto wires =
       json::Array(json::Object(json::Object(edit.project_json).at("canvas"))
                       .at("connections"));

@@ -21,7 +21,7 @@ class AgentSavePolicy : public ::testing::Test {
       {"definitions/plan/_card.json",
        R"({"type":"draft","symbol":"pencil.and.outline"})"},
       {"definitions/plan/README.md",
-       "---\ndescription: Counts words\n---\n\nSplit and count."},
+       "---\ntitle: Plan\ndescription: Counts words\n---\n\nSplit and count."},
       {"definitions/plan/_comments.json",
        R"({"comments":[{"id":"c1","text":"Use a log scale","author":"user"},{"id":"c2","text":"Name the axis","author":"user"}]})"}};
   auto Base() -> SaveBase {
@@ -84,21 +84,22 @@ TEST_F(AgentSavePolicy, DraftIntentIsKeptAndOnlyEmptyDescriptionIsFilled) {
   EXPECT_NO_THROW(Prepare({Implement()}));
   EXPECT_NO_THROW(
       Prepare({Implement({{"fill_description", json::Quote("Ignored")}})}));
-  files["definitions/plan/README.md"] = "Split and count.";
+  files["definitions/plan/README.md"] =
+      "---\ntitle: Plan\ndescription:\n---\n\nSplit and count.";
   EXPECT_THROW(Prepare({Implement()}), Failure);
   const auto saved = Prepare({
       Implement({{"fill_description", json::Quote("Counts words")}})});
   const auto value = json::Object(json::Get(
       json::Object(json::Array(saved.arguments.at("changes"))[0]), "value"));
   EXPECT_EQ(json::Text(value, "readme"),
-            "---\ndescription: Counts words\n---\n\nSplit and count.");
+            "---\ntitle: Plan\ndescription: Counts words\n---\n\nSplit and count.");
   EXPECT_FALSE(value.contains("fill_description"));
 }
 
 TEST_F(AgentSavePolicy, NonblankIntentCannotBeChangedOrDropped) {
-  for (const auto* readme : {"---\ndescription: Different\n---\n\nSplit and count.",
-                             "---\ndescription: Counts words\n---\n\nDifferent.",
-                             "---\ndescription: Counts words\n---\n"}) {
+  for (const auto* readme : {"---\ntitle: Plan\ndescription: Different\n---\n\nSplit and count.",
+                             "---\ntitle: Plan\ndescription: Counts words\n---\n\nDifferent.",
+                             "---\ntitle: Plan\ndescription: Counts words\n---\n"}) {
     EXPECT_THROW(Prepare({Implement({{"readme", json::Quote(readme)}})}),
                  Failure);
   }
@@ -182,7 +183,7 @@ TEST_F(AgentSavePolicy, NestedCommentsPatchesAreStampedAndDraftIntentChecked) {
   const std::string path = "externals/outer/definitions/plan/";
   files[path + "_card.json"] =
       R"({"type":"draft","symbol":"pencil.and.outline"})";
-  files[path + "README.md"] = "Plan";
+  files[path + "README.md"] = "---\ntitle: Plan\ndescription:\n---\n\nPlan";
   auto source = [&](const std::string& file, const std::string& bytes) {
     return json::Encode(json::Members{
         {"value_type", json::Quote("PutSource")},
@@ -197,7 +198,7 @@ TEST_F(AgentSavePolicy, NestedCommentsPatchesAreStampedAndDraftIntentChecked) {
       std::runtime_error);
   EXPECT_NO_THROW(
       Prepare({source("_card.json", ::tsugumi::test::FixtureCodeCard()),
-               source("README.md", "---\ndescription: Summary\n---\n\nPlan")}));
+               source("README.md", "---\ntitle: Plan\ndescription: Summary\n---\n\nPlan")}));
   files[path + "_comments.json"] =
       R"({"comments":[{"id":"c1","text":"Ask","author":"user"}]})";
   auto meta = files.at(path + "_comments.json");
@@ -224,10 +225,10 @@ TEST_F(AgentSavePolicy, NestedCommentsPatchesAreStampedAndDraftIntentChecked) {
             std::string::npos);
 }
 TEST(AgentPresentation, StemDerivationIsOwnedByTheCaller) {
-  EXPECT_EQ(CardStem("Aggregate Results!"), "aggregate-results");
+  EXPECT_EQ(CardStem("Aggregate Results!"), "aggregate_results");
   EXPECT_EQ(CardStem("集計"), "card");
-  EXPECT_EQ(CardStem("---A___B---"), "a-b");
-  EXPECT_LE(CardStem(std::string(500, 'a')).size(), 123u);
+  EXPECT_EQ(CardStem("---A___B---"), "a_b");
+  EXPECT_LE(CardStem(std::string(500, 'a')).size(), 64u);
 }
 }  // namespace
 }  // namespace tsugumi::host

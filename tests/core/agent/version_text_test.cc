@@ -44,7 +44,8 @@ class VersionNote : public ::testing::Test {
 TEST_F(VersionNote,
        FullTreesDistinguishParametersDefinitionsSourceWiringAndMembership) {
   Put("tsugumi.json",
-      R"({"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})");
+      test::FixtureProjectDocument(
+          R"({"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})"));
   Put("definitions/a/_card.json", ::tsugumi::test::FixtureCodeCard());
   Put("definitions/a/params.nix", R"({ secret = "FIRST"; })");
   Put("definitions/b/_card.json", ::tsugumi::test::FixtureCodeCard());
@@ -58,7 +59,7 @@ TEST_F(VersionNote,
   ExpectChanges(neutral, {}, {}, {{"a", {"parameters"}}});
   EXPECT_EQ(versions.note(params).facts, neutral);
   EXPECT_EQ(neutral.find("PRIVATE_SENTINEL"), std::string::npos);
-  Put("definitions/a/_card.json", R"({ "type": "code" })");
+  Put("definitions/a/_card.json", " " + ::tsugumi::test::FixtureCodeCard() + "\n");
   const auto formatting = versions.commit_all("Formatting");
   ExpectChanges(versions.note(formatting).facts, {}, {}, {});
   Put("definitions/a/_card.json",
@@ -69,7 +70,8 @@ TEST_F(VersionNote,
   Put("definitions/c/_card.json", ::tsugumi::test::FixtureCodeCard());
   std::filesystem::remove_all(root / "definitions/b");
   Put("tsugumi.json",
-      R"({"canvas":{"cards":[{"id":"a"},{"id":"c"}],"connections":[{"from":{"card":"a","port":"out"},"to":{"card":"c","port":"in"}}]}})");
+      test::FixtureProjectDocument(
+          R"({"canvas":{"cards":[{"id":"a"},{"id":"c"}],"connections":[{"from":{"card":"a","port":"out"},"to":{"card":"c","port":"in"}}]}})"));
   auto change = versions.commit_all("Change");
   EXPECT_TRUE(versions.diff(change).truncated);
   ExpectChanges(versions.note(change).facts, {"c"}, {"b"},
@@ -96,9 +98,11 @@ TEST_F(VersionNote,
 }
 TEST_F(VersionNote, NestedCardsAndTheEntryLimitUseTheFullDiff) {
   Put("tsugumi.json",
-      R"({"canvas":{"cards":[{"id":"inner"}],"connections":[]}})");
+      test::FixtureProjectDocument(
+          R"({"canvas":{"cards":[{"id":"inner"}],"connections":[]}})"));
   Put("externals/inner/tsugumi.json",
-      R"({"canvas":{"cards":[{"id":"a"}],"connections":[]}})");
+      test::FixtureProjectDocument(
+          R"({"canvas":{"cards":[{"id":"a"}],"connections":[]}})"));
   Put("externals/inner/definitions/a/_card.json",
       ::tsugumi::test::FixtureCodeCard());
   Versions versions(root);
@@ -108,7 +112,8 @@ TEST_F(VersionNote, NestedCardsAndTheEntryLimitUseTheFullDiff) {
   ExpectChanges(versions.note(commit).facts, {}, {},
                 {{"inner/a", {"source"}}});
   Put("externals/inner/tsugumi.json",
-      R"({"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"},{"id":"e"},{"id":"f"},{"id":"g"},{"id":"h"}],"connections":[]}})");
+      test::FixtureProjectDocument(
+          R"({"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"},{"id":"e"},{"id":"f"},{"id":"g"},{"id":"h"}],"connections":[]}})"));
   commit = versions.commit_all("Many Cards");
   ExpectChanges(versions.note(commit).facts,
                 {"inner/b", "inner/c", "inner/d", "inner/e", "inner/f",

@@ -37,7 +37,7 @@ TEST(SchemaDecode, DefinitionLoaderNamesUnknownSettingsAndTheFile) {
 
 TEST(SchemaDecode, EveryCardStatesAKnownType) {
   for (const auto& [text, message] : {
-           std::pair{R"({"symbol":"link"})", R"("type" is required)"},
+           std::pair{R"({"symbol":"link"})", "type is required"},
            std::pair{R"({"type":"none","symbol":"link"})",
                      "unknown enum value: none"},
        }) {

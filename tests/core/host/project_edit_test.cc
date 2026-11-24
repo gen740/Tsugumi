@@ -31,8 +31,7 @@ auto Field(std::vector<std::string> fields, std::string old_value,
 }
 TEST(NixPathDocument, ValidatesNamesAndUrlsAndSortsLockLines) {
   const auto project = [](std::string entries) {
-    return "{\"nixPath\":" + entries +
-           ",\"canvas\":{\"cards\":[],\"connections\":[]}}";
+    return test::FixtureProjectDocument("{\"nixPath\":" + entries + "}");
   };
   EXPECT_NO_THROW(parse_project_json(
       project(R"([{"name":"9.compile_x-1","url":"github:org/repo"}])")));
@@ -321,7 +320,8 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
   SaveBase base;
   base.snapshot["rev"] = "7";
   const std::string before =
-      R"({"nixPath": [],"canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":""},"to":{"card":"compare","port":""}}]}})";
+      test::FixtureProjectDocument(
+          R"({"canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":""},"to":{"card":"compare","port":""}}]}})");
   base.files["tsugumi.json"] = before;
   base.files["definitions/knn/_card.json"] =
       R"({"type":"draft","symbol":"pencil.and.outline"})";
@@ -509,7 +509,8 @@ TEST(ProjectEditDiagnostics, NamesTheWireEndAndTheDefinitionFieldsToWrite) {
     SCOPED_TRACE(scenario);
     Document doc;
     doc.project_json =
-        R"({"nixPath": [],"canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":"out"},"to":{"card":"compare","port":"source"}}]}})";
+        test::FixtureProjectDocument(
+            R"({"canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":"out"},"to":{"card":"compare","port":"source"}}]}})");
     doc.project_buffer = parse_project_json(doc.project_json).buffer;
     const auto add = [&](const std::string& id, const std::string& raw) {
       DefinitionDoc definition;

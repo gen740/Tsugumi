@@ -481,8 +481,7 @@ TEST(EnvironmentAdapterTest, FolderMutationsSurviveStartsAndServiceRecreation) {
 TEST(EnvironmentAdapterTest,
      GuestAttachedRootUsesTheMountEvenWhenTheHostPathExists) {
   TemporaryDirectory directory;
-  Write(directory.path / "project/tsugumi.json",
-        R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
+  Write(directory.path / "project/tsugumi.json", FixtureProjectDocument());
   auto process = std::make_shared<HelperDouble>();
   process->guest = true;
   host::EnvironmentOptions options;

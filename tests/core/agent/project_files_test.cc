@@ -144,7 +144,7 @@ TEST(HostProjectFiles, ImportAndDuplicateUseTheSameRuleAndPreserveBytes) {
 }
 TEST(HostProjectFiles, RejectsTooLargeProjectsBeforeReadingContents) {
   TemporaryDirectory dir;
-  Write(dir.path / "project/tsugumi.json", "{}");
+  Write(dir.path / "project/tsugumi.json", FixtureProjectDocument());
   Write(dir.path / "project/large.bin", "");
   std::filesystem::resize_file(dir.path / "project/large.bin", (64 << 20) + 1);
   EXPECT_THROW(host::ReadProjectFiles((dir.path / "project").string()),

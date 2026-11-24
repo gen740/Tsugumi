@@ -57,13 +57,13 @@ RUN_LIST_REMOTE = {
 }
 
 
-def write(project, definitions, cards, connections, **options):
+def write(project, definitions, cards, connections, *, files=None):
     remote_system = os.environ["TSUGUMI_TEST_REMOTE_SYSTEM"]
     definitions = {
         key: {"system": remote_system, **body} if body.get("workerCapabilities") else body
         for key, body in definitions.items()
     }
-    write_nix_project(project, definitions, cards, connections, **options)
+    write_nix_project(project, definitions, cards, connections, files=files)
 
 
 @pytest.fixture(scope="session")
@@ -398,7 +398,7 @@ def run(input):
                   "_outputs": "table Outputs {} root_type Outputs;",
                   "_nix": entry(python_run(source), views)}
     write(project, {"work": definition}, [card("work", "work")], [],
-          {"definitions/work/notes.html": "<!doctype html><p>Empty view</p>"})
+          files={"definitions/work/notes.html": "<!doctype html><p>Empty view</p>"})
     client = core_factory().connect()
     subscription = text(client.open().subscriptionId)
     client.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("work")])
@@ -544,8 +544,8 @@ def run(input):
 
 
 @pytest.fixture
-def secret_project(project, remote_broker):
-    """The hostd project id the broker binds this project's Card secrets to."""
+def secret_project(project):
+    """Write the hostd project id before the broker captures it on authorization."""
     (project / ".tsugumi").mkdir(exist_ok=True)
     (project / ".tsugumi/project-id").write_text(SECRET_PROJECT)
     return SECRET_PROJECT

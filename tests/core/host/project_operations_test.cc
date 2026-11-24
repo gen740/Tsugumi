@@ -335,7 +335,7 @@ class TransformationProject {
        R"({"type":"subgraph","symbol":"link"})"},
       {"externals/sub/externals/b/tsugumi.json",
        R"({"canvas":{"cards":[{"id":"c"}],"connections":[]}})"},
-      {"externals/sub/externals/b/layout.bin", "{}"},
+      {"externals/sub/externals/b/layout.bin", R"({"cards":{"c":{"x":3,"y":4}}})"},
       {"externals/sub/externals/b/definitions/c/_card.json",
        R"({"type":"draft","symbol":"pencil.and.outline"})"},
       {"externals/sub/externals/b/definitions/c/raw.bin",
@@ -356,8 +356,7 @@ class TransformationProject {
     files["externals/sub/externals/b/definitions/c/README.md"] =
         CardReadme("c");
     for (auto& [path, bytes] : files)
-      if (path == "tsugumi.json" || path.starts_with("definitions/"))
-        bytes = Canonical(path, bytes);
+      bytes = Canonical(path, bytes);
   }
   int saves = 0;
   OperationContext context{"ui", {}, {}, {}};

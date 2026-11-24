@@ -207,7 +207,7 @@ TEST_F(AgentExcludeTest, DefinitionRemovalChecksExcludedDescendants) {
   });
   EXPECT_NO_THROW(policy.CheckSave(
       j::Object(
-          R"({"changes":[{"value_type":"RemoveDefinition","value":{"id":"a-other"}}]})"),
+          R"({"changes":[{"value_type":"RemoveDefinition","value":{"id":"a_other"}}]})"),
       base));
   EXPECT_NO_THROW(policy.CheckSave(
       j::Object(
