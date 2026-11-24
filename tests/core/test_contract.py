@@ -477,8 +477,7 @@ def save_logging_card(client, project, tmp_path, body):
 int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     (void)call;
 """ + body + """
-    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
-    return 0;
+    return write_result(result, result_bytes, sizeof(result_bytes));
 }
 """)
     Project(project).card("work", {"type": "code", "sandbox": {

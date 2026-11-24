@@ -28,6 +28,9 @@ typedef struct tsugumi_effects {
       /* read-only directory path, only for ids granted to this call (in its input CardPorts). 0 ok, <0 error (not granted / missing). */
 } tsugumi_effects;
 typedef struct tsugumi_call { uint32_t abi_version; tsugumi_bytes input; void* host; const tsugumi_effects* effects; } tsugumi_call;
+/* Input bytes are borrowed for the call. The host takes ownership of any
+ * non-null result.data on return, regardless of status. It must be the base
+ * pointer of a libc malloc allocation. The host frees it after its last read. */
 typedef int (*tsugumi_main_fn)(const tsugumi_call* call, tsugumi_bytes* result);
 int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 

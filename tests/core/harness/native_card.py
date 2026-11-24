@@ -11,11 +11,24 @@ from Tsugumi.Card.CardPort import CardPortT
 from Tsugumi.Card.CardResult import CardResultT
 
 
+RESULT_WRITER = r"""
+#include <stdlib.h>
+#include <string.h>
+static inline int write_result(tsugumi_bytes* result, const uint8_t* data,
+                               size_t size) {
+  uint8_t* owned = malloc(size);
+  if (!owned) return 1;
+  memcpy(owned, data, size);
+  *result = (tsugumi_bytes){owned, size};
+  return 0;
+}
+"""
+
+
 STATIC_RESULT_ENTRY = """
 int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
   if (call->abi_version != TSUGUMI_ABI_VERSION) return 1;
-  *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
-  return 0;
+  return write_result(result, result_bytes, sizeof(result_bytes));
 }
 """
 
@@ -25,7 +38,7 @@ def card_source(source, outputs):
     result = CardResultT(outputs=[CardPortT(name=name, bytes=value) for name, value in outputs])
     builder.Finish(result.Pack(builder))
     result_literal = "static const uint8_t result_bytes[] = {" + ",".join(map(str, builder.Output())) + "};\n"
-    return "#include <tsugumi/card_abi.h>\n" + result_literal + source
+    return "#include <tsugumi/card_abi.h>\n" + RESULT_WRITER + result_literal + source
 
 
 def native_card(package, source, outputs=()):

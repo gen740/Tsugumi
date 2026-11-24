@@ -14,6 +14,8 @@ import textwrap
 import flatbuffers
 import pytest
 
+from harness.native_card import RESULT_WRITER
+
 from Tsugumi.Card.CardFailure import CardFailureT
 from Tsugumi.Card.CardPort import CardPortT
 from Tsugumi.Card.CardResult import CardResultT
@@ -49,7 +51,8 @@ def library(tmp_path, source, name="main", *, result=None):
     lib.mkdir(exist_ok=True)
     c = tmp_path / (name + ".c")
     result = packed(CardResultT(outputs=[])) if result is None else result
-    c.write_text(textwrap.dedent(source).replace("RESULT_BYTES", c_bytes(result)))
+    c.write_text("#include <tsugumi/card_abi.h>\n" + RESULT_WRITER
+                 + textwrap.dedent(source).replace("RESULT_BYTES", c_bytes(result)))
     subprocess.run(
         ["cc", "-shared", "-fPIC", "-pthread", "-I", str(ROOT / "protocol/include"),
          str(c), "-o", str(lib / (name + ".so"))],
@@ -163,8 +166,7 @@ def test_worker_passes_inputs_and_schema_unopened(tmp_path):
           memcpy(&size, b, 4);
           static const uint8_t wanted[] = {{{c_bytes(PARAMS)}}};
           if (size != sizeof(wanted) || memcmp(b + 4, wanted, size)) return 5;
-          *result = (tsugumi_bytes){{wire, sizeof(wire)}};
-          return 0;
+          return write_result(result, wire, sizeof(wire));
         }}
     ''')
     with worker(tmp_path) as (p, data, _):
@@ -195,8 +197,8 @@ def test_worker_loads_once_with_launch_secrets_and_no_legacy_environment(tmp_pat
               getenv("TSUGUMI_INVOCATION") || getenv("TSUGUMI_PARAMS_JSON") ||
               getenv("TSUGUMI_OUTPUT_DIR") || getenv("TSUGUMI_TMP_DIR") ||
               getenv("TSUGUMI_WORK_DIR")) return 2;
-          *result = (tsugumi_bytes){wire, sizeof(wire)};
-          return call->abi_version != 0;
+          if (call->abi_version != TSUGUMI_ABI_VERSION) return 1;
+          return write_result(result, wire, sizeof(wire));
         }
     ''')
     with worker(tmp_path, startup={"startup_key": "test-value"}) as (p, data, _):
@@ -231,8 +233,7 @@ def test_encoded_failure_preserves_source(tmp_path, kind):
         #include <tsugumi/card_abi.h>
         int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
           static const uint8_t wire[] = {RESULT_BYTES};
-          *result = (tsugumi_bytes){wire, sizeof(wire)};
-          return 0;
+          return write_result(result, wire, sizeof(wire));
         }
     ''', result=packed(CardResultT(failure=CardFailureT(
         kind=kind, message="bad row", source="src/card.cc", line=31, cell="sample",
@@ -256,8 +257,7 @@ def test_an_undecodable_result_fails_cleanly(tmp_path):
         #include <tsugumi/card_abi.h>
         int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
           static const uint8_t wire[] = {RESULT_BYTES};
-          *result = (tsugumi_bytes){wire, sizeof(wire)};
-          return 0;
+          return write_result(result, wire, sizeof(wire));
         }
     ''', result=b"invalid")
     with worker(tmp_path) as (_, data, _):
@@ -268,6 +268,45 @@ def test_an_undecodable_result_fails_cleanly(tmp_path):
 
 
 @pytest.mark.parametrize("stop", ["deadline", "cancel"])
+def test_resident_worker_releases_results(tmp_path):
+    library(tmp_path, r"""
+        #include <sys/resource.h>
+        static long initial_peak;
+        int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
+          static const uint8_t wire[] = {RESULT_BYTES};
+          static unsigned calls;
+          struct rusage usage;
+          if (getrusage(RUSAGE_SELF, &usage) != 0) return 2;
+          long peak = usage.ru_maxrss;
+          #ifndef __APPLE__
+          peak *= 1024;
+          #endif
+          if (calls == 0) initial_peak = peak;
+          if (peak - initial_peak > 64 * 1024 * 1024) return 3;
+
+          // Commit one byte on each page. Without free the process grows
+          // by 4 MiB on every invocation.
+          const size_t allocation_size = 4 * 1024 * 1024;
+          uint8_t* data = malloc(allocation_size);
+          if (!data) return 4;
+          volatile uint8_t* pages = data;
+          for (size_t i = 0; i < allocation_size; i += 4096) pages[i] = 0;
+          memcpy(data, wire, sizeof(wire));
+          *result = (tsugumi_bytes){data, sizeof(wire)};
+          return ++calls % 2 == 0 ? 0 : 5;
+        }
+    """)
+    with worker(tmp_path) as (_, data, _):
+        for call_id in range(1, 49):
+            send_call(data, tmp_path, call_id)
+            reply = receive(data)
+            if call_id % 2:
+                assert reply.valueType == WorkerPayload.WorkerFailure
+                assert reply.value.failure.diagnostic == b"tsugumi_main returned 5"
+            else:
+                assert reply.valueType == WorkerPayload.WorkerResult
+
+
 def test_stop_callbacks_are_callable_from_card_threads(tmp_path, stop):
     library(tmp_path, '''
         #include <tsugumi/card_abi.h>
@@ -332,8 +371,7 @@ def test_post_return_send_keeps_opaque_bytes_and_original_view(tmp_path):
             pthread_join(thread, &status);
             if (status) return 2;
           }
-          *result = (tsugumi_bytes){wire, sizeof(wire)};
-          return 0;
+          return write_result(result, wire, sizeof(wire));
         }
     ''')
     with worker(tmp_path) as (_, data, _):
@@ -372,8 +410,7 @@ def test_recv_after_return_and_reverse_credit(tmp_path):
             pthread_join(thread, &status);
             if (status) return 2;
           }
-          *result = (tsugumi_bytes){wire, sizeof(wire)};
-          return 0;
+          return write_result(result, wire, sizeof(wire));
         }
     """)
     with worker(tmp_path) as (_, data, control):
@@ -447,6 +484,8 @@ def native_card(body, *, inputs=(), outputs=NUM, declarations="", views="[]", **
 
 
 _CARD_PREAMBLE = r"""
+#include <cstdlib>
+#include <cstring>
 #include "card_abi.h"
 #include "card_generated.h"
 #include <fcntl.h>
@@ -526,14 +565,16 @@ std::string open_artifact(const tsugumi_call& call, const C::CardInput& in,
 _CARD_ENTRY = r"""
 extern "C" int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
   if (call->abi_version != TSUGUMI_ABI_VERSION) return 1;
-  static fb::FlatBufferBuilder builder;
-  builder.Clear();
+  fb::FlatBufferBuilder builder;
   Result output{builder, {}, {}};
   const auto& input = *fb::GetRoot<C::CardInput>(call->input.data);
   const int code = run(*call, input, output);
   if (code != 0) return code;
   builder.Finish(C::CreateCardResult(builder, builder.CreateVector(output.ports), output.failure));
-  *result = {builder.GetBufferPointer(), builder.GetSize()};
+  auto* owned = static_cast<uint8_t*>(std::malloc(builder.GetSize()));
+  if (!owned) return 1;
+  std::memcpy(owned, builder.GetBufferPointer(), builder.GetSize());
+  *result = {owned, builder.GetSize()};
   return 0;
 }
 """

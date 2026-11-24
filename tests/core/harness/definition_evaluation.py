@@ -58,13 +58,16 @@ def _result_literal(outputs):
 def synthetic_sources(outputs=()):
     """A minimal Card in C, independent of any kit SDK: it prints VALUE
     (from value.h) and returns `outputs` [(name, bytes)]."""
+    from harness.native_card import RESULT_WRITER
+
     return {
         "card_abi.h": (ROOT / "protocol/include/tsugumi/card_abi.h").read_text(),
         "card.c": ('#include <stdio.h>\n#include "card_abi.h"\n#include "value.h"\n'
+                   + RESULT_WRITER +
                    "static const uint8_t result_bytes[] = {" + _result_literal(outputs) + "};\n"
                    "int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {\n"
                    "  (void)call;\n  fputs(VALUE \"\\n\", stdout);\n  fflush(stdout);\n"
-                   "  *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};\n  return 0;\n}\n"),
+                   "  return write_result(result, result_bytes, sizeof(result_bytes));\n}\n"),
     }
 
 

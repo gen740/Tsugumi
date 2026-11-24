@@ -124,8 +124,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     pthread_t thread;
     if (pthread_create(&thread, NULL, late, NULL) != 0) return 1;
     pthread_detach(thread);
-    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
-    return 0;
+    return write_result(result, result_bytes, sizeof(result_bytes));
 }
 """
 
@@ -214,8 +213,7 @@ def test_view_messages_without_a_card_process_are_dropped(project, tmp_path, cor
 
     source = r"""
 int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
-    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
-    return 0;
+    return write_result(result, result_bytes, sizeof(result_bytes));
 }
 """
     package = native_card(tmp_path / "ended-card", source)
@@ -250,8 +248,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     if (effects->recv(call->host, "notes", &incoming, 5000) != 0) return 2;
     if (incoming.size != 4 || memcmp(incoming.data, "\x00\xff\x80v", 4)) return 3;
     if (effects->send(call->host, "notes", incoming.data, incoming.size) != 0) return 4;
-    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
-    return 0;
+    return write_result(result, result_bytes, sizeof(result_bytes));
 }
 """
     package = native_card(tmp_path / "round-trip-card", source)
@@ -320,8 +317,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     if (atomic_load(&failed)) return 3;
     const uint8_t done = atomic_load(&sent);
     if (call->effects->send(call->host, "plot", &done, 1)) return 4;
-    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
-    return 0;
+    return write_result(result, result_bytes, sizeof(result_bytes));
 }
 """
 
@@ -335,8 +331,7 @@ def test_full_view_does_not_block_other_traffic(project, tmp_path, core_factory)
     fast = native_card(tmp_path / "fast", r"""
 int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     if (call->effects->send(call->host, "plot", (const uint8_t *)"fast", 4)) return 1;
-    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
-    return 0;
+    return write_result(result, result_bytes, sizeof(result_bytes));
 }
 """)
     client = core_factory(mocked_builds=True).connect(client=Client.Web)
