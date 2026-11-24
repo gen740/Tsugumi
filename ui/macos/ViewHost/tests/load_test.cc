@@ -13,8 +13,8 @@ constexpr std::array<std::string_view, 5> kExports{
     R"((memory (export "memory") 1))",
     R"((func (export "tsugumi_view_abi") (result i32) i32.const 0))",
     R"((func (export "tsugumi_view_start") (param i32 i32 i32 i32 i32 f32) (result i32) i32.const 0))",
-    R"((func (export "tsugumi_view_resize") (param i32 i32 f32) (result i32) i32.const 0))",
-    R"((func (export "tsugumi_view_draw") (param i32) (result i32) i32.const 0))",
+    R"((func (export "tsugumi_view_resize") (param i32 i32 f32 i64) (result i32) i32.const 0))",
+    R"((func (export "tsugumi_view_draw") (param i32 i64) (result i32) i32.const 0))",
 };
 
 auto module(std::string_view imports = {},
@@ -58,9 +58,14 @@ TEST(ViewLoad, MinimalModuleWithoutOptionalExports) { check(module()); }
 
 TEST(ViewLoad, OptionalExportsWithMatchingTypes) {
   check(module({}, kExports, R"(
-    (func (export "tsugumi_view_message") (param i32) (result i32) i32.const 0)
-    (func (export "tsugumi_view_pointer") (param i32 f32 f32 i32 f32 f32 i32) (result i32) i32.const 0)
-    (func (export "tsugumi_view_key") (param i32 i32 i32) (result i32) i32.const 0))"));
+    (func (export "tsugumi_view_message") (param i32 i64) (result i32) i32.const 0)
+    (func (export "tsugumi_view_pointer") (param i32 f32 f32 i32 f32 f32 i32 i64) (result i32) i32.const 0)
+    (func (export "tsugumi_view_key") (param i32 i32 i32 i64) (result i32) i32.const 0)
+    (func (export "tsugumi_view_audio") (param i32 i64) (result i32) i32.const 0)
+    (func (export "tsugumi_view_text_input") (result i32) i32.const 0)
+    (func (export "tsugumi_view_text") (param i32 i64) (result i32) i32.const 0)
+    (func (export "tsugumi_view_composition") (param i32 i32 i64) (result i32) i32.const 0)
+    (func (export "tsugumi_view_gamepad") (param i32 i32 i32 f32 f32 f32 f32 f32 f32 i64) (result i32) i32.const 0))"));
 }
 
 TEST(ViewLoad, RejectsForeignModules) {

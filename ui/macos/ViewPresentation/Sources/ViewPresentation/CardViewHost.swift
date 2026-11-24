@@ -206,6 +206,16 @@ import WebKit
     flush()
   }
 
+  func snapshot() async throws -> Data {
+    guard mounted, !closed else { throw DawnViewError.unavailable }
+    let image = try await web.takeSnapshot(configuration: nil)
+    guard !closed, let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
+          let png = bitmap.representation(using: .png, properties: [:]) else {
+      throw DawnViewError.snapshotFailed
+    }
+    return png
+  }
+
   /// The view goes away with its port; nothing more is delivered.
   func close() {
     guard !closed else { return }

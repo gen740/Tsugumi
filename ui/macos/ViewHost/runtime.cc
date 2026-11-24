@@ -1,21 +1,32 @@
+#include <time.h>
 #include <tsugumi/tsugumi_view.h>
 #include <wasmtime.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <exception>
 #include <initializer_list>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "tsugumi_view_host.h"
 #include "webgpu_imports.gen.h"
+
+struct tsugumi_view_stop {
+  std::atomic<bool> requested{false};
+};
 
 namespace {
 
@@ -70,6 +81,14 @@ auto check_wasm(wasmtime_error_t* error, wasm_trap_t* trap,
 
 auto i32(uint32_t value) -> wasmtime_val_t {
   return {.kind = WASMTIME_I32, .of = {.i32 = static_cast<int32_t>(value)}};
+}
+
+auto i64(uint64_t value) -> wasmtime_val_t {
+  return {.kind = WASMTIME_I64, .of = {.i64 = static_cast<int64_t>(value)}};
+}
+
+auto uptime() -> double {
+  return static_cast<double>(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1e9;
 }
 
 auto f32(float value) -> wasmtime_val_t {
@@ -187,12 +206,50 @@ constexpr std::array kReadParams{I32, I32};
 constexpr std::array kSendParams{I32, I32, I32};
 const Export kAbi{"tsugumi_view_abi", {}};
 const Export kStart{"tsugumi_view_start", {I32, I32, I32, I32, I32, F32}};
-const Export kResize{"tsugumi_view_resize", {I32, I32, F32}};
-const Export kDraw{"tsugumi_view_draw", {I32}};
-const Export kMessage{"tsugumi_view_message", {I32}};
+const Export kResize{"tsugumi_view_resize", {I32, I32, F32, I64}};
+const Export kDraw{"tsugumi_view_draw", {I32, I64}};
+const Export kMessage{"tsugumi_view_message", {I32, I64}};
 const Export kPointer{"tsugumi_view_pointer",
-                      {I32, F32, F32, I32, F32, F32, I32}};
-const Export kKey{"tsugumi_view_key", {I32, I32, I32}};
+                      {I32, F32, F32, I32, F32, F32, I32, I64}};
+const Export kKey{"tsugumi_view_key", {I32, I32, I32, I64}};
+const Export kAudio{"tsugumi_view_audio", {I32, I64}};
+const Export kTextInput{"tsugumi_view_text_input", {}};
+const Export kText{"tsugumi_view_text", {I32, I64}};
+const Export kComposition{"tsugumi_view_composition", {I32, I32, I64}};
+const Export kGamepad{"tsugumi_view_gamepad",
+                      {I32, I32, I32, F32, F32, F32, F32, F32, F32, I64}};
+
+auto make_engine() -> wasm_engine_t* {
+  auto* config = wasm_config_new();
+  if (!config) return nullptr;
+  wasmtime_config_epoch_interruption_set(config, true);
+  return wasm_engine_new_with_config(config);
+}
+
+class EpochTicker {
+ public:
+  explicit EpochTicker(wasm_engine_t* engine)
+      : thread_([this, engine] {
+          using namespace std::chrono_literals;
+          std::unique_lock lock(mutex_);
+          while (!wakeup_.wait_for(lock, 20ms, [this] { return done_; }))
+            wasmtime_engine_increment_epoch(engine);
+        }) {}
+  ~EpochTicker() {
+    {
+      const std::lock_guard lock(mutex_);
+      done_ = true;
+    }
+    wakeup_.notify_one();
+    thread_.join();
+  }
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable wakeup_;
+  bool done_ = false;
+  std::thread thread_;
+};
 
 struct Gpu {
   mutable std::mutex error_mutex;
@@ -339,12 +396,22 @@ struct tsugumi_view_host {
   Gpu gpu;
   Handles handles;
   Procs procs = tsugumi::view::dawnProcs();
-  Owned<wasm_engine_t, wasm_engine_delete> engine{wasm_engine_new()};
+  Owned<wasm_engine_t, wasm_engine_delete> engine{make_engine()};
+  std::optional<EpochTicker> ticker;
   Owned<wasmtime_store_t, wasmtime_store_delete> store;
   wasmtime_context_t* context = nullptr;
   wasmtime_instance_t instance{};
   wasmtime_func_t abi{}, start{}, resize{}, draw{};
-  std::optional<wasmtime_func_t> message, pointer, key;
+  std::optional<wasmtime_func_t> message, pointer, key, audio, text_input, text,
+      composition, gamepad;
+  std::optional<tsugumi_view_host_text_area> text_area;
+  tsugumi_view_stop* stop = nullptr;
+  tsugumi_view_host_waiting_fn waiting = nullptr;
+  bool is_waiting = false;
+  double call_started = 0;
+  double started = 0;
+  double last_present = 0;
+  uint32_t width = 0, height = 0;
   std::optional<std::span<const uint8_t>> current_message;
   tsugumi_view_host_send_fn send = nullptr;
   void* send_context = nullptr;
@@ -356,8 +423,28 @@ struct tsugumi_view_host {
 
   auto load(const uint8_t* wasm, size_t size) -> void;
   auto check_abi() -> void;
+  auto begin_call() -> void;
+  auto end_call() -> void;
+  auto read_memory(uint32_t offset, void* data, uint32_t size) -> void;
+  auto render(WGPUTexture texture, double present) -> int32_t;
+  auto view_time(double at) const -> wasmtime_val_t {
+    return i64(static_cast<uint64_t>(std::max(0.0, at - started) *
+                                     TSUGUMI_VIEW_SAMPLE_RATE));
+  }
+  auto incoming(const uint8_t* bytes, uint32_t size, const Export& spec,
+                const std::optional<wasmtime_func_t>& func,
+                std::initializer_list<wasmtime_val_t> args) -> int32_t {
+    if (!func) return 0;
+    current_message.emplace(bytes, size);
+    struct ClearMessage {
+      tsugumi_view_host& host;
+      ~ClearMessage() { host.current_message.reset(); }
+    } clear{*this};
+    return call(spec.name, *func, args);
+  }
   auto call(const char* name, const wasmtime_func_t& func,
-            std::initializer_list<wasmtime_val_t> args) -> int32_t;
+            std::initializer_list<wasmtime_val_t> args,
+            bool pointer_result = false) -> int32_t;
 
   template <typename Operation>
   auto run(Operation operation) -> int32_t {
@@ -428,7 +515,8 @@ auto message_import(void*, wasmtime_caller_t* caller,
       const auto route = static_cast<uint32_t>(args[0].of.i32);
       if (!in_bounds(memory, route, 16)) return nullptr;
       const auto* bytes = offset ? memory.base + offset : memory.base;
-      results[0] = i32(host.send(host.send_context, memory.base + route, bytes, size));
+      results[0] =
+          i32(host.send(host.send_context, memory.base + route, bytes, size));
     }
     return nullptr;
   } catch (const std::exception& error) {
@@ -476,6 +564,7 @@ auto tsugumi_view_host::export_func(const Export& spec, bool required)
 
 auto tsugumi_view_host::load(const uint8_t* wasm, size_t size) -> void {
   if (!engine) throw TrapError("Could not create Wasmtime engine");
+  ticker.emplace(engine.get());
   wasmtime_module_t* compiled = nullptr;
   check_wasm(wasmtime_module_new(engine.get(), wasm, size, &compiled), nullptr,
              "Compile view");
@@ -496,9 +585,27 @@ auto tsugumi_view_host::load(const uint8_t* wasm, size_t size) -> void {
 
   store.reset(wasmtime_store_new(engine.get(), this, nullptr));
   context = wasmtime_store_context(store.get());
+  wasmtime_store_epoch_deadline_callback(
+      store.get(),
+      [](const wasmtime_context_t*, void* data, uint64_t* delta,
+         wasmtime_update_deadline_kind_t* kind) -> wasmtime_error_t* {
+        auto& host = *static_cast<tsugumi_view_host*>(data);
+        if (host.stop && host.stop->requested.load(std::memory_order_relaxed))
+          return wasmtime_error_new("The view was stopped");
+        if (!host.is_waiting && uptime() - host.call_started > 0.5) {
+          host.is_waiting = true;
+          if (host.waiting) host.waiting(host.send_context, 1);
+        }
+        *delta = 1;
+        *kind = WASMTIME_UPDATE_DEADLINE_CONTINUE;
+        return nullptr;
+      },
+      this, nullptr);
+  begin_call();
   wasm_trap_t* trap = nullptr;
   auto* error = wasmtime_linker_instantiate(linker.get(), context, module.get(),
                                             &instance, &trap);
+  end_call();
   check_wasm(error, trap, "Instantiate view");
 
   wasmtime_extern_t memory{};
@@ -520,6 +627,11 @@ auto tsugumi_view_host::load(const uint8_t* wasm, size_t size) -> void {
   message = export_func(kMessage, false);
   pointer = export_func(kPointer, false);
   key = export_func(kKey, false);
+  audio = export_func(kAudio, false);
+  text_input = export_func(kTextInput, false);
+  text = export_func(kText, false);
+  composition = export_func(kComposition, false);
+  gamepad = export_func(kGamepad, false);
 }
 
 auto tsugumi_view_host::check_abi() -> void {
@@ -529,15 +641,49 @@ auto tsugumi_view_host::check_abi() -> void {
   }
 }
 
+auto tsugumi_view_host::begin_call() -> void {
+  if (stop && stop->requested.load(std::memory_order_relaxed))
+    throw TrapError("The view was stopped");
+  call_started = uptime();
+  wasmtime_context_set_epoch_deadline(context, 1);
+}
+
+auto tsugumi_view_host::end_call() -> void {
+  if (is_waiting) {
+    is_waiting = false;
+    if (waiting) waiting(send_context, 0);
+  }
+}
+
+auto tsugumi_view_host::read_memory(uint32_t offset, void* data, uint32_t size)
+    -> void {
+  wasmtime_extern_t ext{};
+  if (!wasmtime_instance_export_get(context, &instance, "memory", 6, &ext))
+    throw TrapError("Missing memory export");
+  const std::unique_ptr<wasmtime_extern_t, Deleter<wasmtime_extern_delete>>
+      owned(&ext);
+  const auto memory =
+      ext.kind == WASMTIME_EXTERN_SHAREDMEMORY
+          ? Memory{wasmtime_sharedmemory_data(ext.of.sharedmemory),
+                   wasmtime_sharedmemory_data_size(ext.of.sharedmemory)}
+          : Memory{wasmtime_memory_data(context, &ext.of.memory),
+                   wasmtime_memory_data_size(context, &ext.of.memory)};
+  if (!in_bounds(memory, offset, size))
+    throw TrapError("View returned an out-of-bounds pointer");
+  std::memcpy(data, memory.base + offset, size);
+}
+
 auto tsugumi_view_host::call(const char* name, const wasmtime_func_t& func,
-                             std::initializer_list<wasmtime_val_t> args)
-    -> int32_t {
+                             std::initializer_list<wasmtime_val_t> args,
+                             bool pointer_result) -> int32_t {
+  begin_call();
   wasmtime_val_t result{};
   wasm_trap_t* trap = nullptr;
   auto* error = wasmtime_func_call(context, &func, args.begin(), args.size(),
                                    &result, 1, &trap);
+  end_call();
   check_wasm(error, trap, name);
-  if (result.of.i32 < 0) {
+  if (!pointer_result && result.of.i32 < 0) {
     throw TrapError(std::string(name) + " returned " +
                     std::to_string(result.of.i32));
   }
@@ -609,6 +755,16 @@ auto tsugumi_view_host::release_handles() -> void {
 
 tsugumi_view_host::~tsugumi_view_host() { release_handles(); }
 
+auto tsugumi_view_stop_create() -> tsugumi_view_stop* {
+  return new (std::nothrow) tsugumi_view_stop;
+}
+
+auto tsugumi_view_stop_request(tsugumi_view_stop* stop) -> void {
+  stop->requested.store(true, std::memory_order_relaxed);
+}
+
+auto tsugumi_view_stop_destroy(tsugumi_view_stop* stop) -> void { delete stop; }
+
 auto tsugumi_view_host_check(const uint8_t* wasm, size_t size, char* error,
                              size_t error_size) -> int32_t {
   try {
@@ -623,17 +779,18 @@ auto tsugumi_view_host_check(const uint8_t* wasm, size_t size, char* error,
   }
 }
 
-auto tsugumi_view_host_create(const uint8_t* wasm, size_t size,
-                              void* metal_layer, uint32_t width,
-                              uint32_t height, float scale,
-                              tsugumi_view_host_send_fn send,
-                              void* send_context, char* error,
-                              size_t error_size) -> tsugumi_view_host* {
+auto tsugumi_view_host_create(
+    const uint8_t* wasm, size_t size, void* metal_layer, uint32_t width,
+    uint32_t height, float scale, tsugumi_view_stop* stop,
+    tsugumi_view_host_send_fn send, tsugumi_view_host_waiting_fn waiting,
+    void* send_context, char* error, size_t error_size) -> tsugumi_view_host* {
   try {
     auto host = std::make_unique<tsugumi_view_host>();
-    host->load(wasm, size);
+    host->stop = stop;
     host->send = send;
+    host->waiting = waiting;
     host->send_context = send_context;
+    host->load(wasm, size);
     host->gpu.open(metal_layer);
     host->gpu.configure(width, height);
     host->gpu.process_events();
@@ -642,6 +799,9 @@ auto tsugumi_view_host_create(const uint8_t* wasm, size_t size,
     host->gpu.process_events();
     const auto device = host->handles.add(Kind::Device, host->gpu.device.get());
     const auto queue = host->handles.add(Kind::Queue, host->gpu.queue.get());
+    host->width = width;
+    host->height = height;
+    host->started = uptime();
     host->call(kStart.name, host->start,
                {i32(device), i32(queue), i32(kFormat), i32(width), i32(height),
                 f32(scale)});
@@ -654,7 +814,43 @@ auto tsugumi_view_host_create(const uint8_t* wasm, size_t size,
   }
 }
 
-auto tsugumi_view_host_draw(tsugumi_view_host* host) -> int32_t {
+auto tsugumi_view_host::render(WGPUTexture texture, double present) -> int32_t {
+  last_present = std::max(last_present, present);
+  TextureView view(wgpuTextureCreateView(texture, nullptr));
+  if (!view) throw TrapError("Could not create the Dawn render target view");
+  const auto id = handles.add(Kind::TextureView, view.get());
+  view.release();
+  // The module may also release this id inside draw().
+  struct FrameView {
+    Handles& handles;
+    uint32_t id;
+    ~FrameView() {
+      TextureView remaining(static_cast<WGPUTextureView>(
+          handles.takeIfPresent(Kind::TextureView, id)));
+    }
+  };
+  const auto flags = [&] {
+    FrameView frame{handles, id};
+    return call(kDraw.name, draw, {i32(id), view_time(last_present)});
+  }();
+  text_area.reset();
+  if (text_input) {
+    const auto offset =
+        static_cast<uint32_t>(call(kTextInput.name, *text_input, {}, true));
+    if (offset) {
+      tsugumi_view_host_text_area area{};
+      read_memory(offset, &area, sizeof(area));
+      if (std::isfinite(area.x) && std::isfinite(area.y) &&
+          std::isfinite(area.width) && std::isfinite(area.height) &&
+          area.width >= 0 && area.height >= 0)
+        text_area = area;
+    }
+  }
+  return flags;
+}
+
+auto tsugumi_view_host_draw(tsugumi_view_host* host, double present)
+    -> int32_t {
   return host->run([&] {
     WGPUSurfaceTexture acquired = WGPU_SURFACE_TEXTURE_INIT;
     wgpuSurfaceGetCurrentTexture(host->gpu.surface.get(), &acquired);
@@ -667,27 +863,7 @@ auto tsugumi_view_host_draw(tsugumi_view_host* host) -> int32_t {
                       std::to_string(acquired.status) + ")");
     }
 
-    TextureView view(wgpuTextureCreateView(texture.get(), nullptr));
-    if (!view)
-      throw TrapError("Could not create the Dawn surface texture view");
-    const auto id = host->handles.add(Kind::TextureView, view.get());
-    view.release();
-    // The module may also release this id inside draw().
-    struct FrameView {
-      Handles& handles;
-      uint32_t id;
-      ~FrameView() {
-        TextureView remaining(static_cast<WGPUTextureView>(
-            handles.takeIfPresent(Kind::TextureView, id)));
-      }
-    };
-    int32_t flags;
-    {
-      FrameView frame{host->handles, id};
-      flags = host->call(kDraw.name, host->draw, {i32(id)});
-    }
-    // TODO: Capture a PNG for Agent snapshots when the snapshot contract is
-    // decided.
+    const auto flags = host->render(texture.get(), present);
     if (wgpuSurfacePresent(host->gpu.surface.get()) != WGPUStatus_Success) {
       throw TrapError("Could not present the Dawn surface");
     }
@@ -695,51 +871,175 @@ auto tsugumi_view_host_draw(tsugumi_view_host* host) -> int32_t {
   });
 }
 
+auto tsugumi_view_host_snapshot(tsugumi_view_host* host, double present,
+                                tsugumi_view_host_pixels_fn pixels,
+                                void* context) -> int32_t {
+  constexpr uint64_t kMaxBytes = 64u * 1024u * 1024u;
+  const uint64_t stride = (uint64_t{host->width} * 4 + 255) & ~255ull;
+  const uint32_t height = host->height;
+  if (!host->gpu.device || !stride || !height || stride > kMaxBytes / height)
+    return -2;
+  const auto size = static_cast<size_t>(stride * height);
+  WGPUTextureDescriptor desc = WGPU_TEXTURE_DESCRIPTOR_INIT;
+  desc.format = kFormat;
+  desc.size = {host->width, height, 1};
+  desc.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc;
+  SurfaceTexture target(wgpuDeviceCreateTexture(host->gpu.device.get(), &desc));
+  if (!target) return -2;
+  if (host->run([&] { return host->render(target.get(), present); }) < 0)
+    return -1;
+  try {
+    WGPUBufferDescriptor readback = WGPU_BUFFER_DESCRIPTOR_INIT;
+    readback.size = size;
+    readback.usage = WGPUBufferUsage_CopyDst | WGPUBufferUsage_MapRead;
+    Owned<WGPUBufferImpl, wgpuBufferRelease> buffer(
+        wgpuDeviceCreateBuffer(host->gpu.device.get(), &readback));
+    Owned<WGPUCommandEncoderImpl, wgpuCommandEncoderRelease> encoder(
+        wgpuDeviceCreateCommandEncoder(host->gpu.device.get(), nullptr));
+    if (!buffer || !encoder) return -2;
+    WGPUTexelCopyTextureInfo src = WGPU_TEXEL_COPY_TEXTURE_INFO_INIT;
+    src.texture = target.get();
+    WGPUTexelCopyBufferInfo dst = WGPU_TEXEL_COPY_BUFFER_INFO_INIT;
+    dst.buffer = buffer.get();
+    dst.layout.bytesPerRow = static_cast<uint32_t>(stride);
+    dst.layout.rowsPerImage = height;
+    wgpuCommandEncoderCopyTextureToBuffer(encoder.get(), &src, &dst,
+                                          &desc.size);
+    Owned<WGPUCommandBufferImpl, wgpuCommandBufferRelease> commands(
+        wgpuCommandEncoderFinish(encoder.get(), nullptr));
+    if (!commands) return -2;
+    const auto command = commands.get();
+    wgpuQueueSubmit(host->gpu.queue.get(), 1, &command);
+    bool mapped = false;
+    WGPUBufferMapCallbackInfo callback = WGPU_BUFFER_MAP_CALLBACK_INFO_INIT;
+    callback.mode = WGPUCallbackMode_WaitAnyOnly;
+    callback.userdata1 = &mapped;
+    callback.callback = [](WGPUMapAsyncStatus status, WGPUStringView,
+                           void* data, void*) {
+      *static_cast<bool*>(data) = status == WGPUMapAsyncStatus_Success;
+    };
+    wait_for(
+        host->gpu.instance.get(),
+        wgpuBufferMapAsync(buffer.get(), WGPUMapMode_Read, 0, size, callback));
+    if (!mapped) return -2;
+    const auto* data = static_cast<const uint8_t*>(
+        wgpuBufferGetConstMappedRange(buffer.get(), 0, size));
+    if (data)
+      pixels(context, data, host->width, height, static_cast<uint32_t>(stride));
+    wgpuBufferUnmap(buffer.get());
+    return data ? 0 : -2;
+  } catch (const std::exception&) {
+    return -2;
+  }
+}
+
 auto tsugumi_view_host_resize(tsugumi_view_host* host, uint32_t width,
-                              uint32_t height, float scale) -> int32_t {
+                              uint32_t height, float scale, double at)
+    -> int32_t {
   return host->run([&] {
     host->gpu.configure(width, height);
-    return host->call(kResize.name, host->resize,
-                      {i32(width), i32(height), f32(scale)});
+    host->width = width;
+    host->height = height;
+    return host->call(
+        kResize.name, host->resize,
+        {i32(width), i32(height), f32(scale), host->view_time(at)});
   });
 }
 
 auto tsugumi_view_host_message(tsugumi_view_host* host, const uint8_t* bytes,
-                               uint32_t size) -> int32_t {
+                               uint32_t size, double at) -> int32_t {
   return host->run([&] {
-    if (!host->message) return int32_t{0};
-    host->current_message.emplace(bytes, size);
-    struct ClearMessage {
-      tsugumi_view_host& host;
-      ~ClearMessage() { host.current_message.reset(); }
-    } clear{*host};
-    return host->call(kMessage.name, *host->message, {i32(size)});
+    return host->incoming(bytes, size, kMessage, host->message,
+                          {i32(size), host->view_time(at)});
   });
 }
 
 auto tsugumi_view_host_pointer(tsugumi_view_host* host, uint32_t kind, float x,
                                float y, uint32_t buttons, float wheel_x,
-                               float wheel_y, uint32_t modifiers) -> int32_t {
+                               float wheel_y, uint32_t modifiers, double at)
+    -> int32_t {
   return host->run([&] {
     if (!host->pointer) return int32_t{0};
     return host->call(kPointer.name, *host->pointer,
                       {i32(kind), f32(x), f32(y), i32(buttons), f32(wheel_x),
-                       f32(wheel_y), i32(modifiers)});
+                       f32(wheel_y), i32(modifiers), host->view_time(at)});
   });
 }
 
 auto tsugumi_view_host_key(tsugumi_view_host* host, uint32_t kind,
-                           uint32_t code, uint32_t modifiers) -> int32_t {
+                           uint32_t code, uint32_t modifiers, double at)
+    -> int32_t {
   return host->run([&] {
     if (!host->key) return int32_t{0};
-    return host->call(kKey.name, *host->key,
-                      {i32(kind), i32(code), i32(modifiers)});
+    return host->call(
+        kKey.name, *host->key,
+        {i32(kind), i32(code), i32(modifiers), host->view_time(at)});
+  });
+}
+
+auto tsugumi_view_host_text(tsugumi_view_host* host, const uint8_t* bytes,
+                            uint32_t size, double at) -> int32_t {
+  return host->run([&] {
+    return host->incoming(bytes, size, kText, host->text,
+                          {i32(size), host->view_time(at)});
+  });
+}
+
+auto tsugumi_view_host_composition(tsugumi_view_host* host,
+                                   const uint8_t* bytes, uint32_t size,
+                                   uint32_t cursor, double at) -> int32_t {
+  return host->run([&] {
+    return host->incoming(bytes, size, kComposition, host->composition,
+                          {i32(size), i32(cursor), host->view_time(at)});
+  });
+}
+
+auto tsugumi_view_host_text_input(const tsugumi_view_host* host,
+                                  tsugumi_view_host_text_area* area)
+    -> int32_t {
+  if (!host->text_area) return 0;
+  *area = *host->text_area;
+  return 1;
+}
+
+auto tsugumi_view_host_gamepad(tsugumi_view_host* host, uint32_t pad,
+                               uint32_t kind, uint32_t buttons, float lx,
+                               float ly, float rx, float ry, float lt, float rt,
+                               double at) -> int32_t {
+  return host->run([&] {
+    if (!host->gamepad) return int32_t{0};
+    return host->call(
+        kGamepad.name, *host->gamepad,
+        {i32(pad), i32(kind), i32(buttons), f32(lx), f32(ly), f32(rx), f32(ry),
+         f32(lt), f32(rt), host->view_time(at)});
+  });
+}
+
+auto tsugumi_view_host_audio(tsugumi_view_host* host, uint32_t frames,
+                             double heard, float* output) -> int32_t {
+  return host->run([&] {
+    if (!host->audio || frames > TSUGUMI_VIEW_SAMPLE_RATE) return int32_t{-1};
+    const auto offset = static_cast<uint32_t>(
+        host->call(kAudio.name, *host->audio,
+                   {i32(frames), host->view_time(heard)}, true));
+    if (offset)
+      host->read_memory(offset, output, frames * 2 * sizeof(float));
+    else
+      std::fill_n(output, frames * 2, 0.0f);
+    return int32_t{0};
   });
 }
 
 auto tsugumi_view_host_accepts(const tsugumi_view_host* host) -> uint32_t {
-  return (host->message ? 1u : 0u) | (host->pointer ? 2u : 0u) |
-         (host->key ? 4u : 0u);
+  uint32_t mask = 0;
+  if (host->message) mask |= TSUGUMI_HOST_MESSAGE;
+  if (host->pointer) mask |= TSUGUMI_HOST_POINTER;
+  if (host->key) mask |= TSUGUMI_HOST_KEY;
+  if (host->audio) mask |= TSUGUMI_HOST_AUDIO;
+  if (host->text) mask |= TSUGUMI_HOST_TEXT;
+  if (host->composition) mask |= TSUGUMI_HOST_COMPOSITION;
+  if (host->gamepad) mask |= TSUGUMI_HOST_GAMEPAD;
+  return mask;
 }
 
 auto tsugumi_view_host_error(const tsugumi_view_host* host) -> const char* {
