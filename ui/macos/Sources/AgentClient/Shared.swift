@@ -502,6 +502,9 @@ enum Shared {
               "host"
             ]
           },
+          "name": {
+            "type": "string"
+          },
           "project_path": {
             "type": "string",
             "description": "Relative external workflow path. Omit for the root workflow."
