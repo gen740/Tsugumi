@@ -498,6 +498,8 @@ final class UIScript {
         }
       case "fit": NotificationCenter.default.post(name: .canvasFitAll, object: workspace?.active?.id)
       case "run": if let s = session, let t = workspace?.active { RunActions.runAll(s, scope: t.scope) }
+      // runcard <card id>: the Card and what it feeds, as "Run from here" does (for graphs without a trigger).
+      case "runcard": if let s = session { RunActions.run(s, card: key([w[1]]), propagate: true) }
       case "waitrun":
         try? await Task.sleep(for: .seconds(1))
         for _ in 0..<6000 where session?.runActive == true { try? await Task.sleep(for: .milliseconds(200)) }
