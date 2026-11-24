@@ -77,10 +77,11 @@ enum Documents {
     var fields: [String: String] = [:]
     for line in text[start..<end.lowerBound].split(separator: "\n", omittingEmptySubsequences: false) {
       let parts = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-      guard parts.count == 2, parts[1].hasPrefix(" "), !parts[1].utf8.contains(13) else { return nil }
+      // Like the core: an empty value may omit the space after the colon.
+      guard parts.count == 2, parts[1].isEmpty || parts[1].hasPrefix(" "), !parts[1].utf8.contains(13) else { return nil }
       let key = String(parts[0])
       guard ["title", "description"].contains(key), fields[key] == nil else { return nil }
-      fields[key] = String(parts[1].dropFirst())
+      fields[key] = parts[1].isEmpty ? "" : String(parts[1].dropFirst())
     }
     guard let title = fields["title"], !title.trimmingCharacters(in: .whitespaces).isEmpty,
           let description = fields["description"] else { return nil }

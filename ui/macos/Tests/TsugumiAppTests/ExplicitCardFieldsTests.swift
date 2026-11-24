@@ -68,3 +68,10 @@ import TsugumiTestSupport
   }
   #expect(nextInputName(["in1", "in3"]) == "in2")
 }
+
+@Test func readmeAcceptsTheEmptyDescriptionHostdWrites() {
+  let parsed = Documents.parseReadme("---\ntitle: plot\ndescription:\n---\n")
+  #expect(parsed?.title == "plot")
+  #expect(parsed?.description == "")
+  #expect(Documents.parseReadme("---\ntitle: plot\ndescription:x\n---\n") == nil)
+}
