@@ -128,15 +128,40 @@ draws its empty state and handles resize. SDK views reassemble their own chunks.
 
 ### dawn views
 
-A Dawn module draws to one WebGPU canvas. The [host header](../protocol/include/tsugumi/tsugumi_view.h)
-defines the exports for startup, resize and draw and the optional message, pointer
-and key callbacks. Imports are the WebGPU subset and `tsugumi_view_send` /
-`tsugumi_view_read`. The view allocates its own read buffer. The host draws
-immediately after startup, runs all callbacks on one thread and owns one instance
-per view.
+A dawn view is a wasm32 module that draws to one WebGPU surface. Its contract is the
+[view header](../protocol/include/tsugumi/tsugumi_view.h) (dawn view ABI 0):
 
-TODO(open): Dawn host, exact WebGPU imports and pinned headers. The UIs currently
-show a placeholder for Dawn views.
+- **Imports:** only the WebGPU functions listed in `TSUGUMI_VIEW_WEBGPU_IMPORTS`
+  (49 functions of `webgpu.h` from webgpu-headers at the revision the header pins),
+  plus `tsugumi_view_send` and `tsugumi_view_read`. No WASI, files or clock. WebGPU
+  handles are host-owned ids. No imported function writes into the module's memory
+  or takes a callback; the only chained struct is WGSL source on a shader module.
+  Built with clang for wasm32, the header turns a function outside the list into an
+  undefined symbol at link time.
+- **Exports:** `memory`, `tsugumi_view_abi`, `tsugumi_view_start`, `tsugumi_view_resize`
+  and `tsugumi_view_draw` are required; `tsugumi_view_message`, `tsugumi_view_pointer`
+  and `tsugumi_view_key` are optional.
+- **Calls:** the host checks the imports and exports, calls `abi` (it must return 0),
+  then `start` and one `draw`. It draws again on the next display frame only when
+  `draw` returns bit 0, and otherwise only after an event (message, resize, pointer,
+  key). `read` copies the current message only inside `message(size)`. `send` never
+  blocks; it returns negative when the host cannot take the bytes, and the bytes go to
+  the Card's `recv`. A negative return or a trap drops the instance and shows the error.
+  All calls come from one thread; there is one instance per view.
+
+Both UIs translate the module's 32-bit descriptors with code generated at build time
+from webgpu-headers' `webgpu.yml` by one generator ([ui/shared/dawn](../ui/shared/dawn/README.md)):
+
+- **Mac app:** native Dawn and wasmtime inside the app process, drawing into a
+  `CAMetalLayer` view in the SwiftUI canvas, paced by `CADisplayLink`.
+- **Web UI:** the same module in the page, with the imports implemented on
+  `navigator.gpu` and paced by `requestAnimationFrame`.
+
+The kit's `sdk.dawnView { name; src; }` builds a view from C sources (freestanding,
+no libc), and its `dawn-view` template is a minimal example. The `point-cloud` demo
+sends a point cloud to a dawn view.
+
+TODO(open): PNG snapshots of dawn views for the Agent.
 
 ## Value mapping in the default SDKs
 
