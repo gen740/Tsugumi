@@ -29,9 +29,6 @@ struct Invocation {
   std::vector<types::PortType> outputs;
   std::filesystem::path artifact_directory;
   uint64_t artifact_sequence = 0;
-  bool artifact_inputs = false;
-  // The native process-group lifecycle cannot rule out a detached writer.
-  std::filesystem::path artifact_snapshot_root;
   std::vector<ArtifactGrant> grants;
   fs::OutputBudget output_budget;
   const std::atomic<bool>* cancel = nullptr;

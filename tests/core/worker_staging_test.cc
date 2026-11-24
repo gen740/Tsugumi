@@ -1,10 +1,16 @@
-// Socket/Nix-free harness over the production cleaner and output copier.
+// Socket/Nix-free harness over the production cleaner and output installer.
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/attr.h>
+#endif
 
 #include <atomic>
 #include <cerrno>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -143,23 +149,14 @@ auto clean_unreadable_directories(const stdfs::path& root) -> void {
 
 // Exercise sparse transfers with separated data, a trailing hole and an
 // observer that must see every logical byte.
-auto copy_sparse_outputs(const stdfs::path& root) -> void {
-  const auto staging = root / "sparse";
-  stdfs::create_directories(staging / "artifact");
-  const auto source = staging / "artifact/large";
+auto copy_sparse_files(const stdfs::path& root) -> void {
+  const auto source = root / "sparse-source";
   constexpr off_t size = 4 * 1024 * 1024;
   const int file = ::open(source.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600);
   expect(file >= 0, "open sparse source");
   expect(::ftruncate(file, size) == 0, "size sparse source");
   for (const off_t offset : {off_t{0}, size / 2, size - 131072})
     expect(::pwrite(file, "data", 4, offset) == 4, "write sparse data");
-  const int directory = ::open(staging.c_str(), O_RDONLY | O_DIRECTORY);
-  expect(directory >= 0, "open sparse staging");
-  std::atomic<bool> cancel = false;
-  const auto output = root / "sparse-output";
-  tsugumi::fs::OutputBudget budget;
-  tsugumi::fs::copy_staging_artifact(directory, "artifact", output, cancel, budget);
-  ::close(directory);
   const auto check = [&](const stdfs::path& path) {
     expect(stdfs::file_size(path) == static_cast<uint64_t>(size),
            "sparse copy size");
@@ -180,8 +177,7 @@ auto copy_sparse_outputs(const stdfs::path& root) -> void {
     }
     ::close(fd);
   };
-  check(output / "large");
-  // Input transfers additionally consume every logical byte for hashing.
+  // Input transfers consume every logical byte for hashing.
   const auto input = root / "sparse-input";
   const int destination =
       ::open(input.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
@@ -198,35 +194,27 @@ auto copy_sparse_outputs(const stdfs::path& root) -> void {
 
   // A filesystem may report all allocated zero blocks as data. The block
   // detector must avoid allocating them even when extent seeking skips none.
+  const auto dense = root / "allocated-zeros";
   {
-    std::ofstream dense(staging / "artifact/allocated-zeros", std::ios::binary);
+    std::ofstream zeros_file(dense, std::ios::binary);
     const std::string zeros(65536, '\0');
-    for (int i = 0; i < 64; ++i) dense.write(zeros.data(), zeros.size());
+    for (int i = 0; i < 64; ++i) zeros_file.write(zeros.data(), zeros.size());
   }
-  const int zeros_root = ::open(staging.c_str(), O_RDONLY | O_DIRECTORY);
-  expect(zeros_root >= 0, "open zero-block staging");
   const auto zeros_copy = root / "zero-block-copy";
-  tsugumi::fs::copy_staging_artifact(zeros_root, "artifact", zeros_copy,
-                                     cancel, budget);
-  ::close(zeros_root);
+  const int zeros_source = ::open(dense.c_str(), O_RDONLY);
+  const int zeros_destination =
+      ::open(zeros_copy.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+  expect(zeros_source >= 0 && zeros_destination >= 0, "open zero-block copy");
+  tsugumi::fs::copy_sparse_file(zeros_source, zeros_destination, dense,
+                                zeros_copy, {});
+  ::close(zeros_source);
+  ::close(zeros_destination);
   struct stat zeros_status{};
-  expect(::stat((zeros_copy / "allocated-zeros").c_str(), &zeros_status) == 0 &&
+  expect(::stat(zeros_copy.c_str(), &zeros_status) == 0 &&
              zeros_status.st_size == 4 * 1024 * 1024,
          "zero-block copy size");
   expect(zeros_status.st_blocks * 512 < 1024 * 1024,
          "allocated zero blocks were copied densely");
-
-  cancel = true;
-  const int fd = ::open(staging.c_str(), O_RDONLY | O_DIRECTORY);
-  bool cancelled = false;
-  try {
-    tsugumi::fs::copy_staging_artifact(fd, "artifact", root / "sparse-cancelled",
-                                       cancel, budget);
-  } catch (const std::runtime_error&) {
-    cancelled = true;
-  }
-  ::close(fd);
-  expect(cancelled, "sparse transfer ignored cancellation");
 }
 
 auto failure_details(const stdfs::path& root) -> void {
@@ -254,7 +242,38 @@ auto read_file(const stdfs::path& path) -> std::string {
           std::istreambuf_iterator<char>()};
 }
 
-auto copy_outputs(const stdfs::path& root) -> void {
+// A resident's (and on macOS every) installation: seal a clone.
+auto install_clone(int staging, const std::string& name,
+                   const stdfs::path& destination) -> void {
+  tsugumi::fs::OutputBudget budget;
+  const auto clones =
+      destination.parent_path() / (destination.filename().string() + ".clones");
+  stdfs::create_directory(clones);
+  tsugumi::fs::clone_staging_artifact(staging, name, clones / name, budget);
+  const int fd = ::open(clones.c_str(), O_RDONLY | O_DIRECTORY);
+  expect(fd >= 0, "open clones");
+  try {
+    tsugumi::fs::move_staging_artifact(fd, name, destination, budget);
+  } catch (...) {
+    ::close(fd);
+    throw;
+  }
+  ::close(fd);
+}
+
+// The installation of a fresh worker's artifact: macOS seals a clone, Linux
+// renames the staged tree.
+auto install(int staging, const std::string& name,
+             const stdfs::path& destination) -> void {
+#ifdef __APPLE__
+  install_clone(staging, name, destination);
+#else
+  tsugumi::fs::OutputBudget budget;
+  tsugumi::fs::move_staging_artifact(staging, name, destination, budget);
+#endif
+}
+
+auto install_outputs(const stdfs::path& root) -> void {
   const auto staging = root / "outputs";
   const auto report = staging / "report";
   stdfs::create_directories(report / "assets");
@@ -266,30 +285,22 @@ auto copy_outputs(const stdfs::path& root) -> void {
          "mkfifo unused");
   const int fd = ::open(staging.c_str(), O_RDONLY | O_DIRECTORY);
   expect(fd >= 0, "open output staging");
-  const std::atomic<bool> cancel = false;
-  const auto destination = root / "saved-report";
-  tsugumi::fs::OutputBudget budget;
-  tsugumi::fs::copy_staging_artifact(fd, "report", destination, cancel, budget);
-  expect(read_file(destination / "assets/data") == "inside", "directory copy");
-  std::ofstream(report / "assets/data") << "changed";
-  expect(read_file(destination / "assets/data") == "inside",
-         "snapshot changed");
-  std::ofstream(report / "assets/data") << "inside";
   for (const auto* name : {"secret", "report/assets"}) {
     bool rejected = false;
     try {
-      tsugumi::fs::copy_staging_artifact(fd, name, root / "rejected", cancel, budget);
+      install(fd, name, root / "rejected");
     } catch (const std::exception&) {
       rejected = true;
     }
     expect(rejected, "invalid artifact root was accepted");
+    expect(!stdfs::exists(root / "rejected"), "rejected root was installed");
   }
 
   const auto bad = report / "bad";
   const auto refuse = [&](const std::string& kind) {
     bool rejected = false;
     try {
-      tsugumi::fs::copy_staging_artifact(fd, "report", root / "rejected", cancel, budget);
+      install(fd, "report", root / "rejected");
     } catch (const std::exception& error) {
       const std::string message = error.what();
       expect(message.find("report/bad") != std::string::npos,
@@ -299,6 +310,7 @@ auto copy_outputs(const stdfs::path& root) -> void {
       rejected = true;
     }
     expect(rejected, "unsafe output was accepted");
+    expect(!stdfs::exists(root / "rejected"), "unsafe output was installed");
     stdfs::remove(bad);
   };
   stdfs::create_symlink("../secret", bad);
@@ -311,10 +323,20 @@ auto copy_outputs(const stdfs::path& root) -> void {
   refuse("symbolic link");
   expect(::mkfifo(bad.c_str(), 0600) == 0, "mkfifo output");
   refuse("FIFO");
+
+  const auto destination = root / "saved-report";
+  install(fd, "report", destination);
+  expect(read_file(destination / "assets/data") == "inside", "installed tree");
+  for (const auto& path : {destination, destination / "assets",
+                           destination / "assets/data"}) {
+    struct stat status{};
+    expect(::lstat(path.c_str(), &status) == 0 && !(status.st_mode & 0222),
+           "installed tree is writable");
+  }
   ::close(fd);
 }
 
-auto copy_link_race(const stdfs::path& root) -> void {
+auto install_link_race(const stdfs::path& root) -> void {
   const auto staging = root / "race";
   const auto report = staging / "report";
   stdfs::create_directories(report);
@@ -326,7 +348,6 @@ auto copy_link_race(const stdfs::path& root) -> void {
   stdfs::create_symlink("safe", link);
   const int fd = ::open(staging.c_str(), O_RDONLY | O_DIRECTORY);
   expect(fd >= 0, "open racing output");
-  const std::atomic<bool> cancel = false;
   std::atomic<bool> started = false;
   std::atomic<bool> swap_failed = false;
   {
@@ -349,13 +370,13 @@ auto copy_link_race(const stdfs::path& root) -> void {
     for (int i = 0; i < 100; ++i) {
       const auto destination = root / ("race-copy-" + std::to_string(i));
       try {
-        tsugumi::fs::OutputBudget budget;
-        tsugumi::fs::copy_staging_artifact(fd, "report", destination, cancel, budget);
+        install(fd, "report", destination);
       } catch (const std::runtime_error& error) {
         expect(
             std::string(error.what()).find("report/link") != std::string::npos,
             "race error lacks path");
       }
+      if (!stdfs::exists(destination)) continue;
       if (stdfs::exists(destination / "link"))
         expect(read_file(destination / "link") == "inside",
                "race read a host file");
@@ -393,6 +414,110 @@ auto swap_linked_inputs(const stdfs::path& root) -> void {
          "input replacement changed an open file");
 }
 
+#ifdef __APPLE__
+auto extended_flags(const stdfs::path& path) -> uint32_t {
+  attrlist request{};
+  request.bitmapcount = ATTR_BIT_MAP_COUNT;
+  request.forkattr = ATTR_CMNEXT_EXT_FLAGS;
+  request.commonattr = ATTR_CMN_RETURNED_ATTRS;
+  struct {
+    uint32_t length;
+    attribute_set_t returned;
+    uint64_t flags;
+  } __attribute__((packed)) reply{};
+  expect(::getattrlist(path.c_str(), &request, &reply, sizeof reply,
+                       FSOPT_ATTR_CMN_EXTENDED | FSOPT_NOFOLLOW) == 0 &&
+             (reply.returned.forkattr & ATTR_CMNEXT_EXT_FLAGS),
+         "read extended file flags");
+  return static_cast<uint32_t>(reply.flags);
+}
+
+#endif
+
+// A sealed clone is a new inode: a writer the Card kept past the call, through
+// a descriptor or a shared mapping, changes only the staged original. On APFS
+// the clone shares the original's blocks, so a large file is not copied.
+auto seal_clones(const stdfs::path& root) -> void {
+  const auto staging = root / "clone-staging";
+  stdfs::create_directories(staging / "report/nested/empty");
+  const auto member = staging / "report/nested/data";
+  std::ofstream(member) << "sealed";
+  const auto large = staging / "report/large";
+  {
+    std::ofstream file(large, std::ios::binary);
+    const std::string block(1 << 20, 'x');
+    for (int i = 0; i < 64; ++i) file.write(block.data(), block.size());
+  }
+  const int writer = ::open(member.c_str(), O_RDWR);
+  expect(writer >= 0, "open lingering writer");
+  auto* mapped = static_cast<char*>(
+      ::mmap(nullptr, 6, PROT_READ | PROT_WRITE, MAP_SHARED, writer, 0));
+  expect(mapped != MAP_FAILED, "map lingering writer");
+  const int fd = ::open(staging.c_str(), O_RDONLY | O_DIRECTORY);
+  expect(fd >= 0, "open clone staging");
+  const auto store = root / "clone-store/report";
+  stdfs::create_directories(store.parent_path());
+  install_clone(fd, "report", store);
+  expect(!stdfs::equivalent(large, store / "large"), "output was not cloned");
+#ifdef __APPLE__
+  expect(extended_flags(store / "large") & EF_SHARES_ALL_BLOCKS,
+         "large output was copied, not cloned");
+#endif
+  expect(read_file(store / "large").size() == 64u << 20, "clone lost data");
+  expect(stdfs::is_empty(store / "nested/empty"), "clone lost a directory");
+  tsugumi::fs::remove_staging_artifact(fd, "report");
+  expect(!stdfs::exists(staging / "report"), "originals were kept");
+  ::close(fd);
+  expect(::pwrite(writer, "change", 6, 0) == 6, "write lingering descriptor");
+  std::memcpy(mapped, "mapped", 6);
+  expect(::msync(mapped, 6, MS_SYNC) == 0, "sync lingering mapping");
+  ::munmap(mapped, 6);
+  ::close(writer);
+  expect(read_file(store / "nested/data") == "sealed",
+         "a lingering writer changed a sealed artifact");
+}
+
+#ifdef __APPLE__
+// clonefile needs APFS. Another filesystem fails the transfer with a clear
+// error instead of falling back to a byte copy.
+auto clone_unsupported_filesystem(const stdfs::path& root) -> void {
+  const auto image = root / "hfs.dmg";
+  const auto mount = root / "hfs";
+  stdfs::create_directory(mount);
+  const auto run = [](const std::string& command) {
+    expect(std::system(command.c_str()) == 0, "hdiutil failed");
+  };
+  run("/usr/bin/hdiutil create -quiet -size 8m -fs HFS+ -layout NONE "
+      "-volname tsugumi-clone '" + image.string() + "'");
+  run("/usr/bin/hdiutil attach -quiet -nobrowse -noverify -noautoopen "
+      "-mountpoint '" + mount.string() + "' '" + image.string() + "'");
+  struct Detach {
+    stdfs::path mount;
+    ~Detach() {
+      std::system(("/usr/bin/hdiutil detach -quiet -force '" +
+                   mount.string() + "'").c_str());
+    }
+  } detach{mount};
+  stdfs::create_directories(mount / "staging/report");
+  std::ofstream(mount / "staging/report/data") << "output";
+  const int fd = ::open((mount / "staging").c_str(), O_RDONLY | O_DIRECTORY);
+  expect(fd >= 0, "open HFS+ staging");
+  std::string message;
+  try {
+    tsugumi::fs::clone_staging_artifact(fd, "report", mount / "clone",
+                                        tsugumi::fs::OutputBudget{});
+  } catch (const std::runtime_error& error) {
+    message = error.what();
+  }
+  ::close(fd);
+  expect(message.find("report/data") != std::string::npos &&
+             message.find("cannot clone") != std::string::npos &&
+             message.find("APFS") != std::string::npos,
+         "unsupported filesystem lacks a clear error");
+  expect(!stdfs::exists(mount / "clone"), "a failed clone left a copy");
+}
+#endif
+
 }  // namespace
 
 auto main() -> int {
@@ -401,10 +526,14 @@ auto main() -> int {
     clean_card_entries(scratch.path);
     swap_linked_inputs(scratch.path);
     clean_unreadable_directories(scratch.path);
-    copy_sparse_outputs(scratch.path);
+    copy_sparse_files(scratch.path);
     failure_details(scratch.path);
-    copy_outputs(scratch.path);
-    copy_link_race(scratch.path);
+    install_outputs(scratch.path);
+    install_link_race(scratch.path);
+    seal_clones(scratch.path);
+#ifdef __APPLE__
+    clone_unsupported_filesystem(scratch.path);
+#endif
     std::cout << "worker staging tests passed\n";
     return 0;
   } catch (const std::exception& error) {

@@ -9,6 +9,7 @@
 #include <cstring>
 #include <set>
 #include <stdexcept>
+#include <system_error>
 
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
@@ -105,17 +106,16 @@ auto run_invocation(const ReleaseWorker& release_worker,
   InvocationResult result;
   bool between_calls = true;
   bool validation_rejected = false;
-  bool retire_for_artifacts = false;
   const auto release = [&] {
     const auto disposition =
-        worker_disposition(reuse && !retire_for_artifacts, worker.alive(),
-                           between_calls, validation_rejected, result.failure);
+        worker_disposition(reuse, worker.alive(), between_calls,
+                           validation_rejected, result.failure);
     // Retiring a worker stops its process group before clearing scratch.
-    // Clear live staging only when returning a resident for another call.
+    // A resident keeps its sandbox: clearing its staging removes this call's
+    // input and output paths from its view.
     if (disposition.keep) worker.clear_scratch();
     release_worker(std::move(lease.worker), disposition.keep,
-                   retire_for_artifacts ? "the previous call created artifacts"
-                                        : disposition.reason);
+                   disposition.reason);
   };
   try {
     worker.set_display(invocation.display);
@@ -145,7 +145,6 @@ auto run_invocation(const ReleaseWorker& release_worker,
           std::ranges::find(invocation.grants, key, &ArtifactGrant::id);
       if (grant == invocation.grants.end()) return {};
       if (!grant->store_path.empty()) return grant->store_path;
-      if (!invocation.artifact_inputs) return {};
       const auto id = artifact_id_bytes(key);
       const auto label = std::to_string(artifact_sequence(id)) + "." +
                          std::to_string(artifact_counter(id));
@@ -168,31 +167,35 @@ auto run_invocation(const ReleaseWorker& release_worker,
     worker.set_logs(nullptr);
     if (invocation.on_timing) invocation.on_timing(begin, now_ms());
     std::optional<FailureData> transfer_failure;
-    struct Snapshot {
+    // A resident, or on macOS a detached child of the Card (there is no PID
+    // namespace), can keep a writer on the staged inodes past the call. Seal
+    // clones, which are new inodes, instead. Linux retires a fresh worker's
+    // namespace and renames the staged tree.
+#ifdef __APPLE__
+    const bool clone = true;
+#else
+    const bool clone = reuse;
+#endif
+    struct Clones {
       stdfs::path path;
-      ~Snapshot() {
+      ~Clones() {
         if (path.empty()) return;
         std::error_code ec;
         stdfs::remove_all(path, ec);
       }
-    } snapshot;
+    } clones;
     try {
       if (!outcome.created.empty() && !stage)
         throw Failed(FailureKind::output_invalid, "unexpected artifact creation");
       auto budget = invocation.output_budget;
-      // A resident could still hold an open writer after returning. Retire
-      // the process before transferring ownership of its inodes to the run.
-      if (!outcome.created.empty()) {
-        retire_for_artifacts = true;
-        worker.terminate(true);
-      }
-      std::optional<StagingHandle> snapshot_handle;
-      auto snapshot_budget = budget;
-      if (!outcome.created.empty() &&
-          !invocation.artifact_snapshot_root.empty()) {
-        snapshot.path = invocation.artifact_snapshot_root / crypto::uuid4();
-        stdfs::create_directories(snapshot.path);
-        snapshot_handle.emplace(snapshot.path, "artifact snapshot");
+      // A fresh worker is retired before the run takes over its outputs.
+      if (!outcome.created.empty() && !reuse) worker.terminate(true);
+      std::optional<StagingHandle> clones_handle;
+      if (!outcome.created.empty() && clone) {
+        // A sibling of the worker's staging: same volume, hidden from Cards.
+        clones.path = worker.artifact_scratch().parent_path() / crypto::uuid4();
+        stdfs::create_directory(clones.path);
+        clones_handle.emplace(clones.path, "artifact clone");
       }
       for (const auto& id : outcome.created) {
         if (id.size() != 16)
@@ -204,15 +207,22 @@ auto run_invocation(const ReleaseWorker& release_worker,
           throw Failed(FailureKind::output_invalid, "invalid created artifact id");
         const auto name = std::to_string(artifact_counter(bytes));
         try {
-          int source = stage->get();
-          if (snapshot_handle) {
-            const std::atomic<bool> persist{false};
-            fs::copy_staging_artifact(source, name, snapshot.path / name,
-                                      persist, snapshot_budget);
-            source = snapshot_handle->get();
+          if (clone) {
+            fs::clone_staging_artifact(stage->get(), name, clones.path / name,
+                                       budget);
+            fs::move_staging_artifact(clones_handle->get(), name,
+                                      invocation.artifact_directory / name,
+                                      budget);
+            // Clearing or retiring the worker removes whatever this cannot.
+            try {
+              fs::remove_staging_artifact(stage->get(), name);
+            } catch (const std::system_error&) {
+            }
+          } else {
+            fs::move_staging_artifact(stage->get(), name,
+                                      invocation.artifact_directory / name,
+                                      budget);
           }
-          fs::move_staging_artifact(
-              source, name, invocation.artifact_directory / name, budget);
         } catch (const std::runtime_error& error) {
           transfer_failure =
               FailureData::make(FailureKind::output_invalid, error.what());
