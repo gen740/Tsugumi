@@ -232,7 +232,6 @@ function NixPathRows({ session, prefix }: { session: ProjectSession; prefix: str
     setDraft(next)
     setPending(undefined)
     revisionEdit.reload(session.rev)
-    return next
   }
   const save = async (list: J[], original: J | undefined) => {
     setPending(list)
@@ -268,7 +267,8 @@ function NixPathRows({ session, prefix }: { session: ProjectSession; prefix: str
           <Button disabled={disabled} onClick={() => start(entry)}>{L('編集')}</Button>
           <Button disabled={disabled} onClick={() => void update(name)}>{L('更新')}</Button>
           <Button kind="destructive" disabled={disabled} onClick={() => {
-            const { original } = start(entry)
+            const original = clone(get(project, 'nixPath'))
+            close()
             void save(entries.filter(row => str(get(row, 'name')) !== name), original)
           }}>{L('削除')}</Button>
         </Row>
