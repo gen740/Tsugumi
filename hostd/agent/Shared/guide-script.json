@@ -92,9 +92,9 @@
         },
         "change": {
           "show": {
-            "open": "card:settings",
+            "open": "card:generate",
             "highlight": "param:seed",
-            "say": "settings の seed を 7 など試したい値に変え、「適用」で保存してから再実行しましょう。render を開いて比べられます。",
+            "say": "generate の seed を 7 など試したい値に変え、「適用」で保存してから再実行しましょう。render を開いて比べられます。",
             "actions": [
               {
                 "kind": "run",

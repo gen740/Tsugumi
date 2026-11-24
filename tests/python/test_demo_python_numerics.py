@@ -206,7 +206,7 @@ def test_newton(tmp_path):
                                                set_param(b, "center_re", 0.0)))
 
         # Damping from settings: order 1 with ratio |1 - lambda| = 1/2 everywhere.
-        edit_card(env, c, "settings", lambda b: set_param(b, "damping", 0.5))
+        edit_card(env, c, "roots", lambda b: set_param(b, "damping", 0.5))
         rid4 = run_ok(c, "start", NEWTON)
         save_figures(c, rid4, "newton", ["orbits", "order", "basins"], "-damped")
         for row in result(c, rid4, "order"):
@@ -214,7 +214,7 @@ def test_newton(tmp_path):
             assert row["ratio"] == pytest.approx(0.5, abs=0.02), row
 
         # A multiple root in settings: the table reads multiplicity 2 and order 1.
-        edit_card(env, c, "settings", lambda b: (set_param(b, "damping", 1.0), set_param(b, "coeffs", [1.0, 0.0, -3.0, 2.0])))
+        edit_card(env, c, "roots", lambda b: (set_param(b, "damping", 1.0), set_param(b, "coeffs", [1.0, 0.0, -3.0, 2.0])))
         rid5 = run_ok(c, "start", NEWTON)
         save_figures(c, rid5, "newton", ["roots", "orbits", "order", "basins"], "-double")
         assert sorted(r[2] for r in result(c, rid5, "roots")["roots"]) == [1, 2]
@@ -222,7 +222,7 @@ def test_newton(tmp_path):
         assert doubled and all(r["q"] == pytest.approx(1.0, abs=0.1) for r in doubled), doubled
 
         # The black regions of a stable 2-cycle: a whole neighbourhood of 0 and 1 never converges.
-        edit_card(env, c, "settings", lambda b: set_param(b, "coeffs", [1.0, 0.0, -2.0, 2.0]))
+        edit_card(env, c, "roots", lambda b: set_param(b, "coeffs", [1.0, 0.0, -2.0, 2.0]))
         rid6 = run_ok(c, "start", NEWTON)
         save_figures(c, rid6, "newton", ["basins"], "-cycle")
         assert result(c, rid6, "basins")["unconverged"] > 0.001
@@ -329,7 +329,7 @@ def test_pharmacokinetics(tmp_path):
         assert any(two["below_missed_h"] > one["below_missed_h"] for one, two in zip(missed, missed2))
 
         # A longer half-life accumulates more, against R = 1 / (1 - exp(-ke tau)) from the note.
-        edit_card(env, c, "settings", lambda b: set_param(b, "half_life_h", 16.0))
+        edit_card(env, c, "simulate", lambda b: set_param(b, "half_life_h", 16.0))
         rid3 = run_ok(c, "start", PK)
         save_figures(c, rid3, "pharmacokinetics", ["simulate", "window"], "-long")
         for before, after in zip(checks, result(c, rid3, "check")):
@@ -453,7 +453,7 @@ def test_max_flow(tmp_path):
         assert first["gain"] >= on["gain"]
 
         # Another seed is another network, by the same checks.
-        edit_card(env, c, "settings", lambda b: set_param(b, "seed", 11))
+        edit_card(env, c, "network", lambda b: set_param(b, "seed", 11))
         rid4 = run_ok(c, "start", FLOW)
         net4 = result(c, rid4, "network")
         assert net4["edges"] != net["edges"]
