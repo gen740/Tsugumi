@@ -1241,7 +1241,6 @@
   "成果物を開く": "Open Artifacts",
   "成果物 {0}": "Artifact {0}",
   "利用できます": "Available",
-  "削除済み": "Deleted",
   "利用できません（実行後に残していないか、不明な ID）": "Unavailable (not kept after its run, or an unknown id)",
   "残さない（実行の終了時に削除）": "Not kept (removed when the run ends)",
   "この実行が作った成果物の中身を削除します。値に含まれる成果物の ID は利用できなくなります。元に戻せません。": "Delete the contents of the artifacts created by this run? Artifact IDs in recorded values will become unavailable. This cannot be undone.",

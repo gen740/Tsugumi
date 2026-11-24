@@ -23,7 +23,7 @@ from Tsugumi.RPC.RunEventValue import RunEventValue
 
 
 NUMBER = 'table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;'
-ARTIFACT_OUTPUT = 'table Doc {} table Outputs { out:Doc; } root_type Outputs;'
+ARTIFACT_OUTPUT = 'include "tsugumi/artifact.fbs"; table Outputs { out:tsugumi.Artifact; } root_type Outputs;'
 
 
 def scripted_implementations(directory, scenarios):

@@ -99,8 +99,9 @@ const value = () => {
     },
   } as unknown as ProjectSession
   let view!: ReturnType<typeof create>
-  await act(async () => { view = create(<CardArtifactsView session={session} cardKey="plot" />); await setImmediate() })
-  await act(async () => { await setImmediate() })
+  act(() => { view = create(<CardArtifactsView session={session} cardKey="plot" />) })
+  await setImmediate()
+  await setImmediate()
   try {
     const texts = () => view.root.findAll(node => typeof node.type === 'string').flatMap(node => node.children.filter((c): c is string => typeof c === 'string'))
     const all = texts().join('\n')
@@ -108,8 +109,10 @@ const value = () => {
     assert.ok(all.includes(L('残さない（実行の終了時に削除）')))
     assert.ok(all.includes(L('書き出す…')))
     const row = view.root.findAll(node => node.props.role === 'option' && node.props['aria-selected'] === false)[0]
-    await act(async () => { row.props.onClick(); await setImmediate() })
-    assert.ok(reads.length > 0, 'an available artifact shows its files')
+    act(() => { row.props.onClick() })
+    await setImmediate()
+    await setImmediate()
+    assert.equal(reads.at(-1), scratch.artifactId, 'selecting an artifact reads its files')
   } finally { view.unmount() }
 }
 

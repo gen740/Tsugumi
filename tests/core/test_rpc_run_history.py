@@ -200,7 +200,10 @@ def test_history_deletion_keeps_a_run_that_finished_after_selection(core_factory
     daemon.restart()
     client = daemon.connect()
     assert listed(client) == [second]
-    assert read_output(client, second, port="doc") == b""
+    value, = client.call("RunRecordRequest", runId=second, card=path("work")).record.outputs
+    artifact, = value.artifacts
+    assert text(artifact.id) == second_artifact
+    assert read_output(client, second, port="doc") == bytes(value.inlineBytes)
     assert read_pages(client, "ArtifactReadRequest", artifactId=second_artifact, member="report.txt").decode() == CONTENTS
     daemon.stop()
     copied_project = tmp_path / "copy"

@@ -87,6 +87,9 @@ def test_transient_artifact_opens_without_a_port_id_then_expires(
     with pytest.raises(RpcFailure) as gone:
         client.call("ArtifactReadRequest", artifactId=artifact_id, member="scratch.txt")
     assert gone.value.kind == "not_found"
+    # The interrupted consumer never committed its saved inputs.
+    if interrupted:
+        return
     rerun = run(client, "sink", propagate=False)
     assert wait_run(client, rerun).state == RunState.failed
     failed = client.call("RunRecordRequest", runId=rerun, card=path("sink")).record

@@ -1670,6 +1670,10 @@ std::optional<History::LastInput> History::last_input(sql::Db& db,
 }
 
 namespace {
+constexpr char kArtifactSelect[] =
+    "SELECT id, run_id, card, invocation, sequence, counter, keep, location, "
+    "created_ms, sealed_ms, size_bytes, tree_hash FROM artifacts ";
+
 ArtifactData artifact_row(const sql::Stmt& st) {
   ArtifactData a;
   a.id = st.blob(0);
@@ -1690,9 +1694,7 @@ ArtifactData artifact_row(const sql::Stmt& st) {
 
 std::optional<ArtifactData> History::artifact(sql::Db& db,
                                               const std::string& artifact_id) {
-  auto st = db.prepare(
-      "SELECT id, run_id, card, invocation, sequence, counter, keep, location, "
-      "created_ms, sealed_ms, size_bytes, tree_hash FROM artifacts WHERE id=?");
+  auto st = db.prepare(std::string(kArtifactSelect) + "WHERE id=?");
   st.bind_blob(1, artifact_id);
   if (!st.step()) return std::nullopt;
   return artifact_row(st);
@@ -1700,10 +1702,8 @@ std::optional<ArtifactData> History::artifact(sql::Db& db,
 
 auto History::transient_artifacts(sql::Db& db, const std::string& run_id)
     -> std::vector<ArtifactData> {
-  auto st = db.prepare(
-      "SELECT id, run_id, card, invocation, sequence, counter, keep, location, "
-      "created_ms, sealed_ms, size_bytes, tree_hash FROM artifacts "
-      "WHERE run_id=? AND keep=0");
+  auto st =
+      db.prepare(std::string(kArtifactSelect) + "WHERE run_id=? AND keep=0");
   st.bind(1, run_id);
   std::vector<ArtifactData> rows;
   while (st.step()) rows.push_back(artifact_row(st));
@@ -1714,15 +1714,14 @@ std::vector<ArtifactData> History::artifacts(
     sql::Db& db, const std::string& run_id, const std::optional<CardPath>& card,
     std::optional<uint64_t> invocation, const std::string& after,
     uint64_t limit) {
-  std::string q =
-      "SELECT id, run_id, card, invocation, origin, location, created_ms, "
-      "sealed_ms, size_bytes, tree_hash FROM artifacts "
-      "WHERE run_id=?1 AND (?2 IS NULL OR card=?2) AND (?3 IS NULL "
-      "OR invocation=?3) AND "
-      "(card || '\x1f' || printf('%020d', invocation) || '\x1f' || "
-      "printf('%020d', counter)) > ?4 "
-      "ORDER BY card, invocation, counter LIMIT ?5";
-  auto st = db.prepare(q);
+  auto st =
+      db.prepare(std::string(kArtifactSelect) +
+                 "WHERE run_id=?1 AND sealed_ms IS NOT NULL "
+                 "AND (?2 IS NULL OR card=?2) AND (?3 IS NULL "
+                 "OR invocation=?3) AND "
+                 "(card || '\x1f' || printf('%020d', invocation) || '\x1f' || "
+                 "printf('%020d', counter)) > ?4 "
+                 "ORDER BY card, invocation, counter LIMIT ?5");
   st.bind(1, run_id);
   if (card)
     st.bind(2, key(*card));
