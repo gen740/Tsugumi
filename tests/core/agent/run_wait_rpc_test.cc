@@ -6,13 +6,17 @@ namespace {
 TEST_F(AgentProjectFixture,
        MissingSavedInputsNamesTheWorkflowTriggerAndKeepsSingleCardRuns) {
   const auto root = directory.path / "project";
-  Write(root / "definitions/load/_card.json", R"({"type":"trigger"})");
-  Write(root / "definitions/knn/_card.json", R"({"type":"collect"})");
-  Write(root / "definitions/nested/_card.json", R"({"type":"subgraph","external":"nested"})");
+  Write(root / "definitions/load/_card.json",
+        R"({"type":"trigger","symbol":"play.circle"})");
+  Write(
+      root / "definitions/knn/_card.json",
+      R"({"type":"collect","symbol":"line.3.horizontal.decrease","maxRuns":1,"recordIO":"project"})");
+  Write(root / "definitions/nested/_card.json",
+        R"({"type":"subgraph","symbol":"link"})");
   Write(root / "externals/nested/tsugumi.json",
         R"({"canvas":{"cards":[{"id":"inner_load"}],"connections":[]}})");
   Write(root / "externals/nested/definitions/inner_load/_card.json",
-        R"({"type":"trigger"})");
+        R"({"type":"trigger","symbol":"play.circle"})");
   StartProject(
       false,
       R"({"nixPath": [],"canvas":{"cards":[{"id":"load"},{"id":"knn"},{"id":"nested"}],"connections":[{"from":{"card":"load","port":"out"},"to":{"card":"knn","port":"in"}}]}})");
@@ -47,24 +51,20 @@ TEST_F(AgentProjectFixture,
 class AgentRunWaitFixture : public AgentProjectFixture {
  protected:
   auto Prepare() -> std::string {
+    const auto dir = directory.path / "project/definitions/work";
+    Write(dir / "_card.json", FixtureCodeCard());
+    Write(dir / "README.md",
+          "---\ntitle: work\ndescription: Wait fixture\n---\n\nRun completion");
+    Write(dir / "_outputs.fbs", "table Outputs {} root_type Outputs;");
+    Write(dir / "default.nix", "{}");
+    Write(dir / "mock-build.json",
+          R"({"gate":"run-wait","error":"fixture completion"})");
     StartProject();
     const auto conversation = Conversation("run-wait");
     for (auto access :
          {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
           Tsugumi::Service::Access::Run})
       Grant(conversation, access);
-    const auto inspected = Inspect(conversation).View();
-    const auto rev = JsonString(JsonString(inspected, "/text"), "/value/rev");
-    const auto saved = Tool(conversation, "project_save",
-                            "{\"base_rev\":" + Quote(rev) + R"(,"changes":[
-      {"value_type":"SetProject","value":{"json":"{\"name\":\"wait\",\"nixPath\":[],\"canvas\":{\"cards\":[{\"id\":\"work\"}],\"connections\":[]}}"}},
-      {"value_type":"PutDefinition","value":{"id":"work","card_json":"{\"type\":\"code\"}","readme":"---\ndescription: Wait fixture\n---\n\nRun completion"}},
-      {"value_type":"PutSource","value":{"path":"definitions/work/_outputs.fbs","bytes":"table Outputs {} root_type Outputs;"}},
-      {"value_type":"PutSource","value":{"path":"definitions/work/default.nix","bytes":"{}"}},
-      {"value_type":"PutSource","value":{"path":"definitions/work/mock-build.json","bytes":"{\"gate\":\"run-wait\",\"error\":\"fixture completion\"}"}}
-    ]})");
-    if (!saved.Code().empty() || JsonBool(saved.View(), "/isError"))
-      throw std::runtime_error("Cannot save wait fixture: " + saved.View());
     return conversation;
   }
 

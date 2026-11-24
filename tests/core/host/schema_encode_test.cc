@@ -2,7 +2,9 @@
 
 #include <limits>
 
+#include "../agent/document_fixture.hh"
 #include "../agent_fixture_server.hh"
+#include "host/templates.hh"
 #include "tsugumi/document/document.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json.hh"
@@ -11,13 +13,17 @@ namespace tsugumi::schema {
 namespace {
 TEST(SchemaDecode, DefinitionLoaderNamesUnknownSettingsAndTheFile) {
   test::TemporaryDirectory directory;
-  fs::write_atomic(directory.path / "tsugumi.json",
-                   R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
+  fs::write_atomic(
+      directory.path / "tsugumi.json",
+      test::FixtureProjectDocument(
+          R"({"canvas":{"cards":[{"id":"x"}],"connections":[]}})"));
   const auto file = directory.path / "definitions/x/_card.json";
   std::filesystem::create_directories(file.parent_path());
+  fs::write_atomic(file.parent_path() / "README.md", host::CardReadme("x"));
   for (const auto* member : {"filesystem", "unrecognizedSetting"}) {
     fs::write_atomic(
-        file, "{\"type\":\"draft\",\"" + std::string(member) + "\":true}");
+        file, "{\"symbol\":\"pencil.and.outline\",\"type\":\"draft\",\"" +
+                  std::string(member) + "\":true}");
     try {
       load_from_disk(directory.path);
       FAIL() << "Unknown settings must be rejected";
@@ -31,11 +37,9 @@ TEST(SchemaDecode, DefinitionLoaderNamesUnknownSettingsAndTheFile) {
 
 TEST(SchemaDecode, EveryCardStatesAKnownType) {
   for (const auto& [text, message] : {
-           std::pair{R"({})", R"("type" is required)"},
-           std::pair{R"({"type":"none"})", "unknown enum value: none"},
-           std::pair{R"({"type":"code","external":"inner"})",
-                     R"("external" needs "type": "subgraph")"},
-           std::pair{R"({"type":"subgraph"})", R"(a subgraph needs "external")"},
+           std::pair{R"({"symbol":"link"})", R"("type" is required)"},
+           std::pair{R"({"type":"none","symbol":"link"})",
+                     "unknown enum value: none"},
        }) {
     try {
       parse_card_json("x", text);
@@ -47,11 +51,8 @@ TEST(SchemaDecode, EveryCardStatesAKnownType) {
       EXPECT_EQ(error.args.at("path"), "definitions/x/_card.json");
     }
   }
-  for (const auto* type : {"code", "draft", "trigger", "input", "merge", "collect"})
-    EXPECT_NO_THROW(
-        parse_card_json("x", std::string(R"({"type":")") + type + "\"}"));
   EXPECT_NO_THROW(
-      parse_card_json("x", R"({"type":"subgraph","external":"inner"})"));
+      parse_card_json("x", R"({"type":"subgraph","symbol":"link"})"));
 }
 
 TEST(SchemaDecode, NestedUnknownAndWrongTypedSettingsKeepTheirLocation) {

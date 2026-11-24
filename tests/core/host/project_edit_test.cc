@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include "../agent/document_fixture.hh"
 #include "host/failure.hh"
 #include "host/project_operations.hh"
 #include "tsugumi/document/graph.hh"
@@ -217,7 +218,8 @@ TEST(NixPathOperation, ParamRewriteUsesTheConfirmedSourceAndRevision) {
       {"rev", "\"7\""},
       {"project_json",
        R"("{\"canvas\":{\"cards\":[{\"id\":\"a\"}],\"connections\":[]}}")"},
-      {"definitions", R"([{"id":"a","card_json":"{\"type\":\"code\"}"}])"},
+      {"definitions",
+       R"([{"id":"a","card_json":"{\"type\":\"code\",\"symbol\":\"chevron.left.forwardslash.chevron.right\",\"inputs\":[],\"maxRuns\":1,\"reuseWorker\":false,\"timeoutSeconds\":0,\"buildTimeoutSeconds\":0,\"recordLogs\":\"project\",\"recordIO\":\"project\",\"sandbox\":{\"filesystem\":true,\"pid\":true,\"ipc\":true,\"identity\":true,\"limits\":{\"cpu\":0,\"memoryMiB\":0}},\"grants\":{\"network\":false,\"gui\":false},\"system\":\"aarch64-linux\",\"workerCapabilities\":[]}"}])"},
       {"sources",
        json::Encode(std::vector<std::string>{json::Encode(json::Members{
            {"path", json::Quote("definitions/a/params.nix")},
@@ -268,7 +270,7 @@ TEST(NixPathOperation, CardCopyDoesNotCarryPinsOrBlockOnNames) {
       {"rev", "\"7\""},
       {"project_json", json::Quote(source)},
       {"definitions",
-       R"([{"id":"source","card_json":"{\"type\":\"draft\"}"}])"},
+       R"([{"id":"source","card_json":"{\"type\":\"draft\",\"symbol\":\"pencil.and.outline\"}"}])"},
       {"sources", json::Encode(std::vector<std::string>{
                       SourceDoc("tsugumi.lock", pin),
                       SourceDoc("externals/sub/tsugumi.json", destination)})}};
@@ -321,9 +323,12 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
   const std::string before =
       R"({"nixPath": [],"canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":""},"to":{"card":"compare","port":""}}]}})";
   base.files["tsugumi.json"] = before;
-  base.files["definitions/knn/_card.json"] = R"({"type":"draft"})";
+  base.files["definitions/knn/_card.json"] =
+      R"({"type":"draft","symbol":"pencil.and.outline"})";
   H::ProjectEditsT edits;
-  auto implement = Field({}, R"({"type":"draft"})", R"({"type":"code"})");
+  auto implement =
+      Field({}, R"({"type":"draft","symbol":"pencil.and.outline"})",
+            ::tsugumi::test::FixtureCodeCard());
   implement.file_path = "definitions/knn/_card.json";
   Add(edits, std::move(implement));
   Add(edits, WirePort("knn", "compare", "", "", "from", "result"));
@@ -349,7 +354,17 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
   doc.project_json = project;
   doc.project_buffer = parse_project_json(project).buffer;
   for (const auto& [id, raw] :
-       {std::pair{"knn", "{\"type\":\"code\"}"}, {"compare", "{\"type\":\"draft\"}"}}) {
+       {std::pair{
+            "knn",
+            "{\"type\":\"code\",\"symbol\":\"chevron.left.forwardslash.chevron."
+            "right\",\"inputs\":[],\"maxRuns\":1,\"reuseWorker\":false,"
+            "\"timeoutSeconds\":0,\"buildTimeoutSeconds\":0,\"recordLogs\":"
+            "\"project\",\"recordIO\":\"project\",\"sandbox\":{\"filesystem\":"
+            "true,\"pid\":true,\"ipc\":true,\"identity\":true,\"limits\":{"
+            "\"cpu\":0,\"memoryMiB\":0}},\"grants\":{\"network\":false,\"gui\":"
+            "false},\"system\":\"aarch64-linux\",\"workerCapabilities\":[]}"},
+        {"compare",
+         "{\"type\":\"draft\",\"symbol\":\"pencil.and.outline\"}"}}) {
     DefinitionDoc definition;
     definition.card_json = raw;
     definition.card_buffer = parse_card_json(id, raw).buffer;
@@ -385,7 +400,7 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
           {"project_json", json::Quote(before)},
           {"layout", "\"{}\""},
           {"definitions",
-           R"([{"id":"knn","card_json":"{\"type\":\"draft\"}"},{"id":"compare","card_json":"{\"type\":\"draft\"}"}])"}};
+           R"([{"id":"knn","card_json":"{\"type\":\"draft\",\"symbol\":\"pencil.and.outline\"}"},{"id":"compare","card_json":"{\"type\":\"draft\",\"symbol\":\"pencil.and.outline\"}"}])"}};
     } else {
       EXPECT_EQ(method, "project_save");
       ++saves;
@@ -439,15 +454,18 @@ TEST(ProjectEdit, BindsOnlyAnUnambiguousUnmentionedInputOnDraftImplementation) {
     base.files[prefix + "tsugumi.json"] =
         R"({ "canvas": {"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":"out"},"to":{"card":"compare","port":""}}]} })";
     const auto definition = prefix + "definitions/compare/_card.json";
-    base.files[definition] = std::string(variant) == "already_code"
-                                 ? R"({"type":"code"})"
-                                 : R"({"type":"draft"})";
+    base.files[definition] =
+        std::string(variant) == "already_code"
+            ? ::tsugumi::test::FixtureCodeCard()
+            : R"({"type":"draft","symbol":"pencil.and.outline"})";
     H::ProjectEditsT edits;
     auto implement =
         Field({}, base.files.at(definition),
               std::string(variant) == "multiple_inputs"
-                  ? R"({"type":"code","inputs":[{"name":"source"},{"name":"other"}]})"
-                  : R"({"type":"code","inputs":[{"name":"source"}]})");
+                  ? ::tsugumi::test::FixtureCodeCard(
+                        R"({"inputs":[{"name":"source"},{"name":"other"}]})")
+                  : ::tsugumi::test::FixtureCodeCard(
+                        R"({"inputs":[{"name":"source"}]})"));
     implement.file_path = definition;
     Add(edits, std::move(implement));
     if (std::string(variant) == "explicit")
@@ -499,12 +517,13 @@ TEST(ProjectEditDiagnostics, NamesTheWireEndAndTheDefinitionFieldsToWrite) {
       definition.card_buffer = parse_card_json(id, raw).buffer;
       doc.definitions[id] = std::move(definition);
     };
-    add("knn", R"({"type":"trigger"})");
-    add("compare",
-        std::string(scenario) == "draft" ? R"({"type":"draft"})"
-        : std::string(scenario) == "unknown_param"
-            ? R"({"type":"code","inputs":[{"name":"source"}]})"
-            : R"({"type":"code","inputs":[]})");
+    add("knn", R"({"type":"trigger","symbol":"play.circle"})");
+    add("compare", std::string(scenario) == "draft"
+                       ? R"({"type":"draft","symbol":"pencil.and.outline"})"
+                   : std::string(scenario) == "unknown_param"
+                       ? ::tsugumi::test::FixtureCodeCard(
+                             R"({"inputs":[{"name":"source"}]})")
+                       : ::tsugumi::test::FixtureCodeCard());
     if (std::string_view(scenario) == "unknown_param")
       doc.sources["definitions/compare/params.nix"] = {};
     const auto resolved = resolve(
@@ -663,7 +682,8 @@ TEST(ProjectEdit, FirstCommentUndoAndRedoAddressItsId) {
   };
   SaveBase base;
   base.snapshot["rev"] = "0";
-  base.files["definitions/a/_card.json"] = R"({"type":"draft"})";
+  base.files["definitions/a/_card.json"] =
+      R"({"type":"draft","symbol":"pencil.and.outline"})";
   const auto read = [](const auto&) -> std::optional<std::string> {
     return {};
   };
@@ -712,7 +732,8 @@ TEST(ProjectEdit, LastCommentDeletesMetadataWithAFileGuard) {
   const std::string meta = R"({"comments":[{"id":"c","text":"last"}]})";
   SaveBase base;
   base.snapshot["rev"] = "0";
-  base.files["definitions/a/_card.json"] = R"({"type":"draft"})";
+  base.files["definitions/a/_card.json"] =
+      R"({"type":"draft","symbol":"pencil.and.outline"})";
   base.files[path] = "\n  " + meta + "\n";
   H::ProjectJSONEditT remove;
   remove.file_path = path;
@@ -770,7 +791,7 @@ TEST(ProjectEdit, HostConflictsUseTheTypedOperationOutcome) {
             R"({"reply":"OperationResult","value":{"state":"unknown"}})", {}};
       EXPECT_EQ(method, "project_inspect");
       return OperationReply{
-          R"({"reply":"ProjectSnapshot","value":{"rev":0,"project_json":"{}","layout":[],"definitions":[{"id":"a","card_json":"{\"type\":\"code\"}","comments_json":"{\"comments\":[{\"id\":\"current\",\"text\":\"current\"}]}"}]}})",
+          R"({"reply":"ProjectSnapshot","value":{"rev":0,"project_json":"{}","layout":[],"definitions":[{"id":"a","card_json":"{\"type\":\"code\",\"symbol\":\"chevron.left.forwardslash.chevron.right\",\"inputs\":[],\"maxRuns\":1,\"reuseWorker\":false,\"timeoutSeconds\":0,\"buildTimeoutSeconds\":0,\"recordLogs\":\"project\",\"recordIO\":\"project\",\"sandbox\":{\"filesystem\":true,\"pid\":true,\"ipc\":true,\"identity\":true,\"limits\":{\"cpu\":0,\"memoryMiB\":0}},\"grants\":{\"network\":false,\"gui\":false},\"system\":\"aarch64-linux\",\"workerCapabilities\":[]}","comments_json":"{\"comments\":[{\"id\":\"current\",\"text\":\"current\"}]}"}]}})",
           {}};
     };
     const auto conflict =

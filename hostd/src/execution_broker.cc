@@ -192,7 +192,7 @@ auto RegisteredProject(const std::filesystem::path& root) -> std::string {
 struct Entry {
   std::string id, name, endpoint, worker_public_key;
   R::CapabilitiesT capabilities;
-  uint64_t grade = 0;
+  std::vector<uint8_t> worker_capabilities;
   // Only transport identity changes invalidate a project's grant. Capabilities
   // are observations of the worker and the name is presentation.
   std::string generation;
@@ -203,7 +203,7 @@ auto Public(const Entry& entry) -> std::unique_ptr<H::ExecutionServiceT> {
   value->name = entry.name;
   value->endpoint = entry.endpoint;
   value->worker_public_key = entry.worker_public_key;
-  value->grade = entry.grade;
+  value->worker_capabilities = entry.worker_capabilities;
   auto& c = value->capabilities = std::make_unique<H::ExecutionCapabilitiesT>();
   c->isolation = "pid_namespace";
   c->server_id = entry.capabilities.server_id;
@@ -251,7 +251,7 @@ struct ExecutionBroker::State {
         "NULL,"
         "endpoint TEXT NOT NULL,worker_public_key TEXT NOT NULL,capabilities "
         "BLOB NOT "
-        "NULL,grade TEXT NOT NULL,generation TEXT NOT NULL);"
+        "NULL,worker_capabilities BLOB NOT NULL,generation TEXT NOT NULL);"
         "CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,identity TEXT "
         "NOT NULL,"
         "scope TEXT NOT NULL,capability TEXT NOT NULL UNIQUE);"
@@ -352,7 +352,7 @@ struct ExecutionBroker::State {
   auto Entries() -> std::vector<Entry> {
     auto q = db.prepare(
         "SELECT id,name,endpoint,worker_public_key,capabilities,"
-        "grade,generation FROM services "
+        "worker_capabilities,generation FROM services "
         "ORDER BY (id != 'local'),rowid");
     std::vector<Entry> entries;
     while (q.step()) {
@@ -363,8 +363,13 @@ struct ExecutionBroker::State {
       const auto* reply = message->payload.AsReply();
       Require(reply && reply->body.AsCapabilities(),
               "Invalid stored worker capabilities");
-      entries.push_back({q.text(0), q.text(1), q.text(2), q.text(3),
-                         *reply->body.AsCapabilities(), std::stoull(q.text(5)),
+      const auto bits = q.blob(5);
+      entries.push_back({q.text(0),
+                         q.text(1),
+                         q.text(2),
+                         q.text(3),
+                         *reply->body.AsCapabilities(),
+                         {bits.begin(), bits.end()},
                          q.text(6)});
     }
     if (std::ranges::find(entries, "local", &Entry::id) == entries.end()) {
@@ -479,7 +484,7 @@ struct ExecutionBroker::State {
           for (const auto& e : entries) {
             auto target = std::make_unique<R::TargetT>();
             target->id = e.id;
-            target->grade = e.grade;
+            target->worker_capabilities = e.worker_capabilities;
             auto grant = db.prepare(
                 "SELECT generation FROM project_services "
                 "WHERE project=? AND service=?");
@@ -680,13 +685,18 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
       return agent::wire::HostReply(id, Tsugumi::Service::AcknowledgementT{});
     }
     if (const auto* p = request.value_as_ExecutionServicePutRequest()) {
-      Entry entry{p->id()->str(),
-                  p->name()->str(),
-                  p->endpoint()->str(),
-                  p->worker_public_key()->str(),
-                  {},
-                  p->grade(),
-                  crypto::random_token(32)};
+      Entry entry{
+          p->id()->str(),
+          p->name()->str(),
+          p->endpoint()->str(),
+          p->worker_public_key()->str(),
+          {},
+          {p->worker_capabilities()->begin(), p->worker_capabilities()->end()},
+          crypto::random_token(32)};
+      std::set<uint8_t> seen;
+      for (const auto bit : entry.worker_capabilities)
+        Require(bit < 64 && seen.insert(bit).second,
+                "Worker capabilities must be distinct bits from 0 through 63");
       Require(entry.id == "local" || ValidId(entry.id),
               "Invalid execution service ID (local is reserved)");
       Require(
@@ -709,7 +719,9 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
         for (const auto& e : state_->Entries())
           if (e.id == entry.id) {
             previous = e.generation + e.endpoint + e.worker_public_key +
-                       e.name + "\n" + std::to_string(e.grade);
+                       e.name + "\n" +
+                       std::string(e.worker_capabilities.begin(),
+                                   e.worker_capabilities.end());
             if (entry.endpoint == e.endpoint &&
                 entry.worker_public_key == e.worker_public_key)
               entry.capabilities = e.capabilities;
@@ -733,7 +745,9 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
       for (const auto& e : state_->Entries())
         if (e.id == entry.id) {
           current = e.generation + e.endpoint + e.worker_public_key + e.name +
-                    "\n" + std::to_string(e.grade);
+                    "\n" +
+                    std::string(e.worker_capabilities.begin(),
+                                e.worker_capabilities.end());
           if (e.endpoint != entry.endpoint ||
               e.worker_public_key != entry.worker_public_key ||
               e.capabilities.server_id != entry.capabilities.server_id)
@@ -749,14 +763,16 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
           "INSERT INTO services VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO "
           "UPDATE SET "
           "name=excluded.name,endpoint=excluded.endpoint,worker_public_key="
-          "excluded.worker_public_key,capabilities=excluded.capabilities,grade="
-          "excluded.grade,generation=excluded.generation");
+          "excluded.worker_public_key,capabilities=excluded.capabilities,"
+          "worker_capabilities="
+          "excluded.worker_capabilities,generation=excluded.generation");
       q.bind(1, entry.id)
           .bind(2, entry.name)
           .bind(3, entry.endpoint)
           .bind(4, entry.worker_public_key)
           .bind_blob(5, caps)
-          .bind(6, std::to_string(entry.grade))
+          .bind_blob(6, std::string(entry.worker_capabilities.begin(),
+                                    entry.worker_capabilities.end()))
           .bind(7, entry.generation)
           .run();
       transaction.commit();

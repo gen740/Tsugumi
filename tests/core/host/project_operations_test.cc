@@ -5,13 +5,15 @@
 #include <filesystem>
 #include <fstream>
 
+#include "../agent/document_fixture.hh"
 #include "../agent_fixture_server.hh"
 #include "host/agent_exclude.hh"
 #include "host/document_edits.hh"
 #include "host/failure.hh"
-#include "host/layout_saving.hh"
 #include "host/layout_file.hh"
+#include "host/layout_saving.hh"
 #include "host/save.hh"
+#include "host/templates.hh"
 #include "tsugumi/document/document.hh"
 #include "tsugumi/document/text.hh"
 #include "tsugumi/util/crypto.hh"
@@ -321,28 +323,41 @@ class TransformationProject {
        R"({"name":"test","canvas":{"cards":[{"id":"a"},{"id":"sub"}],"connections":[]}})"},
       {"layout.bin",
        R"({"cards":{"a":{"x":10,"y":20,"inputOrder":["q","p"]},"sub":{"x":200,"y":20}}})"},
-      {"definitions/a/_card.json", R"({"type":"draft"})"},
-      {"definitions/a/README.md", "---\ndescription: source\n---\n"},
+      {"definitions/a/_card.json",
+       R"({"type":"draft","symbol":"pencil.and.outline"})"},
+      {"definitions/a/README.md", "---\ntitle: a\ndescription: source\n---\n"},
       {"definitions/a/data.bin", std::string("\0\xff\x80\n", 4)},
-      {"definitions/sub/_card.json", R"({"type":"subgraph","external":"inner"})"},
-      {"externals/inner/tsugumi.json",
+      {"definitions/sub/_card.json", R"({"type":"subgraph","symbol":"link"})"},
+      {"externals/sub/tsugumi.json",
        R"({"name":"inner","canvas":{"cards":[{"id":"b"}],"connections":[]}})"},
-      {"externals/inner/layout.bin", R"({"cards":{"b":{"x":1,"y":2}}})"},
-      {"externals/inner/definitions/b/_card.json", R"({"type":"subgraph","external":"deep"})"},
-      {"externals/inner/externals/deep/tsugumi.json",
+      {"externals/sub/layout.bin", R"({"cards":{"b":{"x":1,"y":2}}})"},
+      {"externals/sub/definitions/b/_card.json",
+       R"({"type":"subgraph","symbol":"link"})"},
+      {"externals/sub/externals/b/tsugumi.json",
        R"({"canvas":{"cards":[{"id":"c"}],"connections":[]}})"},
-      {"externals/inner/externals/deep/layout.bin", "{}"},
-      {"externals/inner/externals/deep/definitions/c/_card.json",
-       R"({"type":"draft"})"},
-      {"externals/inner/externals/deep/definitions/c/raw.bin",
+      {"externals/sub/externals/b/layout.bin", "{}"},
+      {"externals/sub/externals/b/definitions/c/_card.json",
+       R"({"type":"draft","symbol":"pencil.and.outline"})"},
+      {"externals/sub/externals/b/definitions/c/raw.bin",
        std::string("\xff\0\x81", 3)}};
   TransformationProject() {
     for (auto& [path, bytes] : files) {
-      if (path.ends_with("layout.bin"))
+      if (path.ends_with("tsugumi.json")) {
+        auto fields = json::Object(initial_project_json("fixture", {}));
+        for (auto&& [key, value] : json::Object(bytes))
+          fields[key] = std::move(value);
+        bytes = json::Encode(fields);
+      } else if (path.ends_with("layout.bin")) {
         bytes = LayoutView(SplitLayoutView(bytes).layout);
-      else if (path == "tsugumi.json" || path.starts_with("definitions/"))
-        bytes = Canonical(path, bytes);
+      }
     }
+    files["definitions/sub/README.md"] = CardReadme("sub");
+    files["externals/sub/definitions/b/README.md"] = CardReadme("b");
+    files["externals/sub/externals/b/definitions/c/README.md"] =
+        CardReadme("c");
+    for (auto& [path, bytes] : files)
+      if (path == "tsugumi.json" || path.starts_with("definitions/"))
+        bytes = Canonical(path, bytes);
   }
   int saves = 0;
   OperationContext context{"ui", {}, {}, {}};
@@ -538,7 +553,7 @@ class TransformationProject {
   }
 };
 TEST(ProjectOperationTransform, FirstLayoutActionsWorkInsideACardInCard) {
-  const std::string prefix = "externals/inner/";
+  const std::string prefix = "externals/sub/";
   for (const auto* action : {"move", "arrange", "duplicate", "subgraph"}) {
     SCOPED_TRACE(action);
     TransformationProject project;
@@ -553,7 +568,7 @@ TEST(ProjectOperationTransform, FirstLayoutActionsWorkInsideACardInCard) {
     const auto before = json::Object(displayed.at("b"));
     if (std::string_view(action) == "move") {
       H::ProjectMoveT move;
-      move.project_path = "externals/inner";
+      move.project_path = "externals/sub";
       move.cards = {"b"};
       move.dx = 40;
       project.Apply(std::move(move));
@@ -564,14 +579,14 @@ TEST(ProjectOperationTransform, FirstLayoutActionsWorkInsideACardInCard) {
       EXPECT_DOUBLE_EQ(std::stod(moved.at("y")), std::stod(before.at("y")));
     } else if (std::string_view(action) == "arrange") {
       H::ProjectLayoutT arrange;
-      arrange.project_path = "externals/inner";
+      arrange.project_path = "externals/sub";
       arrange.action = H::ProjectLayoutAction::Arrange;
       project.Apply(std::move(arrange));
       EXPECT_TRUE(json::Object(positions(prefix + "layout.bin").at("b"))
                       .contains("x"));
     } else if (std::string_view(action) == "duplicate") {
       H::ProjectCopyT duplicate;
-      duplicate.project_path = "externals/inner";
+      duplicate.project_path = "externals/sub";
       duplicate.copy_connections = true;
       auto item = std::make_unique<H::ProjectCopyItemT>();
       item->from = prefix + "definitions/b/";
@@ -596,7 +611,7 @@ TEST(ProjectOperationTransform, FirstLayoutActionsWorkInsideACardInCard) {
                                             "cards", "{}")).contains("b"));
     } else {
       H::ProjectMakeSubgraphT subgraph;
-      subgraph.project_path = "externals/inner";
+      subgraph.project_path = "externals/sub";
       subgraph.cards = {"b"};
       subgraph.id = "subgraph";
       project.Apply(std::move(subgraph));
@@ -609,38 +624,69 @@ TEST(ProjectOperationTransform, FirstLayoutActionsWorkInsideACardInCard) {
     }
   }
 }
-TEST(ProjectOperationTransform, DeletingTheLastExternalReferenceAndUndo) {
+TEST(ProjectOperationTransform,
+     DeletingASubgraphRemovesItsWholeTreeAndUndoRestoresIt) {
   TransformationProject project;
-  project.files["definitions/spare/_card.json"] = R"({"type":"subgraph","external":"inner"})";
-  const auto inner = project.files.at("externals/inner/tsugumi.json");
-  H::ProjectSelectionT remove_card;
-  remove_card.action = H::ProjectSelectionAction::Delete;
-  remove_card.cards = {"sub"};
-  const auto restore_card = project.Apply(remove_card);
-  EXPECT_FALSE(project.files.contains("definitions/sub/_card.json"));
-  EXPECT_EQ(project.files.at("externals/inner/tsugumi.json"), inner);
-  project.Apply(restore_card);
-  EXPECT_TRUE(DocumentsEqual(project.files.at("definitions/sub/_card.json"),
-                             R"({"type":"subgraph","external":"inner"})"));
-
-  H::ProjectSelectionT remove_definition;
-  remove_definition.action = H::ProjectSelectionAction::DeleteDefinitions;
-  remove_definition.cards = {"spare"};
-  project.Apply(remove_definition);
-  EXPECT_FALSE(project.files.contains("definitions/spare/_card.json"));
-  EXPECT_TRUE(
-      DocumentsEqual(project.files.at("externals/inner/tsugumi.json"), inner));
-  const auto restore_tree = project.Apply(remove_card);
-  EXPECT_FALSE(project.files.contains("externals/inner/tsugumi.json"));
-  project.Apply(restore_tree);
-  EXPECT_TRUE(
-      DocumentsEqual(project.files.at("externals/inner/tsugumi.json"), inner));
+  const auto before = project.files;
+  H::ProjectSelectionT remove;
+  remove.action = H::ProjectSelectionAction::Delete;
+  remove.cards = {"sub"};
+  const auto undo = project.Apply(remove);
+  for (const auto& [path, bytes] : before)
+    if (path.starts_with("definitions/sub/") ||
+        path.starts_with("externals/sub/"))
+      EXPECT_FALSE(project.files.contains(path)) << path;
+  project.Apply(undo);
+  for (const auto& [path, bytes] : before)
+    if (path.starts_with("definitions/sub/") ||
+        path.starts_with("externals/sub/"))
+      EXPECT_EQ(project.files.at(path), bytes) << path;
 }
+
+TEST(ProjectOperationTransform,
+     NestedSubgraphRenameMovesTheChildProjectAndSources) {
+  TransformationProject project;
+  const std::string prefix = "externals/sub/";
+  const auto old_definition = prefix + "definitions/b/_card.json";
+  const auto old_tree = prefix + "externals/b/";
+  const auto new_tree = prefix + "externals/renamed/";
+  auto canvas = json::Object(project.files.at(prefix + "tsugumi.json"));
+  canvas["canvas"] = R"({"cards":[{"id":"renamed"}],"connections":[]})";
+  const auto content = json::Encode(canvas);
+  H::ProjectEditsT edits;
+  H::ProjectFileMoveT move;
+  move.file_path = old_definition;
+  move.to = prefix + "definitions/renamed/_card.json";
+  move.expected_hash = crypto::sha256_hex(project.files.at(old_definition));
+  move.destination_missing = true;
+  auto move_edit = std::make_unique<H::ProjectEditT>();
+  move_edit->value.Set(std::move(move));
+  edits.edits.push_back(std::move(move_edit));
+  H::ProjectFilePutT put;
+  put.file_path = prefix + "tsugumi.json";
+  put.expected_hash = crypto::sha256_hex(project.files.at(put.file_path));
+  put.bytes.assign(content.begin(), content.end());
+  auto put_edit = std::make_unique<H::ProjectEditT>();
+  put_edit->value.Set(std::move(put));
+  edits.edits.push_back(std::move(put_edit));
+  const auto before = project.files;
+  project.Apply(edits);
+  EXPECT_EQ(project.saves, 1);
+  EXPECT_FALSE(project.files.contains(old_definition));
+  EXPECT_TRUE(project.files.contains(prefix + "definitions/renamed/README.md"));
+  for (const auto& [path, bytes] : before) {
+    if (!path.starts_with(old_tree)) continue;
+    EXPECT_FALSE(project.files.contains(path)) << path;
+    EXPECT_EQ(project.files.at(new_tree + path.substr(old_tree.size())), bytes)
+        << path;
+  }
+}
+
 TEST(ProjectOperationTransform, AgentCannotDropOrRelocateAnExcludedTree) {
   test::TemporaryDirectory temporary;
   for (const auto* excluded :
        {"definitions/a/data.bin",
-        "externals/inner/externals/deep/definitions/c/raw.bin"}) {
+        "externals/sub/externals/b/definitions/c/raw.bin"}) {
     for (const auto* action : {"delete", "subgraph", "rename", "document"}) {
       SCOPED_TRACE(std::string(excluded) + ':' + action);
       TransformationProject project;
@@ -722,7 +768,7 @@ TEST(ProjectOperationTransform,
   EXPECT_FALSE(project.files.contains("definitions/a/_card.json"));
   EXPECT_EQ(project.files.at("externals/converted/definitions/a/data.bin"),
             initial.at("definitions/a/data.bin"));
-  const auto deep = "externals/inner/externals/deep/definitions/c/raw.bin";
+  const auto deep = "externals/sub/externals/b/definitions/c/raw.bin";
   EXPECT_EQ(project.files.at("externals/converted/" + std::string(deep)),
             initial.at(deep));
   H::ProjectCopyT copy;
@@ -790,10 +836,12 @@ TEST(ProjectOperationTransform, ImportIncludesNestedBinaryPlacementAndUndo) {
   imported.y = 600;
   const auto inverse = project.Apply(imported);
   EXPECT_EQ(project.saves, 1);
+  EXPECT_EQ(project.files.at("definitions/imported/README.md"),
+            CardReadme("imported"));
   EXPECT_EQ(project.files.at("externals/imported/definitions/a/data.bin"),
             project.files.at("definitions/a/data.bin"));
-  EXPECT_EQ(project.files.at("externals/imported/externals/inner/externals/"
-                             "deep/definitions/c/raw.bin"),
+  EXPECT_EQ(project.files.at("externals/imported/externals/sub/externals/"
+                             "b/definitions/c/raw.bin"),
             std::string("\xff\0\x81", 3));
   const auto at = json::Object(
       json::Object(json::Object(project.files.at("layout.bin")).at("cards"))
@@ -816,10 +864,11 @@ TEST(ProjectOperationTransform, UntangleThenAtomicMoveAndUndoRetainPortOrder) {
        R"({"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"d"}],"connections":[{"from":{"card":"a","port":"out"},"to":{"card":"d","port":"q"}},{"from":{"card":"b","port":"out"},"to":{"card":"d","port":"p"}}]}})"},
       {"layout.bin",
        R"({"flow":"topToBottom","cards":{"a":{"x":0,"y":0},"b":{"x":200,"y":0},"d":{"x":100,"y":300}}})"},
-      {"definitions/a/_card.json", R"({"type":"code"})"},
-      {"definitions/b/_card.json", R"({"type":"code"})"},
+      {"definitions/a/_card.json", ::tsugumi::test::FixtureCodeCard()},
+      {"definitions/b/_card.json", ::tsugumi::test::FixtureCodeCard()},
       {"definitions/d/_card.json",
-       R"({"type":"code","inputs":[{"name":"p"},{"name":"q"}]})"}};
+       ::tsugumi::test::FixtureCodeCard(
+           R"({"inputs":[{"name":"p"},{"name":"q"}]})")}};
   H::LayoutSceneT scene;
   scene.flow = "topToBottom";
   for (const auto& id : {"a", "b", "d"}) {
@@ -987,7 +1036,7 @@ TEST(ProjectOperationCutover, EmptyNestedSelectionLeavesBothProjectsIntact) {
   TransformationProject project;
   const auto before = project.files;
   H::ProjectSelectionT body;
-  body.project_path = "externals/inner";
+  body.project_path = "externals/sub";
   body.action = H::ProjectSelectionAction::Place;
   const auto undo = project.Apply(body);
   EXPECT_TRUE(undo.edits.empty());
@@ -1021,7 +1070,7 @@ TEST(ProjectOperationCutover, MixedDeletionAndPlacementUseTheCurrentClosure) {
   const auto undo = project.Apply(body);
   EXPECT_EQ(project.saves, 1);
   EXPECT_FALSE(project.files.contains(
-      "externals/inner/externals/deep/definitions/c/raw.bin"));
+      "externals/sub/externals/b/definitions/c/raw.bin"));
   const auto layout = json::Object(project.files.at("layout.bin"));
   EXPECT_TRUE(json::Array(layout.at("notes")).empty());
   EXPECT_FALSE(layout.contains("displays"));
@@ -1031,14 +1080,14 @@ TEST(ProjectOperationCutover, MixedDeletionAndPlacementUseTheCurrentClosure) {
           .size(),
       1);
   project.Apply(undo);
-  EXPECT_EQ(
-      project.files.at("externals/inner/externals/deep/definitions/c/raw.bin"),
-      before.at("externals/inner/externals/deep/definitions/c/raw.bin"));
+  EXPECT_EQ(project.files.at("externals/sub/externals/b/definitions/c/raw.bin"),
+            before.at("externals/sub/externals/b/definitions/c/raw.bin"));
   H::ProjectSelectionT unplaced;
   unplaced.action = H::ProjectSelectionAction::DeleteDefinitions;
   unplaced.cards = {"a"};
   project.ExpectConflict(unplaced, "value_conflict");
-  project.files["definitions/unplaced/_card.json"] = R"({"type":"draft"})";
+  project.files["definitions/unplaced/_card.json"] =
+      R"({"type":"draft","symbol":"pencil.and.outline"})";
   H::ProjectSelectionT place;
   place.action = H::ProjectSelectionAction::Place;
   place.cards = {"unplaced"};

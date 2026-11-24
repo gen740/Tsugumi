@@ -161,7 +161,32 @@ auto TreePrefix(const std::string& prefix) -> bool {
          (at != std::string::npos &&
           (at == 0 || IsExternalDocument(prefix.substr(0, at) + "tsugumi.json",
                                          "tsugumi.json")) &&
-          prefix.find('/', at + 12) == prefix.size() - 1);
+          prefix.find('/', at + 12) == prefix.size() - 1 &&
+          valid_name(std::string_view(prefix).substr(at + 12,
+                                                     prefix.size() - at - 13)));
+}
+// Validate document path components without changing the rules for source
+// filenames, notes, or other host paths.
+auto CheckCardPath(std::string_view path) -> void {
+  constexpr std::string_view kExternal = "externals/";
+  constexpr std::string_view kDefinition = "definitions/";
+  for (auto prefix : {kExternal, kDefinition}) {
+    while (path.starts_with(prefix)) {
+      path.remove_prefix(prefix.size());
+      const auto slash = path.find('/');
+      if (slash == path.npos || !valid_name(path.substr(0, slash)))
+        throw Failure("invalid_path", "Invalid Card id in document path");
+      path.remove_prefix(slash + 1);
+      if (prefix == kDefinition) return;
+    }
+  }
+}
+auto DefinitionRoot(const std::string& path) -> std::string {
+  if (!path.ends_with("/_card.json")) return {};
+  const auto root = path.substr(0, path.size() - 10);
+  return TreePrefix(root) && root.rfind("definitions/") != std::string::npos
+             ? root
+             : std::string{};
 }
 auto Change(const std::string& kind, json::Members value) -> std::string {
   return json::Encode(json::Members{{"value_type", json::Quote(kind)},
@@ -717,6 +742,7 @@ auto PrepareProjectEdits(
     if (const auto* json_edit = entry->value.AsProjectJSONEdit()) {
       has_json = true;
       const auto& edit = *json_edit;
+      CheckCardPath(edit.file_path);
       if (authorize) authorize(edit.file_path);
       const auto before = edit.old_value->present
                               ? std::optional(edit.old_value->json)
@@ -798,7 +824,9 @@ auto PrepareProjectEdits(
   std::map<std::string, std::set<std::string>> mentioned_inputs;
   std::set<std::string> replaced_projects, removed_definitions;
   const auto known = ProjectPaths(base);
+  std::vector<std::pair<std::string, std::string>> subgraph_renames;
   auto file = [&](const std::string& path) -> std::optional<std::string>& {
+    CheckCardPath(path);
     if (authorize) authorize(path);
     if (!files.contains(path)) {
       const auto found = base.files.find(path);
@@ -929,10 +957,53 @@ auto PrepareProjectEdits(
       guard(move->file_path, from, move->expected_hash, false);
       guard(move->to, to, move->expected_destination_hash,
             move->destination_missing);
+      const auto old_root = DefinitionRoot(move->file_path);
+      const auto new_root = DefinitionRoot(move->to);
+      if (!old_root.empty() && !new_root.empty() &&
+          json::Text(json::Object(*from), "type") == "subgraph") {
+        const auto at = old_root.rfind("definitions/");
+        if (new_root.rfind("definitions/") != at ||
+            old_root.substr(0, at) != new_root.substr(0, at))
+          throw Failure("invalid_request",
+                        "Rename a subgraph within its project");
+        subgraph_renames.emplace_back(old_root, new_root);
+      }
       to = std::move(from);
       from.reset();
     } else
       throw Failure("invalid_request", "missing project edit body");
+  }
+  // The file move identifies the old and new ids. The caller edits the
+  // canvas and its references in the same operation.
+  for (const auto& [old_root, new_root] : subgraph_renames) {
+    const auto at = old_root.rfind("definitions/");
+    const auto scope = old_root.substr(0, at);
+    const auto old_tree = scope + "externals/" + old_root.substr(at + 12);
+    const auto new_tree = scope + "externals/" + new_root.substr(at + 12);
+    if (std::ranges::any_of(known, [&](const auto& path) {
+          return path.starts_with(new_root) || path.starts_with(new_tree);
+        }))
+      throw Failure("value_conflict", "Subgraph rename destination exists");
+    if (!file(old_tree + "tsugumi.json"))
+      throw Failure("invalid_document", "Missing child project: " + old_tree);
+    for (const auto& [from, to] :
+         {std::pair{old_root, new_root}, std::pair{old_tree, new_tree}}) {
+      for (const auto& path : known) {
+        if (!path.starts_with(from) || path == old_root + "_card.json")
+          continue;
+        auto& before = file(path);
+        if (!before) continue;
+        const auto destination = to + path.substr(from.size());
+        auto& after = file(destination);
+        if (after)
+          throw Failure("value_conflict",
+                        "Rename destination exists: " + destination);
+        after = std::move(before);
+        before.reset();
+      }
+    }
+    if (scope.empty())
+      removed_definitions.insert(old_root.substr(12, old_root.size() - 13));
   }
   // A single input and a single incoming wire leave no routing choice.
   // Do this in the host's atomic plan only for Draft -> code, never in core
@@ -953,7 +1024,7 @@ auto PrepareProjectEdits(
     if (inputs.size() != 1) continue;
     const auto port =
         json::Text(json::Object(inputs.front(), path + ".inputs[0]"), "name");
-    if (!valid_id(port)) continue;
+    if (!valid_name(port)) continue;
     const auto at = path.rfind("definitions/");
     if (at == std::string::npos) continue;
     const auto id = path.substr(at + 12, path.size() - at - 23);

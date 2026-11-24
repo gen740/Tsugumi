@@ -3,6 +3,7 @@
 #include <set>
 
 #include "host/failure.hh"
+#include "host/templates.hh"
 #include "tsugumi/document/readme.hh"
 #include "tsugumi/util/crypto.hh"
 
@@ -81,7 +82,9 @@ auto PrepareAgentSave(json::Members args, const host::SaveBase& base,
                  json::Get(c, "comments_json") == "\"\""))
         after.erase(dir + "_comments.json");
       if (const auto fill = json::Text(c, "fill_description"); !fill.empty()) {
-        auto text = Readme(after, dir + "README.md");
+        const auto path = dir + "README.md";
+        if (!after.contains(path)) after[path] = host::CardReadme(id);
+        auto text = Readme(after, path);
         if (Blank(text.fields["description"])) {
           text.fields["description"] = fill;
           after[dir + "README.md"] = readme::print(text);

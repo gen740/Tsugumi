@@ -10,6 +10,7 @@
 #include <optional>
 
 #include "fixture.hh"
+#include "tsugumi/document/document.hh"
 #include "tsugumi/workerd/protocol.hh"
 
 namespace tsugumi::test {
@@ -28,7 +29,7 @@ class EnvironmentFixture : public AgentFixture {
     return TSUGUMI_ENVIRONMENT_DAEMON;
   }
   auto SetUp() -> void override {
-    Write(project / "tsugumi.json", R"({"name":"Environment"})");
+    Write(project / "tsugumi.json", initial_project_json("Environment", {}));
     extra_host_arguments = {
         "--tsugumid",        DaemonBinary(),
         "--worker",          TSUGUMI_WORKER_BINARY,

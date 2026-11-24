@@ -29,18 +29,52 @@ HOSTD = Path(os.environ.get("TSUGUMI_HOSTD", BUILD / "hostd" / "tsugumi-hostd"))
 WEB_ROOT = WEB_DIST / "public"
 
 EMPTY_PROJECT = {
+    "tsugumiVersion": (ROOT / "VERSION").read_text().strip(),
     "name": "test",
     "nixPath": [],
+    "trackedPaths": [],
+    "agentExclude": [".git", ".DS_Store"],
+    "recordLogs": True,
+    "recordIO": False,
+    "logLimitBytes": 128 << 20,
+    "outputLimitBytes": 64 << 30,
+    "outputLimitEntries": 1000,
     "canvas": {"cards": [], "connections": []},
 }
 
 
 def write_project(root: Path, project: dict | None = None, layout: dict | None = None) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    (root / "tsugumi.json").write_text(json.dumps(project or EMPTY_PROJECT))
+    (root / "tsugumi.json").write_text(json.dumps({**EMPTY_PROJECT, **(project or {})}))
     if layout is not None:
         from harness.document import write_layout
         write_layout(root, layout)
+
+
+def write_card(definition: Path, kind: str = "code", **settings) -> dict:
+    symbols = {
+        "code": "chevron.left.forwardslash.chevron.right",
+        "draft": "pencil.and.outline",
+        "trigger": "play.circle",
+    }
+    card = {"type": kind, "symbol": symbols[kind]}
+    if kind == "code":
+        card.update(
+            inputs=[], maxRuns=1, reuseWorker=False, timeoutSeconds=0,
+            buildTimeoutSeconds=0, recordLogs="project", recordIO="project",
+            sandbox={"filesystem": True, "pid": True, "ipc": True, "identity": True,
+                     "limits": {"cpu": 0, "memoryMiB": 0}},
+            grants={"network": False, "gui": False},
+            system="aarch64-linux" if os.uname().machine in {"arm64", "aarch64"} else "x86_64-linux",
+            workerCapabilities=[],
+        )
+    card.update(settings)
+    definition.mkdir(parents=True, exist_ok=True)
+    (definition / "_card.json").write_text(json.dumps(card))
+    (definition / "README.md").write_text(
+        f"---\ntitle: {definition.name}\ndescription:\n---\n"
+    )
+    return card
 
 
 from harness.daemon import Daemon as CoreDaemon
