@@ -18,12 +18,10 @@ from Tsugumi.Card.CardFailure import CardFailureT
 from Tsugumi.Card.CardPort import CardPortT
 from Tsugumi.Card.CardResult import CardResultT
 from Tsugumi.Data.FailureKind import FailureKind
-from tsugumi.ArtifactId import ArtifactIdT
 from Tsugumi.Worker.EnvVar import EnvVarT
 from Tsugumi.Worker.WorkerCall import WorkerCallT
 from Tsugumi.Worker.WorkerCancel import WorkerCancelT
 from Tsugumi.Worker.WorkerDisplay import WorkerDisplayT
-from Tsugumi.Worker.WorkerPort import WorkerPortT
 from Tsugumi.Worker.WorkerMessage import WorkerMessage, WorkerMessageT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
 from Tsugumi.Worker.WorkerStart import WorkerStartT
@@ -251,15 +249,9 @@ def test_encoded_failure_preserves_source(tmp_path, kind):
         }
 
 
-@pytest.mark.parametrize("result", ["invalid", "missing", "unknown", "duplicate", "ungranted"])
-def test_invalid_results_fail_cleanly(tmp_path, result):
-    declaration = WorkerPortT(name="reading", required=True)
-    output = CardPortT(name="reading", bytes=PARAMS)
-    if result == "unknown":
-        output.name = "extra"
-    elif result == "ungranted":
-        output.artifacts = [ArtifactIdT(bytes=[0] * 16)]
-    card = CardResultT(outputs={"missing": [], "duplicate": [output, output]}.get(result, [output]))
+def test_an_undecodable_result_fails_cleanly(tmp_path):
+    """The worker only decodes the result; output names, required outputs and
+    grants are checked on the host (accept_outputs, worker_execution_test.cc)."""
     library(tmp_path, '''
         #include <tsugumi/card_abi.h>
         int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
@@ -267,9 +259,9 @@ def test_invalid_results_fail_cleanly(tmp_path, result):
           *result = (tsugumi_bytes){wire, sizeof(wire)};
           return 0;
         }
-    ''', result=b"invalid" if result == "invalid" else packed(card))
+    ''', result=b"invalid")
     with worker(tmp_path) as (_, data, _):
-        send_call(data, tmp_path, outputs=[declaration])
+        send_call(data, tmp_path)
         message = receive(data)
         assert message.valueType == WorkerPayload.WorkerFailure
         assert message.value.failure.kind == FailureKind.output_invalid
