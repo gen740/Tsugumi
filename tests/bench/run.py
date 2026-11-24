@@ -25,7 +25,7 @@ from test_worker_loading import native_card
 SCENARIOS = ("value-fresh", "value-resident-50", "file-1gib", "file-sparse-1gib",
              "directory-10000", "file-input-1gib", "run-list-100")
 # Requires the redesigned kit pin with sdk/python/default.nix.
-PYTHON_RUN = 'sdk.pythonCard { src = ./src; outputs = ./_outputs.fbs; inherit inputs params; }'
+PYTHON_RUN = 'sdk.pythonCard { src = ./src; inputs = ./_inputs.fbs; outputs = ./_outputs.fbs; inherit params; }'
 # Every benchmark Card returns its own metrics as the declared `metrics` output.
 METRICS = 'namespace bench; table Metrics { value:string; } '
 VALUE = METRICS + 'table Number { value:ulong; } table Outputs { out:Number (required); metrics:Metrics (required); } root_type Outputs;'
