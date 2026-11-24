@@ -161,10 +161,8 @@ auto run_invocation(const ReleaseWorker& release_worker,
         const auto name = crypto::hex(id.data(), id.size());
         const auto destination = invocation.artifact_directory / name;
         try {
-          fs::copy_staging_output(stage->get(), name, destination,
-                                  persist, invocation.transfer, &budget);
-          if (!stdfs::is_directory(stdfs::symlink_status(destination)))
-            throw fs::Error("artifact must be a directory");
+          fs::copy_staging_artifact(stage->get(), name, destination, persist,
+                                    budget, invocation.transfer);
         } catch (const std::runtime_error& error) {
           std::error_code cleanup_error;
           stdfs::remove_all(destination, cleanup_error);
