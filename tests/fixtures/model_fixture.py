@@ -406,7 +406,7 @@ def decide_comments(messages, text, start):
                 "id": def_id, "card_json": json.dumps(card), "comments_json": json.dumps(meta), "keep_readme": True}})
         for cid in added:
             changes.append({"value_type": "PutDefinition", "value": {
-                "id": cid, "card_json": json.dumps({"type": "input"})}})
+                "id": cid, "card_json": json.dumps({"type": "code"})}})
             changes.append({"value_type": "PutSource", "value": {
                 "path": f"definitions/{cid}/params.nix", "bytes": '{ text = "x"; }'}})
             changes.append({"value_type": "PutSource", "value": {
@@ -414,9 +414,20 @@ def decide_comments(messages, text, start):
                 "bytes": """{ params, inputs }:
 let
   pkgs = import <nixpkgs> { };
-  sdk = import <tsugumi-kit/sdk/input> { inherit pkgs; };
+  sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
 in {
-  run = sdk.input { outputs = ./_outputs.fbs; values.msg = params; };
+  run = sdk.pythonCard {
+    inherit params;
+    inputs = ./_inputs.fbs;
+    outputs = ./_outputs.fbs;
+    src = pkgs.writeTextDir "main.py" ''
+      from card import Output
+      from added.Msg import MsgT
+
+      def run(input):
+          return Output(msg=MsgT(text=${builtins.toJSON params.text}))
+    '';
+  };
 }
 """}})
             changes.append({"value_type": "PutSource", "value": {

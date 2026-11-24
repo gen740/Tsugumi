@@ -302,19 +302,16 @@ def run(input):
     print("remote-card-stdout")
     return Output(doc=TextT(value=input.require("in").value))
 """
-    source = {"type": "input", "_params": '{ value = "remote-input-roundtrip"; }',
-              "_outputs": schema, "_nix": """
-{ params, inputs }:
-let
-  pkgs = import <nixpkgs> { };
-  sdk = import <tsugumi-kit/sdk/input> { inherit pkgs; };
-in {
-  run = sdk.input {
-    outputs = ./_outputs.fbs;
-    values.doc.value = params.value;
-  };
-}
-"""}
+    source = {
+        "type": "code", "_params": '{ value = "remote-input-roundtrip"; }',
+        "_outputs": schema, "_nix": entry(python_run("""
+from card import Output
+from Text import TextT
+
+def run(input):
+    return Output(doc=TextT(value=VALUE))
+""", values={"VALUE": "params.value"})),
+    }
     settings = {
         "type": "code", "inputs": [{"name": "in"}], "_outputs": schema,
         "executionService": "remote-test", "recordIO": True, "timeoutSeconds": 600,
@@ -398,9 +395,7 @@ def run(input):
     assert b"Empty view" in bytes(client.call("CardViewReadRequest", session=session).bytes)
     shown = wait_for_display(client, run_id, lambda update: text(update.session) == session).value.display
     return_credit(client, subscription, shown)
-    chunk = bytes(shown.bytes)
-    assert struct.unpack_from("<4I", chunk) == (0x4D475354, 0, 0, 1)
-    assert chunk[16:] == payload
+    assert bytes(shown.bytes) == payload
     remote_gates(active)
     status = wait_run(client, run_id)
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
