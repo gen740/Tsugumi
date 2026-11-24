@@ -24,7 +24,7 @@ The Trigger starts the run. The Input Card `settings` sends an editable temperat
 
 ```json
 {
-  "tsugumiVersion": "0.9.4",
+  "formatVersion": 1,
   "name": "Temperature conversion",
   "nixPath": [
     {
@@ -84,7 +84,7 @@ The Trigger starts the run. The Input Card `settings` sends an editable temperat
 }
 ```
 
-Use the version of Tsugumi you run as `tsugumiVersion`. See [Project files](Reference.md) for the complete format.
+`formatVersion` is the project file format (currently `1`), not the Tsugumi version. See [Project files](Reference.md) for the complete format.
 
 The lock below is an example of the pins for these declarations. Use an explicit update to resolve new pins for your own declarations. [Project Nix search path](features.md#project-nix-search-path)
 
@@ -158,7 +158,11 @@ The `value` parameter has the same name as the field in the `Temperature` messag
     "network": false,
     "gui": false
   },
-  "system": "aarch64-linux",
+  "systems": [
+    "aarch64-linux",
+    "x86_64-linux",
+    "aarch64-darwin"
+  ],
   "workerCapabilities": []
 }
 ```
@@ -237,7 +241,11 @@ in {
     "network": false,
     "gui": false
   },
-  "system": "aarch64-linux",
+  "systems": [
+    "aarch64-linux",
+    "x86_64-linux",
+    "aarch64-darwin"
+  ],
   "workerCapabilities": []
 }
 ```
@@ -425,7 +433,7 @@ A Code Card has `"type": "code"`. Declare input port names in `inputs`. The conn
 
 Set `grants.network` to true to allow network access. TLS uses the Nix `cacert` bundle through `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
 
-Write the target Nix system in `system` and any required worker capability bits in `workerCapabilities`. See [Worker selection](RemoteExecution.md#worker-selection). Write all four isolation flags and both resource limits in `sandbox`. Use zero for an unlimited CPU or memory budget. A Linux worker with delegated cgroup v2 applies nonzero limits to the Card's process.
+List the Nix systems the Card works on in `systems` and any required worker capability bits in `workerCapabilities`. A worker whose native system is listed builds and runs the Card natively; any other worker runs the first entry under an emulator. See [Worker selection](RemoteExecution.md#worker-selection). Write all four isolation flags and both resource limits in `sandbox`. Use zero for an unlimited CPU or memory budget. A Linux worker with delegated cgroup v2 applies nonzero limits to the Card's process.
 
 Set `grants.network` or `grants.gui` to enable that access on a supported worker. Add named paths with `grants.hostPaths` entries containing `name`, an absolute `path` and an optional `write` flag. The Card reads the worker-visible path from `TSUGUMI_GRANT_<NAME>`, using uppercase letters and underscores in place of other separators. For example, `sample-data` becomes `TSUGUMI_GRANT_SAMPLE_DATA`.
 
@@ -462,7 +470,12 @@ of their derivation inputs.
 
 Set `exports` to publish Nix values to guaranteed downstream Cards. A downstream
 definition reads them as `inputs.<card_id>.<attr>`. For example, C can see both
-A and B in `A → B → C`. TODO(open): Exports across Merge, Collect, feedback and Drafts. A subgraph upstream contributes no `inputs` key for the subgraph or its inner producer and does not pass through its own upstreams. Cards inside a child project likewise receive no parent `inputs` keys.
+A and B in `A → B → C`. A subgraph upstream appears as `inputs.<subgraph Card id>`,
+holding the merged exports of the inner Cards wired to its outputs; inner ids
+never appear outside, and Cards inside a child project receive no parent `inputs`.
+Merge passes on only the exports all its inputs share, Collect those of the Card
+it collects from, and feedback wires and Drafts nothing. See
+[Nix inputs across Cards](Reference.md#nix-inputs-across-cards).
 
 ### Data fixed by Nix
 
@@ -502,8 +515,8 @@ is described in the kit.
 
 A Draft (`_card.json` with `"type": "draft"`) has no input or output ports,
 including when `_outputs.fbs` exists.
-A connection attaches directly to the Draft with `{"card":"plan","port":""}`.
-The `port` field is required; the empty string is reserved for Draft ends.
+A connection attaches directly to the Draft with `{"card":"plan"}`, without a
+`port`. Every other end needs a `port`; either mistake is a load error.
 Any number of wires can enter or leave a Draft, including wires between Drafts.
 A real Card's endpoint still names an existing input or output. The other end's
 port name and the Draft's content explain the planned connection.
@@ -516,7 +529,7 @@ When implementing a Draft, explicitly rebind **every** incoming wire to a real
 input and every outgoing wire to a real output in the **same save** as the new
 definition. Include `SetProject` in `project_save`; inside a Card in Card, update
 its project's `tsugumi.json` and any boundary endpoints too. Ends on other Drafts
-stay empty. A single possible port is still an explicit choice. A save leaving
+stay without a port. A single possible port is still an explicit choice. A save leaving
 a wire on a non-existent port of a real Card fails with `validation_failed`
 and names the wire. No endpoint is inferred or migrated.
 

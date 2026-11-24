@@ -47,7 +47,7 @@ There are four boundaries, from the innermost outwards.
 | Store disk | `~/Library/Application Support/Tsugumi/vm/store.img` (the Nix store shared by all projects; for a development build from source, under `Tsugumi-dev/`, and likewise below) | Yes |
 | virtiofs (per slot) | The open project's folder (`project`) and its control folder (`control`) | Yes |
 | virtiofs (same slot, only when specified) | Mac folders specified in a Card's settings (`host-<tag>`) and Mac folders attached to the chat (`chat-<tag>`) | `host-` only with `write: true`; `chat-` read-only |
-| virtiofs `rosetta` (only when Rosetta is installed) | Rosetta for Linux (`VZLinuxRosettaDirectoryShare`), for Cards with `"system": "x86_64-linux"`; registered with binfmt_misc by the VM's supervisor (`vm/guest/vm-system.nix`) | Read-only |
+| virtiofs `rosetta` (only when Rosetta is installed) | Rosetta for Linux (`VZLinuxRosettaDirectoryShare`), for Cards run as `x86_64-linux`; registered with binfmt_misc by the VM's supervisor (`vm/guest/vm-system.nix`) | Read-only |
 | vsock | The control channel (1024) and the RPC relay (1025) | — |
 | Network | NAT (`VZNATNetworkDeviceAttachment`) | — |
 

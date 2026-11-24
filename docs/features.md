@@ -78,7 +78,7 @@ Every Card states its kind in `_card.json` as `"type"`: `code`, `draft`, `trigge
 | Merge | Forwards every arriving envelope to `out` |
 | Collect | Aggregates a batch into a `Collected` list of envelopes |
 | subgraph (Card in Card) | Handles a child Workflow as one Card. `boundary` maps the outer ports to Cards inside |
-| Draft (`draft`) | An "unimplemented Card": write its name and content directly on the card, and connect it just by dropping a wire on it (it has no ports; the other end names the real port). Draft wire ends use an empty `port` string. Implementing one requires explicitly rebinding its wires to real ports in the same save. The Agent can later generate its implementation |
+| Draft (`draft`) | An "unimplemented Card": write its name and content directly on the card, and connect it just by dropping a wire on it (it has no ports; the other end names the real port). A wire end on a Draft names only the Card, with no `port`. Implementing one requires explicitly rebinding its wires to real ports in the same save. The Agent can later generate its implementation |
 
 A Card in Card uses full Card paths to distinguish state and history; visual groups in `layout.bin` do not affect execution.
 
@@ -155,7 +155,7 @@ tsugumi evaluate nix --project /path/to/project --card '{"segments":["convert"]}
 
 ### Sharing Nix exports through connections
 
-Publish values through `exports` in an upstream Card's `default.nix`. Refer to them as `inputs.<card_id>.<attr>` in a downstream definition. In `A → B → C`, C sees exports from A and B. TODO(open): Exports at Merge, Collect, feedback and Draft boundaries. A subgraph upstream contributes no Nix input key. See [Nix inputs across child project boundaries](Reference.md#nix-inputs-across-child-project-boundaries).
+Publish values through `exports` in an upstream Card's `default.nix`. Refer to them as `inputs.<card_id>.<attr>` in a downstream definition. In `A → B → C`, C sees exports from A and B. A subgraph upstream appears as `inputs.<subgraph Card id>` with the merged exports of its inner Cards wired to its outputs. Merge passes on only the exports all its inputs share, Collect those of the Card it collects from, and feedback wires and Drafts pass on nothing. See [Nix inputs across Cards](Reference.md#nix-inputs-across-cards).
 
 ### Keeping build results
 
@@ -171,7 +171,7 @@ Start with [Your first Card](CardGuide.md), then use the [worker state rules](Ca
 
 ### Another system (x86_64-linux)
 
-- A Card can be built and run for another Nix system using **CPU architecture** in its settings (`"system": "x86_64-linux"` in `_card.json`), for software with no aarch64 build. The value is `x86_64-linux` or `aarch64-linux`. For the local service the list offers the native system and each system with a registered emulator, and for a registered remote worker the systems that worker reports. nixpkgs is imported for that system, and the kernel runs its binaries with an emulator registered with binfmt_misc.
+- A Card lists the Nix systems it works on in **Systems** in its settings (`"systems": ["aarch64-linux", "x86_64-linux"]` in `_card.json`). A worker whose native system is in the list builds and runs the Card natively; any other worker builds and runs the first entry under an emulator, for example `["x86_64-linux"]` for software with no aarch64 build. The worker is chosen without regard to the list. nixpkgs is imported for that system, and the kernel runs its binaries with an emulator registered with binfmt_misc.
   - **Mac (the shared VM):** Rosetta when it is installed on the Mac. qemu (`qemu-user` from cache.nixos.org) only when asked for with `TSUGUMI_VM_X86=qemu`, for a Mac without Rosetta or to try the qemu path. The app never installs Rosetta itself.
   - **Linux:** whatever the system registered, such as `boot.binfmt.emulatedSystems` on NixOS (with Nix's `extra-platforms`).
 - Each invocation records the emulator that ran it (its path; qemu's includes its version), shown in the Info tab of the Card's run history. Rosetta and qemu need not give the same numbers, so the record tells them apart.

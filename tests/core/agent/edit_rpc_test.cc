@@ -73,7 +73,7 @@ TEST_F(AgentProjectFixture,
   Write(root / "definitions/start/_card.json",
         R"({"type":"trigger","symbol":"play.circle"})");
   Write(root / "definitions/plan/_card.json",
-        R"({"type":"draft","symbol":"pencil.and.outline"})");
+        R"({"type":"draft","symbol":"none"})");
   const std::string readme =
       "---\ntitle: plan\ndescription: Make a greeting\n---\n\nReturn hello.";
   Write(root / "definitions/plan/README.md", readme);

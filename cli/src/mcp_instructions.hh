@@ -29,18 +29,19 @@ the person's decision.
   definition folder definitions/<id>/. Its README.md starts with two front-matter fields, title (the display
   name, use the id if there is no better name) and description (one line, may be empty), followed by Markdown.
   _comments.json holds review comments.
-- Write each _card.json with type and symbol. The standard symbols are code chevron.left.forwardslash.chevron.right,
-  input slider.horizontal.3, merge arrow.triangle.merge, collect line.3.horizontal.decrease, draft pencil.and.outline,
-  trigger play.circle, and subgraph link. Code and Input also require inputs (initially []), maxRuns (1),
+- Write each _card.json with type and symbol ("none" shows the UI's own icon for the kind; write "none" unless the
+  person chose an icon). Code and Input also require inputs (initially []), maxRuns (1),
   reuseWorker (false), timeoutSeconds (0), buildTimeoutSeconds (0), recordLogs and recordIO ("project"),
   sandbox (filesystem, pid, ipc and identity true, limits with cpu and memoryMiB both 0),
-  grants (network and gui both false), system (the host's native Linux system), and workerCapabilities ([]).
+  grants (network and gui both false), systems (the Nix systems the Card works on, at least one; initially the
+  host's native Linux system), and workerCapabilities ([]). A worker whose native system is listed builds and runs
+  the Card natively; any other worker runs the first entry emulated.
   grants.hostPaths and secrets are optional. Each hostPaths entry supplies name, path and write.
   Merge also requires inputs (at least one, typically a and b), maxRuns (1) and recordIO ("project").
   Collect also requires maxRuns (1) and recordIO ("project"). Draft, Trigger and Subgraph contain only type and symbol.
   Zero timeouts or sandbox limits mean unlimited. Record settings inherit the project with "project" and
   override with "on" or "off". A worker must have every listed capability bit (distinct numbers from 0 through 63).
-- A new tsugumi.json carries tsugumiVersion (the running Tsugumi version), name, nixPath ([] or declared sources),
+- A new tsugumi.json carries formatVersion (1, the project file format), name, nixPath ([] or declared sources),
   trackedPaths ([]), agentExclude (the host's defaults), recordLogs (true), recordIO (false), logLimitBytes
   (134217728), outputLimitBytes (68719476736), outputLimitEntries (1000) and canvas (cards and connections).
   trackedPaths adds files or folders to Tsugumi's project versions.
@@ -48,7 +49,9 @@ the person's decision.
   one cannot arrive. Declare outputs in _outputs.fbs and use (required) for outputs every call must emit.
 - Use project_edit for Card files and wiring. Tsugumi generates _inputs.fbs for Code and Input Cards, including an empty Inputs table when there are no connections. Pass inputs = ./_inputs.fbs; to language SDK builders.
   Edit the literal in params.nix to change a build-time value; a Card without params has no params.nix. A Code or Input Card's default.nix receives
-  { params, inputs }, where inputs contains upstream Nix exports by Card id within the same project level. Use Artifact values for files or directories.
+  { params, inputs }, where inputs contains upstream Nix exports by Card id within the same project level. A subgraph
+  upstream appears under its own id with the merged exports of the inner Cards wired to its outputs; Merge passes on
+  the exports all its inputs share, Collect those of its source, and feedback wires and Drafts nothing. Use Artifact values for files or directories.
 - Declare nixPath names and URLs in tsugumi.json, then use nix_path_lock_update for one name or all names with
   approval. Each external has its own declarations and lock.
 - evaluate_nix evaluates in the saved Card's directory for the local system, with params and inputs in scope.
@@ -59,8 +62,8 @@ the person's decision.
   wiring. Adding a folder or importing from Git into either store requires the person's approval.
 - The person decides a Card's sandbox, grants, and workerCapabilities. A save that widens access waits for their approval, with your reason. A declined
   widening stays declined: do not reach the same capability another way.
-- A Card in Card has type "subgraph", symbol "link" and its own project at externals/<id>/. Its tsugumi.json
-  may include a boundary with inputs and outputs, both lists of {name, card, port}. Use project_edit on files
+- A Card in Card has type "subgraph" and its own project at externals/<id>/. Its tsugumi.json
+  may include a boundary with inputs and outputs, both lists of {name, card, port} ({name, card} on a Draft). Use project_edit on files
   under that directory. To rename a subgraph id, move its _card.json and update the canvas references in
   one project_edit. The Host moves its definition files and child project together.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
