@@ -40,8 +40,8 @@ table Graph {
 table BoundaryPort {
   name:string (required);
   card:string (required);
-  /// Absent when the Card is a Draft, required otherwise (as on Endpoint).
-  port:string;
+  /// A named port: a Draft, which has none, cannot be on a boundary.
+  port:string (required);
 }
 
 table Boundary {

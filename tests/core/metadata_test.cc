@@ -436,51 +436,31 @@ TEST_F(DocumentStorage,
   EXPECT_TRUE(after->resolution->find({"next"})->inputs.empty());
 }
 
-TEST_F(DocumentStorage, NestedImplementationRebindsBoundaryEndsAtomically) {
+TEST_F(DocumentStorage, ADraftCannotBeOnABoundary) {
   fs::write_atomic(
       root / "tsugumi.json",
       test::project_json(
-          R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"outer"},{"id":"next"}],"connections":[
-    {"from":{"card":"start","port":"out"},"to":{"card":"outer","port":"in"}},
-    {"from":{"card":"outer","port":"out"},"to":{"card":"next"}}
-  ]}})"));
+          R"({"nixPath": [],"canvas":{"cards":[{"id":"outer"}],"connections":[]}})"));
+  std::filesystem::remove_all(root / "definitions/start");
   test::write_card(root / "definitions/outer/_card.json",
                    test::card_json(R"({"type":"subgraph"})"));
-  test::write_card(root / "definitions/next/_card.json",
-                   test::card_json(R"({"type":"draft"})"));
   fs::write_atomic(
       root / "externals/outer/tsugumi.json",
       test::project_json(
-          R"({"canvas":{"cards":[{"id":"plan"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"plan"}],"outputs":[{"name":"out","card":"plan"}]}})"));
+          R"({"canvas":{"cards":[{"id":"plan"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"plan","port":"in"}],"outputs":[]}})"));
   test::write_card(root / "externals/outer/definitions/plan/_card.json",
                    test::card_json(R"({"type":"draft"})"));
+  fs::write_atomic(root / "externals/outer/definitions/plan/README.md",
+                   test::readme("plan"));
   Store store({root, ""});
-  store.open();
-  ASSERT_EQ(store.current()->resolution->edges.size(), 2);
-  ChangeIn implementation{};
-  implementation.kind = ChangeIn::Kind::PutSource;
-  implementation.path = "externals/outer/definitions/plan/_card.json";
-  implementation.base_hash =
-      store.current()->sources.at(implementation.path).hash;
-  implementation.bytes = test::card_json(R"({"type":"collect"})");
   try {
-    commit(store, {implementation});
-    FAIL();
-  } catch (const Failed& error) {
-    EXPECT_EQ(error.failure.kind, FailureKind::invalid_document);
+    store.open();
+    FAIL() << "a boundary on a Draft must not load";
+  } catch (const std::exception& error) {
+    EXPECT_NE(std::string_view(error.what()).find("which has no ports"),
+              std::string_view::npos)
+        << error.what();
   }
-  EXPECT_EQ(store.current()->resolution->find({"outer", "plan"})->kind,
-            CardType::Draft);
-  ChangeIn wiring{};
-  wiring.kind = ChangeIn::Kind::PutSource;
-  wiring.path = "externals/outer/tsugumi.json";
-  wiring.base_hash = store.current()->sources.at(wiring.path).hash;
-  wiring.bytes = test::project_json(
-      R"({"canvas":{"cards":[{"id":"plan"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"plan","port":"in"}],"outputs":[{"name":"out","card":"plan","port":"out"}]}})");
-  const auto after = commit(store, {implementation, wiring});
-  EXPECT_EQ(after->resolution->edges.size(), 2);
-  EXPECT_EQ(after->resolution->find({"outer", "plan"})->kind,
-            CardType::Collect);
 }
 
 TEST_F(DocumentStorage, NamedDraftEndIsRejectedAndIdentifiesTheWire) {

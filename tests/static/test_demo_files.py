@@ -168,8 +168,6 @@ def test_demo_project_files_are_explicit(manifest):
         for ports in boundary.values():
             assert isinstance(ports, list)
             for port in ports:
-                assert port.get("card") in by_id and NAME.fullmatch(port["name"])
-                if kinds[port["card"]] == "draft":
-                    assert port.keys() == {"name", "card"}
-                else:
-                    assert port.keys() == {"name", "card", "port"} and NAME.fullmatch(port["port"])
+                assert port.keys() == {"name", "card", "port"}
+                assert port["card"] in by_id and kinds[port["card"]] != "draft"
+                assert NAME.fullmatch(port["name"]) and NAME.fullmatch(port["port"])

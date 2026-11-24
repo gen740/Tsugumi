@@ -17,7 +17,7 @@ Tsugumi reads each project from its own `tsugumi.json`. When a required field is
 | `outputLimitBytes` | Byte budget for an invocation's output directory. |
 | `outputLimitEntries` | Entry budget for an invocation's output directory. |
 | `canvas` | The `cards` and `connections` arrays. A Card entry has `id`. Each connection has `from` and `to` endpoints, each with `card` and `port`. `port` is absent on a Draft end and required on every other end. |
-| `boundary` | Optional, and only for a child project. It requires both `inputs` and `outputs` arrays, which may be empty. An entry has an outer port `name` and an inner endpoint `card` and `port`; as on a connection, `port` is absent when the inner Card is a Draft. |
+| `boundary` | Optional, and only for a child project. It requires both `inputs` and `outputs` arrays, which may be empty. An entry has an outer port `name` and an inner endpoint `card` and `port`. A Draft has no ports, so it cannot be on a boundary. |
 
 Every field except `boundary` is required. Tsugumi refuses to load a root or child project whose `formatVersion` differs from the format it reads. The error reports both formats. Before v1.0, Tsugumi supplies no project migration.
 

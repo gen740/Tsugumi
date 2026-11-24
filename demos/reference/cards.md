@@ -9,7 +9,7 @@ Read this guide with `demo_read reference/cards.md`. The [SDK guides and starter
 One project_edit can replace a Draft's definition, add its sources and rebind its wire ends atomically. Existing
 README.md title, description and body stay as written. Add a one-line description if it is empty.
 Replace the README with a guarded whole-file text edit when it needs a description. Boundary
-entries in tsugumi.json have `name`, `card` and `port` fields (no `port` on a Draft).
+entries in tsugumi.json have `name`, `card` and `port` fields.
 
 For example, plan starts with _card.json {"type":"draft","symbol":"none"} and a README.md with
 `title: plan` and `description: Make a greeting` in the front matter and `Return hello.` in its body. Its incoming wire is

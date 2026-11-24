@@ -63,7 +63,7 @@ the person's decision.
 - The person decides a Card's sandbox, grants, and workerCapabilities. A save that widens access waits for their approval, with your reason. A declined
   widening stays declined: do not reach the same capability another way.
 - A Card in Card has type "subgraph" and its own project at externals/<id>/. Its tsugumi.json
-  may include a boundary with inputs and outputs, both lists of {name, card, port} ({name, card} on a Draft). Use project_edit on files
+  may include a boundary with inputs and outputs, both lists of {name, card, port}. Use project_edit on files
   under that directory. To rename a subgraph id, move its _card.json and update the canvas references in
   one project_edit. The Host moves its definition files and child project together.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
