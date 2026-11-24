@@ -24,7 +24,7 @@ const errorText = (error: unknown) => error instanceof Error ? error.message : S
 const maxInputPending = 128
 
 export class BrowserView implements LiveViewRenderer {
-  private readonly worker = new Worker(new URL('./dawn-view-worker.js', import.meta.url), { type: 'module' })
+  private readonly worker: Worker
   private readonly owner: Window & typeof globalThis
   private readonly observer: ResizeObserver
   private readonly events = new AbortController()
@@ -54,6 +54,8 @@ export class BrowserView implements LiveViewRenderer {
     private readonly controls: ViewControls,
   ) {
     this.owner = canvas.ownerDocument.defaultView!
+    // The popup's activation and visibility govern its audio and animation.
+    this.worker = new this.owner.Worker(new URL('./dawn-view-worker.js', import.meta.url), { type: 'module' })
     this.size = this.measure()
     this.worker.onmessage = ({ data }: MessageEvent<ViewNotice>) => this.notice(data)
     this.worker.onerror = event => this.fail(event.message || 'Dawn view worker failed')
@@ -194,6 +196,7 @@ export class BrowserView implements LiveViewRenderer {
   private createAudio() {
     try {
       this.audio = new ViewAudio(
+        this.owner,
         suspended => this.controls.enableAudio(suspended),
         (port, clock) => this.post({ type: 'audio', port, clock }, [port]),
         clock => this.post({ type: 'audioClock', clock }),
