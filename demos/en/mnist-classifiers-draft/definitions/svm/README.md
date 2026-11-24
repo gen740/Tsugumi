@@ -1,4 +1,5 @@
 ---
+title: svm
 description: Tell the digits apart with a support vector machine (RBF)
 ---
 

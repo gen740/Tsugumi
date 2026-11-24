@@ -1,4 +1,5 @@
 ---
+title: structures
 description: 構造式を並べる
 ---
 

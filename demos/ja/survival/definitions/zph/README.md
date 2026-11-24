@@ -1,4 +1,5 @@
 ---
+title: zph
 description: 比例ハザードの確認
 ---
 

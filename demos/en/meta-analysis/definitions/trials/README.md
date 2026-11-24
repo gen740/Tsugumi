@@ -1,4 +1,5 @@
 ---
+title: trials
 description: Compute the 13 trials' effect sizes
 ---
 

@@ -1,4 +1,5 @@
 ---
+title: phase
 description: 先まで延ばした相図
 ---
 

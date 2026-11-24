@@ -1,4 +1,5 @@
 ---
+title: logistic
 description: ロジスティック回帰
 ---
 

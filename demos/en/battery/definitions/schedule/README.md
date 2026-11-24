@@ -1,4 +1,5 @@
 ---
+title: schedule
 description: Decide the operation by dynamic programming
 ---
 

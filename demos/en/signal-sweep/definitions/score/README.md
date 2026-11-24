@@ -1,3 +1,4 @@
 ---
+title: score
 description: Compares each signal with each threshold
 ---

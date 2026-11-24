@@ -1,4 +1,5 @@
 ---
+title: mandelbrot
 description: Draw the Mandelbrot set
 ---
 

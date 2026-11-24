@@ -1,4 +1,5 @@
 ---
+title: load
 description: 重力波データを取る
 ---
 

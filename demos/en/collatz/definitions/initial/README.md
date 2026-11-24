@@ -1,3 +1,4 @@
 ---
+title: initial
 description: The sequence's starting value (27 by default)
 ---

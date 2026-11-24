@@ -1,4 +1,5 @@
 ---
+title: load
 description: 観測データを Nix で固定する
 ---
 

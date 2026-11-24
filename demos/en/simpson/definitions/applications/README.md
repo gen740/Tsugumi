@@ -1,4 +1,5 @@
 ---
+title: applications
 description: Plot how applications were skewed
 ---
 

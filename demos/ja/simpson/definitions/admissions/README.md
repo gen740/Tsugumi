@@ -1,4 +1,5 @@
 ---
+title: admissions
 description: Berkeley の出願を学科ごとに集計する
 ---
 

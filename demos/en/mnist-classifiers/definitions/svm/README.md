@@ -1,4 +1,5 @@
 ---
+title: svm
 description: Support vector machine (RBF)
 ---
 

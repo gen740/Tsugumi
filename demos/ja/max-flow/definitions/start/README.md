@@ -1,3 +1,4 @@
 ---
+title: start
 description: ネットワークの作り方（settings）から計算を始める
 ---

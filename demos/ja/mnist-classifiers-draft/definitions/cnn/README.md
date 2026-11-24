@@ -1,4 +1,5 @@
 ---
+title: cnn
 description: 畳み込みニューラルネットで数字を当てる
 ---
 

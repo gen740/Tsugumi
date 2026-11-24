@@ -1,4 +1,5 @@
 ---
+title: similarity
 description: 構造の似かた
 ---
 

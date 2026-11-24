@@ -1,4 +1,5 @@
 ---
+title: moderator
 description: 緯度に対するメタ回帰
 ---
 

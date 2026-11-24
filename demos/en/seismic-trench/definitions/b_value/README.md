@@ -1,4 +1,5 @@
 ---
+title: b_value
 description: Find the b-value
 ---
 

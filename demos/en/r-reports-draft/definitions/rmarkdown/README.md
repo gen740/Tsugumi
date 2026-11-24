@@ -1,4 +1,5 @@
 ---
+title: rmarkdown
 description: Aggregate observations, render parameterized reports with tables and figures, and keep their HTML artifacts.
 ---
 

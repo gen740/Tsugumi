@@ -14,12 +14,14 @@
   writeShellApplication,
   git,
   gh,
+  python3,
 }:
 writeShellApplication {
   name = "tsugumi-release";
   runtimeInputs = [
     git
     gh
+    python3
   ];
   text = ''
     cd "$(git rev-parse --show-toplevel)"
@@ -56,11 +58,44 @@ writeShellApplication {
     if [ "$(cat VERSION)" != "$version" ]; then
       branch="release/$version"
       git checkout -q -b "$branch"
+      python3 -I - "$version" <<'PY'
+    import json
+    import os
+    from pathlib import Path
+    import re
+    import subprocess
+    import sys
+
+    version = sys.argv[1]
+    paths = subprocess.check_output(["git", "ls-files", "-z", "*tsugumi.json"])
+    changes = {}
+    for path in paths.split(b"\0"):
+        if not path:
+            continue
+        manifest = Path(os.fsdecode(path))
+        original = manifest.read_bytes()
+        expected = json.loads(original)
+        if not isinstance(expected.get("tsugumiVersion"), str):
+            raise SystemExit(f"{manifest}: expected a tsugumiVersion string")
+        expected["tsugumiVersion"] = version
+        updated, count = re.subn(
+            rb'("tsugumiVersion"\s*:\s*)"[^"]*"',
+            lambda match: match[1] + json.dumps(version).encode(),
+            original,
+        )
+        if count != 1 or json.loads(updated) != expected:
+            raise SystemExit(f"{manifest}: expected exactly one tsugumiVersion field")
+        changes[manifest] = updated
+
+    for manifest, updated in changes.items():
+        manifest.write_bytes(updated)
+    PY
       echo "$version" > VERSION
-      git commit -qm "Release $version" VERSION
+      git add -u -- VERSION '*tsugumi.json'
+      git commit -qm "Release $version"
       git push -q -u origin "$branch"
       gh pr create --head "$branch" --title "Release $version" \
-        --body "Sets \`VERSION\` to $version. After this merges, run \`nix run .#release -- $release\` again from origin/main to push the tag \`$tag\`."
+        --body "Sets \`VERSION\` and the repository's project manifest versions to $version. After this merges, run \`nix run .#release -- $release\` again from origin/main to push the tag \`$tag\`."
       git checkout -q --detach origin/main
       echo "VERSION is not $version yet: merge the pull request above when its checks pass, then run this again." >&2
       exit 0

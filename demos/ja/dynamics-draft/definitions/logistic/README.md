@@ -1,4 +1,5 @@
 ---
+title: logistic
 description: ロジスティック写像の分岐図を描く
 ---
 

@@ -1,4 +1,5 @@
 ---
+title: compare
 description: Compare the seven classifiers side by side
 ---
 

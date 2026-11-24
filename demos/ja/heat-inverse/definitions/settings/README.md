@@ -1,4 +1,5 @@
 ---
+title: settings
 description: 棒と測定の条件
 ---
 

@@ -1,4 +1,5 @@
 ---
+title: survey
 description: 3 つの層別を並べて比べる
 ---
 

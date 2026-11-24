@@ -1,4 +1,5 @@
 ---
+title: specs
 description: 仕様ごとのハザード比を並べる
 ---
 

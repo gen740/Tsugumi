@@ -1,3 +1,4 @@
 ---
+title: loop
 description: 最初の状態と generate が返す状態をまとめて generate に渡す
 ---

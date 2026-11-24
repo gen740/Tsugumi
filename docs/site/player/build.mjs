@@ -122,10 +122,15 @@ function readCard(root, id, ports, wires) {
   const dir = path.join(root, 'definitions', id)
   const def = readJson(path.join(dir, '_card.json'), {})
   const readme = path.join(dir, 'README.md')
-  const markdown = fs.existsSync(readme) ? fs.readFileSync(readme, 'utf8') : ''
-  const frontMatter = /^---\ndescription: (.*)\n---\n\n?/.exec(markdown)
-  const description = frontMatter?.[1]
-  const body = markdown.slice(frontMatter?.[0].length ?? 0)
+  const markdown = fs.readFileSync(readme, 'utf8')
+  const frontMatter = /^---\n([\s\S]*?)\n---\n\n?/.exec(markdown)
+  const fields = new Map((frontMatter?.[1] ?? '').split('\n').map((line) => {
+    const colon = line.indexOf(':')
+    return [line.slice(0, colon), line.slice(colon + 2)]
+  }))
+  if (!fields.get('title') || !fields.has('description')) throw new Error(`${readme}: expected title and description`)
+  const description = fields.get('description')
+  const body = markdown.slice(frontMatter[0].length)
   const kind = kindOf(def, id)
   const allParams = cardParams(dir)
   // Resolved ports are the core's; Drafts have no ports.
@@ -159,8 +164,8 @@ function readGraph(root) {
   const wires = readWires(doc)
   const children = new Map()
   for (const { id } of doc.canvas.cards) {
-    const { external } = readJson(path.join(root, 'definitions', id, '_card.json'), {})
-    if (external) children.set(id, readGraph(path.join(root, 'externals', external)))
+    const { type } = readJson(path.join(root, 'definitions', id, '_card.json'))
+    if (type === 'subgraph') children.set(id, readGraph(path.join(root, 'externals', id)))
   }
   return { root, doc, wires, children }
 }

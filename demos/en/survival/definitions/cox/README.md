@@ -1,4 +1,5 @@
 ---
+title: cox
 description: Cox proportional hazards model
 ---
 

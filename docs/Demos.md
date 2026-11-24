@@ -75,7 +75,7 @@ The iteration itself is drawn with the Cards' wires, so the behaviour of branche
 - Set `initial` to 2: the odd side's `triple` is never chosen and is `skipped`.
 - Make `maxRuns` of `check` inside smaller: it stops at the iteration limit (`execution_limit`). With a starting value for which `3n+1` exceeds 64 bits, `integer overflow` is detected.
 - Set `initial` to a large value such as 2^60: R's `check` fails, saying it is "not below 2^53" (Julia, C++ and Python return 61 values).
-- Open `collatz-jl` or `collatz-r` and look at the record of `collect`: each invocation's display is the sequence so far.
+- Open `collatz_jl` or `collatz_r` and look at the record of `collect`: each invocation's display is the sequence so far.
 
 ### Signal detection variants (`signal-sweep`)
 

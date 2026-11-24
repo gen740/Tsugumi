@@ -1,4 +1,5 @@
 ---
+title: figure
 description: 全体の線と層ごとの線を重ねて描く
 ---
 

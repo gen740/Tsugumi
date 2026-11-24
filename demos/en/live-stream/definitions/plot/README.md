@@ -1,3 +1,4 @@
 ---
+title: plot
 description: Draws the latest window points and their mean as a line chart
 ---

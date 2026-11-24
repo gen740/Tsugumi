@@ -1,4 +1,5 @@
 ---
+title: settings
 description: ネットワークの作り方
 ---
 

@@ -1,4 +1,5 @@
 ---
+title: scores
 description: 評価を並べる
 ---
 

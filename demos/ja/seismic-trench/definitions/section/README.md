@@ -1,4 +1,5 @@
 ---
+title: section
 description: 緯度帯の断面
 ---
 

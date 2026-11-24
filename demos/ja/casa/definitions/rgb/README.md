@@ -1,4 +1,5 @@
 ---
+title: rgb
 description: RGB画像にする
 ---
 

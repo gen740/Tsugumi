@@ -1,4 +1,5 @@
 ---
+title: sweep
 description: Try every edge
 ---
 

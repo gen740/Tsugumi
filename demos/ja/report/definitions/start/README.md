@@ -1,3 +1,4 @@
 ---
+title: start
 description: レポートの設定（settings）を流して始める
 ---

@@ -1,4 +1,5 @@
 ---
+title: penguins
 description: Read the penguins' measurements
 ---
 

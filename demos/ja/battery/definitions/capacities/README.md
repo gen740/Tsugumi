@@ -1,4 +1,5 @@
 ---
+title: capacities
 description: 容量と節約の関係
 ---
 

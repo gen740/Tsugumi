@@ -1,4 +1,5 @@
 ---
+title: forward
 description: The forward problem: heat spreads
 ---
 

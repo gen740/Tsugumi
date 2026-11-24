@@ -1,4 +1,5 @@
 ---
+title: settings
 description: How to make the network
 ---
 

@@ -1,4 +1,5 @@
 ---
+title: cnn
 description: Convolutional neural network
 ---
 

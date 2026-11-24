@@ -1,4 +1,5 @@
 ---
+title: score
 description: 数えて採点する
 ---
 

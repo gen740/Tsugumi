@@ -33,7 +33,7 @@ Tsugumi connects small, typed steps called Cards into a Workflow. Run the whole 
 - **Keep a monitoring worker resident.** Workers retained with `reuseWorker` have no count, idle-time or memory eviction limit. They stay until the environment stops or the Card's definition or execution conditions change; a failed, cancelled or timed-out call discards its worker, and a dead worker is replaced. Each invocation records reuse, and its log identifies replacement of resident state. Fresh workers prepared for speed keep their separate limits. [Worker state](CardGuide.md#worker-state)
 - **Use a shell or a signed build cache.** Open the project Terminal to run a tool such as `nix --version`. On Mac, configure a shared signed cache in **Settings → Binary Caches** and apply it on the next VM start. [Project terminal](Usage.md#project-terminal) · [Binary caches](BinaryCaches.md) · [Browser and CLI platforms](WebUI.md#the-tsugumi-command)
 - **Run a Card on another Linux machine.** Start `tsugumi-workerd` there, register it in **Settings → Execution service**, and choose it under **Execution service** in the Card's settings. [Run a Card on a remote worker](RemoteExecution.md) · [Execution service](#execution-service)
-- **Control a Card's access.** Use **Card settings → General** to review **Restrict file access**, and the network and host folder permissions under **Experimental**, before running code from another project. [Security and isolation](security.md#summary)
+- **Control a Card's access.** Use **Card settings → General** to review **Restrict file access**, and the network and host folder permissions in the same tab, before running code from another project. [Security and isolation](security.md#summary)
 
 ### Work with the Agent and explore examples
 
@@ -136,7 +136,7 @@ tsugumi lock update nixpkgs --project /path/to/project
 tsugumi lock update --project /path/to/project
 ```
 
-Use `--project-path externals/id` to select an external. The Agent uses `nix_path_lock_update` with approval. The `tsugumi.lock` root contains an `entries` list. Each entry stores `name`, the declared `url`, the resolved `rev` when supplied, and the verifying `narHash`. Updating adds missing entries, removes undeclared ones and resolves changed URLs. It keeps an existing pin for an unchanged declaration. Evaluation requires each declared name's locked URL to match its declaration. [Example lock file](CardGuide.md#the-files)
+Use `--project-path externals/id` to select a child project. The Agent uses `nix_path_lock_update` with approval. The `tsugumi.lock` root contains an `entries` list. Each entry stores `name`, the declared `url`, the resolved `rev` when supplied, and the verifying `narHash`. Updating adds missing entries, removes undeclared ones and resolves changed URLs. It keeps an existing pin for an unchanged declaration. Evaluation requires each declared name's locked URL to match its declaration. [Example lock file](CardGuide.md#the-files)
 
 Imports such as `<nixpkgs>` and `<tsugumi-kit/sdk/cpp>` resolve from Card definition files against their own project's names. An undeclared name raises a catchable evaluation error and lists the declared names. Host `NIX_PATH` is ignored. A project under `externals/<id>/` carries its own `tsugumi.json` and `tsugumi.lock` and resolves names independently of its parent.
 
@@ -155,7 +155,7 @@ tsugumi evaluate nix --project /path/to/project --card '{"segments":["convert"]}
 
 ### Sharing Nix exports through connections
 
-Publish values through `exports` in an upstream Card's `default.nix`. Refer to them as `inputs.<card_id>.<attr>` in a downstream definition. In `A → B → C`, C sees exports from A and B. TODO(open): Exports at Merge, Collect, feedback, Draft and nested or external boundaries.
+Publish values through `exports` in an upstream Card's `default.nix`. Refer to them as `inputs.<card_id>.<attr>` in a downstream definition. In `A → B → C`, C sees exports from A and B. TODO(open): Exports at Merge, Collect, feedback and Draft boundaries. A subgraph upstream contributes no Nix input key. See [Nix inputs across child project boundaries](Reference.md#nix-inputs-across-child-project-boundaries).
 
 ### Keeping build results
 
@@ -182,15 +182,15 @@ Start with [Your first Card](CardGuide.md), then use the [worker state rules](Ca
 
 A Card declares the names of the credentials it needs (`"secrets": ["database_password"]` in `_card.json`); people set the values for each project in its **Settings > Card secrets** (Mac app and Web UI), kept by hostd beside the API keys, bound to that project and never shown again. Each invocation's process receives them as environment variables of the same names; the run history records only which names were provided. See [Card secrets](security.md#card-secrets) and the [Card guide](CardGuide.md#card-secrets).
 
-### Outside access (Experimental)
+### Outside access
 
-- By default a Card has no network and cannot see the Mac's file system ([security.md](security.md)).
-- In **Card settings → General**, the Card can grant access to the network, a supported GUI, or named host paths. Host path grants are read-only by default and appear in the Card environment as `TSUGUMI_GRANT_<NAME>`.
-- The sandbox options (`sandbox.filesystem`, `sandbox.pid`, `sandbox.ipc` and `sandbox.identity`, each on by default) are in the same tab. An Agent's save that turns it off, allows the network, adds a host folder or changes the execution service waits for a person's approval ([The Agent's permission boundary](security.md#the-agents-permission-boundary)).
+- Card creation writes `grants.network: false` and enables filesystem isolation. See [Security and isolation](security.md).
+- In **Card settings → General**, the Card can grant access to the network, a supported GUI, or named host paths. Host path grants with `write: false` are read-only and appear in the Card environment as `TSUGUMI_GRANT_<NAME>`.
+- The sandbox options (`sandbox.filesystem`, `sandbox.pid`, `sandbox.ipc` and `sandbox.identity`, written explicitly) are in the same tab. An Agent's save that disables isolation, allows the network or adds a host folder waits for a person's approval ([The Agent's permission boundary](security.md#the-agents-permission-boundary)).
 
 ## 5. Documents and saving
 
-[The Card guide](CardGuide.md#the-files) describes project files. [ProjectSave](Protocol.md#projectsave) defines save transactions and conflicts; [Versions](Versions.md) explains returning to saved code and settings.
+[Project files](Reference.md) defines the file formats. [ProjectSave](Protocol.md#projectsave) defines save transactions and conflicts; [Versions](Versions.md) explains returning to saved code and settings.
 
 ## 6. Run history and artifacts
 

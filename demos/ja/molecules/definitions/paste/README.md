@@ -1,4 +1,5 @@
 ---
+title: paste
 description: SMILES を貼る
 ---
 

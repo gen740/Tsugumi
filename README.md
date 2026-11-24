@@ -23,7 +23,7 @@
 
 **Run the analysis you sketched with AI, as it is, and check it with your own hands.**
 
-> **Before v1.0.0, any release may break compatibility.** Project files, the Card ABI, the SDKs and settings can change from one release to the next, without migration. Pin the version you use, and expect to update your projects when you upgrade.
+> **Before v1.0.0, any release may break compatibility.** Project files, the Card ABI, the SDKs and settings can change from one release to the next, without migration. Each project declares its `tsugumiVersion` and opens only in that version. See [Project files](docs/Reference.md).
 
 Tsugumi is a research workbench in which the specification a person draws, the thing an AI edits and the processing that actually runs are one and the same Workflow. It runs on macOS, Linux and Windows (Windows through WSL2).
 You draw a computation or a data pipeline as Cards and the wires between them, implement it together with an AI, and run it in environments pinned with Nix.
@@ -152,10 +152,10 @@ You can also open each Card's run history, logs and artifacts, and check every s
 
 ### Going inside a step
 
-A large step can be gathered into a child Workflow (a Card in a Card). Open "collatz-cpp" in the "Collatz (C++ / Python / Julia / R)" demo and the Workflow inside it appears, with a branch and a loop.
+A large step can be gathered into a child Workflow (a Card in a Card). Open "collatz_cpp" in the "Collatz (C++ / Python / Julia / R)" demo and the Workflow inside it appears, with a branch and a loop.
 Most of the time you handle it as a single Card; when you want to check, you can go down to its finest steps.
 
-<a href="https://gen740.github.io/Tsugumi/#demo-collatz"><img src="docs/assets/collatz-subworkflow.svg" alt="The Workflow inside collatz-cpp, going round its branch and loop 112 times" width="100%"></a>
+<a href="https://gen740.github.io/Tsugumi/#demo-collatz"><img src="docs/assets/collatz-subworkflow.svg" alt="The Workflow inside collatz_cpp, going round its branch and loop 112 times" width="100%"></a>
 
 ### Letting Tsugumi the thrush show you around
 

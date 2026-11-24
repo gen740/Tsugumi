@@ -1,3 +1,4 @@
 ---
+title: settings
 description: 乱数の種・歩く人の数・歩数
 ---

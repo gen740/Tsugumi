@@ -1,3 +1,4 @@
 ---
+title: start
 description: 重力波データの取得（load）を始める
 ---

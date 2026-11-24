@@ -1,3 +1,4 @@
 ---
+title: ruby
 description: 型付き入力を乗算する。factor を変更して再実行
 ---
