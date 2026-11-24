@@ -99,8 +99,10 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             self.results[digest] = data
             return digest
 
-        artifact_id = job[:32]
-        artifact = ArtifactIdT(bytes=list(bytes.fromhex(artifact_id)))
+        spec = self.specs[job]
+        invocation = R.InvocationT.InitFromPackedBuf(self.blob_contents[R.string(spec.invocationSha256)])
+        request = WorkerMessageT.InitFromPackedBuf(self.blob_contents[R.string(invocation.callSha256)])
+        artifact = ArtifactIdT(bytes=list(request.value.invocationSequence.to_bytes(8, "big") + bytes(8)))
         output = WorkerOutputT(name="doc", artifacts=[artifact])
         created = [] if result_fault == "artifact" else [artifact]
         result = WorkerResultT(outputs=[output], created=created)
@@ -110,12 +112,12 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         files = {
             "environment": R.pack(R.ResultEnvironmentT(
                 paths=["/nix/store/00000000000000000000000000000000-mock"],
-                directories=["artifacts", f"artifacts/{artifact_id}"],
+                directories=["artifacts", "artifacts/0"],
                 built=True, logTruncated=log_truncated,
             )),
             "logs": R.log_entries((LogStream.standard_output, "one recovered message\n")),
         }
-        files = {f"files/artifacts/{artifact_id}/result.txt": b"retained after shutdown\n", **files}
+        files = {"files/artifacts/0/result.txt": b"retained after shutdown\n", **files}
         if logs is not None:
             files["logs"] = logs
         if result_fault == "display":

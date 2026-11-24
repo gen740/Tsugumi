@@ -51,7 +51,9 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
           spawn.gui = source.gui;
           spawn.network = source.network;
           spawn.ro_paths = source.ro_paths;
-          spawn.artifacts_root = source.artifacts_root;
+          spawn.artifact_store = source.artifact_store;
+          spawn.artifact_inputs = source.artifact_inputs;
+          spawn.artifact_staging = source.artifact_staging;
           spawn.hidden_paths = source.hidden_paths;
           if (source.uid) spawn.uid = *source.uid;
           if (source.gid) spawn.gid = *source.gid;
@@ -67,6 +69,7 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
                               .parent_path()
                               .string();
           reply.call_id = lease.worker->call_id();
+          reply.artifact_scratch = lease.worker->artifact_scratch().string();
           try {
             descriptors = lease.worker->hand_over();
             held.emplace(reply.lease, Held{request.card, lease.generation,

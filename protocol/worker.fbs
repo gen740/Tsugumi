@@ -39,6 +39,7 @@ table WorkerCall {
   grants:[ArtifactGrant] (id: 4);
   // Before replying, forward displays queued before a one-shot call returned.
   drain_display:bool (id: 5);
+  invocation_sequence:ulong (id: 6);
 }
 
 table WorkerOutput {
@@ -56,6 +57,10 @@ table WorkerFailure {
   failure:Tsugumi.Data.Failure (id: 0, required);
   created:[tsugumi.ArtifactId] (id: 1);
 }
+
+// The supervisor resolves the ID using the active call's grants.
+table WorkerArtifactOpen { id:tsugumi.ArtifactId (required); }
+table WorkerArtifactOpened { path:string; }
 
 table WorkerCancel {}
 
@@ -81,6 +86,8 @@ union WorkerPayload {
   WorkerDisplay = 5,
   WorkerStart = 6,
   WorkerDisplayCredit = 7,
+  WorkerArtifactOpen = 8,
+  WorkerArtifactOpened = 9,
 }
 
 table WorkerMessage {

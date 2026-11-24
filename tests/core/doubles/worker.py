@@ -206,10 +206,12 @@ class Worker:
                     name=action["port"], bytes=bytes(value.bytes) if value.bytes is not None else b"",
                     artifacts=value.artifacts)
             elif operation in ("file", "directory"):
-                artifact_key = os.urandom(16)
+                counter = len(self.created)
+                artifact_key = (self.call.invocationSequence.to_bytes(8, "big")
+                                + counter.to_bytes(8, "big"))
                 artifact = ArtifactIdT(bytes=list(artifact_key))
                 self.created.append(artifact)
-                root = Path(text(self.call.artifactDirectory)) / artifact_key.hex()
+                root = Path(text(self.call.artifactDirectory)) / str(counter)
                 destination = root / action["path"]
                 if not destination.is_relative_to(root) or ".." in destination.parts:
                     raise ValueError("artifact member escapes staging")
@@ -227,7 +229,7 @@ class Worker:
                 outputs[action["port"]] = WorkerOutputT(name=action["port"], artifacts=[artifact])
             elif operation == "artifact_symlink":
                 artifact = self.created[-1]
-                root = Path(text(self.call.artifactDirectory)) / bytes(artifact.bytes).hex()
+                root = Path(text(self.call.artifactDirectory)) / str(int.from_bytes(bytes(artifact.bytes)[8:], "big"))
                 (root / action["name"]).symlink_to(action["target"])
             elif operation == "display_text":
                 display = WorkerDisplayT(view="test", bytes=action["text"].encode())

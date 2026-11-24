@@ -110,14 +110,22 @@ TEST_F(NativeContract, ArtifactsAreNewDirectoriesAndOnlyGrantsCanBeOpened) {
     ~Removal() { std::filesystem::remove_all(directory); }
   } cleanup{directory};
   host.artifact_directory = directory;
+  host.invocation_sequence = 1532;
   tsugumi_artifact_id first{}, second{};
   tsugumi_bytes path{};
   ASSERT_EQ(create_artifact(&host, &first, &path), 0);
   const std::string created(path.data, path.data + path.size);
   EXPECT_TRUE(std::filesystem::is_directory(created));
+  EXPECT_EQ(std::filesystem::path(created).filename(), "0");
+  EXPECT_TRUE(
+      std::ranges::equal(first.bytes, tsugumi::make_artifact_id(1532, 0)));
   EXPECT_EQ(path.data[path.size], 0);
   ASSERT_EQ(create_artifact(&host, &second, &path), 0);
-  EXPECT_NE(std::string(path.data, path.data + path.size), created);
+  EXPECT_EQ(std::filesystem::path(std::string(path.data, path.data + path.size))
+                .filename(),
+            "1");
+  EXPECT_TRUE(
+      std::ranges::equal(second.bytes, tsugumi::make_artifact_id(1532, 1)));
   EXPECT_LT(open_artifact(&host, &first, &path), 0);
   ArtifactId key;
   std::ranges::copy(first.bytes, key.begin());

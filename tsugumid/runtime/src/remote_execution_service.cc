@@ -436,9 +436,10 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       try {
         auto result = import_remote_result(
             client_, target_, instance_, s.execution_job_id,
-            reply->result_sha256, job.spec, request.directory,
-            node.outputs, request.inputs, live_log.recorded(), request.log,
-            request.stop,
+            reply->result_sha256, job.spec,
+            service_.store().state_dir() / "artifact-invocations",
+            service_.artifact_destination(s), s.artifact_sequence, node.outputs,
+            request.inputs, live_log.recorded(), request.log, request.stop,
             [&](std::string_view name, uint64_t done, uint64_t total) {
               if (request.transfer)
                 request.transfer("download", name, done, total);
@@ -451,7 +452,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
                 History::put_environment(db, s.run_id, result.environment);
           });
         }
-        service_.seal_artifacts(s, request.directory / "artifacts", result.created);
+        service_.record_artifacts(s, result.created);
         output.outputs = std::move(result.outputs);
         output.auxiliary_logs = std::move(result.auxiliary_logs);
         output.auxiliary_logs_truncated = result.auxiliary_logs_truncated;

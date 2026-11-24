@@ -104,7 +104,7 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card,
       }
       it = resident_.erase(it);
     }
-    if (!lease.worker && !reuse) {
+    if (!lease.worker && !reuse && !sp.artifact_inputs) {
       if (auto it = standby_.find(standby_key); it != standby_.end()) {
         if (it->second.worker->alive())
           lease.worker = std::move(it->second.worker);
@@ -126,8 +126,7 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card,
       throw;
     }
   }
-  if (!reuse && !sp.secrets)
-    refill(standby_key, sp);
+  if (!reuse && !sp.secrets && !sp.artifact_inputs) refill(standby_key, sp);
   return lease;
 }
 

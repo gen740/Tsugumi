@@ -1728,6 +1728,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       -> Produced {
     const Node& node = *rt.node;
     const auto inv = s.invocation;
+    s.artifact_sequence = svc_.history().allocate_invocation_sequence(s);
     int64_t last_transfer = 0;
     auto result = w.execution->execute(
         {node, *w.implementation, in, sources, s, invocation_dir(node, inv),
