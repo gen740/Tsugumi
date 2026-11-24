@@ -31,6 +31,7 @@ from Tsugumi.Worker.ArtifactGrant import ArtifactGrantT
 from Tsugumi.Worker.WorkerPort import WorkerPortT
 from test_worker_loading import card_package
 from Tsugumi.Worker.WorkerCall import WorkerCallT
+from Tsugumi.Worker.WorkerDisplay import WorkerDisplayT
 from Tsugumi.Worker.WorkerMessage import WorkerMessageT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
 
@@ -388,6 +389,68 @@ read -r line < "$TEST_GATE"
                                 R.JobState.Failed, R.JobState.Interrupted)
         finally:
             peer.close()
+
+
+def test_remote_display_credit_and_reverse_messages_share_the_channel(worker):
+    job = "8" * 64
+    spec = card_spec(worker, job, """
+      static uint8_t message[TSUGUMI_MESSAGE_MAX];
+      for (uint8_t i = 1; i <= 3; ++i) {
+        message[0] = i;
+        if (call.effects->send(call.host, "data", message, sizeof(message)))
+          return 1;
+      }
+      tsugumi_bytes input{};
+      if (call.effects->recv(call.host, "control", &input, 60000) ||
+          input.size != 1 || input.data[0] != 42)
+        return 2;
+      if (call.effects->send(call.host, "control", input.data, input.size))
+        return 3;
+    """)
+    submitted = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
+    assert submitted.bodyType == R.ReplyBody.JobStatus, vars(submitted.body)
+    sequence = 0
+    messages = []
+    credits = []
+    deadline = time.monotonic() + 300
+
+    def poll_until(done):
+        nonlocal sequence
+        while time.monotonic() < deadline:
+            query = R.StatusRequestT(displayAfter=sequence, displayCredits=credits)
+            response = worker.call(R.RequestBody.StatusRequest, query, job=job)
+            assert response.bodyType == R.ReplyBody.JobStatus, vars(response.body)
+            status = response.body
+            assert status.state in (R.JobState.Queued, R.JobState.Running,
+                                    R.JobState.Succeeded), vars(status)
+            if status.displaySequence > sequence:
+                sequence = status.displaySequence
+                messages.extend((R.string(message.view), len(message.bytes), int(message.bytes[0]))
+                                for message in status.displays)
+            if done(status):
+                return
+            time.sleep(0.05)
+        pytest.fail(f"display stalled after {messages}")
+
+    try:
+        maximum = 1 << 24
+        poll_until(lambda status: len(messages) >= 2 and status.viewInputReady)
+        assert messages == [("data", maximum, 1), ("data", maximum, 2)]
+        message = WorkerDisplayT(view="control", bytes=[42])
+        sent = worker.call(R.RequestBody.ViewSendRequest,
+                           R.ViewSendRequestT(display=message, offset=0), job=job)
+        assert sent.bodyType == R.ReplyBody.Ack, vars(sent.body)
+        # The reverse message and its echo cross while the data window is full.
+        poll_until(lambda _: len(messages) >= 3)
+        assert messages[2:] == [("control", 1, 42)]
+        credits.append(DisplayCreditT(view="data", released=maximum))
+        poll_until(lambda status: status.state == R.JobState.Succeeded and not status.displayPending)
+        assert messages[3:] == [("data", maximum, 3)]
+    finally:
+        worker.call(R.RequestBody.CancelRequest, R.CancelRequestT(), job=job)
+        worker.wait_state(job, R.JobState.Cancelled, R.JobState.Succeeded,
+                          R.JobState.Failed, R.JobState.Interrupted)
+        worker.call(R.RequestBody.ReleaseRequest, R.ReleaseRequestT(), job=job)
 
 
 @pytest.mark.parametrize("case", ["artifact", "symlink", "byte-budget", "entry-budget"])
