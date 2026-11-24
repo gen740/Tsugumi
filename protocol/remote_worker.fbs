@@ -79,7 +79,7 @@ table Request {
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  // Zero means no advertised contract. Writers explicitly send contract 16.
+  // Zero means no advertised contract. Writers explicitly send contract 17.
   worker_contract:uint;
   active_jobs:uint;
   requires_filesystem:bool = true; requires_pid:bool = true;
