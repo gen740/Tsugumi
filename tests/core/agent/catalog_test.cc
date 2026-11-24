@@ -11,7 +11,7 @@
 namespace tsugumi::agent {
 namespace {
 
-TEST(AgentCatalog, DraftSavePreservesEmptyEnds) {
+TEST(AgentCatalog, DraftSaveKeepsPortLessEnds) {
   const Catalog catalog;
   const auto* tool = catalog.Find("project_save");
   ASSERT_NE(tool, nullptr);
@@ -30,8 +30,7 @@ TEST(AgentCatalog, DraftSavePreservesEmptyEnds) {
   const auto wire =
       json::Object(json::Array(json::Get(canvas, "connections")).front());
   const auto from = json::Object(json::Get(wire, "from"));
-  EXPECT_TRUE(from.contains("port"));
-  EXPECT_EQ(json::Text(from, "port"), "");
+  EXPECT_FALSE(from.contains("port"));
 }
 
 TEST(AgentCatalog, InternalVersionNoteRequestsAreNotTools) {

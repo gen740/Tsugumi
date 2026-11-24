@@ -237,7 +237,7 @@ TEST_F(DocumentStorage, PortAndParamDiagnosticsNameWhatFixesThem) {
   EXPECT_TRUE(param);
 }
 TEST_F(DocumentStorage,
-       AnEmptyEndOnAnImplementedCardAsksForAPortNotAnInputsEntry) {
+       AnEndWithoutAPortOnAnImplementedCardIsALoadError) {
   fs::write_atomic(
       root / "tsugumi.json",
       test::project_json(
@@ -245,17 +245,14 @@ TEST_F(DocumentStorage,
   test::write_card(root / "definitions/b/_card.json",
                    test::card_json(R"({"type":"code"})"));
   Store store({root, ""});
-  store.open();
-  const auto* node = store.current()->resolution->find({"b"});
-  ASSERT_NE(node, nullptr);
-  bool port = false;
-  for (const auto& d : node->diags)
-    if (d.code == "unknown_port") {
-      port = true;
-      EXPECT_EQ(d.message.find("{\"name\": \"\"}"), std::string::npos)
-          << d.message;
-    }
-  EXPECT_TRUE(port);
+  try {
+    store.open();
+    FAIL() << "a port-less end on a Code Card must not load";
+  } catch (const std::exception& error) {
+    EXPECT_NE(std::string_view(error.what()).find("needs a port"),
+              std::string_view::npos)
+        << error.what();
+  }
 }
 TEST_F(DocumentStorage, ProjectNameDoesNotChangeExecution) {
   Store store({root, ""});
@@ -413,7 +410,7 @@ TEST_F(DocumentStorage,
     commit(store, {implementation});
     FAIL() << "Even the only input must be stated";
   } catch (const Failed& error) {
-    EXPECT_EQ(error.failure.kind, FailureKind::validation_failed);
+    EXPECT_EQ(error.failure.kind, FailureKind::invalid_document);
   }
   EXPECT_EQ(store.current(), before);
   EXPECT_EQ(fs::read_file(root / "definitions/plan/_card.json"),
@@ -428,7 +425,7 @@ TEST_F(DocumentStorage,
     commit(store, {implementation, wiring});
     FAIL() << "The output must also be stated";
   } catch (const Failed& error) {
-    EXPECT_EQ(error.failure.kind, FailureKind::validation_failed);
+    EXPECT_EQ(error.failure.kind, FailureKind::invalid_document);
   }
   const auto output = wiring.json.find(R"("card":"plan"})");
   wiring.json.replace(output, std::string(R"("card":"plan"})").size(),
@@ -470,7 +467,7 @@ TEST_F(DocumentStorage, NestedImplementationRebindsBoundaryEndsAtomically) {
     commit(store, {implementation});
     FAIL();
   } catch (const Failed& error) {
-    EXPECT_EQ(error.failure.kind, FailureKind::validation_failed);
+    EXPECT_EQ(error.failure.kind, FailureKind::invalid_document);
   }
   EXPECT_EQ(store.current()->resolution->find({"outer", "plan"})->kind,
             CardType::Draft);
@@ -501,7 +498,7 @@ TEST_F(DocumentStorage, NamedDraftEndIsRejectedAndIdentifiesTheWire) {
     commit(store, {wiring});
     FAIL();
   } catch (const Failed& error) {
-    EXPECT_EQ(error.failure.kind, FailureKind::validation_failed);
+    EXPECT_EQ(error.failure.kind, FailureKind::invalid_document);
   }
 }
 }  // namespace

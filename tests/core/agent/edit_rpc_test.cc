@@ -100,7 +100,14 @@ TEST_F(AgentProjectFixture,
   EXPECT_NE(project.find(R"("nixPath": [])"), std::string::npos);
   EXPECT_EQ(JsonString(project, "/canvas/connections/0/to/port"), "start");
   EXPECT_EQ(JsonString(project, "/canvas/connections/1/from/port"), "result");
-  EXPECT_EQ(JsonString(project, "/canvas/connections/1/to/port"), "");
+  // next stays a Draft, so its end keeps no port.
+  EXPECT_FALSE(json::Object(json::Get(
+                   json::Object(json::Array(json::Get(
+                                    json::Object(json::Get(
+                                        json::Object(project), "canvas")),
+                                    "connections"))[1]),
+                   "to"))
+                   .contains("port"));
   EXPECT_EQ(Read(root / "definitions/plan/README.md"), readme);
   const auto definition = Read(root / "definitions/plan/_card.json");
   EXPECT_EQ(JsonString(definition, "/type"), "code");

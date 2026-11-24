@@ -117,7 +117,8 @@ auto MentionedInputs(const std::string& document,
     -> std::set<std::string> {
   const auto tree = Spans(document).Value();
   const Span* target = &tree;
-  for (const auto& step : edit.selector) {
+  for (size_t i = 0; i < edit.selector.size(); ++i) {
+    const auto& step = edit.selector[i];
     if (!step) return {};
     const Span* next = nullptr;
     for (const auto& child : target->children)
@@ -127,6 +128,8 @@ auto MentionedInputs(const std::string& document,
         next = &child;
         break;
       }
+    // A Draft end has no port: an edit of its absent port names the end.
+    if (!next && i + 1 == edit.selector.size()) break;
     if (!next) return {};
     target = next;
   }
