@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>
@@ -85,6 +86,8 @@ struct Layout {
   auto certificate() const { return state / "tls-certificate.pem"; }
   auto root() const { return state / "binary-cache"; }
   auto uploads() const { return state / "uploads"; }
+  // The --socket path this state's server listens on.
+  auto socket_record() const { return state / "server.socket"; }
 };
 
 auto DefaultState() -> stdfs::path {
@@ -121,15 +124,29 @@ auto Keys(const Layout& layout, const std::vector<std::string>& names)
   return {std::move(secret), std::move(identity)};
 }
 
-auto UnixListener(const stdfs::path& path) -> int {
+// Whether something accepts connections on a Unix socket; anything but a
+// refused connection counts as in use.
+auto Listening(const sockaddr_un& address) -> bool {
+  const Fd probe(::socket(AF_UNIX, SOCK_STREAM, 0));
+  if (probe.value < 0) return true;
+  return ::connect(probe.value, reinterpret_cast<const sockaddr*>(&address),
+                   sizeof address) == 0 ||
+         errno != ECONNREFUSED;
+}
+
+// Called with the state lock held. An existing socket is removed only when
+// this state's server left it behind (it is the recorded path) and nothing
+// listens on it any more.
+auto UnixListener(const stdfs::path& path, const stdfs::path& record) -> int {
   if (!path.is_absolute())
     throw std::runtime_error("--socket must be an absolute path");
   const auto address = tsugumi::unix_socket::Address(path.string());
-  // Only a socket of ours is replaced; the state lock says it is stale.
   struct stat st{};
   if (::lstat(path.c_str(), &st) == 0) {
-    if (!S_ISSOCK(st.st_mode) || st.st_uid != ::geteuid())
-      throw std::runtime_error("--socket names something that is not ours");
+    if (!S_ISSOCK(st.st_mode) || st.st_uid != ::geteuid() ||
+        fs::read_file(record) != path.string() || Listening(address))
+      throw std::runtime_error("--socket names a path in use: " +
+                               path.string());
     ::unlink(path.c_str());
   }
   const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
@@ -139,6 +156,7 @@ auto UnixListener(const stdfs::path& path) -> int {
       ::listen(fd, 64) != 0)
     throw std::runtime_error("Cannot listen on " + path.string());
   ::chmod(path.c_str(), 0600);
+  fs::write_atomic(record, path.string(), 0600);
   return fd;
 }
 
@@ -213,7 +231,8 @@ auto Serve(Config config) -> int {
 
   Fd tcp(TcpListener(config));
   std::optional<Fd> unix;
-  if (!config.socket.empty()) unix.emplace(UnixListener(config.socket));
+  if (!config.socket.empty())
+    unix.emplace(UnixListener(config.socket, layout.socket_record()));
   ::signal(SIGTERM, Stop);
   ::signal(SIGINT, Stop);
   ::signal(SIGPIPE, SIG_IGN);
@@ -289,7 +308,10 @@ auto Serve(Config config) -> int {
     for (const int fd : open) ::shutdown(fd, SHUT_RDWR);
   }
   for (auto& client : clients) client.thread.join();
-  if (unix) ::unlink(config.socket.c_str());
+  if (unix) {
+    ::unlink(config.socket.c_str());
+    ::unlink(layout.socket_record().c_str());
+  }
   return 0;
 }
 
@@ -314,14 +336,17 @@ auto PrintUsage(const Config& config) -> int {
   return 0;
 }
 
+// Shows the keys the server created; it never creates or rewrites a file.
 auto PrintKeys(const Config& config) -> int {
   const Layout layout(config.state);
-  PrivateDirectory(layout.state);
-  auto names = config.names;
-  if (names.empty()) names.emplace_back("localhost");
-  auto [secret, identity] = Keys(layout, names);
-  std::cout << "signing public key: " << cache::PublicKeyOf(secret) << '\n'
-            << "tls public key: " << identity->public_key() << '\n';
+  auto signing = fs::read_file(layout.signing_public_key());
+  if (!signing || !stdfs::exists(layout.identity()))
+    throw std::runtime_error("No keys in " + layout.state.string() +
+                             " yet: start the server once");
+  while (!signing->empty() && signing->back() == '\n') signing->pop_back();
+  const peer_tls::Identity identity(layout.identity());
+  std::cout << "signing public key: " << *signing << '\n'
+            << "tls public key: " << identity.public_key() << '\n';
   return 0;
 }
 

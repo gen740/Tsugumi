@@ -40,8 +40,9 @@ auto Measure(const std::filesystem::path& root,
 // under their name with one link(2): a name is served complete or not at all.
 //
 // A .narinfo is accepted only when its NAR is present with the stated file
-// hash and size, the decompressed NAR has the stated NAR hash and size, and
-// every reference other than itself is already present. The cache then signs
+// hash and size, the decompressed NAR is one valid NAR with the stated NAR
+// hash and size, and every reference other than itself is already present
+// under its full store path. The cache then signs
 // it with its own key, replacing the uploader's signatures. A name that
 // exists keeps its first content; nothing is replaced or removed.
 class Cache {

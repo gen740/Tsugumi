@@ -9,7 +9,9 @@
 #include <cstring>
 #include <nix/store/nar-info.hh>
 #include <nix/store/store-dir-config.hh>
+#include <nix/util/archive.hh>
 #include <nix/util/compression.hh>
+#include <nix/util/fs-sink.hh>
 #include <nix/util/hash.hh>
 #include <nix/util/signature/local-keys.hh>
 #include <nix/util/signature/signer.hh>
@@ -180,20 +182,46 @@ struct Cache::State {
               nar->hash ||
           (info.fileSize && info.fileSize != *size))
         throw Rejected(400, "The narinfo's file hash or size is not its NAR's");
+      // The decompressed bytes are hashed and parsed as one NAR, with
+      // nothing after it, so a client can unpack what is signed.
       nix::HashSink hasher(info.narHash.algo);
+      bool trailing = false;
+      auto parse = nix::sourceToSink([&](nix::Source& source) {
+        nix::NullFileSystemObjectSink files;
+        nix::parseDump(files, source);
+        try {
+          while (true) {
+            char byte;
+            source(&byte, 1);
+            trailing = true;
+          }
+        } catch (const nix::EndOfFile&) {
+        }
+      });
+      nix::LambdaSink both([&](std::string_view bytes) {
+        hasher(bytes);
+        (*parse)(bytes);
+      });
       auto decompress = nix::makeDecompressionSink(
-          info.compression.empty() ? "none" : info.compression, hasher);
+          info.compression.empty() ? "none" : info.compression, both);
       ReadChunks(file, [&](std::string_view bytes) { (*decompress)(bytes); });
       decompress->finish();
+      parse->finish();
+      if (trailing) throw Rejected(400, "The NAR has bytes after its end");
       const auto [nar_hash, nar_size] = hasher.finish();
       if (nar_hash != info.narHash || nar_size != info.narSize)
         throw Rejected(400, "The NAR does not have the narinfo's NAR hash");
-      for (const auto& reference : info.references)
-        if (reference != info.path &&
-            !RegularSize(root /
-                         (std::string(reference.hashPart()) + ".narinfo")))
+      // A reference is present when the cache holds that exact store path,
+      // its name included.
+      for (const auto& reference : info.references) {
+        if (reference == info.path) continue;
+        const auto held = fs::read_file(
+            root / (std::string(reference.hashPart()) + ".narinfo"));
+        if (!held ||
+            nix::NarInfo(store, *held, "cached narinfo").path != reference)
           throw Rejected(409, "Reference " + store.printStorePath(reference) +
                                   " is not in the cache yet");
+      }
       info.sigs.clear();
       info.sigs.insert(signer.signDetached(info.fingerprint(store)));
       return info.to_string(store);
@@ -245,12 +273,23 @@ class TextUpload : public Cache::Upload {
   auto Commit() -> void override {
     if (RegularSize(target_)) return;
     std::string text;
-    try {
-      text = encoding_.empty() ? body_ : nix::decompress(encoding_, body_);
-    } catch (const nix::Error& error) {
-      throw Rejected(400, error.what());
+    if (encoding_.empty()) {
+      text = std::move(body_);
+    } else {
+      // The limit holds for the decompressed text while it is produced.
+      nix::LambdaSink collect([&](std::string_view bytes) {
+        if (text.size() + bytes.size() > limit_)
+          throw Rejected(413, "The file is too large");
+        text.append(bytes);
+      });
+      try {
+        auto decompress = nix::makeDecompressionSink(encoding_, collect);
+        (*decompress)(body_);
+        decompress->finish();
+      } catch (const nix::Error& error) {
+        throw Rejected(400, error.what());
+      }
     }
-    if (text.size() > limit_) throw Rejected(413, "The file is too large");
     Staged staged(uploads_);
     staged.Write(finish_(text));
     staged.Place(target_);

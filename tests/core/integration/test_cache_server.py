@@ -7,8 +7,10 @@ outputs, which Nix accepts only with a trusted signature."""
 
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
+import lzma
 import os
 import shutil
 import signal
@@ -297,10 +299,88 @@ def test_uploads_are_checked_before_they_appear(server, client, built_paths, scr
                           body=changed("URL", "nar/" + "2" * 52 + ".nar.xz"))[0] == 409
     assert server.request(client, "PUT", f"{fake}.narinfo",
                           body=changed("References", "3" * 32 + "-absent"))[0] == 409
+    # A reference names a whole store path: the same hash with another name
+    # is not in the cache.
+    held = Path(dependency).name[:32]
+    assert server.request(client, "PUT", f"{fake}.narinfo",
+                          body=changed("References", held + "-another-name"))[0] == 409
     assert server.request(client, "GET", f"{fake}.narinfo")[0] == 404
     # Names outside the binary-cache layout are not files of the cache.
     assert server.request(client, "PUT", "../escape", body=b"x")[0] in (400, 404)
     assert server.request(client, "PUT", "nix-cache-info", body=b"StoreDir: /x\n")[0] == 403
+
+
+def nix32(digest: bytes) -> str:
+    alphabet = "0123456789abcdfghijklmnpqrsvwxyz"
+    out = []
+    for i in reversed(range((len(digest) * 8 - 1) // 5 + 1)):
+        j, k = divmod(i * 5, 8)
+        c = digest[j] >> k
+        if j + 1 < len(digest):
+            c |= digest[j + 1] << (8 - k)
+        out.append(alphabet[c & 0x1F])
+    return "".join(out)
+
+
+def test_only_a_valid_nar_is_signed(server, client):
+    # Bytes whose hash and size the narinfo states correctly, but no NAR.
+    content = b"not a nar archive"
+    digest = nix32(hashlib.sha256(content).digest())
+    nar = f"nar/{digest}.nar"
+    assert server.request(client, "PUT", nar, body=content)[0] == 200
+    fake = "4" * 32
+    narinfo = (f"StorePath: /nix/store/{fake}-bogus\nURL: {nar}\nCompression: none\n"
+               f"FileHash: sha256:{digest}\nFileSize: {len(content)}\n"
+               f"NarHash: sha256:{digest}\nNarSize: {len(content)}\nReferences: \n")
+    assert server.request(client, "PUT", f"{fake}.narinfo", body=narinfo.encode())[0] == 400
+    assert server.request(client, "GET", f"{fake}.narinfo")[0] == 404
+
+
+def test_a_compressed_narinfo_is_limited_while_it_is_decompressed(server, client):
+    connection = http.client.HTTPSConnection("127.0.0.1", server.port,
+                                             context=server.context(client), timeout=30)
+    try:
+        connection.request("PUT", "/" + "5" * 32 + ".narinfo", body=lzma.compress(b"x" * (2 << 20)),
+                           headers={"Content-Encoding": "xz"})
+        assert connection.getresponse().status == 413
+    finally:
+        connection.close()
+
+
+def test_a_missing_file_answers_head_without_a_body(server, client):
+    # Bytes after a HEAD response would be read as the next response.
+    connection = http.client.HTTPSConnection("127.0.0.1", server.port,
+                                             context=server.context(client), timeout=30)
+    try:
+        for method, name, status in (("HEAD", "0" * 32 + ".narinfo", 404),
+                                     ("HEAD", "nix-cache-info", 200),
+                                     ("GET", "nix-cache-info", 200)):
+            connection.request(method, "/" + name)
+            response = connection.getresponse()
+            assert response.status == status
+            body = response.read()
+            if method == "GET":
+                assert body.startswith(b"StoreDir: ")
+    finally:
+        connection.close()
+
+
+def test_showing_the_keys_changes_no_file(server, tmp_path):
+    def files():
+        return {p.name: (p.read_bytes(), p.stat().st_mtime_ns)
+                for p in server.state.iterdir() if p.is_file()}
+    before = files()
+    shown = subprocess.run([str(CACHED), "public-key", "--state-dir", str(server.state)],
+                           text=True, capture_output=True, check=True)
+    assert f"signing public key: {server.public_key}\n" in shown.stdout
+    assert files() == before
+    # Before the server created them there are no keys to show, and none
+    # are created.
+    empty = tmp_path / "empty-state"
+    empty.mkdir(mode=0o700)
+    missing = subprocess.run([str(CACHED), "public-key", "--state-dir", str(empty)],
+                             text=True, capture_output=True)
+    assert missing.returncode != 0 and list(empty.iterdir()) == []
 
 
 def test_usage_reports_what_the_folder_holds(server, client, built_paths, scratch):

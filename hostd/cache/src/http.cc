@@ -173,22 +173,24 @@ auto Reason(int status) -> std::string_view {
   return "Internal Server Error";
 }
 
+// A HEAD response has the headers of the GET response and no body.
 auto Respond(Connection& connection, int status, std::string_view body,
-             bool close) -> void {
+             bool close, bool head_only = false) -> void {
   std::string head = "HTTP/1.1 " + std::to_string(status) + " " +
                      std::string(Reason(status)) +
                      "\r\nContent-Type: text/plain; charset=utf-8"
                      "\r\nContent-Length: " +
                      std::to_string(body.size() + 1) + "\r\n";
   if (close) head += "Connection: close\r\n";
-  connection.Write(head + "\r\n" + std::string(body) + "\n");
+  connection.Write(head + "\r\n" +
+                   (head_only ? std::string() : std::string(body) + "\n"));
 }
 
 auto Send(Connection& connection, const Cache::File& file, bool head_only)
     -> void {
   const int fd = ::open(file.path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
   if (fd < 0) {
-    Respond(connection, 404, "Not found", false);
+    Respond(connection, 404, "Not found", false, head_only);
     return;
   }
   struct Close {
@@ -234,6 +236,7 @@ auto Serve(Cache& cache, Connection& connection, std::string_view peer)
       Respond(connection, 400, "Malformed request", true);
       return;
     }
+    const bool head_only = request->method == "HEAD";
     const auto connection_header = Lower(request->Header("connection"));
     const bool close = request->version == "HTTP/1.0"
                            ? connection_header != "keep-alive"
@@ -244,27 +247,27 @@ auto Serve(Cache& cache, Connection& connection, std::string_view peer)
     if ((!transfer.empty() && transfer != "chunked") ||
         (!transfer.empty() && !length_header.empty()) ||
         (!length_header.empty() && !length)) {
-      Respond(connection, 400, "Unsupported request framing", true);
+      Respond(connection, 400, "Unsupported request framing", true, head_only);
       return;
     }
     const bool has_body = transfer == "chunked" || (length && *length > 0);
     auto name = std::string_view(request->target);
     name = name.substr(0, name.find('?'));
     if (!name.starts_with('/')) {
-      Respond(connection, 400, "Malformed request target", true);
+      Respond(connection, 400, "Malformed request target", true, head_only);
       return;
     }
     name.remove_prefix(1);
 
     if (request->method == "GET" || request->method == "HEAD") {
       if (has_body) {
-        Respond(connection, 400, "A read carries no body", true);
+        Respond(connection, 400, "A read carries no body", true, head_only);
         return;
       }
       if (const auto file = cache.Find(name))
-        Send(connection, *file, request->method == "HEAD");
+        Send(connection, *file, head_only);
       else
-        Respond(connection, 404, "Not found", false);
+        Respond(connection, 404, "Not found", false, head_only);
     } else if (request->method == "PUT") {
       if (transfer.empty() && !length) {
         Respond(connection, 411, "Content-Length required", true);
