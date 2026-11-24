@@ -719,8 +719,9 @@ private final class CountingRuler: LineNumberRuler {
   let document = try JSONValue.parse(fixtureProjectJSON(#"{"canvas":{"cards":[{"id":"plan"},{"id":"start"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan"}},{"from":{"card":"plan"},"to":{"card":"next"}}]}}"#))
   let snapshot = Tsugumi_RPC_ProjectSnapshotT()
   snapshot.projectJson = document.serialized(); snapshot.layout = []
-  snapshot.definitions = ["plan", "next"].map { id in
-    let definition = Tsugumi_RPC_DefinitionT(); definition.id = id; definition.cardJson = fixtureCardJSON(.draft)
+  snapshot.definitions = ["plan", "start", "next"].map { id in
+    let definition = Tsugumi_RPC_DefinitionT(); definition.id = id
+    definition.cardJson = fixtureCardJSON(id == "start" ? .trigger : .draft)
     return definition
   }
   session.prepareLayout = { _, layout, _ in layout }
@@ -731,8 +732,10 @@ private final class CountingRuler: LineNumberRuler {
   #expect(session.nodeData("plan").symbol == CardKind.draft.symbol)
   let layoutWires = session.layoutScene([]).wires
   #expect(layoutWires.count == 2)
-  #expect(layoutWires.first?.toPort == CardGeometry.newPort)
-  #expect(layoutWires.last?.fromPort == CardGeometry.newPort)
+  let incoming = try #require(layoutWires.first ?? nil)
+  let outgoing = try #require(layoutWires.last ?? nil)
+  #expect(incoming.toPort == CardGeometry.newPort)
+  #expect(outgoing.fromPort == CardGeometry.newPort)
   editor.implementAs("collect")
   #expect(editor.kind == .collect)
   #expect(editor.definition?["symbol"]?.string == "none")
