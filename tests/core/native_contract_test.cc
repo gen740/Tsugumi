@@ -12,6 +12,7 @@ namespace {
 
 class NativeContract : public testing::Test {
  protected:
+  flatbuffers::FlatBufferBuilder card_buffer;
   flatbuffers::FlatBufferBuilder response;
   Host host;
 
