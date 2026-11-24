@@ -226,9 +226,10 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
       std::to_string(sp.sandbox.identity) + "|" +
       std::to_string(sp.sandbox.limits.cpu_millis) + "|" +
       std::to_string(sp.sandbox.limits.memory_bytes) + "|" +
-      std::to_string(sp.gui) + "|" + (uid ? std::to_string(*uid) : "-") + "|" +
-      (sp.network ? "n" : "-") + "|" + sp.worker_binary + "|" + build.key +
-      "|" + std::to_string(build.implementation_index) + "|" + secret_version;
+      std::to_string(sp.gui) + "|" + (sp.uid ? std::to_string(*sp.uid) : "-") +
+      "|" + (sp.network ? "n" : "-") + "|" + sp.worker_binary + "|" +
+      build.key + "|" + std::to_string(build.implementation_index) + "|" +
+      secret_version;
   for (const auto& b : sp.binds)
     key += "|" + b.source + ">" + b.target + (b.write ? "w" : "r");
   const bool reuse = node.settings.reuse_worker;
