@@ -16,7 +16,7 @@ The demos and Drafts in `demos/en` and `demos/ja` declare their Nix sources in `
 | [Data to report](#data-to-report-report) | Aggregating a sales table into a report | Reproduction by seed, failure and `blocked`, rerunning one Card with saved inputs, artifacts, child Workflows |
 | [Collatz (C++ / Python / Julia / R)](#collatz-c--python--julia--r-collatz) | The Collatz sequence | Cross-checking independent implementations in four languages, branches, merges and loops, `maxRuns`, detecting integer overflow |
 | [Python → Ruby → C++](#python--ruby--c-ruby-pipeline) | Passing a typed integer across languages | Ruby Hash outputs, parameters, resident run-start state, live displays |
-| [Live Stream](#live-stream-live-stream) | Plotting a random walk as it goes | A stream made by a feedback loop, stopping at once, WebGPU line charts |
+| [Live Stream](#live-stream-live-stream) | Plotting a random walk as it goes | Feedback loops, cancellation and an HTML line chart |
 | [Plots](#plots-plots) | Diffusion of random walks | Matplotlib figures and `FuncAnimation` published through Report; Plotly and Altair become interactive charts |
 | [Cas A · Chandra RGB](#cas-a--chandra-rgb-casa) | X-ray observation of a supernova remnant | Observation data pinned with Nix, rerunning per Card, version history |
 | [Science demos](#science-demos-fetching-and-analysing-public-data) | Gravitational waves, a protein, an exoplanet, earthquakes | Fetching public data (sizes and SHA-256), analysing and plotting it |
@@ -97,12 +97,12 @@ vector and shows three detections out of six comparisons.
 
 ### Live Stream (`live-stream`)
 
-Makes one value of a random walk every 100 ms and draws the latest values as a line chart in real time.
+Makes one value of a random walk every 100 ms. The `plot` Card opens a line chart panel on the first sample and updates it as values arrive.
 A feedback loop that sends "the next state" back to itself makes a stream that ends.
 
 **Try**
 - Run it and stop (Cancel) in the middle. It stops at once, and the chart up to that point stays.
-- Change `interval_ms`, `seed`, `samples` or `window` of `plot` and run again. The series resets, and with parallelism 1 or 2 no value goes missing or out of order.
+- Change `interval_ms`, `seed` or `samples` in `settings`, or `window` in `plot`, and run again. The new run starts a new chart.
 
 ### Plots (`plots`)
 

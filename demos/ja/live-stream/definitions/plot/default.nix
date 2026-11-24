@@ -13,5 +13,5 @@ in
     src = ./src;
   });
   api = sdk.pythonApi common;
-  inherit (sdk) views;
+  views = builtins.filter (view: view.name == "line-chart") sdk.views;
 }

@@ -8,13 +8,13 @@ import { DawnViewCanvas, type ReadDawnView } from './dawnViewCanvas'
 import { HtmlViewFrame, type ReadHtmlView, type SendHtmlView } from './htmlViewFrame'
 
 const windowLabels = {
-  blocked: ['ポップアップがブロックされました。', 'The browser blocked the popup.'],
-  open: ['別ウィンドウで表示', 'Show in a separate window'],
-  panel: ['パネルで表示', 'Show in a panel'],
-  fullscreen: ['フルスクリーンにする', 'Enter fullscreen'],
-  unavailable: ['このブラウザーではフルスクリーンを利用できません。', 'Fullscreen is unavailable in this browser.'],
+  blocked: 'ポップアップがブロックされました。',
+  open: '別ウィンドウで表示',
+  panel: 'パネルで表示',
+  fullscreen: 'フルスクリーンにする',
+  unavailable: 'このブラウザーではフルスクリーンを利用できません。',
 }
-const label = (key: keyof typeof windowLabels) => windowLabels[key][language() === 'en' ? 1 : 0]
+const label = (key: keyof typeof windowLabels) => L(windowLabels[key])
 
 export function ProjectCardViews({ session }: { session: ProjectSession }) {
   useObserve(session)

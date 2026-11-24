@@ -120,6 +120,14 @@ in
 - Messages travel to one session or one route through the worker, core and UI. The relay uses [ABI backpressure](CardABI.md#display-messages). A window retains its last frame after its routes go away. Closing the window gives every live route a close event.
 - View traffic is live. Use output ports and artifacts for results that people will inspect later. [Run history](RunHistory.md)
 
+### Passing a window between Cards
+
+A title Card can open a view and pass its session in a port alongside the
+initial state. The play Card registers its own route on that session and
+sends the route to the view in a message. The view can direct input to the
+play Card using that route. Passing the same session to a shop Card lets
+it register another route and render into the same window.
+
 ### html views
 
 The UI loads the file in an isolated frame without network access. Use

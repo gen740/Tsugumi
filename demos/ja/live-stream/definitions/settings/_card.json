@@ -1,3 +1,4 @@
 {
-  "type": "input"
+  "type": "code",
+  "inputs": [{ "name": "start" }]
 }

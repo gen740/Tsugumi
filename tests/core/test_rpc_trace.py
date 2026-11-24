@@ -161,7 +161,8 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
         assert not [e.messageType for e in entries if e.requestId in hidden]
         assert not {e.messageType for e in entries} & {
             b"ViewCloseRequest", b"ViewSendRequest", b"ViewCreditRequest",
-            b"CardViewReadRequest", b"FileContent", b"ViewOpened", b"DisplayUpdated"}
+            b"CardViewReadRequest", b"FileContent", b"ViewOpened",
+            b"ViewRouteRegistered", b"DisplayUpdated"}
         captured = "".join("".join(e.contentJson.decode().split()) for e in entries if e.contentJson)
         assert marker.decode() not in captured and ",".join(map(str, marker)) not in captured
 
