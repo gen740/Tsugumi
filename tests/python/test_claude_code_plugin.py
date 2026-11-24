@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from harness.file_events import terminate_process, wait_for_file
-from conftest import BUILD, CLI, HOSTD, TSUGUMID, WEB_ROOT, write_project
+from conftest import BUILD, CLI, HOSTD, TSUGUMID, WEB_ROOT, write_project, write_card
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -247,7 +247,8 @@ def waiting_plugin(tmp_path):
                                       "canvas": {"cards": [{"id": "work"}], "connections": []}})
     definition = tmp_path / "proj/definitions/work"
     definition.mkdir(parents=True)
-    for name, text in {"_card.json": '{"type":"code"}', "default.nix": "{}",
+    write_card(definition)
+    for name, text in {"default.nix": "{}",
                        "_outputs.fbs": "table Outputs {} root_type Outputs;",
                        "mock-build.json": '{"gate":"web-wait","error":"fixture completion"}'}.items():
         (definition / name).write_text(text)
@@ -384,7 +385,7 @@ def test_open_runs_core_tools_and_only_the_user_answers_access(plugin):
     write_project(root / "proj")
     template = root / "proj/templates/entry/start"
     template.mkdir(parents=True)
-    (template / "_card.json").write_text('{"type":"trigger"}')
+    trigger = write_card(template, "trigger")
     text, error = mcp.call("tsugumi_open", {"folder": "missing"})
     assert error and "create: true" in text
     assert not (root / "missing").exists()
@@ -416,11 +417,11 @@ def test_open_runs_core_tools_and_only_the_user_answers_access(plugin):
         })
         assert not error, text
         assert json.loads(text)["reply"] == "SaveResult"
-        assert json.loads((root / "proj/definitions/start/_card.json").read_text()) == {"type": "trigger"}
+        assert json.loads((root / "proj/definitions/start/_card.json").read_text()) == trigger
 
         source = root / "local-template"
         (source / "start").mkdir(parents=True)
-        (source / "start/_card.json").write_text('{"type":"draft","grants":{"network":true}}')
+        code = write_card(source / "start", grants={"network": True, "gui": False})
         add = {"family": "templates", "action": "add", "arguments": {
             "store": "project", "name": "added-via-mcp", "path": str(source),
         }}
@@ -435,13 +436,13 @@ def test_open_runs_core_tools_and_only_the_user_answers_access(plugin):
         guarded_copy = {"family": "templates", "action": "copy", "arguments": {
             "store": "project", "name": "added-via-mcp",
         }}
-        copied = root / "proj/definitions/start-2/_card.json"
+        copied = root / "proj/definitions/start_2/_card.json"
         allow_pending_access(mcp, "tools", guarded_copy, user)
         assert not copied.exists()
         text, error = mcp.call("tools", guarded_copy)
         assert not error, text
         assert json.loads(text)["reply"] == "SaveResult"
-        assert json.loads(copied.read_text()) == {"type": "draft", "grants": {"network": True}}
+        assert json.loads(copied.read_text()) == code
     finally:
         user.close()
     # A second open reuses the host and repeats no rules; create: true makes a new project.

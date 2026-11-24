@@ -10,16 +10,17 @@
 
 namespace tsugumi::host {
 auto CardStem(const std::string& name) -> std::string {
+  if (valid_name(name)) return name;
   std::string stem;
   for (unsigned char c : name) {
     if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+    if ((c >= 'a' && c <= 'z') || (!stem.empty() && c >= '0' && c <= '9'))
       stem += static_cast<char>(c);
-    else if (!stem.empty() && stem.back() != '-')
-      stem += '-';
-    if (stem.size() == 123) break;
+    else if (!stem.empty() && stem.back() != '_')
+      stem += '_';
+    if (stem.size() == 64) break;
   }
-  while (!stem.empty() && stem.back() == '-') stem.pop_back();
+  if (!stem.empty() && stem.back() == '_') stem.pop_back();
   return stem.empty() ? "card" : stem;
 }
 

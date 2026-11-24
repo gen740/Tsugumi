@@ -13,13 +13,13 @@ that the parts share is paid once per helper: three helpers for three one-Card D
 writing them and about twice the tokens. What it costs you: writing the scope and an instruction with everything it needs (Card ids,
 requirements, shared decisions, whether to run), waiting, and reading and checking the reports.
   delegate {"tasks": [{"name": "<short>", "instruction": "<task and context>", "read_cards": ["<id or outer/id>"], "write_cards": ["<id or outer/id>"], "run_cards": ["<id or outer/id>"]}]}
-  Card sets are exact permanent paths (a container does not include its Cards); an empty set permits none, and sets
+  Each id in a Card path matches [a-z][a-z0-9_]{0,63}. Card sets are exact permanent paths (a container does not include its Cards); an empty set permits none, and sets
   are omitted only when the person enabled unscoped helpers. Cards a helper reserves with card_id are its own.
   Inspection, files, records and logs follow read_cards; a run's whole plan must be in run_cards. A wire edit needs
   both ends readable or writable and one end writable. A helper implements a Draft only when
   all incident endpoints are in scope, otherwise it leaves type "draft" and returns the definition and rebindings. A nested
-  tsugumi.json is read with project_file_read and edited with project_edit. Project-wide settings, layout and
-  container links stay with the parent. Guarded edits apply to current state; a stale whole-document project_save is refused.
+  project lives at externals/<id>/. Its tsugumi.json is read with project_file_read and edited with project_edit. Project-wide settings, layout and
+  subgraph definitions stay with the parent. Guarded edits apply to current state; a stale whole-document project_save is refused.
   A helper with depth and count (both 0 by default) may start count helpers of its own, each with a smaller depth
   and Card sets within its own; depth 0 cannot start any. The main Agent has no such limit.
 

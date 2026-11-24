@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from conftest import CLI, HOSTD, WEB_ROOT, BUILD, WORKER, NIX, write_project
+from conftest import CLI, HOSTD, WEB_ROOT, BUILD, WORKER, NIX, write_project, write_card
 from test_claude_code_plugin import isolated_environment, stop_resident_services
 from harness.file_events import process_file, wait_for_file
 
@@ -579,7 +579,7 @@ def test_a_copy_of_a_read_only_demo_can_be_edited(tmp_path):
     (demo / "_card.json").write_text('{"type": "code"}')
     (root / "demos" / "ja" / "d" / ".tsugumi").mkdir()
     (root / "demos" / "ja" / "d" / ".tsugumi" / "history").write_text("private")
-    (root / "demos" / "ja" / "d" / "tsugumi.json").write_text('{"name": "D"}')
+    write_project(root / "demos" / "ja" / "d", {"name": "D"})
     (root / "demos" / "ja" / "index.json").write_text('{"demos": [{"id": "d", "title": "D", "path": "d"}]}')
     for f in sorted(root.joinpath("demos").rglob("*"), reverse=True):
         f.chmod(0o555 if f.is_dir() else 0o444)
@@ -712,7 +712,7 @@ def test_lock_update_pins_a_local_archive_through_the_agent_tool(tmp_path):
     })
     definition = project / "definitions/work"
     definition.mkdir(parents=True)
-    (definition / "_card.json").write_text('{"type":"code"}')
+    write_card(definition)
     (definition / "_outputs.fbs").write_text(EMPTY_OUTPUTS)
     (definition / "default.nix").write_text("{ params, inputs }: { }")
     env = isolated_environment(tmp_path, TSUGUMI_NIX_DIR=str(NIX.resolve()))

@@ -21,6 +21,7 @@ struct DocumentTemplate {
   std::vector<std::string> cards;
 };
 
+auto CardReadme(const std::string& id) -> std::string;
 auto BuiltinCard(Tsugumi::Host::BuiltinCard kind, const std::string& id)
     -> TemplateFiles;
 auto TemplateName(const std::string& name) -> bool;

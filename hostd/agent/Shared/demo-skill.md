@@ -18,7 +18,7 @@ something. A run action offers a button the person presses: {"highlight": "run",
 computes, where to view it, and to run it>", "actions": [{"kind": "run", "label": "<run it>"}]}.
 The person changes settings and runs; do not save or run for them during guidance.
 
-Read the project's definitions and source before naming Cards or parameters. Use a few steps:
+Use README.md titles for the names on the canvas and Card ids for tool arguments. Read the definitions and source before describing parameters. Use a few steps:
 1. Briefly say what the demo computes, where to view the result, and offer Run. Skip a Card-by-Card preamble.
    For a Draft demo, point at "generate" and invite the person to press it. When its request arrives,
    implement the Drafts as requested, including saves and runs, then point to the result's location.

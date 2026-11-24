@@ -25,8 +25,6 @@ auto PermissionKinds(const std::string& language)
       "Write to folders on this machine", "folder.badge.plus");
   add("nix_source", "外部の Nix ソースを読む", "Read an external Nix source",
       "shippingbox");
-  add("execution_service", "実行サービスに処理とデータを送る",
-      "Send computation and data to an execution service", "network");
   return result;
 }
 }  // namespace tsugumi::host

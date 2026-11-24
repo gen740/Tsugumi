@@ -149,31 +149,61 @@ auto GitTemplate(const H::TemplateGitT& source, std::stop_token stop)
 }
 }  // namespace
 
+auto CardReadme(const std::string& id) -> std::string {
+  return "---\ntitle: " + id + "\ndescription:\n---\n";
+}
+
 auto BuiltinCard(H::BuiltinCard kind, const std::string& id) -> TemplateFiles {
-  if (!valid_id(id)) throw Failure("invalid_request", "Invalid Card id");
+  if (!valid_name(id)) throw Failure("invalid_request", "Invalid Card id");
+  const auto card = [&](std::string_view definition) -> TemplateFiles {
+    return {{"_card.json", std::string(definition)},
+            {"README.md", CardReadme(id)}};
+  };
   switch (kind) {
     case H::BuiltinCard::Draft:
-      return {{"_card.json", R"({"type":"draft"})"}};
+      return card(R"({"type":"draft","symbol":"pencil.and.outline"})");
     case H::BuiltinCard::Trigger:
-      return {{"_card.json", R"({"type":"trigger"})"}};
+      return card(R"({"type":"trigger","symbol":"play.circle"})");
     case H::BuiltinCard::Merge:
-      return {{"_card.json",
-               R"({"type":"merge","inputs":[{"name":"a"},{"name":"b"}]})"}};
+      return card(
+          R"({"type":"merge","symbol":"arrow.triangle.merge","inputs":[{"name":"a"},{"name":"b"}],"maxRuns":1,"recordIO":"project"})");
     case H::BuiltinCard::Collect:
-      return {{"_card.json", R"({"type":"collect"})"}};
+      return card(
+          R"({"type":"collect","symbol":"line.3.horizontal.decrease","maxRuns":1,"recordIO":"project"})");
     case H::BuiltinCard::InputValue:
     case H::BuiltinCard::BooleanInput: {
       const bool boolean = kind == H::BuiltinCard::BooleanInput;
       const std::string type = boolean ? "bool" : "double";
       const std::string value = boolean ? "false" : "0.0";
       const std::string table = boolean ? "Boolean" : "Number";
-      return {{"_card.json", R"({"type":"input"})"},
-              {"params.nix", "{ value = " + value + "; }\n"},
-              {"_outputs.fbs", "namespace input;\ntable " + table +
-                                   " { value:" + type +
-                                   "; }\ntable Outputs { value:" + table +
-                                   " (required); }\nroot_type Outputs;\n"},
-              {"default.nix", R"nix({ params, inputs }:
+      auto files = card(R"({
+  "type":"input",
+  "symbol":"slider.horizontal.3",
+  "inputs":[],
+  "maxRuns":1,
+  "reuseWorker":false,
+  "timeoutSeconds":0,
+  "buildTimeoutSeconds":0,
+  "recordLogs":"project",
+  "recordIO":"project",
+  "sandbox":{"filesystem":true,"pid":true,"ipc":true,"identity":true,
+             "limits":{"cpu":0,"memoryMiB":0}},
+  "grants":{"network":false,"gui":false},
+  "workerCapabilities":[]
+})");
+      auto definition = json::Object(files.at("_card.json"));
+#if defined(__aarch64__) || defined(__arm64__)
+      definition["system"] = json::Quote("aarch64-linux");
+#else
+      definition["system"] = json::Quote("x86_64-linux");
+#endif
+      files["_card.json"] = json::Encode(definition);
+      files["params.nix"] = "{ value = " + value + "; }\n";
+      files["_outputs.fbs"] = "namespace input;\ntable " + table +
+                              " { value:" + type +
+                              "; }\ntable Outputs { value:" + table +
+                              " (required); }\nroot_type Outputs;\n";
+      files["default.nix"] = R"nix({ params, inputs }:
 let
   pkgs = import <nixpkgs> { };
   sdk = import <tsugumi-kit/sdk/input> { inherit pkgs; };
@@ -183,7 +213,8 @@ in {
     values.value.value = params.value;
   };
 }
-)nix"}};
+)nix";
+      return files;
     }
   }
   throw Failure("invalid_request", "Unknown built-in Card kind");
@@ -218,13 +249,20 @@ auto CheckTemplate(TemplateFiles files) -> DocumentTemplate {
         "invalid_document",
         "Choose a template folder containing Card definition directories");
   for (const auto& id : cards) {
-    if (!valid_id(id) || !files.contains(id + "/_card.json"))
+    if (!valid_name(id) || !files.contains(id + "/_card.json"))
       throw Failure("invalid_document",
                     "Invalid Card definition in template: " + id);
-    const auto card = json::Object(files.at(id + "/_card.json"));
-    if (card.contains("external"))
-      throw Failure("invalid_document",
-                    "A template Card cannot reference an external project");
+    const auto path = id + "/_card.json";
+    const auto& bytes = files.at(path);
+    parse_card_json(id, bytes);
+    const auto readme = files.find(id + "/README.md");
+    if (readme == files.end())
+      throw Failure("invalid_document", id + "/README.md is required");
+    check_readme(readme->first, readme->second);
+    if (json::Text(json::Object(bytes), "type") == "subgraph")
+      throw Failure(
+          "invalid_document",
+          path + ": a definition template does not contain child projects");
   }
   // Inspect the layout while keeping the stored bytes for both template stores.
   if (files.contains("layout.bin")) {
@@ -257,10 +295,18 @@ auto CheckTemplate(TemplateFiles files) -> DocumentTemplate {
     }
   }
   if (files.contains("tsugumi.json")) {
-    const auto project = json::Object(files.at("tsugumi.json"));
+    const auto& bytes = files.at("tsugumi.json");
+    parse_project_json(bytes);
+    const auto project = json::Object(bytes);
     const auto canvas = json::Object(json::Get(project, "canvas", "{}"));
-    for (const auto& raw :
-         json::Array(json::Get(canvas, "connections", "[]"))) {
+    std::set<std::string> placed;
+    for (const auto& raw : json::Array(canvas.at("cards")))
+      if (!placed.insert(json::Text(json::Object(raw), "id")).second)
+        throw Failure("invalid_document", "Duplicate Card in template canvas");
+    if (placed != cards)
+      throw Failure("invalid_document",
+                    "Template canvas and definition folders must match");
+    for (const auto& raw : json::Array(canvas.at("connections"))) {
       const auto wire = json::Object(raw);
       for (const auto* end : {"from", "to"}) {
         const auto endpoint = json::Object(json::Get(wire, end, "{}"));
@@ -321,7 +367,7 @@ auto HostTemplateNames(const f::path& store, const TemplatePathCheck& check)
       if (std::ranges::any_of(listing.files, [](const auto& path) {
             const auto slash = path.find('/');
             return path.ends_with("/_card.json") && slash == path.rfind('/') &&
-                   valid_id(path.substr(0, slash));
+                   valid_name(path.substr(0, slash));
           }))
         names.push_back(name);
     } catch (const fs::Error&) {

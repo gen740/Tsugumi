@@ -16,7 +16,7 @@ from harness.file_events import process_file
 
 import pytest
 
-from conftest import BUILD
+from conftest import BUILD, EMPTY_PROJECT, write_project
 
 HOST = Path(os.environ.get("TSUGUMI_HOSTD", BUILD / "hostd/tsugumi-hostd"))
 BINDINGS = Path(os.environ.get("TSUGUMI_PY_BINDINGS", BUILD / "generated/python"))
@@ -30,7 +30,7 @@ def host(tmp_path):
     demos = tmp_path / "demos"
     source = demos / "ja/sample"
     source.mkdir(parents=True)
-    (source / "tsugumi.json").write_text('{"name":"Sample"}')
+    write_project(source, {"name": "Sample"})
     (source / ".tsugumi").mkdir()
     (source / ".tsugumi/history").write_text("private")
     (demos / "ja/index.json").write_text(json.dumps({"demos": [
@@ -110,6 +110,17 @@ def host(tmp_path):
             source.chmod(0o755)
 
 
+
+
+def test_creation_writes_all_project_values(host, tmp_path):
+    call, _, _ = host
+    defaults = call("HostProjectDefaultsRequest")
+    created = Path(call("HostProjectCreateRequest", {
+        "parent": str(tmp_path), "name": "Fresh Project",
+    })["path"])
+    assert json.loads((created / "tsugumi.json").read_text()) == {
+        **EMPTY_PROJECT, "name": "Fresh Project", "agentExclude": defaults["agentExclude"],
+    }
 
 
 def test_demo_and_duplicate_are_writable_and_drop_run_state(host, tmp_path):

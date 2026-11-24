@@ -49,7 +49,7 @@
               "ほかのデモ"
             ]
           },
-          "text": "seed から作った売上の CSV を Python で地域ごとに集計し、Markdown と JSON のレポートを成果物に残します。保管には Card in Card（中に Workflow を持つ Card）を使い、わざと失敗させるスイッチもあります。",
+          "text": "seed から作った売上の CSV を Python で地域ごとに集計し、Markdown と JSON のレポートを成果物に残します。保管には Card in Card（externals/<id>/ に子 Workflow を持つ Card）を使い、わざと失敗させるスイッチもあります。",
           "next": {
             "ほかのデモ": "exoplanet-transit/pick"
           }
