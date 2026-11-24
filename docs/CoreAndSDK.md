@@ -32,7 +32,7 @@ The core calls a Card's `default.nix` with `{ params, inputs }`. The Card import
 - `params` is the evaluated literal attrset from [params.nix](CardGuide.md#parameters), or `{ }` when the Card has no params.nix. The SDK embeds it at build time.
 - `inputs` contains Nix exports from the guaranteed upstream Cards, by Card ID. In `A → B → C`, C gets both `inputs.A` and `inputs.B`. TODO(open): Exports through graph boundaries.
 
-Import a language builder from `<tsugumi-kit/sdk/cpp>` or another SDK entry point with `{ inherit pkgs; }`. Pass evaluated `params`, the generated `_inputs.fbs` as the builder's `inputs` (or `null` when absent), and the authored `_outputs.fbs` as `outputs`. Run and API builders share code generation. See the [temperature example](CardGuide.md#the-files) and the [kit builder contract](https://github.com/gen740/tsugumi-kit/blob/main/docs/sdk-contract.md).
+Import a language builder from `<tsugumi-kit/sdk/cpp>` or another SDK entry point with `{ inherit pkgs; }`. Pass evaluated `params`, the generated `_inputs.fbs` as the builder's `inputs`, and the authored `_outputs.fbs` as `outputs`. Run and API builders share code generation. See the [temperature example](CardGuide.md#the-files) and the [kit builder contract](https://github.com/gen740/tsugumi-kit/blob/main/docs/sdk-contract.md).
 
 ### The generated API (`share/tsugumi/api/`)
 
@@ -68,7 +68,7 @@ What a language SDK might otherwise have described lives elsewhere:
 
 ### Port schemas
 
-The core generates one `_inputs.fbs` per wired Card. It contains the connected ports and namespaced copies of their upstream types. The generated `tsugumi_schema` attributes let the SDK select a candidate by the ID in the port envelope. The file is versioned and refreshed when wiring or upstream schemas change.
+The core generates one `_inputs.fbs` per Code or Input Card. The schema describes the connected ports and contains namespaced copies of their upstream types. Cards with no connected inputs get an empty `Inputs` table. The generated `tsugumi_schema` attributes let the SDK select a candidate by the ID in the port envelope. The file is versioned and refreshed when wiring or upstream schemas change.
 
 Merge forwards each envelope unchanged. A Merge-fed port with one distinct schema has that type. With several distinct schemas, its generated input schema declares a union. The UI displays the candidate type names as `A | B`. Collect feeds a fixed `Collected` table with opaque members.
 
@@ -100,7 +100,7 @@ let
   sdk = import <tsugumi-kit/sdk/cpp> { inherit pkgs; };
   common = {
     inherit params;
-    inputs = if builtins.pathExists ./_inputs.fbs then ./_inputs.fbs else null;
+    inputs = ./_inputs.fbs;
     outputs = ./_outputs.fbs;
   };
 in

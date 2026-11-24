@@ -66,7 +66,7 @@ def python_run(main: str, *, values: dict | None = None, tools: str = "") -> str
     source = "(builtins.concatStringsSep \"\" [ " + " ".join(parts + [nix_string(main)]) + " ])"
     options = f" tools = {tools};" if tools else ""
     return ("(sdk.pythonCard { inherit params; outputs = ./_outputs.fbs;"
-            " inputs = if builtins.pathExists ./_inputs.fbs then ./_inputs.fbs else null;"
+            " inputs = ./_inputs.fbs;"
             " src = pkgs.writeTextDir \"main.py\" " + source + ";" + options + " })")
 
 
