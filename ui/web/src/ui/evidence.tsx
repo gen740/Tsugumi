@@ -8,10 +8,10 @@ import { canvasFor } from '../model/canvas'
 import { Evidence, evidenceExists, isEvidence, parseEvidence } from '../model/evidence'
 import { ProjectSession, cardState, key, runState } from '../model/session'
 import { WorkflowTab } from '../model/workspace'
-import { D, R, s, segs } from '../wire/rpc'
+import { D, R, s, segs, sOpt } from '../wire/rpc'
 import { Markdown } from './markdown'
 import { openWorkflowWindow } from './actions'
-import { describeValue } from '../wire/flatjson'
+import { artifactName, describeNamedValue } from '../wire/flatjson'
 import { Button, download } from './controls'
 
 export const EvidenceContext = createContext<{ session: ProjectSession; tab?: WorkflowTab } | undefined>(undefined)
@@ -28,8 +28,12 @@ export async function resolveEvidence(session: ProjectSession, target: Evidence)
       return invocation === undefined ? true : r.record?.summary?.invocation === invocation
     },
     logExists: async t => { const r = await rpc.logRange(t.run!, t.card ?? null, t.invocation ?? null, streamOf(t), t.offset, false, 4); return r.exists !== false && (t.offset ?? 0n) <= (r.sizeBytes ?? 0n) },
-    artifactExists: async t => (await rpc.artifacts(t.run!)).some(a => s(a.artifactId) === t.artifact && (!t.member || a.members.some(m => s(m.path) === t.member))),
+    artifactExists: async t => { const a = await citedArtifact(rpc, t); return !!a && (!t.member || a.members.some(m => s(m.path) === t.member)) },
   })
+}
+async function citedArtifact(rpc: NonNullable<ProjectSession['rpc']>, t: Evidence): Promise<R.ArtifactInfoT | undefined> {
+  const a = (await rpc.artifactsById([t.artifact!])).find(a => s(a.artifactId) === t.artifact)
+  return a
 }
 export function evidenceLink(href: string, label: ReactNode): ReactNode | undefined {
   return isEvidence(href) ? <EvidenceLink href={href}>{label}</EvidenceLink> : undefined
@@ -94,7 +98,8 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
         return <><p>{t.stream} · {L('位置')} {String(log.offset ?? 0n)}</p><pre className="selectable wrap-pre">{decodeLog(log.text)}</pre></>
       }
       if (t.kind === 'artifact') {
-        const a = (await rpc.artifacts(t.run!)).find(a => s(a.artifactId) === t.artifact)!
+        const a = await citedArtifact(rpc, t)
+        if (!a) throw new Error(L('このプロジェクトに根拠の記録がありません'))
         const member = t.member ?? (a.members[0] ? s(a.members[0].path) : undefined)
         const bytes = member ? await rpc.call<R.FileContentT>(R.RequestPayload.ArtifactReadRequest, Object.assign(new R.ArtifactReadRequestT(), { artifactId: t.artifact, member: member, limitBytes: 65536 })) : undefined
         let preview: ReactNode = L('バイナリの成果物です')
@@ -104,7 +109,7 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
           if (mime && bytes.eof === true) preview = <img alt={member} style={{ maxWidth: '100%' }} src={`data:${mime};base64,${btoa(Array.from(data, c => String.fromCharCode(c)).join(''))}`} />
           else { try { preview = <pre className="selectable wrap-pre">{new TextDecoder('utf-8', { fatal: true }).decode(data)}</pre> } catch { /* The binary label remains visible. */ } }
         }
-        return <><p>{session.displayPath(segs(a.card))} · {s(a.artifactId)} · #{String(a.invocation)}</p><p>{member}</p>{member && <EvidenceArtifactExport session={session} target={t} artifact={a} member={member} />}{preview}{bytes && bytes.eof !== true && <p>{L('先頭 64 KiB を表示')}</p>}</>
+        return <><p>{session.displayPath(segs(a.card))} · {artifactName(s(a.artifactId), sOpt(a.label))} · #{String(a.invocation)}</p><p>{member}</p>{member && <EvidenceArtifactExport session={session} target={t} artifact={a} member={member} />}{preview}{bytes && bytes.eof !== true && <p>{L('先頭 64 KiB を表示')}</p>}</>
       }
       if (t.card) {
         const r = await rpc.record(t.run!, t.card, t.invocation ?? null)
@@ -116,7 +121,7 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
           {summary && <><p>{cardState(summary.state).label}</p><Markdown text={s(summary.failure?.diagnostic)} /></>}
           {record && [[L('入力'), record.inputs], [L('出力'), record.outputs]].map(([label, values], i) => <section key={i}>
             <h4>{label as string}</h4>
-            {(values as D.NamedValueT[]).map((v, j) => <pre key={j} className="selectable wrap-pre">{describeValue({ name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifacts: v.artifacts.map(a => ({ id: s(a.id), sizeBytes: a.sizeBytes })), inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs })}</pre>)}
+            {(values as D.NamedValueT[]).map((v, j) => <pre key={j} className="selectable wrap-pre">{describeNamedValue(v)}</pre>)}
           </section>)}
         </>
       }

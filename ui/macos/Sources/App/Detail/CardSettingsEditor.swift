@@ -974,7 +974,7 @@ private struct ParamRow: View {
   }
 }
 
-/// Ports, their purposes, recording and artifact retention.
+/// Ports, their purposes and recording.
 private struct PortsCategory: View {
   @Bindable var model: CardEditorModel
 
@@ -1022,9 +1022,11 @@ private struct PortsCategory: View {
       }
       OutputPortsSection(model: model)
       if model.kind != .subgraph && model.kind != .draft && model.kind != .invalid {
-        Section("記録と成果物") {
+        Section {
           recordingOverride("recordLogs", label: "標準出力と標準エラーを記録")
           recordingOverride("recordIO", label: "入出力の値を記録")
+        } header: { Text("記録と成果物") } footer: {
+          Text("実行の要約は常に記録します。成果物は常に保存され、残すかどうかは Card が成果物を作るときに選びます。残さない成果物は実行の終了時に削除されます。").font(.caption).foregroundStyle(.secondary)
         }
       }
     }

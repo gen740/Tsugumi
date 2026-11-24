@@ -222,8 +222,12 @@ Use `cancelled` and `remaining_ms` for work that observes cancellation and deadl
 
 Include `tsugumi/artifact.fbs` and use `tsugumi.Artifact` for a file or directory.
 Use the SDK to create a writable directory or upload existing contents. Return
-the Artifact in an output. A downstream Card can open the granted Artifact for
-reading or forward its ID. The directory is sealed when the creating call ends.
+the Artifact in an output. Any Card in the project that knows the UUID can open
+the sealed directory or pass the UUID on. The directory is sealed when the
+creating call ends. The SDK keeps artifacts by default. For a scratch artifact,
+define `keep_scratch = false;` in `params.nix` and pass it to the SDK's keep
+option when creating the artifact. A person can then opt in to keeping it for
+a particular run.
 
 ## Views
 
@@ -278,12 +282,6 @@ placeholder, and Subgraph embeds a project from `externals/<id>/`.
 The `sdk.input` helper takes the output schema and a map of output port names
 to FlatBuffers JSON table values. It builds the port bytes, which core emits.
 See the [temperature Card](#the-input-value-card) above.
-
-### An input Card that passes on a project file or folder
-
-Use `sdk.artifact ./data.csv` where a value of type `tsugumi.Artifact` is
-expected in `sdk.input`. The SDK packages the file or directory in the build
-output. Core registers its existing read-only store directory.
 
 ### Parameters
 
@@ -345,13 +343,13 @@ Draft and nested or external boundaries.
 
 Use a locked project source and include its store path in the Card build when
 the program needs immutable data. To send a project file through the graph,
-declare an Artifact output and publish it with an Input Card.
+create an artifact in a Code Card and return its UUID in an output.
 
 ### Reading a merge output
 
 Build SDK after connecting the Merge. Decode a single candidate as its
 ordinary type, or select a member of the generated union when there are
-multiple candidates. Merge forwards the original bytes and artifact IDs.
+multiple candidates. Merge forwards the original bytes, including any artifact UUIDs they contain.
 
 ### Templates
 

@@ -22,6 +22,12 @@ export function parseEvidence(href: string): Evidence | undefined {
     if (!Number.isSafeInteger(lineEnd) || lineStart < 1 || lineEnd < lineStart) return
     return { kind, card: parts, file, lineStart, lineEnd }
   }
+  if (kind === 'artifact') {
+    if (fragment !== undefined || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(address) || [...q.keys()].some(k => k !== 'path')) return
+    const member = q.get('path') ?? undefined
+    if (member !== undefined && (/[\\\x00-\x1f]/.test(member) || member.split('/').some(p => !p || p === '.' || p === '..'))) return
+    return { kind, artifact: address.toLowerCase(), member }
+  }
   const run = parts.shift()!
   if (!runNumber.test(run) || BigInt(run) > 9223372036854775807n) return
   if (parts.length && !card(parts)) return
@@ -30,12 +36,6 @@ export function parseEvidence(href: string): Evidence | undefined {
     return { kind, run, card: parts.length ? parts : undefined, invocation: uint(fragment ?? null) }
   }
   if (fragment !== undefined) return
-  if (kind === 'artifact') {
-    if (parts.length || [...q.keys()].some(k => !['id', 'path'].includes(k)) || !q.get('id')) return
-    const member = q.get('path') ?? undefined
-    if (member !== undefined && (!member || member.startsWith('/') || member.split('/').some(p => !p || p === '.' || p === '..'))) return
-    return { kind, run, artifact: q.get('id')!, member }
-  }
   if ([...q.keys()].some(k => !['invocation', 'stream', 'offset'].includes(k))) return
   const invocation = uint(q.get('invocation')), offset = uint(q.get('offset')) ?? 0n
   if (q.has('invocation') && (!parts.length || !invocation) || q.has('offset') && uint(q.get('offset')) === undefined) return
@@ -55,10 +55,10 @@ export interface EvidenceSource {
 export async function evidenceExists(target: Evidence, source: EvidenceSource): Promise<boolean> {
   try {
     if (target.kind === 'card') return source.cardExists(target.card!)
+    if (target.kind === 'artifact') return await source.artifactExists(target)
     if (!await source.runExists(target.run!)) return false
     if (target.card && !await source.recordExists(target.run!, target.card, target.invocation)) return false
     if (target.kind === 'log') return await source.logExists(target)
-    if (target.kind === 'artifact') return await source.artifactExists(target)
     return true
   } catch { return false }
 }

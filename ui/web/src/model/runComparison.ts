@@ -1,6 +1,6 @@
 // A comparison reads retained records only; it never loads them onto the canvas.
 import { D, R, RPCClient, s, segs } from '../wire/rpc'
-import { describeValue } from '../wire/flatjson'
+import { describeNamedValue } from '../wire/flatjson'
 import { L } from '../i18n'
 import { errorText } from './session'
 
@@ -61,9 +61,7 @@ export function valueDifference(a?: D.NamedValueT, b?: D.NamedValueT): Differenc
 
 export function comparedValues(side: 'inputs' | 'outputs', left?: R.RecordResultT, right?: R.RecordResultT): ComparedField[] {
   const values = (r?: R.RecordResultT) => new Map((r?.record?.[side] ?? []).map(v => [s(v.name), v]))
-  const text = (v?: D.NamedValueT) => v && describeValue({
-    name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifacts: v.artifacts.map(a => ({ id: s(a.id), sizeBytes: a.sizeBytes })), inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs,
-  })
+  const text = (v?: D.NamedValueT) => v && describeNamedValue(v)
   const a = values(left), b = values(right)
   return names(a.keys(), b.keys()).map(name => ({ name, left: text(a.get(name)), right: text(b.get(name)), difference: valueDifference(a.get(name), b.get(name)) }))
 }

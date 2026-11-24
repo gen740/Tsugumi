@@ -111,5 +111,7 @@ import Testing
     let right = ComparedRunCard(summary: Tsugumi_RPC_InvocationSummaryT(), record: y)
     #expect(RunComparison.values(output, left, right).first?.difference == .unknown)
     #expect(RunComparison.values(output, nil, left).first?.difference == .unknown)
+    // The compared text names the artifact, so a changed id is visible.
+    #expect(RunComparison.values(output, left, right).first?.left?.contains(ArtifactText.line(a.artifacts[0]!)) == true)
   }
 }

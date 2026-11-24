@@ -279,6 +279,16 @@ export class RPCClient {
     } while (cursor)
     return out
   }
+  /** Artifacts by uuid, from any run of the project; unknown ids are left out. */
+  async artifactsById(artifactIds: string[]): Promise<R.ArtifactInfoT[]> {
+    const out: R.ArtifactInfoT[] = []
+    for (let start = 0; start < artifactIds.length; start += 500) {
+      const r = Object.assign(new R.ArtifactListRequestT(), { artifactIds: artifactIds.slice(start, start + 500) })
+      const page = await this.call<R.ArtifactPageT>(RequestPayload.ArtifactListRequest, r)
+      out.push(...page.artifacts)
+    }
+    return out
+  }
   async readArtifact(artifactId: string, member: string | null): Promise<Uint8Array> {
     const parts: Uint8Array[] = []
     let offset = 0n

@@ -449,21 +449,24 @@ auto Tools::ProjectCall(const std::string& project, const std::string& name,
     check_recorded(json::Text(args, "run_id"), json::Get(args, "card"));
   if (name == "run_environment_paths" && args.contains("excluding_run_id"))
     check_recorded(json::Text(args, "excluding_run_id"), "");
+  const auto check_artifact = [&](const json::Members& artifact,
+                                  std::string_view member = {}) {
+    policy.CheckArtifact(artifact, member);
+    check_recorded(json::Text(artifact, "run_id"), json::Get(artifact, "card"));
+  };
   if (name == "artifact_read") {
     const auto id = json::Text(args, "artifact_id");
-    const auto first = id.find('/'), last = id.rfind('/');
-    const auto invocation = last == id.npos ? id.npos : id.rfind('/', last - 1);
-    if (first == id.npos || invocation == id.npos || invocation <= first)
-      throw Failure("not_found", "Artifact not found");
-    std::vector<std::string> segments;
-    for (size_t start = first + 1; start < invocation;) {
-      const auto end = id.find('/', start);
-      segments.push_back(json::Quote(id.substr(start, end - start)));
-      start = end + 1;
-    }
-    check_recorded(
-        id.substr(0, first),
-        json::Encode(json::Members{{"segments", json::Encode(segments)}}));
+    const auto query = json::Encode(json::Members{
+        {"artifact_ids",
+         json::Encode(std::vector<std::string>{json::Quote(id)})}});
+    const auto envelope =
+        json::Object(RawProjectCall(project, "artifact_list", query, stop));
+    const auto value = json::Object(json::Get(envelope, "value", "{}"));
+    if (json::Text(envelope, "reply") == "Failure")
+      throw Failure(json::Text(value, "kind"), json::Text(value, "diagnostic"));
+    const auto artifacts = json::Array(json::Get(value, "artifacts", "[]"));
+    if (artifacts.empty()) throw Failure("not_found", "Artifact not found");
+    check_artifact(json::Object(artifacts.front()), json::Text(args, "member"));
   }
   if (name == "run") {
     json::Members plan;
@@ -506,6 +509,25 @@ auto Tools::ProjectCall(const std::string& project, const std::string& name,
     } else if (name == "run_status" && reply == "RunStatus" &&
                value.contains("run_id")) {
       check_recorded(json::Text(value, "run_id"), "");
+    }
+  }
+  if (name == "artifact_list") {
+    auto envelope = json::Object(result);
+    if (json::Text(envelope, "reply") == "ArtifactPage") {
+      auto value = json::Object(json::Get(envelope, "value", "{}"));
+      auto artifacts = json::Array(json::Get(value, "artifacts", "[]"));
+      std::erase_if(artifacts, [&](const std::string& raw) {
+        try {
+          check_artifact(json::Object(raw));
+          return false;
+        } catch (const Failure& error) {
+          if (error.code != "not_found") throw;
+          return true;
+        }
+      });
+      value["artifacts"] = json::Encode(artifacts);
+      envelope["value"] = json::Encode(value);
+      result = json::Encode(envelope);
     }
   }
   const auto file_path = json::Text(args, "path");
@@ -1154,7 +1176,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
   if (call.name == "run_history" || call.name == "run_invocations" ||
       call.name == "artifact_list" || call.name == "run_environments" ||
       call.name == "run_environment_paths") {
-    if (!args.contains("limit")) args["limit"] = "8";
+    if (!args.contains("limit") && !args.contains("artifact_ids"))
+      args["limit"] = "8";
   }
   if (call.name == "demo_list" || call.name == "demo_read") {
     const auto policy = Exclusions(project, stop);

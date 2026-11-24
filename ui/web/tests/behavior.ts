@@ -100,3 +100,5 @@ await import('./marimo')
 await import('./projectOperations')
 await import('./reviewOperations')
 await import('./dawnImports')
+
+await import('./artifactValues')

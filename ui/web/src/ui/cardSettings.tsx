@@ -1019,6 +1019,7 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
                   { value: 'on', label: L('オン') }, { value: 'off', label: L('オフ') }]} />
             </Row>
           })}
+          <Row><span className="secondary caption">{L('実行の要約は常に記録します。成果物は常に保存され、残すかどうかは Card が成果物を作るときに選びます。残さない成果物は実行の終了時に削除されます。')}</span></Row>
         </Section>
       )}
     </Form>
