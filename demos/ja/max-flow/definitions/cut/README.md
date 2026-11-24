@@ -1,4 +1,5 @@
 ---
+title: cut
 description: 最小カットを求める
 ---
 

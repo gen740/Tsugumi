@@ -67,7 +67,6 @@
 .cv-draft-name { flex: 1; min-width: 0; font-weight: 600; pointer-events: auto; outline: none; border: 0; background: none; color: inherit; padding: 0; }
 .cv-draft-problem { color: var(--red); flex: none; }
 .cv-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none; }
-.cv-param-row { display: flex; align-items: center; flex: none; min-width: 0; }
 .cv-result { display: flex; align-items: center; flex: none; white-space: nowrap; overflow: hidden; min-width: 0; }
 .cv-result span { overflow: hidden; text-overflow: ellipsis; }
 .cv-stage-row { display: flex; align-items: center; flex: none; min-width: 0; }
@@ -92,18 +91,6 @@
 .cv-stage-arrow { display: inline-flex; color: color-mix(in srgb, var(--secondary) 60%, transparent); flex: none; }
 
 /* params */
-.cv-param { display: flex; align-items: center; width: 100%; min-width: 0; }
-.cv-param-field { flex: 1; min-width: 0; display: flex; align-items: center; background: var(--text-bg); border: 1px solid color-mix(in srgb, var(--secondary) 35%, transparent); cursor: text; box-sizing: border-box; }
-.cv-param-field.editing { border-color: var(--accent); }
-.cv-param-input { width: 100%; border: 0; outline: none; background: none; padding: 0; font-size: inherit; color: inherit; }
-.cv-param-bool { position: relative; display: inline-flex; cursor: pointer; }
-.cv-param-bool input { position: absolute; opacity: 0; width: 0; height: 0; }
-.cv-switch { position: relative; display: inline-block; border-radius: 999px; background: var(--separator-strong); transition: background 0.12s; }
-.cv-switch::after { content: ""; position: absolute; top: 1.5px; left: 1.5px; height: calc(100% - 3px); aspect-ratio: 1; border-radius: 50%; background: #fff; box-shadow: 0 0.5px 1.5px rgba(0, 0, 0, 0.3); transition: left 0.12s; }
-.cv-param-bool input:focus-visible + .cv-switch { outline: 2px solid var(--accent); outline-offset: 2px; }
-.cv-param-bool input:checked + .cv-switch { background: var(--accent); }
-.cv-param-bool input:checked + .cv-switch::after { left: calc(100% - 1.5px); transform: translateX(-100%); }
-.cv-param-bool input:disabled + .cv-switch { opacity: 0.5; }
 
 /* ---- boundary bars, groups, notes ---- */
 .cv-boundary { background: color-mix(in srgb, var(--accent) 8%, transparent); border: 1px dashed color-mix(in srgb, var(--accent) 50%, transparent); cursor: grab; }

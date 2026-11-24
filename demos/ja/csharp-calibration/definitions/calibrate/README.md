@@ -1,3 +1,4 @@
 ---
+title: calibrate
 description: C# で型付きの測定値に factor を掛ける
 ---

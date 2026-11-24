@@ -1,4 +1,5 @@
 ---
+title: zph
 description: Checking proportional hazards
 ---
 

@@ -1,10 +1,11 @@
+import { projectFixture } from './documentFixture'
 import { R } from '../src/wire/rpc'
 import { cardIds } from './cardIds'
 // A Draft has no ports: its wires attach directly to the Card,
 // and it is written on its Card.
 import assert from 'node:assert/strict'
 import type { ProjectSession as Session } from '../src/model/session'
-import { get, parse, str } from '../shared/json'
+import { get, parse, serialize, str } from '../shared/json'
 
 // The session's module reads the page when it loads, and listens to the server.
 const page = globalThis as Record<string, unknown>
@@ -17,13 +18,11 @@ const { ProjectSession } = await import('../src/model/session')
 
 const session = () => {
   const s = cardIds(new ProjectSession('/p', 'k', 'p'))
-  s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
+  s.project = parse(projectFixture({"name":"t","canvas":{"cards":[],"connections":[]}}))
   s.layout = parse('{}')
   s.connected = true
   return s
 }
-const wires = (s: Session) => s.connections([]).map((c) =>
-  `${str(get(c, 'from', 'card'))}.${str(get(c, 'from', 'port'))}>${str(get(c, 'to', 'card'))}.${str(get(c, 'to', 'port'))}`)
 const ports = (s: Session, k: string) => {
   const d = s.portData(k)
   return [d.inputs.map((p) => p.name), d.outputs.map((p) => p.name)]
@@ -36,7 +35,9 @@ const ports = (s: Session, k: string) => {
 
   // Dropped anywhere on a Draft: both ends name the Card itself.
   await s.connect([a, NEW_PORT], [b, NEW_PORT], [])
-  assert.deepEqual(wires(s), ['draft.>draft-2.'])
+  assert.deepEqual(s.connections([]).map(c => JSON.parse(serialize(c))), [{ from: { card: 'draft' }, to: { card: 'draft_2' } }])
+  assert.equal(s.nodeData(a).symbol, 'pencil.and.outline')
+  assert.deepEqual(s.layoutScene([]).wires, [{ from: a, fromPort: NEW_PORT, to: b, toPort: NEW_PORT }])
   assert.deepEqual(ports(s, a), [[], []])
   assert.deepEqual(ports(s, b), [[], []])
 
@@ -66,10 +67,7 @@ const ports = (s: Session, k: string) => {
   await s.save()
   assert.deepEqual(ports(s, d), [[], []])
 
-  // Declared names do not create Draft ports.
-  s.updateCard(d, (card) => card.set('inputs', [parse('{"name":"planned"}')]))
-  await s.connect([a, NEW_PORT], [d, NEW_PORT], [])
-  assert.deepEqual(ports(s, d), [[], []])
+
 }
 
 {
@@ -85,16 +83,13 @@ const ports = (s: Session, k: string) => {
   assert.equal(str(get(s.cardMeta(a), 'content')), 'count words')
   assert.equal(s.nodeData(a).summary, 'count words', 'what a Draft says is on its Card')
 
-  // No name is fine: the Card shows its content only, and keeps the id made for it.
-  assert.ok(s.draftUntitled(a))
-  assert.ok(s.nodeData(a).untitled)
-  const plain = new CardGeometry(s.nodeData(a), 'topToBottom')
-  assert.equal(plain.headerRow, CardGeometry.untitledTop)
+  assert.equal(s.nodeData(a).title, s.displayName(a))
+  assert.equal(new CardGeometry(s.nodeData(a), 'topToBottom').headerRow, CardGeometry.header)
   await s.save()
   await s.startDraftEdit(a)
   await s.finishDraftEdit()
   assert.ok(s.instance(a))
-  assert.equal(s.displayName(a), a)
+  assert.equal(s.displayName(a), str(get(s.cardMeta(a), 'title')))
 
 }
 

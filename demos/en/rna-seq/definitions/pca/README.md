@@ -1,4 +1,5 @@
 ---
+title: pca
 description: Principal component analysis of the samples
 ---
 

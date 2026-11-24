@@ -2,20 +2,18 @@
 // player, at the screen scale `zoom`:
 // fonts and spacing are multiplied by the zoom, so text stays sharp at any
 // zoom and the hit areas are the geometry's. Also the wire layer.
-import { CSSProperties, useEffect, useRef, useState } from 'react'
+import { CSSProperties, useEffect, useRef } from 'react'
 import {
-  Camera, CardGeometry, CardNodeData, currentStage, isRouting, ParamData, PortData, Pt, Rect, Stage, STAGE_INFO,
+  Camera, CardGeometry, CardNodeData, currentStage, isRouting, PortData, Pt, Rect, Stage, STAGE_INFO,
   NEW_PORT, STAGE_STATUS_LABEL, StageItem, StageProgress, StageStatus,
 } from '../model/canvasKit'
 import { BoundaryPort, WireStyle } from '../model/canvas'
 import type { FlowDirection } from '../model/prefs'
-import { cardState, formatDuration, InlineDraft, KIND_ICON, KIND_LABEL } from '../model/session'
+import { CardKey, cardState, formatDuration, InlineDraft, KIND_LABEL } from '../model/session'
 import { D } from '../wire/rpc'
 import { Icon } from './icons'
 import { permissionInfo } from '../model/permissions'
 import { L } from '../i18n'
-import { InlineParamEdit, RevisionEditNotice } from './revisionEdit'
-import { useObserve } from '../model/observable'
 
 // ---- Texts ------------------------------------------------------------------------
 
@@ -63,10 +61,6 @@ export interface CardNodeProps {
   selected?: boolean
   /** What the guide calls this Card when it points at it ("card:<id>"). */
   guide?: string
-  /** Committing an Input Card's param (undefined: read-only). */
-  onParamBegin?: () => bigint
-  onParamCommit?: (name: string, text: string, edit?: InlineParamEdit, overwrite?: boolean) => Promise<boolean> | void
-  paramsEditable?: boolean
   /** Pointer down on a port: start drawing a wire (from an output, or back from an input). */
   onPortDown?: (port: string, output: boolean, e: React.PointerEvent) => void
   draftEdit?: DraftEdit
@@ -200,7 +194,7 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
       onBlur={edit ? (e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) edit.onDone() } : undefined}>
       <div style={{ height: s(g.topLabels) }} />
       {g.untitled ? <div style={{ height: s(g.headerRow), flex: 'none' }} /> : <div className="cv-card-header" style={{ height: s(CardGeometry.header), padding: `0 ${s(9)}px`, gap: s(6) }}>
-        <span className="secondary cv-center" style={{ width: s(15) }}><Icon name={data.symbol ?? KIND_ICON[data.kind]} size={font(12)} /></span>
+        <span className="secondary cv-center" style={{ width: s(15) }}><Icon name={data.symbol ?? 'xmark.octagon'} size={font(12)} /></span>
         <span className="cv-title" style={{ fontSize: font(12) }}>{data.untitled && !edit ? data.summary?.split('\n')[0] ?? data.title : data.title}</span>
         {!edit && <span style={{ flex: 1, minWidth: s(2) }} />}
         {data.permissions?.map((p) => (
@@ -242,12 +236,6 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
               style={{ fontSize: font(10), height: s(CardGeometry.summaryRow), padding: `0 ${s(10)}px`, color: data.kind === 'invalid' ? colorVar(cardState(D.CardState.failed).color) : undefined }}>{data.summary}</div>
           )}
           {flow === 'leftToRight' && <div style={{ height: s(g.portBand) }} />}
-          {data.params.map((param) => (
-            <div key={param.name} className="cv-param-row" style={{ height: s(CardGeometry.paramRow), padding: `0 ${s(10)}px` }}>
-              <ParamFieldView param={param} editable={!!p.onParamCommit && p.paramsEditable !== false} zoom={z}
-                revision={p.onParamBegin} commit={(t, edit, overwrite) => p.onParamCommit?.(param.name, t, edit, overwrite)} />
-            </div>
-          ))}
           {g.result && (
             <div className="cv-result secondary" style={{ height: s(CardGeometry.resultRow), padding: `0 ${s(10)}px`, gap: s(4) }}>
               <Icon name="text.below.photo" size={font(9)} />
@@ -288,7 +276,7 @@ function StartBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
   )
 }
 
-/** Only the kind's icon, coloured by the state; name and details on hover. */
+/** The Card's icon, coloured by the state; name and details on hover. */
 function RoutingBody({ data, g, z }: { data: CardNodeData; g: CardGeometry; z: number }) {
   const o = g.outlineRect
   const center = g.iconCenter({ x: o.x * z, y: o.y * z, width: o.width * z, height: o.height * z })
@@ -298,7 +286,7 @@ function RoutingBody({ data, g, z }: { data: CardNodeData; g: CardGeometry; z: n
   return (
     <span className="cv-routing-icon" style={{ left: center.x - size / 2, top: center.y - size / 2, color }}
       title={data.title + ' · ' + KIND_LABEL[data.kind] + (rt ? ' · ' + rt : '')}>
-      <Icon name={KIND_ICON[data.kind]} size={size} />
+      <Icon name={data.symbol ?? 'xmark.octagon'} size={size} />
     </span>
   )
 }
@@ -405,74 +393,6 @@ export function StageStrip({ progress, zoom = 1, onTap, caption = '' }: { progre
   )
 }
 
-// ---- Param field --------------------------------------------------------------------------
-
-/** A param shown on an input Card; committed on Return or focus loss. */
-export function ParamFieldView({ param, editable, zoom = 1, revision, commit }: { param: ParamData; editable: boolean; zoom?: number; revision?: () => bigint; commit: (text: string, edit: InlineParamEdit, overwrite: boolean) => Promise<boolean> | void }) {
-  const z = zoom
-  const [text, setText] = useState(param.value)
-  const [editing, setEditing] = useState(false)
-  const [edit] = useState(() => new InlineParamEdit())
-  useObserve(edit)
-  const liveText = useRef(text)
-  liveText.current = text
-  useEffect(() => {
-    if (!editing) setText(param.value)
-  }, [param.value, editing])
-  const begin = () => { edit.begin(param.value, revision?.() ?? 0n); setText(param.value); setEditing(true) }
-  const finish = async (cancel = false, overwrite = false) => {
-    if (!editing || edit.applying) return
-    if (cancel) { setEditing(false); setText(param.value); return }
-    const sent = text
-    if (text === edit.initial || await commit(sent, edit, overwrite) !== false) {
-      if (liveText.current === sent) setEditing(false)
-    }
-  }
-  return (
-    <div className="cv-param" style={{ gap: 6 * z }}>
-      <span className="secondary cv-ellipsis" style={{ fontSize: Math.max(6, 10 * z), flex: 'none', maxWidth: '45%' }}>{param.name}</span>
-      {param.type === 'bool' ? (
-        <label className="cv-param-bool" title={editable ? undefined : L('実行中は変更できません')}
-          onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
-          <input type="checkbox" aria-label={param.name} checked={param.value === 'true'} disabled={!editable || edit.applying} onChange={(e) => {
-            const value = e.target.checked ? 'true' : 'false'
-            edit.begin(param.value, revision?.() ?? 0n); setText(value); setEditing(true)
-            void Promise.resolve(commit(value, edit, false)).then(ok => { if (ok !== false) setEditing(false) })
-          }} />
-          <span className="cv-switch" style={{ width: 22 * z, height: 13 * z }} />
-        </label>
-      ) : (
-        // The value is drawn as text at the zoom; the field exists only while editing.
-        <div className={`cv-param-field${editing ? ' editing' : ''}`}
-          style={{ height: 19 * z, padding: `0 ${4 * z}px`, borderRadius: 4 * z, fontSize: Math.max(6, 11 * z) }}
-          title={editable ? L('{0}・クリックして編集、Return で反映', param.type) : L('実行中は変更できません')}
-          onClick={(e) => {
-            if (!editable || editing) return
-            e.stopPropagation()
-            begin()
-          }}
-          onDoubleClick={(e) => e.stopPropagation()}>
-          {editing ? (
-            <input className="cv-param-input mono" autoFocus value={text} spellCheck={false}
-              onPointerDown={(e) => e.stopPropagation()}
-              onChange={(e) => setText(e.target.value)}
-              onBlur={() => finish()}
-              onKeyDown={(e) => {
-                e.stopPropagation()
-                if (e.key === 'Enter' && !e.nativeEvent.isComposing) finish()
-                if (e.key === 'Escape') finish(true)
-              }} />
-          ) : <span className="mono cv-ellipsis">{text || ' '}</span>}
-        </div>
-      )}
-      {(edit.conflictRev !== undefined || edit.error) && <div className="pad10" style={{ position: 'absolute', zIndex: 100, top: '100%', width: 320, background: 'var(--window-bg)' }} onPointerDown={e => e.stopPropagation()}>
-        <RevisionEditNotice edit={edit} text={() => text} overwrite={() => void finish(false, true)}
-          reload={() => { edit.begin(param.value, revision?.() ?? 0n); setText(param.value); setEditing(false) }} />
-      </div>}
-    </div>
-  )
-}
-
 // ---- Wires ------------------------------------------------------------------------------------
 
 export interface WireDraw {
@@ -562,8 +482,8 @@ export function drive(e: React.PointerEvent | PointerEvent, threshold: number, m
 
 /** A bar standing for the outer Card's inputs (above) or outputs (below)
  *  inside a Card in Card: public name, type and the inner port it maps to. */
-export function BoundaryBarView({ title, ports, input, zoom, rect, style, onPointerDown }: {
-  title: string; ports: BoundaryPort[]; input: boolean; zoom: number; rect: Rect; style: CSSProperties; onPointerDown: (e: React.PointerEvent) => void
+export function BoundaryBarView({ title, ports, input, zoom, rect, style, cardTitle, onPointerDown }: {
+  title: string; ports: BoundaryPort[]; input: boolean; zoom: number; rect: Rect; style: CSSProperties; cardTitle: (card: CardKey) => string; onPointerDown: (e: React.PointerEvent) => void
 }) {
   const mark = Math.max(6, 8 * zoom)
   return (
@@ -577,7 +497,7 @@ export function BoundaryBarView({ title, ports, input, zoom, rect, style, onPoin
         return (
           <span key={i}>
             <span className="cv-boundary-port" style={{ left: x - 52 * zoom, width: 104 * zoom, top: (rect.height * zoom) / 2 + 5 * zoom }}
-              title={p.inner ? L('内部の接続先: {0}.{1}', p.inner[0].split('/').pop(), p.inner[1]) : L('内部の接続先が未設定です')}>
+              title={p.inner ? L('内部の接続先: {0}.{1}', cardTitle(p.inner[0]), p.inner[1]) : L('内部の接続先が未設定です')}>
               <span style={{ fontSize: Math.max(6, 10 * zoom), fontWeight: 500 }}>{p.name}</span>
               {p.type && <span className="mono secondary" style={{ fontSize: Math.max(5, 8 * zoom) }}>{p.type}</span>}
             </span>

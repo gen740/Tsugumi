@@ -1,4 +1,5 @@
 ---
+title: naive
 description: The naive inverse diverges
 ---
 

@@ -1,4 +1,5 @@
 ---
+title: pocket
 description: 結合ポケットの残基
 ---
 

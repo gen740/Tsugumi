@@ -57,7 +57,6 @@ struct StoredValueMeta {
   struct Artifact {
     ArtifactKey id;
     std::optional<uint64_t> size;
-    bool store;
   };
   std::vector<Artifact> artifacts;
   std::string hash;  // SHA-256 of the recorded bytes

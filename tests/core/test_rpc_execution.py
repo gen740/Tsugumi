@@ -85,7 +85,7 @@ def test_gate_controls_a_downstream_worker_without_mocking_the_scheduler(core_fa
     add_worker(graph, "sink", tmp_path / "sink", [
         gate.action(),
         {"op": "echo", "input": "in", "port": "out"},
-    ], inputs=[{"name": "in"}], executionService="local")
+    ], inputs=[{"name": "in"}])
     graph.connect("source", "out", "sink", "in").save(client)
 
     run_id = run(client, "source")

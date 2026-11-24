@@ -133,7 +133,8 @@ table ExecutionService {
   resource_limits:bool (id: 5);
   /// The daemon's concurrent job capacity across its projects, when known.
   max_jobs:uint32 = null (id: 6);
-  grade:uint64 (id: 7);
+  /// Capability bits (0-63) the host settings give this worker.
+  worker_capabilities:[ubyte] (id: 7);
   sandbox:SandboxCapabilities (id: 8);
 }
 

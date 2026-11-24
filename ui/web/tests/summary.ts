@@ -1,3 +1,4 @@
+import { projectFixture } from './documentFixture'
 import { addCodeCard, cardIds } from './cardIds'
 // A Card's summary is in its README.md, whatever its kind, and only there.
 import assert from 'node:assert/strict'
@@ -15,7 +16,7 @@ const { CardEditorModel } = await import('../src/ui/cardSettings')
 
 const session = () => {
   const s = cardIds(new ProjectSession('/p', 'k', 'p'))
-  s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
+  s.project = parse(projectFixture({"name":"t","canvas":{"cards":[],"connections":[]}}))
   s.layout = parse('{}')
   s.connected = true
   return s
@@ -29,7 +30,7 @@ const session = () => {
 
   // Written in Card settings, it goes to README.md and shows on the Card and on hover.
   const editor = new CardEditorModel(s, code)
-  editor.meta = parse('{"description":"logs the value"}')
+  editor.meta = parse('{"title":"Card","description":"logs the value"}')
   assert.ok(await editor.apply())
   assert.equal(str(get(s.cardMeta(code), 'description')), 'logs the value')
   assert.equal(s.nodeData(code).summary, 'logs the value')
@@ -50,15 +51,17 @@ const session = () => {
 }
 
 {
-  // Saving the summary preserves the external reference in _card.json.
+  // The README edit preserves the subgraph and its path.
   const s = session()
-  s.confirmedDefinitions.set('nested', parse('{"type":"subgraph","external":"nested"}'))
-  s.project = parse('{"name":"t","canvas":{"cards":[{"id":"nested"}],"connections":[]}}')
+  s.confirmedDefinitions.set('nested', parse('{"type":"subgraph","symbol":"link"}'))
+  s.project = parse(projectFixture({"name":"t","canvas":{"cards":[{"id":"nested"}],"connections":[]}}))
+  s.externals.set('externals/nested/', { project: parse(projectFixture({ boundary: { inputs: [], outputs: [] } })), layout: parse('{}'), definitions: new Map() })
+  s.confirmedDefinitionMeta.set('nested', parse('{"title":"Nested","description":""}'))
   const editor = new CardEditorModel(s, 'nested')
-  editor.meta = parse('{"description":"the imported graph"}')
+  editor.meta = parse('{"title":"Nested","description":"the imported graph"}')
   assert.ok(await editor.apply())
   assert.equal(str(get(s.cardMeta('nested'), 'description')), 'the imported graph')
   assert.equal(s.cardDescription('nested'), 'the imported graph')
-  assert.equal(str(get(s.cardDefinitionDraft('nested')?.card, 'external')), 'nested')
+  assert.equal(s.cardExternal('nested'), 'externals/nested/')
 }
 console.log('summary behavior: passed')

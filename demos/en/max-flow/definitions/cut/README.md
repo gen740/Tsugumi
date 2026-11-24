@@ -1,4 +1,5 @@
 ---
+title: cut
 description: Find the minimum cut
 ---
 

@@ -62,8 +62,6 @@ struct ArtifactGrant {
   std::string path;
   // Core-side holding layout used to stage the grant on a remote worker.
   std::filesystem::path location = {};
-  // On the remote staging wire, the original path of an Input Card artifact.
-  std::string store_path = {};
 };
 
 struct Value {

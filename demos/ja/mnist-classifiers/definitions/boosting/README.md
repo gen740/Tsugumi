@@ -1,4 +1,5 @@
 ---
+title: boosting
 description: 勾配ブースティング
 ---
 

@@ -1,4 +1,5 @@
 ---
+title: tikhonov
 description: Choose the strength of regularisation
 ---
 

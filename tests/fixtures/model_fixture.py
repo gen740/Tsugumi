@@ -28,7 +28,7 @@ PutDefinition/PutSource per Draft -> project_validate -> run -> report.
 A task from comments ("The user left comments on these Cards ...", with
 "- <path> (definition <id>):" and "  * <comment id>: <text>" lines):
 project_inspect -> one project_save that changes each Card and marks its
-comments resolved, adding an input Card for a comment saying "add a Card
+comments resolved, adding a Code Card for a comment saying "add a Card
 <id>" and a comment of its own for one saying "leave a comment" -> run -> report.
 
 The guide (its role offers guide_show): a
@@ -421,11 +421,11 @@ in {
     inputs = ./_inputs.fbs;
     outputs = ./_outputs.fbs;
     src = pkgs.writeTextDir "main.py" ''
-      from card import Output
+      from card import Output, params
       from added.Msg import MsgT
 
       def run(input):
-          return Output(msg=MsgT(text=${builtins.toJSON params.text}))
+          return Output(msg=MsgT(text=params.text))
     '';
   };
 }

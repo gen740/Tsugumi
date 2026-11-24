@@ -10,4 +10,4 @@ $$\mathrm{Var}[n]=N,\quad \frac{\mathrm{Var}[n]}{N}=1,\quad \mathrm{CV}=\frac{1}
 
 です。反応が線形なので平均は率方程式と一致します。**binding** の $A+B\rightleftharpoons C$ は非線形で、小さな体積では平均そのものが率方程式から外れます。
 
-**settings** の volume を 0.1 にすると分子は 2 個ほどになり、軌道は 0 にも落ちます。synthesis・degradation・runs も変えられます。速さの値は説明用で、特定の遺伝子の実測ではありません。
+**trajectories** と **stationary** の volume を 0.1 にすると分子は 2 個ほどになり、軌道は 0 にも落ちます。synthesis・degradation・runs も変えられます。速さの値は説明用で、特定の遺伝子の実測ではありません。

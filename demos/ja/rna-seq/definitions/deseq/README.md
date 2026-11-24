@@ -1,4 +1,5 @@
 ---
+title: deseq
 description: DESeq2 で発現変動を検定する
 ---
 

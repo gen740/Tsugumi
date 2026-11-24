@@ -44,12 +44,12 @@ extension CanvasWindowTests {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("canvas-status-\(UUID())")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
-    try Data(#"{"name":"status","canvas":{"cards":[],"connections":[]}}"#.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
+    try Data(fixtureProjectJSON(#"{"name":"status","canvas":{"cards":[],"connections":[]}}"#).utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
     let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
     let workspace = Workspace(), tab = WorkflowTab(scope: [])
     // Offline and failed save states both used to wrap in the last layout.
     for dirty in [false, true] {
-      if dirty { s.project = try .parse(#"{"name":"edited","canvas":{"cards":[],"connections":[]}}"#) }
+      if dirty { s.project = try .parse(fixtureProjectJSON(#"{"name":"edited","canvas":{"cards":[],"connections":[]}}"#)) }
       for width in [900.0, 350, 180, 80, 1] {
         let bar = StatusBar(workspace: workspace, session: s, tab: tab)
         let view = NSHostingView(rootView: bar.frame(width: width))

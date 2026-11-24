@@ -244,29 +244,29 @@ def test_molecules(tmp_path):
         strict = {r[0]: r for r in table_rows(display_text(c, rid3, "lipinski"))}
         assert strict["cholesterol"][6] == "**不通過**" and strict["aspirin"][6] == "通過"
 
-        # A new SMILES pasted on the canvas goes through every Card.
-        def paste(name, smiles):
+        # A new SMILES in properties goes through every Card.
+        def set_smiles(name, smiles):
             def f(b):
                 set_param(b, "name", name)
                 set_param(b, "smiles", smiles)
-            edit_card(env, c, "paste", f)
-        paste("toluene", "Cc1ccccc1")
-        rid4 = run(c, "paste", cards=cards)
+            edit_card(env, c, "properties", f)
+        set_smiles("toluene", "Cc1ccccc1")
+        rid4 = run(c, cards=cards)
         rows = {r[0]: r for r in table_rows(display_text(c, rid4, "properties"))}
         assert float(rows["toluene"][2]) == pytest.approx(molecular_weight("C7H8"), abs=0.03) and "dopamine" not in rows
 
         # Not a SMILES, and a valence no atom can have: a message on the Card, the others computed.
         for smiles, why in (("C1CC(", "文法"), ("C(C)(C)(C)(C)C", "化学")):
-            paste("broken", smiles)
-            rid5 = run(c, "paste", cards=cards)
+            set_smiles("broken", smiles)
+            rid5 = run(c, cards=cards)
             shown = display_text(c, rid5, "properties")
             assert f"**broken** の SMILES `{smiles}` は計算から外しました" in shown and why in shown
             assert "broken" not in {r[0] for r in table_rows(shown)} and "aspirin" in shown
 
         # Nothing readable at all: a failure with the reason.
-        paste("broken", "C1CC(")
+        set_smiles("broken", "C1CC(")
         edit_card(env, c, "properties", lambda b: set_param(b, "molecules", []))
-        rid6 = start_run(c, ["paste"])
+        rid6 = start_run(c, ["start"])
         st = wait_run(c, rid6)
         assert st.state == RunState.failed and "no readable molecule" in text(st.failure.diagnostic)
     finally:
@@ -311,7 +311,7 @@ def test_cell_count(tmp_path):
     try:
         c = connect(env)
         cards = ("generate", "preprocess", "segment", "score", "sweep", "mitosis", "real")
-        rid = run(c, cards=cards)
+        rid = run(c, "mitosis", cards=cards)
 
         report = logged(c, rid, "score", "scores")
         assert report["cells"] == 80 and len(report["true_x"]) == 80

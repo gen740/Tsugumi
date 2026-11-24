@@ -86,7 +86,7 @@ import TsugumiRPC
   defer { try? FileManager.default.removeItem(at: dir) }
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   let card = "start"
-  let s = try offlineSession(dir, cards: [(card, #"{"type":"trigger"}"#)], layout: #"{"cards":{"start":{"x":100,"y":100}}}"#)
+  let s = try offlineSession(dir, cards: [(card, fixtureCardJSON(.trigger))], layout: #"{"cards":{"start":{"x":100,"y":100}}}"#)
   s.cameras[key([])] = (x: 0, y: 0, zoom: 0.39)
 
   let guide = GuideController.shared

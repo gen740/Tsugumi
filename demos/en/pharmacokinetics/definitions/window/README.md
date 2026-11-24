@@ -1,4 +1,5 @@
 ---
+title: window
 description: Compare steady-state peaks and troughs with the range
 ---
 

@@ -1,3 +1,4 @@
 ---
-description: 初期値（initial）を流して計算を始める
+title: start
+description: 4 つの実装を実行する
 ---

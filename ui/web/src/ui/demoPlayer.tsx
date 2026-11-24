@@ -9,9 +9,9 @@ import { createRoot } from 'react-dom/client'
 import { pathToScreen, WireStyle } from '../model/canvas'
 import {
   applicableStages, Camera, CardGeometry, CardNodeData, fitCamera, mergeStageStatus, ParamData, PortData, Pt, Rect, Stage, StageItem, stageParts,
-  isDraftWire, StageProgress, StageStatus, union, WireRouter,
+  isDraftWire, NEW_PORT, StageProgress, StageStatus, union, WireRouter,
 } from '../model/canvasKit'
-import { cardState, formatDuration, KIND_ICON, KIND_LABEL } from '../model/session'
+import { cardIcon, cardState, formatDuration, KIND_LABEL } from '../model/session'
 import { permissionInfo, PermissionKind } from '../model/permissions'
 import { D } from '../wire/rpc'
 import { CardNodeView, drive, gridStyle, WireDraw, WireLayer } from './cardNode'
@@ -22,9 +22,10 @@ import { L } from '../i18n'
 // ---- The data build.mjs writes --------------------------------------------------------
 
 interface SourceFile { path: string; text: string; cut?: number }
-interface InnerCard { id: string; kind: CardNodeData['kind']; summary?: string; count?: number; files: SourceFile[] }
+interface InnerCard { id: string; title?: string; kind: CardNodeData['kind']; summary?: string; count?: number; files: SourceFile[] }
 interface CardDoc {
   id: string
+  title?: string
   kind: CardNodeData['kind']
   x: number
   y: number
@@ -33,14 +34,12 @@ interface CardDoc {
   details: string[]
   inputs: PortData[]
   outputs: PortData[]
-  params: ParamData[]
   allParams: ParamData[]
   permissions: PermissionKind[]
-  untitled?: boolean
   files: SourceFile[]
   inner?: InnerCard[]
 }
-interface WireDoc { from: string; fromPort: string; to: string; toPort: string }
+interface WireDoc { from: string; fromPort?: string; to: string; toPort?: string }
 interface NoteDoc { id: string; x: number; y: number; width: number; height: number; color: string; fontSize: number; html: string }
 interface StageRecord { phase: string; outcome: string; ms?: number | null }
 interface FinalState { state: keyof typeof D.CardState; count: number; sent: string[]; stages: StageRecord[]; ms?: number }
@@ -172,8 +171,8 @@ function phaseOf(stepOf: Map<string, number>, id: string, fr: Frame): 'before' |
 
 export function nodeData(data: DemoData, stepOf: Map<string, number>, c: CardDoc, fr: Frame): CardNodeData {
   const base: CardNodeData = {
-    title: c.id, kind: c.kind, symbol: c.symbol, summary: c.summary, inputs: c.inputs, outputs: c.outputs, params: c.params, invocation: 0n,
-    runContinues: fr.mode === 'playing', errors: [], warnings: [], collapsed: false, permissions: c.permissions, untitled: c.untitled,
+    title: c.title ?? c.id, kind: c.kind, symbol: cardIcon(c.kind, c.symbol), summary: c.summary, inputs: c.inputs, outputs: c.outputs, invocation: 0n,
+    runContinues: fr.mode === 'playing', errors: [], warnings: [], collapsed: false, permissions: c.permissions,
   }
   const f = data.final[c.id]
   const phase = phaseOf(stepOf, c.id, fr)
@@ -197,7 +196,7 @@ export function nodeData(data: DemoData, stepOf: Map<string, number>, c: CardDoc
 /** As Scene.style in model/canvas.ts: a value on its way moves, one that arrived stays coloured. */
 function wireStyle(data: DemoData, stepOf: Map<string, number>, w: WireDoc, fr: Frame): WireStyle {
   const f = data.final[w.from]
-  if (!f || !f.sent.includes(w.fromPort)) return 'normal'
+  if (w.fromPort === undefined || !f || !f.sent.includes(w.fromPort)) return 'normal'
   const from = phaseOf(stepOf, w.from, fr)
   if (from === 'before') return 'normal'
   if (from === 'running' && !(f.count > 1 && fr.sub >= 1) && !(fr.sub >= 2)) return 'normal'
@@ -268,11 +267,11 @@ export function Canvas({ data, frame, compact, selected, onSelect, motion, view,
 
   const z = camera.zoom
   const router = new WireRouter(data.flow, placed.map(rectOf))
-  const point = (id: string, port: string, output: boolean): Pt => {
+  const point = (id: string, port: string | undefined, output: boolean): Pt => {
     const p = byId.get(id)
     if (!p) return { x: 0, y: 0 }
-    // An empty Draft endpoint uses the Card's side anchor in this geometry.
-    const at = p.geometry.port(port, output)
+    // A Draft endpoint uses the Card's side anchor in this geometry.
+    const at = p.geometry.port(port ?? NEW_PORT, output)
     return { x: p.doc.x + at.x, y: p.doc.y + at.y }
   }
   const draws: WireDraw[] = data.wires.map((w) => ({
@@ -371,10 +370,10 @@ function SidePanel({ data, card, reached, base, onClose }: { data: DemoData; car
   const f = data.final[card.id]
   const illustration = data.illustrations?.[card.id]
   return (
-    <aside className="tp-panel material selectable" aria-label={L('Card {0} の中身', card.id)} onPointerDown={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
+    <aside className="tp-panel material selectable" aria-label={L('Card {0} の中身', card.title ?? card.id)} onPointerDown={(e) => e.stopPropagation()} onWheel={(e) => e.stopPropagation()}>
       <header className="tp-panel-head">
-        <Icon name={card.symbol ?? KIND_ICON[card.kind]} size={14} />
-        <strong className="cv-ellipsis">{card.id}</strong>
+        <Icon name={cardIcon(card.kind, card.symbol)} size={14} />
+        <strong className="cv-ellipsis">{card.title ?? card.id}</strong>
         <span className="secondary caption nowrap">{KIND_LABEL[card.kind]}</span>
         <span style={{ flex: 1 }} />
         <Button kind="borderless" small iconOnly icon="xmark" help={L('閉じる')} onClick={onClose} />
@@ -404,7 +403,7 @@ function SidePanel({ data, card, reached, base, onClose }: { data: DemoData; car
           <h4>{L('中の Card')}</h4>
           {card.inner.map((c) => (
             <details key={c.id} className="tp-file">
-              <summary><span className="mono">{c.id}</span> <span className="secondary caption">{KIND_LABEL[c.kind]}{reached && c.count ? ` · ${c.count} 回` : ''}</span></summary>
+              <summary><span className="mono">{c.title ?? c.id}</span> <span className="secondary caption">{KIND_LABEL[c.kind]}{reached && c.count ? ` · ${c.count} 回` : ''}</span></summary>
               {c.summary && <p className="secondary">{c.summary}</p>}
               <Sources files={c.files} open={false} />
             </details>
@@ -556,7 +555,7 @@ function Player({ host, url, compact, autoplay }: { host: HTMLElement; url: stri
         {card && <SidePanel data={data} card={card} reached={reached} base={base} onClose={() => setSelected(undefined)} />}
       </Canvas>
       <div className="tp-cards-list">
-        {data.cards.map((c) => <button key={c.id} type="button" onClick={() => setSelected(c.id)}>{L('Card {0} の中身を開く', c.id)}</button>)}
+        {data.cards.map((c) => <button key={c.id} type="button" onClick={() => setSelected(c.id)}>{L('Card {0} の中身を開く', c.title ?? c.id)}</button>)}
       </div>
       <p className="tp-say" aria-live="polite">{say}</p>
     </div>

@@ -14,8 +14,8 @@ import pytest
 
 from harness.daemon import ROOT
 from harness.file_events import wait_for_file
-from projects import SINK, MSG_FBS, MSG_INPUT_NIX, builtin_project, card, conn, run_and_wait, write, write_nix_project
-from harness.document import params_nix, set_param
+from projects import SINK, MSG_FBS, MSG_SOURCE_NIX, builtin_project, card, conn, run_and_wait, write, write_nix_project
+from harness.document import card_document, params_nix, set_param
 from tsugumi_client import RpcFailure, _request_class, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 from harness.document import build_buffer, positions, write_layout
@@ -197,7 +197,7 @@ def test_runs_version_definitions_and_explicit_paths_only(tmp_path, core_factory
     assert not graph(c).dirty
     snap = c.call("ProjectInspectRequest")
     document = json.loads(text(snap.projectJson))
-    document["versionPaths"] = ["reference.csv"]
+    document["trackedPaths"] = ["reference.csv"]
     c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test",
            changes=[change("SetProject", json=json.dumps(document))])
     set_text(c, "changed definition")
@@ -259,10 +259,12 @@ def test_a_demo_history_becomes_its_versions(tmp_path, core_factory):
 
 
 
-def test_the_casa_demo_carries_its_trials(tmp_path, core_factory):
+@pytest.mark.parametrize("language", ["en", "ja"])
+def test_the_casa_demo_carries_its_trials(tmp_path, core_factory, language):
     """The Cas A project exposes its trials and can return to its original Drafts."""
+    demo = ROOT / "demos" / language / "casa"
     root = tmp_path / "casa"
-    shutil.copytree(ROOT / "demos" / "en" / "casa", root)
+    shutil.copytree(demo, root)
     daemon = core_factory(project_root=root)
     c = daemon.connect()
     c.call("VersionInitRequest", opId=new_id(), origin="test")
@@ -279,10 +281,27 @@ def test_the_casa_demo_carries_its_trials(tmp_path, core_factory):
     for card in snap.resolution:
         if text(card.card.segments[0]) in drafts:
             assert not card.inputs and not card.outputs
+    # The original experiments stay in Git even when their Card types have been removed.
+    removed_input_trials = 0
+    for entry in g.commits:
+        commit = text(entry.id)
+        if commit in (text(plan.id), head):
+            continue
+        load_card = json.loads(git(root, "show", f"{commit}:definitions/load/_card.json"))
+        if load_card["type"] == "input":
+            with pytest.raises(RpcFailure) as error:
+                c.call("VersionCheckoutRequest", baseRev=snap.rev, opId=new_id(), origin="test", commit=commit)
+            assert error.value.kind == "invalid_document"
+            assert c.call("ProjectInspectRequest").rev == snap.rev
+            removed_input_trials += 1
+        else:
+            c.call("VersionCheckoutRequest", baseRev=snap.rev, opId=new_id(), origin="test", commit=commit)
+            snap = c.call("ProjectInspectRequest")
+    assert removed_input_trials
     # Returning to the implemented tip restores its real ports and exact document.
     c.call("VersionCheckoutRequest", baseRev=snap.rev, opId=new_id(), origin="test", commit=head)
     restored = c.call("ProjectInspectRequest")
-    assert json.loads(text(restored.projectJson)) == json.loads((ROOT / "demos" / "en" / "casa" / "tsugumi.json").read_text())
+    assert json.loads(text(restored.projectJson)) == json.loads((demo / "tsugumi.json").read_text())
     assert not graph(c).dirty
 
 
@@ -316,8 +335,8 @@ def test_a_run_record_is_independent_of_the_connection(tmp_path, core_factory):
     independent = [f"more{i}" for i in range(7)]
     write_nix_project(root,
           defs={"trigger": {"type": "trigger"},
-                "source": {"type": "input", "params": {"text": "first", "value": True},
-                           "_outputs": MSG_FBS, "_nix": MSG_INPUT_NIX},
+                "source": {"type": "code", "params": {"text": "first", "value": True},
+                           "_outputs": MSG_FBS, "_nix": MSG_SOURCE_NIX},
                 "merge": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
                 "sink": dict(SINK, maxRuns=4)},
           cards=[card("start", "trigger"), card("src", "source"), card("both", "merge"), card("sink", "sink")] + [card(name, "source") for name in independent],
@@ -384,19 +403,19 @@ def test_a_versions_canvas_says_what_each_card_is(tmp_path, core_factory):
     builtin_project(root, extra_cards=[card("wide", "merge"), card("m", "merge")],
                     extra_conns=[conn("src", "msg", "m", "a")])
     wide = root / "definitions" / "wide" / "_card.json"
-    wide.write_text(json.dumps({"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}, {"name": "c"}]}))
+    wide.write_text(json.dumps(card_document({"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}, {"name": "c"}]})))
     daemon = core_factory(project_root=root)
     c = daemon.connect()
     first = text(c.call("VersionInitRequest", opId=new_id(), origin="test").commit)
     canvas = c.call("VersionCanvasRequest", commit=first)
     cards = {text(k.id): k for k in canvas.cards}
     assert {k: text(v.kind) for k, v in cards.items()} == {
-        "start": "trigger", "src": "input", "out": "collect", "wide": "merge", "m": "merge"}
+        "start": "trigger", "src": "code", "out": "collect", "wide": "merge", "m": "merge"}
     assert (cards["wide"].fan, cards["m"].fan, cards["out"].fan) == (3, 2, 0)
     write_layout(root, {"cards": {"out": {"x": 3, "y": 7, "collapsed": True}}})
     assert bytes(c.call("VersionCanvasRequest", commit=commit_all(root)).layout) == (root / "layout.bin").read_bytes()
     # An older version keeps what its Cards were.
-    wide.write_text(json.dumps({"type": "merge", "inputs": [{"name": "a"}]}))
+    wide.write_text(json.dumps(card_document({"type": "merge", "inputs": [{"name": "a"}]})))
     now = {text(k.id): k for k in c.call("VersionCanvasRequest", commit=commit_all(root)).cards}
     assert (text(now["wide"].kind), now["wide"].fan) == ("merge", 1)
     then = {text(k.id): k for k in c.call("VersionCanvasRequest", commit=first).cards}

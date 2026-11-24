@@ -26,9 +26,9 @@ function synthetic_week(seed, days)
     return (; load, solar, flat, tou, spot)
 end
 
-function main(inputs, report)
+function main(_input::Inputs)
     outputs = Dict{String,Any}()
-    s = inputs.settings
+    s = Dict(String(k) => v for (k, v) in pairs(params))
     week = synthetic_week(s["seed"], Int(s["days"]))
     outputs["scenario"] = merge(s, Dict(
         "load" => week.load, "solar" => week.solar, "flat" => week.flat, "tou" => week.tou, "spot" => week.spot))
@@ -40,7 +40,7 @@ function main(inputs, report)
     power = [Dict("day" => day(t), "kind" => name, "kW" => round(series[t]; digits=3))
              for (name, series) in (("House consumption", week.load), ("Solar", week.solar)) for t in eachindex(series)]
     xaxis = Dict("field" => "day", "type" => "quantitative", "title" => "Day", "axis" => Dict("tickMinStep" => 1))
-    report.vegalite(Dict(
+    send(VegaLite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => "A made-up week (data from random numbers, seed = $(s["seed"]))",
@@ -55,7 +55,7 @@ function main(inputs, report)
                  "encoding" => Dict("x" => xaxis, "y" => Dict("field" => "kW", "type" => "quantitative", "title" => "Power (kW)"),
                                     "color" => Dict("field" => "kind", "type" => "nominal", "title" => "Power",
                                                     "scale" => Dict("domain" => ["House consumption", "Solar"], "range" => ["#eb6834", "#eda100"])))),
-        ]))
+        ])))
 
     return outputs
 end

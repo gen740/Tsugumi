@@ -1,12 +1,33 @@
 #include "card.hh"
 
+#include <array>
+
 auto run(const Card::Inputs&) -> Card::Output {
-  Card::Output output;
-  auto& state = output.state.emplace();
-  state.index = Card::params.index;
-  state.samples = Card::params.samples;
-  state.interval_ms = Card::params.interval_ms;
-  state.seed = Card::params.seed;
-  state.value = Card::params.value;
-  return output;
+  using namespace card::display;
+  constexpr std::array<uint8_t, 1> ready{1};
+  constexpr std::array<uint8_t, 1> accepted{0};
+
+  const auto view = view_open("seed");
+  while (!card::cancelled()) {
+    send_raw(view.session, ready);
+    const auto reply = recv(1000);
+    if (reply.status == ReceiveStatus::kCancelled) break;
+    if (reply.status == ReceiveStatus::kClose)
+      throw tsugumi::Failure(Tsugumi::Data::FailureKind::cancelled,
+                             "the seed view was closed");
+    if (reply.status != ReceiveStatus::kMessage || reply.bytes.size() != 1 ||
+        reply.bytes.front() > 20)
+      continue;
+
+    send_raw(view.session, accepted);
+    Card::Output output;
+    auto& state = output.state.emplace();
+    state.index = Card::params.index;
+    state.samples = Card::params.samples;
+    state.interval_ms = Card::params.interval_ms;
+    state.seed = Card::params.seed;
+    state.value = static_cast<double>(reply.bytes.front()) - 10.0;
+    return output;
+  }
+  throw tsugumi::Failure(Tsugumi::Data::FailureKind::cancelled, "cancelled while waiting for the seed");
 }

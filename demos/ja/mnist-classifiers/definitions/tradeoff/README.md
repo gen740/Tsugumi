@@ -1,4 +1,5 @@
 ---
+title: tradeoff
 description: 正解率と時間のトレードオフ
 ---
 

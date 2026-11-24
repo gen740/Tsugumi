@@ -17,12 +17,18 @@ import TsugumiLauncher
   var issued: Set<String> = []
   session.cardIdProvider = { [weak session] name, prefix in
     guard let session else { throw CancellationError() }
-    let stem = String(name.lowercased().map { $0.isLetter || $0.isNumber || "-_".contains($0) ? $0 : "-" })
+    let normalized = name.lowercased().replacingOccurrences(of: #"[^a-z0-9_]+"#, with: "_", options: .regularExpression)
+      .replacingOccurrences(of: #"^[^a-z]+"#, with: "", options: .regularExpression)
+    let stem = normalized.isEmpty ? "card" : normalized
     let used = prefix.isEmpty ? Set(session.definitionDrafts.keys).union(session.cards(in: []).compactMap { $0["id"]?.string })
       : Set(session.external(prefix)?.definitions.keys.map { $0 } ?? [])
-    var id = stem.isEmpty ? "card" : stem
+    var id = String(stem.prefix(64))
     var n = 2
-    while used.contains(id) || issued.contains(prefix + id) { id = "\(stem)-\(n)"; n += 1 }
+    while used.contains(id) || issued.contains(prefix + id) {
+      let suffix = "_\(n)"
+      id = String(stem.prefix(64 - suffix.count)) + suffix
+      n += 1
+    }
     issued.insert(prefix + id)
     return id
   }
@@ -41,18 +47,36 @@ import TsugumiLauncher
   return session
 }
 
+func fixtureCardJSON(_ kind: CardKind, _ fields: [(String, JSONValue)] = []) -> String {
+  var definition = implementedCard(kind, symbol: "none", systems: ["aarch64-linux"])
+  for (key, value) in fields { definition[key] = value }
+  return definition.serialized()
+}
+
+func fixtureProjectJSON(_ fields: String = "{}") -> String {
+  var project: JSONValue = .object([
+    ("formatVersion", .int(1)), ("name", .string("t")), ("nixPath", .array([])),
+    ("trackedPaths", .array([])), ("agentExclude", .array([])), ("recordLogs", .bool(true)), ("recordIO", .bool(false)),
+    ("logLimitBytes", .int(134217728)), ("outputLimitBytes", .int(68719476736)), ("outputLimitEntries", .int(1000)),
+    ("canvas", .object([("cards", .array([])), ("connections", .array([]))])),
+  ])
+  for (key, value) in (try! JSONValue.parse(fields)).object ?? [] { project[key] = value }
+  return project.serialized()
+}
+
 /// A session showing a document no host serves, for tests of what is drawn.
 /// Editing needs a host: tests of actions use a Daemon or their own replies.
 @MainActor func offlineSession(_ dir: URL, cards: [(id: String, card: String)], layout: String = "{}") throws -> ProjectSession {
-  try Data("{}".utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
+  try Data(fixtureProjectJSON().utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
   let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
   session.prepareLayout = { _, layout, _ in layout }
   let snapshot = Tsugumi_RPC_ProjectSnapshotT()
   let ids = cards.map { #"{"id":"\#($0.id)"}"# }.joined(separator: ",")
-  snapshot.rev = 0; snapshot.projectJson = #"{"name":"t","canvas":{"cards":[\#(ids)],"connections":[]}}"#
+  snapshot.rev = 0; snapshot.projectJson = fixtureProjectJSON(#"{"canvas":{"cards":[\#(ids)],"connections":[]}}"#)
   snapshot.layout = fixtureLayout(layout)
   snapshot.definitions = cards.map { card in
     let definition = Tsugumi_RPC_DefinitionT(); definition.id = card.id; definition.cardJson = card.card
+    definition.readme = Documents.printReadme(title: card.id, description: "", body: "")
     return definition
   }
   snapshot.run = Tsugumi_RPC_RunStatusT()

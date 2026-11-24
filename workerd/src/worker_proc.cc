@@ -1385,11 +1385,8 @@ std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
   std::vector<flatbuffers::Offset<W::ArtifactGrant>> grant_offsets;
   for (const auto& grant : grants) {
     const auto id = wire::artifact_struct(grant.id);
-    const auto store = grant.store_path.empty()
-                           ? flatbuffers::Offset<flatbuffers::String>{}
-                           : b.CreateString(grant.store_path);
     grant_offsets.push_back(
-        W::CreateArtifactGrant(b, &id, b.CreateString(grant.path), store));
+        W::CreateArtifactGrant(b, &id, b.CreateString(grant.path)));
   }
   const auto grant_vector = b.CreateVector(grant_offsets);
   const auto artifact_root = artifact_directory.empty()

@@ -30,9 +30,8 @@ def sky_pixel(columns, ra, dec):
 
 
 def run(input: Input) -> Output:
-    events = input.require("input")
-    source, = events.file.open().iterdir()
-    obsid = events.obsid.decode()
+    source = Path(params.events_file)
+    obsid = params.obsid
     tool = input.require("ciao")
     root = params.ciao_root
     p = params
@@ -72,7 +71,8 @@ def run(input: Input) -> Output:
                 bands.append({"color": color, "min_ev": limits[i], "max_ev": limits[i + 1], "photons": int(counts.sum()), "dmcopy": spec})
         # Counted again without CIAO: what the tool wrote is every selected photon, once.
         assert sum(b["photons"] for b in bands) == selected, "bands overlap or leave a gap"
-        manifest = {"obsid": obsid, "events_file": source.name, "exposure_s": ev.header.get("EXPOSURE"), "events": len(ev.data),
+        manifest = {"obsid": obsid, "events_file": source.name, "events_url": p.events_url,
+                    "events_hash": p.events_hash, "events_bytes": source.stat().st_size, "exposure_s": ev.header.get("EXPOSURE"), "events": len(ev.data),
                     "centre_pixel": [x0 + step * size / 2, y0 + step * size / 2], "grid": {"step": step, "pixels": size},
                     "selected": selected, "bands": bands, "tool": {"name": "CIAO", "version": tool.version.decode(), "path": root}}
     (dest / "provenance.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))

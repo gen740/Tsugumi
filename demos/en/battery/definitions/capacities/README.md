@@ -1,4 +1,5 @@
 ---
+title: capacities
 description: Capacity and savings
 ---
 

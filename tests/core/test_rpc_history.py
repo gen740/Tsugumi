@@ -21,7 +21,7 @@ def test_artifacts_survive_without_value_recording(core_factory, project, tmp_pa
     client = daemon.connect()
     worker_project(client, project, tmp_path, [
         {"op": "file", "port": "doc", "path": "big.txt", "text": CONTENTS},
-    ], outputs=FILE_OUTPUT, recordIO=record_io)
+    ], outputs=FILE_OUTPUT, recordIO="on" if record_io else "off")
     run_id = run(client)
     assert wait_run(client, run_id).state == RunState.succeeded
     client.call("ProjectCacheClearRequest", opId=new_id())

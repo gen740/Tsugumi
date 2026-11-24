@@ -85,8 +85,8 @@ enum SmokeTest {
         await s.save()
         report["draft_outputs"] = s.resolution[dk]?.outputs.map(\.name) ?? []
         let draftWire = s.connections(in: []).contains { c in
-          c["from"]?["card"]?.string == draft && c["from"]?["port"]?.string == ""
-            && c["to"]?["card"]?.string == path(next)[0] && c["to"]?["port"]?.string == ""
+          c["from"]?["card"]?.string == draft && c["from"]?["port"] == nil
+            && c["to"]?["card"]?.string == path(next)[0] && c["to"]?["port"] == nil
         }
         report["draft_wire"] = draftWire
         ok = ok && s.saveError == nil && s.resolution[dk]?.outputs.isEmpty == true

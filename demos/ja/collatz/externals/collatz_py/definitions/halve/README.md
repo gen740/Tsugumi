@@ -1,0 +1,4 @@
+---
+title: halve
+description: 偶数を半分にして loop に戻す
+---

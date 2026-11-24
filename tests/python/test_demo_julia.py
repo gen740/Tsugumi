@@ -146,9 +146,9 @@ def test_battery(demo):
     assert flat["saved"] == pytest.approx(results["定額・売電 50%"]["saved"])
     assert flat["saved"] < s["saved"] and flat["cycles"] < s["cycles"]
 
-    # Worse efficiency from the settings on: every saving falls.
-    edit_card(demo, c, "settings", lambda b: set_param(b, "round_trip_efficiency", 0.6))
-    lossy = meta(c, run(c, "settings"), "schedule")
+    # Worse efficiency from market onward: every saving falls.
+    edit_card(demo, c, "market", lambda b: set_param(b, "round_trip_efficiency", 0.6))
+    lossy = meta(c, run(c), "schedule")
     assert lossy["saved"] < flat["saved"]
 
 
@@ -199,9 +199,9 @@ def test_gillespie(demo):
     small = meta(c, run(c, "scaling", propagate=False), "scaling")
     assert small["cvs"][0] == pytest.approx(math.sqrt(1 / 0.4), rel=0.1) and small["cvs"][0] > scaling["cvs"][0]
 
-    # A tenth of the volume from the settings on: a tenth of the molecules, still Poisson.
-    edit_card(demo, c, "settings", lambda b: set_param(b, "volume", 0.1))
-    rid = run(c, "settings")
+    # A tenth of the stationary simulation's volume: a tenth of the molecules, still Poisson.
+    edit_card(demo, c, "stationary", lambda b: set_param(b, "volume", 0.1))
+    rid = run(c)
     low = meta(c, rid, "stationary")
     assert low["theory"] == pytest.approx(2.0)
     assert abs(low["mean"] - 2) < 4 * math.sqrt(2 / runs) and abs(low["fano"] - 1) < 0.2
@@ -274,17 +274,17 @@ def test_heat_inverse(demo):
     assert wide["lambda"] == 1.0 and wide["errors"][1] > 2 * r["errors"][1]
     edit_card(demo, c, "reconstruct", lambda b: set_param(b, "lambda", 0.0))
 
-    # Measured later from the settings on: the same noise, a worse reconstruction.
-    edit_card(demo, c, "settings", lambda b: set_param(b, "final_time", 0.02))
-    late = meta(c, run(c, "settings"), "reconstruct")
+    # Measured later: the same noise, a worse reconstruction.
+    edit_card(demo, c, "forward", lambda b: set_param(b, "final_time", 0.02))
+    late = meta(c, run(c), "reconstruct")
     assert late["errors"][1] > 1.5 * r["errors"][1]
 
     # No noise and an early time: the inversion recovers the truth.
     def early(b):
         set_param(b, "final_time", 0.00005)
         set_param(b, "noise", 0.0)
-    edit_card(demo, c, "settings", early)
-    recovered = meta(c, run(c, "settings"), "reconstruct")
+    edit_card(demo, c, "forward", early)
+    recovered = meta(c, run(c), "reconstruct")
     assert math.sqrt(sum((a - b) ** 2 for a, b in zip(recovered["solution"], truth)) / n) < 1e-3
 
 

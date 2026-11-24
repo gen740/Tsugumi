@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "store.hh"
+#include "test_document.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 
@@ -8,7 +9,7 @@ namespace tsugumi {
 namespace {
 TEST(LayoutBoundary, OnlyExternalProjectLayoutIsExcludedFromExecutionIdentity) {
   Document doc;
-  doc.project_json = initial_project_json("test");
+  doc.project_json = initial_project_json("test", {});
   doc.project_buffer = parse_project_json(doc.project_json).buffer;
   const auto fingerprint = [&] { return execution_fingerprint(doc); };
   const auto empty = fingerprint();
@@ -35,19 +36,23 @@ TEST(LayoutBoundary, DeletingACardDoesNotInterpretOrRewriteLayout) {
   } cleanup{root};
   fs::write_atomic(
       root / "tsugumi.json",
-      R"({"name":"test","nixPath": [],"canvas":{"cards":[{"id":"a"}],"connections":[]}})");
-  fs::write_atomic(root / "definitions/a/_card.json",
-                   R"({"type":"draft"})");
-  const auto layout = document_text::parse(
-      document_text::Schema::Layout, "layout.bin",
-      R"({"cards":[{"key":"a","x":12,"y":8}]})");
+      test::project_json(
+          R"({"name":"test","nixPath": [],"canvas":{"cards":[{"id":"a"}],"connections":[]}})"));
+  test::write_card(root / "definitions/a/_card.json",
+                   test::card_json(R"({"type":"draft"})"));
+  const auto layout =
+      document_text::parse(document_text::Schema::Layout, "layout.bin",
+                           R"({"cards":[{"key":"a","x":12,"y":8}]})");
   fs::write_atomic(root / "layout.bin", layout);
   Store store({root, ""});
   store.open();
   ChangeIn change{};
   change.kind = ChangeIn::Kind::SetProject;
-  change.json = initial_project_json("test");
-  const auto staged = store.stage({change}, crypto::uuid4(), "test");
+  change.json = initial_project_json("test", {});
+  ChangeIn remove{};
+  remove.kind = ChangeIn::Kind::RemoveDefinition;
+  remove.id = "a";
+  const auto staged = store.stage({change, remove}, crypto::uuid4(), "test");
   EXPECT_EQ(staged.doc->layout, layout);
   EXPECT_FALSE(staged.delta.layout_changed);
 }

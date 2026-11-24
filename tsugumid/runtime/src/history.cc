@@ -1432,8 +1432,7 @@ std::vector<StoredValueMeta> History::value_metas(sql::Db& db,
       auto id = ids.substr(offset, 16);
       const auto record = artifact(db, id);
       m.artifacts.push_back({std::move(id),
-                             record ? record->size_bytes : std::nullopt,
-                             record && record->origin == "store"});
+                             record ? record->size_bytes : std::nullopt});
     }
     m.hash = st.text(5);
     out.push_back(std::move(m));

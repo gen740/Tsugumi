@@ -1,4 +1,0 @@
-namespace flow;
-table Settings { seed:ulong; layers:ulong; width:ulong; edge_probability:double; max_capacity:ulong; }
-table Outputs { settings:Settings (required); }
-root_type Outputs;

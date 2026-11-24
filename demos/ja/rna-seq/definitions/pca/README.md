@@ -1,4 +1,5 @@
 ---
+title: pca
 description: サンプルの主成分分析
 ---
 

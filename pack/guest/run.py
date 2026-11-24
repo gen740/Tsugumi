@@ -18,6 +18,7 @@ a setting, so this changes no build.
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -74,18 +75,21 @@ class Rpc:
 
 
 def record_all(project):
-    """recordIO on for every Code Card of the copy."""
+    """Set recordIO on for every Code Card of the copy."""
     for path in (project / "definitions").glob("*/_card.json"):
         definition = json.loads(path.read_text())
-        if definition.get("type") == "code" and not definition.get("recordIO"):
-            definition["recordIO"] = True
+        if definition["type"] == "subgraph":
+            record_all(project / "externals" / path.parent.name)
+        elif definition["type"] == "code" and definition["recordIO"] != "on":
+            definition["recordIO"] = "on"
             path.write_text(json.dumps(definition, indent=2, ensure_ascii=False) + "\n")
 
 
 def wired_outputs(project):
     """(card, port) pairs that feed another Card: the rest are the Workflow's results."""
     connections = json.loads((project / "tsugumi.json").read_text()).get("canvas", {}).get("connections", [])
-    return {(c["from"]["card"], c["from"]["port"]) for c in connections}
+    # A Draft end has no port.
+    return {(c["from"]["card"], c["from"].get("port")) for c in connections}
 
 
 def triggers(project):
@@ -198,7 +202,7 @@ def export_artifacts(rpc, run_id, result):
         page = rpc.call("ArtifactListRequest", request)
         for artifact in page.get("artifacts", []):
             artifact_id = artifact["artifact_id"]
-            if len(artifact_id) != 32 or any(c not in "0123456789abcdef" for c in artifact_id):
+            if re.fullmatch(r"[1-9][0-9]*\.[0-9]+", artifact_id) is None:
                 raise ValueError("malformed artifact id")
             root = result / "artifacts" / artifact_id
             root.mkdir(parents=True, exist_ok=True)

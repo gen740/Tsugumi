@@ -72,7 +72,7 @@ def test_invocation_can_open_only_its_read_only_artifact_grants(core_factory, pr
           closedir(listing);
         }
         out.number(contents.size());
-    """, declarations=declarations, inputs=["doc"], recordIO=True,
+    """, declarations=declarations, inputs=["doc"], recordIO="on",
         grants={"hostPaths": [{"name": "project", "path": str(project), "write": True}]})
     write_nix_project(project, {"source": source, "sink": sink},
                       [card("source", "source"), card("sink", "sink")],
@@ -102,47 +102,6 @@ def test_invocation_can_open_only_its_read_only_artifact_grants(core_factory, pr
                               restrictToRunIds=True, runIds=[run_id])
         assert removed.deletedRuns == 1
         assert not run_root.exists()
-
-
-@pytest.mark.environment
-@pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason="requires Seatbelt or bubblewrap")
-def test_input_card_artifact_opens_at_its_store_path(core_factory, project):
-    artifact_id = "a1" * 16
-    source = {
-        "type": "input",
-        "_outputs": DIRECTORY,
-        "_nix": r"""
-          { params, inputs }:
-          let pkgs = import <nixpkgs> { };
-          in {
-            run = pkgs.runCommand "artifact-input" { } ''
-              root=$out/share/tsugumi/input
-              mkdir -p "$root/ports" "$root/artifacts/ARTIFACT_ID"
-              printf 'opaque' > "$root/ports/doc"
-              printf '%s\n' ARTIFACT_ID > "$root/ports/doc.artifacts"
-              printf 'store' > "$root/artifacts/ARTIFACT_ID/report.txt"
-            '';
-          }
-        """.replace("ARTIFACT_ID", artifact_id),
-    }
-    sink = native_card(r"""
-        const auto directory = fs::path(open_artifact(call, in));
-        if (!directory.string().starts_with("/nix/store/") ||
-            !directory.string().ends_with("/share/tsugumi/input/artifacts/" ARTIFACT_ID))
-          return 1;
-        std::string contents;
-        std::ifstream(directory / "report.txt") >> contents;
-        if (contents != "store") return 2;
-        out.number(contents.size());
-    """.replace("ARTIFACT_ID", json.dumps(artifact_id)), inputs=["doc"], recordIO=True)
-    write_nix_project(project, {"source": source, "sink": sink},
-                      [card("source", "source"), card("sink", "sink")],
-                      [conn("source", "doc", "sink", "doc")])
-    client = core_factory(project_root=project).connect()
-    run_id, status = run_and_wait(client, "source")
-    assert status.state == RunState.succeeded, vars(status.failure) if status.failure else None
-    assert decode_scalar(read_output(client, run_id, card="sink"), "uint64") == len("store")
-    assert not (project / ".tsugumi/artifacts" / run_id).exists()
 
 
 @pytest.mark.environment

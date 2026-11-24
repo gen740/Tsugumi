@@ -1,0 +1,4 @@
+---
+title: route
+description: 偶数は halve へ、奇数は triple へ送る
+---

@@ -12,6 +12,7 @@
 #include "store.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/log.hh"
+#include "tsugumi/util/system.hh"
 #include "tsugumi/workerd/protocol.hh"
 #include "tsugumi/workerd/store.hh"
 #include "tsugumi/workerd/worker_execution.hh"
@@ -75,9 +76,8 @@ auto LocalExecutionService::prepare(const Node& node,
                  "grants.gui requires a native Linux worker with an available "
                  "GUI socket");
   static const SharedStoreDerivationTransport transport;
-  build.target = {WorkerKind::native, node.settings.system.empty()
-                                          ? native_system()
-                                          : node.settings.system};
+  build.target = {WorkerKind::native,
+                  run_system(node.settings, native_system())};
   build.transport = &transport;
   return std::make_unique<PreparedLocalExecution>(*this);
 }
@@ -218,14 +218,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   sp.artifact_store = (state_dir / "artifacts").string();
   sp.artifact_staging = state_dir / "artifact-invocations";
   std::filesystem::create_directories(sp.artifact_store);
-#ifdef __linux__
-  if (sp.sandbox.filesystem) {
-    for (const auto& artifact : artifacts) {
-      if (!artifact.store_path.empty())
-        sp.binds.push_back({artifact.path, artifact.store_path, false, ""});
-    }
-  }
-#endif
 
   // The resident worker of this Card, if it runs the same build under the same
   // conditions.

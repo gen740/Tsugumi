@@ -11,4 +11,15 @@ in
 {
   run = sdk.cppCard (common // { src = ./src; });
   api = sdk.cppApi common;
+  views = [
+    (sdk.dawnView {
+      name = "seed";
+      src = ./views;
+      cflags = [
+        "-Wall"
+        "-Wextra"
+        "-Werror"
+      ];
+    })
+  ];
 }

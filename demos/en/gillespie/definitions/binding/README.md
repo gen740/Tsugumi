@@ -1,4 +1,5 @@
 ---
+title: binding
 description: A non-linear reaction and the rate equation
 ---
 

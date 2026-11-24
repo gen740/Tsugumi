@@ -304,13 +304,6 @@ auto Service::invalidate_resident(const std::string& card) -> void {
   execution_service_->invalidate(card, "the Card definition changed");
 }
 
-auto Service::execution_service(const std::string& id) -> ExecutionService& {
-  // Any other id names a registered execution daemon; its backend checks that
-  // the service is available when an invocation is prepared.
-  if (id == kLocalExecutionService) return *execution_service_;
-  return *remote_execution_;
-}
-
 namespace {
 class SelectedExecution final : public PreparedExecution {
  public:
@@ -409,39 +402,38 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
   const auto card = path_key(node.path);
   std::unique_lock lock(worker_selection_mutex_);
   if (!node.settings.reuse_worker) resident_targets_.erase(card);
-  std::string selected;
+  RemoteTarget selected;
   for (;;) {
     if (build.cancel.stop_requested())
       throw Failed(FailureKind::cancelled, "worker selection cancelled");
     std::vector<WorkerCandidate> candidates;
     for (const auto& target : targets) {
-      const auto capacity =
-          target.id == "local" ? opts_.env_cpus : target.max_jobs;
+      const auto capacity = target.id == kLocalExecutionService
+                                ? opts_.env_cpus
+                                : target.max_jobs;
       candidates.push_back(
-          {target.id, target.grade,
+          {target.id, target.worker_capabilities,
            target.available &&
                (!capacity || worker_slots_[target.id] < capacity),
            target.id == kLocalExecutionService
                ? unsupported_local_option(node.settings, target).empty()
                : (supports_remote_options(node.settings) &&
-                  (node.settings.execution_service != "auto" ||
-                   !node.settings.sandbox.limits.limited() ||
+                  (!node.settings.sandbox.limits.limited() ||
                    target.resource_limits))});
     }
     const auto resident = resident_targets_.find(card);
     const auto resident_id =
         resident == resident_targets_.end() ? std::string{} : resident->second;
     for (;;) {
-      const auto choice =
-          select_worker(candidates, node.settings.worker_condition.get(),
-                        node.settings.execution_service, resident_id);
+      const auto choice = select_worker(
+          candidates, node.settings.worker_capabilities, resident_id);
       if (!choice.matches)
         throw Failed(FailureKind::unsupported,
                      "no registered worker supports the Card's settings and "
-                     "workerCondition");
+                     "workerCapabilities");
       if (!choice.index) break;
       const auto target = targets[*choice.index];
-      if (target.id != "local") {
+      if (target.id != kLocalExecutionService) {
         lock.unlock();
         RemoteProbe live;
         try {
@@ -457,10 +449,10 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
           continue;
         }
       }
-      selected = target.id;
+      selected = target;
       break;
     }
-    if (!selected.empty()) break;
+    if (!selected.id.empty()) break;
     if (build.cancel.stop_requested())
       throw Failed(FailureKind::cancelled, "worker selection cancelled");
     worker_selection_cv_.wait_for(lock, std::chrono::milliseconds(100));
@@ -468,21 +460,21 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
     targets = remote_targets(build.cancel);
     lock.lock();
   }
-  ++worker_slots_[selected];
+  ++worker_slots_[selected.id];
   lock.unlock();
-  auto release = [this, selected] {
+  auto release = [this, id = selected.id] {
     std::lock_guard guard(worker_selection_mutex_);
-    --worker_slots_[selected];
+    --worker_slots_[id];
     worker_selection_cv_.notify_all();
   };
   try {
-    Node chosen = node;
-    chosen.settings.execution_service = selected;
     auto execution =
-        execution_service(selected).prepare(chosen, directory, build);
+        selected.id == kLocalExecutionService
+            ? execution_service_->prepare(node, directory, build)
+            : remote_execution_->prepare(selected, node, directory, build);
     if (node.settings.reuse_worker) {
       std::lock_guard guard(worker_selection_mutex_);
-      resident_targets_[card] = selected;
+      resident_targets_[card] = selected.id;
     }
     return std::make_unique<SelectedExecution>(std::move(execution), release);
   } catch (...) {
@@ -550,6 +542,7 @@ auto Service::remote_targets(std::stop_token stop) const
       local = targets.begin();
     }
     fill_local(*local);
+    std::rotate(targets.begin(), local, local + 1);
     return targets;
   } catch (const std::exception&) {
     RemoteTarget local;
@@ -591,48 +584,29 @@ auto Service::execution_diagnostic(const Node& node,
                   {}};
     return std::nullopt;
   };
-  if (settings.execution_service == "auto") {
-    const RemoteTarget* blocked = nullptr;
-    const RemoteTarget* local = nullptr;
-    bool other = false;
-    for (const auto& target : targets) {
-      if (settings.worker_condition &&
-          !settings.worker_condition->matches(target.grade))
-        continue;
-      if (target.id == kLocalExecutionService) {
-        local = &target;
-        continue;
-      }
-      if (!supports_remote_options(settings) ||
-          (settings.sandbox.limits.limited() && !target.resource_limits))
-        continue;
-      if (target.available) other = true;
-      if (!blocked) blocked = &target;
+  const RemoteTarget* blocked = nullptr;
+  const RemoteTarget* local = nullptr;
+  for (const auto& target : targets) {
+    if (!matches_capabilities(settings.worker_capabilities,
+                              target.worker_capabilities))
+      continue;
+    if (target.id == kLocalExecutionService) {
+      local = &target;
+      continue;
     }
-    if (other) return std::nullopt;
-    if (local && local->available) return local_diagnostic(*local);
-    if (blocked) return unavailable(*blocked);
-    return Diag{
-        true,
-        "invalid_setting",
-        "no registered worker supports the Card settings and workerCondition",
-        node.path,
-        {},
-        {}};
+    if (!supports_remote_options(settings) ||
+        (settings.sandbox.limits.limited() && !target.resource_limits))
+      continue;
+    if (target.available) return std::nullopt;
+    if (!blocked) blocked = &target;
   }
-  const auto target =
-      std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
-  if (target == targets.end() ||
-      (settings.worker_condition &&
-       !settings.worker_condition->matches(target->grade)))
-    return error("execution service " + settings.execution_service +
-                 " is not available");
-  if (!target->available) return unavailable(*target);
-  if (target->id == kLocalExecutionService) return local_diagnostic(*target);
-  // Cached capabilities describe the last observation, not a reason to refuse
-  // a run. RemoteExecutionService probes the worker before choosing a system
-  // or checking resources.
-  return std::nullopt;
+  if (local && local->available) {
+    auto diagnostic = local_diagnostic(*local);
+    if (!diagnostic || !diagnostic->error || !blocked) return diagnostic;
+  }
+  if (blocked) return unavailable(*blocked);
+  return error(
+      "no registered worker supports the Card settings and workerCapabilities");
 }
 
 void Service::shutdown() {
@@ -1274,6 +1248,10 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
     const auto sandbox = R::CreateSandboxCapabilities(
         b, filesystem, namespaces, namespaces, namespaces, network, target.gui,
         host_paths, remote, remote);
+    std::vector<uint8_t> bits;
+    for (uint8_t bit = 0; bit < 64; ++bit)
+      if ((target.worker_capabilities & (uint64_t{1} << bit)) != 0)
+        bits.push_back(bit);
     services.push_back(R::CreateExecutionService(
         b, b.CreateString(target.id), b.CreateString(target.native_system),
         b.CreateVectorOfStrings(target.systems),
@@ -1282,7 +1260,7 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
         target.available, target.resource_limits,
         target.max_jobs ? flatbuffers::Optional(target.max_jobs)
                         : flatbuffers::nullopt,
-        target.grade, sandbox));
+        b.CreateVector(bits), sandbox));
   }
   auto execution_services = b.CreateVector(services);
   flatbuffers::Offset<flatbuffers::Vector<uint8_t>> view;

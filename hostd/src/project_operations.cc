@@ -49,6 +49,25 @@ auto Prefix(const std::string& path) -> std::string {
     throw Failure("invalid_path", "project_path must name an external project");
   return path + '/';
 }
+auto ReadLayouts(TemplateFiles files) -> TemplateFiles {
+  std::map<std::string, LayoutFiles> layouts;
+  std::erase_if(files, [&](const auto& entry) {
+    const auto& [path, bytes] = entry;
+    if (path == "layout.bin" || IsExternalDocument(path, "layout.bin")) {
+      layouts[path.substr(0, path.size() - 10)].layout = bytes;
+      return true;
+    }
+    if (!Document::is_note_file(path)) return false;
+    const auto prefix = path.substr(0, path.rfind("notes/"));
+    if (const auto id = NoteId(prefix, path))
+      layouts[prefix].notes[*id] = bytes;
+    return true;
+  });
+  for (const auto& [prefix, layout] : layouts)
+    files.emplace(prefix + "layout.bin",
+                  LayoutView(layout.layout, layout.notes));
+  return files;
+}
 auto Intent(const H::ProjectOperateRequestT& operation,
             const std::string& origin) -> std::string {
   auto semantic = operation;
@@ -207,8 +226,11 @@ auto Prepare(
     if (!parameter->card || parameter->card->segments.empty())
       throw Failure("invalid_request", "Choose a Card");
     std::vector<std::string> segments;
-    for (const auto& segment : parameter->card->segments)
+    for (const auto& segment : parameter->card->segments) {
+      if (!valid_name(segment))
+        throw Failure("invalid_request", "Invalid Card id");
       segments.push_back(json::Quote(segment));
+    }
     const auto card =
         json::Encode(json::Members{{"segments", json::Encode(segments)}});
     const auto rewritten = Value(call(
@@ -265,25 +287,10 @@ auto Prepare(
         json::Get(json::Object(CompleteLayout(project, layout, read_geometry)),
                   "cards", "{}"));
   };
-  auto external_id = [&](const std::string& card) {
-    return json::Text(
-        json::Object(
-            get(prefix + "definitions/" + card + "/_card.json").value_or("{}")),
-        "external");
-  };
-  auto retained_externals = [&](const std::set<std::string>& removed) {
-    std::set<std::string> retained;
-    const auto definitions = prefix + "definitions/";
-    for (const auto& [path, bytes] : base.files) {
-      if (!path.starts_with(definitions) || !path.ends_with("/_card.json"))
-        continue;
-      const auto local = std::string_view(path).substr(definitions.size());
-      const auto slash = local.find('/');
-      if (slash == local.rfind('/') &&
-          !removed.contains(std::string(local.substr(0, slash))))
-        retained.insert(json::Text(json::Object(bytes, path), "external"));
-    }
-    return retained;
+  auto external_tree = [&](const std::string& card) -> std::string {
+    const auto raw = get(prefix + "definitions/" + card + "/_card.json");
+    if (!raw || json::Text(json::Object(*raw), "type") != "subgraph") return {};
+    return prefix + "externals/" + card + '/';
   };
   auto write_position = [&](const std::string& id, const std::string& x,
                             const std::string& y, json::Members entry = {}) {
@@ -297,7 +304,7 @@ auto Prepare(
   };
   auto place = [&](const std::string& id, double x, double y,
                    bool automatic = false) {
-    if (!valid_id(id))
+    if (!valid_name(id))
       throw Failure("invalid_request", "invalid Card id: " + id);
     auto root = json::Object(required(prefix + "tsugumi.json"),
                              prefix + "tsugumi.json");
@@ -344,11 +351,9 @@ auto Prepare(
       definition(to + "definitions/" + id + '/', d);
   };
   auto link = [&](const std::string& id) {
-    definition(prefix + "definitions/" + id + '/',
-               json::Encode(json::Members{
-                   {"card", json::Encode(json::Members{
-                                {"type", json::Quote("subgraph")},
-                                {"external", json::Quote(id)}})}}));
+    const auto dir = prefix + "definitions/" + id + '/';
+    put(dir + "_card.json", R"({"type":"subgraph","symbol":"none"})");
+    put(dir + "README.md", CardReadme(id));
   };
   auto document_state = [&](const auto& files) {
     auto scope = [&](const std::string& at) {
@@ -416,6 +421,8 @@ auto Prepare(
   if (const auto* selection = body.AsProjectSelection()) {
     if (selection->action == H::ProjectSelectionAction::Place) {
       for (const auto& id : selection->cards) {
+        if (!valid_name(id))
+          throw Failure("invalid_request", "Invalid Card id");
         if (!get(prefix + "definitions/" + id + "/_card.json"))
           throw Failure("target_missing", "Definition: " + id);
         place(id, selection->x, selection->y);
@@ -424,7 +431,7 @@ auto Prepare(
       const std::set<std::string> ids(selection->cards.begin(),
                                       selection->cards.end());
       for (const auto& id : ids)
-        if (!valid_id(id))
+        if (!valid_name(id))
           throw Failure("invalid_request", "invalid Card id: " + id);
       auto root = json::Object(project, prefix + "tsugumi.json");
       auto graph = json::Object(json::Get(root, "canvas", "{}"),
@@ -442,15 +449,11 @@ auto Prepare(
                           "Cannot delete a placed definition");
       }
       if (deleting || definitions) {
-        const auto retained = retained_externals(ids);
         for (const auto& id : ids) {
           const auto dir = prefix + "definitions/" + id + '/';
           std::vector<std::string> roots{dir};
-          const auto external = external_id(id);
-          if (!external.empty() && !retained.contains(external)) {
-            if (!valid_id(external)) throw Failure("invalid_path", external);
-            roots.push_back(prefix + "externals/" + external + '/');
-          }
+          const auto external = external_tree(id);
+          if (!external.empty()) roots.push_back(external);
           for (const auto& path : paths)
             for (const auto& at : roots)
               if (path.starts_with(at)) remove(path);
@@ -469,6 +472,16 @@ auto Prepare(
             selection->connections_json.empty() ? "[]"
                                                 : selection->connections_json,
             "connections_json");
+        for (const auto& raw : selected_wires) {
+          const auto wire = json::Object(raw);
+          for (const auto* side : {"from", "to"}) {
+            const auto end = json::Object(wire.at(side));
+            const auto port = json::Text(end, "port");
+            if (!valid_name(json::Text(end, "card")) ||
+                (!port.empty() && !valid_name(port)))
+              throw Failure("invalid_request", "Invalid wire endpoint");
+          }
+        }
         std::erase_if(wires, [&](const auto& raw) {
           const auto wire = json::Object(raw);
           const auto from =
@@ -566,6 +579,7 @@ auto Prepare(
   } else if (const auto* connect = body.AsProjectConnect()) {
     json::Members definitions;
     for (const auto& id : {connect->from_card, connect->to_card}) {
+      if (!valid_name(id)) throw Failure("invalid_request", "Invalid Card id");
       const auto path = prefix + "definitions/" + id + "/_card.json";
       if (base.files.contains(path))
         definitions[id] =
@@ -578,8 +592,8 @@ auto Prepare(
         connect->to_port);
     put(prefix + "tsugumi.json", json::Object(connected).at("project"));
   } else if (const auto* create = body.AsProjectCreateCard()) {
-    empty(prefix + "definitions/" + create->id + '/');
     auto files = BuiltinCard(create->kind, create->id);
+    empty(prefix + "definitions/" + create->id + '/');
     const auto dir = prefix + "definitions/" + create->id + '/';
     for (const auto& [path, bytes] : files) put(dir + path, bytes);
     place(create->id, create->x, create->y, create->automatic_placement);
@@ -618,18 +632,6 @@ auto Prepare(
       throw Failure("invalid_request", "Unknown template store");
     }
 
-    TemplateFiles source_files{{"tsugumi.json", "{}"}};
-    std::vector<std::string> source_paths;
-    for (const auto& id : contents.cards) {
-      for (auto it = contents.files.lower_bound(id + '/');
-           it != contents.files.end() && it->first.starts_with(id + '/');
-           ++it) {
-        auto path = "definitions/" + it->first;
-        source_paths.push_back(path);
-        source_files.emplace(std::move(path), it->second);
-      }
-    }
-    const auto state = document_state(source_files);
     const auto layout =
         json::Object(LayoutView(json::Get(contents.files, "layout.bin", "")));
     const auto positions = json::Object(json::Get(layout, "cards", "{}"));
@@ -653,7 +655,7 @@ auto Prepare(
             Value(call("card_id", {{"stem", json::Quote(CardStem(old))},
                                    {"project_path", json::Quote(prefix)}}));
         const auto id = json::Text(result, "id");
-        if (!valid_id(id))
+        if (!valid_name(id))
           throw Failure("unavailable", "No Card id was allocated");
         return id;
       };
@@ -662,15 +664,12 @@ auto Prepare(
                           : allocate();
       copied_ids.emplace(old, id);
       const auto to = prefix + "definitions/" + id + '/';
+      if (!valid_name(id)) throw Failure("invalid_request", "Invalid Card id");
       empty(to);
       empty(prefix + "externals/" + id + '/');
-      const auto patch = CopyDocuments(state, source_paths,
-                                       "definitions/" + old + '/', to);
-      for (const auto& [dir, raw] :
-           json::Object(json::Object(patch.edits_json).at("definitions")))
-        definition(dir, raw);
-      for (const auto& file : patch.files)
-        put(file.to, source_files.at(file.from));
+      for (auto it = contents.files.lower_bound(old + '/');
+           it != contents.files.end() && it->first.starts_with(old + '/'); ++it)
+        put(to + it->first.substr(old.size() + 1), it->second);
       auto position = json::Object(json::Get(positions, old, "{}"));
       double x = next_x, y = 0;
       if (positions.contains(old)) {
@@ -691,28 +690,14 @@ auto Prepare(
     const auto wires = json::Array(json::Get(canvas, "connections", "[]"));
     if (!wires.empty()) copy_wires(wires, copied_ids);
   } else if (const auto* imported = body.AsProjectImport()) {
+    if (!valid_name(imported->id))
+      throw Failure("invalid_request", "Invalid Card id");
     empty(prefix + "definitions/" + imported->id + '/');
     const auto destination = prefix + "externals/" + imported->id + '/';
     empty(destination);
-    // Its layout.bin and notes are one layout view, like every project's.
-    std::map<std::string, LayoutFiles> layouts;
     for (const auto& [path, bytes] :
-         ReadProjectFiles(imported->path, authorize)) {
-      if (path == "layout.bin" || IsExternalDocument(path, "layout.bin")) {
-        layouts[path.substr(0, path.size() - 10)].layout = bytes;
-      } else if (Document::is_note_file(path)) {
-        const auto at = path.substr(0, path.rfind("notes/"));
-        if (const auto note = NoteId(at, path)) layouts[at].notes[*note] = bytes;
-      } else {
-        put(destination + path, bytes);
-      }
-    }
-    try {
-      for (const auto& [at, files] : layouts)
-        put(destination + at + "layout.bin", LayoutView(files.layout, files.notes));
-    } catch (const std::exception&) {
-      throw Failure("invalid_document", "The project's layout.bin is invalid");
-    }
+         ReadLayouts(ReadProjectFiles(imported->path, authorize)))
+      put(destination + path, bytes);
     link(imported->id);
     place(imported->id, imported->x, imported->y);
   } else if (const auto* copy = body.AsProjectCopy()) {
@@ -726,7 +711,7 @@ auto Prepare(
         json::Get(json::Object(layout), "cards", "{}"));
     std::map<std::string, std::string> copied_ids;
     for (const auto& item : copy->items) {
-      if (!valid_id(item->id))
+      if (!valid_name(item->id))
         throw Failure("invalid_request", "invalid copy item");
       const auto to = prefix + "definitions/" + item->id + '/';
       empty(to);
@@ -743,13 +728,13 @@ auto Prepare(
       const bool imported = !item->demo.empty() || !item->folder.empty();
       if (imported) {
         if ((!item->demo.empty() && (!context.demo || !item->folder.empty())) ||
-            copy->copy_connections || !valid_id(item->from))
+            copy->copy_connections || !valid_name(item->from))
           throw Failure("invalid_request",
                         "Choose a source project and a Card id");
         source_root = item->demo.empty() ? std::filesystem::path(item->folder)
                                          : context.demo(item->demo);
-        imported_files = ReadProjectFiles(
-            source_root.string(), item->folder.empty() ? nullptr : authorize);
+        imported_files = ReadLayouts(ReadProjectFiles(
+            source_root.string(), item->folder.empty() ? nullptr : authorize));
         source_paths.clear();
         for (const auto& [path, bytes] : imported_files) {
           (void)bytes;
@@ -763,11 +748,12 @@ auto Prepare(
         throw Failure("not_found", "Card not found");
       std::vector<std::string> closure{from};
       if (!is_external) {
-        const auto external_id = json::Text(
-            json::Object(source_files.at(from + "_card.json")), "external");
-        if (!external_id.empty())
-          closure.push_back(from.substr(0, from.rfind("definitions/")) +
-                            "externals/" + external_id + '/');
+        if (json::Text(json::Object(source_files.at(from + "_card.json")),
+                       "type") == "subgraph") {
+          const auto at = from.rfind("definitions/");
+          closure.push_back(from.substr(0, at) + "externals/" +
+                            from.substr(at + 12));
+        }
       }
       for (const auto& path : source_paths)
         for (const auto& dir : closure)
@@ -814,27 +800,21 @@ auto Prepare(
   } else if (const auto* subgraph = body.AsProjectMakeSubgraph()) {
     const auto nested = MakeSubgraph(project, subgraph->cards, subgraph->id);
     const auto destination = prefix + "externals/" + subgraph->id + '/';
-    if (get(destination + "tsugumi.json") ||
-        get(prefix + "definitions/" + subgraph->id + "/_card.json"))
-      throw Failure("value_conflict", "subgraph destination already exists");
+    empty(destination);
+    empty(prefix + "definitions/" + subgraph->id + '/');
     put(prefix + "tsugumi.json", nested.project_json);
     put(destination + "tsugumi.json",
         PreserveProjectBytes(project, nested.external_json));
     if (const auto lock = get(prefix + "tsugumi.lock"))
       put(destination + "tsugumi.lock", *lock);
-    put(prefix + "definitions/" + subgraph->id + "/_card.json",
-        nested.card_json);
+    link(subgraph->id);
     auto outer_layout = json::Object(read_layout(), layout_path);
     const auto positions = displayed_positions(json::Encode(outer_layout));
     json::Members inner_positions;
-    const auto retained =
-        retained_externals({subgraph->cards.begin(), subgraph->cards.end()});
     std::set<std::string> copied;
     for (const auto& id : subgraph->cards) {
       const auto definition = prefix + "definitions/" + id + '/';
-      const auto target = external_id(id);
-      const auto external =
-          target.empty() ? std::string{} : prefix + "externals/" + target + '/';
+      const auto external = external_tree(id);
       for (const auto& path : paths) {
         if (!path.starts_with(definition) &&
             (external.empty() || !path.starts_with(external)))
@@ -843,8 +823,7 @@ auto Prepare(
         put(destination + path.substr(prefix.size()), required(path));
         // Root definition removal includes its sources. External files and
         // nested definitions use the ordinary concrete source removals.
-        if (path.starts_with(definition) || !retained.contains(target))
-          remove(path);
+        remove(path);
       }
       inner_positions[id] = positions.at(id);
     }
@@ -910,6 +889,8 @@ auto Prepare(
       outer_layout["groups"] = json::Encode(groups);
     put(prefix + "layout.bin", json::Encode(outer_layout));
   } else if (const auto* move = body.AsProjectMove()) {
+    if (!std::ranges::all_of(move->cards, valid_name))
+      throw Failure("invalid_request", "Invalid Card id");
     put(layout_path,
         MoveProjectLayout(project, read_layout(), read_geometry, *move));
   } else if (const auto* layout = body.AsProjectLayout()) {
@@ -1165,6 +1146,8 @@ auto ProjectOperations::Execute(const H::ProjectOperateRequestT& operation,
     throw;
   } catch (const ProjectFailure& failure) {
     throw Failure(failure.code, failure.what());
+  } catch (const DocumentError& failure) {
+    throw Failure("invalid_document", failure.what());
   } catch (const LayoutFailure& failure) {
     throw Failure("invalid_document", failure.what());
   } catch (const std::exception& failure) {

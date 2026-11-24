@@ -57,7 +57,7 @@ TEST(FileMiss, CodeSchemaMissDoesNotClaimCodeHasNoSchemas) {
       DescribeFileMiss(
           "definitions/share/missing",
           {{"definitions",
-            R"([{"id":"share","card_json":"{\"type\":\"code\"}"}])"}},
+            R"([{"id":"share","card_json":"{\"type\":\"code\",\"symbol\":\"chevron.left.forwardslash.chevron.right\",\"inputs\":[],\"maxRuns\":1,\"reuseWorker\":false,\"timeoutSeconds\":0,\"buildTimeoutSeconds\":0,\"recordLogs\":\"project\",\"recordIO\":\"project\",\"sandbox\":{\"filesystem\":true,\"pid\":true,\"ipc\":true,\"identity\":true,\"limits\":{\"cpu\":0,\"memoryMiB\":0}},\"grants\":{\"network\":false,\"gui\":false},\"systems\":[\"aarch64-linux\"],\"workerCapabilities\":[]}"}])"}},
           {})
           .empty());
   // Without a type the Card is not described as any kind.
@@ -83,7 +83,10 @@ TEST(FileMiss, ExternalCardMetadataIsReadAtTheInspectionRevision) {
         EXPECT_EQ(method, "project_file_read");
         EXPECT_EQ(json::Text(args, "path"), root + "_card.json");
         EXPECT_EQ(json::Text(args, "at_rev"), "7");
-        return {{"bytes", json::Quote(R"({"type":"collect"})")}};
+        return {
+            {"bytes",
+             json::Quote(
+                 R"({"type":"collect","symbol":"line.3.horizontal.decrease","maxRuns":1,"recordIO":"project"})")}};
       });
   EXPECT_EQ(reads, 1);
   EXPECT_FALSE(diagnostic.empty());

@@ -1,4 +1,5 @@
 ---
+title: whiten
 description: 白色化とバンドパス
 ---
 

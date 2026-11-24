@@ -1,4 +1,5 @@
 ---
+title: prepare
 description: Make a stratified subset
 ---
 

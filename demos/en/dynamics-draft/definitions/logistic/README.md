@@ -1,8 +1,9 @@
 ---
+title: logistic
 description: Draw the bifurcation diagram of the logistic map
 ---
 
-Takes size from settings. For x_{n+1} = r x_n (1 − x_n), splits r from 2.5 to 4.0 into size values; for each r, starting from x_0=0.5, discards 1000 iterations and plots the next 300 values of x as points on a size×size image with r across and x up, and shows it as a PNG. The range of r and the numbers of iterations are parameters. Asserts that at r=3.2 the values after discarding settle on two values (period 2), and logs those two values. Uses numpy and pillow.
+Uses the size in its params.nix. For x_{n+1} = r x_n (1 − x_n), splits r from 2.5 to 4.0 into size values; for each r, starting from x_0=0.5, discards 1000 iterations and plots the next 300 values of x as points on a size×size image with r across and x up, and shows it as a PNG. The range of r and the numbers of iterations are parameters. Asserts that at r=3.2 the values after discarding settle on two values (period 2), and logs those two values. Uses numpy and pillow.
 
 Planned inputs:
-- settings: size and seed
+- start: the Trigger

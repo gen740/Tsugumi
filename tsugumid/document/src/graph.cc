@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <ranges>
@@ -34,9 +35,8 @@ auto Resolution::endpoint(const CardPath& card, const std::string& port,
 namespace {
 constexpr std::pair<CardType, const char*> kCardTypes[] = {
     {CardType::Code, "code"},         {CardType::Draft, "draft"},
-    {CardType::Trigger, "trigger"},   {CardType::Input, "input"},
-    {CardType::Merge, "merge"},       {CardType::Collect, "collect"},
-    {CardType::Subgraph, "subgraph"},
+    {CardType::Trigger, "trigger"},   {CardType::Merge, "merge"},
+    {CardType::Collect, "collect"},   {CardType::Subgraph, "subgraph"},
 };
 }  // namespace
 
@@ -132,6 +132,14 @@ const Node* Resolution::find(const CardPath& p) const {
   return it == index.end() ? nullptr : &nodes[it->second];
 }
 
+auto run_system(const Settings& settings, std::string_view native)
+    -> std::string {
+  if (settings.systems.empty()) return std::string(native);
+  if (std::ranges::find(settings.systems, native) != settings.systems.end())
+    return std::string(native);
+  return settings.systems.front();
+}
+
 std::vector<Diag> Resolution::all_diagnostics(bool executable) const {
   std::vector<Diag> out = diags;
   for (const auto& n : nodes) {
@@ -172,7 +180,7 @@ class Builder {
     resolve_boundary_types();
     resolve_nix_exports();
     for (auto& node : res_->nodes) {
-      if (node.kind != CardType::Code && node.kind != CardType::Input) continue;
+      if (node.kind != CardType::Code) continue;
       try {
         node.generated_inputs = generated_input_schema(*res_, node);
       } catch (const std::runtime_error& error) {
@@ -192,169 +200,52 @@ class Builder {
     std::string to_port;
   };
 
-  void timeout(Node& n, const char* key, std::optional<uint64_t> v,
-               std::optional<uint64_t>& out) {
-    if (!v) return;
-    if (*v > 0)
-      out = *v;
-    else
-      n.diags.push_back(diag(n.path, "invalid_setting",
-                             std::string(key) + " must be a positive integer"));
-  }
-
   void read_settings(Node& n, const DefinitionDoc* def) {
     auto& s = n.settings;
     s.name = n.path.back();
-    if (!def || def->card().external()) return;
+    if (!def) return;
     const auto& d = def->card();
-    auto boolean = [&](std::optional<bool> v, bool& out) {
-      if (v) out = *v;
+    if (const auto* inputs = d.inputs())
+      for (const auto* input : *inputs)
+        n.inputs.push_back({input->name()->str(), false, nullptr});
+    if (const auto v = d.maxRuns()) s.max_runs = *v;
+    if (const auto v = d.timeoutSeconds(); v && *v) s.timeout_seconds = *v;
+    if (const auto v = d.buildTimeoutSeconds(); v && *v)
+      s.build_timeout_seconds = *v;
+
+    const auto record = [](D::RecordSetting setting, bool project) {
+      return setting == D::RecordSetting::project
+                 ? project
+                 : setting == D::RecordSetting::on;
     };
-    if (const auto* ins = d.inputs(); ins && n.kind != CardType::Draft) {
-      std::set<std::string> seen;
-      for (const auto* in : *ins) {
-        const auto name = in->name()->str();
-        if (!valid_id(name)) {
-          n.diags.push_back(diag(n.path, "invalid_setting",
-                                 "inputs entries need a valid name"));
-          continue;
-        }
-        if (!seen.insert(name).second)
-          n.diags.push_back(
-              diag(n.path, "invalid_setting", "duplicate input " + name));
-        n.inputs.push_back({name, false, nullptr});
-      }
-    }
-    if (const auto v = d.maxRuns()) {
-      if (*v > 0)
-        s.max_runs = *v;
-      else
-        n.diags.push_back(
-            diag(n.path, "invalid_setting",
-                 "maxRuns must be a positive integer (0 is rejected)"));
-    }
-    timeout(n, "timeoutSeconds", d.timeoutSeconds(), s.timeout_seconds);
-    timeout(n, "buildTimeoutSeconds", d.buildTimeoutSeconds(),
-            s.build_timeout_seconds);
-    boolean(d.recordLogs(), s.record_logs);
-    boolean(d.recordIO(), s.record_io);
+    if (const auto v = d.recordLogs())
+      s.record_logs = record(*v, s.record_logs);
+    if (const auto v = d.recordIO()) s.record_io = record(*v, s.record_io);
     if (const auto* sandbox = d.sandbox()) {
-      boolean(sandbox->filesystem(), s.sandbox.filesystem);
-      boolean(sandbox->pid(), s.sandbox.pid);
-      boolean(sandbox->ipc(), s.sandbox.ipc);
-      boolean(sandbox->identity(), s.sandbox.identity);
-      if (const auto* limits = sandbox->limits()) {
-        if (const auto cpu = limits->cpu()) {
-          if (!std::isfinite(*cpu) || *cpu <= 0 || *cpu > 256)
-            n.diags.push_back(
-                diag(n.path, "invalid_setting",
-                     "sandbox.limits.cpu must be in (0, 256] or null"));
-          else
-            s.sandbox.limits.cpu_millis =
-                static_cast<uint32_t>(std::ceil(*cpu * 1000));
-        }
-        if (const auto mib = limits->memoryMiB()) {
-          if (*mib == 0 || *mib > (uint64_t{1} << 20))
-            n.diags.push_back(diag(n.path, "invalid_setting",
-                                   "sandbox.limits.memoryMiB must be a "
-                                   "positive integer up to 1048576 or null"));
-          else
-            s.sandbox.limits.memory_bytes = *mib << 20;
-        }
-      }
+      s.sandbox.filesystem = *sandbox->filesystem();
+      s.sandbox.pid = *sandbox->pid();
+      s.sandbox.ipc = *sandbox->ipc();
+      s.sandbox.identity = *sandbox->identity();
+      s.sandbox.limits.cpu_millis =
+          static_cast<uint32_t>(std::ceil(*sandbox->limits()->cpu() * 1000));
+      s.sandbox.limits.memory_bytes = *sandbox->limits()->memoryMiB() << 20;
     }
-    boolean(d.reuseWorker(), s.reuse_worker);
-    const auto* grants = d.grants();
-    if (grants) {
-      boolean(grants->network(), s.grants.network);
-      boolean(grants->gui(), s.grants.gui);
+    if (const auto v = d.reuseWorker()) s.reuse_worker = *v;
+    if (const auto* grants = d.grants()) {
+      s.grants.network = *grants->network();
+      s.grants.gui = *grants->gui();
+      if (const auto* folders = grants->hostPaths())
+        for (const auto* folder : *folders)
+          s.grants.host_paths.push_back(
+              {folder->path()->str(), folder->name()->str(), *folder->write()});
     }
-    if (const auto* service = d.executionService()) {
-      const auto value = service->str();
-      if (n.kind != CardType::Code)
-        n.diags.push_back(
-            diag(n.path, "invalid_setting",
-                 "executionService is only available on Code Cards"));
-      else if (!valid_id(value))
-        n.diags.push_back(diag(n.path, "invalid_setting",
-                               "executionService must be a valid service ID"));
-      else
-        s.execution_service = value;
-    }
-    if (const auto* condition = d.workerCondition()) {
-      auto compiled = worker_condition::compile(
-          {condition->language()->str(), condition->expression()->str()});
-      if (const auto* diagnostic =
-              std::get_if<worker_condition::Diagnostic>(&compiled))
-        n.diags.push_back(diag(n.path, "invalid_setting",
-                               "workerCondition: " + diagnostic->message +
-                                   " at byte " +
-                                   std::to_string(diagnostic->position)));
-      else
-        s.worker_condition = std::move(
-            std::get<std::unique_ptr<const worker_condition::Condition>>(
-                compiled));
-    }
-    const bool remote = s.execution_service != kLocalExecutionService &&
-                        s.execution_service != "auto";
-    if (const auto* secrets = d.secrets()) {
-      std::set<std::string> names;
-      for (const auto* entry : *secrets) {
-        const auto name = entry->str();
-        if (!valid_secret_name(name)) {
-          n.diags.push_back(diag(n.path, "invalid_setting",
-                                 "secrets entries must match "
-                                 "[a-z][a-z0-9_]{0,63}: " +
-                                     name));
-          continue;
-        }
-        if (!names.insert(name).second) {
-          n.diags.push_back(
-              diag(n.path, "invalid_setting", "duplicate secret " + name));
-          continue;
-        }
-        s.secrets.push_back(name);
-      }
-    }
-    if (const auto* system = d.system()) {
-      const auto value = system->str();
-      if (!remote && value == native_system())
-        s.system.clear();
-      else if (value == "x86_64-linux" || value == "aarch64-linux")
-        s.system = value;
-      else
-        n.diags.push_back(diag(
-            n.path, "invalid_setting",
-            "system must be the native system, x86_64-linux or aarch64-linux"));
-    }
-    const auto* folders = grants ? grants->hostPaths() : nullptr;
-    if (folders) {
-      std::set<std::string> names;
-      for (const auto* f : *folders) {
-        const auto path = f->path()->str();
-        const auto name = f->name()->str();
-        if (path.empty() || path.front() != '/' || !valid_id(name)) {
-          n.diags.push_back(diag(
-              n.path, "invalid_setting",
-              "grants.hostPaths entries need an absolute path and a name"));
-          continue;
-        }
-        if (!names.insert(grant_environment(name)).second) {
-          n.diags.push_back(
-              diag(n.path, "invalid_setting",
-                   "duplicate host path grant variable for " + name));
-          continue;
-        }
-        s.grants.host_paths.push_back({path, name, f->write().value_or(false)});
-      }
-    }
-    if (remote && (!s.sandbox.filesystem || !s.sandbox.pid || s.reuse_worker ||
-                   s.grants.gui || !s.grants.host_paths.empty()))
-      n.diags.push_back(
-          diag(n.path, "invalid_setting",
-               "external execution requires filesystem and PID isolation "
-               "and does not support reuseWorker, GUI or host path grants"));
-    read_params(n);
+    if (const auto* secrets = d.secrets())
+      for (const auto* name : *secrets) s.secrets.push_back(name->str());
+    if (const auto* systems = d.systems())
+      for (const auto* system : *systems) s.systems.push_back(system->str());
+    if (const auto* bits = d.workerCapabilities())
+      for (auto bit : *bits) s.worker_capabilities |= uint64_t{1} << bit;
+    if (n.kind != CardType::Subgraph) read_params(n);
   }
 
   void read_params(Node& n) {
@@ -389,7 +280,7 @@ class Builder {
   void load_catalog(Node& n) {
     std::string rel = n.def_dir + "_outputs.fbs";
     if (!doc_.sources.count(rel)) {
-      if (n.kind == CardType::Code || n.kind == CardType::Input)
+      if (n.kind == CardType::Code)
         n.exec_diags.push_back(
             diag(n.path, "missing_outputs", rel + " is missing", true, rel));
       return;
@@ -429,23 +320,12 @@ class Builder {
 
   // The definition of a Card written in an external project (read as sources).
   const DefinitionDoc* external_definition(Node& n) {
-    auto card = read_(n.def_dir + "_card.json");
-    if (!card) {
-      n.diags.push_back(
-          diag(n.path, "invalid_document", n.def_dir + " needs _card.json"));
-      return nullptr;
-    }
+    const auto path = n.def_dir + "_card.json";
+    const auto& source = doc_.sources.at(path);
+    auto parsed = parse_card_json(n.path.back(), *source.document, path);
     DefinitionDoc d;
-    const std::string& id = n.path.back();
-    try {
-      auto parsed = parse_card_json(id, *card);
-      d.card_buffer = std::move(parsed.buffer);
-      d.card_json = std::move(parsed.text);
-    } catch (const DocumentError& e) {
-      n.diags.push_back(
-          diag(n.path, "invalid_document", e.what(), true, n.def_dir));
-      return nullptr;
-    }
+    d.card_buffer = std::move(parsed.buffer);
+    d.card_json = std::move(parsed.text);
     external_defs_.push_back(std::move(d));
     return &external_defs_.back();
   }
@@ -455,9 +335,8 @@ class Builder {
   void scope(const D::Project& project, const std::string& prefix,
              const CardPath& scope_path, int depth) {
     std::vector<NixPathEntry> sources;
-    if (const auto* list = project.nixPath())
-      for (const auto* entry : *list)
-        sources.push_back({entry->name()->str(), entry->url()->str()});
+    for (const auto* entry : *project.nixPath())
+      sources.push_back({entry->name()->str(), entry->url()->str()});
 
     for (const auto* card : *project.canvas()->cards()) {
       const auto id = card->id()->str();
@@ -479,14 +358,11 @@ class Builder {
       n.kind = def ? card_type_of(*def) : CardType::Draft;
       // The accepted Document owns this resolution. Edits only affect later
       // runs.
-      n.settings.record_logs = project.recordLogs().value_or(true);
-      n.settings.record_io = project.recordIO().value_or(false);
-      n.settings.log_limit_bytes =
-          project.logLimitBytes().value_or(kDefaultLogLimitBytes);
-      n.settings.output_limit_bytes =
-          project.outputLimitBytes().value_or(kDefaultOutputLimitBytes);
-      n.settings.output_limit_entries =
-          project.outputLimitEntries().value_or(kDefaultOutputLimitEntries);
+      n.settings.record_logs = *project.recordLogs();
+      n.settings.record_io = *project.recordIO();
+      n.settings.log_limit_bytes = *project.logLimitBytes();
+      n.settings.output_limit_bytes = *project.outputLimitBytes();
+      n.settings.output_limit_entries = *project.outputLimitEntries();
       read_settings(n, def);
       switch (n.kind) {
         case CardType::Code:
@@ -496,25 +372,12 @@ class Builder {
                                         n.def_dir + "default.nix"));
           load_catalog(n);
           break;
-        case CardType::Input:
-          if (!doc_.sources.count(n.def_dir + "default.nix"))
-            n.exec_diags.push_back(diag(n.path, "missing_nix",
-                                        "default.nix is missing", true,
-                                        n.def_dir + "default.nix"));
-          // A connected start input triggers the Card on arrival.
-          // An unconnected Input Card is a source that fires once per run.
-          n.inputs = {{"start", false, nullptr}};
-          load_catalog(n);
-          break;
         case CardType::Trigger:
           n.outputs.push_back(
               {"out", false, types::empty_type()});
           break;
         case CardType::Merge:
           n.outputs = {{"out", false, nullptr}};
-          if (n.inputs.empty())
-            n.diags.push_back(
-                diag(n.path, "invalid_setting", "merge needs declared inputs"));
           break;
         case CardType::Collect:
           n.inputs = {{"in", false, nullptr}};
@@ -535,37 +398,25 @@ class Builder {
       size_t idx = res_->nodes.size();
       res_->index[path_key(n.path)] = idx;
       CardPath inner_scope = n.path;
-      const auto* link = def ? def->card().external() : nullptr;
+      const bool subgraph = n.is_virtual;
       res_->nodes.push_back(std::move(n));
 
-      if (link) {
-        // A Card in Card: the project externals/<link>/ of this project.
-        std::string ext = prefix + "externals/" + link->str() + "/";
-        res_->nodes[idx].external = ext;
-        auto text = read_(ext + "tsugumi.json");
-        if (!text) {
-          res_->nodes[idx].diags.push_back(diag(
-              inner_scope, "unknown_external",
-              ext + " is not a Tsugumi project (no tsugumi.json)", true, ext));
-        } else if (depth >= 15) {
+      if (subgraph) {
+        const auto ext = prefix + "externals/" + id + "/";
+        if (depth >= 15) {
           res_->nodes[idx].diags.push_back(
               diag(inner_scope, "invalid_graph",
                    "Card in Card nesting deeper than 15", true, ext));
         } else {
-          try {
-            projects_.push_back(
-                parse_external_project(ext + "tsugumi.json", *text).buffer);
-            const auto& inner =
-                document_text::root<D::Project>(projects_.back());
-            if (const auto* b = inner.boundary())
-              res_->nodes[idx].boundary =
-                  *std::unique_ptr<D::BoundaryT>(b->UnPack());
-            scope(inner, ext, inner_scope, depth + 1);
-          } catch (const DocumentError& e) {
-            res_->nodes[idx].diags.push_back(diag(inner_scope, "invalid_graph",
-                                                  e.what(), true,
-                                                  ext + "tsugumi.json"));
-          }
+          const auto path = ext + "tsugumi.json";
+          const auto& source = doc_.sources.at(path);
+          projects_.push_back(
+              parse_external_project(path, *source.document).buffer);
+          const auto& inner = document_text::root<D::Project>(projects_.back());
+          if (const auto* b = inner.boundary())
+            res_->nodes[idx].boundary =
+                *std::unique_ptr<D::BoundaryT>(b->UnPack());
+          scope(inner, ext, inner_scope, depth + 1);
         }
       }
     }
@@ -573,9 +424,9 @@ class Builder {
       RawEdge e;
       e.scope = scope_path;
       e.from = c->from()->card()->str();
-      e.from_port = c->from()->port()->str();
+      e.from_port = c->from()->port() ? c->from()->port()->str() : "";
       e.to = c->to()->card()->str();
-      e.to_port = c->to()->port()->str();
+      e.to_port = c->to()->port() ? c->to()->port()->str() : "";
       raw_.push_back(std::move(e));
     }
   }
@@ -803,32 +654,90 @@ class Builder {
     };
     for (auto node : order | std::views::reverse) assign(assign, node, node);
 
-    const auto normal = [](CardType kind) {
-      // TODO(open): exports across Merge, Collect, and Draft Cards.
-      return kind == CardType::Code || kind == CardType::Input ||
-             kind == CardType::Trigger;
+    // What a Card shows to a Card wired from it at the same level:
+    // inputs.<name> -> the Cards whose exports are merged under that name.
+    using Exposed = std::map<std::string, std::set<CardPath>>;
+    std::vector<Exposed> exposed(count);
+    // The Cards whose exports a Card stands for when it feeds a subgraph's
+    // boundary output.
+    std::vector<std::set<CardPath>> own(count);
+    const auto same_level = [](const Node& a, const Node& b) {
+      return a.project_dir == b.project_dir && a.path.size() == b.path.size() &&
+             std::equal(a.path.begin(), a.path.end() - 1, b.path.begin());
+    };
+    // What one wire from source carries to node. A feedback wire carries
+    // nothing. A wire out of a subgraph carries inputs.<subgraph Card id>
+    // with the exports of the inner Card; inner ids never appear outside, and
+    // Cards inside a subgraph get nothing from outside it.
+    const auto carried = [&](size_t index, size_t source) -> Exposed {
+      if (component[index] == component[source]) return {};
+      const auto& node = res_->nodes[index];
+      const auto& producer = res_->nodes[source];
+      if (same_level(producer, node)) return exposed[source];
+      const auto level = node.path.size() - 1;
+      if (producer.path.size() <= node.path.size() ||
+          !std::equal(node.path.begin(), node.path.end() - 1,
+                      producer.path.begin()) ||
+          own[source].empty())
+        return {};
+      return {{producer.path[level], own[source]}};
     };
     for (auto index : order | std::views::reverse) {
       auto& node = res_->nodes[index];
-      if (!normal(node.kind)) continue;
-      std::map<std::string, CardPath> exports;
+      std::vector<Exposed> wires;
+      std::vector<std::set<CardPath>> owns;
       for (const auto& [_, source] : res_->incoming[index]) {
-        const auto& producer = res_->nodes[source];
-        if (!normal(producer.kind)) continue;
-        // TODO(open): exports across feedback wires.
-        if (component[index] == component[source]) continue;
-        // TODO(open): exports across nested and external Card boundaries.
-        if (producer.project_dir != node.project_dir ||
-            producer.path.size() != node.path.size() ||
-            !std::equal(producer.path.begin(), producer.path.end() - 1,
-                        node.path.begin()))
-          continue;
-        exports.emplace(producer.path.back(), producer.path);
-        for (const auto& ref : producer.nix_references)
-          exports.emplace(ref.name, ref.target);
+        wires.push_back(carried(index, source));
+        owns.push_back(component[index] == component[source]
+                           ? std::set<CardPath>{}
+                           : own[source]);
       }
-      for (auto& [id, target] : exports)
-        node.nix_references.push_back({std::move(target), id});
+      switch (node.kind) {
+        case CardType::Code:
+        case CardType::Trigger: {
+          Exposed references;
+          for (auto& wire : wires)
+            for (auto& [name, targets] : wire)
+              references[name].insert(targets.begin(), targets.end());
+          for (const auto& [name, targets] : references)
+            for (const auto& target : targets)
+              node.nix_references.push_back({target, name});
+          exposed[index] = std::move(references);
+          exposed[index][node.path.back()] = {node.path};
+          own[index] = {node.path};
+          break;
+        }
+        case CardType::Merge: {
+          // Only what every input exposes, under the same name and Cards.
+          for (size_t i = 0; i < wires.size(); ++i) {
+            if (i == 0) {
+              exposed[index] = wires[i];
+              own[index] = owns[i];
+              continue;
+            }
+            std::erase_if(exposed[index], [&](const auto& entry) {
+              const auto it = wires[i].find(entry.first);
+              return it == wires[i].end() || it->second != entry.second;
+            });
+            std::set<CardPath> common;
+            std::ranges::set_intersection(own[index], owns[i],
+                                          std::inserter(common, common.end()));
+            own[index] = std::move(common);
+          }
+          break;
+        }
+        case CardType::Collect:
+          // The exports of the Card it collects from.
+          for (size_t i = 0; i < wires.size(); ++i) {
+            for (auto& [name, targets] : wires[i])
+              exposed[index][name].insert(targets.begin(), targets.end());
+            own[index].insert(owns[i].begin(), owns[i].end());
+          }
+          break;
+        default:
+          // Drafts expose nothing; a subgraph's wires end on its inner Cards.
+          break;
+      }
     }
   }
 

@@ -1,3 +1,7 @@
+import { validWorkerBits } from '../../shared/workerBits'
+import { CARD_SYSTEMS, implementedCard, recordSettings } from '../model/cardFields'
+import { nextInputName, validName } from '../model/names'
+import { WorkerBitsEditor } from './workerBits'
 // Card settings: a local working copy of one Card's settings (its
 // `_card.json`), metadata and sources. Nothing reaches the project until
 // "Apply". Every Card has its own definition folder, so what is edited here is
@@ -14,7 +18,7 @@ import { prefs } from '../model/prefs'
 import { portTypeName, CardComment, CardKey, CardParameter, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parameterInputLiteral, path, PortInfo, ProjectSession } from '../model/session'
 import { CardEditorCategory, CATEGORY } from '../model/workspace'
 import { BFBS } from '../../shared/bfbs'
-import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, serialize, str } from '../../shared/json'
+import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, num, numText, obj, serialize, str } from '../../shared/json'
 import { D, R, RPCFailure, s, sOpt, sha256Hex } from '../wire/rpc'
 import { CardNodeView } from './cardNode'
 import { Button, Confirm, Disclosure, Empty, Form, HSplit, Prompt, Row, Section, Select, showMenu, Spinner, TextField, Toggle, Value } from './controls'
@@ -36,7 +40,6 @@ export type SourceLoad = { state: 'loading' } | { state: 'loaded' } | { state: '
  *  is open (the Agent, the canvas): settings and files not touched here take
  *  the new content; changes on both sides require an explicit overwrite or
  *  reload choice. */
-const inputParameters = (boolean: boolean) => `{ value = ${boolean ? 'false' : '0.0'}; }\n`
 
 export class CardEditorModel extends Observable {
   definition?: J
@@ -64,7 +67,6 @@ export class CardEditorModel extends Observable {
   private baseDefinition?: J
   private baseMeta?: J
   private baseTexts = new Map<string, string>()
-  private presetFiles = new Map<string, string>()
   /** Source hash when each file was read. */
   private baseHashes = new Map<string, string>()
 
@@ -77,9 +79,22 @@ export class CardEditorModel extends Observable {
   get definitionId(): string | undefined {
     return path(this.cardKey).pop()
   }
-  get kind() {
-    return this.session.kind(this.cardKey) === 'subgraph' ? 'subgraph' : definitionKind(this.definition)
+  get kind() { return definitionKind(this.definition) }
+  get systems(): string[] {
+    return (arr(get(this.definition, 'systems')) ?? []).map(system => str(system) ?? '')
   }
+
+  setSystemEnabled(system: string, enabled: boolean) {
+    const systems = this.systems
+    if (enabled && !systems.includes(system)) this.setSetting('systems', [...systems, system])
+    if (!enabled && systems.length > 1) this.setSetting('systems', systems.filter(value => value !== system))
+  }
+
+  setEmulationFallback(system: string) {
+    const systems = this.systems
+    if (systems.includes(system)) this.setSetting('systems', [system, ...systems.filter(value => value !== system)])
+  }
+
   get exists() {
     return this.session.instance(this.cardKey) !== undefined
   }
@@ -94,56 +109,30 @@ export class CardEditorModel extends Observable {
 
   rebindings = new Map<string, string>()
 
-  /** Incident wires and boundary ends; every choice starts empty. */
+  /** Incident wires; every choice starts empty. */
   get draftEnds() {
     if (this.session.kind(this.cardKey) !== 'draft' || this.kind === 'draft') return []
     const scope = path(this.cardKey).slice(0, -1), id = path(this.cardKey).pop()
-    const ends: { id: string; label: string; side: string; index?: number; boundary?: string }[] = []
+    const ends: { id: string; label: string; side: string; index: number }[] = []
     this.session.connections(scope).forEach((c, index) => {
       for (const side of ['from', 'to']) if (str(get(c, side, 'card')) === id) {
-        const label = `${str(get(c, 'from', 'card'))}.${str(get(c, 'from', 'port'))} → ${str(get(c, 'to', 'card'))}.${str(get(c, 'to', 'port'))}`
+        const endpoint = (side: string) => [str(get(c, side, 'card')), str(get(c, side, 'port'))].filter(Boolean).join('.')
+        const label = `${endpoint('from')} → ${endpoint('to')}`
         ends.push({ id: `${index}:${side}:${serialize(c, false)}`, label, side, index })
       }
     })
-    const boundary = scope.length ? this.session.boundary(key(scope)) : undefined
-    for (const side of ['inputs', 'outputs']) {
-      const ports = get(boundary, side)
-      if (isObj(ports)) for (const [name, ep] of ports.entries()) if (str(get(ep, 'card')) === id)
-        ends.push({ id: `${side}:${name}:${serialize(ep, false)}`, label: `${side}.${name} → ${id}`, side, boundary: name })
-    }
     return ends
   }
 
-  get implementation() {
-    const kind = definitionKind(this.definition)
-    if (kind === 'input' && (this.presetFiles.get(this.prefix + 'params.nix') === inputParameters(true) ||
-      this.session.resolution.get(this.cardKey)?.parameters?.some(p => p.name === 'value' && p.type === 'bool'))) return 'input_bool'
-    return kind
-  }
+  get implementation() { return definitionKind(this.definition) }
 
   implementAs(value: string) {
-    if (value === 'input' || value === 'input_bool') {
-      const type = value === 'input_bool' ? 'bool' : 'double'
-      this.definition = obj([['type', 'input']])
-      this.preset('_outputs.fbs', `namespace card;\ntable Value { value:${type}; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n`)
-      this.preset('params.nix', inputParameters(value === 'input_bool'))
-    } else {
-      this.definition = obj([['type', value]])
-      for (const [file, text] of this.presetFiles)
-        if (this.created.has(file) && this.texts.get(file) === text) this.removeFile(file)
-      this.presetFiles.clear()
-    }
-    if (value === 'merge') this.setSetting('inputs', [obj([['name', 'a']]), obj([['name', 'b']])])
+    const kind = value as keyof typeof KIND_ICON
+    const native = s(this.session.executionServices.find(service => s(service.id) === 'local')?.nativeSystem)
+    const symbol = str(get(this.definition, 'symbol')) ?? 'none'
+    const system = native.replace(/-darwin$/, '-linux')
+    this.definition = implementedCard(kind, symbol, CARD_SYSTEMS.includes(system) ? [system] : [])
     this.changed()
-  }
-
-  private preset(relative: string, text: string) {
-    const file = this.prefix + relative
-    if (!this.prefix || this.session.sources.has(file) || this.removed.has(file)) return
-    const untouched = this.created.has(file) && this.presetFiles.has(file) && this.texts.get(file) === this.presetFiles.get(file)
-    if (!untouched && (this.created.has(file) || this.texts.has(file))) return
-    this.createFile(relative, text)
-    this.presetFiles.set(file, text)
   }
 
   /** Source files of the definition (documents excluded), with local changes. */
@@ -175,7 +164,6 @@ export class CardEditorModel extends Observable {
     this.baseMeta = clone(this.meta)
     this.texts = new Map()
     this.baseTexts = new Map()
-    this.presetFiles.clear()
     this.baseHashes = new Map()
     this.loads = new Map()
     for (const [p, t] of keep) {
@@ -307,7 +295,6 @@ export class CardEditorModel extends Observable {
     const prefix = this.prefix
     if (!prefix || !rel) return
     const p = prefix + rel
-    if (!this.created.has(p)) this.presetFiles.delete(p)
     this.removed.delete(p)
     this.created.add(p)
     const hash = this.session.sources.get(p)?.hash
@@ -321,8 +308,6 @@ export class CardEditorModel extends Observable {
   async rename(p: string, rel: string): Promise<boolean> {
     const target = this.prefix + rel
     if (target === p) return true
-    this.presetFiles.delete(p)
-    this.presetFiles.delete(target)
     const origin = this.renames.get(p) ?? p
     const hash = this.baseHashes.get(p) ?? this.session.sources.get(origin)?.hash
     const text = this.texts.get(p), base = this.baseTexts.get(p), load = this.loads.get(p)
@@ -385,8 +370,39 @@ export class CardEditorModel extends Observable {
     this.applying = true
     this.changed()
     const ends = this.draftEnds
-    if (ends.some(e => !this.rebindings.get(e.id)?.trim())) {
+    if (ends.some(e => !validName(this.rebindings.get(e.id) ?? ''))) {
       this.message = L('各 wire の実ポート名を指定してください（ポート欄）。')
+      this.applying = false
+      this.changed()
+      return false
+    }
+    const inputNames = (arr(get(this.definition, 'inputs')) ?? []).map(input => str(get(input, 'name')) ?? '')
+    const title = str(get(this.meta, 'title'))
+    const secrets = arr(get(this.definition, 'secrets')) ?? []
+    const definition = this.definition
+    const executable = this.kind === 'code'
+    const hasMaxRuns = executable || this.kind === 'merge' || this.kind === 'collect'
+    const limits = get(definition, 'sandbox', 'limits')
+    const uint = (value: J | undefined, min = 0n, max = 18446744073709551615n) => {
+      const text = numText(value)
+      return text !== undefined && /^\d+$/.test(text) && BigInt(text) >= min && BigInt(text) <= max
+    }
+    const cpu = Number(numText(get(limits, 'cpu')))
+    const invalidNumber = hasMaxRuns && !uint(get(definition, 'maxRuns'), 1n)
+      || executable && (!uint(get(definition, 'timeoutSeconds')) || !uint(get(definition, 'buildTimeoutSeconds'))
+        || !(cpu >= 0 && cpu <= 256) || !uint(get(limits, 'memoryMiB'), 0n, 1048576n))
+    const bits = (arr(get(definition, 'workerCapabilities')) ?? []).map(bit => Number(numText(bit)))
+    const systems = this.systems
+    const error = title !== undefined && !title.trim() ? L('Card 名を入力してください。')
+      : inputNames.some(name => !validName(name)) || new Set(inputNames).size !== inputNames.length || this.kind === 'merge' && !inputNames.length ? L('有効な入力ポート名を指定してください。')
+      : secrets.some(name => !validName(str(name) ?? '')) ? L('有効なシークレット名を指定してください。')
+      : executable && (!systems.length || new Set(systems).size !== systems.length ||
+        systems.some(system => !CARD_SYSTEMS.includes(system))) ? L('対応システムを重複なしで 1 つ以上選択してください。')
+      : executable && !validWorkerBits(bits) ? L('ワーカーのビットは 0〜63 の範囲で重複なしに指定してください。')
+      : invalidNumber ? L('設定の数値を有効な範囲で入力してください。')
+      : undefined
+    if (error) {
+      this.message = error
       this.applying = false
       this.changed()
       return false
@@ -421,20 +437,13 @@ export class CardEditorModel extends Observable {
       }
       x.appendEdits(edits)
       const scope = path(k).slice(0, -1)
-      if (ends.some(e => e.index !== undefined)) x.updateGraph(scope, g => {
+      if (ends.length) x.updateGraph(scope, g => {
         const conns = arr(g.get('connections')) ?? []
-        for (const e of ends) if (e.index !== undefined) {
+        for (const e of ends) {
           const ep = get(conns[e.index], e.side)
           if (isObj(ep)) ep.set('port', bindings.get(e.id)!.trim())
         }
       })
-      if (ends.some(e => e.boundary !== undefined)) x.updateExternal(x.projectPrefix(scope)!, ext => {
-        for (const e of ends) if (e.boundary !== undefined) {
-          const ep = arr(get(ext.project, 'boundary', e.side))?.find(port => str(get(port, 'name')) === e.boundary)
-          if (isObj(ep)) ep.set('port', bindings.get(e.id)!.trim())
-        }
-      })
-
     })
     if (!ok) { this.applying = false; this.changed(); return false }
     const laterDef = clone(this.definition), laterMeta = clone(this.meta)
@@ -479,7 +488,6 @@ export class CardEditorModel extends Observable {
 function categories(m: CardEditorModel): CardEditorCategory[] {
   switch (m.kind) {
     case 'code': return ['general', 'source', 'ports', 'log', 'dependencies', 'executions', 'artifacts', 'notes']
-    case 'input': return ['general', 'source', 'ports', 'log', 'executions', 'artifacts', 'notes']
     case 'draft': case 'invalid': return ['general', 'notes']
     case 'subgraph': return ['general', 'ports', 'executions', 'notes']
     default: return ['general', 'ports', 'log', 'executions', 'artifacts', 'notes']
@@ -629,90 +637,57 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
   // This tsugumid runs on this host: without the sandbox a Card is a process
   // of the user's, so turning it off is the user's knowing choice.
   const [confirmSandboxOff, setConfirmSandboxOff] = useState(false)
-  const string = (n: string, fallback?: string) => ({
-    value: str(get(def, n)) ?? fallback ?? '',
-    onChange: (v: string) => model.setSetting(n, !v || v === fallback ? undefined : v),
-  })
-  // A Card's intent is in its README.md.
-  const metaString = (n: string) => ({
-    value: str(get(model.meta, n)) ?? '',
-    onChange: (v: string) => model.update((x) => {
+  const metaString = (name: string) => ({
+    value: str(get(model.meta, name)) ?? '',
+    onChange: (value: string) => model.update((x) => {
       const meta: JObj = isObj(x.meta) ? x.meta : obj()
-      meta.set(n, v || undefined)
+      if (name !== 'title' && !str(meta.get('title'))) meta.set('title', session.displayName(model.cardKey))
+      meta.set(name, value)
       x.meta = meta
     }),
   })
-  const toggle = (n: string, label: string, fallback: boolean, help?: string, disabled = false) => (
+  const numberField = (name: string, label: string, help: string) => (
     <Row label={label} help={help}>
-      <Toggle checked={bool(get(def, n)) ?? fallback} disabled={disabled} onChange={(v) => model.setSetting(n, v === fallback ? undefined : v)} />
-    </Row>
-  )
-  const numberField = (n: string, label: string, fallback: string, help?: string) => (
-    <Row label={label} help={help}>
-      <TextField value={numText(get(def, n)) ?? str(get(def, n)) ?? ''} placeholder={fallback} style={{ width: 140 }}
-        onChange={(v) => {
-          const t = v.trim()
-          // The core reports non-numbers.
-          model.setSetting(n, !t ? undefined : /^[0-9]+$/.test(t) ? new JNum(t) : t)
-        }} />
-    </Row>
-  )
-  const timeoutField = (n: string, label: string) => (
-    <Row label={label}>
-      <TextField value={get(def, n) === null ? '' : numText(get(def, n)) ?? ''} placeholder={L('無期限')} style={{ width: 140 }}
-        onChange={(v) => model.setSetting(n, v.trim() ? new JNum(v.trim()) : undefined)} />
+      <TextField value={numText(get(def, name)) ?? str(get(def, name)) ?? ''} style={{ width: 140 }}
+        onChange={value => model.setSetting(name, cardNumber(value))} />
     </Row>
   )
   const kind = model.kind
+  const executable = kind === 'code'
+  const hasMaxRuns = executable || kind === 'merge' || kind === 'collect'
   const params = kind === session.kind(model.cardKey) ? session.resolution.get(model.cardKey)?.parameters ?? [] : []
   const diags = session.diagnostics.filter(d => d.card?.join('/') === model.cardKey)
-  const serviceSetting = string('executionService', 'auto')
-  const serviceId = serviceSetting.value
-  const service = session.executionServices.find((e) => s(e.id) === serviceId)
-  const nativeSystem = s(service?.nativeSystem)
-  const systems = service?.systems.map(s) ?? []
-  const system = string('system', '')
-  const unavailable = !!system.value && !systems.includes(system.value)
-  const serviceLabel = (entry: typeof service) => {
-    if (!entry) return session.executionServices.length ? serviceId : L('情報なし')
-    const id = s(entry.id), native = s(entry.nativeSystem)
-    if (id !== 'local') return entry.available ? id : L('{0}（接続未確認）', id)
-    if (native.endsWith('-linux')) return `Linux (${native})`
-    if (native.endsWith('-darwin')) return `macOS (${native})`
-    return id
-  }
+  const systems = model.systems
   const sandbox = get(def, 'sandbox')
   const grants = get(def, 'grants')
   const limits = get(sandbox, 'limits')
-  const setSandbox = (key: string, value: J | undefined) => {
+  const setSandbox = (key: string, value: J) => {
     const next = isObj(sandbox) ? clone(sandbox) as JObj : obj()
     next.set(key, value)
-    model.setSetting('sandbox', next.size ? next : undefined)
+    model.setSetting('sandbox', next)
   }
-  const resourceLimits = serviceId === 'auto' || service?.resourceLimits === true
-  const resource = (name: string, label: string, example: string) => (
-    <Row label={label}>
-      <TextField name={name} value={numText(get(limits, name)) ?? str(get(limits, name)) ?? ''} placeholder={example} style={{ width: 140 }}
+  const resource = (name: string, label: string) => (
+    <Row label={label} help={L('0 = 上限なし')}>
+      <TextField name={name} value={numText(get(limits, name)) ?? str(get(limits, name)) ?? ''} style={{ width: 140 }}
         onChange={(value) => {
-          const text = value.trim()
           const next = isObj(limits) ? clone(limits) as JObj : obj()
-          const number = name === 'cpu' ? /^[0-9]+(?:\.[0-9]+)?$/ : /^[0-9]+$/
-          next.set(name, !text ? undefined : number.test(text) ? new JNum(text.replace(/^0+(?=\d)/, '')) : text)
-          setSandbox('limits', next.size ? next : undefined)
+          next.set(name, cardNumber(value, name === 'cpu'))
+          setSandbox('limits', next)
         }} />
     </Row>
   )
   return (
     <Form>
       <Section>
-        <Value label="ID" value={session.displayName(model.cardKey)} />
+        <Value label="ID" value={path(model.cardKey).at(-1) ?? model.cardKey} />
         <Value label={L('種類')} value={KIND_LABEL[kind]} />
         {def !== undefined && (
           <Row label={L('アイコン')}>
-            <SymbolPicker symbol={str(get(def, 'symbol')) || undefined} inherited={KIND_ICON[kind]}
+            <SymbolPicker symbol={str(get(def, 'symbol')) ?? 'none'} defaultIcon={KIND_ICON[kind]}
               onChange={(v) => model.setSetting('symbol', v)} />
           </Row>
         )}
+        <Row label={L('Card 名')}><TextField {...metaString('title')} /></Row>
         <Row label={L('概要')}>
           <TextField {...metaString('description')} multiline rows={2} style={{ width: '100%', minHeight: 38, maxHeight: 90 }} />
         </Row>
@@ -724,100 +699,82 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
       </Section>
       {model.session.kind(model.cardKey) === 'draft' && <Section title={L('Draft を手動で実装')} footer={L('定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。')}>
         <Row label={L('種類')}><Select value={model.implementation} onChange={v => model.implementAs(v)} options={
-          ['draft', 'code', 'input', 'input_bool', 'trigger', 'merge', 'collect']
-            .map(value => ({ value, label: value === 'input_bool' ? L('真偽値の入力') : value === 'code' ? L('コード') : value }))
+          ['draft', 'code', 'trigger', 'merge', 'collect']
+            .map(value => ({ value, label: value === 'code' ? L('コード') : value }))
         } /></Row>
       </Section>}
       {params.length > 0 && <Section title={L('パラメータ')}>
         {params.map(parameter => <ParamRow key={parameter.name} model={model} parameter={parameter} />)}
       </Section>}
-      {kind !== 'subgraph' && kind !== 'draft' && kind !== 'invalid' && (
+      {hasMaxRuns && (
         <Section title={L('実行')}>
-          {numberField('maxRuns', L('最大発火回数'), '1', L('実行リスト内の呼び出しはまとめて 1 回の発火として数えます。'))}
-          {timeoutField('timeoutSeconds', L('実行の期限（秒）'))}
-          {kind === 'code' && (
-            <>
-              {timeoutField('buildTimeoutSeconds', L('ビルドの期限（秒）'))}
-              <Row label={L('ワーカーの条件式')} help={L('x はワーカーの grade です。例: x > 1、x & 0x10 != 0。空欄はすべての値を許可します。')}>
-                <TextField value={str(get(get(def, 'workerCondition'), 'expression')) ?? ''} mono onChange={(value) => model.setSetting('workerCondition', value.trim() ? obj([['language', 'simple'], ['expression', value]]) : undefined)} />
+          {numberField('maxRuns', L('最大発火回数'), L('実行リスト内の呼び出しはまとめて 1 回の発火として数えます。'))}
+          {executable && <>
+            {numberField('timeoutSeconds', L('実行の期限（秒）'), L('0 = 上限なし'))}
+            {numberField('buildTimeoutSeconds', L('ビルドの期限（秒）'), L('0 = 上限なし'))}
+            <Row label={L('対応システム')}>
+              <div className="col gap6">
+                {CARD_SYSTEMS.map(system => (
+                  <Toggle key={system} kind="checkbox" label={system} checked={systems.includes(system)}
+                    disabled={systems.length === 1 && systems[0] === system}
+                    onChange={enabled => model.setSystemEnabled(system, enabled)} />
+                ))}
+                <span className="caption secondary">{L('対応するワーカーはネイティブで実行し、それ以外は先頭のシステムをエミュレートします。')}</span>
+              </div>
+            </Row>
+            {systems.length > 0 && <Row label={L('エミュレーション時のシステム')}>
+              <Select value={systems[0]} onChange={value => model.setEmulationFallback(value)}
+                options={systems.map(value => ({ value, label: value }))} />
+            </Row>}
+            <Row label={L('ワーカーの必須ビット')} help={L('指定したすべてのビットを持つワーカーで実行します。')}>
+              <WorkerBitsEditor bits={(arr(get(def, 'workerCapabilities')) ?? []).map(bit => Number(numText(bit)))}
+                onChange={bits => model.setSetting('workerCapabilities', bits.map(num))} />
+            </Row>
+            {session.environment.state === 'ready' && session.environment.executionScopeUnavailable && (
+              <Row><span className="caption">{L('このプロジェクトのフォルダで作成時刻を取得できないため、外部の実行サービスを使用できません。')}</span></Row>
+            )}
+            <Row label={L('worker の状態を残す')}
+              help={L('オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。')}>
+              <Toggle checked={bool(get(def, 'reuseWorker'))!} onChange={value => model.setSetting('reuseWorker', value)} />
+            </Row>
+            {resource('cpu', L('CPU 上限（コア）'))}
+            {resource('memoryMiB', L('メモリ上限（MiB）'))}
+            <Row label={L('ファイルアクセスを制限')}>
+              <Toggle checked={bool(get(sandbox, 'filesystem'))!}
+                onChange={value => value ? setSandbox('filesystem', true) : setConfirmSandboxOff(true)} />
+            </Row>
+            {([
+              ['pid', L('PID 名前空間を分離')],
+              ['ipc', L('IPC 名前空間を分離')],
+              ['identity', L('実行ユーザーと権限を分離')],
+            ] as const).map(([key, label]) => (
+              <Row key={key} label={label}>
+                <Toggle checked={bool(get(sandbox, key))!} onChange={value => setSandbox(key, value)} />
               </Row>
-              {session.executionServices.length > 1 || !service && session.executionServices.length ? (
-                <Row label={L('実行サービス')}>
-                  <Select {...serviceSetting} options={[
-                    { value: 'auto', label: L('条件から自動選択') },
-                    ...session.executionServices.map((entry) => ({ value: s(entry.id), label: serviceLabel(entry), disabled: !entry.available })),
-                    ...(!service && serviceId !== 'auto' ? [{ value: serviceId, label: serviceId, disabled: true }] : []),
-                  ]} />
-                </Row>
-              ) : <Value label={L('実行サービス')} value={serviceLabel(service)} />}
-              {session.environment.state === 'ready' && session.environment.executionScopeUnavailable && (
-                <Row><span className="caption">{L('このプロジェクトのフォルダで作成時刻を取得できないため、外部の実行サービスを使用できません。')}</span></Row>
-              )}
-              {serviceId !== 'local' && serviceId !== 'auto' && (!service || !service.available) && (
-                <Row><span className="caption">{L('選択した実行サービスに接続できません。')}</span></Row>
-              )}
-              <Row label={L('CPU アーキテクチャ')} help={L('選択した実行サービスで利用できる CPU アーキテクチャを選びます。')}>
-                <Select {...system} options={[
-                  { value: '', label: nativeSystem ? L('この実行環境の既定（{0}）', nativeSystem) : L('この実行環境の既定') },
-                  ...systems.map((value) => ({ value, label: value })),
-                  ...(unavailable ? [{ value: system.value, label: system.value, disabled: true }] : []),
-                ]} />
-              </Row>
-              {service && unavailable && (
-                <Row><span className="label caption"><Icon name="exclamationmark.triangle" />{L('この実行環境では {0} を実行できません。', system.value)}</span></Row>
-              )}
-              {resourceLimits && <>
-                <Row><span className="caption secondary">{L('CPU とメモリの上限を指定します。実行先のリソースは他のジョブと共有します。')}</span></Row>
-                {resource('cpu', L('CPU 上限（コア）'), '0.5')}
-                {resource('memoryMiB', L('メモリ上限（MiB）'), '1024')}
-              </>}
-              {limits !== undefined && <Row>
-                {!resourceLimits && <span className="caption">{L('この実行サービスではリソースを指定できません。')}</span>}
-                <Button kind="borderless" onClick={() => setSandbox('limits', undefined)}>{L('リソース指定を削除')}</Button>
-              </Row>}
-              {toggle('reuseWorker', L('worker の状態を残す'), false,
-                L('オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。'),
-                serviceId !== 'local' && serviceId !== 'auto' && bool(get(def, 'reuseWorker')) !== true)}
-              {serviceId !== 'local' && serviceId !== 'auto' && bool(get(def, 'reuseWorker')) === true && (
-                <Row><span className="caption">{L('外部の実行サービスでは worker の状態を残せません。')}</span></Row>
-              )}
-              <Row label={L('ファイルアクセスを制限')}>
-                <Toggle checked={bool(get(sandbox, 'filesystem')) ?? true} disabled={serviceId !== 'local' && serviceId !== 'auto' && bool(get(sandbox, 'filesystem')) !== false}
-                  onChange={(v) => (v ? setSandbox('filesystem', undefined) : setConfirmSandboxOff(true))} />
-              </Row>
-              {serviceId !== 'local' && serviceId !== 'auto' && bool(get(sandbox, 'filesystem')) === false && (
-                <Row><span className="caption">{L('外部の実行サービスにはファイルアクセスの制限が必要です。')}</span></Row>
-              )}
-              {([
-                ['pid', L('PID 名前空間を分離')],
-                ['ipc', L('IPC 名前空間を分離')],
-                ['identity', L('実行ユーザーと権限を分離')],
-              ] as const).map(([key, label]) => (
-                <Row key={key} label={label}>
-                  <Toggle checked={bool(get(sandbox, key)) ?? true} onChange={(v) => setSandbox(key, v ? undefined : false)} />
-                </Row>
-              ))}
-              {confirmSandboxOff && (
-                <Confirm title={L('この Card のファイルアクセス制限を解除しますか？')} confirm={L('制限を解除する')}
-                  message={L('アクセスできる範囲は実行環境の権限と共有フォルダに依存します。ネットワーク制限も実行環境によっては無効になります。')}
-                  onConfirm={() => { setConfirmSandboxOff(false); setSandbox('filesystem', false) }} onCancel={() => setConfirmSandboxOff(false)} />
-              )}
-            </>
-          )}
+            ))}
+            {confirmSandboxOff && (
+              <Confirm title={L('この Card のファイルアクセス制限を解除しますか？')} confirm={L('制限を解除する')}
+                message={L('アクセスできる範囲は実行環境の権限と共有フォルダに依存します。ネットワーク制限も実行環境によっては無効になります。')}
+                onConfirm={() => { setConfirmSandboxOff(false); setSandbox('filesystem', false) }} onCancel={() => setConfirmSandboxOff(false)} />
+            )}
+          </>}
         </Section>
       )}
-      {kind === 'code' && (
+      {executable && (
         <Section title={L('アクセス許可')}>
           {([
             ['network', L('ネットワークへのアクセスを許可する')],
             ['gui', L('GUI へのアクセスを許可する')],
           ] as const).map(([key, label]) => (
             <Row key={key} label={label}>
-              <Toggle checked={bool(get(grants, key)) ?? false}
-                onChange={(v) => setGrant(model, key, v ? true : undefined)} />
+              <Toggle checked={bool(get(grants, key))!} onChange={value => setGrant(model, key, value)} />
             </Row>
           ))}
-          <Row><HostFoldersEditor model={model} remote={serviceId !== 'local' && serviceId !== 'auto'} /></Row>
+          <Row><HostFoldersEditor model={model} /></Row>
+          <Row label={L('Card シークレット')} help={L('シークレット名を 1 行に 1 つ指定します。')}>
+            <TextField value={(arr(get(def, 'secrets')) ?? []).map(x => str(x)).join('\n')} multiline rows={3}
+              onChange={value => model.setSetting('secrets', value ? value.split('\n') : undefined)} />
+          </Row>
         </Section>
       )}
       {diags.length > 0 && (
@@ -835,19 +792,25 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
   )
 }
 
+function cardNumber(value: string, fractional = false): J {
+  const text = value.trim()
+  const pattern = fractional ? /^[0-9]+(?:\.[0-9]+)?$/ : /^[0-9]+$/
+  return pattern.test(text) ? new JNum(text.replace(/^0+(?=\d)/, '')) : value
+}
+
 function setGrant(model: CardEditorModel, key: string, value: J | undefined) {
   const grants = get(model.definition, 'grants')
   const next = isObj(grants) ? clone(grants) as JObj : obj()
   next.set(key, value)
-  model.setSetting('grants', next.size ? next : undefined)
+  model.setSetting('grants', next)
 }
 
-/** Folders of the host this Card's worker may read (Experimental): each at
+/** Folders of the host this Card's worker may read: each at
  *  /host/<name> in the worker, read-only unless allowed to write. Only the
  *  folder's path is kept in the project. */
 const grantName = (name: string) => name.toUpperCase().replace(/[^A-Z0-9]/g, '_')
 
-function HostFoldersEditor({ model, remote }: { model: CardEditorModel; remote: boolean }) {
+function HostFoldersEditor({ model }: { model: CardEditorModel }) {
   const folders = arr(get(get(model.definition, 'grants'), 'hostPaths')) ?? []
   const usable = app.status?.hostFolders ?? true
   const [picking, setPicking] = useState(false)
@@ -878,14 +841,14 @@ function HostFoldersEditor({ model, remote }: { model: CardEditorModel; remote: 
     const base = [...last].map((c) => (/[A-Za-z0-9\-_.]/.test(c) ? c : '-')).join('')
     let name = !base || base === '.' || base === '..' ? 'folder' : base
     for (let n = 2; taken.has(grantName(name)); n++) name = `${base}-${n}`
-    edit((l) => l.push(obj([['path', p], ['name', name]])))
+    edit((l) => l.push(obj([['path', p], ['name', name], ['write', false]])))
   }
   return (
     <div className="col gap6 fill">
       <div className="row center">
         <span>{L('ホストのフォルダへのアクセスを許可する')}</span>
         <span className="spacer" />
-        <Button disabled={!usable || remote} onClick={() => setPicking(true)}>{L('フォルダを追加…')}</Button>
+        <Button disabled={!usable} onClick={() => setPicking(true)}>{L('フォルダを追加…')}</Button>
       </div>
       {folders.map((f, i) => {
         const p = str(get(f, 'path')) ?? ''
@@ -896,17 +859,16 @@ function HostFoldersEditor({ model, remote }: { model: CardEditorModel; remote: 
             <div className="col flex1 min0">
               <span className="callout ellipsis" title={p}>{p}</span>
               <span className="caption" style={{ color: ok && usable ? 'var(--secondary)' : 'var(--orange)' }}>
-                {remote ? L('外部の実行サービスにはホストのフォルダを共有できません。') : !usable ? L('この Web UI では使えません（実行すると失敗します）') : ok ? `TSUGUMI_GRANT_${grantName(str(get(f, 'name')) ?? '')}` : L('このホストにはありません（実行すると失敗します）')}
+                {!usable ? L('この Web UI では使えません（実行すると失敗します）') : ok ? `TSUGUMI_GRANT_${grantName(str(get(f, 'name')) ?? '')}` : L('このホストにはありません（実行すると失敗します）')}
               </span>
             </div>
-            <Toggle kind="checkbox" label={L('書き込み')} help={L('オフ（デフォルト）: 読み取り専用')} checked={bool(get(f, 'write')) ?? false} disabled={remote}
-              onChange={(v) => edit((l) => isObj(l[i]) && (l[i] as JObj).set('write', v ? true : undefined))} />
+            <Toggle kind="checkbox" label={L('書き込み')} help={L('オフは読み取り専用')} checked={bool(get(f, 'write'))!}
+              onChange={(v) => edit((l) => isObj(l[i]) && (l[i] as JObj).set('write', v))} />
             <Button kind="borderless" iconOnly icon="minus.circle" help={L('削除')} onClick={() => edit((l) => l.splice(i, 1))} />
           </div>
         )
       })}
-      {remote ? <div className="caption secondary">{L('外部の実行サービスにはホストのフォルダを共有できません。')}</div>
-        : !usable && <div className="caption" style={{ color: 'var(--orange)' }}>{L('macOS 上の Web UI では、フォルダを Card に共有できません（Mac アプリの共通 VM が必要です）。この設定のある Card を実行すると失敗します。')}</div>}
+      {!usable && <div className="caption" style={{ color: 'var(--orange)' }}>{L('macOS 上の Web UI では、フォルダを Card に共有できません（Mac アプリの共通 VM が必要です）。この設定のある Card を実行すると失敗します。')}</div>}
       <div className="caption secondary">{L('Card は TSUGUMI_GRANT_<名前> からフォルダのパスを取得できます。共有 VM での追加・変更はプロジェクトを開き直すと反映されます。')}</div>
       {picking && <FolderPicker message={L('worker から読めるようにするフォルダを選んでください')} onClose={() => setPicking(false)} onPick={(p) => { setPicking(false); add(p) }} />}
     </div>
@@ -970,7 +932,7 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
   const editInputs = (fn: (a: J[]) => void) => {
     const a = inputs.map((x) => clone(x))
     fn(a)
-    model.setSetting('inputs', a.length ? a : undefined)
+    model.setSetting('inputs', a)
   }
   return (
     <Form>
@@ -990,12 +952,12 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
                     <TextField value={name} placeholder={L('名前')} mono help={L('入力ポートの名前')} style={{ width: 140 }}
                       onChange={(v) => editInputs((a) => isObj(a[i]) && (a[i] as JObj).set('name', v))} />
                     <span className="caption secondary nowrap">{portTypeName(r?.inputs.find((p) => p.name === name)) ?? L('未解決')}</span>
-                    <Button kind="borderless" iconOnly icon="minus.circle" help={L('入力を削除')} onClick={() => editInputs((a) => a.splice(i, 1))} />
+                    <Button kind="borderless" iconOnly icon="minus.circle" help={L('入力を削除')} disabled={model.kind === 'merge' && inputs.length <= 1} onClick={() => editInputs((a) => a.splice(i, 1))} />
                   </div>
                 </Row>
               )
             })}
-            <Row><Button onClick={() => editInputs((a) => a.push(obj([['name', `in${a.length + 1}`]])))}>{L('入力を追加')}</Button></Row>
+            <Row><Button onClick={() => editInputs((a) => a.push(obj([['name', nextInputName(a.map(input => str(get(input, 'name')) ?? ''))]])))}>{L('入力を追加')}</Button></Row>
           </>
         ) : (
           <>
@@ -1005,20 +967,17 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
         )}
       </Section>
       <OutputPortsSection model={model} />
-      {model.kind !== 'subgraph' && model.kind !== 'draft' && model.kind !== 'invalid' && (
+      {['code', 'merge', 'collect'].includes(model.kind) && (
         <Section title={L('記録と成果物')}>
           {([
-            ['recordLogs', L('標準出力と標準エラーを記録')],
+            ...(model.kind === 'code' ? [['recordLogs', L('標準出力と標準エラーを記録')]] : []),
             ['recordIO', L('入出力の値を記録')],
-          ] as const).map(([key, label]) => {
-            const value = bool(get(def, key))
-            return <Row key={key} label={label}>
-              <Select value={value === undefined ? 'inherit' : value ? 'on' : 'off'}
-                onChange={(v) => model.setSetting(key, v === 'inherit' ? undefined : v === 'on')}
-                options={[{ value: 'inherit', label: L('プロジェクト設定に従う') },
-                  { value: 'on', label: L('オン') }, { value: 'off', label: L('オフ') }]} />
+          ]).map(([key, label]) => (
+            <Row key={key} label={label}>
+              <Select value={str(get(def, key)) ?? ''} onChange={value => model.setSetting(key, value)}
+                options={recordSettings.map((value, i) => ({ value, label: [L('プロジェクト設定に従う'), L('オン'), L('オフ')][i] }))} />
             </Row>
-          })}
+          ))}
         </Section>
       )}
     </Form>
@@ -1133,7 +1092,7 @@ function BoundaryCategory({ model }: { model: CardEditorModel }) {
       {side(get(b, 'inputs'), L('入力ポート'), false)}
       {side(get(b, 'outputs'), L('出力ポート'), true)}
       <Section footer={L('Card in Card は externals にあるこのプロジェクト用のコピーです。ポートの対応はその tsugumi.json の boundary にあります。中に入ると Card と接続を編集できます。')}>
-        <Value label="external" value={model.session.cardExternal(model.cardKey) ?? ''} />
+        <Value label={L('場所')} value={model.session.cardExternal(model.cardKey) ?? ''} />
       </Section>
     </Form>
   )

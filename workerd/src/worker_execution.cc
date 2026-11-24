@@ -145,7 +145,6 @@ auto run_invocation(const ReleaseWorker& release_worker,
       const auto grant =
           std::ranges::find(invocation.grants, key, &ArtifactGrant::id);
       if (grant == invocation.grants.end()) return {};
-      if (!grant->store_path.empty()) return grant->store_path;
       const auto id = artifact_id_bytes(key);
       const auto label = std::to_string(artifact_sequence(id)) + "." +
                          std::to_string(artifact_counter(id));

@@ -1,2 +1,2 @@
 Dynamical systems gallery
-Each of the six computations takes only settings and depends on no other.
+Each of the six computations reads its own params.nix and depends on no other.

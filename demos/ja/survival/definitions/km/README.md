@@ -1,4 +1,5 @@
 ---
+title: km
 description: Kaplan–Meier と log-rank 検定
 ---
 

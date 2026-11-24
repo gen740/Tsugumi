@@ -1,4 +1,5 @@
 ---
+title: fold
 description: 位相で折り畳む
 ---
 

@@ -1,3 +1,4 @@
+import { projectFixture } from './documentFixture'
 import { addCodeCard, cardIds } from './cardIds'
 // Comments on a Card: written, edited, resolved and removed in its _comments.json,
 // each saved at once, on any Card, its copy having comments of its own; who did
@@ -16,7 +17,7 @@ const { cardComments, commentChange, ProjectSession } = await import('../src/mod
 
 const session = () => {
   const s = cardIds(new ProjectSession('/p', 'k', 'p'))
-  s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
+  s.project = parse(projectFixture({"name":"t","canvas":{"cards":[],"connections":[]}}))
   s.layout = parse('{}')
   let saves = 0
   const operate = s.operateProject
@@ -65,7 +66,7 @@ const session = () => {
 
   for (const c of s.comments(k)) { s.removeComment(k, c.id); await s.save() }
   assert.deepEqual(s.comments(k), [], 'no comments remain')
-  assert.equal(s.displayName(k), k, 'the id is the Card name')
+  assert.equal(s.displayName(k), str(get(s.cardMeta(k), 'title')))
   assert.deepEqual(s.cardsWithOpenComments([]), [])
 }
 
@@ -83,13 +84,14 @@ const session = () => {
 }
 
 {
-  // A Card in Card has a _comments.json too, though its settings are not edited here.
+  // A Card in Card has a _comments.json too.
   const { s } = session()
   const k = await addCodeCard(s, { x: 0, y: 0 })
-  s.setCardDefinition(k, { card: parse('{"type":"subgraph","external":"inner"}') })
+  s.externals.set('externals/' + k + '/', { project: parse(projectFixture({ boundary: { inputs: [], outputs: [] } })), layout: parse('{}'), definitions: new Map() })
+  s.setCardDefinition(k, { card: parse('{"type":"subgraph","symbol":"link"}'), meta: s.cardMeta(k) })
   await s.addComment(k, 'split this')
   assert.equal(s.comments(k).length, 1)
-  assert.equal(str(get(s.cardDefinitionDraft(k)?.card, 'external')), 'inner', 'it stays a Card in Card')
+  assert.equal(s.cardExternal(k), 'externals/' + k + '/', 'it stays a Card in Card')
 }
 
 

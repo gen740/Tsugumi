@@ -10,6 +10,7 @@
 #include <optional>
 
 #include "fixture.hh"
+#include "tsugumi/document/document.hh"
 #include "tsugumi/workerd/protocol.hh"
 
 namespace tsugumi::test {
@@ -28,7 +29,7 @@ class EnvironmentFixture : public AgentFixture {
     return TSUGUMI_ENVIRONMENT_DAEMON;
   }
   auto SetUp() -> void override {
-    Write(project / "tsugumi.json", R"({"name":"Environment"})");
+    Write(project / "tsugumi.json", initial_project_json("Environment", {}));
     extra_host_arguments = {
         "--tsugumid",        DaemonBinary(),
         "--worker",          TSUGUMI_WORKER_BINARY,
@@ -182,9 +183,7 @@ class RealEnvironmentFixture : public EnvironmentFixture {
   auto DaemonBinary() -> std::string override { return TSUGUMI_PROJECT_BINARY; }
 };
 TEST_F(RealEnvironmentFixture, AuthenticatesTheRealProjectServiceBeforeReady) {
-  Write(
-      project / "tsugumi.json",
-      R"({"name":"Environment","nixPath": [],"canvas":{"cards":[],"connections":[]}})");
+  Write(project / "tsugumi.json", initial_project_json("Environment", {}));
   struct Startup {
     std::mutex mutex;
     std::condition_variable changed;

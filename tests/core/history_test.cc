@@ -76,37 +76,6 @@ TEST(RunHistory, ArtifactIdsAndSavedInputSchemaSurviveDatabaseRestart) {
   });
 }
 
-TEST(RunHistory, StoreArtifactSurvivesDeletingOneOfItsRuns) {
-  const auto database = std::filesystem::temp_directory_path() /
-                        ("tsugumi-history-" + crypto::uuid4()) / "runs.sqlite";
-  struct Cleanup {
-    std::filesystem::path directory;
-    ~Cleanup() { std::filesystem::remove_all(directory); }
-  } cleanup{database.parent_path()};
-  std::filesystem::create_directories(cleanup.directory);
-  History history(database);
-  const ArtifactKey id(16, 's');
-  history.write_sync([&](sql::Db& db) {
-    for (const char* run_id : {"1", "2"}) {
-      RunSummaryData run;
-      run.status.run_id = run_id;
-      run.status.state = RunState::succeeded;
-      History::insert_run(db, run, crypto::uuid4());
-      History::put_artifact(db, {id, run_id, {"input"}, 1, "store",
-                                "/nix/store/store-artifact", 1, 1, 64, "tree:hash"});
-    }
-  });
-  EXPECT_EQ(history.delete_runs(std::nullopt, std::vector<std::string>{"1"}),
-            std::vector<std::string>{"1"});
-  history.read([&](sql::Db& db) {
-    EXPECT_FALSE(History::artifact(db, id, "1"));
-    const auto surviving = History::artifact(db, id);
-    ASSERT_TRUE(surviving);
-    EXPECT_EQ(surviving->run_id, "2");
-    EXPECT_EQ(surviving->origin, "store");
-  });
-}
-
 TEST(RunHistory, RoundTripPreservesEveryRunFieldIncludingCommit) {
   const auto directory = std::filesystem::temp_directory_path() /
                          ("tsugumi-history-" + crypto::uuid4());

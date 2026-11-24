@@ -46,7 +46,7 @@
       "id": "signal-sweep",
       "title": "Signal detection sweep",
       "field": "Learn the basics",
-      "description": "Sweep three signal strengths from an Input Card against two named detection thresholds, inspect and compare all six runs, and collect them into one result.",
+      "description": "Compare three signal strengths against two detection thresholds in a single labelled run list, and combine the six results with Collect.",
       "path": "signal-sweep",
       "tags": [
         "Bash",
@@ -59,7 +59,7 @@
       "id": "live-stream",
       "title": "Live Stream",
       "field": "Learn the basics",
-      "description": "A time series plotted while the run is still going.",
+      "description": "Choose a starting value in a Dawn view and watch the feedback loop plot a time series.",
       "path": "live-stream",
       "tags": [
         "C++",

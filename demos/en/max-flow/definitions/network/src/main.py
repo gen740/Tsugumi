@@ -1,16 +1,20 @@
 """A synthetic layered network from a seed: s, then `layers` layers of `width`
 nodes, then t. s reaches all of the first layer and all of the last reaches t."""
+
+from card import Input, Output, params
+from flow.Network import NetworkT
+
 import json
 import string
 
 import numpy as np
 
-from tsugumi import Failure
+from tsugumi import Failure, Markdown, send
 
 
-def main(inputs, report):
-    s = inputs.settings
-    layers, width, probability, top = int(s.layers), int(s.width), s.edgeProbability, int(s.maxCapacity)
+def run(_input: Input) -> Output:
+    s = params
+    layers, width, probability, top = int(s.layers), int(s.width), s.edge_probability, int(s.max_capacity)
     if not 1 <= layers <= 26 or width < 1 or top < 1:
         raise Failure("output_invalid", "layers must be 1 to 26, width and max_capacity at least 1")
     rng = np.random.default_rng(s.seed)
@@ -34,20 +38,20 @@ def main(inputs, report):
 
     out_of_s = sum(int(c) for (u, _), c in zip(pairs, capacity) if u == "s")
     into_t = sum(int(c) for (_, v), c in zip(pairs, capacity) if v == "t")
-    report.markdown(
+    send(Markdown(
         f"**A made-up network** (generated from seed {s.seed})\n\n"
         f"- {len(nodes)} nodes, {len(pairs)} edges\n"
         f"- Capacities from {capacity.min()} to {capacity.max()}\n"
         f"- Total capacity out of $s$ {out_of_s}, into $t$ {into_t}"
-    )
-    report.log("result: " + json.dumps({"nodes": nodes, "edges": [[u, v, int(c)] for (u, v), c in zip(pairs, capacity)]}))
+    ))
+    print("result: " + json.dumps({"nodes": nodes, "edges": [[u, v, int(c)] for (u, v), c in zip(pairs, capacity)]}))
     names = ' '.join(nodes)
     tail = np.array([index[u] for (u, _) in pairs], dtype=np.uint64)
     head = np.array([index[v] for (_, v) in pairs], dtype=np.uint64)
     caps = capacity.astype(np.uint64)
-    return {'network': {
-        'nodes': names,
-        'tail': tail,
-        'head': head,
-        'capacity': caps,
-    }}
+    return Output(network=NetworkT(
+        nodes=names,
+        tail=tail,
+        head=head,
+        capacity=caps,
+    ))

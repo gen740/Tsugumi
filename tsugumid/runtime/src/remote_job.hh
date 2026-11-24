@@ -28,7 +28,7 @@ struct RemoteTarget {
   bool available = false;
   bool resource_limits = false;
   uint32_t max_jobs = 0;
-  uint64_t grade = 0;
+  uint64_t worker_capabilities = 0;
   std::string unavailable_reason;
   bool namespace_isolation = false;
   bool gui = false;

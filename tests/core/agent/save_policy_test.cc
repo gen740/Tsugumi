@@ -5,6 +5,7 @@
 
 #include "../agent_fixture_server.hh"
 #include "agent/catalog.hh"
+#include "document_fixture.hh"
 #include "host/failure.hh"
 #include "host/save.hh"
 #include "tsugumi/util/crypto.hh"
@@ -17,8 +18,10 @@ namespace json = ::tsugumi::json;
 class AgentSavePolicy : public ::testing::Test {
  protected:
   comments::Files files{
-      {"definitions/plan/_card.json", R"({"type":"draft"})"},
-      {"definitions/plan/README.md", "---\ndescription: Counts words\n---\n\nSplit and count."},
+      {"definitions/plan/_card.json",
+       R"({"type":"draft","symbol":"pencil.and.outline"})"},
+      {"definitions/plan/README.md",
+       "---\ntitle: Plan\ndescription: Counts words\n---\n\nSplit and count."},
       {"definitions/plan/_comments.json",
        R"({"comments":[{"id":"c1","text":"Use a log scale","author":"user"},{"id":"c2","text":"Name the axis","author":"user"}]})"}};
   auto Base() -> SaveBase {
@@ -32,7 +35,7 @@ class AgentSavePolicy : public ::testing::Test {
             files};
   }
   auto Put(const std::string& meta,
-           const std::string& body = R"({"type":"code"})",
+           const std::string& body = ::tsugumi::test::FixtureCodeCard(),
            const std::string& id = "plan") -> std::string {
     return json::Encode(json::Members{
         {"value_type", json::Quote("PutDefinition")},
@@ -63,37 +66,40 @@ class AgentSavePolicy : public ::testing::Test {
     return out;
   }
   auto Implement(const json::Members& extra = {}) -> std::string {
-    json::Members value{{"id", json::Quote("plan")},
-                        {"card_json", json::Quote(R"({"type":"code"})")},
-                        {"keep_readme", "true"}, {"keep_comments", "true"}};
+    json::Members value{
+        {"id", json::Quote("plan")},
+        {"card_json", json::Quote(::tsugumi::test::FixtureCodeCard())},
+        {"keep_readme", "true"},
+        {"keep_comments", "true"}};
     for (const auto& [k, v] : extra) value[k] = v;
     return json::Encode(
         json::Members{{"value_type", json::Quote("PutDefinition")},
                       {"value", json::Encode(value)}});
   }
   auto Sink() -> void {
-    files["definitions/plan/_card.json"] = R"({"type":"code"})";
+    files["definitions/plan/_card.json"] = ::tsugumi::test::FixtureCodeCard();
   }
 };
 TEST_F(AgentSavePolicy, DraftIntentIsKeptAndOnlyEmptyDescriptionIsFilled) {
   EXPECT_NO_THROW(Prepare({Implement()}));
   EXPECT_NO_THROW(
       Prepare({Implement({{"fill_description", json::Quote("Ignored")}})}));
-  files["definitions/plan/README.md"] = "Split and count.";
+  files["definitions/plan/README.md"] =
+      "---\ntitle: Plan\ndescription:\n---\n\nSplit and count.";
   EXPECT_THROW(Prepare({Implement()}), Failure);
   const auto saved = Prepare({
       Implement({{"fill_description", json::Quote("Counts words")}})});
   const auto value = json::Object(json::Get(
       json::Object(json::Array(saved.arguments.at("changes"))[0]), "value"));
   EXPECT_EQ(json::Text(value, "readme"),
-            "---\ndescription: Counts words\n---\n\nSplit and count.");
+            "---\ntitle: Plan\ndescription: Counts words\n---\n\nSplit and count.");
   EXPECT_FALSE(value.contains("fill_description"));
 }
 
 TEST_F(AgentSavePolicy, NonblankIntentCannotBeChangedOrDropped) {
-  for (const auto* readme : {"---\ndescription: Different\n---\n\nSplit and count.",
-                             "---\ndescription: Counts words\n---\n\nDifferent.",
-                             "---\ndescription: Counts words\n---\n"}) {
+  for (const auto* readme : {"---\ntitle: Plan\ndescription: Different\n---\n\nSplit and count.",
+                             "---\ntitle: Plan\ndescription: Counts words\n---\n\nDifferent.",
+                             "---\ntitle: Plan\ndescription: Counts words\n---\n"}) {
     EXPECT_THROW(Prepare({Implement({{"readme", json::Quote(readme)}})}),
                  Failure);
   }
@@ -101,7 +107,9 @@ TEST_F(AgentSavePolicy, NonblankIntentCannotBeChangedOrDropped) {
 
 TEST_F(AgentSavePolicy,
        DraftThatStaysDraftAndOrdinaryCardsNeedNoIntentCompletion) {
-  EXPECT_NO_THROW(Prepare({Put(R"({"comments":[]})", R"({"type":"draft"})")}));
+  EXPECT_NO_THROW(
+      Prepare({Put(R"({"comments":[]})",
+                   R"({"type":"draft","symbol":"pencil.and.outline"})")}));
   Sink();
   EXPECT_NO_THROW(Prepare({Put(R"({"comments":[]})")}));
 }
@@ -109,7 +117,7 @@ TEST_F(AgentSavePolicy, ResolutionRecordsWhoDidItAndTheChangedCardIds) {
   Sink();
   auto saved = Prepare({Put(
       R"({"comments":[{"id":"c1","text":"Use a log scale","author":"agent","resolved":true,"resolution":"Log y","state_by":"user","cards":["fake"]},{"id":"c2","text":"Name the axis","author":"user"}]})",
-      R"({"type":"code","maxRuns":2})")});
+      ::tsugumi::test::FixtureCodeCard(R"({"maxRuns":2})"))});
   auto comments = Comments(saved);
   ASSERT_EQ(comments.size(), 2u);
   EXPECT_EQ(json::Text(comments[0], "author"), "user");
@@ -153,8 +161,9 @@ TEST_F(AgentSavePolicy, ReopeningClearsResolutionCardsAndMovingKeepsIdentity) {
       {Put(R"({"comments":[{"id":"c1","text":"Ask","author":"user"}]})")});
   EXPECT_EQ(json::Text(Comments(saved)[0], "state_by"), "agent");
   EXPECT_FALSE(Comments(saved)[0].contains("cards"));
-  saved = Prepare({Put(R"({"comments":[]})"), Put(files.at("definitions/plan/_comments.json"),
-                                  R"({"type":"code"})", "split")});
+  saved = Prepare({Put(R"({"comments":[]})"),
+                   Put(files.at("definitions/plan/_comments.json"),
+                       ::tsugumi::test::FixtureCodeCard(), "split")});
   EXPECT_TRUE(json::Array(saved.comments).empty());
 }
 TEST_F(AgentSavePolicy,
@@ -172,8 +181,9 @@ TEST_F(AgentSavePolicy,
 TEST_F(AgentSavePolicy, NestedCommentsPatchesAreStampedAndDraftIntentChecked) {
   files.clear();
   const std::string path = "externals/outer/definitions/plan/";
-  files[path + "_card.json"] = R"({"type":"draft"})";
-  files[path + "README.md"] = "Plan";
+  files[path + "_card.json"] =
+      R"({"type":"draft","symbol":"pencil.and.outline"})";
+  files[path + "README.md"] = "---\ntitle: Plan\ndescription:\n---\n\nPlan";
   auto source = [&](const std::string& file, const std::string& bytes) {
     return json::Encode(json::Members{
         {"value_type", json::Quote("PutSource")},
@@ -183,13 +193,12 @@ TEST_F(AgentSavePolicy, NestedCommentsPatchesAreStampedAndDraftIntentChecked) {
                        json::Quote(crypto::sha256_hex(files.at(path + file)))},
                       {"bytes", json::Quote(bytes)}})}});
   };
-  EXPECT_THROW(Prepare({source("_card.json", R"({"type":"code"})")}),
-               std::runtime_error);
-  EXPECT_NO_THROW(Prepare(
-      {source("_card.json", R"({"type":"code"})"),
-       source(
-           "README.md",
-           "---\ndescription: Summary\n---\n\nPlan")}));
+  EXPECT_THROW(
+      Prepare({source("_card.json", ::tsugumi::test::FixtureCodeCard())}),
+      std::runtime_error);
+  EXPECT_NO_THROW(
+      Prepare({source("_card.json", ::tsugumi::test::FixtureCodeCard()),
+               source("README.md", "---\ntitle: Plan\ndescription: Summary\n---\n\nPlan")}));
   files[path + "_comments.json"] =
       R"({"comments":[{"id":"c1","text":"Ask","author":"user"}]})";
   auto meta = files.at(path + "_comments.json");
@@ -216,10 +225,10 @@ TEST_F(AgentSavePolicy, NestedCommentsPatchesAreStampedAndDraftIntentChecked) {
             std::string::npos);
 }
 TEST(AgentPresentation, StemDerivationIsOwnedByTheCaller) {
-  EXPECT_EQ(CardStem("Aggregate Results!"), "aggregate-results");
+  EXPECT_EQ(CardStem("Aggregate Results!"), "aggregate_results");
   EXPECT_EQ(CardStem("集計"), "card");
-  EXPECT_EQ(CardStem("---A___B---"), "a-b");
-  EXPECT_LE(CardStem(std::string(500, 'a')).size(), 123u);
+  EXPECT_EQ(CardStem("---A___B---"), "a_b");
+  EXPECT_LE(CardStem(std::string(500, 'a')).size(), 64u);
 }
 }  // namespace
 }  // namespace tsugumi::host

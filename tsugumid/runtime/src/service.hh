@@ -31,7 +31,6 @@ namespace tsugumi {
 
 class Scheduler;
 class NixRunner;
-class ExecutionService;
 class PreparedExecution;
 struct BuildRequest;
 class LocalExecutionService;
@@ -127,11 +126,7 @@ class Service : public RequestSink {
       -> std::filesystem::path;
   auto record_artifacts(const InvocationSummaryData& invocation,
                         std::span<const ArtifactKey> ids) -> void;
-  auto register_store_artifact(const std::string& run, const CardPath& card,
-                               uint64_t invocation, const ArtifactKey& id,
-                               const std::filesystem::path& store_path) -> void;
   // The backend that runs the Cards naming execution service `id`.
-  auto execution_service(const std::string& id) -> ExecutionService&;
   auto invalidate_resident(const std::string& card) -> void;
   auto prepare_execution(const Node& node,
                          const std::filesystem::path& directory,

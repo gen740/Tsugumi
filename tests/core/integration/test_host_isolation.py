@@ -114,7 +114,7 @@ def test_linux_switches_and_named_grants(core_factory, tmp_path):
     with open(os.environ["TSUGUMI_GRANT_RESULT"] + "/data", "w") as f:
         f.write("staged\\n")
     RESULT = 'isolated'"""), outputs=TXT, grants={"hostPaths": [
-                {"name": "sample-data", "path": str(shared)},
+                {"name": "sample-data", "path": str(shared), "write": False},
                 {"name": "result", "path": str(writable), "write": True},
             ]}),
     }

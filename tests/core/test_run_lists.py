@@ -50,14 +50,14 @@ def producer(graph, name, values):
 
 def consumer(graph, *, implementations=None):
     runs = numeric_implementations(graph.directory.parent / "runs-work", [99]) if implementations is None else implementations
-    graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True, "maxRuns": 1,
+    graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": "on", "maxRuns": 1,
                         "inputs": [{"name": "left"}, {"name": "right"}]},
                outputs=NUMBER, plan=mock_plan(runs, execution_list=implementations is not None))
     graph.connect("left", "out", "work", "left").connect("right", "out", "work", "right")
 
 
 def connect_collect(graph):
-    graph.card("collect", {"type": "collect", "recordIO": True})
+    graph.card("collect", {"type": "collect", "recordIO": "on"})
     graph.connect("work", "out", "collect", "in")
 
 
@@ -73,7 +73,7 @@ def test_run_list_labels_name_each_invocation(core_factory, project, tmp_path):
     """Labels from the execution plan are recorded on every member, and an unlabeled entry keeps only its index."""
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project)
-    graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True}, outputs=NUMBER,
+    graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": "on"}, outputs=NUMBER,
                plan=mock_plan(numeric_implementations(tmp_path, [1, 2, 3]), execution_list=True, labels=["threshold 10", "", "threshold 14"]))
     graph.save(client)
 
@@ -104,52 +104,6 @@ def test_invalid_run_list_labels_fail_before_any_member_runs(core_factory, proje
     assert status.state == RunState.failed
     assert message in text(status.failure.diagnostic)
     assert all(row.batchIndex is None for row in invocation_page(client, run_id, "work").records)
-
-
-def test_input_card_emits_built_variants_without_a_worker(core_factory, project, tmp_path):
-    store = tmp_path / "store"
-    client = core_factory(mocked_builds=True, env={"TSUGUMI_MOCK_STORE": str(store)}).connect()
-    values = [17, 23]
-    packages, payloads = [], []
-    for value in values:
-        package = store / f"number-{value}"
-        port = package / "share/tsugumi/input/ports/out"
-        port.parent.mkdir(parents=True)
-        payload = encode_message(tmp_path / f"encode-{value}", NUMBER, {"value": value}, root_type="Number")
-        port.write_bytes(payload)
-        packages.append(str(package))
-        payloads.append(payload)
-    graph = Project(project).card("work", {"type": "input", "recordIO": True,
-                                         "_params": "{ values = [ 17 23 ]; }"},
-                                  outputs=NUMBER,
-                                  plan=mock_plan(packages, execution_list=True, labels=["17", "23"]))
-    graph.save(client)
-    run_id = run(client, "work", propagate=False)
-    status = wait_run(client, run_id)
-    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-    page = invocation_page(client, run_id, "work")
-    assert [(row.implementationIndex, label(row)) for row in page.records] == [
-        (1, "17"), (2, "23")]
-    for invocation, payload in enumerate(payloads, 1):
-        assert read_output(client, run_id, card="work", invocation=invocation) == payload
-
-
-@pytest.mark.parametrize("required", [True, False])
-def test_input_card_missing_output_follows_required_attribute(core_factory, project, tmp_path, required):
-    store = tmp_path / "store"
-    package = store / "empty"
-    package.mkdir(parents=True)
-    client = core_factory(mocked_builds=True, env={"TSUGUMI_MOCK_STORE": str(store)}).connect()
-    schema = NUMBER if required else NUMBER.replace(" (required)", "")
-    Project(project).card("work", {"type": "input"}, outputs=schema,
-                          plan=mock_plan([str(package)])).save(client)
-    status = wait_run(client, run(client, "work", propagate=False))
-    if required:
-        assert status.state == RunState.failed
-        assert status.failure.kind == FailureKind.output_invalid
-        assert "required output out is missing" in text(status.failure.diagnostic)
-    else:
-        assert status.state == RunState.succeeded
 
 
 def combinations(client, directory, run_id):
@@ -263,7 +217,7 @@ def test_singleton_run_list_and_vector_value_have_different_execution_shapes(cor
     ])
     graph.card("vector", {"type": "code", "sandbox": {"filesystem": False}}, outputs=vector,
                plan=mock_plan([vector_run]))
-    graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True,
+    graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": "on",
                         "inputs": [{"name": "in"}]}, outputs=NUMBER,
                plan=mock_plan([work_run], execution_list=True, labels=["forty-two"]))
     graph.connect("vector", "out", "work", "in")
@@ -356,10 +310,10 @@ def test_collected_artifact_members_preserve_batch_order_and_grants(core_factory
         [{"op": "file", "port": "out", "path": "first.txt", "text": "one"}],
         [{"op": "directory", "port": "out", "path": "second", "files": {"data.txt": "two"}}],
     ])
-    graph.card("work", {"type": "code", "recordIO": True, "sandbox": {"filesystem": False}},
+    graph.card("work", {"type": "code", "recordIO": "on", "sandbox": {"filesystem": False}},
                outputs=ARTIFACT_OUTPUT, plan=mock_plan(packages, execution_list=True))
     connect_collect(graph)
-    graph.card("consumer", {"type": "code", "recordIO": True, "sandbox": {"filesystem": False},
+    graph.card("consumer", {"type": "code", "recordIO": "on", "sandbox": {"filesystem": False},
                             "inputs": [{"name": "in"}]},
                outputs=NUMBER, plan=mock_plan(numeric_implementations(tmp_path / "consumer", [1])))
     graph.connect("collect", "out", "consumer", "in").save(client)
@@ -401,7 +355,7 @@ def test_failed_batch_keeps_individual_history_and_cancels_its_sibling(core_fact
         [failure.action(), {"op": "failure", "message": "the batch member failed"}],
         [{"op": "hang", "entered": str(hanging.entered)}],
     ]
-    graph = Project(project).card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True},
+    graph = Project(project).card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": "on"},
                                   outputs=NUMBER, plan=mock_plan(scripted_implementations(tmp_path, scenarios), execution_list=True))
     connect_collect(graph)
     graph.save(client)
@@ -501,7 +455,7 @@ def test_code_waits_for_connected_inputs_and_omits_unconnected_inputs(core_facto
     graph = Project(project).card("start", {"type": "trigger"})
     producer(graph, "left", [10, 20])
     producer(graph, "right", [30, 40, 50])
-    graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True,
+    graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": "on",
                         "inputs": [{"name": name} for name in ("left", "right", "unconnected")]},
                outputs=NUMBER, plan=mock_plan(numeric_implementations(tmp_path, [1])))
     graph.connect("left", "out", "work", "left").connect("right", "out", "work", "right").save(client)

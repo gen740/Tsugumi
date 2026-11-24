@@ -1,4 +1,5 @@
 ---
+title: scaling
 description: 体積とゆらぎの大きさ
 ---
 

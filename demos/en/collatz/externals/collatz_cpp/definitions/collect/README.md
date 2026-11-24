@@ -1,0 +1,4 @@
+---
+title: collect
+description: Collects the numbers that arrive and outputs the sequence on reaching 1
+---

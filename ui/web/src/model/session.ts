@@ -1,3 +1,4 @@
+import { validName } from './names'
 import { DocumentRevisions } from './documentRevisions'
 import { projectOperation, operationInverse } from './projectOperation'
 import { connectionsOf, SavePresence } from './presence'
@@ -18,7 +19,7 @@ import { environmentHost, environmentProgress, environmentState, type EnvPublicS
 import { parse, arr, bool, clone, dbl, get, isObj, J, jeq, JObj, numText, obj, real, serialize, str, tryParse } from '../../shared/json'
 import { cardPath, D, R, LiveDisplayUpdate, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../wire/rpc'
 import {
-  applicableStages, CardGeometry, CardNodeData, mergeStageStatus, orderedPorts, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
+  applicableStages, CardGeometry, CardNodeData, mergeStageStatus, orderedPorts, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
   snapToGrid,
 } from './canvasKit'
 import type { LayoutBar, LayoutScene } from '../../shared/layoutScene'
@@ -1223,9 +1224,9 @@ export class ProjectSession extends Observable {
 
   // ---- Document helpers ------------------------------------------------------------
 
-  private extLink(prefix: string, id: string): string | undefined {
+  private isSubgraph(prefix: string, id: string): boolean {
     const card = prefix === '' ? this.definitions.get(id) : this.external(prefix)?.definitions.get(id)?.card
-    return str(get(card, 'external'))
+    return definitionKind(card) === 'subgraph'
   }
 
   /** The project a scope's Cards are written in: "" for this project,
@@ -1234,9 +1235,8 @@ export class ProjectSession extends Observable {
   projectPrefix(scope: string[]): string | undefined {
     let prefix = ''
     for (const id of scope) {
-      const name = this.extLink(prefix, id)
-      if (!name) return undefined
-      prefix += `externals/${name}/`
+      if (!this.isSubgraph(prefix, id)) return undefined
+      prefix += `externals/${id}/`
     }
     return prefix
   }
@@ -1319,10 +1319,10 @@ export class ProjectSession extends Observable {
   /** The Card's settings (its _card.json). */
   cardDefinition(k: CardKey): J | undefined {
     const d = this.cardDefinitionDraft(k)
-    return d && definitionKind(d.card) !== 'subgraph' ? d.card : undefined
+    return d?.card
   }
 
-  /** The Card's notes: {description, content, comments}. */
+  /** The Card's notes: {title, description, content, comments}. */
   cardMeta(k: CardKey): J | undefined {
     return this.cardDefinitionDraft(k)?.meta
   }
@@ -1339,8 +1339,7 @@ export class ProjectSession extends Observable {
   cardExternal(k: CardKey): string | undefined {
     const sp = this.split(k)
     if (!sp) return undefined
-    const name = this.extLink(sp.prefix, sp.id)
-    return name ? `${sp.prefix}externals/${name}/` : undefined
+    return this.isSubgraph(sp.prefix, sp.id) ? `${sp.prefix}externals/${sp.id}/` : undefined
   }
 
   /** The folder of the Card's definition, project relative ("definitions/<id>/"). */
@@ -1579,9 +1578,9 @@ export class ProjectSession extends Observable {
     return definitionKind(this.cardDefinitionDraft(k)?.card)
   }
 
-  /** A Card's name: its id, the only name it has. */
+  /** A human-facing title from the Card's README. */
   displayName(k: CardKey): string {
-    return path(k).pop() || k
+    return str(get(this.cardMeta(k), 'title')) ?? (path(k).pop() || k)
   }
 
   /** A human-readable path. Pass the original segments to tools and links. */
@@ -1655,6 +1654,7 @@ export class ProjectSession extends Observable {
       if (!this.client) throw new RPCError('disconnected', L('接続していません'))
       id = (await this.client.cardId(name, prefix)).id as string
     }
+    if (!validName(id)) throw new Error('Invalid Card id from allocator')
     if (this.projectPrefix(scope) !== prefix) throw new Error('Card scope changed')
     return id
   }
@@ -1725,7 +1725,7 @@ export class ProjectSession extends Observable {
     const items: H.ProjectCopyItemT[] = []
     for (const k of [...keys].sort()) {
       const id = path(k).pop()!
-      items.push(new H.ProjectCopyItemT(`${prefix}definitions/${id}/`, await this.newCardId(this.displayName(k), scope)))
+      items.push(new H.ProjectCopyItemT(`${prefix}definitions/${id}/`, await this.newCardId(id, scope)))
     }
     if (!items.length) return new Set()
     try {
@@ -1742,11 +1742,6 @@ export class ProjectSession extends Observable {
   }
 
   // ---- A Draft written on the canvas -------------------------------------------------
-
-  /** Whether a Draft has no name of its own: its id is one made for it. */
-  draftUntitled(k: CardKey): boolean {
-    return this.kind(k) === 'draft' && this.displayName(k) === 'draft'
-  }
 
   /** Starts writing a Draft's content on its Card. */
   async startDraftEdit(k: CardKey, revision?: RevisionEdit) {
@@ -1795,6 +1790,7 @@ export class ProjectSession extends Observable {
     const base = e.revision.jsonBase(dir + 'README.md', e.initialReadme, overwrite)
     const before = typeof base === 'string' ? base : undefined
     const readme = parseReadme(before ?? '')
+    if (!readme) return
     const after = printReadme({ ...readme, body: e.content })
     const ok = await e.revision.apply(this, x => x.appendEdits([x.jsonEdit(dir + 'README.md', before, after)]))
     if (ok && this.inlineDraft?.revision === e.revision) {
@@ -1811,6 +1807,7 @@ export class ProjectSession extends Observable {
   async connect(from: [CardKey, string], to: [CardKey, string], scope: string[]) {
     const fromId = path(from[0]).pop(), toId = path(to[0]).pop(), prefix = this.projectPrefix(scope)
     if (!fromId || !toId || prefix === undefined || !this.isEditable) return
+    if (!validName(fromId) || !validName(toId) || [from[1], to[1]].some(port => port !== '' && !validName(port))) return
     await this.operate(H.ProjectOperationBody.ProjectConnect, new H.ProjectConnectT(prefix.replace(/\/$/, ''), fromId, from[1], toId, to[1]))
   }
 
@@ -2012,13 +2009,14 @@ export class ProjectSession extends Observable {
     const cards = ids.map((id) => {
       const k = key([...scope, id]), g = this.geometry(k)
       const ports = (names: string[], output: boolean) => names.map((name) => ({ name, ...g.port(name, output) }))
-      return { id, ...this.placedPosition(k), ...g.size, reorderable: ['code', 'input', 'subgraph'].includes(this.kind(k)),
+      return { id, ...this.placedPosition(k), ...g.size, reorderable: ['code', 'subgraph'].includes(this.kind(k)),
         // Unnamed visual anchors locate Draft wires without declaring Card ports.
         inputs: ports(this.kind(k) === 'draft' ? [''] : g.inputs, false), outputs: ports(this.kind(k) === 'draft' ? [''] : g.outputs, true) }
     })
     const wires = this.connections(scope).flatMap((c) => {
-      const from = str(get(c, 'from', 'card')), fromPort = str(get(c, 'from', 'port')), to = str(get(c, 'to', 'card')), toPort = str(get(c, 'to', 'port'))
-      return from && fromPort !== undefined && to && toPort !== undefined ? [{ from, fromPort, to, toPort }] : []
+      const from = str(get(c, 'from', 'card')), to = str(get(c, 'to', 'card'))
+      const fromPort = str(get(c, 'from', 'port')) ?? '', toPort = str(get(c, 'to', 'port')) ?? ''
+      return from && to ? [{ from, fromPort, to, toPort }] : []
     })
     const notes = this.notes(scope).flatMap((n) => {
       const id = str(get(n, 'id'))
@@ -2028,7 +2026,10 @@ export class ProjectSession extends Observable {
       if (!scope.length) return undefined
       const list = get(this.boundary(key(scope)), side)
       return {
-        ends: isObj(list) ? list.entries().map(([name, v]) => ({ name, card: str(get(v, 'card')) ?? '', port: str(get(v, 'port')) ?? '' })) : [],
+        ends: isObj(list) ? list.entries().flatMap(([name, v]) => {
+          const card = str(get(v, 'card')), port = str(get(v, 'port'))
+          return card && port ? [{ name, card, port }] : []
+        }) : [],
         at: this.boundaryPosition(scope, side),
       }
     }
@@ -2213,13 +2214,6 @@ export class ProjectSession extends Observable {
     return { inputs: ins, outputs: outs }
   }
 
-  /** Scalar parameters editable on Input Cards. */
-  inlineParams(k: CardKey): ParamData[] {
-    if (this.kind(k) !== 'input') return []
-    return (this.resolution.get(k)?.parameters ?? []).filter(p => !p.type.startsWith('['))
-      .map(p => ({ name: p.name, type: p.type, value: paramText(p.value) }))
-  }
-
   cardDescription(k: CardKey): string | undefined {
     return str(get(this.cardMeta(k), 'description')) || undefined
   }
@@ -2339,20 +2333,20 @@ export class ProjectSession extends Observable {
     // definition cannot be read, what the core says about it.
     if (kind === 'draft') summary = str(get(m, 'content')) || summary
     if (kind === 'invalid') summary = diags.find((x) => x.error)?.message ?? L('Card の定義を読めません')
-    const sym = str(get(def, 'symbol'))
+    const title = str(get(m, 'title'))
     const editing = kind === 'draft' && this.inlineDraft?.card === k
     const pending = state?.executionState === D.RemoteExecutionState.queued || state?.executionState === D.RemoteExecutionState.disconnected ||
       state?.executionState === D.RemoteExecutionState.cancelling ? remoteExecutionLabel(state.executionState) : undefined
     return {
-      title: path(k).pop() || k, kind, runMark: state || batch ? runMark(this.runStatus) : undefined, symbol: kind === 'invalid' ? undefined : sym || undefined, summary: summary || undefined,
-      inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k),
+      title: title?.trim() ? title : this.displayName(k), kind, runMark: state || batch ? runMark(this.runStatus) : undefined, symbol: cardIcon(kind, str(get(def, 'symbol'))), summary: summary || undefined,
+      inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true),
       result: state?.transfer ?? pending ?? (!state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
       state: kind === 'subgraph' ? this.compositeState(k) : this.canvasCardState(k), stage: empty ? undefined : this.stageProgress(k), executionList,
       invocation: empty ? 0n : state?.invocation ?? 0n, runContinues: this.runActive,
       failure: state && (state.state === D.CardState.failed || state.state === D.CardState.blocked) ? state.failure ?? cardState(state.state).label : undefined,
       errors: diags.filter((x) => x.error).map((x) => x.message), warnings: diags.filter((x) => !x.error).map((x) => x.message),
       collapsed: !editing && (opts.collapsed ?? this.collapsed(k)), permissions: cardPermissions(def),
-      draftEditing: editing, untitled: this.draftUntitled(k), openComments: cardComments(m).filter((c) => !c.resolved).length,
+      draftEditing: editing, openComments: cardComments(m).filter((c) => !c.resolved).length,
       portGrid: prefs.showGrid ? prefs.gridSize : undefined,
     }
   }
@@ -2368,7 +2362,7 @@ export class ProjectSession extends Observable {
   // Shown ports and their order (the layout's inputOrder / outputOrder) are
   // presentation: each UI works them out itself rather than asking hostd.
   private visualPorts(k: CardKey, ports: PortData[], output: boolean): PortData[] {
-    if (!['code', 'draft', 'input', 'subgraph'].includes(this.kind(k))) return ports
+    if (!['code', 'draft', 'subgraph'].includes(this.kind(k))) return ports
     const saved = arr(get(this.layoutOf(path(k).slice(0, -1)), 'cards', this.layoutKey(k), output ? 'outputOrder' : 'inputOrder')) ?? []
     return orderedPorts(ports, saved.flatMap(v => typeof v === 'string' ? [v] : []))
   }
@@ -2428,19 +2422,27 @@ export class ProjectSession extends Observable {
 /** What a Card is, for choosing what the canvas and the editor offer.
  *  `invalid`: its _card.json has no type or one this build does not know (or
  *  one that does not match `external`), a definition error the core reports. */
-export type CardKind = 'trigger' | 'input' | 'merge' | 'collect' | 'draft' | 'subgraph' | 'code' | 'invalid'
+export type CardKind = 'trigger' | 'merge' | 'collect' | 'draft' | 'subgraph' | 'code' | 'invalid'
 /** The _card.json "type" names. */
-const KINDS: CardKind[] = ['trigger', 'input', 'merge', 'collect', 'draft', 'subgraph', 'code']
+const KINDS: CardKind[] = ['trigger', 'merge', 'collect', 'draft', 'subgraph', 'code']
 
 export const KIND_LABEL: Record<CardKind, string> = {
-  trigger: L('開始'), input: L('入力'), merge: L('合流'), collect: L('収集'),
+  trigger: L('開始'), merge: L('合流'), collect: L('収集'),
   draft: 'Draft', subgraph: 'Card in Card', code: L('処理'), invalid: L('定義エラー'),
 }
 
 export const KIND_ICON: Record<CardKind, string> = {
-  trigger: 'play.circle', input: 'slider.horizontal.3',
+  trigger: 'play.circle',
   merge: 'arrow.triangle.merge', collect: 'line.3.horizontal.decrease', draft: 'pencil.and.outline', subgraph: 'link',
   code: 'chevron.left.forwardslash.chevron.right', invalid: 'xmark.octagon',
+}
+
+export function cardIcon(kind: CardKind, symbol?: string): string {
+  return kind === 'invalid' || !symbol || symbol === 'none' ? KIND_ICON[kind] : symbol
+}
+
+export function definitionIcon(def: J | undefined): string {
+  return cardIcon(definitionKind(def), str(get(def, 'symbol')))
 }
 
 /** A kind by its _card.json "type" name (also VersionCanvasCard.kind, empty
@@ -2449,18 +2451,14 @@ export const KIND_ICON: Record<CardKind, string> = {
 export const cardKindNamed = (name: string | undefined): CardKind =>
   name !== undefined && (KINDS as string[]).includes(name) ? name as CardKind : 'invalid'
 
-/** What a _card.json says the Card is: its "type" (a subgraph exactly when it
- *  names an `external`). Without a definition, `invalid` as well. */
+/** A Card’s kind comes from its _card.json type. */
 export function definitionKind(def: J | undefined): CardKind {
-  const kind = cardKindNamed(str(get(def, 'type')))
-  return (kind === 'subgraph') === (get(def, 'external') !== undefined) ? kind : 'invalid'
+  return cardKindNamed(str(get(def, 'type')))
 }
 
 const BUILTIN_CARDS = {
   draft: H.BuiltinCard.Draft,
   trigger: H.BuiltinCard.Trigger,
-  input: H.BuiltinCard.InputValue,
-  input_bool: H.BuiltinCard.BooleanInput,
   merge: H.BuiltinCard.Merge,
   collect: H.BuiltinCard.Collect,
 }
@@ -2468,12 +2466,10 @@ export type DefinitionTemplate = keyof typeof BUILTIN_CARDS
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   { id: 'draft', label: L('Draft') },
   { id: 'trigger', label: L('トリガー') },
-  { id: 'input', label: L('入力値') },
-  { id: 'input_bool', label: L('真偽値の入力') },
   { id: 'merge', label: L('合流') },
   { id: 'collect', label: L('収集') },
 ]
-export const templateBaseName = (t: DefinitionTemplate) => t === 'input_bool' ? 'condition' : t === 'trigger' ? 'start' : t
+export const templateBaseName = (t: DefinitionTemplate) => t === 'trigger' ? 'start' : t
 
 export const NOTE_COLORS: { id: string; label: string }[] = [
   { id: 'yellow', label: L('黄') }, { id: 'blue', label: L('青') }, { id: 'green', label: L('緑') }, { id: 'pink', label: L('桃') }, { id: 'gray', label: L('灰') },

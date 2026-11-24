@@ -1,4 +1,5 @@
 ---
+title: boosting
 description: Tell the digits apart with gradient boosting
 ---
 

@@ -1,4 +1,5 @@
 ---
+title: lipinski
 description: Lipinski の Rule of Five
 ---
 

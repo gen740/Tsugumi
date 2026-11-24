@@ -30,7 +30,7 @@ class InspectProbeTests(unittest.TestCase):
         body = json.loads(result["content"][0]["text"])
         self.assertEqual(body["reply"], "ProjectSnapshot")
         definition = body["value"]["definitions"][0]
-        self.assertEqual(json.loads(definition["card_json"]), {"type": "input"})
+        self.assertEqual(json.loads(definition["card_json"]), {"type": "code"})
         self.assertIn("definitions/initial/params.nix",
                       [source["path"] for source in body["value"]["sources"]])
         self.assertTrue(call("project_inspect", {"id": "initial"})["isError"])

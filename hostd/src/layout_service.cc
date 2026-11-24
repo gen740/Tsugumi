@@ -7,8 +7,9 @@
 
 #include "agent/wire.hh"
 #include "host/layout.hh"
-#include "host/layout_saving.hh"
 #include "host/layout_file.hh"
+#include "host/layout_saving.hh"
+#include "tsugumi/document/document.hh"
 #include "tsugumi/document/text.hh"
 #include "tsugumi/util/json_object.hh"
 
@@ -46,8 +47,11 @@ auto scene_of(const R::LayoutScene& in) -> layout::Scene {
     std::set<std::string> names;
     if (ps)
       for (const auto* p : *ps) {
-        if (!names.insert(p->name()->str()).second)
-          throw LayoutFailure("duplicate layout port");
+        const auto name = p->name()->string_view();
+        // Drafts have an unnamed visual anchor.
+        if ((!name.empty() && !valid_name(name)) ||
+            !names.insert(std::string(name)).second)
+          throw LayoutFailure("invalid or duplicate layout port");
         const auto at = field + "[" + std::to_string(out.size()) + "]";
         out.push_back({p->name()->str(), measured(p->x(), at + ".x"),
                        measured(p->y(), at + ".y")});
@@ -58,8 +62,7 @@ auto scene_of(const R::LayoutScene& in) -> layout::Scene {
   if (in.cards())
     for (const auto* c : *in.cards()) {
       const auto id = c->id()->str();
-      if (id.empty() || id.find('\0') != std::string::npos ||
-          !ids.insert(id).second)
+      if (!valid_name(id) || !ids.insert(id).second)
         throw LayoutFailure("invalid or duplicate layout Card id");
       const auto at = "scene.cards[" + std::to_string(s.cards.size()) + "]";
       s.cards.push_back(
@@ -69,9 +72,17 @@ auto scene_of(const R::LayoutScene& in) -> layout::Scene {
            ports(c->outputs(), at + ".outputs"), c->reorderable()});
     }
   if (in.wires())
-    for (const auto* w : *in.wires())
+    for (const auto* w : *in.wires()) {
+      if (!valid_name(w->from()->string_view()) ||
+          !valid_name(w->to()->string_view()) ||
+          (!w->from_port()->str().empty() &&
+           !valid_name(w->from_port()->string_view())) ||
+          (!w->to_port()->str().empty() &&
+           !valid_name(w->to_port()->string_view())))
+        throw LayoutFailure("invalid layout wire endpoint");
       s.wires.push_back({w->from()->str(), w->from_port()->str(),
                          w->to()->str(), w->to_port()->str()});
+    }
   auto boxes = [](const auto* bs, const std::string& field) {
     std::vector<layout::Box> out;
     if (bs)
@@ -89,9 +100,15 @@ auto scene_of(const R::LayoutScene& in) -> layout::Scene {
     layout::Bar out;
     if (!b) return out;
     if (b->ends())
-      for (const auto* e : *b->ends())
+      for (const auto* e : *b->ends()) {
+        if (!valid_name(e->name()->string_view()) ||
+            !valid_name(e->card()->string_view()) ||
+            (!e->port()->str().empty() &&
+             !valid_name(e->port()->string_view())))
+          throw LayoutFailure("invalid layout boundary endpoint");
         out.ends.push_back(
             {e->name()->str(), e->card()->str(), e->port()->str()});
+      }
     if (b->x().has_value() != b->y().has_value())
       throw LayoutFailure("layout bar needs both coordinates");
     if (b->x())

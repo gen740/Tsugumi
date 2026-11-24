@@ -1,3 +1,0 @@
----
-description: The random seed, the number of walkers and the number of steps
----

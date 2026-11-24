@@ -1,3 +1,4 @@
+import { cardStem } from '../model/names'
 // Typed project operations. The shared C++ client owns transport, validation,
 // request correlation, deadlines and disconnect handling (Wasm in the browser).
 import { Builder, ByteBuffer, Encoding } from 'flatbuffers'
@@ -449,9 +450,4 @@ export async function webSocketTransport(url: string, signal?: AbortSignal, prot
   } finally {
     signal?.removeEventListener('abort', release)
   }
-}
-
-/** Presentation choice made by the caller; core only reserves the id. */
-export function cardStem(name: string): string {
-  return name.replace(/[A-Z]/g, c => c.toLowerCase()).replace(/[^a-z0-9]+/g, '-').replace(/^-/, '').slice(0, 123).replace(/-$/, '') || 'card'
 }

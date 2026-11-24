@@ -1,4 +1,0 @@
-namespace mol;
-table Pasted { name:string; smiles:string; }
-table Outputs { pasted:Pasted (required); }
-root_type Outputs;

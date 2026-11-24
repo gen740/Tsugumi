@@ -145,16 +145,22 @@ auto Store::stage_file(const stdfs::path& root, const std::string& from,
 
 auto Store::allocate_card_id(const std::string& stem,
                              const std::string& project_path) -> std::string {
-  if (!valid_id(stem) || stem.size() > 123)
-    throw Failed(FailureKind::invalid_request,
-                 "Card stem must be 1..123 ASCII identifier characters");
-  const auto fold = [](std::string value) {
-    std::transform(
-        value.begin(), value.end(), value.begin(), [](unsigned char c) {
-          return static_cast<char>(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
-        });
-    return value;
-  };
+  std::string base;
+  for (size_t i = 0; i < stem.size() && base.size() < 64; ++i) {
+    char c = stem[i];
+    if (static_cast<unsigned char>(c) >= 0x80) {
+      // A non-ASCII character occupies one position in the identifier.
+      while (i + 1 < stem.size() &&
+             (static_cast<unsigned char>(stem[i + 1]) & 0xc0) == 0x80)
+        ++i;
+    }
+    if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+    const bool valid =
+        (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+    base += valid ? c : '_';
+  }
+  if (base.empty()) base = "card";
+  if (base.front() < 'a' || base.front() > 'z') base.insert(0, "card_");
   // A scope can still be a local draft, so validate its path rather than
   // requiring it on disk.
   auto rest = project_path;
@@ -163,7 +169,7 @@ auto Store::allocate_card_id(const std::string& stem,
       throw Failed(FailureKind::invalid_path, "invalid project_path");
     rest.erase(0, 10);
     auto slash = rest.find('/');
-    if (slash == std::string::npos || !valid_id(rest.substr(0, slash)))
+    if (slash == std::string::npos || !valid_name(rest.substr(0, slash)))
       throw Failed(FailureKind::invalid_path, "invalid project_path");
     rest.erase(0, slash + 1);
   }
@@ -173,12 +179,12 @@ auto Store::allocate_card_id(const std::string& stem,
   auto reservations = fs::read_file(state_dir() / "card-ids").value_or("");
   std::set<std::string> issued;
   std::istringstream lines(reservations);
-  for (std::string line; std::getline(lines, line);) issued.insert(fold(line));
+  for (std::string line; std::getline(lines, line);) issued.insert(line);
   auto doc = current();
   std::set<std::string> canvas_ids;
   if (project_path.empty()) {
     for (const auto* card : *doc->project().canvas()->cards())
-      canvas_ids.insert(fold(card->id()->str()));
+      canvas_ids.insert(card->id()->str());
   } else if (doc->sources.count(project_path + "tsugumi.json")) {
     auto project = parse_external_project(
         project_path + "tsugumi.json",
@@ -187,22 +193,21 @@ auto Store::allocate_card_id(const std::string& stem,
          *document_text::root<Tsugumi::Document::Project>(project.buffer)
               .canvas()
               ->cards())
-      canvas_ids.insert(fold(card->id()->str()));
+      canvas_ids.insert(card->id()->str());
   }
   if (project_path.empty())
     for (const auto& [id, definition] : doc->definitions) {
       (void)definition;
-      canvas_ids.insert(fold(id));
+      canvas_ids.insert(id);
     }
-  const auto base = fold(stem);
   // The name itself is the first candidate; duplicates compose a small index.
   // One case keeps generated definition folders portable to macOS.
   for (uint64_t number = 1; number != 0; ++number) {
-    const auto suffix = number == 1 ? "" : "-" + std::to_string(number);
-    auto id = base.substr(0, 128 - suffix.size()) + suffix;
+    const auto suffix = number == 1 ? "" : "_" + std::to_string(number);
+    auto id = base.substr(0, 64 - suffix.size()) + suffix;
     auto key = project_path + id;
     auto dir = project_path + def_dir(id);
-    bool exists = issued.count(fold(key)) || canvas_ids.count(id) ||
+    bool exists = issued.count(key) || canvas_ids.count(id) ||
                   stdfs::exists(opts_.root / dir) ||
                   stdfs::exists(opts_.root / project_path / "externals" / id);
     auto source = doc->sources.lower_bound(dir);
@@ -645,7 +650,7 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
         });
         break;
       case K::PutDefinition: {
-        if (!valid_id(c.id))
+        if (!valid_name(c.id))
           throw Failed(FailureKind::invalid_request,
                        "invalid definition id " + c.id);
         DefinitionDoc d;
@@ -782,7 +787,6 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
           path + " belongs to definition " + id + " which does not exist",
           {{"path", path}});
   }
-  wrap([&] { check_structure(*doc); });
 
   // Files carried with their bytes: nested projects' documents and notes.
   const auto carried = [&](const std::string& path, std::string bytes) {
@@ -819,7 +823,10 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
     });
     it = streamed.erase(it);
   }
-  wrap([&] { doc->check_document_size(); });
+  wrap([&] {
+    doc->check_document_size();
+    check_structure(*doc);
+  });
   if (doc->sources.size() > kMaxManifestEntries)
     throw Failed(
         FailureKind::resource_limit,

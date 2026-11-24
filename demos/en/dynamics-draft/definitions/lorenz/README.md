@@ -1,8 +1,9 @@
 ---
+title: lorenz
 description: Draw the Lorenz attractor
 ---
 
-Takes size and seed from settings. Solves the Lorenz equations (σ=10, ρ=28, β=8/3) from (1, 1, 1) with RK4 at dt=0.005 for 40000 steps, discarding the first 1000. Projects the orbit on the x–z plane, counts visits on a size×size grid and shows them as a PNG in log shading. σ, ρ, β and the number of steps are parameters. Asserts that the orbit stays within |x|<30 and 0<z<60, and logs the ranges of x and z. Uses numpy and pillow.
+Uses the size and seed in its params.nix. Solves the Lorenz equations (σ=10, ρ=28, β=8/3) from (1, 1, 1) with RK4 at dt=0.005 for 40000 steps, discarding the first 1000. Projects the orbit on the x–z plane, counts visits on a size×size grid and shows them as a PNG in log shading. σ, ρ, β and the number of steps are parameters. Asserts that the orbit stays within |x|<30 and 0<z<60, and logs the ranges of x and z. Uses numpy and pillow.
 
 Planned inputs:
-- settings: size and seed
+- start: the Trigger

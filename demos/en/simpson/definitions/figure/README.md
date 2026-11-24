@@ -1,4 +1,5 @@
 ---
+title: figure
 description: Overlay the line for the whole and the lines for each stratum
 ---
 

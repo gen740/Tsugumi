@@ -8,6 +8,5 @@ Update fixtures only when the expected public behaviour changes. The suite comma
 - `wire-routes.json`: after changing routing, regenerate with `WIRE_ROUTES_WRITE=1 npm --prefix ui/web test`.
 - `port-grid-contract.json` is shared by native and Web UI tests; update both consumers when changing its contract.
 
-- `subgraph-edits.json` records host document edits for Web gesture and undo fixtures. The host unit tests verify every reply; graph transformation expectations belong to `tests/core/agent/document_edits_test.cc`. Presentation fixtures call the production operation executor through `tsugumi_document_edit_driver` (override its path with `TSUGUMI_DOCUMENT_EDIT_DRIVER`).
 
 - `service-contract.json` contains flatc wire goldens for Host reference demos/version notes, Agent summaries/access and shared replies. C++, Swift and TypeScript read the same vectors; the Agent request list also checks the BFBS-derived external MCP catalog. Regenerate with `python3 tests/tools/generate_service_vectors.py` and review the wire changes.

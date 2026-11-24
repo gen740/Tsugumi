@@ -1,4 +1,5 @@
 ---
+title: sensitivity
 description: 1 試験を除く・推定量を変える
 ---
 

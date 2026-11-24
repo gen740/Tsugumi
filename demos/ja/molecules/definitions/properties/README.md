@@ -1,4 +1,5 @@
 ---
+title: properties
 description: 分子の物性を計算する
 ---
 

@@ -52,7 +52,7 @@ worker. A created ID is the sequence followed by the worker's zero-based
 artifact counter, encoded as two big-endian 64-bit integers. It is displayed
 as `<invocation sequence>.<counter>`. Access depends on the recorded grant.
 `artifact_open` checks the call's grant and materializes its directory on
-demand. Input Card artifacts retain their existing IDs and store paths. See
+demand. See
 [artifact access in the sandbox](SandboxContract.md#artifact-access).
 
 ## Effects and their lifetimes

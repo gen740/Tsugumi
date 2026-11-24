@@ -10,7 +10,6 @@
 #include <future>
 #include <iterator>
 #include <set>
-#include <sstream>
 #include <stop_token>
 
 #include "collect_value.hh"
@@ -931,15 +930,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     request.timeout_seconds = node.settings.build_timeout_seconds;
     request.max_implementations = max_implementations;
     request.cancel = work.cancellation->stop_event.get_token();
-    // Input Cards produce immutable store output; no worker starts for them.
-    const SharedStoreDerivationTransport transport;
-    if (node.kind == CardType::Input) {
-      request.target = {WorkerKind::native, native_system()};
-      request.transport = &transport;
-    } else {
-      prepared = svc_.prepare_execution(
-          node, invocation_dir(node, work.invocation), request);
-    }
+    prepared = svc_.prepare_execution(
+        node, invocation_dir(node, work.invocation), request);
     const bool reuses_builds = request.target.kind == WorkerKind::native;
     if (rt.build && reuses_builds && rt.build_target &&
         rt.build_target->kind == request.target.kind &&
@@ -1170,7 +1162,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     uint32_t count = 0;
     bool reserved = false;
     const bool code = node.kind == CardType::Code;
-    const bool builds = code || node.kind == CardType::Input;
     std::optional<FailureData> failure;
     try {
       if (work.activation > node.settings.max_runs)
@@ -1181,7 +1172,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
              {"max_runs", std::to_string(node.settings.max_runs)}});
       count = input_combinations(node, work.groups);
       remember_inputs(rt, work);
-      if (builds && count != 0) {
+      if (code && count != 0) {
         work.prepared = new_invocation(work);
         auto& s = *work.prepared;
         s.state = CardState::running;
@@ -1229,12 +1220,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       member.execution = prepared.get();
       member.execution_list = batch.execution_list;
       if (index == 0) member.prepared = std::move(work.prepared);
-      if (builds)
+      if (code)
         member.implementation =
             &implementations.at(index % implementations.size());
       const auto inputs_index =
-          builds ? index / static_cast<uint32_t>(implementations.size())
-                 : index;
+          code ? index / static_cast<uint32_t>(implementations.size()) : index;
       member.inputs = batch_inputs(node, work.groups, inputs_index);
       auto produced = invoke(member, worker_lane);
       {
@@ -1394,7 +1384,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     } else {
       s.state = CardState::running;
       if (!prepared) {
-        if (node.kind == CardType::Code || node.kind == CardType::Input) {
+        if (node.kind == CardType::Code) {
           stage_begin(s, Phase::prepare, StageOutcome::reused);
           stage_begin(s, Phase::evaluate, StageOutcome::reused);
           stage_begin(s, Phase::build, StageOutcome::reused);
@@ -1587,94 +1577,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   // ---- builtins
   // --------------------------------------------------------------
 
-  auto input_ports(const Node& node, const Work& work) -> std::vector<Value> {
-    const stdfs::path package(work.implementation->package);
-    const stdfs::path store = NixStore::store_dir();
-    const auto invalid = [](const std::string& reason) {
-      return Failed(FailureKind::output_invalid, reason);
-    };
-    if (package.parent_path() != store)
-      throw invalid("Input Card run output must be in the Nix store");
-    // Open each path beneath the store without following directory symlinks.
-    const auto prefix = package.filename() / "share/tsugumi/input";
-    const auto read = [&](const stdfs::path& relative, uint64_t limit) {
-      std::string contents;
-      fs::stream_beneath(store, prefix / relative, limit,
-                         [&](std::string_view part) { contents += part; });
-      return contents;
-    };
-    const auto exists = [&](const stdfs::path& relative) {
-      std::error_code error;
-      const auto found =
-          stdfs::symlink_status(store / prefix / relative, error);
-      if (error && error != std::errc::no_such_file_or_directory)
-        throw invalid("cannot inspect Input Card output " + relative.string());
-      return stdfs::exists(found);
-    };
-    std::vector<Value> outputs;
-    std::map<std::string, stdfs::path> artifacts;
-    uint64_t remaining =
-        std::min<uint64_t>(node.settings.output_limit_bytes, kMaxBatchBytes);
-    try {
-      for (const auto& port : node.outputs) {
-        if (!valid_id(port.name) || port.name.ends_with(".artifacts"))
-          throw invalid("invalid Input Card output port " + port.name);
-        const auto file = stdfs::path("ports") / port.name;
-        if (!exists(file)) {
-          if (port.required)
-            throw invalid("required output " + port.name + " is missing");
-          continue;
-        }
-        if (!port.type) throw invalid("output " + port.name + " has no type");
-        if (outputs.size() >= node.settings.output_limit_entries)
-          throw invalid("Input Card exceeds its output entry limit");
-        Value value{port.name, port.type, read(file, remaining),
-                    schema_id(*port.type)};
-        remaining -= value.bytes.size();
-        const auto listing = file.string() + ".artifacts";
-        if (exists(listing)) {
-          // Artifact ids are lowercase hex in the file and binary in the
-          // envelope. The file is bounded separately from the port payload.
-          std::istringstream lines(read(listing, kMaxBatchBytes));
-          std::set<std::string> port_artifacts;
-          for (std::string hex; std::getline(lines, hex);) {
-            const auto digit = [](char c) -> int {
-              if (c >= '0' && c <= '9') return c - '0';
-              if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-              return -1;
-            };
-            if (hex.size() != 32)
-              throw invalid("invalid artifact ID on output " + port.name);
-            std::string id;
-            for (size_t i = 0; i < hex.size(); i += 2) {
-              const int high = digit(hex[i]), low = digit(hex[i + 1]);
-              if (high < 0 || low < 0)
-                throw invalid("invalid artifact ID on output " + port.name);
-              id += static_cast<char>(high * 16 + low);
-            }
-            if (!port_artifacts.insert(id).second) continue;
-            const auto entry = prefix / "artifacts" / hex;
-            if (!artifacts.contains(id)) {
-              if (artifacts.size() >= node.settings.output_limit_entries ||
-                  !fs::directory_beneath(store, entry))
-                throw invalid("invalid artifact directory on output " +
-                              port.name);
-              artifacts.emplace(id, store / entry);
-            }
-            value.artifacts.push_back(std::move(id));
-          }
-        }
-        outputs.push_back(std::move(value));
-      }
-    } catch (const fs::Error& error) {
-      throw invalid(error.what());
-    }
-    for (const auto& [id, path] : artifacts)
-      svc_.register_store_artifact(run_id_, node.path, work.invocation, id,
-                                   path);
-    return outputs;
-  }
-
   auto run_builtin(NodeRt& rt, const Work& w, InvocationSummaryData& s,
                    const std::vector<Value>& in) -> Produced {
     const Node& node = *rt.node;
@@ -1692,10 +1594,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
              schema_id(*types::empty_type())});
         break;
       }
-      case CardType::Input:
-        stage_begin(s, Phase::execute);
-        p.outputs = input_ports(node, w);
-        break;
       case CardType::Collect:
         p.outputs.push_back(collect_values(node.outputs.front(), in,
                                            w.cancellation->stop));
@@ -2243,8 +2141,7 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
   std::erase_if(seeds, [&](size_t i) { return !targets.count(i); });
   for (size_t i : targets) {
     out.targets.push_back(res.nodes[i].path);
-    if (res.nodes[i].kind == CardType::Code ||
-        res.nodes[i].kind == CardType::Input)
+    if (res.nodes[i].kind == CardType::Code)
       out.build_candidates.push_back(res.nodes[i].path);
     out.diagnostics.insert(out.diagnostics.end(), res.nodes[i].diags.begin(),
                            res.nodes[i].diags.end());

@@ -1,4 +1,5 @@
 ---
+title: basins
 description: 収束先の地図（フラクタル）
 ---
 

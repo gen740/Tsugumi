@@ -1,3 +1,4 @@
 ---
-description: Sends the pasted SMILES (paste) to start the computation
+title: start
+description: Run properties using its parameters
 ---

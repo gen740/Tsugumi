@@ -14,11 +14,11 @@ The RPC exposes `RunStatus.partial_run` and `RunStatus.uses_partial_result` in s
 2. Select an invocation when the Card ran more than once. Open **Ports** to inspect recorded values, **Log** to read its output and diagnostics, or **Info** to see its status and execution details.
 3. To keep structured values from future invocations, select **On** for **Record input and output values** under **Card settings → Ports**.
 
-## Set recording defaults
+## Set recording policy
 
-The project settings control what new invocations record. Stdout and stderr are recorded by default, up to 128 MiB combined per invocation. Set the limit in bytes from 0 through 1 GiB. A zero limit leaves stdout and stderr available only while the run is active. Build logs and journals keep their own limits.
+The project settings control what new invocations record. Project creation writes `recordLogs: true` and a combined `logLimitBytes` of 128 MiB per invocation. Set the limit in bytes from 0 through 1 GiB. A zero limit leaves stdout and stderr available only while the run is active. Build logs and journals keep their own limits.
 
-Structured input and output value recording is off by default. What a Card sends to its views is never recorded ([Views](CardGuide.md#views)). A Card can inherit each setting from its project or explicitly set it on or off. Each nested project uses its own settings. A run keeps the policy accepted when it started, along with its summary, failure details, timings and versions.
+Project creation writes `recordIO: false`. What a Card sends to its views is never recorded ([Views](CardGuide.md#views)). Where a Card supports recording, it writes `project` to inherit the setting or `on` or `off` to override it. Each nested project uses its own settings. A run keeps the policy accepted when it started, along with its summary, failure details, timings and versions.
 
 For example, open **Visualization → report**, run it, and inspect a figure Card's input and output. A stopped or failed invocation can have a log and status even when there is no output.
 
@@ -50,8 +50,7 @@ The list uses the original history record. Configured cache endpoints, where rec
 
 Open **Artifacts** for a Card and select a run. Preview or export the files in
 an artifact directory. Created artifacts are sealed at call completion and kept
-under `.tsugumi/artifacts/<run-id>/`. Store-backed Input Card artifacts point
-to immutable Nix store directories. Forwarded IDs can refer to an earlier
+under `.tsugumi/artifacts/<run-id>/`. Forwarded IDs can refer to an earlier
 run's artifact. Run deletion removes artifacts owned by the deleted run.
 
 ## Follow evidence from chat

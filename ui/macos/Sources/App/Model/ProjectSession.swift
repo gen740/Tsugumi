@@ -1290,8 +1290,8 @@ final class ProjectSession {
   func projectPrefix(_ scope: [String]) -> String? {
     var prefix = ""
     for id in scope {
-      guard let name = externalName(prefix: prefix, id: id) else { return nil }
-      prefix += "externals/\(name)/"
+      guard isSubgraph(prefix: prefix, id: id) else { return nil }
+      prefix += "externals/\(id)/"
     }
     return prefix
   }
@@ -1350,11 +1350,10 @@ final class ProjectSession {
 
   /// The Card's settings (its _card.json).
   func cardDefinition(_ k: CardKey) -> JSONValue? {
-    guard let d = cardDefinitionDraft(k), definitionKind(d.card) != .subgraph else { return nil }
-    return d.card
+    cardDefinitionDraft(k)?.card
   }
 
-  /// The Card's notes: {description, content, comments}.
+  /// The Card's notes: {title, description, content, comments}.
   func cardMeta(_ k: CardKey) -> JSONValue? { cardDefinitionDraft(k)?.meta }
 
   /// Sets a Card's definition files in the draft (nil removes them).
@@ -1369,12 +1368,12 @@ final class ProjectSession {
   func cardExternal(_ k: CardKey) -> String? {
     let p = path(k)
     guard let id = p.last, let prefix = projectPrefix(Array(p.dropLast())) else { return nil }
-    return externalName(prefix: prefix, id: id).map { prefix + "externals/\($0)/" }
+    return isSubgraph(prefix: prefix, id: id) ? prefix + "externals/\(id)/" : nil
   }
 
-  private func externalName(prefix: String, id: String) -> String? {
+  private func isSubgraph(prefix: String, id: String) -> Bool {
     let card = prefix.isEmpty ? definitions[id] : external(prefix)?.definitions[id]?.card
-    return card?["external"]?.string
+    return definitionKind(card) == .subgraph
   }
 
   /// The folder of the Card's definition, project relative ("definitions/<id>/").

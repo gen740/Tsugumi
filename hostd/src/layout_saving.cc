@@ -1,15 +1,15 @@
 #include "host/layout_saving.hh"
 
-#include "host/layout_file.hh"
-
 #include <algorithm>
 #include <cmath>
 #include <map>
 #include <set>
 
 #include "host/layout.hh"
+#include "host/layout_file.hh"
 #include "host/layout_service.hh"
 #include "host/save.hh"
+#include "tsugumi/document/document.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/text.hh"
@@ -64,7 +64,9 @@ auto IsExternalDocument(std::string_view path, std::string_view name) -> bool {
   bool external = false;
   while (path.starts_with("externals/")) {
     const auto slash = path.find('/', 10);
-    if (slash == std::string_view::npos) return false;
+    if (slash == std::string_view::npos ||
+        !valid_name(path.substr(10, slash - 10)))
+      return false;
     path.remove_prefix(slash + 1);
     external = true;
   }

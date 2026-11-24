@@ -1,4 +1,5 @@
 ---
+title: spectrum
 description: Draw the spectrum
 ---
 

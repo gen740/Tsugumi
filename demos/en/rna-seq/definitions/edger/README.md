@@ -1,4 +1,5 @@
 ---
+title: edger
 description: Answer the same question with edgeR
 ---
 

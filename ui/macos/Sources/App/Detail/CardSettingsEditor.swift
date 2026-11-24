@@ -34,7 +34,6 @@ final class CardEditorModel {
   private var baseDefinition: JSONValue?
   private var baseMeta: JSONValue?
   private var baseTexts: [String: String] = [:]
-  private var presetFiles: [String: String] = [:]
   private var baseHashes: [String: String] = [:]   // source hash when each file was read
 
   init(session: ProjectSession, cardKey: CardKey) {
@@ -45,9 +44,12 @@ final class CardEditorModel {
 
   /// The Card's definition folder name (its id).
   var definitionId: String? { path(cardKey).last }
-  var kind: CardKind {
-    session.kind(cardKey) == .subgraph ? .subgraph : definitionKind(definition)
+  var kind: CardKind { definitionKind(definition) }
+  var systems: [String] {
+    get { (definition?["systems"]?.array ?? []).map { $0.string ?? "" } }
+    set { definition?["systems"] = .array(newValue.map(JSONValue.string)) }
   }
+
   var exists: Bool { session.instance(cardKey) != nil }
   private var prefix: String { session.definitionDir(cardKey) ?? "" }
 
@@ -61,64 +63,42 @@ final class CardEditorModel {
     var id: String
     var label: String
     var side: String
-    var index: Int?
-    var boundary: String?
+    var index: Int
   }
-  /// Incident wires and boundary ends. No port is selected implicitly.
+  /// Incident wires. No port is selected implicitly.
   var draftEnds: [DraftEnd] {
     guard session.kind(cardKey) == .draft, kind != .draft, let id = path(cardKey).last else { return [] }
     let scope = Array(path(cardKey).dropLast())
     var ends: [DraftEnd] = []
     for (index, c) in session.connections(in: scope).enumerated() {
       for side in ["from", "to"] where c[side]?["card"]?.string == id {
-        let label = "\(c["from"]?["card"]?.string ?? "").\(c["from"]?["port"]?.string ?? "") → \(c["to"]?["card"]?.string ?? "").\(c["to"]?["port"]?.string ?? "")"
+        func endpoint(_ side: String) -> String {
+          [c[side]?["card"]?.string, c[side]?["port"]?.string].compactMap { $0 }.joined(separator: ".")
+        }
+        let label = "\(endpoint("from")) → \(endpoint("to"))"
         ends.append(DraftEnd(id: "\(index):\(side):\(c.serialized(pretty: false))", label: label, side: side, index: index))
-      }
-    }
-    let boundary = scope.isEmpty ? nil : session.boundary(key(scope))
-    for side in ["inputs", "outputs"] {
-      for (name, ep) in boundary?[side]?.object ?? [] where ep["card"]?.string == id {
-        ends.append(DraftEnd(id: "\(side):\(name):\(ep.serialized(pretty: false))", label: "\(side).\(name) → \(id)", side: side, boundary: name))
       }
     }
     return ends
   }
 
-  var implementation: String {
-    let kind = definitionKind(definition)
-    if kind == .input, presetFiles[prefix + "params.nix"] == Self.inputParameters(boolean: true) ||
-      session.resolution[cardKey]?.parameters.contains(where: { $0.name == "value" && $0.type == "bool" }) == true {
-      return DefinitionTemplate.booleanInput.rawValue
-    }
-    return kind.rawValue
-  }
+  var implementation: String { definitionKind(definition).rawValue }
 
   func implementAs(_ value: String) {
-    if value == "input" || value == DefinitionTemplate.booleanInput.rawValue {
-      let boolean = value == DefinitionTemplate.booleanInput.rawValue
-      let type = boolean ? "bool" : "double"
-      definition = .object([("type", .string("input"))])
-      preset("_outputs.fbs", "namespace card;\ntable Value { value:\(type); }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n")
-      preset("params.nix", Self.inputParameters(boolean: boolean))
-    } else {
-      definition = .object([("type", .string(value))])
-      for (file, text) in presetFiles where created.contains(file) && texts[file] == text { removeFile(file) }
-      presetFiles = [:]
-    }
-    if value == "merge" { definition?["inputs"] = .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])]) }
-  }
-
-  private static func inputParameters(boolean: Bool) -> String {
-    "{ value = \(boolean ? "false" : "0.0"); }\n"
-  }
-
-  private func preset(_ relative: String, _ text: String) {
-    let file = prefix + relative
-    guard !prefix.isEmpty, session.sources[file] == nil, !removed.contains(file) else { return }
-    let untouched = created.contains(file) && presetFiles[file] != nil && texts[file] == presetFiles[file]
-    guard untouched || (!created.contains(file) && texts[file] == nil) else { return }
-    createFile(relative, text: text)
-    presetFiles[file] = text
+    let kind = CardKind.named(value)
+    #if arch(arm64)
+    let native = "aarch64-linux"
+    #else
+    let native = "x86_64-linux"
+    #endif
+    let configured = session.executionServices.first { $0.id == "local" }?.nativeSystem
+    let system = configured.flatMap { system in
+      if system.hasSuffix("-linux") { return system }
+      if system.hasSuffix("-darwin") { return String(system.dropLast("-darwin".count)) + "-linux" }
+      return nil
+    } ?? native
+    let symbol = definition?["symbol"]?.string ?? "none"
+    definition = implementedCard(kind, symbol: symbol, systems: [system])
   }
 
   /// Source files of the definition (documents excluded), with local changes.
@@ -147,7 +127,6 @@ final class CardEditorModel {
     baseMeta = meta
     texts = [:]
     baseTexts = [:]
-    presetFiles = [:]
     baseHashes = [:]
     loads = [:]
     for (p, t) in keep {
@@ -270,7 +249,6 @@ final class CardEditorModel {
   func createFile(_ rel: String, text: String = "") {
     guard !prefix.isEmpty, !rel.isEmpty else { return }
     let p = prefix + rel
-    if !created.contains(p) { presetFiles[p] = nil }
     removed.remove(p)
     created.insert(p)
     if let hash = session.sources[p]?.hash { baseHashes[p] = hash }
@@ -283,8 +261,6 @@ final class CardEditorModel {
   func rename(_ p: String, to rel: String) async -> Bool {
     let target = prefix + rel
     if target == p { return true }
-    presetFiles[p] = nil
-    presetFiles[target] = nil
     let origin = renames[p] ?? p
     let hash = baseHashes[p] ?? session.sources[origin]?.hash
     let text = texts[p], base = baseTexts[p], load = loads[p]
@@ -326,8 +302,38 @@ final class CardEditorModel {
     applying = true
     defer { applying = false }
     let ends = draftEnds, bindings = rebindings
-    guard !ends.contains(where: { bindings[$0.id]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true }) else {
+    guard !ends.contains(where: { !validName(bindings[$0.id] ?? "") }) else {
       message = String(localized: "各 wire の実ポート名を指定してください（ポート欄）。")
+      return false
+    }
+    if let title = meta?["title"]?.string, title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      message = String(localized: "Card 名を入力してください。")
+      return false
+    }
+    let inputNames = (definition?["inputs"]?.array ?? []).map { $0["name"]?.string ?? "" }
+    if !inputNames.allSatisfy(validName) || Set(inputNames).count != inputNames.count || kind == .merge && inputNames.isEmpty {
+      message = String(localized: "有効な入力ポート名を指定してください。")
+      return false
+    }
+    if !(definition?["secrets"]?.array ?? []).allSatisfy({ validName($0.string ?? "") }) {
+      message = String(localized: "有効なシークレット名を指定してください。")
+      return false
+    }
+    let executable = kind == .code
+    let hasMaxRuns = executable || [.merge, .collect].contains(kind)
+    if executable && (systems.isEmpty || Set(systems).count != systems.count || !systems.allSatisfy(cardSystems.contains)) {
+      message = String(localized: "対応システムを重複なしで 1 つ以上選択してください。")
+      return false
+    }
+    let limits = definition?["sandbox"]?["limits"]
+    func uint(_ value: JSONValue?, min: UInt64 = 0, max: UInt64 = .max) -> Bool {
+      guard let text = value?.numberText, let number = UInt64(text) else { return false }
+      return (min...max).contains(number)
+    }
+    if hasMaxRuns && !uint(definition?["maxRuns"], min: 1)
+      || executable && (!uint(definition?["timeoutSeconds"]) || !uint(definition?["buildTimeoutSeconds"])
+        || !(0...256).contains(limits?["cpu"]?.double ?? .nan) || !uint(limits?["memoryMiB"], max: 1048576)) {
+      message = String(localized: "設定の数値を有効な範囲で入力してください。")
       return false
     }
     let def = definition, m = meta, k = cardKey
@@ -366,27 +372,15 @@ final class CardEditorModel {
       }
       s.appendEdits(edits)
       let scope = Array(path(k).dropLast())
-      if ends.contains(where: { $0.index != nil }) {
+      if !ends.isEmpty {
         s.updateGraph(scope) { g in
           var conns = g["connections"]?.array ?? []
           for e in ends {
-            if let i = e.index { conns[i][e.side]?["port"] = .string(bindings[e.id]!.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            conns[e.index][e.side]?["port"] = .string(bindings[e.id]!.trimmingCharacters(in: .whitespacesAndNewlines))
           }
           g["connections"] = .array(conns)
         }
       }
-      if ends.contains(where: { $0.boundary != nil }), let prefix = s.projectPrefix(scope) {
-        s.updateExternal(prefix) { ext in
-          for e in ends {
-            if let name = e.boundary, var ports = ext.project["boundary"]?[e.side]?.array,
-               let i = ports.firstIndex(where: { $0["name"]?.string == name }) {
-              ports[i]["port"] = .string(bindings[e.id]!.trimmingCharacters(in: .whitespacesAndNewlines))
-              ext.project["boundary"]?[e.side] = .array(ports)
-            }
-          }
-        }
-      }
-
     }
     guard ok else { return false }
     message = String(localized: "適用しました。")
@@ -457,7 +451,6 @@ struct CardSettingsEditor: View {
   private func categories(_ m: CardEditorModel) -> [CardEditorCategory] {
     switch m.kind {
     case .code: return CardEditorCategory.allCases
-    case .input: return [.general, .source, .ports, .log, .executions, .artifacts, .notes]
     case .draft, .invalid: return [.general, .notes]
     case .subgraph: return [.general, .ports, .executions, .notes]
     default: return [.general, .ports, .log, .executions, .artifacts, .notes]
@@ -606,25 +599,25 @@ struct CardPreview: View {
 
 // MARK: - Categories
 
-/// Id (the Card's only name and its folder), description, params, when it
-/// runs, and the worker's permissions.
+/// Card identity, execution settings and permissions.
 private struct GeneralCategory: View {
   @Bindable var model: CardEditorModel
+  @State private var confirmSandboxOff = false
 
-  private var remote: Bool {
-    { let id = model.definition?["executionService"]?.string ?? "auto"; return id != "local" && id != "auto" }()
-  }
+  private var executable: Bool { model.kind == .code }
 
   var body: some View {
     Form {
       Section {
-        LabeledContent("ID", value: model.session.displayName(model.cardKey))
+        LabeledContent("ID", value: path(model.cardKey).last ?? model.cardKey)
         LabeledContent("種類", value: model.kind.label)
-        LabeledContent("アイコン") {
-          SymbolPicker(symbol: Binding(get: { model.definition?["symbol"]?.string.flatMap { $0.isEmpty ? nil : $0 } },
-                                       set: { model.definition?["symbol"] = $0.map { .string($0) } }),
-                       inherited: model.kind.symbol)
+        if model.definition != nil {
+          LabeledContent("アイコン") {
+            SymbolPicker(symbol: Binding(get: { model.definition?["symbol"]?.string ?? "none" },
+                                         set: { model.definition?["symbol"] = .string($0) }), defaultIcon: model.kind.symbol)
+          }
         }
+        TextField("Card 名", text: metaString("title"))
         TextField("概要", text: metaString("description"), axis: .vertical)
           .lineLimit(2...5)
         if model.kind == .draft {
@@ -635,12 +628,11 @@ private struct GeneralCategory: View {
       if model.session.kind(model.cardKey) == .draft {
         Section {
           Picker("種類", selection: Binding(get: { model.implementation }, set: { model.implementAs($0) })) {
-            ForEach(["draft", "code", "input",
-                     DefinitionTemplate.booleanInput.rawValue, "trigger", "merge", "collect"], id: \.self) { value in
+            ForEach(["draft", "code", "trigger", "merge", "collect"], id: \.self) { value in
               if value == "code" {
                 Text("コード").tag(value)
               } else {
-                Text(value == DefinitionTemplate.booleanInput.rawValue ? DefinitionTemplate.booleanInput.label : value).tag(value)
+                Text(value).tag(value)
               }
             }
           }
@@ -655,40 +647,43 @@ private struct GeneralCategory: View {
           }
         }
       }
-      if model.kind != .subgraph && model.kind != .draft && model.kind != .invalid {
+      if executable || [.merge, .collect].contains(model.kind) {
         Section("実行") {
-          numberField("maxRuns", label: "最大発火回数", fallback: "1")
+          numberField("maxRuns", label: "最大発火回数")
             .help("実行リスト内の呼び出しはまとめて 1 回の発火として数えます。")
-          timeoutField("timeoutSeconds", label: "実行の期限（秒）")
-          if model.kind == .code {
-            timeoutField("buildTimeoutSeconds", label: "ビルドの期限（秒）")
+          if executable {
+            numberField("timeoutSeconds", label: "実行の期限（秒）").help("0 = 上限なし")
+            numberField("buildTimeoutSeconds", label: "ビルドの期限（秒）").help("0 = 上限なし")
             executionSettings
-            toggle("reuseWorker", label: "worker の状態を残す", fallback: false)
+            Toggle("worker の状態を残す", isOn: Binding(
+              get: { model.definition?["reuseWorker"]?.bool == true },
+              set: { model.definition?["reuseWorker"] = .bool($0) }))
               .help("オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。")
-              .disabled(remote && model.definition?["reuseWorker"]?.bool != true)
-            if remote && model.definition?["reuseWorker"]?.bool == true {
-              Label("外部の実行サービスでは worker の状態を残せません。", systemImage: "exclamationmark.triangle")
-                .font(.caption)
+            Toggle("ファイルアクセスを制限", isOn: Binding(
+              get: { model.definition?["sandbox"]?["filesystem"]?.bool == true },
+              set: { if $0 { setNested("sandbox", "filesystem", .bool(true)) } else { confirmSandboxOff = true } }))
+            .confirmationDialog("この Card のファイルアクセス制限を解除しますか？", isPresented: $confirmSandboxOff, titleVisibility: .visible) {
+              Button("制限を解除する", role: .destructive) { setNested("sandbox", "filesystem", .bool(false)) }
+            } message: {
+              Text("アクセスできる範囲は実行環境の権限と共有フォルダに依存します。ネットワーク制限も実行環境によっては無効になります。")
             }
-            nestedToggle("sandbox", "filesystem", label: "ファイルアクセスを制限", fallback: true)
-              .disabled(remote && model.definition?["sandbox"]?["filesystem"]?.bool != false)
-            nestedToggle("sandbox", "pid", label: "PID 名前空間を分離", fallback: true)
-            nestedToggle("sandbox", "ipc", label: "IPC 名前空間を分離", fallback: true)
-            nestedToggle("sandbox", "identity", label: "実行ユーザーと権限を分離", fallback: true)
-            if remote && model.definition?["sandbox"]?["filesystem"]?.bool == false {
-              Label("外部の実行サービスにはファイルアクセスの制限が必要です。", systemImage: "exclamationmark.triangle")
-                .font(.caption)
-            }
+            nestedToggle("sandbox", "pid", label: "PID 名前空間を分離")
+            nestedToggle("sandbox", "ipc", label: "IPC 名前空間を分離")
+            nestedToggle("sandbox", "identity", label: "実行ユーザーと権限を分離")
           }
         }
-        if model.kind == .code {
-          Section {
-            nestedToggle("grants", "network", label: "ネットワークへのアクセスを許可する", fallback: false)
-            nestedToggle("grants", "gui", label: "GUI へのアクセスを許可する", fallback: false)
-            HostFoldersEditor(model: model, remote: remote)
-          } header: {
-            Text("アクセス許可")
-          }
+      }
+      if executable {
+        Section("アクセス許可") {
+          nestedToggle("grants", "network", label: "ネットワークへのアクセスを許可する")
+          nestedToggle("grants", "gui", label: "GUI へのアクセスを許可する")
+          HostFoldersEditor(model: model)
+          TextField("Card シークレット", text: Binding(
+            get: { (model.definition?["secrets"]?.array ?? []).compactMap(\.string).joined(separator: "\n") },
+            set: { text in
+              model.definition?["secrets"] = text.isEmpty ? nil : .array(text.components(separatedBy: "\n").map { .string($0) })
+            }), axis: .vertical)
+            .help("シークレット名を 1 行に 1 つ指定します。")
         }
       }
       let diags = model.session.diagnostics.filter { $0.card.map(key) == model.cardKey }
@@ -705,155 +700,102 @@ private struct GeneralCategory: View {
   }
 
   @ViewBuilder private var executionSettings: some View {
-    let services = model.session.executionServices
-    let serviceSetting = string("executionService", fallback: "auto")
-    let serviceId = serviceSetting.wrappedValue
-    let service = services.first { $0.id == serviceId }
-    let resourceLimits = serviceId == "auto" || service?.resourceLimits == true
-    let nativeSystem = service?.nativeSystem ?? ""
-    let systems = service?.systems.compactMap { $0 } ?? []
-    let system = string("system", fallback: "")
-    let selected = system.wrappedValue
-
-    TextField("ワーカーの条件式", text: Binding(
-      get: { model.definition?["workerCondition"]?["expression"]?.string ?? "" },
-      set: { value in
-        var condition = JSONValue.object([])
-        condition["language"] = .string("simple")
-        condition["expression"] = .string(value)
-        model.definition?["workerCondition"] = value.trimmingCharacters(in: .whitespaces).isEmpty ? nil : condition
-      }))
-      .help("x はワーカーの grade です。例: x > 1、x & 0x10 != 0。空欄はすべての値を許可します。")
-    if !services.isEmpty {
-      Picker("実行サービス", selection: serviceSetting) {
-        Text("条件から自動選択").tag("auto")
-        ForEach(services, id: \.id) { entry in
-          Text(verbatim: serviceLabel(entry)).tag(entry.id).disabled(!entry.available)
+    LabeledContent("対応システム") {
+      VStack(alignment: .leading, spacing: 5) {
+        ForEach(cardSystems, id: \.self) { system in
+          Toggle(isOn: Binding(
+            get: { model.systems.contains(system) },
+            set: { enabled in
+              if enabled, !model.systems.contains(system) { model.systems.append(system) }
+              if !enabled, model.systems.count > 1 { model.systems.removeAll { $0 == system } }
+            })) {
+            Text(verbatim: system)
+          }
+          .toggleStyle(.checkbox)
+          .disabled(model.systems == [system])
         }
-        if service == nil && serviceId != "auto" { Text(verbatim: serviceId).tag(serviceId).disabled(true) }
+        Text("対応するワーカーはネイティブで実行し、それ以外は先頭のシステムをエミュレートします。")
+          .font(.caption).foregroundStyle(.secondary)
       }
-    } else {
-      LabeledContent("実行サービス", value: service.map(serviceLabel) ?? String(localized: "情報なし"))
     }
+    if let first = model.systems.first {
+      Picker("エミュレーション時のシステム", selection: Binding(
+        get: { model.systems.first ?? first },
+        set: { system in model.systems = [system] + model.systems.filter { $0 != system } })) {
+        ForEach(model.systems, id: \.self) { Text(verbatim: $0).tag($0) }
+      }
+    }
+    LabeledContent("ワーカーの必須ビット") {
+      WorkerBitsEditor(bits: Binding(
+        get: { (model.definition?["workerCapabilities"]?.array ?? []).compactMap { $0.numberText.flatMap(UInt8.init) } },
+        set: { model.definition?["workerCapabilities"] = .array($0.map { .number(String($0)) }) }))
+    }
+    .help("指定したすべてのビットを持つワーカーで実行します。")
     if !model.session.identity.supportsExternalExecution {
       Label("このプロジェクトのフォルダで作成時刻を取得できないため、外部の実行サービスを使用できません。", systemImage: "exclamationmark.triangle")
         .font(.caption)
     }
-    if serviceId != "local" && serviceId != "auto" && service?.available != true {
-      Label("選択した実行サービスに接続できません。", systemImage: "exclamationmark.triangle").font(.caption)
-    }
-    Picker("CPU アーキテクチャ", selection: system) {
-      if nativeSystem.isEmpty {
-        Text("この実行環境の既定").tag("")
-      } else {
-        Text("この実行環境の既定（\(nativeSystem)）").tag("")
-      }
-      ForEach(systems, id: \.self) { value in
-        Text(verbatim: value).tag(value)
-      }
-      if !selected.isEmpty && !systems.contains(selected) {
-        Text(verbatim: selected).tag(selected).disabled(true)
-      }
-    }
-    .help("選択した実行サービスで利用できる CPU アーキテクチャを選びます。")
-    if service != nil && !selected.isEmpty && !systems.contains(selected) {
-      Label("この実行環境では \(selected) を実行できません。", systemImage: "exclamationmark.triangle")
-        .font(.caption)
-    }
-    if resourceLimits {
-      Text("CPU とメモリの上限を指定します。実行先のリソースは他のジョブと共有します。").font(.caption).foregroundStyle(.secondary)
-      executionResource("cpu", label: "CPU 上限（コア）", example: "0.5")
-      executionResource("memoryMiB", label: "メモリ上限（MiB）", example: "1024")
-    }
-    if model.definition?["sandbox"]?["limits"] != nil {
-      if !resourceLimits {
-        Label("この実行サービスではリソースを指定できません。", systemImage: "exclamationmark.triangle").font(.caption)
-      }
-      Button("リソース指定を削除") { setNested("sandbox", "limits", nil) }
-    }
+    executionResource("cpu", label: "CPU 上限（コア）").help("0 = 上限なし")
+    executionResource("memoryMiB", label: "メモリ上限（MiB）").help("0 = 上限なし")
   }
 
-  private func serviceLabel(_ service: Tsugumi_RPC_ExecutionServiceT) -> String {
-    if service.id != "local" {
-      return service.available ? service.id : String(localized: "\(service.id)（接続未確認）")
-    }
-    if service.nativeSystem.hasSuffix("-linux") { return "Linux (\(service.nativeSystem))" }
-    if service.nativeSystem.hasSuffix("-darwin") { return "macOS (\(service.nativeSystem))" }
-    return service.id
-  }
-
-  private func setNested(_ group: String, _ key: String, _ value: JSONValue?) {
+  private func setNested(_ group: String, _ key: String, _ value: JSONValue) {
     var settings = JSONValue.object(model.definition?[group]?.object ?? [])
     settings[key] = value
-    model.definition?[group] = settings.object?.isEmpty == false ? settings : nil
+    model.definition?[group] = settings
   }
 
-  private func nestedToggle(_ group: String, _ key: String, label: LocalizedStringKey, fallback: Bool) -> some View {
+  private func nestedToggle(_ group: String, _ key: String, label: LocalizedStringKey) -> some View {
     Toggle(label, isOn: Binding(
-      get: { model.definition?[group]?[key]?.bool ?? fallback },
-      set: { setNested(group, key, $0 == fallback ? nil : .bool($0)) }))
+      get: { model.definition?[group]?[key]?.bool == true },
+      set: { setNested(group, key, .bool($0)) }))
   }
 
-  private func executionResource(_ name: String, label: LocalizedStringKey, example: String) -> some View {
+  private func executionResource(_ name: String, label: LocalizedStringKey) -> some View {
     TextField(label, text: Binding(
       get: {
         let value = model.definition?["sandbox"]?["limits"]?[name]
         return value?.numberText ?? value?.string ?? ""
       },
       set: { value in
-        let text = value.trimmingCharacters(in: .whitespaces)
-        var resources = JSONValue.object(model.definition?["sandbox"]?["limits"]?.object ?? [])
-        let number = name == "cpu" ? Double(text).flatMap { $0.isFinite ? String($0) : nil } : UInt64(text).map { String($0) }
-        resources[name] = text.isEmpty ? nil : (number.map { .number($0) } ?? .string(text))
-        setNested("sandbox", "limits", resources.object?.isEmpty == false ? resources : nil)
-      }), prompt: Text(example))
+        var limits = JSONValue.object(model.definition?["sandbox"]?["limits"]?.object ?? [])
+        limits[name] = cardNumber(value, fractional: name == "cpu")
+        setNested("sandbox", "limits", limits)
+      }))
   }
 
-  private func string(_ name: String, fallback: String? = nil) -> Binding<String> {
-    Binding(get: { model.definition?[name]?.string ?? fallback ?? "" },
-            set: { v in model.definition?[name] = v.isEmpty || v == fallback ? nil : .string(v) })
-  }
-
-  /// A Card's intent is in its README.md.
   private func metaString(_ name: String) -> Binding<String> {
     Binding(get: { model.meta?[name]?.string ?? "" },
-            set: { v in
+            set: { value in
               var meta = model.meta ?? .object([])
-              meta[name] = v.isEmpty ? nil : .string(v)
+              if name != "title", meta["title"] == nil { meta["title"] = .string(model.session.displayName(model.cardKey)) }
+              meta[name] = .string(value)
               model.meta = meta
             })
   }
 
-  private func toggle(_ name: String, label: LocalizedStringKey, fallback: Bool) -> some View {
-    Toggle(label, isOn: Binding(get: { model.definition?[name]?.bool ?? fallback },
-                                set: { v in model.definition?[name] = v == fallback ? nil : .bool(v) }))
-  }
-
-  private func numberField(_ name: String, label: LocalizedStringKey, fallback: String) -> some View {
+  private func numberField(_ name: String, label: LocalizedStringKey) -> some View {
     TextField(label, text: Binding(
       get: { model.definition?[name]?.numberText ?? model.definition?[name]?.string ?? "" },
-      set: { v in
-        let t = v.trimmingCharacters(in: .whitespaces)
-        model.definition?[name] = t.isEmpty ? nil : (UInt64(t) != nil ? .number(t) : .string(t))  // core reports non-numbers
-      }), prompt: Text(fallback))
+      set: { model.definition?[name] = cardNumber($0) }))
   }
 
-  private func timeoutField(_ name: String, label: LocalizedStringKey) -> some View {
-    TextField(label, text: Binding(
-      get: { model.definition?[name] == .null ? "" : (model.definition?[name]?.numberText ?? "") },
-      set: { v in
-        let t = v.trimmingCharacters(in: .whitespaces)
-        model.definition?[name] = t.isEmpty ? nil : .number(t)
-      }), prompt: Text("無期限"))
+  private func cardNumber(_ value: String, fractional: Bool = false) -> JSONValue {
+    let text = value.trimmingCharacters(in: .whitespaces)
+    if fractional, text.wholeMatch(of: #/[0-9]+(?:\.[0-9]+)?/#) != nil, let number = Double(text), number.isFinite {
+      let normalized = text.replacingOccurrences(of: #"^0+(?=\d)"#, with: "", options: .regularExpression)
+      return .number(normalized)
+    }
+    if text.wholeMatch(of: #/[0-9]+/#) != nil, let number = UInt64(text) { return .number(String(number)) }
+    return .string(value)
   }
 }
 
-/// Folders of the Mac this Card's worker may read (Experimental): each at
+/// Folders of the Mac this Card's worker may read: each at
 /// /host/<name> in the worker, read-only unless allowed to write. Only the
 /// folder's path is kept in the project.
 private struct HostFoldersEditor: View {
   @Bindable var model: CardEditorModel
-  let remote: Bool
 
   var body: some View {
     let folders = model.definition?["grants"]?["hostPaths"]?.array ?? []
@@ -861,7 +803,7 @@ private struct HostFoldersEditor: View {
       HStack {
         Text("ホストのフォルダへのアクセスを許可する")
         Spacer()
-        Button("フォルダを追加…") { add() }.disabled(remote)
+        Button("フォルダを追加…") { add() }
       }
       ForEach(folders.indices, id: \.self) { i in
         let f = folders[i]
@@ -872,22 +814,19 @@ private struct HostFoldersEditor: View {
           Image(systemName: present ? "folder" : "folder.badge.questionmark").foregroundStyle(present ? Color.secondary : Color.orange)
           VStack(alignment: .leading, spacing: 1) {
             Text(path).lineLimit(1).truncationMode(.middle).font(.callout)
-            Text(remote ? String(localized: "外部の実行サービスにはホストのフォルダを共有できません。")
-                        : present ? "TSUGUMI_GRANT_\(grantName(f["name"]?.string ?? ""))" : String(localized: "この Mac にはありません（実行すると失敗します）"))
+            Text(present ? "TSUGUMI_GRANT_\(grantName(f["name"]?.string ?? ""))" : String(localized: "この Mac にはありません（実行すると失敗します）"))
               .font(.caption).foregroundStyle(present ? Color.secondary : Color.orange)
           }
           Spacer()
-          Toggle("書き込み", isOn: Binding(get: { f["write"]?.bool ?? false }, set: { v in
-            edit { $0[i]["write"] = v ? .bool(true) : nil }
+          Toggle("書き込み", isOn: Binding(get: { f["write"]?.bool == true }, set: { v in
+            edit { $0[i]["write"] = .bool(v) }
           }))
           .toggleStyle(.checkbox)
-          .disabled(remote)
-          .help("オフ（デフォルト）: 読み取り専用")
+          .help("オフは読み取り専用")
           Button { edit { $0.remove(at: i) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
         }
       }
-      Text(remote ? String(localized: "外部の実行サービスにはホストのフォルダを共有できません。")
-                  : String(localized: "Card は TSUGUMI_GRANT_<名前> からフォルダのパスを取得できます。共有 VM での追加・変更はプロジェクトを開き直すと反映されます。"))
+      Text(String(localized: "Card は TSUGUMI_GRANT_<名前> からフォルダのパスを取得できます。共有 VM での追加・変更はプロジェクトを開き直すと反映されます。"))
         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
   }
@@ -897,7 +836,7 @@ private struct HostFoldersEditor: View {
     fn(&list)
     var grants = JSONValue.object(model.definition?["grants"]?.object ?? [])
     grants["hostPaths"] = list.isEmpty ? nil : .array(list)
-    model.definition?["grants"] = grants.object?.isEmpty == false ? grants : nil
+    model.definition?["grants"] = grants
   }
 
   private func grantName(_ name: String) -> String {
@@ -915,7 +854,7 @@ private struct HostFoldersEditor: View {
     var name = base.isEmpty || base == "." || base == ".." ? "folder" : base
     var n = 2
     while taken.contains(grantName(name)) { name = "\(base)-\(n)"; n += 1 }
-    edit { $0.append(.object([("path", .string(url.path)), ("name", .string(name))])) }
+    edit { $0.append(.object([("path", .string(url.path)), ("name", .string(name)), ("write", .bool(false))])) }
   }
 }
 
@@ -1009,9 +948,15 @@ private struct PortsCategory: View {
                 .help("入力ポートの名前")
               Text(r?.inputs.first { $0.name == name }?.typeName ?? String(localized: "未解決")).font(.caption).foregroundStyle(.secondary)
               Button { editInputs { $0.remove(at: i) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                .disabled(model.kind == .merge && inputs.count <= 1)
             }
           }
-          Button("入力を追加") { editInputs { $0.append(.object([("name", .string("in\($0.count + 1)"))])) } }
+          Button("入力を追加") {
+            editInputs { inputs in
+              let name = nextInputName(inputs.compactMap { $0["name"]?.string })
+              inputs.append(.object([("name", .string(name))]))
+            }
+          }
         } else {
           ForEach(r?.inputs ?? [], id: \.name) { p in LabeledContent(p.name, value: p.typeName ?? String(localized: "未解決")) }
           if (r?.inputs ?? []).isEmpty { Text("入力はありません").foregroundStyle(.secondary) }
@@ -1021,9 +966,9 @@ private struct PortsCategory: View {
           .font(.caption).foregroundStyle(.secondary)
       }
       OutputPortsSection(model: model)
-      if model.kind != .subgraph && model.kind != .draft && model.kind != .invalid {
+      if [.code, .merge, .collect].contains(model.kind) {
         Section("記録と成果物") {
-          recordingOverride("recordLogs", label: "標準出力と標準エラーを記録")
+          if model.kind == .code { recordingOverride("recordLogs", label: "標準出力と標準エラーを記録") }
           recordingOverride("recordIO", label: "入出力の値を記録")
         }
       }
@@ -1034,16 +979,16 @@ private struct PortsCategory: View {
   private func editInputs(_ fn: (inout [JSONValue]) -> Void) {
     var inputs = model.definition?["inputs"]?.array ?? []
     fn(&inputs)
-    model.definition?["inputs"] = inputs.isEmpty ? nil : .array(inputs)
+    model.definition?["inputs"] = .array(inputs)
   }
 
   private func recordingOverride(_ name: String, label: LocalizedStringKey) -> some View {
     Picker(label, selection: Binding(
-      get: { model.definition?[name]?.bool },
-      set: { model.definition?[name] = $0.map { .bool($0) } })) {
-      Text("プロジェクト設定に従う").tag(nil as Bool?)
-      Text("オン").tag(true as Bool?)
-      Text("オフ").tag(false as Bool?)
+      get: { model.definition?[name]?.string ?? "" },
+      set: { model.definition?[name] = .string($0) })) {
+      Text("プロジェクト設定に従う").tag(RecordSetting.project.rawValue)
+      Text("オン").tag(RecordSetting.on.rawValue)
+      Text("オフ").tag(RecordSetting.off.rawValue)
     }
   }
 }
@@ -1137,7 +1082,7 @@ private struct BoundaryCategory: View {
       side(b?["inputs"]?.object ?? [], title: "入力ポート", output: false)
       side(b?["outputs"]?.object ?? [], title: "出力ポート", output: true)
       Section {
-        LabeledContent("external", value: model.session.cardExternal(model.cardKey) ?? "")
+        LabeledContent("場所", value: model.session.cardExternal(model.cardKey) ?? "")
         Text("Card in Card は externals にあるこのプロジェクト用のコピーです。ポートの対応はその tsugumi.json の boundary にあります。中に入ると Card と接続を編集できます。")
           .font(.caption).foregroundStyle(.secondary)
       }

@@ -6,15 +6,24 @@
 #include <atomic>
 #include <utility>
 
+#include "../agent_fixture_server.hh"
+#include "document_fixture.hh"
+#include "host/environment.hh"
+#include "host/templates.hh"
+#include "tsugumi/document/host_requirements.hh"
 #include "tsugumi/protocol/runtime_state_generated.h"
 #include "tsugumi/util/flat_file.hh"
-#include "../agent_fixture_server.hh"
-#include "host/environment.hh"
-#include "tsugumi/document/host_requirements.hh"
 
 namespace tsugumi::test {
 namespace {
 namespace H = Tsugumi::Host;
+auto HostFolderCard(const std::string& name, const std::filesystem::path& path,
+                    bool writable) -> std::string {
+  return FixtureCodeCard(json::Encode(json::Members{
+      {"grants", R"({"network":false,"gui":false,"hostPaths":[{"name":)" +
+                     Quote(name) + R"(,"path":)" + Quote(path.string()) +
+                     R"(,"write":)" + (writable ? "true" : "false") + "}]}"}}));
+}
 class HelperDouble final : public host::EnvironmentProcess {
  public:
   std::atomic<bool> running = false;
@@ -103,7 +112,7 @@ struct AuthorizationDouble {
 };
 TEST(EnvironmentAdapterTest, CoreOwnsReadinessAndStopsTheProcessOnShutdown) {
   TemporaryDirectory directory;
-  Write(directory.path / "project/tsugumi.json", "{}");
+  Write(directory.path / "project/tsugumi.json", FixtureProjectDocument());
   AuthorizationDouble authorization;
   auto helper = std::make_shared<HelperDouble>();
   host::EnvironmentOptions options;
@@ -145,7 +154,7 @@ TEST(EnvironmentAdapterTest, CoreOwnsReadinessAndStopsTheProcessOnShutdown) {
 }
 TEST(EnvironmentAdapterTest, HelperFailureRevokesAuthorizationAndCanBeRetried) {
   TemporaryDirectory directory;
-  Write(directory.path / "project/tsugumi.json", "{}");
+  Write(directory.path / "project/tsugumi.json", FixtureProjectDocument());
   AuthorizationDouble authorization;
   auto helper = std::make_shared<HelperDouble>();
   helper->fail = true;
@@ -175,7 +184,7 @@ TEST(EnvironmentAdapterTest, HelperFailureRevokesAuthorizationAndCanBeRetried) {
 }
 TEST(EnvironmentAdapterTest, FailureAndTimeoutIncludeBoundedDaemonTail) {
   TemporaryDirectory directory;
-  Write(directory.path / "project/tsugumi.json", "{}");
+  Write(directory.path / "project/tsugumi.json", FixtureProjectDocument());
   AuthorizationDouble authorization;
   auto helper = std::make_shared<HelperDouble>();
   helper->verify = false;
@@ -216,26 +225,22 @@ TEST(EnvironmentAdapterTest,
   std::filesystem::create_directory(chat);
   Write(
       project / "tsugumi.json",
-      R"({"nixPath": [],"canvas":{"cards":[{"id":"a"},{"id":"nested"}],"connections":[]}})");
+      FixtureProjectDocument(
+          R"({"nixPath": [],"canvas":{"cards":[{"id":"a"},{"id":"nested"}],"connections":[]}})"));
   Write(project / "definitions/a/_card.json",
-        "{\"type\":\"code\",\"executionService\":\"local\",\"grants\":{\"hostPaths\":[{\"name\":\"data\","
-        "\"path\":" +
-            Quote(data.string()) + "}]}}");
-  Write(project / "definitions/nested/_card.json", R"({"type":"subgraph","external":"x"})");
-  Write(project / "externals/x/tsugumi.json",
-        R"({"nixPath": [],"canvas":{"cards":[{"id":"b"}],"connections":[]}})");
-  Write(project / "externals/x/definitions/b/_card.json",
-        "{\"type\":\"code\",\"executionService\":\"local\",\"grants\":{\"hostPaths\":[{\"name\":\"data\","
-        "\"path\":" +
-            Quote(data.string()) + ",\"write\":true}]}}");
-  Write(project / "definitions/unused/_card.json",
-        "{\"type\":\"code\",\"executionService\":\"local\",\"grants\":{\"hostPaths\":[{\"name\":\"chat\","
-        "\"path\":" +
-            Quote(chat.string()) + ",\"write\":true}]}}");
-  Write(project / "externals/unused/definitions/ignored/_card.json",
-        "{\"type\":\"code\",\"executionService\":\"local\",\"grants\":{\"hostPaths\":[{\"name\":"
-        "\"ignored\",\"path\":" +
-            Quote(chat.string()) + ",\"write\":true}]}}");
+        HostFolderCard("data", data, false));
+  Write(project / "definitions/a/README.md", host::CardReadme("a"));
+  Write(project / "definitions/nested/_card.json",
+        R"({"type":"subgraph","symbol":"link"})");
+  Write(
+      project / "externals/nested/tsugumi.json",
+      FixtureProjectDocument(
+          R"({"nixPath": [],"canvas":{"cards":[{"id":"b"}],"connections":[]}})"));
+  Write(project / "externals/nested/definitions/b/_card.json",
+        HostFolderCard("data", data, true));
+  Write(project / "externals/nested/definitions/b/README.md",
+        host::CardReadme("b"));
+  Write(project / "definitions/nested/README.md", host::CardReadme("nested"));
   AuthorizationDouble authorization;
   auto helper = std::make_shared<HelperDouble>();
   helper->guest = true;
@@ -271,15 +276,15 @@ TEST(EnvironmentAdapterTest,
             "/run/tsugumi/chat/" + mounts[3].name.substr(5));
   // A disk edit not accepted by the running core must not alter its mounts,
   // and a start of a ready project leaves the running guest's folders alone.
-  Write(project / "externals/x/definitions/b/_card.json",
+  Write(project / "externals/nested/definitions/b/_card.json",
         "unaccepted broken JSON");
   EXPECT_EQ(service.Handle(input).phase, H::EnvironmentPhase::Ready);
   EXPECT_EQ(helper->launches, 1);
   EXPECT_EQ(helper->signals, 0);
-  Write(project / "externals/x/definitions/b/_card.json",
-        "{\"type\":\"code\",\"executionService\":\"local\",\"grants\":{\"hostPaths\":[{\"name\":\"data\","
-        "\"path\":" +
-            Quote(data.string()) + ",\"write\":true}]}}");
+  Write(project / "externals/nested/definitions/b/_card.json",
+        HostFolderCard("data", data, true));
+  Write(project / "externals/nested/definitions/b/README.md",
+        host::CardReadme("b"));
   // A guest keeps the folders of its start: any other set starts it again.
   input.action = H::EnvironmentAction::RemoveFolders;
   input.folders = {chat.string()};
@@ -300,7 +305,8 @@ TEST(EnvironmentAdapterTest, AttachWaitsForTheGuestAndRollsBackFailedBatches) {
   TemporaryDirectory directory;
   const auto project = directory.path / "project";
   Write(project / "tsugumi.json",
-        R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
+        FixtureProjectDocument(
+            R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})"));
   auto helper = std::make_shared<HelperDouble>();
   helper->guest = true;
   AuthorizationDouble authorization;
@@ -392,12 +398,13 @@ TEST(EnvironmentAdapterTest,
   const auto project = directory.path / "project",
              data = directory.path / "data";
   std::filesystem::create_directory(data);
-  Write(project / "tsugumi.json",
-        R"({"nixPath": [],"canvas":{"cards":[{"id":"a"}],"connections":[]}})");
+  Write(
+      project / "tsugumi.json",
+      FixtureProjectDocument(
+          R"({"nixPath": [],"canvas":{"cards":[{"id":"a"}],"connections":[]}})"));
   Write(project / "definitions/a/_card.json",
-        "{\"type\":\"code\",\"executionService\":\"local\",\"grants\":{\"hostPaths\":[{\"name\":\"data\","
-        "\"path\":" +
-            Quote(data.string()) + "}]}}");
+        HostFolderCard("data", data, false));
+  Write(project / "definitions/a/README.md", host::CardReadme("a"));
   auto helper = std::make_shared<HelperDouble>();
   helper->guest = true;
   helper->change_requirements = true;
@@ -425,7 +432,7 @@ namespace tsugumi::test {
 TEST(EnvironmentAdapterTest, FolderMutationsSurviveStartsAndServiceRecreation) {
   TemporaryDirectory directory;
   const auto project = directory.path / "project";
-  Write(project / "tsugumi.json", "{}");
+  Write(project / "tsugumi.json", FixtureProjectDocument("{}"));
   const auto a = (directory.path / "a").string(),
              b = (directory.path / "b").string();
   std::filesystem::create_directory(a);
@@ -474,8 +481,7 @@ TEST(EnvironmentAdapterTest, FolderMutationsSurviveStartsAndServiceRecreation) {
 TEST(EnvironmentAdapterTest,
      GuestAttachedRootUsesTheMountEvenWhenTheHostPathExists) {
   TemporaryDirectory directory;
-  Write(directory.path / "project/tsugumi.json",
-        R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
+  Write(directory.path / "project/tsugumi.json", FixtureProjectDocument());
   auto process = std::make_shared<HelperDouble>();
   process->guest = true;
   host::EnvironmentOptions options;

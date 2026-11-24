@@ -89,7 +89,7 @@ table Capabilities {
   requires_filesystem:bool = true; requires_pid:bool = true;
 }
 // The host decides availability and supplies its reason; the core only carries it.
-table Target { id:string (required); available:bool; capabilities:Capabilities (required); grade:ulong; unavailable_reason:string; }
+table Target { id:string (required); available:bool; capabilities:Capabilities (required); worker_capabilities:[ubyte]; unavailable_reason:string; }
 table Catalog { services:[Target] (required); }
 table BlobChunk { digest:string (required); total:ulong; offset:ulong; bytes:[ubyte] (required); }
 table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diagnostic:string; transfer_name:string; transfer_done:ulong; transfer_total:ulong; log_truncated:bool;

@@ -1,0 +1,4 @@
+---
+title: collatz_py
+description: 数列を Python のループで求める子 Workflow
+---

@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+from harness.document import card_document, card_readme
 from harness.fixtures import worker_project
 from harness.scenario import Gate, run, wait_run
 from projects import builtin_project, card
@@ -18,16 +19,16 @@ def save(client, changes):
 def test_direct_rpc_does_not_stamp_comments_or_enforce_draft_intent(tmp_path, core_factory):
     root = tmp_path / "p"
     builtin_project(root, extra_cards=[card("plan")])
-    (root / "definitions/plan/README.md").write_text("---\ndescription: Original\n---\n\nPlan")
+    (root / "definitions/plan/README.md").write_text(card_readme("Plan", "Original", "Plan"))
     client = core_factory(project_root=root).connect()
     comments = {"comments": [{"text": "Ask", "author": "user"}]}
-    save(client, [change("PutDefinition", id="plan", cardJson='{"type":"code"}', readme='Updated plan', commentsJson=json.dumps(comments))])
+    save(client, [change("PutDefinition", id="plan", cardJson=json.dumps(card_document({"type": "code"})), readme=card_readme("Plan", "Updated plan"), commentsJson=json.dumps(comments))])
     result = next(d for d in client.call("ProjectInspectRequest").definitions if text(d.id) == "plan")
     assert json.loads(text(result.commentsJson)) == comments
-    assert text(result.readme) == "Updated plan"
+    assert text(result.readme) == card_readme("Plan", "Updated plan")
     for invalid in ('[]', 'null', '{'):
         with pytest.raises(RpcFailure):
-            save(client, [change("PutDefinition", id="plan", cardJson='{"type":"code"}', commentsJson=invalid)])
+            save(client, [change("PutDefinition", id="plan", cardJson=json.dumps(card_document({"type": "code"})), commentsJson=invalid)])
 
 
 def test_presentation_saves_while_busy_keep_execution_revision_and_run_source_hash(core_factory, project, tmp_path):
@@ -44,7 +45,7 @@ def test_presentation_saves_while_busy_keep_execution_revision_and_run_source_ha
         definition = next(d for d in before.definitions if text(d.id) == "work")
         settings = json.loads(text(definition.cardJson))
         result = save(client, [change("SetProject", json=json.dumps(document)),
-            change("PutDefinition", id="work", cardJson=json.dumps(settings), readme="Updated description")])
+            change("PutDefinition", id="work", cardJson=json.dumps(settings), readme=card_readme("Work", "Updated description"))])
         assert result.executionRev == before.executionRev
         settings["maxRuns"] = 2
         with pytest.raises(RpcFailure) as failure:

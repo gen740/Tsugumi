@@ -1,4 +1,5 @@
 ---
+title: forecast
 description: 残した年を予測する
 ---
 
