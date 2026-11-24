@@ -62,7 +62,7 @@ export function useLogStream(session: Pick<ProjectSession, 'rpc' | 'subscribeLog
       changed = true
       frames.wake()
     }
-    const frames = new LogReadFrames(requestAnimationFrame, cancelAnimationFrame, async () => {
+    const frames = new LogReadFrames((callback) => requestAnimationFrame(callback), (handle) => cancelAnimationFrame(handle), async () => {
       if (sizeDirty) {
         sizeDirty = false
         publish()
