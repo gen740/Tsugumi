@@ -1,6 +1,5 @@
 #include <bit>
 #include <cstring>
-#include <limits>
 #include <string>
 #include <string_view>
 
@@ -100,3 +99,17 @@ class Reader {
   Context& context_;
   std::string_view import_;
 };
+
+template <class Decode>
+auto copy_descriptor(Arena& arena, Decode decode) -> decltype(decode())* {
+  auto value = decode();
+  auto* storage = arena.allocate<decltype(value)>();
+  *storage = value;
+  return storage;
+}
+
+template <class Decode>
+auto copy_optional(Arena& arena, uint32_t address, Decode decode) -> decltype(decode())* {
+  if (address == 0) return nullptr;
+  return copy_descriptor(arena, decode);
+}

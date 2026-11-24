@@ -22,7 +22,7 @@ function(tsugumi_generate_webgpu_imports)
             "${generator_dir}/js_reader.inc"
     VERBATIM
   )
-  # The decoder tests compile the generated source in a sibling CMake directory.
+  # The decoder tests compile the generated source in a separate CMake directory.
   add_custom_target(tsugumi-webgpu-generated DEPENDS ${sources})
   set(TSUGUMI_WEBGPU_GEN_SOURCES ${sources} PARENT_SCOPE)
 endfunction()
