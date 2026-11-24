@@ -1,6 +1,7 @@
-"""Compare the vendored Card ABI with the canonical core declarations.
+"""Compare the vendored Card and Dawn view ABIs with the core declarations.
 
-The ABI is card.fbs, every schema it includes (transitively) and card_abi.h.
+The Card ABI includes card.fbs, its transitive includes and card_abi.h.
+The Dawn view ABI is tsugumi_view.h, which must match byte for byte.
 The kit vendors exactly these files, under the same names, in abi/.
 This includes artifact.fbs, which is also installed for user schemas.
 """
@@ -41,7 +42,7 @@ def main(protocol, kit):
     assert "artifact.fbs" in names, "the Card ABI must include artifact.fbs"
     assert schemas(kit, "card.fbs") == names, "kit card.fbs includes a different set of schemas"
     vendored = {path.name for path in kit.iterdir()}
-    expected = set(names) | {"card_abi.h"}
+    expected = set(names) | {"card_abi.h", "tsugumi_view.h"}
     assert vendored == expected, f"kit vendors {sorted(vendored)}, expected {sorted(expected)}"
     for name in names:
         assert tokens(uncomment((protocol / name).read_text())) == tokens(
@@ -50,6 +51,9 @@ def main(protocol, kit):
     assert header((protocol / "include/tsugumi/card_abi.h").read_text()) == header(
         (kit / "card_abi.h").read_text()
     ), "kit card_abi.h differs from the canonical Card ABI"
+    assert (protocol / "include/tsugumi/tsugumi_view.h").read_bytes() == (
+        kit / "tsugumi_view.h"
+    ).read_bytes(), "kit tsugumi_view.h differs from the canonical Dawn view ABI"
 
 
 if __name__ == "__main__":
