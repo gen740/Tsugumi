@@ -50,7 +50,14 @@ func batchExecutionUsesRecordedWireCountsAndSelectsExactInvocations(count: Int) 
   let directory = try SyncTests.project()
   defer { try? FileManager.default.removeItem(at: directory) }
   let card = directory.appendingPathComponent("definitions/a")
-  var definition = implementedCard(.code, symbol: CardKind.code.symbol, system: "aarch64-linux")
+  // The daemon double runs Cards natively on this Mac: name its system so the
+  // run needs no emulator.
+  #if arch(arm64)
+  let native = "aarch64-darwin"
+  #else
+  let native = "x86_64-darwin"
+  #endif
+  var definition = implementedCard(.code, symbol: CardKind.code.symbol, system: native)
   definition["sandbox"]?["filesystem"] = .bool(false)
   definition["recordIO"] = .string("on")
   try Data(definition.serialized().utf8)
