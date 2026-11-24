@@ -56,12 +56,18 @@ export async function openHost(): Promise<HostConnection> {
 
 let connection: Promise<HostConnection> | undefined
 
-const listeners = new Set<(event: H.EventT) => void>()
+const listeners = new Set<(event: H.EventT, client: HostConnection) => void>()
+const openListeners = new Set<(client: HostConnection) => void>()
 const closeListeners = new Set<() => void>()
 
-export function onHostEvent(fn: (event: H.EventT) => void): () => void {
+export function onHostEvent(fn: (event: H.EventT, client: HostConnection) => void): () => void {
   listeners.add(fn)
   return () => listeners.delete(fn)
+}
+
+export function onHostOpen(fn: (client: HostConnection) => void): () => void {
+  openListeners.add(fn)
+  return () => openListeners.delete(fn)
 }
 
 export function onHostClose(fn: () => void): () => void {
@@ -79,7 +85,8 @@ export function sharedHost(): Promise<HostConnection> {
         clear()
         for (const listener of closeListeners) listener()
       })
-      client.onEvent((event) => { for (const listener of listeners) listener(event) })
+      client.onEvent((event) => { for (const listener of listeners) listener(event, client) })
+      for (const listener of openListeners) listener(client)
     }, clear)
   }
   return connection

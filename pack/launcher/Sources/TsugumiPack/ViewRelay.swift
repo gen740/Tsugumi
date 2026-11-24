@@ -117,7 +117,7 @@ import Virtualization
         NSApplication.shared.finishLaunching()
       }
       let opening = CardViewOpening(id: id, card: value.card?.segments ?? [], name: name, type: type,
-                                    mode: mode, width: value.width ?? 0, height: value.height ?? 0)
+                                    mode: mode, width: value.width ?? 0, height: value.height ?? 0, flags: value.flags ?? 0)
       let session = id.uuidString.lowercased()
       let files = CardViewFiles { [weak self] _, offset in
         guard let self else { throw PackError("The packed workflow has ended") }
@@ -227,6 +227,7 @@ private struct PackViewValue: Decodable {
   let name: String?
   let type: String?
   let mode: UInt32?
+  let flags: UInt32?
   let width: UInt32?
   let height: UInt32?
   let display: Display?

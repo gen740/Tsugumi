@@ -37,6 +37,46 @@ enum Shared {
   ],
   "hostTools": [
     {
+      "name": "view_windows",
+      "description": "List the open Card view windows of the current project. Use a window's session to send input or take a snapshot.",
+      "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
+    },
+    {
+      "name": "view_input",
+      "description": "Send one synthetic input to a Dawn view. Coordinates are logical pixels from the top left, or movement while locked. Pointer kinds are move (0), down (1), up (2), wheel (3), and leave (4). Key kinds are down (0) and up (1), with USB HID usage codes. Modifiers are shift, control, alt and meta in bits 0 to 3. Send committed text as UTF-8. Gamepad kinds are connected (0), changed (1), and disconnected (2), with W3C standard button bits, signed stick axes and unsigned triggers.",
+      "mutating": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session": {"type": "string"},
+          "action_type": {"type": "string", "enum": ["ViewPointer", "ViewKey", "ViewText", "ViewGamepad"]},
+          "action": {
+            "type": "object",
+            "properties": {
+              "kind": {"type": "integer"}, "x": {"type": "number"}, "y": {"type": "number"},
+              "buttons": {"type": "integer"}, "wheel_x": {"type": "number"}, "wheel_y": {"type": "number"},
+              "modifiers": {"type": "integer"}, "code": {"type": "integer"}, "text": {"type": "string"},
+              "pad": {"type": "integer"}, "lx": {"type": "number"}, "ly": {"type": "number"},
+              "rx": {"type": "number"}, "ry": {"type": "number"}, "lt": {"type": "number"}, "rt": {"type": "number"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": ["session", "action_type", "action"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "view_snapshot",
+      "description": "Capture the current frame of an open Card view as an offscreen PNG and show it as an image. Pass the session returned by view_windows.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {"session": {"type": "string"}},
+        "required": ["session"],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "nix_path_lock_update",
       "description": "Update tsugumi.lock for the root project, or an external selected by project_path (externals/<id>). Supply name to check one declaration, or omit it to check all declarations. Missing sources and changed URLs are resolved, matching entries are kept, and undeclared entries are removed.",
       "mutating": true,
@@ -1092,6 +1132,11 @@ enum Shared {
         "logs": "log_range",
         "environments": "run_environments",
         "environment_paths": "run_environment_paths"
+      },
+      "views": {
+        "list": "view_windows",
+        "input": "view_input",
+        "snapshot": "view_snapshot"
       },
       "artifacts": {
         "list": "artifact_list",
