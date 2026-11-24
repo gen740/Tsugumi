@@ -55,8 +55,8 @@ The lock below is an example of the pins for these declarations. Use an explicit
     {
       "name": "tsugumi-kit",
       "url": "github:gen740/tsugumi-kit/main",
-      "rev": "d877ed11303997268e2806bfccaf028f7275930b",
-      "narHash": "sha256-izi0h8DFTMsNv0iShVdkGwp/qLvhli2XGQv+P8yrJ0M="
+      "rev": "2c56fee956c62950c8cf925a821d4bf5f97a8598",
+      "narHash": "sha256-+QxSovos92wRFoAD4MlpTEkdJtoNJnXU1qplCsWJOws="
     }
   ]
 }
