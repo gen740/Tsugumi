@@ -281,13 +281,23 @@ def test_the_casa_demo_carries_its_trials(tmp_path, core_factory, language):
     for card in snap.resolution:
         if text(card.card.segments[0]) in drafts:
             assert not card.inputs and not card.outputs
-    # Each trial, including those on unadopted branches, is also loadable.
+    # The original experiments stay in Git even when their Card types have been removed.
+    removed_input_trials = 0
     for entry in g.commits:
         commit = text(entry.id)
         if commit in (text(plan.id), head):
             continue
-        c.call("VersionCheckoutRequest", baseRev=snap.rev, opId=new_id(), origin="test", commit=commit)
-        snap = c.call("ProjectInspectRequest")
+        load_card = json.loads(git(root, "show", f"{commit}:definitions/load/_card.json"))
+        if load_card["type"] == "input":
+            with pytest.raises(RpcFailure) as error:
+                c.call("VersionCheckoutRequest", baseRev=snap.rev, opId=new_id(), origin="test", commit=commit)
+            assert error.value.kind == "invalid_document"
+            assert c.call("ProjectInspectRequest").rev == snap.rev
+            removed_input_trials += 1
+        else:
+            c.call("VersionCheckoutRequest", baseRev=snap.rev, opId=new_id(), origin="test", commit=commit)
+            snap = c.call("ProjectInspectRequest")
+    assert removed_input_trials
     # Returning to the implemented tip restores its real ports and exact document.
     c.call("VersionCheckoutRequest", baseRev=snap.rev, opId=new_id(), origin="test", commit=head)
     restored = c.call("ProjectInspectRequest")
