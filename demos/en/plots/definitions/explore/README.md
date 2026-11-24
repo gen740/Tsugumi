@@ -1,3 +1,4 @@
 ---
+title: explore
 description: Draws a Plotly scatter plot of end points and farthest distances
 ---

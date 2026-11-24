@@ -1,3 +1,4 @@
+import { projectFixture } from './documentFixture'
 import { cardIds } from './cardIds'
 import assert from 'node:assert/strict'
 import { Builder } from 'flatbuffers'
@@ -12,8 +13,9 @@ import * as H from '../shared/gen/tsugumi/host'
 import { R, cardPath } from '../src/wire/rpc'
 
 const session = cardIds(new ProjectSession('/input-test', 'input-test', 'input-test'))
-session.project = parse('{"name":"input-test","canvas":{"cards":[],"connections":[]}}')
+session.project = parse(projectFixture({"name":"input-test","canvas":{"cards":[],"connections":[]}}))
 session.layout = parse('{}')
+session.executionServices = [Object.assign(new R.ExecutionServiceT(), { id: 'local', nativeSystem: 'aarch64-linux' })]
 let operations = 0
 const operate = session.operateProject
 const resolved = (card: string, value: string) =>
@@ -108,7 +110,9 @@ const draftEditor = new CardEditorModel(session, draft)
 draftEditor.implementAs('input')
 draftEditor.implementAs(preset.id)
 assert.equal(draftEditor.implementation, preset.id)
-assert.equal(await draftEditor.apply(), true)
+assert.equal(await draftEditor.apply(), true, draftEditor.message)
+assert.deepEqual(get(session.cardDefinition(draft), 'systems'), ['aarch64-linux'])
+assert.equal(get(session.cardDefinition(draft), 'symbol'), 'none')
 assert.equal(await session.sourceText(`definitions/${draft}/params.nix`), '{ value = false; }\n')
 assert.equal(get(session.cardDefinition(draft), 'params'), undefined)
 const draftSchema = await session.sourceText(`definitions/${draft}/_outputs.fbs`)

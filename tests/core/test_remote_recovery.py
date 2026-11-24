@@ -69,7 +69,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         self.cancelled = set()
         self.cancel_received = threading.Event()
         self.core_ids = set()
-        self.grade = 1
+        self.worker_capabilities = [63]
         self.blobs = set()
         self.blob_contents = {}
         self.specs = {}
@@ -146,7 +146,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             caps.nativeSystem = self.catalog_system
             caps.systems = [self.catalog_system]
             return R.reply(R.ReplyBody.Catalog, R.CatalogT(services=[R.TargetT(id="cluster", available=True, capabilities=caps,
-                grade=self.grade)]))
+                workerCapabilities=self.worker_capabilities)]))
         if self.server_id != self.registered_server:
             return R.failure(R.ErrorCode.RegistrationChanged, "execution service was replaced")
         if kind == R.RequestBody.ProbeRequest:
@@ -306,7 +306,7 @@ def remote_gateway(monkeypatch):
 def test_stop_is_accepted_while_worker_selection_catalog_is_pending(project, remote_gateway, core_factory, tmp_path):
     client = core_factory(mocked_builds=True).connect()
     worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
-                   executionService="cluster")
+                   systems=[Gateway.system], workerCapabilities=[63])
     client.ensure_subscription()
     rev = client.call("ProjectInspectRequest").rev
     remote_gateway.stall_operation = R.RequestBody.CatalogRequest
@@ -353,7 +353,7 @@ def test_stop_is_accepted_while_worker_selection_catalog_is_pending(project, rem
 def running_job(project, remote_gateway, core_factory, tmp_path, request):
     daemon = core_factory(mocked_builds=True)
     client = daemon.connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, executionService="cluster",
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, systems=[Gateway.system], workerCapabilities=[63],
                    sandbox={"limits": {"cpu": 0.5, "memoryMiB": 256}})
     limit = getattr(request, "param", 128 << 20)
     if hasattr(request, "param"):
@@ -386,7 +386,7 @@ def running_job(project, remote_gateway, core_factory, tmp_path, request):
 def test_incompatible_remote_gateway_prevents_upload(project, remote_gateway, core_factory, tmp_path, field, value):
     remote_gateway.probe_overrides[field] = value
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, executionService="cluster",
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, systems=[Gateway.system], workerCapabilities=[63],
                    sandbox={"limits": {"cpu": 0.5, "memoryMiB": 256}})
     run_id = start_run(client, "work", propagate=False)
     status = wait_run(client, run_id)
@@ -396,37 +396,35 @@ def test_incompatible_remote_gateway_prevents_upload(project, remote_gateway, co
 
 
 @pytest.mark.parametrize("catalog_resources,live_resources", [(False, True), (True, False)])
-def test_resource_limits_use_live_worker_not_catalog(project, remote_gateway, core_factory, tmp_path,
+def test_resource_limits_check_both_catalog_and_live_worker(project, remote_gateway, core_factory, tmp_path,
                                                      catalog_resources, live_resources):
     remote_gateway.catalog_resource_limits = catalog_resources
     if live_resources:
         remote_gateway.catalog_contract = 99
     remote_gateway.resource_limits = live_resources
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, executionService="cluster",
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, systems=[Gateway.system], workerCapabilities=[63],
                    sandbox={"limits": {"cpu": 0.5, "memoryMiB": 256}})
-    run_id = start_run(client, "work", propagate=False)
-    if live_resources:
-        live = wait_for_state(client, run_id, RemoteExecutionState.running)
-        remote_gateway.finish(text(live.executionJobId))
-        assert wait_run(client, run_id).state == RunState.succeeded
+    if not catalog_resources:
+        with pytest.raises(RpcFailure) as failure:
+            start_run(client, "work", propagate=False)
+        assert failure.value.kind == "validation_failed"
     else:
+        run_id = start_run(client, "work", propagate=False)
         status = wait_run(client, run_id)
         assert status.state == RunState.failed
         assert status.failure.kind == FailureKind.unsupported
-        assert remote_gateway.submit_count == 0
+    assert remote_gateway.submit_count == 0
 
 
-@pytest.mark.parametrize("requested_system", [None, "aarch64-linux"])
-def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tmp_path, requested_system):
+def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tmp_path):
     """Assignment evaluates for the worker's current system, even with a stale catalog."""
     remote_gateway.catalog_system = "x86_64-linux"
     remote_gateway.system = "aarch64-linux"
     remote_gateway.resource_limits = False
     client = core_factory(mocked_builds=True).connect()
-    settings = {} if requested_system is None else {"system": requested_system}
     worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
-                   executionService="cluster", **settings)
+                   systems=["aarch64-linux"], workerCapabilities=[63])
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     spec = remote_gateway.specs[text(live.executionJobId)]
@@ -443,7 +441,7 @@ def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tm
 def test_evaluation_failure_prevents_transfer(project, remote_gateway, core_factory):
     """A target-system evaluation error is visible before any upload or submission."""
     client = core_factory(mocked_builds=True).connect()
-    Project(project).card("work", {"type": "code", "sandbox": {}, "executionService": "cluster"},
+    Project(project).card("work", {"type": "code", "sandbox": {}, "systems": [Gateway.system], "workerCapabilities": [63]},
                           outputs=FILE_OUTPUT, plan={"error": "package is unavailable on this platform"}).save(client)
     run_id = start_run(client, "work", propagate=False)
     status = wait_run(client, run_id)
@@ -456,7 +454,7 @@ def test_evaluation_failure_prevents_transfer(project, remote_gateway, core_fact
 def test_remote_job_without_resource_limits(project, remote_gateway, core_factory, tmp_path):
     remote_gateway.resource_limits = False
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, executionService="cluster")
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, systems=[Gateway.system], workerCapabilities=[63])
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     assert live.executionResources is None
@@ -468,7 +466,7 @@ def test_remote_job_without_resource_limits(project, remote_gateway, core_factor
 
 def test_remote_status_relay_keeps_binary_view_data_out_of_results(project, remote_gateway, core_factory, tmp_path):
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, executionService="cluster")
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, systems=[Gateway.system], workerCapabilities=[63])
     subscription = text(client.open().subscriptionId)
     client.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("work")])
     run_id = start_run(client, "work", propagate=False)
@@ -496,7 +494,7 @@ def test_remote_view_messages_do_not_wait_for_another_views_reply(project, remot
     daemon = core_factory(mocked_builds=True)
     ui = daemon.connect(client=Client.Web)
     worker_project(ui, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
-                   executionService="cluster", views=[
+                   systems=[Gateway.system], workerCapabilities=[63], views=[
                        {"blob": "/nix/store/example-notes", "name": "notes", "type": "html"},
                        {"blob": "/nix/store/example-plot", "name": "plot", "type": "html"},
                    ])
@@ -530,7 +528,7 @@ def test_remote_view_messages_do_not_wait_for_another_views_reply(project, remot
 @pytest.mark.parametrize("field", ["outputLimitBytes", "outputLimitEntries"])
 def test_remote_result_cannot_exceed_the_project_output_budget(project, remote_gateway, core_factory, tmp_path, field):
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, executionService="cluster")
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, systems=[Gateway.system], workerCapabilities=[63])
     snapshot = client.call("ProjectInspectRequest")
     config = json.loads(text(snapshot.projectJson))
     config[field] = 0
@@ -693,7 +691,7 @@ def test_network_cut_within_same_core_life_resumes(running_job):
 def test_stop_cancels_remote_job_before_the_pending_reply(project, remote_gateway, core_factory, tmp_path, operation):
     client = core_factory(mocked_builds=True).connect()
     worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
-                   executionService="cluster")
+                   systems=[Gateway.system], workerCapabilities=[63])
     if operation == R.RequestBody.StatusRequest:
         run_id = start_run(client, "work", propagate=False)
         wait_for_state(client, run_id, RemoteExecutionState.running)
@@ -715,7 +713,7 @@ def test_stop_cancels_remote_job_before_the_pending_reply(project, remote_gatewa
 def test_stop_reaches_worker_before_submit_is_applied(project, remote_gateway, core_factory, tmp_path):
     client = core_factory(mocked_builds=True).connect()
     worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
-                   executionService="cluster")
+                   systems=[Gateway.system], workerCapabilities=[63])
     remote_gateway.stall_operation = R.RequestBody.SubmitRequest
     remote_gateway.stall = "blackhole"
     remote_gateway.defer_submit = True
@@ -815,11 +813,10 @@ def test_remote_truncation_metadata_survives_import_and_restart(running_job):
     assert text(stdout.text) == "remote"
 
 
-def test_grade_condition_selects_and_records_registered_worker(project, remote_gateway, core_factory, tmp_path):
-    remote_gateway.grade = 0x8000000000000000
+def test_worker_capabilities_selects_and_records_registered_worker(project, remote_gateway, core_factory, tmp_path):
     client = core_factory(mocked_builds=True).connect()
     worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
-                   workerCondition={"language": "simple", "expression": "x & 0x8000000000000000 != 0"})
+                   systems=[Gateway.system], workerCapabilities=[63])
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     assert text(live.executionService) == "cluster"
@@ -830,10 +827,10 @@ def test_grade_condition_selects_and_records_registered_worker(project, remote_g
     assert text(completed.executionService) == "cluster"
 
 
-def test_grade_condition_without_registered_match_fails_before_submission(project, remote_gateway, core_factory, tmp_path):
+def test_worker_capabilities_without_registered_match_fails_before_submission(project, remote_gateway, core_factory, tmp_path):
     client = core_factory(mocked_builds=True).connect()
     worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
-                   workerCondition={"language": "simple", "expression": "x > 1"})
+                   workerCapabilities=[7, 63])
     plan = client.call("RunPlanRequest", card=path("work"), propagate=False)
     assert any(text(d.code) == "invalid_setting" for d in plan.diagnostics)
     with pytest.raises(RpcFailure):
@@ -841,17 +838,17 @@ def test_grade_condition_without_registered_match_fails_before_submission(projec
     assert remote_gateway.submit_count == 0
 
 
-@pytest.mark.parametrize("run_budget,build_budget", [(None, None), (2, 3)])
+@pytest.mark.parametrize("run_budget,build_budget", [(0, 0), (2, 3)])
 def test_remote_separates_build_and_call_budgets(project, remote_gateway, core_factory, tmp_path, run_budget, build_budget):
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, executionService="cluster",
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, systems=[Gateway.system], workerCapabilities=[63],
                    timeoutSeconds=run_budget, buildTimeoutSeconds=build_budget)
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     spec = remote_gateway.specs[text(live.executionJobId)]
     invocation = R.InvocationT.InitFromPackedBuf(remote_gateway.blob_contents[text(spec.invocationSha256)])
     call = WorkerMessageT.InitFromPackedBuf(remote_gateway.blob_contents[R.string(invocation.callSha256)])
-    assert call.value.deadlineMs == (run_budget * 1000 if run_budget is not None else None)
+    assert call.value.deadlineMs == (run_budget * 1000 if run_budget else None)
     assert (0 < spec.buildTimeoutMs <= build_budget * 1000) if build_budget else spec.buildTimeoutMs == 0
     # Spending more than the call budget in transport/queue polling must not
     # make the core fail a call which the worker has not yet completed.

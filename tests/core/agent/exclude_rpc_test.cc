@@ -99,9 +99,9 @@ class AgentExclusionRPC : public AgentProjectFixture {
   auto Open(const std::vector<std::string>& excluded, bool shell = false)
       -> std::string {
     Write(directory.path / "project/definitions/public/_card.json",
-          R"({"type":"draft"})");
+          R"({"type":"draft","symbol":"pencil.and.outline"})");
     Write(directory.path / "project/definitions/hidden/_card.json",
-          R"({"type":"draft"})");
+          R"({"type":"draft","symbol":"pencil.and.outline"})");
     Write(directory.path / "project/definitions/hidden/src/secret.txt",
           "EXCLUDED_CONTENT_SENTINEL");
     std::vector<std::string> entries;
@@ -125,16 +125,18 @@ TEST_F(AgentExclusionRPC,
       R"({"name":"RCW 86","nixPath": [],"canvas":{"cards":[{"id":"sub"}],"connections":[]}})";
   const std::map<std::string, std::string> files{
       {"tsugumi.json", project},
-      {"layout.bin", document_text::parse(document_text::Schema::Layout, "layout.bin",
+      {"layout.bin",
+       document_text::parse(document_text::Schema::Layout, "layout.bin",
                             R"({"cards":[{"key":"sub","x":10,"y":20}]})")},
-      {"definitions/sub/_card.json", R"({"type":"subgraph","external":"inner"})"},
-      {"externals/inner/tsugumi.json",
+      {"definitions/sub/_card.json", R"({"type":"subgraph","symbol":"link"})"},
+      {"externals/sub/tsugumi.json",
        R"({"canvas":{"cards":[{"id":"data"}],"connections":[]}})"},
-      {"externals/inner/definitions/data/_card.json",
-       R"({"type":"draft"})"},
-      {"externals/inner/definitions/data/src/raw.bin",
+      {"externals/sub/definitions/data/_card.json",
+       R"({"type":"draft","symbol":"pencil.and.outline"})"},
+      {"externals/sub/definitions/data/src/raw.bin",
        std::string("\0\xff\x80\n", 4)}};
   for (const auto& [path, bytes] : files) Write(folder / path, bytes);
+  WriteFixtureProjectTree(folder, Read(folder / "tsugumi.json"));
   const auto c = Open({".git"});
   EXPECT_EQ(Error(ImportAttached(c, folder)), "permission_denied");
   RegisterAttached(folder);
@@ -155,33 +157,37 @@ TEST_F(AgentExclusionRPC,
   const auto destination = directory.path / "project";
   for (const auto& [path, bytes] : files) {
     EXPECT_EQ(Read(destination / "externals/imported" / path),
-              DocumentBytes(path, bytes)) << path;
-    EXPECT_EQ(Read(folder / path), bytes) << path;
+              DocumentBytes(path, Read(folder / path)))
+        << path;
+    (void)bytes;
   }
   EXPECT_EQ(
       j::Text(j::Object(Read(destination / "definitions/imported/_card.json")),
-              "external"),
-      "imported");
+              "type"),
+      "subgraph");
+  EXPECT_EQ(Read(destination / "definitions/imported/README.md"),
+            host::CardReadme("imported"));
   ExpectPlaced(Read(destination / "layout.bin"), "imported", 120, 240);
   const auto inspected = Inspect(c);
   ASSERT_EQ(Error(inspected), "") << Diagnostic(inspected);
   EXPECT_NE(
       inspected.View().find(
-          "externals/imported/externals/inner/definitions/data/src/raw.bin"),
+          "externals/imported/externals/sub/definitions/data/src/raw.bin"),
       std::string::npos);
   const auto copied = Tool(
       c, "project_copy",
-      R"({"source":"card","base_rev":"1","files":[{"from":"externals/imported/externals/inner/definitions/data/src/raw.bin","to":"definitions/public/raw.bin"}]})");
+      R"({"source":"card","base_rev":"1","files":[{"from":"externals/imported/externals/sub/definitions/data/src/raw.bin","to":"definitions/public/raw.bin"}]})");
   ASSERT_EQ(Error(copied), "") << Diagnostic(copied);
   EXPECT_EQ(Read(destination / "definitions/public/raw.bin"),
-            files.at("externals/inner/definitions/data/src/raw.bin"));
+            files.at("externals/sub/definitions/data/src/raw.bin"));
 }
 
 TEST_F(AgentExclusionRPC,
        AttachedProjectImportRefusesExcludedContentsBeforeSaving) {
   const auto folder = directory.path / "attached";
-  Write(folder / "tsugumi.json", R"({"canvas":{"cards":[],"connections":[]}})");
-  const auto secret = folder / "externals/inner/definitions/data/src/raw.bin";
+  Write(folder / "tsugumi.json",
+        FixtureProjectDocument(R"({"canvas":{"cards":[],"connections":[]}})"));
+  const auto secret = folder / "externals/sub/definitions/data/src/raw.bin";
   Write(secret, "EXCLUDED_ATTACHMENT");
   const auto c = Open({secret.string()});
   Attach(c, folder);
@@ -196,7 +202,8 @@ TEST_F(AgentExclusionRPC,
 TEST_F(AgentExclusionRPC,
        AttachedProjectImportRefusesExcludedDestinationBeforeSaving) {
   const auto folder = directory.path / "attached";
-  Write(folder / "tsugumi.json", R"({"canvas":{"cards":[],"connections":[]}})");
+  Write(folder / "tsugumi.json",
+        FixtureProjectDocument(R"({"canvas":{"cards":[],"connections":[]}})"));
   const auto c = Open({"externals/imported"});
   Attach(c, folder);
   const auto result = ImportAttached(c, folder);
@@ -270,19 +277,22 @@ TEST_F(AgentExclusionRPC,
       R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})";
   const std::string binary("\0\xff\x80\n", 4);
   Write(folder / "tsugumi.json", project);
-  Write(folder / "definitions/sub/_card.json", R"({"type":"subgraph","external":"inner"})");
+  Write(folder / "definitions/sub/_card.json",
+        R"({"type":"subgraph","symbol":"link"})");
   Write(folder / "definitions/sub/README.md",
-        "---\ndescription: Keep this\n---\n");
-  Write(folder / "externals/inner/tsugumi.json", project);
-  Write(folder / "externals/inner/definitions/next/_card.json",
-        R"({"type":"subgraph","external":"deep"})");
-  Write(folder / "externals/inner/externals/deep/tsugumi.json", project);
+        "---\ntitle: Sub\ndescription: Keep this\n---\n");
+  Write(folder / "externals/sub/tsugumi.json", project);
+  Write(folder / "externals/sub/definitions/next/_card.json",
+        R"({"type":"subgraph","symbol":"link"})");
+  Write(folder / "externals/sub/externals/next/tsugumi.json", project);
   const auto definition =
-      "externals/inner/externals/deep/definitions/data/_card.json";
-  Write(folder / definition, R"({"type":"draft"})");
+      "externals/sub/externals/next/definitions/data/_card.json";
+  Write(folder / definition,
+        R"({"type":"draft","symbol":"pencil.and.outline"})");
   const auto source =
-      "externals/inner/externals/deep/definitions/data/src/raw.bin";
+      "externals/sub/externals/next/definitions/data/src/raw.bin";
   Write(folder / source, binary);
+  WriteFixtureProjectTree(folder, Read(folder / "tsugumi.json"));
   const auto c = Open({".git"});
   const auto args = j::Encode(j::Members{{"source", Quote("attached")},
                                          {"folder", Quote(folder.string())},
@@ -296,32 +306,34 @@ TEST_F(AgentExclusionRPC,
   const auto destination = directory.path / "project";
   EXPECT_EQ(
       Read(destination /
-           "externals/copied/externals/deep/definitions/data/src/raw.bin"),
+           "externals/copied/externals/next/definitions/data/src/raw.bin"),
       binary);
   EXPECT_EQ(Read(destination /
-                 "externals/copied/externals/deep/definitions/data/_card.json"),
+                 "externals/copied/externals/next/definitions/data/_card.json"),
             DocumentBytes(definition, Read(folder / definition)));
   EXPECT_EQ(
       j::Text(j::Object(Read(destination / "definitions/copied/_card.json")),
-              "external"),
-      "copied");
+              "type"),
+      "subgraph");
   EXPECT_EQ(Read(destination / "definitions/copied/README.md"),
-            "---\ndescription: Keep this\n---\n");
+            "---\ntitle: Sub\ndescription: Keep this\n---\n");
   ExpectPlaced(Read(destination / "layout.bin"), "copied", 120, 240);
   EXPECT_EQ(Read(folder / source), binary);
   EXPECT_EQ(Read(folder / "definitions/sub/README.md"),
-            "---\ndescription: Keep this\n---\n");
+            "---\ntitle: Sub\ndescription: Keep this\n---\n");
 }
 
 TEST_F(AgentExclusionRPC, AttachedCardCopyRefusesExcludedClosureBeforeSaving) {
   const auto folder = directory.path / "attached";
-  Write(folder / "tsugumi.json", R"({"canvas":{"cards":[],"connections":[]}})");
-  Write(folder / "definitions/sub/_card.json", R"({"type":"subgraph","external":"inner"})");
-  Write(folder / "externals/inner/tsugumi.json",
+  Write(folder / "tsugumi.json",
+        FixtureProjectDocument(R"({"canvas":{"cards":[],"connections":[]}})"));
+  Write(folder / "definitions/sub/_card.json",
+        R"({"type":"subgraph","symbol":"link"})");
+  Write(folder / "externals/sub/tsugumi.json",
         R"({"canvas":{"cards":[],"connections":[]}})");
-  Write(folder / "externals/inner/definitions/data/_card.json",
-        R"({"type":"draft"})");
-  const auto secret = folder / "externals/inner/definitions/data/src/raw.bin";
+  Write(folder / "externals/sub/definitions/data/_card.json",
+        R"({"type":"draft","symbol":"pencil.and.outline"})");
+  const auto secret = folder / "externals/sub/definitions/data/src/raw.bin";
   Write(secret, "EXCLUDED_ATTACHMENT");
   const auto c = Open({secret.string()});
   Attach(c, folder);
@@ -398,8 +410,10 @@ TEST_F(AgentExclusionRPC, FileReadListWriteAndPolicyChangesAreEnforcedByHost) {
 TEST_F(AgentExclusionRPC, DemoReadListCopyAndHelpersCannotReachExcludedDemo) {
   const auto demo = directory.path / "demos/ja/finished";
   Write(demo / "tsugumi.json",
-        R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
-  Write(demo / "definitions/step/_card.json", R"({"type":"draft"})");
+        FixtureProjectDocument(
+            R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})"));
+  Write(demo / "definitions/step/_card.json",
+        R"({"type":"draft","symbol":"pencil.and.outline"})");
   Write(demo / "definitions/step/src/note.txt", "EXCLUDED_DEMO_SENTINEL");
   Write(
       directory.path / "demos/ja/index.json",
@@ -436,10 +450,12 @@ TEST_F(AgentExclusionRPC, DemoReadListCopyAndHelpersCannotReachExcludedDemo) {
 TEST_F(AgentExclusionRPC, DemoCardCopySavesItsDefinitionAndSources) {
   const auto demo = directory.path / "demos/en/source";
   Write(demo / "tsugumi.json",
-        R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
-  Write(demo / "definitions/step/_card.json", R"({"type":"draft"})");
+        FixtureProjectDocument(
+            R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})"));
+  Write(demo / "definitions/step/_card.json",
+        R"({"type":"draft","symbol":"pencil.and.outline"})");
   Write(demo / "definitions/step/README.md",
-        "---\ndescription: Keep description\n---\n");
+        "---\ntitle: data\ndescription: Keep description\n---\n");
   Write(demo / "definitions/step/src/note.txt", "COPIED_COMPLETE_SOURCE");
   Write(directory.path / "demos/en/index.json",
         R"({"demos":[{"id":"source","path":"source","title":"Source"}]})");

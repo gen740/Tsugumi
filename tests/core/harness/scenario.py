@@ -11,7 +11,7 @@ from projects import wait_run as wait_run
 from tsugumi_client import RpcFailure, change, new_id, path, text
 
 from .daemon import BUILD, ROOT
-from .document import params_nix
+from .document import card_document, card_readme, params_nix
 from .file_events import wait_for_file
 
 STRING_OUTPUT = 'table Value { value:string; } table Outputs { out:Value; } root_type Outputs;'
@@ -75,8 +75,12 @@ class Project:
         doc["canvas"] = {"cards": [{"id": name} for name in self.cards], "connections": self.connections}
         changes = [change("SetProject", json=json.dumps(doc))]
         for name, (definition, files) in self.cards.items():
-            changes.append(change("PutDefinition", id=name, cardJson=json.dumps(definition)))
+            readme = files.get("README.md", card_readme(name))
+            changes.append(change("PutDefinition", id=name, cardJson=json.dumps(card_document(definition)),
+                                  readme=readme, keepComments=True))
             for filename, content in files.items():
+                if filename == "README.md":
+                    continue
                 relative = f"definitions/{name}/{filename}"
                 fields = {}
                 try:

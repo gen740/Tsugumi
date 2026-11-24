@@ -1,4 +1,5 @@
 ---
+title: pool
 description: 固定効果と変量効果で併合する
 ---
 

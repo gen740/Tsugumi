@@ -1,4 +1,5 @@
 ---
+title: life
 description: ライフゲームを進める
 ---
 

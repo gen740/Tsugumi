@@ -1,4 +1,5 @@
 ---
+title: spectrum
 description: Decay of the singular values
 ---
 

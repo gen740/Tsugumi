@@ -1,3 +1,4 @@
+import { cardFixture, projectFixture } from './documentFixture'
 import { addCodeCard, cardIds } from './cardIds'
 // A wire to or from a Draft is dotted, whatever else it shows, until the Draft
 // has code. The Mac app checks the same (UILogicTests: draftWiresAreDotted).
@@ -18,7 +19,7 @@ const { WireLayer } = await import('../src/ui/cardNode')
 
 const session = () => {
   const s = cardIds(new ProjectSession('/p', 'k', 'p'))
-  s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
+  s.project = parse(projectFixture({"name":"t","canvas":{"cards":[],"connections":[]}}))
   s.layout = parse('{}')
   return s
 }
@@ -37,7 +38,6 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
   assert.ok(isDraftWire(kind, 'd', 'c'), 'from a Draft')
   assert.ok(isDraftWire(kind, 'c', 'd'), 'to a Draft')
   assert.ok(isDraftWire(kind, 'd', 'd'), 'between Drafts')
-  assert.ok(isDraftWire(kind, 'd'), 'from a Draft to the bar of a Card in Card')
   assert.ok(!isDraftWire(kind, 'c', 's'), 'between Cards with code')
   assert.ok(!isDraftWire(kind, 'c'), 'from a Card with code to the bar')
 }
@@ -66,10 +66,7 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
 
   // Implement the Draft and rebind its wire ends: the wires are solid again.
   await s.applyMutation((x) => {
-    x.updateCard(draft, (c) => {
-      c.set('type', 'code')
-      c.set('inputs', parse('[{"name":"in"}]'))
-    })
+    x.setCardDefinition(draft, { card: parse(cardFixture('code', { inputs: [{ name: 'in' }] })), meta: x.cardMeta(draft) })
     x.updateGraph([], (g) => g.set('connections', parse(`[
       {"from":{"card":"start","port":"out"},"to":{"card":"plan","port":"in"}},
       {"from":{"card":"plan","port":"out"},"to":{"card":"log","port":"in"}}
@@ -80,25 +77,20 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
 }
 
 {
-  // In a Card in Card: its bars' wires to an inner Draft are dotted, the wires of the Card itself are not.
+  // A Draft cannot be placed on a subgraph boundary, but it can have internal wires.
   const s = session()
   const start = await s.addCard('trigger', [], { x: 0, y: 0 }, 'start')
   const log = await addCodeCard(s, { x: 600, y: 0 }, 'log')
   const draft = await s.addCard('draft', [], { x: 300, y: 0 }, 'plan')
   await s.connect([start, 'out'], [draft, NEW_PORT], [])
   await s.connect([draft, NEW_PORT], [log, 'in'], [])
-  const outer = await s.makeSubgraph(new Set([draft]), [])
+  assert.equal(await s.makeSubgraph(new Set([draft]), []), undefined)
+  assert.equal(s.connections([]).length, 2)
+  const outer = await s.makeSubgraph(new Set([start, draft, log]), [])
   assert.ok(outer)
   assert.equal(s.kind(outer), 'subgraph')
-  assert.ok(Object.values(dotted(s)).length > 0)
-  assert.ok(Object.values(dotted(s)).every((d) => !d), 'a Card in Card is not a Draft')
-  // External documents are read after the operation's confirmed delta.
   await new Promise<void>(resolve => setImmediate(resolve))
-  const inside = new Scene(s, [outer])
-  assert.ok(inside.boundary)
-  const bars = inside.wires.filter((w) => w.connection === undefined)
-  assert.equal(bars.length, 2)
-  assert.ok(bars.every((w) => w.dotted))
+  assert.deepEqual(dotted(s, [outer]), { 'start>plan': true, 'plan>log': true })
 }
 
 {

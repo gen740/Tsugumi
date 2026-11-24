@@ -1,4 +1,5 @@
 ---
+title: generate
 description: Make synthetic plate data
 ---
 

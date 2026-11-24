@@ -6,8 +6,9 @@
 
 #include "agent/catalog.hh"
 #include "agent/context.hh"
-#include "tsugumi/document/input_types.hh"
+#include "test_document.hh"
 #include "tsugumi/document/input_schema.hh"
+#include "tsugumi/document/input_types.hh"
 #include "tsugumi/document/schema_id.hh"
 #include "tsugumi/util/crypto.hh"
 #include "wire.hh"
@@ -23,11 +24,14 @@ auto Graph(const std::string& cards, const std::string& wires, Files files)
     -> std::shared_ptr<const Resolution> {
   Document doc;
   doc.project_buffer =
-      parse_project_json("{\"nixPath\":[],\"canvas\":{\"cards\":" + cards +
-                         ",\"connections\":" + wires + "}}")
+      parse_project_json(test::project_json("{\"canvas\":{\"cards\":" + cards +
+                                            ",\"connections\":" + wires + "}}"))
           .buffer;
   for (const auto& [path, text] : files) {
-    doc.sources[path] = {crypto::sha256_hex(text), text.size()};
+    if (Document::is_external_document_file(path))
+      doc.sources[path] = external_document_source(path, text);
+    else
+      doc.sources[path] = {crypto::sha256_hex(text), text.size()};
     if (!path.starts_with("definitions/")) continue;
     const auto end = path.find('/', 12);
     const auto id = path.substr(12, end - 12);
@@ -63,13 +67,14 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
       R"([{"id":"src"},{"id":"dest"},{"id":"file"}])",
       R"([{"from":{"card":"src","port":"out"},"to":{"card":"dest","port":"data"}},
           {"from":{"card":"file","port":"out"},"to":{"card":"dest","port":"file"}}])",
-      {{"definitions/src/_card.json", R"({"type":"code"})"},
+      {{"definitions/src/_card.json", test::card_json(R"({"type":"code"})")},
        {"definitions/src/_outputs.fbs", kSchema},
-       {"definitions/file/_card.json", R"({"type":"input"})"},
+       {"definitions/file/_card.json", test::card_json(R"({"type":"input"})")},
        {"definitions/file/_outputs.fbs",
         R"(table Message { body:string; } table Outputs { out:Message; } root_type Outputs;)"},
        {"definitions/dest/_card.json",
-        R"({"type":"code","inputs":[{"name":"data"},{"name":"file"},{"name":"missing"}]})"}});
+        test::card_json(
+            R"({"type":"code","inputs":[{"name":"data"},{"name":"file"},{"name":"missing"}]})")}});
   const auto result = Present(*graph, {"dest"});
   ASSERT_EQ(result.inputs.size(), 3u);
   EXPECT_EQ(result.rev, 3u);
@@ -100,11 +105,14 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
 TEST(InputTypes, DistinctUnnamedDraftEndsKeepTheirSourceTypes) {
   const auto graph = Graph(
       R"([{"id":"src"},{"id":"draft"},{"id":"other"}])",
-      R"([{"from":{"card":"src","port":"out"},"to":{"card":"draft","port":""}},
-          {"from":{"card":"other","port":"out"},"to":{"card":"draft","port":""}}])",
-      {{"definitions/src/_card.json", R"({"type":"code"})"},
+      R"([{"from":{"card":"src","port":"out"},"to":{"card":"draft"}},
+          {"from":{"card":"other","port":"out"},"to":{"card":"draft"}}])",
+      {{"definitions/src/_card.json", test::card_json(R"({"type":"code"})")},
        {"definitions/src/_outputs.fbs", kSchema},
-       {"definitions/other/_card.json", R"({"type":"trigger"})"}});
+       {"definitions/other/_card.json",
+        test::card_json(R"({"type":"trigger"})")},
+       {"definitions/draft/_card.json",
+        test::card_json(R"({"type":"draft"})")}});
   const auto ends = input_types(*graph, {"draft"});
   ASSERT_EQ(ends.size(), 2u);
   CardPath sources;
@@ -124,21 +132,23 @@ TEST(InputTypes, NestedBoundariesShareTheExecutableEndpointResolution) {
       R"([{"id":"src"},{"id":"container"},{"id":"dest"}])",
       R"([{"from":{"card":"src","port":"out"},"to":{"card":"container","port":"in"}},
           {"from":{"card":"container","port":"out"},"to":{"card":"dest","port":"data"}}])",
-      {{"definitions/src/_card.json", R"({"type":"code"})"},
+      {{"definitions/src/_card.json", test::card_json(R"({"type":"code"})")},
        {"definitions/src/_outputs.fbs", kSchema},
        {"definitions/dest/_card.json",
-        R"({"type":"code","inputs":[{"name":"data"}]})"},
+        test::card_json(R"({"type":"code","inputs":[{"name":"data"}]})")},
        {"definitions/container/_card.json",
-        R"({"type":"subgraph","external":"outer"})"},
-       {"externals/outer/tsugumi.json",
-        R"({"canvas":{"cards":[{"id":"inner"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"inner","port":"in"}],"outputs":[{"name":"out","card":"inner","port":"out"}]}})"},
-       {"externals/outer/definitions/inner/_card.json",
-        R"({"type":"subgraph","external":"nested"})"},
-       {"externals/outer/externals/nested/tsugumi.json",
-        R"({"canvas":{"cards":[{"id":"leaf"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"leaf","port":"in"}],"outputs":[{"name":"out","card":"leaf","port":"out"}]}})"},
-       {"externals/outer/externals/nested/definitions/leaf/_card.json",
-        R"({"type":"code","inputs":[{"name":"in"}]})"},
-       {"externals/outer/externals/nested/definitions/leaf/_outputs.fbs",
+        test::card_json(R"({"type":"subgraph"})")},
+       {"externals/container/tsugumi.json",
+        test::project_json(
+            R"({"canvas":{"cards":[{"id":"inner"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"inner","port":"in"}],"outputs":[{"name":"out","card":"inner","port":"out"}]}})")},
+       {"externals/container/definitions/inner/_card.json",
+        test::card_json(R"({"type":"subgraph"})")},
+       {"externals/container/externals/inner/tsugumi.json",
+        test::project_json(
+            R"({"canvas":{"cards":[{"id":"leaf"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"leaf","port":"in"}],"outputs":[{"name":"out","card":"leaf","port":"out"}]}})")},
+       {"externals/container/externals/inner/definitions/leaf/_card.json",
+        test::card_json(R"({"type":"code","inputs":[{"name":"in"}]})")},
+       {"externals/container/externals/inner/definitions/leaf/_outputs.fbs",
         kSchema}});
   const auto ends = input_types(*graph, {"dest"});
   ASSERT_EQ(ends.size(), 1u);
@@ -161,11 +171,12 @@ TEST(InputTypes, CollectAndMergeUseTheResolverTypes) {
       R"([{"id":"src"},{"id":"collect"},{"id":"merge"}])",
       R"([{"from":{"card":"src","port":"out"},"to":{"card":"collect","port":"in"}},
           {"from":{"card":"collect","port":"out"},"to":{"card":"merge","port":"items"}}])",
-      {{"definitions/src/_card.json", R"({"type":"code"})"},
+      {{"definitions/src/_card.json", test::card_json(R"({"type":"code"})")},
        {"definitions/src/_outputs.fbs", kSchema},
-       {"definitions/collect/_card.json", R"({"type":"collect"})"},
+       {"definitions/collect/_card.json",
+        test::card_json(R"({"type":"collect"})")},
        {"definitions/merge/_card.json",
-        R"({"type":"merge","inputs":[{"name":"items"}]})"}});
+        test::card_json(R"({"type":"merge","inputs":[{"name":"items"}]})")}});
   for (const auto& [card, port] :
        std::vector<std::pair<std::string, std::string>>{
            {"collect", "out"},
@@ -182,16 +193,16 @@ TEST(InputTypes, SecondWireLeavesOnlyTheFirstProducer) {
       R"([{"id":"first"},{"id":"second"},{"id":"dest"}])",
       R"([{"from":{"card":"first","port":"out"},"to":{"card":"dest","port":"in"}},
           {"from":{"card":"second","port":"out"},"to":{"card":"dest","port":"in"}}])",
-      {{"definitions/first/_card.json", R"({"type":"code"})"},
+      {{"definitions/first/_card.json", test::card_json(R"({"type":"code"})")},
        {"definitions/first/_outputs.fbs",
         "table First { value:int; } table Outputs { out:First; } root_type "
         "Outputs;"},
-       {"definitions/second/_card.json", R"({"type":"code"})"},
+       {"definitions/second/_card.json", test::card_json(R"({"type":"code"})")},
        {"definitions/second/_outputs.fbs",
         "table Second { value:int; } table Outputs { out:Second; } root_type "
         "Outputs;"},
        {"definitions/dest/_card.json",
-        R"({"type":"code","inputs":[{"name":"in"}]})"}});
+        test::card_json(R"({"type":"code","inputs":[{"name":"in"}]})")}});
   const auto ends = input_types(*graph, {"dest"});
   ASSERT_EQ(ends.size(), 1u);
   EXPECT_EQ(ends[0].source->path, (CardPath{"first"}));
@@ -234,18 +245,22 @@ TEST(InputTypes, GeneratedSchemaKeepsMergeCandidatesAndCollectMembers) {
             {"from":{"card":"merge","port":"out"},"to":{"card":"collect","port":"in"}},
             {"from":{"card":"merge","port":"out"},"to":{"card":"dest","port":"merged"}},
             {"from":{"card":"collect","port":"out"},"to":{"card":"dest","port":"batch"}}])",
-        {{"definitions/a/_card.json", R"({"type":"code"})"},
-         {"definitions/b/_card.json", R"({"type":"code"})"},
+        {{"definitions/a/_card.json", test::card_json(R"({"type":"code"})")},
+         {"definitions/b/_card.json", test::card_json(R"({"type":"code"})")},
          {"definitions/a/_outputs.fbs", kSchema},
          {"definitions/b/_outputs.fbs", same ? kSchema : R"(
             include "tsugumi/artifact.fbs";
             namespace sample;
             table Message { artifact:tsugumi.Artifact; }
             table Outputs { out:Message; } root_type Outputs;)"},
-         {"definitions/merge/_card.json", R"({"type":"merge","inputs":[{"name":"a"},{"name":"b"}]})"},
-         {"definitions/collect/_card.json", R"({"type":"collect"})"},
+         {"definitions/merge/_card.json",
+          test::card_json(
+              R"({"type":"merge","inputs":[{"name":"a"},{"name":"b"}]})")},
+         {"definitions/collect/_card.json",
+          test::card_json(R"({"type":"collect"})")},
          {"definitions/dest/_card.json",
-          R"({"type":"code","inputs":[{"name":"unwired"},{"name":"merged"},{"name":"batch"}]})"}});
+          test::card_json(
+              R"({"type":"code","inputs":[{"name":"unwired"},{"name":"merged"},{"name":"batch"}]})")}});
     const auto* node = graph->find({"dest"});
     ASSERT_TRUE(node->generated_inputs);
     const auto& schema = *node->generated_inputs;
@@ -283,12 +298,13 @@ TEST(InputTypes, DirectArtifactRootStampsTheSharedTypeOnTheField) {
       R"([{"id":"source"},{"id":"dest"}])",
       R"([{"from":{"card":"source","port":"out"},
            "to":{"card":"dest","port":"in"}}])",
-      {{"definitions/source/_card.json", R"({"type":"input"})"},
-       {"definitions/source/_outputs.fbs",
-        R"(include "tsugumi/artifact.fbs";
+            {{"definitions/source/_card.json",
+              test::card_json(R"({"type":"input"})")},
+             {"definitions/source/_outputs.fbs",
+              R"(include "tsugumi/artifact.fbs";
            table Outputs { out:tsugumi.Artifact; } root_type Outputs;)"},
-       {"definitions/dest/_card.json",
-        R"({"type":"code","inputs":[{"name":"in"}]})"}});
+             {"definitions/dest/_card.json",
+              test::card_json(R"({"type":"code","inputs":[{"name":"in"}]})")}});
   const auto& schema = graph->find({"dest"})->generated_inputs;
   ASSERT_TRUE(schema);
   const auto id = schema_id(*graph->find({"source"})->output("out")->type);
@@ -344,8 +360,8 @@ TEST(InputTypes, LargeDefinitionAndModelResultAreNeverClipped) {
   schema += "}\n";
   const auto graph = Graph(
       R"([{"id":"src"},{"id":"draft"}])",
-      R"([{"from":{"card":"src","port":"out"},"to":{"card":"draft","port":""}}])",
-      {{"definitions/src/_card.json", R"({"type":"code"})"},
+      R"([{"from":{"card":"src","port":"out"},"to":{"card":"draft"}}])",
+      {{"definitions/src/_card.json", test::card_json(R"({"type":"code"})")},
        {"definitions/src/_outputs.fbs",
         schema + "table Outputs { out:Large; } root_type Outputs;"}});
   const auto presented = Present(*graph, {"draft"});

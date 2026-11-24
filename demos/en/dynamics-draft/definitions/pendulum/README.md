@@ -1,4 +1,5 @@
 ---
+title: pendulum
 description: Compare the chaos of double pendulums
 ---
 

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 620" width="1100" height="620" role="img" aria-labelledby="title desc">
-<title id="title">Collatz — the Workflow inside collatz-cpp</title>
+<title id="title">Collatz — the Workflow inside collatz_cpp</title>
 <desc id="desc">Direct wires carry the loop value to check and collect. The Branch routes even and odd values back through halve and triple.</desc>
 <style>
 text{font-family:system-ui,sans-serif;fill:#ecf2f4;font-size:16px}

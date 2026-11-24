@@ -1,4 +1,5 @@
 ---
+title: stationary
 description: 定常分布とポアソン分布
 ---
 

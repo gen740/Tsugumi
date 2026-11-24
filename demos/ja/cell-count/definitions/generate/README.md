@@ -1,4 +1,5 @@
 ---
+title: generate
 description: 合成の細胞画像を作る
 ---
 

@@ -1,3 +1,4 @@
 ---
+title: start
 description: 多項式と反復の設定（settings）から計算を始める
 ---

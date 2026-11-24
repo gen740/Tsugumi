@@ -1,4 +1,5 @@
 ---
+title: mlp
 description: 多層パーセプトロン
 ---
 

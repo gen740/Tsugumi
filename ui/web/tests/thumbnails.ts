@@ -27,11 +27,11 @@ for (const id of ids) {
     for (const [id, port, direction] of [[w.from, w.fromPort, 'outputs'], [w.to, w.toPort, 'inputs']] as const) {
       const c = cards.get(id)
       assert.ok(c, `${d.id}: missing Card ${id}`)
-      assert.ok(c.kind === 'draft' ? port === '' : port !== '' && c[direction].some(p => p.name === port), `${d.id}: ${id}.${port}`)
+      assert.ok(c.kind === 'draft' ? port === undefined : !!port && c[direction].some(p => p.name === port), `${d.id}: ${id}.${port}`)
     }
   }
   const rects = d.cards.map((c: CardNodeData & { id: string; x: number; y: number }) => {
-    const g = new CardGeometry({ ...c, title: c.id, invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false }, d.flow)
+    const g = new CardGeometry({ ...c, title: c.title ?? c.id, invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false }, d.flow)
     return { id: c.id, x: c.x, y: c.y, ...g.size }
   })
   for (const [i, a] of rects.entries()) {
@@ -60,7 +60,7 @@ for (const id of ids) {
             if (c.kind !== 'draft') continue
             assert.deepEqual(c.inputs, [])
             assert.deepEqual(c.outputs, [])
-            const r = new CardGeometry({ ...node('draft'), title: c.id, summary: c.summary, untitled: c.untitled }, flow).outlineRect
+            const r = new CardGeometry({ ...node('draft'), title: c.title ?? c.id, summary: c.summary }, flow).outlineRect
             const expected = flow === 'topToBottom'
               ? { x: c.x + r.x + r.width / 2, y: c.y + r.y + (output ? r.height : 0) }
               : { x: c.x + r.x + (output ? r.width : 0), y: c.y + r.y + r.height / 2 }

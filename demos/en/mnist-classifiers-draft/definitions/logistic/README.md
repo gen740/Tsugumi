@@ -1,4 +1,5 @@
 ---
+title: logistic
 description: Tell the digits apart with logistic regression
 ---
 

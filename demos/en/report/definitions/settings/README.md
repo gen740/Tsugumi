@@ -1,3 +1,4 @@
 ---
+title: settings
 description: The random seed, the number of rows and the report's heading
 ---

@@ -1,4 +1,5 @@
 ---
+title: stationary
 description: Stationary distribution and the Poisson distribution
 ---
 

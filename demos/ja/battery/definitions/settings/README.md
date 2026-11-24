@@ -1,4 +1,5 @@
 ---
+title: settings
 description: 電池と契約の条件
 ---
 

@@ -3,6 +3,7 @@
 #include <set>
 
 #include "host/failure.hh"
+#include "host/templates.hh"
 #include "tsugumi/document/readme.hh"
 #include "tsugumi/util/crypto.hh"
 
@@ -81,7 +82,9 @@ auto PrepareAgentSave(json::Members args, const host::SaveBase& base,
                  json::Get(c, "comments_json") == "\"\""))
         after.erase(dir + "_comments.json");
       if (const auto fill = json::Text(c, "fill_description"); !fill.empty()) {
-        auto text = Readme(after, dir + "README.md");
+        const auto path = dir + "README.md";
+        if (!after.contains(path)) after[path] = host::CardReadme(id);
+        auto text = Readme(after, path);
         if (Blank(text.fields["description"])) {
           text.fields["description"] = fill;
           after[dir + "README.md"] = readme::print(text);
@@ -118,7 +121,7 @@ auto PrepareAgentSave(json::Members args, const host::SaveBase& base,
         after[path] = value;
       }
       if (!comments::is_comments(path))
-        if (auto card = comments::card_of(path, after);
+        if (auto card = comments::card_of(path);
             card && (kind == "RemoveSource" || !hashes.contains(path) ||
                      hashes.at(path) != crypto::sha256_hex(after.at(path))))
           changed.insert(*card);
@@ -140,7 +143,7 @@ auto PrepareAgentSave(json::Members args, const host::SaveBase& base,
     auto fail = [&](const std::string& why) {
       throw host::Failure(
           "validation_failed",
-          comments::card_of(path, after).value_or(path) + ": " + why);
+          comments::card_of(path).value_or(path) + ": " + why);
     };
     if (!Blank(old_readme.fields["description"]) &&
         old_readme.fields["description"] != new_readme.fields["description"])
@@ -157,7 +160,7 @@ auto PrepareAgentSave(json::Members args, const host::SaveBase& base,
   for (const auto& [path, text] : after)
     if (!comments::is_comments(path) &&
         (!before.contains(path) || before.at(path) != text))
-      if (auto card = comments::card_of(path, after)) changed.insert(*card);
+      if (auto card = comments::card_of(path)) changed.insert(*card);
   const auto was = comments::of(before);
   const std::vector<std::string> cards(changed.begin(), changed.end());
   // Stamp only metadata written by this save. A keep-only save preserves it.
@@ -171,7 +174,7 @@ auto PrepareAgentSave(json::Members args, const host::SaveBase& base,
         comments::is_comments(path) && after.contains(path)) {
       const auto original = after.at(path);
       after[path] = comments::stamped(
-          original, comments::card_of(path, after).value_or(path), was, cards,
+          original, comments::card_of(path).value_or(path), was, cards,
           reserve);
       if (kind == "PutDefinition") {
         if (after.at(path) != original || c.contains("comments_json")) {

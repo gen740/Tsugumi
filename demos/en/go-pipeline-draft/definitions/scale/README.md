@@ -1,4 +1,5 @@
 ---
+title: scale
 description: Multiply the owned value in Go
 ---
 

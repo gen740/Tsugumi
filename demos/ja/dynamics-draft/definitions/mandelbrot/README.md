@@ -1,4 +1,5 @@
 ---
+title: mandelbrot
 description: マンデルブロ集合を描く
 ---
 

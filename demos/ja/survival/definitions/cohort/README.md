@@ -1,4 +1,5 @@
 ---
+title: cohort
 description: 対象者を選ぶ
 ---
 

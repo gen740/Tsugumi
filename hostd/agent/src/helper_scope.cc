@@ -78,12 +78,7 @@ auto ValidCard(const std::string& card) -> bool {
   do {
     const auto end = card.find('/', begin);
     const auto part = card.substr(begin, end - begin);
-    if (part.empty() || part.size() > 128 ||
-        !std::all_of(part.begin(), part.end(), [](unsigned char c) {
-          return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                 (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.';
-        }))
-      return false;
+    if (!valid_name(part)) return false;
     if (end == std::string::npos) return true;
     begin = end + 1;
   } while (true);
@@ -162,46 +157,19 @@ auto HelperScope::RequireRun(const std::string& card) const -> void {
   if (!runs_.contains(card))
     Deny("run of " + (card.empty() ? "the whole project" : card));
 }
-auto HelperScope::Root(const std::string& card, const Reader& read,
-                       bool writing) const -> std::string {
+auto HelperScope::Root(const std::string& card, const Reader& read) const
+    -> std::string {
   if (const auto found = created_.find(card); found != created_.end())
     return found->second;
   std::string prefix;
-  std::vector<std::string> logical_prefixes{""};
   size_t begin = 0;
   for (;;) {
     const auto end = card.find('/', begin);
     const auto id = card.substr(begin, end - begin);
     if (end == std::string::npos) return prefix + "definitions/" + id;
-    const auto link =
-        json::Object(read(prefix + "definitions/" + id + "/_card.json"));
-    const auto external = json::Text(link, "external");
-    if (!ValidCard(external) || external.find('/') != std::string::npos)
+    if (!IsSubgraph(read(prefix + "definitions/" + id + "/_card.json")))
       Deny("unresolved nested Card " + card);
-    // Multiple container Cards may point at the same definitions. Every
-    // alias of a shared definition must be assigned, or a file write/read
-    // would cross a different Card's boundary through shared storage.
-    const auto project = json::Object(read(prefix + "tsugumi.json"));
-    const auto canvas = json::Object(json::Get(project, "canvas", "{}"));
-    std::set<std::string> aliases{id};
-    for (const auto& raw : json::Array(json::Get(canvas, "cards", "[]"))) {
-      const auto sibling = json::Text(json::Object(raw), "id");
-      if (sibling == id || !ValidCard(sibling)) continue;
-      const auto sibling_link =
-          read(prefix + "definitions/" + sibling + "/_card.json");
-      if (sibling_link.empty()) continue;
-      if (json::Text(json::Object(sibling_link), "external") == external)
-        aliases.insert(sibling);
-    }
-    std::vector<std::string> next;
-    for (const auto& logical : logical_prefixes)
-      for (const auto& alias : aliases) {
-        const auto nested = logical + alias + '/';
-        Require(nested + card.substr(end + 1), writing);
-        next.push_back(nested);
-      }
-    logical_prefixes = std::move(next);
-    prefix += "externals/" + external + '/';
+    prefix += "externals/" + id + '/';
     begin = end + 1;
   }
 }
@@ -215,7 +183,7 @@ auto HelperScope::File(const std::string& path, bool writing,
   for (const auto& card : writing ? writes_ : reads_) {
     std::string root;
     try {
-      root = Root(card, read, writing);
+      root = Root(card, read);
     } catch (const std::exception&) {
       continue;
     }
@@ -231,12 +199,10 @@ auto HelperScope::Created(const std::string& id,
                           const std::string& project_path, const Reader& read)
     -> void {
   if (!scoped_ || !ValidCard(id) || id.find('/') != std::string::npos) return;
-  // Find the logical parent through its link, rather than assuming that a
-  // container's permanent identifier and its external directory are equal.
   std::string parent;
   if (!project_path.empty()) {
     for (const auto& card : writes_) {
-      const auto root = Root(card, read, true);
+      const auto root = Root(card, read);
       const auto at = root.rfind("definitions/");
       if (root.substr(0, at) == project_path) {
         const auto slash = card.rfind('/');
@@ -245,11 +211,9 @@ auto HelperScope::Created(const std::string& id,
           break;
         }
       }
-      const auto link_text = read(root + "/_card.json");
-      if (link_text.empty()) continue;
-      const auto link = json::Object(link_text);
-      const auto external = json::Text(link, "external");
-      if (root.substr(0, at) + "externals/" + external + '/' == project_path) {
+      const auto id = root.substr(at + 12);
+      if (root.substr(0, at) + "externals/" + id + '/' == project_path &&
+          IsSubgraph(read(root + "/_card.json"))) {
         parent = card + '/';
         break;
       }
@@ -386,7 +350,7 @@ auto HelperScope::CheckBindings(const Reader& before, const Reader& now) const
   auto resolved = *this;
   resolved.created_.clear();
   for (const auto& card : writes_)
-    if (resolved.Root(card, before, true) != resolved.Root(card, now, true))
+    if (resolved.Root(card, before) != resolved.Root(card, now))
       Deny("changed container binding for " + card);
 }
 
@@ -428,7 +392,7 @@ auto HelperScope::ExpandSave(json::Members args, const Reader& read) const
     if (path != "tsugumi.json") {
       bool found = false;
       for (const auto& card : writes_) {
-        const auto root = Root(card, read, true);
+        const auto root = Root(card, read);
         const auto end = root.rfind("definitions/");
         if (root.substr(0, end) + "tsugumi.json" != path) continue;
         const auto slash = card.rfind('/');
@@ -670,7 +634,7 @@ auto HelperScope::Check(const std::string& tool, const json::Members& args,
       } else if (type == "PutDefinition" || type == "RemoveDefinition") {
         const auto id = json::Text(value, "id");
         Require(id, true);
-        const auto old_card = read(Root(id, read, true) + "/_card.json");
+        const auto old_card = read(Root(id, read) + "/_card.json");
         if (IsSubgraph(old_card)) Deny("replacing a container definition");
         if (IsSubgraph(json::Text(value, "card_json")))
           Deny("changing a container link");

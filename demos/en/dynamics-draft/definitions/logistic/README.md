@@ -1,4 +1,5 @@
 ---
+title: logistic
 description: Draw the bifurcation diagram of the logistic map
 ---
 

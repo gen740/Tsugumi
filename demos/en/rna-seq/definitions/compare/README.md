@@ -1,4 +1,5 @@
 ---
+title: compare
 description: Compare DESeq2 and edgeR
 ---
 

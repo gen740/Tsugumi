@@ -189,7 +189,8 @@ extension ProjectSession {
     let ports = portData(k, definition: definition)
     let def = definition ?? cardDefinition(k)
     let m = notes ?? cardMeta(k)
-    let title = displayName(k)
+    let editedTitle = m?["title"]?.string
+    let title = editedTitle.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? displayName(k)
     var summary = m?["description"]?.string
     // What a Draft shows on its Card is what it says it will do.
     if kind == .draft, let content = m?["content"]?.string, !content.isEmpty { summary = content }
@@ -199,7 +200,7 @@ extension ProjectSession {
     let editing = kind == .draft && inlineDraft?.card == k
     return CardNodeData(
       title: title, kind: kind,
-      symbol: kind == .invalid ? nil : (def?["symbol"]?.string).flatMap { $0.isEmpty ? nil : $0 },
+      symbol: kind.displaySymbol(def?["symbol"]?.string),
       summary: summary, inputs: visualPorts(k, ports.inputs, output: false), outputs: visualPorts(k, outputs ?? ports.outputs, output: true),
       params: inlineParams(k),
       result: state?.transfer ?? state?.executionState?.pendingLabel ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
@@ -208,7 +209,7 @@ extension ProjectSession {
       failure: state.flatMap { $0.state == .failed || $0.state == .blocked ? ($0.failure ?? $0.state.label) : nil },
       errors: diags.filter(\.error).map(\.message), warnings: diags.filter { !$0.error }.map(\.message),
       collapsed: !editing && (collapsed ?? self.collapsed(k)), permissions: CardPermission.of(def),
-      draftEditing: editing, untitled: draftUntitled(k),
+      draftEditing: editing,
       portGrid: AppPreferences.shared.showGrid ? AppPreferences.shared.gridSize : nil,
       openComments: CardComment.list(in: m).filter { !$0.resolved }.count)
   }

@@ -1,3 +1,4 @@
 ---
+title: settings
 description: The random seed, the number of points, the interval and the walk's starting state
 ---

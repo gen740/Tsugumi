@@ -1,4 +1,5 @@
 ---
+title: reconstruct
 description: 選んだ λ で復元する
 ---
 

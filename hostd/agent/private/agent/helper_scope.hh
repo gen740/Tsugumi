@@ -68,8 +68,7 @@ class HelperScope {
  private:
   auto File(const std::string& path, bool writing, const Reader& read) const
       -> void;
-  auto Root(const std::string& card, const Reader& read,
-            bool writing = false) const -> std::string;
+  auto Root(const std::string& card, const Reader& read) const -> std::string;
   uint64_t depth_, count_;
   bool scoped_;
   std::set<std::string> reads_, writes_, runs_;

@@ -1,3 +1,4 @@
 ---
+title: start
 description: 集計と2種類のレポート生成を開始する。
 ---

@@ -1,4 +1,6 @@
 {
   "type": "collect",
-  "recordIO": true
+  "symbol": "line.3.horizontal.decrease",
+  "maxRuns": 1,
+  "recordIO": "on"
 }

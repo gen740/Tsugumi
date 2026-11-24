@@ -1,4 +1,5 @@
 ---
+title: edger
 description: edgeR で同じ問いを解く
 ---
 

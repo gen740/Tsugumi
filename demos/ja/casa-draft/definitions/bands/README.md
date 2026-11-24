@@ -1,4 +1,5 @@
 ---
+title: bands
 description: エネルギー帯で分ける
 ---
 

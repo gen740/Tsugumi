@@ -9,7 +9,7 @@ import {
 } from '../model/canvasKit'
 import { BoundaryPort, WireStyle } from '../model/canvas'
 import type { FlowDirection } from '../model/prefs'
-import { cardState, formatDuration, InlineDraft, KIND_ICON, KIND_LABEL } from '../model/session'
+import { CardKey, cardState, formatDuration, InlineDraft, KIND_LABEL } from '../model/session'
 import { D } from '../wire/rpc'
 import { Icon } from './icons'
 import { permissionInfo } from '../model/permissions'
@@ -200,7 +200,7 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
       onBlur={edit ? (e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) edit.onDone() } : undefined}>
       <div style={{ height: s(g.topLabels) }} />
       {g.untitled ? <div style={{ height: s(g.headerRow), flex: 'none' }} /> : <div className="cv-card-header" style={{ height: s(CardGeometry.header), padding: `0 ${s(9)}px`, gap: s(6) }}>
-        <span className="secondary cv-center" style={{ width: s(15) }}><Icon name={data.symbol ?? KIND_ICON[data.kind]} size={font(12)} /></span>
+        <span className="secondary cv-center" style={{ width: s(15) }}><Icon name={data.symbol ?? 'xmark.octagon'} size={font(12)} /></span>
         <span className="cv-title" style={{ fontSize: font(12) }}>{data.untitled && !edit ? data.summary?.split('\n')[0] ?? data.title : data.title}</span>
         {!edit && <span style={{ flex: 1, minWidth: s(2) }} />}
         {data.permissions?.map((p) => (
@@ -288,7 +288,7 @@ function StartBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
   )
 }
 
-/** Only the kind's icon, coloured by the state; name and details on hover. */
+/** The Card's icon, coloured by the state; name and details on hover. */
 function RoutingBody({ data, g, z }: { data: CardNodeData; g: CardGeometry; z: number }) {
   const o = g.outlineRect
   const center = g.iconCenter({ x: o.x * z, y: o.y * z, width: o.width * z, height: o.height * z })
@@ -298,7 +298,7 @@ function RoutingBody({ data, g, z }: { data: CardNodeData; g: CardGeometry; z: n
   return (
     <span className="cv-routing-icon" style={{ left: center.x - size / 2, top: center.y - size / 2, color }}
       title={data.title + ' · ' + KIND_LABEL[data.kind] + (rt ? ' · ' + rt : '')}>
-      <Icon name={KIND_ICON[data.kind]} size={size} />
+      <Icon name={data.symbol ?? 'xmark.octagon'} size={size} />
     </span>
   )
 }
@@ -562,8 +562,8 @@ export function drive(e: React.PointerEvent | PointerEvent, threshold: number, m
 
 /** A bar standing for the outer Card's inputs (above) or outputs (below)
  *  inside a Card in Card: public name, type and the inner port it maps to. */
-export function BoundaryBarView({ title, ports, input, zoom, rect, style, onPointerDown }: {
-  title: string; ports: BoundaryPort[]; input: boolean; zoom: number; rect: Rect; style: CSSProperties; onPointerDown: (e: React.PointerEvent) => void
+export function BoundaryBarView({ title, ports, input, zoom, rect, style, cardTitle, onPointerDown }: {
+  title: string; ports: BoundaryPort[]; input: boolean; zoom: number; rect: Rect; style: CSSProperties; cardTitle: (card: CardKey) => string; onPointerDown: (e: React.PointerEvent) => void
 }) {
   const mark = Math.max(6, 8 * zoom)
   return (
@@ -577,7 +577,7 @@ export function BoundaryBarView({ title, ports, input, zoom, rect, style, onPoin
         return (
           <span key={i}>
             <span className="cv-boundary-port" style={{ left: x - 52 * zoom, width: 104 * zoom, top: (rect.height * zoom) / 2 + 5 * zoom }}
-              title={p.inner ? L('内部の接続先: {0}.{1}', p.inner[0].split('/').pop(), p.inner[1]) : L('内部の接続先が未設定です')}>
+              title={p.inner ? L('内部の接続先: {0}.{1}', cardTitle(p.inner[0]), p.inner[1]) : L('内部の接続先が未設定です')}>
               <span style={{ fontSize: Math.max(6, 10 * zoom), fontWeight: 500 }}>{p.name}</span>
               {p.type && <span className="mono secondary" style={{ fontSize: Math.max(5, 8 * zoom) }}>{p.type}</span>}
             </span>

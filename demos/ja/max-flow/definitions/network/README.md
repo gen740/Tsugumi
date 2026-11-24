@@ -1,4 +1,5 @@
 ---
+title: network
 description: 架空のネットワークを作る
 ---
 

@@ -7,25 +7,21 @@ from pathlib import Path
 
 import pytest
 
-from projects import SINK, put
+from harness.document import card_document, card_readme
+from projects import SINK, card, conn, put, write
 from tsugumi_client import RpcFailure, change, new_id, path, text
 
 EVENTS_FBS = "table Events { value:string; }\ntable Outputs { events:Events (required); }\nroot_type Outputs;\n"
 
 
 def make(root: Path) -> None:
-    put(root / "tsugumi.json", json.dumps({
-        "name": "files", "nixPath": [],
-        "canvas": {"cards": [{"id": "start"}, {"id": "load"}, {"id": "show"}], "connections": [
-            {"from": {"card": "load", "port": "events"}, "to": {"card": "show", "port": "in"}}]}}))
-    put(root / "definitions" / "start" / "_card.json", json.dumps({"type": "trigger"}))
-    put(root / "definitions" / "load" / "_card.json", json.dumps({
-        "type": "input"}))
+    write(root, {"trigger": {"type": "trigger"}, "input": {"type": "input"}, "sink": SINK},
+          [card("start", "trigger"), card("load", "input"), card("show", "sink")],
+          [conn("load", "events", "show", "in")], name="files")
     put(root / "definitions" / "load" / "params.nix", '{ value = "data/events.txt"; }')
     put(root / "definitions" / "load" / "default.nix", '{ params, inputs }: { }')
     put(root / "definitions" / "load" / "_outputs.fbs", EVENTS_FBS)
     put(root / "definitions" / "load" / "data" / "events.txt", "photon 1\nphoton 2\n")
-    put(root / "definitions" / "show" / "_card.json", json.dumps(SINK))
 
 
 def test_reads_without_at_rev_and_the_root_as_empty_path(tmp_path, core_factory):
@@ -59,13 +55,13 @@ def test_put_definition_can_keep_the_readme(tmp_path, core_factory):
     """Settings change without writing the intent (README.md) again."""
     root = tmp_path / "p"
     make(root)
-    readme = "---\ndescription: 観測データを読む\n---\n\n露光補正はしない"
+    readme = card_readme("Load", "観測データを読む", "露光補正はしない")
     put(root / "definitions" / "load" / "README.md", readme)
     c = core_factory(project_root=root, mocked_builds=True).connect()
     snap = c.call("ProjectInspectRequest")
     card = {"type": "input", "maxRuns": 2}
     c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
-           changes=[change("PutDefinition", id="load", cardJson=json.dumps(card), keepReadme=True, keepComments=True)])
+           changes=[change("PutDefinition", id="load", cardJson=json.dumps(card_document(card)), keepReadme=True, keepComments=True)])
     assert bytes(c.call("ProjectFileReadRequest", path="definitions/load/README.md").bytes).decode() == readme
     assert json.loads(bytes(c.call("ProjectFileReadRequest", path="definitions/load/_card.json").bytes))["maxRuns"] == 2
 

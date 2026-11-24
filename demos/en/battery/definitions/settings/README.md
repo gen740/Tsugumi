@@ -1,4 +1,5 @@
 ---
+title: settings
 description: Battery and contract conditions
 ---
 

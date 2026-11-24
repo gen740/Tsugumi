@@ -1,3 +1,4 @@
 ---
+title: settings
 description: 乱数の種・点数・間隔と歩き始めの状態
 ---

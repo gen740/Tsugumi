@@ -1,4 +1,5 @@
 ---
+title: compare
 description: DESeq2 と edgeR を比べる
 ---
 

@@ -1,3 +1,4 @@
+import { cardFixture, projectFixture } from './documentFixture'
 import assert from 'node:assert/strict'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { parse } from '../shared/json'
@@ -8,14 +9,14 @@ import { Workspace } from '../src/model/workspace'
 import { WireLayer } from '../src/ui/cardNode'
 
 const session = new ProjectSession('/p', 'p', 'p')
-const doc = '{"canvas":{"cards":[{"id":"source"},{"id":"collect"},{"id":"sink"}],"connections":[{"from":{"card":"source","port":"out"},"to":{"card":"collect","port":"in"}},{"from":{"card":"collect","port":"out"},"to":{"card":"sink","port":"in"}}]}}'
+const doc = projectFixture({"canvas":{"cards":[{"id":"source"},{"id":"collect"},{"id":"sink"}],"connections":[{"from":{"card":"source","port":"out"},"to":{"card":"collect","port":"in"}},{"from":{"card":"collect","port":"out"},"to":{"card":"sink","port":"in"}}]},"name":"t"})
 session.project = parse(doc)
 session.confirmedProject = parse(doc)
 session.layout = parse('{}')
 session.confirmedLayout = parse('{}')
-session.confirmedDefinitions.set('source', parse('{"type":"code"}'))
-session.confirmedDefinitions.set('collect', parse('{"type":"collect"}'))
-session.confirmedDefinitions.set('sink', parse('{"type":"code"}'))
+session.confirmedDefinitions.set('source', parse(cardFixture('code')))
+session.confirmedDefinitions.set('collect', parse(cardFixture('collect')))
+session.confirmedDefinitions.set('sink', parse(cardFixture('code')))
 const ordinaryList = { name: 'out', rootType: 'Example.List' }
 session.resolution.set('source', { path: ['source'], inputs: [], outputs: [ordinaryList], diagnostics: [], nixReferences: [] })
 session.resolution.set('collect', { path: ['collect'], inputs: [], outputs: [ordinaryList], diagnostics: [], nixReferences: [] })

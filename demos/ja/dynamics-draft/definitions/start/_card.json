@@ -1,3 +1,4 @@
 {
-  "type": "trigger"
+  "type": "trigger",
+  "symbol": "play.circle"
 }

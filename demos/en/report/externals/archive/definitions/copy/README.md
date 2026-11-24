@@ -1,3 +1,4 @@
 ---
+title: copy
 description: Copies the report that arrived, adds the time it was filed and keeps it as an artifact
 ---

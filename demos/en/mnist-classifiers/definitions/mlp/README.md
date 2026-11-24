@@ -1,4 +1,5 @@
 ---
+title: mlp
 description: Multilayer perceptron
 ---
 

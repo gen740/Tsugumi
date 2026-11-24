@@ -72,7 +72,7 @@ def project_copy(demo: str, tmp: Path, sandbox: bool) -> Path:
         for f in dst.rglob("definitions/*/_card.json"):
             card = json.loads(f.read_text())
             if card.get("type") == "code":
-                card["sandbox"] = {"filesystem": False, "pid": False, "ipc": False, "identity": False}
+                card["sandbox"].update(filesystem=False, pid=False, ipc=False, identity=False)
                 f.write_text(json.dumps(card))
     return dst
 
@@ -86,9 +86,8 @@ def card_paths(root: Path, prefix: list[str] | None = None) -> list[list[str]]:
         cid = c["id"]
         out.append([*prefix, cid])
         definition = root / "definitions" / cid / "_card.json"
-        ext = json.loads(definition.read_text()).get("external") if definition.exists() else None
-        if ext:
-            out += card_paths(root / "externals" / ext, [*prefix, cid])
+        if json.loads(definition.read_text())["type"] == "subgraph":
+            out += card_paths(root / "externals" / cid, [*prefix, cid])
     return out
 
 

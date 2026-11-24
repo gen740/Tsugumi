@@ -99,7 +99,7 @@ def test_artifacts_cross_virtiofs_with_read_only_grants(tmp_path):
         if (mkdir((directory / "extra").c_str(), 0700) == 0 || errno != EROFS)
           return 7;
         out.number(contents.size());
-    """, declarations="#include <cerrno>", inputs=["doc"], recordIO=True)
+    """, declarations="#include <cerrno>", inputs=["doc"], recordIO="on")
     project = tmp_path / "artifact-project"
     write(project, {"source": source, "show": sink},
           [card("source", "source"), card("show", "show")],
@@ -226,8 +226,8 @@ OPEN = """if network():
 
 
 def test_isolation(env):
-    probe = python_card(txt_main(ISOLATION_BODY.replace("CHECKS", SANDBOXED)), outputs=TXT, recordIO=True)
-    opened = python_card(txt_main(ISOLATION_BODY.replace("CHECKS", OPEN)), outputs=TXT, recordIO=True,
+    probe = python_card(txt_main(ISOLATION_BODY.replace("CHECKS", SANDBOXED)), outputs=TXT, recordIO="on")
+    opened = python_card(txt_main(ISOLATION_BODY.replace("CHECKS", OPEN)), outputs=TXT, recordIO="on",
                          sandbox={"filesystem": False, "pid": False, "ipc": False, "identity": False})
     defs = {"trigger": {"type": "trigger"}, "probe": probe, "open": opened}
     c = load(env, defs, [card("start", "trigger"), card("probe", "probe"), card("open", "open")], [])
@@ -339,7 +339,7 @@ def run(input):
 
 
 def test_python_card_has_a_home_and_a_directory_while_it_loads(env):
-    defs = {"trigger": {"type": "trigger"}, "show": python_card(LOAD_MAIN, outputs=TXT, recordIO=True)}
+    defs = {"trigger": {"type": "trigger"}, "show": python_card(LOAD_MAIN, outputs=TXT, recordIO="on")}
     c = load(env, defs, [card("start", "trigger"), card("show", "show")], [])
     run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
@@ -350,7 +350,7 @@ def test_python_card_has_a_home_and_a_directory_while_it_loads(env):
 
 def test_python_card_environment_lives_with_its_process(env):
     defs = {"trigger": {"type": "trigger"},
-            "show": python_card(ENVIRONMENT_MAIN, outputs=TXT, reuseWorker=True, recordIO=True)}
+            "show": python_card(ENVIRONMENT_MAIN, outputs=TXT, reuseWorker=True, recordIO="on")}
     c = load(env, defs, [card("start", "trigger"), card("show", "show")], [])
     seen = []
     for _ in range(2):

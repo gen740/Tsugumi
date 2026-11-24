@@ -1,3 +1,4 @@
 ---
+title: explore
 description: 到達点と最大距離の散布図を Plotly で描く
 ---

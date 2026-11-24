@@ -489,7 +489,8 @@ RemoteExecutionService::RemoteExecutionService(Service& service,
                                                RemoteJobClient& client)
     : service_(service), client_(client) {}
 
-auto RemoteExecutionService::prepare(const Node& node,
+auto RemoteExecutionService::prepare(const RemoteTarget& target,
+                                     const Node& node,
                                      const stdfs::path& directory,
                                      BuildRequest& build)
     -> std::unique_ptr<PreparedExecution> {
@@ -501,28 +502,20 @@ auto RemoteExecutionService::prepare(const Node& node,
         FailureKind::unsupported,
         "remote workers require filesystem and PID isolation and do not "
         "support worker reuse, GUI or host path grants");
-  const auto targets = service_.remote_targets(build.cancel);
   if (build.cancel.stop_requested())
     throw Failed(FailureKind::cancelled, "worker selection cancelled");
-  const auto target =
-      std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
-  if (target == targets.end())
-    throw Failed(FailureKind::unsupported, "execution service " +
-                                               settings.execution_service +
-                                               " is not registered");
-  auto probe = client_.probe(target->id, target->server_id, build.cancel);
-  auto system = settings.system.empty() ? probe.native_system : settings.system;
+  auto probe = client_.probe(target.id, target.server_id, build.cancel);
+  const auto system = run_system(settings, probe.native_system);
   if (settings.sandbox.limits.limited() && !probe.resource_limits)
     throw Failed(FailureKind::unsupported,
                  "the remote execution daemon cannot enforce resource limits");
-  if (!settings.system.empty() &&
-      std::ranges::find(probe.systems, system) == probe.systems.end())
+  if (std::ranges::find(probe.systems, system) == probe.systems.end())
     throw Failed(
         FailureKind::unsupported,
         "external execution service no longer supports system " + system);
   stdfs::create_directories(directory);
   auto prepared = std::make_unique<PreparedRemoteExecution>(
-      service_, client_, target->id, std::move(system),
+      service_, client_, target.id, system,
       std::move(probe.instance),
       directory / (".derivation-" + crypto::uuid4()));
   build.target = {WorkerKind::remote, prepared->system()};

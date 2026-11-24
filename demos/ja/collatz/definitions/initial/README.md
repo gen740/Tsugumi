@@ -1,3 +1,4 @@
 ---
+title: initial
 description: 数列の初期値（既定は 27）
 ---

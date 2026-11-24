@@ -14,15 +14,20 @@ public extension RPCClient {
     try await call(.projectinspectrequest, Tsugumi_RPC_ProjectInspectRequestT())
   }
 
+  /// A valid stem for the core allocator ([a-z][a-z0-9_]{0,63}), the same rule
+  /// as the Web UI's cardStem. The allocator reserves the final id.
   static func cardStem(_ name: String) -> String {
     var stem = ""
     for byte in name.utf8 {
       let c = byte >= 65 && byte <= 90 ? byte + 32 : byte
-      if (c >= 97 && c <= 122) || (c >= 48 && c <= 57) { stem.append(Character(UnicodeScalar(c))) }
-      else if !stem.isEmpty && !stem.hasSuffix("-") { stem += "-" }
-      if stem.count == 123 { break }
+      let letter = c >= 97 && c <= 122
+      if letter || (!stem.isEmpty && ((c >= 48 && c <= 57) || c == 95)) {
+        stem.append(Character(UnicodeScalar(c)))
+      } else if !stem.isEmpty && !stem.hasSuffix("_") {
+        stem += "_"
+      }
+      if stem.count == 64 { break }
     }
-    while stem.hasSuffix("-") { stem.removeLast() }
     return stem.isEmpty ? "card" : stem
   }
 

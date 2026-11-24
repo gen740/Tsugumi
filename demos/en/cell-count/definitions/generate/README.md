@@ -1,4 +1,5 @@
 ---
+title: generate
 description: Make a synthetic cell image
 ---
 

@@ -70,9 +70,9 @@ enum PresenceEvents {
     }
 
     init?(_ c: JSONValue) {
-      guard let f = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
-            let t = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { return nil }
-      self.init(from: f, fromPort: fp, to: t, toPort: tp)
+      guard let f = c["from"]?["card"]?.string, let t = c["to"]?["card"]?.string else { return nil }
+      self.init(from: f, fromPort: c["from"]?["port"]?.string ?? "",
+                to: t, toPort: c["to"]?["port"]?.string ?? "")
     }
   }
 

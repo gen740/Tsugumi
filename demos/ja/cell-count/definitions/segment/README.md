@@ -1,4 +1,5 @@
 ---
+title: segment
 description: 閾値と watershed で切り分ける
 ---
 

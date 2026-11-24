@@ -1,4 +1,5 @@
 ---
+title: load
 description: lung データを読む
 ---
 

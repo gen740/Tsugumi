@@ -5,8 +5,7 @@ import Foundation
 import TsugumiRPC
 
 /// What a Card is, for choosing what the canvas and the editor offer.
-/// `invalid`: its _card.json has no type or one this build does not know (or
-/// one that does not match `external`), a definition error the core reports.
+/// `invalid`: its _card.json has no type or one this build does not know.
 enum CardKind: String {
   case trigger, input, merge, collect, draft, subgraph, code, invalid
 
@@ -18,6 +17,11 @@ enum CardKind: String {
   /// Card shows as a definition error, with no ports and no run.
   static func named(_ name: String?) -> CardKind {
     types.first { $0.rawValue == name } ?? .invalid
+  }
+
+  func displaySymbol(_ custom: String?) -> String {
+    guard self != .invalid, let custom, !custom.isEmpty, custom != "none" else { return symbol }
+    return custom
   }
 
   var editsValueOnCanvas: Bool { self == .input }
@@ -49,11 +53,13 @@ enum CardKind: String {
   }
 }
 
-/// What a _card.json says the Card is: its "type" (a subgraph exactly when it
-/// names an `external`). Without a definition, `invalid` as well.
+/// A Card’s kind comes from its _card.json type.
 func definitionKind(_ def: JSONValue?) -> CardKind {
-  let kind = CardKind.named(def?["type"]?.string)
-  return (kind == .subgraph) == (def?["external"] != nil) ? kind : .invalid
+  CardKind.named(def?["type"]?.string)
+}
+
+func definitionIcon(_ def: JSONValue?) -> String {
+  definitionKind(def).displaySymbol(def?["symbol"]?.string)
 }
 
 /// What a new Card starts from: a built-in Card or a scaffold. Every Card
@@ -111,7 +117,7 @@ extension ProjectSession {
 
   /// The human name; exact addresses keep the permanent identifier.
   /// A Card's name: its id, the only name it has.
-  func displayName(_ k: CardKey) -> String { path(k).last ?? k }
+  func displayName(_ k: CardKey) -> String { cardMeta(k)?["title"]?.string ?? path(k).last ?? k }
 
   /// A human-readable path. Tools and evidence links use the original segments.
   func displayPath(_ segments: [String]) -> String {
@@ -181,6 +187,7 @@ extension ProjectSession {
       guard let rpc else { throw RPCError.disconnected }
       id = try await rpc.cardId(name: name, projectPath: prefix).id
     }
+    guard validName(id) else { throw RPCFailure(kind: .invalidPath, diagnostic: "Invalid Card id from allocator") }
     guard projectPrefix(scope) == prefix else { throw RPCFailure(kind: .invalidPath, diagnostic: "Card scope changed") }
     return id
   }
@@ -279,7 +286,7 @@ extension ProjectSession {
       for k in keys.sorted() {
         guard let old = path(k).last else { continue }
         let item = Tsugumi_Host_ProjectCopyItemT()
-        item.from = prefix + "definitions/\(old)/"; item.id = try await newCardId(displayName(k), in: scope)
+        item.from = prefix + "definitions/\(old)/"; item.id = try await newCardId(old, in: scope)
         items.append(item)
       }
       try await copyCards(items, in: scope, connections: true)
@@ -288,11 +295,6 @@ extension ProjectSession {
   }
 
   // MARK: - A Draft written on the canvas
-
-  /// Whether a Draft has no name of its own: its id is one made for it.
-  func draftUntitled(_ k: CardKey) -> Bool {
-    kind(k) == .draft && displayName(k) == "draft"
-  }
 
   /// Starts writing a Draft's content on its Card.
   func startDraftEdit(_ k: CardKey, revision existing: RevisionEdit? = nil) async {
@@ -337,10 +339,10 @@ extension ProjectSession {
     guard let dir = definitionDir(e.card) else { return nil }
     // The README.md as it was when writing began (or as the conflict found it).
     let before = e.revision.jsonBase(dir + "README.md", initial: e.initialReadme.map { .string($0) }, overwrite: overwrite)?.string
-    let readme = Documents.parseReadme(before ?? "")
-    let after = Documents.printReadme(description: readme.description, body: e.content)
+    guard let before, let readme = Documents.parseReadme(before) else { return nil }
+    let after = Documents.printReadme(title: readme.title, description: readme.description, body: e.content)
     let ok = await e.revision.apply(self) { s in
-      s.appendEdits([s.jsonEdit(dir + "README.md", old: before.map { .string($0) }, new: after.map { .string($0) })])
+      s.appendEdits([s.jsonEdit(dir + "README.md", old: .string(before), new: .string(after))])
     }
     if ok, inlineDraft?.revision === e.revision {
       if inlineDraft?.content == e.content { inlineDraft = nil }
@@ -355,6 +357,7 @@ extension ProjectSession {
 
   func connect(from: (CardKey, String), to: (CardKey, String), in scope: [String]) async throws {
     guard let fromId = path(from.0).last, let toId = path(to.0).last, let prefix = projectPrefix(scope), isEditable else { return }
+    guard validName(fromId), validName(toId), [from.1, to.1].allSatisfy({ $0.isEmpty || validName($0) }) else { return }
     let body = Tsugumi_Host_ProjectConnectT()
     body.projectPath = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     body.fromCard = fromId; body.fromPort = from.1; body.toCard = toId; body.toPort = to.1
@@ -602,10 +605,10 @@ extension ProjectSession {
       return c
     }
     scene.wires = connections(in: scope).compactMap { c in
-      guard let f = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
-            let t = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { return nil }
+      guard let from = c["from"]?["card"]?.string, let to = c["to"]?["card"]?.string else { return nil }
       let w = Tsugumi_Host_LayoutWireT()
-      w.from = f; w.fromPort = fp; w.to = t; w.toPort = tp
+      w.from = from; w.fromPort = c["from"]?["port"]?.string ?? ""
+      w.to = to; w.toPort = c["to"]?["port"]?.string ?? ""
       return w
     }
     scene.notes = notes(in: scope).compactMap { n in
@@ -618,9 +621,10 @@ extension ProjectSession {
     func bar(_ side: String) -> Tsugumi_Host_LayoutBarT? {
       guard !scope.isEmpty else { return nil }
       let b = Tsugumi_Host_LayoutBarT()
-      b.ends = (boundary(key(scope))?[side]?.object ?? []).map { name, endpoint in
+      b.ends = (boundary(key(scope))?[side]?.object ?? []).compactMap { name, endpoint in
+        guard let card = endpoint["card"]?.string, let port = endpoint["port"]?.string else { return nil }
         let e = Tsugumi_Host_LayoutBarEndT()
-        e.name = name; e.card = endpoint["card"]?.string ?? ""; e.port = endpoint["port"]?.string ?? ""
+        e.name = name; e.card = card; e.port = port
         return e
       }
       let at = boundaryPosition(scope, side)

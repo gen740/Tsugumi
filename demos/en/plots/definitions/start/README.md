@@ -1,3 +1,4 @@
 ---
+title: start
 description: Starts the computation from the walk's settings (settings)
 ---

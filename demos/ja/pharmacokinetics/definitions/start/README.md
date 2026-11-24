@@ -1,3 +1,4 @@
 ---
+title: start
 description: 投与計画（settings）から計算を始める
 ---

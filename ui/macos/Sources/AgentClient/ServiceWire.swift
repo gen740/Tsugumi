@@ -118,9 +118,8 @@ enum ServiceWire {
         v.endpoint = fields["endpoint"] as? String ?? ""
         v.workerPublicKey = fields["workerPublicKey"] as? String ?? ""
         v.verify = fields["verify"] as? Bool ?? false
-        let grade = fields["grade"] as? String ?? "1"
-        let hex = grade.lowercased().hasPrefix("0x")
-        v.grade = UInt64(hex ? String(grade.dropFirst(2)) : grade, radix: hex ? 16 : 10) ?? 0
+        guard let bits = fields["worker_capabilities"] as? [UInt8], WorkerBits.valid(bits) else { throw InvalidWorkerBits.invalid }
+        v.workerCapabilities = bits
         return (Tsugumi_Host_RequestPayload.executionserviceputrequest.rawValue, v)
       case "ExecutionServiceRemoveRequest":
         let v = Tsugumi_Host_ExecutionServiceRemoveRequestT()
@@ -468,7 +467,7 @@ enum ServiceWire {
     case let v as Tsugumi_Host_ExecutionServicesT:
       return ["services": try v.services.compactMap { try $0.map(view) }, "hostPublicKey": v.hostPublicKey] as [String: Any]
     case let v as Tsugumi_Host_ExecutionServiceT:
-      return ["id": v.id, "name": v.name, "endpoint": v.endpoint, "workerPublicKey": v.workerPublicKey, "grade": String(v.grade), "capabilities": try view(v.capabilities)] as [String: Any]
+      return ["id": v.id, "name": v.name, "endpoint": v.endpoint, "workerPublicKey": v.workerPublicKey, "worker_capabilities": v.workerCapabilities, "capabilities": try view(v.capabilities)] as [String: Any]
     case let v as Tsugumi_Host_ExecutionCapabilitiesT:
       return ["serverId": v.serverId, "nativeSystem": v.nativeSystem, "systems": v.systems.compactMap { $0 },
               "isolation": v.isolation ?? "pid_namespace", "resourceLimits": v.resourceLimits,

@@ -5,8 +5,11 @@
 #include <algorithm>
 #include <set>
 
+#include "../agent_fixture_server.hh"
 #include "host/permission_kinds.hh"
 #include "host/templates.hh"
+#include "tsugumi/document/document.hh"
+#include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::host {
@@ -44,7 +47,7 @@ auto ConnectionWires(const std::string& state) -> std::set<std::string> {
 }
 TEST(DocumentConnect, OneOutputCanFeedSeveralInputs) {
   const std::string state =
-      R"({"project":{"canvas":{"cards":[{"id":"start"},{"id":"a"},{"id":"b"}],"connections":[]}},"definitions":{"start":{"card":{"type":"trigger"}}}})";
+      R"({"project":{"canvas":{"cards":[{"id":"start"},{"id":"a"},{"id":"b"}],"connections":[]}},"definitions":{"start":{"card":{"type":"trigger","symbol":"play.circle"}}}})";
   const auto first = ConnectDocuments(state, "start", "out", "a", "in");
   const auto second = ConnectDocuments(first, "start", "out", "b", "in");
   EXPECT_EQ(ConnectionWires(second),
@@ -54,7 +57,7 @@ TEST(DocumentConnect, OneOutputCanFeedSeveralInputs) {
 }
 TEST(DocumentConnect, InputReplacementKeepsDraftDefinitionsUnchanged) {
   const std::string state =
-      R"({"project":{"canvas":{"cards":[{"id":"old"},{"id":"new"},{"id":"dest"}],"connections":[{"from":{"card":"old","port":""},"to":{"card":"dest","port":"in"}}]}},"definitions":{"old":{"card":{"type":"draft"},"meta":{"content":"planned"}},"new":{"card":{"type":"trigger"}},"dest":{"card":{"type":"code"}}}})";
+      R"({"project":{"canvas":{"cards":[{"id":"old"},{"id":"new"},{"id":"dest"}],"connections":[{"from":{"card":"old"},"to":{"card":"dest","port":"in"}}]}},"definitions":{"old":{"card":{"type":"draft","symbol":"pencil.and.outline"},"meta":{"content":"planned"}},"new":{"card":{"type":"trigger","symbol":"play.circle"}},"dest":{"card":{"type":"code","symbol":"chevron.left.forwardslash.chevron.right","inputs":[],"maxRuns":1,"reuseWorker":false,"timeoutSeconds":0,"buildTimeoutSeconds":0,"recordLogs":"project","recordIO":"project","sandbox":{"filesystem":true,"pid":true,"ipc":true,"identity":true,"limits":{"cpu":0,"memoryMiB":0}},"grants":{"network":false,"gui":false},"systems":["aarch64-linux"],"workerCapabilities":[]}}}})";
   const auto replaced = ConnectDocuments(state, "new", "out", "dest", "in");
   EXPECT_EQ(ConnectionWires(replaced),
             (std::set<std::string>{"new.out>dest.in"}));
@@ -64,7 +67,7 @@ TEST(DocumentConnect, InputReplacementKeepsDraftDefinitionsUnchanged) {
 TEST(DocumentConnect,
      DraftGesturesKeepMultipleIncomingAndOutgoingWiresPortless) {
   const std::string state =
-      R"({"project":{"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"c"}],"connections":[]}},"definitions":{"a":{"card":{"type":"draft"}},"b":{"card":{"type":"draft"}},"c":{"card":{"type":"draft"}}}})";
+      R"({"project":{"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"c"}],"connections":[]}},"definitions":{"a":{"card":{"type":"draft","symbol":"pencil.and.outline"}},"b":{"card":{"type":"draft","symbol":"pencil.and.outline"}},"c":{"card":{"type":"draft","symbol":"pencil.and.outline"}}}})";
   const auto first = ConnectDocuments(state, "a", "+", "b", "+");
   EXPECT_EQ(ConnectionWires(first), (std::set<std::string>{"a.>b."}));
   const auto second = ConnectDocuments(first, "a", "+", "c", "+");
@@ -77,21 +80,38 @@ TEST(DocumentConnect,
                std::runtime_error);
 }
 
-TEST(BuiltinCard, CreatesOnlyTheLanguageIndependentKinds) {
+TEST(BuiltinCard, WritesCompleteDefinitionsThatLoadInTheCore) {
   using Kind = Tsugumi::Host::BuiltinCard;
-  const auto draft = BuiltinCard(Kind::Draft, "new-card");
-  EXPECT_EQ(json::Text(json::Object(draft.at("_card.json")), "type"), "draft");
-  EXPECT_FALSE(draft.contains("README.md"));
-  for (const auto& [kind, type] : {std::pair{Kind::Trigger, "trigger"},
-                                  {Kind::Collect, "collect"},
-                                  {Kind::Merge, "merge"},
-                                  {Kind::InputValue, "input"},
-                                  {Kind::BooleanInput, "input"}}) {
-    const auto files = BuiltinCard(kind, "new-card.2");
+  for (const auto& [kind, type] : {std::pair{Kind::Draft, "draft"},
+                                   {Kind::Trigger, "trigger"},
+                                   {Kind::Collect, "collect"},
+                                   {Kind::Merge, "merge"},
+                                   {Kind::InputValue, "input"},
+                                   {Kind::BooleanInput, "input"}}) {
+    test::TemporaryDirectory directory;
+    const auto files = BuiltinCard(kind, "new_card");
     const auto card = json::Object(files.at("_card.json"));
     EXPECT_EQ(json::Text(card, "type"), type);
-    if (kind == Kind::Merge) EXPECT_EQ(json::Array(card.at("inputs")).size(), 2);
+    EXPECT_FALSE(json::Text(card, "symbol").empty());
+    EXPECT_EQ(files.at("README.md"),
+              "---\ntitle: new_card\ndescription:\n---\n");
+    auto project = json::Object(initial_project_json("fixture", {}));
+    project["canvas"] = R"({"cards":[{"id":"new_card"}],"connections":[]})";
+    fs::write_atomic(directory.path / "tsugumi.json", json::Encode(project));
+    const auto definition = directory.path / "definitions/new_card";
+    std::filesystem::create_directories(definition);
+    for (const auto& [name, bytes] : files)
+      fs::write_atomic(definition / name, bytes);
+    EXPECT_NO_THROW(load_from_disk(directory.path));
+
+    if (kind == Kind::Merge)
+      EXPECT_EQ(json::Array(card.at("inputs")).size(), 2);
     if (kind == Kind::BooleanInput || kind == Kind::InputValue) {
+      EXPECT_EQ(card.at("recordLogs"), R"("project")");
+      EXPECT_EQ(card.at("recordIO"), R"("project")");
+      EXPECT_EQ(card.at("workerCapabilities"), "[]");
+      EXPECT_EQ(card.at("timeoutSeconds"), "0");
+      EXPECT_EQ(card.at("buildTimeoutSeconds"), "0");
       const auto schema = files.at("_outputs.fbs");
       const bool boolean = kind == Kind::BooleanInput;
       EXPECT_NE(schema.find(boolean ? "table Boolean { value:bool; }"
@@ -107,9 +127,23 @@ TEST(BuiltinCard, CreatesOnlyTheLanguageIndependentKinds) {
   }
 }
 
+TEST(DocumentEdits, RejectsInvalidCardIdsAndWirePorts) {
+  const std::string state =
+      R"({"project":{"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}}})";
+  for (const auto& name : {std::string("A"), std::string("9a"),
+                           std::string("a-b"), std::string(65, 'a')}) {
+    EXPECT_THROW(BuiltinCard(Tsugumi::Host::BuiltinCard::Draft, name),
+                 std::runtime_error);
+    EXPECT_THROW(ConnectDocuments(state, name, "out", "b", "in"),
+                 std::runtime_error);
+    EXPECT_THROW(ConnectDocuments(state, "a", "out", "b", name),
+                 std::runtime_error);
+  }
+}
+
 TEST(DocumentCopy, DefinitionKeepsSettingsAndGivesCommentsTheirOwnIdentity) {
   const std::string state =
-      R"({"definitions":{"a":{"card":{"type":"code","sandbox":{"filesystem":false},"grants":{"network":true}},"readme":"Plots","comments":{"comments":[{"id":"old","text":"one","author":"user","resolved":true,"cards":["a"]}]}}}})";
+      R"({"definitions":{"a":{"card":{"type":"code","symbol":"chevron.left.forwardslash.chevron.right","inputs":[],"maxRuns":1,"reuseWorker":false,"timeoutSeconds":0,"buildTimeoutSeconds":0,"recordLogs":"project","recordIO":"project","sandbox":{"filesystem":false,"pid":true,"ipc":true,"identity":true,"limits":{"cpu":0,"memoryMiB":0}},"grants":{"network":true,"gui":false},"systems":["aarch64-linux"],"workerCapabilities":[]},"readme":"Plots","comments":{"comments":[{"id":"old","text":"one","author":"user","resolved":true,"cards":["a"]}]}}}})";
   const auto edit =
       CopyDocuments(state,
                     {"definitions/a/src/asset.bin", "definitions/a/params.nix",
@@ -140,13 +174,13 @@ TEST(DocumentCopy, DefinitionKeepsSettingsAndGivesCommentsTheirOwnIdentity) {
 
 TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
   const std::string state =
-      R"({"definitions":{"a":{"card":{"type":"subgraph","external":"inner"}}},"externals":{"externals/inner/":{"project":{"name":"inner","nixPath":[{"name":"pkgs","url":"github:org/pkg"}]},"layout":{"cards":{"x":{"x":2}}},"definitions":{"x":{"card":{"type":"draft"},"readme":"unsaved"}}},"externals/inner/externals/grand/":{"project":{"name":"grand"},"layout":{},"definitions":{}}}})";
+      R"({"definitions":{"a":{"card":{"type":"subgraph","symbol":"link"}}},"externals":{"externals/a/":{"project":{"name":"inner","nixPath":[{"name":"pkgs","url":"github:org/pkg"}]},"layout":{"cards":{"x":{"x":2}}},"definitions":{"x":{"card":{"type":"draft","symbol":"pencil.and.outline"},"readme":"unsaved"}}},"externals/a/externals/grand/":{"project":{"name":"grand"},"layout":{},"definitions":{}}}})";
   const std::vector<std::string> paths = {
-      "externals/inner/tsugumi.json",
-      "externals/inner/definitions/x/README.md",
-      "externals/inner/definitions/removed/_card.json",
-      "externals/inner/asset.bin",
-      "externals/inner/externals/grand/data.bin",
+      "externals/a/tsugumi.json",
+      "externals/a/definitions/x/README.md",
+      "externals/a/definitions/removed/_card.json",
+      "externals/a/asset.bin",
+      "externals/a/externals/grand/data.bin",
       "externals/other/no"};
   const auto edit = CopyDocuments(state, paths, "definitions/a/",
                                   "externals/target/definitions/copy/");
@@ -156,14 +190,14 @@ TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
       json::Text(json::Object(
                      json::Object(defs.at("externals/target/definitions/copy/"))
                          .at("card")),
-                 "external"),
-      "copy");
+                 "type"),
+      "subgraph");
   const auto exts = json::Object(patch.at("externals"));
   const auto originals = json::Object(json::Object(state).at("externals"));
   EXPECT_EQ(exts.at("externals/target/externals/copy/"),
-            originals.at("externals/inner/"));
+            originals.at("externals/a/"));
   EXPECT_EQ(exts.at("externals/target/externals/copy/externals/grand/"),
-            originals.at("externals/inner/externals/grand/"));
+            originals.at("externals/a/externals/grand/"));
   std::set<std::string> destinations;
   for (const auto& file : edit.files)
     EXPECT_TRUE(destinations.insert(file.to).second);
@@ -172,7 +206,7 @@ TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
                 "externals/target/externals/copy/asset.bin",
                 "externals/target/externals/copy/externals/grand/data.bin"}));
   const auto external =
-      CopyDocuments(state, paths, "externals/inner/", "externals/another/");
+      CopyDocuments(state, paths, "externals/a/", "externals/another/");
   EXPECT_EQ(external.files.size(), 2);
   EXPECT_EQ(
       json::Object(json::Object(external.edits_json).at("externals")).size(),
@@ -181,8 +215,9 @@ TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
 
 TEST(DocumentCopy, MissingLinkedProjectCannotProduceAPartialCopy) {
   EXPECT_THROW(
-      CopyDocuments(R"({"definitions":{"a":{"card":{"type":"subgraph","external":"missing"}}}})",
-                    {}, "definitions/a/", "definitions/b/"),
+      CopyDocuments(
+          R"({"definitions":{"a":{"card":{"type":"subgraph","symbol":"link"}}}})",
+          {}, "definitions/a/", "definitions/b/"),
       std::runtime_error);
   EXPECT_THROW(
       CopyDocuments("{}", {}, "externals/missing/", "externals/copy/"),
@@ -244,7 +279,7 @@ TEST(DocumentSubgraph, ReusesEndpointsAndDisambiguatesPortNames) {
   std::set<std::string> ports;
   for (const auto& output : json::Array(boundary.at("outputs")))
     ports.insert(json::Text(json::Object(output), "name"));
-  EXPECT_EQ(ports, (std::set<std::string>{"a_b_c", "a_b_c2"}));
+  EXPECT_EQ(ports, (std::set<std::string>{"a_b_c", "a_b_c_2"}));
   const auto wires =
       json::Array(json::Object(json::Object(edit.project_json).at("canvas"))
                       .at("connections"));

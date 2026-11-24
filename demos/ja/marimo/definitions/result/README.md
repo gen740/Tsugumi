@@ -1,3 +1,4 @@
 ---
+title: result
 description: 下流へ渡された確定済みの数値結果
 ---

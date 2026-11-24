@@ -401,7 +401,7 @@ def test_target_system_change_selects_new_packages_and_definition(core_factory, 
                           sources=sources(expression("builtins.currentSystem"))).save(client)
     before = completed_definition(client)
     assert before[0] == native + "\n"
-    edit_json(project / "definitions/work/_card.json", lambda card: card.update(system=foreign))
+    edit_json(project / "definitions/work/_card.json", lambda card: card.update(systems=[foreign]))
     reload_project(client)
     after = completed_definition(client)
     assert after[0] == foreign + "\n" and after[1] != before[1]

@@ -49,7 +49,7 @@
               "Other demos"
             ]
           },
-          "text": "It aggregates a sales CSV made from a seed by region with Python, and keeps Markdown and JSON reports as artifacts. It files them with a Card in Card (a Card with a Workflow inside), and has a switch to make it fail on purpose.",
+          "text": "It aggregates a sales CSV made from a seed by region with Python, and keeps Markdown and JSON reports as artifacts. It files them with a Card in Card (a Card whose child Workflow lives at externals/<id>/), and has a switch to make it fail on purpose.",
           "next": {
             "Other demos": "exoplanet-transit/pick"
           }

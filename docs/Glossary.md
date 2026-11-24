@@ -31,7 +31,7 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **`interrupted`** | A local or remote run left unfinished when its submitting `tsugumid` ended; recorded as `failed` with failure kind `interrupted`, with no result rescue or automatic rerun |
 | **Partial run (single run)** | Running only the chosen Cards, or "from here". Uses saved inputs ([Rerunning from the middle](Rationale.md#rerunning-from-the-middle)) |
 | **Saved inputs** | The full set of inputs of the latest trigger, including any batches. Partial runs use these inputs independently of `recordIO` |
-| **`recordIO`** | A setting that keeps the input and output values of every invocation of a Card in the history (off by default) |
+| **`recordIO`** | A setting that keeps the input and output values of every invocation of a Card in the history |
 | **Artifact** | A file or folder a Card output |
 | **View** | A display surface a Card declares in its `default.nix`: a name, a type (`html` or `dawn`) and one file ([Views](CoreAndSDK.md#views)) |
 | **Display** | What a Card sends to one of its views while it works: text, a table, an image, a chart and so on. Live only: displays are not recorded, so check results in outputs and artifacts ([Visualisation](features.md#7-visualisation)) |

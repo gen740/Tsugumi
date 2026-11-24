@@ -1,13 +1,13 @@
 #include "remote_job.hh"
 
-#include "tsugumi/protocol/trace_codec.hh"
-
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+#include "tsugumi/protocol/trace_codec.hh"
 #if defined(__linux__)
 #include <linux/vm_sockets.h>
 #endif
@@ -311,8 +311,15 @@ auto RemoteJobClient::catalog(std::stop_token stop) const -> std::vector<RemoteT
   std::vector<RemoteTarget> targets;
   for (const auto& t : catalog->services) {
     const auto& c = *t->capabilities;
+    uint64_t bits = 0;
+    for (auto bit : t->worker_capabilities) {
+      if (bit >= 64 || (bits & (uint64_t{1} << bit)))
+        throw BrokerDisconnected(
+            "invalid worker_capabilities in execution broker catalog");
+      bits |= uint64_t{1} << bit;
+    }
     targets.push_back({t->id, c.native_system, c.systems, c.server_id,
-                       t->available, c.resource_limits, c.max_jobs, t->grade,
+                       t->available, c.resource_limits, c.max_jobs, bits,
                        t->unavailable_reason});
   }
   return targets;

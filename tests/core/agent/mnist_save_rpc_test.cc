@@ -65,8 +65,9 @@ TEST_F(AgentProjectFixture,
       continue;
     implemented.push_back(id);
     const auto readme = id == "report"
-        ? "---\ndescription: Compare the classifiers\n---\n\nPresent the comparison."
-        : Read(root / "definitions" / id / "README.md");
+                            ? "---\ntitle: report\ndescription: Compare the "
+                              "classifiers\n---\n\nPresent the comparison."
+                            : Read(root / "definitions" / id / "README.md");
     std::set<std::string> inputs, outputs;
     for (const auto& wire_raw : wires) {
       const auto wire = json::Object(wire_raw);
@@ -79,8 +80,8 @@ TEST_F(AgentProjectFixture,
     std::vector<std::string> input_defs;
     for (const auto& name : inputs)
       input_defs.push_back(json::Encode(json::Members{{"name", Quote(name)}}));
-    const auto definition = json::Encode(json::Members{
-        {"type", Quote("code")}, {"inputs", json::Encode(input_defs)}});
+    const auto definition = FixtureCodeCard(
+        json::Encode(json::Members{{"inputs", json::Encode(input_defs)}}));
     change("PutDefinition", {{"id", Quote(id)},
                              {"readme", Quote(readme)},
                              {"card_json", Quote(definition)}});

@@ -1,3 +1,4 @@
 ---
+title: generate
 description: 間隔をおいて次の 1 点を作り、samples 点に達するまで状態を loop に返す
 ---

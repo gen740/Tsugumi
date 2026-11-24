@@ -1,4 +1,5 @@
 ---
+title: range
 description: 濃度範囲と区間の幅
 ---
 

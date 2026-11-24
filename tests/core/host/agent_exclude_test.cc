@@ -36,7 +36,7 @@ class AgentExcludeTest : public testing::Test {
   }
 };
 TEST_F(AgentExcludeTest, DefaultsExplicitEmptyAndResolvedPaths) {
-  AgentExclude defaults(root, "{}");
+  AgentExclude defaults(root, R"({"agentExclude":[".git",".DS_Store"]})");
   for (const auto* path : {".git", ".git/config", ".DS_Store"})
     EXPECT_TRUE(defaults.Contains(path));
   EXPECT_FALSE(defaults.Contains(".github/workflows/ci.yml"));
@@ -56,12 +56,10 @@ TEST_F(AgentExcludeTest, DefaultsExplicitEmptyAndResolvedPaths) {
   EXPECT_TRUE(absolute.Contains(outside / "new/file"));
 }
 TEST_F(AgentExcludeTest, NestedCardSelectorsFollowTheActualExternalFolder) {
-  Write(root / "definitions/group/_card.json",
-        R"({"type":"subgraph","external":"unaccepted-folder"})");
   AgentExclude policy(
-      root,
-      R"({"agentExclude":["externals/different-folder/definitions/leaf"]})",
-      {{"definitions/group/_card.json", R"({"type":"subgraph","external":"different-folder"})"}});
+      root, R"({"agentExclude":["externals/group/definitions/leaf"]})",
+      {{"definitions/group/_card.json",
+        R"({"type":"subgraph","symbol":"link"})"}});
   Refused([&] {
     policy.CheckContent(R"({"targets":[{"segments":["group","leaf"]}]})");
   });
@@ -91,7 +89,7 @@ TEST_F(AgentExcludeTest, FileFamiliesAndSnapshotOmitHiddenContent) {
   });
 }
 TEST_F(AgentExcludeTest, NestedDocumentTextRequiresTheScopedFileRead) {
-  AgentExclude policy(root, "{}");
+  AgentExclude policy(root, R"({"agentExclude":[]})");
   const auto filtered = j::Object(policy.Filter(
       R"({"sources":[{"path":"externals/sub/tsugumi.json","hash":"h","document":"{\"name\":\"Private workflow\"}"}]})"));
   const auto sources = j::Array(filtered.at("sources"));
@@ -188,7 +186,8 @@ TEST_F(AgentExcludeTest, SavesAndExpandedEditsCannotChangePolicyOrHiddenFiles) {
   Refused([&] { policy.CheckSave(expanded, base); }, "permission_denied");
 }
 TEST_F(AgentExcludeTest, ExclusionDoesNotIdentifyARun) {
-  Write(root / "tsugumi.json", initial_project_json("Project"));
+  Write(root / "tsugumi.json",
+        initial_project_json("Project", {".git", ".DS_Store"}));
   const auto before = load_from_disk(root);
   auto project = j::Object(before->project_json);
   project["agentExclude"] = R"(["private","/some/installation/demo"])";
@@ -208,7 +207,7 @@ TEST_F(AgentExcludeTest, DefinitionRemovalChecksExcludedDescendants) {
   });
   EXPECT_NO_THROW(policy.CheckSave(
       j::Object(
-          R"({"changes":[{"value_type":"RemoveDefinition","value":{"id":"a-other"}}]})"),
+          R"({"changes":[{"value_type":"RemoveDefinition","value":{"id":"a_other"}}]})"),
       base));
   EXPECT_NO_THROW(policy.CheckSave(
       j::Object(
@@ -216,7 +215,7 @@ TEST_F(AgentExcludeTest, DefinitionRemovalChecksExcludedDescendants) {
       base));
 }
 TEST_F(AgentExcludeTest, WholeDocumentsCannotDropOrRenameTreesWithHiddenFiles) {
-  for (const auto& prefix : {std::string{}, std::string{"externals/nested/"}}) {
+  for (const auto& prefix : {std::string{}, std::string{"externals/group/"}}) {
     const std::string project = j::Encode(j::Members{
         {"agentExclude", j::Encode(std::vector<std::string>{
                              j::Quote(prefix + "definitions/a/private.txt")})},
@@ -261,12 +260,14 @@ TEST_F(AgentExcludeTest, WholeDocumentsCannotDropOrRenameTreesWithHiddenFiles) {
     });
   }
 }
-TEST_F(AgentExcludeTest, LinksCannotDetachAnExternalWithHiddenDescendants) {
+TEST_F(AgentExcludeTest,
+       ATypeChangeCannotDetachAnExternalWithHiddenDescendants) {
   AgentExclude policy(
       root,
-      R"({"agentExclude":["externals/original/definitions/a/private.txt"]})");
+      R"({"agentExclude":["externals/group/definitions/a/private.txt"]})");
   SaveBase base;
-  base.files["definitions/group/_card.json"] = R"({"type":"subgraph","external":"original"})";
+  base.files["definitions/group/_card.json"] =
+      R"({"type":"subgraph","symbol":"link"})";
   Refused([&] {
     policy.CheckSave(
         j::Object(
@@ -276,7 +277,7 @@ TEST_F(AgentExcludeTest, LinksCannotDetachAnExternalWithHiddenDescendants) {
   Refused([&] {
     policy.CheckSave(
         j::Object(
-            R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","card_json":"{\"type\":\"subgraph\",\"external\":\"elsewhere\"}"}}]})"),
+            R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","card_json":"{\"type\":\"draft\",\"symbol\":\"pencil.and.outline\"}"}}]})"),
         base);
   });
   Refused([&] {
@@ -287,7 +288,7 @@ TEST_F(AgentExcludeTest, LinksCannotDetachAnExternalWithHiddenDescendants) {
   });
   EXPECT_NO_THROW(policy.CheckSave(
       j::Object(
-          R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","card_json":"{\"type\":\"subgraph\",\"external\":\"original\"}"}}]})"),
+          R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","card_json":"{\"type\":\"subgraph\",\"symbol\":\"link\"}"}}]})"),
       base));
 }
 TEST_F(AgentExcludeTest,
@@ -295,10 +296,10 @@ TEST_F(AgentExcludeTest,
   const auto demos = temporary.path / "demos";
   for (const auto* language : {"ja", "en"})
     Write(demos / language / "finished/tsugumi.json",
-          initial_project_json("Finished"));
+          initial_project_json("Finished", {".git", ".DS_Store"}));
   for (const auto* language : {"ja", "en"}) {
     Write(demos / language / "finished-draft/tsugumi.json",
-          initial_project_json("Draft"));
+          initial_project_json("Draft", {".git", ".DS_Store"}));
     Write(
         demos / language / "index.json",
         R"({"demos":[{"id":"finished-draft","path":"finished-draft","title":"Draft","agentExclude":["ja/finished","en/finished"]}]})");
@@ -329,13 +330,16 @@ TEST_F(AgentExcludeTest,
 TEST_F(AgentExcludeTest,
        DemoCardCopyIncludesSourcesAndNestedDefinitionClosure) {
   const auto demo = temporary.path / "demo";
-  Write(demo / "tsugumi.json", initial_project_json("Demo"));
-  Write(demo / "definitions/group/_card.json", R"({"type":"subgraph","external":"nested"})");
+  Write(demo / "tsugumi.json",
+        initial_project_json("Demo", {".git", ".DS_Store"}));
+  Write(demo / "definitions/group/_card.json",
+        R"({"type":"subgraph","symbol":"link"})");
   Write(demo / "definitions/group/README.md", "Group");
-  Write(demo / "externals/nested/tsugumi.json", initial_project_json("Nested"));
-  Write(demo / "externals/nested/definitions/leaf/_card.json",
-        R"({"type":"draft"})");
-  Write(demo / "externals/nested/definitions/leaf/src/main.py",
+  Write(demo / "externals/group/tsugumi.json",
+        initial_project_json("Nested", {".git", ".DS_Store"}));
+  Write(demo / "externals/group/definitions/leaf/_card.json",
+        R"({"type":"draft","symbol":"pencil.and.outline"})");
+  Write(demo / "externals/group/definitions/leaf/src/main.py",
         "COMPLETE_SOURCE");
   H::ProjectOperateRequestT operation;
   operation.project_id = "p";
@@ -361,7 +365,8 @@ TEST_F(AgentExcludeTest,
     } else if (method == "project_inspect") {
       type = "ProjectSnapshot";
       value = {{"rev", "1"},
-               {"project_json", j::Quote(initial_project_json("Open"))},
+               {"project_json",
+                j::Quote(initial_project_json("Open", {".git", ".DS_Store"}))},
                {"layout", "\"{}\""},
                {"definitions", "[]"},
                {"sources", "[]"}};

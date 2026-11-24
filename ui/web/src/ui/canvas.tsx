@@ -15,7 +15,7 @@ import { NEW_PORT, Pt, Rect, snapToGrid } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
 import {
-  CardKey, DefinitionTemplate, key, KIND_ICON, KIND_LABEL, NOTE_COLORS, parameterInputLiteral, path, portTypeName, ProjectSession,
+  CardKey, definitionIcon, DefinitionTemplate, key, KIND_LABEL, NOTE_COLORS, parameterInputLiteral, path, portTypeName, ProjectSession,
 } from '../model/session'
 import { Workspace, WorkflowTab } from '../model/workspace'
 import { arr, clone, dbl, get, J, JObj, obj, real, str } from '../../shared/json'
@@ -32,7 +32,6 @@ import { newCardItems, TemplatePicker, type TemplatePlacement } from './cardTemp
 
 // Kept here for the views that import them from the canvas.
 export { DEFINITION_DRAG, openWorkflowWindow }
-export const kindIcon = (k: string) => (KIND_ICON as Record<string, string>)[k] ?? 'circle'
 export const noteColor = (id: J | string | undefined) => {
   const c = typeof id === 'string' ? id : str(id as J | undefined)
   return `var(--note-${c && NOTE_COLORS.some((n) => n.id === c) ? c : 'yellow'})`
@@ -599,7 +598,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         })}
       </svg>}
 
-      {b && <BoundaryBars b={b} zoom={z} screen={screen} drag={boundaryDrag} onDown={onBoundaryDown} />}
+      {b && <BoundaryBars b={b} zoom={z} screen={screen} drag={boundaryDrag} cardTitle={k => session.displayName(k)} onDown={onBoundaryDown} />}
 
       {scene.cardKeys.map((k) => {
         const data = scene.data(k)
@@ -854,8 +853,8 @@ export function cardMenu(workspace: Workspace, session: ProjectSession, tab: Wor
 
 // ---- Card in Card boundary ------------------------------------------------------------------
 
-function BoundaryBars({ b, zoom, screen, drag, onDown }: {
-  b: Boundary; zoom: number; screen: (p: Pt) => Pt; drag?: SceneDrag['boundary']; onDown: (input: boolean, origin: Pt, e: React.PointerEvent) => void
+function BoundaryBars({ b, zoom, screen, drag, cardTitle, onDown }: {
+  b: Boundary; zoom: number; screen: (p: Pt) => Pt; drag?: SceneDrag['boundary']; cardTitle: (card: CardKey) => string; onDown: (input: boolean, origin: Pt, e: React.PointerEvent) => void
 }) {
   /** A bar's position without the drag in progress. */
   const undragged = (r: Rect, input: boolean): Pt => (drag && drag.input === input ? { x: r.x - drag.dx, y: r.y - drag.dy } : { x: r.x, y: r.y })
@@ -863,7 +862,7 @@ function BoundaryBars({ b, zoom, screen, drag, onDown }: {
     <>
       {([[b.top, b.inputs, true], [b.bottom, b.outputs, false]] as const).map(([rect, ports, input]) => (
         <BoundaryBarView key={input ? 'in' : 'out'} title={input ? L('この Card の入力') : L('この Card の出力')} ports={ports} input={input} zoom={zoom} rect={rect}
-          style={placed(screen(rect), rect.width * zoom, rect.height * zoom)}
+          style={placed(screen(rect), rect.width * zoom, rect.height * zoom)} cardTitle={cardTitle}
           onPointerDown={(e) => onDown(input, undragged(rect, input), e)} />
       ))}
     </>
@@ -961,25 +960,27 @@ function hoverContent(session: ProjectSession, scope: string[], t: HoverTarget):
     const id = session.currentRunId
     if (id && d.invocation > 0n) status += L('（Run {0} の中でこの Card の {1} 回目の実行）', id.slice(0, 8), d.invocation)
     return {
-      title: d.title, subtitle: KIND_LABEL[d.kind], symbol: d.symbol ?? KIND_ICON[d.kind], lines, status,
+      title: d.title, subtitle: KIND_LABEL[d.kind], symbol: d.symbol ?? 'xmark.octagon', lines, status,
       problems: [...d.errors, ...(d.failure ? [d.failure] : [])], warnings: d.warnings,
     }
   }
   const symbol = 'point.topleft.down.to.point.bottomright.curvepath'
   const c = session.connections(scope)[t.i]
-  const fc = str(get(c, 'from', 'card')), fp = str(get(c, 'from', 'port')), tc = str(get(c, 'to', 'card')), tp = str(get(c, 'to', 'port'))
-  if (!fc || fp === undefined || !tc || tp === undefined) return { title: L('接続'), subtitle: '', symbol }
+  const fc = str(get(c, 'from', 'card')), tc = str(get(c, 'to', 'card'))
+  const fp = str(get(c, 'from', 'port')), tp = str(get(c, 'to', 'port'))
+  if (!fc || !tc) return { title: L('接続'), subtitle: '', symbol }
   const fk = key([...scope, fc]), tk = key([...scope, tc])
   const out = session.resolution.get(fk)?.outputs.find((p) => p.name === fp)
   const inp = session.resolution.get(tk)?.inputs.find((p) => p.name === tp)
-  const lines = [`${session.displayName(fk)}.${fp}  →  ${session.displayName(tk)}.${tp}`]
+  const label = (card: CardKey, port?: string) => session.displayName(card) + (port === undefined ? '' : `.${port}`)
+  const lines = [`${label(fk, fp)}  →  ${label(tk, tp)}`]
   lines.push(L('型: ') + (portTypeName(out) ?? portTypeName(inp) ?? L('未解決')))
   let status = L('この Run ではまだ値が通っていません')
   const st = session.cardStates.get(fk)
   const id = session.currentRunId
-  const batch = session.executionWire(fk, fp)
-  if (batch.executionList) status = batch.count === undefined ? L('実行リスト（件数未確定）') : L('実行リスト') + ` ×${batch.count}`
-  else if (st && st.sentInRun.has(fp) && id) status = L('Run {0} で値が通りました（送信元の最新は実行 #{1}）', id.slice(0, 8), st.invocation)
+  const batch = fp === undefined ? undefined : session.executionWire(fk, fp)
+  if (batch?.executionList) status = batch.count === undefined ? L('実行リスト（件数未確定）') : L('実行リスト') + ` ×${batch.count}`
+  else if (st && fp !== undefined && st.sentInRun.has(fp) && id) status = L('Run {0} で値が通りました（送信元の最新は実行 #{1}）', id.slice(0, 8), st.invocation)
   return { title: L('接続'), subtitle: '', symbol, lines, status }
 }
 
@@ -1028,7 +1029,7 @@ function FindBox({ session, keys, text, field, onChange, onClose, onPick }: {
       </div>
       {matches.slice(0, 8).map((k) => (
         <button key={k} type="button" className="cv-find-item" onClick={() => onPick(k)}>
-          <Icon name={kindIcon(session.kind(k))} />
+          <Icon name={definitionIcon(session.cardDefinition(k))} />
           <span className="flex1 cv-ellipsis" style={{ textAlign: 'left' }}>{session.displayName(k)}</span>
           <span className="caption secondary">{KIND_LABEL[session.kind(k)]}</span>
         </button>

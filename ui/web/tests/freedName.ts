@@ -86,10 +86,10 @@ const clean = (s: Session, k: string) => {
   // Copies of Cards start clean too.
   const s = session([])
   const a = await addCodeCard(s, { x: 0, y: 0 }, 'a')
-  rememberResult(s, 'a-2')
+  rememberResult(s, 'a_2')
   const made = await s.duplicate(new Set([a]), [])
-  assert.deepEqual([...made], ['a-2'])
-  clean(s, 'a-2')
+  assert.deepEqual([...made], ['a_2'])
+  clean(s, 'a_2')
 }
 {
   // Put where another Card is, as E does: it goes to a free place.

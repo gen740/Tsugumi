@@ -1,4 +1,5 @@
 ---
+title: compare
 description: Comparing the compounds (relative potency)
 ---
 

@@ -26,9 +26,9 @@ function node(dir: string, id: string): CardNodeData {
   const typed = fs.existsSync(fbs)
     ? [...(/table Outputs\s*\{([^}]*)\}/.exec(fs.readFileSync(fbs, 'utf8').replace(/\/\*.*?\*\//gs, ''))?.[1] ?? '').matchAll(/(\w+)\s*:/g)].map((m) => ({ name: m[1] }))
     : []
-  const blank = { summary: meta?.description || undefined, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, title: id }
+  const blank = { summary: meta?.description || undefined, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, title: meta?.title ?? id }
   if (def?.type === 'subgraph') {
-    const b = read(path.join(dir, 'externals', def.external, 'tsugumi.json'))?.boundary ?? {}
+    const b = read(path.join(dir, 'externals', id, 'tsugumi.json'))?.boundary ?? {}
     return { ...blank, kind: 'subgraph', inputs: named(b.inputs), outputs: named(b.outputs) }
   }
   const declared = named(def?.inputs)
@@ -41,8 +41,7 @@ function node(dir: string, id: string): CardNodeData {
     case 'collect': return { ...blank, kind: 'collect', inputs: [{ name: 'in' }], outputs: [{ name: 'out' }] }
     case 'code': return { ...blank, kind: 'code', inputs: declared, outputs: typed }
     case 'draft': {
-      const untitled = /^draft(-[0-9]+)?$/.test(id)
-      return { ...blank, kind: 'draft', summary: meta.body || blank.summary, untitled, inputs: [], outputs: [] }
+      return { ...blank, kind: 'draft', summary: meta?.body || blank.summary, inputs: [], outputs: [] }
     }
     default: throw new Error(`type ${def?.type}`)
   }
@@ -71,7 +70,7 @@ function scene(name: string, dir: string, flow: FlowDirection | undefined, moved
     const p = saved(id)
     return grid ? { x: snapToGrid(p.x, grid), y: snapToGrid(p.y, grid) } : p
   }
-  const conns: { from: { card: string; port: string }; to: { card: string; port: string } }[] = project.canvas.connections
+  const conns: { from: { card: string; port?: string }; to: { card: string; port?: string } }[] = project.canvas.connections
   if (!flow) {
     if (layout.flow === 'topToBottom' || layout.flow === 'leftToRight') flow = layout.flow
     else {
@@ -90,12 +89,12 @@ function scene(name: string, dir: string, flow: FlowDirection | undefined, moved
   }))
   const geos = new Map(ids.map((id) => [id, new CardGeometry(datas.get(id)!, flow!)]))
   const cardRect = (id: string): Rect => ({ ...place(id), ...geos.get(id)!.size })
-  const port = (id: string, p: string, output: boolean): Pt => {
-    const o = place(id), q = geos.get(id)!.port(p, output)
+  const port = (id: string, p: string | undefined, output: boolean): Pt => {
+    const o = place(id), q = geos.get(id)!.port(p ?? '', output)
     return { x: o.x + q.x, y: o.y + q.y }
   }
   const obstacles = ids.map(cardRect)
-  const wires: Wire[] = conns.map((c) => ({ a: port(c.from.card, c.from.port, true), b: port(c.to.card, c.to.port, false), name: `${c.from.card}.${c.from.port}>${c.to.card}.${c.to.port}` }))
+  const wires: Wire[] = conns.map((c) => ({ a: port(c.from.card, c.from.port, true), b: port(c.to.card, c.to.port, false), name: `${[c.from.card, c.from.port].filter(Boolean).join('.')}>${[c.to.card, c.to.port].filter(Boolean).join('.')}` }))
   type End = { name: string; card: string; port: string }
   const ends = (list: End[] = []) => list.map(end => [end.name, end] as const)
   const bi = ends(project.boundary?.inputs), bo = ends(project.boundary?.outputs)
@@ -162,7 +161,7 @@ if (process.env.WIRE_ROUTES_WRITE || process.env.TSUGUMI_WIRE_BENCH === '1') {
   const index: { demos: { path: string }[] } = read(path.join(root, 'demos/ja/index.json'))
   const demos = index.demos.flatMap((d) => scopes(d.path, path.join(root, 'demos', 'ja', d.path)))
   if (process.env.WIRE_ROUTES_WRITE) {
-    const shared = ['report', 'live-stream', 'collatz/collatz-py', 'mnist-classifiers', 'rna-seq']
+    const shared = ['report', 'live-stream', 'collatz/collatz_py', 'mnist-classifiers', 'rna-seq']
       .map((name) => demos.find((scene) => scene.name === name)!)
       .concat(
         ...['casa', 'rna-seq'].map((name) => scene(`${name}, grid 20`, path.join(root, 'demos/ja', name), undefined, {}, 20).scene))

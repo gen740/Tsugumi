@@ -1,4 +1,5 @@
 ---
+title: cnn
 description: 畳み込みニューラルネット
 ---
 

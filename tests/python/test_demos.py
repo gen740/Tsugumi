@@ -127,7 +127,7 @@ def without_julia_and_r(dst):
     """The Collatz demo of C++ and Python alone, as CI runs it: Julia and R (large Nix closures, a process for every
     step) are left out of the copy, and `compare` loses their two inputs but keeps the rest of its code. The four
     languages together are checked by test_demo_collatz.py (TSUGUMI_TEST_DEMO_RUNS=1)."""
-    gone = ("collatz-jl", "collatz-r")
+    gone = ("collatz_jl", "collatz_r")
     project = json.loads((dst / "tsugumi.json").read_text())
     canvas = project["canvas"]
     canvas["cards"] = [c for c in canvas["cards"] if c["id"] not in gone]
@@ -199,7 +199,7 @@ def test_collatz_rejects_overflow(collatz):
               raw=lambda s: s.replace('"data": 0', f'"data": {big}'))
     run_id = start_run(c, ["start"])
     assert wait_run(c, run_id).state == RunState.failed
-    triple = c.call("RunRecordRequest", runId=run_id, card=path("collatz-cpp", "triple"))
+    triple = c.call("RunRecordRequest", runId=run_id, card=path("collatz_cpp", "triple"))
     assert triple.status.state == CardState.failed
     assert triple.status.failure.kind == FailureKind.output_invalid
 

@@ -1,4 +1,5 @@
 ---
+title: penguins
 description: ペンギンの計測値を読む
 ---
 

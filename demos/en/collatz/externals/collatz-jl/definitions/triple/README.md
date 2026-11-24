@@ -1,3 +1,0 @@
----
-description: Turns an odd number into 3n+1, adds it to the sequence so far and sends it back to loop (fails beyond uint64)
----

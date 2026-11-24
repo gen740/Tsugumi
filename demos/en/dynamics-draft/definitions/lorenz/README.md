@@ -1,4 +1,5 @@
 ---
+title: lorenz
 description: Draw the Lorenz attractor
 ---
 

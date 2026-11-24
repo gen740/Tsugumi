@@ -539,8 +539,8 @@ struct GraphCanvas: View {
     var ends: [(a: CGPoint, b: CGPoint)] = []
     var out: [RoutedWire] = []
     for (i, c) in session.connections(in: tab.scope).enumerated() {
-      guard let fc = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
-            let tc = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { continue }
+      guard let fc = c["from"]?["card"]?.string, let tc = c["to"]?["card"]?.string else { continue }
+      let fp = c["from"]?["port"]?.string ?? "", tp = c["to"]?["port"]?.string ?? ""
       let fk = key(tab.scope + [fc]), tk = key(tab.scope + [tc])
       let batch = session.executionWire(fk, fp)
       ends.append((portWorld(fk, fp, output: true), portWorld(tk, tp, output: false)))
@@ -647,11 +647,11 @@ struct GraphCanvas: View {
   private func boundaryBars(_ b: Boundary) -> some View {
     let z = CGFloat(camera.zoom)
     return ZStack(alignment: .topLeading) {
-      BoundaryBarView(title: String(localized: "この Card の入力"), ports: b.inputs, input: true, zoom: z, rect: b.top)
+      BoundaryBarView(title: String(localized: "この Card の入力"), ports: b.inputs, input: true, zoom: z, rect: b.top, cardTitle: session.displayName)
         .placeScaled(at: screen(b.top.origin), size: b.top.size, zoom: camera.zoom, pixel: displayScale)
         .gesture(boundaryMove(input: true, from: undragged(b.top.origin, input: true)))
         .help("ドラッグで移動できます")
-      BoundaryBarView(title: String(localized: "この Card の出力"), ports: b.outputs, input: false, zoom: z, rect: b.bottom)
+      BoundaryBarView(title: String(localized: "この Card の出力"), ports: b.outputs, input: false, zoom: z, rect: b.bottom, cardTitle: session.displayName)
         .placeScaled(at: screen(b.bottom.origin), size: b.bottom.size, zoom: camera.zoom, pixel: displayScale)
         .gesture(boundaryMove(input: false, from: undragged(b.bottom.origin, input: false)))
         .help("ドラッグで移動できます")
@@ -968,7 +968,7 @@ struct GraphCanvas: View {
       ForEach(findMatches.prefix(8), id: \.self) { k in
         Button { pick(k) } label: {
           HStack {
-            Image(systemName: session.kind(k).symbol).frame(width: 16)
+            Image(systemName: definitionIcon(session.cardDefinition(k))).frame(width: 16)
             Text(session.displayName(k))
             Spacer()
             Text(session.kind(k).label).font(.caption).foregroundStyle(.secondary)
@@ -1061,26 +1061,26 @@ struct GraphCanvas: View {
       if let id = session.currentRunId, d.invocation > 0 {
         status += String(localized: "（Run \(String(id.prefix(8))) の中でこの Card の \(d.invocation) 回目の実行）")
       }
-      return .init(title: d.title, subtitle: d.kind.label, symbol: d.symbol ?? d.kind.symbol, lines: lines,
+      return .init(title: d.title, subtitle: d.kind.label, symbol: d.symbol ?? "xmark.octagon", lines: lines,
                    status: status, problems: d.errors + (d.failure.map { [$0] } ?? []), warnings: d.warnings)
     case .wire(let i):
       let conns = session.connections(in: tab.scope)
       let symbol = "point.topleft.down.to.point.bottomright.curvepath"
-      guard i < conns.count, let fc = conns[i]["from"]?["card"]?.string, let fp = conns[i]["from"]?["port"]?.string,
-            let tc = conns[i]["to"]?["card"]?.string, let tp = conns[i]["to"]?["port"]?.string else {
+      guard i < conns.count, let fc = conns[i]["from"]?["card"]?.string, let tc = conns[i]["to"]?["card"]?.string else {
         return .init(title: String(localized: "接続"), subtitle: "", symbol: symbol)
       }
       let fk = key(tab.scope + [fc]), tk = key(tab.scope + [tc])
+      let fp = conns[i]["from"]?["port"]?.string, tp = conns[i]["to"]?["port"]?.string
       let out = session.resolution[fk]?.outputs.first { $0.name == fp }
       let inp = session.resolution[tk]?.inputs.first { $0.name == tp }
-      var lines = ["\(session.displayName(fk)).\(fp)  →  \(session.displayName(tk)).\(tp)"]
-      if debug.showKeys { lines.append("connection #\(i): \(fk).\(fp) → \(tk).\(tp)") }
+      func label(_ card: String, _ port: String?) -> String { card + (port.map { ".\($0)" } ?? "") }
+      var lines = ["\(label(session.displayName(fk), fp))  →  \(label(session.displayName(tk), tp))"]
+      if debug.showKeys { lines.append("connection #\(i): \(label(fk, fp)) → \(label(tk, tp))") }
       lines.append(String(localized: "型: ") + (out?.typeName ?? inp?.typeName ?? String(localized: "未解決")))
       var status = String(localized: "この Run ではまだ値が通っていません")
-      let batch = session.executionWire(fk, fp)
-      if batch.executionList {
+      if let batch = fp.map({ session.executionWire(fk, $0) }), batch.executionList {
         status = batch.count.map { String(localized: "実行リスト") + " ×\($0)" } ?? String(localized: "実行リスト（件数未確定）")
-      } else if let st = session.cardStates[fk], st.sentInRun.contains(fp), let id = session.currentRunId {
+      } else if let fp, let st = session.cardStates[fk], st.sentInRun.contains(fp), let id = session.currentRunId {
         status = String(localized: "Run \(String(id.prefix(8))) で値が通りました（送信元の最新は実行 #\(st.invocation)）")
       }
       return .init(title: String(localized: "接続"), subtitle: "", symbol: symbol, lines: lines, status: status)
@@ -1398,6 +1398,7 @@ struct BoundaryBarView: View {
   let input: Bool
   let zoom: CGFloat
   let rect: CGRect
+  let cardTitle: (CardKey) -> String
 
   var body: some View {
     ZStack(alignment: .topLeading) {
@@ -1414,7 +1415,7 @@ struct BoundaryBarView: View {
         }
         .frame(width: 104 * zoom)
         .position(x: x, y: rect.height * zoom / 2 + 5 * zoom)
-        .help(p.inner.map { String(localized: "内部の接続先: \(String($0.0.split(separator: "/").last ?? "")).\($0.1)") }
+        .help(p.inner.map { String(localized: "内部の接続先: \(cardTitle($0.0)).\($0.1)") }
               ?? String(localized: "内部の接続先が未設定です"))
         Group {
           if input { Circle().fill(Color.accentColor) } else {

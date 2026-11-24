@@ -72,7 +72,7 @@ def test_invocation_can_open_only_its_read_only_artifact_grants(core_factory, pr
           closedir(listing);
         }
         out.number(contents.size());
-    """, declarations=declarations, inputs=["doc"], recordIO=True,
+    """, declarations=declarations, inputs=["doc"], recordIO="on",
         grants={"hostPaths": [{"name": "project", "path": str(project), "write": True}]})
     write_nix_project(project, {"source": source, "sink": sink},
                       [card("source", "source"), card("sink", "sink")],
@@ -134,7 +134,7 @@ def test_input_card_artifact_opens_at_its_store_path(core_factory, project):
         std::ifstream(directory / "report.txt") >> contents;
         if (contents != "store") return 2;
         out.number(contents.size());
-    """.replace("ARTIFACT_ID", json.dumps(artifact_id)), inputs=["doc"], recordIO=True)
+    """.replace("ARTIFACT_ID", json.dumps(artifact_id)), inputs=["doc"], recordIO="on")
     write_nix_project(project, {"source": source, "sink": sink},
                       [card("source", "source"), card("sink", "sink")],
                       [conn("source", "doc", "sink", "doc")])

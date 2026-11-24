@@ -1,4 +1,5 @@
 ---
+title: knn
 description: k 近傍法
 ---
 

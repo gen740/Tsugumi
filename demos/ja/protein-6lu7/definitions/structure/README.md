@@ -1,4 +1,5 @@
 ---
+title: structure
 description: Cα と阻害剤を取り出す
 ---
 

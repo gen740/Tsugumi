@@ -1,4 +1,5 @@
 ---
+title: pendulum
 description: 二重振り子のカオスを比べる
 ---
 

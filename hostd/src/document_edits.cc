@@ -6,6 +6,7 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "tsugumi/document/document.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/json_object.hh"
 
@@ -13,9 +14,11 @@ namespace tsugumi::host {
 namespace {
 namespace json = ::tsugumi::json;
 
+// A Draft end has no port: an empty port leaves the field out.
 auto Endpoint(const std::string& card, const std::string& port) -> std::string {
-  return json::Encode(
-      json::Members{{"card", json::Quote(card)}, {"port", json::Quote(port)}});
+  json::Members end{{"card", json::Quote(card)}};
+  if (!port.empty()) end["port"] = json::Quote(port);
+  return json::Encode(end);
 }
 
 // Reuse a boundary port when several wires name the same inner endpoint.
@@ -32,8 +35,11 @@ auto BoundaryPort(std::vector<std::string>& ports, const std::string& endpoint)
     names.insert(json::Text(value, "name"));
   }
   const auto stem = json::Text(end, "card") + "_" + json::Text(end, "port");
-  auto name = stem;
-  for (size_t i = 2; names.contains(name); ++i) name = stem + std::to_string(i);
+  auto name = stem.substr(0, 64);
+  for (size_t i = 2; names.contains(name); ++i) {
+    const auto suffix = "_" + std::to_string(i);
+    name = stem.substr(0, 64 - suffix.size()) + suffix;
+  }
   auto entry = end;
   entry["name"] = json::Quote(name);
   ports.push_back(json::Encode(entry));
@@ -45,8 +51,8 @@ auto MakeSubgraph(const std::string& project,
                   const std::vector<std::string>& cards, const std::string& id)
     -> DocumentSubgraph {
   const std::set<std::string> selected(cards.begin(), cards.end());
-  if (selected.empty() || id.empty() || id.find('/') != std::string::npos ||
-      id == "." || id == "..")
+  if (selected.empty() || !valid_name(id) ||
+      !std::ranges::all_of(selected, valid_name))
     throw std::runtime_error("Choose Cards and a new Card id");
   auto outer = json::Object(project);
   // Carry all project conditions, including pinned Nix sources and future
@@ -78,6 +84,12 @@ auto MakeSubgraph(const std::string& project,
       inner_wires.push_back(raw);
       continue;
     }
+    // A boundary port names a port, and a Draft has none.
+    if ((f && !from.contains("port")) || (t && !to.contains("port")))
+      throw std::runtime_error(
+          "A Draft wired to a Card outside the selection cannot be on a Card "
+          "in Card's boundary");
+
     if (f) wire["from"] = Endpoint(id, BoundaryPort(outputs, wire.at("from")));
     if (t) wire["to"] = Endpoint(id, BoundaryPort(inputs, wire.at("to")));
     outer_wires.push_back(json::Encode(wire));
@@ -116,7 +128,7 @@ auto MakeSubgraph(const std::string& project,
   result.project_json = json::Encode(outer);
   result.external_json = json::Encode(inner);
   result.card_json = json::Encode(json::Members{
-      {"type", json::Quote("subgraph")}, {"external", json::Quote(id)}});
+      {"type", json::Quote("subgraph")}, {"symbol", json::Quote("none")}});
   return result;
 }
 auto CopyDocuments(const std::string& state,
@@ -172,6 +184,8 @@ auto CopyDocuments(const std::string& state,
                target_prefix = to.substr(0, t);
     const auto id = from.substr(f + 12, from.size() - f - 13);
     const auto new_id = to.substr(t + 12, to.size() - t - 13);
+    if (!valid_name(id) || !valid_name(new_id))
+      throw std::runtime_error("Invalid Card id");
     const auto project = source_prefix.empty()
                              ? root
                              : json::Object(externals.at(source_prefix));
@@ -190,14 +204,9 @@ auto CopyDocuments(const std::string& state,
       document["comments"] = json::Encode(comments);
       draft["comments"] = json::Encode(document);
     }
-    auto card = json::Object(draft.at("card"));
-    const auto external = json::Text(card, "external");
-    if (!external.empty()) {
-      copy_external(source_prefix + "externals/" + external + "/",
+    if (json::Text(json::Object(draft.at("card")), "type") == "subgraph")
+      copy_external(source_prefix + "externals/" + id + "/",
                     target_prefix + "externals/" + new_id + "/");
-      card["external"] = json::Quote(new_id);
-      draft["card"] = json::Encode(card);
-    }
     definitions[to] = json::Encode(draft);
     for (const auto& path : paths) {
       if (!path.starts_with(from)) continue;
@@ -228,6 +237,8 @@ auto ConnectDocuments(const std::string& state, const std::string& from_card,
       return json::Text(json::Object(raw), "id") == id;
     });
   };
+  if (!valid_name(from_card) || !valid_name(to_card))
+    throw std::runtime_error("Invalid Card id");
   if (!has_card(from_card) || !has_card(to_card))
     throw std::runtime_error("A wire endpoint is missing");
   const auto is_draft = [&](const std::string& id) {
@@ -237,9 +248,9 @@ auto ConnectDocuments(const std::string& state, const std::string& from_card,
   };
   // Draft gestures attach to the Card itself and never declare ports.
   const auto endpoint_port = [](bool draft, const std::string& port) {
-    if (draft) return std::string{};
-    if (port == "+")
-      throw std::runtime_error("Only a Draft accepts a Card endpoint gesture");
+    if (draft && (port.empty() || port == "+" || valid_name(port)))
+      return std::string{};
+    if (!valid_name(port)) throw std::runtime_error("Invalid wire port name");
     return port;
   };
   const auto fp = endpoint_port(is_draft(from_card), from_port);

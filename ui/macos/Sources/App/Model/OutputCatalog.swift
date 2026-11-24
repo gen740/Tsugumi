@@ -1,3 +1,4 @@
+import TsugumiAgentClient
 import Foundation
 
 /// Output ports read from an `_outputs.fbs` text that is being edited, for
@@ -49,7 +50,7 @@ enum OutputCatalog {
       let field = raw.trimmingCharacters(in: .whitespacesAndNewlines)
       if field.isEmpty { continue }
       let parts = field.split(separator: ":", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-      guard parts.count == 2, parts[0].range(of: #"^[A-Za-z_][A-Za-z0-9_]*$"#, options: .regularExpression) != nil else {
+      guard parts.count == 2, validName(String(parts[0])) else {
         return .error(String(localized: "フィールドを読めません: \(field)"))
       }
       let typeAndAttrs = parts[1]

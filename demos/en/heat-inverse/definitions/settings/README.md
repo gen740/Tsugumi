@@ -1,4 +1,5 @@
 ---
+title: settings
 description: Rod and measurement conditions
 ---
 

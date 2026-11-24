@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "host/failure.hh"
+#include "tsugumi/document/document.hh"
 
 namespace tsugumi::agent {
 namespace {
@@ -35,7 +36,10 @@ auto CardPath(const std::string& key) -> std::string {
   std::vector<std::string> segments;
   for (size_t start = 0; start <= key.size();) {
     const auto end = std::min(key.find('/', start), key.size());
-    segments.push_back(json::Quote(key.substr(start, end - start)));
+    const auto segment = std::string_view(key).substr(start, end - start);
+    if (!valid_name(segment))
+      throw Failure("invalid_request", "Invalid Card path: " + key);
+    segments.push_back(json::Quote(segment));
     start = end + 1;
   }
   return json::Encode(json::Members{{"segments", json::Encode(segments)}});
@@ -185,6 +189,8 @@ auto FindVersions(const json::Members& args, const ProjectRead& read)
   const auto card = json::Text(args, "card");
   if (card.empty()) throw Failure("invalid_request", "card is required");
   const auto observe = json::Text(args, "observe", card);
+  (void)CardPath(card);
+  (void)CardPath(observe);
   std::set<std::string> kinds;
   if (args.contains("kinds"))
     for (const auto& kind : Strings(args.at("kinds"))) kinds.insert(kind);

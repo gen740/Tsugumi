@@ -1,3 +1,4 @@
 ---
+title: spread
 description: Draws, with Altair, the mean squared distance growing in proportion to t
 ---

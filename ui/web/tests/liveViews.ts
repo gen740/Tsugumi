@@ -1,3 +1,4 @@
+import { cardFixture, projectFixture } from './documentFixture'
 // Only open live viewers subscribe to displays.
 import assert from 'node:assert/strict'
 import { Builder, ByteBuffer } from 'flatbuffers'
@@ -18,18 +19,18 @@ const delta = (rev: bigint, fields: Partial<R.DocumentDeltaT>) =>
 
 const session = () => {
   const s = new ProjectSession('/p', 'k', 'p')
-  const project = '{"name":"t","canvas":{"cards":[{"id":"a"}],"connections":[]}}'
+  const project = projectFixture({"name":"t","canvas":{"cards":[{"id":"a"}],"connections":[]}})
   const asked: string[][] = []
   s.client = { setVisible: async (_sub: unknown, cards: string[][]) => { asked.push(cards.map((c) => c.join('/'))) } } as never
   const inner = s as unknown as { subscription: string; applyDelta(d: R.DocumentDeltaT): void; apply(snapshot: R.ProjectSnapshotT, reset: boolean): void }
   inner.subscription = 'sub'
   inner.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 1n, projectJson: project, layout: [],
-    definitions: [definition('a', '{"type":"draft"}')], resolution: [resolved('a')] }))
+    definitions: [definition('a', cardFixture('draft'))], resolution: [resolved('a')] }))
   return { s, asked, apply: (d: R.DocumentDeltaT) => inner.applyDelta(d) }
 }
 
 const { s, asked, apply } = session()
-apply(delta(1n, { definitionsUpsert: [definition('a', '{"type":"code"}')] }))
+apply(delta(1n, { definitionsUpsert: [definition('a', cardFixture('code'))] }))
 assert.equal(s.kind('a'), 'code')
 assert.deepEqual(asked, [], 'the canvas does not subscribe when a Draft becomes code')
 

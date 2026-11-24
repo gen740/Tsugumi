@@ -1,4 +1,5 @@
 ---
+title: trajectories
 description: Trajectories and the rate equation
 ---
 

@@ -43,7 +43,7 @@ def test_collatz_27_in_four_languages(demo):
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     assert c.call("RunRecordRequest", runId=rid, card=path("compare")).status.state == CardState.succeeded
     expected = collatz_reference(27)
-    for lang in ("collatz-jl", "collatz-r"):
+    for lang in ("collatz_jl", "collatz_r"):
         assert collected_collatz(c, rid, lang, "collect") == expected, lang
 
 
@@ -57,7 +57,7 @@ def test_collatz_r_fails_rather_than_round(demo):
     rid = start_run(c, ["start"])
     st = wait_run(c, rid)
     assert st.state == RunState.failed
-    assert c.call("RunRecordRequest", runId=rid, card=path("collatz-r", "check")).status.state == CardState.failed
+    assert c.call("RunRecordRequest", runId=rid, card=path("collatz_r", "check")).status.state == CardState.failed
     # The failed run waits for the branches that go on: Julia has the exact sequence.
     expected = [n] + [2 ** k for k in range(56, -1, -1)]
-    assert collected_collatz(c, rid, "collatz-jl", "collect") == expected
+    assert collected_collatz(c, rid, "collatz_jl", "collect") == expected

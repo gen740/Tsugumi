@@ -1,4 +1,5 @@
 ---
+title: tikhonov
 description: 正則化の強さを選ぶ
 ---
 

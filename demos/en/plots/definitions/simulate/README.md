@@ -1,3 +1,4 @@
 ---
+title: simulate
 description: Makes ±1 random walks from the seed
 ---

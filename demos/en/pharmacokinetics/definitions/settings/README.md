@@ -1,4 +1,5 @@
 ---
+title: settings
 description: Dosing plans and the made-up drug's values
 ---
 

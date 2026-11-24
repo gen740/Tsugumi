@@ -1,4 +1,5 @@
 set(_tsugumi_remote_result_daemon_sources
+  project_document_test.cc
   shell_test.cc
 )
 if(NOT TSUGUMI_NATIVE_DARWIN_TESTS)

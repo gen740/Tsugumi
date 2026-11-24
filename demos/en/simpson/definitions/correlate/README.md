@@ -1,4 +1,5 @@
 ---
+title: correlate
 description: Compute the correlation for the whole and each stratum
 ---
 

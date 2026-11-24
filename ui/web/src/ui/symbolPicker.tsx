@@ -29,7 +29,7 @@ export const CARD_SYMBOLS: { symbol: string; label: string }[] = ([
   ['exclamationmark.triangle', L('警告 注意')], ['lock', L('鍵 保護')], ['key', L('キー 認証')], ['person', L('人 ユーザー')],
   ['cpu', L('計算機 CPU')], ['memorychip', L('メモリ')], ['bolt', L('高速 電気')], ['leaf', L('自然 葉')], ['flame', L('ホット 炎')],
   ['drop', L('水 液体')], ['atom', L('科学 原子')], ['waveform', L('信号 波形')], ['speaker.wave.2', L('音声 スピーカー')],
-  ['music.note', L('音楽')], ['film', L('動画 映画')], ['paintbrush', L('描画 絵')], ['pencil', L('編集 書く')],
+  ['music.note', L('音楽')], ['film', L('動画 映画')], ['paintbrush', L('描画 絵')], ['pencil', L('編集 書く')], ['pencil.and.outline', L('編集 書く')],
   ['scissors', L('切り取り 分割')], ['link', L('リンク 参照')], ['paperclip', L('添付')], ['tag', L('タグ ラベル')],
   ['bookmark', L('ブックマーク 印')], ['star', L('お気に入り 星')], ['heart', L('重要 ハート')], ['list.bullet', L('リスト 一覧')],
   ['list.number', L('番号付き 順番')], ['square.grid.2x2', L('グリッド 格子')], ['square.stack.3d.up', L('階層 重ねる')],
@@ -43,24 +43,25 @@ export const CARD_SYMBOLS: { symbol: string; label: string }[] = ([
   ['moon', L('夜 月')], ['bird', L('鳥 つぐみ')],
 ] as [string, string][]).map(([symbol, label]) => ({ symbol, label }))
 
-/** `symbol`: the Card's own choice (undefined: the icon of its kind). */
-export function SymbolPicker({ symbol, onChange, inherited }: { symbol?: string; onChange: (s: string | undefined) => void; inherited: string }) {
+export function SymbolPicker({ symbol, defaultIcon, onChange }: { symbol: string; defaultIcon: string; onChange: (s: string) => void }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const anchor = useRef<HTMLSpanElement>(null)
-  const current = symbol ?? inherited
+  const current = symbol
   const q = search.toLowerCase()
   const shown = CARD_SYMBOLS.filter((s) => !q || s.label.toLowerCase().includes(q))
   return (
     <div className="row gap8 center">
       <span ref={anchor}>
         <Button onClick={() => setOpen(!open)} help={L('アイコンを選ぶ')}>
-          <span className="row gap6 center"><Icon name={current} size={16} />{L('アイコンを選ぶ…')}</span>
+          <span className="row gap6 center"><Icon name={current === 'none' ? defaultIcon : current} size={16} />{L('アイコンを選ぶ…')}</span>
         </Button>
       </span>
-      {symbol !== undefined && <Button kind="link" help={L('Card の種類のアイコンを使います')} onClick={() => onChange(undefined)}>{L('デフォルトに戻す')}</Button>}
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor}>
         <div className="symbol-picker">
+          <Button onClick={() => { onChange('none'); setOpen(false) }}>
+            <span className="row gap6 center"><Icon name={defaultIcon} size={16} />{L('種類の既定')}</span>
+          </Button>
           <TextField value={search} onChange={setSearch} placeholder={L('探す（例: 計算、表、画像）')} autoFocus />
           <div className="symbol-grid" role="listbox" aria-label={L('アイコン')}>
             {shown.map((s) => (
@@ -75,12 +76,6 @@ export function SymbolPicker({ symbol, onChange, inherited }: { symbol?: string;
             ))}
           </div>
           {!shown.length && <div className="caption secondary">{L('一致するアイコンはありません')}</div>}
-          <div className="row center gap6">
-            <Button disabled={symbol === undefined} onClick={() => { onChange(undefined); setOpen(false) }}>{L('デフォルトに戻す')}</Button>
-            <span className="spacer" />
-            <Icon name={inherited} className="secondary" />
-            <span className="caption secondary">{L('デフォルト')}</span>
-          </div>
         </div>
       </Popover>
     </div>

@@ -82,11 +82,11 @@ class Versions {
 
   bool enabled() const;
   // Makes the folder a repository with a first commit of its definitions and
-  // versionPaths opt-ins, always excluding .tsugumi/. A demo's history file
+  // trackedPaths opt-ins, always excluding .tsugumi/. A demo's history file
   // (.tsugumi-history) becomes its commits, branches, tags and notes
   // instead, ending in what is on disk. Returns HEAD.
   std::string init();
-  // Commits saved definitions and versionPaths opt-ins when they differ from
+  // Commits saved definitions and trackedPaths opt-ins when they differ from
   // HEAD (on a detached HEAD a branch is made first, so nothing is left
   // unreachable). Returns HEAD; "" when the folder is not a repository.
   // A run supplies the accepted document to verify the bytes before staging.

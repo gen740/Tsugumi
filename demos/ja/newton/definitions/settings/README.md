@@ -1,4 +1,5 @@
 ---
+title: settings
 description: 多項式と反復の設定
 ---
 
