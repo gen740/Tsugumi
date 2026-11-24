@@ -76,8 +76,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     pthread_t thread;
     if (pthread_create(&thread, NULL, serve, NULL)) return 3;
     pthread_detach(thread);
-    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
-    return 0;
+    return write_result(result, result_bytes, sizeof(result_bytes));
 }
 """
 
@@ -214,8 +213,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     while (access(RELEASE, F_OK)) usleep(1000);
     effects->send(host, &fast, (const uint8_t *)"ready", 5);
     pthread_join(thread, NULL);
-    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
-    return 0;
+    return write_result(result, result_bytes, sizeof(result_bytes));
 }
 """
     _, ui, _, subscription = setup(core_factory, project, tmp_path, source)
@@ -263,8 +261,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     FILE *file = fopen(CAPABILITY, "wb");
     if (!file || fwrite(&session, sizeof(session), 1, file) != 1 || fclose(file))
         return 2;
-    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
-    return 0;
+    return write_result(result, result_bytes, sizeof(result_bytes));
 }
 """)
     successor_source = capability + r"""
@@ -296,8 +293,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
         memcmp(&event.route, &route, sizeof(route)))
         return 5;
 #endif
-    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
-    return 0;
+    return write_result(result, result_bytes, sizeof(result_bytes));
 }
 """
     successor = native_card(tmp_path / "successor", successor_source)
