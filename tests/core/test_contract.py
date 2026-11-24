@@ -37,8 +37,7 @@ def project_json(snapshot) -> dict:
 
 
 def save_name(c: Client, rev: int, name: str, op: str | None = None, base_doc: dict | None = None):
-    doc = dict(base_doc or {"nixPath": [],
-                            "canvas": {"cards": [], "connections": []}})
+    doc = dict(base_doc if base_doc is not None else project_json(c.call("ProjectInspectRequest")))
     doc["name"] = name
     return c.call("ProjectSaveRequest", baseRev=rev, opId=op or new_id(), origin="test",
                   changes=[change("SetProject", json=json.dumps(doc))])
@@ -261,12 +260,14 @@ def test_operation_conflict_and_required_fields(client):
 def test_document_validation(client):
     """Invalid document fields, card paths and connections cannot be saved."""
     snap = client.open().snapshot
+    doc = project_json(snap)
     bad = [
-        '{"name":"a","name":"b","nixPath": [],"canvas":{"cards":[],"connections":[]}}',
-        '{"name":"a","nixPath": [],"canvas":{"cards":[],"connections":[]},"typo":1}',
-        '{"name":"a","nixPath": [],"canvas":{"cards":[{"id":"a/b"}],"connections":[]}}',
-        '{"name":"a","nixPath": [],"canvas":{"cards":[{"id":"x","definition":"nope"}],"connections":[]}}',
-        '{"name":"a","nixPath": [],"canvas":{"cards":[],"connections":[{"from":{"card":"q","port":"o"},"to":{"card":"r","port":"i"}}]}}',
+        json.dumps(doc)[:-1] + ', "name": "duplicate"}',
+        json.dumps(dict(doc, typo=1)),
+        json.dumps(dict(doc, canvas={"cards": [{"id": "a/b"}], "connections": []})),
+        json.dumps(dict(doc, canvas={"cards": [{"id": "x", "definition": "nope"}], "connections": []})),
+        json.dumps(dict(doc, canvas={"cards": [], "connections": [
+            {"from": {"card": "q", "port": "o"}, "to": {"card": "r", "port": "i"}}]})),
     ]
     for j in bad:
         with pytest.raises(RpcFailure) as e:

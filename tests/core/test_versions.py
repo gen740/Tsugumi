@@ -15,7 +15,7 @@ import pytest
 from harness.daemon import ROOT
 from harness.file_events import wait_for_file
 from projects import SINK, MSG_FBS, MSG_INPUT_NIX, builtin_project, card, conn, run_and_wait, write, write_nix_project
-from harness.document import params_nix, set_param
+from harness.document import card_document, params_nix, set_param
 from tsugumi_client import RpcFailure, _request_class, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 from harness.document import build_buffer, positions, write_layout
@@ -384,7 +384,7 @@ def test_a_versions_canvas_says_what_each_card_is(tmp_path, core_factory):
     builtin_project(root, extra_cards=[card("wide", "merge"), card("m", "merge")],
                     extra_conns=[conn("src", "msg", "m", "a")])
     wide = root / "definitions" / "wide" / "_card.json"
-    wide.write_text(json.dumps({"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}, {"name": "c"}]}))
+    wide.write_text(json.dumps(card_document({"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}, {"name": "c"}]})))
     daemon = core_factory(project_root=root)
     c = daemon.connect()
     first = text(c.call("VersionInitRequest", opId=new_id(), origin="test").commit)
@@ -396,7 +396,7 @@ def test_a_versions_canvas_says_what_each_card_is(tmp_path, core_factory):
     write_layout(root, {"cards": {"out": {"x": 3, "y": 7, "collapsed": True}}})
     assert bytes(c.call("VersionCanvasRequest", commit=commit_all(root)).layout) == (root / "layout.bin").read_bytes()
     # An older version keeps what its Cards were.
-    wide.write_text(json.dumps({"type": "merge", "inputs": [{"name": "a"}]}))
+    wide.write_text(json.dumps(card_document({"type": "merge", "inputs": [{"name": "a"}]})))
     now = {text(k.id): k for k in c.call("VersionCanvasRequest", commit=commit_all(root)).cards}
     assert (text(now["wide"].kind), now["wide"].fan) == ("merge", 1)
     then = {text(k.id): k for k in c.call("VersionCanvasRequest", commit=first).cards}
