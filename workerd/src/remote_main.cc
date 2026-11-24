@@ -1,4 +1,3 @@
-#include "tsugumi/workerd/authorized_keys.hh"
 // Remote reception and detached supervision share one binary. Only --invoke
 // initialises Nix; listeners and carriers operate on bounded protocol frames.
 #include <arpa/inet.h>
@@ -1035,7 +1034,7 @@ auto run(Config config) -> int {
     fs::write_atomic(config.authorized_keys,
                      "# One ed25519: SPKI key per line.\n", 0600);
   peer_tls::Context tls(identity, true, [&](std::string_view key) {
-    return workerd::Authorized(config.authorized_keys, key);
+    return peer_tls::Authorized(config.authorized_keys, key);
   });
   Daemon daemon(config);
   Fd unixfd(unix_listener(config.unix_socket));

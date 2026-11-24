@@ -1,5 +1,3 @@
-#include "tsugumi/workerd/authorized_keys.hh"
-
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -8,7 +6,8 @@
 #include <sstream>
 
 #include "tsugumi/rpc/peer_tls.hh"
-namespace tsugumi::workerd {
+
+namespace tsugumi::peer_tls {
 auto Authorized(const std::filesystem::path& file, std::string_view key)
     -> bool {
   // Re-read at every handshake so removing a line revokes new connections.
@@ -45,7 +44,7 @@ auto Authorized(const std::filesystem::path& file, std::string_view key)
     // A malformed configuration fails closed, including unrelated invalid keys.
     if (fields >> extra) return false;
     try {
-      peer_tls::ValidateKey(public_key);
+      ValidateKey(public_key);
     } catch (...) {
       return false;
     }
@@ -53,4 +52,4 @@ auto Authorized(const std::filesystem::path& file, std::string_view key)
   }
   return found;
 }
-}  // namespace tsugumi::workerd
+}  // namespace tsugumi::peer_tls
