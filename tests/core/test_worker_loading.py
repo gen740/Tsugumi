@@ -506,8 +506,7 @@ def test_one_shot_result_waits_for_queued_view_data(tmp_path):
             if (call->effects->send(call->host, &session, payload, sizeof(payload)))
               return 2;
           }
-          *result = (tsugumi_bytes){wire, sizeof(wire)};
-          return 0;
+          return write_result(result, wire, sizeof(wire));
         }
     """)
     with worker(tmp_path) as (_, data, control):
