@@ -86,7 +86,8 @@ def record_all(project):
 def wired_outputs(project):
     """(card, port) pairs that feed another Card: the rest are the Workflow's results."""
     connections = json.loads((project / "tsugumi.json").read_text()).get("canvas", {}).get("connections", [])
-    return {(c["from"]["card"], c["from"]["port"]) for c in connections}
+    # A Draft end has no port.
+    return {(c["from"]["card"], c["from"].get("port")) for c in connections}
 
 
 def triggers(project):
