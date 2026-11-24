@@ -62,8 +62,8 @@ TEST(RunHistory, ArtifactIdsAndSavedInputSchemaSurviveDatabaseRestart) {
       ASSERT_EQ(values.size(), 1u);
       EXPECT_EQ(values[0].hash, crypto::sha256_hex(bytes));
       ASSERT_EQ(values[0].artifacts.size(), 1u);
-      EXPECT_EQ(values[0].artifacts[0].first, id);
-      EXPECT_EQ(values[0].artifacts[0].second, 123u);
+      EXPECT_EQ(values[0].artifacts[0].id, id);
+      EXPECT_EQ(values[0].artifacts[0].size, 123u);
     }
     const auto saved = History::last_input(db, {"card"});
     ASSERT_TRUE(saved);
