@@ -147,6 +147,10 @@ auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
     write += " (subpath " + quote((artifacts / "outputs").string()) + ")";
   }
   std::string read_only_grants;
+  if (!artifacts.empty())
+    read_only_grants = " (require-all (subpath " + quote(artifacts.string()) +
+                       ") (require-not (subpath " +
+                       quote((artifacts / "outputs").string()) + ")))";
   std::string private_paths;
   if (!sp.artifact_store.empty()) {
     private_paths =
