@@ -145,7 +145,7 @@ def test_snapshot_lists_the_systems_the_local_service_can_run(client):
     guarantee = service.sandbox
     assert guarantee.filesystem == (1 if sys.platform == "darwin" else 2)
     assert guarantee.network == (1 if sys.platform == "darwin" else 2)
-    assert guarantee.pid == (0 if sys.platform == "darwin" else 2)
+    assert (guarantee.pid, guarantee.ipc, guarantee.identity) == (2, 2, 2)
     assert service.maxJobs is None
     expected = {NATIVE}
     if sys.platform == "linux" and emulator_registered(FOREIGN):

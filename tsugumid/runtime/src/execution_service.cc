@@ -22,7 +22,9 @@ namespace tsugumi {
 namespace {
 
 // The unprivileged identity for Card processes.
+#ifdef __linux__
 constexpr uid_t kCardUid = 65534;
+#endif
 
 class PreparedLocalExecution final : public PreparedExecution {
  public:
@@ -150,13 +152,13 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     throw;
   }
 
-  // Cards run as nobody: switched to by root (container), or mapped in
-  // bubblewrap's user namespace when tsugumid is not root (shared VM).
-  std::optional<uid_t> uid;
+  WorkerSpawn sp;
+#ifdef __linux__
+  // Linux identity isolation uses a dedicated uid in bubblewrap.
   if (node.settings.sandbox.identity &&
       (::geteuid() == 0 || worker_has_bwrap()))
-    uid = kCardUid;
-  WorkerSpawn sp;
+    sp.uid = sp.gid = kCardUid;
+#endif
   // A package of another system is loaded by the worker its build made for
   // that system, which the kernel runs under the emulator.
   sp.worker_binary = build.worker.empty()
@@ -182,8 +184,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     }
   }
 #endif
-  sp.uid = uid;
-  sp.gid = uid;
   const std::filesystem::path state_dir = service_.store().state_dir();
   // Another system's binaries run with the emulator the kernel opened when it
   // was registered; Rosetta also reads its own folder while it runs.

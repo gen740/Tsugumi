@@ -17,6 +17,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 import pytest
@@ -70,6 +71,75 @@ def connects(target: str) -> str:
             except OSError:
                 print(label + ": refused", flush=True)
 {target}"""
+
+
+def test_pid_isolation_hides_other_processes(core_factory, tmp_path):
+    """A Card with all isolation flags enabled can run and inspect itself."""
+    other = os.getpid()
+    os.kill(other, 0)
+    out = stdout_of_card(core_factory, tmp_path, f"""
+    import ctypes
+    import errno
+    import os
+
+    lib = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    path = ctypes.create_string_buffer(4096)
+    assert lib.proc_pidpath(os.getpid(), path, len(path)) > 0
+    assert lib.proc_pidpath({other}, path, len(path)) <= 0
+    pids = (ctypes.c_int * 4096)()
+    assert lib.proc_listpids(1, 0, pids, ctypes.sizeof(pids)) <= 0
+    system = ctypes.CDLL(None, use_errno=True)
+    mib = (ctypes.c_int * 3)(1, 14, 0)  # CTL_KERN, KERN_PROC, KERN_PROC_ALL
+    size = ctypes.c_size_t()
+    assert system.sysctl(mib, len(mib), None, ctypes.byref(size), None, 0) == -1
+    os.kill(os.getpid(), 0)
+    try:
+        # Signal zero checks permission without delivering a signal.
+        os.kill({other}, 0)
+    except OSError as error:
+        assert error.errno in (errno.EPERM, errno.EACCES)
+    else:
+        raise AssertionError("can signal a process outside the worker")
+    print("process isolated", flush=True)""")
+    assert "process isolated" in out
+
+
+def test_ipc_isolation_blocks_host_posix_shared_memory(core_factory, tmp_path):
+    name = f"/tsugumi-{uuid.uuid4().hex[:16]}".encode()
+    system = ctypes.CDLL(None, use_errno=True)
+    fd = system.shm_open(name, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    assert fd >= 0, os.strerror(ctypes.get_errno())
+    try:
+        out = stdout_of_card(core_factory, tmp_path, f"""
+    import ctypes
+    import errno
+    import os
+    system = ctypes.CDLL(None, use_errno=True)
+    assert system.shm_open({name!r}, os.O_RDONLY) == -1
+    assert ctypes.get_errno() in (errno.EPERM, errno.EACCES)
+    print("shared memory denied", flush=True)""",
+                             sandbox={"filesystem": False, "pid": False, "identity": False})
+        assert "shared memory denied" in out
+    finally:
+        os.close(fd)
+        assert system.shm_unlink(name) == 0
+
+
+def test_identity_isolation_protects_home_without_filesystem_flag(core_factory, tmp_path):
+    # A synthetic file in the account's home. No user data is read.
+    with tempfile.TemporaryDirectory(prefix="tsugumi-seatbelt-", dir=Path.home()) as directory:
+        member = Path(directory) / "probe"
+        member.write_text("test fixture")
+        out = stdout_of_card(core_factory, tmp_path, f"""
+    import errno
+    try:
+        with open({str(member)!r}, "rb"):
+            raise AssertionError("can open an ungranted home file")
+    except OSError as error:
+        assert error.errno in (errno.EPERM, errno.EACCES)
+    print("home file denied", flush=True)""",
+                             sandbox={"filesystem": False, "pid": False, "ipc": False})
+        assert "home file denied" in out
 
 
 def test_a_card_with_network_reaches_nothing_on_this_host(core_factory, tmp_path):
@@ -135,6 +205,15 @@ def reached_on_this_host(names: list[str]) -> list[str]:
     return [n for n in names if libsystem.bootstrap_look_up(bootstrap, n.encode(), ctypes.byref(ctypes.c_uint())) == 0]
 
 
+def test_identity_isolation_denies_keychain_services(core_factory, tmp_path):
+    names = ["com.apple.SecurityServer", "com.apple.securityd.xpc", "com.apple.securitydservice"]
+    out = stdout_of_card(core_factory, tmp_path, f"\n    NAMES = {names!r}" + MACH_LOOKUP,
+                         grants={"network": True},
+                         sandbox={"filesystem": False, "pid": False, "ipc": False})
+    for name in names:
+        assert f"{name} denied" in out
+
+
 def test_a_card_with_network_reaches_no_mach_service_of_the_session(core_factory, tmp_path):
     """A network-enabled card cannot look up the user's session services.
 
@@ -163,12 +242,19 @@ def test_a_card_with_network_reaches_only_the_resolver_among_unix_sockets(core_f
         other = str(Path(folder) / "s")
         listener.bind(other)
         accepted = accept_in_background(listener)
-        out = stdout_of_network_card(
+        out = stdout_of_card(
             core_factory, tmp_path,
-            connects(f'    reach("resolver", "/var/run/mDNSResponder")\n    reach("other", {other!r})'))
+            connects(f'    reach("resolver", "/var/run/mDNSResponder")\n    reach("other", {other!r})'),
+            grants={"network": True}, sandbox={"ipc": False})
         assert "resolver: connected" in out
         assert "other: refused" in out
         assert not accepted
+
+
+def test_ipc_isolation_blocks_the_resolver_socket_even_with_network_granted(core_factory, tmp_path):
+    out = stdout_of_network_card(core_factory, tmp_path,
+                                 connects('    reach("resolver", "/var/run/mDNSResponder")'))
+    assert "resolver: refused" in out
 
 
 def test_a_card_with_network_resolves_a_name(core_factory, tmp_path):
@@ -179,7 +265,7 @@ def test_a_card_with_network_resolves_a_name(core_factory, tmp_path):
         socket.getaddrinfo(name, None)
     except OSError:
         pytest.skip(f"{name} does not resolve on this host either")
-    out = stdout_of_network_card(
+    out = stdout_of_card(
         core_factory, tmp_path,
         # What matters is the name, not a connection.
         f"""
@@ -188,7 +274,8 @@ def test_a_card_with_network_resolves_a_name(core_factory, tmp_path):
         socket.getaddrinfo({name!r}, 9)
         print("name: resolved", flush=True)
     except OSError as e:
-        print("name: unresolved", e, flush=True)""")
+        print("name: unresolved", e, flush=True)""",
+        grants={"network": True}, sandbox={"ipc": False})
     assert "name: resolved" in out
 
 
