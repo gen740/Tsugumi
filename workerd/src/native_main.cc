@@ -29,6 +29,7 @@
 #include "tsugumi/protocol/card_generated.h"
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/rpc/frame.hh"
+#include "tsugumi/workerd/artifact_id.hh"
 #include "tsugumi/workerd/frame.hh"
 
 namespace C = Tsugumi::Card;
@@ -55,16 +56,6 @@ auto id_bytes(const tsugumi::ArtifactId& id) -> ArtifactId {
   return result;
 }
 
-auto id_hex(const ArtifactId& id) -> std::string {
-  constexpr char digits[] = "0123456789abcdef";
-  std::string result;
-  for (const auto byte : id) {
-    result += digits[byte >> 4];
-    result += digits[byte & 15];
-  }
-  return result;
-}
-
 struct ViewQueue {
   std::deque<std::string> incoming;
   std::deque<std::string> outgoing;
@@ -84,6 +75,8 @@ struct Host {
   bool stopping = false;
   std::mutex artifact_mutex;
   std::string artifact_directory;
+  uint64_t invocation_sequence = 0;
+  uint64_t next_artifact = 0;
   std::map<ArtifactId, std::string> granted;
   std::map<ArtifactId, std::string> created;
   std::atomic<uint64_t> cancelled_id{0};
@@ -286,16 +279,15 @@ auto create_artifact(void* context, tsugumi_artifact_id* out,
   try {
     std::lock_guard lock(host.artifact_mutex);
     if (host.artifact_directory.empty()) return -1;
-    ArtifactId id;
-#ifdef __APPLE__
-    ::arc4random_buf(id.data(), id.size());
-#else
-    if (::getentropy(id.data(), id.size()) != 0) return -1;
-#endif
-    const auto directory = host.artifact_directory + "/" + id_hex(id);
-    if (host.granted.contains(id) || host.created.contains(id) ||
-        ::mkdir(directory.c_str(), 0700) != 0)
+    if (!host.invocation_sequence || host.next_artifact == UINT64_MAX)
       return -1;
+    const auto id =
+        tsugumi::make_artifact_id(host.invocation_sequence, host.next_artifact);
+    const auto directory =
+        host.artifact_directory + "/" + std::to_string(host.next_artifact);
+    if (host.granted.contains(id) || ::mkdir(directory.c_str(), 0700) != 0)
+      return -1;
+    ++host.next_artifact;
     const auto inserted = host.created.emplace(id, directory);
     std::ranges::copy(id, out->bytes);
     *path = path_bytes(inserted.first->second);
@@ -315,9 +307,26 @@ auto open_artifact(void* context, const tsugumi_artifact_id* id,
   std::ranges::copy(id->bytes, key.begin());
   const auto found = host.granted.find(key);
   if (found == host.granted.end()) return -1;
-  struct stat info{};
-  if (::lstat(found->second.c_str(), &info) != 0 || !S_ISDIR(info.st_mode))
-    return -1;
+  if (found->second.empty()) {
+    flatbuffers::FlatBufferBuilder b;
+    const tsugumi::ArtifactId artifact{flatbuffers::span(key)};
+    const auto request = W::CreateWorkerArtifactOpen(b, &artifact);
+    const auto call_id = host.call_id.load();
+    W::FinishWorkerMessageBuffer(
+        b,
+        W::CreateWorkerMessage(b, call_id, W::WorkerPayload::WorkerArtifactOpen,
+                               request.Union()));
+    if (!send_frame(host, b)) return -1;
+    const auto reply = read_frame(kData);
+    if (!reply) return -1;
+    flatbuffers::Verifier verify(
+        reinterpret_cast<const uint8_t*>(reply->data()), reply->size());
+    if (!W::VerifyWorkerMessageBuffer(verify)) return -1;
+    const auto* message = W::GetWorkerMessage(reply->data());
+    const auto* opened = message->value_as_WorkerArtifactOpened();
+    if (message->call_id() != call_id || !opened || !opened->path()) return -1;
+    found->second = opened->path()->str();
+  }
   *path = path_bytes(found->second);
   return 0;
 }
@@ -494,16 +503,9 @@ auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
     host.artifact_directory.clear();
     if (const auto* directory = call.artifact_directory())
       host.artifact_directory = directory->str();
-    if (const auto* grants = call.grants()) {
-      for (const auto* grant : *grants) {
-        const auto key = id_bytes(*grant->id());
-        if (!requested.erase(key))
-          return Failure{D::FailureKind::input_missing, "unexpected artifact grant"};
-        host.granted.emplace(key, grant->path()->str());
-      }
-    }
-    if (!requested.empty())
-      return Failure{D::FailureKind::input_missing, "an input artifact is unavailable"};
+    host.invocation_sequence = call.invocation_sequence();
+    host.next_artifact = 0;
+    for (const auto& id : requested) host.granted.try_emplace(id);
   }
 
   if (auto failure = stop()) return failure;
@@ -578,7 +580,8 @@ auto serve(const std::string& package) -> int {
       reply.Clear();
       failure_frame(reply, last_call, *failure, created_ids(host));
     }
-    if (call->drain_display()) flush_display(host, last_call);
+    if (call->drain_display() || !created_ids(host).empty())
+      flush_display(host, last_call);
     host.call_id = 0;
     std::fflush(stdout);
     std::fflush(stderr);

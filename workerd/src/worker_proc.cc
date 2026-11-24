@@ -101,8 +101,8 @@ auto send_frame(trace::Link& link, int fd, const std::string& frame,
 // /nix/store, staged invocation inputs and system libraries read-only, writes
 // only to the worker's own scratch folder and writable grants. Paths
 // are matched after symlink resolution (/tmp -> /private/tmp).
-auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch)
-    -> std::string {
+auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
+                      const std::filesystem::path& artifacts) -> std::string {
   if (!sp.sandbox.filesystem)
     return sp.network ? std::string{}
                       : "(version 1)\n(allow default)\n(deny network*)\n";
@@ -141,11 +141,20 @@ auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch)
     read += " (subpath " + quote(p) + ")";
     exec += " (subpath " + quote(p) + ")";
   }
-  std::string read_only_grants;
-  if (!sp.artifacts_root.empty()) {
-    const auto rule = " (subpath " + quote(sp.artifacts_root) + ")";
+  if (!artifacts.empty()) {
+    const auto rule = " (subpath " + quote(artifacts.string()) + ")";
     read += rule;
-    read_only_grants += rule;
+    write += " (subpath " + quote((artifacts / "outputs").string()) + ")";
+  }
+  std::string read_only_grants;
+  std::string private_paths;
+  if (!sp.artifact_store.empty()) {
+    private_paths =
+        "(deny file-read* file-write* (subpath " + quote(sp.artifact_store) +
+        ")"
+        " (require-all (subpath " +
+        quote(sp.artifact_staging.string()) + ") (require-not (subpath " +
+        quote(artifacts.string()) + "))))\n";
   }
   for (const auto& bind : sp.binds) {
     const auto rule = " (subpath " + quote(bind.source) + ")";
@@ -164,12 +173,11 @@ auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch)
          "(allow sysctl-read)\n(allow ipc-posix-shm)\n(allow "
          "file-read-metadata)\n"
          "(allow file-read* " +
-         read + ")\n(allow file-write* " + write +
-         ")\n" +
+         read + ")\n(allow file-write* " + write + ")\n" +
          (read_only_grants.empty()
               ? ""
               : "(deny file-write* " + read_only_grants + ")\n") +
-         "(allow file-ioctl (subpath \"/dev\"))\n" +
+         private_paths + "(allow file-ioctl (subpath \"/dev\"))\n" +
          // With the network allowed, still nothing on this host: tsugumid's
          // own ports and sockets, the web server, other local services. For
          // Seatbelt "localhost" is every address of this host (LAN, VPN,
@@ -298,12 +306,24 @@ auto remove_card_cgroup(const std::filesystem::path& path) -> void {
 bool worker_uid_on_host() { return !worker_has_bwrap(); }
 
 WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
+  if (!sp.artifact_staging.empty())
+    artifact_scratch_ = sp.artifact_staging / crypto::uuid4();
+  // Construction failures clean up private artifact staging before the
+  // partially constructed worker can be handed to the pool.
+  struct StagingGuard {
+    std::filesystem::path path;
+    ~StagingGuard() {
+      if (path.empty()) return;
+      std::error_code ec;
+      std::filesystem::remove_all(path, ec);
+    }
+  } artifact_guard{artifact_scratch_};
 #ifdef __APPLE__
   // O_EVTONLY still needs read permission on Darwin. Repair an unreadable
   // directory with exactly the Card's identity and sandbox, then open it with
   // O_NOFOLLOW. Even a surviving child swapping in a hard link cannot enlist
   // the core's broader authority to chmod a protected host inode.
-  const auto profile = seatbelt_profile(sp, scratch_);
+  const auto profile = seatbelt_profile(sp, scratch_, artifact_scratch_);
   recover_permissions_ = [profile, uid = sp.uid, gid = sp.gid](
                              int parent, const char* name) {
     std::filesystem::path target(name);
@@ -345,6 +365,10 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
                      "chown " + path + ": " + std::strerror(error));
       }
     }
+  if (!artifact_scratch_.empty())
+    std::filesystem::create_directories(artifact_scratch_ / "outputs");
+  if (sp.artifact_inputs)
+    std::filesystem::create_directory(artifact_scratch_ / "inputs");
   proc::Spec spec;
   std::string certificate = TSUGUMI_CACERT;
   std::string temporary = tmp_dir();
@@ -436,36 +460,39 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
       argv.insert(argv.end(), {"--ro-bind", path, path});
     if (filesystem || !sp.hidden_paths.empty())
       argv.insert(argv.end(), {"--bind", scratch_, scratch_});
+    if (!filesystem && !sp.hidden_paths.empty() && !artifact_scratch_.empty()) {
+      const auto root = artifact_scratch_.string();
+      argv.insert(argv.end(), {"--bind", root, root});
+    }
     if (filesystem) {
       for (const auto& bind : sp.binds) {
-        bool writable = bind.write;
-        std::filesystem::path protected_subtree;
-        if (writable && !sp.artifacts_root.empty()) {
+        std::vector<std::filesystem::path> hidden;
+        if (!sp.artifact_store.empty()) {
           const auto source = std::filesystem::canonical(bind.source);
-          const auto root = std::filesystem::canonical(sp.artifacts_root);
-          const auto relative = source.lexically_relative(root);
-          if (!relative.empty() && *relative.begin() != "..") {
-            writable = false;
-          } else {
+          for (const auto& private_path :
+               {std::filesystem::path(sp.artifact_store),
+                sp.artifact_staging}) {
+            const auto root = std::filesystem::weakly_canonical(private_path);
+            const auto relative = source.lexically_relative(root);
+            if (!relative.empty() && *relative.begin() != "..")
+              throw Failed(FailureKind::permission_denied,
+                           "host grant points into private artifact storage");
             const auto child = root.lexically_relative(source);
-            if (!child.empty() && *child.begin() != "..")
-              protected_subtree = std::filesystem::path(bind.target) / child;
+            if (!child.empty() && *child.begin() != ".." &&
+                std::filesystem::exists(root))
+              hidden.push_back(std::filesystem::path(bind.target) / child);
           }
         }
-        argv.insert(argv.end(), {writable ? "--bind" : "--ro-bind", bind.source,
-                                 bind.target});
-        if (!protected_subtree.empty())
-          argv.insert(argv.end(), {"--ro-bind", sp.artifacts_root,
-                                   protected_subtree.string()});
+        argv.insert(argv.end(), {bind.write ? "--bind" : "--ro-bind",
+                                 bind.source, bind.target});
+        for (const auto& path : hidden)
+          argv.insert(argv.end(), {"--tmpfs", path.string()});
       }
-      if (!sp.artifacts_root.empty()) {
-        // Keep search-only directories unreadable even with identity off.
-        // The Card must not be able to regain capabilities in a user namespace.
-        argv.push_back("--disable-userns");
-        argv.insert(argv.end(),
-                    {"--ro-bind", sp.artifacts_root, kSandboxArtifactsRoot});
-        if (!sp.sandbox.identity)
-          argv.insert(argv.end(), {"--cap-drop", "ALL"});
+      if (!artifact_scratch_.empty()) {
+        const auto root = artifact_scratch_.string();
+        argv.insert(argv.end(), {"--ro-bind", root, root});
+        const auto outputs = artifact_scratch_ / "outputs";
+        argv.insert(argv.end(), {"--bind", outputs.string(), outputs.string()});
       }
       if (sp.network)
         for (const char* path :
@@ -638,6 +665,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     }
     if (!sp.channels_borrowed) start_data_reader();
     resume_logs();
+    artifact_guard.path.clear();
   } catch (...) {
     terminate(true);
     throw;
@@ -651,6 +679,7 @@ WorkerProc::WorkerProc(Borrowed borrowed)
       err_fd_(borrowed.descriptors[3]),
       alive_(true),
       scratch_(std::move(borrowed.scratch)),
+      artifact_scratch_(std::move(borrowed.artifact_scratch)),
       call_id_(borrowed.call_id),
       borrowed_(true),
       lease_id_(borrowed.lease),
@@ -737,14 +766,17 @@ WorkerProc::~WorkerProc() {
   }
   terminate();
   std::error_code ec;
-  if (!scratch_.empty()) {
+  for (const auto& directory :
+       {std::filesystem::path(scratch_), artifact_scratch_}) {
+    if (directory.empty()) continue;
     try {
       // Also covers failed/dead and remote workers, and lifetime home data.
-      fs::clear_staging(scratch_, recover_permissions_);
-      std::filesystem::remove(scratch_, ec);
+      fs::clear_staging(directory, recover_permissions_);
+      std::filesystem::remove(directory, ec);
       if (ec)
-        log::warn("cannot remove worker scratch " + scratch_ + " (errno " +
-                  std::to_string(ec.value()) + "): " + ec.message());
+        log::warn("cannot remove worker scratch " + directory.string() +
+                  " (errno " + std::to_string(ec.value()) +
+                  "): " + ec.message());
     } catch (const std::system_error& error) {
       log::warn("cannot clear worker scratch: " + std::string(error.what()));
     }
@@ -783,6 +815,8 @@ void WorkerProc::clear_scratch() {
     return;
   }
   try {
+    if (!artifact_scratch_.empty())
+      fs::clear_staging(artifact_scratch_ / "outputs", recover_permissions_);
     fs::clear_staging(tmp_dir(), recover_permissions_,
                       x11_mounted_ ? ".X11-unix" : "");
   } catch (const std::system_error& error) {
@@ -1097,7 +1131,7 @@ auto WorkerProc::read_data() -> void {
         display_ready_.notify_one();
         continue;
       }
-      std::lock_guard lock(data_mutex_);
+      std::unique_lock lock(data_mutex_);
       if (!awaiting_ || message->call_id() != awaiting_ || pending_) {
         log::warn("discarding a worker reply for inactive call " +
                   std::to_string(message->call_id().value_or(0)));
@@ -1105,6 +1139,25 @@ auto WorkerProc::read_data() -> void {
       }
       trace::Observe(trace_link_, "Card worker", "project core", false, frame,
                      &trace::kFlatBufferCodec);
+      if (const auto* open = message->value_as_WorkerArtifactOpen()) {
+        const auto open_artifact = open_artifact_;
+        const auto call_id = *message->call_id();
+        lock.unlock();
+        const auto path =
+            open_artifact ? open_artifact(wire::artifact_id(*open->id())) : "";
+        lock.lock();
+        if (awaiting_ != call_id) continue;
+        flatbuffers::FlatBufferBuilder b;
+        const auto response = W::CreateWorkerArtifactOpened(
+            b, path.empty() ? 0 : b.CreateString(path));
+        W::FinishWorkerMessageBuffer(
+            b, W::CreateWorkerMessage(b, call_id,
+                                      W::WorkerPayload::WorkerArtifactOpened,
+                                      response.Union()));
+        send(data_fd_, {reinterpret_cast<const char*>(b.GetBufferPointer()),
+                        b.GetSize()});
+        continue;
+      }
       WorkerOutcome outcome;
       if (const auto* result = message->value_as_WorkerResult()) {
         outcome.created = wire::artifact_ids(result->created());
@@ -1148,7 +1201,8 @@ auto WorkerProc::read_data() -> void {
 
 WorkerOutcome WorkerProc::call(
     std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
-    std::optional<std::chrono::steady_clock::time_point> deadline) {
+    std::optional<std::chrono::steady_clock::time_point> deadline,
+    ArtifactOpen open_artifact) {
   {
     std::lock_guard lock(data_mutex_);
     if (data_closed_)
@@ -1156,6 +1210,7 @@ WorkerOutcome WorkerProc::call(
               FailureData::make(FailureKind::worker_failed,
                                 "worker data channel closed")};
     awaiting_ = call_id;
+    open_artifact_ = std::move(open_artifact);
   }
   try {
     send_frame(trace_link_, data_fd_, frame, cancel, deadline);
@@ -1184,6 +1239,7 @@ WorkerOutcome WorkerProc::call(
         const bool disconnected = data_closed_;
         pending_.reset();
         awaiting_ = 0;
+        open_artifact_ = {};
         lock.unlock();
         if (disconnected) terminate();
         read_logs(false);
@@ -1232,7 +1288,8 @@ std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
                               std::optional<uint64_t> deadline_ms,
                               const std::filesystem::path& artifact_directory,
                               std::span<const ArtifactGrant> grants,
-                              bool drain_display) {
+                              bool drain_display,
+                              uint64_t invocation_sequence) {
   flatbuffers::FlatBufferBuilder b(64 * 1024);
   // The Card reads each nested message in place.
   auto message = [&](const std::string& s) {
@@ -1269,6 +1326,7 @@ std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
   cb.add_grants(grant_vector);
   cb.add_artifact_directory(artifact_root);
   cb.add_drain_display(drain_display);
+  cb.add_invocation_sequence(invocation_sequence);
   cb.add_outputs(outsv);
   if (deadline_ms) cb.add_deadline_ms(*deadline_ms);
   auto call = cb.Finish();

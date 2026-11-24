@@ -68,6 +68,49 @@ def shown(c, run_id, name="show"):
     return decode_scalar(read_output(c, run_id, card=name))
 
 
+def test_artifacts_cross_virtiofs_with_read_only_grants(env):
+    schema = """include "tsugumi/artifact.fbs";
+      table Outputs { doc:tsugumi.Artifact (required); } root_type Outputs;"""
+    source = python_card("""
+from pathlib import Path
+from card import Artifact, Output
+
+def run(inputs):
+    artifact, directory = Artifact.dir()
+    directory = Path(directory)
+    (directory / "nested").mkdir()
+    (directory / "nested" / "report.txt").write_text("shared VM")
+    return Output(doc=artifact)
+""", outputs=schema)
+    sink = python_card(txt_main("""
+    import errno
+    import os
+    directory = input.require("doc").open()
+    assert not os.path.exists("/project/.tsugumi/artifacts")
+    member = directory / "nested" / "report.txt"
+    for operation in (lambda: member.open("a"), lambda: member.chmod(0o600)):
+        try:
+            operation()
+        except OSError as error:
+            assert error.errno == errno.EROFS, error
+        else:
+            raise AssertionError("input accepted a write operation")
+    RESULT = member.read_text()
+"""), outputs=TXT, inputs=["doc"], recordIO=True)
+    client = load(env, {"source": source, "show": sink},
+                  [card("source", "source"), card("show", "show")],
+                  [conn("source", "doc", "show", "doc")])
+    run_id, status = run_and_wait(client, "source")
+    assert status.state == RunState.succeeded, (
+        log(client, run_id, "source"), log(client, run_id, "show")
+    )
+    assert shown(client, run_id) == "shared VM"
+    root = env.project / ".tsugumi" / "artifacts" / run_id / "source" / "@1" / "0"
+    member = root / "nested" / "report.txt"
+    assert member.read_text() == "shared VM"
+    assert all(not node.stat().st_mode & 0o222 for node in (root, root / "nested", member))
+
+
 def test_backpressure_stall_ends_the_run(env):
     """A feedback producer fills wait.value while wait.condition awaits the
     same join, so the run reports the full queue."""

@@ -9,7 +9,7 @@ def corrupt_retained_file(artifact: Path, original: bytes) -> None:
     """Replace a unique fixture output after the execution cache is cleared.
 
     Match complete content rather than filenames, database rows or directory names.
-    Start at the granted artifact directory to avoid listing its holding folders.
+    Start at the retained artifact directory.
     """
     if not original:
         raise ValueError("artifact fault injection requires unique nonempty content")

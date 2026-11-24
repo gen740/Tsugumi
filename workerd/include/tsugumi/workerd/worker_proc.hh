@@ -47,8 +47,10 @@ struct WorkerSpawn {
   SandboxOptions sandbox;
   // Fixed read-only runtime paths.
   std::vector<std::string> ro_paths;
-  // Linux mounts this at kSandboxArtifactsRoot. Seatbelt allows it in place.
-  std::string artifacts_root;
+  // Hide the store and private staging even through overlapping host grants.
+  std::string artifact_store;
+  std::filesystem::path artifact_staging;
+  bool artifact_inputs = false;
   // Covered with an empty tmpfs for sandbox: false Cards (the control folder
   // with the RPC token, tsugumid's state); ro paths and the scratch folder
   // inside them are bound again on top.
@@ -67,8 +69,6 @@ struct WorkerSpawn {
   std::optional<uid_t> uid;
   std::optional<gid_t> gid;
 };
-
-inline constexpr auto kSandboxArtifactsRoot = "/tsugumi-artifacts";
 
 // The opaque output envelope the worker reported.
 struct RawOutput {
@@ -118,6 +118,7 @@ class WorkerProc {
   struct Borrowed {
     std::array<int, 4> descriptors;
     std::string scratch;
+    std::filesystem::path artifact_scratch;
     uint64_t call_id = 0;
     uint64_t lease = 0;
     std::function<void()> clear;
@@ -128,11 +129,13 @@ class WorkerProc {
   ~WorkerProc();
   WorkerProc(const WorkerProc&) = delete;
 
+  using ArtifactOpen = std::function<std::string(const ArtifactKey&)>;
   // Sends one call and waits for its result. On cancel or deadline the worker
   // gets WorkerCancel, then the process group is killed after one second.
   WorkerOutcome call(
       std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
-      std::optional<std::chrono::steady_clock::time_point> deadline);
+      std::optional<std::chrono::steady_clock::time_point> deadline,
+      ArtifactOpen open_artifact = {});
   uint64_t next_call_id() { return ++call_id_; }
   auto call_id() const -> uint64_t { return call_id_; }
   auto set_call_id(uint64_t value) -> void { call_id_ = value; }
@@ -144,6 +147,7 @@ class WorkerProc {
   auto idle() -> void;
   auto resume(Borrowed borrowed) -> void;
   auto scratch() const -> const std::string& { return scratch_; }
+  auto artifact_scratch() const -> const auto& { return artifact_scratch_; }
   // The sink may run on the reader thread between invocations. It must own
   // its captures and return promptly.
   auto set_display(DisplaySink display) -> void;
@@ -181,6 +185,7 @@ class WorkerProc {
   int err_fd_ = -1;
   bool alive_ = false;
   std::string scratch_;
+  std::filesystem::path artifact_scratch_;
   std::filesystem::path cgroup_;
   bool x11_mounted_ = false;
   // Darwin's permission repair runs with the same authority as the Card.
@@ -206,6 +211,7 @@ class WorkerProc {
   uint64_t awaiting_ = 0;
   bool data_closed_ = false;
   std::optional<WorkerOutcome> pending_;
+  ArtifactOpen open_artifact_;
   std::shared_ptr<DisplaySink> display_;
   LogSink logs_;
   std::mutex log_mu_;
@@ -227,6 +233,7 @@ std::string worker_call_frame(
     const std::vector<types::PortType>& outputs,
     std::optional<uint64_t> deadline_ms,
     const std::filesystem::path& artifact_directory = {},
-    std::span<const ArtifactGrant> grants = {}, bool drain_display = false);
+    std::span<const ArtifactGrant> grants = {}, bool drain_display = false,
+    uint64_t invocation_sequence = 0);
 
 }  // namespace tsugumi

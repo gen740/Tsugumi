@@ -1,4 +1,4 @@
-"""Exercise the project artifact tree under Seatbelt and bubblewrap."""
+"""Exercise invocation artifact directories under Seatbelt and bubblewrap."""
 
 import json
 import stat
@@ -10,90 +10,98 @@ from harness.observations import decode_scalar, read_output
 from harness.real_cards import log
 from projects import card, conn, run_and_wait, write_nix_project
 from test_worker_loading import DIRECTORY, native_card
-from tsugumi_client import new_id, path
+from tsugumi_client import new_id, text
 from Tsugumi.Data.RunState import RunState
 
 
 @pytest.mark.environment
 @pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason="requires Seatbelt or bubblewrap")
-def test_artifact_holders_are_searchable_but_not_listable(core_factory, project):
+def test_invocation_can_open_only_its_read_only_artifact_grants(core_factory, project):
     stored_root = project.resolve() / ".tsugumi/artifacts"
-    sandbox_root = stored_root if sys.platform == "darwin" else "/tsugumi-artifacts"
-    check_holders = r"""
-        static bool protected_holder(const fs::path& path) {
-          struct stat info{};
-          if (stat(path.c_str(), &info) != 0 || !S_ISDIR(info.st_mode) ||
-              (info.st_mode & 0444) != 0) return false;
-          if (auto* listing = opendir(path.c_str())) {
-            closedir(listing);
-            return false;
-          }
-          if (errno != EACCES && errno != EPERM) return false;
-          return chmod(path.c_str(), 0700) != 0;
-        }
-    """
     declarations = (
         "#include <cerrno>\n#include <dirent.h>\n"
-        f"static const fs::path artifact_root = {json.dumps(str(sandbox_root))};\n"
-        + check_holders
+        f"static const fs::path store = {json.dumps(str(stored_root))};\n"
     )
     source = native_card(r"""
-        if (!protected_holder(artifact_root)) return 1;
-        tsugumi_artifact_id id;
+        if (auto* listing = opendir(store.c_str())) {
+          closedir(listing);
+          return 1;
+        }
+        tsugumi_artifact_id id, ungranted;
         const auto directory = fs::path(create_artifact(call, id));
-        std::ofstream(directory / "report.txt") << "artifact";
+        const auto private_output = fs::path(create_artifact(call, ungranted));
+        fs::create_directories(directory / "nested/empty");
+        std::ofstream(directory / "nested/report.txt") << "artifact";
+        std::ofstream(private_output / "hidden.txt") << "ungranted";
         out.artifact(id);
     """, declarations=declarations, outputs=DIRECTORY)
     sink = native_card(r"""
-        tsugumi_artifact_id unknown{};
+        tsugumi_artifact_id ungranted;
+        std::copy_n(in.inputs()->Get(0)->artifacts()->Get(0)->bytes()->data(), 16,
+                    ungranted.bytes);
+        ungranted.bytes[15] = 1;
         tsugumi_bytes unused;
-        if (call.effects->artifact_open(call.host, &unknown, &unused) >= 0) return 1;
+        if (call.effects->artifact_open(call.host, &ungranted, &unused) >= 0) return 1;
         const auto directory = fs::path(open_artifact(call, in));
-        if (directory.empty()) return 2;
-        const auto relative = directory.lexically_relative(artifact_root);
-        if (std::distance(relative.begin(), relative.end()) != 4 ||
-            *relative.begin() == ".." || directory.filename().string().size() != 32)
-          return 3;
-        for (auto holder = directory.parent_path(); ; holder = holder.parent_path()) {
-          if (!protected_holder(holder)) return 4;
-          if (holder == artifact_root) break;
-        }
-        const auto member = directory / "report.txt";
+        if (directory.empty() || directory.string().starts_with(store.string())) return 2;
+        if (fs::path(open_artifact(call, in)) != directory) return 3;
+        if (std::distance(fs::directory_iterator(directory.parent_path()),
+                          fs::directory_iterator{}) != 1) return 4;
+        if (!fs::is_empty(directory / "nested/empty")) return 5;
+        const auto member = directory / "nested/report.txt";
         std::string contents;
         std::ifstream(member) >> contents;
-        if (contents != "artifact") return 5;
+        if (contents != "artifact") return 6;
         if (std::ofstream(member, std::ios::app) ||
             std::ofstream(directory / "extra") ||
             chmod(directory.c_str(), 0700) == 0 ||
-            chmod(member.c_str(), 0600) == 0) return 6;
+            chmod(member.c_str(), 0600) == 0) return 7;
+#ifdef __linux__
+        if (errno != EROFS) return 8;
+#endif
         const char* granted_project = std::getenv("TSUGUMI_GRANT_PROJECT");
-        if (!granted_project) return 7;
-        const auto alias = fs::path(granted_project) / ".tsugumi/artifacts" / relative;
-        if (!fs::is_directory(alias) || chmod(alias.c_str(), 0700) == 0) return 8;
+        if (!granted_project) return 9;
+        if (auto* listing = opendir((fs::path(granted_project) / ".tsugumi/artifacts").c_str())) {
+          while (auto* entry = readdir(listing)) {
+            const std::string_view name(entry->d_name);
+            if (name != "." && name != "..") {
+              closedir(listing);
+              return 10;
+            }
+          }
+          closedir(listing);
+        }
         out.number(contents.size());
-    """, declarations=declarations, inputs=["doc"], recordIO=True, reuseWorker=True,
+    """, declarations=declarations, inputs=["doc"], recordIO=True,
         grants={"hostPaths": [{"name": "project", "path": str(project), "write": True}]})
     write_nix_project(project, {"source": source, "sink": sink},
                       [card("source", "source"), card("sink", "sink")],
                       [conn("source", "doc", "sink", "doc")])
     client = core_factory(project_root=project).connect()
-    for reused in (False, True):
+    previous = 0
+    for _ in range(2):
         run_id, status = run_and_wait(client, "source")
         assert status.state == RunState.succeeded, (
             vars(status.failure) if status.failure else None,
             log(client, run_id, "source"), log(client, run_id, "sink")
         )
         assert decode_scalar(read_output(client, run_id, card="sink"), "uint64") == len("artifact")
-        inv, = client.call("RunInvocationsRequest", runId=run_id, card=path("sink")).records
-        assert inv.workerReused == reused
+        first, second = client.call("ArtifactListRequest", runId=run_id).artifacts
+        sequence, counter = map(int, text(first.artifactId).split("."))
+        assert sequence > previous and counter == 0
+        assert text(second.artifactId) == f"{sequence}.1"
+        previous = sequence
         run_root = stored_root / run_id
-        for holder in (stored_root, run_root, run_root / "source", run_root / "source/@1"):
-            assert stat.S_IMODE(holder.stat().st_mode) == 0o311
+        saved = run_root / "source/@1/0"
+        assert (saved / "nested/report.txt").read_text() == "artifact"
+        assert (run_root / "source/@1/1/hidden.txt").read_text() == "ungranted"
+        for path in (saved, *saved.rglob("*")):
+            assert not stat.S_IMODE(path.stat().st_mode) & 0o222
 
-    removed = client.call("RunHistoryDeleteRequest", opId=new_id(),
-                          restrictToRunIds=True, runIds=[run_id])
-    assert removed.deletedRuns == 1
-    assert not run_root.exists()
+        removed = client.call("RunHistoryDeleteRequest", opId=new_id(),
+                              restrictToRunIds=True, runIds=[run_id])
+        assert removed.deletedRuns == 1
+        assert not run_root.exists()
 
 
 @pytest.mark.environment
