@@ -1,5 +1,5 @@
 """Writes a deterministic sales table: the same seed gives the same CSV."""
-from card import Artifact, Input, Output
+from card import Artifact, Input, Output, params
 import csv
 import os
 import random
@@ -11,7 +11,7 @@ PRODUCTS = ["Kettle", "Lamp", "Chair", "Desk", "Shelf"]
 
 def run(inputs: Input) -> Output:
     artifact, directory = Artifact.dir()
-    config = inputs.config
+    config = params
     rng = random.Random(config.seed)
     path = os.path.join(directory, "sales.csv")
     with open(path, "w", newline="") as f:

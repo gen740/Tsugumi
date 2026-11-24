@@ -18,7 +18,7 @@ const { CardNodeView, idleText } = await import('../src/ui/cardNode')
 const { miniMapLayout } = await import('../src/ui/versions')
 const { parse } = await import('../shared/json')
 
-const missing = 'definitions/old/_card.json: "type" is required (one of code, draft, trigger, input, merge, collect, subgraph)'
+const missing = 'definitions/old/_card.json: "type" is required (one of code, draft, trigger, merge, collect, subgraph)'
 const diagnostic = (id: string, message: string) => Object.assign(new DT.DiagnosticT(), {
   severity: DT.Severity.error, code: 'invalid_document', message, card: Object.assign(new DT.CardPathT(), { segments: [id] }),
   path: `definitions/${id}/_card.json`,

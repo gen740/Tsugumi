@@ -20,7 +20,6 @@ namespace tsugumi {
 enum class CardType {
   Code,
   Trigger,
-  Input,
   Merge,
   Collect,
   Subgraph,

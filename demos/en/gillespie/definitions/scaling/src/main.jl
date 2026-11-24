@@ -34,10 +34,10 @@ end
 # Fewer molecules, more noise: the coefficient of variation is 1 / sqrt(mean).
 function main(inputs, report)
     outputs = Dict{String,Any}()
-    m = inputs.settings
+    m = params
     k, gamma, runs = m["synthesis"], m["degradation"], Int(m["runs"])
-    volumes = sort(Float64.(inputs.params["volumes"]))
-    shown = Float64.(inputs.params["shown_volumes"])
+    volumes = sort(Float64.(params["volumes"]))
+    shown = Float64.(params["shown_volumes"])
     rng = Xoshiro(m["seed"] + 2)
     t_end = 8 / gamma
 

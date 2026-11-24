@@ -15,7 +15,7 @@ EVENTS_FBS = "table Events { value:string; }\ntable Outputs { events:Events (req
 
 
 def make(root: Path) -> None:
-    write(root, {"trigger": {"type": "trigger"}, "input": {"type": "input"}, "sink": SINK},
+    write(root, {"trigger": {"type": "trigger"}, "input": {"type": "code"}, "sink": SINK},
           [card("start", "trigger"), card("load", "input"), card("show", "sink")],
           [conn("load", "events", "show", "in")], name="files")
     put(root / "definitions" / "load" / "params.nix", '{ value = "data/events.txt"; }')
@@ -59,7 +59,7 @@ def test_put_definition_can_keep_the_readme(tmp_path, core_factory):
     put(root / "definitions" / "load" / "README.md", readme)
     c = core_factory(project_root=root, mocked_builds=True).connect()
     snap = c.call("ProjectInspectRequest")
-    card = {"type": "input", "maxRuns": 2}
+    card = {"type": "code", "maxRuns": 2}
     c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
            changes=[change("PutDefinition", id="load", cardJson=json.dumps(card_document(card)), keepReadme=True, keepComments=True)])
     assert bytes(c.call("ProjectFileReadRequest", path="definitions/load/README.md").bytes).decode() == readme

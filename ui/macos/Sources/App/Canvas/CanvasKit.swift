@@ -175,12 +175,6 @@ struct PortData: Hashable {
   var typeName: String?
 }
 
-struct ParamData: Hashable {
-  var name: String
-  var type: String
-  var value: String
-}
-
 /// What the user and the Agent write about a Card (_comments.json), and the record
 /// of who did what ("agent" or "user"; nil when not recorded).
 struct CardComment: Equatable, Identifiable {
@@ -236,7 +230,6 @@ struct CardNodeData: Equatable {
   var summary: String?
   var inputs: [PortData]
   var outputs: [PortData]
-  var params: [ParamData] = []
   var result: String?
   var state: Tsugumi_Data_CardState?
   var executionList = false
@@ -320,7 +313,6 @@ struct CardGeometry {
   static let header: CGFloat = 32
   static let summaryRow: CGFloat = 15
   static let portRow: CGFloat = 15
-  static let paramRow: CGFloat = 26
   static let resultRow: CGFloat = 18
   static let stageRow: CGFloat = 22
   /// A Draft's content on the Card (three lines), and while it is being written.
@@ -345,7 +337,6 @@ struct CardGeometry {
   let outputs: [String]
   let collapsed: Bool
   let summary: Bool
-  let params: Int
   let result: Bool
   let stages: Bool
   let flow: FlowDirection
@@ -366,7 +357,6 @@ struct CardGeometry {
     untitled = d.isDraft && d.untitled && !d.draftEditing && !d.collapsed
     // The small ones keep their shape: their summary is on hover.
     summary = d.summary != nil && !d.isRouting && d.kind != .trigger && !d.isDraft
-    params = d.params.count
     // Rows are reserved by kind, so a run never makes a Card grow or shrink.
     result = d.result != nil
     stages = d.kind == .code
@@ -512,7 +502,7 @@ struct CardGeometry {
   }
   /// A Card's height without its port rows.
   private var contentHeight: CGFloat {
-    topLabels + headerRow + (summary ? Self.summaryRow : 0) + draftRow + CGFloat(params) * Self.paramRow +
+    topLabels + headerRow + (summary ? Self.summaryRow : 0) + draftRow +
       (result ? Self.resultRow : 0) + (stages ? Self.stageRow : 0) + bottomLabels + 4
   }
   var height: CGFloat { size.height }
@@ -919,10 +909,7 @@ struct CardNodeView: View {
   let flow: FlowDirection
   var zoom: Double = 1
   var selected = false
-  /// Committing an edited param of an input Card (nil: read-only).
-  var onParamBegin: ((InlineParamEdit, String) -> UInt64)?
-  var onParamCommit: ((String, String, InlineParamEdit?, Bool) async -> Bool)?
-  var paramsEditable = true
+  var portsEditable = true
   var onPortDrag: ((String, CGPoint) -> Void)?
   var onPortDrop: ((String, CGPoint) -> Void)?
   /// Dragging from an input port (a wire drawn back to an output).
@@ -968,7 +955,7 @@ struct CardNodeView: View {
     .frame(width: size.width, height: size.height, alignment: .topLeading)
     // The outline and the ports: a port sits on the edge, and the half of it
     // outside the outline must still start a wire.
-    .contentShape(Self.hitShape(data, flow: flow, zoom: zoom, newPorts: onPortDrag != nil && paramsEditable))
+    .contentShape(Self.hitShape(data, flow: flow, zoom: zoom, newPorts: onPortDrag != nil && portsEditable))
     .accessibilityElement(children: .contain)
     .accessibilityLabel(accessibilityText)
   }
@@ -1047,13 +1034,6 @@ struct CardNodeView: View {
             .padding(.horizontal, s(10)).frame(height: s(CardGeometry.summaryRow), alignment: .top)
         }
         if flow == .leftToRight { Color.clear.frame(height: s(g.portBand)) }
-        ForEach(data.params, id: \.name) { p in
-          ParamFieldView(param: p, editable: onParamCommit != nil && paramsEditable, zoom: zoom, revision: { onParamBegin?($0, p.name) ?? 0 }) { text, edit, overwrite in
-            await onParamCommit?(p.name, text, edit, overwrite) ?? false
-          }
-            .frame(height: s(CardGeometry.paramRow))
-            .padding(.horizontal, s(10))
-        }
         if g.result {
           HStack(spacing: s(4)) {
             Image(systemName: "text.below.photo").font(font(9))
@@ -1284,7 +1264,7 @@ struct CardNodeView: View {
             .onEnded { onPortDrop?(p.name, $0.location) })
           .help(portHelp(p, output: true) + (onPortDrag != nil ? String(localized: "（ドラッグして入力ポートへ接続）") : ""))
       }
-      if onPortDrag != nil, paramsEditable {
+      if onPortDrag != nil, portsEditable {
         newPortMark(g, output: false)
         newPortMark(g, output: true)
       }
@@ -1419,77 +1399,6 @@ struct StageStrip: View {
     if item.status == .failed || item.status == .cancelled { t += String(localized: "（クリックでこの段階のログ）") }
     else if onTap != nil, item.status != .pending { t += String(localized: "（クリックでログ）") }
     return t
-  }
-}
-
-/// A param shown on an input Card; committed on Return or focus loss.
-struct ParamFieldView: View {
-  let param: ParamData
-  let editable: Bool
-  var zoom: Double = 1
-  var revision: ((InlineParamEdit) -> UInt64)?
-  let commit: (String, InlineParamEdit, Bool) async -> Bool
-  @State private var edit = InlineParamEdit()
-  @State private var text = ""
-  @State private var editing = false
-  @FocusState private var focused: Bool
-
-  var body: some View {
-    let z = CGFloat(zoom)
-    HStack(spacing: 6 * z) {
-      Text(param.name).font(.system(size: max(6, 10 * z))).foregroundStyle(.secondary).lineLimit(1)
-      if param.type == "bool" {
-        Toggle(param.name, isOn: Binding(get: { param.value == "true" }, set: { value in
-          edit.begin(param.value, rev: revision?(edit) ?? 0)
-          text = value ? "true" : "false"
-          editing = true
-          finish()
-        }))
-          .toggleStyle(.switch).controlSize(.mini).labelsHidden()
-          .disabled(!editable || edit.revision.applying)
-      } else {
-        // The value is drawn as text at the zoom; the field (an AppKit text
-        // field, which keeps its own layout) exists only while editing, so a
-        // zoom never leaves the text out of place.
-        Group {
-          if editing {
-            TextField("", text: $text)
-              .textFieldStyle(.plain)
-              .font(.system(size: max(6, 11 * z), design: .monospaced))
-              .focused($focused)
-              .onSubmit { finish() }
-              .onChange(of: focused) { if !focused { finish() } }
-              .onAppear { focused = true }
-          } else {
-            Text(text.isEmpty ? " " : text)
-              .font(.system(size: max(6, 11 * z), design: .monospaced))
-              .lineLimit(1)
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .contentShape(Rectangle())
-              .onTapGesture { if editable { edit.begin(param.value, rev: revision?(edit) ?? 0); text = param.value; editing = true } }
-          }
-        }
-        .padding(.horizontal, 4 * z)
-        .frame(height: 19 * z)
-        .background(RoundedRectangle(cornerRadius: 4 * z).fill(Color(nsColor: .textBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 4 * z).strokeBorder(focused ? Color.accentColor : .secondary.opacity(0.35)))
-        .help(editable ? "\(param.type)・クリックして編集、Return で反映" : String(localized: "実行中は変更できません"))
-      }
-    }
-    .popover(isPresented: Binding(get: { edit.revision.conflictRev != nil || edit.revision.error != nil }, set: { _ in })) {
-      RevisionEditNotice(edit: edit.revision, text: { text }, overwrite: { finish(overwrite: true) }, reload: {
-        edit.begin(param.value, rev: revision?(edit) ?? 0); text = param.value; editing = false
-      }).padding().frame(width: 320)
-    }
-    .onAppear { text = param.value }
-    .onChange(of: param.value) { if !editing { text = param.value } }
-  }
-
-  private func finish(overwrite: Bool = false) {
-    guard editing, !edit.revision.applying else { return }
-    if text == edit.initial { editing = false; text = param.value; return }
-    let sent = text
-    Task { if await commit(sent, edit, overwrite), text == sent { editing = false } }
   }
 }
 
@@ -2198,9 +2107,8 @@ struct CanvasGrid: View {
 enum PreviewSamples {
   static func items() -> [CanvasItem] {
     func port(_ n: String) -> PortData { PortData(name: n, typeName: "t.Number") }
-    let input = CardNodeData(title: String(localized: "初期値"), kind: .input, summary: nil,
-                             inputs: [port("start")], outputs: [port("value")],
-                             params: [ParamData(name: "value", type: "int", value: "27")],
+    let input = CardNodeData(title: String(localized: "初期値"), kind: .code, summary: nil,
+                             inputs: [], outputs: [port("value")],
                              state: .succeeded, invocation: 1)
     var step = CardNodeData(title: String(localized: "n / 2"), kind: .code,
                             summary: String(localized: "偶数を半分にする"), inputs: [port("number")], outputs: [port("next")],

@@ -19,7 +19,7 @@ import { environmentHost, environmentProgress, environmentState, type EnvPublicS
 import { parse, arr, bool, clone, dbl, get, isObj, J, jeq, JObj, numText, obj, real, serialize, str, tryParse } from '../../shared/json'
 import { cardPath, D, R, LiveDisplayUpdate, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../wire/rpc'
 import {
-  applicableStages, CardGeometry, CardNodeData, mergeStageStatus, orderedPorts, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
+  applicableStages, CardGeometry, CardNodeData, mergeStageStatus, orderedPorts, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
   snapToGrid,
 } from './canvasKit'
 import type { LayoutBar, LayoutScene } from '../../shared/layoutScene'
@@ -2014,7 +2014,7 @@ export class ProjectSession extends Observable {
     const cards = ids.map((id) => {
       const k = key([...scope, id]), g = this.geometry(k)
       const ports = (names: string[], output: boolean) => names.map((name) => ({ name, ...g.port(name, output) }))
-      return { id, ...this.placedPosition(k), ...g.size, reorderable: ['code', 'input', 'subgraph'].includes(this.kind(k)),
+      return { id, ...this.placedPosition(k), ...g.size, reorderable: ['code', 'subgraph'].includes(this.kind(k)),
         // Unnamed visual anchors locate Draft wires without declaring Card ports.
         inputs: ports(this.kind(k) === 'draft' ? [''] : g.inputs, false), outputs: ports(this.kind(k) === 'draft' ? [''] : g.outputs, true) }
     })
@@ -2215,13 +2215,6 @@ export class ProjectSession extends Observable {
     return { inputs: ins, outputs: outs }
   }
 
-  /** Scalar parameters editable on Input Cards. */
-  inlineParams(k: CardKey): ParamData[] {
-    if (this.kind(k) !== 'input') return []
-    return (this.resolution.get(k)?.parameters ?? []).filter(p => !p.type.startsWith('['))
-      .map(p => ({ name: p.name, type: p.type, value: paramText(p.value) }))
-  }
-
   cardDescription(k: CardKey): string | undefined {
     return str(get(this.cardMeta(k), 'description')) || undefined
   }
@@ -2348,7 +2341,7 @@ export class ProjectSession extends Observable {
       state?.executionState === D.RemoteExecutionState.cancelling ? remoteExecutionLabel(state.executionState) : undefined
     return {
       title: title?.trim() ? title : this.displayName(k), kind, runMark: state || batch ? runMark(this.runStatus) : undefined, symbol: kind === 'invalid' ? undefined : sym || undefined, summary: summary || undefined,
-      inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k),
+      inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true),
       result: state?.transfer ?? pending ?? (!state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
       state: kind === 'subgraph' ? this.compositeState(k) : this.canvasCardState(k), stage: empty ? undefined : this.stageProgress(k), executionList,
       invocation: empty ? 0n : state?.invocation ?? 0n, runContinues: this.runActive,
@@ -2371,7 +2364,7 @@ export class ProjectSession extends Observable {
   // Shown ports and their order (the layout's inputOrder / outputOrder) are
   // presentation: each UI works them out itself rather than asking hostd.
   private visualPorts(k: CardKey, ports: PortData[], output: boolean): PortData[] {
-    if (!['code', 'draft', 'input', 'subgraph'].includes(this.kind(k))) return ports
+    if (!['code', 'draft', 'subgraph'].includes(this.kind(k))) return ports
     const saved = arr(get(this.layoutOf(path(k).slice(0, -1)), 'cards', this.layoutKey(k), output ? 'outputOrder' : 'inputOrder')) ?? []
     return orderedPorts(ports, saved.flatMap(v => typeof v === 'string' ? [v] : []))
   }
@@ -2431,17 +2424,17 @@ export class ProjectSession extends Observable {
 /** What a Card is, for choosing what the canvas and the editor offer.
  *  `invalid`: its _card.json has no type or one this build does not know (or
  *  one that does not match `external`), a definition error the core reports. */
-export type CardKind = 'trigger' | 'input' | 'merge' | 'collect' | 'draft' | 'subgraph' | 'code' | 'invalid'
+export type CardKind = 'trigger' | 'merge' | 'collect' | 'draft' | 'subgraph' | 'code' | 'invalid'
 /** The _card.json "type" names. */
-const KINDS: CardKind[] = ['trigger', 'input', 'merge', 'collect', 'draft', 'subgraph', 'code']
+const KINDS: CardKind[] = ['trigger', 'merge', 'collect', 'draft', 'subgraph', 'code']
 
 export const KIND_LABEL: Record<CardKind, string> = {
-  trigger: L('開始'), input: L('入力'), merge: L('合流'), collect: L('収集'),
+  trigger: L('開始'), merge: L('合流'), collect: L('収集'),
   draft: 'Draft', subgraph: 'Card in Card', code: L('処理'), invalid: L('定義エラー'),
 }
 
 export const KIND_ICON: Record<CardKind, string> = {
-  trigger: 'play.circle', input: 'slider.horizontal.3',
+  trigger: 'play.circle',
   merge: 'arrow.triangle.merge', collect: 'line.3.horizontal.decrease', draft: 'pencil.and.outline', subgraph: 'link',
   code: 'chevron.left.forwardslash.chevron.right', invalid: 'xmark.octagon',
 }
@@ -2460,8 +2453,6 @@ export function definitionKind(def: J | undefined): CardKind {
 const BUILTIN_CARDS = {
   draft: H.BuiltinCard.Draft,
   trigger: H.BuiltinCard.Trigger,
-  input: H.BuiltinCard.InputValue,
-  input_bool: H.BuiltinCard.BooleanInput,
   merge: H.BuiltinCard.Merge,
   collect: H.BuiltinCard.Collect,
 }
@@ -2469,12 +2460,10 @@ export type DefinitionTemplate = keyof typeof BUILTIN_CARDS
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   { id: 'draft', label: L('Draft') },
   { id: 'trigger', label: L('トリガー') },
-  { id: 'input', label: L('入力値') },
-  { id: 'input_bool', label: L('真偽値の入力') },
   { id: 'merge', label: L('合流') },
   { id: 'collect', label: L('収集') },
 ]
-export const templateBaseName = (t: DefinitionTemplate) => t === 'input_bool' ? 'condition' : t === 'trigger' ? 'start' : t
+export const templateBaseName = (t: DefinitionTemplate) => t === 'trigger' ? 'start' : t
 
 export const NOTE_COLORS: { id: string; label: string }[] = [
   { id: 'yellow', label: L('黄') }, { id: 'blue', label: L('青') }, { id: 'green', label: L('緑') }, { id: 'pink', label: L('桃') }, { id: 'gray', label: L('灰') },

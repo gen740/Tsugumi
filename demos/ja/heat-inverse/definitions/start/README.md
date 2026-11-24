@@ -1,4 +1,4 @@
 ---
 title: start
-description: 棒と測定の条件（settings）から計算を始める
+description: forward のパラメータで計算を始める
 ---

@@ -50,8 +50,7 @@ The list uses the original history record. Configured cache endpoints, where rec
 
 Open **Artifacts** for a Card and select a run. Preview or export the files in
 an artifact directory. Created artifacts are sealed at call completion and kept
-under `.tsugumi/artifacts/<run-id>/`. Store-backed Input Card artifacts point
-to immutable Nix store directories. Forwarded IDs can refer to an earlier
+under `.tsugumi/artifacts/<run-id>/`. Forwarded IDs can refer to an earlier
 run's artifact. Run deletion removes artifacts owned by the deleted run.
 
 ## Follow evidence from chat

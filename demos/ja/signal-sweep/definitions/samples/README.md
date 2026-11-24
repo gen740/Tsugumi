@@ -1,4 +1,0 @@
----
-title: samples
-description: 3 つの信号強度を値ごとに 1 回ずつ送る（値の掃引）
----

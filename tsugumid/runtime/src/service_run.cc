@@ -125,10 +125,9 @@ void Service::evaluate_nix(RequestIn& req) {
   if (!node)
     throw Failed(FailureKind::not_found, "unknown card " + path_key(card),
                  {{"card", path_key(card)}});
-  if (node->kind != CardType::Code && node->kind != CardType::Draft &&
-      node->kind != CardType::Input)
+  if (node->kind != CardType::Code && node->kind != CardType::Draft)
     throw Failed(FailureKind::invalid_request,
-                 "Nix evaluation requires a Code, Input or Draft Card",
+                 "Nix evaluation requires a Code or Draft Card",
                  {{"card", path_key(card)}});
   if (r->expression()->size() == 0)
     throw Failed(FailureKind::invalid_request, "expression is empty");
@@ -881,13 +880,9 @@ auto artifact_holders(const std::string& run, const CardPath& card,
 
 auto artifact_location(const stdfs::path& project, const ArtifactData& artifact)
     -> stdfs::path {
-  if (artifact.origin == "store") {
-    const stdfs::path path(artifact.location);
-    if (path.is_absolute() && fs::resolves_inside(NixStore::store_dir(), path))
-      return path;
-  } else if (artifact.origin == "created" &&
-             artifact.location.starts_with(".tsugumi/artifacts/") &&
-             fs::valid_relative_path(artifact.location)) {
+  if (artifact.origin == "created" &&
+      artifact.location.starts_with(".tsugumi/artifacts/") &&
+      fs::valid_relative_path(artifact.location)) {
     const auto path = project / artifact.location;
     if (fs::resolves_inside(project / ".tsugumi/artifacts", path)) return path;
   }
@@ -925,17 +920,9 @@ auto Service::artifact_grants(std::span<const Value> inputs)
       const auto path = artifact_location(opts_.root, *record);
       if (!stdfs::is_directory(stdfs::symlink_status(path)))
         throw Failed(FailureKind::input_missing, "an input artifact directory is missing");
-      if (record->origin == "store") {
-        grants.push_back({id, path.string(),
-                          artifact_holders(record->run_id, record->card,
-                                           record->invocation) /
-                              crypto::hex(id.data(), id.size()),
-                          path.string()});
-      } else {
-        grants.push_back(
-            {id, path.string(),
-             path.lexically_relative(store_->state_dir() / "artifacts")});
-      }
+      grants.push_back(
+          {id, path.string(),
+           path.lexically_relative(store_->state_dir() / "artifacts")});
     }
     return grants;
   });
@@ -999,27 +986,6 @@ auto Service::seal_artifacts(const InvocationSummaryData& invocation,
       throw;
     }
   }
-}
-
-auto Service::register_store_artifact(const std::string& run, const CardPath& card,
-                                      uint64_t invocation, const ArtifactKey& id,
-                                      const stdfs::path& store_path) -> void {
-  const auto created = now_ms();
-  ArtifactData record{id, run, card, invocation, "store", store_path.string(),
-                      created, created, std::nullopt, std::nullopt};
-  const auto path = artifact_location(opts_.root, record);
-  if (id.size() != 16 || !stdfs::is_directory(stdfs::symlink_status(path)))
-    throw Failed(FailureKind::output_invalid, "invalid store artifact");
-  record.size_bytes = fs::directory_size(path);
-  record.tree_hash = "tree:" + fs::sha256_tree(path);
-  history_->write_sync([&](sql::Db& db) {
-    // A deterministic store id may be emitted again on a later run.
-    const auto existing = History::artifact(db, id);
-    if (existing && (existing->origin != record.origin ||
-                     existing->tree_hash != record.tree_hash))
-      throw Failed(FailureKind::output_invalid, "store artifact id collision");
-    if (!History::artifact(db, id, run)) History::put_artifact(db, record);
-  });
 }
 
 void Service::artifact_list(RequestIn& req) {

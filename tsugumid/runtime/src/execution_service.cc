@@ -217,16 +217,10 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     sp.artifacts_root = (state_dir / "artifacts").string();
     fs::create_artifact_holders(sp.artifacts_root);
 #ifdef __linux__
-    for (auto& artifact : artifacts) {
-      if (artifact.store_path.empty()) {
-        artifact.path =
-            (std::filesystem::path(kSandboxArtifactsRoot) / artifact.location)
-                .string();
-      } else {
-        // A store artifact may be outside the consuming Card's closure.
-        sp.binds.push_back({artifact.path, artifact.path, false, ""});
-      }
-    }
+    for (auto& artifact : artifacts)
+      artifact.path =
+          (std::filesystem::path(kSandboxArtifactsRoot) / artifact.location)
+              .string();
 #endif
   }
 

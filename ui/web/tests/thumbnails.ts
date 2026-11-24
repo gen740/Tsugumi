@@ -17,7 +17,7 @@ const ids = JSON.parse(fs.readFileSync(path.join(root, 'demos', 'ja', 'index.jso
 assert.ok(ids.length > 0)
 
 const node = (kind: CardKind, inputs = [] as { name: string }[], outputs = [] as { name: string }[]) => ({
-  title: 'x', kind, inputs, outputs, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false,
+  title: 'x', kind, inputs, outputs, invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false,
 }) as unknown as CardNodeData
 
 for (const id of ids) {

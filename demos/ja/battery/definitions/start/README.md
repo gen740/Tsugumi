@@ -1,4 +1,4 @@
 ---
 title: start
-description: 電池と契約の条件（settings）から計算を始める
+description: market のパラメータで計算を始める
 ---

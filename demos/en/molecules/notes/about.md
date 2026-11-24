@@ -8,6 +8,6 @@ $$M = \sum_i n_i\, A_i$$
 
 $$M \le 500,\quad \log P \le 5,\quad \mathrm{NH{+}OH} \le 5,\quad \mathrm{N{+}O} \le 10$$
 
-Paste a SMILES into smiles of **paste** and run, and that molecule joins every Card. A SMILES that cannot be read shows the reason instead of crashing.
+Paste a SMILES into smiles of **properties** and run, and that molecule joins every Card. A SMILES that cannot be read shows the reason instead of crashing.
 
 logP is an estimate by summing atomic contributions (Crippen), not a measurement. A rule of thumb has exceptions, and it does not decide whether a drug is good.

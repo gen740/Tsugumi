@@ -300,20 +300,17 @@ def stage_project(root, scenario):
         shutil.copytree(ROOT / "demos/en/collatz", root)
         return root
     if scenario == "builtin-chain":
-        definitions = {"trigger": {"type": "trigger"}, "sink": SINK,
-                       "input": {"type": "input", "_params": "{ value = 1; }",
-                                 "_outputs": "table Value { value:ulong; } "
-                                             "table Outputs { value:Value; } root_type Outputs;"}}
-        cards = [card("start", "trigger"), card("src", "input")]
+        definitions = {"trigger": {"type": "trigger"}, "merge": {"type": "merge", "inputs": [{"name": "start"}]}, "sink": SINK}
+        cards = [card("start", "trigger")]
         connections = []
-        previous = "src"
-        for index in range(40):
-            name = f"input{index}"
-            cards.append(card(name, "input"))
-            connections.append(conn(previous, "value", name, "start"))
+        previous = "start"
+        for index in range(41):
+            name = f"merge{index}"
+            cards.append(card(name, "merge"))
+            connections.append(conn(previous, "out", name, "start"))
             previous = name
         cards.append(card("sink", "sink"))
-        connections.append(conn(previous, "value", "sink", "in"))
+        connections.append(conn(previous, "out", "sink", "in"))
         write(root, definitions, cards, connections)
         return root
     raise ValueError(f"unknown stage scenario {scenario}")

@@ -7,7 +7,7 @@ import pytest
 
 from harness.file_events import wait_for_file
 from harness.observations import decode_scalar, read_output
-from harness.real_cards import log
+from harness.real_cards import python_card, log
 from harness.scenario import Project
 from projects import card, conn, run_and_wait, start_run, wait_run, write_nix_project as write
 from test_worker_loading import DIRECTORY, native_card
@@ -145,16 +145,14 @@ def test_stopped_resident_can_interrupt_a_large_send(core_factory, tmp_path, sto
         reuseWorker=True, recordIO="on")
     if stop == "deadline":
         definition["timeoutSeconds"] = 5
-    payload = {
-        "type": "input",
-        "_outputs": 'table Text { value:string; } table Outputs { data:Text (required); } root_type Outputs;',
-        "_nix": """{ params, inputs }: let pkgs = import <nixpkgs> { }; in {
-          run = pkgs.runCommand "large-input-fixture" { } ''
-            mkdir -p "$out/share/tsugumi/input/ports"
-            head -c 4194304 /dev/zero > "$out/share/tsugumi/input/ports/data"
-          '';
-        }""",
-    }
+    payload = python_card("""
+from card import Output
+from Text import TextT
+
+
+def run(input):
+    return Output(data=TextT(value="x" * 4194304))
+""", outputs="table Text { value:string; } table Outputs { data:Text (required); } root_type Outputs;")
     root = tmp_path / "p"
     write(root, {"payload": payload, "resident": definition},
           [card("source", "payload"), card("resident", "resident")],

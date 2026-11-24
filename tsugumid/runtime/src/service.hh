@@ -118,9 +118,6 @@ class Service : public RequestSink {
   auto seal_artifacts(const InvocationSummaryData& invocation,
                       const std::filesystem::path& staging,
                       std::span<const ArtifactKey> ids) -> void;
-  auto register_store_artifact(const std::string& run, const CardPath& card,
-                               uint64_t invocation, const ArtifactKey& id,
-                               const std::filesystem::path& store_path) -> void;
   // The backend that runs the Cards naming execution service `id`.
   auto invalidate_resident(const std::string& card) -> void;
   auto prepare_execution(const Node& node,

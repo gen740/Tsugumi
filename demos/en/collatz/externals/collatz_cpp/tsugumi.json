@@ -24,6 +24,9 @@
   "canvas": {
     "cards": [
       {
+        "id": "initial"
+      },
+      {
         "id": "loop"
       },
       {
@@ -43,6 +46,16 @@
       }
     ],
     "connections": [
+      {
+        "from": {
+          "card": "initial",
+          "port": "value"
+        },
+        "to": {
+          "card": "loop",
+          "port": "init"
+        }
+      },
       {
         "from": {
           "card": "loop",
@@ -118,9 +131,9 @@
   "boundary": {
     "inputs": [
       {
-        "name": "n",
-        "card": "loop",
-        "port": "init"
+        "name": "start",
+        "card": "initial",
+        "port": "start"
       }
     ],
     "outputs": [

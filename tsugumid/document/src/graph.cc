@@ -34,9 +34,8 @@ auto Resolution::endpoint(const CardPath& card, const std::string& port,
 namespace {
 constexpr std::pair<CardType, const char*> kCardTypes[] = {
     {CardType::Code, "code"},         {CardType::Draft, "draft"},
-    {CardType::Trigger, "trigger"},   {CardType::Input, "input"},
-    {CardType::Merge, "merge"},       {CardType::Collect, "collect"},
-    {CardType::Subgraph, "subgraph"},
+    {CardType::Trigger, "trigger"},   {CardType::Merge, "merge"},
+    {CardType::Collect, "collect"},   {CardType::Subgraph, "subgraph"},
 };
 }  // namespace
 
@@ -172,7 +171,7 @@ class Builder {
     resolve_boundary_types();
     resolve_nix_exports();
     for (auto& node : res_->nodes) {
-      if (node.kind != CardType::Code && node.kind != CardType::Input) continue;
+      if (node.kind != CardType::Code) continue;
       try {
         node.generated_inputs = generated_input_schema(*res_, node);
       } catch (const std::runtime_error& error) {
@@ -271,7 +270,7 @@ class Builder {
   void load_catalog(Node& n) {
     std::string rel = n.def_dir + "_outputs.fbs";
     if (!doc_.sources.count(rel)) {
-      if (n.kind == CardType::Code || n.kind == CardType::Input)
+      if (n.kind == CardType::Code)
         n.exec_diags.push_back(
             diag(n.path, "missing_outputs", rel + " is missing", true, rel));
       return;
@@ -361,16 +360,6 @@ class Builder {
             n.exec_diags.push_back(diag(n.path, "missing_nix",
                                         "default.nix is missing", true,
                                         n.def_dir + "default.nix"));
-          load_catalog(n);
-          break;
-        case CardType::Input:
-          if (!doc_.sources.count(n.def_dir + "default.nix"))
-            n.exec_diags.push_back(diag(n.path, "missing_nix",
-                                        "default.nix is missing", true,
-                                        n.def_dir + "default.nix"));
-          // A connected start input triggers the Card on arrival.
-          // An unconnected Input Card is a source that fires once per run.
-          n.inputs = {{"start", false, nullptr}};
           load_catalog(n);
           break;
         case CardType::Trigger:
@@ -657,8 +646,7 @@ class Builder {
 
     const auto normal = [](CardType kind) {
       // TODO(open): exports across Merge, Collect, and Draft Cards.
-      return kind == CardType::Code || kind == CardType::Input ||
-             kind == CardType::Trigger;
+      return kind == CardType::Code || kind == CardType::Trigger;
     };
     for (auto index : order | std::views::reverse) {
       auto& node = res_->nodes[index];

@@ -1,5 +1,5 @@
 """Writes report.md and summary.json in an Artifact."""
-from card import Artifact, Input, Output
+from card import Artifact, Input, Output, params
 import json
 import os
 
@@ -7,7 +7,7 @@ import os
 def run(inputs: Input) -> Output:
     artifact, directory = Artifact.dir()
     s = inputs.summary
-    heading = inputs.config.heading.decode()
+    heading = params.heading
     regions = [s.regions[i] for i in range(len(s.regions))]
     lines = [f"# {heading}", "", f"{s.rows} sales, revenue {s.revenue:,}", "",
              "| Region | Units | Revenue |", "| --- | ---: | ---: |"]

@@ -15,7 +15,7 @@ import { NEW_PORT, Pt, Rect, snapToGrid } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
 import {
-  CardKey, DefinitionTemplate, key, KIND_LABEL, NOTE_COLORS, parameterInputLiteral, path, portTypeName, ProjectSession,
+  CardKey, DefinitionTemplate, key, KIND_LABEL, NOTE_COLORS, path, portTypeName, ProjectSession,
 } from '../model/session'
 import { Workspace, WorkflowTab } from '../model/workspace'
 import { arr, clone, dbl, get, J, JObj, obj, real, str } from '../../shared/json'
@@ -253,13 +253,6 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
 
   /** Keeps the Draft's name and content under its permanent key. */
   const finishDraftEdit = () => { void session.finishDraftEdit() }
-
-  const commitParam = async (k: CardKey, name: string, text: string, edit = new InlineParamEdit(), overwrite = false) => {
-    if (!session.isEditable) return false
-    const parameter = session.resolution.get(k)?.parameters?.find(p => p.name === name)
-    if (!parameter) return false
-    return edit.commitParam(session, k, name, parameterInputLiteral(text, parameter.type), overwrite)
-  }
 
   const addBuiltin = (t: DefinitionTemplate, at?: Pt) => {
     void cv.addBuiltin(t, at).then((k) => { if (k && t === 'draft') cv.writeDraft(k) }).catch((e) => { session.notice = String(e); session.changed() })
@@ -609,12 +602,6 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
           <Fragment key={k}>
           <CardNodeView data={data} flow={flow} zoom={z} selected={sel.has(k)} guide={'card:' + k}
             style={placed(origin, g.size.width * z, g.size.height * z, data.draftEditing ? { zIndex: 1 } : undefined)}
-            onParamBegin={() => session.rev}
-            onParamCommit={data.kind === 'input' ? (name, text, edit, overwrite) => {
-              if (!edit) { edit = new InlineParamEdit(); edit.begin(data.params.find(p => p.name === name)?.value ?? '', session.rev) }
-              return commitParam(k, name, text, edit, overwrite)
-            } : undefined}
-            paramsEditable={session.isEditable}
             onPortDown={session.isEditable ? (port, output, e) => onPortDown(k, port, output, e) : undefined}
             draftEdit={session.inlineDraft?.card === k ? {
               draft: session.inlineDraft,

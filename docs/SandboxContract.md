@@ -75,7 +75,7 @@ artifact directly. `artifact_open` resolves only IDs granted to the call.
 An offline backup that enumerates the artifact tree needs read permission on
 the holding directories.
 
-Input Card artifacts use their immutable Nix store paths. Remote workers stage
+Remote workers stage
 granted artifacts in the same directory layout and return newly created
 artifacts with the result. Filesystem isolation must be enabled for these access
 guarantees.

@@ -14,7 +14,7 @@ def test_invalid_card_documents_are_rejected_without_a_save(client):
     invalid_documents = (
         '{"type":"code","sandbox":true,"sandbox":false}',
         '{"type":"code","params":{"k":1}}',
-        '{"type":"input","sweeps":{"k":[1]}}',
+        '{"type":"input","symbol":"slider.horizontal.3"}',
         b'{"type":"code","symbol":"\xff"}',
         b'{"type":"code","symbol":"\xc3"}',
         '{"type":"code","timeoutSeconds":NaN}',

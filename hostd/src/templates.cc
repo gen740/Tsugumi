@@ -166,52 +166,6 @@ auto BuiltinCard(H::BuiltinCard kind, const std::string& id) -> TemplateFiles {
     case H::BuiltinCard::Collect:
       return card(
           R"({"type":"collect","symbol":"line.3.horizontal.decrease","maxRuns":1,"recordIO":"project"})");
-    case H::BuiltinCard::InputValue:
-    case H::BuiltinCard::BooleanInput: {
-      const bool boolean = kind == H::BuiltinCard::BooleanInput;
-      const std::string type = boolean ? "bool" : "double";
-      const std::string value = boolean ? "false" : "0.0";
-      const std::string table = boolean ? "Boolean" : "Number";
-      auto files = card(R"({
-  "type":"input",
-  "symbol":"slider.horizontal.3",
-  "inputs":[],
-  "maxRuns":1,
-  "reuseWorker":false,
-  "timeoutSeconds":0,
-  "buildTimeoutSeconds":0,
-  "recordLogs":"project",
-  "recordIO":"project",
-  "sandbox":{"filesystem":true,"pid":true,"ipc":true,"identity":true,
-             "limits":{"cpu":0,"memoryMiB":0}},
-  "grants":{"network":false,"gui":false},
-  "workerCapabilities":[]
-})");
-      auto definition = json::Object(files.at("_card.json"));
-#if defined(__aarch64__) || defined(__arm64__)
-      definition["system"] = json::Quote("aarch64-linux");
-#else
-      definition["system"] = json::Quote("x86_64-linux");
-#endif
-      files["_card.json"] = json::Encode(definition);
-      files["params.nix"] = "{ value = " + value + "; }\n";
-      files["_outputs.fbs"] = "namespace input;\ntable " + table +
-                              " { value:" + type +
-                              "; }\ntable Outputs { value:" + table +
-                              " (required); }\nroot_type Outputs;\n";
-      files["default.nix"] = R"nix({ params, inputs }:
-let
-  pkgs = import <nixpkgs> { };
-  sdk = import <tsugumi-kit/sdk/input> { inherit pkgs; };
-in {
-  run = sdk.input {
-    outputs = ./_outputs.fbs;
-    values.value.value = params.value;
-  };
-}
-)nix";
-      return files;
-    }
   }
   throw Failure("invalid_request", "Unknown built-in Card kind");
 }

@@ -27,9 +27,6 @@
         "id": "start"
       },
       {
-        "id": "settings"
-      },
-      {
         "id": "market"
       },
       {
@@ -52,18 +49,8 @@
           "port": "out"
         },
         "to": {
-          "card": "settings",
-          "port": "start"
-        }
-      },
-      {
-        "from": {
-          "card": "settings",
-          "port": "settings"
-        },
-        "to": {
           "card": "market",
-          "port": "settings"
+          "port": "start"
         }
       },
       {

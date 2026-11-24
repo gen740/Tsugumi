@@ -82,7 +82,7 @@ function cardFiles(dir) {
   })
 }
 
-const KINDS = new Set(['code', 'draft', 'trigger', 'input', 'merge', 'collect', 'subgraph'])
+const KINDS = new Set(['code', 'draft', 'trigger', 'merge', 'collect', 'subgraph'])
 
 /** A demo's Card states one of the types (the UIs show anything else as a
  *  definition error, which no demo has). */
@@ -94,7 +94,6 @@ const kindOf = (def, id) => {
 /** As paramText in ui/web/src/model/session.ts. */
 const paramText = (v) => (typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : Array.isArray(v) ? JSON.stringify(v) : '')
 
-const INLINE_TYPES = new Set(['int', 'float', 'bool', 'string'])
 
 // The checked-in flat parameter sets put one current literal on each assignment line.
 // Read these for the static preview without evaluating any Nix expressions.
@@ -149,7 +148,7 @@ function readCard(root, id, ports, wires) {
   if (Object.values(def.sandbox ?? {}).some((on) => on === false)) permissions.push('sandbox_off')
   return {
     id, kind, symbol: def.symbol || undefined, summary: summary || undefined, details, inputs, outputs,
-    params: kind === 'input' ? allParams.filter((p) => INLINE_TYPES.has(p.type)) : [], allParams, permissions,
+    allParams, permissions,
     untitled: (kind === 'draft' && /^draft(_[0-9]+)?$/.test(id)) || undefined,
     files: kind === 'subgraph' ? [] : cardFiles(dir),
   }
@@ -448,7 +447,7 @@ async function main() {
   writeGuideProject(guideDir)
   const entries = [
     ...readJson(path.join(ROOT, 'demos', 'en', 'index.json')).demos.map((d) => ({ ...d, root: path.join(ROOT, 'demos', 'en', d.path) })),
-    { id: 'card-guide', title: 'Your first Card', description: 'start → settings → convert from the Card guide.', tags: ['C++', 'Guide'], root: guideDir },
+    { id: 'card-guide', title: 'Your first Card', description: 'start → convert from the Card guide.', tags: ['C++', 'Guide'], root: guideDir },
   ]
   const index = []
   const built = []

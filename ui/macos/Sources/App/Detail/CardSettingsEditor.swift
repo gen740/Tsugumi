@@ -34,7 +34,6 @@ final class CardEditorModel {
   private var baseDefinition: JSONValue?
   private var baseMeta: JSONValue?
   private var baseTexts: [String: String] = [:]
-  private var presetFiles: [String: String] = [:]
   private var baseHashes: [String: String] = [:]   // source hash when each file was read
 
   init(session: ProjectSession, cardKey: CardKey) {
@@ -82,17 +81,10 @@ final class CardEditorModel {
     return ends
   }
 
-  var implementation: String {
-    let kind = definitionKind(definition)
-    if kind == .input, presetFiles[prefix + "params.nix"] == Self.inputParameters(boolean: true) ||
-      session.resolution[cardKey]?.parameters.contains(where: { $0.name == "value" && $0.type == "bool" }) == true {
-      return DefinitionTemplate.booleanInput.rawValue
-    }
-    return kind.rawValue
-  }
+  var implementation: String { definitionKind(definition).rawValue }
 
   func implementAs(_ value: String) {
-    let kind = CardKind.named(value == DefinitionTemplate.booleanInput.rawValue ? "input" : value)
+    let kind = CardKind.named(value)
     #if arch(arm64)
     let native = "aarch64-linux"
     #else
@@ -106,28 +98,6 @@ final class CardEditorModel {
     } ?? native
     let symbol = kind == .draft ? baseDefinition?["symbol"]?.string ?? kind.symbol : kind.symbol
     definition = implementedCard(kind, symbol: symbol, system: system)
-    if kind == .input {
-      let boolean = value == DefinitionTemplate.booleanInput.rawValue
-      let type = boolean ? "bool" : "double"
-      preset("_outputs.fbs", "namespace card;\ntable Value { value:\(type); }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n")
-      preset("params.nix", Self.inputParameters(boolean: boolean))
-    } else {
-      for (file, text) in presetFiles where created.contains(file) && texts[file] == text { removeFile(file) }
-      presetFiles = [:]
-    }
-  }
-
-  private static func inputParameters(boolean: Bool) -> String {
-    "{ value = \(boolean ? "false" : "0.0"); }\n"
-  }
-
-  private func preset(_ relative: String, _ text: String) {
-    let file = prefix + relative
-    guard !prefix.isEmpty, session.sources[file] == nil, !removed.contains(file) else { return }
-    let untouched = created.contains(file) && presetFiles[file] != nil && texts[file] == presetFiles[file]
-    guard untouched || (!created.contains(file) && texts[file] == nil) else { return }
-    createFile(relative, text: text)
-    presetFiles[file] = text
   }
 
   /// Source files of the definition (documents excluded), with local changes.
@@ -156,7 +126,6 @@ final class CardEditorModel {
     baseMeta = meta
     texts = [:]
     baseTexts = [:]
-    presetFiles = [:]
     baseHashes = [:]
     loads = [:]
     for (p, t) in keep {
@@ -279,7 +248,6 @@ final class CardEditorModel {
   func createFile(_ rel: String, text: String = "") {
     guard !prefix.isEmpty, !rel.isEmpty else { return }
     let p = prefix + rel
-    if !created.contains(p) { presetFiles[p] = nil }
     removed.remove(p)
     created.insert(p)
     if let hash = session.sources[p]?.hash { baseHashes[p] = hash }
@@ -292,8 +260,6 @@ final class CardEditorModel {
   func rename(_ p: String, to rel: String) async -> Bool {
     let target = prefix + rel
     if target == p { return true }
-    presetFiles[p] = nil
-    presetFiles[target] = nil
     let origin = renames[p] ?? p
     let hash = baseHashes[p] ?? session.sources[origin]?.hash
     let text = texts[p], base = baseTexts[p], load = loads[p]
@@ -352,7 +318,7 @@ final class CardEditorModel {
       message = String(localized: "有効なシークレット名を指定してください。")
       return false
     }
-    let executable = [.code, .input].contains(kind)
+    let executable = kind == .code
     let hasMaxRuns = executable || [.merge, .collect].contains(kind)
     let limits = definition?["sandbox"]?["limits"]
     func uint(_ value: JSONValue?, min: UInt64 = 0, max: UInt64 = .max) -> Bool {
@@ -492,7 +458,6 @@ struct CardSettingsEditor: View {
   private func categories(_ m: CardEditorModel) -> [CardEditorCategory] {
     switch m.kind {
     case .code: return CardEditorCategory.allCases
-    case .input: return [.general, .source, .ports, .log, .executions, .artifacts, .notes]
     case .draft, .invalid: return [.general, .notes]
     case .subgraph: return [.general, .ports, .executions, .notes]
     default: return [.general, .ports, .log, .executions, .artifacts, .notes]
@@ -646,7 +611,7 @@ private struct GeneralCategory: View {
   @Bindable var model: CardEditorModel
   @State private var confirmSandboxOff = false
 
-  private var executable: Bool { [.code, .input].contains(model.kind) }
+  private var executable: Bool { model.kind == .code }
 
   var body: some View {
     Form {
@@ -670,12 +635,11 @@ private struct GeneralCategory: View {
       if model.session.kind(model.cardKey) == .draft {
         Section {
           Picker("種類", selection: Binding(get: { model.implementation }, set: { model.implementAs($0) })) {
-            ForEach(["draft", "code", "input",
-                     DefinitionTemplate.booleanInput.rawValue, "trigger", "merge", "collect"], id: \.self) { value in
+            ForEach(["draft", "code", "trigger", "merge", "collect"], id: \.self) { value in
               if value == "code" {
                 Text("コード").tag(value)
               } else {
-                Text(value == DefinitionTemplate.booleanInput.rawValue ? DefinitionTemplate.booleanInput.label : value).tag(value)
+                Text(value).tag(value)
               }
             }
           }
@@ -962,7 +926,7 @@ private struct PortsCategory: View {
       }
 
       Section {
-        if model.definition != nil, [.code, .input, .merge].contains(model.kind) {
+        if model.definition != nil, [.code, .merge].contains(model.kind) {
           let inputs = model.definition?["inputs"]?.array ?? []
           ForEach(inputs.indices, id: \.self) { i in
             let name = inputs[i]["name"]?.string ?? ""
@@ -992,9 +956,9 @@ private struct PortsCategory: View {
           .font(.caption).foregroundStyle(.secondary)
       }
       OutputPortsSection(model: model)
-      if [.code, .input, .merge, .collect].contains(model.kind) {
+      if [.code, .merge, .collect].contains(model.kind) {
         Section("記録と成果物") {
-          if [.code, .input].contains(model.kind) { recordingOverride("recordLogs", label: "標準出力と標準エラーを記録") }
+          if model.kind == .code { recordingOverride("recordLogs", label: "標準出力と標準エラーを記録") }
           recordingOverride("recordIO", label: "入出力の値を記録")
         }
       }

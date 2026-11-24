@@ -22,12 +22,11 @@ inline auto card_json(std::string_view fields) -> std::string {
   auto card = json::Object(fields);
   const auto type = json::Text(card, "type");
   card.try_emplace("symbol", json::Quote(type));
-  if (type == "collect" || type == "merge" || type == "code" ||
-      type == "input") {
+  if (type == "collect" || type == "merge" || type == "code") {
     card.try_emplace("maxRuns", "1");
     card.try_emplace("recordIO", R"("project")");
   }
-  if (type == "code" || type == "input") {
+  if (type == "code") {
     card.try_emplace("inputs", "[]");
     card.try_emplace("reuseWorker", "false");
     card.try_emplace("timeoutSeconds", "0");

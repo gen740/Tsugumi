@@ -358,24 +358,9 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
           !stdfs::is_directory(stdfs::symlink_status(source)))
         throw Failed(FailureKind::input_missing, "invalid remote artifact grant");
       fs::create_artifact_holders(artifacts_root, holders);
-      auto target = spawn.sandbox.filesystem
-                        ? stdfs::path(kSandboxArtifactsRoot) / relative
-                        : source;
-      if (const auto* store_path = entry->store_path()) {
-        const stdfs::path path(store_path->str());
-        const stdfs::path store_root = "/nix/store";
-        const auto relative_store_path = path.lexically_relative(store_root);
-        if (relative_store_path.empty() ||
-            !fs::valid_relative_path(relative_store_path.begin()->string()) ||
-            path != store_root / *relative_store_path.begin() /
-                        "share/tsugumi/input/artifacts" / hex)
-          throw Failed(FailureKind::input_missing,
-                       "invalid store artifact path");
-        if (spawn.sandbox.filesystem) {
-          spawn.binds.push_back({source.string(), path.string(), false, ""});
-          target = path;
-        }
-      }
+      const auto target = spawn.sandbox.filesystem
+                              ? stdfs::path(kSandboxArtifactsRoot) / relative
+                              : source;
       grants.push_back({std::move(id), target.string()});
     }
   }

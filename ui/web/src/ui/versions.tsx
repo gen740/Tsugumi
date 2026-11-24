@@ -79,7 +79,7 @@ export interface MiniMapCard { id: string; x: number; y: number; kind: CardKind;
 function miniMapCardData(c: MiniMapCard): CardNodeData {
   const ports = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `p${i}` }))
   return {
-    title: c.id, kind: c.kind, inputs: ports(c.kind === 'merge' ? c.fan : 1), outputs: ports(1), params: [],
+    title: c.id, kind: c.kind, inputs: ports(c.kind === 'merge' ? c.fan : 1), outputs: ports(1),
     invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: c.collapsed,
   }
 }

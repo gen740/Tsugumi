@@ -6,7 +6,7 @@ Tsugumi connects small, typed steps called Cards into a Workflow. Run the whole 
 
 ### Build and navigate a Workflow
 
-- **Sketch before writing code.** Add a Draft with `e` while the Canvas has focus, describe a step, and draw its wires. Add a Start, Input, Merge or Collect Card when you already know how data should flow. [Canvas tools](Usage.md#canvas-tools) · [Kinds of Card](#kinds-of-card)
+- **Sketch before writing code.** Add a Draft with `e` while the Canvas has focus, describe a step, and draw its wires. Add a Start, Merge or Collect Card when you already know how data should flow. [Canvas tools](Usage.md#canvas-tools) · [Kinds of Card](#kinds-of-card)
 - **Organise a larger graph.** Right-click the Canvas and choose **Arrange** to place Cards or **Untangle Wires** to reduce crossings while keeping their positions. Group related Cards with **Group Selection**, or open a Card in Card to see its child Workflow and boundary ports. The import button by **Add Card** copies another project into `externals/` and places its Workflow as a Card in Card. [Canvas tools](Usage.md#canvas-tools) · [Cards and Workflows](#2-cards-and-workflows)
 - **Run variants and batches.** Give a Card a list of implementations in `run`, or send it a batch, and it runs every combination. Connect the batch to a Collect Card to pass one typed list of envelopes on. [Run lists and Collect](#run-lists-and-collect)
 - **See references between Card definitions.** Turn on **Nix references**, then hover a Card or open the list. Follow `inputs.<card_id>` to the upstream Card whose exports it names. [Nix references](Usage.md#canvas-tools)
@@ -68,13 +68,12 @@ Every Card has an id for its definition directory, connections and run records. 
 
 ### Kinds of Card
 
-Every Card states its kind in `_card.json` as `"type"`: `code`, `draft`, `trigger`, `input`, `merge`, `collect` or `subgraph`. Nothing else decides it; a missing or unknown `type` is a definition error.
+Every Card states its kind in `_card.json` as `"type"`: `code`, `draft`, `trigger`, `merge`, `collect` or `subgraph`. Nothing else decides it; a missing or unknown `type` is a definition error.
 
 | Kind | Role |
 | --- | --- |
 | Code Card (`code`) | Builds its processing in `default.nix` with a language SDK into `lib/main.so` (C++, Python, Go, Rust, C#, Julia, R, Ruby or an SDK of your own) |
-| trigger | Where a Workflow's run starts (output port `out`) |
-| Input | Builds the declared port values in Nix from `params.nix` and any files the definition uses |
+| trigger | Starts a Workflow and emits an empty value on `out`. May supply Nix exports to its downstream Cards |
 | Merge | Forwards every arriving envelope to `out` |
 | Collect | Aggregates a batch into a `Collected` list of envelopes |
 | subgraph (Card in Card) | Handles a child Workflow as one Card. `boundary` maps the outer ports to Cards inside |
@@ -100,7 +99,7 @@ A Card in Card uses full Card paths to distinguish state and history; visual gro
 
 ### Run lists and Collect
 
-A Code or Input Card can return a list of `{ label; run; }` variants from `default.nix`. An Input Card can use a list in `params.nix` to build variants. For each trigger, the runtime runs every combination of the Card's variants and the items on its connected inputs. Two implementations and batches of three and four inputs give 24 invocations. Labels identify members in run history and comparisons.
+A Code Card can return a list of `{ label; run; }` variants from `default.nix`. Use a list in `params.nix` to configure the variants. For each trigger, the runtime runs every combination of the Card's variants and the items on its connected inputs. Two implementations and batches of three and four inputs give 24 invocations. Labels identify members in run history and comparisons.
 
 Collect aggregates a batch into one fixed `Collected` value, preserving each member's schema ID, bytes and artifact IDs. Skipped members are absent. Collect emits an empty list when there are no members. The graph grants the collected artifact IDs to downstream Cards.
 

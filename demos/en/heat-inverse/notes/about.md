@@ -10,6 +10,6 @@ $$\min_u\ \|Au-d\|^2+\lambda^2\|u\|^2,\quad \hat u=\sum_k\frac{\sigma_k}{\sigma_
 
 $\lambda$ is chosen by the discrepancy principle $\|A\hat u-d\|\approx\sigma_{\rm noise}\sqrt{n}$ or at the corner of the L-curve (**tikhonov**). The "closest $\lambda$", which needs the truth, is only for comparison.
 
-Try final_time and noise of **settings**, and lambda of **reconstruct**. **horizon** shows the details lost by measuring late.
+Try final_time and noise of **forward**, and lambda of **reconstruct**. **horizon** shows the details lost by measuring late.
 
 The size of the noise is taken as known. On this grid the vanished modes cannot be recovered, and the recovery is "one solution consistent with the measurements".

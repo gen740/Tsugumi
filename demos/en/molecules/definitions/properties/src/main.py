@@ -1,10 +1,14 @@
 """Reads the molecules and computes their properties with RDKit. A SMILES that
 cannot be read is reported with the reason and skipped."""
+
+from card import Input, Output, params
+from mol.Molecules import MoleculesT
+
 import numpy as np
 from rdkit import Chem, RDLogger
 from rdkit.Chem import Crippen, Descriptors, Lipinski, rdMolDescriptors
 
-from tsugumi import Failure
+from tsugumi import Failure, Markdown, send
 
 RDLogger.DisableLog("rdApp.*")  # reasons are shown on the Card instead
 
@@ -21,27 +25,26 @@ def read(smiles):
     return mol, None
 
 
-def entries(inputs):
+def entries():
     """(name, SMILES) from the list, then the pasted one."""
-    p = inputs.params
+    p = params
     pairs = []
     for i in range(len(p.molecules)):
-        name, _, smiles = p.molecules[i].decode().partition(":")
+        name, _, smiles = p.molecules[i].partition(":")
         pairs.append((name.strip(), smiles.strip()) if smiles else (f"#{i + 1}", name.strip()))
-    pasted = inputs.pasted
-    smiles = (pasted.smiles or b"").decode().strip()
+    smiles = p.smiles.strip()
     if smiles:
-        pairs.append(((pasted.name or b"pasted").decode().strip() or "pasted", smiles))
+        pairs.append((p.name.strip() or "pasted", smiles))
     return pairs
 
 
-def main(inputs, report):
+def run(_input: Input) -> Output:
     rows, errors = [], []
-    for name, smiles in entries(inputs):
+    for name, smiles in entries():
         mol, why = read(smiles)
         if mol is None:
             errors.append(f"The SMILES `{smiles}` of **{name}** was left out of the computation: {why}.")
-            report.log(f"skipped {name}: {smiles}: {why}")
+            print(f"skipped {name}: {smiles}: {why}")
             continue
         rows.append(dict(
             name=name, smiles=smiles, formula=rdMolDescriptors.CalcMolFormula(mol),
@@ -59,20 +62,20 @@ def main(inputs, report):
               "| --- | --- | --- | --- | --- | --- | --- | --- |"]
     lines += [f"| {r['name']} | {r['formula']} | {r['mw']:.2f} | {r['logp']:.2f} | {r['tpsa']:.2f} | "
               f"{r['hbd']} | {r['hba']} | {r['rotatable']} |" for r in rows]
-    report.markdown("\n".join(lines))
+    send(Markdown("\n".join(lines)))
     (names, smiles, formula) = (list([r[k] for r in rows]) for k in ('name', 'smiles', 'formula'))
     doubles = [np.array([r[k] for r in rows], dtype=np.float64) for k in ('mw', 'logp', 'tpsa')]
     ints = [np.array([r[k] for r in rows], dtype=np.int32) for k in ('hbd', 'hba', 'rotatable', 'nh_oh', 'n_o')]
-    return {'molecules': {
-        'names': names,
-        'smiles': smiles,
-        'formula': formula,
-        'mw': doubles[0],
-        'logp': doubles[1],
-        'tpsa': doubles[2],
-        'hbd': ints[0],
-        'hba': ints[1],
-        'rotatable': ints[2],
-        'nh_oh': ints[3],
-        'n_o': ints[4],
-    }}
+    return Output(molecules=MoleculesT(
+        names=names,
+        smiles=smiles,
+        formula=formula,
+        mw=doubles[0],
+        logp=doubles[1],
+        tpsa=doubles[2],
+        hbd=ints[0],
+        hba=ints[1],
+        rotatable=ints[2],
+        nhOh=ints[3],
+        nO=ints[4],
+    ))

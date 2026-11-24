@@ -27,9 +27,6 @@
         "id": "start"
       },
       {
-        "id": "settings"
-      },
-      {
         "id": "forward"
       },
       {
@@ -58,18 +55,8 @@
           "port": "out"
         },
         "to": {
-          "card": "settings",
-          "port": "start"
-        }
-      },
-      {
-        "from": {
-          "card": "settings",
-          "port": "settings"
-        },
-        "to": {
           "card": "forward",
-          "port": "settings"
+          "port": "start"
         }
       },
       {

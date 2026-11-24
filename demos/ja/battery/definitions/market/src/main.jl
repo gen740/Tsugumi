@@ -28,7 +28,7 @@ end
 
 function main(inputs, report)
     outputs = Dict{String,Any}()
-    s = inputs.settings
+    s = Dict(String(k) => v for (k, v) in pairs(params))
     week = synthetic_week(s["seed"], Int(s["days"]))
     outputs["scenario"] = merge(s, Dict(
         "load" => week.load, "solar" => week.solar, "flat" => week.flat, "tou" => week.tou, "spot" => week.spot))

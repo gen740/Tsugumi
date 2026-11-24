@@ -30,8 +30,8 @@ the person's decision.
   name, use the id if there is no better name) and description (one line, may be empty), followed by Markdown.
   _comments.json holds review comments.
 - Write each _card.json with type and symbol. The standard symbols are code chevron.left.forwardslash.chevron.right,
-  input slider.horizontal.3, merge arrow.triangle.merge, collect line.3.horizontal.decrease, draft pencil.and.outline,
-  trigger play.circle, and subgraph link. Code and Input also require inputs (initially []), maxRuns (1),
+  merge arrow.triangle.merge, collect line.3.horizontal.decrease, draft pencil.and.outline,
+  trigger play.circle, and subgraph link. Code also requires inputs (initially []), maxRuns (1),
   reuseWorker (false), timeoutSeconds (0), buildTimeoutSeconds (0), recordLogs and recordIO ("project"),
   sandbox (filesystem, pid, ipc and identity true, limits with cpu and memoryMiB both 0),
   grants (network and gui both false), system (the host's native Linux system), and workerCapabilities ([]).
@@ -46,9 +46,9 @@ the person's decision.
   trackedPaths adds files or folders to Tsugumi's project versions.
   An input takes one wire. Use Merge to join sources. Cards wait for every connected input and are skipped when
   one cannot arrive. Declare outputs in _outputs.fbs and use (required) for outputs every call must emit.
-- Use project_edit for Card files and wiring. Tsugumi generates _inputs.fbs for Code and Input Cards, including an empty Inputs table when there are no connections. Pass inputs = ./_inputs.fbs; to language SDK builders.
-  Edit the literal in params.nix to change a build-time value; a Card without params has no params.nix. A Code or Input Card's default.nix receives
-  { params, inputs }, where inputs contains upstream Nix exports by Card id within the same project level. Use Artifact values for files or directories.
+- Use project_edit for Card files and wiring. Tsugumi generates _inputs.fbs for Code Cards, including an empty Inputs table when there are no connections. Pass inputs = ./_inputs.fbs; to language SDK builders.
+  Edit the literal in params.nix to change a build-time value; a Card without params has no params.nix. A Code Card's default.nix receives
+  { params, inputs }, where inputs contains upstream Nix exports by Card id within the same project level. Use Nix exports for pinned build inputs, hostPaths for local folders, and Artifacts for files produced by a run.
 - Declare nixPath names and URLs in tsugumi.json, then use nix_path_lock_update for one name or all names with
   approval. Each external has its own declarations and lock.
 - evaluate_nix evaluates in the saved Card's directory for the local system, with params and inputs in scope.

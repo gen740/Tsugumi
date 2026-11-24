@@ -39,7 +39,7 @@ The demos and Drafts in `demos/en` and `demos/ja` declare their Nix sources in `
 | [Dynamical systems gallery](#dynamical-systems-gallery-dynamics-draft) | Six dynamical systems | The Agent splits independent Drafts among helpers and implements them at the same time |
 | [MNIST · comparing classifiers (Draft)](#mnist--comparing-classifiers-draft-mnist-classifiers-draft) | Classifying handwritten digits (seven methods) | From a plan implemented up to the data, helpers implement seven classifiers at the same time and the Agent puts the comparison together |
 
-The arrows in the diagrams are a Card's wires (`output port → input port`). The kinds of Card are trigger (where a run starts), input (an input whose value is edited on the Canvas), merge, collect, subgraph (Card in Card) and code Cards ([supported languages](CardGuide.md#inputs-and-outputs)).
+The arrows in the diagrams are a Card's wires (`output port → input port`). The kinds of Card are trigger (where a run starts), merge, collect, subgraph (Card in Card) and code Cards ([supported languages](CardGuide.md#inputs-and-outputs)).
 Every Card has a summary in `README.md`, readable on the Canvas (by hovering, for trigger and merge) and in the Card's settings.
 
 ## The basics
@@ -57,7 +57,7 @@ Makes a sales table from a seed, aggregates it by region into a Markdown report,
 The shortest Workflow, mostly Python Cards.
 
 **Try**
-- Change `seed` or `heading` and run. With the same `seed` the aggregate is the same and only the heading changes.
+- Change `seed` in `generate` or `heading` in `render` and run. With the same `seed` the aggregate is the same and only the heading changes.
 - Turn `fail_on_purpose` of `aggregate` On and run. `aggregate`'s log gives the reason, and `render` downstream is `blocked`. Turn it Off and rerun only `aggregate`: with the saved inputs it succeeds at once.
 - Double-click `archive` to go into the child Workflow, and preview and export the artifact's directory. Artifacts remain even after the run cache is cleared.
 
@@ -72,37 +72,37 @@ The iteration itself is drawn with the Cards' wires, so the behaviour of branche
 
 **Try**
 - Run it as it is. 27 reaches 1 in 111 steps (112 values), with a maximum of 9232 on the way. `compare` reports that they agree.
-- Set `initial` to 2: the odd side's `triple` is never chosen and is `skipped`.
+- Set the `value` in each implementation’s `initial/params.nix` to `"2"`: the odd side's `triple` is never chosen and is `skipped`.
 - Make `maxRuns` of `check` inside smaller: it stops at the iteration limit (`execution_limit`). With a starting value for which `3n+1` exceeds 64 bits, `integer overflow` is detected.
-- Set `initial` to a large value such as 2^60: R's `check` fails, saying it is "not below 2^53" (Julia, C++ and Python return 61 values).
+- Set each implementation’s `value` to the decimal string for a large integer such as 2^60: R's `check` fails, saying it is "not below 2^53" (Julia, C++ and Python return 61 values).
 - Open `collatz_jl` or `collatz_r` and look at the record of `collect`: each invocation's display is the sequence so far.
 
 ### Signal detection variants (`signal-sweep`)
 
 Run **start** to compare three signal strengths (8, 12, 16) with two detection
-thresholds (10, 14). **samples** is an Input Card which maps its `values` parameter to a Nix run list. It emits each signal in its own invocation, named `value=8`,
-`value=12` and `value=16`. **score** has a run list of two implementations named
-`threshold=10` and `threshold=14`, and makes six comparisons. Open its batch
-history to see which signal and threshold each invocation used.
+thresholds (10, 14). **score** maps both lists in `params.nix` to six labelled
+implementations. Open the batch history to see the signal and threshold in
+each label.
 
 **collect** turns the six results into one `Collected` value. **summary** reads the
 vector and shows three detections out of six comparisons.
 
 **Try**
-- In the settings of **samples**, add a value to `values`, for example `[8, 12, 16, 20]`, and run from **start** again.
-- Add a threshold such as `12` in `score/default.nix`, run again and compare the two runs. Each comparison pairs members by name, so `threshold=14` is still compared with `threshold=14`.
-- Set `values` to `[ 8 ]` to emit one signal and run **score** twice.
+
+- Add a value to **score**'s `values`, for example `[ 8 12 16 20 ]`, and run again.
+- Add a threshold such as `12` to `thresholds` and compare the two runs. Members
+  with the same combination of value and threshold keep the same label.
 
 [Run lists and Collect](features.md#run-lists-and-collect)
 
 ### Live Stream (`live-stream`)
 
 Makes one value of a random walk every 100 ms and draws the latest values as a line chart in real time.
-A feedback loop that sends "the next state" back to itself makes a stream that ends.
+The **seed** Dawn view sends the chosen starting value to the seed Card. The Card receives it with `recv` and emits the initial state into a Merge. The generator returns the next state to the Merge until it reaches the sample limit.
 
 **Try**
-- Run it and stop (Cancel) in the middle. It stops at once, and the chart up to that point stays.
-- Change `interval_ms`, `seed`, `samples` or `window` of `plot` and run again. The series resets, and with parallelism 1 or 2 no value goes missing or out of order.
+- Start a run, open the **seed** view and click a tick on the slider. Stop (Cancel) in the middle. It stops at once, and the chart up to that point stays.
+- Change `interval_ms`, `seed` or `samples` on the seed Card, or `window` on `plot` and run again. The series resets, and with parallelism 1 or 2 no value goes missing or out of order.
 
 ### Plots (`plots`)
 
@@ -166,9 +166,9 @@ Solves $z^3 - 1 = 0$ on the complex plane to see how the starting point decides 
 - Run it as it is. The errors in `orbits` fall quadratically on the log axis, and the estimated order in `order` lines up with the theory. `basins` draws the fractal boundaries between where points converge.
 - Set `center_re` of `basins` to -0.8 and `half_width` to 0.2 and rerun just that Card. Wherever you zoom on the boundary, all three colours gather.
 - Set `offset` of `trouble` to 1e-5. The first step is thrown out to $1/(3 z_0^2)$, and far away it comes back only by 2/3 per step, so inspect the iteration count and raise `max_iter` if convergence reaches its cap.
-- Set `damping` of `settings` to 0.5 and run the whole. From every starting point the order becomes 1 with ratio 0.5, and the shape of the boundaries on the map changes too.
-- Set `coeffs` of `settings` to `[1, 0, -3, 2]` ($(z-1)^2(z+2)$). At the root of multiplicity 2 the order drops to 1 with ratio 0.5, and rounding limits the final error.
-- Set `coeffs` of `settings` to `[1, 0, -2, 2]` ($z^3 - 2z + 2$). A black region appears around 0 (starting points drawn into a cycle of period 2 that never converge).
+- Set `damping` of `roots` to 0.5 and run the whole. From every starting point the order becomes 1 with ratio 0.5, and the shape of the boundaries on the map changes too.
+- Set `coeffs` of `roots` to `[1, 0, -3, 2]` ($(z-1)^2(z+2)$). At the root of multiplicity 2 the order drops to 1 with ratio 0.5, and rounding limits the final error.
+- Set `coeffs` of `roots` to `[1, 0, -2, 2]` ($z^3 - 2z + 2$). A black region appears around 0 (starting points drawn into a cycle of period 2 that never converge).
 
 ### Pharmacokinetics (`pharmacokinetics`)
 
@@ -177,8 +177,8 @@ Compares how concentration moves with the dosing interval, in a one-compartment 
 **Try**
 - Run it as it is and look at `window`. 400 mg every 24 hours and 200 mg every 12 hours give the same mean concentration (the table in `check`), and shortening the interval narrows the gap between peak and trough.
 - Set `missed_count` of `missed` to 2 and rerun just that Card. For the same daily dose, the longer the interval, the more the time below the range grows.
-- Set `half_life_h` of `settings` to 16 and run the whole. The accumulation ratio grows, and so does the time to reach steady state.
-- Shorten `days` of `settings` and "reaching steady state" in `check` shows that it does not get there.
+- Set `half_life_h` of `simulate` to 16 and run the whole. The accumulation ratio grows, and so does the time to reach steady state.
+- Shorten `days` of `simulate` and "reaching steady state" in `check` shows that it does not get there.
 
 ### Maximum flow and minimum cut (`max-flow`)
 
@@ -188,7 +188,7 @@ On a made-up layered network made from a seed, checks that the maximum flow equa
 - Run it as it is and look at `sweep`. Of the cut's three edges only two increase it; `a2->b2` does not, because another minimum cut remains (`verify` counts two minimum cuts).
 - Set `edge` of `whatif` to `s->a2` and `raise_by` to 1000. Even an edge running at full capacity does not increase the maximum flow if it is off the cut.
 - Set `edge` of `whatif` to `b3->c3`. Raising it by 10 increases the flow by only 8, because the next cut gets in the way; increasing `raise_by` further gains nothing beyond that.
-- Change `seed` of `settings` and run the whole. On another network, the values in `verify` still all agree.
+- Change `seed` of `network` and run the whole. On another network, the values in `verify` still all agree.
 
 ### Dose–response curve (`dose-response`)
 
@@ -275,15 +275,15 @@ A note says that which value to read is not decided by the data alone, but by th
 **Try**
 - Run it as it is. Compare savings under the synthetic tariffs and inspect the agreement between dynamic programming and exhaustive search in `check`.
 - Change `tariff` of `schedule` to `flat`, `tou` or `spot` and rerun just that Card.
-- Lower `round_trip_efficiency` of `settings` and run. Compare savings as efficiency crosses cheap / expensive (18 / 42) under time-of-use prices.
-- Set `export_ratio` of `settings` to 1 and exports earn the same as imports cost, so storing solar is pointless. At the flat tariff the saving is 0 yen with 0 cycles: the battery does not run.
+- Lower `round_trip_efficiency` of `market` and run. Compare savings as efficiency crosses cheap / expensive (18 / 42) under time-of-use prices.
+- Set `export_ratio` of `market` to 1 and exports earn the same as imports cost, so storing solar is pointless. At the flat tariff the saving is 0 yen with 0 cycles: the battery does not run.
 - Change `capacities_kwh` of `capacities` and see where it levels off.
 
 ### Fluctuations in chemical reactions (`gillespie`)
 
 **Try**
 - Run it as it is. The trajectories fluctuate, but the mean of 2000 runs follows the rate equation. Compare stationary mean, variance and Fano factor with theory. In the reversible binding model, compare the bound fraction with the rate equation as volume changes.
-- Set `volume` of `settings` to 0.1 and run. It becomes a Poisson distribution with mean 2, and trajectories drop to 0 too. The Fano factor stays 1.
+- Set `volume` of `trajectories` and `stationary` to 0.1 and run. It becomes a Poisson distribution with mean 2, and trajectories drop to 0 too. The Fano factor stays 1.
 - Increase `shown_runs` of `trajectories` and rerun just that Card.
 - Change `on_rate` or `concentration` of `binding` and see how far it departs from the rate equation.
 - Make `limit_sigma` of `check` smaller and see how far statistical fluctuation takes it off.
@@ -292,9 +292,9 @@ A note says that which value to read is not decided by the data alone, but by th
 
 **Try**
 - Run it as it is. Compare the naive inverse with Tikhonov regularisation. In `horizon`, inspect recoverable modes and reconstruction error as measurement time changes.
-- Set `final_time` of `settings` to 0.02 and run. With the same noise, the recovery's error grows.
+- Set `final_time` of `forward` to 0.02 and run. With the same noise, the recovery's error grows.
 - Change `lambda` of `reconstruct` and rerun just that Card. Back at 0, it uses the discrepancy principle's value.
-- Set `noise` of `settings` to 0 and `final_time` to 0.00005, and the recovery returns to the truth.
+- Set `noise` of `forward` to 0 and `final_time` to 0.00005, and the recovery returns to the truth.
 - Change `times` of `horizon` and find the time at which the jaggedness disappears.
 
 ### Comparing ecological models (`ecology-models`)
@@ -316,7 +316,7 @@ Press "Generate Cards" at the top right of the Canvas and the Agent makes Cards 
 
 A demo in which the Agent splits six independent Drafts among helpers and implements them at the same time.
 
-`settings` only hands the image size (`size` 480) and the random seed (`seed` 7) to the six Drafts; the Drafts are not connected to each other.
+Each Draft has an image size (`size` 480) and random seed (`seed` 7) in its own `params.nix`. The Drafts are independent.
 Each Draft's description gives the steps of the computation and `assert`s that check the result is right (a glider in the Game of Life moving one cell diagonally in four generations, the double pendulum's energy error being small, and so on).
 
 Press "Generate Cards" and the Agent splits the six Drafts among helpers, and a thrush of a different colour for each helper writes and checks its own Card at the same time ([Splitting the work](features.md#splitting-the-work-delegate)).

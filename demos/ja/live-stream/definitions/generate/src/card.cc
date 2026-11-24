@@ -13,12 +13,14 @@ static double noise(uint64_t seed, uint64_t index) {
   return static_cast<double>(z >> 11) / 4503599627370496.0 - 1.0;
 }
 
-template <class S>
-static Card::Output step(const S& s, const tsugumi::Run& run) {
+auto run(const Card::Inputs& inputs) -> Card::Output {
+  const auto s = inputs.get<Card::input_types::state>("state");
   // The sampling interval is the purpose of this wait, not a progress effect.
   auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(s.interval_ms);
   while (std::chrono::steady_clock::now() < until) {
-    if (run.cancelled()) throw tsugumi::Failure("cancelled", "cancelled while waiting for the next sample");
+    if (card::cancelled())
+      throw tsugumi::Failure(Tsugumi::Data::FailureKind::cancelled,
+                             "cancelled while waiting for the next sample");
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
   double value = s.value + noise(s.seed, s.index);
@@ -34,9 +36,4 @@ static Card::Output step(const S& s, const tsugumi::Run& run) {
   next.seed = s.seed;
   next.value = value;
   return out;
-}
-
-// The loop delivers a merge union tagged with the arrival port.
-auto run(const Card::Inputs& inputs, tsugumi::Report& report, const tsugumi::Run& run) -> Card::Output {
-  return Card::visit(inputs.state.value, [&run](const auto& s) { return step(s, run); });
 }

@@ -24,7 +24,7 @@
   "canvas": {
     "cards": [
       {
-        "id": "start"
+        "id": "mitosis"
       },
       {
         "id": "generate"
@@ -42,30 +42,17 @@
         "id": "sweep"
       },
       {
-        "id": "mitosis"
-      },
-      {
         "id": "real"
       }
     ],
     "connections": [
       {
         "from": {
-          "card": "start",
+          "card": "mitosis",
           "port": "out"
         },
         "to": {
           "card": "generate",
-          "port": "start"
-        }
-      },
-      {
-        "from": {
-          "card": "start",
-          "port": "out"
-        },
-        "to": {
-          "card": "mitosis",
           "port": "start"
         }
       },
@@ -122,11 +109,11 @@
       {
         "from": {
           "card": "mitosis",
-          "port": "image"
+          "port": "out"
         },
         "to": {
           "card": "real",
-          "port": "image"
+          "port": "start"
         }
       }
     ]

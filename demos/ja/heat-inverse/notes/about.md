@@ -10,6 +10,6 @@ $$\min_u\ \|Au-d\|^2+\lambda^2\|u\|^2,\quad \hat u=\sum_k\frac{\sigma_k}{\sigma_
 
 $\lambda$ は食い違い原理 $\|A\hat u-d\|\approx\sigma_{\rm noise}\sqrt{n}$ か L 曲線の角で選びます（**tikhonov**）。真の値が分かっている「最も近い $\lambda$」は比較のためだけのものです。
 
-**settings** の final_time・noise、**reconstruct** の lambda を変えて試せます。**horizon** は遅く測ると失われる細部を示します。
+**forward** の final_time・noise、**reconstruct** の lambda を変えて試せます。**horizon** は遅く測ると失われる細部を示します。
 
 ノイズの大きさは既知としています。この格子では消えたモードは取り戻せず、復元は「測定と矛盾しない解のひとつ」です。

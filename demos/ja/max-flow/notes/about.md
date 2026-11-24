@@ -8,4 +8,4 @@ $$\max_f |f| = \min_{(S,T)} \sum_{u \in S,\, v \in T} c(u, v)$$
 
 ネットワークは seed から作った架空のものです。
 
-**settings** の seed を変えて全体を実行できます。**whatif** の edge と raise_by、**sweep** の raise_by は、その Card だけを実行し直せます。
+**network** の seed を変えて全体を実行できます。**whatif** の edge と raise_by、**sweep** の raise_by は、その Card だけを実行し直せます。

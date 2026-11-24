@@ -1,4 +1,0 @@
----
-title: settings
-description: 乱数の種・行数・レポートの見出し
----

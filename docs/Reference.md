@@ -29,23 +29,23 @@ Card ids, input and output port names, boundary port names and child project dir
 
 Each `definitions/<card id>/_card.json` uses the fields for its type. **R** means required, **O** means optional, and **—** means the field is forbidden.
 
-| Field | Code | Input | Merge | Collect | Draft | Trigger | Subgraph |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `type` | R | R | R | R | R | R | R |
-| `symbol` | R | R | R | R | R | R | R |
-| `inputs` | R | R | R (at least one) | — | — | — | — |
-| `maxRuns` | R | R | R | R | — | — | — |
-| `reuseWorker` | R | R | — | — | — | — | — |
-| `timeoutSeconds` | R | R | — | — | — | — | — |
-| `buildTimeoutSeconds` | R | R | — | — | — | — | — |
-| `recordLogs` | R | R | — | — | — | — | — |
-| `recordIO` | R | R | R | R | — | — | — |
-| `sandbox` and `sandbox.limits` | R | R | — | — | — | — | — |
-| `grants.network` and `grants.gui` | R | R | — | — | — | — | — |
-| `grants.hostPaths` | O | O | — | — | — | — | — |
-| `system` | R | R | — | — | — | — | — |
-| `workerCapabilities` | R | R | — | — | — | — | — |
-| `secrets` | O | O | — | — | — | — | — |
+| Field | Code | Merge | Collect | Draft | Trigger | Subgraph |
+| --- | --- | --- | --- | --- | --- | --- |
+| `type` | R | R | R | R | R | R |
+| `symbol` | R | R | R | R | R | R |
+| `inputs` | R | R (at least one) | — | — | — | — |
+| `maxRuns` | R | R | R | — | — | — |
+| `reuseWorker` | R | — | — | — | — | — |
+| `timeoutSeconds` | R | — | — | — | — | — |
+| `buildTimeoutSeconds` | R | — | — | — | — | — |
+| `recordLogs` | R | — | — | — | — | — |
+| `recordIO` | R | R | R | — | — | — |
+| `sandbox` and `sandbox.limits` | R | — | — | — | — | — |
+| `grants.network` and `grants.gui` | R | — | — | — | — | — |
+| `grants.hostPaths` | O | — | — | — | — | — |
+| `system` | R | — | — | — | — | — |
+| `workerCapabilities` | R | — | — | — | — | — |
+| `secrets` | O | — | — | — | — | — |
 
 - `type` is the lowercase kind name. `symbol` is the icon's symbol name. `inputs` is an array of objects with a `name` field. `maxRuns` bounds activations per run. `reuseWorker` lets the worker keep state across invocations and runs.
 - `timeoutSeconds` limits a Card call and `buildTimeoutSeconds` limits the build. A positive value is in seconds. Zero means no limit.

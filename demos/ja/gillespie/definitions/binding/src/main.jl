@@ -44,11 +44,11 @@ end
 # small volume the true mean differs from it, and the gap closes as V grows.
 function main(inputs, report)
     outputs = Dict{String,Any}()
-    m = inputs.settings
-    concentration = inputs.params["concentration"]
-    on, off = inputs.params["on_rate"], inputs.params["off_rate"]
-    volumes = sort(Float64.(inputs.params["volumes"]))
-    replicas = Int(inputs.params["replicas"])
+    m = params
+    concentration = params["concentration"]
+    on, off = params["on_rate"], params["off_rate"]
+    volumes = sort(Float64.(params["volumes"]))
+    replicas = Int(params["replicas"])
     rng = Xoshiro(m["seed"] + 3)
 
     rows = Dict{String,Any}[]

@@ -1,4 +1,4 @@
 ---
 title: start
-description: Starts the computation from the battery and contract conditions (settings)
+description: Run market using its parameters
 ---

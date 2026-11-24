@@ -4,9 +4,6 @@
   "inputs": [
     {
       "name": "input"
-    },
-    {
-      "name": "events"
     }
   ],
   "maxRuns": 1,

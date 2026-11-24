@@ -8,19 +8,16 @@ import TsugumiTestSupport
 
 @Test func explicitCardFieldsAndWorkerBits() throws {
   let code = implementedCard(.code, symbol: CardKind.code.symbol, system: "aarch64-linux")
-  let input = implementedCard(.input, symbol: CardKind.input.symbol, system: "aarch64-linux")
   let executableFields = Set(["type", "symbol", "inputs", "maxRuns", "reuseWorker", "timeoutSeconds",
     "buildTimeoutSeconds", "recordLogs", "recordIO", "sandbox", "grants", "system", "workerCapabilities"])
-  for card in [code, input] {
-    #expect(Set(card.object?.map(\.0) ?? []) == executableFields)
-    #expect(card["timeoutSeconds"]?.uint64 == 0)
-    #expect(card["buildTimeoutSeconds"]?.uint64 == 0)
-    #expect(card["sandbox"]?["limits"]?["cpu"]?.double == 0)
-    #expect(card["sandbox"]?["limits"]?["memoryMiB"]?.uint64 == 0)
-    #expect(card["recordLogs"]?.string == "project")
-    #expect(card["recordIO"]?.string == "project")
-    #expect(card["workerCapabilities"]?.array?.isEmpty == true)
-  }
+  #expect(Set(code.object?.map(\.0) ?? []) == executableFields)
+  #expect(code["timeoutSeconds"]?.uint64 == 0)
+  #expect(code["buildTimeoutSeconds"]?.uint64 == 0)
+  #expect(code["sandbox"]?["limits"]?["cpu"]?.double == 0)
+  #expect(code["sandbox"]?["limits"]?["memoryMiB"]?.uint64 == 0)
+  #expect(code["recordLogs"]?.string == "project")
+  #expect(code["recordIO"]?.string == "project")
+  #expect(code["workerCapabilities"]?.array?.isEmpty == true)
   #expect(RecordSetting.allCases.map(\.rawValue) == ["project", "on", "off"])
   #expect(Set(implementedCard(.merge, symbol: "star", system: "").object?.map(\.0) ?? []) ==
     Set(["type", "symbol", "inputs", "maxRuns", "recordIO"]))

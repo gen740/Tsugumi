@@ -3,7 +3,7 @@
   "symbol": "chevron.left.forwardslash.chevron.right",
   "inputs": [
     {
-      "name": "input"
+      "name": "start"
     },
     {
       "name": "ciao"

@@ -112,7 +112,6 @@ export interface CardNodeData {
   summary?: string
   inputs: PortData[]
   outputs: PortData[]
-  params: ParamData[]
   result?: string
   state?: D.CardState
   executionList?: boolean
@@ -170,7 +169,6 @@ export class CardGeometry {
   static readonly header = 32
   static readonly summaryRow = 15
   static readonly portRow = 15
-  static readonly paramRow = 26
   static readonly resultRow = 18
   static readonly stageRow = 22
   /** A Draft's content on the Card (three lines), and while it is being written. */
@@ -191,7 +189,6 @@ export class CardGeometry {
   readonly outputs: string[]
   readonly collapsed: boolean
   readonly summary: boolean
-  readonly params: number
   readonly result: boolean
   readonly stages: boolean
   readonly shape: CardShape
@@ -211,7 +208,6 @@ export class CardGeometry {
     this.untitled = this.draft && !!d.untitled && !this.draftEditing && !d.collapsed
     // The small ones keep their shape: their summary is on hover.
     this.summary = d.summary !== undefined && !isRouting(d) && d.kind !== 'trigger' && !this.draft
-    this.params = d.params.length
     // Rows are reserved by kind, so a run never makes a Card grow or shrink.
     this.result = d.result !== undefined
     this.stages = d.kind === 'code'
@@ -356,7 +352,7 @@ export class CardGeometry {
   }
   /** A Card's height without its port rows. */
   private get contentHeight() {
-    return this.topLabels + this.headerRow + (this.summary ? CardGeometry.summaryRow : 0) + this.draftRow + this.params * CardGeometry.paramRow +
+    return this.topLabels + this.headerRow + (this.summary ? CardGeometry.summaryRow : 0) + this.draftRow +
       (this.result ? CardGeometry.resultRow : 0) + (this.stages ? CardGeometry.stageRow : 0) + this.bottomLabels + 4
   }
   get height() {

@@ -1,4 +1,0 @@
----
-title: start
-description: Signals the two lines, synthetic and real images (begin)
----

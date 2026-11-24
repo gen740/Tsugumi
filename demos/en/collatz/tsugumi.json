@@ -27,9 +27,6 @@
         "id": "start"
       },
       {
-        "id": "initial"
-      },
-      {
         "id": "collatz_cpp"
       },
       {
@@ -55,48 +52,38 @@
           "port": "out"
         },
         "to": {
-          "card": "initial",
+          "card": "collatz_cpp",
           "port": "start"
         }
       },
       {
         "from": {
-          "card": "initial",
-          "port": "value"
-        },
-        "to": {
-          "card": "collatz_cpp",
-          "port": "n"
-        }
-      },
-      {
-        "from": {
-          "card": "initial",
-          "port": "value"
+          "card": "start",
+          "port": "out"
         },
         "to": {
           "card": "collatz_py",
-          "port": "n"
+          "port": "start"
         }
       },
       {
         "from": {
-          "card": "initial",
-          "port": "value"
+          "card": "start",
+          "port": "out"
         },
         "to": {
           "card": "collatz_jl",
-          "port": "n"
+          "port": "start"
         }
       },
       {
         "from": {
-          "card": "initial",
-          "port": "value"
+          "card": "start",
+          "port": "out"
         },
         "to": {
           "card": "collatz_r",
-          "port": "n"
+          "port": "start"
         }
       },
       {

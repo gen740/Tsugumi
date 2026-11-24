@@ -69,7 +69,7 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
           {"from":{"card":"file","port":"out"},"to":{"card":"dest","port":"file"}}])",
       {{"definitions/src/_card.json", test::card_json(R"({"type":"code"})")},
        {"definitions/src/_outputs.fbs", kSchema},
-       {"definitions/file/_card.json", test::card_json(R"({"type":"input"})")},
+       {"definitions/file/_card.json", test::card_json(R"({"type":"code"})")},
        {"definitions/file/_outputs.fbs",
         R"(table Message { body:string; } table Outputs { out:Message; } root_type Outputs;)"},
        {"definitions/dest/_card.json",
@@ -299,7 +299,7 @@ TEST(InputTypes, DirectArtifactRootStampsTheSharedTypeOnTheField) {
       R"([{"from":{"card":"source","port":"out"},
            "to":{"card":"dest","port":"in"}}])",
             {{"definitions/source/_card.json",
-              test::card_json(R"({"type":"input"})")},
+              test::card_json(R"({"type":"code"})")},
              {"definitions/source/_outputs.fbs",
               R"(include "tsugumi/artifact.fbs";
            table Outputs { out:tsugumi.Artifact; } root_type Outputs;)"},

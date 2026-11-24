@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from harness.values import recorded_input_json
-from projects import MSG_FBS, MSG_INPUT_NIX, SINK, builtin_project, card, conn, put, run_and_wait
+from projects import MSG_FBS, MSG_SOURCE_NIX, SINK, builtin_project, card, conn, put, run_and_wait
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 from harness.daemon import StartupFailure
@@ -32,16 +32,16 @@ def diagnostics(c, card: list[str]) -> list[str]:
 
 
 def external(root: Path, name: str, text_value: str) -> None:
-    """externals/<name>: an Input with its message as the boundary output."""
+    """externals/<name>: a Code Card with its message as the boundary output."""
     ext = root / "externals" / name
-    pins = [entry for entry in fixture_locks() if entry["name"] == "nixpkgs"]
+    pins = fixture_locks()
     put(ext / "tsugumi.json", json.dumps(project_document(
         name=name, nixPath=declarations(pins),
         canvas={"cards": [{"id": "say"}], "connections": []},
         boundary={"inputs": [], "outputs": [{"name": "said", "card": "say", "port": "msg"}]})))
     write_lock(ext, pins)
-    put(ext / "definitions" / "say" / "default.nix", MSG_INPUT_NIX)
-    put(ext / "definitions" / "say" / "_card.json", json.dumps(card_document({"type": "input"})))
+    put(ext / "definitions" / "say" / "default.nix", MSG_SOURCE_NIX)
+    put(ext / "definitions" / "say" / "_card.json", json.dumps(card_document({"type": "code"})))
     put(ext / "definitions/say/README.md", card_readme("Say"))
     put(ext / "definitions" / "say" / "params.nix", params_nix({"text": text_value, "value": True}))
     put(ext / "definitions" / "say" / "_outputs.fbs", MSG_FBS)
@@ -271,7 +271,7 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
     assert bytes(sources[meta_path].document).decode() == metadata
     assert sources[code_path].document is None
 
-    updated = json.dumps(card_document({"type": "input"}))
+    updated = json.dumps(card_document({"type": "code"}))
     saved = c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
                    changes=[
                        change("PutSource", path=card_path, bytes=updated.encode(),

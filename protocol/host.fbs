@@ -262,7 +262,7 @@ table ProjectCopyItem {
 }
 table ProjectCopy { project_path:string; items:[ProjectCopyItem]; copy_connections:bool; }
 table ProjectImport { project_path:string; path:string (required); id:string (required); x:double; y:double; }
-enum BuiltinCard:ubyte { Draft, Trigger, InputValue, BooleanInput, Merge, Collect }
+enum BuiltinCard:ubyte { Draft, Trigger, Merge, Collect }
 table ProjectCreateCard { project_path:string; id:string (required); kind:BuiltinCard; x:double; y:double; automatic_placement:bool; }
 enum ProjectLayoutAction:ubyte { Arrange, Untangle }
 table ProjectLayout {

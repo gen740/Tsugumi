@@ -314,19 +314,15 @@ def run(input):
     print("remote-card-stdout")
     return Output(doc=TextT(value=input.require("in").value))
 """
-    source = {"type": "input", "_params": '{ value = "remote-input-roundtrip"; }',
-              "_outputs": schema, "_nix": """
-{ params, inputs }:
-let
-  pkgs = import <nixpkgs> { };
-  sdk = import <tsugumi-kit/sdk/input> { inherit pkgs; };
-in {
-  run = sdk.input {
-    outputs = ./_outputs.fbs;
-    values.doc.value = params.value;
-  };
-}
-"""}
+    source = {"type": "code", "_params": '{ value = "remote-input-roundtrip"; }',
+              "_outputs": schema, "_nix": entry(python_run("""
+from card import Output, params
+from Text import TextT
+
+
+def run(input):
+    return Output(doc=TextT(value=params.value))
+"""))}
     settings = {
         "type": "code", "inputs": [{"name": "in"}], "_outputs": schema,
         "workerCapabilities": [63], "recordIO": "on", "timeoutSeconds": 600,

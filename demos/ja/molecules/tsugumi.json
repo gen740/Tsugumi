@@ -27,9 +27,6 @@
         "id": "start"
       },
       {
-        "id": "paste"
-      },
-      {
         "id": "properties"
       },
       {
@@ -52,18 +49,8 @@
           "port": "out"
         },
         "to": {
-          "card": "paste",
-          "port": "start"
-        }
-      },
-      {
-        "from": {
-          "card": "paste",
-          "port": "pasted"
-        },
-        "to": {
           "card": "properties",
-          "port": "pasted"
+          "port": "start"
         }
       },
       {

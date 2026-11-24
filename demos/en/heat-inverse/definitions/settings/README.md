@@ -1,6 +1,0 @@
----
-title: settings
-description: Rod and measurement conditions
----
-
-Passes on the number of grid cells cells, the thermal diffusivity alpha, the measurement time final_time, the standard deviation of the measurement noise noise (°C) and the seed. The rod has length 1, and time is dimensionless.

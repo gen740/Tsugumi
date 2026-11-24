@@ -22,9 +22,9 @@ end
 
 # Several single runs over the rate equation dn/dt = kV - gamma n, n(0) = 0.
 function main(inputs, report)
-    m = inputs.settings
+    m = params
     k, gamma, volume, runs = m["synthesis"], m["degradation"], m["volume"], Int(m["runs"])
-    shown = Int(inputs.params["shown_runs"])
+    shown = Int(params["shown_runs"])
     birth = k * volume
     t_end = 5 / gamma
     times = collect(range(0.0, t_end; length=201))

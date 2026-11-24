@@ -12,6 +12,7 @@ from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
 from harness.document import card_document, card_readme, params_nix, project_document
+from harness.real_cards import python_nix
 from harness.nix_path import declarations, test_lock_entries, write_lock
 
 MSG_FBS = """
@@ -22,23 +23,15 @@ table Outputs { msg:Msg (required); cond:Cond; }
 root_type Outputs;
 """
 
-# Independent producer fixture: build the two FlatBuffers with flatc using
-# evaluated Nix params, then expose exactly the Input Card output layout.
-MSG_INPUT_NIX = """{ params, inputs }:
-let
-  pkgs = import <nixpkgs> { };
-  msg = pkgs.writeText "msg.json" (builtins.toJSON { inherit (params) text; });
-  cond = pkgs.writeText "cond.json" (builtins.toJSON { inherit (params) value; });
-in {
-  run = pkgs.runCommand "message-input" { nativeBuildInputs = [ pkgs.flatbuffers ]; } ''
-    mkdir -p "$out/share/tsugumi/input/ports"
-    flatc --binary --strict-json --root-type demo.Msg ${./_outputs.fbs} ${msg}
-    flatc --binary --strict-json --root-type demo.Cond ${./_outputs.fbs} ${cond}
-    mv *-msg.bin "$out/share/tsugumi/input/ports/msg"
-    mv *-cond.bin "$out/share/tsugumi/input/ports/cond"
-  '';
-}
-"""
+MSG_SOURCE_NIX = python_nix("""from card import Input, Output, params
+from demo.Msg import MsgT
+from demo.Cond import CondT
+
+
+def run(_input: Input) -> Output:
+    return Output(msg=MsgT(text=params.text), cond=CondT(value=params.value))
+""")
+
 
 SINK = {"type": "collect"}
 
@@ -133,19 +126,18 @@ def write_nix_project(root, defs, cards, conns, files=None, name="test", *, lock
 
 
 def builtin_project(root: Path, text: str = "hello", extra_cards=(), extra_conns=()) -> None:
-    """An input Card wired to a sink, with a trigger for whole-workflow runs."""
+    """A Code source wired to a sink, with a trigger for whole-workflow runs."""
     defs = {
         "trigger": {"type": "trigger"},
-        "source": {"type": "input", "params": {"text": "x", "value": True},
-                   "_outputs": MSG_FBS, "_nix": MSG_INPUT_NIX},
+        "source": {"type": "code", "params": {"text": "x", "value": True},
+                   "_outputs": MSG_FBS, "_nix": MSG_SOURCE_NIX},
         "sink": SINK,
         "merge": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}]},
     }
-    # The input Card is a start Card (no inputs).
     write(root, defs, [card("start", "trigger"), card("src", "source", params={"text": text}), card("out", "sink"),
                        *extra_cards],
           [conn("src", "msg", "out", "in"), *extra_conns], name="builtin",
-          locked=[entry for entry in test_lock_entries() if entry["name"] == "nixpkgs"])
+          locked=test_lock_entries())
 
 
 def start_run(c, card_path, propagate: bool = True, concurrency: int | None = 4) -> str:

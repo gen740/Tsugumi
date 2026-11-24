@@ -26,7 +26,6 @@ table WorkerPort {
 table ArtifactGrant {
   id:tsugumi.ArtifactId (required);
   path:string (required);
-  store_path:string;
 }
 
 // The worker never opens input or output bytes.

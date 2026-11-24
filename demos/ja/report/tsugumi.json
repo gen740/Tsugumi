@@ -27,9 +27,6 @@
         "id": "start"
       },
       {
-        "id": "settings"
-      },
-      {
         "id": "generate"
       },
       {
@@ -43,16 +40,6 @@
       }
     ],
     "connections": [
-      {
-        "from": {
-          "card": "start",
-          "port": "out"
-        },
-        "to": {
-          "card": "settings",
-          "port": "start"
-        }
-      },
       {
         "from": {
           "card": "generate",
@@ -85,22 +72,12 @@
       },
       {
         "from": {
-          "card": "settings",
-          "port": "config"
+          "card": "start",
+          "port": "out"
         },
         "to": {
           "card": "generate",
-          "port": "config"
-        }
-      },
-      {
-        "from": {
-          "card": "settings",
-          "port": "config"
-        },
-        "to": {
-          "card": "render",
-          "port": "config"
+          "port": "start"
         }
       }
     ]

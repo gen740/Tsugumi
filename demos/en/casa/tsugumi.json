@@ -28,13 +28,10 @@
   "canvas": {
     "cards": [
       {
-        "id": "start"
+        "id": "load"
       },
       {
         "id": "ciao"
-      },
-      {
-        "id": "load"
       },
       {
         "id": "bands"
@@ -49,21 +46,11 @@
     "connections": [
       {
         "from": {
-          "card": "start",
+          "card": "load",
           "port": "out"
         },
         "to": {
           "card": "ciao",
-          "port": "start"
-        }
-      },
-      {
-        "from": {
-          "card": "start",
-          "port": "out"
-        },
-        "to": {
-          "card": "load",
           "port": "start"
         }
       },
@@ -80,11 +67,11 @@
       {
         "from": {
           "card": "load",
-          "port": "events"
+          "port": "out"
         },
         "to": {
           "card": "bands",
-          "port": "input"
+          "port": "start"
         }
       },
       {
@@ -105,16 +92,6 @@
         "to": {
           "card": "spectrum",
           "port": "input"
-        }
-      },
-      {
-        "from": {
-          "card": "load",
-          "port": "events"
-        },
-        "to": {
-          "card": "spectrum",
-          "port": "events"
         }
       }
     ]

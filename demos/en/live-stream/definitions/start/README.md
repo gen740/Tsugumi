@@ -1,4 +1,4 @@
 ---
 title: start
-description: Sends settings' state to start the stream
+description: Wait for a starting value from the seed view
 ---

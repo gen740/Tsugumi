@@ -8,7 +8,7 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | --- | --- |
 | **Workflow** | A graph of Cards connected by wires. The same thing a person draws, the Agent edits and the runtime executes ([Rationale](Rationale.md)) |
 | **Card** | A unit of processing, with input and output ports and settings ([Cards and Workflows](features.md#2-cards-and-workflows)) |
-| **Card type** | What a Card is, stated as `"type"` in its `_card.json`: `code`, `draft`, `trigger`, `input`, `merge`, `collect` or `subgraph` ([Kinds of Card](features.md#kinds-of-card)) |
+| **Card type** | What a Card is, stated as `"type"` in its `_card.json`: `code`, `draft`, `trigger`, `merge`, `collect` or `subgraph` ([Kinds of Card](features.md#kinds-of-card)) |
 | **Code Card** | A Card whose `default.nix` builds its processing with a language SDK into `lib/main.so`, usually from sources in `src/` ([Your first Card](CardGuide.md)) |
 | **Built-in Card** | A Card kind managed by the core. Trigger starts a run, Input emits built port values, Merge forwards arrivals and Collect aggregates them |
 | **Draft** | An unimplemented Card with only a name and content. Wire Drafts up to draw a plan (they have no ports) and have the Agent implement them |
