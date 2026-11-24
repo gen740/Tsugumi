@@ -96,9 +96,15 @@ TSUGUMI_VIEW_WEBGPU_IMPORTS(TSUGUMI_VIEW_DECLARE_IMPORT_)
 
 /* module "tsugumi" */
 
-/* Send bytes to the Card that owns this view. Never blocks.
- * The host copies the bytes before returning.
- * Returns 0 if queued, negative if the host cannot take it. */
+/* Send bytes to the Card that owns this view: each live process of the Card
+ * receives them through `recv`. Never blocks. The host copies the bytes
+ * before returning.
+ * Returns 0 if the host took the bytes, negative if it cannot take them
+ * (more than TSUGUMI_MESSAGE_MAX bytes, a NULL pointer with a nonzero size,
+ * or the host's queue for this view already holds a full message).
+ * With no live Card process (before the first run, or after the process
+ * ended) the message has no receiver and is dropped: this still returns 0,
+ * and nothing is shown under the view. */
 TSUGUMI_VIEW_IMPORT_("tsugumi", tsugumi_view_send)
 int32_t tsugumi_view_send(const uint8_t* data, uint32_t size);
 
