@@ -72,9 +72,7 @@ struct CardViewHost: View {
     case "html":
       HTMLCardView(session: session, cardKey: cardKey, index: index, view: view)
     case "dawn":
-      // TODO(open): dawn host
-      ContentUnavailableView("Dawn の表示はまだ使えません", systemImage: "cube.transparent",
-                             description: Text(verbatim: view.name))
+      DawnCardView(session: session, cardKey: cardKey, index: index, view: view)
     default:
       ContentUnavailableView(String(localized: "表示の種類「\(view.type)」には対応していません"),
                              systemImage: "exclamationmark.triangle", description: Text(verbatim: view.name))

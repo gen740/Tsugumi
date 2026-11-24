@@ -10,7 +10,7 @@
   "この Card は表示を宣言していません": "This Card has no declared views",
   "ビューの宣言を評価できませんでした: {0}": {"text": "Could not evaluate the view declarations: {0}", "mac": ["@"]},
   "表示の切り替え": "Switch View",
-  "Dawn の表示はまだ使えません": "Dawn views are not available yet",
+  "Dawn ビューを実行できませんでした": "Could not run the Dawn view",
   "表示の種類「{0}」には対応していません": {"text": "Unsupported view type “{0}”", "mac": ["@"]},
   "この接続では表示のファイルを読めません": "This connection cannot read view files",
   "表示のファイルが 32 MiB を超えています": "The view file exceeds 32 MiB",
