@@ -23,12 +23,12 @@ export async function checkCardViewsInChromium(browser, web, directory) {
     entryPoints: [path.join(web, 'tests/cardViewsBrowser.tsx')], outfile: path.join(directory, 'card-views.js'),
     bundle: true, jsx: 'automatic', loader: { '.md': 'text' }, logLevel: 'warning',
   })
-  await fs.writeFile(html, '<!doctype html><div id="root"></div><script src="card-views.js"></script>')
-  assert.equal(await runInChromium(browser, html, 'globalThis.cardViewsResult', ['--disable-gpu', '--disable-popup-blocking']), null)
-  console.log('Chromium Card views: sessions, popups, exact bytes, fullscreen control, sandbox and teardown passed')
+  await fs.writeFile(html, '<!doctype html><link rel="stylesheet" href="card-views.css"><div id="root"></div><script src="card-views.js"></script>')
+  assert.equal(await runInChromium(browser, html, 'globalThis.cardViewsResult', ['--disable-gpu']), null)
+  console.log('Chromium Card views: sessions, in-page windows, detach, minimize, exact bytes, full screen, sandbox and teardown passed')
 }
 
-export async function checkChildWebGpuInChromium(browser, web, directory) {
+export async function checkDawnWorkerInChromium(browser, web, directory) {
   const html = path.join(directory, 'dawn-worker.html')
   await esbuild.build({
     entryPoints: {
@@ -41,9 +41,9 @@ export async function checkChildWebGpuInChromium(browser, web, directory) {
   })
   await fs.writeFile(html, '<!doctype html><script type="module" src="dawn-worker-test.js"></script>')
   const result = await runInChromium(browser, html, 'globalThis.dawnWorkerResult', [
-    '--enable-unsafe-webgpu', '--disable-popup-blocking', '--allow-file-access-from-files',
+    '--enable-unsafe-webgpu', '--allow-file-access-from-files',
     '--autoplay-policy=no-user-gesture-required',
   ])
   assert.equal(result, null)
-  console.log('Chromium Dawn views: child OffscreenCanvas, IME, AudioWorklet, PNG snapshot, waiting overlay and Stop passed')
+  console.log('Chromium Dawn views: OffscreenCanvas, draw paused while minimized, IME, AudioWorklet, PNG snapshot, waiting overlay and Stop passed')
 }

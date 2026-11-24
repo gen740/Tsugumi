@@ -11,6 +11,7 @@ const errorText = (cause: unknown) => cause instanceof Error ? cause.message : S
 
 const routes = new Set<string>()
 let instance: DawnViewInstance | undefined
+let visible = true
 let clock: AudioClock | undefined
 let nextSend = 0
 let sendReply: ((error?: string) => void) | undefined
@@ -30,6 +31,7 @@ async function run(command: ViewCommand) {
   switch (command.type) {
     case 'start': {
       for (const route of command.routes) routes.add(route)
+      visible = command.visible
       const { module } = await loadView(command.bytes)
       instance = await DawnViewInstance.mount(module, command.canvas, command.size, {
         send: (bytes, route) => new Promise<void>((resolve, reject) => {
@@ -43,12 +45,16 @@ async function run(command: ViewCommand) {
         onFatal: cause => post({ type: 'fatal', message: errorText(cause) }),
         onCall: started => post({ type: 'call', started }),
         onTextArea: area => post({ type: 'textArea', area }),
-      }, command.refreshPeriod)
+      }, command.refreshPeriod, visible)
       post({ type: 'ready', features: instance.features })
       break
     }
     case 'route':
       routes.add(command.route)
+      break
+    case 'visible':
+      visible = command.visible
+      instance?.setVisible(visible)
       break
     case 'refresh':
       if (instance) instance.refreshPeriod = command.period

@@ -7,6 +7,7 @@ import { api, onServerEvent, Status } from '../api'
 import { uuid } from '../wire/rpc'
 import { ChatController } from './chat'
 import { Observable } from './observable'
+import { raiseWindow, topWindow } from './windowOrder'
 import { CardKey, ProjectSession } from './session'
 import { CardEditorCategory } from './workspace'
 
@@ -47,8 +48,6 @@ export class AppModel extends Observable {
   windows: DetailWindow[] = []
   readonly cardNavigators = new Map<ProjectSession, (card: CardKey) => void>()
   private chats = new Map<string, ChatController>()
-  // Above the canvas overlays (z-index 20–50), below popovers and sheets.
-  private z = 1000
 
   constructor() {
     super()
@@ -173,7 +172,7 @@ export class AppModel extends Observable {
     const vw = window.innerWidth, vh = window.innerHeight
     const w = Math.min(width, vw - 40), h = Math.min(height, vh - 60)
     this.windows = [...this.windows, {
-      id: uuid(), session, what, width: w, height: h, z: ++this.z,
+      id: uuid(), session, what, width: w, height: h, z: raiseWindow(),
       x: Math.max(10, (vw - w) / 2 + n * 24), y: Math.max(10, (vh - h) / 2 - 20 + n * 24),
     }]
     this.changed()
@@ -181,8 +180,8 @@ export class AppModel extends Observable {
 
   focusWindow(id: string) {
     const w = this.windows.find((w) => w.id === id)
-    if (!w || w.z === this.z) return
-    w.z = ++this.z
+    if (!w || w.z === topWindow()) return
+    w.z = raiseWindow()
     this.changed()
   }
 

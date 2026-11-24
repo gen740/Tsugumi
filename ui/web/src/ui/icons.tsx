@@ -35,6 +35,8 @@ const BASE: Record<string, string> = {
   'square.stack.3d.up': 'M8 2 14 5 8 8 2 5zM2 8l6 3 6-3M2 11l6 3 6-3',
   'square.stack.3d.up.fill': 'M8 2 14 5 8 8 2 5zM2 8l6 3 6-3M2 11l6 3 6-3',
   'square.stack': 'M3 5.5h10v8H3zM4.5 3.5h7M6 1.8h4',
+  'sidebar.right': 'M2 3h12v10H2zM10 3v10',
+  viewfinder: 'M2 5.5V2h3.5M10.5 2H14v3.5M14 10.5V14h-3.5M5.5 14H2v-3.5',
   'square.on.square': 'M5 5h8.5v8.5H5zM3 11V2.5h8.5',
   'chevron.left.forwardslash.chevron.right': 'M5 4.5 1.8 8 5 11.5M11 4.5 14.2 8 11 11.5M9.2 3 6.8 13',
   snowflake: 'M8 1.5v13M2.4 4.8l11.2 6.4M2.4 11.2l11.2-6.4M6.3 2.5 8 4l1.7-1.5M6.3 13.5 8 12l1.7 1.5',

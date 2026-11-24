@@ -25,7 +25,6 @@ const maxInputPending = 128
 
 export class BrowserView implements LiveViewRenderer {
   private readonly worker: Worker
-  private readonly owner: Window & typeof globalThis
   private readonly observer: ResizeObserver
   private readonly events = new AbortController()
   private readonly queued: ViewMessage[] = []
@@ -44,6 +43,7 @@ export class BrowserView implements LiveViewRenderer {
   private nextId = 0
   private inputPending = 0
   private started = false
+  private visible = true
   private ready = false
   private disposed = false
 
@@ -53,27 +53,25 @@ export class BrowserView implements LiveViewRenderer {
     private readonly flags: number,
     private readonly controls: ViewControls,
   ) {
-    this.owner = canvas.ownerDocument.defaultView!
-    // The popup's activation and visibility govern its audio and animation.
-    this.worker = new this.owner.Worker(new URL('./dawn-view-worker.js', import.meta.url), { type: 'module' })
+    this.worker = new Worker(new URL('./dawn-view-worker.js', import.meta.url), { type: 'module' })
     this.size = this.measure()
     this.worker.onmessage = ({ data }: MessageEvent<ViewNotice>) => this.notice(data)
     this.worker.onerror = event => this.fail(event.message || 'Dawn view worker failed')
     this.worker.onmessageerror = () => this.fail('Dawn view worker message could not be read')
-    this.observer = new this.owner.ResizeObserver(([entry]) => this.resize(entry?.devicePixelContentBoxSize?.[0]))
+    this.observer = new ResizeObserver(([entry]) => this.resize(entry?.devicePixelContentBoxSize?.[0]))
     try {
       this.observer.observe(canvas, { box: 'device-pixel-content-box' })
     } catch {
       this.observer.observe(canvas)
     }
     const { signal } = this.events
-    this.owner.addEventListener('resize', () => this.resize(), { signal })
+    window.addEventListener('resize', () => this.resize(), { signal })
     canvas.addEventListener('pointerdown', () => { this.enableAudio() }, { signal })
     if (flags & viewFlags.hideCursor) canvas.style.cursor = 'none'
   }
 
   private now() {
-    return this.owner.performance.timeOrigin + this.owner.performance.now()
+    return performance.timeOrigin + performance.now()
   }
 
   private post(command: ViewCommand, transferable?: Transferable[]) {
@@ -83,7 +81,7 @@ export class BrowserView implements LiveViewRenderer {
   start(bytes: Uint8Array<ArrayBuffer>) {
     if (this.disposed) return
     const canvas = this.canvas.transferControlToOffscreen()
-    this.post({ type: 'start', bytes, canvas, size: this.size, routes: [...this.routes], refreshPeriod: this.refreshPeriod },
+    this.post({ type: 'start', bytes, canvas, size: this.size, routes: [...this.routes], refreshPeriod: this.refreshPeriod, visible: this.visible },
       [bytes.buffer, canvas])
     this.started = true
     this.measureRefreshPeriod()
@@ -97,7 +95,7 @@ export class BrowserView implements LiveViewRenderer {
       previous = timestamp
       if (delta >= 3 && delta <= 40) intervals.push(delta)
       if (intervals.length < 12) {
-        this.frame = this.owner.requestAnimationFrame(measure)
+        this.frame = requestAnimationFrame(measure)
         return
       }
       this.frame = undefined
@@ -105,11 +103,11 @@ export class BrowserView implements LiveViewRenderer {
       this.refreshPeriod = intervals[intervals.length >> 1]
       this.post({ type: 'refresh', period: this.refreshPeriod })
     }
-    this.frame = this.owner.requestAnimationFrame(measure)
+    this.frame = requestAnimationFrame(measure)
   }
 
   private measure(box?: ResizeObserverSize) {
-    const scale = this.owner.devicePixelRatio
+    const scale = devicePixelRatio
     return {
       width: Math.max(1, box?.inlineSize ?? Math.round(this.canvas.clientWidth * scale)),
       height: Math.max(1, box?.blockSize ?? Math.round(this.canvas.clientHeight * scale)),
@@ -135,6 +133,13 @@ export class BrowserView implements LiveViewRenderer {
       if (size !== this.size) this.sendResize()
     })
     this.post({ type: 'resize', id, size, at: this.resizeAt })
+  }
+
+  /** A minimized window keeps its calls running; only drawing pauses. */
+  setVisible(visible: boolean) {
+    if (this.visible === visible) return
+    this.visible = visible
+    if (this.started) this.post({ type: 'visible', visible })
   }
 
   registerRoute(route: string) {
@@ -196,7 +201,6 @@ export class BrowserView implements LiveViewRenderer {
   private createAudio() {
     try {
       this.audio = new ViewAudio(
-        this.owner,
         suspended => this.controls.enableAudio(suspended),
         (port, clock) => this.post({ type: 'audio', port, clock }, [port]),
         clock => this.post({ type: 'audioClock', clock }),
@@ -210,9 +214,9 @@ export class BrowserView implements LiveViewRenderer {
   }
 
   private watchdog(started: boolean) {
-    this.owner.clearTimeout(this.callTimer)
+    window.clearTimeout(this.callTimer)
     if (started) {
-      this.callTimer = this.owner.setTimeout(() => {
+      this.callTimer = window.setTimeout(() => {
         this.waiting = true
         this.controls.waiting(true)
       }, 500)
@@ -296,7 +300,7 @@ export class BrowserView implements LiveViewRenderer {
     this.watchdog(false)
     this.controls.enableAudio(false)
     this.observer.disconnect()
-    if (this.frame !== undefined) this.owner.cancelAnimationFrame(this.frame)
+    if (this.frame !== undefined) cancelAnimationFrame(this.frame)
     this.audio?.dispose()
     this.input?.dispose()
     this.canvas.style.cursor = ''

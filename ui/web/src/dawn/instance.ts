@@ -60,6 +60,8 @@ export class DawnViewInstance {
   private wantsFrame = false
   private scale = 1
   private stopped = false
+  // A hidden (minimized) view keeps receiving calls, but is not drawn.
+  private hidden = false
   private currentBytes?: Uint8Array<ArrayBuffer>
   private readonly reverse: { bytes: Uint8Array<ArrayBuffer>; route: Uint8Array<ArrayBuffer> }[] = []
   private reverseBytes = 0
@@ -77,7 +79,7 @@ export class DawnViewInstance {
     public refreshPeriod: number,
   ) {}
 
-  static async mount(module: WebAssembly.Module, canvas: OffscreenCanvas, size: ViewSize, options: ViewHost, refreshPeriod: number) {
+  static async mount(module: WebAssembly.Module, canvas: OffscreenCanvas, size: ViewSize, options: ViewHost, refreshPeriod: number, visible: boolean) {
     const gpu = (navigator as Navigator & { gpu?: DawnGpu }).gpu
     if (!gpu) throw new Error('WebGPU is unavailable in this worker')
     const adapter = await gpu.requestAdapter()
@@ -89,6 +91,7 @@ export class DawnViewInstance {
     if (!context) throw new Error('Could not create the WebGPU canvas context')
     const device = await adapter.requestDevice()
     const view = new DawnViewInstance(canvas, context, device, format, options, refreshPeriod)
+    view.hidden = !visible
     try {
       view.start(module, size, formatValue)
       return view
@@ -132,7 +135,7 @@ export class DawnViewInstance {
     const queueId = this.handles.add('Queue', this.device.queue)
     this.origin = absoluteNow()
     this.call('start', deviceId, queueId, formatValue, size.width, size.height, size.scale)
-    this.draw(absoluteNow() + this.refreshPeriod)
+    if (!this.hidden) this.draw(absoluteNow() + this.refreshPeriod)
   }
 
   get features() {
@@ -179,8 +182,20 @@ export class DawnViewInstance {
     }
   }
 
+  /** Hiding cancels the pending frame; showing draws once at once. */
+  setVisible(visible: boolean) {
+    if (this.hidden === !visible) return
+    this.hidden = !visible
+    if (this.hidden) {
+      if (this.frame !== undefined) cancelAnimationFrame(this.frame)
+      this.frame = undefined
+    } else if (this.exports) {
+      this.draw(absoluteNow() + this.refreshPeriod)
+    }
+  }
+
   private scheduleDraw() {
-    if (!this.stopped && this.frame === undefined)
+    if (!this.stopped && !this.hidden && this.frame === undefined)
       this.frame = requestAnimationFrame(timestamp => {
         this.frame = undefined
         this.draw(performance.timeOrigin + timestamp + this.refreshPeriod)

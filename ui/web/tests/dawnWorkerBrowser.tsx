@@ -42,16 +42,29 @@ async function until(condition: () => unknown, description: string) {
 }
 
 async function test() {
-  const child = requireValue(window.open('', '_blank', 'popup,width=320,height=240'), 'Could not open the child window')
-  const doc = child.document
+  const doc = document
   const host = doc.createElement('main')
+  host.style.cssText = 'width: 320px; height: 240px; display: flex; flex-direction: column'
   doc.body.append(host)
   const root = createRoot(host)
   const view = new LiveView('dawn', 'card', 'dawn', 'dawn', 1, 320, 240)
   const messages: number[] = []
+  const show = (hidden: boolean) => root.render(<DawnViewCanvas view={view} read={async () => bytes.slice()}
+    send={async (_, data) => { messages.push(data[0]) }} hidden={hidden} />)
+  const draws = () => messages.filter(value => value === 1).length
   try {
-    root.render(<DawnViewCanvas view={view} read={async () => bytes.slice()} send={async (_, data) => { messages.push(data[0]) }} />)
-    await until(() => messages.includes(1), 'the child canvas drew in the Worker')
+    show(false)
+    await until(() => messages.includes(1), 'the canvas drew in the Worker')
+
+    // Minimized: messages still reach the view, but it is not drawn until restored.
+    show(true)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    const shown = draws()
+    view.deliver({ bytes: Uint8Array.of(1) })
+    await new Promise(resolve => setTimeout(resolve, 300))
+    if (draws() !== shown) throw new Error('A hidden view must not be drawn')
+    show(false)
+    await until(() => draws() > shown, 'restoring the view drew it again')
     await until(() => doc.querySelector('textarea:not([hidden])'), 'the IME textarea follows the view text area')
     const textarea = requireValue(doc.querySelector('textarea'), 'The textarea is missing')
     textarea.dispatchEvent(new CompositionEvent('compositionstart'))
@@ -75,7 +88,7 @@ async function test() {
   } finally {
     view.close()
     root.unmount()
-    child.close()
+    host.remove()
   }
 }
 

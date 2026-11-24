@@ -15,10 +15,11 @@ export type AudioRequest = { frame: number; frames: number }
 export type AudioChunk = { frame: number; samples?: Float32Array<ArrayBuffer> }
 
 export type ViewCommand =
-  | { type: 'start'; bytes: Uint8Array<ArrayBuffer>; canvas: OffscreenCanvas; size: ViewSize; routes: string[]; refreshPeriod: number }
+  | { type: 'start'; bytes: Uint8Array<ArrayBuffer>; canvas: OffscreenCanvas; size: ViewSize; routes: string[]; refreshPeriod: number; visible: boolean }
   | { type: 'route'; route: string }
   | { type: 'resize'; size: ViewSize; at: number; id: number }
   | { type: 'refresh'; period: number }
+  | { type: 'visible'; visible: boolean }
   | { type: 'message'; bytes: Uint8Array<ArrayBuffer>; at: number; id: number }
   | { type: 'input'; event: DawnInput; at: number; id: number }
   | { type: 'snapshot'; id: number }
