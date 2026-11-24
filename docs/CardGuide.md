@@ -255,7 +255,7 @@ The worker sets the working directory, `HOME`, `TMPDIR` and the environment at l
 | `_card.json` | Card type, input names and execution settings |
 | `_outputs.fbs` | Output ports and their types |
 | `_inputs.fbs` | Generated input schema for connected ports |
-| `params.nix` | Current parameter literals |
+| `params.nix` | Current parameter literals; absent when the Card has no params |
 | `default.nix` | Nix definition receiving `{ params, inputs }` |
 | `README.md` | Optional one-line `description` front matter and Markdown body |
 | `_comments.json` | Review comments |
@@ -283,7 +283,8 @@ output. Core registers its existing read-only store directory.
 
 ### Parameters
 
-`params.nix` is a flat attrset of literals. Entries can be booleans, signed
+`params.nix` is a flat attrset of literals. A Card without params has no
+`params.nix`; a missing file is the same as `{ }`. Entries can be booleans, signed
 64-bit integers, doubles, strings and nonempty homogeneous lists of these types.
 `10` and `10.0` have different types. Editing a value in the UI replaces that
 literal in place, preserving the type, other entries and comments. Pass

@@ -4,7 +4,7 @@ A Card in Card holds a child workflow. Wires carry
 typed values from an output port to an input port, and a run starts from the trigger Card and follows the wires.
 Each project declares named Nix sources and pins their URLs with an explicit lock update. Parameter edits change the literal in the Card's params.nix. Code Cards use these environments: the installed Mac clients use a shared Linux VM, Linux uses bubblewrap,
 and a development daemon directly on macOS uses Seatbelt. Filesystem and network permissions are per Card.
-Runs and logs are recorded; artifacts are retained when the Card is configured to keep them.
+Runs, logs and artifacts are recorded per run.
 The user can ask you anything about the app; you explain, they act.
 
 How you answer:

@@ -57,7 +57,7 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **bubblewrap / Seatbelt** | How Cards are isolated: bubblewrap inside the VM and on Linux, Seatbelt in a Web UI run directly on a Mac from the repository |
 | **nixPath** | Named Nix sources declared in `tsugumi.json` and resolved by Cards through `<name/path>` |
 | **tsugumi.lock** | The project document that maps each Nix source name to a URL pinned by revision and NAR hash |
-| **params.nix** | A Card definition file with a flat set of literals that hold the current parameter values and determine their types |
+| **params.nix** | A Card definition file with a flat set of literals that hold the current parameter values and determine their types; a Card without params has none |
 
 ## Agent
 

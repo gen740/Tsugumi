@@ -145,6 +145,7 @@ Each output is a table field in the root of _outputs.fbs. Mark outputs every cal
 from wiring and upstream schemas. Pass that schema to the SDK builder.
 
 Edit values in params.nix, a flat literal attrset such as `{ seed = 7; tariff = "spot"; }`.
+A Card without params has no params.nix.
 The SDK embeds the evaluated params at build time. In `default.nix { params, inputs }`,
 `inputs.<card_id>` is the upstream Card's Nix exports. See the [Card guide](https://github.com/gen740/Tsugumi/blob/main/docs/CardGuide.md)
 and the [SDK contract](https://github.com/gen740/tsugumi-kit/blob/main/docs/sdk-contract.md).

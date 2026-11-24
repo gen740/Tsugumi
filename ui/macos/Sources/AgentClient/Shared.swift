@@ -158,7 +158,7 @@ enum Shared {
     {
       "name": "project_copy",
       "mutating": true,
-      "description": "Copy files into Card sources without loading bytes into the model, import an attached project into externals (folder + id), or copy a Card and its complete definition closure from an attached project or bundled demo. source: attached (folder + files, folder + id, or folder + card + id), card or scratch (files), demo (demo = language-qualified demo_list path, card = source Card id, id = destination Card id); Card copies accept optional name; Card copies and project imports accept project_path, x, y. base_rev is the inspected revision.",
+      "description": "Copy files into Card sources without loading bytes into the model, import an attached project into externals (folder + id), or copy a Card and its complete definition closure from an attached project or bundled demo. source: attached (folder + files, folder + id, or folder + card + id), card or scratch (files), demo (demo = language-qualified demo_list path, card = source Card id, id = destination Card id); Card copies and project imports accept project_path, x, y. base_rev is the inspected revision.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -210,9 +210,6 @@ enum Shared {
             "type": "string"
           },
           "id": {
-            "type": "string"
-          },
-          "name": {
             "type": "string"
           },
           "project_path": {
@@ -504,9 +501,6 @@ enum Shared {
               "project",
               "host"
             ]
-          },
-          "name": {
-            "type": "string"
           },
           "project_path": {
             "type": "string",

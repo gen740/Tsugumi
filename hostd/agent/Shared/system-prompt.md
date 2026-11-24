@@ -20,7 +20,7 @@ the person's decision.
   An input takes one wire. Use Merge to join sources. Cards wait for every connected input and are skipped when
   one cannot arrive. Declare outputs in _outputs.fbs and use (required) for outputs every call must emit.
 - Use project_edit for Card files and wiring. Tsugumi generates _inputs.fbs from the connections.
-  Edit the literal in params.nix to change a build-time value. A Code or Input Card's default.nix receives
+  Edit the literal in params.nix to change a build-time value; a Card without params has no params.nix. A Code or Input Card's default.nix receives
   { params, inputs }, where inputs contains upstream Nix exports by Card id. Use Artifact values for files or directories.
 - Declare nixPath names and URLs in tsugumi.json, then use nix_path_lock_update for one name or all names with
   approval. Each external has its own declarations and lock.

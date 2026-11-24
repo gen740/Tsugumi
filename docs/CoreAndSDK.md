@@ -29,7 +29,7 @@ The Card ABI that connects the two is in [Card ABI](CardABI.md), and what a Card
 
 The core calls a Card's `default.nix` with `{ params, inputs }`. The Card imports nixpkgs and its SDK from the [project's locked Nix search path](features.md#project-nix-search-path).
 
-- `params` is the evaluated literal attrset from [params.nix](CardGuide.md#parameters). The SDK embeds it at build time.
+- `params` is the evaluated literal attrset from [params.nix](CardGuide.md#parameters), or `{ }` when the Card has no params.nix. The SDK embeds it at build time.
 - `inputs` contains Nix exports from the guaranteed upstream Cards, by Card ID. In `A → B → C`, C gets both `inputs.A` and `inputs.B`. TODO(open): Exports through graph boundaries.
 
 Import a language builder from `<tsugumi-kit/sdk/cpp>` or another SDK entry point with `{ inherit pkgs; }`. Pass evaluated `params`, the generated `_inputs.fbs` as the builder's `inputs` (or `null` when absent), and the authored `_outputs.fbs` as `outputs`. Run and API builders share code generation. See the [temperature example](CardGuide.md#the-files) and the [kit builder contract](https://github.com/gen740/tsugumi-kit/blob/main/docs/sdk-contract.md).
