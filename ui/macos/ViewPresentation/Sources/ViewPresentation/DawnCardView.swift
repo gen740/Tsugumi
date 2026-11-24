@@ -392,6 +392,7 @@ private struct DawnGamepadState: Equatable {
   private var dimensions: (width: UInt32, height: UInt32, scale: Float)?
   private var pointerTracking: NSTrackingArea?
   private var pointerLocked = false
+  private var releasingEscape = false
   private var cursorHidden = false
   private var pointerInside = false
   private var marked = NSAttributedString(string: "")
@@ -413,7 +414,7 @@ private struct DawnGamepadState: Equatable {
   override func makeBackingLayer() -> CALayer { CAMetalLayer() }
   override var isFlipped: Bool { true }
   override var acceptsFirstResponder: Bool {
-    host?.acceptsKeys == true || host?.acceptsPointerLock == true
+    host?.acceptsKeys == true || host?.textArea != nil || host?.acceptsPointerLock == true
   }
   // The click that brings the window forward is also the view's, as a press and release.
   override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -433,6 +434,7 @@ private struct DawnGamepadState: Equatable {
 
   @objc private func windowLostFocus() {
     pointerInside = false
+    releasingEscape = false
     buttons = 0
     releasePointer()
     inputContext?.discardMarkedText()
@@ -514,7 +516,8 @@ private struct DawnGamepadState: Equatable {
 
   private func pointer(_ event: NSEvent, kind: UInt32) {
     if kind == 1, acceptsFirstResponder { window?.makeFirstResponder(self) }
-    if kind == 1, !pointerLocked, host?.acceptsPointerLock == true, window?.isKeyWindow == true {
+    if kind == 1, !pointerLocked, host?.acceptsPointerLock == true,
+       window?.isKeyWindow == true, window?.firstResponder === self {
       pointerLocked = CGAssociateMouseAndMouseCursorPosition(0) == .success
       updateCursor()
     }
@@ -549,18 +552,25 @@ private struct DawnGamepadState: Equatable {
   }
 
   override func keyDown(with event: NSEvent) {
-    if event.keyCode == UInt16(kVK_Escape), pointerLocked {
+    if event.keyCode == UInt16(kVK_Escape), pointerLocked || releasingEscape {
+      releasingEscape = true
       releasePointer()
       return
     }
     host?.key(event, kind: 0)
-    guard host?.textArea != nil else { return }
+    guard let host, !host.waiting, host.textArea != nil else { return }
     inputTimestamp = event.timestamp
     defer { inputTimestamp = nil }
     interpretKeyEvents([event])
   }
 
-  override func keyUp(with event: NSEvent) { host?.key(event, kind: 1) }
+  override func keyUp(with event: NSEvent) {
+    if event.keyCode == UInt16(kVK_Escape), releasingEscape {
+      releasingEscape = false
+      return
+    }
+    host?.key(event, kind: 1)
+  }
 
   private var compositionTime: Double { inputTimestamp ?? CACurrentMediaTime() }
 
