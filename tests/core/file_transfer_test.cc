@@ -64,6 +64,8 @@ auto large_file(const fs::path& root, bool sparse) -> void {
     }
     expect(static_cast<bool>(file), "write large file");
   }
+  // Linux moves the staged file into the store.
+  const auto expected = sparse ? std::string() : tsugumi::fs::sha256_file(source);
   const auto check = [&](const fs::path& path) {
     expect(fs::file_size(path) == size, "staging truncated a large file");
     if (sparse) {
@@ -78,7 +80,7 @@ auto large_file(const fs::path& root, bool sparse) -> void {
       expect(file.gcount() == 4 && std::string_view(tail, 4) == "tail",
              "lost data beyond 2 GiB");
     } else {
-      expect(tsugumi::fs::sha256_file(path) == tsugumi::fs::sha256_file(source),
+      expect(tsugumi::fs::sha256_file(path) == expected,
              "staging changed file content");
     }
   };
