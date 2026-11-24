@@ -5,31 +5,6 @@ import XCTest
 @testable import TsugumiAgentClient
 
 final class ServiceWireTests: XCTestCase {
-  func testNixEvaluationRequestPreservesCardScopeAndOptionalSystem() throws {
-    let evaluation = Tsugumi_RPC_EvaluateNixRequestT()
-    evaluation.card = cardPath(["analysis", "plot"])
-    evaluation.expression = "(import ./. { inherit params inputs; }).api or null"
-    evaluation.build = true
-    evaluation.atRev = 42
-
-    let request = Tsugumi_RPC_RequestT()
-    request.value = Tsugumi_RPC_RequestPayloadUnion(evaluation, type: .evaluatenixrequest)
-    var message = Tsugumi_RPC_MessageT()
-    message.requestId = 7
-    message.payload = Tsugumi_RPC_PayloadUnion(request, type: .request)
-    var builder = FlatBufferBuilder()
-    let root = Tsugumi_RPC_Message.pack(&builder, obj: &message)
-    builder.finish(offset: root, fileId: "TSG1")
-    var buffer = ByteBuffer(bytes: builder.sizedByteArray)
-    let wire: Tsugumi_RPC_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSG1")
-    let decoded = try XCTUnwrap(wire.unpack().payload?.value as? Tsugumi_RPC_RequestT)
-    let value = try XCTUnwrap(decoded.value?.value as? Tsugumi_RPC_EvaluateNixRequestT)
-    XCTAssertEqual(value.card.segments, ["analysis", "plot"])
-    XCTAssertEqual(value.expression, "(import ./. { inherit params inputs; }).api or null")
-    XCTAssertEqual(value.atRev, 42)
-    XCTAssertTrue(value.build)
-  }
-
   func testSeparateContractsMatchSharedFlatcGoldens() throws {
     let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .appendingPathComponent("../../../../../tests/fixtures/service-contract.json").standardizedFileURL

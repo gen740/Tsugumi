@@ -26,7 +26,7 @@ function node(dir: string, id: string): CardNodeData {
   const typed = fs.existsSync(fbs)
     ? [...(/table Outputs\s*\{([^}]*)\}/.exec(fs.readFileSync(fbs, 'utf8').replace(/\/\*.*?\*\//gs, ''))?.[1] ?? '').matchAll(/(\w+)\s*:/g)].map((m) => ({ name: m[1] }))
     : []
-  const blank = { summary: def?.description || meta?.description || undefined, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, title: id }
+  const blank = { summary: meta?.description || undefined, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, title: id }
   if (def?.type === 'subgraph') {
     const b = read(path.join(dir, 'externals', def.external, 'tsugumi.json'))?.boundary ?? {}
     return { ...blank, kind: 'subgraph', inputs: named(b.inputs), outputs: named(b.outputs) }
@@ -125,8 +125,7 @@ function scopes(name: string, dir: string, grid?: number): Scene[] {
   return out
 }
 
-/** Cards the path enters and leaves again. A branch's port sits inside its box:
- *  a stay that starts or ends the path is the wire reaching its port. */
+/** Counts Cards the path enters and leaves. The wire may start or end at a port inside its Card. */
 function crossed(pts: Pt[], obstacles: Rect[]): number {
   const dense: Pt[] = [pts[0]]
   for (let i = 1; i < pts.length; i++) {

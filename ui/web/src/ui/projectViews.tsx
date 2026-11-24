@@ -91,7 +91,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
           {unapplied && <span className="label" style={{ color: 'var(--orange)' }}><Icon name="pencil.circle.fill" />{L('未適用の変更')}</span>}
         </div>
         <div className="callout secondary">{L('Card「{0}」の定義（definitions/{0}/）です。', id)}</div>
-        <div className="headline">{L('_card.json（設定・params・入力）')}</div>
+        <div className="headline">{L('_card.json（設定・入力）')}</div>
         <CodeEditor text={cardText} onChange={setCardText} language="json" documentId={`db:${id}/_card.json`} style={{ flex: 2, minHeight: 180 }} />
         <div className="headline">{L('README.md（説明と内容、任意）')}</div>
         <CodeEditor text={metaText} onChange={setMetaText} language="md" documentId={`db:${id}/README.md`} style={{ flex: 1, minHeight: 80, maxHeight: 140 }} />
@@ -232,7 +232,6 @@ function NixPathRows({ session, prefix }: { session: ProjectSession; prefix: str
     setDraft(next)
     setPending(undefined)
     revisionEdit.reload(session.rev)
-    return next
   }
   const save = async (list: J[], original: J | undefined) => {
     setPending(list)
@@ -268,7 +267,8 @@ function NixPathRows({ session, prefix }: { session: ProjectSession; prefix: str
           <Button disabled={disabled} onClick={() => start(entry)}>{L('編集')}</Button>
           <Button disabled={disabled} onClick={() => void update(name)}>{L('更新')}</Button>
           <Button kind="destructive" disabled={disabled} onClick={() => {
-            const { original } = start(entry)
+            const original = clone(get(project, 'nixPath'))
+            close()
             void save(entries.filter(row => str(get(row, 'name')) !== name), original)
           }}>{L('削除')}</Button>
         </Row>

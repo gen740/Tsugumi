@@ -83,19 +83,8 @@ final class RevisionEdit {
     return false
   }
   func replaceDocuments(_ session: ProjectSession, overwrite: Bool = false, _ documents: [(String, JSONValue?)]) async -> Bool {
-    guard !applying else { return false }
-    applying = true
-    defer { applying = false }
-    do {
-      savedRev = try await session.replaceDocuments(overwrite ? (conflictRev ?? baseRev) : baseRev, documents)
-      reload(savedRev ?? session.rev)
-      return true
-    } catch let failure as RPCFailure where failure.kind == .revisionConflict || failure.kind == .hashConflict || failure.kind == .valueConflict || failure.kind == .sourceChanged {
-      recordConflict(session)
-      return false
-    } catch { self.error = String(describing: error); return false }
+    await applyOperation(session) { try await session.replaceDocuments(overwrite ? (conflictRev ?? baseRev) : baseRev, documents) }
   }
-
 }
 
 struct RevisionEditNotice: View {

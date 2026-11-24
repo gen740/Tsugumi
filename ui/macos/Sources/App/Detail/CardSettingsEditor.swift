@@ -485,7 +485,7 @@ struct CardSettingsEditor: View {
           case .dependencies: DependenciesCategory(model: m)
           case .executions: CardExecutionView(session: session, model: m)
           case .artifacts: CardArtifactsView(session: session, cardKey: ref.card)
-          case .notes: NotesCategory(model: m)
+          case .notes: CommentsCategory(session: m.session, card: m.cardKey)
           }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -594,7 +594,7 @@ struct CardPreview: View {
     case .error?: outputs = []
     case nil: outputs = nil
     }
-    let data = session.nodeData(model.cardKey, definition: model.definition, meta: model.meta,
+    let data = session.nodeData(model.cardKey, definition: model.definition, notes: model.meta,
                                 collapsed: collapsed, outputs: outputs)
     if items.isEmpty {
       items = [CanvasItem(id: model.cardKey, data: data, origin: .zero)]
@@ -1160,7 +1160,6 @@ private struct BoundaryCategory: View {
   }
 }
 
-/// Free text describing intent and notes in README.md.
 /// What the user and the Agent write about this Card. Saved at once, not with Apply
 /// (during a run, when the run ends, as other edits): it says nothing about how it runs.
 private struct CommentsCategory: View {
@@ -1292,51 +1291,6 @@ private struct CommentsCategory: View {
     .padding(.horizontal, 10).padding(.vertical, 8)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
-  }
-}
-
-/// Comments (what to change, for the Agent) above the added context (what the
-/// Card is for); a Card with no definition has only comments.
-private struct NotesCategory: View {
-  @Bindable var model: CardEditorModel
-
-  var body: some View {
-    VSplitView {
-      CommentsCategory(session: model.session, card: model.cardKey)
-        .frame(minHeight: 160, maxHeight: .infinity)
-      if model.kind != .subgraph {
-        VStack(alignment: .leading, spacing: 0) {
-          Text("追加コンテキスト").font(.headline).padding([.horizontal, .top], 12)
-          ContextCategory(model: model)
-        }
-        .frame(minHeight: 140, idealHeight: 200, maxHeight: .infinity)
-      }
-    }
-  }
-}
-
-private struct ContextCategory: View {
-  @Bindable var model: CardEditorModel
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Text("処理の意図や補足を文章で残します（README.md）。チャットで Card を参照したときにも使われます。")
-        .font(.callout).foregroundStyle(.secondary)
-      if model.definitionId == nil {
-        Text("定義を持たない Card には追加コンテキストを置けません。").foregroundStyle(.secondary)
-      } else {
-        TextEditor(text: Binding(
-          get: { model.meta?["context"]?.string ?? "" },
-          set: { v in
-            var m = model.meta ?? .object([])
-            m["context"] = v.isEmpty ? nil : .string(v)
-            model.meta = (m.object?.isEmpty ?? true) ? nil : m
-          }))
-          .font(.body)
-          .border(.secondary.opacity(0.3))
-      }
-    }
-    .padding(12)
   }
 }
 
@@ -1781,26 +1735,5 @@ struct FileNode: Identifiable, Hashable {
       FileNode(name: d, path: base + d + "/", children: tree(dirs[d]!, base: base + d + "/"))
     }
     return folders + leaves.sorted().map { FileNode(name: $0, path: base + $0, children: nil) }
-  }
-}
-
-/// Choices for an Input Card's Path source: every project file and folder of
-/// the Card's project, written as the core reads them (relative to the Card's
-/// definition folder, or project:<path> from the project root).
-func pathChoices(_ sourcePaths: [String], definitionDir: String) -> [String] {
-  let components = definitionDir.split(separator: "/")
-  guard components.count >= 2, components[components.count - 2] == "definitions" else { return [] }
-  let root = components.dropLast(2).map { $0 + "/" }.joined()
-  var paths = Set<String>()
-  for source in sourcePaths where source.hasPrefix(root) {
-    let rel = source.dropFirst(root.count)
-    // A nested project's files belong to that project.
-    let parts = rel.split(separator: "/")
-    if parts.isEmpty || parts[0] == "externals" { continue }
-    for n in 1...parts.count { paths.insert(root + parts[..<n].joined(separator: "/")) }
-  }
-  paths.remove(String(definitionDir.dropLast()))
-  return paths.sorted().map {
-    $0.hasPrefix(definitionDir) ? String($0.dropFirst(definitionDir.count)) : "project:" + $0.dropFirst(root.count)
   }
 }

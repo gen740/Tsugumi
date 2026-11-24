@@ -80,7 +80,7 @@ const ports = (s: Session, k: string) => {
   s.setDraftEdit({ content: 'count words' })
   const open = new CardGeometry(s.nodeData(a), 'topToBottom')
   assert.equal(open.draftRow, CardGeometry.draftEditRow, 'the Card opens up while it is written')
-  assert.equal(await s.finishDraftEdit(), undefined)
+  await s.finishDraftEdit()
   assert.equal(s.inlineDraft, undefined)
   assert.equal(str(get(s.cardMeta(a), 'content')), 'count words')
   assert.equal(s.nodeData(a).summary, 'count words', 'what a Draft says is on its Card')
@@ -92,7 +92,7 @@ const ports = (s: Session, k: string) => {
   assert.equal(plain.headerRow, CardGeometry.untitledTop)
   await s.save()
   await s.startDraftEdit(a)
-  assert.equal(await s.finishDraftEdit(), undefined)
+  await s.finishDraftEdit()
   assert.ok(s.instance(a))
   assert.equal(s.displayName(a), a)
 

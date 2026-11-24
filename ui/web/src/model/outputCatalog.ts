@@ -46,10 +46,7 @@ export function parseOutputCatalog(text: string): OutputCatalogResult {
     const typeAndAttrs = parts[1]
     const type = typeAndAttrs.split('(')[0].trim()
     if (!type) return { error: L('型がありません: {0}', parts[0]) }
-    const paren = typeAndAttrs.indexOf('(')
-    const attrs = paren >= 0 ? typeAndAttrs.slice(paren) : ''
-    const path = type === 'string' && /\btsugumi\s*:\s*"path"/.test(attrs)
-    ports.push({ name: parts[0], typeName: path ? 'Path' : type })
+    ports.push({ name: parts[0], typeName: type })
   }
   return { ports }
 }

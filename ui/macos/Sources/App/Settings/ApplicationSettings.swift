@@ -357,7 +357,7 @@ private struct EditorSettings: View {
     """,
     "nix": """
     # A Nix definition with a helper export
-    { pkgs, params, inputs, schemas }:
+    { params, inputs }:
     {
       exports = { scale = x: x * 2; };
     }

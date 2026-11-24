@@ -83,14 +83,9 @@ enum SmokeTest {
         report["layout_extras"] = s.saveError ?? "ok"
         ok = ok && s.saveError == nil && s.confirmedLayout["groups"] != nil
 
-        // Metadata does not create Draft ports; wires attach to the Card itself.
+        // Draft wires attach directly to the Card.
         let dk = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 600), name: "smoke-draft")
         let draft = path(dk)[0]
-        s.edit { s in
-          var meta = s.definitionMeta[draft] ?? .object([])
-          meta["outputs"] = .array([.object([("name", .string("summary")), ("description", .string("the result in words"))])])
-          s.setCardDefinition(key([draft]), DefinitionDraft(card: s.definitions[draft] ?? .object([]), meta: meta))
-        }
         let next = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 300, y: 600), name: "smoke-next")
         try await s.connect(from: (dk, CardGeometry.newPort), to: (next, CardGeometry.newPort), in: [])
         await s.save()

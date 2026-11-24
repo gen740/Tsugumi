@@ -14,7 +14,7 @@ export const CATEGORY: Record<CardEditorCategory, { title: string; icon: string 
   dependencies: { title: L('依存'), icon: 'shippingbox.and.arrow.backward' },
   executions: { title: L('実行履歴'), icon: 'clock.arrow.circlepath' },
   artifacts: { title: L('成果物'), icon: 'shippingbox' },
-  notes: { title: L('コメントと追加コンテキスト'), icon: 'bubble.left' },
+  notes: { title: L('コメント'), icon: 'bubble.left' },
 }
 
 /** One tab of the workbench: a scope (the root workflow or a child workflow)

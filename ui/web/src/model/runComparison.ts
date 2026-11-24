@@ -118,7 +118,7 @@ export function runScope(run?: R.RunSummaryT, displayPath = (segments: string[])
 }
 
 /** What names a member of an execution list: its implementation label (a run
- *  list entry's `label`, an Input sweep's `name=value`), else its number. */
+ *  list entry's `label`), else its number. */
 export function memberName(i: R.InvocationSummaryT): string {
   const label = s(i.implementationLabel)
   return label || (i.implementationIndex != null ? L('実装 {0}', i.implementationIndex) : L('{0} 回目', String(i.invocation ?? 0n)))

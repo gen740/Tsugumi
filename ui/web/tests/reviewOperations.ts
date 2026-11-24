@@ -246,7 +246,8 @@ for (const kind of ['note', 'group', 'comment'] as const) {
     publish('before')
     edit.beginField('before', s, file, selector, value('before'))
     publish('agent')
-    let actual = 'agent', wanted = 'mine'
+    let actual = 'agent'
+    const wanted = 'mine'
     const guards: string[] = []
     s.operateProject = async (request: H.ProjectOperateRequestT) => {
       const field = (request.body as H.ProjectEditsT).edits[0].value as H.ProjectFieldEditT
@@ -266,11 +267,6 @@ for (const kind of ['note', 'group', 'comment'] as const) {
     assert.equal(await save(true), true, kind + ': overwrite must save')
     assert.equal(guards.at(-1), serialize(value(actual)))
     assert.equal(file === 'layout.bin' ? serialize(s.layout) : serialize(s.cardMeta('a')), serialize(document('mine')))
-    if (kind === 'name') {
-      actual = 'mine'; wanted = 'again'
-      assert.equal(await save(false), true, 'the next edit uses the value just saved')
-      assert.equal(guards.at(-1), serialize(value('mine')))
-    }
   }
 }
 

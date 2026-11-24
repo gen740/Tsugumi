@@ -6,7 +6,7 @@ export interface ViewDeclaration {
   blob: string
 }
 
-export type ViewMessage = { type: 'data'; bytes: Uint8Array<ArrayBuffer>; complete?: () => void }
+export type ViewMessage = { bytes: Uint8Array<ArrayBuffer>; complete?: () => void }
 
 /** One entry of a Card's views list. Its index is how the core serves its file. */
 export class LiveView {
@@ -61,7 +61,7 @@ export class CardLiveViews {
 
   data(name: string, bytes: Uint8Array<ArrayBuffer>, complete?: () => void) {
     const matching = this.views.filter(view => view.declaration.name === name)
-    if (matching.length === 1) matching[0].deliver({ type: 'data', bytes, ...(complete ? { complete } : {}) })
+    if (matching.length === 1) matching[0].deliver(complete ? { bytes, complete } : { bytes })
     else {
       if (!matching.length) this.unknown.add(name)
       complete?.()

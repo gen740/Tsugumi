@@ -86,21 +86,9 @@ export class RevisionEdit extends Observable {
       this.changed()
     }
   }
-  async replaceDocuments(session: ProjectSession, documents: [string, J | undefined][], overwrite = false): Promise<boolean> {
-    if (this.applying) return false
-    this.applying = true; this.changed()
-    try {
-      this.savedRev = await session.replaceDocuments(overwrite ? this.conflictRev ?? this.baseRev : this.baseRev, documents)
-      this.reload(this.savedRev)
-      return true
-    } catch (e) {
-      if (e instanceof RPCFailure && (e.kind === D.FailureKind.revision_conflict || e.kind === D.FailureKind.hash_conflict || e.kind === D.FailureKind.value_conflict || e.kind === D.FailureKind.source_changed)) this.recordConflict(session)
-      else this.error = errorText(e)
-      return false
-    }
-    finally { this.applying = false; this.changed() }
+  replaceDocuments(session: ProjectSession, documents: [string, J | undefined][], overwrite = false): Promise<boolean> {
+    return this.applyOperation(session, () => session.replaceDocuments(overwrite ? this.conflictRev ?? this.baseRev : this.baseRev, documents))
   }
-
 }
 
 export function RevisionEditNotice({ edit, text, overwrite, reload }: { edit: RevisionEdit; text: () => string; overwrite: () => void; reload: () => void }) {

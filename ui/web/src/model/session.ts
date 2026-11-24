@@ -15,7 +15,7 @@ import { api, onServerEvent } from '../api'
 import { projectHost } from '../wire/projectHost'
 import { hostCall, onHostEvent } from '../wire/host'
 import { environmentHost, environmentProgress, environmentState, type EnvPublicState } from '../wire/environment'
-import { parse, arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../../shared/json'
+import { parse, arr, bool, clone, dbl, get, isObj, J, jeq, JObj, numText, obj, real, serialize, str, tryParse } from '../../shared/json'
 import { cardPath, D, R, LiveDisplayUpdate, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../wire/rpc'
 import {
   applicableStages, CardGeometry, CardNodeData, mergeStageStatus, orderedPorts, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
@@ -318,7 +318,7 @@ export class ProjectSession extends Observable {
   layout: J = obj()
   /** The Draft being written on the canvas (geometry opens its Card up). */
   inlineDraft?: InlineDraft
-  private draftFinishTask?: Promise<CardKey | undefined>
+  private draftFinishTask?: Promise<void>
   get hasUnsavedEdits() {
     const e = this.inlineDraft
     return this.dirty || !!this.draftFinishTask || !!e && e.content !== e.initialContent
@@ -1463,11 +1463,6 @@ export class ProjectSession extends Observable {
     this.editComments(k, (list) => list.filter((c) => str(get(c, 'id')) !== id))
   }
 
-  /** A setting of the Card (its _card.json). */
-  cardSetting(k: CardKey, name: string): J | undefined {
-    return get(this.cardDefinition(k), name)
-  }
-
   derivedLayouts = new Map<string, J>()
   private layoutTasks = new Map<string, Promise<void>>()
 
@@ -1794,32 +1789,29 @@ export class ProjectSession extends Observable {
     this.changed()
   }
 
-  /** Keeps what was written. A name the Card cannot take stays as it was, with
-   *  a notice. The Card's permanent key when its name changed. */
-  async finishDraftEdit(overwrite = false): Promise<CardKey | undefined> {
+  /** Saves the Draft text and keeps the edit open if saving fails. */
+  async finishDraftEdit(overwrite = false): Promise<void> {
     if (this.draftFinishTask) return this.draftFinishTask
-    if (!this.inlineDraft) return undefined
+    if (!this.inlineDraft) return
     const task = (async () => {
-      let renamed: CardKey | undefined
       do {
-        renamed = await this.finishDraftEditOnce(overwrite) ?? renamed
+        await this.finishDraftEditOnce(overwrite)
         const current = this.inlineDraft
         if (!current || current.revision.conflictRev !== undefined || current.revision.error) break
       } while (true)
-      return renamed
     })()
     this.draftFinishTask = task
     try { return await task } finally { this.draftFinishTask = undefined; this.changed() }
   }
 
-  private async finishDraftEditOnce(overwrite: boolean): Promise<CardKey | undefined> {
+  private async finishDraftEditOnce(overwrite: boolean): Promise<void> {
     const e = this.inlineDraft
-    if (!e) return undefined
+    if (!e) return
     if (!this.instance(e.card) || e.content === e.initialContent) {
-      this.inlineDraft = undefined; this.changed(); return undefined
+      this.inlineDraft = undefined; this.changed(); return
     }
     const dir = this.definitionDir(e.card)
-    if (!dir) return undefined
+    if (!dir) return
     // The README.md as it was when writing began (or as the conflict found it).
     const base = e.revision.jsonBase(dir + 'README.md', e.initialReadme, overwrite)
     const before = typeof base === 'string' ? base : undefined
@@ -1831,7 +1823,6 @@ export class ProjectSession extends Observable {
       else this.inlineDraft = { ...this.inlineDraft, initialContent: e.content, initialReadme: after }
     }
     this.changed()
-    return undefined
   }
 
   deleteCards(keys: Set<CardKey>, scope: string[]) {
@@ -2072,15 +2063,6 @@ export class ProjectSession extends Observable {
     this.selectOperation(H.ProjectSelectionAction.DeleteDefinitions, [], [key([id])])
   }
 
-  /** Why a Card that ran has no result to show. */
-  noResultNote(k: CardKey): string | undefined {
-    switch (this.cardStates.get(k)?.state) {
-      case D.CardState.failed: return L('失敗したので結果はありません')
-      case D.CardState.blocked: return L('上流の Card が失敗したので実行していません')
-      default: return undefined
-    }
-  }
-
   async updateNixPathLock(prefix: string, name?: string) {
     await this.operate(H.ProjectOperationBody.ProjectUpdateNixPathLock,
       new H.ProjectUpdateNixPathLockT(prefix ? prefix.slice(0, -1) : null, name ?? null), false)
@@ -2227,31 +2209,28 @@ export class ProjectSession extends Observable {
     return { inputs: d.inputs.map((p) => p.name), outputs: d.outputs.map((p) => p.name) }
   }
 
-  portData(k: CardKey, definition?: J, meta?: J): { inputs: PortData[]; outputs: PortData[] } {
+  portData(k: CardKey, definition?: J): { inputs: PortData[]; outputs: PortData[] } {
     const def = definition ?? this.cardDefinition(k)
-    const m = meta ?? this.cardMeta(k)
-    // Ports have no notes of their own: a Card's README.md describes them.
-    const note = (_list: string, _name: string): string | undefined => (void m, undefined)
     const r = this.resolution.get(k)
     if (definitionKind(def) === 'collect') return {
-      inputs: [{ name: 'in', typeName: portTypeName(r?.inputs.find((p) => p.name === 'in')), note: note('inputs', 'in') }],
-      outputs: [{ name: 'out', typeName: portTypeName(r?.outputs.find((p) => p.name === 'out')), note: note('outputs', 'out') }],
+      inputs: [{ name: 'in', typeName: portTypeName(r?.inputs.find((p) => p.name === 'in')) }],
+      outputs: [{ name: 'out', typeName: portTypeName(r?.outputs.find((p) => p.name === 'out')) }],
     }
     const kind = definitionKind(def)
     const draft = kind === 'draft'
     if (draft || kind === 'invalid') return { inputs: [], outputs: [] }
     if (definition === undefined && r && !draft) {
       return {
-        inputs: r.inputs.map((p) => ({ name: p.name, typeName: portTypeName(p), note: note('inputs', p.name) })),
-        outputs: r.outputs.map((p) => ({ name: p.name, typeName: portTypeName(p), note: note('outputs', p.name) })),
+        inputs: r.inputs.map((p) => ({ name: p.name, typeName: portTypeName(p) })),
+        outputs: r.outputs.map((p) => ({ name: p.name, typeName: portTypeName(p) })),
       }
     }
     // Not resolved yet (unsaved) or a working copy: declared ports.
     const ins = (arr(get(def, 'inputs')) ?? []).flatMap((i) => {
       const n = str(get(i, 'name'))
-      return n ? [{ name: n, typeName: portTypeName(r?.inputs.find((p) => p.name === n)), note: note('inputs', n) }] : []
+      return n ? [{ name: n, typeName: portTypeName(r?.inputs.find((p) => p.name === n)) }] : []
     })
-    const outs: PortData[] = (r?.outputs ?? []).map((p) => ({ name: p.name, typeName: portTypeName(p), note: note('outputs', p.name) }))
+    const outs: PortData[] = (r?.outputs ?? []).map((p) => ({ name: p.name, typeName: portTypeName(p) }))
     return { inputs: ins, outputs: outs }
   }
 
@@ -2373,7 +2352,7 @@ export class ProjectSession extends Observable {
     const executionList = batch?.executionList === true
     const empty = executionList && batch.complete && !batch.failed && batch.invocationCount === 0
     const diags = this.resolution.get(k)?.diagnostics ?? []
-    const ports = this.portData(k, opts.definition, opts.meta)
+    const ports = this.portData(k, opts.definition)
     const def = opts.definition ?? this.cardDefinition(k)
     const m = opts.meta ?? this.cardMeta(k)
     let summary = str(get(m, 'description'))

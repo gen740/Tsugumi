@@ -48,9 +48,8 @@ const invocation = (id: string, state: D.CardState, n = 1n) =>
   assert.deepEqual(asked, ['r1'])
   assert.equal(s.cardStates.get('a')?.state, D.CardState.failed)
   assert.equal(s.cardStates.get('a')?.invocation, 2n)
-  assert.equal(s.noResultNote('a'), '失敗したので結果はありません')
-  assert.equal(s.noResultNote('b'), '上流の Card が失敗したので実行していません')
-  assert.equal(s.noResultNote('c'), undefined, 'not run: nothing to explain')
+  assert.equal(s.cardStates.get('b')?.state, D.CardState.blocked)
+  assert.equal(s.cardStates.has('c'), false)
 }
 
 // A run that started while it asked keeps its own states.

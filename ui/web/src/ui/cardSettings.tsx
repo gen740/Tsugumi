@@ -14,7 +14,7 @@ import { prefs } from '../model/prefs'
 import { portTypeName, CardComment, CardKey, CardParameter, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parameterInputLiteral, path, PortInfo, ProjectSession } from '../model/session'
 import { CardEditorCategory, CATEGORY } from '../model/workspace'
 import { BFBS } from '../../shared/bfbs'
-import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, parse, serialize, str } from '../../shared/json'
+import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, serialize, str } from '../../shared/json'
 import { D, R, RPCFailure, s, sOpt, sha256Hex } from '../wire/rpc'
 import { CardNodeView } from './cardNode'
 import { Button, Confirm, Disclosure, Empty, Form, HSplit, Prompt, Row, Section, Select, showMenu, Spinner, TextField, Toggle, Value } from './controls'
@@ -549,7 +549,7 @@ export function CardSettingsEditor({ session, card, initial, file, onClose }: { 
           {category === 'dependencies' && <DependenciesCategory model={model} />}
           {category === 'executions' && <CardExecutionView session={session} model={model} />}
           {category === 'artifacts' && <CardArtifactsView session={session} cardKey={model.cardKey} />}
-          {category === 'notes' && <NotesCategory model={model} />}
+          {category === 'notes' && <CommentsCategory session={model.session} card={model.cardKey} />}
         </div>
         <RevisionEditNotice edit={model.revisionEdit} text={() => model.recoveryText}
           overwrite={() => void model.apply(true)} reload={() => model.reload()} />
@@ -961,23 +961,7 @@ function ParamRow({ model, parameter }: { model: CardEditorModel; parameter: Car
   )
 }
 
-/** A port's purpose in the Card description. */
-function portNote(model: CardEditorModel, list: string, name: string): { value: string; onChange: (v: string) => void } {
-  return {
-    value: str(get((arr(get(model.meta, list)) ?? []).find((x) => str(get(x, 'name')) === name), 'description')) ?? '',
-    onChange: (v) => model.update((m) => {
-      const meta: JObj = isObj(m.meta) ? m.meta : obj()
-      const items = (arr(meta.get(list)) ?? []).map((x) => clone(x))
-      const i = items.findIndex((x) => str(get(x, 'name')) === name)
-      if (i >= 0 && isObj(items[i])) (items[i] as JObj).set('description', v || undefined)
-      else if (v) items.push(obj([['name', name], ['description', v]]))
-      meta.set(list, items.length ? items : undefined)
-      m.meta = meta.size ? meta : undefined
-    }),
-  }
-}
-
-/** Ports, their purposes, recording. */
+/** Ports and recording. */
 function PortsCategory({ model }: { model: CardEditorModel }) {
   const r = model.session.resolution.get(model.cardKey)
   const def = model.definition
@@ -1005,8 +989,6 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
                   <div className="row gap8 center fill">
                     <TextField value={name} placeholder={L('名前')} mono help={L('入力ポートの名前')} style={{ width: 140 }}
                       onChange={(v) => editInputs((a) => isObj(a[i]) && (a[i] as JObj).set('name', v))} />
-                    <TextField {...portNote(model, 'inputs', name)} placeholder={L('用途（何を受け取るか）')} style={{ flex: 1 }}
-                      help={L('このポートの用途（README.md の説明）。Agent とほかの人への説明です。')} />
                     <span className="caption secondary nowrap">{portTypeName(r?.inputs.find((p) => p.name === name)) ?? L('未解決')}</span>
                     <Button kind="borderless" iconOnly icon="minus.circle" help={L('入力を削除')} onClick={() => editInputs((a) => a.splice(i, 1))} />
                   </div>
@@ -1106,7 +1088,6 @@ function OutputPortsSection({ model }: { model: CardEditorModel }) {
         <Row key={port.name}>
           <div className="row gap8 center fill">
             <span className="mono ellipsis" style={{ width: 120, flex: 'none' }}>{port.name}</span>
-            <TextField {...portNote(model, 'outputs', port.name)} placeholder={L('用途（何を出すか）')} style={{ flex: 1 }} />
             {!p ? (
               <span className="caption secondary nowrap">{portTypeName(port) ?? L('未解決')}</span>
             ) : (
@@ -1155,41 +1136,6 @@ function BoundaryCategory({ model }: { model: CardEditorModel }) {
         <Value label="external" value={model.session.cardExternal(model.cardKey) ?? ''} />
       </Section>
     </Form>
-  )
-}
-
-/** Comments (what to change, for the Agent) above the added context (what the
- *  Card is for); a Card with no definition has only comments. */
-function NotesCategory({ model }: { model: CardEditorModel }) {
-  return (
-    <div className="col fill min0">
-      <div className="flex1 min0 col"><CommentsCategory session={model.session} card={model.cardKey} /></div>
-      {model.kind !== 'subgraph' && (
-        <div className="col border-top" style={{ height: 220 }}>
-          <div className="headline" style={{ padding: '12px 12px 0' }}>{L('追加コンテキスト')}</div>
-          <ContextCategory model={model} />
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** Free text describing intent and notes in README.md. */
-function ContextCategory({ model }: { model: CardEditorModel }) {
-  return (
-    <div className="col gap8 fill pad12">
-      <div className="callout secondary">{L('処理の意図や補足を文章で残します（README.md）。チャットで Card を参照したときにも使われます。')}</div>
-      {model.definitionId === undefined ? <div className="secondary">{L('定義を持たない Card には追加コンテキストを置けません。')}</div> : (
-        <textarea className="field flex1 cse-context" value={str(get(model.meta, 'context')) ?? ''} onChange={(e) => {
-          const v = e.target.value
-          model.update((m) => {
-            const meta: JObj = isObj(m.meta) ? m.meta : obj()
-            meta.set('context', v || undefined)
-            m.meta = meta.size ? meta : undefined
-          })
-        }} />
-      )}
-    </div>
   )
 }
 
