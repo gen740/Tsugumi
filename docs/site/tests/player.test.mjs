@@ -19,7 +19,7 @@ test('player wires reach published ports and Draft Cards', () => {
         const card = byId.get(id)
         assert.ok(card, `${entry.id}: missing Card ${id}`)
         if (card.kind === 'draft') {
-          assert.equal(port, '', `${entry.id}: ${id} attaches at the Card`)
+          assert.equal(port, undefined, `${entry.id}: ${id} attaches at the Card, with no port`)
           attachments++
         } else {
           assert.ok(card[direction].some(p => p.name === port), `${entry.id}: ${id}.${port}`)
