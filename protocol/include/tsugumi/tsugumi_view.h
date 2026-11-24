@@ -1,10 +1,10 @@
 /* tsugumi_view.h — dawn view ABI, for wasm32 view modules */
 #pragma once
 #include <stdint.h>
+#include <tsugumi/card_abi.h>  /* TSUGUMI_MESSAGE_MAX: the per-message limit */
 #include <webgpu/webgpu.h>     /* pinned webgpu-headers revision (to be fixed with the host) */
 
 #define TSUGUMI_VIEW_ABI 0      /* 0 until Tsugumi v1.0.0, like the Card ABI */
-#define TSUGUMI_MESSAGE_MAX (1u << 24)  /* per-message limit, part of the Card ABI too */
 
 /* ======================================================================
  * Imports: the ONLY functions a module may import. A module importing
