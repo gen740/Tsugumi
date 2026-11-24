@@ -354,10 +354,9 @@ table GuideState {
 
 // Execution services contain public pins only. Private TLS keys never cross RPC.
 table ExecutionServicesRequest {}
-table ExecutionServicePutRequest { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); verify:bool;
-  /// Capability bits (0-63) this worker has; a Card runs only on a worker
-  /// whose bits include all of its workerCapabilities.
-  worker_capabilities:[ubyte] (required); }
+// worker_capabilities: the capability bits (0-63) this worker has; a Card runs
+// only on a worker whose bits include all of its workerCapabilities.
+table ExecutionServicePutRequest { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); verify:bool; worker_capabilities:[ubyte] (required); }
 table ExecutionServiceRemoveRequest { id:string (required); }
 // hostd derives identity from the host filesystem, never the document UUID.
 // hostd writes the scoped capability into this project's control share.

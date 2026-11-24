@@ -161,7 +161,7 @@ if (process.env.WIRE_ROUTES_WRITE || process.env.TSUGUMI_WIRE_BENCH === '1') {
   const index: { demos: { path: string }[] } = read(path.join(root, 'demos/ja/index.json'))
   const demos = index.demos.flatMap((d) => scopes(d.path, path.join(root, 'demos', 'ja', d.path)))
   if (process.env.WIRE_ROUTES_WRITE) {
-    const shared = ['report', 'live-stream', 'collatz/collatz-py', 'mnist-classifiers', 'rna-seq']
+    const shared = ['report', 'live-stream', 'collatz/collatz_py', 'mnist-classifiers', 'rna-seq']
       .map((name) => demos.find((scene) => scene.name === name)!)
       .concat(
         ...['casa', 'rna-seq'].map((name) => scene(`${name}, grid 20`, path.join(root, 'demos/ja', name), undefined, {}, 20).scene))

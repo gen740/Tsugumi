@@ -150,7 +150,7 @@ function readCard(root, id, ports, wires) {
   return {
     id, kind, symbol: def.symbol || undefined, summary: summary || undefined, details, inputs, outputs,
     params: kind === 'input' ? allParams.filter((p) => INLINE_TYPES.has(p.type)) : [], allParams, permissions,
-    untitled: (kind === 'draft' && /^draft(-[0-9]+)?$/.test(id)) || undefined,
+    untitled: (kind === 'draft' && /^draft(_[0-9]+)?$/.test(id)) || undefined,
     files: kind === 'subgraph' ? [] : cardFiles(dir),
   }
 }
