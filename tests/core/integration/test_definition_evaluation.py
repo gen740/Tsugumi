@@ -184,6 +184,7 @@ def test_kit_derivation_is_independent_of_unused_parameter_values(core_factory, 
           in {
             run = sdk.pythonCard {
               params = { inherit (params) used; };
+              inputs = ./_inputs.fbs;
               outputs = ./_outputs.fbs;
               src = ./src;
             };
