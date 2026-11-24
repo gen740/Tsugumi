@@ -1,0 +1,20 @@
+{
+  "name": "Interactive point cloud",
+  "nixPath": [
+    {
+      "name": "nixpkgs",
+      "url": "github:NixOS/nixpkgs/nixos-unstable"
+    },
+    {
+      "name": "tsugumi-kit",
+      "url": "github:gen740/tsugumi-kit/main"
+    }
+  ],
+  "canvas": {
+    "cards": [
+      {
+        "id": "cloud"
+      }
+    ]
+  }
+}
