@@ -122,8 +122,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     if (call->effects->recv(call->host, &event, 10000) || event.kind != 0 ||
         call->effects->recv(call->host, &event, 10000) || event.kind != 1)
         return 2;
-    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
-    return 0;
+    return write_result(result, result_bytes, sizeof(result_bytes));
 }
 """)
     core = core_factory(mocked_builds=True, env={"TSUGUMI_RPC_TRACE": "1",

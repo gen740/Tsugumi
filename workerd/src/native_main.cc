@@ -17,6 +17,7 @@
 #include <cstring>
 #include <deque>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -517,6 +518,19 @@ auto load_card(const std::string& package, std::string& error)
   return entry;
 }
 
+// FlatBuffers tracks alignment relative to the end of its backing store.
+class InputAllocator final : public flatbuffers::Allocator {
+ public:
+  auto allocate(size_t size) -> uint8_t* override {
+    void* data = nullptr;
+    if (posix_memalign(&data, FLATBUFFERS_MAX_ALIGNMENT, size) != 0)
+      throw std::bad_alloc();
+    return static_cast<uint8_t*>(data);
+  }
+
+  auto deallocate(uint8_t* data, size_t) -> void override { std::free(data); }
+};
+
 using Payload = flatbuffers::Vector<uint8_t>;
 
 auto aligned_payload(flatbuffers::FlatBufferBuilder& b, const Payload& data)
@@ -593,9 +607,10 @@ auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
                      "the Card exceeded timeoutSeconds"};
     return std::nullopt;
   };
-  // Input bytes belong to the Card's SDK: they are copied
-  // aligned, never opened.
-  flatbuffers::FlatBufferBuilder b;
+  // The SDK borrows this envelope and its aligned payloads for the call.
+  InputAllocator allocator;
+  flatbuffers::FlatBufferBuilder b(1024, &allocator, false,
+                                   FLATBUFFERS_MAX_ALIGNMENT);
   std::vector<flatbuffers::Offset<C::CardPort>> inputs;
   for (const auto* input : *call.inputs()) {
     flatbuffers::Offset<Payload> bytes;
@@ -605,6 +620,7 @@ auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
     inputs.push_back(C::CreateCardPort(
         b, b.CreateString(input->name()->string_view()), schema, bytes));
   }
+  b.TrackMinAlign(FLATBUFFERS_MAX_ALIGNMENT);
   b.Finish(C::CreateCardInput(b, b.CreateVector(inputs)));
   {
     std::lock_guard lock(host.artifact_mutex);
@@ -625,6 +641,8 @@ auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
                          &kEffects};
   tsugumi_bytes returned{};
   const int status = entry(&abi, &returned);
+  const std::unique_ptr<void, decltype(&std::free)> result_owner(
+      const_cast<uint8_t*>(returned.data), &std::free);
   if (auto failure = stop()) return failure;
   if (status != 0)
     return Failure{D::FailureKind::worker_failed,

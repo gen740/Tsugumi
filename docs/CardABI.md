@@ -16,6 +16,13 @@ The call supplies a serialized `CardInput`, an opaque host pointer and an effect
 table. A successful ABI call returns a serialized `CardResult` containing output
 ports or a `CardFailure`. Parameters are embedded by the SDK at build time.
 The input envelope contains only connected ports that arrived for this call.
+It and its payloads are borrowed for the duration of the call.
+
+The SDK returns a fresh libc `malloc` allocation in `result.data`. Ownership
+passes to the host as soon as the entry returns, regardless of status. The
+pointer must identify the start of the allocation. The worker releases it with
+`free` after verification and after copying the fields needed for its reply.
+This also applies to calls served by a resident worker.
 
 ## Fixed schemas
 
