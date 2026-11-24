@@ -8,7 +8,7 @@ import TsugumiRPC
 
 /// The shared VM's boot disk (vm/guest/vm-boot.nix: kernel and a
 /// release-built root file system with Nix, Tsugumi and project tools).
-/// How the VM runs x86_64-linux binaries (Cards with "system": "x86_64-linux"):
+/// How the VM runs x86_64-linux binaries (Cards run as x86_64-linux):
 /// with Rosetta when it is installed on this Mac, with qemu only when
 /// TSUGUMI_VM_X86=qemu asks for it. The guest's supervisor (vm-system.nix)
 /// registers the one named on the kernel command line (tsugumi.x86=...).

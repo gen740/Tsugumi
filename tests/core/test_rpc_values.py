@@ -65,7 +65,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
 }
 """, [("out", payload)])
     client = core_factory(mocked_builds=True).connect()
-    Project(project).card("work", {"type": "code", "recordIO": True, "sandbox": {
+    Project(project).card("work", {"type": "code", "recordIO": "on", "sandbox": {
         "filesystem": False, "pid": False, "ipc": False, "identity": False,
     }}, outputs=STRUCTURED_SCHEMA, plan=mock_plan([package])).save(client)
     run_id = run(client)

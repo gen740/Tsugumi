@@ -22,27 +22,26 @@ function heat_modes(n, alpha, T)
     return F.vectors, exp.(-alpha * T .* max.(F.values, 0.0))
 end
 
-function main(inputs, report)
+function main(_input::Inputs)
     outputs = Dict{String,Any}()
-    s = inputs.settings
-    n, alpha, T, noise = Int(s["cells"]), s["alpha"], s["final_time"], s["noise"]
+    n, alpha, T, noise = Int(params.cells), params.alpha, params.final_time, params.noise
     x, truth = true_profile(n)
     V, sigma = heat_modes(n, alpha, T)
     clean = V * (sigma .* (V' * truth))
-    rng = Xoshiro(s["seed"])
+    rng = Xoshiro(params.seed)
     measured = clean .+ noise .* randn(rng, n)
 
     heat_change = (sum(clean) - sum(truth)) / sum(truth)
     abs(heat_change) < 1e-10 || error("insulated ends must keep the heat: relative change $heat_change")
-    report.log(string(@sprintf("relative change of the total heat: %.2e", heat_change)))
+    println(string(@sprintf("relative change of the total heat: %.2e", heat_change)))
 
-    outputs["measurement"] = Dict("seed" => s["seed"], "alpha" => alpha, "final_time" => T, "noise" => noise,
+    outputs["measurement"] = Dict("seed" => params.seed, "alpha" => alpha, "final_time" => T, "noise" => noise,
                                     "x" => x, "truth" => truth, "measured" => measured)
     round3(v) = round(v; digits=3)
     lines = [Dict("x" => x[j], "u" => round3(series[j]), "line" => name)
              for (name, series) in (("初期の温度（真の値・架空）", truth), ("時刻 T の温度", clean)) for j in 1:n]
     points = [Dict("x" => x[j], "u" => round3(measured[j])) for j in 1:n]
-    report.vegalite(Dict(
+    send(VegaLite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("anchor" => "start", "text" => @sprintf("熱は細部から消える: T = %g の測定（ノイズ %g ℃）", T, noise),
@@ -58,7 +57,7 @@ function main(inputs, report)
             Dict("data" => Dict("values" => points), "mark" => Dict("type" => "point", "filled" => true, "size" => 16, "color" => "#2a78d6"),
                  "encoding" => Dict("x" => Dict("field" => "x", "type" => "quantitative"), "y" => Dict("field" => "u", "type" => "quantitative"),
                                     "color" => Dict("datum" => "測定値"))),
-        ]))
+        ])))
 
     return outputs
 end

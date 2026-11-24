@@ -1,6 +1,0 @@
-include "tsugumi/artifact.fbs";
-
-namespace casa;
-table Events { file:tsugumi.Artifact (required); obsid:string; }
-table Outputs { events:Events (required); }
-root_type Outputs;

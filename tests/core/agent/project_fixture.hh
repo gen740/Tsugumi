@@ -1,6 +1,10 @@
 #pragma once
 
+#include <set>
+
+#include "document_fixture.hh"
 #include "fixture.hh"
+#include "host/templates.hh"
 #include "tsugumi/document/text.hh"
 #include "tsugumi/util/json_object.hh"
 
@@ -23,6 +27,36 @@ inline auto FixtureLayout(const std::string& view) -> std::string {
 
 inline auto FixtureLayoutText(const std::string& bytes) -> std::string {
   return document_text::print(document_text::Schema::Layout, bytes);
+}
+
+// Materialize the canvas entries and notes for fixtures that supply their
+// definitions on disk. An explicit canvas still sets the order and wires.
+inline auto WriteFixtureProjectTree(const std::filesystem::path& root,
+                                    const std::string& document) -> void {
+  auto fields = json::Object(FixtureProjectDocument(document));
+  auto canvas = json::Object(fields.at("canvas"));
+  auto cards = json::Array(canvas.at("cards"));
+  std::set<std::string> placed;
+  for (const auto& card : cards)
+    placed.insert(json::Text(json::Object(card), "id"));
+  const auto definitions = root / "definitions";
+  if (std::filesystem::is_directory(definitions))
+    for (const auto& entry : std::filesystem::directory_iterator(definitions)) {
+      if (!entry.is_directory() ||
+          !std::filesystem::exists(entry.path() / "_card.json"))
+        continue;
+      const auto id = entry.path().filename().string();
+      if (placed.insert(id).second)
+        cards.push_back(json::Encode(json::Members{{"id", json::Quote(id)}}));
+      const auto note = entry.path() / "README.md";
+      if (!std::filesystem::exists(note)) Write(note, host::CardReadme(id));
+      const auto child = root / "externals" / id / "tsugumi.json";
+      if (std::filesystem::exists(child))
+        WriteFixtureProjectTree(child.parent_path(), Read(child));
+    }
+  canvas["cards"] = json::Encode(cards);
+  fields["canvas"] = json::Encode(canvas);
+  Write(root / "tsugumi.json", json::Encode(fields));
 }
 
 // Project integration is opt-in; Agent-only scenarios never start a core
@@ -82,7 +116,7 @@ class AgentProjectFixture : public AgentFixture {
       const std::string& document =
           R"({"name":"PRIVATE_PROJECT_SENTINEL","nixPath": [],"canvas":{"cards":[],"connections":[]}})",
       const std::string& layout = "{}") -> void {
-    Write(directory.path / "project/tsugumi.json", document);
+    WriteFixtureProjectTree(directory.path / "project", document);
     const auto layout_path = directory.path / "project/layout.bin";
     if (!std::filesystem::exists(layout_path))
       Write(layout_path, FixtureLayout(layout));
@@ -138,10 +172,13 @@ class AgentProjectFixture : public AgentFixture {
         "\x00\x05\x00\x01\xff\x89\x99\x3d\x1d\x00\x00\x00\x00\x49\x45\x4e\x44"
         "\xae\x42\x60\x82";
     Write(directory.path / "project/definitions/picture/_card.json",
-          R"({"type":"draft"})");
+          R"({"type":"draft","symbol":"pencil.and.outline"})");
     Write(directory.path / "project/definitions/picture/src/pixel.png",
           std::string_view(pixel, sizeof(pixel) - 1 - (complete ? 0 : 8)));
-    StartProject();
+    Write(directory.path / "project/definitions/picture/README.md",
+          host::CardReadme("picture"));
+    StartProject(false,
+                 R"({"canvas":{"cards":[{"id":"picture"}],"connections":[]}})");
   }
 
   std::string project_fault;

@@ -53,7 +53,7 @@ auto of(const Files& files) -> std::vector<Comment> {
   std::vector<Comment> out;
   for (const auto& [path, text] : files) {
     if (!is_comments(path)) continue;
-    if (auto card = card_of(path, files)) {
+    if (auto card = card_of(path)) {
       auto list = parse(*card, text);
       out.insert(out.end(), list.begin(), list.end());
     }
@@ -109,34 +109,12 @@ auto is_comments(const std::string& path) -> bool {
          rel.substr(slash + 1) == "_comments.json";
 }
 
-auto card_of(const std::string& path, const Files& files)
-    -> std::optional<std::string> {
-  std::string rest = path, prefix, directory;
+auto card_of(const std::string& path) -> std::optional<std::string> {
+  std::string rest = path, prefix;
   while (rest.starts_with("externals/")) {
     auto slash = rest.find('/', 10);
     if (slash == std::string::npos) return std::nullopt;
-    const auto external = rest.substr(10, slash - 10);
-    auto id = external;
-    for (const auto& [link, text] : files) {
-      if (!link.starts_with(directory + "definitions/") ||
-          !link.ends_with("/_card.json"))
-        continue;
-      auto local = link.substr(directory.size());
-      if (local.find('/', 12) != local.size() - 11) continue;
-      try {
-        const auto buffer = document_text::parse(document_text::Schema::Card,
-                                                 link, text);
-        if (document_text::str(
-                document_text::root<Tsugumi::Document::Card>(buffer)
-                    .external()) == external) {
-          id = local.substr(12, local.size() - 23);
-          break;
-        }
-      } catch (const std::exception&) {
-      }
-    }
-    prefix += id + "/";
-    directory += "externals/" + external + "/";
+    prefix += rest.substr(10, slash - 10) + "/";
     rest.erase(0, slash + 1);
   }
   if (!rest.starts_with("definitions/")) return std::nullopt;

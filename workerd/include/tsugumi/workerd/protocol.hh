@@ -18,7 +18,7 @@ inline constexpr uint64_t kMaxBlob = uint64_t{64} << 30;
 inline constexpr uint32_t kMaxSpec = 256 << 10;
 // The largest live log slice one status reply carries.
 inline constexpr uint32_t kLogChunkBytes = 256 << 10;
-inline constexpr uint32_t kContract = 17;
+inline constexpr uint32_t kContract = 19;
 
 struct Error : std::runtime_error {
   R::ErrorCode code;
@@ -56,5 +56,9 @@ inline constexpr int kDisplayChannelFd = 7;
 // The marker a running job's work directory holds while its invocation waits
 // for its Card secrets; it never holds a value.
 inline constexpr std::string_view kSecretsWanted = "secrets-wanted";
+// While the Card waits in artifact_open, the work directory holds the wanted
+// id (16 bytes); the listener answers with the core's JobArtifactRequest.
+inline constexpr std::string_view kArtifactWanted = "artifact-wanted";
+inline constexpr std::string_view kArtifactReply = "artifact-reply";
 auto terminal(R::JobState state) -> bool;
 }  // namespace tsugumi::workerd

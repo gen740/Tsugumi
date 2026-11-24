@@ -1,4 +1,5 @@
 ---
+title: bands
 description: Split into energy bands
 ---
 

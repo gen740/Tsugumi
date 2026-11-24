@@ -43,9 +43,11 @@ try {
   await import(pathToFileURL(out).href)
   if (process.env.TSUGUMI_CHROMIUM) {
     const { checkLogInChromium } = await import('../tests/logBrowser.mjs')
-    const { checkCardViewsInChromium } = await import('../tests/cardViewsBrowser.mjs')
+    const { checkCardViewsInChromium, checkChildWebGpuInChromium } = await import('../tests/cardViewsBrowser.mjs')
     await checkLogInChromium(process.env.TSUGUMI_CHROMIUM, web, dir)
     await checkCardViewsInChromium(process.env.TSUGUMI_CHROMIUM, web, dir)
+    if (process.env.TSUGUMI_CHROMIUM_WEBGPU === '1')
+      await checkChildWebGpuInChromium(process.env.TSUGUMI_CHROMIUM, dir)
   }
 } finally {
   fs.rmSync(dir, { recursive: true, force: true })

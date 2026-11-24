@@ -2,12 +2,10 @@
 
 #include <flatbuffers/flatbuffers.h>
 
-#include <set>
 #include <vector>
 
 #include "tsugumi/document/schema_id.hh"
 #include "tsugumi/protocol/card_generated.h"
-#include "tsugumi/workerd/value_wire.hh"
 
 namespace tsugumi {
 
@@ -17,7 +15,6 @@ auto collect_values(const types::PortType& output,
   constexpr size_t kMaxMessageBytes = size_t{16} << 20;
   flatbuffers::FlatBufferBuilder builder;
   std::vector<flatbuffers::Offset<builtin::Envelope>> items;
-  std::set<ArtifactKey> artifacts;
   for (const auto& member : members) {
     if (cancel.load())
       throw Failed(FailureKind::cancelled, "collect cancelled");
@@ -30,9 +27,7 @@ auto collect_values(const types::PortType& output,
     const auto bytes = builder.CreateVector(
         reinterpret_cast<const uint8_t*>(member.bytes.data()),
         member.bytes.size());
-    const auto ids = wire::artifact_ids(builder, member.artifacts);
-    items.push_back(builtin::CreateEnvelope(builder, schema, bytes, ids));
-    artifacts.insert(member.artifacts.begin(), member.artifacts.end());
+    items.push_back(builtin::CreateEnvelope(builder, schema, bytes));
     if (builder.GetSize() > kMaxMessageBytes)
       throw Failed(FailureKind::output_invalid,
                    "collected value exceeds 16 MiB");
@@ -45,8 +40,7 @@ auto collect_values(const types::PortType& output,
           output.type,
           {reinterpret_cast<const char*>(builder.GetBufferPointer()),
            builder.GetSize()},
-          schema_id(*output.type),
-          {artifacts.begin(), artifacts.end()}};
+          schema_id(*output.type)};
 }
 
 }  // namespace tsugumi

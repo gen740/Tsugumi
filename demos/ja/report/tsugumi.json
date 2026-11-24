@@ -1,4 +1,5 @@
 {
+  "formatVersion": 1,
   "name": "Data to report",
   "nixPath": [
     {
@@ -10,13 +11,20 @@
       "url": "github:gen740/tsugumi-kit/main"
     }
   ],
+  "trackedPaths": [],
+  "agentExclude": [
+    ".git",
+    ".DS_Store"
+  ],
+  "recordLogs": true,
+  "recordIO": false,
+  "logLimitBytes": 134217728,
+  "outputLimitBytes": 68719476736,
+  "outputLimitEntries": 1000,
   "canvas": {
     "cards": [
       {
         "id": "start"
-      },
-      {
-        "id": "settings"
       },
       {
         "id": "generate"
@@ -32,16 +40,6 @@
       }
     ],
     "connections": [
-      {
-        "from": {
-          "card": "start",
-          "port": "out"
-        },
-        "to": {
-          "card": "settings",
-          "port": "start"
-        }
-      },
       {
         "from": {
           "card": "generate",
@@ -74,22 +72,12 @@
       },
       {
         "from": {
-          "card": "settings",
-          "port": "config"
+          "card": "start",
+          "port": "out"
         },
         "to": {
           "card": "generate",
-          "port": "config"
-        }
-      },
-      {
-        "from": {
-          "card": "settings",
-          "port": "config"
-        },
-        "to": {
-          "card": "render",
-          "port": "config"
+          "port": "start"
         }
       }
     ]

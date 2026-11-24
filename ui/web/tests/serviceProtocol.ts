@@ -87,11 +87,18 @@ async function browserRequest(type: H.RequestPayload, value: H.RequestT['value']
   return request
 }
 
-const grade = (1n << 63n) + 3n
+const bits = [0, 1, 63]
 const service = (await browserRequest(H.RequestPayload.ExecutionServicePutRequest,
-  new H.ExecutionServicePutRequestT('compute', 'Compute', 'tls://worker:8765', 'ed25519:test', true, grade))).value as H.ExecutionServicePutRequestT
-assert.equal(service.grade, grade)
+  new H.ExecutionServicePutRequestT('compute', 'Compute', 'tls://worker:8765', 'ed25519:test', true, bits))).value as H.ExecutionServicePutRequestT
+assert.deepEqual(service.workerCapabilities, bits)
 assert.equal(service.verify, true)
+const fields = { id: 'local', name: 'Local', endpoint: '', workerPublicKey: '', worker_capabilities: [] }
+const local = H.Message.getRootAsMessage(new fb.ByteBuffer(encodeRequest('ExecutionServicePutRequest', fields, 1n, true))).unpack()
+assert.deepEqual(((local.payload as H.RequestT).value as H.ExecutionServicePutRequestT).workerCapabilities, [])
+for (const worker_capabilities of [[0, 0], [64], [-1], [0.5]]) {
+  assert.throws(() => encodeRequest('ExecutionServicePutRequest', { ...fields, worker_capabilities }, 1n, true))
+}
+
 
 // C++ object packing omits optional empty vectors. Every Host list reader
 // must return an empty list even when the vector offset is absent on the wire.

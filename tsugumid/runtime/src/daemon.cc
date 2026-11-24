@@ -15,10 +15,10 @@
 #include <string>
 #include <vector>
 
-#include "tsugumi/protocol/runtime_state_generated.h"
-#include "tsugumi/util/flat_file.hh"
 #include "service.hh"
+#include "tsugumi/protocol/runtime_state_generated.h"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
 
@@ -285,10 +285,11 @@ int run_daemon(int argc, char** argv) {
   } catch (const std::exception& e) {
     S::StartupErrorT error;
     const auto* failure = dynamic_cast<const Failed*>(&e);
-    error.kind =
-        failure && failure->failure.kind == FailureKind::resource_limit
-            ? "resource_limit"
-            : "project_open_failed";
+    error.kind = "project_open_failed";
+    if (failure && failure->failure.kind == FailureKind::resource_limit)
+      error.kind = "resource_limit";
+    if (failure && failure->failure.kind == FailureKind::invalid_document)
+      error.kind = "invalid_document";
     return report_startup_failure(std::move(error), e);
   }
   if (!opt.prepare_cards.empty()) {

@@ -9,7 +9,6 @@
 #include "tsugumi/document/collect_type.hh"
 #include "tsugumi/document/schema_id.hh"
 #include "tsugumi/protocol/card_generated.h"
-#include "tsugumi/workerd/value_wire.hh"
 
 namespace tsugumi {
 namespace {
@@ -30,7 +29,6 @@ TEST(CollectValue, EmptyListHasEmptyItems) {
   EXPECT_EQ(value.name, "out");
   EXPECT_EQ(value.type, output.type);
   EXPECT_EQ(value.schema, schema_id(*output.type));
-  EXPECT_TRUE(value.artifacts.empty());
   flatbuffers::Verifier verifier(
       reinterpret_cast<const uint8_t*>(value.bytes.data()), value.bytes.size());
   ASSERT_TRUE(verifier.VerifyBuffer<builtin::Collected>());
@@ -39,18 +37,16 @@ TEST(CollectValue, EmptyListHasEmptyItems) {
   EXPECT_EQ(collected->items()->size(), 0u);
 }
 
-TEST(CollectValue, PreservesOpaqueSchemaBytesAndArtifactIds) {
+TEST(CollectValue, PreservesOpaqueSchemaAndBytes) {
   const auto output = output_port();
   ASSERT_TRUE(output.type);
-  const ArtifactKey a(16, 'a'), b(16, 'b');
   const std::vector<Value> members{
-      {"left", nullptr, std::string("opaque\0", 7), "first", {b, a}},
-      {"right", nullptr, std::string("\xff\0", 2), "second", {a}},
-      {"empty", nullptr, {}, "third", {}},
+      {"left", nullptr, std::string("opaque\0", 7), "first"},
+      {"right", nullptr, std::string("\xff\0", 2), "second"},
+      {"empty", nullptr, {}, "third"},
   };
   const std::atomic<bool> cancel{false};
   const auto value = collect_values(output, members, cancel);
-  EXPECT_EQ(value.artifacts, (std::vector<ArtifactKey>{a, b}));
   flatbuffers::Verifier verifier(
       reinterpret_cast<const uint8_t*>(value.bytes.data()), value.bytes.size());
   ASSERT_TRUE(verifier.VerifyBuffer<builtin::Collected>());
@@ -62,7 +58,6 @@ TEST(CollectValue, PreservesOpaqueSchemaBytesAndArtifactIds) {
     const auto* item = items->Get(i);
     const auto& member = members[i];
     EXPECT_EQ(item->schema()->str(), member.schema);
-    EXPECT_EQ(wire::artifact_ids(item->artifacts()), member.artifacts);
     ASSERT_NE(item->bytes(), nullptr);
     const auto* data = reinterpret_cast<const char*>(item->bytes()->data());
     EXPECT_EQ(std::string_view(data, item->bytes()->size()), member.bytes);

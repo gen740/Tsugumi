@@ -139,6 +139,9 @@ auto ObjectSchema(int index, int depth) -> std::string {
     properties[field->name()->str()] = json::Encode(property);
     if (field->required()) required.push_back(json::Quote(field->name()->str()));
   }
+  if (object->name()->string_view() == "Tsugumi.Data.CardPath")
+    properties["segments"] =
+        R"({"type":"array","items":{"type":"string","pattern":"^[a-z][a-z0-9_]{0,63}$"}})";
   json::Members out{{"type", json::Quote("object")},
                     {"properties", json::Encode(properties)},
                     {"additionalProperties", "false"}};

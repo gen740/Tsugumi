@@ -14,8 +14,10 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <thread>
+#include <utility>
 
 #include "display_channel.hh"
 #include "nix_store.hh"
@@ -137,22 +139,26 @@ auto make_result(const workerd::InvocationResult& outcome) -> std::string {
   flatbuffers::FlatBufferBuilder b;
   W::WorkerPayload kind;
   flatbuffers::Offset<void> body;
+  std::vector<flatbuffers::Offset<W::CreatedArtifact>> artifacts;
+  for (const auto& artifact : outcome.created) {
+    const auto id = wire::artifact_struct(artifact.id);
+    artifacts.push_back(W::CreateCreatedArtifact(b, &id, artifact.keep));
+  }
+  const auto created = b.CreateVector(artifacts);
   if (outcome.failure) {
     kind = W::WorkerPayload::WorkerFailure;
     body =
-        W::CreateWorkerFailure(b, wire::failure(b, *outcome.failure),
-                               wire::artifact_ids(b, outcome.created)).Union();
+        W::CreateWorkerFailure(b, wire::failure(b, *outcome.failure), created)
+            .Union();
   } else {
     std::vector<flatbuffers::Offset<W::WorkerOutput>> outputs;
     for (const auto& value : outcome.outputs)
       outputs.push_back(W::CreateWorkerOutput(
           b, b.CreateString(value.name),
           b.CreateVector(reinterpret_cast<const uint8_t*>(value.bytes.data()),
-                         value.bytes.size()),
-          wire::artifact_ids(b, value.artifacts)));
+                         value.bytes.size())));
     kind = W::WorkerPayload::WorkerResult;
-    body = W::CreateWorkerResult(b, b.CreateVector(outputs),
-                                 wire::artifact_ids(b, outcome.created)).Union();
+    body = W::CreateWorkerResult(b, b.CreateVector(outputs), created).Union();
   }
   W::FinishWorkerMessageBuffer(b, W::CreateWorkerMessage(b, 1, kind, body));
   if (b.GetSize() > kWorkerLimit)
@@ -197,6 +203,16 @@ class InvocationDisplay {
     ready_.notify_one();
   }
 
+  auto request(const WorkerViewRequest& request)
+      -> std::optional<WorkerViewReply> {
+    std::lock_guard lock(mutex_);
+    if (closed_ || stopping_) return WorkerViewReply{request.request_id, false};
+    request_ = request;
+    outstanding_request_ = request.request_id;
+    ready_.notify_one();
+    return std::nullopt;
+  }
+
  private:
   auto write() -> void {
     try {
@@ -206,9 +222,18 @@ class InvocationDisplay {
       for (;;) {
         std::unique_lock lock(mutex_);
         ready_.wait(lock, [&] {
-          return stopping_ || closed_ || !pending_.empty() || !credits_.empty();
+          return stopping_ || closed_ || request_ || !pending_.empty() ||
+                 !credits_.empty();
         });
         if (closed_) return;
+        if (request_) {
+          auto request = std::exchange(request_, std::nullopt);
+          lock.unlock();
+          flatbuffers::FlatBufferBuilder b;
+          workerd::build_view_request(b, *request);
+          workerd::write_display_frame(workerd::kDisplayChannelFd, b);
+          continue;
+        }
         if (!credits_.empty()) {
           auto credit = credits_.extract(credits_.begin());
           lock.unlock();
@@ -219,11 +244,12 @@ class InvocationDisplay {
         if (stopping_ && pending_.empty()) return;
         auto [display, complete] = std::move(pending_.front());
         pending_.pop_front();
-        in_flight_[display.view].emplace_back(
+        in_flight_[display.session].emplace_back(
             workerd::message_cost(display.bytes.size()), std::move(complete));
         lock.unlock();
-        workerd::write_display(workerd::kDisplayChannelFd, display.view,
-                               display.bytes);
+        flatbuffers::FlatBufferBuilder b;
+        workerd::build_display(b, display.session, display.bytes);
+        workerd::write_display_frame(workerd::kDisplayChannelFd, b);
       }
     } catch (const std::exception&) {
       ::shutdown(workerd::kDisplayChannelFd, SHUT_RDWR);
@@ -234,29 +260,46 @@ class InvocationDisplay {
     try {
       while (auto frame = workerd::read_display(workerd::kDisplayChannelFd)) {
         const auto* envelope = W::GetWorkerMessage(frame->data());
-        if (const auto* message = envelope->value_as_WorkerDisplay()) {
-          if (auto worker = target_.lock()) {
-            WorkerDisplayData display{message->view()->str(),
-                                      bytes(message->bytes())};
-            // Once the worker retires, reverse messages may still be in
-            // transit. Keep draining forward credits until the writer stops.
-            if (worker->send(display, [this, view = display.view,
-                                        cost = workerd::message_cost(
-                                            display.bytes.size())] {
-                  std::lock_guard lock(mutex_);
-                  credits_[view] += cost;
-                  ready_.notify_one();
-                }) != WorkerProc::ViewDelivery::accepted) {
-              target_.reset();
-            }
+        if (const auto* response = envelope->value_as_WorkerViewReply()) {
+          {
+            std::lock_guard lock(mutex_);
+            if (response->request_id() == 0 ||
+                response->request_id() != outstanding_request_)
+              break;
+            outstanding_request_ = 0;
           }
+          if (auto worker = target_.lock())
+            worker->reply(workerd::view_reply(*response));
+          continue;
+        }
+        if (const auto* message = envelope->value_as_WorkerViewEvent()) {
+          auto event = workerd::view_event(*message);
+          if (!workerd::valid_view_event(event)) break;
+          WorkerProc::DisplayCredit complete;
+          if (event.kind == ViewEventKind::message) {
+            complete = [this, route = event.route,
+                        cost = workerd::message_cost(event.bytes.size())] {
+              std::lock_guard lock(mutex_);
+              credits_[route] += cost;
+              ready_.notify_one();
+            };
+          }
+          // Continue to return credits while the worker retires.
+          const auto worker = target_.lock();
+          const auto delivery = worker ? worker->send(event, complete)
+                                       : WorkerProc::ViewDelivery::closed;
+          if (delivery == WorkerProc::ViewDelivery::full)
+            throw std::runtime_error(
+                "remote event exceeded the worker relay credit");
+          if (delivery == WorkerProc::ViewDelivery::closed && complete)
+            complete();
           continue;
         }
         const auto* credit = envelope->value_as_WorkerDisplayCredit();
         if (!credit) break;
         size_t bytes = credit->bytes();
         std::unique_lock lock(mutex_);
-        auto& view = in_flight_[credit->view()->str()];
+        auto& view = in_flight_[workerd::view_uuid(credit->address())];
         while (bytes) {
           if (view.empty() || bytes < view.front().first)
             throw std::runtime_error("invalid remote display credit");
@@ -273,10 +316,13 @@ class InvocationDisplay {
     ::shutdown(workerd::kDisplayChannelFd, SHUT_RDWR);
     std::unique_lock lock(mutex_);
     closed_ = true;
+    const auto request_id = std::exchange(outstanding_request_, 0);
     auto in_flight = std::move(in_flight_);
     auto pending = std::move(pending_);
     ready_.notify_all();
     lock.unlock();
+    if (request_id)
+      if (auto worker = target_.lock()) worker->reply({request_id, false});
     for (auto& [name, view] : in_flight)
       for (auto& [cost, complete] : view) complete();
     for (auto& [display, complete] : pending) complete();
@@ -286,19 +332,72 @@ class InvocationDisplay {
   std::mutex mutex_;
   std::condition_variable ready_;
   std::deque<std::pair<WorkerDisplayData, WorkerProc::DisplayCredit>> pending_;
-  std::map<std::string,
-           std::deque<std::pair<size_t, WorkerProc::DisplayCredit>>>
+  std::optional<WorkerViewRequest> request_;
+  uint64_t outstanding_request_ = 0;
+  std::map<ViewUuid, std::deque<std::pair<size_t, WorkerProc::DisplayCredit>>>
       in_flight_;
   bool stopping_ = false;
   bool closed_ = false;
-  std::map<std::string, size_t> credits_;
+  std::map<ViewUuid, size_t> credits_;
   std::thread reader_;
   std::thread writer_;
 };
 
+auto fetch_artifact(const stdfs::path& directory, const stdfs::path& blobs,
+                    const ArtifactKey& id, std::stop_token stop)
+    -> stdfs::path {
+  const auto uuid = artifact_id_text(id);
+  const auto target = directory / "staged/artifacts" / uuid;
+  const auto wanted = directory / "artifact-wanted";
+  const auto reply = directory / "artifact-reply";
+  struct RemoveExchange {
+    stdfs::path wanted;
+    stdfs::path reply;
+    ~RemoveExchange() {
+      std::error_code ec;
+      stdfs::remove(wanted, ec);
+      stdfs::remove(reply, ec);
+    }
+  } exchange{wanted, reply};
+
+  fs::write_atomic(wanted, uuid, 0600);
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::minutes(5);
+  while (!stop.stop_requested() &&
+         std::chrono::steady_clock::now() < deadline) {
+    if (stdfs::exists(reply)) {
+      const auto bytes = read(reply, workerd::kMaxFrame);
+      const auto manifest =
+          remote::decode<workerd::R::JobArtifactRequest>(bytes);
+      if (!manifest || manifest->id != uuid || !manifest->found) return {};
+      try {
+        stdfs::create_directories(target);
+        for (const auto& name : manifest->directories)
+          stdfs::create_directories(target / remote::relative_path(name));
+        for (const auto& file : manifest->files) {
+          if (stop.stop_requested())
+            throw std::runtime_error("remote artifact staging cancelled");
+          const auto destination = target / remote::relative_path(file->path);
+          stdfs::create_directories(destination.parent_path());
+          const auto size = fs::link_beneath(blobs, file->sha256, destination);
+          if (!size || *size != file->size)
+            throw std::runtime_error("remote artifact member is missing");
+        }
+        return target;
+      } catch (...) {
+        std::error_code ec;
+        stdfs::remove_all(target, ec);
+        throw;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  return {};
+}
+
 auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
                 const remote::RW::InvocationT& invocation,
-                const stdfs::path& input, const stdfs::path& directory,
+                const stdfs::path& blobs, const stdfs::path& directory,
                 const stdfs::path& store, const stdfs::path& group,
                 const WorkerStoreResult& env, const WorkerProc::LogSink& log,
                 Secrets secrets) -> workerd::InvocationResult {
@@ -333,57 +432,13 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   for (const auto* port : *call.inputs())
     values.push_back({port->name()->str(), nullptr,
                       port->bytes() ? bytes(port->bytes()) : "",
-                      port->schema() ? port->schema()->str() : "",
-                      wire::artifact_ids(port->artifacts())});
+                      port->schema() ? port->schema()->str() : ""});
   std::vector<types::PortType> outputs;
   for (const auto* port : *call.outputs())
     outputs.push_back({port->name()->str(), port->required(), nullptr});
-  const auto artifacts_root = input / "artifacts";
   const auto outputs_root = directory / "result/files/artifacts";
   spawn.artifact_store = outputs_root.string();
   spawn.artifact_staging = directory / "artifact-invocations";
-  std::vector<ArtifactGrant> grants;
-  if (const auto* entries = call.grants()) {
-    for (const auto* entry : *entries) {
-      auto id = wire::artifact_id(*entry->id());
-      const bool store_origin = entry->store_path() != nullptr;
-      const auto leaf =
-          store_origin
-              ? crypto::hex(id.data(), id.size())
-              : std::to_string(artifact_counter(artifact_id_bytes(id)));
-      const auto relative = remote::relative_path(entry->path()->string_view());
-      const auto holders = relative.parent_path();
-      const auto invocation_name = holders.filename().string();
-      const auto source = artifacts_root / relative;
-      if (relative.filename() != leaf ||
-          !crypto::is_run_id(relative.begin()->string()) ||
-          !invocation_name.starts_with('@') || invocation_name.size() == 1 ||
-          invocation_name.find_first_not_of("0123456789", 1) !=
-              std::string::npos ||
-          !stdfs::is_directory(stdfs::symlink_status(source)))
-        throw Failed(FailureKind::input_missing, "invalid remote artifact grant");
-      std::string store_target;
-      if (const auto* store_path = entry->store_path()) {
-        const stdfs::path path(store_path->str());
-        const stdfs::path store_root = "/nix/store";
-        const auto relative_store_path = path.lexically_relative(store_root);
-        if (relative_store_path.empty() ||
-            !fs::valid_relative_path(relative_store_path.begin()->string()) ||
-            path != store_root / *relative_store_path.begin() /
-                        "share/tsugumi/input/artifacts" / leaf)
-          throw Failed(FailureKind::input_missing,
-                       "invalid store artifact path");
-        if (spawn.sandbox.filesystem) {
-          spawn.binds.push_back({source.string(), path.string(), false, ""});
-          store_target = path.string();
-        } else {
-          store_target = source.string();
-        }
-      }
-      grants.push_back(
-          {std::move(id), source.string(), {}, std::move(store_target)});
-    }
-  }
   stdfs::create_directories(outputs_root);
   auto worker = std::make_unique<WorkerProc>(spawn);
   InvocationDisplay display(worker->view_receiver());
@@ -395,8 +450,10 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   request.inputs = values;
   request.outputs = std::move(outputs);
   request.artifact_directory = outputs_root;
-  request.artifact_sequence = call.invocation_sequence();
-  request.grants = std::move(grants);
+  request.artifact_sequence = 1;  // One invocation per remote job.
+  request.resolve_artifact = [&](const ArtifactKey& id, std::stop_token stop) {
+    return fetch_artifact(directory, blobs, id, stop);
+  };
   request.output_budget = {job.output_limit_bytes, job.output_limit_entries};
   if (call.deadline_ms()) request.timeout_ms = *call.deadline_ms();
   // Allow the worker to report its own budget failure before escalation.
@@ -404,6 +461,9 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   request.log = log;
   request.display = [&display](auto message, auto complete) {
     display.push(std::move(message), std::move(complete));
+  };
+  request.view_control = [&display](const auto& control) {
+    return display.request(control);
   };
   return workerd::run_invocation(
       [](std::unique_ptr<WorkerProc>, bool, const std::string&) {}, lease,
@@ -435,43 +495,6 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
       read(blob(job->invocation_sha256), kWorkerLimit));
   if (!decoded) throw std::runtime_error("invalid remote invocation manifest");
   const auto& invocation = *decoded;
-  int64_t last_progress = 0;
-  const auto progress = [&](const stdfs::path& name, uint64_t done,
-                            uint64_t total) {
-    const auto now = now_ms();
-    if (done && done != total && now - last_progress < 100) return;
-    last_progress = now;
-    remote::RW::TransferProgressT value;
-    value.name = name.generic_string();
-    value.done = done;
-    value.total = total;
-    fs::write_atomic(directory / "progress",
-                     remote::encode<remote::RW::TransferProgress>(value), 0600);
-  };
-  const auto input = directory / "staged";
-  stdfs::create_directories(input);
-  for (const auto& dir : invocation.directories)
-    stdfs::create_directories(input / remote::relative_path(dir));
-  for (const auto& entry : invocation.files) {
-    const auto& file = *entry;
-    const auto path = input / remote::relative_path(file.path);
-    const auto source = blob(file.sha256);
-    stdfs::create_directories(path.parent_path());
-    uint64_t done = 0;
-    if (const auto size = fs::link_beneath(blobs, source.filename(), path)) {
-      done = *size;
-      progress(file.path, done, file.size);
-    } else {
-      progress(file.path, 0, file.size);
-      fs::copy_beneath(blobs, source.filename(), path,
-                       [&](std::string_view chunk) {
-                         done += chunk.size();
-                         progress(file.path, done, file.size);
-                       });
-    }
-    if (done != file.size)
-      throw std::runtime_error("remote invocation input size does not match");
-  }
   const auto frame = read(blob(invocation.call_sha256), kWorkerLimit);
   flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(frame.data()),
                                  frame.size());
@@ -509,7 +532,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
         job->build_timeout_ms);
     auto secrets =
         job->secrets.empty() ? Secrets{} : receive_secrets(directory, *job);
-    outcome = run_worker(*call, *job, invocation, input, directory, store,
+    outcome = run_worker(*call, *job, invocation, blobs, directory, store,
                          group, environment, log, std::move(secrets));
   } catch (const Failed& error) {
     outcome.failure = error.failure;

@@ -39,6 +39,11 @@ come later.
    `rootfs.erofs` (the runner image), `payload.erofs` and `pack.json` (the
    exported workflow entry points).
 
+The exported app requires macOS 26. A Card can open a view in the app's
+main window, a separate window, or native full screen. The guest stays
+available after the Workflow produces its results while any of its views
+remain open. View messages travel over a private virtio socket.
+
 The app, when run, boots the runner image with **no network device**. The
 payload's store is laid over the image's (a read-only overlay), the
 workflow uses a copy of the project on a temporary sparse disk. `tsugumid

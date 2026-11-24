@@ -14,7 +14,7 @@ struct RemoteInvocationResult {
   bool auxiliary_logs_truncated = false;
   BuildEnvironmentData environment;
   bool built = false;
-  std::vector<ArtifactKey> created;
+  std::vector<CreatedArtifact> created;
 };
 
 // The prefix of a job's log (its size-prefixed entries) that the core already
@@ -33,10 +33,15 @@ auto stage_remote_archive(const RemoteJobClient& client,
                           std::stop_token cancel,
                           const TransferProgress& progress = {}) -> std::string;
 
+auto deliver_remote_artifact(
+    const RemoteJobClient& client, const std::string& service,
+    const std::string& instance, const std::string& job_id,
+    const std::string& fingerprint, const std::string& uuid,
+    const std::filesystem::path& source, std::stop_token stop) -> void;
+
 auto stage_remote_invocation(
     const RemoteJobClient& client, const std::string& service,
     const std::string& instance, const std::string& job_id,
-    std::vector<ArtifactGrant> grants,
     const std::string& archive_digest, const ExecutionRequest& request)
     -> std::string;
 auto import_remote_result(
@@ -44,10 +49,10 @@ auto import_remote_result(
     const std::string& instance, const std::string& job_id,
     const std::string& result_digest, const std::string& spec,
     const std::filesystem::path& state_directory,
-    const std::filesystem::path& artifact_destination, uint64_t sequence,
+    const std::filesystem::path& artifact_destination,
     const std::vector<types::PortType>& outputs,
-    const std::vector<Value>& inputs, const RemoteLogPrefix& recorded,
-    const WorkerProc::LogSink& log, std::stop_token stop,
+    const RemoteLogPrefix& recorded, const WorkerProc::LogSink& log,
+    std::stop_token stop,
     const std::function<void(std::string_view, uint64_t, uint64_t)>& progress,
     const std::function<void(int64_t, int64_t)>& on_validation)
     -> RemoteInvocationResult;

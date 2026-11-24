@@ -18,13 +18,19 @@ import socket
 import struct
 import sys
 import threading
+from uuid import UUID
 
 import flatbuffers
 
 from Tsugumi.Data.Failure import FailureT
 from Tsugumi.Data.FailureKind import FailureKind
+from tsugumi.Artifact import ArtifactT
 from tsugumi.ArtifactId import ArtifactIdT
+from Tsugumi.Worker.WorkerArtifactCreate import WorkerArtifactCreateT
+from Tsugumi.Worker.WorkerArtifactOpen import WorkerArtifactOpenT
+from Tsugumi.Worker.ViewControlKind import ViewControlKind
 from Tsugumi.Worker.WorkerDisplay import WorkerDisplayT
+from Tsugumi.Worker.WorkerViewRequest import WorkerViewRequestT
 from Tsugumi.Worker.WorkerFailure import WorkerFailureT
 from Tsugumi.Worker.WorkerMessage import WorkerMessage, WorkerMessageT
 from Tsugumi.Worker.WorkerOutput import WorkerOutputT
@@ -114,6 +120,8 @@ class Worker:
         self.cancelled = set()
         self.calls = 0
         self.call_id = 0
+        self.view_request_id = 0
+        self.view_reply = None
         self.call = None
         self.created = []
 
@@ -123,6 +131,10 @@ class Worker:
                 if message.valueType == WorkerPayload.WorkerCancel:
                     with self.condition:
                         self.cancelled.add(message.callId)
+                        self.condition.notify_all()
+                elif message.valueType == WorkerPayload.WorkerViewReply:
+                    with self.condition:
+                        self.view_reply = message.value
                         self.condition.notify_all()
         except (EOFError, OSError, ValueError):
             pass
@@ -163,9 +175,16 @@ class Worker:
                 self.changed.recv(4096)
         self.check_cancel()
 
+    def artifact_request(self, kind, value, expected):
+        self.data.send(self.call_id, kind, value)
+        reply = self.data.receive()
+        if reply is None or reply.callId != self.call_id or reply.valueType != expected:
+            raise ValueError("invalid artifact effect reply")
+        return reply.value
+
     def failure(self, kind, message):
         failure = FailureT(kind=getattr(FailureKind, kind), args=[], diagnostic=message)
-        self.data.send(self.call_id, WorkerPayload.WorkerFailure, WorkerFailureT(failure=failure, created=self.created))
+        self.data.send(self.call_id, WorkerPayload.WorkerFailure, WorkerFailureT(failure=failure))
 
     def actions(self, actions, outputs):
         for action in actions:
@@ -203,14 +222,16 @@ class Worker:
             elif operation == "echo":
                 value = next(v for v in self.call.inputs if text(v.name) == action["input"])
                 outputs[action["port"]] = WorkerOutputT(
-                    name=action["port"], bytes=bytes(value.bytes) if value.bytes is not None else b"",
-                    artifacts=value.artifacts)
+                    name=action["port"], bytes=bytes(value.bytes) if value.bytes is not None else b"")
             elif operation in ("file", "directory"):
-                counter = len(self.created)
-                artifact_key = (self.call.invocationSequence.to_bytes(8, "big")
-                                + counter.to_bytes(8, "big"))
-                artifact = ArtifactIdT(bytes=list(artifact_key))
-                self.created.append(artifact)
+                reply = self.artifact_request(
+                    WorkerPayload.WorkerArtifactCreate,
+                    WorkerArtifactCreateT(flags=1 if action.get("keep", True) else 0),
+                    WorkerPayload.WorkerArtifactCreated)
+                if reply.id is None:
+                    raise ValueError("artifact creation refused")
+                counter, artifact = reply.counter, reply.id
+                self.created.append(counter)
                 root = Path(text(self.call.artifactDirectory)) / str(counter)
                 destination = root / action["path"]
                 if not destination.is_relative_to(root) or ".." in destination.parts:
@@ -226,14 +247,39 @@ class Worker:
                             raise ValueError("artifact member escapes staging")
                         member.parent.mkdir(parents=True, exist_ok=True)
                         member.write_text(contents)
-                outputs[action["port"]] = WorkerOutputT(name=action["port"], artifacts=[artifact])
+                builder = flatbuffers.Builder(64)
+                builder.Finish(ArtifactT(id=artifact).Pack(builder))
+                outputs[action["port"]] = WorkerOutputT(name=action["port"], bytes=bytes(builder.Output()))
+                if "uuid_file" in action:
+                    Path(action["uuid_file"]).write_text(str(UUID(bytes=bytes(artifact.bytes))))
+            elif operation == "open_artifact":
+                key = ArtifactIdT(bytes=list(UUID(Path(action["uuid_file"]).read_text()).bytes))
+                reply = self.artifact_request(WorkerPayload.WorkerArtifactOpen,
+                    WorkerArtifactOpenT(id=key), WorkerPayload.WorkerArtifactOpened)
+                if reply.path is None:
+                    self.failure("input_missing", "artifact unavailable")
+                    return False
+                data = (Path(text(reply.path)) / action["member"]).read_text()
+                outputs[action["port"]] = WorkerOutputT(name=action["port"], bytes=scalar("string", data))
             elif operation == "artifact_symlink":
-                artifact = self.created[-1]
-                root = Path(text(self.call.artifactDirectory)) / str(int.from_bytes(bytes(artifact.bytes)[8:], "big"))
+                root = Path(text(self.call.artifactDirectory)) / str(self.created[-1])
                 (root / action["name"]).symlink_to(action["target"])
             elif operation == "display_text":
-                display = WorkerDisplayT(view="test", bytes=action["text"].encode())
-                self.data.send(0, WorkerPayload.WorkerDisplay, display)
+                self.view_request_id += 1
+                self.data.send(0, WorkerPayload.WorkerViewRequest, WorkerViewRequestT(
+                    requestId=self.view_request_id, kind=ViewControlKind.Open,
+                    view=action.get("view", "test"),
+                ))
+                with self.condition:
+                    self.condition.wait_for(
+                        lambda: self.call_id in self.cancelled or
+                        (self.view_reply and self.view_reply.requestId == self.view_request_id)
+                    )
+                    self.check_cancel()
+                    reply, self.view_reply = self.view_reply, None
+                if reply.ok:
+                    display = WorkerDisplayT(session=reply.session, bytes=action["text"].encode())
+                    self.data.send(0, WorkerPayload.WorkerDisplay, display)
             else:
                 raise ValueError(f"unknown worker action: {operation}")
         return True
@@ -257,7 +303,7 @@ class Worker:
                 outputs = {}
                 if self.actions(self.scenario.get("actions", []), outputs):
                     self.check_cancel()
-                    result = WorkerResultT(outputs=list(outputs.values()), created=self.created)
+                    result = WorkerResultT(outputs=list(outputs.values()))
                     self.data.send(self.call_id, WorkerPayload.WorkerResult, result)
             except Cancelled:
                 self.failure("cancelled", "scripted worker observed cancellation")

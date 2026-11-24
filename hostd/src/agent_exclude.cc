@@ -37,7 +37,8 @@ auto AgentExclude::Defaults() -> std::vector<std::string> {
 auto AgentExclude::Entries(const std::string& document)
     -> std::vector<std::string> {
   const auto fields = j::Object(document);
-  if (!fields.contains("agentExclude")) return Defaults();
+  if (!fields.contains("agentExclude"))
+    throw Failure("invalid_document", "tsugumi.json requires agentExclude");
   std::vector<std::string> entries;
   for (const auto& raw : j::Array(fields.at("agentExclude"))) {
     const auto path = j::String(raw);
@@ -57,8 +58,7 @@ AgentExclude::AgentExclude(std::filesystem::path root,
   }
   for (const auto& [path, raw] : files) {
     if (!path.ends_with("/_card.json")) continue;
-    const auto external = j::Text(j::Object(raw), "external");
-    if (!external.empty()) links_.emplace(path, external);
+    if (j::Text(j::Object(raw), "type") == "subgraph") subgraphs_.insert(path);
   }
 }
 auto AgentExclude::Contains(const std::filesystem::path& path) const -> bool {
@@ -74,15 +74,14 @@ auto AgentExclude::Card(const std::string& id, const std::string& prefix) const
     -> bool {
   const auto slash = id.find('/');
   const auto first = id.substr(0, slash);
+  if (!valid_name(first)) return false;
   const auto definition = prefix + "definitions/" + first;
   if (Contains(definition)) return false;
   if (Contains(definition + "/_card.json")) return false;
   if (slash == std::string::npos) return true;
   // The logical path follows the confirmed definition in this revision.
-  const auto link = links_.find(definition + "/_card.json");
-  if (link == links_.end()) return false;
-  const auto& external = link->second;
-  const auto nested = prefix + "externals/" + external + '/';
+  if (!subgraphs_.contains(definition + "/_card.json")) return false;
+  const auto nested = prefix + "externals/" + first + '/';
   return !Contains(nested) && Card(id.substr(slash + 1), nested);
 }
 auto AgentExclude::CheckRequest(const std::string& name, const j::Members& args,
@@ -95,31 +94,39 @@ auto AgentExclude::CheckRequest(const std::string& name, const j::Members& args,
     if (args.contains("run_id"))
       Check(".tsugumi/runs/" + j::Text(args, "run_id"));
   }
-  if (name == "artifact_read") {
-    // Artifacts use run/Card-path/invocation/output as their canonical id.
-    const auto id = j::Text(args, "artifact_id");
-    const auto first = id.find('/');
-    if (first != id.npos) {
-      const auto artifact =
-          ".tsugumi/runs/" + id.substr(0, first) + "/artifacts/" + id;
-      Check(artifact);
-      if (args.contains("member"))
-        Check(std::filesystem::path(artifact) / j::Text(args, "member"));
-    }
-  }
-  if (recorded) return;
   const auto check_card = [&](const j::Members& card) {
     std::string id;
     for (const auto& segment : j::Array(j::Get(card, "segments", "[]"))) {
+      const auto name = j::String(segment);
+      if (!valid_name(name))
+        throw Failure("invalid_request", "Invalid Card id");
       if (!id.empty()) id += '/';
-      id += j::String(segment);
+      id += name;
     }
-    if (!id.empty() && !Card(id)) throw Failure("not_found", "Card not found");
+    if (!recorded && !id.empty() && !Card(id))
+      throw Failure("not_found", "Card not found");
   };
   if (args.contains("segments")) check_card(args);
   for (const auto* key : {"card", "source_card", "trigger", "target"})
     if (args.contains(key) && args.at(key).starts_with('{'))
       check_card(j::Object(args.at(key)));
+}
+auto AgentExclude::CheckArtifact(const j::Members& artifact,
+                                 std::string_view member) const -> void {
+  const auto run = j::Text(artifact, "run_id");
+  Check(".tsugumi/runs/" + run);
+  auto path = std::filesystem::path(".tsugumi/artifacts") / run;
+  const auto card = j::Object(j::Get(artifact, "card", "{}"));
+  for (const auto& segment : j::Array(j::Get(card, "segments", "[]")))
+    path /= j::String(segment);
+  const auto label = j::Text(artifact, "label");
+  const auto dot = label.find('.');
+  if (dot == label.npos) throw Failure("not_found", "Artifact not found");
+  const auto invocation = j::Get(artifact, "invocation");
+  path /= "@" + j::String(invocation, invocation);
+  path /= label.substr(dot + 1);
+  Check(path);
+  if (!member.empty()) Check(path / member);
 }
 auto AgentExclude::CheckContent(const std::string& raw) const -> void {
   if (raw.starts_with('[')) {
@@ -249,9 +256,9 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base,
     if (hidden_tree(dir)) return true;
     const auto link = base.files.find(dir + "/_card.json");
     if (link == base.files.end()) return false;
-    const auto external = j::Text(j::Object(link->second), "external");
-    const auto prefix = dir.substr(0, dir.rfind("definitions/"));
-    return !external.empty() && hidden_tree(prefix + "externals/" + external);
+    if (j::Text(j::Object(link->second), "type") != "subgraph") return false;
+    const auto at = dir.rfind("definitions/");
+    return hidden_tree(dir.substr(0, at) + "externals/" + dir.substr(at + 12));
   };
   const auto card_document = [](const std::string& path) {
     return path.ends_with("/_card.json") &&
@@ -263,10 +270,9 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base,
     const auto before = base.files.contains(path) ? base.files.at(path) : "{}";
     if (card_document(path)) {
       const auto old = j::Object(before), after = j::Object(bytes);
-      const auto external = j::Text(old, "external");
-      const auto prefix = path.substr(0, path.rfind("definitions/"));
-      if (!external.empty() && external != j::Text(after, "external") &&
-          hidden_tree(prefix + "externals/" + external))
+      if (j::Text(old, "type") == "subgraph" &&
+          j::Text(after, "type") != "subgraph" &&
+          hidden_definition(path.substr(0, path.size() - 11)))
         throw Failure("not_found", "Card not found");
     }
     const bool project_document =
@@ -338,7 +344,9 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base,
                LayoutView(DecodeSourceBytes(j::Get(value, "layout", "\"\"")),
                           {}));
     else if (type == "PutDefinition" || type == "RemoveDefinition") {
-      const auto dir = "definitions/" + j::Text(value, "id");
+      const auto id = j::Text(value, "id");
+      if (!valid_name(id)) throw Failure("invalid_request", "Invalid Card id");
+      const auto dir = "definitions/" + id;
       Check(dir);
       if (type == "RemoveDefinition" && hidden_definition(dir))
         throw Failure("not_found", "Card not found");

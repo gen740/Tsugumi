@@ -1,4 +1,5 @@
 ---
+title: simulate
 description: Solve the differential equation numerically
 ---
 

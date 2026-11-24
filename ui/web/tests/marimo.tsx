@@ -1,3 +1,4 @@
+import { cardFixture, projectFixture } from './documentFixture'
 import assert from 'node:assert/strict'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { ProjectSession } from '../src/model/session'
@@ -7,8 +8,8 @@ import { CardEditorModel } from '../src/ui/cardSettings'
 import { FailureSourceLink } from '../src/ui/history'
 
 const session = new ProjectSession('/p', 'marimo', 'marimo')
-session.project = parse('{"canvas":{"cards":[{"id":"notebook"}],"connections":[]}}')
-session.confirmedDefinitions.set('notebook', parse('{"type":"code"}'))
+session.project = parse(projectFixture({"canvas":{"cards":[{"id":"notebook"}],"connections":[]},"name":"t"}))
+session.confirmedDefinitions.set('notebook', parse(cardFixture('code')))
 const model = new CardEditorModel(session, 'notebook')
 const source = 'definitions/notebook/src/notebook.py'
 model.texts.set(source, 'unsaved notebook changes')

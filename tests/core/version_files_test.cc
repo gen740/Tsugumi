@@ -1,12 +1,13 @@
 #include <git2.h>
 #include <gtest/gtest.h>
 
-#include "tsugumi/protocol/runtime_state_generated.h"
-#include "tsugumi/util/flat_file.hh"
-#include "tsugumi/util/json_object.hh"
+#include "test_document.hh"
 #include "tsugumi/document/document.hh"
+#include "tsugumi/protocol/runtime_state_generated.h"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json_object.hh"
 #include "versions.hh"
 
 namespace tsugumi {
@@ -48,8 +49,11 @@ class VersionFiles : public ::testing::Test {
 };
 
 TEST_F(VersionFiles, LockDocumentsAreTrackedWithTheirProjects) {
-  Put("tsugumi.json", initial_project_json("root"));
-  Put("externals/sub/tsugumi.json", initial_project_json("sub"));
+  Put("tsugumi.json", test::project_json(
+      R"({"name":"root","canvas":{"cards":[{"id":"sub"}],"connections":[]}})"));
+  Put("definitions/sub/_card.json", test::card_json(R"({"type":"subgraph"})"));
+  Put("definitions/sub/README.md", test::readme("Sub"));
+  Put("externals/sub/tsugumi.json", initial_project_json("sub", {}));
   Put("tsugumi.lock", R"({"entries":[]})");
   Put("externals/sub/tsugumi.lock", R"({"entries":[]})");
   const auto loaded = load_from_disk(root);
@@ -65,7 +69,8 @@ TEST_F(VersionFiles, LockDocumentsAreTrackedWithTheirProjects) {
 
 TEST_F(VersionFiles, DefinitionsTemplatesAndLiteralOptInsShareOneSelection) {
   Put("tsugumi.json",
-      R"({"nixPath": [],"canvas":{"cards":[],"connections":[]},"versionPaths":["inputs/reference.csv","chosen folder","missing","literal[1].csv"]})");
+      test::project_json(
+          R"({"nixPath": [],"canvas":{"cards":[],"connections":[]},"trackedPaths":["inputs/reference.csv","chosen folder","missing","literal[1].csv"]})"));
   const std::set<std::string> definitions = {
       "layout.bin",
       "definitions/a/_card.json",
@@ -130,7 +135,8 @@ TEST_F(VersionFiles, DefinitionsTemplatesAndLiteralOptInsShareOneSelection) {
 TEST_F(VersionFiles,
        InternalStateAndUnselectedIndexEntriesNeverEnterTheNextVersion) {
   Put("tsugumi.json",
-      R"({"nixPath": [],"canvas":{"cards":[],"connections":[]},"versionPaths":["result.csv"]})");
+      test::project_json(
+          R"({"nixPath": [],"canvas":{"cards":[],"connections":[]},"trackedPaths":["result.csv"]})"));
   Put(".gitignore", "# Existing ignore file does not exclude state\n");
   Put("result.csv");
   Put("stray.csv");
@@ -150,7 +156,8 @@ TEST_F(VersionFiles,
   git_repository_free(repo);
   // Also defend direct callers against an unvalidated internal-state opt-in.
   Put("tsugumi.json",
-      R"({"nixPath": [],"canvas":{"cards":[],"connections":[]},"versionPaths":[".tsugumi",".git","externals/inner/.tsugumi"]})");
+      test::project_json(
+          R"({"nixPath": [],"canvas":{"cards":[],"connections":[]},"trackedPaths":[".tsugumi",".git","externals/inner/.tsugumi"]})"));
   const auto next = versions.mark("definitions", "Keep as Version");
   EXPECT_EQ(Paths(next), (std::set<std::string>{"tsugumi.json"}));
   EXPECT_EQ(fs::read_file(root / "result.csv"), "content");
@@ -162,29 +169,28 @@ TEST_F(VersionFiles,
 }
 
 TEST_F(VersionFiles, ProjectValidationRejectsEscapesAndInternalPaths) {
-  const std::string prefix =
-      R"({"name":"p","nixPath": [],"canvas":{"cards":[],"connections":[]},"versionPaths":[)";
   for (const auto& path :
        {"../outside", "/outside", ".", "", "a/../b", "a//b", ".tsugumi",
         "a/.tsugumi/state", ".git/config", ".TSUGUMI/state"}) {
     SCOPED_TRACE(path);
-    EXPECT_THROW(parse_project_json(
-                     prefix + json::Quote(path) + "]}"),
+    EXPECT_THROW(parse_project_json(test::project_json(
+                     "{\"trackedPaths\":[" + json::Quote(path) + "]}")),
                  DocumentError);
   }
-  EXPECT_NO_THROW(parse_project_json(
-      prefix + R"("inputs/reference.csv","chosen folder","missing"]})"));
+  EXPECT_NO_THROW(parse_project_json(test::project_json(
+      R"({"trackedPaths":["inputs/reference.csv","chosen folder","missing"]})")));
   EXPECT_THROW(
-      parse_project_json(
-          R"({"name":"p","nixPath": [],"canvas":{"cards":[],"connections":[]},"versionPaths":"result.csv"})"),
+      parse_project_json(test::project_json(
+          R"({"name":"p","nixPath": [],"canvas":{"cards":[],"connections":[]},"trackedPaths":"result.csv"})")),
       DocumentError);
 }
 
 TEST_F(VersionFiles,
        ImportedDemoDifferencesCannotAddInternalOrUnselectedFiles) {
   Put("tsugumi.json",
-      R"({"nixPath": [],"canvas":{"cards":[],"connections":[]},"versionPaths":["chosen.csv"]})");
-  Put("definitions/a/_card.json", R"({"type":"code"})");
+      test::project_json(
+          R"({"nixPath": [],"canvas":{"cards":[],"connections":[]},"trackedPaths":["chosen.csv"]})"));
+  Put("definitions/a/_card.json", test::card_json(R"({"type":"code"})"));
   Put(".tsugumi/state");
   Put("result.csv");
   using namespace Tsugumi::State;
@@ -194,9 +200,12 @@ TEST_F(VersionFiles,
   first->message = "First";
   first->time = 1793700000;
   for (const auto& [path, bytes] : std::map<std::string, std::string>{
-           {"chosen.csv", "chosen"}, {".tsugumi/state", "private"},
-           {"externals/inner/.tsugumi/state", "private"}, {"result.csv", "result"},
-           {"definitions/a/_card.json", R"({"type":"draft"})"}}) {
+           {"chosen.csv", "chosen"},
+           {".tsugumi/state", "private"},
+           {"externals/inner/.tsugumi/state", "private"},
+           {"result.csv", "result"},
+           {"definitions/a/_card.json",
+            test::card_json(R"({"type":"draft"})")}}) {
     auto file = std::make_unique<HistoryFileT>();
     file->path = path;
     file->bytes.assign(bytes.begin(), bytes.end());

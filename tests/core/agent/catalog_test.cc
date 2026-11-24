@@ -11,13 +11,13 @@
 namespace tsugumi::agent {
 namespace {
 
-TEST(AgentCatalog, DraftSavePreservesEmptyEnds) {
+TEST(AgentCatalog, DraftSaveKeepsPortLessEnds) {
   const Catalog catalog;
   const auto* tool = catalog.Find("project_save");
   ASSERT_NE(tool, nullptr);
   const auto request = catalog.Request(
       "project_save",
-      R"({"base_rev":0,"op_id":"save","origin":"agent","changes":[{"value_type":"SetProject","value":{"json":"{\"canvas\":{\"connections\":[{\"from\":{\"card\":\"plan\",\"port\":\"\"},\"to\":{\"card\":\"next\",\"port\":\"in\"}}]}}"}}]})",
+      R"({"base_rev":0,"op_id":"save","origin":"agent","changes":[{"value_type":"SetProject","value":{"json":"{\"canvas\":{\"connections\":[{\"from\":{\"card\":\"plan\"},\"to\":{\"card\":\"next\",\"port\":\"in\"}}]}}"}}]})",
       1);
   const auto* save = Tsugumi::RPC::GetMessage(request.data())
                          ->payload_as_Request()
@@ -30,8 +30,7 @@ TEST(AgentCatalog, DraftSavePreservesEmptyEnds) {
   const auto wire =
       json::Object(json::Array(json::Get(canvas, "connections")).front());
   const auto from = json::Object(json::Get(wire, "from"));
-  EXPECT_TRUE(from.contains("port"));
-  EXPECT_EQ(json::Text(from, "port"), "");
+  EXPECT_FALSE(from.contains("port"));
 }
 
 TEST(AgentCatalog, InternalVersionNoteRequestsAreNotTools) {

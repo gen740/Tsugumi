@@ -1,4 +1,5 @@
 ---
+title: range
 description: Concentration range and the width of the interval
 ---
 

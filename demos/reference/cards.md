@@ -7,16 +7,16 @@ Read this guide with `demo_read reference/cards.md`. The [SDK guides and starter
 ## Implementing a Draft
 
 One project_edit can replace a Draft's definition, add its sources and rebind its wire ends atomically. Existing
-README.md description and body stay as written. Add a one-line description if it is empty.
+README.md title, description and body stay as written. Add a one-line description if it is empty.
 Replace the README with a guarded whole-file text edit when it needs a description. Boundary
 entries in tsugumi.json have `name`, `card` and `port` fields.
 
-For example, plan starts with _card.json {"type":"draft"} and a README.md with
-`description: Make a greeting` in the front matter and `Return hello.` in its body. Its incoming wire is
-start:out -> plan:"", and its outgoing wire is plan:"" -> next:"" (next remains a Draft). An end on a Card that stays a Draft keeps port "": only the implemented Card's own ends get real ports. These project_edit
+For example, plan starts with _card.json {"type":"draft","symbol":"none"} and a README.md with
+`title: plan` and `description: Make a greeting` in the front matter and `Return hello.` in its body. Its incoming wire is
+start:out -> plan, and its outgoing wire is plan -> next (next remains a Draft); a Draft end has no port. An end on a Card that stays a Draft keeps no port: only the implemented Card's own ends get real ports. These project_edit
 arguments implement plan and retain its intent text and every unrelated project field.
 
-The project declares `nixpkgs` and `tsugumi-kit` in `tsugumi.json` under `nixPath` as `{name, url}` entries. With approval, `nix_path_lock_update` writes one name or all names to `tsugumi.lock`, whose entries list stores each name, declared URL, optional revision and NAR hash. Each external uses its own declarations and lock. If an import names an undeclared source, add the name to the owning project's `nixPath` and lock it.
+The project declares `nixpkgs` and `tsugumi-kit` in `tsugumi.json` under `nixPath` as `{name, url}` entries. With approval, `nix_path_lock_update` writes one name or all names to `tsugumi.lock`, whose entries list stores each name, declared URL, optional revision and NAR hash. Each child project uses its own declarations and lock. If an import names an undeclared source, add the name to the owning project's `nixPath` and lock it.
 
 ```json
 {
@@ -27,18 +27,44 @@ The project declares `nixpkgs` and `tsugumi-kit` in `tsugumi.json` under `nixPat
       "old_value": {
         "present": true,
         "value": {
-          "type": "draft"
+          "type": "draft",
+          "symbol": "none"
         }
       },
       "new_value": {
         "present": true,
         "value": {
           "type": "code",
+          "symbol": "none",
           "inputs": [
             {
               "name": "start"
             }
-          ]
+          ],
+          "maxRuns": 1,
+          "reuseWorker": false,
+          "timeoutSeconds": 0,
+          "buildTimeoutSeconds": 0,
+          "recordLogs": "project",
+          "recordIO": "project",
+          "sandbox": {
+            "filesystem": true,
+            "pid": true,
+            "ipc": true,
+            "identity": true,
+            "limits": {
+              "cpu": 0,
+              "memoryMiB": 0
+            }
+          },
+          "grants": {
+            "network": false,
+            "gui": false
+          },
+          "systems": [
+            "aarch64-linux"
+          ],
+          "workerCapabilities": []
         }
       }
     },
@@ -73,8 +99,7 @@ The project declares `nixpkgs` and `tsugumi-kit` in `tsugumi.json` under `nixPat
               "port": "out"
             },
             "to": {
-              "card": "plan",
-              "port": ""
+              "card": "plan"
             }
           }
         },
@@ -86,8 +111,7 @@ The project declares `nixpkgs` and `tsugumi-kit` in `tsugumi.json` under `nixPat
         }
       ],
       "old_value": {
-        "present": true,
-        "value": ""
+        "present": false
       },
       "new_value": {
         "present": true,
@@ -106,12 +130,10 @@ The project declares `nixpkgs` and `tsugumi-kit` in `tsugumi.json` under `nixPat
         {
           "match": {
             "from": {
-              "card": "plan",
-              "port": ""
+              "card": "plan"
             },
             "to": {
-              "card": "next",
-              "port": ""
+              "card": "next"
             }
           }
         },
@@ -123,8 +145,7 @@ The project declares `nixpkgs` and `tsugumi-kit` in `tsugumi.json` under `nixPat
         }
       ],
       "old_value": {
-        "present": true,
-        "value": ""
+        "present": false
       },
       "new_value": {
         "present": true,

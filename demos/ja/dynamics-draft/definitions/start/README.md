@@ -1,3 +1,4 @@
 ---
-description: 画像の大きさと乱数の種（settings）から始める
+title: start
+description: 実装した力学系を実行する
 ---

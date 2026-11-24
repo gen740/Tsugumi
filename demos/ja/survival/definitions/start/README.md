@@ -1,3 +1,4 @@
 ---
+title: start
 description: lung データの読み込み（load）を始める
 ---

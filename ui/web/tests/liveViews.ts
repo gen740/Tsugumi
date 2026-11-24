@@ -1,4 +1,3 @@
-// Only open live viewers subscribe to displays.
 import assert from 'node:assert/strict'
 import { Builder, ByteBuffer } from 'flatbuffers'
 import { D, R, RPCClient, RequestPayload, cardPath, type Transport } from '../src/wire/rpc'
@@ -11,72 +10,49 @@ page.matchMedia ??= () => ({ matches: false, addEventListener() {} })
 page.EventSource ??= class { addEventListener() {} close() {} }
 const { ProjectSession } = await import('../src/model/session')
 
-const resolved = (id: string) => ({ card: { segments: [id] }, inputs: [], outputs: [], diagnostics: [], nixReferences: [] }) as unknown as R.ResolvedCardT
-const definition = (id: string, card: string) => Object.assign(new R.DefinitionT(), { id, cardJson: card })
-const delta = (rev: bigint, fields: Partial<R.DocumentDeltaT>) =>
-  Object.assign(new R.DocumentDeltaT(), { baseRev: rev, rev: rev + 1n, resolution: [resolved('a')], diagnostics: [], ...fields })
-
-const session = () => {
-  const s = new ProjectSession('/p', 'k', 'p')
-  const project = '{"name":"t","canvas":{"cards":[{"id":"a"}],"connections":[]}}'
-  const asked: string[][] = []
-  s.client = { setVisible: async (_sub: unknown, cards: string[][]) => { asked.push(cards.map((c) => c.join('/'))) } } as never
-  const inner = s as unknown as { subscription: string; applyDelta(d: R.DocumentDeltaT): void; apply(snapshot: R.ProjectSnapshotT, reset: boolean): void }
-  inner.subscription = 'sub'
-  inner.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 1n, projectJson: project, layout: [],
-    definitions: [definition('a', '{"type":"draft"}')], resolution: [resolved('a')] }))
-  return { s, asked, apply: (d: R.DocumentDeltaT) => inner.applyDelta(d) }
-}
-
-const { s, asked, apply } = session()
-apply(delta(1n, { definitionsUpsert: [definition('a', '{"type":"code"}')] }))
-assert.equal(s.kind('a'), 'code')
-assert.deepEqual(asked, [], 'the canvas does not subscribe when a Draft becomes code')
-
-const closeA = s.observeDisplay('a')
-const closeSecondA = s.observeDisplay('a')
-const closeB = s.observeDisplay('nested/b')
-closeA()
-closeB()
-closeSecondA()
-assert.deepEqual(asked, [['a'], ['a', 'nested/b'], ['a'], []])
-
-
 function frame(message: R.MessageT): Uint8Array {
   const builder = new Builder(256)
   builder.finish(message.pack(builder), 'TSG1')
   return builder.asUint8Array().slice()
 }
 
-const { s: live } = session()
-const requests: R.CardViewReadRequestT[] = []
-const credits: bigint[] = []
-const reverse: number[][] = []
+const live = new ProjectSession('/p', 'k', 'p')
+const inner = live as unknown as { subscription: string; listen(client: RPCClient): void }
+inner.subscription = 'sub'
+const reads: R.CardViewReadRequestT[] = []
+const credits: R.ViewCreditRequestT[] = []
+const reverse: R.ViewSendRequestT[] = []
+const closes: R.ViewCloseRequestT[] = []
 const source = new TextEncoder().encode('<!doctype html><p>海</p>')
 const wire: Transport = { close() {}, async call(bytes) {
   const request = R.Message.getRootAsMessage(new ByteBuffer(bytes)).unpack()
   const { valueType, value } = request.payload as R.RequestT
-  if (valueType === RequestPayload.ViewCreditRequest) credits.push((value as R.ViewCreditRequestT).creditId!)
-  if (valueType === RequestPayload.ViewSendRequest) reverse.push((value as R.ViewSendRequestT).bytes)
-  if (valueType === RequestPayload.ViewSetVisibleRequest || valueType === RequestPayload.ViewCreditRequest || valueType === RequestPayload.ViewSendRequest)
-    return frame(new R.MessageT(request.requestId, R.Payload.Reply, new R.ReplyT(R.ReplyPayload.Ack, new R.AckT())))
-  assert.equal(valueType, RequestPayload.CardViewReadRequest)
-  const read = value as R.CardViewReadRequestT
-  requests.push(read)
-  const offset = Number(read.offset)
-  const page = [...source.subarray(offset, offset + 2)]
-  const part = Object.assign(new R.FileContentT(), {
-    name: read.name, hash: '/nix/store/view', sizeBytes: BigInt(source.length), offset: BigInt(offset),
-    nextOffset: BigInt(offset + page.length), bytes: page, eof: offset + page.length >= source.length,
-  })
-  return frame(new R.MessageT(request.requestId, R.Payload.Reply, new R.ReplyT(R.ReplyPayload.FileContent, part)))
+  const reply = (type: R.ReplyPayload, value: R.ReplyT['value']) =>
+    frame(new R.MessageT(request.requestId, R.Payload.Reply, new R.ReplyT(type, value)))
+  switch (valueType) {
+    case RequestPayload.ViewCreditRequest: credits.push(value as R.ViewCreditRequestT); break
+    case RequestPayload.ViewSendRequest: reverse.push(value as R.ViewSendRequestT); break
+    case RequestPayload.ViewCloseRequest: closes.push(value as R.ViewCloseRequestT); break
+    case RequestPayload.CardViewReadRequest: {
+      const read = value as R.CardViewReadRequestT
+      reads.push(read)
+      const offset = Number(read.offset)
+      const bytes = [...source.subarray(offset, offset + 2)]
+      return reply(R.ReplyPayload.FileContent, Object.assign(new R.FileContentT(), {
+        name: 'same-view', hash: '/nix/store/view', sizeBytes: BigInt(source.length), offset: BigInt(offset),
+        nextOffset: BigInt(offset + bytes.length), bytes, eof: offset + bytes.length >= source.length,
+      }))
+    }
+    default: assert.fail(`Unexpected call ${valueType}`)
+  }
+  return reply(R.ReplyPayload.Ack, new R.AckT())
 } }
 const client = new RPCClient(wire)
 live.client = client
 const loop: (() => void)[] = []
 page.requestAnimationFrame = (fn: () => void) => { loop.push(fn); return loop.length }
 page.cancelAnimationFrame = () => {}
-;(live as unknown as { listen(client: RPCClient): void }).listen(client)
+inner.listen(client)
 let seq = 0n
 function notify(type: R.NotificationPayload, value: R.NotificationT['value']) {
   const message = new R.NotificationT('sub', ++seq, type, value)
@@ -85,88 +61,83 @@ function notify(type: R.NotificationPayload, value: R.NotificationT['value']) {
   packet.fill(0) // The transport can reuse this buffer before the UI batch runs.
 }
 const flush = () => loop.shift()?.()
-const card = cardPath(['a'])
-const declarations = [
-  new D.CardViewT('first', 'html', '/nix/store/first'),
-  new D.CardViewT('second', 'html', '/nix/store/second'),
-  new D.CardViewT('future', 'dawn', '/nix/store/future'),
-]
-const declare = (views: D.CardViewT[]) =>
-  notify(R.NotificationPayload.CardViewsUpdated, new R.CardViewsUpdatedT(card, views))
-const send = (name: string, bytes: number[], source = card, creditId: bigint | null = null) =>
-  notify(R.NotificationPayload.DisplayUpdated, new R.DisplayUpdatedT(new D.DisplayT(source, name, bytes, creditId)))
+const first = '00000000-0000-4000-8000-000000000001'
+const second = '00000000-0000-4000-8000-000000000002'
+const unknown = '00000000-0000-4000-8000-000000000003'
+const card = cardPath(['outer', 'a'])
+const open = (session: string, w = 0, h = 0) =>
+  notify(R.NotificationPayload.ViewOpened, new R.ViewOpenedT(session, card, 'same-view', 'html', w ? 1 : 0, w, h))
+const send = (session: string, bytes: number[], creditId: bigint | null = null) =>
+  notify(R.NotificationPayload.DisplayUpdated, new R.DisplayUpdatedT(new D.DisplayT(session, bytes, creditId)))
 
-send('unobserved', [])
+send(unknown, [7], 99n)
 flush()
-assert.equal(live.liveViews.size, 0)
-const close = live.observeDisplay('a')
-declare(declarations)
+assert.equal(live.liveViews.size, 0, 'only ViewOpened creates a session')
+open(first)
+send(first, [0, 255, 128], 1n)
+open(second, 640, 480)
+send(second, [1, 0, 2], 2n)
+send(first, [])
 flush()
-const entry = live.liveViews.get('a')!
-assert.deepEqual(entry.views.map(v => [v.index, v.declaration.name]), [[0, 'first'], [1, 'second'], [2, 'future']])
-const [first, second] = entry.views
-const firstMessages: ViewMessage[] = [], secondMessages: ViewMessage[] = []
-const offFirst = first.listen(event => firstMessages.push(event))
-const offSecond = second.listen(event => secondMessages.push(event))
-send('first', [0, 255, 128])
-send('first', [6])
-send('second', [1, 0, 2])
-send('unexpected', [42])
-send('first', [7], cardPath(['different']), 99n)
-send('second', [])
-flush()
-assert.deepEqual(firstMessages, [
-  { bytes: Uint8Array.of(0, 255, 128) },
-  { bytes: Uint8Array.of(6) },
+const a = live.liveViews.get(first)!
+const b = live.liveViews.get(second)!
+assert.deepEqual([b.card, b.name, b.mode, b.width, b.height], ['outer/a', 'same-view', 1, 640, 480])
+assert.deepEqual(credits.map(c => c.creditId), [99n], 'credit waits for presentation')
+const seen: [string, number[]][] = []
+const capture = (session: string) => (message: ViewMessage) => {
+  seen.push([session, [...message.bytes]])
+  message.complete?.()
+}
+const off = a.listen(capture(first))
+b.listen(capture(second))
+assert.deepEqual(seen, [[first, [0, 255, 128]], [first, []], [second, [1, 0, 2]]])
+assert.deepEqual(credits.map(c => [c.subscriptionId, c.session, c.bytes, c.creditId]), [
+  ['sub', unknown, 1, 99n], ['sub', first, 3, 1n], ['sub', second, 3, 2n],
 ])
-assert.deepEqual(secondMessages, [
-  { bytes: Uint8Array.of(1, 0, 2) },
-  { bytes: new Uint8Array() },
+open(first) // A duplicate open cannot replace a running renderer.
+flush()
+assert.equal(live.liveViews.get(first), a)
+off()
+send(first, [99], 3n)
+flush()
+assert.equal(credits.at(-1)?.creditId, 3n, 'an unloaded renderer returns credit')
+
+const route = Uint8Array.from({ length: 16 }, (_, i) => 0xf0 + i)
+const routeId = 'f0f1f2f3-f4f5-f6f7-f8f9-fafbfcfdfeff'
+assert.equal(a.acceptsRoute(route), false)
+notify(R.NotificationPayload.ViewRouteRegistered, new R.ViewRouteRegisteredT(first, routeId))
+flush()
+assert.equal(a.acceptsRoute(route), true)
+assert.equal(b.acceptsRoute(route), false, 'a route from another window is rejected')
+assert.equal(b.acceptsRoute(new Uint8Array(16)), true, 'the zero route addresses the opener')
+await client.sendView(first, route, Uint8Array.of(0, 255))
+await client.sendView(second, new Uint8Array(16), new Uint8Array())
+assert.deepEqual(reverse.map(r => [r.session, r.route, r.bytes]), [
+  [first, routeId, [0, 255]],
+  [second, '00000000-0000-0000-0000-000000000000', []],
 ])
-assert.deepEqual([...entry.unknown], ['unexpected'])
-assert.deepEqual(credits, [99n], 'data discarded by the UI returns its credit')
-await client.sendView(['a'], 'first', Uint8Array.of(0, 255))
-assert.deepEqual(reverse, [[0, 255]])
-const late: ViewMessage[] = []
-const detachLate = first.listen(message => late.push(message))
-assert.deepEqual(late, [], 'late listeners receive live data only')
-detachLate()
-declare(declarations)
+assert.throws(() => client.sendView(first, new Uint8Array(15), new Uint8Array()), RangeError)
+live.closeLiveView(first)
+live.closeLiveView(first)
+assert.equal(a.acceptsRoute(route), false)
+assert.deepEqual(closes.map(r => r.session), [first])
+send(first, [42], 4n)
 flush()
-assert.equal(entry.views[0], first, 'an unchanged blob keeps its frame and bytes')
-declare([new D.CardViewT('first', 'html', '/nix/store/rebuilt')])
-flush()
-assert.equal(entry.views.length, 1)
-declare([new D.CardViewT('twin', 'html', '/nix/store/a'), new D.CardViewT('twin', 'html', '/nix/store/b')])
-flush()
-assert.deepEqual([...entry.ambiguous], ['twin'], 'a repeated name is reported')
-send('twin', [5])
-flush()
-assert.equal(entry.unknown.has('twin'), false)
-const closeAgain = live.observeDisplay('a')
-close()
-assert.equal(live.liveViews.get('a'), entry)
-const broken = Object.assign(new D.FailureT(), { kind: D.FailureKind.nix_failed, diagnostic: 'views are broken' })
-notify(R.NotificationPayload.CardViewsUpdated, Object.assign(new R.CardViewsUpdatedT(card, []), { failure: broken }))
-flush()
-assert.equal(entry.failure, 'views are broken', 'a failed evaluation is kept apart from an empty list')
-assert.equal(entry.views.length, 0)
-declare([])
-flush()
-assert.equal(entry.failure, undefined, 'an evaluated empty list has no failure')
-assert.equal(entry.views.length, 0, 'an empty list clears all declarations')
-assert.equal(entry.ambiguous.size, 0)
-closeAgain()
-assert.equal(live.liveViews.has('a'), false)
-assert.equal(entry.unknown.size, 0)
-offFirst()
-offSecond()
+assert.equal(credits.at(-1)?.creditId, 4n, 'in-flight data returns credit after a close')
+assert.equal(live.liveViews.get(second), b)
 
 const controller = new AbortController()
-assert.equal(await client.readCardView(['a'], 1, 'first', controller.signal), new TextDecoder().decode(source))
-assert.ok(requests.length > 1)
-assert.deepEqual(requests.map(r => r.offset), requests.map((_, i) => BigInt(i * 2)))
-assert.ok(requests.every(r => r.name === 'first' && r.index === 1 && r.card?.segments[0] === 'a'))
+assert.equal(await client.readCardView(second, controller.signal), new TextDecoder().decode(source))
+assert.ok(reads.length > 1)
+assert.deepEqual(reads.map(r => r.offset), reads.map((_, i) => BigInt(i * 2)))
+assert.ok(reads.every(r => r.session === second))
 controller.abort()
-await assert.rejects(client.readCardView(['a'], 1, 'first', controller.signal), { name: 'AbortError' })
-console.log('live views: visibility, declarations, binary routing, FIFO, reverse RPC, credit, disposal and chunked reads passed')
+await assert.rejects(client.readCardView(second, controller.signal), { name: 'AbortError' })
+
+open(unknown)
+send(unknown, [8], 5n)
+flush()
+live.liveViews.reset()
+assert.equal(live.liveViews.size, 0)
+assert.equal(credits.at(-1)?.creditId, 5n)
+console.log('live views: session presentation, FIFO, routes, credits, close and paged reads passed')

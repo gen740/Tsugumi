@@ -1,4 +1,5 @@
 ---
+title: normalize
 description: サイズ因子で正規化する
 ---
 

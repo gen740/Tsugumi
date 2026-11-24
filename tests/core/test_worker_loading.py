@@ -23,7 +23,13 @@ from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Worker.EnvVar import EnvVarT
 from Tsugumi.Worker.WorkerCall import WorkerCallT
 from Tsugumi.Worker.WorkerCancel import WorkerCancelT
-from Tsugumi.Worker.WorkerDisplay import WorkerDisplayT
+from Tsugumi.Worker.ViewControlKind import ViewControlKind
+from Tsugumi.Worker.ViewEventKind import ViewEventKind
+from Tsugumi.Worker.ViewUuid import ViewUuidT
+from Tsugumi.Worker.WorkerDisplay import WorkerDisplay
+from Tsugumi.Worker.WorkerDisplayCredit import WorkerDisplayCreditT
+from Tsugumi.Worker.WorkerViewEvent import WorkerViewEventT
+from Tsugumi.Worker.WorkerViewReply import WorkerViewReplyT
 from Tsugumi.Worker.WorkerMessage import WorkerMessage, WorkerMessageT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
 from Tsugumi.Worker.WorkerStart import WorkerStartT
@@ -104,9 +110,10 @@ def worker(package, *, startup=None, arguments=()):
                 print("worker exit", p.returncode, out, err)
 
 
-def send_call(data, tmp_path, call_id=1, *, deadline=None, inputs=(), outputs=(), artifact_directory=None, grants=()):
+def send_call(data, tmp_path, call_id=1, *, deadline=None, inputs=(), outputs=(), artifact_directory=None, drain_display=False):
     call = WorkerCallT(inputs=list(inputs), outputs=list(outputs),
-                       artifactDirectory=artifact_directory, grants=list(grants), deadlineMs=deadline)
+                       artifactDirectory=artifact_directory, deadlineMs=deadline,
+                       drainDisplay=drain_display)
     send_message(data, WorkerMessageT(
         callId=call_id, valueType=WorkerPayload.WorkerCall, value=call,
     ))
@@ -117,7 +124,7 @@ def send_message(data, message):
     data.sendall(struct.pack("<I", len(frame)) + frame)
 
 
-def receive(data):
+def receive(data, *, unpack=True):
     def full(n):
         out = bytearray()
         while len(out) < n:
@@ -127,7 +134,8 @@ def receive(data):
         return out
 
     size, = struct.unpack("<I", full(4))
-    return WorkerMessageT.InitFromObj(WorkerMessage.GetRootAs(full(size)))
+    message = WorkerMessage.GetRootAs(full(size))
+    return WorkerMessageT.InitFromObj(message) if unpack else message
 
 
 def test_worker_passes_inputs_and_schema_unopened(tmp_path):
@@ -347,7 +355,7 @@ def test_stop_callbacks_are_callable_from_card_threads(tmp_path, stop):
         )
 
 
-def test_post_return_send_keeps_opaque_bytes_and_original_view(tmp_path):
+def test_post_return_open_and_send_keep_opaque_bytes_and_session(tmp_path):
     library(tmp_path, '''
         #include <tsugumi/card_abi.h>
         #include <pthread.h>
@@ -357,7 +365,14 @@ def test_post_return_send_keeps_opaque_bytes_and_original_view(tmp_path):
           while (access("send-now", F_OK) != 0) usleep(1000);
           static const uint8_t bytes[] = {0, 255, 128, 'z'};
           extern const tsugumi_effects* effects;
-          return (void*)(intptr_t)effects->send(host, "undeclared", bytes, sizeof(bytes));
+          tsugumi_route route;
+          tsugumi_view_session session;
+          if (!effects->view_open(host, "notes", TSUGUMI_VIEW_PANEL, 1, 2, &route, &session))
+            return (void*)1;
+          if (effects->view_open(host, "notes", TSUGUMI_VIEW_WINDOW, 480, 320, &route, &session))
+            return (void*)2;
+          if (route.bytes[0] != 2 || session.bytes[0] != 1) return (void*)3;
+          return (void*)(intptr_t)effects->send(host, &session, bytes, sizeof(bytes));
         }
         const tsugumi_effects* effects;
         int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
@@ -374,30 +389,54 @@ def test_post_return_send_keeps_opaque_bytes_and_original_view(tmp_path):
           return write_result(result, wire, sizeof(wire));
         }
     ''')
-    with worker(tmp_path) as (_, data, _):
+    with worker(tmp_path) as (_, data, control):
         send_call(data, tmp_path)
         assert receive(data).valueType == WorkerPayload.WorkerResult
         (tmp_path / "send-now").touch()
+        request = receive(data)
+        assert request.callId == 0
+        assert request.valueType == WorkerPayload.WorkerViewRequest
+        assert request.value.requestId == 1
+        assert request.value.kind == ViewControlKind.Open and request.value.view == b"notes"
+        assert (request.value.mode, request.value.width, request.value.height) == (1, 480, 320)
+        session, route = ViewUuidT(bytes=[1] * 16), ViewUuidT(bytes=[2] * 16)
+        send_message(control, WorkerMessageT(
+            callId=0, valueType=WorkerPayload.WorkerViewReply,
+            value=WorkerViewReplyT(requestId=1, ok=True, route=route, session=session),
+        ))
         message = receive(data)
-        assert message.callId == 0
-        assert message.valueType == WorkerPayload.WorkerDisplay
-        assert message.value.view == b"undeclared"
+        assert message.callId == 0 and message.valueType == WorkerPayload.WorkerDisplay
+        assert bytes(message.value.session.bytes) == bytes(session.bytes)
         assert bytes(message.value.bytes) == b"\x00\xff\x80z"
         send_call(data, tmp_path, 2)
         assert receive(data).valueType == WorkerPayload.WorkerResult
 
 
-def test_recv_after_return_and_reverse_credit(tmp_path):
+def test_idle_routes_recv_close_and_reverse_credit(tmp_path):
     library(tmp_path, r"""
         #include <tsugumi/card_abi.h>
         #include <pthread.h>
         #include <string.h>
         static const tsugumi_effects* effects;
+        #include <unistd.h>
         static void* receive_value(void* host) {
-          tsugumi_bytes data;
-          if (effects->recv(host, "chat", &data, 3000) != 0) return (void*)1;
-          if (data.size != 4 || memcmp(data.data, "\x00\xff\x80z", 4)) return (void*)2;
-          return (void*)(intptr_t)effects->send(host, "echo", data.data, data.size);
+          while (access("register-now", F_OK) != 0) usleep(1000);
+          const tsugumi_view_session session = {{1}};
+          tsugumi_route route;
+          if (effects->route_register(host, &session, &route) || route.bytes[0] != 2)
+            return (void*)1;
+          tsugumi_view_event event;
+          if (effects->recv(host, &event, 3000) || event.kind != 0 ||
+              memcmp(event.route.bytes, route.bytes, 16) ||
+              memcmp(event.session.bytes, session.bytes, 16) ||
+              event.data.size != 4 || memcmp(event.data.data, "\x00\xff\x80z", 4))
+            return (void*)2;
+          if (effects->send(host, &session, event.data.data, event.data.size)) return (void*)3;
+          if (effects->recv(host, &event, 3000) || event.kind != 1 ||
+              memcmp(event.route.bytes, route.bytes, 16) ||
+              memcmp(event.session.bytes, session.bytes, 16) || event.data.size)
+            return (void*)4;
+          return (void*)(intptr_t)effects->route_unregister(host, &route);
         }
         int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
           static const uint8_t wire[] = {RESULT_BYTES};
@@ -416,21 +455,94 @@ def test_recv_after_return_and_reverse_credit(tmp_path):
     with worker(tmp_path) as (_, data, control):
         send_call(data, tmp_path)
         assert receive(data).valueType == WorkerPayload.WorkerResult
+        session = ViewUuidT(bytes=[1] + [0] * 15)
+        route = ViewUuidT(bytes=[2] + [0] * 15)
+        (tmp_path / "register-now").touch()
+        register = receive(data)
+        assert register.valueType == WorkerPayload.WorkerViewRequest
+        assert register.value.kind == ViewControlKind.Register
+        assert register.value.requestId == 1
+        assert bytes(register.value.session.bytes) == bytes(session.bytes)
+        send_message(control, WorkerMessageT(
+            callId=0, valueType=WorkerPayload.WorkerViewReply,
+            value=WorkerViewReplyT(requestId=1, ok=True, route=route),
+        ))
         payload = b"\x00\xff\x80z"
-        send_message(control, WorkerMessageT(callId=0, valueType=WorkerPayload.WorkerDisplay,
-                                            value=WorkerDisplayT(view="chat", bytes=payload)))
-        frames = [receive(data), receive(data)]
+        for kind, value in ((ViewEventKind.Message, payload), (ViewEventKind.Close, None)):
+            send_message(control, WorkerMessageT(
+                callId=0, valueType=WorkerPayload.WorkerViewEvent,
+                value=WorkerViewEventT(kind=kind, route=route, session=session, bytes=value),
+            ))
+        frames = [receive(data) for _ in range(3)]
         by_kind = {frame.valueType: frame.value for frame in frames}
         credit = by_kind[WorkerPayload.WorkerDisplayCredit]
-        assert credit.view == b"chat" and credit.bytes == len(payload)
+        assert bytes(credit.address.bytes) == bytes(route.bytes)
+        assert credit.bytes == len(payload)
         echo = by_kind[WorkerPayload.WorkerDisplay]
-        assert echo.view == b"echo" and bytes(echo.bytes) == payload
+        assert bytes(echo.session.bytes) == bytes(session.bytes) and bytes(echo.bytes) == payload
+        unregister = by_kind[WorkerPayload.WorkerViewRequest]
+        assert unregister.kind == ViewControlKind.Unregister and unregister.requestId == 2
+        assert bytes(unregister.route.bytes) == bytes(route.bytes)
+        send_message(control, WorkerMessageT(
+            callId=0, valueType=WorkerPayload.WorkerViewReply,
+            value=WorkerViewReplyT(requestId=2, ok=True),
+        ))
         send_call(data, tmp_path, 2)
         assert receive(data).valueType == WorkerPayload.WorkerResult
 
 
+def test_one_shot_result_waits_for_queued_view_data(tmp_path):
+    library(tmp_path, """
+        #include <tsugumi/card_abi.h>
+        int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
+          static const uint8_t wire[] = {RESULT_BYTES};
+          static uint8_t payload[TSUGUMI_MESSAGE_MAX];
+          tsugumi_route route;
+          tsugumi_view_session session;
+          if (call->effects->view_open(call->host, "plot", TSUGUMI_VIEW_PANEL,
+                                      0, 0, &route, &session)) return 1;
+          for (uint8_t i = 1; i <= 3; ++i) {
+            payload[0] = i;
+            if (call->effects->send(call->host, &session, payload, sizeof(payload)))
+              return 2;
+          }
+          *result = (tsugumi_bytes){wire, sizeof(wire)};
+          return 0;
+        }
+    """)
+    with worker(tmp_path) as (_, data, control):
+        send_call(data, tmp_path, drain_display=True)
+        request = receive(data)
+        assert request.valueType == WorkerPayload.WorkerViewRequest
+        session, route = ViewUuidT(bytes=[1] * 16), ViewUuidT(bytes=[2] * 16)
+        send_message(control, WorkerMessageT(
+            callId=0, valueType=WorkerPayload.WorkerViewReply,
+            value=WorkerViewReplyT(requestId=request.value.requestId, ok=True,
+                                   session=session, route=route),
+        ))
+        maximum = 1 << 24
+
+        def expect_payload(first_byte):
+            message = receive(data, unpack=False)
+            assert message.ValueType() == WorkerPayload.WorkerDisplay
+            table = message.Value()
+            display = WorkerDisplay()
+            display.Init(table.Bytes, table.Pos)
+            assert display.BytesLength() == maximum and display.Bytes(0) == first_byte
+
+        expect_payload(1)
+        expect_payload(2)
+        assert not select.select([data], [], [], 0.05)[0]
+        send_message(control, WorkerMessageT(
+            callId=0, valueType=WorkerPayload.WorkerDisplayCredit,
+            value=WorkerDisplayCreditT(address=session, bytes=maximum),
+        ))
+        expect_payload(3)
+        assert receive(data).valueType == WorkerPayload.WorkerResult
+
+
 NUM = 'table Num { value:ulong; } table Outputs { out:Num (required); } root_type Outputs;'
-DIRECTORY = 'table Document {} table Outputs { doc:Document (required); } root_type Outputs;'
+DIRECTORY = 'include "tsugumi/artifact.fbs"; table Outputs { doc:tsugumi.Artifact (required); } root_type Outputs;'
 
 
 def card_package(body, *, declarations=""):
@@ -488,6 +600,7 @@ _CARD_PREAMBLE = r"""
 #include <cstring>
 #include "card_abi.h"
 #include "card_generated.h"
+#include "artifact_generated.h"
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -530,8 +643,8 @@ struct Result {
 
   void artifact(const tsugumi_artifact_id& id, const char* port = "doc") {
     const tsugumi::ArtifactId fixed(fb::span<const uint8_t, 16>(id.bytes, 16));
-    ports.push_back(C::CreateCardPort(message, message.CreateString(port), 0, 0,
-                                     message.CreateVectorOfStructs(&fixed, 1)));
+    fb::FlatBufferBuilder payload;
+    add(port, payload, tsugumi::CreateArtifact(payload, &fixed).o);
   }
 
   void fail(D::FailureKind kind, const char* error) {
@@ -539,9 +652,10 @@ struct Result {
   }
 };
 
-std::string create_artifact(const tsugumi_call& call, tsugumi_artifact_id& id) {
+std::string create_artifact(const tsugumi_call& call, tsugumi_artifact_id& id,
+                            uint32_t flags = TSUGUMI_ARTIFACT_KEEP) {
   tsugumi_bytes path;
-  if (call.effects->artifact_create(call.host, &id, &path) != 0)
+  if (call.effects->artifact_create(call.host, flags, &id, &path) != 0)
     throw std::runtime_error("artifact_create failed");
   return {reinterpret_cast<const char*>(path.data), path.size};
 }
@@ -549,10 +663,12 @@ std::string create_artifact(const tsugumi_call& call, tsugumi_artifact_id& id) {
 std::string open_artifact(const tsugumi_call& call, const C::CardInput& in,
                           std::string_view name = "doc") {
   for (const auto* port : *in.inputs()) {
-    if (port->name()->string_view() != name || !port->artifacts() ||
-        port->artifacts()->size() == 0) continue;
+    if (port->name()->string_view() != name || !port->bytes()) continue;
+    fb::Verifier verify(port->bytes()->data(), port->bytes()->size());
+    if (!verify.VerifyBuffer<tsugumi::Artifact>()) continue;
+    const auto* artifact = fb::GetRoot<tsugumi::Artifact>(port->bytes()->data());
     tsugumi_artifact_id id;
-    std::copy_n(port->artifacts()->Get(0)->bytes()->data(), 16, id.bytes);
+    std::copy_n(artifact->id()->bytes()->data(), 16, id.bytes);
     tsugumi_bytes path;
     if (call.effects->artifact_open(call.host, &id, &path) == 0)
       return {reinterpret_cast<const char*>(path.data), path.size};

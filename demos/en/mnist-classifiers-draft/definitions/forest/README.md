@@ -1,4 +1,5 @@
 ---
+title: forest
 description: Tell the digits apart with a random forest
 ---
 

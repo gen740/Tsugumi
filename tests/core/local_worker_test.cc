@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <future>
+#include <set>
 #include <thread>
 
 #include "tsugumi/rpc/frame.hh"
@@ -95,7 +96,7 @@ TEST(LocalWorker, ExceptionalBorrowerExitReturnsTheLeaseAfterClosingChannels) {
   EXPECT_TRUE(returned);
 }
 
-TEST(LocalWorker, DiscardsStaleRepliesAndReceivesDataWhileIdle) {
+TEST(LocalWorker, DiscardsStaleRepliesAndRelaysViewsWhileIdle) {
   namespace W = Tsugumi::Worker;
   std::array<SocketPair, 4> channels;
   std::array<int, 4> descriptors;
@@ -143,14 +144,72 @@ TEST(LocalWorker, DiscardsStaleRepliesAndReceivesDataWhileIdle) {
   worker.idle();
   flatbuffers::FlatBufferBuilder b;
   const uint8_t bytes[] = {0, 255, 128};
-  const auto display = W::CreateWorkerDisplay(b, b.CreateString("unknown"),
-                                              b.CreateVector(bytes, 3));
+  const ViewUuid session{1};
+  const W::ViewUuid address{flatbuffers::span<const uint8_t, 16>(session)};
+  const auto display =
+      W::CreateWorkerDisplay(b, &address, b.CreateVector(bytes, 3));
   send(0, W::WorkerPayload::WorkerDisplay, b, display.Union());
   ASSERT_EQ(data.wait_for(std::chrono::seconds(3)), std::future_status::ready);
   const auto value = data.get();
-  EXPECT_EQ(value.view, "unknown");
+  EXPECT_EQ(value.session, session);
   EXPECT_EQ(value.bytes, std::string("\0\xff\x80", 3));
   worker.set_display({});
+
+  std::promise<WorkerViewRequest> control;
+  auto request = control.get_future();
+  worker.set_view_control(
+      [&](const auto& incoming) -> std::optional<WorkerViewReply> {
+        control.set_value(incoming);
+        return std::nullopt;
+      });
+  b.Clear();
+  const auto open = W::CreateWorkerViewRequest(
+      b, 1, W::ViewControlKind::Open, b.CreateString("plot"), 1, 640, 480);
+  send(0, W::WorkerPayload::WorkerViewRequest, b, open.Union());
+  ASSERT_EQ(request.wait_for(std::chrono::seconds(3)),
+            std::future_status::ready);
+  const auto opening = request.get();
+  EXPECT_EQ(opening.request_id, 1);
+  EXPECT_EQ(opening.kind, ViewControlKind::open);
+  EXPECT_EQ(opening.view, "plot");
+  EXPECT_EQ(opening.width, 640);
+  const auto receiver = worker.view_receiver().lock();
+  ASSERT_TRUE(receiver);
+  const ViewUuid route{2};
+  EXPECT_FALSE(receiver->reply({2, true, session, route}));
+  EXPECT_TRUE(receiver->reply({1, true, session, route}));
+  EXPECT_FALSE(receiver->reply({1, true, session, route}));
+  EXPECT_EQ(receiver->send({ViewEventKind::close, route, session, {}}),
+            WorkerProc::ViewDelivery::accepted);
+  EXPECT_EQ(receiver->send({ViewEventKind::close, route, session, {}}),
+            WorkerProc::ViewDelivery::closed);
+
+  const timeval timeout{3, 0};
+  ASSERT_EQ(::setsockopt(channels[1].fd[1], SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                         sizeof(timeout)),
+            0);
+  std::set<W::WorkerPayload> seen;
+  for (int i = 0; i < 3; ++i) {
+    const auto frame = rpc::frame::Read(channels[1].fd[1], 4096);
+    ASSERT_TRUE(frame);
+    const auto* message = W::GetWorkerMessage(frame->data());
+    EXPECT_EQ(message->call_id(), 0);
+    EXPECT_TRUE(seen.insert(message->value_type()).second);
+    if (const auto* reply = message->value_as_WorkerViewReply()) {
+      EXPECT_EQ(reply->request_id(), 1);
+      EXPECT_TRUE(reply->ok());
+      ASSERT_TRUE(reply->session());
+      EXPECT_EQ(reply->session()->bytes()->Get(0), 1);
+    }
+    if (const auto* event = message->value_as_WorkerViewEvent()) {
+      EXPECT_EQ(event->kind(), W::ViewEventKind::Close);
+      EXPECT_EQ(event->route()->bytes()->Get(0), 2);
+      EXPECT_EQ(event->session()->bytes()->Get(0), 1);
+    }
+  }
+  EXPECT_EQ(seen, (std::set{W::WorkerPayload::WorkerDisplayCredit,
+                            W::WorkerPayload::WorkerViewReply,
+                            W::WorkerPayload::WorkerViewEvent}));
 }
 
 TEST(LocalWorker, AnInvalidatedLeaseCannotReturnItsResident) {

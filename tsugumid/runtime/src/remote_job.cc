@@ -1,13 +1,13 @@
 #include "remote_job.hh"
 
-#include "tsugumi/protocol/trace_codec.hh"
-
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+#include "tsugumi/protocol/trace_codec.hh"
 #if defined(__linux__)
 #include <linux/vm_sockets.h>
 #endif
@@ -30,6 +30,19 @@ namespace tsugumi {
 namespace {
 
 namespace R = Tsugumi::RemoteWorker;
+namespace W = Tsugumi::Worker;
+
+auto view_uuid(const W::ViewUuid* value) -> ViewUuid {
+  ViewUuid id{};
+  if (value) std::ranges::copy(*value->bytes(), id.begin());
+  return id;
+}
+
+auto pack_view_uuid(const ViewUuid& id) -> std::unique_ptr<W::ViewUuid> {
+  return std::make_unique<W::ViewUuid>(
+      flatbuffers::span<const uint8_t, 16>(id));
+}
+
 struct Connection {
   int fd;
   ~Connection() {
@@ -198,12 +211,30 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
     throw BrokerDisconnected("invalid remote view message sequence");
   std::vector<WorkerDisplayData> displays;
   displays.reserve(j->displays.size());
-  for (const auto& display : j->displays)
-    displays.push_back({display->view, std::string(display->bytes.begin(),
-                                                   display->bytes.end())});
-  std::map<std::string, uint64_t> credits;
+  for (const auto& display : j->displays) {
+    const auto session = view_uuid(display->session.get());
+    if (session == ViewUuid{} || display->bytes.size() > TSUGUMI_MESSAGE_MAX)
+      throw BrokerDisconnected("invalid remote view message");
+    displays.push_back(
+        {session, std::string(display->bytes.begin(), display->bytes.end())});
+  }
+  std::map<ViewUuid, uint64_t> credits;
   for (const auto& entry : j->view_input_credits)
-    credits.emplace(entry->view, entry->released);
+    credits.emplace(view_uuid(entry->address.get()), entry->released);
+  std::optional<WorkerViewRequest> view_request;
+  if (const auto& control = j->view_request) {
+    if (!control->request_id || control->kind > W::ViewControlKind::MAX)
+      throw BrokerDisconnected("invalid remote view control request");
+    view_request =
+        WorkerViewRequest{control->request_id,
+                          static_cast<ViewControlKind>(control->kind),
+                          control->view,
+                          control->mode,
+                          control->width,
+                          control->height,
+                          view_uuid(control->session.get()),
+                          view_uuid(control->route.get())};
+  }
   return {std::move(state),
           j->fingerprint,
           j->result_sha256,
@@ -220,7 +251,9 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
           j->display_pending,
           j->display_sequence,
           j->view_input_ready,
-          std::move(credits)};
+          std::move(credits),
+          j->artifact_wanted,
+          std::move(view_request)};
 }
 auto require_ack(const R::ReplyT& reply) -> void {
   if (!reply.body.AsAck())
@@ -265,7 +298,10 @@ auto RemoteJobClient::request(R::RequestT q,
     throw BrokerDisconnected("cannot read execution broker capability");
   R::BrokerRequestT broker;
   broker.capability = *capability;
-  const bool view_message = q.body.AsViewSendRequest() != nullptr;
+  const auto* poll = q.body.AsStatusRequest();
+  const bool view_message = q.body.AsViewSendRequest() ||
+                            (poll && (poll->view_reply || poll->display_after ||
+                                      !poll->display_credits.empty()));
   broker.request = std::make_unique<R::RequestT>(std::move(q));
   R::MessageT message;
   message.payload.Set(std::move(broker));
@@ -285,7 +321,10 @@ auto RemoteJobClient::request(R::RequestT q,
   auto* reply = incoming->payload.AsReply();
   if (!reply) throw BrokerDisconnected("expected execution broker reply");
   const auto* status = reply->body.AsJobStatus();
-  if (!view_message && (!status || status->displays.empty()))
+  if (!view_message &&
+      (!status ||
+       (!status->view_request && !status->display_pending &&
+        status->displays.empty() && status->view_input_credits.empty())))
     trace::Observe(link, "hostd execution broker", "project core", false,
                    response, &trace::kFlatBufferCodec);
   if (const auto* error = reply->body.AsFailure()) {
@@ -311,8 +350,15 @@ auto RemoteJobClient::catalog(std::stop_token stop) const -> std::vector<RemoteT
   std::vector<RemoteTarget> targets;
   for (const auto& t : catalog->services) {
     const auto& c = *t->capabilities;
+    uint64_t bits = 0;
+    for (auto bit : t->worker_capabilities) {
+      if (bit >= 64 || (bits & (uint64_t{1} << bit)))
+        throw BrokerDisconnected(
+            "invalid worker_capabilities in execution broker catalog");
+      bits |= uint64_t{1} << bit;
+    }
     targets.push_back({t->id, c.native_system, c.systems, c.server_id,
-                       t->available, c.resource_limits, c.max_jobs, t->grade,
+                       t->available, c.resource_limits, c.max_jobs, bits,
                        t->unavailable_reason});
   }
   return targets;
@@ -416,31 +462,49 @@ auto RemoteJobClient::submit(std::string_view service,
   body.spec.assign(spec.begin(), spec.end());
   return job_state(request(command(std::move(body), service, instance, job), stop));
 }
+auto RemoteJobClient::deliver_artifact(std::string_view service,
+                                       std::string_view instance,
+                                       std::string_view job,
+                                       R::JobArtifactRequestT body,
+                                       std::stop_token stop) const -> void {
+  require_ack(request(command(std::move(body), service, instance, job), stop));
+}
 auto RemoteJobClient::send_view(std::string_view service,
                                 std::string_view instance,
                                 std::string_view job_id,
-                                const WorkerDisplayData& display,
-                                uint64_t offset, std::stop_token stop) const
-    -> void {
+                                const WorkerViewEvent& event, uint64_t offset,
+                                std::stop_token stop) const -> void {
   R::ViewSendRequestT input;
   input.offset = offset;
-  input.display = std::make_unique<Tsugumi::Worker::WorkerDisplayT>();
-  input.display->view = display.view;
-  input.display->bytes.assign(display.bytes.begin(), display.bytes.end());
+  input.event = std::make_unique<W::WorkerViewEventT>();
+  input.event->kind = static_cast<W::ViewEventKind>(event.kind);
+  input.event->session = pack_view_uuid(event.session);
+  input.event->route = pack_view_uuid(event.route);
+  input.event->bytes.assign(event.bytes.begin(), event.bytes.end());
   require_ack(request(command(std::move(input), service, instance, job_id), stop));
 }
 
 auto RemoteJobClient::status(
     std::string_view service, std::string_view instance, std::string_view job,
     uint64_t log_offset, std::stop_token stop, uint64_t display_after,
-    const std::map<std::string, uint64_t>& credits) const -> RemoteJobState {
+    const std::map<ViewUuid, uint64_t>& credits,
+    const std::optional<WorkerViewReply>& view_reply) const -> RemoteJobState {
   R::StatusRequestT body;
   body.display_after = display_after;
-  for (const auto& [view, released] : credits) {
+  for (const auto& [session, released] : credits) {
     auto entry = std::make_unique<R::DisplayCreditT>();
-    entry->view = view;
+    entry->address = pack_view_uuid(session);
     entry->released = released;
     body.display_credits.push_back(std::move(entry));
+  }
+  if (view_reply) {
+    body.view_reply = std::make_unique<W::WorkerViewReplyT>();
+    body.view_reply->request_id = view_reply->request_id;
+    body.view_reply->ok = view_reply->ok;
+    if (view_reply->session != ViewUuid{})
+      body.view_reply->session = pack_view_uuid(view_reply->session);
+    if (view_reply->route != ViewUuid{})
+      body.view_reply->route = pack_view_uuid(view_reply->route);
   }
   body.log_offset = log_offset;
   body.log_limit = workerd::kLogChunkBytes;

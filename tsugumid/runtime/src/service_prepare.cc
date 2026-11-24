@@ -38,8 +38,7 @@ auto Service::prepare_cards(std::ostream& out) -> bool {
     try {
       // The same evaluation and build as a run of this Card on the local
       // service, whichever branches a run would take.
-      auto execution = execution_service(kLocalExecutionService)
-                           .prepare(node, run_scratch_, request);
+      auto execution = execution_service_->prepare(node, run_scratch_, request);
       const auto plan = nix_->build(request);
       card_record.closure = plan.common.environment.paths;
       card_record.key = plan.evaluation_key;

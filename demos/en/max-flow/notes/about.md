@@ -8,4 +8,4 @@ However much you widen an edge that is not in the cut, that cut's capacity stays
 
 The network is a made-up one, made from the seed.
 
-Change seed of **settings** and run the whole. edge and raise_by of **whatif**, and raise_by of **sweep**, can be rerun on their own Card.
+Change seed of **network** and run the whole. edge and raise_by of **whatif**, and raise_by of **sweep**, can be rerun on their own Card.

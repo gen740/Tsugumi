@@ -1,4 +1,5 @@
 ---
+title: whiten
 description: Whiten and band-pass
 ---
 

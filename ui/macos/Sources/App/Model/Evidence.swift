@@ -1,3 +1,4 @@
+import TsugumiAgentClient
 import Foundation
 import TsugumiRPC
 
@@ -30,7 +31,7 @@ struct EvidenceTarget: Hashable, Identifiable {
       return UInt64(s)
     }
     func validCard(_ parts: [String]) -> Bool {
-      !parts.isEmpty && parts.allSatisfy { $0.count <= 128 && $0 != "." && $0 != ".." && $0.range(of: #"^[A-Za-z0-9_.-]+$"#, options: .regularExpression) != nil }
+      !parts.isEmpty && parts.allSatisfy { validName(String($0)) }
     }
     let kind = part(1)!, query = part(3), fragment = part(4)
     var parts = part(2)!.components(separatedBy: "/")
@@ -52,6 +53,23 @@ struct EvidenceTarget: Hashable, Identifiable {
       target.file = file; target.lineStart = Int(first); target.lineEnd = Int(last)
       return target
     }
+    let encoded = (query ?? "").replacingOccurrences(of: "+", with: "%20")
+    guard encoded.removingPercentEncoding != nil, let components = URLComponents(string: "evidence:?" + encoded) else { return nil }
+    let items = components.queryItems ?? []
+    guard Set(items.map(\.name)).count == items.count else { return nil }
+    var params: [String: String] = [:]
+    for item in items { params[item.name] = item.value ?? "" }
+    if kind == "artifact" {
+      guard fragment == nil, parts.count == 1, let id = UUID(uuidString: parts[0]),
+            Set(params.keys).isSubset(of: ["path"]) else { return nil }
+      target.artifact = id.uuidString.lowercased()
+      if let path = params["path"] {
+        guard !path.contains("\\"), !path.unicodeScalars.contains(where: { $0.value < 32 }),
+              !path.components(separatedBy: "/").contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else { return nil }
+        target.member = path
+      }
+      return target
+    }
     let run = parts.removeFirst()
     guard run.range(of: #"^[1-9][0-9]{0,18}$"#, options: .regularExpression) != nil,
           let runNumber = Int64(run), runNumber > 0,
@@ -67,21 +85,6 @@ struct EvidenceTarget: Hashable, Identifiable {
       return target
     }
     guard fragment == nil else { return nil }
-    let encoded = (query ?? "").replacingOccurrences(of: "+", with: "%20")
-    guard encoded.removingPercentEncoding != nil, let components = URLComponents(string: "evidence:?" + encoded) else { return nil }
-    let items = components.queryItems ?? []
-    guard Set(items.map(\.name)).count == items.count else { return nil }
-    var params: [String: String] = [:]
-    for item in items { params[item.name] = item.value ?? "" }
-    if kind == "artifact" {
-      guard parts.isEmpty, Set(params.keys).isSubset(of: ["id", "path"]), let id = params["id"], !id.isEmpty else { return nil }
-      target.artifact = id
-      if let path = params["path"] {
-        guard !path.isEmpty, !path.components(separatedBy: "/").contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else { return nil }
-        target.member = path
-      }
-      return target
-    }
     guard Set(params.keys).isSubset(of: ["invocation", "stream", "offset"]) else { return nil }
     if let raw = params["invocation"] {
       guard !parts.isEmpty, let n = number(raw), n > 0 else { return nil }
@@ -98,8 +101,14 @@ struct EvidenceTarget: Hashable, Identifiable {
 
   @MainActor func exists(in session: ProjectSession) async -> Bool {
     if kind == "card" { return session.resolution[key(card!)] != nil }
-    guard let rpc = session.rpc, let run else { return false }
+    guard let rpc = session.rpc else { return false }
     do {
+      if kind == "artifact", let artifact {
+        return try await rpc.artifacts(ids: [artifact]).contains { a in
+          member == nil || a.members.contains { $0?.path == member }
+        }
+      }
+      guard let run else { return false }
       _ = try await rpc.runStatus(runId: run)
       if let card {
         let r = try await rpc.record(runId: run, card: card, invocation: invocation)
@@ -108,11 +117,6 @@ struct EvidenceTarget: Hashable, Identifiable {
       if kind == "log" {
         let log = try await rpc.logRange(runId: run, card: card, invocation: invocation, stream: logStream, offset: offset, limit: 4)
         return log.exists != false && offset <= (log.sizeBytes ?? 0)
-      }
-      if kind == "artifact" {
-        return try await rpc.artifacts(runId: run).contains { a in
-          a.artifactId == artifact && (member == nil || a.members.contains { $0?.path == member })
-        }
       }
       return true
     } catch { return false }

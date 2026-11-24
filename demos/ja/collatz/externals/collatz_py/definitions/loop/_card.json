@@ -1,0 +1,17 @@
+{
+  "type": "merge",
+  "symbol": "arrow.triangle.merge",
+  "inputs": [
+    {
+      "name": "init"
+    },
+    {
+      "name": "half"
+    },
+    {
+      "name": "triple"
+    }
+  ],
+  "maxRuns": 100000,
+  "recordIO": "project"
+}

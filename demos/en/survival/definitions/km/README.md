@@ -1,4 +1,5 @@
 ---
+title: km
 description: Kaplan–Meier and the log-rank test
 ---
 

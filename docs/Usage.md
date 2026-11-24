@@ -49,8 +49,7 @@ A template folder contains one directory per Card, each with the original Card d
 
 ## Canvas tools
 
-Right-click the Canvas and choose **Boolean Input** to create a toggle. Wire its value to a Code Card that chooses which optional outputs to produce. Use Merge to bring alternative outputs back to one downstream input. The timeline distinguishes skipped Cards. [Card types and execution](features.md#2-cards-and-workflows)
-
+Edit a boolean parameter in a Code Card's settings to select which optional outputs it produces. Use Merge to bring alternative outputs back to one downstream input. The timeline distinguishes skipped Cards. [Card types and execution](features.md#2-cards-and-workflows)
 
 Use **Arrange** to place Cards and reduce wire crossings. Use **Untangle Wires** when the Cards are already where you want them. Both are available from the Canvas context menu and can be undone. Untangling changes the visual order of ports while preserving the connections and the way the Workflow runs.
 
@@ -96,7 +95,7 @@ Opening this Settings pane measures build and scratch usage. Build sizes use NAR
 
 ## Card settings and app settings
 
-Card names appear on the Canvas and in lists, history, comparisons and chat references. Renaming changes the name only; tools, file paths and connections keep the permanent identifier. A Card without a name shows its identifier.
+Card names appear on the Canvas and in lists, history, comparisons and chat references. Editing the display name writes `title` in the Card's README. Tools, file paths and connections identify the Card by its id. The UI shows that id if the README cannot be read.
 
 Open a Card's settings to edit its working copy, then choose **Apply**. A parameter edit rewrites its current literal in `params.nix` and preserves the surrounding source. Settings JSON, Card settings and project settings use the same revision check. Inline value edits use the revision at which editing began; leaving an unchanged value does not save it. Text entered while Apply or Save is pending stays unapplied after the submitted text is saved. If another save conflicts, choose **Overwrite** or **Keep edits and reload**; the latter keeps your previous text available to reapply. Tabs include Source, Ports, Comments, Nix Definition, Run History and Artifacts; the available tabs depend on the Card's kind. Run history and artifacts remain readable while running, but changes to Cards and closing a running project are blocked.
 
@@ -112,7 +111,7 @@ Closing a project window leaves its execution environment resident. Stop it expl
 
 ## Working with the Agent
 
-**Project settings → General → Paths excluded from the Agent** edits `agentExclude` in `tsugumi.json`: one project-relative or absolute path per line. Each entry hides a file or its entire tree from Agent tools and helpers; symbolic links are compared on resolved real paths. Lists omit excluded content and direct access returns `not_found`. People retain the complete project view. The absent setting defaults to `.git` (repository internals) and `.DS_Store` (Finder metadata); the settings editor shows these editable entries. An explicit empty list disables the defaults. `.tsugumi` contains the person's run records, conversations and scratch, so it is not a default exclusion. Only a person can change this setting; Agent saves and edits cannot change it.
+**Project settings → General → Paths excluded from the Agent** edits `agentExclude` in `tsugumi.json`: one project-relative or absolute path per line. Each entry hides a file or its entire tree from Agent tools and helpers; symbolic links are compared on resolved real paths. Lists omit excluded content and direct access returns `not_found`. People retain the complete project view. At creation the host writes its project default, initially `.git` (repository internals) and `.DS_Store` (Finder metadata). Edit the written list to change which paths are hidden. An empty list excludes no paths through this setting. Only a person can change this setting; Agent saves and edits cannot change it.
 
 Use `project_copy` to copy a bundled demo Card with `source: "demo"`, a language-qualified demo path, the source `card` ID and the destination `id`. The copy includes its definition and source files. Add any required dependencies to the destination's [Nix search path](features.md#project-nix-search-path) and update its lock.
 

@@ -49,6 +49,9 @@ class Journal {
   auto spec(std::string_view job) const -> std::string;
   auto put(std::string_view job, const R::PutBlobRequestT& chunk,
            std::string_view core) -> void;
+  auto deliver_artifact(std::string_view job,
+                        const R::JobArtifactRequestT& artifact,
+                        std::string_view core) -> void;
   auto get(std::string_view job, const R::GetBlobRequestT& request,
            std::string_view core) const -> R::BlobChunkT;
   // Bytes of the running or kept job log from `offset`, at most `limit`, and

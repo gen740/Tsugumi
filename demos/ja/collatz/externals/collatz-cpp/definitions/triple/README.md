@@ -1,3 +1,0 @@
----
-description: 奇数を 3n+1 にして loop に戻す（uint64 を超えたら失敗）
----

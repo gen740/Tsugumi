@@ -1,3 +1,4 @@
 ---
-description: Starts the computation from the rod and measurement conditions (settings)
+title: start
+description: Run forward using its parameters
 ---

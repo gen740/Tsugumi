@@ -1,3 +1,4 @@
 ---
+title: aggregate
 description: Compute the mean, minimum and maximum of the observations.
 ---

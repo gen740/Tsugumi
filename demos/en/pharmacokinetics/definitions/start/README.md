@@ -1,3 +1,4 @@
 ---
-description: Starts the computation from the dosing plans (settings)
+title: start
+description: Run simulate using its parameters
 ---

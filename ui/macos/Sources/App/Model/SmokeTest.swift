@@ -1,3 +1,4 @@
+import TsugumiViewPresentation
 import AppKit
 import Foundation
 import FlatBuffers
@@ -33,13 +34,6 @@ enum SmokeTest {
         await s.save()
         report["layout_save_rev"] = [before, s.rev]
         let trigger = s.cards(in: []).compactMap { $0["id"]?.string }.first { s.kind(key([$0])) == .trigger } ?? "start"
-        let viewers = s.resolution.keys.filter { s.kind($0) == .code }.map { card in
-          let id = UUID()
-          s.openDisplayViewer(id, card: card)
-          return id
-        }
-        defer { for id in viewers { s.closeDisplayViewer(id) } }
-        await s.refreshVisibleDisplays()
         let t1 = Date()
         try await s.run(card: [trigger], propagate: true)
         try await Task.sleep(for: .milliseconds(200))
@@ -66,8 +60,8 @@ enum SmokeTest {
           report["rerun_notifications"] = [s.notificationCount - n0, s.notificationBatches - b0]
         }
         report["card_states"] = s.cardStates.mapValues { String(describing: $0.state) }
-        report["views"] = s.cardViews.declarations.mapValues { $0.map { "\($0.name):\($0.type)" } }
-        report["view_data"] = s.cardViews.received.mapValues { $0.sorted() }
+        report["views"] = Dictionary(grouping: s.cardViews.openings, by: { key($0.card) })
+          .mapValues { $0.map { "\($0.name):\($0.type)" }.sorted() }
         await s.undo()
         await s.save()
         report["undo_save_rev"] = s.rev
@@ -91,8 +85,8 @@ enum SmokeTest {
         await s.save()
         report["draft_outputs"] = s.resolution[dk]?.outputs.map(\.name) ?? []
         let draftWire = s.connections(in: []).contains { c in
-          c["from"]?["card"]?.string == draft && c["from"]?["port"]?.string == ""
-            && c["to"]?["card"]?.string == path(next)[0] && c["to"]?["port"]?.string == ""
+          c["from"]?["card"]?.string == draft && c["from"]?["port"] == nil
+            && c["to"]?["card"]?.string == path(next)[0] && c["to"]?["port"] == nil
         }
         report["draft_wire"] = draftWire
         ok = ok && s.saveError == nil && s.resolution[dk]?.outputs.isEmpty == true

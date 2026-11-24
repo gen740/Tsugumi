@@ -1,4 +1,5 @@
 {
+  "formatVersion": 1,
   "name": "Molecular properties",
   "nixPath": [
     {
@@ -10,13 +11,20 @@
       "url": "github:gen740/tsugumi-kit/main"
     }
   ],
+  "trackedPaths": [],
+  "agentExclude": [
+    ".git",
+    ".DS_Store"
+  ],
+  "recordLogs": true,
+  "recordIO": false,
+  "logLimitBytes": 134217728,
+  "outputLimitBytes": 68719476736,
+  "outputLimitEntries": 1000,
   "canvas": {
     "cards": [
       {
         "id": "start"
-      },
-      {
-        "id": "paste"
       },
       {
         "id": "properties"
@@ -41,18 +49,8 @@
           "port": "out"
         },
         "to": {
-          "card": "paste",
-          "port": "start"
-        }
-      },
-      {
-        "from": {
-          "card": "paste",
-          "port": "pasted"
-        },
-        "to": {
           "card": "properties",
-          "port": "pasted"
+          "port": "start"
         }
       },
       {

@@ -21,7 +21,7 @@ TEST(RunHistory, NotebookFailurePositionRoundtrip) {
   EXPECT_EQ(restored->kind, failure.kind);
 }
 
-TEST(RunHistory, ArtifactIdsAndSavedInputSchemaSurviveDatabaseRestart) {
+TEST(RunHistory, ArtifactRowsAndSavedInputSchemaSurviveDatabaseRestart) {
   const auto directory = std::filesystem::temp_directory_path() /
                          ("tsugumi-history-" + crypto::uuid4());
   std::filesystem::create_directories(directory);
@@ -32,7 +32,7 @@ TEST(RunHistory, ArtifactIdsAndSavedInputSchemaSurviveDatabaseRestart) {
   const auto database = directory / "runs.sqlite";
   const ArtifactKey id(16, '\0');
   const std::string bytes("\0\xff\x80\xc3(\n", 6);
-  const Value value{"value", nullptr, bytes, "schema-id", {id}};
+  const Value value{"value", nullptr, bytes, "schema-id"};
   {
     History original(database);
     RunSummaryData run;
@@ -48,9 +48,18 @@ TEST(RunHistory, ArtifactIdsAndSavedInputSchemaSurviveDatabaseRestart) {
     record.outputs = {value};
     original.write_sync([&](sql::Db& db) {
       History::insert_run(db, run, crypto::uuid4());
-      History::put_artifact(db, {id, "1", {"card"}, 1, "created",
-                                ".tsugumi/artifacts/1/card/@1/example",
-                                10, 11, 123, "tree:digest"});
+      History::put_artifact(db, {id,
+                                 "1",
+                                 {"card"},
+                                 1,
+                                 2,
+                                 0,
+                                 true,
+                                 ".tsugumi/artifacts/1/card/@1/example",
+                                 10,
+                                 11,
+                                 123,
+                                 "tree:digest"});
       original.complete_invocation(db, record);
       History::put_last_input(db, {"card"}, "1", 1, {{"value", false, {value}}});
     });
@@ -61,49 +70,16 @@ TEST(RunHistory, ArtifactIdsAndSavedInputSchemaSurviveDatabaseRestart) {
       const auto values = History::value_metas(db, "1", {"card"}, 1, input);
       ASSERT_EQ(values.size(), 1u);
       EXPECT_EQ(values[0].hash, crypto::sha256_hex(bytes));
-      ASSERT_EQ(values[0].artifacts.size(), 1u);
-      EXPECT_EQ(values[0].artifacts[0].id, id);
-      EXPECT_EQ(values[0].artifacts[0].size, 123u);
+      EXPECT_TRUE(values[0].artifacts.empty());
     }
     const auto saved = History::last_input(db, {"card"});
     ASSERT_TRUE(saved);
     EXPECT_EQ(saved->groups.at(0).values.at(0).schema, "schema-id");
-    EXPECT_EQ(saved->groups.at(0).values.at(0).artifacts, value.artifacts);
+    EXPECT_EQ(saved->groups.at(0).values.at(0).bytes, value.bytes);
     const auto artifact = History::artifact(db, id);
     ASSERT_TRUE(artifact);
     EXPECT_EQ(artifact->sealed_ms, 11);
     EXPECT_EQ(artifact->tree_hash, "tree:digest");
-  });
-}
-
-TEST(RunHistory, StoreArtifactSurvivesDeletingOneOfItsRuns) {
-  const auto database = std::filesystem::temp_directory_path() /
-                        ("tsugumi-history-" + crypto::uuid4()) / "runs.sqlite";
-  struct Cleanup {
-    std::filesystem::path directory;
-    ~Cleanup() { std::filesystem::remove_all(directory); }
-  } cleanup{database.parent_path()};
-  std::filesystem::create_directories(cleanup.directory);
-  History history(database);
-  const ArtifactKey id(16, 's');
-  history.write_sync([&](sql::Db& db) {
-    for (const char* run_id : {"1", "2"}) {
-      RunSummaryData run;
-      run.status.run_id = run_id;
-      run.status.state = RunState::succeeded;
-      History::insert_run(db, run, crypto::uuid4());
-      History::put_artifact(db, {id, run_id, {"input"}, 1, "store",
-                                "/nix/store/store-artifact", 1, 1, 64, "tree:hash"});
-    }
-  });
-  EXPECT_EQ(history.delete_runs(std::nullopt, std::vector<std::string>{"1"}),
-            std::vector<std::string>{"1"});
-  history.read([&](sql::Db& db) {
-    EXPECT_FALSE(History::artifact(db, id, "1"));
-    const auto surviving = History::artifact(db, id);
-    ASSERT_TRUE(surviving);
-    EXPECT_EQ(surviving->run_id, "2");
-    EXPECT_EQ(surviving->origin, "store");
   });
 }
 
@@ -142,9 +118,10 @@ TEST(RunHistory, RoundTripPreservesEveryRunFieldIncludingCommit) {
     const auto op_id = crypto::uuid4();
     original.write_sync([&](sql::Db& db) {
       History::insert_run(db, input, op_id);
-      db.prepare("UPDATE runs SET has_artifacts=1 WHERE run_id=?")
-          .bind(1, *input.status.run_id)
-          .run();
+      History::put_artifact(
+          db,
+          {crypto::uuid4().substr(0, 16), *input.status.run_id, input.target, 1,
+           1, 0, true, ".tsugumi/artifacts/test", 10, 11, 123, "tree:digest"});
     });
     const auto before = original.read(
         [&](sql::Db& db) { return History::run(db, *input.status.run_id); });
@@ -184,12 +161,10 @@ TEST(RunHistory, RoundTripPreservesEveryRunFieldIncludingCommit) {
     EXPECT_EQ(after->target, before->target);
     EXPECT_EQ(after->propagate, before->propagate);
     restored.read([&](sql::Db& db) {
-      auto st =
-          db.prepare("SELECT op_id, has_artifacts FROM runs WHERE run_id=?");
+      auto st = db.prepare("SELECT op_id FROM runs WHERE run_id=?");
       st.bind(1, *input.status.run_id);
       ASSERT_TRUE(st.step());
       EXPECT_EQ(st.text(0), op_id);
-      EXPECT_EQ(st.i64(1), 1);
     });
     // Both readers use kRunCols; the cursor sequence follows the two flags.
     for (auto* history : {&original, &restored}) {

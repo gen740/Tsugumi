@@ -96,17 +96,14 @@ TSUGUMI_VIEW_WEBGPU_IMPORTS(TSUGUMI_VIEW_DECLARE_IMPORT_)
 
 /* module "tsugumi" */
 
-/* Send bytes to the Card that owns this view: each live process of the Card
- * receives them through `recv`. Never blocks. The host copies the bytes
- * before returning.
- * Returns 0 if the host took the bytes, negative if it cannot take them
- * (more than TSUGUMI_MESSAGE_MAX bytes, a NULL pointer with a nonzero size,
- * or the host's queue for this view already holds a full message).
- * With no live Card process (before the first run, or after the process
- * ended) the message has no receiver and is dropped: this still returns 0,
- * and nothing is shown under the view. */
+/* Send bytes to a route of this window. A route of all zero bytes means
+ * the route returned by view_open. The host rejects a route from another
+ * window and drops messages for a dead route. Never blocks. The host
+ * copies the route and data before returning. Returns 0 when accepted
+ * and a negative value when the host cannot accept the message. */
 TSUGUMI_VIEW_IMPORT_("tsugumi", tsugumi_view_send)
-int32_t tsugumi_view_send(const uint8_t* data, uint32_t size);
+int32_t tsugumi_view_send(const uint8_t* route /* 16 bytes */,
+                          const uint8_t* data, uint32_t size);
 
 /* Copy the current message into dst. Valid only inside
  * tsugumi_view_message; size must equal the size it was given.

@@ -1,0 +1,16 @@
+{
+  "entries": [
+    {
+      "name": "nixpkgs",
+      "url": "github:NixOS/nixpkgs/nixos-unstable",
+      "rev": "1c89083e451e891152365b799595cf7790a43325",
+      "narHash": "sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4="
+    },
+    {
+      "name": "tsugumi-kit",
+      "url": "github:gen740/tsugumi-kit/main",
+      "rev": "2a14f78b158489dd573d18cb1bc164be8131fe72",
+      "narHash": "sha256-MfV/Ni2vt3G2ODCrRmgqCO182zk6oq6AhjNSDLUqf54="
+    }
+  ]
+}

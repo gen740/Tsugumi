@@ -14,31 +14,13 @@ namespace tsugumi::workerd {
 namespace {
 namespace stdfs = std::filesystem;
 
-TEST(WorkerOutputs, OpaqueBytesAndGrantedArtifactsAreForwarded) {
-  const ArtifactKey id(16, 'a');
-  const std::vector<Value> inputs{{"input", nullptr, {}, "schema", {id}}};
+TEST(WorkerOutputs, OpaqueBytesAreForwarded) {
   const std::vector<types::PortType> ports{{"value", false, nullptr}};
   const std::string bytes("not a FlatBuffer\0", 17);
-  const auto outputs = accept_outputs({{"value", bytes, {id}}}, ports, inputs);
+  const auto outputs = accept_outputs({{"value", bytes}}, ports);
   ASSERT_EQ(outputs.size(), 1u);
   EXPECT_EQ(outputs[0].name, "value");
   EXPECT_EQ(outputs[0].bytes, bytes);
-  EXPECT_EQ(outputs[0].artifacts, std::vector<ArtifactKey>{id});
-}
-
-TEST(WorkerOutputs, OnlyCreatedAndGrantedArtifactsAreAccepted) {
-  const ArtifactKey id(16, 'a');
-  const std::vector<ArtifactKey> created{id};
-  const std::vector<types::PortType> ports{{"value", false, nullptr}};
-  try {
-    accept_outputs({{"value", "", {id}}}, ports);
-    FAIL() << "accepted an ungranted artifact";
-  } catch (const Failed& error) {
-    EXPECT_EQ(error.failure.kind, FailureKind::output_invalid);
-  }
-  EXPECT_NO_THROW(accept_outputs({{"value", "", {id}}}, ports, {}, created));
-  const std::vector<ArtifactKey> duplicates{id, id};
-  EXPECT_THROW(accept_outputs({{"value", "", {id}}}, ports, {}, duplicates), Failed);
 }
 
 TEST(WorkerOutputs, RejectsUnknownDuplicateAndMissingRequiredOutputs) {
@@ -52,8 +34,8 @@ TEST(WorkerOutputs, RejectsUnknownDuplicateAndMissingRequiredOutputs) {
     EXPECT_EQ(error.failure.args.front(),
               std::make_pair(std::string("port"), std::string("value")));
   }
-  EXPECT_THROW(accept_outputs({{"unknown", "", {}}}, ports), Failed);
-  EXPECT_THROW(accept_outputs({{"value", "", {}}, {"value", "", {}}}, ports), Failed);
+  EXPECT_THROW(accept_outputs({{"unknown", ""}}, ports), Failed);
+  EXPECT_THROW(accept_outputs({{"value", ""}, {"value", ""}}, ports), Failed);
 }
 
 TEST(WorkerPoolOwnership, ClearsProjectScratch) {

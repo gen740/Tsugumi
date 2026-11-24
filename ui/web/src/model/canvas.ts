@@ -3,7 +3,7 @@
 // controls, the menus and the shortcuts.
 import { arr, dbl, get, isObj, J, str } from '../../shared/json'
 import { D } from '../wire/rpc'
-import { Camera, CardGeometry, CardNodeData, fitCamera, isDraftWire, Pt, Rect, union, WireRouter } from './canvasKit'
+import { Camera, CardGeometry, CardNodeData, fitCamera, isDraftWire, NEW_PORT, Pt, Rect, union, WireRouter } from './canvasKit'
 import { Observable } from './observable'
 import { ShortcutAction } from './prefs'
 import { portTypeName, CardKey, DefinitionTemplate, key, path, ProjectSession } from './session'
@@ -189,8 +189,9 @@ export class Scene {
     // Routed together: a wire's path must not depend on the order of the connections.
     const ends: { a: Pt; b: Pt; wire: Omit<RoutedWire, 'd' | 'pts'> }[] = []
     s.connections(this.scope).forEach((c, i) => {
-      const fc = str(get(c, 'from', 'card')), fp = str(get(c, 'from', 'port')), tc = str(get(c, 'to', 'card')), tp = str(get(c, 'to', 'port'))
-      if (!fc || fp === undefined || !tc || tp === undefined) return
+      const fc = str(get(c, 'from', 'card')), tc = str(get(c, 'to', 'card'))
+      if (!fc || !tc) return
+      const fp = str(get(c, 'from', 'port')) ?? NEW_PORT, tp = str(get(c, 'to', 'port')) ?? NEW_PORT
       const fk = key([...this.scope, fc]), tk = key([...this.scope, tc])
       ends.push({ a: this.portWorld(fk, fp, true), b: this.portWorld(tk, tp, false), wire: {
         connection: i, style: i === this.selectedConnection ? 'selected' : this.style(fk, fp, tk),

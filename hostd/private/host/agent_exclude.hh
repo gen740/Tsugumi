@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,8 @@ class AgentExclude {
   auto CheckRequest(const std::string& name,
                     const ::tsugumi::json::Members& args,
                     bool recorded = false) const -> void;
+  auto CheckArtifact(const ::tsugumi::json::Members& artifact,
+                     std::string_view member = {}) const -> void;
   auto CheckContent(const std::string& raw) const -> void;
   auto CheckSave(const ::tsugumi::json::Members& plan, const SaveBase& base,
                  const SourcePatches& patches = {},
@@ -43,6 +46,6 @@ class AgentExclude {
       -> bool;
   std::filesystem::path root_;
   std::vector<std::filesystem::path> paths_;
-  ::tsugumi::json::Members links_;
+  std::set<std::string> subgraphs_;
 };
 }  // namespace tsugumi::host

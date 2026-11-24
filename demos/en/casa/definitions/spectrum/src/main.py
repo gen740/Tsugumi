@@ -5,7 +5,6 @@ their colours and the emission lines of the ejecta are marked.
 The histogram and band overlays use Matplotlib."""
 from card import Input, Output, params
 import json
-from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -30,8 +29,7 @@ def run(input: Input) -> Output:
     # The photons in the same square of sky as the bands' grid.
     (cx, cy), grid = manifest["centre_pixel"], manifest["grid"]
     half = grid["step"] * grid["pixels"] / 2
-    events = input.require("events")
-    with fits.open(events.file.open() / manifest["events_file"], memmap=True) as hd:
+    with fits.open(p.events_file, memmap=True) as hd:
         ev = hd["EVENTS"].data
         x = np.asarray(ev["x"], dtype=float)
         y = np.asarray(ev["y"], dtype=float)

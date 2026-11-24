@@ -14,6 +14,7 @@
 #include "store.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/workerd/artifact_id.hh"
 #include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/workerd/protocol.hh"
@@ -92,29 +93,33 @@ class LiveRemoteLog {
   bool closed_ = false;
 };
 
-// One reverse window and writer per active view. Broker I/O for one view
-// must not delay another view's request or the job's status polls.
+// Each route has a separate reverse window and writer, so broker I/O for
+// a stalled route cannot delay another route or the job's status polls.
 class RemoteViewInput {
  public:
   using Send =
-      std::function<void(const WorkerDisplayData&, uint64_t, std::stop_token)>;
+      std::function<void(const WorkerViewEvent&, uint64_t, std::stop_token)>;
   explicit RemoteViewInput(Send send) : send_(std::move(send)) {}
   ~RemoteViewInput() {
-    for (auto& [name, view] : views_) view.writer.request_stop();
+    for (auto& [id, route] : routes_) route.writer.request_stop();
   }
 
-  auto push(const WorkerDisplayData& message) -> WorkerProc::ViewDelivery {
+  auto push(const WorkerViewEvent& event) -> WorkerProc::ViewDelivery {
     std::lock_guard lock(mutex_);
     if (!listening_) return WorkerProc::ViewDelivery::closed;
-    auto& view = views_[message.view];
-    if (view.queued > workerd::kViewBudget - TSUGUMI_MESSAGE_MAX)
+    auto& route = routes_[event.route];
+    if (route.closed) return WorkerProc::ViewDelivery::closed;
+    const bool closing = event.kind == ViewEventKind::close;
+    if (!closing && route.queued > kThreshold)
       return WorkerProc::ViewDelivery::full;
-    if (!view.writer.joinable())
-      view.writer =
-          std::jthread([this, &view, name = message.view](
-                           std::stop_token stop) { write(name, view, stop); });
-    view.pending.push_back(message.bytes);
-    view.queued += workerd::message_cost(message.bytes.size());
+    if (!route.writer.joinable())
+      route.writer = std::jthread(
+          [this, &route](std::stop_token stop) { write(route, stop); });
+    route.pending.push_back(event);
+    if (closing)
+      route.closed = true;
+    else
+      route.queued += workerd::message_cost(event.bytes.size());
     changed_.notify_all();
     return WorkerProc::ViewDelivery::accepted;
   }
@@ -122,54 +127,61 @@ class RemoteViewInput {
   auto update(const RemoteJobState& status) -> void {
     std::lock_guard lock(mutex_);
     listening_ = status.state == "running" && status.view_input_ready;
-    for (const auto& [name, released] : status.view_input_credits) {
-      const auto view = views_.find(name);
-      if (view != views_.end())
-        view->second.released = std::max(view->second.released, released);
+    for (const auto& [id, released] : status.view_input_credits) {
+      const auto route = routes_.find(id);
+      if (route != routes_.end())
+        route->second.released = std::max(route->second.released, released);
     }
     changed_.notify_all();
   }
 
  private:
-  struct View {
-    std::deque<std::string> pending;
+  static constexpr size_t kThreshold =
+      workerd::kViewBudget - TSUGUMI_MESSAGE_MAX;
+  struct Route {
+    std::deque<WorkerViewEvent> pending;
+    bool closed = false;
     size_t queued = 0;
     uint64_t sent = 0;
     uint64_t released = 0;
     std::jthread writer;
   };
 
-  auto write(const std::string& name, View& view, std::stop_token stop)
-      -> void {
+  auto write(Route& route, std::stop_token stop) -> void {
     std::unique_lock lock(mutex_);
     const auto ready = [&] {
-      return listening_ && !view.pending.empty() &&
-             view.sent <=
-                 view.released + workerd::kViewBudget - TSUGUMI_MESSAGE_MAX;
+      // Close can always enter the queue and can be sent at its head without
+      // taking any byte credit. Earlier messages keep their FIFO order.
+      return listening_ && !route.pending.empty() &&
+             (route.pending.front().kind == ViewEventKind::close ||
+              route.sent <= route.released + kThreshold);
     };
     while (changed_.wait(lock, stop, ready) && !stop.stop_requested()) {
-      WorkerDisplayData message{name, std::move(view.pending.front())};
-      const auto charge = workerd::message_cost(message.bytes.size());
-      const auto offset = view.sent;
+      auto event = std::move(route.pending.front());
+      route.pending.pop_front();
+      const bool closing = event.kind == ViewEventKind::close;
+      const auto charge =
+          closing ? 0 : workerd::message_cost(event.bytes.size());
+      const auto offset = route.sent;
       lock.unlock();
       bool accepted = false;
       bool retry = false;
       try {
-        send_(message, offset, stop);
+        send_(event, offset, stop);
         accepted = true;
       } catch (const BrokerDisconnected&) {
-        retry = true;  // The worker deduplicates by the byte offset.
+        retry = true;  // The worker deduplicates by the byte offset or close.
       } catch (const std::exception&) {
       }
       lock.lock();
       if (retry) {
-        view.pending.front() = std::move(message.bytes);
+        route.pending.push_front(std::move(event));
         changed_.wait_for(lock, stop, std::chrono::milliseconds(50),
                           [] { return false; });
       } else {
-        view.pending.pop_front();
-        view.queued -= charge;
-        if (accepted) view.sent += charge;
+        if (closing) return;
+        route.queued -= charge;
+        if (accepted) route.sent += charge;
       }
     }
   }
@@ -178,12 +190,13 @@ class RemoteViewInput {
   std::mutex mutex_;
   std::condition_variable_any changed_;
   bool listening_ = false;
-  std::map<std::string, View> views_;
+  std::map<ViewUuid, Route> routes_;
 };
 
 auto poll_remote_job(const RemoteJobClient& client, RemoteJobRecord& job,
                      uint64_t log_offset, uint64_t display_after,
-                     const std::map<std::string, uint64_t>& credits,
+                     const std::map<ViewUuid, uint64_t>& credits,
+                     const std::optional<WorkerViewReply>& view_reply,
                      std::stop_token stop) -> RemoteJobState {
   const auto& s = job.invocation;
   const auto fingerprint = crypto::sha256_hex(job.spec);
@@ -193,7 +206,7 @@ auto poll_remote_job(const RemoteJobClient& client, RemoteJobRecord& job,
                           fingerprint, log_offset);
   } else {
     reply = client.status(s.execution_service, job.instance, s.execution_job_id,
-                          log_offset, stop, display_after, credits);
+                          log_offset, stop, display_after, credits, view_reply);
     if (reply.state == "missing" || reply.state == "uploading") {
       if (job.accepted)
         return {"interrupted",
@@ -232,14 +245,16 @@ class PreparedRemoteExecution final : public PreparedExecution {
  public:
   PreparedRemoteExecution(Service& service, const RemoteJobClient& client,
                           std::string target, std::string system,
-                          std::string instance, stdfs::path archive)
+                          std::string instance, stdfs::path archive,
+                          DocumentPtr doc)
       : service_(service),
         client_(client),
         target_(std::move(target)),
         system_(std::move(system)),
         instance_(std::move(instance)),
         archive_(std::move(archive)),
-        transport_(archive_) {}
+        transport_(archive_),
+        doc_(std::move(doc)) {}
   PreparedRemoteExecution(const PreparedRemoteExecution&) = delete;
   auto operator=(const PreparedRemoteExecution&)
       -> PreparedRemoteExecution& = delete;
@@ -266,6 +281,7 @@ class PreparedRemoteExecution final : public PreparedExecution {
   std::string instance_;
   stdfs::path archive_;
   ArchiveDerivationTransport transport_;
+  DocumentPtr doc_;
 };
 
 auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
@@ -290,9 +306,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       [&](uint64_t done, uint64_t total) {
         if (request.transfer) request.transfer("upload", "Nix", done, total);
       });
-  auto spec =
-      stage_remote_invocation(client_, target_, instance_, s.execution_job_id,
-                              service_.artifact_grants(request.inputs), archive_digest, request);
+  auto spec = stage_remote_invocation(
+      client_, target_, instance_, s.execution_job_id, archive_digest, request);
   if (request.stop.stop_requested())
     throw Failed(FailureKind::cancelled,
                  "run cancelled before external submission");
@@ -318,10 +333,10 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
         client.send_view(target, instance, id, message, offset, stop);
       });
   auto receiver = std::make_shared<WorkerProc::ViewReceiver>();
-  receiver->remote = [&input](const auto& message) {
-    return input.push(message);
+  receiver->remote = [&input](const WorkerViewEvent& event,
+                              WorkerProc::DisplayCredit) {
+    return input.push(event);
   };
-  service_.set_view_receiver(node.path, receiver);
   struct CloseReceiver {
     WorkerProc::ViewReceiver& receiver;
     ~CloseReceiver() {
@@ -331,10 +346,13 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
   } close_receiver{*receiver};
   struct DisplayProgress {
     std::mutex mutex;
-    std::map<std::string, uint64_t> released;
+    std::map<ViewUuid, uint64_t> released;
   };
   auto display = std::make_shared<DisplayProgress>();
   uint64_t display_after = 0;
+  std::optional<WorkerViewReply> last_view_reply;
+  bool view_reply_pending = false;
+  std::optional<std::vector<schema::CardView>> views;
   auto& history = service_.history();
   ExecutionResult output;
   LiveRemoteLog live_log(kRemoteLogTransportBytes, request.log);
@@ -348,30 +366,63 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
     std::optional<RemoteJobState> reply;
     bool more_log = false;
     try {
-      std::map<std::string, uint64_t> credits;
+      std::map<ViewUuid, uint64_t> credits;
       {
         std::lock_guard lock(display->mutex);
         credits = display->released;
       }
-      reply = poll_remote_job(client_, job, live_log.cursor(), display_after,
-                              credits, stop);
+      reply = poll_remote_job(
+          client_, job, live_log.cursor(), display_after, credits,
+          view_reply_pending ? last_view_reply : std::nullopt, stop);
       if (stop.stop_requested()) continue;
       more_log = live_log.accept(*reply);
       input.update(*reply);
+      view_reply_pending = false;
+      if (const auto& control = reply->view_request) {
+        if (!last_view_reply ||
+            control->request_id > last_view_reply->request_id) {
+          if (control->kind == ViewControlKind::open && !views) {
+            // View blobs are served from this Core's native store. Evaluate
+            // only the declarations, from the submitted run's snapshot.
+            try {
+              BuildRequest resolve;
+              resolve.node = &node;
+              resolve.doc = doc_;
+              resolve.timeout_seconds = node.settings.build_timeout_seconds;
+              resolve.cancel = stop;
+              views = service_.nix().declared_views(resolve);
+            } catch (const Failed&) {
+              if (stop.stop_requested()) continue;
+              views.emplace();
+            }
+          }
+          static const std::vector<schema::CardView> empty;
+          last_view_reply = service_.view_control(
+              node.path, views ? *views : empty, receiver, *control);
+        }
+        view_reply_pending = last_view_reply->request_id == control->request_id;
+      }
       if (reply->display_sequence > display_after) {
         display_after = reply->display_sequence;
         for (auto& message : reply->displays) {
           const auto release =
-              [display, view = message.view,
+              [display, session = message.session,
                cost = workerd::message_cost(message.bytes.size())] {
                 std::lock_guard lock(display->mutex);
-                display->released[view] += cost;
+                display->released[session] += cost;
               };
           if (request.display)
             request.display(std::move(message), release);
           else
             release();
         }
+      }
+      if (!reply->artifact_wanted.empty() && !job.cancel_requested) {
+        const auto id = parse_artifact_id(reply->artifact_wanted);
+        if (!id) throw BrokerRequestRejected("invalid remote artifact UUID");
+        deliver_remote_artifact(client_, target_, instance_, s.execution_job_id,
+                                reply->fingerprint, reply->artifact_wanted,
+                                service_.resolve_artifact(*id), stop);
       }
       s.execution_state = remote_execution_state(reply->state);
       if (request.transfer && !reply->transfer_name.empty())
@@ -438,8 +489,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
             client_, target_, instance_, s.execution_job_id,
             reply->result_sha256, job.spec,
             service_.store().state_dir() / "artifact-invocations",
-            service_.artifact_destination(s), s.artifact_sequence, node.outputs,
-            request.inputs, live_log.recorded(), request.log, request.stop,
+            service_.artifact_destination(s), node.outputs, live_log.recorded(),
+            request.log, request.stop,
             [&](std::string_view name, uint64_t done, uint64_t total) {
               if (request.transfer)
                 request.transfer("download", name, done, total);
@@ -472,7 +523,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       return output;
     }
     // A log behind the job's own continues without waiting.
-    if (more_log || (reply && !reply->displays.empty())) continue;
+    if (more_log || (reply && (!reply->displays.empty() || view_reply_pending)))
+      continue;
     // The worker protocol reports progress by polling. Stop interrupts the
     // interval and the exchange so Cancel can use a new connection immediately.
     std::unique_lock lock(wait_mutex);
@@ -489,7 +541,8 @@ RemoteExecutionService::RemoteExecutionService(Service& service,
                                                RemoteJobClient& client)
     : service_(service), client_(client) {}
 
-auto RemoteExecutionService::prepare(const Node& node,
+auto RemoteExecutionService::prepare(const RemoteTarget& target,
+                                     const Node& node,
                                      const stdfs::path& directory,
                                      BuildRequest& build)
     -> std::unique_ptr<PreparedExecution> {
@@ -501,30 +554,22 @@ auto RemoteExecutionService::prepare(const Node& node,
         FailureKind::unsupported,
         "remote workers require filesystem and PID isolation and do not "
         "support worker reuse, GUI or host path grants");
-  const auto targets = service_.remote_targets(build.cancel);
   if (build.cancel.stop_requested())
     throw Failed(FailureKind::cancelled, "worker selection cancelled");
-  const auto target =
-      std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
-  if (target == targets.end())
-    throw Failed(FailureKind::unsupported, "execution service " +
-                                               settings.execution_service +
-                                               " is not registered");
-  auto probe = client_.probe(target->id, target->server_id, build.cancel);
-  auto system = settings.system.empty() ? probe.native_system : settings.system;
+  auto probe = client_.probe(target.id, target.server_id, build.cancel);
+  const auto system = run_system(settings, probe.native_system);
   if (settings.sandbox.limits.limited() && !probe.resource_limits)
     throw Failed(FailureKind::unsupported,
                  "the remote execution daemon cannot enforce resource limits");
-  if (!settings.system.empty() &&
-      std::ranges::find(probe.systems, system) == probe.systems.end())
+  if (std::ranges::find(probe.systems, system) == probe.systems.end())
     throw Failed(
         FailureKind::unsupported,
         "external execution service no longer supports system " + system);
   stdfs::create_directories(directory);
   auto prepared = std::make_unique<PreparedRemoteExecution>(
-      service_, client_, target->id, std::move(system),
+      service_, client_, target.id, system,
       std::move(probe.instance),
-      directory / (".derivation-" + crypto::uuid4()));
+      directory / (".derivation-" + crypto::uuid4()), build.doc);
   build.target = {WorkerKind::remote, prepared->system()};
   build.transport = &prepared->transport();
   return prepared;

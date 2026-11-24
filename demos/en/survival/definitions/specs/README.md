@@ -1,4 +1,5 @@
 ---
+title: specs
 description: Lay out the hazard ratio by specification
 ---
 

@@ -1,4 +1,5 @@
 ---
+title: check
 description: 順問題と逆問題を確かめる
 ---
 

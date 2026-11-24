@@ -1,4 +1,5 @@
 ---
+title: trajectories
 description: 軌道と率方程式
 ---
 

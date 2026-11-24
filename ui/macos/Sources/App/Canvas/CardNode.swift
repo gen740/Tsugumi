@@ -56,15 +56,6 @@ extension ProjectSession {
     return (ins, outs)
   }
 
-  /// Params edited directly on input Cards.
-  func inlineParams(_ k: CardKey) -> [ParamData] {
-    guard kind(k).editsValueOnCanvas else { return [] }
-    return (resolution[k]?.parameters ?? []).compactMap { parameter in
-      guard !parameter.type.hasPrefix("[") else { return nil }
-      return ParamData(name: parameter.name, type: parameter.type, value: parameterText(parameter.effectiveValue))
-    }
-  }
-
   func cardDescription(_ k: CardKey) -> String? {
     if let d = cardMeta(k)?["description"]?.string, !d.isEmpty { return d }
     return nil
@@ -189,7 +180,8 @@ extension ProjectSession {
     let ports = portData(k, definition: definition)
     let def = definition ?? cardDefinition(k)
     let m = notes ?? cardMeta(k)
-    let title = displayName(k)
+    let editedTitle = m?["title"]?.string
+    let title = editedTitle.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? displayName(k)
     var summary = m?["description"]?.string
     // What a Draft shows on its Card is what it says it will do.
     if kind == .draft, let content = m?["content"]?.string, !content.isEmpty { summary = content }
@@ -199,16 +191,15 @@ extension ProjectSession {
     let editing = kind == .draft && inlineDraft?.card == k
     return CardNodeData(
       title: title, kind: kind,
-      symbol: kind == .invalid ? nil : (def?["symbol"]?.string).flatMap { $0.isEmpty ? nil : $0 },
+      symbol: kind.displaySymbol(def?["symbol"]?.string),
       summary: summary, inputs: visualPorts(k, ports.inputs, output: false), outputs: visualPorts(k, outputs ?? ports.outputs, output: true),
-      params: inlineParams(k),
       result: state?.transfer ?? state?.executionState?.pendingLabel ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
       state: kind == .subgraph ? compositeState(k) : canvasCardState(k), executionList: executionList, stage: empty ? nil : stageProgress(k),
       invocation: empty ? 0 : state?.invocation ?? 0, runContinues: runActive, runMark: (state != nil || batch != nil ? runMark(runStatus) : nil),
       failure: state.flatMap { $0.state == .failed || $0.state == .blocked ? ($0.failure ?? $0.state.label) : nil },
       errors: diags.filter(\.error).map(\.message), warnings: diags.filter { !$0.error }.map(\.message),
       collapsed: !editing && (collapsed ?? self.collapsed(k)), permissions: CardPermission.of(def),
-      draftEditing: editing, untitled: draftUntitled(k),
+      draftEditing: editing,
       portGrid: AppPreferences.shared.showGrid ? AppPreferences.shared.gridSize : nil,
       openComments: CardComment.list(in: m).filter { !$0.resolved }.count)
   }
@@ -224,7 +215,7 @@ extension ProjectSession {
   // Shown ports and their order (layout.bin inputOrder / outputOrder) are
   // presentation: each UI works them out itself rather than asking hostd.
   private func visualPorts(_ k: CardKey, _ ports: [PortData], output: Bool) -> [PortData] {
-    guard [.code, .draft, .input, .subgraph].contains(kind(k)) else { return ports }
+    guard [.code, .draft, .subgraph].contains(kind(k)) else { return ports }
     let saved = layout(of: Array(path(k).dropLast()))["cards"]?[layoutKey(k)]?[output ? "outputOrder" : "inputOrder"]?.array?.compactMap(\.string) ?? []
     return orderedPorts(ports, saved: saved)
   }

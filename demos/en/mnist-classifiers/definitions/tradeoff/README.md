@@ -1,4 +1,5 @@
 ---
+title: tradeoff
 description: The trade-off between accuracy and time
 ---
 

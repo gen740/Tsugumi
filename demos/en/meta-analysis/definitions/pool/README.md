@@ -1,4 +1,5 @@
 ---
+title: pool
 description: Pool with fixed and random effects
 ---
 

@@ -15,13 +15,34 @@ the person's decision.
   Cards can be followed and rerun by the person.
 - Project edits are atomic; the canvas derives positions for Cards without saved coordinates, and project_validate checks the
   whole latest revision (ports, wiring, settings, _outputs.fbs).
-- The Card id names its definition folder and is its name on the canvas. _card.json declares its type, input names
-  and execution settings. README.md holds its description, and _comments.json holds review comments.
+- Card ids and input, output and boundary port names match [a-z][a-z0-9_]{0,63}. Each canvas Card has a
+  definition folder definitions/<id>/. Its README.md starts with two front-matter fields, title (the display
+  name, use the id if there is no better name) and description (one line, may be empty), followed by Markdown.
+  _comments.json holds review comments.
+- Write each _card.json with type and symbol ("none" shows the UI's own icon for the kind; write "none" unless the
+  person chose an icon). Code also requires inputs (initially []), maxRuns (1),
+  reuseWorker (false), timeoutSeconds (0), buildTimeoutSeconds (0), recordLogs and recordIO ("project"),
+  sandbox (filesystem, pid, ipc and identity true, limits with cpu and memoryMiB both 0),
+  grants (network and gui both false), systems (the Nix systems the Card works on, at least one; initially the
+  host's native Linux system), and workerCapabilities ([]). A worker whose native system is listed builds and runs
+  the Card natively; any other worker runs the first entry emulated.
+  grants.hostPaths and secrets are optional. Each hostPaths entry supplies name, path and write.
+  Merge also requires inputs (at least one, typically a and b), maxRuns (1) and recordIO ("project").
+  Collect also requires maxRuns (1) and recordIO ("project"). Draft, Trigger and Subgraph contain only type and symbol.
+  Zero timeouts or sandbox limits mean unlimited. Record settings inherit the project with "project" and
+  override with "on" or "off". A worker must have every listed capability bit (distinct numbers from 0 through 63).
+- A new tsugumi.json carries formatVersion (1, the project file format), name, nixPath ([] or declared sources),
+  trackedPaths ([]), agentExclude (the host's defaults), recordLogs (true), recordIO (false), logLimitBytes
+  (134217728), outputLimitBytes (68719476736), outputLimitEntries (1000) and canvas (cards and connections).
+  trackedPaths adds files or folders to Tsugumi's project versions.
   An input takes one wire. Use Merge to join sources. Cards wait for every connected input and are skipped when
   one cannot arrive. Declare outputs in _outputs.fbs and use (required) for outputs every call must emit.
-- Use project_edit for Card files and wiring. Tsugumi generates _inputs.fbs for Code and Input Cards, including an empty Inputs table when there are no connections. Pass inputs = ./_inputs.fbs; to language SDK builders.
-  Edit the literal in params.nix to change a build-time value; a Card without params has no params.nix. A Code or Input Card's default.nix receives
-  { params, inputs }, where inputs contains upstream Nix exports by Card id. Use Artifact values for files or directories.
+- Use project_edit for Card files and wiring. Tsugumi generates _inputs.fbs for Code Cards, including an empty Inputs table when there are no connections. Pass inputs = ./_inputs.fbs; to language SDK builders.
+  Edit the literal in params.nix to change a build-time value; a Card without params has no params.nix. A Code Card's default.nix receives
+  { params, inputs }, where inputs contains upstream Nix exports by Card id within the same project level. A subgraph
+  upstream appears under its own id with the merged exports of the inner Cards wired to its outputs; Merge passes on
+  the exports all its inputs share, Collect those of its source, and feedback wires and Drafts nothing. Use Nix exports for pinned build inputs,
+  hostPaths for local folders, and Artifacts for files produced by a run.
 - Declare nixPath names and URLs in tsugumi.json, then use nix_path_lock_update for one name or all names with
   approval. Each external has its own declarations and lock.
 - evaluate_nix evaluates in the saved Card's directory for the local system, with params and inputs in scope.
@@ -30,11 +51,12 @@ the person's decision.
 - template_list returns the visible Project and Host templates. To copy an existing template, use tools family
   templates action copy with the exact store and name. Each copy creates fresh Card IDs and preserves its internal
   wiring. Adding a folder or importing from Git into either store requires the person's approval.
-- The person decides a Card's sandbox, grants, and executionService. A save that widens access waits for their approval, with your reason. A declined
+- The person decides a Card's sandbox, grants, and workerCapabilities. A save that widens access waits for their approval, with your reason. A declined
   widening stays declined: do not reach the same capability another way.
-- A Card in Card is definitions/<id>/_card.json {"type": "subgraph", "external": "<name>"}: the project externals/<name>/ with its own
-  tsugumi.json (boundary inputs and outputs are lists of {name, card, port} entries), layout.bin and definitions.
-  Use project_edit on its definition and project files under externals/<name>/.
+- A Card in Card has type "subgraph" and its own project at externals/<id>/. Its tsugumi.json
+  may include a boundary with inputs and outputs, both lists of {name, card, port}. Use project_edit on files
+  under that directory. To rename a subgraph id, move its _card.json and update the canvas references in
+  one project_edit. The Host moves its definition files and child project together.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
   Card alone (propagate false) uses the inputs saved by an earlier whole run. run and tools family runs action status take wait_seconds
   (up to 300) and return when the run ends or when the time is up (still_running true). A run builds and runs every
@@ -53,13 +75,13 @@ the person's decision.
 - project_copy copies files into Card sources without their bytes passing through your context; it returns paths,
   sizes and hashes. input_types returns complete FlatBuffers schemas and routing details for a Card.
 <!-- End of shared MCP rules -->
-- Making a Draft (a step the person describes to write later): definitions/<id>/_card.json {"type": "draft"}
-  and README.md (front matter with description: <one line>, then Markdown with the person's plan). Add its
+- Making a Draft (a step the person describes to write later): definitions/<id>/_card.json {"type": "draft", "symbol": "none"}
+  and README.md (front matter with title and description, then Markdown with the person's plan). Add its
   {"id"} and connections in tsugumi.json in the same project_edit. A Draft has no ports: every wire end on
-  it is {"card": "<id>", "port": ""}; the other end's real port name carries the meaning. A Draft and what needs it
+  it is {"card": "<id>"}, without a port; the other end's real port name carries the meaning. A Draft and what needs it
   do not run.
 - Implementing a Draft keeps its id: one project_edit sets its definition and sources, rebinds every incoming,
-  outgoing and boundary wire end to a real port (ends on remaining Drafts stay ""), and fills an empty README.md
+  outgoing and boundary wire end to a real port (ends on remaining Drafts stay without a port), and fills an empty README.md
   description while preserving its existing description and Markdown body. See reference/cards.md.
   Upstream Cards first, since their outputs are the types downstream
   Cards read. project_validate reports Drafts not written yet with the code "draft". A refused save, a validation
@@ -79,6 +101,6 @@ the person's decision.
   Card, card:outer/inner), [Run 12 (its start time or mark)](run:12), [Spectrum #1 (run 12)](run:12/spectrum#1) for an
   invocation, [stderr (12/spectrum#1)](log:12/spectrum?invocation=1&stream=stderr&offset=0) (stdout, stderr, build or
   journal at a byte offset; no Card and invocation for the run's own log), [plot.png (run
-  12)](artifact:12?id=<URL-encoded artifact id>&path=<URL-encoded member>) (no path for the whole artifact). Label a
+  12)](artifact:<artifact UUID>?path=<URL-encoded member>) (no path for the whole artifact). Label a
   link with the name the person sees and use the run numbers, Card ids, invocations and artifact ids tools returned; a
   link to something missing shows as text that cannot be opened.

@@ -13,19 +13,23 @@ public struct BFBS {
     public let base: BaseType
     public let element: BaseType
     public let index: Int32
+    /// Elements of a fixed-length array (a struct field).
+    public var fixedLength: UInt16 = 0
   }
 
   public struct Field {
     public let name: String
     public let type: TypeInfo
     public let id: UInt16
-    public let offset: UInt16  // vtable slot
+    public let offset: UInt16  // vtable slot; in a struct, the byte offset
   }
 
   public struct Object {
     public let name: String
     public let fields: [Field]
     public let isStruct: Bool
+    /// Bytes of a struct.
+    public var byteSize: Int32 = 0
   }
 
   public struct EnumValue {
@@ -89,7 +93,7 @@ public struct BFBS {
   private static func type(_ t: Table) -> TypeInfo {
     TypeInfo(base: BaseType(rawValue: scalar(t, 0, Int8(0))) ?? .none,
              element: BaseType(rawValue: scalar(t, 1, Int8(0))) ?? .none,
-             index: scalar(t, 2, Int32(-1)))
+             index: scalar(t, 2, Int32(-1)), fixedLength: scalar(t, 3, UInt16(0)))
   }
 
   private static func object(_ t: Table) -> Object {
@@ -97,7 +101,7 @@ public struct BFBS {
       Field(name: string(f, 0), type: child(f, 1).map(type) ?? TypeInfo(base: .none, element: .none, index: -1),
             id: scalar(f, 2, UInt16(0)), offset: scalar(f, 3, UInt16(0)))
     }.sorted { $0.id < $1.id }
-    return Object(name: string(t, 0), fields: fields, isStruct: scalar(t, 2, false))
+    return Object(name: string(t, 0), fields: fields, isStruct: scalar(t, 2, false), byteSize: scalar(t, 4, Int32(0)))
   }
 
   private static func enumeration(_ t: Table) -> Enum {

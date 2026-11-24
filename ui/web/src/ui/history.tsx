@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { artifactHTML } from '../model/artifactHTML'
 import { useObserve } from '../model/observable'
 import { CardKey, cardState, errorText, formatBytes, formatDuration, formatMillis, path, ProjectSession, remoteExecutionLabel, runState } from '../model/session'
-import { describeValue } from '../wire/flatjson'
+import { artifactName, describeNamedValue } from '../wire/flatjson'
 import { D, R, s, segs, sOpt } from '../wire/rpc'
 import { Button, Confirm, download, Empty, Form, HSplit, MenuButton, Row, Section, Segmented, Select, Sheet, Spinner, TextField, Value } from './controls'
 import { RunComparisonView } from './runComparison'
@@ -32,9 +32,13 @@ function DeleteRunCategory({ session, runId }: { session: ProjectSession; runId:
   return <>
     <MenuButton label={L('記録を削除…')} disabled={busy || session.runActive || !session.connected} items={() =>
       ([[R.RunRecordCategory.Logs, L('標準出力と標準エラー')],
-        [R.RunRecordCategory.Values, L('値')]] as const)
+        [R.RunRecordCategory.Values, L('値')],
+        [R.RunRecordCategory.Artifacts, L('成果物')]] as const)
         .map(([category, label]) => ({ label, destructive: true, action: () => void prepare(category, label) }))} />
     {pending && <Confirm title={L('実行 {0} の「{1}」を削除しますか？', pending.target, pending.label)}
+      message={pending.category === R.RunRecordCategory.Artifacts
+        ? L('この実行が作った成果物の中身を削除します。値に含まれる成果物の ID は利用できなくなります。元に戻せません。')
+        : undefined}
       confirm={L('削除')} onCancel={() => setPending(undefined)} onConfirm={() => {
         setBusy(true)
         void session.deleteRunCategory(pending.target, pending.category).catch(e => setError(errorText(e)))
@@ -287,15 +291,20 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
 
 /** A recorded input/output value as pretty JSON (decoded with its own BFBS). */
 function ValueBox({ v }: { v: D.NamedValueT }) {
-  const text = useMemo(() => describeValue({
-    name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifacts: v.artifacts.map(a => ({ id: s(a.id), sizeBytes: a.sizeBytes })), inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs,
-  }), [v])
+  const text = useMemo(() => describeNamedValue(v), [v])
   return <pre className="value-box selectable">{text}</pre>
 }
 
 type Preview = { kind: 'html'; html: string } | { kind: 'text'; text: string } | { kind: 'image'; url: string } | { kind: 'binary'; size: number }
 const IMAGE_TYPES: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', tiff: 'image/tiff', svg: 'image/svg+xml', webp: 'image/webp', pdf: 'application/pdf',
+}
+
+/** Which call made it, then whether it expires, then its size and files. */
+function artifactCaption(a: R.ArtifactInfoT): string {
+  const parts = [`#${String(a.invocation ?? 0n)}`]
+  if (!a.keep) parts.push(L('残さない（実行の終了時に削除）'))
+  return [...parts, `${String(a.sizeBytes ?? 0n)} bytes`, L('{0} 件', a.members.length)].join(' · ')
 }
 
 /** Retained outputs of one Card: run/invocation → outputs → files → preview. */
@@ -330,7 +339,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
     return () => {
       alive = false
     }
-  }, [session.lastFinished, session.recordingRevision, session.rpc, cardKey, attempt])
+  }, [session.lastFinished, session.runActive, session.recordingRevision, session.rpc, cardKey, attempt])
   useEffect(() => {
     const rpc = session.rpc
     if (!rpc || !runId) return setArtifacts([])
@@ -344,7 +353,8 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
     return () => {
       alive = false
     }
-  }, [runId, cardKey, session.recordingRevision])
+    // An artifact made without keep is listed while its run runs and is gone when it ends.
+  }, [runId, cardKey, session.recordingRevision, session.lastFinished])
   const read = (a: R.ArtifactInfoT, m: string) => session.rpc!.readArtifact(s(a.artifactId), m)
   useEffect(() => {
     setPreview(undefined)
@@ -410,8 +420,8 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
                 <div key={s(a.artifactId)} role="option" aria-selected={s(a.artifactId) === artifactId}
                   className={`list-row clickable col-start${s(a.artifactId) === artifactId ? ' selected' : ''}`}
                   onClick={() => { setArtifactId(s(a.artifactId)); setMember(a.members[0] ? s(a.members[0].path) : undefined) }}>
-                  <b className="callout">{s(a.artifactId)}</b>
-                  <span className="caption secondary">#{String(a.invocation ?? 0n)} · {String(a.sizeBytes ?? 0n)} bytes · {a.members.length} 件</span>
+                  <b className="callout selectable">{artifactName(s(a.artifactId), sOpt(a.label))}</b>
+                  <span className="caption secondary">{artifactCaption(a)}</span>
                 </div>
               ))}
             </div>,

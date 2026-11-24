@@ -1,4 +1,5 @@
 ---
+title: load
 description: Pin the observation with Nix
 ---
 

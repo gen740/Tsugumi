@@ -10,6 +10,6 @@ $$\eta\,p_{\rm high} > p_{\rm low}$$
 
 At a flat tariff where buying and selling cost the same, $p_{\rm high}=p_{\rm low}$, so as long as $\eta<1$ not running it is optimal (the top of **tariffs**). If exports are cheaper, moving surplus solar from midday to the night pays by that much.
 
-Try the tariff of **schedule**, and capacity_kwh, round_trip_efficiency and export_ratio of **settings**.
+Try the tariff of **schedule**, and capacity_kwh, round_trip_efficiency and export_ratio of **market**.
 
 The stored energy can only move on its step (soc_step_kwh), so the answer is slightly worse than the true optimum. The **check** table shows by how much. Forecast errors, battery wear and the cost of the equipment are not included.

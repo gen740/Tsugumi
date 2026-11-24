@@ -1,3 +1,5 @@
+import { implementedCard } from '../src/model/cardFields'
+import { serialize } from '../shared/json'
 import { Builder } from 'flatbuffers'
 import {
   BoundaryPlaceT, CardGroupT, CardPlaceT, GroupPortT, Layout, LayoutT, NotePlaceT, PositionT,
@@ -30,9 +32,19 @@ export function layoutFixture(text: string) {
 
 export const layoutBytes = (text: string) => layoutFixture(text).bytes
 
+export function projectFixture(fields: object = {}): string {
+  return JSON.stringify({ formatVersion: 1, name: 't', nixPath: [], trackedPaths: [], agentExclude: [],
+    recordLogs: true, recordIO: false, logLimitBytes: 134217728, outputLimitBytes: 68719476736,
+    outputLimitEntries: 1000, canvas: { cards: [], connections: [] }, ...fields })
+}
+
+export function cardFixture(kind: string, fields: object = {}): string {
+  return JSON.stringify({ ...JSON.parse(serialize(implementedCard(kind, 'none', ['aarch64-linux']))), ...fields })
+}
+
 export function definitionFixture(id: string, cardJson: string, notesJson?: string) {
   const notes = notesJson ? JSON.parse(notesJson) : {}
-  const readme = printReadme({ description: notes.description ?? '', body: notes.content ?? '' })
-  return new R.DefinitionT(id, cardJson, readme ?? null,
+  const readme = printReadme({ title: notes.title ?? id, description: notes.description ?? '', body: notes.content ?? '' })
+  return new R.DefinitionT(id, cardJson, readme,
     notes.comments ? JSON.stringify({ comments: notes.comments }) : null)
 }

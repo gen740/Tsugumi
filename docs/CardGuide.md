@@ -1,21 +1,21 @@
 # Your first Card
 
-Make a C++ Card that converts a temperature from Celsius to Fahrenheit. Then rerun it with a different parameter and inspect the saved result. The [temperature-conversion template](https://github.com/gen740/tsugumi-kit/tree/main/templates/temperature-conversion) has the same wiring.
+Make a C++ Card that converts a temperature from Celsius to Fahrenheit. Then rerun it with a different parameter and inspect the saved result. The [temperature-conversion template](https://github.com/gen740/tsugumi-kit/tree/main/templates/temperature-conversion) contains the conversion Card.
 
 ## What you will make
 
 ```text
-start ──out→ settings ──temperature→ convert
+start.out → convert.start
 ```
 
-The Trigger starts the run. The Input Card `settings` sends an editable temperature. The Code Card `convert` calculates a Fahrenheit value, sends it to its live view and returns a typed output.
+The Trigger starts the run. The Code Card `convert` reads the temperature from its own `params.nix`, shows the Fahrenheit value in its live view and returns a typed output.
 
 <div data-player="card-guide"></div>
 
 ## Making it on screen
 
-1. Create a project from the temperature-conversion template or start with an empty project.
-2. For an empty project, place a Trigger, an Input Value and a Draft on the Canvas. Name them `start`, `settings` and `convert`. Add the files below and connect the ports. In the Draft's settings, choose Code as the implementation kind.
+1. Start with an empty project. The temperature-conversion template is also available as a single Code Card you can run directly.
+2. For an empty project, place a Trigger named `start` and a Draft named `convert` on the canvas. Add the files below and connect the ports. In the Draft's settings, choose Code as the implementation kind.
 3. If you are declaring the sources yourself, add the two names under **Project settings → Name and Environment → Nix search path**. Choose **Update all** to write `tsugumi.lock`.
 
 ## The files
@@ -24,20 +24,54 @@ The Trigger starts the run. The Input Card `settings` sends an editable temperat
 
 ```json
 {
+  "formatVersion": 1,
   "name": "Temperature conversion",
   "nixPath": [
-    {"name": "nixpkgs", "url": "github:NixOS/nixpkgs/nixos-unstable"},
-    {"name": "tsugumi-kit", "url": "github:gen740/tsugumi-kit/main"}
+    {
+      "name": "nixpkgs",
+      "url": "github:NixOS/nixpkgs/nixos-unstable"
+    },
+    {
+      "name": "tsugumi-kit",
+      "url": "github:gen740/tsugumi-kit/main"
+    }
   ],
+  "trackedPaths": [],
+  "agentExclude": [
+    ".git",
+    ".DS_Store"
+  ],
+  "recordLogs": true,
+  "recordIO": false,
+  "logLimitBytes": 134217728,
+  "outputLimitBytes": 68719476736,
+  "outputLimitEntries": 1000,
   "canvas": {
-    "cards": [{"id": "start"}, {"id": "settings"}, {"id": "convert"}],
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "convert"
+      }
+    ],
     "connections": [
-      {"from": {"card": "start", "port": "out"}, "to": {"card": "settings", "port": "start"}},
-      {"from": {"card": "settings", "port": "temperature"}, "to": {"card": "convert", "port": "celsius"}}
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "convert",
+          "port": "start"
+        }
+      }
     ]
   }
 }
 ```
+
+`formatVersion` is the project file format (currently `1`), not the Tsugumi version. See [Project files](Reference.md) for the complete format.
 
 The lock below is an example of the pins for these declarations. Use an explicit update to resolve new pins for your own declarations. [Project Nix search path](features.md#project-nix-search-path)
 
@@ -55,8 +89,8 @@ The lock below is an example of the pins for these declarations. Use an explicit
     {
       "name": "tsugumi-kit",
       "url": "github:gen740/tsugumi-kit/main",
-      "rev": "2c56fee956c62950c8cf925a821d4bf5f97a8598",
-      "narHash": "sha256-+QxSovos92wRFoAD4MlpTEkdJtoNJnXU1qplCsWJOws="
+      "rev": "2a14f78b158489dd573d18cb1bc164be8131fe72",
+      "narHash": "sha256-MfV/Ni2vt3G2ODCrRmgqCO182zk6oq6AhjNSDLUqf54="
     }
   ]
 }
@@ -65,49 +99,19 @@ The lock below is an example of the pins for these declarations. Use an explicit
 `definitions/start/_card.json`
 
 ```json
-{"type": "trigger"}
-```
-
-### The input value Card
-
-The `value` parameter has the same name as the field in the `Temperature` message. The `temperature` field of `Outputs` names the output port.
-
-`definitions/settings/_card.json`
-
-```json
-{"type": "input"}
-```
-
-`definitions/settings/params.nix`
-
-```nix
 {
-  value = 20.0;
+  "type": "trigger",
+  "symbol": "play.circle"
 }
 ```
 
-`definitions/settings/_outputs.fbs`
+`definitions/start/README.md`
 
-```text
-namespace thermometer;
-table Temperature { value:double; }
-table Outputs { temperature:Temperature (required); }
-root_type Outputs;
-```
-
-`definitions/settings/default.nix`
-
-```nix
-{ params, inputs }:
-let
-  pkgs = import <nixpkgs> { };
-  sdk = import <tsugumi-kit/sdk/input> { inherit pkgs; };
-in {
-  run = sdk.input {
-    outputs = ./_outputs.fbs;
-    values.temperature.value = params.value;
-  };
-}
+```md
+---
+title: start
+description: Start a run.
+---
 ```
 
 ### The conversion Card
@@ -115,7 +119,41 @@ in {
 `definitions/convert/_card.json`
 
 ```json
-{"type": "code", "inputs": [{"name": "celsius"}]}
+{
+  "type": "code",
+  "symbol": "chevron.left.forwardslash.chevron.right",
+  "inputs": [
+    {
+      "name": "start"
+    }
+  ],
+  "maxRuns": 1,
+  "reuseWorker": false,
+  "timeoutSeconds": 0,
+  "buildTimeoutSeconds": 0,
+  "recordLogs": "project",
+  "recordIO": "project",
+  "sandbox": {
+    "filesystem": true,
+    "pid": true,
+    "ipc": true,
+    "identity": true,
+    "limits": {
+      "cpu": 0,
+      "memoryMiB": 0
+    }
+  },
+  "grants": {
+    "network": false,
+    "gui": false
+  },
+  "systems": [
+    "aarch64-linux",
+    "x86_64-linux",
+    "aarch64-darwin"
+  ],
+  "workerCapabilities": []
+}
 ```
 
 `definitions/convert/_outputs.fbs`
@@ -131,11 +169,10 @@ root_type Outputs;
 
 ```nix
 {
+  celsius = 20.0;
   scale = 1.8;
   offset = 32.0;
   unit = "°F";
-  cxxflags = [ "-O2" ];
-  plot = true;
 }
 ```
 
@@ -153,22 +190,19 @@ let
   };
 in
 {
-  run = sdk.cppCard (common // {
-    src = ./src;
-    cxxflags = params.cxxflags;
-    tools = pkgs.lib.optional params.plot pkgs.gnuplot;
-  });
+  run = sdk.cppCard (common // { src = ./src; });
   api = sdk.cppApi common;
   views = builtins.filter (view: view.name == "markdown") sdk.views;
 }
 ```
 
-`default.nix` uses `cxxflags` and `plot` to configure the build. The SDK embeds the evaluated parameters in the Card build. The SDK generates the interface from the port schema, `_outputs.fbs` and the names and types of the evaluated `params`.
+The SDK embeds the evaluated parameters in the Card build. The SDK generates the interface from the port schema, `_outputs.fbs` and the names and types of the evaluated `params`.
 
 `definitions/convert/README.md`
 
 ```markdown
 ---
+title: convert
 description: Convert Celsius to Fahrenheit
 ---
 ```
@@ -178,11 +212,9 @@ description: Convert Celsius to Fahrenheit
 ```cpp
 #include "card.hh"
 
-auto run(const Card::Inputs& input) -> Card::Output {
-  using Fallback = decltype(Card::Output::fahrenheit)::value_type;
-  using Celsius = Card::InputType<"celsius", Fallback>;
-  const auto celsius = input.get<Celsius>("celsius");
-  const double fahrenheit = celsius.value * Card::params.scale + Card::params.offset;
+auto run(const Card::Inputs&) -> Card::Output {
+  const double fahrenheit =
+      Card::params.celsius * Card::params.scale + Card::params.offset;
   card::display::send(card::display::Scalar{fahrenheit, Card::params.unit});
   Card::Output output;
   output.fahrenheit.emplace().value = fahrenheit;
@@ -190,13 +222,13 @@ auto run(const Card::Inputs& input) -> Card::Output {
 }
 ```
 
-`Card::InputType` selects the connected type or a fallback that lets the source compile while unwired. `input.get` reports `input_missing` if the call requires an absent value. In the Card editor's Source view, press **Build SDK** to read the generated names and declarations.
+In the Card editor's Source view, press **Build SDK** to read the generated names and declarations.
 
 ## Running it and checking
 
 1. Press **Run** (⌘R). The first build prepares the Card's environment.
 2. Open `convert`'s live view to see `68 °F`. Use **Run History** to inspect the output on `fahrenheit` and the logs for evaluation, build and execution.
-3. Change the `offset` to `0.0` and choose **Run Only This Card (Last Inputs)**. The editor saves the new literal in `params.nix`. This experiment uses the saved 20-degree input and yields 36 after rebuilding the Card. Set the value back to `32.0` to restore the original calculation.
+3. In Card Settings, change `celsius` to `-40.0` and run again. The editor saves the new literal in `params.nix`. The rebuilt Card shows `−40 °F`. Select either run in Run History to inspect its result.
 
 ## Inputs and outputs
 
@@ -222,8 +254,12 @@ Use `cancelled` and `remaining_ms` for work that observes cancellation and deadl
 
 Include `tsugumi/artifact.fbs` and use `tsugumi.Artifact` for a file or directory.
 Use the SDK to create a writable directory or upload existing contents. Return
-the Artifact in an output. A downstream Card can open the granted Artifact for
-reading or forward its ID. The directory is sealed when the creating call ends.
+the Artifact in an output. Any Card in the project that knows the UUID can open
+the sealed directory or pass the UUID on. The directory is sealed when the
+creating call ends. The SDK keeps artifacts by default. For a scratch artifact,
+define `keep_scratch = false;` in `params.nix` and pass it to the SDK's keep
+option when creating the artifact. A person can then opt in to keeping it for
+a particular run.
 
 ## Views
 
@@ -236,11 +272,10 @@ See [Views](CoreAndSDK.md#views) for the display protocol and Dawn contract.
 
 ## Worker state
 
-Cards start a fresh worker for each call by default. Set `reuseWorker: true` to keep one worker for the Card: memory, loaded libraries and files in its working directory survive across calls and runs. One worker takes one call at a time. There is no hook at the start of a run, so a Card that keeps state decides from its inputs when to reset it, for example starting over when a loop's initial value arrives. Resident workers have no count, idle-time or memory eviction limit, including workers used for monitoring. They live until the project's environment stops or the Card's definition, SDK, grants or a secret value changes; a call already running when the definition changes finishes on the old version. A failed, cancelled or timed-out call always discards its worker; the next call starts fresh and logs the reason, as it does after a crash. Each invocation records whether its worker already held state (`worker_reused`). Ordinary fresh workers prepared for speed remain limited to 32, ten minutes idle and 2 GiB each.
+With `reuseWorker: false`, each call starts with a fresh worker. Set `reuseWorker: true` to keep one worker for the Card: memory, loaded libraries and files in its working directory survive across calls and runs. One worker takes one call at a time. There is no hook at the start of a run, so a Card that keeps state decides from its inputs when to reset it, for example starting over when a loop's initial value arrives. Resident workers have no count, idle-time or memory eviction limit, including workers used for monitoring. They live until the project's environment stops or the Card's definition, SDK, grants or a secret value changes; a call already running when the definition changes finishes on the old version. A failed, cancelled or timed-out call always discards its worker; the next call starts fresh and logs the reason, as it does after a crash. Each invocation records whether its worker already held state (`worker_reused`). Ordinary fresh workers prepared for speed remain limited to 32, ten minutes idle and 2 GiB each.
 A resident worker can open and create artifacts. When a call returns, the
 paths of its artifacts are gone, and the next call opens its own
 ([artifact access](SandboxContract.md#artifact-access)).
-
 
 | Location | Use | Lifetime |
 | --- | --- | --- |
@@ -261,29 +296,17 @@ The worker sets the working directory, `HOME`, `TMPDIR` and the environment at l
 | `_inputs.fbs` | Generated input schema for connected ports |
 | `params.nix` | Current parameter literals; absent when the Card has no params |
 | `default.nix` | Nix definition receiving `{ params, inputs }` |
-| `README.md` | Optional one-line `description` front matter and Markdown body |
+| `README.md` | Required `title` and `description` front matter and an optional Markdown body |
 | `_comments.json` | Review comments |
 | `src/`, `views/` | Card source and optional custom view source |
 
-The folder ID is the Card's name on the canvas.
+The folder id identifies the Card in the project. The README's `title` is the name on the canvas.
 
 ### Card types
 
-Use Code for processing, Input for values built with Nix, and Trigger to start
-the workflow. Merge and Collect route and aggregate arrivals. Draft is a
+Use Code for processing and Trigger to start
+the workflow. A Trigger can also supply Nix exports through its ordinary wires. Merge and Collect route and aggregate arrivals. Draft is a
 placeholder, and Subgraph embeds a project from `externals/<id>/`.
-
-### An input Card with fixed values
-
-The `sdk.input` helper takes the output schema and a map of output port names
-to FlatBuffers JSON table values. It builds the port bytes, which core emits.
-See the [temperature Card](#the-input-value-card) above.
-
-### An input Card that passes on a project file or folder
-
-Use `sdk.artifact ./data.csv` where a value of type `tsugumi.Artifact` is
-expected in `sdk.input`. The SDK packages the file or directory in the build
-output. Core registers its existing read-only store directory.
 
 ### Parameters
 
@@ -299,9 +322,9 @@ its expression uses.
 
 A Code Card has `"type": "code"`. Declare input port names in `inputs`. The connected outputs supply the input types, and `default.nix` selects the SDK.
 
-Network access is off by default where the worker can isolate it. Set `grants.network` to true to allow it. TLS uses the Nix `cacert` bundle through `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
+Set `grants.network` to true to allow network access. TLS uses the Nix `cacert` bundle through `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
 
-Use `executionService` to select a registered service. The default is `auto`. In `sandbox`, `filesystem`, `pid`, `ipc` and `identity` default to true. Use `sandbox.limits.cpu` for a limit in cores (fractions are allowed) and `sandbox.limits.memoryMiB` for a memory limit in MiB. Omit either value or use `null` for an unlimited resource. A Linux worker with delegated cgroup v2 applies these limits to the Card's process.
+List the Nix systems the Card works on in `systems` and any required worker capability bits in `workerCapabilities`. A worker whose native system is listed builds and runs the Card natively; any other worker runs the first entry under an emulator. See [Worker selection](RemoteExecution.md#worker-selection). Write all four isolation flags and both resource limits in `sandbox`. Use zero for an unlimited CPU or memory budget. A Linux worker with delegated cgroup v2 applies nonzero limits to the Card's process.
 
 Set `grants.network` or `grants.gui` to enable that access on a supported worker. Add named paths with `grants.hostPaths` entries containing `name`, an absolute `path` and an optional `write` flag. The Card reads the worker-visible path from `TSUGUMI_GRANT_<NAME>`, using uppercase letters and underscores in place of other separators. For example, `sample-data` becomes `TSUGUMI_GRANT_SAMPLE_DATA`.
 
@@ -322,13 +345,15 @@ What the Card does with the value is its author's responsibility: child processe
 
 ### Run lists and connected Nix exports
 
-A definition can return several variants. An Input Card can map a list of literals
-to distinct values using the same mechanism.
+A Code Card can map a list of parameter values into named variants.
 
 ```nix
 run = map (value: {
   label = toString value;
-  run = sdk.input { outputs = ./_outputs.fbs; values.temperature = { inherit value; }; };
+  run = sdk.cppCard (common // {
+    params = params // { celsius = value; };
+    src = ./src;
+  });
 }) params.temperatures;
 ```
 
@@ -338,20 +363,26 @@ of their derivation inputs.
 
 Set `exports` to publish Nix values to guaranteed downstream Cards. A downstream
 definition reads them as `inputs.<card_id>.<attr>`. For example, C can see both
-A and B in `A → B → C`. TODO(open): Exports across Merge, Collect, feedback,
-Draft and nested or external boundaries.
+A and B in `A → B → C`. A subgraph upstream appears as `inputs.<subgraph Card id>`,
+holding the merged exports of the inner Cards wired to its outputs; inner ids
+never appear outside, and Cards inside a child project receive no parent `inputs`.
+Merge passes on only the exports all its inputs share, Collect those of the Card
+it collects from, and feedback wires and Drafts nothing. See
+[Nix inputs across Cards](Reference.md#nix-inputs-across-cards).
 
 ### Data fixed by Nix
 
-Use a locked project source and include its store path in the Card build when
-the program needs immutable data. To send a project file through the graph,
-declare an Artifact output and publish it with an Input Card.
+Use a hash-pinned Nix fetch for immutable data. Share the store path through
+a Nix export and reference it from the consuming Card build to include it
+in that runtime closure. Bundle local files in the source or grant access
+with `grants.hostPaths`. To share files produced during execution, create
+an artifact during the Card call and return its UUID in an output.
 
 ### Reading a merge output
 
 Build SDK after connecting the Merge. Decode a single candidate as its
 ordinary type, or select a member of the generated union when there are
-multiple candidates. Merge forwards the original bytes and artifact IDs.
+multiple candidates. Merge forwards the original bytes, including any artifact UUIDs they contain.
 
 ### Templates
 
@@ -379,8 +410,8 @@ is described in the kit.
 
 A Draft (`_card.json` with `"type": "draft"`) has no input or output ports,
 including when `_outputs.fbs` exists.
-A connection attaches directly to the Draft with `{"card":"plan","port":""}`.
-The `port` field is required; the empty string is reserved for Draft ends.
+A connection attaches directly to the Draft with `{"card":"plan"}`, without a
+`port`. Every other end needs a `port`; either mistake is a load error.
 Any number of wires can enter or leave a Draft, including wires between Drafts.
 A real Card's endpoint still names an existing input or output. The other end's
 port name and the Draft's content explain the planned connection.
@@ -393,7 +424,7 @@ When implementing a Draft, explicitly rebind **every** incoming wire to a real
 input and every outgoing wire to a real output in the **same save** as the new
 definition. Include `SetProject` in `project_save`; inside a Card in Card, update
 its project's `tsugumi.json` and any boundary endpoints too. Ends on other Drafts
-stay empty. A single possible port is still an explicit choice. A save leaving
+stay without a port. A single possible port is still an explicit choice. A save leaving
 a wire on a non-existent port of a real Card fails with `validation_failed`
 and names the wire. No endpoint is inferred or migrated.
 

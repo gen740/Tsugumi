@@ -1,4 +1,4 @@
-"""A Card's "system": built and run for another Nix system under an emulator
+"""A Card's "systems": built and run for another Nix system under an emulator
 the kernel has registered (binfmt_misc). Which systems a Card may name (Cards
 of every language may), and what a run says when no emulator is there.
 
@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from harness import remote_worker as R
-from harness.daemon import Daemon
+from harness.daemon import Daemon, StartupFailure
 from harness.scenario import run
 from projects import MSG_FBS, card, conn, run_and_wait, write
 from tsugumi_client import RpcFailure, path, text
@@ -70,7 +70,10 @@ def registered_remote(monkeypatch, resource_limits):
             caps = R.CapabilitiesT(serverId="2" * 64, nativeSystem=FOREIGN, systems=[FOREIGN],
                                    resourceLimits=resource_limits, maxJobs=8, workerContract=R.WORKER_CONTRACT)
             self.wfile.write(R.frame(R.reply(R.ReplyBody.Catalog, R.CatalogT(
-                services=[R.TargetT(id="cluster", available=True, capabilities=caps)]))))
+                services=[
+                    R.TargetT(id="cluster", available=True, capabilities=caps, workerCapabilities=[63]),
+                    R.TargetT(id="local", available=True, capabilities=caps, workerCapabilities=[1]),
+                ]))))
 
     with tempfile.TemporaryDirectory(prefix="tsugumi-broker-") as directory:
         endpoint = str(Path(directory) / "socket")
@@ -89,35 +92,37 @@ def registered_remote(monkeypatch, resource_limits):
 
 
 @pytest.mark.parametrize("resource_limits,settings,valid", [
-    (False, {"executionService": "cluster"}, True),
-    (False, {"executionService": "cluster", "grants": {"gui": True}}, False),
-    (False, {"executionService": "cluster", "sandbox": {"filesystem": False}}, False),
-    (False, {"executionService": "cluster", "sandbox": {"pid": False}}, False),
-    (False, {"executionService": "cluster", "sandbox": {"ipc": False, "identity": False}}, True),
-    (False, {"executionService": "cluster", "grants": {"hostPaths": []}}, True),
-    (False, {"executionService": "cluster", "grants": {"hostPaths": [{"path": "/data", "name": "data"}]}},
+    (False, {"workerCapabilities": [63]}, True),
+    (False, {"workerCapabilities": [63], "grants": {"gui": True}}, False),
+    (False, {"workerCapabilities": [63], "sandbox": {"filesystem": False}}, False),
+    (False, {"workerCapabilities": [63], "sandbox": {"pid": False}}, False),
+    (False, {"workerCapabilities": [63], "sandbox": {"ipc": False, "identity": False}}, True),
+    (False, {"workerCapabilities": [63], "grants": {"hostPaths": []}}, True),
+    (False, {"workerCapabilities": [63], "grants": {"hostPaths": [{"path": "/data", "name": "data", "write": False}]}},
      False),
-    (True, {"executionService": "local", "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}},
+    (True, {"workerCapabilities": [1], "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}},
      False),
-    (True, {"executionService": "cluster", "system": NATIVE.split("-")[0] + "-linux",
+    (True, {"workerCapabilities": [63], "systems": [NATIVE.split("-")[0] + "-linux"],
       "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, True),
-    (True, {"executionService": "cluster", "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, True),
-    (False, {"executionService": "cluster", "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, True),
+    (True, {"workerCapabilities": [63], "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, True),
+    (False, {"workerCapabilities": [63], "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, False),
 ], ids=["unlimited", "gui", "no-filesystem", "no-pid", "isolation-switches", "empty-host-folders", "nonempty-host-folders", "local-resources", "wrong-system", "remote-native", "unsupported-limits"])
-def test_external_service_validation_keeps_cached_capabilities_advisory(
+def test_worker_validation_checks_capabilities_and_resources(
         project, core_factory, registered_remote, resource_limits, settings, valid):
-    """The catalog describes services; live capabilities are checked during prepare."""
+    """Placement filters the broker catalog before a run starts."""
     definition = {"type": "code", "_outputs": MSG_FBS,
                   "_nix": '{ pkgs, inputs, params, ... }: { run = "true"; }', **settings}
     write(project, {"work": definition}, [card("work", "work")], [])
     client = core_factory().connect()
     services = {text(service.id): service for service in client.call("ProjectInspectRequest").executionServices}
-    assert services.keys() == {"local", "cluster"}
+    assert list(services) == ["local", "cluster"]
+    assert list(services["local"].workerCapabilities) == [1]
     cluster = services["cluster"]
     assert cluster.kind == ExecutionServiceKind.remote_daemon
     assert text(cluster.nativeSystem) == FOREIGN
     assert cluster.resourceLimits == resource_limits
     assert cluster.maxJobs == 8
+    assert list(cluster.workerCapabilities) == [63]
     validation = client.call("ProjectValidateRequest")
     if valid:
         assert validation.valid, [text(diagnostic.message) for diagnostic in validation.diagnostics]
@@ -148,13 +153,9 @@ def test_snapshot_lists_the_systems_the_local_service_can_run(client):
     assert {text(system) for system in service.systems} == expected
 
 
-@pytest.mark.parametrize("definition", [
-    {"type": "code", "executionService": "unavailable", "_outputs": MSG_FBS,
-     "_nix": '{ pkgs, inputs, params, ... }: { run = "true"; }'},
-    {"type": "trigger", "executionService": "local"},
-], ids=["unknown-service", "built-in-card"])
-def test_invalid_execution_service_selection_prevents_the_run(project, core_factory, definition):
-    """An invalid selection is reported before a run can start."""
+def test_no_registered_worker_has_requested_capabilities(project, core_factory):
+    definition = {"type": "code", "workerCapabilities": [63], "_outputs": MSG_FBS,
+                  "_nix": '{ pkgs, inputs, params, ... }: { run = "true"; }'}
     write(project, {"work": definition}, [card("work", "work")], [])
     client = core_factory().connect()
     assert "invalid_setting" in diagnostics(client, "work")
@@ -169,19 +170,27 @@ def test_which_systems_and_cards(tmp_path):
     root = tmp_path / "p"
     defs = {"py": {"type": "code"}, "cc": {"type": "code"}, "sh": {"type": "code"},
             "r": {"type": "code"}}
-    cards = [card("unknown", "sh", system="riscv64-linux"), card("py", "py", system=FOREIGN),
-             card("cc", "cc", system=FOREIGN), card("sh", "sh", system=FOREIGN), card("r", "r", system=FOREIGN)]
-    cards.append(card("native", "py", system=NATIVE))
+    cards = [card("py", "py", systems=[FOREIGN]),
+             card("cc", "cc", systems=[FOREIGN]), card("sh", "sh", systems=[FOREIGN]), card("r", "r", systems=[FOREIGN])]
+    cards.append(card("native", "py", systems=[NATIVE]))
     write(root, defs, cards, [])
     with Daemon(root) as daemon:
         c = daemon.connect()
-        assert "invalid_setting" in diagnostics(c, "unknown")
         # bash runs as a program the kernel hands to the emulator;
         # C++, Python, R and Julia in a worker built for that system.
         for ok in ("py", "cc", "sh", "r"):
             assert "invalid_setting" not in diagnostics(c, ok), ok
-        # This machine's own system is the default, written out.
+        # The native system is accepted even on Darwin.
         assert "invalid_setting" not in diagnostics(c, "native")
+
+
+@pytest.mark.parametrize("systems", [[], ["riscv64-linux"], ["x86_64-linux", "x86_64-linux"]])
+def test_invalid_systems_stop_document_load(project, core_factory, systems):
+    write(project, {"work": {"type": "code", "systems": systems}},
+          [card("work", "work")], [])
+    with pytest.raises(StartupFailure) as failure:
+        core_factory()
+    assert failure.value.kind == "invalid_document"
 
 
 @pytest.mark.skipif(emulator_registered(FOREIGN), reason=f"an emulator for {FOREIGN} is registered here")
@@ -192,7 +201,7 @@ def test_an_unavailable_foreign_system_stops_the_run(tmp_path):
             "sh": {"type": "code", "inputs": [{"name": "in"}],
                    "_outputs": MSG_FBS,
                    "_nix": '{ pkgs, inputs, params, ... }:\n{ run = "uname -m"; }\n'}}
-    write(root, defs, [card("start", "trigger"), card("x", "sh", system=FOREIGN)], [conn("start", "out", "x", "in")])
+    write(root, defs, [card("start", "trigger"), card("x", "sh", systems=[FOREIGN])], [conn("start", "out", "x", "in")])
     with Daemon(root) as daemon:
         c = daemon.connect()
         run_id, status = run_and_wait(c, "start")

@@ -47,9 +47,9 @@ auto Info(const f::path& folder) -> std::string {
   if (!f::is_regular_file(folder / "tsugumi.json"))
     throw ProjectFailure("invalid_project",
                          "Choose a folder containing tsugumi.json");
-  const auto project = json::Object(fs::read_beneath(folder, "tsugumi.json"));
-  auto name = json::Text(project, "name");
-  if (name.empty()) name = folder.filename().string();
+  const auto bytes = fs::read_beneath(folder, "tsugumi.json");
+  parse_project_json(bytes);
+  const auto name = json::Text(json::Object(bytes), "name");
   return json::Encode(
       json::Members{{"path", json::Quote(f::canonical(folder).string())},
                     {"name", json::Quote(name)}});
@@ -323,7 +323,8 @@ auto Projects::Apply(const A::Request& request) -> std::string {
         if (flow != "topToBottom" && flow != "leftToRight")
           throw ProjectFailure("invalid_flow",
                                "Choose topToBottom or leftToRight");
-        const auto document = initial_project_json(name);
+        const auto document =
+            initial_project_json(name, AgentExclude::Defaults());
         const auto destination = Path(p->parent()->str()) / name;
         return Populate(destination, [&] {
           fs::write_atomic(destination / "tsugumi.json", document);
@@ -342,7 +343,10 @@ auto Projects::Apply(const A::Request& request) -> std::string {
         if (fs::resolves_inside(source, destination))
           throw ProjectFailure("invalid_project",
                                "The copy must be outside the source project");
-        return Populate(destination, [&] { Copy(source, destination); });
+        return Populate(destination, [&] {
+          Copy(source, destination);
+          load_from_disk(destination);
+        });
       }
       case A::RequestPayload::HostDemoListRequest:
         return json::Encode(Catalog(

@@ -12,6 +12,10 @@ export interface TypeInfo {
   base: BaseType
   element: BaseType
   index: number
+  /** Elements of a fixed-length array (a struct field). */
+  fixedLength: number
+  /** Bytes of one element of a vector or array. */
+  elementSize: number
 }
 
 export interface Field {
@@ -28,6 +32,8 @@ export interface BObject {
   name: string
   fields: Field[]
   isStruct: boolean
+  /** Bytes of a struct. */
+  byteSize: number
   documentation: string[]
 }
 
@@ -97,8 +103,8 @@ function i64(bb: ByteBuffer, t: number, id: number) {
 }
 
 function typeInfo(bb: ByteBuffer, t: number | undefined): TypeInfo {
-  if (t === undefined) return { base: BaseType.none, element: BaseType.none, index: -1 }
-  return { base: i8(bb, t, 0, 0), element: i8(bb, t, 1, 0), index: i32(bb, t, 2, -1) }
+  if (t === undefined) return { base: BaseType.none, element: BaseType.none, index: -1, fixedLength: 0, elementSize: 0 }
+  return { base: i8(bb, t, 0, 0), element: i8(bb, t, 1, 0), index: i32(bb, t, 2, -1), fixedLength: u16(bb, t, 3), elementSize: i32(bb, t, 5, 0) }
 }
 
 export class BFBS {
@@ -123,6 +129,7 @@ export class BFBS {
         }))
         .sort((a, b) => a.id - b.id),
       isStruct: bool(bb, t, 2),
+      byteSize: i32(bb, t, 4, 0),
       documentation: strings(bb, t, 6),
     }))
     this.enums = tables(bb, root, 1).map((t) => ({

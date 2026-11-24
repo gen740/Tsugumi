@@ -1,4 +1,5 @@
 {
+  "formatVersion": 1,
   "name": "Maximum flow and minimum cut",
   "nixPath": [
     {
@@ -10,13 +11,20 @@
       "url": "github:gen740/tsugumi-kit/main"
     }
   ],
+  "trackedPaths": [],
+  "agentExclude": [
+    ".git",
+    ".DS_Store"
+  ],
+  "recordLogs": true,
+  "recordIO": false,
+  "logLimitBytes": 134217728,
+  "outputLimitBytes": 68719476736,
+  "outputLimitEntries": 1000,
   "canvas": {
     "cards": [
       {
         "id": "start"
-      },
-      {
-        "id": "settings"
       },
       {
         "id": "network"
@@ -44,18 +52,8 @@
           "port": "out"
         },
         "to": {
-          "card": "settings",
-          "port": "start"
-        }
-      },
-      {
-        "from": {
-          "card": "settings",
-          "port": "settings"
-        },
-        "to": {
           "card": "network",
-          "port": "settings"
+          "port": "start"
         }
       },
       {

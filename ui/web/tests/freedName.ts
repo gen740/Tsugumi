@@ -20,10 +20,6 @@ const session = (cards: string[]) => {
   return s
 }
 const rememberResult = (s: Session, k: string) => {
-  s.liveViews.observe(k, () => {})
-  const views = s.liveViews.get(k)!
-  views.declare([{ name: 'chart', type: 'html', blob: '/nix/store/chart' }])
-  views.data('chart', Uint8Array.of(42))
   s.cardStates.set(k, { state: 2, invocation: 1n, stages: [], cached: false, workerReused: false, sent: new Set(), sentInRun: new Set() })
 }
 // What the core says is in the document after a save.
@@ -31,19 +27,7 @@ const resolved = (s: Session, cards: string[]) =>
   (s as unknown as { applyResolution(r: unknown[], d: unknown[]): void }).applyResolution(
     cards.map((id) => ({ card: { segments: [id] }, inputs: [], outputs: [], diagnostics: [], nixReferences: [] })), [])
 const clean = (s: Session, k: string) => {
-  assert.equal(!!s.liveViews.get(k)?.views.length, false, 'no result of the Card that had the name')
   assert.equal(s.cardStates.has(k), false, 'no run state of the Card that had the name')
-}
-
-{
-  // A Card goes (a delete, a rename, the Agent's save): its result goes with it.
-  const s = session(['b', 'other'])
-  resolved(s, ['b', 'other'])
-  rememberResult(s, 'b')
-  rememberResult(s, 'other')
-  resolved(s, ['other'])
-  assert.equal(!!s.liveViews.get('b')?.views.length, false)
-  assert.equal(!!s.liveViews.get('other')?.views.length, true, 'the other Cards keep theirs')
 }
 
 {
@@ -79,17 +63,16 @@ const clean = (s: Session, k: string) => {
   const k = await s.addCard('draft', [], { x: 0, y: 0 })
   assert.equal(k, 'draft')
   clean(s, k)
-  assert.equal(!!s.liveViews.get('a')?.views.length, true)
 }
 
 {
   // Copies of Cards start clean too.
   const s = session([])
   const a = await addCodeCard(s, { x: 0, y: 0 }, 'a')
-  rememberResult(s, 'a-2')
+  rememberResult(s, 'a_2')
   const made = await s.duplicate(new Set([a]), [])
-  assert.deepEqual([...made], ['a-2'])
-  clean(s, 'a-2')
+  assert.deepEqual([...made], ['a_2'])
+  clean(s, 'a_2')
 }
 {
   // Put where another Card is, as E does: it goes to a free place.

@@ -46,7 +46,7 @@ The [generic evaluation tool](features.md#evaluating-a-card-expression) runs a N
 
 The result of a Card's `default.nix` may define only these attributes:
 
-- `run`: a derivation containing `lib/main.so` for Code Cards or built port values for Input Cards, or a list of `{ label; run; }`;
+- `run`: a derivation containing `lib/main.so`, or a list of `{ label; run; }`;
 - `views`: the Card's [views](#views);
 - `exports`: values that downstream Cards may read.
 - `api`: the optional code-generation derivation.
@@ -68,7 +68,7 @@ What a language SDK might otherwise have described lives elsewhere:
 
 ### Port schemas
 
-The core generates one `_inputs.fbs` per Code or Input Card. The schema describes the connected ports and contains namespaced copies of their upstream types. Cards with no connected inputs get an empty `Inputs` table. The generated `tsugumi_schema` attributes let the SDK select a candidate by the ID in the port envelope. The file is versioned and refreshed when wiring or upstream schemas change.
+The core generates one `_inputs.fbs` per Code Card. The schema describes the connected ports and contains namespaced copies of their upstream types. Cards with no connected inputs get an empty `Inputs` table. The generated `tsugumi_schema` attributes let the SDK select a candidate by the ID in the port envelope. The file is versioned and refreshed when wiring or upstream schemas change.
 
 Merge forwards each envelope unchanged. A Merge-fed port with one distinct schema has that type. With several distinct schemas, its generated input schema declares a union. The UI displays the candidate type names as `A | B`. Collect feeds a fixed `Collected` table with opaque members.
 
@@ -86,7 +86,7 @@ Merge forwards each envelope unchanged. A Merge-fed port with one distinct schem
 - The Agent or the user chooses a template. The core never chooses: there is no automatic selection and there are no per-language defaults.
 - The Agent may list and copy templates. Adding or importing one needs a person's approval.
 - Scaffolding a new Card is the Agent's job.
-- The "New Card" menu offers Draft, Trigger, Input, Merge and Collect, and "From Template…" with Project and Host sections and nothing preselected. [Reuse Cards from a template](Usage.md#reuse-cards-from-a-template)
+- The "New Card" menu offers Draft, Trigger, Merge and Collect, and "From Template…" with Project and Host sections and nothing preselected. [Reuse Cards from a template](Usage.md#reuse-cards-from-a-template)
 - No templates ship in the core. Example templates live in tsugumi-kit.
 
 ## Views
@@ -115,15 +115,25 @@ in
 
 - Each entry is `{ name; type; blob; }`. `type` is `html` or `dawn`. `blob` is one file in the Nix store: a self-contained HTML file for `html`, a Wasm binary for `dawn`.
 - Include SDK-provided views explicitly with `sdk.views`. LineChart and Points are HTML views in the SDK. Custom HTML can include its own JS and Wasm.
-- The UI shows declared views before execution and resolves their names. Undeclared or duplicate names produce a UI error.
-- Messages carry bytes in both directions through the worker, core and UI. The Card controls send pacing through [ABI backpressure](CardABI.md#display-messages).
+- The Card calls `view_open` by name to create a window. Each open creates a session and an opener route. A Card that receives a session from a port can send to that window and register its own route to receive responses.
+- PANEL opens in the project window on macOS and over the canvas on the Web. WINDOW opens a separate window and accepts an optional initial content size. FULLSCREEN opens a native fullscreen window on macOS and a browser child window with a fullscreen button on the Web. A packed app presents PANEL in its main window.
+- Messages travel to one session or one route through the worker, core and UI. The relay uses [ABI backpressure](CardABI.md#display-messages). A window retains its last frame after its routes go away. Closing the window gives every live route a close event.
 - View traffic is live. Use output ports and artifacts for results that people will inspect later. [Run history](RunHistory.md)
+
+### Passing a window between Cards
+
+A title Card can open a view and pass its session in a port alongside the
+initial state. The play Card registers its own route on that session and
+sends the route to the view in a message. The view can direct input to the
+play Card using that route. Passing the same session to a shop Card lets
+it register another route and render into the same window.
 
 ### html views
 
-The UI loads the file in an isolated frame without network access and transfers
-a `MessagePort` with a window message `{tsugumi: 1, port}`. The port carries
-`{type: "data", bytes: ArrayBuffer}` messages in both directions. The view
+The UI loads the file in an isolated frame without network access. Use
+`tsugumi.onmessage = (bytes) => { /* draw */ }` to receive Card messages.
+Use `tsugumi.send(bytes, route)` to send to a specific route, where `route` is
+a 16-byte `Uint8Array`. Omitting it sends to the opener's route. The view
 draws its empty state and handles resize. SDK views reassemble their own chunks.
 
 ### dawn views
@@ -144,9 +154,11 @@ A dawn view is a wasm32 module that draws to one WebGPU surface. Its contract is
 - **Calls:** the host checks the imports and exports, calls `abi` (it must return 0),
   then `start` and one `draw`. It draws again on the next display frame only when
   `draw` returns bit 0, and otherwise only after an event (message, resize, pointer,
-  key). `read` copies the current message only inside `message(size)`. `send` never
-  blocks; it returns negative when the host cannot take the bytes, and the bytes go to
-  the Card's `recv`. A negative return or a trap drops the instance and shows the error.
+  key). `read` copies the current message only inside `message(size)`.
+  `tsugumi_view_send(route, data, size)` takes a 16-byte route. An all-zero route
+  addresses the opener. Sending is nonblocking. The host rejects routes from
+  other windows and drops traffic for dead routes. A negative callback return
+  or a trap drops the instance and shows the error.
   All calls come from one thread; there is one instance per view.
 
 Both UIs translate the module's 32-bit descriptors with code generated at build time
@@ -160,8 +172,6 @@ from webgpu-headers' `webgpu.yml` by one generator ([ui/shared/dawn](../ui/share
 The kit's `sdk.dawnView { name; src; }` builds a view from C sources (freestanding,
 no libc), and its `dawn-view` template is a minimal example. The `point-cloud` demo
 sends a point cloud to a dawn view.
-
-TODO(open): PNG snapshots of dawn views for the Agent.
 
 ## Value mapping in the default SDKs
 
@@ -189,4 +199,4 @@ See [Remote execution](RemoteExecution.md#data-left-on-a-worker) and [Where data
 
 ## Open
 
-TODO(open): Display recording and recording of results that depend on view interaction.
+TODO(open): PNG snapshots of Dawn views for the Agent.

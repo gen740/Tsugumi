@@ -1,3 +1,4 @@
 ---
+title: record
 description: 数列と偶奇を collatz.csv に書いて成果物に残す
 ---

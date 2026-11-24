@@ -10,6 +10,7 @@
 
 #include "tsugumi/document/definition_values.hh"
 #include "tsugumi/document/types.hh"
+#include "tsugumi/workerd/view.hh"
 namespace tsugumi {
 using FailureKind = Tsugumi::Data::FailureKind;
 using RunState = Tsugumi::Data::RunState;
@@ -53,16 +54,11 @@ class Failed : public std::exception {
   FailureData failure;
 };
 
-// Artifact ids in C++ are binary (exactly 16 bytes). Paths travel only
-// in private grant messages.
+// Artifact keys are the 16 bytes of a UUID.
 using ArtifactKey = std::string;
-struct ArtifactGrant {
+struct CreatedArtifact {
   ArtifactKey id;
-  std::string path;
-  // Core-side holding layout used to stage the grant on a remote worker.
-  std::filesystem::path location = {};
-  // On the remote staging wire, the original path of an Input Card artifact.
-  std::string store_path = {};
+  bool keep;
 };
 
 struct Value {
@@ -70,12 +66,6 @@ struct Value {
   types::TypeRef type;
   std::string bytes;
   std::string schema;
-  std::vector<ArtifactKey> artifacts = {};
-};
-
-struct WorkerDisplayData {
-  std::string view;
-  std::string bytes;
 };
 
 }  // namespace tsugumi

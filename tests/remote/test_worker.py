@@ -16,6 +16,7 @@ import struct
 import subprocess
 import sys
 import time
+from uuid import UUID, uuid4
 
 import pytest
 from harness import remote_worker as R
@@ -28,13 +29,14 @@ from harness import peer_tls as TLS
 from harness.file_events import process_file, wait_for_exit
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
-from tsugumi.ArtifactId import ArtifactIdT
-from Tsugumi.Card.CardPort import CardPortT
-from Tsugumi.Worker.ArtifactGrant import ArtifactGrantT
 from Tsugumi.Worker.WorkerPort import WorkerPortT
 from test_worker_loading import card_package
 from Tsugumi.Worker.WorkerCall import WorkerCallT
-from Tsugumi.Worker.WorkerDisplay import WorkerDisplayT
+from Tsugumi.Worker.ViewControlKind import ViewControlKind
+from Tsugumi.Worker.ViewEventKind import ViewEventKind
+from Tsugumi.Worker.ViewUuid import ViewUuidT
+from Tsugumi.Worker.WorkerViewEvent import WorkerViewEventT
+from Tsugumi.Worker.WorkerViewReply import WorkerViewReplyT
 from Tsugumi.Worker.WorkerMessage import WorkerMessageT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
 
@@ -244,8 +246,8 @@ def test_rejects_unsafe_options_before_listening(tmp_path):
     assert result.returncode != 0
 
 
-def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(), files=(),
-              grants=(), output_budget=None):
+def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(),
+              output_budget=None):
     nix_directory = os.environ.get("TSUGUMI_NIX_DIR")
     if not nix_directory:
         pytest.skip("needs the installed worker build sources")
@@ -285,18 +287,17 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(), files
             peer.put_chunk(job, archive_digest, total, offset, stream.read(1 << 20))
 
     call = WorkerCallT(
-        inputs=list(inputs), outputs=list(outputs), grants=list(grants),
-        deadlineMs=deadline_ms, invocationSequence=5,
+        inputs=list(inputs), outputs=list(outputs), deadlineMs=deadline_ms,
     )
     message = WorkerMessageT(callId=1, valueType=WorkerPayload.WorkerCall, value=call)
     call_digest = peer.upload(job, R.pack(message, b"TSW1"))
     invocation = peer.upload(job, R.pack(R.InvocationT(
         callSha256=call_digest, archiveSha256=archive_digest,
-        files=[R.InvocationFileT(**file) for file in files], implementationIndex=1,
+        implementationIndex=1,
     )))
     return R.pack(R.JobSpecT(
         system=peer.caps.nativeSystem, derivation=derivation, output=output,
-        invocationSha256=invocation, inputBlobs=[archive_digest, call_digest, invocation, *[file["sha256"] for file in files]],
+        invocationSha256=invocation, inputBlobs=[archive_digest, call_digest, invocation],
         logLimitBytes=8 << 20, **(output_budget or {}),
     ))
 
@@ -395,21 +396,42 @@ read -r line < "$TEST_GATE"
             peer.close()
 
 
-def test_remote_display_credit_and_reverse_messages_share_the_channel(worker):
+def test_remote_view_control_replay_and_bidirectional_credits(worker):
     job = "8" * 64
     spec = card_spec(worker, job, """
       static uint8_t message[TSUGUMI_MESSAGE_MAX];
+      tsugumi_route data_route{}, control_route{};
+      tsugumi_view_session data{}, control{};
+      if (call.effects->view_open(call.host, "data", TSUGUMI_VIEW_PANEL, 0, 0,
+                                  &data_route, &data) ||
+          call.effects->view_open(call.host, "control", TSUGUMI_VIEW_WINDOW, 640, 480,
+                                  &control_route, &control)) return 1;
       for (uint8_t i = 1; i <= 3; ++i) {
         message[0] = i;
-        if (call.effects->send(call.host, "data", message, sizeof(message)))
-          return 1;
+        if (call.effects->send(call.host, &data, message, sizeof(message)))
+          return 2;
       }
-      tsugumi_bytes input{};
-      if (call.effects->recv(call.host, "control", &input, 60000) ||
-          input.size != 1 || input.data[0] != 42)
-        return 2;
-      if (call.effects->send(call.host, "control", input.data, input.size))
-        return 3;
+      tsugumi_view_event event{};
+      if (call.effects->recv(call.host, &event, 60000) || event.kind != 0 ||
+          event.route.bytes[0] != control_route.bytes[0] ||
+          event.session.bytes[0] != control.bytes[0] ||
+          event.data.size != 1 || event.data.data[0] != 42) return 3;
+      if (call.effects->send(call.host, &control, event.data.data, event.data.size))
+        return 4;
+      bool closed = false, received = false;
+      for (int i = 0; i < 2; ++i) {
+        if (call.effects->recv(call.host, &event, 60000)) return 5;
+        if (!closed && event.kind == 1 && event.route.bytes[0] == control_route.bytes[0] &&
+            event.data.size == 0) {
+          closed = true;
+        } else if (!received && event.kind == 0 && event.route.bytes[0] == data_route.bytes[0] &&
+                   event.data.size == 1 && event.data.data[0] == 9) {
+          received = true;
+        } else {
+          return 6;
+        }
+      }
+      if (call.effects->recv(call.host, &event, 100) != 1) return 7;
     """)
     submitted = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
     assert submitted.bodyType == R.ReplyBody.JobStatus, vars(submitted.body)
@@ -429,43 +451,85 @@ def test_remote_display_credit_and_reverse_messages_share_the_channel(worker):
         status.Init(body.Bytes, body.Pos)
         return status
 
-    def poll_until(done):
+    def poll(view_reply=None):
         nonlocal sequence
-        while time.monotonic() < deadline:
-            query = R.StatusRequestT(displayAfter=sequence, displayCredits=credits)
-            status = worker.call(R.RequestBody.StatusRequest, query, job=job,
-                                 read_reply=read_status)
-            assert status.State() in (R.JobState.Queued, R.JobState.Running,
-                                      R.JobState.Succeeded), status.Diagnostic()
-            if status.DisplaySequence() > sequence:
-                sequence = status.DisplaySequence()
-                for index in range(status.DisplaysLength()):
-                    display = status.Displays(index)
-                    messages.append((R.string(display.View()), display.BytesLength(), display.Bytes(0)))
-            if done(status):
-                return
-            time.sleep(0.05)
-        pytest.fail(f"display stalled after {messages}")
+        query = R.StatusRequestT(displayAfter=sequence, displayCredits=credits,
+                                 viewReply=view_reply)
+        status = worker.call(R.RequestBody.StatusRequest, query, job=job, read_reply=read_status)
+        assert status.State() in (R.JobState.Queued, R.JobState.Running,
+                                  R.JobState.Succeeded), status.Diagnostic()
+        if status.DisplaySequence() > sequence:
+            sequence = status.DisplaySequence()
+            for index in range(status.DisplaysLength()):
+                display = status.Displays(index)
+                messages.append((display.Session().Bytes(0), display.BytesLength(), display.Bytes(0)))
+        return status
 
+    def poll_until(done, view_reply=None):
+        while time.monotonic() < deadline:
+            status = poll(view_reply)
+            if done(status):
+                return status
+            time.sleep(0.05)
+        pytest.fail(f"relay stalled after {messages}")
+
+    data = ViewUuidT(bytes=[1] * 16)
+    control = ViewUuidT(bytes=[2] * 16)
+    data_route = ViewUuidT(bytes=[3] * 16)
+    control_route = ViewUuidT(bytes=[4] * 16)
+    fingerprint = hashlib.sha256(spec).hexdigest()
     try:
+        first = poll_until(lambda status: status.ViewRequest()).ViewRequest()
+        assert first.RequestId() == 1 and first.Kind() == ViewControlKind.Open
+        assert first.View() == b"data"
+        replay = poll().ViewRequest()
+        assert replay.RequestId() == 1 and replay.View() == b"data"
+        reply = WorkerViewReplyT(requestId=1, ok=True, session=data, route=data_route)
+        # Lose the first status outcome and retry the same reply, including while
+        # the next request is outstanding. It must only release the first waiter.
+        poll(reply)
+        second = poll_until(lambda status: status.ViewRequest(), reply).ViewRequest()
+        assert second.RequestId() == 2 and second.View() == b"control"
+        assert (second.Mode(), second.Width(), second.Height()) == (1, 640, 480)
+        reply = WorkerViewReplyT(requestId=2, ok=True, session=control, route=control_route)
         maximum = 1 << 24
-        poll_until(lambda status: len(messages) >= 2 and status.ViewInputReady())
-        assert messages == [("data", maximum, 1), ("data", maximum, 2)]
-        message = WorkerDisplayT(view="control", bytes=[42])
-        sent = worker.call(R.RequestBody.ViewSendRequest,
-                           ViewSendRequestT(display=message, offset=0), job=job)
-        assert sent.bodyType == R.ReplyBody.Ack, vars(sent.body)
+        poll_until(lambda status: len(messages) >= 2 and status.ViewInputReady(), reply)
+        assert messages == [(1, maximum, 1), (1, maximum, 2)]
+
+        def send_event(kind, payload=None, *, session=control, route=control_route):
+            event = WorkerViewEventT(kind=kind, session=session, route=route,
+                                     bytes=payload)
+            sent = worker.call(R.RequestBody.ViewSendRequest,
+                               ViewSendRequestT(event=event, offset=0), job=job)
+            assert sent.bodyType == R.ReplyBody.Ack, vars(sent.body)
+
+        send_event(ViewEventKind.Message, [42])
         # The reverse message and its echo cross while the data window is full.
         poll_until(lambda _: len(messages) >= 3)
-        assert messages[2:] == [("control", 1, 42)]
-        credits.append(DisplayCreditT(view="data", released=maximum))
-        poll_until(lambda status: status.State() == R.JobState.Succeeded and not status.DisplayPending())
-        assert messages[3:] == [("data", maximum, 3)]
+        assert messages[2:] == [(2, 1, 42)]
+        send_event(ViewEventKind.Close)
+        send_event(ViewEventKind.Close)
+        send_event(ViewEventKind.Message, [9], session=data, route=data_route)
+        credits.append(DisplayCreditT(address=data, released=maximum))
+        status = poll_until(lambda status: status.State() == R.JobState.Succeeded and not status.DisplayPending())
+        assert messages[3:] == [(1, maximum, 3)]
+
+        def result_bytes(digest):
+            response = worker.call(R.RequestBody.GetBlobRequest,
+                                   R.GetBlobRequestT(digest=R.string(digest), offset=0), job=job)
+            assert response.bodyType == R.ReplyBody.BlobChunk
+            return bytes(response.body.bytes)
+
+        manifest = R.ResultManifestT.InitFromPackedBuf(result_bytes(status.ResultSha256()))
+        result = WorkerMessageT.InitFromPackedBuf(result_bytes(manifest.invocationResultSha256))
+        assert result.valueType == WorkerPayload.WorkerResult, vars(result.value)
     finally:
-        worker.call(R.RequestBody.CancelRequest, R.CancelRequestT(), job=job)
+        worker.call(R.RequestBody.CancelRequest,
+                    R.CancelRequestT(fingerprint=fingerprint), job=job)
         worker.wait_state(job, R.JobState.Cancelled, R.JobState.Succeeded,
                           R.JobState.Failed, R.JobState.Interrupted)
-        worker.call(R.RequestBody.ReleaseRequest, R.ReleaseRequestT(), job=job)
+        worker.call(R.RequestBody.ReleaseRequest,
+                    R.ReleaseRequestT(fingerprint=fingerprint), job=job)
 
 
 @pytest.mark.parametrize("case", ["artifact", "symlink", "byte-budget", "entry-budget"])
@@ -473,30 +537,25 @@ def test_real_remote_artifact_boundary(worker, case):
     job = "9" * 64
     outputs = [WorkerPortT(name="doc", required=True)]
     inputs = []
-    grants = []
-    files = []
     create = """
       tsugumi_artifact_id id;
       const auto directory = fs::path(create_artifact(call, id));
     """
     if case == "artifact":
-        granted = ArtifactIdT(bytes=list((3).to_bytes(8, "big") + bytes(8)))
-        relative = "1/group/source/@2/0"
+        capability = uuid4()
+        initializer = ",".join(str(byte) for byte in capability.bytes)
         contents = b"staged"
-        files.append({"path": f"artifacts/{relative}/nested/input.txt",
-                      "sha256": worker.upload(job, contents), "size": len(contents)})
-        inputs.append(CardPortT(name="doc", artifacts=[granted]))
-        grants.append(ArtifactGrantT(id=granted, path=relative))
         body = create + """
-          const fs::path granted = open_artifact(call, in);
-          if (granted.filename() != "3.0" ||
+          tsugumi_artifact_id capability{{CAPABILITY}};
+          tsugumi_bytes dir;
+          if (call.effects->artifact_open(call.host, &capability, &dir) != 0) return 1;
+          const fs::path granted{std::string(reinterpret_cast<const char*>(dir.data), dir.size)};
+          if (granted.filename() != "ARTIFACT_UUID" ||
               std::distance(fs::directory_iterator(granted.parent_path()),
                             fs::directory_iterator{}) != 1) return 2;
-          tsugumi_artifact_id ungranted{};
-          ungranted.bytes[7] = 3;
-          ungranted.bytes[15] = 1;
+          capability.bytes[15] ^= 1;
           tsugumi_bytes unused;
-          if (call.effects->artifact_open(call.host, &ungranted, &unused) == 0)
+          if (call.effects->artifact_open(call.host, &capability, &unused) == 0)
             return 3;
           std::string contents;
           const auto input = granted / "nested/input.txt";
@@ -506,12 +565,17 @@ def test_real_remote_artifact_boundary(worker, case):
               chmod(input.c_str(), 0600) == 0) return 4;
           static const uint8_t first[] = {0, 0};
           static const uint8_t second[] = {0, 255, 128};
-          if (call.effects->send(call.host, "data", first, sizeof(first)) ||
-              call.effects->send(call.host, "data", second, sizeof(second))) return 1;
+          tsugumi_route route{};
+          tsugumi_view_session session{};
+          if (call.effects->view_open(call.host, "data", TSUGUMI_VIEW_PANEL, 0, 0,
+                                      &route, &session) ||
+              call.effects->send(call.host, &session, first, sizeof(first)) ||
+              call.effects->send(call.host, &session, second, sizeof(second))) return 1;
           std::ofstream(directory / "report.txt") << "artifact";
           std::ofstream("unrelated") << "not an artifact";
           out.artifact(id);
         """
+        body = body.replace("CAPABILITY", initializer).replace("ARTIFACT_UUID", str(capability))
     elif case == "symlink":
         body = create + """
           fs::create_symlink("/etc/passwd", directory / "link");
@@ -529,8 +593,7 @@ def test_real_remote_artifact_boundary(worker, case):
             std::ofstream(directory / std::to_string(i)).close();
           out.artifact(id);
         """
-    spec = card_spec(worker, job, body, outputs=outputs, inputs=inputs,
-                     grants=grants, files=files)
+    spec = card_spec(worker, job, body, outputs=outputs, inputs=inputs)
     fingerprint = hashlib.sha256(spec).hexdigest()
     try:
         response = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
@@ -538,20 +601,40 @@ def test_real_remote_artifact_boundary(worker, case):
         displays = []
         display_after = 0
         released = {}
+        view_reply = None
+        session = bytes([1] * 16)
+        route = ViewUuidT(bytes=[2] * 16)
         deadline = time.monotonic() + 300
         while True:
             # Advance past replayed displays and return credit for consumed bytes.
             query = R.StatusRequestT(displayAfter=display_after, displayCredits=[
-                DisplayCreditT(view=view, released=total)
+                DisplayCreditT(address=ViewUuidT(bytes=list(view)), released=total)
                 for view, total in released.items()
-            ])
+            ], viewReply=view_reply)
             response = worker.call(R.RequestBody.StatusRequest, query, job=job)
             assert response.bodyType == R.ReplyBody.JobStatus, vars(response.body)
             status = response.body
+            if status.artifactWanted:
+                wanted = R.string(status.artifactWanted)
+                found = wanted == str(capability)
+                files = []
+                if found:
+                    files.append(R.InvocationFileT(
+                        path="nested/input.txt", sha256=worker.upload(job, contents),
+                        size=len(contents)))
+                response = worker.call(R.RequestBody.JobArtifactRequest,
+                    R.JobArtifactRequestT(id=wanted, fingerprint=fingerprint, found=found,
+                                         files=files), job=job)
+                assert response.bodyType == R.ReplyBody.Ack, vars(response.body)
+            if status.viewRequest:
+                assert status.viewRequest.requestId == 1 and status.viewRequest.view == b"data"
+                view_reply = WorkerViewReplyT(requestId=1, ok=True,
+                                              session=ViewUuidT(bytes=list(session)),
+                                              route=route)
             if status.displaySequence > display_after:
                 display_after = status.displaySequence
                 for message in status.displays:
-                    view = R.string(message.view)
+                    view = bytes(message.session.bytes)
                     payload = bytes(message.bytes)
                     displays.append((view, payload))
                     released[view] = released.get(view, 0) + max(1, len(payload))
@@ -575,11 +658,12 @@ def test_real_remote_artifact_boundary(worker, case):
             result_bytes(R.string(manifest.invocationResultSha256)))
         if case == "artifact":
             assert result.valueType == WorkerPayload.WorkerResult, vars(result.value)
-            assert displays == [("data", b"\x00\x00"), ("data", b"\x00\xff\x80")]
+            assert displays == [(session, b"\x00\x00"), (session, b"\x00\xff\x80")]
             created, = result.value.created
             output, = result.value.outputs
-            assert bytes(output.artifacts[0].bytes) == bytes(created.bytes)
-            assert bytes(created.bytes) == (5).to_bytes(8, "big") + bytes(8)
+            assert output.bytes is not None
+            assert UUID(bytes=bytes(created.id.bytes)).version == 4
+            assert created.keep
             artifact_path = "files/artifacts/0/report.txt"
             assert {name for name in entries if name.startswith("files/")} == {artifact_path}
             assert result_bytes(entries[artifact_path]) == b"artifact"

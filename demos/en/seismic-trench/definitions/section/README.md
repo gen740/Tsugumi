@@ -1,4 +1,5 @@
 ---
+title: section
 description: Section of a band of latitude
 ---
 

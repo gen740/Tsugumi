@@ -1,4 +1,5 @@
 ---
+title: thresholds
 description: 閾値と遺伝子の数
 ---
 

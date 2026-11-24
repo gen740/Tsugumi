@@ -1,5 +1,0 @@
----
-description: Reaction rates and volume
----
-
-Passes on the synthesis rate k (per unit volume and time), the degradation rate γ, the volume V, the number of simulations and the seed. The values are for illustration, not measurements of any particular gene.

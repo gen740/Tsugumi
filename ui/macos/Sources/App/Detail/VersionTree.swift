@@ -119,6 +119,7 @@ struct VersionMiniMapLayout {
 struct VersionMiniMap: View {
   let canvas: Tsugumi_Host_VersionCanvasT
   let changed: [String]
+  let cardTitle: (String) -> String
   static let width = 284.0
   static let maxHeight = 132.0
 
@@ -146,7 +147,8 @@ struct VersionMiniMap: View {
                  style: StrokeStyle(lineWidth: touched.contains(id) || c.invalid ? 1.25 : 0.75, dash: c.draft ? [3, 2] : []))
         if map.named && (c.shape == .card || c.shape == .start) {
           let fit = max(1, Int(r.width / 5) - 1)
-          g.draw(Text(id.count * 5 > Int(r.width) ? id.prefix(fit) + "…" : id).font(.system(size: 8.5)), at: CGPoint(x: r.midX, y: r.midY))
+          let title = cardTitle(id)
+          g.draw(Text(verbatim: title.count * 5 > Int(r.width) ? title.prefix(fit) + "…" : title).font(.system(size: 8.5)), at: CGPoint(x: r.midX, y: r.midY))
         }
       }
     }
@@ -330,7 +332,7 @@ struct VersionTreeView: View {
           Text("ノートを読み込めませんでした: \(error)").font(.caption).foregroundStyle(.red)
         }
         if let canvas = session.versionCanvases[c.id], !canvas.cards.isEmpty {
-          VersionMiniMap(canvas: canvas, changed: c.changedList)
+          VersionMiniMap(canvas: canvas, changed: c.changedList, cardTitle: { versionCardTitle($0, commit: c.id) })
         }
       }
       .font(.callout)
@@ -436,11 +438,17 @@ struct VersionTreeView: View {
             .font(.caption).foregroundStyle(Self.stateColor(last.state))
         }
         if !c.changedList.isEmpty {
-          Text(Self.changedText(c.changedList)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+          Text(Self.changedText(c.changedList.map { versionCardTitle($0, commit: c.id) })).font(.caption).foregroundStyle(.secondary).lineLimit(1)
         }
       }
     }
     .padding(.horizontal, 8)
+  }
+
+  /// The clean head is the version whose README files are available in this session.
+  private func versionCardTitle(_ card: String, commit: String) -> String {
+    guard let graph = session.versionGraph, graph.head == commit, !graph.dirty, !session.dirty, !card.isEmpty else { return card }
+    return session.displayPath(path(card))
   }
 
   static func changedText(_ changed: [String]) -> String {
@@ -468,17 +476,17 @@ struct VersionTreeView: View {
           LabeledContent("版", value: String(c.id.prefix(12))).font(.caption.monospaced())
           LabeledContent("作成", value: Date(timeIntervalSince1970: Double(c.time ?? 0) / 1000).formatted(date: .abbreviated, time: .shortened))
             .font(.caption)
-          if !c.changedList.isEmpty { Text(Self.changedText(c.changedList)).font(.caption) }
+          if !c.changedList.isEmpty { Text(Self.changedText(c.changedList.map { versionCardTitle($0, commit: c.id) })).font(.caption) }
           if !(session.versionComments[c.id] ?? []).isEmpty {
             Text("コメント").font(.subheadline.weight(.semibold))
             ForEach(Array((session.versionComments[c.id] ?? []).enumerated()), id: \.offset) { _, x in
               VStack(alignment: .leading, spacing: 1) {
-                Text(verbatim: "\(x.card) · \(CardComment.change(x.change, by: x.by))").foregroundStyle(.secondary)
+                Text(verbatim: "\(versionCardTitle(x.card, commit: c.id)) · \(CardComment.change(x.change, by: x.by))").foregroundStyle(.secondary)
                 Text(verbatim: x.text).textSelection(.enabled)
                 if let line = x.resolution, !line.isEmpty {
                   Text(verbatim: line).foregroundStyle(.secondary).textSelection(.enabled)
                 }
-                let changed = x.cards.compactMap { $0 }
+                let changed = x.cards.compactMap { $0 }.map { versionCardTitle($0, commit: c.id) }
                 if !changed.isEmpty {
                   Text("変更した Card: \(changed.joined(separator: "、"))").foregroundStyle(.secondary).textSelection(.enabled)
                 }

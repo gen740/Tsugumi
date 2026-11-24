@@ -7,6 +7,7 @@
 #include <set>
 #include <sstream>
 
+#include "tsugumi/document/document.hh"
 #include "tsugumi/document/input_schema.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/json_object.hh"
@@ -616,6 +617,11 @@ CatalogResult parse_catalog(const std::string& fbs_text,
   }
   for (const auto* field : fields) {
     if (field->value.type.base_type == flatbuffers::BASE_TYPE_UTYPE) continue;
+    if (!valid_name(field->name)) {
+      r.errors.push_back(filename + ": output port " + field->name +
+                         " must match [a-z][a-z0-9_]{0,63}");
+      continue;
+    }
     PortType port;
     port.name = field->name;
     port.required = field->IsRequired();

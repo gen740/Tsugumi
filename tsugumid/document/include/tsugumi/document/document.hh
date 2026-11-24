@@ -57,7 +57,7 @@ inline constexpr uint64_t kMaxLogLimitBytes = uint64_t{1} << 30;
 inline constexpr uint64_t kDefaultOutputLimitBytes = uint64_t{64} << 30;
 inline constexpr uint64_t kDefaultOutputLimitEntries = 1000;
 
-// definitions/<id>/: _card.json, and the optional README.md and
+// definitions/<id>/: required _card.json and README.md, and optional
 // _comments.json.
 struct DefinitionDoc {
   std::string card_buffer;  // _card.json as a FlatBuffer
@@ -109,10 +109,16 @@ struct Document {
 using DocumentPtr = std::shared_ptr<const Document>;
 
 bool valid_id(const std::string& id);
-// A Card secret name, which is also its environment variable's name:
-// [a-z][a-z0-9_]{0,63}. Lower case never collides with PATH, HOME, LANG or the
-// TSUGUMI_* variables a worker sets.
-bool valid_secret_name(std::string_view name);
+// The one rule for Card ids, port names (inputs, outputs, boundary ports) and
+// Card secret names: [a-z][a-z0-9_]{0,63}. Ids name folders (APFS is case
+// insensitive; a leading '.' hides a folder), port names become FlatBuffers
+// namespaces and Nix attribute names, and lower-case secret names never collide
+// with PATH, HOME, LANG or the TSUGUMI_* variables a worker sets.
+bool valid_name(std::string_view name);
+
+// The project file format this Tsugumi reads and writes (tsugumi.json
+// formatVersion). It changes only when the project file format changes.
+inline constexpr uint32_t kProjectFormatVersion = 1;
 
 class DocumentError : public std::runtime_error {
  public:
@@ -125,8 +131,12 @@ class DocumentError : public std::runtime_error {
   std::map<std::string, std::string> args;
 };
 
-// The initial tsugumi.json, available before a project daemon exists.
-auto initial_project_json(const std::string& name) -> std::string;
+// The initial tsugumi.json, available before a project daemon exists. It
+// writes every value (there are no built-in defaults); agent_exclude is the
+// host's project default.
+auto initial_project_json(const std::string& name,
+                          const std::vector<std::string>& agent_exclude)
+    -> std::string;
 
 // A parsed document: its buffer and its canonical text.
 struct ParsedDocument {
@@ -140,8 +150,8 @@ auto parse_project_json(const std::string& text) -> ParsedDocument;
 auto parse_project_lock(const std::string& path, const std::string& text)
     -> ParsedDocument;
 auto valid_nix_path_name(std::string_view name) -> bool;
-auto parse_card_json(const std::string& id, const std::string& text)
-    -> ParsedDocument;
+auto parse_card_json(const std::string& id, const std::string& text,
+                     const std::string& path = {}) -> ParsedDocument;
 auto parse_comments_json(const std::string& rel, const std::string& text)
     -> ParsedDocument;
 // Checks a README.md (see readme.hh).

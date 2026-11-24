@@ -51,25 +51,11 @@ auto artifact_id(const ::tsugumi::ArtifactId& id) -> ArtifactKey {
   return {reinterpret_cast<const char*>(id.bytes()->data()), id.bytes()->size()};
 }
 
-auto artifact_ids(const ArtifactIdVector* ids) -> std::vector<ArtifactKey> {
-  std::vector<ArtifactKey> result;
-  if (ids)
-    for (const auto* id : *ids) result.push_back(artifact_id(*id));
-  return result;
-}
-
 auto artifact_struct(const ArtifactKey& id) -> ::tsugumi::ArtifactId {
   if (id.size() != 16)
     throw Failed(FailureKind::internal_error, "an artifact id is not 16 bytes");
   return ::tsugumi::ArtifactId(flatbuffers::span<const uint8_t, 16>(
       reinterpret_cast<const uint8_t*>(id.data()), id.size()));
-}
-
-auto artifact_ids(FBB& b, std::span<const ArtifactKey> ids) -> Off<ArtifactIdVector> {
-  std::vector<::tsugumi::ArtifactId> encoded;
-  encoded.reserve(ids.size());
-  for (const auto& id : ids) encoded.push_back(artifact_struct(id));
-  return b.CreateVectorOfStructs(encoded);
 }
 
 }  // namespace wire

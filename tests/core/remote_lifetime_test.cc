@@ -19,6 +19,7 @@
 #include "journal.hh"
 #include "remote_execution_service.hh"
 #include "service.hh"
+#include "test_document.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 
@@ -230,8 +231,10 @@ TEST_F(JournalBroker, InterruptedCleanupKeepsUncollectedInputsResultsAndLogs) {
   ServiceOptions options;
   options.root = root / "project";
   std::filesystem::create_directories(options.root);
-  fs::write_atomic(options.root / "tsugumi.json",
-                   R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
+  fs::write_atomic(
+      options.root / "tsugumi.json",
+      test::project_json(
+          R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})"));
   options.scratch_dir = root / "scratch";
   options.run_scratch_dir = root / "outputs";
   Service current(options);

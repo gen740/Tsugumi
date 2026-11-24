@@ -1,4 +1,5 @@
 ---
+title: horizon
 description: A late measurement loses details
 ---
 

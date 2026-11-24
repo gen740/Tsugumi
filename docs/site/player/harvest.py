@@ -36,12 +36,15 @@ os.environ.setdefault("TSUGUMI_PY_BINDINGS", str(BUILD / "generated" / "python")
 sys.path.insert(0, str(ROOT / "tests" / "core"))
 
 from harness.daemon import Daemon  # noqa: E402
+from harness.views import ZERO_ROUTE  # noqa: E402
 from projects import start_run, wait_run  # noqa: E402
 from tsugumi_client import RpcFailure, path, text  # noqa: E402
 from Tsugumi.Data.CardState import CardState  # noqa: E402
 from Tsugumi.Data.Phase import Phase  # noqa: E402
 from Tsugumi.Data.RunState import RunState  # noqa: E402
 from Tsugumi.Data.StageOutcome import StageOutcome  # noqa: E402
+from Tsugumi.RPC.NotificationPayload import NotificationPayload  # noqa: E402
+from Tsugumi.Trace.Client import Client  # noqa: E402
 
 OUT = ROOT / "docs" / "site" / "player-data" / "assets"
 STATE = {v: k for k, v in vars(CardState).items() if not k.startswith("_")}
@@ -72,7 +75,7 @@ def project_copy(demo: str, tmp: Path, sandbox: bool) -> Path:
         for f in dst.rglob("definitions/*/_card.json"):
             card = json.loads(f.read_text())
             if card.get("type") == "code":
-                card["sandbox"] = {"filesystem": False, "pid": False, "ipc": False, "identity": False}
+                card["sandbox"].update(filesystem=False, pid=False, ipc=False, identity=False)
                 f.write_text(json.dumps(card))
     return dst
 
@@ -86,9 +89,8 @@ def card_paths(root: Path, prefix: list[str] | None = None) -> list[list[str]]:
         cid = c["id"]
         out.append([*prefix, cid])
         definition = root / "definitions" / cid / "_card.json"
-        ext = json.loads(definition.read_text()).get("external") if definition.exists() else None
-        if ext:
-            out += card_paths(root / "externals" / ext, [*prefix, cid])
+        if json.loads(definition.read_text())["type"] == "subgraph":
+            out += card_paths(root / "externals" / cid, [*prefix, cid])
     return out
 
 
@@ -103,6 +105,25 @@ def invocations(c, run_id: str, card: list[str]) -> list:
             return out
 
 
+def send_seed(c, subscription: str, timeout: float) -> None:
+    """Choose the Live Stream starting value as a click on the seed view would."""
+    opened = c.wait_notification(
+        lambda event: event.valueType == NotificationPayload.ViewOpened
+        and text(event.value.name) == "seed",
+        timeout=timeout,
+    ).value
+    session = text(opened.session)
+    ready = c.wait_notification(
+        lambda event: event.valueType == NotificationPayload.DisplayUpdated
+        and text(event.value.display.session) == session
+        and bytes(event.value.display.bytes) == b"\x01",
+        timeout=timeout,
+    ).value.display
+    c.call("ViewCreditRequest", subscriptionId=subscription, session=session,
+           bytes=1, creditId=ready.creditId)
+    c.call("ViewSendRequest", session=session, route=ZERO_ROUTE, bytes=b"\x0a")
+
+
 def harvest(demo: str, tmp: Path, sandbox: bool, timeout: float) -> dict:
     root = project_copy(demo, tmp, sandbox)
     graph_id = subprocess.check_output(
@@ -111,8 +132,15 @@ def harvest(demo: str, tmp: Path, sandbox: bool, timeout: float) -> dict:
     daemon = Daemon(root).start()
     began = time.time()
     try:
-        c = daemon.connect()
-        run_id = start_run(c, ["start"], concurrency=4)
+        c = daemon.connect(client=Client.Web)
+        snapshot = c.call("ProjectInspectRequest")
+        trigger = next(text(d.id) for d in snapshot.definitions
+                       if json.loads(text(d.cardJson))["type"] == "trigger")
+        if demo == "live-stream":
+            subscription = text(c.open().subscriptionId)
+        run_id = start_run(c, [trigger], concurrency=4)
+        if demo == "live-stream":
+            send_seed(c, subscription, timeout)
         status = wait_run(c, run_id, timeout=timeout)
         if status.state != RunState.succeeded:
             state = RUN.get(status.state, str(status.state))

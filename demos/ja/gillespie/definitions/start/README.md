@@ -1,3 +1,4 @@
 ---
-description: 反応の速さと体積（settings）から計算を始める
+title: start
+description: 各シミュレーションをそれぞれのパラメータで実行する
 ---

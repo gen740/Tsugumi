@@ -1,3 +1,4 @@
+import { validName } from './names'
 // Output ports read from an `_outputs.fbs` text that is being edited, for
 // the Card preview. The core remains the authority (it resolves the types
 // on apply); this only reads the port catalog's shape: the root table's
@@ -42,7 +43,7 @@ export function parseOutputCatalog(text: string): OutputCatalogResult {
     if (!field) continue
     const colon = field.indexOf(':')
     const parts = colon < 0 ? [field] : [field.slice(0, colon).trim(), field.slice(colon + 1).trim()].filter((p) => p !== '')
-    if (parts.length !== 2 || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(parts[0])) return { error: L('フィールドを読めません: {0}', field) }
+    if (parts.length !== 2 || !validName(parts[0])) return { error: L('フィールドを読めません: {0}', field) }
     const typeAndAttrs = parts[1]
     const type = typeAndAttrs.split('(')[0].trim()
     if (!type) return { error: L('型がありません: {0}', parts[0]) }

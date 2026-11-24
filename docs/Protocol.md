@@ -440,19 +440,11 @@ No fields.
 
 | Request | Response | Description |
 | --- | --- | --- |
-| [`ViewSetVisible`](#viewsetvisible) | Ack | Replaces the subscription's Display targets. enabled = true. |
 | [`ViewSave`](#viewsave) | ViewSaveResult | CAS on view_rev only. |
-| [`CardViewRead`](#cardviewread) | FileContent | Read a page of the file of one view declaration: entry `index` (required) of the Card's views list, as CardViewsUpdated last sent it. `name` must be that entry's name, so a read made against a list that has since changed fails with not_found instead of serving another declaration. Names may repeat; the core never chooses between declarations by name. Only declared regular files that resolve inside the Nix store are served, read from one open descriptor, and their bytes are relayed without being interpreted. Neither RPC trace records these requests or their replies. FileContent.name is the view name and hash is the declared store path, which names immutable content. offset defaults to 0 and limit_bytes to 1 MiB (1..1048576). |
-| [`ViewSend`](#viewsend) | Ack | Send opaque bytes from an open view to its Card process. With no live Card process the bytes are dropped and the reply is still Ack. |
+| [`CardViewRead`](#cardviewread) | FileContent | Read a page of the immutable view file pinned by the open session. Only its presenting subscription may read it. FileContent.name is the declared view name and hash is the Nix store path. offset defaults to 0 and limit_bytes defaults to 1 MiB (1..1048576). This RPC is transient. |
+| [`ViewSend`](#viewsend) | Ack | Send opaque bytes to one route in the sending window. The all-zero route selects the opener's route. Messages to a dead route are dropped. |
 | [`ViewCredit`](#viewcredit) | Ack | Return display capacity after the UI forwards or discards a message. |
-
-### ViewSetVisible
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `subscription_id` | `string` | yes |  |
-| `cards` | `[CardPath]` | yes |  |
-| `enabled` | `bool` |  |  |
+| [`ViewClose`](#viewclose) | Ack | Close a view owned by this subscription. Each live route receives one close event. Repeating a completed close has no effect. |
 
 ### ViewSave
 
@@ -466,18 +458,16 @@ No fields.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `card` | `CardPath` | yes |  |
-| `name` | `string` | yes |  |
+| `session` | `string` | yes |  |
 | `offset` | `uint64` |  |  |
 | `limit_bytes` | `uint32` |  |  |
-| `index` | `uint32` |  |  |
 
 ### ViewSend
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `card` | `CardPath` | yes |  |
-| `view` | `string` | yes |  |
+| `session` | `string` | yes |  |
+| `route` | `string` | yes |  |
 | `bytes` | `[ubyte]` | yes |  |
 
 ### ViewCredit
@@ -485,10 +475,15 @@ No fields.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `subscription_id` | `string` | yes |  |
-| `card` | `CardPath` | yes |  |
-| `view` | `string` | yes |  |
+| `session` | `string` | yes |  |
 | `bytes` | `uint32` |  |  |
 | `credit_id` | `uint64` |  |  |
+
+### ViewClose
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `session` | `string` | yes |  |
 
 ## Versions
 
@@ -570,7 +565,15 @@ Sent from `tsugumid` to connected clients.
 - `LogAvailable`
 - `TraceChanged`
 - `RunCategoryDeleteResult`
-- `CardViewsUpdated`
+- `ViewOpened`
+- `ViewRouteRegistered`
+
+Card views open through the Card ABI. The presenting subscription receives
+`ViewOpened` before any `DisplayUpdated` for the session and owns the
+file reads, sends, credits and close. `ViewRouteRegistered` binds a route
+to a session for the lifetime of the window. Session and route IDs use canonical
+UUID text. The all-zero route selects the opening Card’s route. View RPCs
+and notifications are excluded from RPC traces.
 
 ### Run events
 
@@ -644,7 +647,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `SignInActionRequest` | `profile: string` (required), `attempt_id: string`, `action: string` (required), `client_id: string` |
 | `SignInStatusRequest` | `profile: string` (required), `attempt_id: string` |
 | `ExecutionServicesRequest` | None |
-| `ExecutionServicePutRequest` | `id: string` (required), `name: string` (required), `endpoint: string` (required), `worker_public_key: string` (required), `verify: bool`, `grade: ulong` |
+| `ExecutionServicePutRequest` | `id: string` (required), `name: string` (required), `endpoint: string` (required), `worker_public_key: string` (required), `verify: bool`, `worker_capabilities: [ubyte]` (required) |
 | `ExecutionServiceRemoveRequest` | `id: string` (required) |
 | `ExecutionProjectAuthorizeRequest` | `project_id: string` (required), `path: string` (required), `control_dir: string` (required), `guest: bool` |
 | `ExecutionProjectRevokeRequest` | `project_id: string` (required) |

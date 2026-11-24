@@ -137,7 +137,13 @@ TEST_F(HostProjectsFixture,
 TEST_F(HostProjectsFixture,
        CopiesDemosAndProjectsWithoutStateAndWithWritableFiles) {
   const auto source = directory.path / "demos/ja/sample";
-  Write(source / "tsugumi.json", R"({"name":"Sample"})");
+  Write(
+      source / "tsugumi.json",
+      FixtureProjectDocument(
+          R"({"name":"Sample","canvas":{"cards":[{"id":"card"}],"connections":[]}})"));
+  Write(source / "definitions/card/_card.json",
+        R"({"type":"draft","symbol":"pencil.and.outline"})");
+  Write(source / "definitions/card/README.md", host::CardReadme("card"));
   Write(source / "definitions/card/src/main.py", "print('sample')");
   Write(source / ".tsugumi/history", "private run");
   Write(source / "nested/.tsugumi/state", "private nested state");

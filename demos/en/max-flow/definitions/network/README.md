@@ -1,4 +1,5 @@
 ---
+title: network
 description: Make a made-up network
 ---
 

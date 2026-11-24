@@ -25,7 +25,7 @@ macOS uses the native Darwin daemon and worker. No app, foreground interaction,
 VM controller or shared Linux VM is needed. Linux needs the sandbox facilities
 and dependencies described in [building](../../docs/INSTALL.md#building-from-source).
 Run as an ordinary user on a disk-backed filesystem. The generated benchmark
-Cards use default filesystem isolation on both paths, and `recordIO: true` so
+Cards use default filesystem isolation on both paths, and `recordIO: "on"` so
 that their declared `metrics` output can be read back.
 Only the resident scenario sets `reuseWorker: true`.
 

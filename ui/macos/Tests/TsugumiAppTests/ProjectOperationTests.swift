@@ -21,11 +21,11 @@ import TsugumiTestSupport
 
   private func session() throws -> (ProjectSession, URL) {
     let dir = try directory()
-    try Data("{}".utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
+    try Data(fixtureProjectJSON().utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
     let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
     session.prepareLayout = { _, layout, _ in layout }
     let snapshot = Tsugumi_RPC_ProjectSnapshotT()
-    snapshot.rev = 0; snapshot.projectJson = #"{"name":"old","canvas":{"cards":[],"connections":[]}}"#
+    snapshot.rev = 0; snapshot.projectJson = fixtureProjectJSON(#"{"name":"old","canvas":{"cards":[],"connections":[]}}"#)
     snapshot.layout = []
     snapshot.run = Tsugumi_RPC_RunStatusT()
     session.receiveProjectSnapshot(snapshot, projectId: "p")
@@ -35,7 +35,7 @@ import TsugumiTestSupport
   private func delta(_ base: UInt64, _ id: String, _ name: String) -> Tsugumi_RPC_DocumentDeltaT {
     let delta = Tsugumi_RPC_DocumentDeltaT()
     delta.baseRev = base; delta.rev = base + 1; delta.opId = id; delta.origin = "ui"
-    delta.projectJson = #"{"name":"\#(name)","canvas":{"cards":[],"connections":[]}}"#
+    delta.projectJson = fixtureProjectJSON(#"{"name":"\#(name)","canvas":{"cards":[],"connections":[]}}"#)
     return delta
   }
 
@@ -119,8 +119,8 @@ import TsugumiTestSupport
     let (session, dir) = try session()
     defer { try? FileManager.default.removeItem(at: dir) }
     let snapshot = Tsugumi_RPC_ProjectSnapshotT()
-    snapshot.rev = 0; snapshot.projectJson = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#; snapshot.layout = []
-    let definition = Tsugumi_RPC_DefinitionT(); definition.id = "a"; definition.cardJson = #"{"type":"draft"}"#
+    snapshot.rev = 0; snapshot.projectJson = fixtureProjectJSON(#"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#); snapshot.layout = []
+    let definition = Tsugumi_RPC_DefinitionT(); definition.id = "a"; definition.cardJson = fixtureCardJSON(.draft)
     snapshot.definitions = [definition]
     let source = Tsugumi_RPC_SourceInfoT(); source.path = "definitions/a/data.bin"; source.hash = "selected-hash"; source.sizeBytes = 3
     snapshot.sources = [source]
@@ -147,46 +147,15 @@ import TsugumiTestSupport
     calls.continuation.finish()
   }
 
-  @Test func draftInputPresetPreservesExistingSchema() async throws {
-    let (session, dir) = try session()
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let snapshot = Tsugumi_RPC_ProjectSnapshotT()
-    snapshot.projectJson = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#
-    snapshot.layout = []
-    let definition = Tsugumi_RPC_DefinitionT()
-    definition.id = "a"; definition.cardJson = #"{"type":"draft"}"#
-    snapshot.definitions = [definition]
-    let schema = Tsugumi_RPC_SourceInfoT()
-    schema.path = "definitions/a/_outputs.fbs"; schema.hash = "custom"; schema.sizeBytes = 32
-    snapshot.sources = [schema]
-    session.receiveProjectSnapshot(snapshot, projectId: "p")
-    session.operateProject = { request in
-      let body = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
-      let puts = body.edits.compactMap { $0?.value?.value as? Tsugumi_Host_ProjectFilePutT }
-      #expect(puts.map(\.filePath) == ["definitions/a/params.nix"])
-      #expect(puts.first.map { String(decoding: $0.bytes, as: UTF8.self) } == "{ value = false; }\n")
-      #expect(!body.edits.contains { $0?.value?.type == .projectfileremove })
-      let saved = self.delta(0, request.opId, "saved")
-      saved.projectJson = snapshot.projectJson
-      return self.result(saved)
-    }
-    let editor = CardEditorModel(session: session, cardKey: "a")
-    editor.implementAs("input")
-    editor.implementAs("input_bool")
-    #expect(editor.kind == .input)
-    #expect(await editor.apply())
-    #expect(session.sources[schema.path]?.hash == "custom")
-  }
-
   @Test func parameterAndDraftKeepTheirSelectedValues() async throws {
     let (session, dir) = try session()
     defer { try? FileManager.default.removeItem(at: dir) }
     let snapshot = Tsugumi_RPC_ProjectSnapshotT()
-    snapshot.rev = 0; snapshot.projectJson = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#; snapshot.layout = []
+    snapshot.rev = 0; snapshot.projectJson = fixtureProjectJSON(#"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#); snapshot.layout = []
     let definition = Tsugumi_RPC_DefinitionT(); definition.id = "a"
-    definition.cardJson = #"{"type":"input"}"#
+    definition.cardJson = fixtureCardJSON(.code)
     snapshot.resolution = [resolvedParameter(["a"], 1)]
-    definition.readme = "before"
+    definition.readme = Documents.printReadme(title: "a", description: "", body: "before")
     snapshot.definitions = [definition]
     session.receiveProjectSnapshot(snapshot, projectId: "p")
     let edit = InlineParamEdit(); edit.begin("1", rev: 0)
@@ -195,9 +164,9 @@ import TsugumiTestSupport
     session.inlineDraft?.content = "mine"
     let other = delta(0, "agent", "old"); other.projectJson = nil; other.origin = "agent"
     let changed = Tsugumi_RPC_DefinitionT(); changed.id = "a"
-    changed.cardJson = #"{"type":"input"}"#
+    changed.cardJson = fixtureCardJSON(.code)
     other.resolution = [resolvedParameter(["a"], 2)]
-    changed.readme = "---\ndescription: unrelated\n---\n\nagent"
+    changed.readme = "---\ntitle: a\ndescription: unrelated\n---\n\nagent"
     other.definitionsUpsert = [changed]; session.applyDelta(other)
     // The replies keep the documents: the Card under edit stays on the canvas.
     func unchanged(_ id: String) -> Tsugumi_RPC_DocumentDeltaT {
@@ -222,11 +191,12 @@ import TsugumiTestSupport
       let body = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
       let edit = try #require(body.edits[0]?.value?.value as? Tsugumi_Host_ProjectJSONEditT)
       let before = try JSONValue.parse(try #require(edit.oldValue.json))
-      let readme = Documents.parseReadme(try #require(before.string))
+      let selected = try #require(before.string)
+      let readme = try #require(Documents.parseReadme(selected))
       draftBases.append(readme.body)
       if readme.body != "agent" { throw RPCFailure(kind: .valueConflict, diagnostic: "") }
       let after = try JSONValue.parse(try #require(edit.newValue.json))
-      #expect(Documents.parseReadme(try #require(after.string)).description == "unrelated")
+      #expect(Documents.parseReadme(try #require(after.string))?.description == "unrelated")
       return self.result(unchanged(request.opId))
     }
     _ = await session.finishDraftEdit()
@@ -354,16 +324,16 @@ import TsugumiTestSupport
       let (session, dir) = try session()
       defer { try? FileManager.default.removeItem(at: dir) }
       let prefix = "externals/sub/"
-      let project = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#
+      let project = fixtureProjectJSON(#"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#)
       let snapshot = Tsugumi_RPC_ProjectSnapshotT(); snapshot.rev = 0
-      snapshot.projectJson = #"{"canvas":{"cards":[{"id":"sub"}],"connections":[]}}"#; snapshot.layout = []
-      let link = Tsugumi_RPC_DefinitionT(); link.id = "sub"; link.cardJson = #"{"type":"subgraph","external":"sub"}"#
+      snapshot.projectJson = fixtureProjectJSON(#"{"canvas":{"cards":[{"id":"sub"}],"connections":[]}}"#); snapshot.layout = []
+      let link = Tsugumi_RPC_DefinitionT(); link.id = "sub"; link.cardJson = #"{"type":"subgraph","symbol":"link"}"#
       snapshot.definitions = [link]
       func source(_ file: String, _ text: String) -> Tsugumi_RPC_SourceInfoT {
         let value = Tsugumi_RPC_SourceInfoT(); value.path = prefix + file; value.document = Array(text.utf8)
         return value
       }
-      snapshot.sources = [source("tsugumi.json", project), source("definitions/a/_card.json", #"{"type":"input"}"#)]
+      snapshot.sources = [source("tsugumi.json", project), source("definitions/a/_card.json", fixtureCardJSON(.code))]
       session.receiveProjectSnapshot(snapshot, projectId: "p")
       var calls = 0
       session.operateProject = { request in
@@ -425,7 +395,7 @@ extension ProjectOperationTests {
             d.sourcesUpsert = [note]
           }
         } else {
-          let def = Tsugumi_RPC_DefinitionT(); def.id = "a"; def.cardJson = #"{"type":"draft"}"#; def.commentsJson = document(text).serialized()
+          let def = Tsugumi_RPC_DefinitionT(); def.id = "a"; def.cardJson = fixtureCardJSON(.draft); def.commentsJson = document(text).serialized()
           d.definitionsUpsert = [def]
         }
         return d
@@ -470,7 +440,7 @@ extension ProjectOperationTests {
       let (s, dir) = try session()
       defer { try? FileManager.default.removeItem(at: dir) }
       let snapshot = Tsugumi_RPC_ProjectSnapshotT()
-      snapshot.rev = 0; snapshot.projectJson = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#; snapshot.layout = []
+      snapshot.rev = 0; snapshot.projectJson = fixtureProjectJSON(#"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#); snapshot.layout = []
       let definition = Tsugumi_RPC_DefinitionT(); definition.id = "a"; definition.cardJson = #"{"type":"draft","symbol":"before"}"#
       let file = "definitions/a/data.bin"
       let info = Tsugumi_RPC_SourceInfoT(); info.path = file; info.hash = "before"; info.sizeBytes = 1
@@ -529,7 +499,7 @@ extension ProjectOperationTests {
       if body.expectedRev != s.rev { throw RPCFailure(kind: .revisionConflict, diagnostic: "") }
       #expect(body.documents.first??.path == "definitions/a/_card.json")
       let d = self.delta(s.rev, request.opId, "saved")
-      let def = Tsugumi_RPC_DefinitionT(); def.id = "a"; def.cardJson = #"{"type":"draft"}"#
+      let def = Tsugumi_RPC_DefinitionT(); def.id = "a"; def.cardJson = fixtureCardJSON(.draft)
       d.definitionsUpsert = [def]
       return self.result(d)
     }
@@ -555,11 +525,11 @@ extension ProjectOperationTests {
       defer { try? FileManager.default.removeItem(at: dir) }
       func changed(_ n: Int, _ id: String) -> Tsugumi_RPC_DocumentDeltaT {
         let d = delta(s.rev, id, "old")
-        d.projectJson = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#
+        d.projectJson = fixtureProjectJSON(#"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#)
         let def = Tsugumi_RPC_DefinitionT(); def.id = "a"
-        def.cardJson = #"{"type":"input"}"#
+        def.cardJson = fixtureCardJSON(.code)
         d.resolution = [resolvedParameter(["a"], n)]
-        def.readme = "---\ndescription: unrelated\n---\n\n\(n)"
+        def.readme = "---\ntitle: a\ndescription: unrelated\n---\n\n\(n)"
         d.definitionsUpsert = [def]
         return d
       }
@@ -575,9 +545,10 @@ extension ProjectOperationTests {
           let body = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
           let json = try #require(body.edits[0]?.value?.value as? Tsugumi_Host_ProjectJSONEditT)
           let before = try JSONValue.parse(try #require(json.oldValue.json))
-          guardValue = Documents.parseReadme(try #require(before.string)).body
+          let selected = try #require(before.string)
+          guardValue = try #require(Documents.parseReadme(selected)).body
           let written = try JSONValue.parse(try #require(json.newValue.json))
-          #expect(Documents.parseReadme(try #require(written.string)).description == "unrelated")
+          #expect(Documents.parseReadme(try #require(written.string))?.description == "unrelated")
         } else {
           let body = try #require(request.body?.value as? Tsugumi_Host_ProjectRewriteParamLiteralT)
           guardValue = String(try #require(body.expectedRev))
@@ -585,7 +556,7 @@ extension ProjectOperationTests {
         guards.append(guardValue)
         if guardValue != (draft ? String(actual) : String(s.rev)) { throw RPCFailure(kind: .revisionConflict, diagnostic: "") }
         let d = changed(3, request.opId)
-        if draft { d.definitionsUpsert[0]?.readme = "---\ndescription: unrelated\n---\n\nmine" }
+        if draft { d.definitionsUpsert[0]?.readme = "---\ntitle: a\ndescription: unrelated\n---\n\nmine" }
         return self.result(d)
       }
       func save(_ overwrite: Bool) async -> Bool {
@@ -612,7 +583,7 @@ extension ProjectOperationTests {
        "notes":[{"id":"note","x":100,"y":300},{"id":"other","x":3000,"y":300}],
        "displays":{"b":{"x":400,"y":400,"width":300,"height":200},"c":{"x":400,"y":400,"width":300,"height":200,"hidden":true}}}
       """
-    let s = try offlineSession(dir, cards: ["a", "b", "c"].map { ($0, #"{"type":"draft"}"#) }, layout: initial)
+    let s = try offlineSession(dir, cards: ["a", "b", "c"].map { ($0, fixtureCardJSON(.draft)) }, layout: initial)
     let marquee = CGRect(x: -100, y: -100, width: 1000, height: 1000)
     let items = s.marqueeItems(marquee, in: [])
     #expect(items.cards == ["a"] && items.notes == ["note"])
@@ -651,7 +622,7 @@ extension ProjectOperationTests {
       #expect(delete.action == .delete)
       #expect(delete.cards == ["a"] && delete.notes == ["note"])
       let d = self.delta(s.rev, request.opId, "unused")
-      d.projectJson = #"{"canvas":{"cards":[{"id":"b"},{"id":"c"}],"connections":[]}}"#
+      d.projectJson = fixtureProjectJSON(#"{"canvas":{"cards":[{"id":"b"},{"id":"c"}],"connections":[]}}"#)
       d.layoutChanged = true; d.layout = fixtureLayout(#"{"cards":{"b":{"x":3000,"y":0}}}"#)
       d.definitionsRemoved = ["a"]
       return self.result(d, inverse: Tsugumi_Host_ProjectEditsT())
@@ -675,13 +646,13 @@ extension ProjectOperationTests {
     let dir = try directory()
     defer { try? FileManager.default.removeItem(at: dir) }
     let layout = #"{"cards":{"a":{"x":700,"y":500}},"groups":[{"id":"group","cards":["a","b"]}]}"#
-    let s = try offlineSession(dir, cards: [("a", #"{"type":"code"}"#), ("b", #"{"type":"draft"}"#)], layout: layout)
+    let s = try offlineSession(dir, cards: [("a", fixtureCardJSON(.code)), ("b", fixtureCardJSON(.draft))], layout: layout)
     let renamed = delta(0, "rename", "unused")
     renamed.projectJson = nil; renamed.origin = "agent"
     let definition = Tsugumi_RPC_DefinitionT()
-    definition.id = "a"; definition.cardJson = #"{"type":"code"}"#; definition.readme = "---\ndescription: same description\n---\n"
+    definition.id = "a"; definition.cardJson = fixtureCardJSON(.code); definition.readme = "---\ntitle: a\ndescription: same description\n---\n"
     let other = Tsugumi_RPC_DefinitionT()
-    other.id = "b"; other.cardJson = #"{"type":"draft"}"#; other.readme = definition.readme
+    other.id = "b"; other.cardJson = fixtureCardJSON(.draft); other.readme = Documents.printReadme(title: "b", description: "same description", body: "")
     renamed.definitionsUpsert = [definition, other]
     let resolved = Tsugumi_RPC_ResolvedCardT()
     resolved.card = cardPath(["a"])
@@ -695,13 +666,13 @@ extension ProjectOperationTests {
   @Test func helpersSavesAreDrawnByTheirOwnBirds() throws {
     let dir = try directory()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let s = try offlineSession(dir, cards: ["a", "b", "c"].map { ($0, #"{"type":"code"}"#) })
+    let s = try offlineSession(dir, cards: ["a", "b", "c"].map { ($0, fixtureCardJSON(.code)) })
     s.startHelpers([(name: "first", cards: ["a"]), (name: "second", cards: ["b"])])
     let saved = delta(0, "helper save", "unused")
     saved.origin = "agent"; saved.projectJson = nil
     saved.definitionsUpsert = ["b", "c"].map { id in
       let definition = Tsugumi_RPC_DefinitionT()
-      definition.id = id; definition.cardJson = #"{"type":"code","maxRuns":3}"#
+      definition.id = id; definition.cardJson = fixtureCardJSON(.code, [("maxRuns", .int(3))])
       return definition
     }
     s.applyDelta(saved)
@@ -716,14 +687,14 @@ extension ProjectOperationTests {
   @Test func commentEditsStayOnTheirCardAndReopeningClearsTheResolution() async throws {
     let dir = try directory()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let s = try offlineSession(dir, cards: [("plan", #"{"type":"draft"}"#)])
+    let s = try offlineSession(dir, cards: [("plan", fixtureCardJSON(.draft))])
     s.referenceIdProvider = { _, _, _ in "comment" }
     s.operateProject = { request in
       let edits = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
       let edit = try #require(edits.edits.first??.value?.value as? Tsugumi_Host_ProjectJSONEditT)
       #expect(edit.filePath == "definitions/plan/_comments.json")
       let definition = Tsugumi_RPC_DefinitionT()
-      definition.id = "plan"; definition.cardJson = #"{"type":"draft"}"#; definition.commentsJson = edit.newValue.json
+      definition.id = "plan"; definition.cardJson = fixtureCardJSON(.draft); definition.commentsJson = edit.newValue.json
       let d = self.delta(s.rev, request.opId, "unused")
       d.projectJson = nil; d.definitionsUpsert = [definition]
       return self.result(d, inverse: Tsugumi_Host_ProjectEditsT())
@@ -738,7 +709,7 @@ extension ProjectOperationTests {
     let resolved = delta(s.rev, "agent", "unused")
     resolved.projectJson = nil; resolved.origin = "agent"
     let definition = Tsugumi_RPC_DefinitionT()
-    definition.id = "plan"; definition.cardJson = #"{"type":"draft"}"#
+    definition.id = "plan"; definition.cardJson = fixtureCardJSON(.draft)
     definition.commentsJson = #"{"comments":[{"id":"comment","author":"user","text":"Check units","resolved":true,"state_by":"agent","resolution":"Checked","cards":["a"]}]}"#
     resolved.definitionsUpsert = [definition]
     s.applyDelta(resolved)
@@ -766,7 +737,7 @@ extension ProjectOperationTests {
     s.cardIdProvider = { name, _ in name }
     s.operateProject = { request in
       let d = self.delta(s.rev, request.opId, "draft")
-      d.projectJson = #"{"canvas":{"cards":[{"id":"draft"}],"connections":[]}}"#
+      d.projectJson = fixtureProjectJSON(#"{"canvas":{"cards":[{"id":"draft"}],"connections":[]}}"#)
       return self.result(d, inverse: Tsugumi_Host_ProjectEditsT())
     }
     let tab = WorkflowTab(scope: [])
@@ -800,7 +771,7 @@ extension ProjectOperationTests {
       placements.append(add.automaticPlacement)
       let d = self.delta(s.rev, request.opId, "unused")
       let cards = add.automaticPlacement ? #"{"id":"auto"}"# : #"{"id":"auto"},{"id":"drop"}"#
-      d.projectJson = #"{"canvas":{"cards":[\#(cards)],"connections":[]}}"#
+      d.projectJson = fixtureProjectJSON(#"{"canvas":{"cards":[\#(cards)],"connections":[]}}"#)
       if !add.automaticPlacement {
         d.layoutChanged = true; d.layout = fixtureLayout(#"{"cards":{"drop":{"x":4000,"y":4000}}}"#)
       }

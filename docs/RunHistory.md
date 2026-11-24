@@ -14,11 +14,11 @@ The RPC exposes `RunStatus.partial_run` and `RunStatus.uses_partial_result` in s
 2. Select an invocation when the Card ran more than once. Open **Ports** to inspect recorded values, **Log** to read its output and diagnostics, or **Info** to see its status and execution details.
 3. To keep structured values from future invocations, select **On** for **Record input and output values** under **Card settings → Ports**.
 
-## Set recording defaults
+## Set recording policy
 
-The project settings control what new invocations record. Stdout and stderr are recorded by default, up to 128 MiB combined per invocation. Set the limit in bytes from 0 through 1 GiB. A zero limit leaves stdout and stderr available only while the run is active. Build logs and journals keep their own limits.
+The project settings control what new invocations record. Project creation writes `recordLogs: true` and a combined `logLimitBytes` of 128 MiB per invocation. Set the limit in bytes from 0 through 1 GiB. A zero limit leaves stdout and stderr available only while the run is active. Build logs and journals keep their own limits.
 
-Structured input and output value recording is off by default. What a Card sends to its views is never recorded ([Views](CardGuide.md#views)). A Card can inherit each setting from its project or explicitly set it on or off. Each nested project uses its own settings. A run keeps the policy accepted when it started, along with its summary, failure details, timings and versions.
+Project creation writes `recordIO: false`. What a Card sends to its views is never recorded ([Views](CardGuide.md#views)). Where a Card supports recording, it writes `project` to inherit the setting or `on` or `off` to override it. Each nested project uses its own settings. A run keeps the policy accepted when it started, along with its summary, failure details, timings and versions.
 
 For example, open **Visualization → report**, run it, and inspect a figure Card's input and output. A stopped or failed invocation can have a log and status even when there is no output.
 
@@ -49,10 +49,16 @@ The list uses the original history record. Configured cache endpoints, where rec
 ## Keep and open artifacts
 
 Open **Artifacts** for a Card and select a run. Preview or export the files in
-an artifact directory. Created artifacts are sealed at call completion and kept
-under `.tsugumi/artifacts/<run-id>/`. Store-backed Input Card artifacts point
-to immutable Nix store directories. Forwarded IDs can refer to an earlier
-run's artifact. Run deletion removes artifacts owned by the deleted run.
+an artifact directory. Created artifacts are sealed at call completion.
+The UUID gives access to a sealed artifact within the project, including artifacts
+created in earlier runs. The label next to it shows the invocation sequence and
+artifact counter. The Artifacts view lists runs with at least one available artifact for the selected Card.
+
+A Card may create an artifact without KEEP for intermediate data. Later Cards
+can open it during the same run. At run end, including recovery of an interrupted
+run, its directory and database row are removed. A recorded value keeps its
+original UUID and shows the artifact as unavailable. A rerun that tries to open
+that UUID fails because its artifact is unavailable.
 
 ## Follow evidence from chat
 
@@ -64,14 +70,20 @@ Run records are written directly to `.tsugumi/runs.sqlite`. Copy the whole proje
 
 If the history format is incompatible, close the project and move `.tsugumi/runs.sqlite` and its SQLite sidecars together to a location you choose before reopening. Tsugumi leaves the database untouched and has no archive/recovery command.
 
-In a Card's **Run History**, use **Delete Records…** to remove selected logs
-or recorded values. Project Run History can delete complete runs, including
+In a Card's **Run History**, use **Delete Records…** to remove a finished run's
+logs, recorded values or artifacts. Deleting a category preserves the run summary.
+Deleting the Artifacts category removes the run's artifact directories and their
+database rows. Values that contain their UUIDs show them as unavailable. Project Run History can delete complete runs, including
 their owned artifact directories. Build cache removal and scratch cleanup
 are separate actions. Scratch and runs remain until a person deletes them.
 See [build and scratch space](Usage.md#manage-build-and-scratch-space).
 
 ## History storage
 
-The primary database is `.tsugumi/runs.sqlite`; created artifacts live under `.tsugumi/artifacts/<run-id>/`. The database records artifact IDs and locations, size and sealed tree hash. Recorded port values and saved inputs retain artifact IDs. TODO(open): How artifact management relates to the old file-recording category.
+The primary database is `.tsugumi/runs.sqlite`. Created artifacts live under
+`.tsugumi/artifacts/<run>/<card path>/@<invocation index>/<counter>/`. The database
+maps UUIDs to their location, KEEP flag, size and sealed tree hash. Run History
+can show IDs found by schema reflection in recorded values. IDs hidden in
+opaque data, including Collect members and Any values, can still be opened by UUID.
 
 [Storage paths and deletion controls](security.md#8-where-data-is-kept-and-how-to-delete-it).

@@ -42,7 +42,7 @@ struct CardDatabaseView: View {
         List(ids, id: \.self, selection: $selected) { id in
           let def = session.definitions[id]
           HStack {
-            Image(systemName: definitionKind(def).symbol).foregroundStyle(.secondary).frame(width: 16)
+            Image(systemName: definitionIcon(def)).foregroundStyle(.secondary).frame(width: 16)
             VStack(alignment: .leading) {
               Text(session.displayName(key([id])))
               Text(definitionKind(def).label + (session.unplacedDefinitions.contains(id) ? String(localized: " · 未配置") : ""))
@@ -302,48 +302,55 @@ private struct GeneralProjectSettings: View {
   let session: ProjectSession
   @State private var selectedProject: JSONValue = .object([])
   @State private var name = ""
-  @State private var versionPaths = ""
+  @State private var trackedPaths = ""
   @State private var agentExclude = ""
   @State private var recording: [String: Bool] = [:]
-  @State private var logLimit = ""
-  private let recordingDefaults = ["recordLogs": true, "recordIO": false]
+  @State private var limits: [String: String] = [:]
+  private let recordingKeys = ["recordLogs", "recordIO"]
+  private let limitFields: [(key: String, label: LocalizedStringKey, max: UInt64)] = [
+    ("logLimitBytes", "呼び出しごとのログ上限（バイト）", 1073741824),
+    ("outputLimitBytes", "出力の保存上限（バイト）", .max),
+    ("outputLimitEntries", "出力の保存件数上限", .max),
+  ]
 
   private func recordingValues(_ project: JSONValue) -> [String: Bool] {
-    Dictionary(uniqueKeysWithValues: recordingDefaults.map { key, fallback in
-      (key, project[key]?.bool ?? fallback)
+    Dictionary(uniqueKeysWithValues: recordingKeys.compactMap { key in
+      project[key]?.bool.map { (key, $0) }
     })
   }
 
-  private func logLimitValue(_ project: JSONValue) -> String {
-    project["logLimitBytes"]?.numberText ?? "134217728"
+  private func limitValues(_ project: JSONValue) -> [String: String] {
+    Dictionary(uniqueKeysWithValues: limitFields.map { ($0.key, project[$0.key]?.numberText ?? "") })
   }
 
-  private var validLogLimit: Bool {
-    guard let bytes = UInt64(logLimit), logLimit.utf8.allSatisfy({ (48...57).contains($0) }) else { return false }
-    return bytes <= 1073741824
+  private var validLimits: Bool {
+    limitFields.allSatisfy { field in
+      guard let text = limits[field.key], let value = UInt64(text),
+            text.utf8.allSatisfy({ (48...57).contains($0) }) else { return false }
+      return value <= field.max
+    }
   }
 
   private func recordingToggle(_ key: String, _ label: LocalizedStringKey) -> some View {
-    Toggle(label, isOn: Binding(get: { recording[key] ?? recordingDefaults[key] ?? false },
-                                 set: { recording[key] = $0 }))
+    Toggle(label, isOn: Binding(get: { recording[key] == true }, set: { recording[key] = $0 }))
   }
   private func excludeText(_ project: JSONValue) -> String {
-    (project["agentExclude"]?.array?.compactMap(\.string) ?? AppModel.shared.agentExcludeDefaults).joined(separator: "\n")
+    (project["agentExclude"]?.array?.compactMap(\.string) ?? []).joined(separator: "\n")
   }
   @State private var message: String?
   @State private var revisionEdit = RevisionEdit()
 
   var body: some View {
-    let savedPaths = (selectedProject["versionPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
-    let changed = name != (selectedProject["name"]?.string ?? "") || versionPaths != savedPaths || agentExclude != excludeText(selectedProject) || recording != recordingValues(selectedProject) || logLimit != logLimitValue(selectedProject)
+    let savedPaths = (selectedProject["trackedPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
+    let changed = name != (selectedProject["name"]?.string ?? "") || trackedPaths != savedPaths || agentExclude != excludeText(selectedProject) || recording != recordingValues(selectedProject) || limits != limitValues(selectedProject)
     VStack(alignment: .leading) {
       Form {
         TextField("プロジェクト名", text: $name)
         Section {
           LabeledContent {
-            TextEditor(text: $versionPaths).font(.system(.body, design: .monospaced)).frame(minHeight: 90)
+            TextEditor(text: $trackedPaths).font(.system(.body, design: .monospaced)).frame(minHeight: 90)
           } label: {
-            InfoHeader("版に含める追加パス", info: "定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。")
+            InfoHeader("Tsugumi の版に含める追加パス", info: "Tsugumi のプロジェクトの版に追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します。Git の追跡には影響しません。ワイルドカード、.tsugumi/、.git/、シンボリックリンクは指定できません。")
           }
         }
         Section {
@@ -357,22 +364,27 @@ private struct GeneralProjectSettings: View {
           Task { await session.setProjectTrust(trusted) }
         })) { InfoHeader("このプロジェクトを信頼する", info: "信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。") }
         .disabled(!session.trustedFolder.isEmpty)
-        Section("記録の既定値") {
+        Section {
           recordingToggle("recordLogs", "標準出力と標準エラーを記録")
           recordingToggle("recordIO", "入出力の値を記録")
-          TextField("呼び出しごとのログ上限（バイト）", text: $logLimit)
-          Text("0〜1073741824。0 の場合もログは実行中に表示されます。")
-            .font(.caption).foregroundStyle(validLogLimit ? Color.secondary : .red)
+          ForEach(limitFields.indices, id: \.self) { i in
+            let field = limitFields[i]
+            TextField(field.label, text: Binding(get: { limits[field.key] ?? "" }, set: { limits[field.key] = $0 }))
+              .help(field.key == "logLimitBytes" ? "0〜1073741824。0 の場合もログは実行中に表示されます。" : "")
+          }
+        } header: { Text("記録の既定値") } footer: {
+          Text("実行の要約は常に記録します。成果物は常に保存され、残すかどうかは Card が成果物を作るときに選びます。残さない成果物は実行の終了時に削除されます。").font(.caption).foregroundStyle(.secondary)
         }
         TrustedFoldersSettings()
         LabeledContent("場所", value: session.identity.url.path)
+        LabeledContent("ファイル形式", value: session.project["formatVersion"]?.numberText ?? "")
         NixPathSettings(session: session)
       }
       .formStyle(.grouped)
       RevisionEditNotice(edit: revisionEdit, text: {
-        (["name: \(name)", "versionPaths:\n\(versionPaths)", "agentExclude:\n\(agentExclude)"] +
+        (["name: \(name)", "trackedPaths:\n\(trackedPaths)", "agentExclude:\n\(agentExclude)"] +
           recording.sorted(by: { $0.key < $1.key }).map { "\($0.key): \($0.value)" } +
-          ["logLimitBytes: \(logLimit)"]).joined(separator: "\n")
+          limitFields.map { "\($0.key): \(limits[$0.key] ?? "")" }).joined(separator: "\n")
       }, overwrite: { Task { await save(overwrite: true) } }, reload: { load() })
         .padding(.horizontal, 12)
       HStack {
@@ -381,7 +393,7 @@ private struct GeneralProjectSettings: View {
         Button("保存") {
           Task { await save() }
         }
-        .disabled(!changed || !validLogLimit || revisionEdit.applying || !session.isEditable)
+        .disabled(!changed || !validLimits || revisionEdit.applying || !session.isEditable)
         .keyboardShortcut(.defaultAction)
       }
       .padding(12)
@@ -392,34 +404,37 @@ private struct GeneralProjectSettings: View {
   private func load() {
     selectedProject = session.project
     name = session.project["name"]?.string ?? ""
-    versionPaths = (session.project["versionPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
+    trackedPaths = (session.project["trackedPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
     agentExclude = excludeText(session.project)
     recording = recordingValues(session.project)
-    logLimit = logLimitValue(session.project)
+    limits = limitValues(session.project)
     revisionEdit.reload(session.rev)
   }
 
   private func save(overwrite: Bool = false) async {
-    guard validLogLimit, let bytes = UInt64(logLimit) else { return }
-    let sentRecording = recording, sentLogLimit = logLimit
-    let sentName = name, sentPaths = versionPaths, sentExclude = agentExclude
+    guard validLimits else { return }
+    let sentRecording = recording, sentLimits = limits
+    let sentName = name, sentPaths = trackedPaths, sentExclude = agentExclude
     let paths = sentPaths.components(separatedBy: .newlines).filter { !$0.isEmpty }
     let before = revisionEdit.jsonBase("tsugumi.json", initial: selectedProject, overwrite: overwrite)
     var after = before ?? .object([])
     if sentName != (selectedProject["name"]?.string ?? "") { after["name"] = .string(sentName) }
-    let originalPaths = (selectedProject["versionPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
-    if sentPaths != originalPaths { after["versionPaths"] = .array(paths.map { .string($0) }) }
+    let originalPaths = (selectedProject["trackedPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
+    if sentPaths != originalPaths { after["trackedPaths"] = .array(paths.map { .string($0) }) }
     if sentExclude != excludeText(selectedProject) { after["agentExclude"] = .array(sentExclude.components(separatedBy: .newlines).filter { !$0.isEmpty }.map { .string($0) }) }
     let savedRecording = recordingValues(selectedProject)
     for (key, value) in sentRecording where savedRecording[key] != value { after[key] = .bool(value) }
-    if sentLogLimit != logLimitValue(selectedProject) { after["logLimitBytes"] = .number(String(bytes)) }
+    let savedLimits = limitValues(selectedProject)
+    for (key, text) in sentLimits where text != savedLimits[key] {
+      if let value = UInt64(text) { after[key] = .number(String(value)) }
+    }
     if await revisionEdit.apply(session, { s in
       s.appendEdits([s.jsonEdit("tsugumi.json", old: before, new: after)])
     }) {
       selectedProject = after
       for (key, value) in recordingValues(after) where recording[key] == sentRecording[key] { recording[key] = value }
-      if logLimit == sentLogLimit { logLimit = logLimitValue(after) }
-      if versionPaths == sentPaths { versionPaths = paths.joined(separator: "\n") }
+      for (key, value) in limitValues(after) where limits[key] == sentLimits[key] { limits[key] = value }
+      if trackedPaths == sentPaths { trackedPaths = paths.joined(separator: "\n") }
       message = String(localized: "保存しました。")
     }
   }

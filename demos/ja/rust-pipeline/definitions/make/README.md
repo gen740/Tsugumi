@@ -1,3 +1,4 @@
 ---
+title: make
 description: Python で整数を作る
 ---

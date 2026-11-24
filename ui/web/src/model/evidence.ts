@@ -1,3 +1,4 @@
+import { validName } from './names'
 /** Project-local evidence addresses. Never accept hosts, project paths or arbitrary query fields. */
 export type Evidence = { kind: 'card' | 'run' | 'log' | 'artifact'; card?: string[]; run?: string; invocation?: bigint; stream?: 'stdout' | 'stderr' | 'build' | 'journal'; offset?: bigint; artifact?: string; member?: string; file?: string; lineStart?: number; lineEnd?: number }
 const runNumber = /^[1-9][0-9]{0,18}$/
@@ -8,7 +9,7 @@ export function parseEvidence(href: string): Evidence | undefined {
   if (!match) return
   const [, kind, address, query, fragment] = match
   const parts = address.split('/')
-  const card = (values: string[]) => values.length > 0 && values.every(v => /^[A-Za-z0-9_.-]+$/.test(v) && v !== '.' && v !== '..' && v.length <= 128)
+  const card = (values: string[]) => values.length > 0 && values.every(validName)
   try { if (query !== undefined) decodeURIComponent(query.replace(/\+/g, ' ')) } catch { return }
   const q = new URLSearchParams(query)
   if ([...q.keys()].some((k, i, all) => all.indexOf(k) !== i)) return
@@ -22,6 +23,12 @@ export function parseEvidence(href: string): Evidence | undefined {
     if (!Number.isSafeInteger(lineEnd) || lineStart < 1 || lineEnd < lineStart) return
     return { kind, card: parts, file, lineStart, lineEnd }
   }
+  if (kind === 'artifact') {
+    if (fragment !== undefined || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(address) || [...q.keys()].some(k => k !== 'path')) return
+    const member = q.get('path') ?? undefined
+    if (member !== undefined && (/[\\\x00-\x1f]/.test(member) || member.split('/').some(p => !p || p === '.' || p === '..'))) return
+    return { kind, artifact: address.toLowerCase(), member }
+  }
   const run = parts.shift()!
   if (!runNumber.test(run) || BigInt(run) > 9223372036854775807n) return
   if (parts.length && !card(parts)) return
@@ -30,12 +37,6 @@ export function parseEvidence(href: string): Evidence | undefined {
     return { kind, run, card: parts.length ? parts : undefined, invocation: uint(fragment ?? null) }
   }
   if (fragment !== undefined) return
-  if (kind === 'artifact') {
-    if (parts.length || [...q.keys()].some(k => !['id', 'path'].includes(k)) || !q.get('id')) return
-    const member = q.get('path') ?? undefined
-    if (member !== undefined && (!member || member.startsWith('/') || member.split('/').some(p => !p || p === '.' || p === '..'))) return
-    return { kind, run, artifact: q.get('id')!, member }
-  }
   if ([...q.keys()].some(k => !['invocation', 'stream', 'offset'].includes(k))) return
   const invocation = uint(q.get('invocation')), offset = uint(q.get('offset')) ?? 0n
   if (q.has('invocation') && (!parts.length || !invocation) || q.has('offset') && uint(q.get('offset')) === undefined) return
@@ -55,10 +56,10 @@ export interface EvidenceSource {
 export async function evidenceExists(target: Evidence, source: EvidenceSource): Promise<boolean> {
   try {
     if (target.kind === 'card') return source.cardExists(target.card!)
+    if (target.kind === 'artifact') return await source.artifactExists(target)
     if (!await source.runExists(target.run!)) return false
     if (target.card && !await source.recordExists(target.run!, target.card, target.invocation)) return false
     if (target.kind === 'log') return await source.logExists(target)
-    if (target.kind === 'artifact') return await source.artifactExists(target)
     return true
   } catch { return false }
 }

@@ -1,4 +1,5 @@
 ---
+title: load
 description: airway のカウントを読む
 ---
 

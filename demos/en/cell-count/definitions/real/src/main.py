@@ -21,20 +21,18 @@ def background(image, radius):
 
 def run(input: Input) -> Output:
     p = params
-    source = input.require("image")
-    image_file, = source.file.open().iterdir()
-    raw = imread(image_file).astype(np.float64)
+    raw = imread(p.image_file).astype(np.float64)
     image = raw / np.percentile(raw, 99.9)
-    clean = gaussian(image - background(image, p.backgroundRadius), sigma=p.sigma)
-    mask = remove_small_objects(ndi.binary_fill_holes(clean > threshold_otsu(clean)), max_size=p.minArea)
+    clean = gaussian(image - background(image, p.background_radius), sigma=p.sigma)
+    mask = remove_small_objects(ndi.binary_fill_holes(clean > threshold_otsu(clean)), max_size=p.min_area)
     plain = label(mask)
     distance = ndi.gaussian_filter(ndi.distance_transform_edt(mask), 1)
-    peaks = peak_local_max(distance, min_distance=p.minDistance, labels=plain, exclude_border=False)
+    peaks = peak_local_max(distance, min_distance=p.min_distance, labels=plain, exclude_border=False)
     markers = np.zeros(image.shape, dtype=np.int32)
     markers[tuple(peaks.T)] = np.arange(1, len(peaks) + 1)
     split = watershed(-distance, markers, mask=mask)
     areas = [r.area for r in regionprops(split)]
-    print(f"{raw.shape[1]} x {raw.shape[0]} px from {source.source.decode()}")
+    print(f"{raw.shape[1]} x {raw.shape[0]} px from {p.image_url}")
     print(f"threshold only {plain.max()} objects; watershed {split.max()} objects; median area {np.median(areas):.0f} px")
 
     fig, axes = plt.subplots(1, 2, figsize=(9, 5.2))

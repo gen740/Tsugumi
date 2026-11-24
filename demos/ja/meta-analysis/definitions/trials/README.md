@@ -1,4 +1,5 @@
 ---
+title: trials
 description: 13 試験の効果量を計算する
 ---
 

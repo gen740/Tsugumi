@@ -1,3 +1,4 @@
 ---
-description: 貼った SMILES（paste）を流して計算を始める
+title: start
+description: properties のパラメータで計算を始める
 ---

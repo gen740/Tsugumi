@@ -227,7 +227,7 @@ enum Shared {
     {
       "name": "project_edit",
       "mutating": true,
-      "description": "Apply guarded changes atomically; returns the save result. Structured selectors use field for object members or match for array keys; old_value/new_value use present to distinguish absence from a JSON value. Text replacement expects one match unless expected_matches is given. File put/remove/move use inspected hashes or missing flags. Examples: demo_read reference/cards.md.",
+      "description": "Apply guarded changes atomically; returns the save result. Structured selectors use field for object members or match for array keys; old_value/new_value use present to distinguish absence from a JSON value. Text replacement expects one match unless expected_matches is given. File put/remove/move use inspected hashes or missing flags. Moving a subgraph’s _card.json within its project also moves the child project. Examples: demo_read reference/cards.md.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -406,16 +406,20 @@ enum Shared {
             "type": "string"
           },
           "from_card": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
           },
           "from_port": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^([a-z][a-z0-9_]{0,63})?$"
           },
           "to_card": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
           },
           "to_port": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^([a-z][a-z0-9_]{0,63})?$"
           }
         },
         "required": [
@@ -430,7 +434,7 @@ enum Shared {
     {
       "name": "project_make_subgraph",
       "mutating": true,
-      "description": "Move Cards and their sources into a Card in Card atomically; returns the save result. Reserve id with card_id. project_path selects an external project; omitted means root.",
+      "description": "Move Cards and their sources atomically into the subgraph at externals/<id>/. Reserve id with card_id. project_path selects a child project; omitted means root.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -440,12 +444,14 @@ enum Shared {
           "cards": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,63}$"
             },
             "minItems": 1
           },
           "id": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
           }
         },
         "required": [
@@ -638,7 +644,7 @@ enum Shared {
   "draftRequest": {
     "root": "the root workflow",
     "child": "the child workflow {scope}",
-    "text": "Implement these Draft Cards in {where}, matching their description, content and existing connections, keeping their ids. Each implementation is one project_edit containing its definition, sources and every incoming, outgoing and boundary wire end rebound to a real port; ends on remaining Drafts stay empty. Preserve the existing README.md description and body, and fill an empty description in that edit. Read demo_read reference/cards.md and the SDK guide. Once the wired definition is saved, build its API locally with evaluate_nix using (import ./. { inherit params inputs; }).api and build: true. Then check them with project_validate, run the workflow once from its trigger Card and check each Card's result with run_record.\n{list}"
+    "text": "Implement these Draft Cards in {where}, matching their description, content and existing connections, keeping their ids. Each implementation is one project_edit containing its definition, sources and every incoming, outgoing and boundary wire end rebound to a real port; ends on remaining Drafts stay without a port. Preserve the existing README.md description and body, and fill an empty description in that edit. Read demo_read reference/cards.md and the SDK guide. Once the wired definition is saved, build its API locally with evaluate_nix using (import ./. { inherit params inputs; }).api and build: true. Then check them with project_validate, run the workflow once from its trigger Card and check each Card's result with run_record.\n{list}"
   },
   "commentRequest": {
     "text": "The user left comments on these Cards in {where}; do what they ask. By default the Card a comment is on changes, keeping its id and wiring; a comment may ask for new Cards or a split (project_edit for the Cards and connections in one atomic save). A Draft among them is implemented following its comments. Comments with finding=true are observations, not change requests. The save that does what a comment asks also resolves it: project_edit of the Card's _comments.json with that comment's \"resolved\": true and a one-line \"resolution\" in the user's language; Tsugumi records which Cards that save changed. How to write code Cards: demo_read reference/cards.md. Then check them with project_validate, run what changed once and check each result with run_record; a result that is not what its comment asks means the work is not done. A comment you cannot do stays open, with the reason in your reply.\n{list}"

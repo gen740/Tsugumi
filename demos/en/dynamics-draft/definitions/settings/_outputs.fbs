@@ -1,4 +1,0 @@
-namespace gallery;
-table Settings { size:ulong; seed:ulong; }
-table Outputs { config:Settings (required); }
-root_type Outputs;

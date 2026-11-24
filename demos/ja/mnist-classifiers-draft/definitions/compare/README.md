@@ -1,4 +1,5 @@
 ---
+title: compare
 description: 7 つの分類器を並べて比べる
 ---
 

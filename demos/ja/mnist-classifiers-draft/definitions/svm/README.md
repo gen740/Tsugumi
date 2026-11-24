@@ -1,4 +1,5 @@
 ---
+title: svm
 description: サポートベクターマシン（RBF）で数字を当てる
 ---
 

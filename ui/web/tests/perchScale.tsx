@@ -1,3 +1,4 @@
+import { projectFixture } from './documentFixture'
 import { cardIds } from './cardIds'
 // The Agent's bird beside a Card goes with the canvas's zoom, as the helpers' birds
 // do: at 39% a bird of 90 points stood over the Cards it was working on.
@@ -38,7 +39,7 @@ assert.equal(perchScale(undefined), 1)
 // The canvas around a Card says its zoom, where the guide looks for it from the Card.
 {
   const s = cardIds(new ProjectSession('/p', 'k', 'p'))
-  s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
+  s.project = parse(projectFixture({"name":"t","canvas":{"cards":[],"connections":[]}}))
   s.layout = parse('{}')
   const k = await s.addCard('trigger', [], { x: 0, y: 0 }, 'start')
   const tab = new WorkflowTab([])

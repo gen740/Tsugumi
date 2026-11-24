@@ -60,15 +60,14 @@ New artifacts are created in writable directories supplied by the worker. [Card 
 
 ## Artifact access
 
-Each invocation receives grants for the artifact IDs listed on its input
-envelopes. The SDK opens a granted artifact as a read-only directory.
-The returned path is scoped to the invocation. Forwarding an ID preserves
-the artifact's identity.
+A Card can open any sealed artifact of its project by UUID. The UUID is the
+capability. The returned read-only path is scoped to the invocation.
 
 The artifact store stays outside the sandbox. The worker supervisor creates
 a private invocation directory on the same filesystem and materializes
-granted inputs when the Card calls `artifact_open`. It recreates directory
-trees and hard-links their files on Linux, including in the shared VM.
+the requested tree when the Card calls `artifact_open`. It recreates directory
+trees and hard-links their files on Linux, including in the shared VM, with a copy
+fallback across filesystems.
 Bubblewrap mounts those inputs read-only. On native macOS the supervisor
 clones files, and Seatbelt denies writes and metadata changes to the inputs.
 The supervisor installs created outputs under
@@ -90,10 +89,10 @@ from the worker's private artifact directory. That directory is bound once,
 at a fixed path, into the worker's sandbox, so the removal takes the paths out
 of a resident's view without remounting, and the next call's directories
 appear in the same place. Descriptors opened during a call cannot be revoked:
-a leftover input descriptor only reads data that was granted, and a leftover
+a leftover input descriptor continues to read the artifact it opened, and a leftover
 output descriptor points at an inode the sealed artifact has superseded.
-Input Card artifacts retain their immutable Nix store paths. Remote workers stage grants and return newly
-created artifacts with the result. These access guarantees require filesystem
+Remote workers request sealed artifacts on demand and return newly created
+artifacts with the result. Artifacts made without KEEP expire at run end. These access guarantees require filesystem
 isolation.
 
 ## Grants
@@ -110,7 +109,7 @@ isolation.
 
 **Before P1 (`24fc2d2c`).**
 
-- `network` and `hostFolders` are set in `_card.json`. A host folder is mounted at `/host/<name>`, read-only by default ([Outside access](features.md#outside-access-experimental)).
+- `grants.network` and optional `grants.hostPaths` are set in `_card.json`. A host folder with `write: false` is mounted read-only at `/host/<name>`. See [Outside access](features.md#outside-access).
 - There is no GUI grant.
 - For a Card with the network, the worker passes on `SSL_CERT_FILE` and `NIX_SSL_CERT_FILE` from its own environment, which it inherits from its launcher (`workerd/src/worker_proc.cc`, `workerd/src/local_client.cc`).
 
@@ -157,7 +156,7 @@ These are facts about the code at `24fc2d2c`, kept for comparison with the contr
 | Kind | What it does |
 | --- | --- |
 | Linux native (bubblewrap) | Host paths bound at `/host/<name>`; network on or off; mount, PID, IPC and user namespaces, uid 65534; no CPU or memory limits, a deadline only; no GUI |
-| macOS native (Seatbelt) | `hostFolders` rejected. Network denied by default; when allowed, localhost and Unix sockets stay denied but the LAN is reachable. No path remapping and no PID or IPC namespaces. Reads of `/`, `/usr`, `/System` and `/private/etc` are allowed, and metadata of the whole host is visible. POSIX shared memory is allowed. No limits. Without the sandbox, a plain `exec` |
+| macOS native (Seatbelt) | `grants.hostPaths` is rejected. With `grants.network: false` the network is denied. With `grants.network: true` the LAN is reachable and localhost and Unix sockets stay denied. No path remapping and no PID or IPC namespaces. Reads of `/`, `/usr`, `/System` and `/private/etc` are allowed, and metadata of the whole host is visible. POSIX shared memory is allowed. No limits. Without the sandbox, a plain `exec` |
 | Shared VM (the Linux guest on a Mac) | Mac folders through virtiofs and bubblewrap; limits only for the whole VM; no display path to the Mac |
 | Remote (`tsugumi-workerd`) | Nested bubblewrap, uid 65534, cgroup v2 `cpu.max` / `memory.max`; no host paths; running without the sandbox and `reuseWorker` are rejected |
 

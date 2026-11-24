@@ -11,6 +11,7 @@ from harness.real_cards import log
 from projects import card, run_and_wait, start_run, wait_for_log, wait_run, write_nix_project as write
 from test_worker_loading import DIRECTORY, native_card
 from tsugumi_client import new_id, path, text
+from Tsugumi.Data.ArtifactState import ArtifactState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 
@@ -27,7 +28,7 @@ def test_library_initialization_observes_launch_environment_and_logs(core_factor
           puts("source started");
           fflush(stdout);
         }
-    ''', reuseWorker=True, recordIO=True)
+    ''', reuseWorker=True, recordIO="on")
     write(tmp_path / "p", {"show": definition}, [card("show", "show")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
     for reused in (False, True):
@@ -99,7 +100,7 @@ def test_successful_call_ignores_undeclared_special_entries(core_factory, tmp_pa
         const auto directory = fs::path(create_artifact(call, id));
         std::ofstream(directory / "result") << "safe";
         out.artifact(id);
-    ''', outputs=DIRECTORY, recordIO=True)
+    ''', outputs=DIRECTORY, recordIO="on")
     write(tmp_path / "p", {"copy": definition}, [card("copy", "copy")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
     run_id, state = run_and_wait(c, "copy")
@@ -180,7 +181,7 @@ def test_resident_work_is_persistent_and_temp_is_per_call(core_factory, tmp_path
         std::ofstream("count") << previous + 1;
         printf("paths=%s|%s\n", home, temporary);
         out.number(previous + 1);
-    ''', reuseWorker=True, recordIO=True)
+    ''', reuseWorker=True, recordIO="on")
     root = tmp_path / "p"
     write(root, {"work": definition}, [card("work", "work")], [])
     c = core_factory(project_root=root).connect()
@@ -196,18 +197,31 @@ def test_resident_work_is_persistent_and_temp_is_per_call(core_factory, tmp_path
         paths = seen
 
 
-@pytest.mark.parametrize("case", ["forged-id", "linked", "byte-budget", "entry-budget"])
+def test_output_id_the_call_did_not_create_is_an_unavailable_value(core_factory, tmp_path):
+    """An artifact id in an output is a value: the core records it as it is
+    and shows it as unavailable when nothing sealed is recorded under it."""
+    definition = native_card(r'''
+        tsugumi_artifact_id id{};
+        out.artifact(id);
+    ''', outputs=DIRECTORY, recordIO="on")
+    write(tmp_path / "p", {"work": definition}, [card("work", "work")], [])
+    c = core_factory(project_root=tmp_path / "p").connect()
+    run_id, state = run_and_wait(c, "work")
+    assert state.state == RunState.succeeded, log(c, run_id, "work", 2)
+    assert not c.call("ArtifactListRequest", runId=run_id, card=path("work")).artifacts
+    value, = c.call("RunRecordRequest", runId=run_id, card=path("work")).record.outputs
+    unavailable, = value.artifacts
+    assert text(unavailable.id) == "00000000-0000-0000-0000-000000000000"
+    assert unavailable.state == ArtifactState.unavailable
+
+
+@pytest.mark.parametrize("case", ["linked", "byte-budget", "entry-budget"])
 def test_local_output_boundary(core_factory, tmp_path, case):
     create = """
         tsugumi_artifact_id id;
         const auto directory = fs::path(create_artifact(call, id));
     """
-    if case == "forged-id":
-        body = r'''
-            tsugumi_artifact_id id{};
-            out.artifact(id);
-        '''
-    elif case == "linked":
+    if case == "linked":
         body = create + r'''
             std::ofstream("regular") << "inside";
             fs::create_symlink("regular", directory / "linked");

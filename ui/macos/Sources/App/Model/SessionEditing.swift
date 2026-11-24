@@ -5,13 +5,12 @@ import Foundation
 import TsugumiRPC
 
 /// What a Card is, for choosing what the canvas and the editor offer.
-/// `invalid`: its _card.json has no type or one this build does not know (or
-/// one that does not match `external`), a definition error the core reports.
+/// `invalid`: its _card.json has no type or one this build does not know.
 enum CardKind: String {
-  case trigger, input, merge, collect, draft, subgraph, code, invalid
+  case trigger, merge, collect, draft, subgraph, code, invalid
 
   /// The _card.json "type" names.
-  static let types: [CardKind] = [.trigger, .input, .merge, .collect, .draft, .subgraph, .code]
+  static let types: [CardKind] = [.trigger, .merge, .collect, .draft, .subgraph, .code]
 
   /// A kind by its _card.json "type" name (also VersionCanvasCard.kind, empty
   /// for a definition the daemon cannot read). Anything else is `invalid`: the
@@ -20,12 +19,14 @@ enum CardKind: String {
     types.first { $0.rawValue == name } ?? .invalid
   }
 
-  var editsValueOnCanvas: Bool { self == .input }
+  func displaySymbol(_ custom: String?) -> String {
+    guard self != .invalid, let custom, !custom.isEmpty, custom != "none" else { return symbol }
+    return custom
+  }
 
   var label: String {
     switch self {
     case .trigger: return String(localized: "開始")
-    case .input: return String(localized: "入力")
     case .merge: return String(localized: "合流")
     case .collect: return String(localized: "収集")
     case .draft: return "Draft"
@@ -38,7 +39,6 @@ enum CardKind: String {
   var symbol: String {
     switch self {
     case .trigger: return "play.circle"
-    case .input: return "slider.horizontal.3"
     case .merge: return "arrow.triangle.merge"
     case .collect: return "line.3.horizontal.decrease"
     case .draft: return "pencil.and.outline"
@@ -49,18 +49,19 @@ enum CardKind: String {
   }
 }
 
-/// What a _card.json says the Card is: its "type" (a subgraph exactly when it
-/// names an `external`). Without a definition, `invalid` as well.
+/// A Card’s kind comes from its _card.json type.
 func definitionKind(_ def: JSONValue?) -> CardKind {
-  let kind = CardKind.named(def?["type"]?.string)
-  return (kind == .subgraph) == (def?["external"] != nil) ? kind : .invalid
+  CardKind.named(def?["type"]?.string)
+}
+
+func definitionIcon(_ def: JSONValue?) -> String {
+  definitionKind(def).displaySymbol(def?["symbol"]?.string)
 }
 
 /// What a new Card starts from: a built-in Card or a scaffold. Every Card
 /// gets a definition folder of its own (definitions/<id>/).
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
-  case draft, trigger, input
-  case booleanInput = "input_bool"
+  case draft, trigger
   case merge, collect
 
   var id: String { rawValue }
@@ -68,8 +69,6 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     switch self {
     case .draft: .draft
     case .trigger: .trigger
-    case .input: .inputvalue
-    case .booleanInput: .booleaninput
     case .merge: .merge
     case .collect: .collect
     }
@@ -78,20 +77,17 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     switch self {
     case .draft: String(localized: "Draft")
     case .trigger: String(localized: "トリガー")
-    case .input: String(localized: "入力値")
-    case .booleanInput: String(localized: "真偽値の入力")
     case .merge: String(localized: "合流")
     case .collect: String(localized: "収集")
     }
   }
   var symbol: String {
-    (self == .booleanInput ? .input : CardKind(rawValue: rawValue) ?? .draft).symbol
+    (CardKind(rawValue: rawValue) ?? .draft).symbol
   }
   /// The human name used when creating a Card; the core generates its identifier.
   var baseName: String {
     switch self {
     case .trigger: "start"
-    case .booleanInput: "condition"
     default: rawValue
     }
   }
@@ -111,7 +107,7 @@ extension ProjectSession {
 
   /// The human name; exact addresses keep the permanent identifier.
   /// A Card's name: its id, the only name it has.
-  func displayName(_ k: CardKey) -> String { path(k).last ?? k }
+  func displayName(_ k: CardKey) -> String { cardMeta(k)?["title"]?.string ?? path(k).last ?? k }
 
   /// A human-readable path. Tools and evidence links use the original segments.
   func displayPath(_ segments: [String]) -> String {
@@ -181,6 +177,7 @@ extension ProjectSession {
       guard let rpc else { throw RPCError.disconnected }
       id = try await rpc.cardId(name: name, projectPath: prefix).id
     }
+    guard validName(id) else { throw RPCFailure(kind: .invalidPath, diagnostic: "Invalid Card id from allocator") }
     guard projectPrefix(scope) == prefix else { throw RPCFailure(kind: .invalidPath, diagnostic: "Card scope changed") }
     return id
   }
@@ -279,7 +276,7 @@ extension ProjectSession {
       for k in keys.sorted() {
         guard let old = path(k).last else { continue }
         let item = Tsugumi_Host_ProjectCopyItemT()
-        item.from = prefix + "definitions/\(old)/"; item.id = try await newCardId(displayName(k), in: scope)
+        item.from = prefix + "definitions/\(old)/"; item.id = try await newCardId(old, in: scope)
         items.append(item)
       }
       try await copyCards(items, in: scope, connections: true)
@@ -288,11 +285,6 @@ extension ProjectSession {
   }
 
   // MARK: - A Draft written on the canvas
-
-  /// Whether a Draft has no name of its own: its id is one made for it.
-  func draftUntitled(_ k: CardKey) -> Bool {
-    kind(k) == .draft && displayName(k) == "draft"
-  }
 
   /// Starts writing a Draft's content on its Card.
   func startDraftEdit(_ k: CardKey, revision existing: RevisionEdit? = nil) async {
@@ -337,10 +329,10 @@ extension ProjectSession {
     guard let dir = definitionDir(e.card) else { return nil }
     // The README.md as it was when writing began (or as the conflict found it).
     let before = e.revision.jsonBase(dir + "README.md", initial: e.initialReadme.map { .string($0) }, overwrite: overwrite)?.string
-    let readme = Documents.parseReadme(before ?? "")
-    let after = Documents.printReadme(description: readme.description, body: e.content)
+    guard let before, let readme = Documents.parseReadme(before) else { return nil }
+    let after = Documents.printReadme(title: readme.title, description: readme.description, body: e.content)
     let ok = await e.revision.apply(self) { s in
-      s.appendEdits([s.jsonEdit(dir + "README.md", old: before.map { .string($0) }, new: after.map { .string($0) })])
+      s.appendEdits([s.jsonEdit(dir + "README.md", old: .string(before), new: .string(after))])
     }
     if ok, inlineDraft?.revision === e.revision {
       if inlineDraft?.content == e.content { inlineDraft = nil }
@@ -355,6 +347,7 @@ extension ProjectSession {
 
   func connect(from: (CardKey, String), to: (CardKey, String), in scope: [String]) async throws {
     guard let fromId = path(from.0).last, let toId = path(to.0).last, let prefix = projectPrefix(scope), isEditable else { return }
+    guard validName(fromId), validName(toId), [from.1, to.1].allSatisfy({ $0.isEmpty || validName($0) }) else { return }
     let body = Tsugumi_Host_ProjectConnectT()
     body.projectPath = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     body.fromCard = fromId; body.fromPort = from.1; body.toCard = toId; body.toPort = to.1
@@ -598,14 +591,14 @@ extension ProjectSession {
       // Unnamed visual anchors locate Draft wires without declaring Card ports.
       c.inputs = ports(kind(k) == .draft ? [""] : g.inputs, output: false)
       c.outputs = ports(kind(k) == .draft ? [""] : g.outputs, output: true)
-      c.reorderable = [.code, .input, .subgraph].contains(kind(k))
+      c.reorderable = [.code, .subgraph].contains(kind(k))
       return c
     }
     scene.wires = connections(in: scope).compactMap { c in
-      guard let f = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
-            let t = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { return nil }
+      guard let from = c["from"]?["card"]?.string, let to = c["to"]?["card"]?.string else { return nil }
       let w = Tsugumi_Host_LayoutWireT()
-      w.from = f; w.fromPort = fp; w.to = t; w.toPort = tp
+      w.from = from; w.fromPort = c["from"]?["port"]?.string ?? ""
+      w.to = to; w.toPort = c["to"]?["port"]?.string ?? ""
       return w
     }
     scene.notes = notes(in: scope).compactMap { n in
@@ -618,9 +611,10 @@ extension ProjectSession {
     func bar(_ side: String) -> Tsugumi_Host_LayoutBarT? {
       guard !scope.isEmpty else { return nil }
       let b = Tsugumi_Host_LayoutBarT()
-      b.ends = (boundary(key(scope))?[side]?.object ?? []).map { name, endpoint in
+      b.ends = (boundary(key(scope))?[side]?.object ?? []).compactMap { name, endpoint in
+        guard let card = endpoint["card"]?.string, let port = endpoint["port"]?.string else { return nil }
         let e = Tsugumi_Host_LayoutBarEndT()
-        e.name = name; e.card = endpoint["card"]?.string ?? ""; e.port = endpoint["port"]?.string ?? ""
+        e.name = name; e.card = card; e.port = port
         return e
       }
       let at = boundaryPosition(scope, side)

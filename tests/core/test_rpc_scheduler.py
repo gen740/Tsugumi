@@ -18,7 +18,7 @@ TEXT = "table Text { value:string; } table Outputs { out:Text; } root_type Outpu
 
 def add_code(graph, directory, name, *, inputs=(), outputs=None, values=(), runs=None):
     packages = [native_card(directory / name, STATIC_RESULT_ENTRY, values)] if runs is None else runs
-    return graph.card(name, {"type": "code", "recordIO": True,
+    return graph.card(name, {"type": "code", "recordIO": "on",
                             "sandbox": {"filesystem": False},
                             "inputs": [{"name": name} for name in inputs]},
                       outputs=outputs or EMPTY,
@@ -93,7 +93,7 @@ def test_missing_output_skips_join_and_propagates(core_factory, project, tmp_pat
     add_code(graph, tmp_path, "join", inputs=["left", "right"], outputs=NUMBER)
     add_code(graph, tmp_path, "downstream", inputs=["in"])
     graph.card("merge", {"type": "merge", "inputs": [{"name": "in"}]})
-    graph.card("collect", {"type": "collect", "recordIO": True})
+    graph.card("collect", {"type": "collect", "recordIO": "on"})
     graph.connect("arrives", "out", "join", "left").connect("absent", "out", "join", "right")
     graph.connect("join", "out", "merge", "in").connect("merge", "out", "downstream", "in")
     graph.connect("merge", "out", "collect", "in").save(c)
@@ -124,7 +124,7 @@ def test_merge_forwards_heterogeneous_arrivals_unchanged(core_factory, project, 
     add_code(graph, tmp_path, "first", outputs=NUMBER, values=[("out", b"opaque number")])
     add_code(graph, tmp_path, "second", outputs=TEXT, values=[("out", b"opaque text")])
     add_code(graph, tmp_path, "absent", outputs=NUMBER)
-    graph.card("merge", {"type": "merge", "recordIO": True, "maxRuns": 3,
+    graph.card("merge", {"type": "merge", "recordIO": "on", "maxRuns": 3,
                          "inputs": [{"name": n} for n in ("a", "b", "c", "unwired")]})
     graph.connect("first", "out", "merge", "a").connect("second", "out", "merge", "b")
     graph.connect("absent", "out", "merge", "c").save(c)
@@ -153,7 +153,7 @@ def test_collect_keeps_only_members_that_emit_the_port(core_factory, project, tm
     ]
     graph.card("start", {"type": "trigger"})
     add_code(graph, tmp_path, "batch", outputs=NUMBER, runs=packages)
-    graph.card("collect", {"type": "collect", "recordIO": True})
+    graph.card("collect", {"type": "collect", "recordIO": "on"})
     graph.connect("batch", "out", "collect", "in").save(c)
 
     run, status = run_and_wait(c, "start")
@@ -182,7 +182,7 @@ def test_unwired_merge_skips_and_collect_emits_an_empty_value(core_factory, proj
     c = core_factory().connect()
     graph = Project(project).card("start", {"type": "trigger"})
     graph.card("merge", {"type": "merge", "inputs": [{"name": "unused"}]})
-    graph.card("collect", {"type": "collect", "recordIO": True})
+    graph.card("collect", {"type": "collect", "recordIO": "on"})
     graph.connect("merge", "out", "collect", "in").save(c)
 
     run, status = run_and_wait(c, "start")

@@ -103,7 +103,7 @@ struct InvocationSummaryData {
   std::optional<RemoteExecutionState> execution_state;
   std::optional<uint64_t> batch_activation;
   std::optional<uint32_t> batch_index, batch_size, implementation_index;
-  // A run list entry's label or an Input Card's swept values; "" for none.
+  // A run list entry's label; "" for none.
   std::string implementation_label;
   // Card secret names handed to the Card's process; never their values.
   std::vector<std::string> secrets;
@@ -144,7 +144,9 @@ struct ArtifactData {
   std::string run_id;
   CardPath card;
   uint64_t invocation = 0;
-  std::string origin;
+  uint64_t sequence = 0;
+  uint64_t counter = 0;
+  bool keep = true;
   std::string location;
   int64_t created_ms = 0;
   std::optional<int64_t> sealed_ms;

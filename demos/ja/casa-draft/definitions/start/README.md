@@ -1,3 +1,4 @@
 ---
+title: start
 description: 観測データの読み込み（load）を始める
 ---

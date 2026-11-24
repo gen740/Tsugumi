@@ -183,7 +183,8 @@ struct Export {
 
 using enum ValType;
 constexpr std::array kResult{I32};
-constexpr std::array kMessageParams{I32, I32};
+constexpr std::array kReadParams{I32, I32};
+constexpr std::array kSendParams{I32, I32, I32};
 const Export kAbi{"tsugumi_view_abi", {}};
 const Export kStart{"tsugumi_view_start", {I32, I32, I32, I32, I32, F32}};
 const Export kResize{"tsugumi_view_resize", {I32, I32, F32}};
@@ -412,8 +413,8 @@ auto message_import(void*, wasmtime_caller_t* caller,
                     size_t) -> wasm_trap_t* {
   try {
     auto& host = caller_host(caller);
-    const auto offset = static_cast<uint32_t>(args[0].of.i32);
-    const auto size = static_cast<uint32_t>(args[1].of.i32);
+    const auto offset = static_cast<uint32_t>(args[Read ? 0 : 1].of.i32);
+    const auto size = static_cast<uint32_t>(args[Read ? 1 : 2].of.i32);
     const auto memory = caller_memory(caller);
     results[0] = i32(-1);
     if (!in_bounds(memory, offset, size)) return nullptr;
@@ -424,8 +425,10 @@ auto message_import(void*, wasmtime_caller_t* caller,
         results[0] = i32(0);
       }
     } else if (size <= TSUGUMI_MESSAGE_MAX && host.send) {
+      const auto route = static_cast<uint32_t>(args[0].of.i32);
+      if (!in_bounds(memory, route, 16)) return nullptr;
       const auto* bytes = offset ? memory.base + offset : memory.base;
-      results[0] = i32(host.send(host.send_context, bytes, size));
+      results[0] = i32(host.send(host.send_context, memory.base + route, bytes, size));
     }
     return nullptr;
   } catch (const std::exception& error) {
@@ -482,9 +485,9 @@ auto tsugumi_view_host::load(const uint8_t* wasm, size_t size) -> void {
 
   // Link only the ABI's functions. Wasmtime rejects any unresolved import or
   // an import whose kind or signature differs from its definition.
-  define_import(linker.get(), "tsugumi", "tsugumi_view_read", kMessageParams,
+  define_import(linker.get(), "tsugumi", "tsugumi_view_read", kReadParams,
                 kResult, message_import<true>);
-  define_import(linker.get(), "tsugumi", "tsugumi_view_send", kMessageParams,
+  define_import(linker.get(), "tsugumi", "tsugumi_view_send", kSendParams,
                 kResult, message_import<false>);
   for (const auto& import : tsugumi::view::imports()) {
     define_import(linker.get(), "webgpu", import.name, import.params,
