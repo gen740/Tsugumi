@@ -20,7 +20,6 @@ await import("./environmentHost")
 await import("./chatStopped")
 await import("./chatInterrupted")
 await import("./folderAttachments")
-await import("./booleanInput")
 
 await import("./artifactHTML")
 

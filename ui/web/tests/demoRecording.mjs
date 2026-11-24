@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -9,10 +10,16 @@ const source = fileURLToPath(new URL('../../../demos/en/report/', import.meta.ur
 const assets = path.join(process.env.TSUGUMI_SITE_PLAYER_DIR, 'player-data', 'assets')
 const read = (file) => JSON.parse(fs.readFileSync(file, 'utf8'))
 const ports = read(path.join(assets, 'ports.json'))
-const recording = read(path.join(assets, 'report.run.json'))
+const player = fileURLToPath(new URL('../../../docs/site/player/build.mjs', import.meta.url))
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tsg-recording-'))
 try {
   fs.cpSync(source, root, { recursive: true })
+  // Use the recording's timeline with the current graph for this fixture.
+  // The archived recording keeps the graph it actually ran.
+  const recording = {
+    ...read(path.join(assets, 'report.run.json')),
+    graphId: execFileSync(process.execPath, [player, '--graph-id', root], { encoding: 'utf8' }).trim(),
+  }
   const build = () => buildDemo({ id: 'report' }, root, ports, {}, recording)
   assert.equal(build().run?.id, recording.run.id)
 
@@ -25,9 +32,7 @@ try {
   assert.equal(build().run?.id, recording.run.id, 'reordering the document keeps the same graph')
 
   const summary = edited.canvas.connections.find(({ to }) => to.card === 'render' && to.port === 'summary')
-  const config = edited.canvas.connections.find(({ to }) => to.card === 'render' && to.port === 'config')
-  summary.to.port = 'config'
-  config.to.port = 'summary'
+  summary.to.port = 'different'
   fs.writeFileSync(document, JSON.stringify(edited))
   let preview = build()
   assert.equal(preview.run, undefined, 'the same Cards wired to different ports do not replay the run')

@@ -1,7 +1,11 @@
 {
-  "type": "input",
+  "type": "code",
   "symbol": "slider.horizontal.3",
-  "inputs": [],
+  "inputs": [
+    {
+      "name": "start"
+    }
+  ],
   "maxRuns": 1,
   "reuseWorker": false,
   "timeoutSeconds": 0,

@@ -9,7 +9,7 @@
     "definitions": [
       {
         "id": "initial",
-        "card_json": "{\"type\": \"input\"}"
+        "card_json": "{\"type\": \"code\"}"
       }
     ],
     "sources": [

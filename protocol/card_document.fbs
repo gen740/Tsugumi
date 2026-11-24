@@ -9,7 +9,7 @@
 // load error. Scalars are declared `= null` so that the core can tell a
 // missing value from a written one. Whoever creates a Card writes every value.
 //
-//   code, input:  type symbol inputs maxRuns reuseWorker timeoutSeconds
+//   code:         type symbol inputs maxRuns reuseWorker timeoutSeconds
 //                 buildTimeoutSeconds recordLogs recordIO sandbox grants
 //                 systems workerCapabilities [secrets]
 //   merge:        type symbol inputs maxRuns recordIO
@@ -23,7 +23,6 @@ enum CardType:ubyte {
   code,
   draft,
   trigger,
-  input,
   merge,
   collect,
   subgraph,

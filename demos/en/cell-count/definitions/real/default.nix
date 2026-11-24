@@ -3,7 +3,10 @@ let
   pkgs = import <nixpkgs> { };
   sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
   common = {
-    inherit params;
+    params = params // {
+      image_file = toString inputs.mitosis.image;
+      image_url = inputs.mitosis.url;
+    };
     inputs = ./_inputs.fbs;
     outputs = ./_outputs.fbs;
   };

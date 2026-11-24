@@ -9,14 +9,14 @@ let cardSystems = ["aarch64-linux", "x86_64-linux", "aarch64-darwin", "x86_64-da
 /// Values written when converting a Draft in the editor.
 func implementedCard(_ kind: CardKind, symbol: String, systems: [String]) -> JSONValue {
   var definition: JSONValue = .object([("type", .string(kind.rawValue)), ("symbol", .string(symbol))])
-  if [.code, .input, .merge, .collect].contains(kind) {
+  if [.code, .merge, .collect].contains(kind) {
     definition["maxRuns"] = .number("1")
     definition["recordIO"] = .string(RecordSetting.project.rawValue)
   }
   if kind == .merge {
     definition["inputs"] = .array(["a", "b"].map { .object([("name", .string($0))]) })
   }
-  if kind == .code || kind == .input {
+  if kind == .code {
     definition["inputs"] = .array([])
     definition["reuseWorker"] = .bool(false)
     definition["timeoutSeconds"] = .number("0")

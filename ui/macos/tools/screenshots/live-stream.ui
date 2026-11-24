@@ -4,6 +4,7 @@ chat hide
 wait 2
 fit
 open visual plot
+open visual settings
 wait 2
 run
 wait 12

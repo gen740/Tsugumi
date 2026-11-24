@@ -37,7 +37,7 @@ for (const c of contract.ports) {
   const name = JSON.stringify({ ...c, in: undefined, out: undefined })
   const ports = (count: number) => Array.from({ length: count }, (_, i) => ({ name: `p${i}`, type: 'x' })) as unknown as CardNodeData['inputs']
   const g = new CardGeometry({
-    title: 'x', kind: c.kind, inputs: ports(c.inputs), outputs: ports(c.outputs), params: [], invocation: 0n, runContinues: false, errors: [], warnings: [],
+    title: 'x', kind: c.kind, inputs: ports(c.inputs), outputs: ports(c.outputs), invocation: 0n, runContinues: false, errors: [], warnings: [],
     collapsed: !!c.collapsed, summary: c.summary ? 's' : undefined, portGrid: c.grid ?? undefined,
   }, c.flow)
   assert.ok(Number.isFinite(g.size.width) && g.size.width > 0 && Number.isFinite(g.size.height) && g.size.height > 0)

@@ -268,7 +268,7 @@ import TsugumiTestSupport
   #expect(definitionKind(try JSONValue.parse(#"{"type":"invalid"}"#)) == .invalid, "not a type name")
 
   // The core's diagnostic (file and message) is what the Card says.
-  let missing = #"definitions/old/_card.json: "type" is required (one of code, draft, trigger, input, merge, collect, subgraph)"#
+  let missing = #"definitions/old/_card.json: "type" is required (one of code, draft, trigger, merge, collect, subgraph)"#
   let delta = Tsugumi_RPC_DocumentDeltaT()
   delta.baseRev = 0; delta.rev = 1; delta.origin = "agent"
   delta.resolution = ["old", "future", "plan", "step"].map { id in

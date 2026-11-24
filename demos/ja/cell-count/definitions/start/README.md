@@ -1,4 +1,0 @@
----
-title: start
-description: 合成画像と実画像の 2 系統（begin）に合図を送る
----

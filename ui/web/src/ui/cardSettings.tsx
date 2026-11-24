@@ -40,7 +40,6 @@ export type SourceLoad = { state: 'loading' } | { state: 'loaded' } | { state: '
  *  is open (the Agent, the canvas): settings and files not touched here take
  *  the new content; changes on both sides require an explicit overwrite or
  *  reload choice. */
-const inputParameters = (boolean: boolean) => `{ value = ${boolean ? 'false' : '0.0'}; }\n`
 
 export class CardEditorModel extends Observable {
   definition?: J
@@ -68,7 +67,6 @@ export class CardEditorModel extends Observable {
   private baseDefinition?: J
   private baseMeta?: J
   private baseTexts = new Map<string, string>()
-  private presetFiles = new Map<string, string>()
   /** Source hash when each file was read. */
   private baseHashes = new Map<string, string>()
 
@@ -126,38 +124,15 @@ export class CardEditorModel extends Observable {
     return ends
   }
 
-  get implementation() {
-    const kind = definitionKind(this.definition)
-    if (kind === 'input' && (this.presetFiles.get(this.prefix + 'params.nix') === inputParameters(true) ||
-      this.session.resolution.get(this.cardKey)?.parameters?.some(p => p.name === 'value' && p.type === 'bool'))) return 'input_bool'
-    return kind
-  }
+  get implementation() { return definitionKind(this.definition) }
 
   implementAs(value: string) {
-    const kind = value === 'input_bool' ? 'input' : value as keyof typeof KIND_ICON
+    const kind = value as keyof typeof KIND_ICON
     const native = s(this.session.executionServices.find(service => s(service.id) === 'local')?.nativeSystem)
     const symbol = str(get(this.definition, 'symbol')) ?? 'none'
     const system = native.replace(/-darwin$/, '-linux')
     this.definition = implementedCard(kind, symbol, CARD_SYSTEMS.includes(system) ? [system] : [])
-    if (kind === 'input') {
-      const type = value === 'input_bool' ? 'bool' : 'double'
-      this.preset('_outputs.fbs', `namespace card;\ntable Value { value:${type}; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n`)
-      this.preset('params.nix', inputParameters(value === 'input_bool'))
-    } else {
-      for (const [file, text] of this.presetFiles)
-        if (this.created.has(file) && this.texts.get(file) === text) this.removeFile(file)
-      this.presetFiles.clear()
-    }
     this.changed()
-  }
-
-  private preset(relative: string, text: string) {
-    const file = this.prefix + relative
-    if (!this.prefix || this.session.sources.has(file) || this.removed.has(file)) return
-    const untouched = this.created.has(file) && this.presetFiles.has(file) && this.texts.get(file) === this.presetFiles.get(file)
-    if (!untouched && (this.created.has(file) || this.texts.has(file))) return
-    this.createFile(relative, text)
-    this.presetFiles.set(file, text)
   }
 
   /** Source files of the definition (documents excluded), with local changes. */
@@ -189,7 +164,6 @@ export class CardEditorModel extends Observable {
     this.baseMeta = clone(this.meta)
     this.texts = new Map()
     this.baseTexts = new Map()
-    this.presetFiles.clear()
     this.baseHashes = new Map()
     this.loads = new Map()
     for (const [p, t] of keep) {
@@ -321,7 +295,6 @@ export class CardEditorModel extends Observable {
     const prefix = this.prefix
     if (!prefix || !rel) return
     const p = prefix + rel
-    if (!this.created.has(p)) this.presetFiles.delete(p)
     this.removed.delete(p)
     this.created.add(p)
     const hash = this.session.sources.get(p)?.hash
@@ -335,8 +308,6 @@ export class CardEditorModel extends Observable {
   async rename(p: string, rel: string): Promise<boolean> {
     const target = this.prefix + rel
     if (target === p) return true
-    this.presetFiles.delete(p)
-    this.presetFiles.delete(target)
     const origin = this.renames.get(p) ?? p
     const hash = this.baseHashes.get(p) ?? this.session.sources.get(origin)?.hash
     const text = this.texts.get(p), base = this.baseTexts.get(p), load = this.loads.get(p)
@@ -409,7 +380,7 @@ export class CardEditorModel extends Observable {
     const title = str(get(this.meta, 'title'))
     const secrets = arr(get(this.definition, 'secrets')) ?? []
     const definition = this.definition
-    const executable = this.kind === 'code' || this.kind === 'input'
+    const executable = this.kind === 'code'
     const hasMaxRuns = executable || this.kind === 'merge' || this.kind === 'collect'
     const limits = get(definition, 'sandbox', 'limits')
     const uint = (value: J | undefined, min = 0n, max = 18446744073709551615n) => {
@@ -517,7 +488,6 @@ export class CardEditorModel extends Observable {
 function categories(m: CardEditorModel): CardEditorCategory[] {
   switch (m.kind) {
     case 'code': return ['general', 'source', 'ports', 'log', 'dependencies', 'executions', 'artifacts', 'notes']
-    case 'input': return ['general', 'source', 'ports', 'log', 'executions', 'artifacts', 'notes']
     case 'draft': case 'invalid': return ['general', 'notes']
     case 'subgraph': return ['general', 'ports', 'executions', 'notes']
     default: return ['general', 'ports', 'log', 'executions', 'artifacts', 'notes']
@@ -683,7 +653,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
     </Row>
   )
   const kind = model.kind
-  const executable = kind === 'code' || kind === 'input'
+  const executable = kind === 'code'
   const hasMaxRuns = executable || kind === 'merge' || kind === 'collect'
   const params = kind === session.kind(model.cardKey) ? session.resolution.get(model.cardKey)?.parameters ?? [] : []
   const diags = session.diagnostics.filter(d => d.card?.join('/') === model.cardKey)
@@ -729,8 +699,8 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
       </Section>
       {model.session.kind(model.cardKey) === 'draft' && <Section title={L('Draft を手動で実装')} footer={L('定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。')}>
         <Row label={L('種類')}><Select value={model.implementation} onChange={v => model.implementAs(v)} options={
-          ['draft', 'code', 'input', 'input_bool', 'trigger', 'merge', 'collect']
-            .map(value => ({ value, label: value === 'input_bool' ? L('真偽値の入力') : value === 'code' ? L('コード') : value }))
+          ['draft', 'code', 'trigger', 'merge', 'collect']
+            .map(value => ({ value, label: value === 'code' ? L('コード') : value }))
         } /></Row>
       </Section>}
       {params.length > 0 && <Section title={L('パラメータ')}>
@@ -957,7 +927,7 @@ function ParamRow({ model, parameter }: { model: CardEditorModel; parameter: Car
 function PortsCategory({ model }: { model: CardEditorModel }) {
   const r = model.session.resolution.get(model.cardKey)
   const def = model.definition
-  const editable = def !== undefined && ['code', 'input', 'merge'].includes(model.kind)
+  const editable = def !== undefined && ['code', 'merge'].includes(model.kind)
   const inputs = arr(get(def, 'inputs')) ?? []
   const editInputs = (fn: (a: J[]) => void) => {
     const a = inputs.map((x) => clone(x))
@@ -997,10 +967,10 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
         )}
       </Section>
       <OutputPortsSection model={model} />
-      {['code', 'input', 'merge', 'collect'].includes(model.kind) && (
+      {['code', 'merge', 'collect'].includes(model.kind) && (
         <Section title={L('記録と成果物')}>
           {([
-            ...(['code', 'input'].includes(model.kind) ? [['recordLogs', L('標準出力と標準エラーを記録')]] : []),
+            ...(model.kind === 'code' ? [['recordLogs', L('標準出力と標準エラーを記録')]] : []),
             ['recordIO', L('入出力の値を記録')],
           ]).map(([key, label]) => (
             <Row key={key} label={label}>

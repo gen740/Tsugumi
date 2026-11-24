@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from harness.observations import decode_scalar
+from harness.real_cards import python_nix
 from projects import SINK, card, conn, run_and_wait, write, write_nix_project
 from tsugumi_client import RpcFailure, path, text
 from Tsugumi.Data.CardState import CardState
@@ -31,19 +32,15 @@ def test_direct_fanout_preserves_precise_numbers(tmp_path, core_factory):
     root = tmp_path / "p"
     write_nix_project(root,
           defs={"trigger": {"type": "trigger"},
-                "reading": {"type": "input",
+                "reading": {"type": "code",
                             "_params": '{ rate = 0.042169650342858; tiny = 1.0e-20; }',
-                            "_nix": """{ params, inputs }:
-let
-  pkgs = import <nixpkgs> { };
-  reading = pkgs.writeText "reading.json" (builtins.toJSON params);
-in {
-  run = pkgs.runCommand "reading-input" { nativeBuildInputs = [ pkgs.flatbuffers ]; } ''
-    mkdir -p "$out/share/tsugumi/input/ports"
-    flatc --binary --strict-json --root-type nums.Reading ${./_outputs.fbs} ${reading}
-    mv *-reading.bin "$out/share/tsugumi/input/ports/reading"
-  '';
-}""",
+                            "_nix": python_nix("""from card import Output, params
+from nums.Reading import ReadingT
+
+
+def run(input):
+    return Output(reading=ReadingT(rate=params.rate, tiny=params.tiny))
+"""),
                             "_outputs": """
 namespace nums;
 table Reading { rate:double; tiny:double; }

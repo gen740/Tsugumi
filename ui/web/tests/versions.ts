@@ -19,7 +19,7 @@ type CardNodeData = import('../src/model/canvasKit').CardNodeData
 function nodeData(kind: CardKind, fan: number): CardNodeData {
   const ports = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `p${i}` }))
   return {
-    title: 'c', kind, inputs: ports(kind === 'merge' ? fan : 1), outputs: ports(1), params: [],
+    title: 'c', kind, inputs: ports(kind === 'merge' ? fan : 1), outputs: ports(1),
     invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false,
   }
 }

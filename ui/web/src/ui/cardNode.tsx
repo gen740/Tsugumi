@@ -2,9 +2,9 @@
 // player, at the screen scale `zoom`:
 // fonts and spacing are multiplied by the zoom, so text stays sharp at any
 // zoom and the hit areas are the geometry's. Also the wire layer.
-import { CSSProperties, useEffect, useRef, useState } from 'react'
+import { CSSProperties, useEffect, useRef } from 'react'
 import {
-  Camera, CardGeometry, CardNodeData, currentStage, isRouting, ParamData, PortData, Pt, Rect, Stage, STAGE_INFO,
+  Camera, CardGeometry, CardNodeData, currentStage, isRouting, PortData, Pt, Rect, Stage, STAGE_INFO,
   NEW_PORT, STAGE_STATUS_LABEL, StageItem, StageProgress, StageStatus,
 } from '../model/canvasKit'
 import { BoundaryPort, WireStyle } from '../model/canvas'
@@ -14,8 +14,6 @@ import { D } from '../wire/rpc'
 import { Icon } from './icons'
 import { permissionInfo } from '../model/permissions'
 import { L } from '../i18n'
-import { InlineParamEdit, RevisionEditNotice } from './revisionEdit'
-import { useObserve } from '../model/observable'
 
 // ---- Texts ------------------------------------------------------------------------
 
@@ -63,10 +61,6 @@ export interface CardNodeProps {
   selected?: boolean
   /** What the guide calls this Card when it points at it ("card:<id>"). */
   guide?: string
-  /** Committing an Input Card's param (undefined: read-only). */
-  onParamBegin?: () => bigint
-  onParamCommit?: (name: string, text: string, edit?: InlineParamEdit, overwrite?: boolean) => Promise<boolean> | void
-  paramsEditable?: boolean
   /** Pointer down on a port: start drawing a wire (from an output, or back from an input). */
   onPortDown?: (port: string, output: boolean, e: React.PointerEvent) => void
   draftEdit?: DraftEdit
@@ -242,12 +236,6 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
               style={{ fontSize: font(10), height: s(CardGeometry.summaryRow), padding: `0 ${s(10)}px`, color: data.kind === 'invalid' ? colorVar(cardState(D.CardState.failed).color) : undefined }}>{data.summary}</div>
           )}
           {flow === 'leftToRight' && <div style={{ height: s(g.portBand) }} />}
-          {data.params.map((param) => (
-            <div key={param.name} className="cv-param-row" style={{ height: s(CardGeometry.paramRow), padding: `0 ${s(10)}px` }}>
-              <ParamFieldView param={param} editable={!!p.onParamCommit && p.paramsEditable !== false} zoom={z}
-                revision={p.onParamBegin} commit={(t, edit, overwrite) => p.onParamCommit?.(param.name, t, edit, overwrite)} />
-            </div>
-          ))}
           {g.result && (
             <div className="cv-result secondary" style={{ height: s(CardGeometry.resultRow), padding: `0 ${s(10)}px`, gap: s(4) }}>
               <Icon name="text.below.photo" size={font(9)} />
@@ -401,74 +389,6 @@ export function StageStrip({ progress, zoom = 1, onTap, caption = '' }: { progre
         </span>
       )}
       <span className="secondary cv-ellipsis" style={{ fontSize: Math.max(6, s(9.5)), flex: 1, minWidth: 0 }}>{caption}</span>
-    </div>
-  )
-}
-
-// ---- Param field --------------------------------------------------------------------------
-
-/** A param shown on an input Card; committed on Return or focus loss. */
-export function ParamFieldView({ param, editable, zoom = 1, revision, commit }: { param: ParamData; editable: boolean; zoom?: number; revision?: () => bigint; commit: (text: string, edit: InlineParamEdit, overwrite: boolean) => Promise<boolean> | void }) {
-  const z = zoom
-  const [text, setText] = useState(param.value)
-  const [editing, setEditing] = useState(false)
-  const [edit] = useState(() => new InlineParamEdit())
-  useObserve(edit)
-  const liveText = useRef(text)
-  liveText.current = text
-  useEffect(() => {
-    if (!editing) setText(param.value)
-  }, [param.value, editing])
-  const begin = () => { edit.begin(param.value, revision?.() ?? 0n); setText(param.value); setEditing(true) }
-  const finish = async (cancel = false, overwrite = false) => {
-    if (!editing || edit.applying) return
-    if (cancel) { setEditing(false); setText(param.value); return }
-    const sent = text
-    if (text === edit.initial || await commit(sent, edit, overwrite) !== false) {
-      if (liveText.current === sent) setEditing(false)
-    }
-  }
-  return (
-    <div className="cv-param" style={{ gap: 6 * z }}>
-      <span className="secondary cv-ellipsis" style={{ fontSize: Math.max(6, 10 * z), flex: 'none', maxWidth: '45%' }}>{param.name}</span>
-      {param.type === 'bool' ? (
-        <label className="cv-param-bool" title={editable ? undefined : L('実行中は変更できません')}
-          onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
-          <input type="checkbox" aria-label={param.name} checked={param.value === 'true'} disabled={!editable || edit.applying} onChange={(e) => {
-            const value = e.target.checked ? 'true' : 'false'
-            edit.begin(param.value, revision?.() ?? 0n); setText(value); setEditing(true)
-            void Promise.resolve(commit(value, edit, false)).then(ok => { if (ok !== false) setEditing(false) })
-          }} />
-          <span className="cv-switch" style={{ width: 22 * z, height: 13 * z }} />
-        </label>
-      ) : (
-        // The value is drawn as text at the zoom; the field exists only while editing.
-        <div className={`cv-param-field${editing ? ' editing' : ''}`}
-          style={{ height: 19 * z, padding: `0 ${4 * z}px`, borderRadius: 4 * z, fontSize: Math.max(6, 11 * z) }}
-          title={editable ? L('{0}・クリックして編集、Return で反映', param.type) : L('実行中は変更できません')}
-          onClick={(e) => {
-            if (!editable || editing) return
-            e.stopPropagation()
-            begin()
-          }}
-          onDoubleClick={(e) => e.stopPropagation()}>
-          {editing ? (
-            <input className="cv-param-input mono" autoFocus value={text} spellCheck={false}
-              onPointerDown={(e) => e.stopPropagation()}
-              onChange={(e) => setText(e.target.value)}
-              onBlur={() => finish()}
-              onKeyDown={(e) => {
-                e.stopPropagation()
-                if (e.key === 'Enter' && !e.nativeEvent.isComposing) finish()
-                if (e.key === 'Escape') finish(true)
-              }} />
-          ) : <span className="mono cv-ellipsis">{text || ' '}</span>}
-        </div>
-      )}
-      {(edit.conflictRev !== undefined || edit.error) && <div className="pad10" style={{ position: 'absolute', zIndex: 100, top: '100%', width: 320, background: 'var(--window-bg)' }} onPointerDown={e => e.stopPropagation()}>
-        <RevisionEditNotice edit={edit} text={() => text} overwrite={() => void finish(false, true)}
-          reload={() => { edit.begin(param.value, revision?.() ?? 0n); setText(param.value); setEditing(false) }} />
-      </div>}
     </div>
   )
 }

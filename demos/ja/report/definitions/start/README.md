@@ -1,4 +1,4 @@
 ---
 title: start
-description: レポートの設定（settings）を流して始める
+description: 売上表の生成を始める
 ---

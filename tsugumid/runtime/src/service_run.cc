@@ -28,8 +28,7 @@ using FBB = flatbuffers::FlatBufferBuilder;
 namespace stdfs = std::filesystem;
 
 namespace {
-auto display_artifact_id(const ArtifactKey& id, bool store) -> std::string {
-  if (store) return crypto::hex(id.data(), id.size());
+auto display_artifact_id(const ArtifactKey& id) -> std::string {
   const auto bytes = artifact_id_bytes(id);
   return std::to_string(artifact_sequence(bytes)) + "." +
          std::to_string(artifact_counter(bytes));
@@ -132,10 +131,9 @@ void Service::evaluate_nix(RequestIn& req) {
   if (!node)
     throw Failed(FailureKind::not_found, "unknown card " + path_key(card),
                  {{"card", path_key(card)}});
-  if (node->kind != CardType::Code && node->kind != CardType::Draft &&
-      node->kind != CardType::Input)
+  if (node->kind != CardType::Code && node->kind != CardType::Draft)
     throw Failed(FailureKind::invalid_request,
-                 "Nix evaluation requires a Code, Input or Draft Card",
+                 "Nix evaluation requires a Code or Draft Card",
                  {{"card", path_key(card)}});
   if (r->expression()->size() == 0)
     throw Failed(FailureKind::invalid_request, "expression is empty");
@@ -773,9 +771,9 @@ void Service::run_record(RequestIn& req) {
           truncated = true;
         }
         std::vector<flatbuffers::Offset<D::ValueArtifact>> artifacts;
-        for (const auto& [id, size, store] : m.artifacts)
+        for (const auto& [id, size] : m.artifacts)
           artifacts.push_back(D::CreateValueArtifact(
-              b, b.CreateString(display_artifact_id(id, store)), size));
+              b, b.CreateString(display_artifact_id(id)), size));
         const auto ids = b.CreateVector(artifacts);
         const auto hash = b.CreateString(m.hash);
         D::NamedValueBuilder nb(b);
@@ -888,13 +886,9 @@ auto artifact_invocation_path(const std::string& run, const CardPath& card,
 
 auto artifact_location(const stdfs::path& project, const ArtifactData& artifact)
     -> stdfs::path {
-  if (artifact.origin == "store") {
-    const stdfs::path path(artifact.location);
-    if (path.is_absolute() && fs::resolves_inside(NixStore::store_dir(), path))
-      return path;
-  } else if (artifact.origin == "created" &&
-             artifact.location.starts_with(".tsugumi/artifacts/") &&
-             fs::valid_relative_path(artifact.location)) {
+  if (artifact.origin == "created" &&
+      artifact.location.starts_with(".tsugumi/artifacts/") &&
+      fs::valid_relative_path(artifact.location)) {
     const auto path = project / artifact.location;
     if (fs::resolves_inside(project / ".tsugumi/artifacts", path)) return path;
   }
@@ -902,35 +896,22 @@ auto artifact_location(const stdfs::path& project, const ArtifactData& artifact)
 }
 
 auto artifact_key(std::string_view text) -> ArtifactKey {
-  if (const auto separator = text.find('.'); separator != text.npos) {
-    const auto number = [](std::string_view part) {
-      uint64_t value = 0;
-      const auto [next, error] =
-          std::from_chars(part.data(), part.data() + part.size(), value);
-      if (error != std::errc{} || next != part.data() + part.size())
-        throw Failed(FailureKind::invalid_request, "invalid artifact id");
-      return value;
-    };
-    const auto invocation = number(text.substr(0, separator));
-    if (!invocation)
-      throw Failed(FailureKind::invalid_request, "invalid artifact id");
-    const auto id =
-        make_artifact_id(invocation, number(text.substr(separator + 1)));
-    return {reinterpret_cast<const char*>(id.data()), id.size()};
-  }
-  const auto hex = text;
-  constexpr std::string_view alphabet = "0123456789abcdef";
-  if (hex.size() != 32)
+  const auto separator = text.find('.');
+  if (separator == text.npos)
     throw Failed(FailureKind::invalid_request, "invalid artifact id");
-  ArtifactKey id;
-  for (size_t offset = 0; offset < hex.size(); offset += 2) {
-    const auto high = alphabet.find(hex[offset]);
-    const auto low = alphabet.find(hex[offset + 1]);
-    if (high == alphabet.npos || low == alphabet.npos)
+  const auto number = [](std::string_view part) {
+    uint64_t value = 0;
+    const auto [next, error] =
+        std::from_chars(part.data(), part.data() + part.size(), value);
+    if (error != std::errc{} || next != part.data() + part.size())
       throw Failed(FailureKind::invalid_request, "invalid artifact id");
-    id.push_back(static_cast<char>((high << 4) | low));
-  }
-  return id;
+    return value;
+  };
+  const auto invocation = number(text.substr(0, separator));
+  if (!invocation)
+    throw Failed(FailureKind::invalid_request, "invalid artifact id");
+  const auto id = make_artifact_id(invocation, number(text.substr(separator + 1)));
+  return {reinterpret_cast<const char*>(id.data()), id.size()};
 }
 }  // namespace
 
@@ -949,17 +930,9 @@ auto Service::artifact_grants(std::span<const Value> inputs)
       const auto path = artifact_location(opts_.root, *record);
       if (!stdfs::is_directory(stdfs::symlink_status(path)))
         throw Failed(FailureKind::input_missing, "an input artifact directory is missing");
-      if (record->origin == "store") {
-        grants.push_back({id, path.string(),
-                          artifact_invocation_path(record->run_id, record->card,
-                                                   record->invocation) /
-                              crypto::hex(id.data(), id.size()),
-                          path.string()});
-      } else {
-        grants.push_back(
-            {id, path.string(),
-             path.lexically_relative(store_->state_dir() / "artifacts")});
-      }
+      grants.push_back(
+          {id, path.string(),
+           path.lexically_relative(store_->state_dir() / "artifacts")});
     }
     return grants;
   });
@@ -1004,27 +977,6 @@ auto Service::record_artifacts(const InvocationSummaryData& invocation,
   });
 }
 
-auto Service::register_store_artifact(const std::string& run, const CardPath& card,
-                                      uint64_t invocation, const ArtifactKey& id,
-                                      const stdfs::path& store_path) -> void {
-  const auto created = now_ms();
-  ArtifactData record{id, run, card, invocation, "store", store_path.string(),
-                      created, created, std::nullopt, std::nullopt};
-  const auto path = artifact_location(opts_.root, record);
-  if (id.size() != 16 || !stdfs::is_directory(stdfs::symlink_status(path)))
-    throw Failed(FailureKind::output_invalid, "invalid store artifact");
-  record.size_bytes = fs::directory_size(path);
-  record.tree_hash = "tree:" + fs::sha256_tree(path);
-  history_->write_sync([&](sql::Db& db) {
-    // A deterministic store id may be emitted again on a later run.
-    const auto existing = History::artifact(db, id);
-    if (existing && (existing->origin != record.origin ||
-                     existing->tree_hash != record.tree_hash))
-      throw Failed(FailureKind::output_invalid, "store artifact id collision");
-    if (!History::artifact(db, id, run)) History::put_artifact(db, record);
-  });
-}
-
 void Service::artifact_list(RequestIn& req) {
   const auto* r = project_request(req)->value_as_ArtifactListRequest();
   require_run_id(*r->run_id(), "run_id");
@@ -1056,7 +1008,7 @@ void Service::artifact_list(RequestIn& req) {
           b, b.CreateString(name), size, b.CreateString(fs::sha256_file(path / name))));
     }
     out.push_back(R::CreateArtifactInfo(
-        b, b.CreateString(display_artifact_id(a.id, a.origin == "store")),
+        b, b.CreateString(display_artifact_id(a.id)),
         b.CreateString(a.run_id), wire::path(b, a.card), a.invocation,
         a.size_bytes, a.tree_hash ? b.CreateString(*a.tree_hash) : 0,
         b.CreateVector(members)));
@@ -1084,9 +1036,7 @@ void Service::artifact_read(RequestIn& req) {
   const auto* r = project_request(req)->value_as_ArtifactReadRequest();
   const auto id = artifact_key(r->artifact_id()->string_view());
   auto a = history_->read([&](sql::Db& db) { return History::artifact(db, id); });
-  if (!a || !a->sealed_ms ||
-      (a->origin == "store") !=
-          (r->artifact_id()->string_view().find('.') == std::string_view::npos))
+  if (!a || !a->sealed_ms)
     throw Failed(FailureKind::not_found, "unknown artifact");
   if (!r->member() || !fs::valid_relative_path(r->member()->string_view()))
     throw Failed(FailureKind::invalid_path, "invalid artifact member");

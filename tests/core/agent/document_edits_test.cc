@@ -85,9 +85,7 @@ TEST(BuiltinCard, WritesCompleteDefinitionsThatLoadInTheCore) {
   for (const auto& [kind, type] : {std::pair{Kind::Draft, "draft"},
                                    {Kind::Trigger, "trigger"},
                                    {Kind::Collect, "collect"},
-                                   {Kind::Merge, "merge"},
-                                   {Kind::InputValue, "input"},
-                                   {Kind::BooleanInput, "input"}}) {
+                                   {Kind::Merge, "merge"}}) {
     test::TemporaryDirectory directory;
     const auto files = BuiltinCard(kind, "new_card");
     const auto card = json::Object(files.at("_card.json"));
@@ -106,24 +104,7 @@ TEST(BuiltinCard, WritesCompleteDefinitionsThatLoadInTheCore) {
 
     if (kind == Kind::Merge)
       EXPECT_EQ(json::Array(card.at("inputs")).size(), 2);
-    if (kind == Kind::BooleanInput || kind == Kind::InputValue) {
-      EXPECT_EQ(card.at("recordLogs"), R"("project")");
-      EXPECT_EQ(card.at("recordIO"), R"("project")");
-      EXPECT_EQ(card.at("workerCapabilities"), "[]");
-      EXPECT_EQ(card.at("timeoutSeconds"), "0");
-      EXPECT_EQ(card.at("buildTimeoutSeconds"), "0");
-      const auto schema = files.at("_outputs.fbs");
-      const bool boolean = kind == Kind::BooleanInput;
-      EXPECT_NE(schema.find(boolean ? "table Boolean { value:bool; }"
-                                    : "table Number { value:double; }"),
-                std::string::npos);
-      EXPECT_EQ(files.at("params.nix"),
-                boolean ? "{ value = false; }\n" : "{ value = 0.0; }\n");
-      EXPECT_NE(files.at("default.nix").find("run = sdk.input"),
-                std::string::npos);
-    } else {
-      EXPECT_FALSE(files.contains("default.nix"));
-    }
+    EXPECT_FALSE(files.contains("default.nix"));
   }
 }
 

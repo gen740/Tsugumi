@@ -21,7 +21,7 @@ def evaluated(client, card, expression, **options):
 @pytest.mark.environment
 def test_nix_inputs_are_transitive_exports_and_merge_passes_on_what_its_inputs_share(client, project):
     graph = Project(project)
-    graph.card("a", {"type": "code"}, outputs=OUTPUTS, sources={
+    graph.card("a", {"type": "trigger"}, sources={
         "default.nix": '{ params, inputs }: { exports.message = params.text; }',
         "params.nix": '{ text = "from A"; }',
     })

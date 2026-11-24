@@ -1,4 +1,4 @@
 ---
 title: start
-description: Starts from the image size and random seed (settings)
+description: Start the implemented dynamical systems
 ---

@@ -26,7 +26,7 @@ function node(dir: string, id: string): CardNodeData {
   const typed = fs.existsSync(fbs)
     ? [...(/table Outputs\s*\{([^}]*)\}/.exec(fs.readFileSync(fbs, 'utf8').replace(/\/\*.*?\*\//gs, ''))?.[1] ?? '').matchAll(/(\w+)\s*:/g)].map((m) => ({ name: m[1] }))
     : []
-  const blank = { summary: meta?.description || undefined, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, title: meta?.title ?? id }
+  const blank = { summary: meta?.description || undefined, invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, title: meta?.title ?? id }
   if (def?.type === 'subgraph') {
     const b = read(path.join(dir, 'externals', id, 'tsugumi.json'))?.boundary ?? {}
     return { ...blank, kind: 'subgraph', inputs: named(b.inputs), outputs: named(b.outputs) }
@@ -34,9 +34,6 @@ function node(dir: string, id: string): CardNodeData {
   const declared = named(def?.inputs)
   switch (def?.type) {
     case 'trigger': return { ...blank, kind: 'trigger', inputs: [], outputs: [{ name: 'out' }] }
-    // This fixture tests port routing without an evaluator. Parameter rows
-    // from the live resolution are covered in the Input Card behavior tests.
-    case 'input': return { ...blank, kind: 'input', inputs: [{ name: 'start' }], outputs: typed }
     case 'merge': return { ...blank, kind: 'merge', inputs: declared, outputs: [{ name: 'out' }] }
     case 'collect': return { ...blank, kind: 'collect', inputs: [{ name: 'in' }], outputs: [{ name: 'out' }] }
     case 'code': return { ...blank, kind: 'code', inputs: declared, outputs: typed }

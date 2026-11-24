@@ -19,7 +19,7 @@ MACHINE = {"arm64": "aarch64", "amd64": "x86_64"}.get(
 NATIVE_SYSTEM = f"{MACHINE}-{'darwin' if sys.platform == 'darwin' else 'linux'}"
 
 SYMBOLS = {
-    "code": "chevron.left.forwardslash.chevron.right", "input": "slider.horizontal.3",
+    "code": "chevron.left.forwardslash.chevron.right",
     "trigger": "play.circle", "merge": "arrow.triangle.merge",
     "collect": "line.3.horizontal.decrease", "draft": "pencil.and.outline",
     "subgraph": "link",
@@ -39,15 +39,15 @@ def project_document(**fields):
 def card_document(fields):
     kind = fields["type"]
     body = {"type": kind, "symbol": SYMBOLS[kind]}
-    if kind in {"code", "input", "merge", "collect"}:
+    if kind in {"code", "merge", "collect"}:
         body.update(maxRuns=1, recordIO="project")
     if kind == "merge":
         body["inputs"] = [{"name": "a"}, {"name": "b"}]
-    if kind in {"code", "input"}:
+    if kind == "code":
         body.update(inputs=[], reuseWorker=False, timeoutSeconds=0, buildTimeoutSeconds=0,
                     recordLogs="project", systems=[NATIVE_SYSTEM], workerCapabilities=[])
     body.update(fields)
-    if kind in {"code", "input"}:
+    if kind == "code":
         sandbox = body.get("sandbox", {})
         body["sandbox"] = {
             "filesystem": True, "pid": True, "ipc": True, "identity": True,

@@ -25,7 +25,6 @@ EXECUTABLE_FIELDS = BASE_FIELDS | {
 }
 CARD_FIELDS = {
     "code": EXECUTABLE_FIELDS,
-    "input": EXECUTABLE_FIELDS,
     "merge": BASE_FIELDS | {"inputs", "maxRuns", "recordIO"},
     "collect": BASE_FIELDS | {"maxRuns", "recordIO"},
     "draft": BASE_FIELDS,
@@ -57,7 +56,7 @@ def test_localized_demos_share_executable_definitions(demo):
 
 
 @pytest.mark.parametrize("language", ["ja", "en"])
-def test_demo_locks_and_input_definitions(language):
+def test_demo_locks_and_parameters(language):
     for manifest in (ROOT / "demos" / language).rglob("tsugumi.json"):
         declarations = {entry["name"]: entry["url"] for entry in json.loads(manifest.read_text())["nixPath"]}
         lock = json.loads(manifest.with_name("tsugumi.lock").read_text())
@@ -67,10 +66,6 @@ def test_demo_locks_and_input_definitions(language):
         assert all(entry["narHash"].startswith("sha256-") for entry in entries), manifest
 
         for definition in manifest.parent.glob("definitions/*/_card.json"):
-            card = json.loads(definition.read_text())
-            if card["type"] == "input":
-                for name in ("default.nix", "_outputs.fbs"):
-                    assert definition.with_name(name).is_file(), (definition, name)
             # A Card without params has no params.nix (a missing file is {}).
             params = definition.with_name("params.nix")
             if params.is_file():
@@ -91,7 +86,7 @@ def check_card(definition):
     path = definition / "_card.json"
     card = json.loads(path.read_text())
     required = CARD_FIELDS[card["type"]]
-    optional = {"secrets"} if card["type"] in {"code", "input"} else set()
+    optional = {"secrets"} if card["type"] == "code" else set()
     assert required <= card.keys() <= required | optional, path
     assert isinstance(card["symbol"], str) and card["symbol"], path
     for port in card.get("inputs", []):
@@ -100,7 +95,7 @@ def check_card(definition):
         assert card["inputs"], path
     for setting in {"recordLogs", "recordIO"} & card.keys():
         assert card[setting] in {"project", "on", "off"}, (path, setting)
-    if card["type"] in {"code", "input"}:
+    if card["type"] == "code":
         sandbox = card["sandbox"]
         assert sandbox.keys() == {"filesystem", "pid", "ipc", "identity", "limits"}, path
         assert all(type(sandbox[key]) is bool for key in sandbox.keys() - {"limits"}), path

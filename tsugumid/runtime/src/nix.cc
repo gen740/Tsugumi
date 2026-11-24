@@ -383,8 +383,7 @@ auto NixRunner::evaluate_expression(const ExpressionRequest& req)
   if (!req.doc || !req.doc->resolution)
     throw std::runtime_error("Card expression requires a resolved project");
   const auto* node = req.doc->resolution->find(req.card);
-  if (!node || (node->kind != CardType::Code && node->kind != CardType::Draft &&
-                node->kind != CardType::Input))
+  if (!node || (node->kind != CardType::Code && node->kind != CardType::Draft))
     throw std::runtime_error("unknown definition for Card " +
                              path_key(req.card));
   if (req.expression.size() > kMaxDocumentJsonBytes)
@@ -426,9 +425,8 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
   call.cores = req.cores;
   call.max_implementations = req.max_implementations;
   call.views_only = views_only;
-  const bool needs_worker =
-      node.kind != CardType::Input && (req.target.kind == WorkerKind::remote ||
-                                       req.target.system != native_system());
+  const bool needs_worker = req.target.kind == WorkerKind::remote ||
+                            req.target.system != native_system();
   call.needs_worker = needs_worker && !views_only;
   call.cancel = req.cancel;
   const auto budget_start = std::chrono::steady_clock::now();

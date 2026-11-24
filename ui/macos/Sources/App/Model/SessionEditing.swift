@@ -7,10 +7,10 @@ import TsugumiRPC
 /// What a Card is, for choosing what the canvas and the editor offer.
 /// `invalid`: its _card.json has no type or one this build does not know.
 enum CardKind: String {
-  case trigger, input, merge, collect, draft, subgraph, code, invalid
+  case trigger, merge, collect, draft, subgraph, code, invalid
 
   /// The _card.json "type" names.
-  static let types: [CardKind] = [.trigger, .input, .merge, .collect, .draft, .subgraph, .code]
+  static let types: [CardKind] = [.trigger, .merge, .collect, .draft, .subgraph, .code]
 
   /// A kind by its _card.json "type" name (also VersionCanvasCard.kind, empty
   /// for a definition the daemon cannot read). Anything else is `invalid`: the
@@ -24,12 +24,9 @@ enum CardKind: String {
     return custom
   }
 
-  var editsValueOnCanvas: Bool { self == .input }
-
   var label: String {
     switch self {
     case .trigger: return String(localized: "開始")
-    case .input: return String(localized: "入力")
     case .merge: return String(localized: "合流")
     case .collect: return String(localized: "収集")
     case .draft: return "Draft"
@@ -42,7 +39,6 @@ enum CardKind: String {
   var symbol: String {
     switch self {
     case .trigger: return "play.circle"
-    case .input: return "slider.horizontal.3"
     case .merge: return "arrow.triangle.merge"
     case .collect: return "line.3.horizontal.decrease"
     case .draft: return "pencil.and.outline"
@@ -65,8 +61,7 @@ func definitionIcon(_ def: JSONValue?) -> String {
 /// What a new Card starts from: a built-in Card or a scaffold. Every Card
 /// gets a definition folder of its own (definitions/<id>/).
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
-  case draft, trigger, input
-  case booleanInput = "input_bool"
+  case draft, trigger
   case merge, collect
 
   var id: String { rawValue }
@@ -74,8 +69,6 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     switch self {
     case .draft: .draft
     case .trigger: .trigger
-    case .input: .inputvalue
-    case .booleanInput: .booleaninput
     case .merge: .merge
     case .collect: .collect
     }
@@ -84,20 +77,17 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     switch self {
     case .draft: String(localized: "Draft")
     case .trigger: String(localized: "トリガー")
-    case .input: String(localized: "入力値")
-    case .booleanInput: String(localized: "真偽値の入力")
     case .merge: String(localized: "合流")
     case .collect: String(localized: "収集")
     }
   }
   var symbol: String {
-    (self == .booleanInput ? .input : CardKind(rawValue: rawValue) ?? .draft).symbol
+    (CardKind(rawValue: rawValue) ?? .draft).symbol
   }
   /// The human name used when creating a Card; the core generates its identifier.
   var baseName: String {
     switch self {
     case .trigger: "start"
-    case .booleanInput: "condition"
     default: rawValue
     }
   }
@@ -601,7 +591,7 @@ extension ProjectSession {
       // Unnamed visual anchors locate Draft wires without declaring Card ports.
       c.inputs = ports(kind(k) == .draft ? [""] : g.inputs, output: false)
       c.outputs = ports(kind(k) == .draft ? [""] : g.outputs, output: true)
-      c.reorderable = [.code, .input, .subgraph].contains(kind(k))
+      c.reorderable = [.code, .subgraph].contains(kind(k))
       return c
     }
     scene.wires = connections(in: scope).compactMap { c in

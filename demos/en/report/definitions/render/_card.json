@@ -4,9 +4,6 @@
   "inputs": [
     {
       "name": "summary"
-    },
-    {
-      "name": "config"
     }
   ],
   "maxRuns": 1,

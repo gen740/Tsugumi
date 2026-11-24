@@ -1,0 +1,4 @@
+namespace collatz;
+table Initial { seed:ulong; }
+table Outputs { value:Initial (required); }
+root_type Outputs;

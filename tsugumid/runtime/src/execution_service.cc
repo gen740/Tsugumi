@@ -218,14 +218,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   sp.artifact_store = (state_dir / "artifacts").string();
   sp.artifact_staging = state_dir / "artifact-invocations";
   std::filesystem::create_directories(sp.artifact_store);
-#ifdef __linux__
-  if (sp.sandbox.filesystem) {
-    for (const auto& artifact : artifacts) {
-      if (!artifact.store_path.empty())
-        sp.binds.push_back({artifact.path, artifact.store_path, false, ""});
-    }
-  }
-#endif
 
   // The resident worker of this Card, if it runs the same build under the same
   // conditions.

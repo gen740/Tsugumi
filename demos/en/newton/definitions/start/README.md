@@ -1,4 +1,4 @@
 ---
 title: start
-description: Starts the computation from the polynomial and iteration settings (settings)
+description: Run roots using its parameters
 ---

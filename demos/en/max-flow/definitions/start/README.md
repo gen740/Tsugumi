@@ -1,4 +1,4 @@
 ---
 title: start
-description: Starts the computation from how to make the network (settings)
+description: Run network using its parameters
 ---

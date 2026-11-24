@@ -399,7 +399,7 @@ auto parse_card_json(const std::string& id, const std::string& text,
     invalid(rel + ": " + error.what(), {{"path", rel}});
   }
   const auto type = json::Text(fields, "type");
-  const bool executable = type == "code" || type == "input";
+  const bool executable = type == "code";
   const bool inputs = executable || type == "merge";
   const bool runs = inputs || type == "collect";
   std::set<std::string_view> required{"type", "symbol"};

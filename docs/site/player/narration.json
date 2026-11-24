@@ -3,7 +3,6 @@
     "intro": "A demo that makes a sales table from a seed and aggregates it by region into a report. Press ▶ Run and the Cards move in the order they did when it really ran.",
     "cards": {
       "start": "The run begins at the start Card.",
-      "settings": "Sends the settings: seed 42, 500 rows and a heading.",
       "generate": "Writes 500 rows of region, product, quantity and unit price as CSV, with random numbers from the seed. The same seed gives the same CSV.",
       "aggregate": "Totals sales and quantity per region.",
       "render": "Writes the aggregate to report.md and summary.json and shows the report.",
@@ -15,7 +14,6 @@
     "intro": "A demo that implements the same Collatz iteration separately in C++, Python, Julia and R, and checks that the four sequences agree.",
     "cards": {
       "start": "The run begins at the start Card.",
-      "initial": "Sends the starting value 27.",
       "collatz_cpp": "The Workflow inside runs the iteration on its wires, halving even numbers and tripling odd ones plus 1, until it reaches 1.",
       "collatz_py": "On the Python side, a Workflow of the same shape runs the same iteration.",
       "collatz_jl": "The Julia side has the same shape. It runs in a separate process per invocation, so it carries the sequence so far in the message.",
@@ -29,7 +27,7 @@
     "intro": "A demo that makes one value of a random walk every 100 ms and draws it as a line chart in real time.",
     "cards": {
       "start": "The run begins at the start Card.",
-      "settings": "Sends the seed, the count, the interval and the first state.",
+      "settings": "The seed view sends a chosen starting value to the Card, which passes the initial state to the loop.",
       "generate": "Takes one step, sends the value to plot, and returns the next state to its own input. This loop of wires goes round until the set count.",
       "loop": "Merges the first state with the next state coming back from generate.",
       "plot": "Draws the latest values and their mean as a line chart."
@@ -40,7 +38,6 @@
     "intro": "A demo that plots random walks with the same matplotlib, Plotly and Altair code you would write anywhere else. No Tsugumi-specific drawing calls are used.",
     "cards": {
       "start": "The run begins at the start Card.",
-      "settings": "Sends the seed, the number of walkers and the number of steps.",
       "simulate": "Makes ±1 random walks with numpy.",
       "summary": "Four Cards draw figures from the same walks. Report publishes the Matplotlib animation, Plotly figure and Altair chart through explicit report.figure calls.",
       "diffusion": "Draws with FuncAnimation how the distribution spreads as √t.",
@@ -52,9 +49,8 @@
   "casa": {
     "intro": "A demo that pins an X-ray observation of the supernova remnant Cassiopeia A and the analysis tool CIAO with Nix, and splits the photons into three energy bands for an RGB image.",
     "cards": {
-      "start": "The run begins at the start Card.",
       "ciao": "Builds the analysis tool CIAO with Nix, pinned by the hash of its source. The build happens only the first time.",
-      "load": "Uses the observation file pinned by hash. The download happens only the first time; no network while running.",
+      "load": "Starts the workflow and exports the hash-pinned FITS path to the analysis Cards.",
       "bands": "With CIAO's dmcopy, splits the photons into three energy bands and counts them on a grid centred on Cas A.",
       "rgb": "rgb assigns the three bands to R, G and B for an image, and spectrum draws the energy spectrum of the same photons.",
       "spectrum": "The spectrum shows which element's lines fell in which colour."
@@ -102,13 +98,12 @@
     "finale": "In the app you can change the band of latitude or mc and rerun only the analysis Cards, without fetching again."
   },
   "card-guide": {
-    "intro": "Follow a temperature from the Input Card to the C++ conversion Card.",
+    "intro": "Follow a temperature conversion using a C++ Card parameter.",
     "cards": {
       "start": "The run begins at the start Card.",
-      "settings": "Sends a temperature of 20 °C. Edit the value on the Canvas.",
       "convert": "Applies the scale and offset, sends 68 °F to the live view and returns the Fahrenheit value."
     },
-    "finale": "Change the offset and rerun only convert to try a different condition with the saved input."
+    "finale": "Change the Celsius parameter in Card Settings and rerun to compare the two results."
   },
   "draft": {
     "intro": "A Draft is a Card that says in words what it receives, what it does and what it passes on. It has no code yet. With \"Generate Cards\" in the app, the Agent writes code from these words, runs it and checks."
@@ -143,7 +138,6 @@
     "intro": "A demo that solves z³ − 1 = 0 by Newton's method on the complex plane, to see how the starting point decides where it goes and how fast.",
     "cards": {
       "start": "The run begins at the start Card.",
-      "settings": "Sends the polynomial's coefficients and the damping factor.",
       "roots": "Finds the roots and their multiplicities from eigenvalues, without Newton's method.",
       "orbits": "Draws how the error falls for each starting point.",
       "order": "Estimates the order of convergence from the errors and sets it next to the theory.",
@@ -156,7 +150,6 @@
     "intro": "Teaching material comparing how concentration moves with the dosing interval, in a model of a made-up drug, \"Tsugumicin\". The values are not those of any real drug, and this is not medical advice.",
     "cards": {
       "start": "The run begins at the start Card.",
-      "settings": "Sends the dosing plans to compare and the made-up drug's values.",
       "simulate": "Solves the differential equation and draws the concentration over time.",
       "check": "Checks the numerical solution against closed forms. Fails if they differ much.",
       "window": "Overlays the concentration in the last dosing interval and compares peaks and troughs.",
@@ -168,7 +161,6 @@
     "intro": "A demo that checks, on a made-up network made from a seed, that the maximum flow equals the minimum cut.",
     "cards": {
       "start": "The run begins at the start Card.",
-      "settings": "Sends the seed and the size of the network.",
       "network": "Makes a directed graph with capacities.",
       "flow": "Finds the maximum flow and draws each edge's flow.",
       "cut": "Finds the minimum cut. Fails unless it equals the maximum flow.",
@@ -194,7 +186,6 @@
     "intro": "A demo that finds properties and structural formulas with RDKit from SMILES, strings that write molecules.",
     "cards": {
       "start": "The run begins at the start Card.",
-      "paste": "Sends the SMILES of a molecule to try.",
       "properties": "Tables molecular weight, logP and more. A SMILES that cannot be read is skipped, with the reason.",
       "structures": "Draws the structural formulas side by side.",
       "lipinski": "Checks Lipinski's Rule of Five.",
@@ -206,13 +197,12 @@
   "cell-count": {
     "intro": "A demo that scores ways of counting cells on synthetic images with known answers, and applies the same procedure to a real image of nuclei.",
     "cards": {
-      "start": "The run begins at the start Card.",
       "generate": "Makes a synthetic image of cells with known centres.",
       "preprocess": "Subtracts the background and blurs.",
       "segment": "Separates regions with a threshold and watershed.",
       "score": "Matches them with the answers and scores both methods.",
       "sweep": "Changes the number of cells and the noise, and tables where it breaks down.",
-      "mitosis": "Passes a real image of nuclei, pinned by its Nix hash.",
+      "mitosis": "Starts the workflow and exports the store path of a hash-pinned image of nuclei.",
       "real": "Applies the same procedure to the real image. There is no ground truth, so it is not scored."
     },
     "finale": "What separating touching cells gains is compared in scores."
@@ -277,7 +267,6 @@
     "intro": "A Julia demo that optimises the charging and discharging of a home battery by dynamic programming, on made-up price data.",
     "cards": {
       "start": "The run begins at the start Card.",
-      "settings": "Sends conditions such as capacity and efficiency.",
       "market": "Makes consumption, solar and prices. All of it is made-up data.",
       "schedule": "Finds the charging and discharging with the lowest bill.",
       "capacities": "Compares the saving at other capacities.",
@@ -290,7 +279,6 @@
     "intro": "A Julia demo that simulates fluctuations in chemical reactions with Gillespie's method and checks them against theory.",
     "cards": {
       "start": "The run begins at the start Card.",
-      "settings": "Sends the reaction rates and the number of runs.",
       "trajectories": "Overlays trajectories, their mean and the solution of the rate equation.",
       "stationary": "Compares the distribution of end points with the theoretical Poisson distribution.",
       "scaling": "Changes the volume and compares the size of fluctuations with theory.",
@@ -303,7 +291,6 @@
     "intro": "A Julia demo of an inverse problem, recovering an initial temperature from measured ones, to see what regularisation does. The data is made up.",
     "cards": {
       "start": "The run begins at the start Card.",
-      "settings": "Sends the grid, the measurement time and the noise.",
       "forward": "Makes the temperature at time T from a made-up initial temperature, with noise added.",
       "spectrum": "Shows which components sink into the noise.",
       "naive": "Shows that solving backwards as it is diverges.",

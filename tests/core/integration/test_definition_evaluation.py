@@ -53,10 +53,9 @@ def definition(**extra):
     return {"type": "code", "sandbox": {"filesystem": False}, "reuseWorker": True, **extra}
 
 
-@pytest.mark.parametrize("kind", ["code", "input"])
-def test_missing_params_file_evaluates_to_empty_set(core_factory, project, kind):
+def test_missing_params_file_evaluates_to_empty_set(core_factory, project):
     client = core_factory().connect()
-    Project(project).card("work", {"type": kind}, outputs=EMPTY_OUTPUTS, sources={
+    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
         "default.nix": "{ params, inputs }: { run = throw \"unused run\"; }",
     }).save(client)
     assert not (project / "definitions/work/params.nix").exists()

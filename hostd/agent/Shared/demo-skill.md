@@ -35,7 +35,7 @@ Use README.md titles for the names on the canvas and Card ids for tool arguments
    show_demos and new_project. Demo mode ends and ordinary chat continues.
 
 For the demos with scripted guides, use the same short route:
-- report: view render's table and report.md / summary.json artifacts; change settings.seed (for example to 7),
+- report: view render's table and report.md / summary.json artifacts; change generate.seed (for example to 7),
   Apply and rerun; compare in render.
 - exoplanet-transit: view fold's plot, depth and radius ratio, and detrend's period search; change
   detrend.window_days (for example to 0.2), Apply and rerun; compare in fold.

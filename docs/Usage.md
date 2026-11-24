@@ -49,8 +49,7 @@ A template folder contains one directory per Card, each with the original Card d
 
 ## Canvas tools
 
-Right-click the Canvas and choose **Boolean Input** to create a toggle. Wire its value to a Code Card that chooses which optional outputs to produce. Use Merge to bring alternative outputs back to one downstream input. The timeline distinguishes skipped Cards. [Card types and execution](features.md#2-cards-and-workflows)
-
+Edit a boolean parameter in a Code Card's settings to select which optional outputs it produces. Use Merge to bring alternative outputs back to one downstream input. The timeline distinguishes skipped Cards. [Card types and execution](features.md#2-cards-and-workflows)
 
 Use **Arrange** to place Cards and reduce wire crossings. Use **Untangle Wires** when the Cards are already where you want them. Both are available from the Canvas context menu and can be undone. Untangling changes the visual order of ports while preserving the connections and the way the Workflow runs.
 

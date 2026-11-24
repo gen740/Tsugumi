@@ -27,9 +27,6 @@
         "id": "start"
       },
       {
-        "id": "settings"
-      },
-      {
         "id": "roots"
       },
       {
@@ -52,18 +49,8 @@
           "port": "out"
         },
         "to": {
-          "card": "settings",
-          "port": "start"
-        }
-      },
-      {
-        "from": {
-          "card": "settings",
-          "port": "settings"
-        },
-        "to": {
           "card": "roots",
-          "port": "settings"
+          "port": "start"
         }
       },
       {

@@ -346,11 +346,7 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   if (const auto* entries = call.grants()) {
     for (const auto* entry : *entries) {
       auto id = wire::artifact_id(*entry->id());
-      const bool store_origin = entry->store_path() != nullptr;
-      const auto leaf =
-          store_origin
-              ? crypto::hex(id.data(), id.size())
-              : std::to_string(artifact_counter(artifact_id_bytes(id)));
+      const auto leaf = std::to_string(artifact_counter(artifact_id_bytes(id)));
       const auto relative = remote::relative_path(entry->path()->string_view());
       const auto holders = relative.parent_path();
       const auto invocation_name = holders.filename().string();
@@ -362,26 +358,7 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
               std::string::npos ||
           !stdfs::is_directory(stdfs::symlink_status(source)))
         throw Failed(FailureKind::input_missing, "invalid remote artifact grant");
-      std::string store_target;
-      if (const auto* store_path = entry->store_path()) {
-        const stdfs::path path(store_path->str());
-        const stdfs::path store_root = "/nix/store";
-        const auto relative_store_path = path.lexically_relative(store_root);
-        if (relative_store_path.empty() ||
-            !fs::valid_relative_path(relative_store_path.begin()->string()) ||
-            path != store_root / *relative_store_path.begin() /
-                        "share/tsugumi/input/artifacts" / leaf)
-          throw Failed(FailureKind::input_missing,
-                       "invalid store artifact path");
-        if (spawn.sandbox.filesystem) {
-          spawn.binds.push_back({source.string(), path.string(), false, ""});
-          store_target = path.string();
-        } else {
-          store_target = source.string();
-        }
-      }
-      grants.push_back(
-          {std::move(id), source.string(), {}, std::move(store_target)});
+      grants.push_back({std::move(id), source.string()});
     }
   }
   stdfs::create_directories(outputs_root);

@@ -397,7 +397,7 @@ def test_int64_values_preserve_precision_and_report_overflow(builtin_client):
     source = "definitions/b/params.nix"
     res = c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
                  changes=[change("SetProject", json=json.dumps(doc)),
-                          change("PutDefinition", id="b", cardJson=json.dumps(card_document({"type": "input"})), readme=card_readme("B")),
+                          change("PutDefinition", id="b", cardJson=json.dumps(card_document({"type": "code"})), readme=card_readme("B")),
                           change("PutSource", path=source, bytes=raw)])
     node = next(r for r in res.delta.resolution if text(r.card.segments[0]) == "b")
     assert "invalid_param" not in [text(x.code) for x in node.diagnostics]

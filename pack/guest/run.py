@@ -18,6 +18,7 @@ a setting, so this changes no build.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -170,7 +171,7 @@ def export_artifacts(rpc, run_id, result):
         page = rpc.call("ArtifactListRequest", request)
         for artifact in page.get("artifacts", []):
             artifact_id = artifact["artifact_id"]
-            if len(artifact_id) != 32 or any(c not in "0123456789abcdef" for c in artifact_id):
+            if re.fullmatch(r"[1-9][0-9]*\.[0-9]+", artifact_id) is None:
                 raise ValueError("malformed artifact id")
             root = result / "artifacts" / artifact_id
             root.mkdir(parents=True, exist_ok=True)

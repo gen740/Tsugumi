@@ -1,4 +1,4 @@
 ---
 title: start
-description: Sends the starting value (initial) to begin the computation
+description: Start the four implementations
 ---

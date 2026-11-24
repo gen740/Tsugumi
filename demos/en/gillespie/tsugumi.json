@@ -27,9 +27,6 @@
         "id": "start"
       },
       {
-        "id": "settings"
-      },
-      {
         "id": "trajectories"
       },
       {
@@ -52,48 +49,38 @@
           "port": "out"
         },
         "to": {
-          "card": "settings",
+          "card": "trajectories",
           "port": "start"
         }
       },
       {
         "from": {
-          "card": "settings",
-          "port": "settings"
-        },
-        "to": {
-          "card": "trajectories",
-          "port": "settings"
-        }
-      },
-      {
-        "from": {
-          "card": "settings",
-          "port": "settings"
+          "card": "start",
+          "port": "out"
         },
         "to": {
           "card": "stationary",
-          "port": "settings"
+          "port": "start"
         }
       },
       {
         "from": {
-          "card": "settings",
-          "port": "settings"
+          "card": "start",
+          "port": "out"
         },
         "to": {
           "card": "scaling",
-          "port": "settings"
+          "port": "start"
         }
       },
       {
         "from": {
-          "card": "settings",
-          "port": "settings"
+          "card": "start",
+          "port": "out"
         },
         "to": {
           "card": "binding",
-          "port": "settings"
+          "port": "start"
         }
       },
       {

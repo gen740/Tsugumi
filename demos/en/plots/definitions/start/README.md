@@ -1,4 +1,4 @@
 ---
 title: start
-description: Starts the computation from the walk's settings (settings)
+description: Run simulate using its parameters
 ---

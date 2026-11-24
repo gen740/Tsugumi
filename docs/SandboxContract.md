@@ -92,9 +92,8 @@ of a resident's view without remounting, and the next call's directories
 appear in the same place. Descriptors opened during a call cannot be revoked:
 a leftover input descriptor only reads data that was granted, and a leftover
 output descriptor points at an inode the sealed artifact has superseded.
-Input Card artifacts retain their immutable Nix store paths. Remote workers stage grants and return newly
-created artifacts with the result. These access guarantees require filesystem
-isolation.
+Remote workers stage grants and return newly created artifacts with the result.
+These access guarantees require filesystem isolation.
 
 ## Grants
 

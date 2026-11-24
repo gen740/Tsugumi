@@ -56,15 +56,6 @@ extension ProjectSession {
     return (ins, outs)
   }
 
-  /// Params edited directly on input Cards.
-  func inlineParams(_ k: CardKey) -> [ParamData] {
-    guard kind(k).editsValueOnCanvas else { return [] }
-    return (resolution[k]?.parameters ?? []).compactMap { parameter in
-      guard !parameter.type.hasPrefix("[") else { return nil }
-      return ParamData(name: parameter.name, type: parameter.type, value: parameterText(parameter.effectiveValue))
-    }
-  }
-
   func cardDescription(_ k: CardKey) -> String? {
     if let d = cardMeta(k)?["description"]?.string, !d.isEmpty { return d }
     return nil
@@ -202,7 +193,6 @@ extension ProjectSession {
       title: title, kind: kind,
       symbol: kind.displaySymbol(def?["symbol"]?.string),
       summary: summary, inputs: visualPorts(k, ports.inputs, output: false), outputs: visualPorts(k, outputs ?? ports.outputs, output: true),
-      params: inlineParams(k),
       result: state?.transfer ?? state?.executionState?.pendingLabel ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
       state: kind == .subgraph ? compositeState(k) : canvasCardState(k), executionList: executionList, stage: empty ? nil : stageProgress(k),
       invocation: empty ? 0 : state?.invocation ?? 0, runContinues: runActive, runMark: (state != nil || batch != nil ? runMark(runStatus) : nil),
@@ -225,7 +215,7 @@ extension ProjectSession {
   // Shown ports and their order (layout.bin inputOrder / outputOrder) are
   // presentation: each UI works them out itself rather than asking hostd.
   private func visualPorts(_ k: CardKey, _ ports: [PortData], output: Bool) -> [PortData] {
-    guard [.code, .draft, .input, .subgraph].contains(kind(k)) else { return ports }
+    guard [.code, .draft, .subgraph].contains(kind(k)) else { return ports }
     let saved = layout(of: Array(path(k).dropLast()))["cards"]?[layoutKey(k)]?[output ? "outputOrder" : "inputOrder"]?.array?.compactMap(\.string) ?? []
     return orderedPorts(ports, saved: saved)
   }

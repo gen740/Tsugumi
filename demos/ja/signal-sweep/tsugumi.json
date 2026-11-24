@@ -27,9 +27,6 @@
         "id": "start"
       },
       {
-        "id": "samples"
-      },
-      {
         "id": "score"
       },
       {
@@ -46,18 +43,8 @@
           "port": "out"
         },
         "to": {
-          "card": "samples",
-          "port": "start"
-        }
-      },
-      {
-        "from": {
-          "card": "samples",
-          "port": "out"
-        },
-        "to": {
           "card": "score",
-          "port": "signal"
+          "port": "start"
         }
       },
       {

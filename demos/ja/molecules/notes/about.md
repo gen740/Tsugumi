@@ -8,6 +8,6 @@ $$M = \sum_i n_i\, A_i$$
 
 $$M \le 500,\quad \log P \le 5,\quad \mathrm{NH{+}OH} \le 5,\quad \mathrm{N{+}O} \le 10$$
 
-**paste** の smiles に SMILES を貼って実行すると、その分子が全部の Card に加わります。読めない SMILES は、落ちずに理由を表示します。
+**properties** の smiles に SMILES を貼って実行すると、その分子が全部の Card に加わります。読めない SMILES は、落ちずに理由を表示します。
 
 logP は原子の寄与の和（Crippen）による推定で、測定値ではありません。経験則には例外があり、薬としての良し悪しを決めるものではありません。

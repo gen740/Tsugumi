@@ -19,7 +19,7 @@ assert.equal(parseReadme('---\ntitle: Results\ndescription: \nunknown: value\n--
 
 const executable = ['type', 'symbol', 'inputs', 'maxRuns', 'reuseWorker', 'timeoutSeconds',
   'buildTimeoutSeconds', 'recordLogs', 'recordIO', 'sandbox', 'grants', 'systems', 'workerCapabilities'].sort()
-for (const kind of ['code', 'input']) {
+for (const kind of ['code']) {
   const def = implementedCard(kind, 'star', ['aarch64-linux'])
   assert.deepEqual(def.keys().sort(), executable)
   assert.equal(str(get(def, 'recordIO')), 'project')

@@ -48,7 +48,7 @@ TEST(ProjectDocument, RequiresEveryProjectFieldAndChecksItsFormat) {
 
 TEST(ProjectDocument, EnforcesRequiredAndEffectiveFieldsForEveryCardType) {
   for (const std::string kind :
-       {"code", "input", "merge", "collect", "draft", "trigger", "subgraph"}) {
+       {"code", "merge", "collect", "draft", "trigger", "subgraph"}) {
     SCOPED_TRACE(kind);
     auto fields = json::Object(test::card_json(
         kind == "merge" ? R"({"type":"merge","inputs":[{"name":"in"}]})"

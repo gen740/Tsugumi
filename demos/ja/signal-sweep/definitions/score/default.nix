@@ -6,13 +6,15 @@ let
     inputs = ./_inputs.fbs;
     outputs = ./_outputs.fbs;
   };
-  thresholds = [ 10 14 ];
-  arguments = threshold: common // { params = { inherit threshold; }; };
+  arguments = signal: threshold: common // { params = { inherit signal threshold; }; };
 in
 {
-  run = map (threshold: {
-    label = "threshold=${toString threshold}";
-    run = sdk.pythonCard (arguments threshold // { src = ./src; });
-  }) thresholds;
-  api = sdk.pythonApi (arguments (builtins.head thresholds));
+  run = pkgs.lib.concatMap (
+    signal:
+    map (threshold: {
+      label = "value=${toString signal}, threshold=${toString threshold}";
+      run = sdk.pythonCard (arguments signal threshold // { src = ./src; });
+    }) params.thresholds
+  ) params.values;
+  api = sdk.pythonApi (arguments 0 0);
 }

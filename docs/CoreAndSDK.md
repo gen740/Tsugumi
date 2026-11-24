@@ -46,7 +46,7 @@ The [generic evaluation tool](features.md#evaluating-a-card-expression) runs a N
 
 The result of a Card's `default.nix` may define only these attributes:
 
-- `run`: a derivation containing `lib/main.so` for Code Cards or built port values for Input Cards, or a list of `{ label; run; }`;
+- `run`: a derivation containing `lib/main.so`, or a list of `{ label; run; }`;
 - `views`: the Card's [views](#views);
 - `exports`: values that downstream Cards may read.
 - `api`: the optional code-generation derivation.
@@ -68,7 +68,7 @@ What a language SDK might otherwise have described lives elsewhere:
 
 ### Port schemas
 
-The core generates one `_inputs.fbs` per Code or Input Card. The schema describes the connected ports and contains namespaced copies of their upstream types. Cards with no connected inputs get an empty `Inputs` table. The generated `tsugumi_schema` attributes let the SDK select a candidate by the ID in the port envelope. The file is versioned and refreshed when wiring or upstream schemas change.
+The core generates one `_inputs.fbs` per Code Card. The schema describes the connected ports and contains namespaced copies of their upstream types. Cards with no connected inputs get an empty `Inputs` table. The generated `tsugumi_schema` attributes let the SDK select a candidate by the ID in the port envelope. The file is versioned and refreshed when wiring or upstream schemas change.
 
 Merge forwards each envelope unchanged. A Merge-fed port with one distinct schema has that type. With several distinct schemas, its generated input schema declares a union. The UI displays the candidate type names as `A | B`. Collect feeds a fixed `Collected` table with opaque members.
 
@@ -86,7 +86,7 @@ Merge forwards each envelope unchanged. A Merge-fed port with one distinct schem
 - The Agent or the user chooses a template. The core never chooses: there is no automatic selection and there are no per-language defaults.
 - The Agent may list and copy templates. Adding or importing one needs a person's approval.
 - Scaffolding a new Card is the Agent's job.
-- The "New Card" menu offers Draft, Trigger, Input, Merge and Collect, and "From Template…" with Project and Host sections and nothing preselected. [Reuse Cards from a template](Usage.md#reuse-cards-from-a-template)
+- The "New Card" menu offers Draft, Trigger, Merge and Collect, and "From Template…" with Project and Host sections and nothing preselected. [Reuse Cards from a template](Usage.md#reuse-cards-from-a-template)
 - No templates ship in the core. Example templates live in tsugumi-kit.
 
 ## Views

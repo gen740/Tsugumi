@@ -27,9 +27,6 @@
         "id": "start"
       },
       {
-        "id": "settings"
-      },
-      {
         "id": "simulate"
       },
       {
@@ -52,18 +49,8 @@
           "port": "out"
         },
         "to": {
-          "card": "settings",
-          "port": "start"
-        }
-      },
-      {
-        "from": {
-          "card": "settings",
-          "port": "walk"
-        },
-        "to": {
           "card": "simulate",
-          "port": "walk"
+          "port": "start"
         }
       },
       {

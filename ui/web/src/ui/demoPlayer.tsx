@@ -34,7 +34,6 @@ interface CardDoc {
   details: string[]
   inputs: PortData[]
   outputs: PortData[]
-  params: ParamData[]
   allParams: ParamData[]
   permissions: PermissionKind[]
   files: SourceFile[]
@@ -172,7 +171,7 @@ function phaseOf(stepOf: Map<string, number>, id: string, fr: Frame): 'before' |
 
 export function nodeData(data: DemoData, stepOf: Map<string, number>, c: CardDoc, fr: Frame): CardNodeData {
   const base: CardNodeData = {
-    title: c.title ?? c.id, kind: c.kind, symbol: cardIcon(c.kind, c.symbol), summary: c.summary, inputs: c.inputs, outputs: c.outputs, params: c.params, invocation: 0n,
+    title: c.title ?? c.id, kind: c.kind, symbol: cardIcon(c.kind, c.symbol), summary: c.summary, inputs: c.inputs, outputs: c.outputs, invocation: 0n,
     runContinues: fr.mode === 'playing', errors: [], warnings: [], collapsed: false, permissions: c.permissions,
   }
   const f = data.final[c.id]

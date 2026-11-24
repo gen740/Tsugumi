@@ -3,7 +3,7 @@
   "symbol": "chevron.left.forwardslash.chevron.right",
   "inputs": [
     {
-      "name": "config"
+      "name": "start"
     }
   ],
   "maxRuns": 1,
