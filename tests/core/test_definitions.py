@@ -234,6 +234,7 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
     prefix = "externals/outer/externals/inner/"
     project_path = prefix + "tsugumi.json"
     card_path = prefix + "definitions/definitions/_card.json"
+    inputs_path = prefix + "definitions/definitions/_inputs.fbs"
     meta_path = prefix + "definitions/definitions/README.md"
     code_path = prefix + "definitions/definitions/src/run.py"
     project = '{"canvas":{"cards":[{"id":"definitions"}],"connections":[]}}'
@@ -265,7 +266,10 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
                               baseHash=text(sources[card_path].hash)),
                        change("RemoveSource", path=meta_path, baseHash=text(sources[meta_path].hash)),
                    ])
-    assert {text(s.path): json.loads(bytes(s.document)) for s in saved.delta.sourcesUpsert} == {card_path: json.loads(updated)}
+    upserts = {text(s.path): s for s in saved.delta.sourcesUpsert}
+    assert set(upserts) == {card_path, inputs_path}
+    assert json.loads(bytes(upserts[card_path].document)) == json.loads(updated)
+    assert upserts[inputs_path].document is None
     assert [text(p) for p in saved.delta.sourcesRemoved] == [meta_path]
 
     # Only a reload accepts an out-of-band change. A save that needs a new
@@ -296,6 +300,7 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
     reloaded = c.call("ProjectReloadRequest", baseRev=changed.rev, opId=new_id(), origin="t")
     assert reloaded.executionRev > changed.executionRev
     assert {text(s.path): json.loads(bytes(s.document)) for s in reloaded.delta.sourcesUpsert} == {card_path: json.loads(draft)}
+    assert [text(p) for p in reloaded.delta.sourcesRemoved] == [inputs_path]
 
 
 def test_card_in_card_is_an_external_project(tmp_path, core_factory):

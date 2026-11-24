@@ -64,7 +64,7 @@ def test_generated_inputs_refresh_on_change_and_keep_their_mtime_on_identical_ty
     graph.cards["A"][1]["_outputs.fbs"] = source.read_text()
     graph.connections.clear()
     graph.save(client)
-    assert not target.exists()
+    assert target.read_text().endswith("namespace inputs;\ntable Inputs {\n}\nroot_type Inputs;\n")
 
 
 @pytest.mark.environment
