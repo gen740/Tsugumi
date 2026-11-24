@@ -109,10 +109,16 @@ struct Document {
 using DocumentPtr = std::shared_ptr<const Document>;
 
 bool valid_id(const std::string& id);
-// A Card secret name, which is also its environment variable's name:
-// [a-z][a-z0-9_]{0,63}. Lower case never collides with PATH, HOME, LANG or the
-// TSUGUMI_* variables a worker sets.
-bool valid_secret_name(std::string_view name);
+// The one rule for Card ids, port names (inputs, outputs, boundary ports) and
+// Card secret names: [a-z][a-z0-9_]{0,63}. Ids name folders (APFS is case
+// insensitive; a leading '.' hides a folder), port names become FlatBuffers
+// namespaces and Nix attribute names, and lower-case secret names never collide
+// with PATH, HOME, LANG or the TSUGUMI_* variables a worker sets.
+bool valid_name(std::string_view name);
+
+// This Tsugumi's version (VERSION): written into every tsugumi.json it creates
+// or saves, and required of every tsugumi.json it loads.
+extern const char* const kTsugumiVersion;
 
 class DocumentError : public std::runtime_error {
  public:
@@ -125,8 +131,12 @@ class DocumentError : public std::runtime_error {
   std::map<std::string, std::string> args;
 };
 
-// The initial tsugumi.json, available before a project daemon exists.
-auto initial_project_json(const std::string& name) -> std::string;
+// The initial tsugumi.json, available before a project daemon exists. It
+// writes every value (there are no built-in defaults); agent_exclude is the
+// host's project default.
+auto initial_project_json(const std::string& name,
+                          const std::vector<std::string>& agent_exclude)
+    -> std::string;
 
 // A parsed document: its buffer and its canonical text.
 struct ParsedDocument {

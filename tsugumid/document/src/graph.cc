@@ -301,7 +301,7 @@ class Builder {
       std::set<std::string> names;
       for (const auto* entry : *secrets) {
         const auto name = entry->str();
-        if (!valid_secret_name(name)) {
+        if (!valid_name(name)) {
           n.diags.push_back(diag(n.path, "invalid_setting",
                                  "secrets entries must match "
                                  "[a-z][a-z0-9_]{0,63}: " +

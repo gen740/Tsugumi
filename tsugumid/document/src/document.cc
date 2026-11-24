@@ -55,7 +55,9 @@ bool valid_id(const std::string& id) {
   return true;
 }
 
-bool valid_secret_name(std::string_view name) {
+const char* const kTsugumiVersion = TSUGUMI_VERSION_TEXT;
+
+bool valid_name(std::string_view name) {
   if (name.empty() || name.size() > 64 || name[0] < 'a' || name[0] > 'z')
     return false;
   for (char c : name)
@@ -282,10 +284,23 @@ auto check_log_limit(const D::Project& p, const std::string& where) -> void {
 
 }  // namespace
 
-auto initial_project_json(const std::string& name) -> std::string {
+auto initial_project_json(const std::string& name,
+                          const std::vector<std::string>& agent_exclude)
+    -> std::string {
+  std::string exclude;
+  for (const auto& path : agent_exclude)
+    exclude += (exclude.empty() ? "" : ",") + json::Quote(path);
   return parse_project_json(
-             "{\"name\":" + json::Quote(name) +
-             R"(,"nixPath":[],"canvas":{"cards":[],"connections":[]}})")
+             "{\"tsugumiVersion\":" + json::Quote(kTsugumiVersion) +
+             ",\"name\":" + json::Quote(name) +
+             R"(,"nixPath":[],"trackedPaths":[],"agentExclude":[)" + exclude +
+             R"(],"recordLogs":true,"recordIO":false,"logLimitBytes":)" +
+             std::to_string(kDefaultLogLimitBytes) +
+             ",\"outputLimitBytes\":" +
+             std::to_string(kDefaultOutputLimitBytes) +
+             ",\"outputLimitEntries\":" +
+             std::to_string(kDefaultOutputLimitEntries) +
+             R"(,"canvas":{"cards":[],"connections":[]}})")
       .text;
 }
 

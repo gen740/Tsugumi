@@ -30,6 +30,9 @@ add_library(tsugumi_document STATIC
   ${PROJECT_SOURCE_DIR}/tsugumid/document/src/collect_type.cc
   ${PROJECT_SOURCE_DIR}/tsugumid/document/src/host_requirements.cc)
 target_include_directories(tsugumi_document PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# The version written into and required of every tsugumi.json.
+set_source_files_properties(${PROJECT_SOURCE_DIR}/tsugumid/document/src/document.cc
+  PROPERTIES COMPILE_DEFINITIONS "TSUGUMI_VERSION_TEXT=\"${TSUGUMI_VERSION}\"")
 target_link_libraries(tsugumi_document PUBLIC tsugumi_protocol tsugumi_json
   flatbuffers::flatbuffers Threads::Threads tsugumi_util)
 
