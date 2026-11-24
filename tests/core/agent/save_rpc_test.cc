@@ -350,6 +350,11 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorSavesGraphWithoutWritingLayout) {
                {"put",
                 json::Quote(
                     R"({"type":"draft","symbol":"pencil.and.outline"})")},
+               {"expect_missing", "true"}}),
+           json::Encode(json::Members{
+               {"file_path", json::Quote("externals/outer/definitions/" + id +
+                                         "/README.md")},
+               {"put", json::Quote(host::CardReadme(id))},
                {"expect_missing", "true"}})})}});
   model.Queue(AnthropicTool("save", "project_edit", args));
   model.Queue(AnthropicText("Saved."));

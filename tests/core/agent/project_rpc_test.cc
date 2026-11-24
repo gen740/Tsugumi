@@ -2023,7 +2023,7 @@ TEST_F(AgentProjectFixture,
   const auto original = JsonString(Inspect(conversation).View(), "/text");
   const auto initial_revision = JsonString(original, "/value/rev");
   const auto document =
-      R"({"name":"RENAMED_BY_MODEL","nixPath": [],"canvas":{"cards":[],"connections":[]}})";
+      FixtureProjectDocument(R"({"name":"RENAMED_BY_MODEL"})");
   const auto arguments =
       "{\"base_rev\":" + Quote(initial_revision) +
       ",\"changes\":[{\"value_type\":\"SetProject\",\"value\":{\"json\":" +
@@ -2610,13 +2610,14 @@ TEST_F(AgentProjectFixture, ReloadApprovalCannotWidenADifferentPermissionSet) {
   const auto snapshot = JsonString(Inspect(conversation).View(), "/text");
   const auto arguments =
       "{\"base_rev\":" + Quote(JsonString(snapshot, "/value/rev")) + "}";
-  Write(
-      directory.path / "project/tsugumi.json",
-      R"({"name":"External edit","nixPath": [],"canvas":{"cards":[{"id":"work"}],"connections":[]}})");
+  Write(directory.path / "project/tsugumi.json",
+        FixtureProjectDocument(
+            R"({"name":"External edit","canvas":{"cards":[{"id":"work"}],"connections":[]}})"));
   const auto definition =
       directory.path / "project/definitions/work/_card.json";
   Write(definition, ::tsugumi::test::FixtureCodeCard(
                         R"({"grants":{"network":true,"gui":false}})"));
+  Write(definition.parent_path() / "README.md", host::CardReadme("work"));
   const auto pending =
       Tool(conversation, "project_reload", arguments, "reload-a");
   ASSERT_EQ(pending.Code(), "grant_required");
@@ -2872,8 +2873,8 @@ TEST_F(AgentProjectFixture, ChangedApprovalTargetsNeedANewApproval) {
   // A real save changes the core's revision after the person saw the target.
   const auto inspect = JsonString(Inspect(conversation).View(), "/text");
   const auto rev = JsonString(inspect, "/value/rev");
-  const auto document =
-      R"({"name":"Changed approval target","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})";
+  const auto document = FixtureProjectDocument(
+      R"({"name":"Changed approval target","agentExclude":[]})");
   const auto saved = Tool(
       conversation, "project_save",
       "{\"base_rev\":" + Quote(rev) +
@@ -2973,7 +2974,7 @@ TEST_F(AgentProjectFixture,
 }
 
 TEST_F(AgentProjectFixture, HelperOwnsTheCardItReservesFromEmptySets) {
-  StartProject();
+  StartProject(false, FixtureProjectDocument(R"({"name":"Helper project"})"));
   const auto conversation = Conversation("helper-created-card");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -3010,12 +3011,18 @@ TEST_F(AgentProjectFixture, HelperOwnsTheCardItReservesFromEmptySets) {
   const auto id = JsonString(reserved, "/value/id");
   ASSERT_FALSE(id.empty());
   const auto path = "definitions/" + id + "/src/own.txt";
+  const auto graph =
+      R"({"name":"Helper project","nixPath":[],"canvas":{"cards":[{"id":)" +
+      Quote(id) + R"(}],"connections":[]}})";
   model.Queue(AnthropicTool(
       "save-own", "project_save",
       "{\"base_rev\":" + Quote(rev) +
-          ",\"changes\":[{\"value_type\":\"PutDefinition\",\"value\":{\"id\":" +
+          ",\"changes\":[{\"value_type\":\"SetProject\",\"value\":{\"json\":" +
+          Quote(graph) +
+          "}},{\"value_type\":\"PutDefinition\",\"value\":{\"id\":" +
           Quote(id) + ",\"card_json\":" +
           Quote(R"({"type":"draft","symbol":"pencil.and.outline"})") +
+          ",\"readme\":" + Quote(host::CardReadme(id)) +
           "}},{\"value_type\":\"PutSource\",\"value\":{\"path\":" +
           Quote(path) + ",\"bytes\":[111,119,110]}}]}"));
   model.Queue(AnthropicTool("read-own", "project_file_read",
