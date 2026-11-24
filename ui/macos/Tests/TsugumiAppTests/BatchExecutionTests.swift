@@ -58,7 +58,9 @@ func batchExecutionUsesRecordedWireCountsAndSelectsExactInvocations(count: Int) 
   let native = "x86_64-darwin"
   #endif
   var definition = implementedCard(.code, symbol: CardKind.code.symbol, systems: [native])
+  // The scripted worker reads its test package directly from the project.
   definition["sandbox"]?["filesystem"] = .bool(false)
+  definition["sandbox"]?["identity"] = .bool(false)
   definition["recordIO"] = .string("on")
   try Data(definition.serialized().utf8)
     .write(to: card.appendingPathComponent("_card.json"))

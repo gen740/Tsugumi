@@ -1,8 +1,16 @@
 """Prepare external workers; save their card definitions through public RPC."""
 
 import json
+import sys
 
 from harness.scenario import Project, STRING_OUTPUT
+
+
+# The scripted worker reads scenarios and writes gate files outside scratch.
+# On macOS its process observations also need the host parent PID.
+SCRIPTED_WORKER_SANDBOX = {"filesystem": False}
+if sys.platform == "darwin":
+    SCRIPTED_WORKER_SANDBOX.update(pid=False, identity=False)
 
 
 def mock_plan(runs, *, views=(), execution_list=False, **options):
@@ -14,7 +22,7 @@ def add_worker(graph, name, package, actions, *, outputs=STRING_OUTPUT, views=()
     package.mkdir(parents=True, exist_ok=True)
     (package / "scenario.json").write_text(json.dumps({"actions": actions}))
     return graph.card(
-        name, {"type": "code", "sandbox": {"filesystem": False}, "recordIO": "on", **settings},
+        name, {"type": "code", "sandbox": SCRIPTED_WORKER_SANDBOX, "recordIO": "on", **settings},
         outputs=outputs, plan=mock_plan([str(package)], views=views),
     )
 
