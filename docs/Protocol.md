@@ -199,8 +199,8 @@ No fields.
 | [`EvaluateNix`](#evaluatenix) | EvaluateNixResult | Evaluate a Nix expression on the local system in the saved Card's directory with its nixPath, params and inputs. Returns JSON. For Build SDK, evaluate (import ./. { inherit params inputs; }).api with build enabled to return the derivation's output files. |
 | [`NixPathLockSource`](#nixpathlocksource) | NixPathLockedSource | Fetch a source for an explicit Host lock update. |
 | [`RewriteParamLiteral`](#rewriteparamliteral) | RewrittenParamLiteral | Prepare a guarded params.nix edit for the Host. |
-| [`InputTypes`](#inputtypes) | InputTypesResult | Read resolved incoming sources, port kinds and full types. output_port selects an upstream output instead. |
-| [`OutputTypes`](#outputtypes) | OutputTypesResult | Compile _outputs.fbs text to reflection schema; port and type_name optionally set an output's type and kind in returned text. |
+| [`InputTypes`](#inputtypes) | InputTypesResult | Read resolved incoming sources and full types. output_port selects an upstream output instead. |
+| [`OutputTypes`](#outputtypes) | OutputTypesResult | Compile _outputs.fbs text to reflection schema; port and type_name optionally set an output's type in returned text. |
 
 ### EvaluateNix
 

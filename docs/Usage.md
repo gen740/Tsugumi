@@ -56,7 +56,7 @@ Use **Arrange** to place Cards and reduce wire crossings. Use **Untangle Wires**
 
 Select several Cards and choose **Group Selection** to keep them together on the Canvas. To reuse another Workflow, use the import button by **Add Card** in the sidebar. It copies the selected project into `externals` as a Card in Card. Its boundary maps the outer ports to steps inside, which you can open by double-clicking the Card.
 
-Use **Nix references** in the Canvas controls to see the upstream Card exports available to each Card through its input ports. Hover a Card to highlight its links or open **List** to jump to either end or open the consumer's `default.nix`. An input port named `data` is available as `inputs.data` when its producer is known. [Nix reference rules](features.md#sharing-nix-exports-through-connections)
+Use **Nix references** in the Canvas controls to see the upstream Card exports available to each Card through its connections. Hover a Card to highlight its links or open **List** to jump to either end or open the consumer's `default.nix`. An upstream Card `a` that is guaranteed to run first is available as `inputs.a`. [Nix reference rules](features.md#sharing-nix-exports-through-connections)
 
 ## Run from a Card
 
@@ -64,7 +64,7 @@ Run the Workflow once to save its inputs. For example, open a copy of **Visualiz
 
 Use the bottom **Timeline** to see which steps ran. Select a Card there to inspect its log, or open **Card settings → Run History** to choose an earlier invocation. [Run history](RunHistory.md)
 
-A thick wire carries a batch of values. Its count shows how many items are in that batch. Connect it to a Collect Card to pass one vector or Directory to the next step. [Run lists and Collect](features.md#run-lists-and-collect)
+A thick wire carries a batch of values. Its count shows how many items are in that batch. Connect it to a Collect Card to pass one `Collected` list to the next step. [Run lists and Collect](features.md#run-lists-and-collect)
 
 ## Live displays
 
