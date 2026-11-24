@@ -143,6 +143,8 @@
 .card-views { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
 .card-view { display: flex; flex-direction: column; gap: 4px; }
 .card-view h3, .card-views p { margin: 0; }
-.card-view-html { flex: 1; min-height: 140px; }
+.card-view-html, .card-view-dawn { flex: 1; min-height: 140px; }
 .card-view iframe { display: block; border: 0; width: 100%; flex: 1; min-height: 0; }
 .card-view iframe[hidden] { display: none; }
+.dawn-view-surface { position: relative; flex: 1; min-height: 0; }
+.dawn-view-surface canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
