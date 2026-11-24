@@ -6,7 +6,7 @@ Update fixtures only when the expected public behaviour changes. The suite comma
 - `delegateSchema` in `agent-contract.json` records the structure of the schema in `hostd/agent/Shared/agent.json` without description text; `tests/static/test_agent_contract.py` checks it.
 - `layout-scenes.json` holds a small set of distinct layout constraints; tests check geometry and scope without coordinate goldens.
 - `wire-routes.json`: after changing routing, regenerate with `WIRE_ROUTES_WRITE=1 npm --prefix ui/web test`.
-- `port-grid-contract.json` and `nix-source-refs.json` are shared by native and Web UI tests; update both consumers when changing their contracts.
+- `port-grid-contract.json` is shared by native and Web UI tests; update both consumers when changing its contract.
 
 - `subgraph-edits.json` records host document edits for Web gesture and undo fixtures. The host unit tests verify every reply; graph transformation expectations belong to `tests/core/agent/document_edits_test.cc`. Presentation fixtures call the production operation executor through `tsugumi_document_edit_driver` (override its path with `TSUGUMI_DOCUMENT_EDIT_DRIVER`).
 

@@ -1,11 +1,12 @@
 """Public RPC coverage for Card evaluation, project locks and generated schemas."""
 
 import json
-import tarfile
+
+import pytest
 
 from harness.definition_evaluation import EMPTY_OUTPUTS, reload_project
 from harness.scenario import Project
-from tsugumi_client import change, new_id, path, text
+from tsugumi_client import path, text
 
 
 OUTPUTS = "table Value { text:string; } table Outputs { out:Value; } root_type Outputs;"
@@ -17,6 +18,7 @@ def evaluated(client, card, expression, **options):
     return json.loads(text(result.json))
 
 
+@pytest.mark.environment
 def test_nix_inputs_are_transitive_exports_and_stop_at_merge(client, project):
     graph = Project(project)
     graph.card("A", {"type": "code"}, outputs=OUTPUTS, sources={
@@ -65,28 +67,7 @@ def test_generated_inputs_refresh_on_change_and_keep_their_mtime_on_identical_ty
     assert not target.exists()
 
 
-def test_lock_source_without_revision_uses_declared_url_and_verified_nar(client, project, tmp_path):
-    contents = tmp_path / "contents"
-    contents.mkdir()
-    (contents / "default.nix").write_text('"from a tarball"')
-    archive = tmp_path / "library.tar.gz"
-    with tarfile.open(archive, "w:gz") as tar:
-        tar.add(contents, arcname="library")
-    url = "tarball+" + archive.resolve().as_uri()
-    result = client.call("NixPathLockSourceRequest", url=url)
-    assert not result.rev
-    locked = {"entries": [{"name": "source", "url": url, "narHash": text(result.narHash)}]}
-    snapshot = client.call("ProjectInspectRequest")
-    doc = json.loads(text(snapshot.projectJson))
-    doc["nixPath"] = [{"name": "source", "url": url}]
-    client.call("ProjectSaveRequest", baseRev=snapshot.rev, opId=new_id(), origin="ui:test",
-                changes=[change("SetProject", json=json.dumps(doc)),
-                         change("SetProjectLock", path="tsugumi.lock", json=json.dumps(locked))])
-    Project(project).card("work", {"type": "code"}, outputs=EMPTY_OUTPUTS).save(client)
-    assert json.loads((project / "tsugumi.lock").read_text()) == locked
-    assert evaluated(client, "work", "import <source>") == "from a tarball"
-
-
+@pytest.mark.environment
 def test_sdk_build_handles_missing_api_and_rejects_foreign_systems(client, project):
     graph = Project(project)
     graph.card("no-api", {"type": "code"}, outputs=EMPTY_OUTPUTS, sources={

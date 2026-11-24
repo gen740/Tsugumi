@@ -78,11 +78,6 @@ def python_nix(main: str, *, values: dict | None = None, let: str = "", tools: s
             + "{ run = " + python_run(main, values=values, tools=tools) + "; " + extra + "}\n")
 
 
-def printing_run(text_nix: str) -> str:
-    """A run that prints the value of the Nix string expression `text_nix`."""
-    return python_run(PRINT_MAIN, values={"PRINTED": text_nix})
-
-
 def python_card(main: str, *, outputs=NUM, inputs=(), values=None, let="", tools="", extra="", **settings) -> dict:
     body = {"type": "code", "inputs": [{"name": i} for i in inputs], **settings}
     body["_outputs"] = outputs

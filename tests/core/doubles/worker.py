@@ -167,14 +167,6 @@ class Worker:
         failure = FailureT(kind=getattr(FailureKind, kind), args=[], diagnostic=message)
         self.data.send(self.call_id, WorkerPayload.WorkerFailure, WorkerFailureT(failure=failure, created=self.created))
 
-    def output_path(self, relative):
-        if self.call is None:
-            raise ValueError("file actions require a File or Directory output")
-        relative = Path(relative)
-        if relative.is_absolute() or ".." in relative.parts:
-            raise ValueError("output action path must stay inside the output directory")
-        return Path.cwd() / relative
-
     def actions(self, actions, outputs):
         for action in actions:
             self.check_cancel()
@@ -237,10 +229,6 @@ class Worker:
                 artifact = self.created[-1]
                 root = Path(text(self.call.artifactDirectory)) / bytes(artifact.bytes).hex()
                 (root / action["name"]).symlink_to(action["target"])
-            elif operation == "symlink":
-                destination = self.output_path(action["path"])
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.symlink_to(action["target"])
             elif operation == "display_text":
                 display = WorkerDisplayT(view="test", bytes=action["text"].encode())
                 self.data.send(0, WorkerPayload.WorkerDisplay, display)

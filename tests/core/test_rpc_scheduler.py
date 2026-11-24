@@ -1,15 +1,12 @@
 """Graph scheduling, opaque routing and terminal states through public RPC."""
 
-import flatbuffers
 import pytest
 
-from harness.native_card import native_card
+from harness.native_card import STATIC_RESULT_ENTRY, native_card
 from harness.scenario import Project
 from harness.values import reference_json
 from projects import run_and_wait, wait_run, wait_run_notification
 from tsugumi_client import new_id, path, text
-from Tsugumi.Card.CardPort import CardPortT
-from Tsugumi.Card.CardResult import CardResultT
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
@@ -19,24 +16,8 @@ EMPTY = "table Outputs {} root_type Outputs;"
 TEXT = "table Text { value:string; } table Outputs { out:Text; } root_type Outputs;"
 
 
-def card_program(package, values):
-    builder = flatbuffers.Builder(128)
-    result = CardResultT(outputs=[CardPortT(name=port, bytes=data) for port, data in values])
-    builder.Finish(result.Pack(builder))
-    literal = ",".join(map(str, builder.Output()))
-    entry = f"""
-static const uint8_t fixture[] = {{{literal}}};
-int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {{
-  if (call->abi_version != TSUGUMI_ABI_VERSION) return 1;
-  *result = (tsugumi_bytes){{fixture, sizeof(fixture)}};
-  return 0;
-}}
-"""
-    return native_card(package, entry)
-
-
 def add_code(graph, directory, name, *, inputs=(), outputs=None, values=(), runs=None):
-    packages = [card_program(directory / name, values)] if runs is None else runs
+    packages = [native_card(directory / name, STATIC_RESULT_ENTRY, values)] if runs is None else runs
     return graph.card(name, {"type": "code", "recordIO": True,
                             "sandbox": {"filesystem": False},
                             "inputs": [{"name": name} for name in inputs]},
@@ -167,8 +148,8 @@ def test_collect_keeps_only_members_that_emit_the_port(core_factory, project, tm
     c = core_factory(mocked_builds=True).connect()
     graph = Project(project)
     packages = [
-        card_program(tmp_path / "present", [("out", b"member")]),
-        card_program(tmp_path / "empty", []),
+        native_card(tmp_path / "present", STATIC_RESULT_ENTRY, [("out", b"member")]),
+        native_card(tmp_path / "empty", STATIC_RESULT_ENTRY),
     ]
     graph.card("start", {"type": "trigger"})
     add_code(graph, tmp_path, "batch", outputs=NUMBER, runs=packages)
