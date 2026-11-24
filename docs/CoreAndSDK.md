@@ -1,7 +1,6 @@
 # The core and the language SDKs
 
 **Status** — decided by the owner on 2026-11-13 through 2026-11-23.
-Points that are not decided yet are listed under [Open](#open).
 
 The Card ABI that connects the two is in [Card ABI](CardABI.md), and what a Card sees when it runs is in [The sandbox contract](SandboxContract.md).
 
