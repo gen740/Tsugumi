@@ -683,6 +683,8 @@ auto tsugumi_view_host_draw(tsugumi_view_host* host) -> int32_t {
       FrameView frame{host->handles, id};
       flags = host->call(kDraw.name, host->draw, {i32(id)});
     }
+    // TODO: Capture a PNG for Agent snapshots when the snapshot contract is
+    // decided.
     if (wgpuSurfacePresent(host->gpu.surface.get()) != WGPUStatus_Success) {
       throw TrapError("Could not present the Dawn surface");
     }

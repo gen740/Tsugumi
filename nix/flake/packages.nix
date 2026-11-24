@@ -92,7 +92,9 @@ in
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
         ci-core-native = (ci-core.override { nativeDarwin = true; }).overrideAttrs (old: {
           postInstall = old.postInstall + ''
-            for binary in ${core}/libexec/tsugumi-tests/tsugumi-view-*-tests; do
+            for suite in load decode; do
+              binary="${core}/libexec/tsugumi-tests/tsugumi-view-$suite-tests"
+              test -x "$binary"
               ln -s "$binary" "$out/libexec/tsugumi-tests/"
             done
           '';

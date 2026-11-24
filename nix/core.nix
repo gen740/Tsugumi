@@ -117,7 +117,7 @@ clangStdenv.mkDerivation {
   doCheck = isDarwin;
   checkPhase = ''
     runHook preCheck
-    ctest --output-on-failure -R '^tsugumi-view-'
+    ctest --output-on-failure --no-tests=error -R '^tsugumi-view-(load|decode)-tests$'
     runHook postCheck
   '';
   # Inputs for the dev shell's own CMake configuration.
