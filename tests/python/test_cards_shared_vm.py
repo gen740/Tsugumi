@@ -1,8 +1,8 @@
 """Code Card behaviour in the real environment (TSUGUMI_TEST_SHARED_VM=1; the
 shared VM): backpressure stalls, cancellation, isolation, delegated limits,
 Nix upstream references, stages and caching, the process a Card runs in,
-skipped Cards and worker crashes. The Cards are small Python
-Cards; what an SDK offers is checked in the kit."""
+skipped Cards and worker crashes. Most fixtures use small Python Cards.
+The artifact probe drives the native ABI directly."""
 
 from __future__ import annotations
 
@@ -18,9 +18,11 @@ from harness.observations import decode_scalar, read_output
 from harness.real_cards import (ENVIRONMENT_MAIN, NUM, ONE_MAIN, TXT, check_process_environment, log,
                                 python_card, txt_main)
 from projects import card, conn, run_and_wait, start_run, wait_for_log, wait_run, write_nix_project as write
+from test_worker_loading import DIRECTORY, native_card
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
+from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.Phase import Phase
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
@@ -68,47 +70,59 @@ def shown(c, run_id, name="show"):
     return decode_scalar(read_output(c, run_id, card=name))
 
 
-def test_artifacts_cross_virtiofs_with_read_only_grants(env):
-    schema = """include "tsugumi/artifact.fbs";
-      table Outputs { doc:tsugumi.Artifact (required); } root_type Outputs;"""
-    source = python_card("""
-from pathlib import Path
-from card import Artifact, Output
-
-def run(inputs):
-    artifact, directory = Artifact.dir()
-    directory = Path(directory)
-    (directory / "nested").mkdir()
-    (directory / "nested" / "report.txt").write_text("shared VM")
-    return Output(doc=artifact)
-""", outputs=schema)
-    sink = python_card(txt_main("""
-    import errno
-    import os
-    directory = input.require("doc").open()
-    assert not os.path.exists("/project/.tsugumi/artifacts")
-    member = directory / "nested" / "report.txt"
-    for operation in (lambda: member.open("a"), lambda: member.chmod(0o600)):
-        try:
-            operation()
-        except OSError as error:
-            assert error.errno == errno.EROFS, error
-        else:
-            raise AssertionError("input accepted a write operation")
-    RESULT = member.read_text()
-"""), outputs=TXT, inputs=["doc"], recordIO=True)
-    client = load(env, {"source": source, "show": sink},
-                  [card("source", "source"), card("show", "show")],
-                  [conn("source", "doc", "show", "doc")])
-    run_id, status = run_and_wait(client, "source")
-    assert status.state == RunState.succeeded, (
-        log(client, run_id, "source"), log(client, run_id, "show")
-    )
-    assert shown(client, run_id) == "shared VM"
-    root = env.project / ".tsugumi" / "artifacts" / run_id / "source" / "@1" / "0"
-    member = root / "nested" / "report.txt"
-    assert member.read_text() == "shared VM"
-    assert all(not node.stat().st_mode & 0o222 for node in (root, root / "nested", member))
+def test_artifacts_cross_virtiofs_with_read_only_grants(tmp_path):
+    source = native_card(r"""
+        tsugumi_artifact_id id;
+        const auto directory = fs::path(create_artifact(call, id));
+        fs::create_directory(directory / "nested");
+        std::ofstream(directory / "nested/report.txt") << "shared VM";
+        out.artifact(id);
+    """, outputs=DIRECTORY)
+    sink = native_card(r"""
+        if (fs::exists("/project/.tsugumi/artifacts")) return 1;
+        const auto directory = fs::path(open_artifact(call, in));
+        if (directory.empty()) return 2;
+        const auto member = directory / "nested/report.txt";
+        std::ifstream report(member);
+        std::string contents;
+        std::getline(report, contents);
+        if (contents != "shared VM") return 3;
+        const int fd = open(member.c_str(), O_WRONLY | O_APPEND);
+        const int write_error = errno;
+        if (fd >= 0) {
+          close(fd);
+          return 4;
+        }
+        // The sealed inode can reject write-open before the mount check.
+        if (write_error != EROFS && write_error != EACCES) return 5;
+        if (chmod(member.c_str(), 0600) == 0 || errno != EROFS) return 6;
+        if (mkdir((directory / "extra").c_str(), 0700) == 0 || errno != EROFS)
+          return 7;
+        out.number(contents.size());
+    """, declarations="#include <cerrno>", inputs=["doc"], recordIO=True)
+    project = tmp_path / "artifact-project"
+    write(project, {"source": source, "show": sink},
+          [card("source", "source"), card("show", "show")],
+          [conn("source", "doc", "show", "doc")])
+    guest = real_environment(project)
+    try:
+        with guest.client() as client:
+            run_id, status = run_and_wait(client, "source")
+            assert status.state == RunState.succeeded, (
+                text(status.failure.diagnostic) if status.failure else None,
+                log(client, run_id, "source", LogStream.build),
+                log(client, run_id, "show", LogStream.build),
+                log(client, run_id, "source", LogStream.standard_error),
+                log(client, run_id, "show", LogStream.standard_error),
+            )
+            value = read_output(client, run_id, card="show")
+            assert decode_scalar(value, "uint64") == len("shared VM")
+        root = project / ".tsugumi" / "artifacts" / run_id / "source" / "@1" / "0"
+        member = root / "nested" / "report.txt"
+        assert member.read_text() == "shared VM"
+        assert all(not node.stat().st_mode & 0o222 for node in (root, root / "nested", member))
+    finally:
+        guest.cleanup()
 
 
 def test_backpressure_stall_ends_the_run(env):
