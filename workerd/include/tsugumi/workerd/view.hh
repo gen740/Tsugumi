@@ -27,7 +27,7 @@ struct WorkerViewRequest {
   uint64_t request_id;
   ViewControlKind kind;
   std::string view;
-  uint32_t mode = 0, width = 0, height = 0;
+  uint32_t mode = 0, flags = 0, width = 0, height = 0;
   ViewUuid session = {}, route = {};
 };
 

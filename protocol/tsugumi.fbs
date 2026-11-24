@@ -1386,6 +1386,7 @@ table ViewOpened {
   mode:uint32;
   width:uint32;
   height:uint32;
+  flags:uint32;
 }
 
 /// A route belongs to this session. This association lasts until the view

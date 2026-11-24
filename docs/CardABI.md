@@ -83,14 +83,19 @@ one process mailbox for that window. The route lasts until it is unregistered or
 the process ends. The window stays open until the user closes it.
 
 Open with `TSUGUMI_VIEW_PANEL`, `TSUGUMI_VIEW_WINDOW` or
-`TSUGUMI_VIEW_FULLSCREEN`. The optional initial content size is in logical
+`TSUGUMI_VIEW_FULLSCREEN`. Pass zero for ordinary cursor behavior or combine
+`TSUGUMI_VIEW_HIDE_CURSOR` and `TSUGUMI_VIEW_LOCK_POINTER` in the flags argument
+after the mode. A locked pointer reports relative movement, and the user
+can release it. The optional initial content size is in logical
 pixels and applies to `TSUGUMI_VIEW_WINDOW`. Use two positive dimensions or
-`0, 0` to let the UI choose. An unknown view or mode, a partial size, or a
+`0, 0` to let the UI choose. An unknown view, mode or flag, a partial size, or a
 nonzero size in either of the other modes is an error.
 
 `recv` returns the route, the session, and the event kind. Kind 0 carries
 message bytes. Closing a window sends one kind 1 event with empty data to
 each live route. Later sends to the closed session are dropped.
+Without a presenting UI, opening a view still returns a session and a route.
+Sends succeed and drop their messages, and that session produces no events.
 
 Messages can carry up to `TSUGUMI_MESSAGE_MAX` (16 MiB). A larger send fails
 immediately. The relay applies backpressure at each hop. A Card send waits

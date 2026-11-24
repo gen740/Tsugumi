@@ -115,7 +115,7 @@ def test_live_views_stay_out_of_traces(project, core_factory, tmp_path):
 int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     tsugumi_route route;
     tsugumi_view_session session;
-    if (call->effects->view_open(call->host, "page", 0, 0, 0, &route, &session) ||
+    if (call->effects->view_open(call->host, "page", 0, 0, 0, 0, &route, &session) ||
         call->effects->send(call->host, &session, (const uint8_t *)"display", 7))
         return 1;
     tsugumi_view_event event;

@@ -8,7 +8,11 @@
 #include <webgpu/webgpu.h>
 
 #define TSUGUMI_VIEW_ABI 0      /* 0 until Tsugumi v1.0.0, like the Card ABI */
+#define TSUGUMI_VIEW_SAMPLE_RATE 48000u
 #define TSUGUMI_VIEW_WEBGPU_HEADERS_REV "a1dc77409bb2b8bd80540cbf4b8db219e123e909"
+
+/* Time since the view started, in 48 kHz frames. */
+typedef uint64_t tsugumi_view_time;
 
 #if defined(__wasm__)
 #define TSUGUMI_VIEW_IMPORT_(module, name) __attribute__((import_module(module), import_name(#name)))
@@ -105,8 +109,8 @@ TSUGUMI_VIEW_IMPORT_("tsugumi", tsugumi_view_send)
 int32_t tsugumi_view_send(const uint8_t* route /* 16 bytes */,
                           const uint8_t* data, uint32_t size);
 
-/* Copy the current message into dst. Valid only inside
- * tsugumi_view_message; size must equal the size it was given.
+/* Copy the current incoming bytes into dst. Valid only inside message, text
+ * and composition; size must equal the size passed to the export.
  * Returns 0 on success, negative otherwise. */
 TSUGUMI_VIEW_IMPORT_("tsugumi", tsugumi_view_read)
 int32_t tsugumi_view_read(uint8_t* dst, uint32_t size);
@@ -114,7 +118,8 @@ int32_t tsugumi_view_read(uint8_t* dst, uint32_t size);
 /* ======================================================================
  * Exports: callbacks the host calls, found by name at load.
  * Return 0 on success; a negative value or a trap makes the host drop
- * this instance and show the error. One instance per view.
+ * this instance and show the error. One instance per view, with all exports
+ * called on its own thread.
  * A WebGPU validation error or device loss does not drop the instance:
  * the host shows the first one under the view and keeps calling it.
  * ==================================================================== */
@@ -138,37 +143,58 @@ int32_t tsugumi_view_start(WGPUDevice device, WGPUQueue queue,
 
 /* Called when the drawing area changes size or scale. */
 TSUGUMI_VIEW_EXPORT_(tsugumi_view_resize)
-int32_t tsugumi_view_resize(uint32_t width, uint32_t height, float scale);
-
-/* Draw into target. Return bit 0 set to ask to be drawn again;
- * otherwise the host calls draw again only after an event
- * (message, resize, pointer, key). Other bits are reserved (0). */
+int32_t tsugumi_view_resize(uint32_t width, uint32_t height, float scale, tsugumi_view_time at);
+/* Draw the frame that will be shown at present. Bit 0 of the result asks
+ * for another frame. Otherwise the host draws again after an event. */
 TSUGUMI_VIEW_EXPORT_(tsugumi_view_draw)
-int32_t tsugumi_view_draw(WGPUTextureView target);
+int32_t tsugumi_view_draw(WGPUTextureView target, tsugumi_view_time present);
 
-/* --- optional: data from the Card -------------------------------- */
-
-/* One message the Card sent, of size bytes. Read it with
- * tsugumi_view_read into memory the view allocates itself.
- * Messages arrive in send order. */
+/* --- optional: data from Cards ------------------------------------- */
 TSUGUMI_VIEW_EXPORT_(tsugumi_view_message)
-int32_t tsugumi_view_message(uint32_t size);
+int32_t tsugumi_view_message(uint32_t size, tsugumi_view_time at);
 
-/* --- optional: input --------------------------------------------- */
+/* --- optional: sound -------------------------------------------------- */
+/* Fill `frames` stereo float32 frames (interleaved) in the view's memory and
+ * return the pointer; NULL = silence this time. `heard` is when the first of
+ * these frames reaches the listener, output latency included. */
+TSUGUMI_VIEW_EXPORT_(tsugumi_view_audio)
+const float* tsugumi_view_audio(uint32_t frames, tsugumi_view_time heard);
 
-/* kind: 0 move, 1 down, 2 up, 3 wheel, 4 leave
- * x, y: logical pixels, origin at the top-left of the view
- * buttons: bit 0 primary, 1 secondary, 2 middle
- * modifiers: bit 0 shift, 1 control, 2 alt/option, 3 meta/command */
+/* --- optional: pointer and keys ------------------------------------- */
+/* kind: 0 move, 1 down, 2 up, 3 wheel, 4 leave. x, y: logical pixels, or the
+ * movement while the pointer is locked. buttons: bit 0 primary, 1 secondary,
+ * 2 middle. modifiers: bit 0 shift, 1 control, 2 alt/option, 3 meta/command. */
 TSUGUMI_VIEW_EXPORT_(tsugumi_view_pointer)
-int32_t tsugumi_view_pointer(uint32_t kind, float x, float y,
-                             uint32_t buttons,
-                             float wheel_x, float wheel_y,
-                             uint32_t modifiers);
-
-/* kind: 0 down, 1 up; code: physical key, USB HID usage id */
+int32_t tsugumi_view_pointer(uint32_t kind, float x, float y, uint32_t buttons,
+                             float wheel_x, float wheel_y, uint32_t modifiers,
+                             tsugumi_view_time at);
+/* kind: 0 down, 1 up. code: physical key, USB HID usage id. */
 TSUGUMI_VIEW_EXPORT_(tsugumi_view_key)
-int32_t tsugumi_view_key(uint32_t kind, uint32_t code, uint32_t modifiers);
+int32_t tsugumi_view_key(uint32_t kind, uint32_t code, uint32_t modifiers, tsugumi_view_time at);
+
+/* --- optional: text ---------------------------------------------------- */
+typedef struct {
+  float x, y, width, height; /* logical pixels */
+} tsugumi_view_text_area;
+/* Asked by the host (after draw): where text is being entered, or NULL when
+ * no text input is active (no IME is shown). */
+TSUGUMI_VIEW_EXPORT_(tsugumi_view_text_input)
+const tsugumi_view_text_area* tsugumi_view_text_input(void);
+/* Committed text, UTF-8, size bytes; read it with tsugumi_view_read. */
+TSUGUMI_VIEW_EXPORT_(tsugumi_view_text)
+int32_t tsugumi_view_text(uint32_t size, tsugumi_view_time at);
+/* Text being composed by the IME, UTF-8; cursor is a byte offset in it.
+ * size 0 = composition ended. Without this export the OS shows it itself. */
+TSUGUMI_VIEW_EXPORT_(tsugumi_view_composition)
+int32_t tsugumi_view_composition(uint32_t size, uint32_t cursor, tsugumi_view_time at);
+
+/* --- optional: gamepads ------------------------------------------------ */
+/* kind: 0 connected, 1 changed, 2 disconnected. buttons: the W3C standard
+ * gamepad layout (17 buttons) as bits. Sticks -1..1, triggers 0..1. */
+TSUGUMI_VIEW_EXPORT_(tsugumi_view_gamepad)
+int32_t tsugumi_view_gamepad(uint32_t pad, uint32_t kind, uint32_t buttons,
+                             float lx, float ly, float rx, float ry,
+                             float lt, float rt, tsugumi_view_time at);
 
 #ifdef __cplusplus
 }

@@ -43,6 +43,7 @@ inline auto view_request(const W::WorkerViewRequest& request)
           static_cast<ViewControlKind>(request.kind()),
           request.view() ? request.view()->str() : "",
           request.mode(),
+          request.flags(),
           request.width(),
           request.height(),
           view_uuid(request.session()),
@@ -120,7 +121,7 @@ inline auto build_view_request(flatbuffers::FlatBufferBuilder& b,
           b, request.request_id, static_cast<W::ViewControlKind>(request.kind),
           name, request.mode, request.width, request.height,
           request.session == ViewUuid{} ? nullptr : &session,
-          request.route == ViewUuid{} ? nullptr : &route)
+          request.route == ViewUuid{} ? nullptr : &route, request.flags)
           .Union());
 }
 

@@ -328,9 +328,9 @@ def test_post_return_open_and_send_keep_opaque_bytes_and_session(tmp_path):
           extern const tsugumi_effects* effects;
           tsugumi_route route;
           tsugumi_view_session session;
-          if (!effects->view_open(host, "notes", TSUGUMI_VIEW_PANEL, 1, 2, &route, &session))
+          if (!effects->view_open(host, "notes", TSUGUMI_VIEW_PANEL, 0, 1, 2, &route, &session))
             return (void*)1;
-          if (effects->view_open(host, "notes", TSUGUMI_VIEW_WINDOW, 480, 320, &route, &session))
+          if (effects->view_open(host, "notes", TSUGUMI_VIEW_WINDOW, 0, 480, 320, &route, &session))
             return (void*)2;
           if (route.bytes[0] != 2 || session.bytes[0] != 1) return (void*)3;
           return (void*)(intptr_t)effects->send(host, &session, bytes, sizeof(bytes));
@@ -463,7 +463,7 @@ def test_one_shot_result_waits_for_queued_view_data(tmp_path):
           tsugumi_route route;
           tsugumi_view_session session;
           if (call->effects->view_open(call->host, "plot", TSUGUMI_VIEW_PANEL,
-                                      0, 0, &route, &session)) return 1;
+                                      0, 0, 0, &route, &session)) return 1;
           for (uint8_t i = 1; i <= 3; ++i) {
             payload[0] = i;
             if (call->effects->send(call->host, &session, payload, sizeof(payload)))

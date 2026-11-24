@@ -158,10 +158,11 @@ auto request_view(Host& host, WorkerViewRequest request)
   }
 }
 
-auto open_view(void* context, const char* view, uint32_t mode, uint32_t width,
-               uint32_t height, tsugumi_route* route,
+auto open_view(void* context, const char* view, uint32_t mode, uint32_t flags,
+               uint32_t width, uint32_t height, tsugumi_route* route,
                tsugumi_view_session* session) -> int {
   if (!view || !route || !session || mode > TSUGUMI_VIEW_FULLSCREEN ||
+      (flags & ~(TSUGUMI_VIEW_HIDE_CURSOR | TSUGUMI_VIEW_LOCK_POINTER)) ||
       ((width == 0) != (height == 0)) ||
       (width != 0 && mode != TSUGUMI_VIEW_WINDOW))
     return -1;
@@ -171,7 +172,7 @@ auto open_view(void* context, const char* view, uint32_t mode, uint32_t width,
     const auto reply =
         request_view(*static_cast<Host*>(context),
                      {0, ViewControlKind::open, std::string(view, size), mode,
-                      width, height});
+                      flags, width, height});
     if (!reply || !reply->ok || reply->route == ViewUuid{} ||
         reply->session == ViewUuid{})
       return -1;

@@ -308,7 +308,7 @@ class Service : public RequestSink {
         -> std::shared_ptr<const ViewBlob>;
   };
   struct ViewSession {
-    ConnId conn;
+    std::optional<ConnId> conn;
     std::string subscription;
     std::string name;
     std::shared_ptr<const ViewBlob> blob;

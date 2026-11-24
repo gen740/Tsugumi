@@ -230,6 +230,7 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
                           static_cast<ViewControlKind>(control->kind),
                           control->view,
                           control->mode,
+                          control->flags,
                           control->width,
                           control->height,
                           view_uuid(control->session.get()),

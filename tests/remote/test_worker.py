@@ -402,9 +402,9 @@ def test_remote_view_control_replay_and_bidirectional_credits(worker):
       static uint8_t message[TSUGUMI_MESSAGE_MAX];
       tsugumi_route data_route{}, control_route{};
       tsugumi_view_session data{}, control{};
-      if (call.effects->view_open(call.host, "data", TSUGUMI_VIEW_PANEL, 0, 0,
+      if (call.effects->view_open(call.host, "data", TSUGUMI_VIEW_PANEL, 0, 0, 0,
                                   &data_route, &data) ||
-          call.effects->view_open(call.host, "control", TSUGUMI_VIEW_WINDOW, 640, 480,
+          call.effects->view_open(call.host, "control", TSUGUMI_VIEW_WINDOW, 0, 640, 480,
                                   &control_route, &control)) return 1;
       for (uint8_t i = 1; i <= 3; ++i) {
         message[0] = i;
@@ -567,7 +567,7 @@ def test_real_remote_artifact_boundary(worker, case):
           static const uint8_t second[] = {0, 255, 128};
           tsugumi_route route{};
           tsugumi_view_session session{};
-          if (call.effects->view_open(call.host, "data", TSUGUMI_VIEW_PANEL, 0, 0,
+          if (call.effects->view_open(call.host, "data", TSUGUMI_VIEW_PANEL, 0, 0, 0,
                                       &route, &session) ||
               call.effects->send(call.host, &session, first, sizeof(first)) ||
               call.effects->send(call.host, &session, second, sizeof(second))) return 1;
