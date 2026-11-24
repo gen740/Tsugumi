@@ -4,6 +4,7 @@
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
+#include <openssl/x509v3.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -158,9 +159,72 @@ Identity::Identity(const std::filesystem::path& file)
           X509_check_private_key(state_->certificate.get(), state_->key.get()),
       "Invalid TLS identity");
 }
+Identity::Identity(const std::filesystem::path& file,
+                   const std::vector<std::string>& names)
+    : Identity(file) {
+  Check(!names.empty(), "A server certificate needs at least one name");
+  std::string alternatives;
+  for (const auto& name : names) {
+    Check(!name.empty() && name.find_first_of(", \t\r\n") == name.npos,
+          "Invalid server certificate name");
+    // An address in brackets is an IPv6 literal, as in URLs.
+    auto bare = name.starts_with('[') && name.ends_with(']')
+                    ? name.substr(1, name.size() - 2)
+                    : name;
+    Owned<ASN1_OCTET_STRING, ASN1_OCTET_STRING_free> address(
+        a2i_IPADDRESS(bare.c_str()), ASN1_OCTET_STRING_free);
+    alternatives += (alternatives.empty() ? "" : ",") +
+                    std::string(address ? "IP:" : "DNS:") + bare;
+  }
+  Certificate cert(X509_new(), X509_free);
+  // Fixed serial and validity: Ed25519 signatures are deterministic, so the
+  // same key and names give the same certificate. 9999-12-31 is RFC 5280's
+  // "no well-defined expiration".
+  Owned<ASN1_TIME, ASN1_TIME_free> begin(ASN1_TIME_new(), ASN1_TIME_free);
+  Owned<ASN1_TIME, ASN1_TIME_free> end(ASN1_TIME_new(), ASN1_TIME_free);
+  Check(cert && begin && end &&
+            ASN1_TIME_set_string(begin.get(), "20000101000000Z") &&
+            ASN1_TIME_set_string(end.get(), "99991231235959Z") &&
+            X509_set_version(cert.get(), 2) &&
+            ASN1_INTEGER_set(X509_get_serialNumber(cert.get()), 1) &&
+            X509_set1_notBefore(cert.get(), begin.get()) &&
+            X509_set1_notAfter(cert.get(), end.get()) &&
+            X509_set_pubkey(cert.get(), state_->key.get()),
+        "Cannot create TLS certificate");
+  auto* subject = X509_get_subject_name(cert.get());
+  Check(X509_NAME_add_entry_by_txt(
+            subject, "CN", MBSTRING_ASC,
+            reinterpret_cast<const unsigned char*>(names.front().c_str()), -1,
+            -1, 0) &&
+            X509_set_issuer_name(cert.get(), subject),
+        "Cannot create TLS certificate");
+  X509V3_CTX context;
+  X509V3_set_ctx_nodb(&context);
+  X509V3_set_ctx(&context, cert.get(), cert.get(), nullptr, nullptr, 0);
+  for (const auto& [nid, value] :
+       {std::pair{NID_subject_alt_name, alternatives},
+        std::pair{NID_basic_constraints, std::string("critical,CA:FALSE")}}) {
+    Owned<X509_EXTENSION, X509_EXTENSION_free> extension(
+        X509V3_EXT_conf_nid(nullptr, &context, nid, value.c_str()),
+        X509_EXTENSION_free);
+    Check(extension && X509_add_ext(cert.get(), extension.get(), -1),
+          "Cannot create TLS certificate");
+  }
+  Check(X509_sign(cert.get(), state_->key.get(), nullptr) > 0,
+        "Cannot sign TLS certificate");
+  state_->certificate = std::move(cert);
+}
 Identity::~Identity() = default;
 auto Identity::public_key() const -> std::string {
   return Public(state_->key.get());
+}
+auto Identity::certificate_pem() const -> std::string {
+  Bio output(BIO_new(BIO_s_mem()), BIO_free);
+  Check(output && PEM_write_bio_X509(output.get(), state_->certificate.get()),
+        "Cannot encode TLS certificate");
+  char* bytes = nullptr;
+  const auto count = BIO_get_mem_data(output.get(), &bytes);
+  return std::string(bytes, static_cast<size_t>(count));
 }
 struct Context::State {
   Owned<SSL_CTX, SSL_CTX_free> context{nullptr, SSL_CTX_free};
@@ -247,6 +311,25 @@ auto Stream::Read(size_t count) -> std::string {
     offset += n;
   }
   return result;
+}
+auto Stream::ReadSome(size_t limit) -> std::string {
+  std::string result(limit, '\0');
+  while (true) {
+    size_t n = 0;
+    const int rc =
+        SSL_read_ex(state_->ssl.get(), result.data(), result.size(), &n);
+    if (rc != 1 &&
+        SSL_get_error(state_->ssl.get(), rc) == SSL_ERROR_ZERO_RETURN)
+      return {};
+    if (!state_->Ready(rc, "TLS stream disconnected or timed out")) continue;
+    result.resize(n);
+    return result;
+  }
+}
+auto Stream::peer_key() const -> std::string {
+  Key key(X509_get_pubkey(SSL_get0_peer_certificate(state_->ssl.get())),
+          EVP_PKEY_free);
+  return Public(key.get());
 }
 auto Stream::Write(std::string_view bytes) -> void {
   while (!bytes.empty()) {

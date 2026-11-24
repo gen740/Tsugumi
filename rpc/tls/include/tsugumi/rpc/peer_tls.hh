@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace tsugumi::peer_tls {
 // Synchronous framed I/O requires blocking accepted sockets on every OS.
@@ -13,14 +14,27 @@ auto ConfigureSocket(int fd, int timeout_seconds = 0) -> void;
 
 // Canonical Ed25519 SubjectPublicKeyInfo, base64 encoded after "ed25519:".
 auto ValidateKey(std::string_view value) -> void;
+// Whether an authorized_keys file lists `key`: one public key per line, blank
+// lines and `#` comments allowed. The file must be an owned regular file not
+// writable by others; a malformed file authorizes nothing. Callers re-read it
+// at every handshake so removing a line revokes new connections.
+auto Authorized(const std::filesystem::path& file, std::string_view key)
+    -> bool;
 
 class Identity {
  public:
   explicit Identity(const std::filesystem::path& file);
+  // A server reached by clients that verify host names (curl, and so Nix)
+  // presents a certificate for `names` (DNS names or IP addresses) instead
+  // of the stored one. It is self-signed by the same key and the same bytes
+  // on every start, so a client can keep trusting the file it was given.
+  Identity(const std::filesystem::path& file,
+           const std::vector<std::string>& names);
   ~Identity();
   Identity(const Identity&) = delete;
   auto operator=(const Identity&) -> Identity& = delete;
   auto public_key() const -> std::string;
+  auto certificate_pem() const -> std::string;
 
  private:
   struct State;
@@ -52,6 +66,10 @@ class Stream {
   Stream(const Stream&) = delete;
   auto operator=(const Stream&) -> Stream& = delete;
   auto Read(size_t count) -> std::string;
+  // Up to `limit` bytes as soon as any arrive; empty when the peer closed.
+  auto ReadSome(size_t limit) -> std::string;
+  // The peer's authenticated public key, in the form `accepts` received.
+  auto peer_key() const -> std::string;
   auto Write(std::string_view bytes) -> void;
 
  private:
