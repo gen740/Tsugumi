@@ -115,9 +115,10 @@ class Service : public RequestSink {
   auto set_view_receiver(const CardPath& card,
                          std::weak_ptr<WorkerProc::ViewReceiver> receiver) -> void;
   auto artifact_grants(std::span<const Value> inputs) -> std::vector<ArtifactGrant>;
-  auto seal_artifacts(const InvocationSummaryData& invocation,
-                      const std::filesystem::path& staging,
-                      std::span<const ArtifactKey> ids) -> void;
+  auto artifact_destination(const InvocationSummaryData& invocation)
+      -> std::filesystem::path;
+  auto record_artifacts(const InvocationSummaryData& invocation,
+                        std::span<const ArtifactKey> ids) -> void;
   auto register_store_artifact(const std::string& run, const CardPath& card,
                                uint64_t invocation, const ArtifactKey& id,
                                const std::filesystem::path& store_path) -> void;

@@ -380,7 +380,11 @@ def test_collected_artifact_members_preserve_batch_order_and_grants(core_factory
         value, = record(current, "collect").outputs
         envelopes = reference_json(tmp_path / "decode", bytes(value.schemaBfbs), bytes(value.inlineBytes),
                                    root_type="tsugumi.builtin.Collected")["items"]
-        assert [bytes(item["artifacts"][0]["bytes"]).hex() for item in envelopes] == members
+        def label(item):
+            key = bytes(item["artifacts"][0]["bytes"])
+            return f"{int.from_bytes(key[:8], 'big')}.{int.from_bytes(key[8:], 'big')}"
+
+        assert [label(item) for item in envelopes] == members
         received, = record(current, "consumer").inputs
         assert {text(item.id) for item in value.artifacts} == set(members)
         assert {text(item.id) for item in received.artifacts} == set(members)

@@ -120,7 +120,9 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
   target->gui = spawn.gui;
   target->network = spawn.network;
   target->ro_paths = spawn.ro_paths;
-  target->artifacts_root = spawn.artifacts_root;
+  target->artifact_store = spawn.artifact_store;
+  target->artifact_inputs = spawn.artifact_inputs;
+  target->artifact_staging = spawn.artifact_staging.string();
   target->hidden_paths = spawn.hidden_paths;
   if (spawn.uid) target->uid = *spawn.uid;
   if (spawn.gid) target->gid = *spawn.gid;
@@ -144,6 +146,7 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
   WorkerProc::Borrowed borrowed{
       reply.descriptors,
       message.scratch,
+      message.artifact_scratch,
       message.call_id,
       message.lease,
       [this, id = message.lease] { command(L::Action::ClearScratch, id); },

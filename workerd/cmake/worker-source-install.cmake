@@ -9,4 +9,6 @@ tsugumi_card_nix_files(worker/protocol
   "${TSUGUMI_PROTOCOL_DIR}/worker_types.fbs")
 tsugumi_card_nix_files(worker/include/tsugumi "${TSUGUMI_PROTOCOL_DIR}/include/tsugumi/card_abi.h")
 tsugumi_card_nix_files(worker/include/tsugumi/rpc "${PROJECT_SOURCE_DIR}/rpc/include/tsugumi/rpc/frame.hh")
-tsugumi_card_nix_files(worker/include/tsugumi/workerd include/tsugumi/workerd/frame.hh)
+tsugumi_card_nix_files(worker/include/tsugumi/workerd
+  include/tsugumi/workerd/artifact_id.hh
+  include/tsugumi/workerd/frame.hh)

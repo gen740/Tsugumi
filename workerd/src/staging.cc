@@ -4,6 +4,9 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/clonefile.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -242,27 +245,6 @@ auto copy_entry(int source, const std::filesystem::path& label,
 
 }  // namespace
 
-auto create_artifact_holders(const std::filesystem::path& root,
-                             const std::filesystem::path& relative) -> void {
-  constexpr mode_t mode = 0311;
-  auto create = [&](const std::filesystem::path& path) {
-    if (::mkdir(path.c_str(), mode) != 0 && errno != EEXIST)
-      failed("mkdir artifact holder", path);
-    struct stat info{};
-    if (::lstat(path.c_str(), &info) != 0) failed("stat artifact holder", path);
-    if (!S_ISDIR(info.st_mode))
-      failed("invalid artifact holder", path, ENOTDIR);
-    if ((info.st_mode & 07777) != mode && ::chmod(path.c_str(), mode) != 0)
-      failed("chmod artifact holder", path);
-  };
-  auto path = root;
-  create(path);
-  for (const auto& segment : relative) {
-    path /= segment;
-    create(path);
-  }
-}
-
 auto clear_staging(const std::filesystem::path& path,
                    const std::function<void(int, const char*)>& recover,
                    std::string_view preserved_entry) -> void {
@@ -290,6 +272,110 @@ auto copy_staging_artifact(int staging, const std::filesystem::path& name,
     reject(name, entry_kind(status.st_mode), "artifact must be a directory");
   std::filesystem::create_directories(destination.parent_path());
   copy_entry(source.get(), name, destination, cancel, progress, budget);
+}
+
+auto link_artifact(const std::filesystem::path& source,
+                   const std::filesystem::path& destination) -> void {
+  namespace fs = std::filesystem;
+  if (!fs::is_directory(fs::symlink_status(source)))
+    throw std::runtime_error("artifact grant is not a directory");
+  fs::create_directory(destination);
+  try {
+    for (const auto& entry : fs::recursive_directory_iterator(source)) {
+      const auto target = destination / entry.path().lexically_relative(source);
+      const auto status = entry.symlink_status();
+      if (fs::is_directory(status)) {
+        fs::create_directory(target);
+      } else if (fs::is_regular_file(status)) {
+#ifdef __APPLE__
+        if (::clonefile(entry.path().c_str(), target.c_str(), CLONE_NOFOLLOW) !=
+            0)
+          failed("clone artifact member", entry.path());
+#else
+        fs::create_hard_link(entry.path(), target);
+#endif
+      } else {
+        throw std::runtime_error(
+            "artifact grant contains an unsupported entry");
+      }
+    }
+  } catch (...) {
+    std::error_code error;
+    fs::remove_all(destination, error);
+    throw;
+  }
+}
+
+auto move_staging_artifact(int staging, const std::filesystem::path& name,
+                           const std::filesystem::path& destination,
+                           OutputBudget& budget) -> void {
+  namespace fs = std::filesystem;
+  if (name.empty() || name.has_parent_path() || name == "." || name == "..")
+    reject(name, "artifact name", "expected one directory component");
+  const auto root = open_entry(staging, name.string(), name);
+  if (!S_ISDIR(status_of(root.get(), name).st_mode))
+    reject(name, "artifact", "artifact must be a directory");
+  const auto visit = [&](auto&& self, int fd, const fs::path& path,
+                         bool seal) -> void {
+    const auto st = status_of(fd, path);
+    if (!seal) {
+      if (!budget.entries)
+        reject(path, entry_kind(st.st_mode), "output entry budget exceeded");
+      --budget.entries;
+    }
+    if (S_ISREG(st.st_mode)) {
+      if (!seal) {
+        if (st.st_nlink != 1)
+          reject(path, "regular file", "hard links in outputs are forbidden");
+        const auto bytes = static_cast<uint64_t>(st.st_size);
+        if (bytes > budget.bytes)
+          reject(path, "regular file", "output byte budget exceeded");
+        budget.bytes -= bytes;
+      } else if (::fchmod(fd, 0400) != 0) {
+        failed("seal artifact file", path);
+      }
+      return;
+    }
+    if (!S_ISDIR(st.st_mode))
+      reject(path, entry_kind(st.st_mode),
+             "only regular files and directories are allowed");
+    const int scan = ::openat(fd, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (scan < 0) failed("openat", path);
+    std::unique_ptr<DIR, decltype(&::closedir)> entries(::fdopendir(scan),
+                                                        ::closedir);
+    if (!entries) {
+      const int error = errno;
+      ::close(scan);
+      failed("fdopendir", path, error);
+    }
+    for (;;) {
+      errno = 0;
+      const auto* entry = ::readdir(entries.get());
+      if (!entry) {
+        if (errno) failed("readdir", path);
+        break;
+      }
+      const std::string member = entry->d_name;
+      if (member == "." || member == "..") continue;
+      const auto child = open_entry(fd, member, path / member);
+      self(self, child.get(), path / member, seal);
+    }
+    if (seal && ::fchmod(fd, 0500) != 0)
+      failed("seal artifact directory", path);
+  };
+  visit(visit, root.get(), name, false);
+  fs::create_directories(destination.parent_path());
+  if (fs::exists(fs::symlink_status(destination)))
+    reject(name, "artifact directory", "destination already exists");
+  if (::renameat(staging, name.c_str(), AT_FDCWD, destination.c_str()) != 0)
+    failed("move artifact into store", destination);
+  try {
+    visit(visit, root.get(), destination, true);
+  } catch (...) {
+    if (::renameat(AT_FDCWD, destination.c_str(), staging, name.c_str()) != 0)
+      failed("roll back artifact move", destination);
+    throw;
+  }
 }
 
 }  // namespace tsugumi::fs

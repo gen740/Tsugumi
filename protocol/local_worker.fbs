@@ -13,13 +13,15 @@ table Spawn {
   filesystem:bool = true; pid:bool = true; ipc:bool = true; identity:bool = true;
   cpu_millis:ulong; memory_bytes:ulong; network:bool; gui:bool;
   ro_paths:[string]; hidden_paths:[string]; binds:[Bind]; uid:uint = null; gid:uint = null;
-  artifacts_root:string;
+  artifact_store:string;
+  artifact_inputs:bool; artifact_staging:string;
 }
 table Message {
   action:Action; card:string; key:string (trace_secret); spawn:Spawn; reuse:bool;
   lease:ulong; keep:bool; force:bool; reason:string;
   reused:bool; replaced:string; scratch:string; call_id:ulong; error:string;
   error_kind:Tsugumi.Data.FailureKind = worker_failed;
+  artifact_scratch:string;
 }
 root_type Message;
 file_identifier "TSL1";

@@ -45,7 +45,7 @@ from Tsugumi.RemoteWorker.StatusRequest import StatusRequestT
 from Tsugumi.RemoteWorker.SubmitRequest import SubmitRequestT
 from Tsugumi.RemoteWorker.Target import TargetT
 
-WORKER_CONTRACT = 16
+WORKER_CONTRACT = 17
 
 __all__ = ['BrokerRequestT', 'AckT', 'BlobChunkT', 'CancelRequestT', 'CapabilitiesT', 'CardSecretT', 'CardSecretsT', 'CatalogRequestT', 'CatalogT', 'ErrorCode', 'FailureT', 'GetBlobRequestT', 'JobSecretsRequestT', 'JobSpecT', 'JobState', 'JobStatusT', 'MessageT', 'Payload', 'ProbeRequestT', 'PutBlobRequestT', 'ReleaseRequestT', 'ReplyBody', 'ReplyT', 'RequestBody', 'RequestT', 'ResultFileT', 'ResultManifestT', 'StatusRequestT', 'SubmitRequestT', 'TargetT', 'broker_request', 'exact', 'failure', 'frame', 'pack', 'read', 'read_broker_request', 'reply', 'request', 'string']
 

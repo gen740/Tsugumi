@@ -76,28 +76,23 @@ def test_failed_resident_is_discarded(core_factory, tmp_path, crashes):
             assert f"state started fresh: {reason}" in log(c, run_id, "resident", 2)
 
 
-def test_output_transfer_failure_keeps_living_resident_state(core_factory, tmp_path):
-    definition = native_card(r'''
+def test_artifact_creation_retires_resident_even_when_transfer_fails(core_factory, tmp_path):
+    definition = native_card(r"""
         static unsigned calls;
         tsugumi_artifact_id id;
         const auto file = fs::path(create_artifact(call, id)) / "result";
-        if (++calls == 1) {
-          if (mkfifo(file.c_str(), 0600)) return 1;
-        } else {
-          std::ofstream(file) << "recovered";
-        }
+        if (++calls != 1) return 1;
+        if (mkfifo(file.c_str(), 0600)) return 2;
         out.artifact(id);
-    ''', outputs=DIRECTORY, reuseWorker=True)
+    """, outputs=DIRECTORY, reuseWorker=True)
     write(tmp_path / "p", {"resident": definition}, [card("resident", "resident")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
-    first, state = run_and_wait(c, "resident")
-    assert state.state == RunState.failed
-    inv, = c.call("RunInvocationsRequest", runId=first, card=path("resident")).records
-    assert inv.failure.kind == FailureKind.output_invalid
-    second, state = run_and_wait(c, "resident")
-    assert state.state == RunState.succeeded, log(c, second, "resident", 2)
-    inv, = c.call("RunInvocationsRequest", runId=second, card=path("resident")).records
-    assert inv.workerReused
+    for _ in range(2):
+        run_id, state = run_and_wait(c, "resident")
+        assert state.state == RunState.failed
+        inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("resident")).records
+        assert inv.failure.kind == FailureKind.output_invalid
+        assert not inv.workerReused
 
 
 def test_missing_required_output_discards_resident_state(core_factory, tmp_path):
