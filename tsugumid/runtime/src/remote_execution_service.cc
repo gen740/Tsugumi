@@ -14,6 +14,7 @@
 #include "store.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/workerd/artifact_id.hh"
 #include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/workerd/protocol.hh"
@@ -305,9 +306,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       [&](uint64_t done, uint64_t total) {
         if (request.transfer) request.transfer("upload", "Nix", done, total);
       });
-  auto spec =
-      stage_remote_invocation(client_, target_, instance_, s.execution_job_id,
-                              service_.artifact_grants(request.inputs), archive_digest, request);
+  auto spec = stage_remote_invocation(
+      client_, target_, instance_, s.execution_job_id, archive_digest, request);
   if (request.stop.stop_requested())
     throw Failed(FailureKind::cancelled,
                  "run cancelled before external submission");
@@ -417,6 +417,13 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
             release();
         }
       }
+      if (!reply->artifact_wanted.empty() && !job.cancel_requested) {
+        const auto id = parse_artifact_id(reply->artifact_wanted);
+        if (!id) throw BrokerRequestRejected("invalid remote artifact UUID");
+        deliver_remote_artifact(client_, target_, instance_, s.execution_job_id,
+                                reply->fingerprint, reply->artifact_wanted,
+                                service_.resolve_artifact(*id), stop);
+      }
       s.execution_state = remote_execution_state(reply->state);
       if (request.transfer && !reply->transfer_name.empty())
         request.transfer("copy", reply->transfer_name, reply->transfer_done,
@@ -482,8 +489,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
             client_, target_, instance_, s.execution_job_id,
             reply->result_sha256, job.spec,
             service_.store().state_dir() / "artifact-invocations",
-            service_.artifact_destination(s), s.artifact_sequence, node.outputs,
-            request.inputs, live_log.recorded(), request.log, request.stop,
+            service_.artifact_destination(s), node.outputs, live_log.recorded(),
+            request.log, request.stop,
             [&](std::string_view name, uint64_t done, uint64_t total) {
               if (request.transfer)
                 request.transfer("download", name, done, total);

@@ -62,16 +62,8 @@ auto worker_disposition(bool reuse, bool alive, bool between_calls,
 }
 
 auto accept_outputs(std::vector<RawOutput> raw,
-                    std::span<const types::PortType> ports,
-                    std::span<const Value> inputs,
-                    std::span<const ArtifactKey> created)
+                    std::span<const types::PortType> ports)
     -> std::vector<Value> {
-  std::set<ArtifactKey> allowed;
-  for (const auto& value : inputs)
-    allowed.insert(value.artifacts.begin(), value.artifacts.end());
-  for (const auto& id : created)
-    if (id.size() != 16 || !allowed.insert(id).second)
-      throw Failed(FailureKind::output_invalid, "invalid created artifact id");
   std::set<std::string_view> seen;
   std::vector<Value> outputs;
   outputs.reserve(raw.size());
@@ -84,12 +76,7 @@ auto accept_outputs(std::vector<RawOutput> raw,
     if (!seen.insert(name).second)
       throw Failed(FailureKind::output_invalid,
                    "output " + name + " produced twice", {{"port", name}});
-    for (const auto& id : output.artifacts)
-      if (!allowed.contains(id))
-        throw Failed(FailureKind::output_invalid,
-                     "output references an ungranted artifact", {{"port", name}});
-    outputs.push_back({name, port->type, std::move(output.bytes), {},
-                       std::move(output.artifacts)});
+    outputs.push_back({name, port->type, std::move(output.bytes), {}});
   }
   for (const auto& port : ports)
     if (port.required && !seen.contains(port.name))
@@ -139,19 +126,18 @@ auto run_invocation(const ReleaseWorker& release_worker,
                                            invocation.deadline_grace.count());
     const auto id = worker.next_call_id();
     auto frame = worker_call_frame(id, invocation.inputs, invocation.outputs,
-                                   invocation.timeout_ms, stage_path, {},
-                                   !reuse, invocation.artifact_sequence);
-    const auto open = [&](const ArtifactKey& key) -> std::string {
-      const auto grant =
-          std::ranges::find(invocation.grants, key, &ArtifactGrant::id);
-      if (grant == invocation.grants.end()) return {};
-      const auto id = artifact_id_bytes(key);
-      const auto label = std::to_string(artifact_sequence(id)) + "." +
-                         std::to_string(artifact_counter(id));
-      const auto destination = worker.artifact_scratch() / "inputs" / label;
+                                   invocation.timeout_ms, stage_path, !reuse);
+    const auto open = [&](const ArtifactKey& key,
+                          std::stop_token stop) -> std::string {
+      if (!invocation.resolve_artifact) return {};
+      const auto destination =
+          worker.artifact_scratch() / "inputs" / artifact_id_text(key);
       try {
-        if (!stdfs::is_directory(stdfs::symlink_status(destination)))
-          fs::link_artifact(grant->path, destination);
+        if (!stdfs::is_directory(stdfs::symlink_status(destination))) {
+          const auto source = invocation.resolve_artifact(key, stop);
+          if (source.empty()) return {};
+          fs::link_artifact(source, destination);
+        }
         return destination.string();
       } catch (const std::exception&) {
         return {};
@@ -160,8 +146,8 @@ auto run_invocation(const ReleaseWorker& release_worker,
     worker.set_logs(invocation.log);
     const auto begin = invocation.on_timing ? now_ms() : 0;
     between_calls = false;
-    auto outcome =
-        worker.call(std::move(frame), id, invocation.cancel, deadline, open);
+    auto outcome = worker.call(std::move(frame), id, invocation.cancel,
+                               deadline, open, stage.has_value());
     result.failure = std::move(outcome.failure);
     between_calls = true;
     worker.set_logs(nullptr);
@@ -197,15 +183,8 @@ auto run_invocation(const ReleaseWorker& release_worker,
         stdfs::create_directory(clones.path);
         clones_handle.emplace(clones.path, "artifact clone");
       }
-      for (const auto& id : outcome.created) {
-        if (id.size() != 16)
-          throw Failed(FailureKind::output_invalid,
-                       "invalid created artifact id");
-        const auto bytes = artifact_id_bytes(id);
-        if (artifact_sequence(bytes) != invocation.artifact_sequence ||
-            artifact_counter(bytes) != result.created.size())
-          throw Failed(FailureKind::output_invalid, "invalid created artifact id");
-        const auto name = std::to_string(artifact_counter(bytes));
+      for (const auto& artifact : outcome.created) {
+        const auto name = std::to_string(result.created.size());
         try {
           if (clone) {
             fs::clone_staging_artifact(stage->get(), name, clones.path / name,
@@ -228,12 +207,11 @@ auto run_invocation(const ReleaseWorker& release_worker,
               FailureData::make(FailureKind::output_invalid, error.what());
           break;
         }
-        result.created.push_back(id);
+        result.created.push_back(artifact);
       }
       if (!result.failure && !transfer_failure) {
-        result.outputs = accept_outputs(std::move(outcome.outputs),
-                                        invocation.outputs, invocation.inputs,
-                                        outcome.created);
+        result.outputs =
+            accept_outputs(std::move(outcome.outputs), invocation.outputs);
         if (invocation.validate) invocation.validate(result);
       }
     } catch (const Failed& error) {

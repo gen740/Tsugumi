@@ -101,7 +101,7 @@ A Card in Card uses full Card paths to distinguish state and history; visual gro
 
 A Code Card can return a list of `{ label; run; }` variants from `default.nix`. Use a list in `params.nix` to configure the variants. For each trigger, the runtime runs every combination of the Card's variants and the items on its connected inputs. Two implementations and batches of three and four inputs give 24 invocations. Labels identify members in run history and comparisons.
 
-Collect aggregates a batch into one fixed `Collected` value, preserving each member's schema ID, bytes and artifact IDs. Skipped members are absent. Collect emits an empty list when there are no members. The graph grants the collected artifact IDs to downstream Cards.
+Collect aggregates a batch into one fixed `Collected` value, preserving each member's schema ID and payload bytes. Skipped members are absent. Collect emits an empty list when there are no members. Consumers open artifact UUIDs contained in members by passing them to the SDK.
 
 The runtime limits one trigger to 256 combinations and a run to 4,096 worker invocations. The input and output batches each allow up to 32 MiB of serialized port values.
 

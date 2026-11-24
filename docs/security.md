@@ -110,7 +110,7 @@ The shared VM hides the project's control folder and state behind mounts even wh
 
 Native macOS reports partial filesystem and network guarantees through Seatbelt. Seatbelt exposes system file metadata and allows access to some system files, but not to `/bin` or `/usr/bin`: a Card can run only store paths (the tools it declared), the worker and files in its own folders and grants. With filesystem isolation on and network granted, it continues to deny connections to the local host and almost all Unix sockets. DNS via mDNSResponder and certificate validation via trustd remain available.
 
-The workspace and `HOME` are private to the process and survive calls of a resident worker. The worker clears temporary files between calls. Where remapping is available, `/tmp` is backed by the worker's disk scratch. With filesystem isolation enabled, the project artifact root is exposed read-only at sandbox startup. Its holding directories allow exact-name traversal and deny listing. The core checks invocation grants for `artifact_open`, and a Card that already knows an exact path can read that artifact directly. [Artifact access](SandboxContract.md#artifact-access)
+The workspace and `HOME` are private to the process and survive calls of a resident worker. The worker clears temporary files between calls. Where remapping is available, `/tmp` is backed by the worker's disk scratch. With filesystem isolation enabled, the sandbox hides the project artifact store. The worker exposes a read-only directory for each sealed artifact a Card opens by UUID. Sharing an artifact UUID grants access within the project, including via run history. [Artifact access](SandboxContract.md#artifact-access)
 
 The worker builds the process environment at launch and fixes it for the life of the process. The Card gets no implicit shell or `PATH`; the tools a Card declares to its SDK's builder are its `PATH`, and Nix `cacert` is used for certificate verification. The worker loads the Card's `lib/main.so` and calls it through [Card ABI](CardABI.md). Created artifact directories are sealed read-only before passing outputs downstream. [Card ABI](CardABI.md#artifacts) A failed call keeps its failure record and discards its outputs.
 
@@ -267,7 +267,7 @@ Helpers have separate scratch and command/output directories, including unscoped
 | Data | Where | Deleting and managing |
 | --- | --- | --- |
 | The project's documents and sources | The project folder | Manage in Finder or the like (Tsugumi never deletes the folder itself) |
-| Primary run history | `.tsugumi/runs.sqlite`, `.tsugumi/artifacts/` | "Delete…" under Run History |
+| Primary run history and kept artifacts | `.tsugumi/runs.sqlite`, `.tsugumi/artifacts/` | Delete finished runs or their logs, recorded values or artifacts under Run History. Artifacts created without KEEP expire when their run ends. |
 | Nix store, build roots | `~/Library/Application Support/Tsugumi/vm/store.img` | "Delete" under Build Cache and "Clean shared store" |
 | Control folders (token, origins, attached folders) | `~/Library/Application Support/Tsugumi/environments/<id>/control/` | "Reset all environments" |
 | API keys | hostd's owner-only `host-core/host.sqlite` (every platform) | Settings > API registers or deletes a key |

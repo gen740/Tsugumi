@@ -94,18 +94,6 @@ auto AgentExclude::CheckRequest(const std::string& name, const j::Members& args,
     if (args.contains("run_id"))
       Check(".tsugumi/runs/" + j::Text(args, "run_id"));
   }
-  if (name == "artifact_read") {
-    // Artifacts use run/Card-path/invocation/output as their canonical id.
-    const auto id = j::Text(args, "artifact_id");
-    const auto first = id.find('/');
-    if (first != id.npos) {
-      const auto artifact =
-          ".tsugumi/runs/" + id.substr(0, first) + "/artifacts/" + id;
-      Check(artifact);
-      if (args.contains("member"))
-        Check(std::filesystem::path(artifact) / j::Text(args, "member"));
-    }
-  }
   const auto check_card = [&](const j::Members& card) {
     std::string id;
     for (const auto& segment : j::Array(j::Get(card, "segments", "[]"))) {
@@ -122,6 +110,23 @@ auto AgentExclude::CheckRequest(const std::string& name, const j::Members& args,
   for (const auto* key : {"card", "source_card", "trigger", "target"})
     if (args.contains(key) && args.at(key).starts_with('{'))
       check_card(j::Object(args.at(key)));
+}
+auto AgentExclude::CheckArtifact(const j::Members& artifact,
+                                 std::string_view member) const -> void {
+  const auto run = j::Text(artifact, "run_id");
+  Check(".tsugumi/runs/" + run);
+  auto path = std::filesystem::path(".tsugumi/artifacts") / run;
+  const auto card = j::Object(j::Get(artifact, "card", "{}"));
+  for (const auto& segment : j::Array(j::Get(card, "segments", "[]")))
+    path /= j::String(segment);
+  const auto label = j::Text(artifact, "label");
+  const auto dot = label.find('.');
+  if (dot == label.npos) throw Failure("not_found", "Artifact not found");
+  const auto invocation = j::Get(artifact, "invocation");
+  path /= "@" + j::String(invocation, invocation);
+  path /= label.substr(dot + 1);
+  Check(path);
+  if (!member.empty()) Check(path / member);
 }
 auto AgentExclude::CheckContent(const std::string& raw) const -> void {
   if (raw.starts_with('[')) {

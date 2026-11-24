@@ -163,7 +163,10 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
     auto state = read(dir);
     require_owner(state, core);
     if (state.state != R::JobState::Missing &&
-        state.state != R::JobState::Uploading)
+        state.state != R::JobState::Uploading &&
+        !(state.state == R::JobState::Running &&
+          stdfs::exists(stdfs::symlink_status(dir / "work/artifact-wanted")) &&
+          !stdfs::exists(stdfs::symlink_status(dir / "work/artifact-reply"))))
       throw Error(R::ErrorCode::Rejected, "job no longer accepts uploads");
     if (state.state == R::JobState::Missing) {
       private_directory(dir / "blobs");
@@ -232,6 +235,44 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
     persist(fd.value, offset + c.bytes.size() == c.total);
   });
 }
+auto Journal::deliver_artifact(std::string_view job,
+                               const R::JobArtifactRequestT& artifact,
+                               std::string_view core) -> void {
+  locked(job, [&](const auto& dir) {
+    const auto state = read(dir);
+    require_owner(state, core);
+    if (state.fingerprint != artifact.fingerprint)
+      throw Error(R::ErrorCode::Rejected, "artifact sent for a different job");
+    const auto work = dir / "work";
+    const auto wanted = fs::read_file(work / "artifact-wanted");
+    // A cancelled or timed out call may have moved on by the time the
+    // response arrives. A repeated response has no effect.
+    if (state.state != R::JobState::Running || !wanted ||
+        *wanted != artifact.id || stdfs::exists(work / "artifact-reply"))
+      return;
+    if (!crypto::is_uuid(artifact.id) ||
+        (!artifact.found &&
+         (!artifact.files.empty() || !artifact.directories.empty())) ||
+        artifact.files.size() > 1024 || artifact.directories.size() > 2048)
+      throw Error(R::ErrorCode::Invalid, "invalid remote artifact manifest");
+    std::set<stdfs::path> paths;
+    for (const auto& directory : artifact.directories)
+      if (!paths.insert(remote::relative_path(directory)).second)
+        throw Error(R::ErrorCode::Invalid, "duplicate remote artifact member");
+    for (const auto& file : artifact.files) {
+      if (!paths.insert(remote::relative_path(file->path)).second ||
+          !crypto::is_sha256_hex(file->sha256))
+        throw Error(R::ErrorCode::Invalid, "invalid remote artifact member");
+      const auto blob = dir / "blobs" / file->sha256;
+      if (!stdfs::is_regular_file(stdfs::symlink_status(blob)) ||
+          stdfs::file_size(blob) != file->size)
+        throw Error(R::ErrorCode::Rejected, "remote artifact blob is missing");
+    }
+    fs::write_atomic(work / "artifact-reply",
+                     remote::encode<R::JobArtifactRequest>(artifact), 0600);
+  });
+}
+
 auto Journal::get(std::string_view job, const R::GetBlobRequestT& r,
                   std::string_view core) const -> R::BlobChunkT {
   if (!r.limit || r.limit > kChunkBytes)

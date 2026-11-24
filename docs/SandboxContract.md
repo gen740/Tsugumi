@@ -60,15 +60,14 @@ New artifacts are created in writable directories supplied by the worker. [Card 
 
 ## Artifact access
 
-Each invocation receives grants for the artifact IDs listed on its input
-envelopes. The SDK opens a granted artifact as a read-only directory.
-The returned path is scoped to the invocation. Forwarding an ID preserves
-the artifact's identity.
+A Card can open any sealed artifact of its project by UUID. The UUID is the
+capability. The returned read-only path is scoped to the invocation.
 
 The artifact store stays outside the sandbox. The worker supervisor creates
 a private invocation directory on the same filesystem and materializes
-granted inputs when the Card calls `artifact_open`. It recreates directory
-trees and hard-links their files on Linux, including in the shared VM.
+the requested tree when the Card calls `artifact_open`. It recreates directory
+trees and hard-links their files on Linux, including in the shared VM, with a copy
+fallback across filesystems.
 Bubblewrap mounts those inputs read-only. On native macOS the supervisor
 clones files, and Seatbelt denies writes and metadata changes to the inputs.
 The supervisor installs created outputs under
@@ -90,10 +89,11 @@ from the worker's private artifact directory. That directory is bound once,
 at a fixed path, into the worker's sandbox, so the removal takes the paths out
 of a resident's view without remounting, and the next call's directories
 appear in the same place. Descriptors opened during a call cannot be revoked:
-a leftover input descriptor only reads data that was granted, and a leftover
+a leftover input descriptor continues to read the artifact it opened, and a leftover
 output descriptor points at an inode the sealed artifact has superseded.
-Remote workers stage grants and return newly created artifacts with the result.
-These access guarantees require filesystem isolation.
+Remote workers request sealed artifacts on demand and return newly created
+artifacts with the result. Artifacts made without KEEP expire at run end. These access guarantees require filesystem
+isolation.
 
 ## Grants
 

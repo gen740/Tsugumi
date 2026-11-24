@@ -106,79 +106,74 @@ auto stage_remote_archive(const RemoteJobClient& client,
   return archive_digest;
 }
 
+auto deliver_remote_artifact(const RemoteJobClient& client,
+                             const std::string& service,
+                             const std::string& instance,
+                             const std::string& job_id,
+                             const std::string& fingerprint,
+                             const std::string& uuid, const stdfs::path& source,
+                             std::stop_token stop) -> void {
+  R::JobArtifactRequestT answer;
+  answer.fingerprint = fingerprint;
+  answer.id = uuid;
+  if (!source.empty()) {
+    try {
+      const auto tree = fs::list_beneath(source, "", kMaxInputBlobs * 2);
+      if (tree.files.size() >= kMaxInputBlobs || !tree.links.empty() ||
+          !tree.special.empty())
+        throw std::runtime_error("cannot stage remote artifact tree");
+      uint64_t total = 0;
+      std::set<std::string> uploaded;
+      answer.directories = tree.directories;
+      for (const auto& name : tree.files) {
+        if (stop.stop_requested())
+          throw BrokerDisconnected("remote artifact transfer cancelled");
+        crypto::Sha256 hash;
+        const auto size = fs::stream_beneath(
+            source, name, kMaxBlobBytes - total, [&](std::string_view chunk) {
+              if (stop.stop_requested())
+                throw BrokerDisconnected("remote artifact transfer cancelled");
+              hash.update(chunk);
+            });
+        const auto digest = hash.finish_hex();
+        total += size;
+        // Artifacts are sealed. The worker checks the digest of the uploaded
+        // stream before it publishes the blob.
+        if (uploaded.insert(digest).second) {
+          std::ifstream contents(source / name, std::ios::binary);
+          if (!contents)
+            throw std::runtime_error("cannot open artifact member");
+          client.put_blob(service, instance, job_id, digest, size, contents,
+                          stop);
+        }
+        auto file = std::make_unique<R::InvocationFileT>();
+        file->path = name;
+        file->sha256 = digest;
+        file->size = size;
+        answer.files.push_back(std::move(file));
+      }
+      answer.found = true;
+    } catch (const BrokerDisconnected&) {
+      throw;
+    } catch (const BrokerInstanceChanged&) {
+      throw;
+    } catch (const std::exception&) {
+      answer.files.clear();
+      answer.directories.clear();
+    }
+  }
+  client.deliver_artifact(service, instance, job_id, std::move(answer), stop);
+}
+
 auto stage_remote_invocation(const RemoteJobClient& client,
                              const std::string& service,
                              const std::string& instance,
                              const std::string& job_id,
-                             std::vector<ArtifactGrant> grants,
                              const std::string& archive_digest,
                              const ExecutionRequest& request) -> std::string {
-  remote::RW::InvocationT invocation;
+  R::InvocationT invocation;
   invocation.implementation_index = request.build.implementation_index;
-  auto& files = invocation.files;
-  auto& dirs = invocation.directories;
   std::set<std::string> blobs;
-  uint64_t total = 0;
-  auto stage_file = [&](const stdfs::path& root, const stdfs::path& source,
-                        const stdfs::path& destination) {
-    if (files.size() >= kMaxInputBlobs - 3)
-      throw std::runtime_error("remote input has too many files");
-    const auto path = remote::relative_path(destination.generic_string());
-    const auto temporary = request.directory / (".input-" + crypto::uuid4());
-    struct RemoveInput {
-      stdfs::path path;
-      ~RemoveInput() {
-        std::error_code ec;
-        stdfs::remove(path, ec);
-      }
-    } remove{temporary};
-    std::ofstream snapshot(temporary, std::ios::binary);
-    if (!snapshot) throw std::runtime_error("cannot stage remote input");
-    crypto::Sha256 hash;
-    const auto size = fs::stream_beneath(
-        root, source, kMaxBlobBytes - total, [&](std::string_view chunk) {
-          if (request.stop.stop_requested())
-            throw Failed(FailureKind::cancelled,
-                         "run cancelled before external submission");
-          hash.update(chunk);
-          snapshot.write(chunk.data(),
-                         static_cast<std::streamsize>(chunk.size()));
-          if (!snapshot) throw std::runtime_error("cannot stage remote input");
-        });
-    snapshot.close();
-    if (!snapshot) throw std::runtime_error("cannot stage remote input");
-    total += size;
-    const auto digest = hash.finish_hex();
-    if (blobs.insert(digest).second) {
-      std::ifstream stream(temporary, std::ios::binary);
-      client.put_blob(service, instance, job_id, digest, size, stream,
-                      request.stop, [&](uint64_t done, uint64_t bytes) {
-                        if (request.transfer)
-                          request.transfer("upload", path.generic_string(),
-                                           done, bytes);
-                      });
-    }
-    auto file = std::make_unique<remote::RW::InvocationFileT>();
-    file->path = path.generic_string();
-    file->sha256 = digest;
-    file->size = size;
-    files.push_back(std::move(file));
-  };
-  for (auto& grant : grants) {
-    const auto root = stdfs::path(grant.path);
-    const auto destination = stdfs::path("artifacts") / grant.location;
-    const auto listing = fs::list_beneath(root, "", kMaxInputBlobs * 2);
-    if (!listing.links.empty() || !listing.special.empty())
-      throw Failed(FailureKind::input_missing,
-                   "remote artifact contains a symlink or special file");
-    dirs.push_back(destination.generic_string());
-    for (const auto& child : listing.directories)
-      dirs.push_back(remote::relative_path((destination / child).generic_string())
-                         .generic_string());
-    for (const auto& name : listing.files)
-      stage_file(root, name, destination / name);
-    grant.path = grant.location.generic_string();
-  }
   if (request.stop.stop_requested())
     throw Failed(FailureKind::cancelled,
                  "run cancelled before external submission");
@@ -188,7 +183,7 @@ auto stage_remote_invocation(const RemoteJobClient& client,
                             ? std::optional<uint64_t>(
                                   *request.node.settings.timeout_seconds * 1000)
                             : std::nullopt,
-                        {}, grants, false, request.summary.artifact_sequence);
+                        {});
   invocation.call_sha256 =
       upload(client, service, instance, job_id, call, request.stop);
   blobs.insert(invocation.call_sha256);
@@ -234,9 +229,9 @@ auto import_remote_result(
     const std::string& instance, const std::string& job_id,
     const std::string& result_digest, const std::string& spec,
     const stdfs::path& state_directory, const stdfs::path& artifact_destination,
-    uint64_t sequence, const std::vector<types::PortType>& outputs,
-    const std::vector<Value>& inputs, const RemoteLogPrefix& recorded,
-    const WorkerProc::LogSink& log, std::stop_token stop,
+    const std::vector<types::PortType>& outputs,
+    const RemoteLogPrefix& recorded, const WorkerProc::LogSink& log,
+    std::stop_token stop,
     const std::function<void(std::string_view, uint64_t, uint64_t)>& progress,
     const std::function<void(int64_t, int64_t)>& on_validation)
     -> RemoteInvocationResult {
@@ -280,13 +275,19 @@ auto import_remote_result(
   if (!failure && !worker)
     throw std::runtime_error("remote worker did not send a result or failure");
   const auto started = now_ms();
-  result.created = wire::artifact_ids(failure ? failure->created() : worker->created());
   std::set<stdfs::path> declared;
-  for (size_t counter = 0; counter < result.created.size(); ++counter) {
-    const auto id = artifact_id_bytes(result.created[counter]);
-    if (artifact_sequence(id) != sequence || artifact_counter(id) != counter)
-      throw Failed(FailureKind::output_invalid, "invalid remote artifact id");
-    declared.insert(std::to_string(counter));
+  std::set<ArtifactKey> ids;
+  const auto* artifacts = failure ? failure->created() : worker->created();
+  if (artifacts) {
+    for (const auto* artifact : *artifacts) {
+      auto id = wire::artifact_id(*artifact->id());
+      if ((id[6] & 0xf0) != 0x40 || (id[8] & 0xc0) != 0x80 ||
+          !ids.insert(id).second)
+        throw Failed(FailureKind::output_invalid,
+                     "invalid remote artifact UUID");
+      declared.insert(std::to_string(result.created.size()));
+      result.created.push_back({std::move(id), artifact->keep()});
+    }
   }
   const auto permitted = [&](const stdfs::path& relative, bool allow_root) {
     auto part = relative.begin();
@@ -348,13 +349,11 @@ auto import_remote_result(
     for (const auto* output : *worker->outputs()) {
       const auto* bytes = output->bytes();
       raw.push_back({output->name()->str(),
-                     bytes ? std::string(bytes->begin(), bytes->end()) : "",
-                     wire::artifact_ids(output->artifacts())});
+                     bytes ? std::string(bytes->begin(), bytes->end()) : ""});
     }
   }
   result.outputs = workerd::accept_outputs(
-      std::move(raw), failure ? std::span<const types::PortType>{} : outputs,
-      inputs, result.created);
+      std::move(raw), failure ? std::span<const types::PortType>{} : outputs);
   std::set<stdfs::path> directories;
   for (const auto& dir : environment->directories) {
     const auto rel = remote::relative_path(dir);

@@ -23,7 +23,10 @@ from harness.scenario import FILE_OUTPUT
 from harness.views import ZERO_ROUTE, declaration, display, open_view, return_credit
 from projects import start_run, wait_invocation, wait_run, wait_run_notification
 from Tsugumi.Data.CardState import CardState
+from uuid import uuid4
+
 from tsugumi.ArtifactId import ArtifactIdT
+from Tsugumi.Worker.CreatedArtifact import CreatedArtifactT
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
@@ -108,12 +111,9 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             self.results[digest] = data
             return digest
 
-        spec = self.specs[job]
-        invocation = R.InvocationT.InitFromPackedBuf(self.blob_contents[R.string(spec.invocationSha256)])
-        request = WorkerMessageT.InitFromPackedBuf(self.blob_contents[R.string(invocation.callSha256)])
-        artifact = ArtifactIdT(bytes=list(request.value.invocationSequence.to_bytes(8, "big") + bytes(8)))
-        output = WorkerOutputT(name="doc", artifacts=[artifact])
-        created = [] if result_fault == "artifact" else [artifact]
+        artifact = ArtifactIdT(bytes=list(uuid4().bytes))
+        output = WorkerOutputT(name="doc")
+        created = [] if result_fault == "artifact" else [CreatedArtifactT(id=artifact, keep=True)]
         result = WorkerResultT(outputs=[output], created=created)
         message = WorkerMessageT(callId=1, valueType=WorkerPayload.WorkerResult, value=result)
         buffer = flatbuffers.Builder(128)

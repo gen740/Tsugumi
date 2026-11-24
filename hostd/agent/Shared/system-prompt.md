@@ -101,6 +101,6 @@ the person's decision.
   Card, card:outer/inner), [Run 12 (its start time or mark)](run:12), [Spectrum #1 (run 12)](run:12/spectrum#1) for an
   invocation, [stderr (12/spectrum#1)](log:12/spectrum?invocation=1&stream=stderr&offset=0) (stdout, stderr, build or
   journal at a byte offset; no Card and invocation for the run's own log), [plot.png (run
-  12)](artifact:12?id=<URL-encoded artifact id>&path=<URL-encoded member>) (no path for the whole artifact). Label a
+  12)](artifact:<artifact UUID>?path=<URL-encoded member>) (no path for the whole artifact). Label a
   link with the name the person sees and use the run numbers, Card ids, invocations and artifact ids tools returned; a
   link to something missing shows as text that cannot be opened.

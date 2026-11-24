@@ -73,13 +73,12 @@ struct WorkerSpawn {
 struct RawOutput {
   std::string name;
   std::string bytes;
-  std::vector<ArtifactKey> artifacts;
 };
 
 struct WorkerOutcome {
   std::vector<RawOutput> outputs;
   std::optional<FailureData> failure;
-  std::vector<ArtifactKey> created = {};
+  std::vector<CreatedArtifact> created = {};
 };
 
 // Whether a Card worker runs as its own uid on the host (folders it writes are
@@ -131,13 +130,14 @@ class WorkerProc {
   ~WorkerProc();
   WorkerProc(const WorkerProc&) = delete;
 
-  using ArtifactOpen = std::function<std::string(const ArtifactKey&)>;
+  using ArtifactOpen =
+      std::function<std::string(const ArtifactKey&, std::stop_token)>;
   // Sends one call and waits for its result. On cancel or deadline the worker
   // gets WorkerCancel, then the process group is killed after one second.
   WorkerOutcome call(
       std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
       std::optional<std::chrono::steady_clock::time_point> deadline,
-      ArtifactOpen open_artifact = {});
+      ArtifactOpen open_artifact = {}, bool create_artifacts = false);
   uint64_t next_call_id() { return ++call_id_; }
   auto call_id() const -> uint64_t { return call_id_; }
   auto set_call_id(uint64_t value) -> void { call_id_ = value; }
@@ -220,6 +220,8 @@ class WorkerProc {
   bool data_closed_ = false;
   std::optional<WorkerOutcome> pending_;
   ArtifactOpen open_artifact_;
+  bool create_artifacts_ = false;
+  std::vector<CreatedArtifact> created_artifacts_;
   std::shared_ptr<DisplaySink> display_;
   std::shared_ptr<ViewControl> view_control_;
   LogSink logs_;
@@ -242,7 +244,6 @@ std::string worker_call_frame(
     const std::vector<types::PortType>& outputs,
     std::optional<uint64_t> deadline_ms,
     const std::filesystem::path& artifact_directory = {},
-    std::span<const ArtifactGrant> grants = {}, bool drain_display = false,
-    uint64_t invocation_sequence = 0);
+    bool drain_display = false);
 
 }  // namespace tsugumi

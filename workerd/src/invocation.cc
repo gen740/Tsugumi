@@ -139,22 +139,26 @@ auto make_result(const workerd::InvocationResult& outcome) -> std::string {
   flatbuffers::FlatBufferBuilder b;
   W::WorkerPayload kind;
   flatbuffers::Offset<void> body;
+  std::vector<flatbuffers::Offset<W::CreatedArtifact>> artifacts;
+  for (const auto& artifact : outcome.created) {
+    const auto id = wire::artifact_struct(artifact.id);
+    artifacts.push_back(W::CreateCreatedArtifact(b, &id, artifact.keep));
+  }
+  const auto created = b.CreateVector(artifacts);
   if (outcome.failure) {
     kind = W::WorkerPayload::WorkerFailure;
     body =
-        W::CreateWorkerFailure(b, wire::failure(b, *outcome.failure),
-                               wire::artifact_ids(b, outcome.created)).Union();
+        W::CreateWorkerFailure(b, wire::failure(b, *outcome.failure), created)
+            .Union();
   } else {
     std::vector<flatbuffers::Offset<W::WorkerOutput>> outputs;
     for (const auto& value : outcome.outputs)
       outputs.push_back(W::CreateWorkerOutput(
           b, b.CreateString(value.name),
           b.CreateVector(reinterpret_cast<const uint8_t*>(value.bytes.data()),
-                         value.bytes.size()),
-          wire::artifact_ids(b, value.artifacts)));
+                         value.bytes.size())));
     kind = W::WorkerPayload::WorkerResult;
-    body = W::CreateWorkerResult(b, b.CreateVector(outputs),
-                                 wire::artifact_ids(b, outcome.created)).Union();
+    body = W::CreateWorkerResult(b, b.CreateVector(outputs), created).Union();
   }
   W::FinishWorkerMessageBuffer(b, W::CreateWorkerMessage(b, 1, kind, body));
   if (b.GetSize() > kWorkerLimit)
@@ -339,9 +343,61 @@ class InvocationDisplay {
   std::thread writer_;
 };
 
+auto fetch_artifact(const stdfs::path& directory, const stdfs::path& blobs,
+                    const ArtifactKey& id, std::stop_token stop)
+    -> stdfs::path {
+  const auto uuid = artifact_id_text(id);
+  const auto target = directory / "staged/artifacts" / uuid;
+  const auto wanted = directory / "artifact-wanted";
+  const auto reply = directory / "artifact-reply";
+  struct RemoveExchange {
+    stdfs::path wanted;
+    stdfs::path reply;
+    ~RemoveExchange() {
+      std::error_code ec;
+      stdfs::remove(wanted, ec);
+      stdfs::remove(reply, ec);
+    }
+  } exchange{wanted, reply};
+
+  fs::write_atomic(wanted, uuid, 0600);
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::minutes(5);
+  while (!stop.stop_requested() &&
+         std::chrono::steady_clock::now() < deadline) {
+    if (stdfs::exists(reply)) {
+      const auto bytes = read(reply, workerd::kMaxFrame);
+      const auto manifest =
+          remote::decode<workerd::R::JobArtifactRequest>(bytes);
+      if (!manifest || manifest->id != uuid || !manifest->found) return {};
+      try {
+        stdfs::create_directories(target);
+        for (const auto& name : manifest->directories)
+          stdfs::create_directories(target / remote::relative_path(name));
+        for (const auto& file : manifest->files) {
+          if (stop.stop_requested())
+            throw std::runtime_error("remote artifact staging cancelled");
+          const auto destination = target / remote::relative_path(file->path);
+          stdfs::create_directories(destination.parent_path());
+          const auto size = fs::link_beneath(blobs, file->sha256, destination);
+          if (!size || *size != file->size)
+            throw std::runtime_error("remote artifact member is missing");
+        }
+        return target;
+      } catch (...) {
+        std::error_code ec;
+        stdfs::remove_all(target, ec);
+        throw;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  return {};
+}
+
 auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
                 const remote::RW::InvocationT& invocation,
-                const stdfs::path& input, const stdfs::path& directory,
+                const stdfs::path& blobs, const stdfs::path& directory,
                 const stdfs::path& store, const stdfs::path& group,
                 const WorkerStoreResult& env, const WorkerProc::LogSink& log,
                 Secrets secrets) -> workerd::InvocationResult {
@@ -376,34 +432,13 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   for (const auto* port : *call.inputs())
     values.push_back({port->name()->str(), nullptr,
                       port->bytes() ? bytes(port->bytes()) : "",
-                      port->schema() ? port->schema()->str() : "",
-                      wire::artifact_ids(port->artifacts())});
+                      port->schema() ? port->schema()->str() : ""});
   std::vector<types::PortType> outputs;
   for (const auto* port : *call.outputs())
     outputs.push_back({port->name()->str(), port->required(), nullptr});
-  const auto artifacts_root = input / "artifacts";
   const auto outputs_root = directory / "result/files/artifacts";
   spawn.artifact_store = outputs_root.string();
   spawn.artifact_staging = directory / "artifact-invocations";
-  std::vector<ArtifactGrant> grants;
-  if (const auto* entries = call.grants()) {
-    for (const auto* entry : *entries) {
-      auto id = wire::artifact_id(*entry->id());
-      const auto leaf = std::to_string(artifact_counter(artifact_id_bytes(id)));
-      const auto relative = remote::relative_path(entry->path()->string_view());
-      const auto holders = relative.parent_path();
-      const auto invocation_name = holders.filename().string();
-      const auto source = artifacts_root / relative;
-      if (relative.filename() != leaf ||
-          !crypto::is_run_id(relative.begin()->string()) ||
-          !invocation_name.starts_with('@') || invocation_name.size() == 1 ||
-          invocation_name.find_first_not_of("0123456789", 1) !=
-              std::string::npos ||
-          !stdfs::is_directory(stdfs::symlink_status(source)))
-        throw Failed(FailureKind::input_missing, "invalid remote artifact grant");
-      grants.push_back({std::move(id), source.string()});
-    }
-  }
   stdfs::create_directories(outputs_root);
   auto worker = std::make_unique<WorkerProc>(spawn);
   InvocationDisplay display(worker->view_receiver());
@@ -415,8 +450,10 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   request.inputs = values;
   request.outputs = std::move(outputs);
   request.artifact_directory = outputs_root;
-  request.artifact_sequence = call.invocation_sequence();
-  request.grants = std::move(grants);
+  request.artifact_sequence = 1;  // One invocation per remote job.
+  request.resolve_artifact = [&](const ArtifactKey& id, std::stop_token stop) {
+    return fetch_artifact(directory, blobs, id, stop);
+  };
   request.output_budget = {job.output_limit_bytes, job.output_limit_entries};
   if (call.deadline_ms()) request.timeout_ms = *call.deadline_ms();
   // Allow the worker to report its own budget failure before escalation.
@@ -458,43 +495,6 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
       read(blob(job->invocation_sha256), kWorkerLimit));
   if (!decoded) throw std::runtime_error("invalid remote invocation manifest");
   const auto& invocation = *decoded;
-  int64_t last_progress = 0;
-  const auto progress = [&](const stdfs::path& name, uint64_t done,
-                            uint64_t total) {
-    const auto now = now_ms();
-    if (done && done != total && now - last_progress < 100) return;
-    last_progress = now;
-    remote::RW::TransferProgressT value;
-    value.name = name.generic_string();
-    value.done = done;
-    value.total = total;
-    fs::write_atomic(directory / "progress",
-                     remote::encode<remote::RW::TransferProgress>(value), 0600);
-  };
-  const auto input = directory / "staged";
-  stdfs::create_directories(input);
-  for (const auto& dir : invocation.directories)
-    stdfs::create_directories(input / remote::relative_path(dir));
-  for (const auto& entry : invocation.files) {
-    const auto& file = *entry;
-    const auto path = input / remote::relative_path(file.path);
-    const auto source = blob(file.sha256);
-    stdfs::create_directories(path.parent_path());
-    uint64_t done = 0;
-    if (const auto size = fs::link_beneath(blobs, source.filename(), path)) {
-      done = *size;
-      progress(file.path, done, file.size);
-    } else {
-      progress(file.path, 0, file.size);
-      fs::copy_beneath(blobs, source.filename(), path,
-                       [&](std::string_view chunk) {
-                         done += chunk.size();
-                         progress(file.path, done, file.size);
-                       });
-    }
-    if (done != file.size)
-      throw std::runtime_error("remote invocation input size does not match");
-  }
   const auto frame = read(blob(invocation.call_sha256), kWorkerLimit);
   flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(frame.data()),
                                  frame.size());
@@ -532,7 +532,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
         job->build_timeout_ms);
     auto secrets =
         job->secrets.empty() ? Secrets{} : receive_secrets(directory, *job);
-    outcome = run_worker(*call, *job, invocation, input, directory, store,
+    outcome = run_worker(*call, *job, invocation, blobs, directory, store,
                          group, environment, log, std::move(secrets));
   } catch (const Failed& error) {
     outcome.failure = error.failure;

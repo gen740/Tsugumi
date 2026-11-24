@@ -456,7 +456,7 @@ table RewriteParamLiteralRequest {
   literal:string (id: 2, required);
   at_rev:uint64 = null (id: 3);
 }
-enum RunRecordCategory:ubyte { Unspecified, Logs, Values }
+enum RunRecordCategory:ubyte { Unspecified, Logs, Values, Artifacts }
 
 /// -> RunCategoryDeleteResult. Delete one category from a finished run.
 table RunCategoryDeleteRequest {
@@ -769,16 +769,19 @@ table RunValueReadRequest {
   limit_bytes:uint32 = null (id: 6);
 }
 
-/// -> ArtifactPage. List run artifacts; invocation requires card.
+/// -> ArtifactPage. List a run's artifacts (invocation requires card), or
+/// look up artifact_ids: unknown ids are left out.
 table ArtifactListRequest {
-  run_id:string (id: 0, required);
+  run_id:string (id: 0);
   card:Tsugumi.Data.CardPath (id: 1);
   invocation:uint64 = null (id: 2);
   cursor:string (id: 3);
   limit:uint32 = null (id: 4);
+  /// uuid text; without run_id.
+  artifact_ids:[string] (id: 5);
 }
 
-/// -> FileContent. Read artifact bytes; member selects a file within a Directory artifact.
+/// -> FileContent. Read a member of a sealed artifact by its UUID.
 table ArtifactReadRequest {
   artifact_id:string (id: 0, required);
   member:string (id: 1);
@@ -1255,6 +1258,10 @@ table ArtifactInfo {
   size_bytes:uint64 = null (id: 4);
   tree_hash:string (id: 5);
   members:[ArtifactMember] (id: 6, required);
+  /// `<invocation sequence>.<k>`, next to the uuid for people.
+  label:string (id: 7);
+  /// Created without keep: removed with its record when its run ends.
+  keep:bool (id: 8);
 }
 
 table ArtifactPage {

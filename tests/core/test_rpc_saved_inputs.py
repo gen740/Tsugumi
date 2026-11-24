@@ -13,7 +13,7 @@ from Tsugumi.Data.RunState import RunState
 def test_subgraph_replays_saved_merge_arrival(core_factory, project, tmp_path):
     fixture = Project(project)
     packages = scripted_implementations(tmp_path / "packages", [
-        [{"op": "file", "port": "out", "path": "report.txt", "text": "sealed artifact"}],
+        [{"op": "output", "port": "out", "type": "uint64", "value": 7}],
     ])
     fixture.card("source", {"type": "code", "sandbox": {"filesystem": False}},
                  outputs=NUMBER, plan=mock_plan(packages))
@@ -40,17 +40,13 @@ def test_subgraph_replays_saved_merge_arrival(core_factory, project, tmp_path):
     _, status = run_and_wait(client, "child", propagate=False)
     assert status.state == RunState.failed and status.failure.kind == FailureKind.input_missing
     source_runs = []
-    artifact_ids = []
+    payloads = []
     for _ in range(2):
         run, status = run_and_wait(client, "start")
         assert status.state == RunState.succeeded, text(status.failure.diagnostic)
         value, = record(client, run, "child/relay").outputs
-        artifact_id, = [text(item.id) for item in value.artifacts]
-        row, = client.call("ArtifactListRequest", runId=run).artifacts
-        assert text(row.artifactId) == artifact_id
-        artifact_ids.append(artifact_id)
+        payloads.append(bytes(value.inlineBytes))
         source_runs.append(run)
-    assert artifact_ids[0] != artifact_ids[1]
     deleted = client.call("RunHistoryDeleteRequest", restrictToRunIds=True,
                           runIds=source_runs[:1], opId=new_id())
     assert deleted.deletedRuns == 1
@@ -62,4 +58,4 @@ def test_subgraph_replays_saved_merge_arrival(core_factory, project, tmp_path):
         assert status.state == RunState.succeeded, text(status.failure.diagnostic)
         value, = record(client, run, "child/relay").outputs
         assert text(value.rootType) == "Number"
-        assert [text(item.id) for item in value.artifacts] == artifact_ids[1:]
+        assert bytes(value.inlineBytes) == payloads[-1]

@@ -254,8 +254,12 @@ Use `cancelled` and `remaining_ms` for work that observes cancellation and deadl
 
 Include `tsugumi/artifact.fbs` and use `tsugumi.Artifact` for a file or directory.
 Use the SDK to create a writable directory or upload existing contents. Return
-the Artifact in an output. A downstream Card can open the granted Artifact for
-reading or forward its ID. The directory is sealed when the creating call ends.
+the Artifact in an output. Any Card in the project that knows the UUID can open
+the sealed directory or pass the UUID on. The directory is sealed when the
+creating call ends. The SDK keeps artifacts by default. For a scratch artifact,
+define `keep_scratch = false;` in `params.nix` and pass it to the SDK's keep
+option when creating the artifact. A person can then opt in to keeping it for
+a particular run.
 
 ## Views
 
@@ -372,13 +376,13 @@ Use a hash-pinned Nix fetch for immutable data. Share the store path through
 a Nix export and reference it from the consuming Card build to include it
 in that runtime closure. Bundle local files in the source or grant access
 with `grants.hostPaths`. To share files produced during execution, create
-and return an Artifact during the Card call.
+an artifact during the Card call and return its UUID in an output.
 
 ### Reading a merge output
 
 Build SDK after connecting the Merge. Decode a single candidate as its
 ordinary type, or select a member of the generated union when there are
-multiple candidates. Merge forwards the original bytes and artifact IDs.
+multiple candidates. Merge forwards the original bytes, including any artifact UUIDs they contain.
 
 ### Templates
 

@@ -133,16 +133,22 @@ struct EvidenceView: View {
       } catch { bodyText = String(describing: error) }
       return
     }
-    guard let rpc = session.rpc, await target.exists(in: session), let run = target.run else {
+    guard let rpc = session.rpc, await target.exists(in: session) else {
       bodyText = String(localized: "このプロジェクトに根拠の記録がありません"); return
     }
+    let run = target.run ?? ""
     do {
       if target.kind == "log" {
         let log = try await rpc.logRange(runId: run, card: target.card, invocation: target.invocation, stream: target.logStream, offset: target.offset)
         bodyText = "\(target.stream) · \(String(localized: "位置")) \(log.offset ?? 0)\n\n\(log.text)"
       } else if target.kind == "artifact" {
-        guard let a = try await rpc.artifacts(runId: run).first(where: { $0.artifactId == target.artifact }) else { return }
-        let member = target.member ?? a.members.first.flatMap { $0?.path }
+        guard let id = target.artifact,
+              let a = try await rpc.artifacts(ids: [id]).first else { return }
+        let title = "\(session.displayPath(a.card.path)) · \(ArtifactText.name(a))"
+        guard let member = target.member ?? a.members.first.flatMap({ $0?.path }) else {
+          bodyText = title
+          return
+        }
         artifact = a
         artifactMember = member
         let request = Tsugumi_RPC_ArtifactReadRequestT()
@@ -151,7 +157,7 @@ struct EvidenceView: View {
         request.limitBytes = 65536
         let data: Tsugumi_RPC_FileContentT = try await rpc.call(.artifactreadrequest, request)
         if data.eof == true { preview = NSImage(data: Data(data.bytes)) }
-        bodyText = "\(session.displayPath(a.card.path)) · \(a.artifactId)\n\(member ?? "")\n\n" + (preview == nil ? (String(bytes: data.bytes, encoding: .utf8) ?? String(localized: "バイナリの成果物です")) : "")
+        bodyText = "\(title)\n\(member)\n\n" + (preview == nil ? (String(bytes: data.bytes, encoding: .utf8) ?? String(localized: "バイナリの成果物です")) : "")
         if data.eof != true { bodyText += "\n" + String(localized: "先頭 64 KiB を表示") }
       } else if let card = target.card {
         let r = try await rpc.record(runId: run, card: card, invocation: target.invocation)

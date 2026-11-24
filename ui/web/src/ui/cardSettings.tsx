@@ -978,6 +978,7 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
                 options={recordSettings.map((value, i) => ({ value, label: [L('プロジェクト設定に従う'), L('オン'), L('オフ')][i] }))} />
             </Row>
           ))}
+          <Row><span className="secondary caption">{L('実行の要約は常に記録します。成果物は常に保存され、残すかどうかは Card が成果物を作るときに選びます。残さない成果物は実行の終了時に削除されます。')}</span></Row>
         </Section>
       )}
     </Form>

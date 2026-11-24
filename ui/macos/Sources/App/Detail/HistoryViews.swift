@@ -488,6 +488,7 @@ private struct DeleteRunCategory: View {
     Menu("記録を削除…") {
       Button("標準出力と標準エラー") { prepare(.logs, String(localized: "標準出力と標準エラー")) }
       Button("値") { prepare(.values, String(localized: "値")) }
+      Button("成果物") { prepare(.artifacts, String(localized: "成果物")) }
     }
     .disabled(busy || session.runActive || !session.connected)
     .confirmationDialog(
@@ -503,6 +504,10 @@ private struct DeleteRunCategory: View {
         }
       }
       Button("キャンセル", role: .cancel) {}
+    } message: { selection in
+      if selection.category == .artifacts {
+        Text("この実行が作った成果物の中身を削除します。値に含まれる成果物の ID は利用できなくなります。元に戻せません。")
+      }
     }
     if let error {
       Text("削除できませんでした: \(error)").font(.caption).foregroundStyle(.red).textSelection(.enabled)
@@ -575,8 +580,8 @@ struct CardArtifactsView: View {
       HSplitView {
         List(artifacts, id: \.artifactId, selection: $artifactId) { a in
           VStack(alignment: .leading) {
-            Text(a.artifactId).font(.callout.bold())
-            Text("#\(a.invocation ?? 0) · \(a.sizeBytes ?? 0) bytes · \(a.members.count) 件").font(.caption).foregroundStyle(.secondary)
+            Text(ArtifactText.name(a)).font(.callout.bold()).lineLimit(1).truncationMode(.middle)
+            Text(ArtifactText.caption(a)).font(.caption).foregroundStyle(.secondary)
           }
           .tag(Optional(a.artifactId))
         }
@@ -618,14 +623,17 @@ struct CardArtifactsView: View {
       }
       if let error { Text(error).font(.caption).foregroundStyle(.red).padding(6) }
     }
-    .task(id: "\(runId ?? "")|\(session.recordingRevision)") { await loadArtifacts() }
+    // An artifact made without keep is listed while its run runs and is gone when it ends.
+    .task(id: "\(runId ?? "")|\(session.recordingRevision)|\(String(describing: session.lastFinished))") { await loadArtifacts() }
     .task(id: "\(artifactId ?? "")|\(member ?? "")") { await loadPreview() }
+    .onChange(of: artifactId) { member = members.first?.path }
   }
 
   private var selectedArtifact: Tsugumi_RPC_ArtifactInfoT? { artifacts.first { $0.artifactId == artifactId } }
 
   private var members: [Tsugumi_RPC_ArtifactMemberT] {
-    (selectedArtifact?.members.compactMap { $0 } ?? []).filter { search.isEmpty || $0.path.localizedCaseInsensitiveContains(search) }
+    guard let a = selectedArtifact else { return [] }
+    return a.members.compactMap { $0 }.filter { search.isEmpty || $0.path.localizedCaseInsensitiveContains(search) }
   }
 
   private func loadRuns() async {
@@ -641,8 +649,8 @@ struct CardArtifactsView: View {
   private func loadArtifacts() async {
     guard let rpc = session.rpc, let runId else { artifacts = []; return }
     artifacts = (try? await rpc.artifacts(runId: runId, card: path(cardKey))) ?? []
-    artifactId = artifacts.first?.artifactId
-    member = selectedArtifact?.members.first??.path
+    if !artifacts.contains(where: { $0.artifactId == artifactId }) { artifactId = artifacts.first?.artifactId }
+    if !members.contains(where: { $0.path == member }) { member = members.first?.path }
   }
 
   private func loadPreview() async {

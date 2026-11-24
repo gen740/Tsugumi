@@ -3,6 +3,7 @@
 import json
 import stat
 import sys
+from uuid import UUID
 
 import pytest
 
@@ -16,7 +17,7 @@ from Tsugumi.Data.RunState import RunState
 
 @pytest.mark.environment
 @pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason="requires Seatbelt or bubblewrap")
-def test_invocation_can_open_only_its_read_only_artifact_grants(core_factory, project):
+def test_invocation_can_open_a_sealed_artifact_by_uuid(core_factory, project):
     stored_root = project.resolve() / ".tsugumi/artifacts"
     declarations = (
         "#include <cerrno>\n#include <dirent.h>\n"
@@ -37,9 +38,10 @@ def test_invocation_can_open_only_its_read_only_artifact_grants(core_factory, pr
     """, declarations=declarations, outputs=DIRECTORY)
     sink = native_card(r"""
         tsugumi_artifact_id ungranted;
-        std::copy_n(in.inputs()->Get(0)->artifacts()->Get(0)->bytes()->data(), 16,
-                    ungranted.bytes);
-        ungranted.bytes[15] = 1;
+        const auto* port = in.inputs()->Get(0);
+        const auto* artifact = fb::GetRoot<tsugumi::Artifact>(port->bytes()->data());
+        std::copy_n(artifact->id()->bytes()->data(), 16, ungranted.bytes);
+        ungranted.bytes[15] ^= 1;
         tsugumi_bytes unused;
         if (call.effects->artifact_open(call.host, &ungranted, &unused) >= 0) return 1;
         const auto directory = fs::path(open_artifact(call, in));
@@ -87,9 +89,10 @@ def test_invocation_can_open_only_its_read_only_artifact_grants(core_factory, pr
         )
         assert decode_scalar(read_output(client, run_id, card="sink"), "uint64") == len("artifact")
         first, second = client.call("ArtifactListRequest", runId=run_id).artifacts
-        sequence, counter = map(int, text(first.artifactId).split("."))
+        sequence, counter = map(int, text(first.label).split("."))
         assert sequence > previous and counter == 0
-        assert text(second.artifactId) == f"{sequence}.1"
+        assert text(second.label) == f"{sequence}.1"
+        assert all(UUID(text(a.artifactId)).version == 4 for a in (first, second))
         previous = sequence
         run_root = stored_root / run_id
         saved = run_root / "source/@1/0"

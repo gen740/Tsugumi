@@ -15,7 +15,7 @@ from .document import card_document, card_readme, params_nix
 from .file_events import wait_for_file
 
 STRING_OUTPUT = 'table Value { value:string; } table Outputs { out:Value; } root_type Outputs;'
-FILE_OUTPUT = 'table Document {} table Outputs { doc:Document; } root_type Outputs;'
+FILE_OUTPUT = 'include "tsugumi/artifact.fbs"; table Outputs { doc:tsugumi.Artifact; } root_type Outputs;'
 
 
 class Gate:

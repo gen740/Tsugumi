@@ -36,9 +36,18 @@ table Diagnostic {
   offset:uint64 = null (id: 5);
 }
 
+/// What an artifact id found in a recorded value resolves to now.
+/// unavailable: nothing is recorded under the id (an artifact created
+/// without keep after its run ended, a deleted artifact, or an id from elsewhere).
+enum ArtifactState : ubyte { unspecified = 0, available = 1, unavailable = 2 }
+
+/// An artifact id found in a value (a tsugumi.ArtifactId in its schema).
 table ValueArtifact {
-  id:string (required);
-  size_bytes:uint64 = null;
+  id:string (id: 0, required);
+  size_bytes:uint64 = null (id: 1);
+  /// `<invocation sequence>.<k>`: the core's number for people.
+  label:string (id: 2);
+  state:ArtifactState (id: 3);
 }
 
 table NamedValue {

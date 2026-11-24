@@ -20,7 +20,7 @@ namespace tsugumi::workerd {
 struct InvocationResult {
   std::vector<Value> outputs;
   std::optional<FailureData> failure;
-  std::vector<ArtifactKey> created = {};
+  std::vector<CreatedArtifact> created = {};
 };
 
 struct Invocation {
@@ -29,7 +29,8 @@ struct Invocation {
   std::vector<types::PortType> outputs;
   std::filesystem::path artifact_directory;
   uint64_t artifact_sequence = 0;
-  std::vector<ArtifactGrant> grants;
+  std::function<std::filesystem::path(const ArtifactKey&, std::stop_token)>
+      resolve_artifact;
   fs::OutputBudget output_budget;
   const std::atomic<bool>* cancel = nullptr;
   std::optional<uint64_t> timeout_ms;
@@ -53,11 +54,9 @@ auto worker_disposition(bool reuse, bool alive, bool between_calls,
                         const std::optional<FailureData>& failure)
     -> WorkerDisposition;
 
-// Admit opaque outputs by declared name, required presence and capability.
+// Admit opaque outputs by declared name, required presence.
 auto accept_outputs(std::vector<RawOutput> raw,
-                    std::span<const types::PortType> ports,
-                    std::span<const Value> inputs = {},
-                    std::span<const ArtifactKey> created = {})
+                    std::span<const types::PortType> ports)
     -> std::vector<Value>;
 
 using ReleaseWorker =

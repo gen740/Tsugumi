@@ -1,5 +1,4 @@
-// Safe transfer and removal of private worker staging, never run-result
-// removal.
+// Filesystem operations for staging, sealing and removing artifact trees.
 #pragma once
 
 #include <cstdint>
@@ -42,7 +41,7 @@ auto clone_staging_artifact(int staging, const std::filesystem::path& name,
 auto remove_staging_artifact(int staging, const std::filesystem::path& name)
     -> void;
 
-// Materialize the granted tree in a directory writable only by the supervisor.
+// Materialize the sealed tree in a directory writable only by the supervisor.
 auto link_artifact(const std::filesystem::path& source,
                    const std::filesystem::path& destination) -> void;
 

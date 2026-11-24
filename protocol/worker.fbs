@@ -22,12 +22,6 @@ table WorkerPort {
   required:bool (id: 1);
 }
 
-// Private filesystem information for an artifact already granted by core.
-table ArtifactGrant {
-  id:tsugumi.ArtifactId (required);
-  path:string (required);
-}
-
 // The worker never opens input or output bytes.
 table WorkerCall {
   inputs:[Tsugumi.Card.CardPort] (id: 0, required);
@@ -35,29 +29,38 @@ table WorkerCall {
   // Remaining time in milliseconds. Omitted means no deadline.
   deadline_ms:uint64 = null (id: 2);
   artifact_directory:string (id: 3);
-  grants:[ArtifactGrant] (id: 4);
   // Before replying, forward displays queued before a one-shot call returned.
-  drain_display:bool (id: 5);
-  invocation_sequence:ulong (id: 6);
+  drain_display:bool (id: 4);
 }
 
 table WorkerOutput {
   name:string (id: 0, required);
   bytes:[ubyte] (id: 1);
-  artifacts:[tsugumi.ArtifactId] (id: 2);
 }
 
+// An artifact the supervisor created during the call. Its position in the
+// list is its directory name under the call's artifact directory.
+table CreatedArtifact {
+  id:tsugumi.ArtifactId (id: 0, required);
+  keep:bool (id: 1);
+}
+
+// The supervisor fills `created` itself; the Card's process leaves it empty.
 table WorkerResult {
   outputs:[WorkerOutput] (id: 0, required);
-  created:[tsugumi.ArtifactId] (id: 1);
+  created:[CreatedArtifact] (id: 1);
 }
 
 table WorkerFailure {
   failure:Tsugumi.Data.Failure (id: 0, required);
-  created:[tsugumi.ArtifactId] (id: 1);
+  created:[CreatedArtifact] (id: 1);
 }
 
-// The supervisor resolves the ID using the active call's grants.
+// The supervisor allocates a random id and the next directory number; the
+// Card's process makes `<artifact_directory>/<counter>`. No id = refused.
+table WorkerArtifactCreate { flags:uint; }
+table WorkerArtifactCreated { id:tsugumi.ArtifactId; counter:ulong; }
+// The supervisor resolves any sealed artifact of the project by its id.
 table WorkerArtifactOpen { id:tsugumi.ArtifactId (required); }
 table WorkerArtifactOpened { path:string; }
 
@@ -120,6 +123,8 @@ union WorkerPayload {
   WorkerViewEvent = 10,
   WorkerViewRequest = 11,
   WorkerViewReply = 12,
+  WorkerArtifactCreate = 13,
+  WorkerArtifactCreated = 14,
 }
 
 table WorkerMessage {

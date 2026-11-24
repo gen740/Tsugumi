@@ -14,6 +14,7 @@ for (const c of cases) {
     assert.deepEqual(typeof value === 'bigint' ? String(value) : value, c[field], `${c.href} ${field}`)
   }
 }
+const artifactId = '0f8c2a4e-5b1d-4c3e-9a7f-2d6b8e1c4f90'
 const run = '12'
 const calls: string[] = []
 const source: EvidenceSource = {
@@ -21,7 +22,7 @@ const source: EvidenceSource = {
   runExists: async id => { calls.push(`run:${id}`); return id === run },
   recordExists: async (_, card, invocation) => card.join('/') === 'spectrum' && (invocation === undefined || invocation === 2n),
   logExists: async target => target.offset === 128n && target.stream === 'stderr',
-  artifactExists: async target => target.artifact === 'saved' && target.member === 'plot.png',
+  artifactExists: async target => target.artifact === artifactId && target.member === 'plot.png',
 }
 assert.equal(await evidenceExists(parseEvidence('card:spectrum')!, source), true)
 assert.equal(await evidenceExists(parseEvidence('card:missing')!, source), false)
@@ -30,8 +31,8 @@ assert.equal(await evidenceExists(parseEvidence(`run:${run}/spectrum#3`)!, sourc
 assert.equal(await evidenceExists(parseEvidence(`run:${run}/deleted#2`)!, source), false)
 assert.equal(await evidenceExists(parseEvidence(`log:${run}/spectrum?invocation=2&stream=stderr&offset=128`)!, source), true)
 assert.equal(await evidenceExists(parseEvidence(`log:${run}/spectrum?offset=129`)!, source), false)
-assert.equal(await evidenceExists(parseEvidence(`artifact:${run}?id=saved&path=plot.png`)!, source), true)
-assert.equal(await evidenceExists(parseEvidence(`artifact:${run}?id=missing`)!, source), false)
+assert.equal(await evidenceExists(parseEvidence(`artifact:${artifactId}?path=plot.png`)!, source), true)
+assert.equal(await evidenceExists(parseEvidence(`artifact:11111111-2222-4333-8444-555555555555`)!, source), false)
 assert.equal(await evidenceExists(parseEvidence(`run:${run}`)!, { ...source, runExists: async () => { throw Error('offline') } }), false)
 assert.ok(calls.every(value => value === `run:${run}`))
 let touchedOtherRecord = false

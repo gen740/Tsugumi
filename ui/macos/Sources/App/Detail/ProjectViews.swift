@@ -364,7 +364,7 @@ private struct GeneralProjectSettings: View {
           Task { await session.setProjectTrust(trusted) }
         })) { InfoHeader("このプロジェクトを信頼する", info: "信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。") }
         .disabled(!session.trustedFolder.isEmpty)
-        Section("記録の既定値") {
+        Section {
           recordingToggle("recordLogs", "標準出力と標準エラーを記録")
           recordingToggle("recordIO", "入出力の値を記録")
           ForEach(limitFields.indices, id: \.self) { i in
@@ -372,6 +372,8 @@ private struct GeneralProjectSettings: View {
             TextField(field.label, text: Binding(get: { limits[field.key] ?? "" }, set: { limits[field.key] = $0 }))
               .help(field.key == "logLimitBytes" ? "0〜1073741824。0 の場合もログは実行中に表示されます。" : "")
           }
+        } header: { Text("記録の既定値") } footer: {
+          Text("実行の要約は常に記録します。成果物は常に保存され、残すかどうかは Card が成果物を作るときに選びます。残さない成果物は実行の終了時に削除されます。").font(.caption).foregroundStyle(.secondary)
         }
         TrustedFoldersSettings()
         LabeledContent("場所", value: session.identity.url.path)

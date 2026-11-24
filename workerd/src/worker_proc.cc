@@ -15,6 +15,9 @@
 #include <set>
 #include <stdexcept>
 #include <system_error>
+
+#include "tsugumi/card_abi.h"
+#include "tsugumi/workerd/artifact_id.hh"
 #ifdef __APPLE__
 #include <libproc.h>
 #else
@@ -1213,12 +1216,37 @@ auto WorkerProc::read_data() -> void {
       }
       trace::Observe(trace_link_, "Card worker", "project core", false, frame,
                      &trace::kFlatBufferCodec);
+      if (const auto* create = message->value_as_WorkerArtifactCreate()) {
+        flatbuffers::FlatBufferBuilder b;
+        const auto counter = created_artifacts_.size();
+        std::optional<::tsugumi::ArtifactId> id;
+        if (create_artifacts_ && !(create->flags() & ~TSUGUMI_ARTIFACT_KEEP)) {
+          auto key = *parse_artifact_id(crypto::uuid4());
+          id = wire::artifact_struct(key);
+          created_artifacts_.push_back(
+              {std::move(key), bool(create->flags() & TSUGUMI_ARTIFACT_KEEP)});
+        }
+        const auto response =
+            W::CreateWorkerArtifactCreated(b, id ? &*id : nullptr, counter);
+        W::FinishWorkerMessageBuffer(
+            b, W::CreateWorkerMessage(b, *message->call_id(),
+                                      W::WorkerPayload::WorkerArtifactCreated,
+                                      response.Union()));
+        send(data_fd_, {reinterpret_cast<const char*>(b.GetBufferPointer()),
+                        b.GetSize()});
+        continue;
+      }
       if (const auto* open = message->value_as_WorkerArtifactOpen()) {
+        const auto key = wire::artifact_id(*open->id());
+        const bool unsealed =
+            std::ranges::find(created_artifacts_, key, &CreatedArtifact::id) !=
+            created_artifacts_.end();
         const auto open_artifact = open_artifact_;
         const auto call_id = *message->call_id();
         lock.unlock();
-        const auto path =
-            open_artifact ? open_artifact(wire::artifact_id(*open->id())) : "";
+        const auto path = open_artifact && !unsealed
+                              ? open_artifact(key, data_stop_.get_token())
+                              : "";
         lock.lock();
         if (awaiting_ != call_id) continue;
         flatbuffers::FlatBufferBuilder b;
@@ -1234,21 +1262,19 @@ auto WorkerProc::read_data() -> void {
       }
       WorkerOutcome outcome;
       if (const auto* result = message->value_as_WorkerResult()) {
-        outcome.created = wire::artifact_ids(result->created());
         for (const auto* output : *result->outputs()) {
           const auto* bytes = output->bytes();
           outcome.outputs.push_back(
               {output->name()->str(),
-               bytes ? std::string(bytes->begin(), bytes->end()) : "",
-               wire::artifact_ids(output->artifacts())});
+               bytes ? std::string(bytes->begin(), bytes->end()) : ""});
         }
       } else if (const auto* failure = message->value_as_WorkerFailure()) {
         outcome.failure = wire::failure(failure->failure());
-        outcome.created = wire::artifact_ids(failure->created());
       } else {
         diagnostic = "unexpected message from worker";
         break;
       }
+      outcome.created = std::move(created_artifacts_);
       pending_ = std::move(outcome);
       data_ready_.notify_one();
     }
@@ -1277,7 +1303,7 @@ auto WorkerProc::read_data() -> void {
 WorkerOutcome WorkerProc::call(
     std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
     std::optional<std::chrono::steady_clock::time_point> deadline,
-    ArtifactOpen open_artifact) {
+    ArtifactOpen open_artifact, bool create_artifacts) {
   {
     std::lock_guard lock(data_mutex_);
     if (data_closed_)
@@ -1286,6 +1312,8 @@ WorkerOutcome WorkerProc::call(
                                 "worker data channel closed")};
     awaiting_ = call_id;
     open_artifact_ = std::move(open_artifact);
+    create_artifacts_ = create_artifacts;
+    created_artifacts_.clear();
   }
   try {
     send_frame(trace_link_, data_fd_, frame, cancel, deadline);
@@ -1362,9 +1390,7 @@ std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
                               const std::vector<types::PortType>& outputs,
                               std::optional<uint64_t> deadline_ms,
                               const std::filesystem::path& artifact_directory,
-                              std::span<const ArtifactGrant> grants,
-                              bool drain_display,
-                              uint64_t invocation_sequence) {
+                              bool drain_display) {
   flatbuffers::FlatBufferBuilder b(64 * 1024);
   // The Card reads each nested message in place.
   auto message = [&](const std::string& s) {
@@ -1375,30 +1401,20 @@ std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
   };
   std::vector<flatbuffers::Offset<C::CardPort>> ins;
   for (const auto& v : inputs)
-    ins.push_back(C::CreateCardPort(b, b.CreateString(v.name),
-                                    b.CreateString(v.schema), message(v.bytes),
-                                    wire::artifact_ids(b, v.artifacts)));
+    ins.push_back(C::CreateCardPort(
+        b, b.CreateString(v.name), b.CreateString(v.schema), message(v.bytes)));
   auto insv = b.CreateVector(ins);
   std::vector<flatbuffers::Offset<W::WorkerPort>> outs;
   for (const auto& p : outputs)
     outs.push_back(W::CreateWorkerPort(b, b.CreateString(p.name), p.required));
-  std::vector<flatbuffers::Offset<W::ArtifactGrant>> grant_offsets;
-  for (const auto& grant : grants) {
-    const auto id = wire::artifact_struct(grant.id);
-    grant_offsets.push_back(
-        W::CreateArtifactGrant(b, &id, b.CreateString(grant.path)));
-  }
-  const auto grant_vector = b.CreateVector(grant_offsets);
   const auto artifact_root = artifact_directory.empty()
                                  ? flatbuffers::Offset<flatbuffers::String>{}
                                  : b.CreateString(artifact_directory.string());
   auto outsv = b.CreateVector(outs);
   W::WorkerCallBuilder cb(b);
   cb.add_inputs(insv);
-  cb.add_grants(grant_vector);
   cb.add_artifact_directory(artifact_root);
   cb.add_drain_display(drain_display);
-  cb.add_invocation_sequence(invocation_sequence);
   cb.add_outputs(outsv);
   if (deadline_ms) cb.add_deadline_ms(*deadline_ms);
   auto call = cb.Finish();

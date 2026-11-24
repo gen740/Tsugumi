@@ -394,6 +394,7 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
               help={key === 'logLimitBytes' ? L('0〜1073741824。0 の場合もログは実行中に表示されます。') : undefined}>
               <TextField value={limits[key]} onChange={value => setLimits(current => ({ ...current, [key]: value }))} mono />
             </Row>)}
+            <Row><span className="secondary caption">{L('実行の要約は常に記録します。成果物は常に保存され、残すかどうかは Card が成果物を作るときに選びます。残さない成果物は実行の終了時に削除されます。')}</span></Row>
           </Section>
           <TrustedFoldersSettings />
           <NixPathSettings session={session} />

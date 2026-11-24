@@ -13,6 +13,7 @@ extern "C" {
 #define TSUGUMI_MESSAGE_MAX (1u << 24)
 typedef struct tsugumi_bytes { const uint8_t* data; size_t size; } tsugumi_bytes;
 typedef struct { uint8_t bytes[16]; } tsugumi_artifact_id;
+#define TSUGUMI_ARTIFACT_KEEP 1u
 typedef struct { uint8_t bytes[16]; } tsugumi_view_session;
 typedef struct { uint8_t bytes[16]; } tsugumi_route;
 typedef struct {
@@ -49,10 +50,10 @@ typedef struct tsugumi_effects {
   /* The rest are valid only during the call. */
   int (*cancelled)(void* host);
   int64_t (*remaining_ms)(void* host);            /* -1 = no deadline */
-  int (*artifact_create)(void* host, tsugumi_artifact_id* id, tsugumi_bytes* path);
-      /* new writable directory for this call, sealed read-only when the call returns; path is NUL-terminated, valid during the call. 0 ok, <0 error. */
+  int (*artifact_create)(void* host, uint32_t flags, tsugumi_artifact_id* id, tsugumi_bytes* path);
+      /* new writable directory for this call under a new random id, sealed read-only when the call returns; path is NUL-terminated, valid during the call. flags: TSUGUMI_ARTIFACT_KEEP keeps the artifact after its run; without it the artifact exists only while its run runs (later Cards of the same run can open it) and is removed, with its record, when the run ends. Unknown flag bits are an error. 0 ok, <0 error. */
   int (*artifact_open)(void* host, const tsugumi_artifact_id* id, tsugumi_bytes* path);
-      /* read-only directory path, only for ids granted to this call (in its input CardPorts). 0 ok, <0 error (not granted / missing). */
+      /* read-only directory of a sealed artifact of this project; knowing the id is enough. 0 ok, <0 error: unknown id, not sealed yet, not kept after its run, or deleted. */
 } tsugumi_effects;
 typedef struct tsugumi_call { uint32_t abi_version; tsugumi_bytes input; void* host; const tsugumi_effects* effects; } tsugumi_call;
 typedef int (*tsugumi_main_fn)(const tsugumi_call* call, tsugumi_bytes* result);

@@ -42,9 +42,9 @@
     "offset": "0"
   },
   {
-    "href": "artifact:12?id=opaque%3Aid&path=reports%2Fplot.png",
+    "href": "artifact:0f8c2a4e-5b1d-4c3e-9a7f-2d6b8e1c4f90?path=reports%2Fplot.png",
     "kind": "artifact",
-    "artifact": "opaque:id",
+    "artifact": "0f8c2a4e-5b1d-4c3e-9a7f-2d6b8e1c4f90",
     "member": "reports/plot.png"
   },
   {
@@ -84,10 +84,10 @@
     "href": "log:12?invocation=1"
   },
   {
-    "href": "artifact:12?id=x&path=..%2Fsecret"
+    "href": "artifact:0f8c2a4e-5b1d-4c3e-9a7f-2d6b8e1c4f90?path=..%2Fsecret"
   },
   {
-    "href": "artifact:12?id=x&project=other"
+    "href": "artifact:0f8c2a4e-5b1d-4c3e-9a7f-2d6b8e1c4f90?project=other"
   },
   {
     "href": "https://example.com"
@@ -96,31 +96,31 @@
     "href": "javascript:alert(1)"
   },
   {
-    "href": "artifact:12?id=x&path=a+b.txt",
+    "href": "artifact:0f8c2a4e-5b1d-4c3e-9a7f-2d6b8e1c4f90?path=a+b.txt",
     "kind": "artifact",
-    "artifact": "x",
+    "artifact": "0f8c2a4e-5b1d-4c3e-9a7f-2d6b8e1c4f90",
     "member": "a b.txt"
   },
   {
-    "href": "artifact:12?id=x&path=a%2Bb.txt",
+    "href": "artifact:0f8c2a4e-5b1d-4c3e-9a7f-2d6b8e1c4f90?path=a%2Bb.txt",
     "kind": "artifact",
-    "artifact": "x",
+    "artifact": "0f8c2a4e-5b1d-4c3e-9a7f-2d6b8e1c4f90",
     "member": "a+b.txt"
   },
   {
-    "href": "artifact:12?id=x&path=a%20b.txt",
+    "href": "artifact:0f8c2a4e-5b1d-4c3e-9a7f-2d6b8e1c4f90?path=a%20b.txt",
     "kind": "artifact",
-    "artifact": "x",
+    "artifact": "0f8c2a4e-5b1d-4c3e-9a7f-2d6b8e1c4f90",
     "member": "a b.txt"
   },
   {
-    "href": "artifact:12?id=x&path=bad%2"
+    "href": "artifact:0f8c2a4e-5b1d-4c3e-9a7f-2d6b8e1c4f90?path=bad%2"
   },
   {
-    "href": "artifact:12?id=x&path=bad%FF"
+    "href": "artifact:0f8c2a4e-5b1d-4c3e-9a7f-2d6b8e1c4f90?path=bad%FF"
   },
   {
-    "href": "artifact:12?id=x&path=bad%C0%AF"
+    "href": "artifact:0f8c2a4e-5b1d-4c3e-9a7f-2d6b8e1c4f90?path=bad%C0%AF"
   },
   {
     "href": "card:outer/inner?file=src%2Fmain.py&lines=12-18",
@@ -179,9 +179,9 @@
     "href": "run:12345678-1234-1234-1234-123456789abc"
   },
   {
-    "href": "artifact:12?id=12%2Florenz%2F1%2Fimage&path=plot.png",
+    "href": "artifact:0f8c2a4e-5b1d-4c3e-9a7f-2d6b8e1c4f90?path=plot.png",
     "kind": "artifact",
-    "artifact": "12/lorenz/1/image",
+    "artifact": "0f8c2a4e-5b1d-4c3e-9a7f-2d6b8e1c4f90",
     "member": "plot.png"
   }
 ]

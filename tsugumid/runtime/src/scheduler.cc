@@ -554,7 +554,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     group.partial_result = true;
     group.saved_input = true;
     group.saved_partial_result = saved.partial_result;
-    (void)svc_.artifact_grants(saved.values);
     for (const auto& value : saved.values)
       group.members.push_back(
           {std::make_shared<const Value>(value), saved.port, {}, activation});
@@ -1940,6 +1939,7 @@ void Scheduler::recover_interrupted() {
     svc_.history().write_sync([&](sql::Db& db) {
       auto r = History::run(db, run_id);
       if (!r) return;
+      svc_.expire_artifacts(db, run_id);
       r->status.state = RunState::failed;
       r->status.failure =
           FailureData::make(FailureKind::interrupted,
@@ -2323,6 +2323,7 @@ auto Scheduler::finished(RunSummaryData sum, std::string record) -> void {
   auto done = std::move(active_);
   try {
     svc_.history().write_sync([&](sql::Db& db) {
+      svc_.expire_artifacts(db, *sum.status.run_id);
       History::update_run(db, sum.status);
       History::interrupt_batches(db, *sum.status.run_id);
       // Detached external invocations are still pending after the local

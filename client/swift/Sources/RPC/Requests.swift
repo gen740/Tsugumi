@@ -157,6 +157,19 @@ public extension RPCClient {
     return out
   }
 
+  /// Looks artifacts up by uuid, whichever run made them; unknown ids are left out.
+  func artifacts(ids: [String]) async throws -> [Tsugumi_RPC_ArtifactInfoT] {
+    guard !ids.isEmpty else { return [] }
+    var out: [Tsugumi_RPC_ArtifactInfoT] = []
+    for start in stride(from: 0, to: ids.count, by: 500) {
+      let r = Tsugumi_RPC_ArtifactListRequestT()
+      r.artifactIds = Array(ids[start..<min(start + 500, ids.count)])
+      let page: Tsugumi_RPC_ArtifactPageT = try await call(.artifactlistrequest, r)
+      out += page.artifacts.compactMap { $0 }
+    }
+    return out
+  }
+
   func readArtifact(id: String, member: String?) async throws -> Data {
     var out = Data()
     var offset: UInt64 = 0

@@ -170,8 +170,8 @@ struct ComparedRunField: Identifiable {
       let x = a[name], y = b[name]
       // A value absent from a side whose values are unknown is not a removed value.
       let difference: ComparedDifference = (x == nil && ma != nil) || (y == nil && mb != nil) ? .unknown : valueDifference(x, y)
-      return ComparedRunField(name: name, left: x.map { describeValue($0, includeArtifact: false) } ?? ma,
-                              right: y.map { describeValue($0, includeArtifact: false) } ?? mb, difference: difference)
+      return ComparedRunField(name: name, left: x.map { describeValue($0) } ?? ma,
+                              right: y.map { describeValue($0) } ?? mb, difference: difference)
     }
   }
 
