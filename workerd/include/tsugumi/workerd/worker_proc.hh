@@ -100,12 +100,15 @@ class WorkerProc {
       std::function<void(LogStream stream, const std::string& text)>;
   using DisplayCredit = std::function<void()>;
   using DisplaySink = std::function<void(WorkerDisplayData, DisplayCredit)>;
+  // What became of a view message offered to a Card process: `closed` means
+  // no live process takes view messages (the message is dropped).
+  enum class ViewDelivery { accepted, full, closed };
   struct ViewReceiver {
     std::mutex mutex;
     WorkerProc* worker = nullptr;
-    std::function<bool(const WorkerDisplayData&)> remote;
+    std::function<ViewDelivery(const WorkerDisplayData&)> remote;
     auto send(const WorkerDisplayData& display, DisplayCredit complete = {})
-        -> bool;
+        -> ViewDelivery;
   };
 
   // Throws Failed(permission_denied) when the sandbox cannot be applied.
@@ -146,7 +149,7 @@ class WorkerProc {
   auto set_display(DisplaySink display) -> void;
   // Admits one reverse message; returns its credit after forwarding.
   auto send_display(const WorkerDisplayData& display,
-                    DisplayCredit complete = {}) -> bool;
+                    DisplayCredit complete = {}) -> ViewDelivery;
   auto view_receiver() -> std::weak_ptr<ViewReceiver>;
   auto resume_logs() -> void;
   // Where the worker's output goes while it serves the current call.

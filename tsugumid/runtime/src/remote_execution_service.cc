@@ -103,11 +103,12 @@ class RemoteViewInput {
     for (auto& [name, view] : views_) view.writer.request_stop();
   }
 
-  auto push(const WorkerDisplayData& message) -> bool {
+  auto push(const WorkerDisplayData& message) -> WorkerProc::ViewDelivery {
     std::lock_guard lock(mutex_);
-    if (!listening_) return false;
+    if (!listening_) return WorkerProc::ViewDelivery::closed;
     auto& view = views_[message.view];
-    if (view.queued > workerd::kViewBudget - TSUGUMI_MESSAGE_MAX) return false;
+    if (view.queued > workerd::kViewBudget - TSUGUMI_MESSAGE_MAX)
+      return WorkerProc::ViewDelivery::full;
     if (!view.writer.joinable())
       view.writer =
           std::jthread([this, &view, name = message.view](
@@ -115,7 +116,7 @@ class RemoteViewInput {
     view.pending.push_back(message.bytes);
     view.queued += workerd::message_cost(message.bytes.size());
     changed_.notify_all();
-    return true;
+    return WorkerProc::ViewDelivery::accepted;
   }
 
   auto update(const RemoteJobState& status) -> void {

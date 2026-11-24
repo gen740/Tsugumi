@@ -208,6 +208,35 @@ def test_data_is_fifo_and_post_return_bytes_are_live(project, tmp_path, core_fac
     assert not any(n.valueType == NotificationPayload.DisplayUpdated for n in restarted.notifications.copy())
 
 
+def test_view_messages_without_a_card_process_are_dropped(project, tmp_path, core_factory):
+    from Tsugumi.Trace.Client import Client
+    from tsugumi_client import RpcFailure
+
+    source = r"""
+int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
+    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
+    return 0;
+}
+"""
+    package = native_card(tmp_path / "ended-card", source)
+    daemon = core_factory(mocked_builds=True)
+    ui = daemon.connect(client=Client.Web)
+    Project(project).card("work", {"type": "code", "reuseWorker": False, "sandbox": {
+        "filesystem": False, "pid": False, "ipc": False, "identity": False,
+    }}, outputs=OUTPUTS, plan=mock_plan([package], views=VIEWS)).save(ui)
+    subscription = text(ui.open().subscriptionId)
+    ui.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("work")])
+    assert view_fields(await_views(ui)) == VIEWS
+    # Before the first run and after the process ended there is no receiver:
+    # the message is dropped and the view gets an ordinary acknowledgement.
+    ui.call("ViewSendRequest", card=path("work"), view="plot", bytes=[1])
+    assert wait_run(ui, run(ui)).state == RunState.succeeded
+    ui.call("ViewSendRequest", card=path("work"), view="plot", bytes=[1])
+    with pytest.raises(RpcFailure) as failure:
+        ui.call("ViewSendRequest", card=path("work"), view="missing", bytes=[1])
+    assert failure.value.kind == "invalid_request"
+
+
 def test_view_messages_make_a_round_trip_through_project_rpc(project, tmp_path, core_factory):
     from Tsugumi.Trace.Client import Client
 
