@@ -12,7 +12,7 @@ from harness.proxy import ReplyProxy
 from harness.scenario import Project, STRING_OUTPUT, wait_run
 from projects import builtin_project, start_run, wait_for_log
 from tsugumi_client import Client, RpcFailure, change, make, new_id, path, text
-from harness.document import build_buffer, layout_bytes
+from harness.document import build_buffer, card_document, card_readme, layout_bytes
 from Tsugumi.Data.OperationState import OperationState
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
@@ -373,8 +373,8 @@ def test_ui_layout_fields_and_draft_outputs(client):
     doc["canvas"]["cards"].append({"id": "plan"})
     fbs = 'namespace d;\ntable SummaryValue { value:string; }\ntable Outputs { summary:SummaryValue; }\nroot_type Outputs;\n'
     res2 = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t", changes=[
-        change("PutDefinition", id="plan", cardJson=json.dumps({"type": "draft", "inputs": [{"name": "in"}]}),
-               readme="---\ndescription: d\n---\n\np"),
+        change("PutDefinition", id="plan", cardJson=json.dumps(card_document({"type": "draft"})),
+               readme=card_readme("Plan", "d", "p")),
         change("PutSource", path="definitions/plan/_outputs.fbs", bytes=list(fbs.encode())),
         change("SetProject", json=json.dumps(doc)),
     ])
@@ -382,7 +382,7 @@ def test_ui_layout_fields_and_draft_outputs(client):
     assert [text(p.name) for p in plan.outputs] == [], [(text(d.code), text(d.message)) for d in plan.diagnostics]
     assert [text(p.name) for p in plan.inputs] == []
     meta = next(d for d in res2.delta.definitionsUpsert if text(d.id) == "plan")
-    assert text(meta.readme) == "---\ndescription: d\n---\n\np"
+    assert text(meta.readme) == card_readme("Plan", "d", "p")
     v = client.call("ProjectValidateRequest", atRev=res2.rev, targets=[path("plan")])
     assert "draft" in [text(d.code) for d in v.diagnostics]
 
@@ -396,7 +396,7 @@ def test_int64_values_preserve_precision_and_report_overflow(builtin_client):
     source = "definitions/b/params.nix"
     res = c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
                  changes=[change("SetProject", json=json.dumps(doc)),
-                          change("PutDefinition", id="b", cardJson='{"type":"input"}'),
+                          change("PutDefinition", id="b", cardJson=json.dumps(card_document({"type": "input"})), readme=card_readme("B")),
                           change("PutSource", path=source, bytes=raw)])
     node = next(r for r in res.delta.resolution if text(r.card.segments[0]) == "b")
     assert "invalid_param" not in [text(x.code) for x in node.diagnostics]
@@ -536,12 +536,12 @@ def test_recording_switch_and_zero_limit_leave_live_output(project, tmp_path, co
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     from harness.scenario import Gate
     gate = Gate(tmp_path, "live")
-    settings = {"recordLogs": card_logs} if card_logs is not None else {}
+    settings = {"recordLogs": "project" if card_logs is None else "on" if card_logs else "off"}
     worker_project(client, project, tmp_path / "case", [
         {"op": "log", "stream": "stdout", "text": "output"},
         gate.action(),
         {"op": "failure", "message": "record the failure summary"},
-    ], recordIO=False, **settings)
+    ], recordIO="off", **settings)
     snap = client.call("ProjectInspectRequest")
     config = project_json(snap)
     for invalid in (-1, (1 << 30) + 1):
@@ -660,7 +660,7 @@ def test_run_logs_and_history(project, tmp_path, core_factory):
     c = core_factory(mocked_builds=True, mocked_worker=True).connect()
     worker_project(c, project, tmp_path, [
         {"op": "log", "stream": "stdout", "text": message},
-    ], recordIO=False)
+    ], recordIO="off")
     shown = path("work")
     opened = c.open()
     acc = c.call("RunRequest", baseRev=opened.snapshot.rev, opId=new_id(), origin="t", card=shown)
@@ -705,26 +705,25 @@ def test_empty_readme_keeps_the_file(client):
     snap = client.call("ProjectInspectRequest")
     doc = project_json(snap)
     doc["canvas"]["cards"].append({"id": "plan"})
-    readme = "---\ndescription: d\n---\n\nthe user's intent"
-    card = {"type": "draft", "inputs": [{"name": "in"}]}
+    readme = card_readme("Plan", "d", "the user's intent")
+    card = card_document({"type": "draft"})
     res = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t", changes=[
         change("PutDefinition", id="plan", cardJson=json.dumps(card), readme=readme),
         change("SetProject", json=json.dumps(doc)),
     ])
-    card["inputs"].append({"name": "more"})
+    card["symbol"] = "more"
     blank = change("PutDefinition", id="plan", cardJson=json.dumps(card), readme="")
     # The same in a check and in a save.
     v = client.call("ProjectValidateRequest", changes=[blank])
     assert "invalid_document" not in [text(d.code) for d in v.diagnostics]
     res = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t", changes=[blank])
     saved = next(d for d in res.delta.definitionsUpsert if text(d.id) == "plan")
-    assert json.loads(text(saved.cardJson))["inputs"][1]["name"] == "more"
+    assert json.loads(text(saved.cardJson))["symbol"] == "more"
     assert text(saved.readme) == readme
-    # Leaving it out still removes it, as the contract says.
-    res = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t", changes=[
-        change("PutDefinition", id="plan", cardJson=json.dumps(card))])
-    assert next(d for d in res.delta.definitionsUpsert if text(d.id) == "plan").readme is None
-
+    with pytest.raises(RpcFailure) as rejected:
+        client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t", changes=[
+            change("PutDefinition", id="plan", cardJson=json.dumps(card))])
+    assert rejected.value.kind == "invalid_document"
 
 
 
@@ -736,16 +735,16 @@ def test_draft_resolution_ignores_meta_schema_and_layout(client):
     snap = client.call("ProjectInspectRequest")
     doc = project_json(snap)
     doc["canvas"]["cards"].append({"id": "plan"})
-    draft = json.dumps({"type": "draft", "inputs": [{"name": "in"}]})
+    draft = json.dumps(card_document({"type": "draft"}))
     res = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t", changes=[
-        change("PutDefinition", id="plan", cardJson=draft, readme="A planned port called first."),
+        change("PutDefinition", id="plan", cardJson=draft, readme=card_readme("Plan", body="A planned port called first.")),
         change("SetProject", json=json.dumps(doc))])
     assert ports(res, "plan") == []
     res = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t",
                       changes=[change("SetLayout", layout=layout_bytes({"cards": {"plan": {"x": 5, "y": 5}}}))])
     assert ports(res, "plan") == []
     res = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t", changes=[
-        change("PutDefinition", id="plan", cardJson=draft, readme="A planned port called second.")])
+        change("PutDefinition", id="plan", cardJson=draft, readme=card_readme("Plan", body="A planned port called second."))])
     assert ports(res, "plan") == []
     fbs = "namespace d;\ntable {t} {{ value:string; }}\ntable Outputs {{ summary:{t}; }}\nroot_type Outputs;\n"
     prev = None

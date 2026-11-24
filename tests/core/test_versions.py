@@ -197,7 +197,7 @@ def test_runs_version_definitions_and_explicit_paths_only(tmp_path, core_factory
     assert not graph(c).dirty
     snap = c.call("ProjectInspectRequest")
     document = json.loads(text(snap.projectJson))
-    document["versionPaths"] = ["reference.csv"]
+    document["trackedPaths"] = ["reference.csv"]
     c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test",
            changes=[change("SetProject", json=json.dumps(document))])
     set_text(c, "changed definition")

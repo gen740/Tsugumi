@@ -27,7 +27,7 @@ def test_library_initialization_observes_launch_environment_and_logs(core_factor
           puts("source started");
           fflush(stdout);
         }
-    ''', reuseWorker=True, recordIO=True)
+    ''', reuseWorker=True, recordIO="on")
     write(tmp_path / "p", {"show": definition}, [card("show", "show")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
     for reused in (False, True):
@@ -99,7 +99,7 @@ def test_successful_call_ignores_undeclared_special_entries(core_factory, tmp_pa
         const auto directory = fs::path(create_artifact(call, id));
         std::ofstream(directory / "result") << "safe";
         out.artifact(id);
-    ''', outputs=DIRECTORY, recordIO=True)
+    ''', outputs=DIRECTORY, recordIO="on")
     write(tmp_path / "p", {"copy": definition}, [card("copy", "copy")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
     run_id, state = run_and_wait(c, "copy")
@@ -180,7 +180,7 @@ def test_resident_work_is_persistent_and_temp_is_per_call(core_factory, tmp_path
         std::ofstream("count") << previous + 1;
         printf("paths=%s|%s\n", home, temporary);
         out.number(previous + 1);
-    ''', reuseWorker=True, recordIO=True)
+    ''', reuseWorker=True, recordIO="on")
     root = tmp_path / "p"
     write(root, {"work": definition}, [card("work", "work")], [])
     c = core_factory(project_root=root).connect()

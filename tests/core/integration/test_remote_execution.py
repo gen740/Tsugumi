@@ -36,7 +36,7 @@ from projects import (
     wait_for_display,
     wait_invocation,
     wait_run,
-    write_nix_project as write,
+    write_nix_project,
 )
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
@@ -52,9 +52,19 @@ RUN_LIST_OUTPUT = 'table Number { value:ulong; } table Outputs { out:Number (req
 # Each remote job realizes its dependencies in a private store, even during a batch.
 RUN_LIST_TIMEOUT_SECONDS = 1200
 RUN_LIST_REMOTE = {
-    "type": "code", "recordIO": True, "executionService": "remote-test",
+    "type": "code", "recordIO": "on", "workerCapabilities": [63],
     "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS, "_outputs": RUN_LIST_OUTPUT,
 }
+
+
+def write(project, definitions, cards, connections, **options):
+    remote_system = os.environ["TSUGUMI_TEST_REMOTE_SYSTEM"]
+    definitions = {
+        key: {"system": remote_system, **body} if body.get("workerCapabilities") else body
+        for key, body in definitions.items()
+    }
+    write_nix_project(project, definitions, cards, connections, **options)
+
 
 @pytest.fixture(scope="session")
 def remote_store_seed(tmp_path_factory):
@@ -158,7 +168,11 @@ def remote_broker(project, tmp_path, monkeypatch, remote_daemon):
             added_key = public
             external_authorized.write_text(previous.rstrip("\n") + "\n" + public + "\n")
         host.call("ExecutionServicePutRequest", id="remote-test", name="Remote test",
-                  endpoint=endpoint, workerPublicKey=Path(key_file).read_text().strip(), verify=True)
+                  endpoint=endpoint, workerPublicKey=Path(key_file).read_text().strip(), verify=True,
+                  workerCapabilities=[63])
+        service = next(value for value in host.call("ExecutionServicesRequest").services
+                       if text(value.id) == "remote-test")
+        monkeypatch.setenv("TSUGUMI_TEST_REMOTE_SYSTEM", text(service.capabilities.nativeSystem))
 
         def authorize(folder, name):
             control = tmp_path / name
@@ -315,7 +329,7 @@ in {
 """}
     settings = {
         "type": "code", "inputs": [{"name": "in"}], "_outputs": schema,
-        "executionService": "remote-test", "recordIO": True, "timeoutSeconds": 600,
+        "workerCapabilities": [63], "recordIO": "on", "timeoutSeconds": 600,
     }
     definitions = {
         "input": source,
@@ -379,7 +393,7 @@ def run(input):
     return Output()
 """
     views = 'views = [{ name = "notes"; type = "html"; blob = ./notes.html; }];'
-    definition = {"type": "code", "executionService": "remote-test",
+    definition = {"type": "code", "workerCapabilities": [63],
                   "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS,
                   "_outputs": "table Outputs {} root_type Outputs;",
                   "_nix": entry(python_run(source), views)}
@@ -440,7 +454,7 @@ def run(input):
         "source": {"type": "code", "_outputs": RUN_LIST_OUTPUT, "_nix": numbers([10, 20])},
         "work": {**RUN_LIST_REMOTE, "inputs": [{"name": "in"}],
                  "_nix": numbers([100, 200], 'input.require("in").value + ')},
-        "collect": {"type": "collect", "recordIO": True},
+        "collect": {"type": "collect", "recordIO": "on"},
     }
     write(project, definitions, [card(name, name) for name in definitions],
           [conn("source", "out", "work", "in"), conn("work", "out", "collect", "in")])
@@ -473,7 +487,7 @@ def run(input):
         variants.append(f'{{ label = "{message}"; run = {program}; }}')
     definitions = {
         "fails": {**RUN_LIST_REMOTE, "_nix": entry("[ " + " ".join(variants) + " ]")},
-        "collect": {"type": "collect", "recordIO": True},
+        "collect": {"type": "collect", "recordIO": "on"},
     }
     write(project, definitions, [card(name, name) for name in definitions],
           [conn("fails", "out", "collect", "in")])
@@ -501,7 +515,7 @@ def run(input):
 
 
 def test_call_timeout_is_separate_from_build_and_transfers(project, core_factory, remote_broker):
-    definition = {"type": "code", "executionService": "remote-test", "timeoutSeconds": 1,
+    definition = {"type": "code", "workerCapabilities": [63], "timeoutSeconds": 1,
                   "buildTimeoutSeconds": 600, "_outputs": "table Outputs {} root_type Outputs;",
                   "_nix": entry(python_run(GATE_HELPER + "\ndef run(input): wait_for_release()\n"))}
     write(project, {"deadline": definition}, [card("deadline", "deadline")], [])
@@ -530,7 +544,7 @@ def run(input):
 
 
 @pytest.fixture
-def secret_project(project):
+def secret_project(project, remote_broker):
     """The hostd project id the broker binds this project's Card secrets to."""
     (project / ".tsugumi").mkdir(exist_ok=True)
     (project / ".tsugumi/project-id").write_text(SECRET_PROJECT)

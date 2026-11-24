@@ -23,10 +23,6 @@ std::vector<std::string> widenings(const Resolution* before,
     auto key = path_key(n.path);
     const Node* b = before ? before->find(n.path) : nullptr;
     const auto& s = n.settings;
-    if (s.execution_service != kLocalExecutionService &&
-        s.execution_service != "auto" &&
-        (!b || b->settings.execution_service != s.execution_service))
-      out.push_back("execution_service " + key + " " + s.execution_service);
     if (s.grants.network && !(b && b->settings.grants.network))
       out.push_back("network " + key);
     if (s.grants.gui && !(b && b->settings.grants.gui))

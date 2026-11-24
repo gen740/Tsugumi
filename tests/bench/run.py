@@ -119,39 +119,39 @@ def workspace(out):
     return Path(tempfile.mkdtemp(prefix="tsg-bench-", dir=out.parent)).resolve()
 
 
-def python_card(*, service=None, resident=False, run_list=False):
+def python_card(*, remote_system=None, resident=False, run_list=False):
     expression = f"builtins.genList (_: {PYTHON_RUN}) 100" if run_list else PYTHON_RUN
     # recordIO keeps the small metrics value for RunValueRead.
     result = {"type": "code", "sandbox": {},
-              "reuseWorker": resident, "recordIO": True,
+              "reuseWorker": resident, "recordIO": "on",
               "_outputs": VALUE,
               "_nix": "{ params, inputs }: let " + PYTHON_BINDINGS + " in { run = " + expression + "; }\n"}
-    if service:
-        result["executionService"] = service
+    if remote_system:
+        result.update(system=remote_system, workerCapabilities=[63])
     return result
 
 
-def artifact_card(operation, service=None):
+def artifact_card(operation, remote_system=None):
     reads_input = operation == "file-input-1gib"
-    settings = {"recordIO": True}
-    if service:
-        settings["executionService"] = service
+    settings = {"recordIO": "on"}
+    if remote_system:
+        settings.update(system=remote_system, workerCapabilities=[63])
     return native_card(ARTIFACT_BODY.replace("__OP__", json.dumps(operation)),
                        inputs=["doc"] if reads_input else [],
                        outputs=VALUE if reads_input else ARTIFACT, **settings)
 
 
-def make_project(root, scenario, service=None):
+def make_project(root, scenario, remote_system=None):
     cards, connections = [card("work", "work")], []
     files = {}
     if scenario in ARTIFACT_OPERATIONS:
-        definitions = {"work": artifact_card(scenario, service)}
+        definitions = {"work": artifact_card(scenario, remote_system)}
     else:
-        definitions = {"work": python_card(service=service, resident=scenario == "value-resident-50",
+        definitions = {"work": python_card(remote_system=remote_system, resident=scenario == "value-resident-50",
                                             run_list=scenario == "run-list-100")}
         files["definitions/work/src/main.py"] = BODY
     if scenario == "file-input-1gib":
-        definitions["source"] = artifact_card("source", service)
+        definitions["source"] = artifact_card("source", remote_system)
         cards.insert(0, card("source", "source"))
         connections.append(conn("source", "out", "work", "doc"))
     write(root, definitions, cards, connections, files, name="Execution baseline")
@@ -205,7 +205,7 @@ class Remote:
             self.stream = self.socket.makefile("rwb", buffering=0)
             self.call("HelloRequest", token=ready["user_token"])
             self.call("ExecutionServicePutRequest", id=self.service, name="Execution baseline",
-                      endpoint=endpoint, workerPublicKey=public_key, verify=True)
+                      endpoint=endpoint, workerPublicKey=public_key, verify=True, workerCapabilities=[63])
             self.registered = True
             services = self.call("ExecutionServicesRequest").services
             self.capabilities = next(s.capabilities for s in services if text(s.id) == self.service)
@@ -253,7 +253,7 @@ def fixture_metrics(client, run):
 
 def execute_bundle(root, scenario, timeout, remote, runs, metadata):
     """A fresh daemon per repetition; residents live for 50 serial requests."""
-    project = make_project(root / "project", scenario, remote.service if remote else None)
+    project = make_project(root / "project", scenario, text(remote.capabilities.nativeSystem) if remote else None)
     daemon = Daemon(project)
     metadata.update(project=str(project), daemon_directory=str(daemon.directory), setup=[],
                     daemon_processes_started=0, run_ids=[])

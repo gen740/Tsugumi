@@ -46,7 +46,6 @@ std::vector<Change> changes(const std::vector<Comment>& before,
 using Files = std::map<std::string, std::string>;
 // Definition paths use ids, including nested external project directories.
 auto is_comments(const std::string& path) -> bool;
-auto card_of(const std::string& path, const Files& files = {})
-    -> std::optional<std::string>;
+auto card_of(const std::string& path) -> std::optional<std::string>;
 auto of(const Files& files) -> std::vector<Comment>;
 }  // namespace tsugumi::comments

@@ -73,11 +73,13 @@ class Rpc:
 
 
 def record_all(project):
-    """recordIO on for every Code Card of the copy."""
+    """Set recordIO on for every Code Card of the copy."""
     for path in (project / "definitions").glob("*/_card.json"):
         definition = json.loads(path.read_text())
-        if definition.get("type") == "code" and not definition.get("recordIO"):
-            definition["recordIO"] = True
+        if definition["type"] == "subgraph":
+            record_all(project / "externals" / path.parent.name)
+        elif definition["type"] == "code" and definition["recordIO"] != "on":
+            definition["recordIO"] = "on"
             path.write_text(json.dumps(definition, indent=2, ensure_ascii=False) + "\n")
 
 

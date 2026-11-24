@@ -2,8 +2,7 @@
 
 namespace tsugumi {
 
-// The Nix system of this machine: what a Card is built for unless its
-// settings name another.
+// The native Nix system of this machine.
 constexpr const char* native_system() {
 #if defined(__aarch64__) && defined(__APPLE__)
   return "aarch64-darwin";

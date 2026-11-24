@@ -11,7 +11,7 @@ from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
-from harness.document import params_nix
+from harness.document import card_document, card_readme, params_nix, project_document
 from harness.nix_path import declarations, test_lock_entries, write_lock
 
 MSG_FBS = """
@@ -81,15 +81,18 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
     for c in cards:
         cid = c["id"]
         folder = root / "definitions" / cid
+        put(folder / "README.md", card_readme(cid))
         if "_inner" in c:
             inner = c["_inner"]
             write(root / "externals" / cid, defs, inner["cards"], inner["connections"],
                   {k: v for k, v in files.items() if k.startswith("definitions/")}, name=cid, locked=locked)
             doc = json.loads((root / "externals" / cid / "tsugumi.json").read_text())
-            doc["boundary"] = {side: [dict(name=name, **ep) for name, ep in ports.items()]
-                               for side, ports in inner["boundary"].items()}
+            doc["boundary"] = {
+                side: [dict(name=name, **end) for name, end in inner["boundary"].get(side, {}).items()]
+                for side in ("inputs", "outputs")
+            }
             put(root / "externals" / cid / "tsugumi.json", json.dumps(doc))
-            put(folder / "_card.json", json.dumps({"type": "subgraph", "external": cid}))
+            put(folder / "_card.json", json.dumps(card_document({"type": "subgraph"})))
             continue
         d = c.get("definition")
         body = copy.deepcopy(defs[d]) if d else {"type": "draft"}
@@ -103,7 +106,7 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
             params = params_nix(values)
         # Card-local file parameters need no rewriting when a definition is reused.
         mine, theirs = f"definitions/{cid}/", f"definitions/{d}/"
-        put(folder / "_card.json", json.dumps(body))
+        put(folder / "_card.json", json.dumps(card_document(body)))
         if outputs:
             put(folder / "_outputs.fbs", outputs)
         if nix:
@@ -117,9 +120,9 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
     for rel, data in files.items():
         if not any(rel.startswith(p) for p in defs_names):
             put(root / rel, data)
-    put(root / "tsugumi.json", json.dumps({
-        "name": name, "nixPath": declarations(locked),
-        "canvas": {"cards": [{"id": c["id"]} for c in cards], "connections": conns}}))
+    put(root / "tsugumi.json", json.dumps(project_document(
+        name=name, nixPath=declarations(locked),
+        canvas={"cards": [{"id": c["id"]} for c in cards], "connections": conns})))
     if locked:
         write_lock(root, locked)
 

@@ -76,9 +76,7 @@ auto LocalExecutionService::prepare(const Node& node,
                  "grants.gui requires a native Linux worker with an available "
                  "GUI socket");
   static const SharedStoreDerivationTransport transport;
-  build.target = {WorkerKind::native, node.settings.system.empty()
-                                          ? native_system()
-                                          : node.settings.system};
+  build.target = {WorkerKind::native, node.settings.system};
   build.transport = &transport;
   return std::make_unique<PreparedLocalExecution>(*this);
 }

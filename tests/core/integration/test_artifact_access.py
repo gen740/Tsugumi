@@ -71,7 +71,7 @@ def test_artifact_holders_are_searchable_but_not_listable(core_factory, project)
         const auto alias = fs::path(granted_project) / ".tsugumi/artifacts" / relative;
         if (!fs::is_directory(alias) || chmod(alias.c_str(), 0700) == 0) return 8;
         out.number(contents.size());
-    """, declarations=declarations, inputs=["doc"], recordIO=True, reuseWorker=True,
+    """, declarations=declarations, inputs=["doc"], recordIO="on", reuseWorker=True,
         grants={"hostPaths": [{"name": "project", "path": str(project), "write": True}]})
     write_nix_project(project, {"source": source, "sink": sink},
                       [card("source", "source"), card("sink", "sink")],
@@ -126,7 +126,7 @@ def test_input_card_artifact_opens_at_its_store_path(core_factory, project):
         std::ifstream(directory / "report.txt") >> contents;
         if (contents != "store") return 2;
         out.number(contents.size());
-    """.replace("ARTIFACT_ID", json.dumps(artifact_id)), inputs=["doc"], recordIO=True)
+    """.replace("ARTIFACT_ID", json.dumps(artifact_id)), inputs=["doc"], recordIO="on")
     write_nix_project(project, {"source": source, "sink": sink},
                       [card("source", "source"), card("sink", "sink")],
                       [conn("source", "doc", "sink", "doc")])

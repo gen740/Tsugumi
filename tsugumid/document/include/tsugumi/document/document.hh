@@ -57,7 +57,7 @@ inline constexpr uint64_t kMaxLogLimitBytes = uint64_t{1} << 30;
 inline constexpr uint64_t kDefaultOutputLimitBytes = uint64_t{64} << 30;
 inline constexpr uint64_t kDefaultOutputLimitEntries = 1000;
 
-// definitions/<id>/: _card.json, and the optional README.md and
+// definitions/<id>/: required _card.json and README.md, and optional
 // _comments.json.
 struct DefinitionDoc {
   std::string card_buffer;  // _card.json as a FlatBuffer
@@ -150,8 +150,8 @@ auto parse_project_json(const std::string& text) -> ParsedDocument;
 auto parse_project_lock(const std::string& path, const std::string& text)
     -> ParsedDocument;
 auto valid_nix_path_name(std::string_view name) -> bool;
-auto parse_card_json(const std::string& id, const std::string& text)
-    -> ParsedDocument;
+auto parse_card_json(const std::string& id, const std::string& text,
+                     const std::string& path = {}) -> ParsedDocument;
 auto parse_comments_json(const std::string& rel, const std::string& text)
     -> ParsedDocument;
 // Checks a README.md (see readme.hh).

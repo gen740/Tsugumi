@@ -18,15 +18,15 @@
 
 namespace tsugumi {
 
-class RemoteExecutionService final : public ExecutionService {
+class RemoteExecutionService final {
  public:
   RemoteExecutionService(Service& service, RemoteJobClient& client);
 
   // Every activation transfers its derivation closure for the remote worker to
   // realise.
-  auto prepare(const Node& node, const std::filesystem::path& directory,
-               BuildRequest& build)
-      -> std::unique_ptr<PreparedExecution> override;
+  auto prepare(const RemoteTarget& target, const Node& node,
+               const std::filesystem::path& directory, BuildRequest& build)
+      -> std::unique_ptr<PreparedExecution>;
 
   // Retries cancellation/release acknowledgements, never result retrieval.
   auto release_completed() -> void;

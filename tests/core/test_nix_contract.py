@@ -21,34 +21,34 @@ def evaluated(client, card, expression, **options):
 @pytest.mark.environment
 def test_nix_inputs_are_transitive_exports_and_stop_at_merge(client, project):
     graph = Project(project)
-    graph.card("A", {"type": "code"}, outputs=OUTPUTS, sources={
+    graph.card("a", {"type": "code"}, outputs=OUTPUTS, sources={
         "default.nix": '{ params, inputs }: { exports.message = params.text; }',
         "params.nix": '{ text = "from A"; }',
     })
-    graph.card("B", {"type": "code", "inputs": [{"name": "in"}]}, outputs=OUTPUTS, sources={
-        "default.nix": '{ params, inputs }: { exports.message = inputs.A.message + " via B"; }',
+    graph.card("b", {"type": "code", "inputs": [{"name": "in"}]}, outputs=OUTPUTS, sources={
+        "default.nix": '{ params, inputs }: { exports.message = inputs.a.message + " via B"; }',
     })
-    for name in ("C", "D"):
+    for name in ("c", "d"):
         graph.card(name, {"type": "code", "inputs": [{"name": "in"}]}, outputs=EMPTY_OUTPUTS)
     graph.card("merge", {"type": "merge", "inputs": [{"name": "a"}]})
-    graph.connect("A", "out", "B", "in").connect("B", "out", "C", "in")
-    graph.connect("A", "out", "merge", "a").connect("merge", "out", "D", "in")
+    graph.connect("a", "out", "b", "in").connect("b", "out", "c", "in")
+    graph.connect("a", "out", "merge", "a").connect("merge", "out", "d", "in")
     graph.save(client)
-    assert evaluated(client, "C", "inputs") == {
-        "A": {"message": "from A"}, "B": {"message": "from A via B"},
+    assert evaluated(client, "c", "inputs") == {
+        "a": {"message": "from A"}, "b": {"message": "from A via B"},
     }
-    assert evaluated(client, "D", "inputs") == {}
-    assert evaluated(client, "C", "params") == {}
-    assert evaluated(client, "C", "null", build=True) is None
+    assert evaluated(client, "d", "inputs") == {}
+    assert evaluated(client, "c", "params") == {}
+    assert evaluated(client, "c", "null", build=True) is None
 
 
 def test_generated_inputs_refresh_on_change_and_keep_their_mtime_on_identical_types(client, project):
-    source = project / "definitions/A/_outputs.fbs"
-    target = project / "definitions/B/_inputs.fbs"
-    graph = Project(project).card("A", {"type": "code"}, outputs=OUTPUTS)
-    graph.card("B", {"type": "code", "inputs": [{"name": "wired"}, {"name": "unused"}]},
+    source = project / "definitions/a/_outputs.fbs"
+    target = project / "definitions/b/_inputs.fbs"
+    graph = Project(project).card("a", {"type": "code"}, outputs=OUTPUTS)
+    graph.card("b", {"type": "code", "inputs": [{"name": "wired"}, {"name": "unused"}]},
                outputs=EMPTY_OUTPUTS)
-    graph.connect("A", "out", "B", "wired").save(client)
+    graph.connect("a", "out", "b", "wired").save(client)
     original, mtime = target.read_text(), target.stat().st_mtime_ns
     assert "wired: inputs.wired.Value" in original
     assert "unused:" not in original
@@ -61,7 +61,7 @@ def test_generated_inputs_refresh_on_change_and_keep_their_mtime_on_identical_ty
     changed = target.read_text()
     assert changed != original and "count:int" in changed
 
-    graph.cards["A"][1]["_outputs.fbs"] = source.read_text()
+    graph.cards["a"][1]["_outputs.fbs"] = source.read_text()
     graph.connections.clear()
     graph.save(client)
     assert not target.exists()
@@ -70,7 +70,7 @@ def test_generated_inputs_refresh_on_change_and_keep_their_mtime_on_identical_ty
 @pytest.mark.environment
 def test_sdk_build_handles_missing_api_and_rejects_foreign_systems(client, project):
     graph = Project(project)
-    graph.card("no-api", {"type": "code"}, outputs=EMPTY_OUTPUTS, sources={
+    graph.card("no_api", {"type": "code"}, outputs=EMPTY_OUTPUTS, sources={
         "default.nix": "{ params, inputs }: { run = []; }",
     })
     graph.card("foreign", {"type": "code"}, outputs=EMPTY_OUTPUTS, sources={
@@ -84,7 +84,7 @@ def test_sdk_build_handles_missing_api_and_rejects_foreign_systems(client, proje
     })
     graph.save(client)
     expression = "(import ./. { inherit params inputs; }).api or null"
-    assert evaluated(client, "no-api", expression, build=True) is None
+    assert evaluated(client, "no_api", expression, build=True) is None
     result = client.call("EvaluateNixRequest", card=path("foreign"),
                          expression=expression, build=True)
     assert result.failure

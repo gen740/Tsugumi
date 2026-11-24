@@ -50,7 +50,7 @@ table Reading { rate:double; tiny:double; }
 table Outputs { reading:Reading (required); }
 root_type Outputs;
 """},
-                "sink": dict(SINK, recordIO=True)},
+                "sink": dict(SINK, recordIO="on")},
           cards=[card("src", "reading"), card("a", "sink"), card("b", "sink")],
           conns=[conn("src", "reading", "a", "in"), conn("src", "reading", "b", "in")])
     d = core_factory(project_root=root)

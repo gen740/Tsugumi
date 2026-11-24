@@ -934,7 +934,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     // Input Cards produce immutable store output; no worker starts for them.
     const SharedStoreDerivationTransport transport;
     if (node.kind == CardType::Input) {
-      request.target = {WorkerKind::native, native_system()};
+      request.target = {WorkerKind::native, node.settings.system};
       request.transport = &transport;
     } else {
       prepared = svc_.prepare_execution(
@@ -1617,7 +1617,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         std::min<uint64_t>(node.settings.output_limit_bytes, kMaxBatchBytes);
     try {
       for (const auto& port : node.outputs) {
-        if (!valid_id(port.name) || port.name.ends_with(".artifacts"))
+        if (!valid_name(port.name))
           throw invalid("invalid Input Card output port " + port.name);
         const auto file = stdfs::path("ports") / port.name;
         if (!exists(file)) {

@@ -2,66 +2,48 @@
 
 #include "scheduler.hh"
 #include "service.hh"
+#include "test_document.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 
 namespace tsugumi {
 namespace {
-TEST(RemoteExecutionCapabilities,
-     CachedLimitsAndSystemsCannotRefuseARunBeforeProbe) {
+TEST(RemoteExecutionCapabilities, FiltersLimitsAndCapabilitiesFromCatalog) {
   Node node;
   node.path = {"work"};
-  node.settings.execution_service = "worker";
-  node.settings.system = "aarch64-linux";
+  node.settings.worker_capabilities = 1;
   node.settings.sandbox.limits = ExecutionResources{500, 256u << 20};
-  RemoteTarget cached;
-  cached.id = "worker";
-  cached.available = true;
-  cached.native_system = "x86_64-linux";
-  cached.systems = {cached.native_system};
-  cached.resource_limits = false;
-  EXPECT_FALSE(Service::execution_diagnostic(node, {cached}));
+  RemoteTarget target;
+  target.id = "remote";
+  target.available = true;
+  EXPECT_TRUE(Service::execution_diagnostic(node, {target}));
+  target.worker_capabilities = 1;
+  EXPECT_TRUE(Service::execution_diagnostic(node, {target}));
+  target.resource_limits = true;
+  EXPECT_FALSE(Service::execution_diagnostic(node, {target}));
 }
 TEST(RemoteExecutionCapabilities,
-     MissingOrRevokedRegistrationStillRefusesARun) {
+     ReportsUnavailableMatchingWorkerWithHostReason) {
   Node node;
   node.path = {"work"};
-  node.settings.execution_service = "worker";
-  EXPECT_TRUE(Service::execution_diagnostic(node, {}));
-  RemoteTarget revoked;
-  revoked.id = "worker";
-  revoked.available = false;
-  EXPECT_TRUE(Service::execution_diagnostic(node, {revoked}));
-}
-TEST(RemoteExecutionCapabilities, AutoRefusesUnavailableMatchesWithHostReason) {
-  Node node;
-  node.path = {"work"};
-  node.kind = CardType::Code;
-  node.settings.execution_service = "auto";
-  auto compiled = worker_condition::compile({"simple", "x >= 10"});
-  node.settings.worker_condition = std::move(
-      std::get<std::unique_ptr<const worker_condition::Condition>>(compiled));
+  node.settings.worker_capabilities = 1;
   RemoteTarget local;
   local.id = "local";
   local.available = true;
   local.namespace_isolation = true;
   RemoteTarget remote;
   remote.id = "remote";
-  remote.grade = 10;
+  remote.worker_capabilities = 1;
   remote.unavailable_reason = "host refusal for remote";
   auto diagnostic = Service::execution_diagnostic(node, {local, remote});
   ASSERT_TRUE(diagnostic);
   EXPECT_TRUE(diagnostic->error);
   EXPECT_EQ(diagnostic->card, node.path);
   EXPECT_EQ(diagnostic->message, remote.unavailable_reason);
-  node.settings.execution_service = remote.id;
-  EXPECT_EQ(Service::execution_diagnostic(node, {local, remote})->message,
-            remote.unavailable_reason);
-  node.settings.execution_service = "auto";
   remote.available = true;
   EXPECT_FALSE(Service::execution_diagnostic(node, {local, remote}));
   remote.available = false;
-  local.grade = 10;
+  local.worker_capabilities = 1;
   const auto local_diagnostic =
       Service::execution_diagnostic(node, {local, remote});
   EXPECT_FALSE(local_diagnostic && local_diagnostic->error);
@@ -79,7 +61,8 @@ TEST(RemoteExecutionLifetime,
   fs::create_directories(root);
   tsugumi::fs::write_atomic(
       root / "tsugumi.json",
-      R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
+      test::project_json(
+          R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})"));
   ServiceOptions options;
   options.root = root;
   options.scratch_dir = root / "scratch";
