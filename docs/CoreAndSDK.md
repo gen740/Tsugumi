@@ -173,8 +173,6 @@ The kit's `sdk.dawnView { name; src; }` builds a view from C sources (freestandi
 no libc), and its `dawn-view` template is a minimal example. The `point-cloud` demo
 sends a point cloud to a dawn view.
 
-TODO(open): PNG snapshots of dawn views for the Agent.
-
 ## Value mapping in the default SDKs
 
 These points belong to the default SDKs, not to the ABI.
@@ -198,3 +196,7 @@ These hold through the whole change ([Philosophy](Philosophy.md#a-laboratory-not
 - Definitions (code and environment) may be shared by the machine.
 
 See [Remote execution](RemoteExecution.md#data-left-on-a-worker) and [Where data is kept](security.md#8-where-data-is-kept-and-how-to-delete-it).
+
+## Open
+
+TODO(open): PNG snapshots of Dawn views for the Agent.
