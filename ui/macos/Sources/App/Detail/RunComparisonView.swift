@@ -47,7 +47,7 @@ struct ComparedRunField: Identifiable {
   private static func names<V>(_ a: [String: V], _ b: [String: V]) -> [String] { Set(a.keys).union(b.keys).sorted() }
 
   /// What names a member of an execution list: its implementation label (a run
-  /// list entry's `label`, an Input sweep's `name=value`), else its number.
+  /// list entry's `label`), else its number.
   static func memberName(_ i: Tsugumi_RPC_InvocationSummaryT) -> String {
     if let label = i.implementationLabel, !label.isEmpty { return label }
     if let index = i.implementationIndex { return String(localized: "実装 \(index)") }

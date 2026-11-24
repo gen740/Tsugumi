@@ -173,7 +173,6 @@ struct StageProgress: Equatable {
 struct PortData: Hashable {
   var name: String
   var typeName: String?
-  var note: String?
 }
 
 struct ParamData: Hashable {
@@ -239,7 +238,6 @@ struct CardNodeData: Equatable {
   var outputs: [PortData]
   var params: [ParamData] = []
   var result: String?
-  var resultFailed = false
   var state: Tsugumi_Data_CardState?
   var executionList = false
   var stage: StageProgress?
@@ -1309,7 +1307,6 @@ struct CardNodeView: View {
   private func portHelp(_ p: PortData, output: Bool) -> String {
     var s = (output ? String(localized: "出力 ") : String(localized: "入力 ")) + p.name
     if let t = p.typeName { s += " : \(t)" }
-    if let n = p.note, !n.isEmpty { s += "\n" + n }
     return s
   }
 

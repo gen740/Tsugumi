@@ -347,7 +347,7 @@ std::vector<uint64_t> steps(uint64_t n, size_t limit = 1000) {
 }
 `,
   nix: `# A Nix definition with a helper export
-{ pkgs, params, inputs, schemas }:
+{ params, inputs }:
 {
   exports = { scale = x: x * 2; };
 }

@@ -82,7 +82,7 @@ struct CardDatabaseView: View {
           if unapplied { Label("未適用の変更", systemImage: "pencil.circle.fill").foregroundStyle(.orange) }
         }
         Text("Card「\(id)」の定義（definitions/\(id)/）です。").font(.callout).foregroundStyle(.secondary)
-        Text("_card.json（設定・params・入力）").font(.headline)
+        Text("_card.json（設定・入力）").font(.headline)
         CodeEditor(text: $cardText, language: "json").frame(minHeight: 180)
         Text("README.md（説明・計画、任意）").font(.headline)
         CodeEditor(text: $metaText, language: "md").frame(minHeight: 80, maxHeight: 140)

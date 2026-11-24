@@ -1211,15 +1211,6 @@ final class ProjectSession {
     cardStates[k] = nil
   }
 
-  /// Why a Card that ran has no result to show.
-  func noResultNote(_ k: CardKey) -> String? {
-    switch cardStates[k]?.state {
-    case .failed: return String(localized: "失敗したので結果はありません")
-    case .blocked: return String(localized: "上流の Card が失敗したので実行していません")
-    default: return nil
-    }
-  }
-
   func updateNixPathLock(prefix: String, name: String? = nil) async throws {
     let update = Tsugumi_Host_ProjectUpdateNixPathLockT()
     update.projectPath = prefix.isEmpty ? nil : String(prefix.dropLast())
@@ -1427,22 +1418,6 @@ final class ProjectSession {
     })
   }
 
-  /// Changes a Card's _card.json in the draft.
-  func updateCard(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
-    guard var d = cardDefinitionDraft(k), definitionKind(d.card) != .subgraph else { return }
-    fn(&d.card)
-    setCardDefinition(k, d)
-  }
-
-  /// Changes a Card's notes in the draft.
-  func updateMeta(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
-    guard var d = cardDefinitionDraft(k) else { return }
-    var meta = d.meta ?? .object([])
-    fn(&meta)
-    d.meta = meta
-    setCardDefinition(k, d)
-  }
-
   // MARK: - Comments on a Card (its _comments.json)
 
   /// What the user asks of this Card, in the order written.
@@ -1480,23 +1455,6 @@ final class ProjectSession {
     _ = try await applyMutation { s in s.changeComments(k) { $0 + [.object([("id", .string(id)), ("text", .string(t)), ("author", .string("user")), ("finding", .bool(finding))])] } }
   }
 
-  func setCommentText(_ k: CardKey, id: String, text: String) {
-    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !t.isEmpty else { return }
-    changeComments(k) { list in
-      if !list.contains(where: { $0["id"]?.string == id }) {
-        return list + [.object([("id", .string(id)), ("text", .string(t)), ("author", .string("user"))])]
-      }
-      return list.map { c in
-        guard c["id"]?.string == id else { return c }
-        var n = c
-        n["text"] = .string(t)
-        n["edited_by"] = .string("user")
-        return n
-      }
-    }
-  }
-
   /// Marks a comment by hand. Opening one again takes back what was said about it.
   func setCommentResolved(_ k: CardKey, id: String, _ resolved: Bool) {
     editComments(k) { list in
@@ -1517,9 +1475,6 @@ final class ProjectSession {
   func removeComment(_ k: CardKey, id: String) {
     editComments(k) { $0.filter { $0["id"]?.string != id } }
   }
-
-  /// A setting of the Card (its _card.json).
-  func cardSetting(_ k: CardKey, _ name: String) -> JSONValue? { cardDefinition(k)?[name] }
 
   private(set) var derivedLayouts: [String: JSONValue] = [:]
   @ObservationIgnored private var layoutTasks: [String: Task<Void, Never>] = [:]

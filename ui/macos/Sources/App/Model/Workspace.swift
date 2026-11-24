@@ -33,7 +33,7 @@ enum CardEditorCategory: String, Codable, CaseIterable, Identifiable {
     case .dependencies: return String(localized: "依存")
     case .executions: return String(localized: "実行履歴")
     case .artifacts: return String(localized: "成果物")
-    case .notes: return String(localized: "コメントと追加コンテキスト")
+    case .notes: return String(localized: "コメント")
     }
   }
 

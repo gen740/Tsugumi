@@ -55,9 +55,7 @@ enum OutputCatalog {
       let typeAndAttrs = parts[1]
       let type = typeAndAttrs.split(separator: "(").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? typeAndAttrs
       guard !type.isEmpty else { return .error(String(localized: "型がありません: \(parts[0])")) }
-      let attrs = typeAndAttrs.contains("(") ? String(typeAndAttrs.drop { $0 != "(" }) : ""
-      let path = type == "string" && attrs.range(of: #"\btsugumi\s*:\s*"path""#, options: .regularExpression) != nil
-      ports.append(PortData(name: parts[0], typeName: path ? "Path" : type))
+      ports.append(PortData(name: parts[0], typeName: type))
     }
     return .ports(ports)
   }

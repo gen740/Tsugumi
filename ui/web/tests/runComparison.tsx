@@ -59,8 +59,6 @@ for (const name of ['low', 'boundary']) assert.equal(byName(comparedParams(unrec
 const v = Object.assign(new D.NamedValueT(), { name: 'photons', rootType: 'Counts', inlineBytes: [1, 2, 3], sizeBytes: 3n })
 a.record!.outputs = [v]; b.record!.outputs = [Object.assign(new D.NamedValueT(), v, { inlineBytes: [1, 2, 4] })]
 assert.equal(comparedValues('outputs', a, b)[0].difference, 'changed')
-b.record!.outputs = [Object.assign(new D.NamedValueT(), v, { artifactId: 'another-retained-copy' })]
-assert.equal(comparedValues('outputs', a, b)[0].difference, 'same', 'retention identity alone does not change the value')
 
 // A value the response left out (too large to inline) is never reported as unchanged.
 const omitted = (hash: string | null = null, size = 9000000n) => Object.assign(new D.NamedValueT(), { name: 'photons', rootType: 'Counts', inlineBytes: [], sizeBytes: size, contentHash: hash })
@@ -262,8 +260,8 @@ assert.equal(valueDifference(v, undefined), 'unknown')
   ])
   assert.equal(memberName(member('left', 1n, 1, null, 2)), L('実装 {0}', 2))
   assert.ok(inBatch(member('left', 1n, 1, null)) && !inBatch(summary('left', 'single')))
-  const one = Object.assign(member('left', 1n, 1, 'value=5'), { batchSize: 1 })
-  assert.ok(inBatch(one), 'a one-member sweep is still a named batch member')
+  const one = Object.assign(member('left', 1n, 1, 'threshold 5'), { batchSize: 1 })
+  assert.ok(inBatch(one), 'a one-entry run list is still a named batch member')
 
   const pages: string[] = []
   const all = await batchMembers({

@@ -34,28 +34,25 @@ extension ProjectSession {
     return (d.inputs.map(\.name), d.outputs.map(\.name))
   }
 
-  func portData(_ k: CardKey, definition: JSONValue? = nil, meta: JSONValue? = nil) -> (inputs: [PortData], outputs: [PortData]) {
+  func portData(_ k: CardKey, definition: JSONValue? = nil) -> (inputs: [PortData], outputs: [PortData]) {
     let def = definition ?? cardDefinition(k)
-    // Ports have no notes of their own: a Card's README.md describes them.
-    func note(_ list: String, _ name: String) -> String? { nil }
     let draft = definitionKind(def) == .draft
     if draft || definitionKind(def) == .invalid { return ([], []) }
     if kind(k) == .collect {
       let r = resolution[k]
-      return ([PortData(name: "in", typeName: r?.inputs.first { $0.name == "in" }?.typeName, note: note("inputs", "in"))],
-              [PortData(name: "out", typeName: r?.outputs.first { $0.name == "out" }?.typeName, note: note("outputs", "out"))])
+      return ([PortData(name: "in", typeName: r?.inputs.first { $0.name == "in" }?.typeName)],
+              [PortData(name: "out", typeName: r?.outputs.first { $0.name == "out" }?.typeName)])
     }
     if definition == nil, !draft, let r = resolution[k] {
-      return (r.inputs.map { PortData(name: $0.name, typeName: $0.typeName, note: note("inputs", $0.name)) },
-              r.outputs.map { PortData(name: $0.name, typeName: $0.typeName, note: note("outputs", $0.name)) })
+      return (r.inputs.map { PortData(name: $0.name, typeName: $0.typeName) },
+              r.outputs.map { PortData(name: $0.name, typeName: $0.typeName) })
     }
     // Not resolved yet (unsaved) or a working copy: declared ports.
     let ins = (def?["inputs"]?.array ?? []).compactMap { i -> PortData? in
       guard let n = i["name"]?.string else { return nil }
-      return PortData(name: n, typeName: resolution[k]?.inputs.first { $0.name == n }?.typeName,
-                      note: note("inputs", n))
+      return PortData(name: n, typeName: resolution[k]?.inputs.first { $0.name == n }?.typeName)
     }
-    let outs = resolution[k]?.outputs.map { PortData(name: $0.name, typeName: $0.typeName, note: note("outputs", $0.name)) } ?? []
+    let outs = resolution[k]?.outputs.map { PortData(name: $0.name, typeName: $0.typeName) } ?? []
     return (ins, outs)
   }
 
@@ -181,7 +178,7 @@ extension ProjectSession {
     return (key(parent + [from]), output)
   }
 
-  func nodeData(_ k: CardKey, definition: JSONValue? = nil, meta: JSONValue? = nil,
+  func nodeData(_ k: CardKey, definition: JSONValue? = nil, notes: JSONValue? = nil,
                 collapsed: Bool? = nil, outputs: [PortData]? = nil) -> CardNodeData {
     let kind = definition.map(definitionKind) ?? self.kind(k)
     let state = cardStates[k]
@@ -189,10 +186,10 @@ extension ProjectSession {
     let executionList = batch?.executionList == true
     let empty = executionList && batch?.complete == true && batch?.failed == false && batch?.invocationCount == 0
     let diags = resolution[k]?.diagnostics ?? []
-    let ports = portData(k, definition: definition, meta: meta)
+    let ports = portData(k, definition: definition)
     let def = definition ?? cardDefinition(k)
-    let m = meta ?? cardMeta(k)
-    let title = m?["name"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? path(k).last ?? k
+    let m = notes ?? cardMeta(k)
+    let title = displayName(k)
     var summary = m?["description"]?.string
     // What a Draft shows on its Card is what it says it will do.
     if kind == .draft, let content = m?["content"]?.string, !content.isEmpty { summary = content }
@@ -206,7 +203,6 @@ extension ProjectSession {
       summary: summary, inputs: visualPorts(k, ports.inputs, output: false), outputs: visualPorts(k, outputs ?? ports.outputs, output: true),
       params: inlineParams(k),
       result: state?.transfer ?? state?.executionState?.pendingLabel ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
-      resultFailed: false,
       state: kind == .subgraph ? compositeState(k) : canvasCardState(k), executionList: executionList, stage: empty ? nil : stageProgress(k),
       invocation: empty ? 0 : state?.invocation ?? 0, runContinues: runActive, runMark: (state != nil || batch != nil ? runMark(runStatus) : nil),
       failure: state.flatMap { $0.state == .failed || $0.state == .blocked ? ($0.failure ?? $0.state.label) : nil },

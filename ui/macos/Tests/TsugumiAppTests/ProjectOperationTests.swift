@@ -743,11 +743,10 @@ extension ProjectOperationTests {
     resolved.definitionsUpsert = [definition]
     s.applyDelta(resolved)
     #expect(s.openComments("plan").isEmpty)
-    s.edit { $0.setCommentText("plan", id: comment.id, text: "Check the axes") }
     s.setCommentResolved("plan", id: comment.id, false)
     await s.save()
     let reopened = try #require(s.openComments("plan").first)
-    #expect(reopened.text == "Check the axes" && reopened.editedBy == "user" && reopened.stateBy == "user")
+    #expect(reopened.text == "Check units" && reopened.stateBy == "user")
     #expect(reopened.resolution == nil && reopened.cards.isEmpty)
     s.removeComment("plan", id: comment.id)
     await s.save()

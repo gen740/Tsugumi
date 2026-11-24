@@ -82,7 +82,6 @@ export function mergeStageStatus(parts: StageStatus[], ended: boolean): StageSta
 export interface PortData {
   name: string
   typeName?: string
-  note?: string
 }
 
 /** Ports in the order the layout saved for them (`inputOrder` / `outputOrder`):
