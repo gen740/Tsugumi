@@ -56,6 +56,9 @@ typedef struct tsugumi_effects {
       /* read-only directory of a sealed artifact of this project; knowing the id is enough. 0 ok, <0 error: unknown id, not sealed yet, not kept after its run, or deleted. */
 } tsugumi_effects;
 typedef struct tsugumi_call { uint32_t abi_version; tsugumi_bytes input; void* host; const tsugumi_effects* effects; } tsugumi_call;
+/* Input bytes are borrowed for the call. The host takes ownership of any
+ * non-null result.data on return, regardless of status. It must be the base
+ * pointer of a libc malloc allocation. The host frees it after its last read. */
 typedef int (*tsugumi_main_fn)(const tsugumi_call* call, tsugumi_bytes* result);
 int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 
