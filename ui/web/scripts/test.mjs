@@ -47,7 +47,7 @@ try {
     await checkLogInChromium(process.env.TSUGUMI_CHROMIUM, web, dir)
     await checkCardViewsInChromium(process.env.TSUGUMI_CHROMIUM, web, dir)
     if (process.env.TSUGUMI_CHROMIUM_WEBGPU === '1')
-      await checkChildWebGpuInChromium(process.env.TSUGUMI_CHROMIUM, dir)
+      await checkChildWebGpuInChromium(process.env.TSUGUMI_CHROMIUM, web, dir)
   }
 } finally {
   fs.rmSync(dir, { recursive: true, force: true })

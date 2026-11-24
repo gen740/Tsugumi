@@ -9,8 +9,7 @@ import { HtmlViewFrame, type ReadHtmlView, type SendHtmlView } from './htmlViewF
 
 const windowLabels = {
   blocked: 'ポップアップがブロックされました。',
-  open: '別ウィンドウで表示',
-  panel: 'パネルで表示',
+  open: 'ウィンドウで開く',
   fullscreen: 'フルスクリーンにする',
   unavailable: 'このブラウザーではフルスクリーンを利用できません。',
 }
@@ -25,7 +24,6 @@ export function ProjectCardViews({ session }: { session: ProjectSession }) {
 function CardViewWindow({ view, project, index }: { view: LiveView; project: ProjectSession; index: number }) {
   const [child, setChild] = useState<{ window: Window; document: Document }>()
   const [blocked, setBlocked] = useState(false)
-  const [panel, setPanel] = useState(view.mode === ViewMode.panel)
   const title = `${project.displayName(view.card)} · ${view.name}`
   const close = useCallback(() => project.closeLiveView(view.session), [project, view])
   const open = useCallback(() => {
@@ -80,15 +78,12 @@ function CardViewWindow({ view, project, index }: { view: LiveView; project: Pro
     <ChildView fullscreen={view.mode === ViewMode.fullscreen}>
       <CardViewContent view={view} project={project} child />
     </ChildView>, child.document.body)
-  if (!panel && !blocked) return null
+  if (view.mode !== ViewMode.panel && !blocked) return null
   return <ViewPanel title={title} close={close} index={index}>
-    {panel ? <CardViewContent view={view} project={project} /> :
+    {view.mode === ViewMode.panel ? <CardViewContent view={view} project={project} /> :
       <div className="col gap8 pad16">
         <p role="status">{label('blocked')}</p>
-        <div className="row gap8">
-          <button type="button" onClick={open}>{label('open')}</button>
-          <button type="button" onClick={() => setPanel(true)}>{label('panel')}</button>
-        </div>
+        <button type="button" onClick={open}>{label('open')}</button>
       </div>}
   </ViewPanel>
 }
