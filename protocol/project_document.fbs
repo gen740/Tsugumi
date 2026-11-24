@@ -3,6 +3,11 @@
 // Saved as FlatBuffers JSON text (two-space indent, fields in this order) and
 // read with the FlatBuffers parser, which is the document's schema check. The
 // core checks ids, references and search-path names.
+//
+// There are no built-in defaults: every field without "Optional" in its
+// comment must be written, and a missing one is a load error (scalars are
+// declared `= null` so that the core can tell a missing value from a written
+// one). Whoever creates a project writes every value.
 
 namespace Tsugumi.Document;
 
@@ -16,8 +21,9 @@ table Connection {
   to:Endpoint (required);
 }
 
-/// A Card on the canvas. Its id is its name and the folder of its own
-/// definition (definitions/<id>/), which holds every setting.
+/// A Card on the canvas. Its id ([a-z][a-z0-9_]{0,63}) is its name and the
+/// folder of its own definition (definitions/<id>/), which holds every
+/// setting; a subgraph Card's project is externals/<id>/.
 table CardInstance {
   id:string (required);
 }
@@ -36,8 +42,8 @@ table BoundaryPort {
 }
 
 table Boundary {
-  inputs:[BoundaryPort];
-  outputs:[BoundaryPort];
+  inputs:[BoundaryPort] (required);
+  outputs:[BoundaryPort] (required);
 }
 
 table NixPathEntry {
@@ -46,20 +52,24 @@ table NixPathEntry {
 }
 
 table Project {
-  name:string;
-  nixPath:[NixPathEntry];
-  /// Additional literal project-relative files or folders kept in versions.
-  versionPaths:[string];
+  /// The Tsugumi version that created or last saved the project. The core
+  /// refuses a project whose version differs from its own.
+  tsugumiVersion:string (required);
+  name:string (required);
+  nixPath:[NixPathEntry] (required);
+  /// Additional literal project-relative files or folders kept in Tsugumi's
+  /// own project versions (not git).
+  trackedPaths:[string] (required);
   /// Host policy, carried without affecting execution.
-  agentExclude:[string];
+  agentExclude:[string] (required);
   recordLogs:bool = null;
   recordIO:bool = null;
   logLimitBytes:ulong = null;
   outputLimitBytes:ulong = null;
   outputLimitEntries:ulong = null;
   canvas:Graph (required);
-  /// The ports this project has as a Card in Card (an external of another
-  /// project).
+  /// Optional: present only in a child project (externals/<id>/), the ports
+  /// it has as a Card in Card.
   boundary:Boundary;
 }
 

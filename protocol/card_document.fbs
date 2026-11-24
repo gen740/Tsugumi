@@ -2,6 +2,19 @@
 //
 // Saved as FlatBuffers JSON text and read with the FlatBuffers parser (see
 // project_document.fbs). Keys keep the document's camelCase spelling.
+//
+// There are no built-in defaults. Each Card type has its own set of fields
+// (docs/Reference.md, "_card.json"): every field of that set without
+// "Optional" in its comment must be written, and a field outside the set is a
+// load error. Scalars are declared `= null` so that the core can tell a
+// missing value from a written one. Whoever creates a Card writes every value.
+//
+//   code, input:  type symbol inputs maxRuns reuseWorker timeoutSeconds
+//                 buildTimeoutSeconds recordLogs recordIO sandbox grants
+//                 system workerCapabilities [secrets]
+//   merge:        type symbol inputs maxRuns recordIO
+//   collect:      type symbol maxRuns recordIO
+//   draft, trigger, subgraph: type symbol
 
 namespace Tsugumi.Document;
 
@@ -16,24 +29,33 @@ enum CardType:ubyte {
   subgraph,
 }
 
+/// Whether a Card records: as its project says, or on or off for this Card.
+enum RecordSetting:ubyte {
+  project,
+  on,
+  off,
+}
+
 table Input {
+  /// [a-z][a-z0-9_]{0,63}.
   name:string (required);
 }
 
-/// A folder the worker may read (Experimental): a folder of the Mac, seen in
-/// the worker as /host/<name>.
+/// A folder the worker may read: a folder of the Mac, seen in the worker as
+/// /host/<name>.
 table HostFolder {
   /// Absolute path on the Mac.
   path:string (required);
   /// Folder name under /host (an id).
   name:string (required);
-  /// Default false: read-only.
+  /// false: read-only.
   write:bool = null;
 }
 
 table SandboxLimits {
-  /// CPUs, in (0, 256].
+  /// CPUs, in [0, 256]; 0 means no limit.
   cpu:double = null;
+  /// 0 means no limit.
   memoryMiB:ulong = null;
 }
 
@@ -48,38 +70,36 @@ table Sandbox {
 table Grants {
   network:bool = null;
   gui:bool = null;
+  /// Optional.
   hostPaths:[HostFolder];
 }
 
-table WorkerCondition {
-  language:string (required);
-  expression:string (required);
-}
-
 table Card {
-  /// Required.
   type:CardType = null;
-  /// externals/<external>/ for a subgraph (Card in Card).
-  external:string;
-  symbol:string;
+  /// The Card's icon (a symbol name the UIs draw).
+  symbol:string (required);
   inputs:[Input];
   maxRuns:ulong = null;
-  /// Positive; absent means no deadline.
+  /// 0 means no limit.
   timeoutSeconds:ulong = null;
+  /// 0 means no limit.
   buildTimeoutSeconds:ulong = null;
-  recordLogs:bool = null;
-  recordIO:bool = null;
+  recordLogs:RecordSetting = null;
+  recordIO:RecordSetting = null;
   sandbox:Sandbox;
   grants:Grants;
-  /// Keep worker state across invocations and runs. Default false.
+  /// Keep worker state across invocations and runs.
   reuseWorker:bool = null;
-  executionService:string;
-  workerCondition:WorkerCondition;
-  /// The Nix system the Card is built for and runs as: "x86_64-linux" or
-  /// "aarch64-linux". Default: this machine's. Another one runs emulated.
+  /// The Nix system the Card is built for and runs as, written explicitly
+  /// (for example "aarch64-linux"). A worker of another native system runs it
+  /// emulated.
   system:string;
-  /// Names of the Card secrets the Card's process receives as environment
-  /// variables of the same name. Values live only in hostd's secret store.
+  /// Capability bits (0-63) a worker must have: the Card runs only on a worker
+  /// whose own bits (host settings) include every bit listed here.
+  workerCapabilities:[ubyte];
+  /// Optional: names of the Card secrets the Card's process receives as
+  /// environment variables of the same name. Values live only in hostd's
+  /// secret store.
   secrets:[string];
 }
 
