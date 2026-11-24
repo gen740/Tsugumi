@@ -400,7 +400,7 @@ def test_a_versions_canvas_says_what_each_card_is(tmp_path, core_factory):
     canvas = c.call("VersionCanvasRequest", commit=first)
     cards = {text(k.id): k for k in canvas.cards}
     assert {k: text(v.kind) for k, v in cards.items()} == {
-        "start": "trigger", "src": "input", "out": "collect", "wide": "merge", "m": "merge"}
+        "start": "trigger", "src": "code", "out": "collect", "wide": "merge", "m": "merge"}
     assert (cards["wide"].fan, cards["m"].fan, cards["out"].fan) == (3, 2, 0)
     write_layout(root, {"cards": {"out": {"x": 3, "y": 7, "collapsed": True}}})
     assert bytes(c.call("VersionCanvasRequest", commit=commit_all(root)).layout) == (root / "layout.bin").read_bytes()

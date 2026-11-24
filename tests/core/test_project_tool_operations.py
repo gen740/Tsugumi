@@ -15,8 +15,8 @@ EVENTS_FBS = "table Events { value:string; }\ntable Outputs { events:Events (req
 
 
 def make(root: Path) -> None:
-    write(root, {"trigger": {"type": "trigger"}, "input": {"type": "code"}, "sink": SINK},
-          [card("start", "trigger"), card("load", "input"), card("show", "sink")],
+    write(root, {"trigger": {"type": "trigger"}, "source": {"type": "code"}, "sink": SINK},
+          [card("start", "trigger"), card("load", "source"), card("show", "sink")],
           [conn("load", "events", "show", "in")], name="files")
     put(root / "definitions" / "load" / "params.nix", '{ value = "data/events.txt"; }')
     put(root / "definitions" / "load" / "default.nix", '{ params, inputs }: { }')
