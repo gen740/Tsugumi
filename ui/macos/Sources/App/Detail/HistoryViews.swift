@@ -675,25 +675,3 @@ struct CardArtifactsView: View {
     } catch { self.error = "\(error)" }
   }
 }
-
-/// The views a Card declares, live, in their own window. Nothing shown here is recorded.
-struct VisualizationWindow: View {
-  let session: ProjectSession
-  let cardKey: CardKey
-  @State private var viewer = UUID()
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        Text(session.displayName(cardKey)).font(.title2.bold())
-        Spacer()
-        Button("チャットに参照を追加") { AppModel.shared.chat(for: session).addReference(.display(cardKey)) }
-      }
-      CardViewsPanel(session: session, cardKey: cardKey)
-    }
-    .padding(16)
-    .navigationTitle(session.displayName(cardKey))
-    .onAppear { session.openDisplayViewer(viewer, card: cardKey) }
-    .onDisappear { session.closeDisplayViewer(viewer) }
-  }
-}

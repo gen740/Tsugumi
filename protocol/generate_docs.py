@@ -20,7 +20,7 @@ GROUPS = [
     ("Running", ["RunPlan", "Run", "RunCancel", "RunStatus"]),
     ("History and artifacts", ["RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "RunCategoryDelete", "RunHistoryDelete",
                  "RunDefinitionPaths", "ArtifactList", "ArtifactRead", "LogRange", "RunEnvironments", "RunEnvironmentPaths", "RunEnvironmentUses"]),
-    ("Views", ["ViewSetVisible", "ViewSave", "CardViewRead", "ViewSend", "ViewCredit"]),
+    ("Views", ["ViewSave", "CardViewRead", "ViewSend", "ViewCredit", "ViewClose"]),
     ("Versions", ["VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionNote", "VersionDiff", "VersionComments"]),
 ]
 
@@ -127,6 +127,12 @@ def render() -> str:
     out += ["## Notifications", "", "Sent from `tsugumid` to connected clients.", ""]
     for n in union_members(text, "NotificationPayload"):
         out.append(f"- `{n}`")
+    out += ["", "Card views open through the Card ABI. The presenting subscription receives",
+            "`ViewOpened` before any `DisplayUpdated` for the session and owns the",
+            "file reads, sends, credits and close. `ViewRouteRegistered` binds a route",
+            "to a session for the lifetime of the window. Session and route IDs use canonical",
+            "UUID text. The all-zero route selects the opening Card’s route. View RPCs",
+            "and notifications are excluded from RPC traces."]
     out += ["", "### Run events", "", "The `value` inside a `RunEvent` has one of these types.", ""]
     for n in union_members(text, "RunEventValue"):
         out.append(f"- `{n}`")

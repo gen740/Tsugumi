@@ -37,6 +37,9 @@ struct BuildRequest;
 class LocalExecutionService;
 class RemoteExecutionService;
 class CacheUsage;
+namespace schema {
+struct CardView;
+}  // namespace schema
 
 struct ServiceOptions {
   std::filesystem::path root;
@@ -113,8 +116,12 @@ class Service : public RequestSink {
   auto run_scratch() const -> const std::filesystem::path& {
     return run_scratch_;
   }
-  auto set_view_receiver(const CardPath& card,
-                         std::weak_ptr<WorkerProc::ViewReceiver> receiver) -> void;
+  auto view_control(const CardPath& card,
+                    const std::vector<schema::CardView>& views,
+                    const std::weak_ptr<WorkerProc::ViewReceiver>& endpoint,
+                    const WorkerViewRequest& request) -> WorkerViewReply;
+  auto display(WorkerDisplayData display, WorkerProc::DisplayCredit credit)
+      -> void;
   auto artifact_grants(std::span<const Value> inputs) -> std::vector<ArtifactGrant>;
   auto artifact_destination(const InvocationSummaryData& invocation)
       -> std::filesystem::path;
@@ -144,16 +151,6 @@ class Service : public RequestSink {
   // A run finished: its record goes to the project's copy soon.
   // A run ended: its result goes to the note of the version it started from.
   void note_run_end(const RunStatusData& s, const std::string& facts);
-  // The views a Card declares (name -> blob), set with the full list each
-  // time CardViewsUpdated is sent; an empty list clears them. CardViewRead
-  // serves only these files.
-  struct DeclaredView {
-    std::string name;
-    std::string blob;
-  };
-  auto set_card_views(const CardPath& card, std::vector<DeclaredView> views)
-      -> void;
-
  private:
   void reply(const RequestIn& req, std::string bytes);
   void fail(const RequestIn& req, const FailureData& f);
@@ -224,7 +221,7 @@ class Service : public RequestSink {
   void artifact_list(RequestIn& req);
   void artifact_read(RequestIn& req);
   void log_range(RequestIn& req);
-  void view_set_visible(RequestIn& req);
+  void view_close(RequestIn& req);
   void view_send(RequestIn& req);
   void view_credit(RequestIn& req);
   void card_view_read(RequestIn& req);
@@ -253,7 +250,6 @@ class Service : public RequestSink {
       const std::optional<std::string>& view_id, const ViewRecord* view);
   void check_snapshot(const Document& doc);
   void publish_delta(const Delta& delta, size_t notification_bytes);
-  auto refresh_card_views(DocumentPtr doc) -> void;
   void check_at_rev(std::optional<uint64_t> at_rev, const Document& doc) const;
   RunStatusData current_run_status();
 
@@ -264,10 +260,6 @@ class Service : public RequestSink {
   std::unique_ptr<Store> store_;
   std::unique_ptr<History> history_;
   std::unique_ptr<Versions> versions_;
-  std::mutex view_routes_mu_;
-  std::map<std::string, std::vector<std::weak_ptr<WorkerProc::ViewReceiver>>> view_routes_;
-  std::mutex view_files_mu_;
-  std::map<std::string, std::vector<DeclaredView>> view_files_;  // path_key
   std::unique_ptr<NixRunner> nix_;
   std::filesystem::path run_scratch_;
   std::unique_ptr<CacheUsage> cache_usage_;
@@ -283,13 +275,7 @@ class Service : public RequestSink {
   std::unique_ptr<Lane> read_pool_;
   std::unique_ptr<Lane> cancel_lane_;
   std::unique_ptr<Lane> shell_lane_;
-  std::unique_ptr<Lane> card_views_lane_;
-  std::stop_source card_views_shutdown_;
-  std::mutex card_views_build_mu_;
-  // Owned by the mutation lane. A new execution revision cancels older work.
-  std::optional<uint64_t> card_views_rev_;
-  std::stop_source card_views_cancel_;
-  std::map<std::string, std::optional<Note>> card_views_;
+  std::stop_source shutdown_stop_;
   std::mutex cancellations_mu_;
   bool shell_stopping_ = false;
   std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::atomic<bool>>>
@@ -311,7 +297,34 @@ class Service : public RequestSink {
   // Owned by the transport loop, alongside debug dispatch and disconnect.
   std::optional<ConnId> trace_owner_;
   std::map<ConnId, std::string> subscriptions_;  // conn -> subscription id
-  std::map<ConnId, std::set<std::string>> visible_cards_;
+  struct ViewBlob {
+    const int fd;
+    const uint64_t size;
+    const std::string path;
+    ViewBlob(int fd, uint64_t size, std::string path);
+    ~ViewBlob();
+    ViewBlob(const ViewBlob&) = delete;
+    auto read(uint64_t offset, uint64_t limit) const -> std::string;
+    static auto open(const std::string& path)
+        -> std::shared_ptr<const ViewBlob>;
+  };
+  struct ViewSession {
+    ConnId conn;
+    std::string subscription;
+    std::string name;
+    std::shared_ptr<const ViewBlob> blob;
+    ViewUuid opener;
+    // An expired endpoint is a dead route that still belongs to the session.
+    std::map<ViewUuid, std::weak_ptr<WorkerProc::ViewReceiver>> routes;
+  };
+  // Subscription selection and session lifecycle share subs_mu_.
+  std::map<ViewUuid, ViewSession> view_sessions_;
+  auto owned_view(const RequestIn& req, const ViewUuid& session)
+      -> ViewSession*;
+  auto end_view(const ViewUuid& session, const ViewSession& view) -> void;
+  auto end_views(ConnId conn) -> void;
+  static auto view_uuid(const flatbuffers::String& value) -> ViewUuid;
+  void reply_view_ack(const RequestIn& req);
 
   std::mutex view_mu_;
 

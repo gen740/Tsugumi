@@ -13,5 +13,5 @@ in
     src = ./src;
   });
   api = sdk.pythonApi common;
-  # TODO(open): Port the demo display.
+  inherit (sdk) views;
 }

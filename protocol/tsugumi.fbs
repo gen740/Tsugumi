@@ -806,25 +806,24 @@ table LogRangeRequest {
   live:bool = false (id: 10);
 }
 
-/// -> Ack. Replaces the subscription's Display targets. enabled = true.
-table ViewSetVisibleRequest {
-  subscription_id:string (id: 0, required);
-  cards:[Tsugumi.Data.CardPath] (id: 1, required);
-  enabled:bool = null (id: 2);
+/// -> Ack. Close a view owned by this subscription. Each live route receives
+/// one close event. Repeating a completed close has no effect.
+table ViewCloseRequest {
+  session:string (required);
 }
 
-/// -> Ack. Send opaque bytes from an open view to its Card process. With no live Card process the bytes are dropped and the reply is still Ack.
+/// -> Ack. Send opaque bytes to one route in the sending window. The all-zero
+/// route selects the opener's route. Messages to a dead route are dropped.
 table ViewSendRequest {
-  card:Tsugumi.Data.CardPath (required);
-  view:string (required);
+  session:string (required);
+  route:string (required);
   bytes:[ubyte] (required);
 }
 
 /// -> Ack. Return display capacity after the UI forwards or discards a message.
 table ViewCreditRequest {
   subscription_id:string (required);
-  card:Tsugumi.Data.CardPath (required);
-  view:string (required);
+  session:string (required);
   bytes:uint32;
   credit_id:uint64 = null;
 }
@@ -849,23 +848,14 @@ table ViewSaveRequest {
   view:[ubyte] (id: 2, required);
 }
 
-/// -> FileContent. Read a page of the file of one view declaration: entry
-/// `index` (required) of the Card's views list, as CardViewsUpdated last sent it. `name`
-/// must be that entry's name, so a read made against a list that has since
-/// changed fails with not_found instead of serving another declaration. Names
-/// may repeat; the core never chooses between declarations by name. Only
-/// declared regular files that resolve inside the Nix store are served, read
-/// from one open descriptor, and their bytes are relayed without being
-/// interpreted. Neither RPC trace records these requests or their replies.
-/// FileContent.name is the view name and hash is the declared store path,
-/// which names immutable content. offset defaults to 0 and limit_bytes to
-/// 1 MiB (1..1048576).
+/// -> FileContent. Read a page of the immutable view file pinned by the open
+/// session. Only its presenting subscription may read it. FileContent.name is
+/// the declared view name and hash is the Nix store path. offset defaults to 0
+/// and limit_bytes defaults to 1 MiB (1..1048576). This RPC is transient.
 table CardViewReadRequest {
-  card:Tsugumi.Data.CardPath (id: 0, required);
-  name:string (id: 1, required);
-  offset:uint64 = null (id: 2);
-  limit_bytes:uint32 = null (id: 3);
-  index:uint32 = null (id: 4);
+  session:string (required);
+  offset:uint64 = null;
+  limit_bytes:uint32 = null;
 }
 
 /// -> ProjectActivity. Observe active runs and queued/running requests, across
@@ -897,7 +887,7 @@ union RequestPayload {
   ArtifactListRequest = 25,
   ArtifactReadRequest = 26,
   LogRangeRequest = 27,
-  ViewSetVisibleRequest = 28,
+  ViewCloseRequest = 28,
   ViewSaveRequest = 29,
   RunHistoryDeleteRequest = 30,
   OutputTypesRequest = 31,
@@ -1379,15 +1369,23 @@ table RunEvent {
 
 table DisplayUpdated { display:Tsugumi.Data.Display (id: 0, required); }
 
-/// The full list of views for a Card, available independently of a run.
-/// When evaluating the declarations failed, failure says why and views is
-/// empty; an absent failure with an empty list means the Card declares none.
-table CardViewsUpdated {
-  card:Tsugumi.Data.CardPath (id: 0, required);
-  views:[Tsugumi.Data.CardView] (id: 1, required);
-  failure:Tsugumi.Data.Failure (id: 2);
+/// Sent once to the presenting subscription before any display message.
+table ViewOpened {
+  session:string (required);
+  card:Tsugumi.Data.CardPath (required);
+  name:string (required);
+  type:string (required);
+  mode:uint32;
+  width:uint32;
+  height:uint32;
 }
 
+/// A route belongs to this session. This association lasts until the view
+/// closes, even after the receiving process has dropped the route.
+table ViewRouteRegistered {
+  session:string (required);
+  route:string (required);
+}
 
 /// An absent end_offset and unspecified stream indicate invocation log
 /// metadata changed without new stream bytes.
@@ -1407,7 +1405,8 @@ union NotificationPayload {
   LogAvailable = 4,
   TraceChanged:Tsugumi.Trace.TraceChanged = 5,
   RunCategoryDeleteResult = 6,
-  CardViewsUpdated = 7,
+  ViewOpened = 7,
+  ViewRouteRegistered = 8,
 }
 
 // ---- Frame -------------------------------------------------------------------

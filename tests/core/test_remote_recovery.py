@@ -11,6 +11,7 @@ import struct
 import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import flatbuffers
@@ -19,6 +20,7 @@ from harness import remote_worker as R
 from harness.fixtures import add_worker, worker_project
 from harness.scenario import Project
 from harness.scenario import FILE_OUTPUT
+from harness.views import ZERO_ROUTE, declaration, display, open_view, return_credit
 from projects import start_run, wait_invocation, wait_run, wait_run_notification
 from Tsugumi.Data.CardState import CardState
 from tsugumi.ArtifactId import ArtifactIdT
@@ -28,7 +30,11 @@ from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
+from Tsugumi.Trace.Client import Client
+from Tsugumi.Worker.ViewControlKind import ViewControlKind
+from Tsugumi.Worker.ViewEventKind import ViewEventKind
 from Tsugumi.Worker.WorkerDisplay import WorkerDisplayT
+from Tsugumi.Worker.WorkerViewRequest import WorkerViewRequestT
 from Tsugumi.Worker.WorkerMessage import WorkerMessageT
 from Tsugumi.Worker.WorkerOutput import WorkerOutputT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
@@ -61,6 +67,9 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         self.probe_overrides = {}
         self.receipts = {}
         self.view_messages = []
+        self.view_controls = {}
+        self.view_responses = []
+        self.lose_view_response = False
         self.hold_view = None
         self.view_stalled = threading.Event()
         self.submit_count = 0
@@ -181,9 +190,11 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         job = R.string(q.jobId)
         if kind == R.RequestBody.ViewSendRequest:
             assert self.receipts[job]["state"] == "running"
-            view = R.string(body.display.view)
-            self.view_messages.append((job, view, bytes(body.display.bytes)))
-            if view == self.hold_view:
+            event = body.event
+            route = bytes(event.route.bytes)
+            payload = bytes(event.bytes) if event.bytes is not None else b""
+            self.view_messages.append((job, event.kind, route, payload))
+            if route == self.hold_view:
                 self.view_stalled.set()
                 self.resume.wait(10)
             return R.reply(R.ReplyBody.Ack, R.AckT())
@@ -226,6 +237,18 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             status.logSize = len(log)
             status.logBytes = list(log[body.logOffset:body.logOffset + min(body.logLimit, 7)])
         if kind == R.RequestBody.StatusRequest:
+            controls = self.view_controls.get(job)
+            if controls:
+                if body.viewReply:
+                    answer = body.viewReply
+                    assert answer.ok and answer.requestId == controls[0].requestId
+                    self.view_responses.append(answer)
+                    if self.lose_view_response:
+                        self.lose_view_response = False
+                        return None
+                    controls.pop(0)
+                if controls:
+                    status.viewRequest = controls[0]
             status.displays = self.live_displays.pop(job, None)
             if status.displays:
                 status.displaySequence = body.displayAfter + 1
@@ -466,61 +489,75 @@ def test_remote_job_without_resource_limits(project, remote_gateway, core_factor
     assert wait_run(client, run_id).state == RunState.succeeded
 
 
-def test_remote_status_relay_keeps_binary_view_data_out_of_results(project, remote_gateway, core_factory, tmp_path):
-    client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, executionService="cluster")
-    subscription = text(client.open().subscriptionId)
-    client.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("work")])
-    run_id = start_run(client, "work", propagate=False)
-    live = wait_for_state(client, run_id, RemoteExecutionState.running)
-    job_id = text(live.executionJobId)
-    view = "unmatched/remote-view"
+def remote_view_job(project, remote_gateway, core_factory, tmp_path, names):
+    store = tmp_path / "store"
+    store.mkdir()
+    blob = store / "page.html"
+    blob.write_text("<p>remote view</p>")
+    daemon = core_factory(mocked_builds=True, env={"TSUGUMI_MOCK_STORE": str(store)})
+    ui = daemon.connect(client=Client.Web)
+    worker_project(ui, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
+                   executionService="cluster", views=[declaration(blob, name) for name in names])
+    subscription = text(ui.open().subscriptionId)
+    run_id = start_run(ui, "work", propagate=False)
+    live = wait_for_state(ui, run_id, RemoteExecutionState.running)
+    job = text(live.executionJobId)
+    remote_gateway.view_controls[job] = [
+        WorkerViewRequestT(requestId=i, kind=ViewControlKind.Open, view=name)
+        for i, name in enumerate(names, 1)
+    ]
+    return ui, subscription, run_id, job
+
+
+def test_remote_status_replays_control_and_keeps_view_data_out_of_results(
+        project, remote_gateway, core_factory, tmp_path):
+    remote_gateway.lose_view_response = True
+    ui, subscription, run_id, job = remote_view_job(
+        project, remote_gateway, core_factory, tmp_path, ["notes"])
+    session = text(open_view(ui).session)
+    deadline = time.monotonic() + 5
+    while len(remote_gateway.view_responses) < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    first, retried = remote_gateway.view_responses
+    assert bytes(first.session.bytes) == bytes(retried.session.bytes) == uuid.UUID(session).bytes
+    assert bytes(first.route.bytes) == bytes(retried.route.bytes)
     payload = b"remote-view\x00\xff\xfe"
-    remote_gateway.live_displays[job_id] = [WorkerDisplayT(view=view, bytes=payload)]
-    shown = client.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated, timeout=10)
-    update = shown.value.display
-    assert update.card.segments == [b"work"]
-    assert text(update.view) == view and bytes(update.bytes) == payload
-    client.call("ViewCreditRequest", subscriptionId=subscription, card=update.card,
-                view=view, bytes=len(payload), creditId=update.creditId)
-    remote_gateway.finish(job_id)
-    assert wait_run(client, run_id).state == RunState.succeeded
+    remote_gateway.live_displays[job] = [WorkerDisplayT(session=first.session, bytes=payload)]
+    update = display(ui, session)
+    assert bytes(update.bytes) == payload
+    return_credit(ui, subscription, update)
+    remote_gateway.finish(job)
+    assert wait_run(ui, run_id).state == RunState.succeeded
+    assert not any(note.valueType == NotificationPayload.ViewOpened for note in ui.notifications.copy())
     assert all(payload not in blob for blob in remote_gateway.results.values())
-    saved = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
+    saved = ui.call("RunRecordRequest", runId=run_id, card=path("work")).record
     assert saved.outputs and not hasattr(saved, "display")
 
 
-def test_remote_view_messages_do_not_wait_for_another_views_reply(project, remote_gateway, core_factory, tmp_path):
-    from Tsugumi.Trace.Client import Client
-
-    daemon = core_factory(mocked_builds=True)
-    ui = daemon.connect(client=Client.Web)
-    worker_project(ui, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
-                   executionService="cluster", views=[
-                       {"blob": "/nix/store/example-notes", "name": "notes", "type": "html"},
-                       {"blob": "/nix/store/example-plot", "name": "plot", "type": "html"},
-                   ])
-    subscription = text(ui.open().subscriptionId)
-    ui.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("work")])
-    ui.wait_notification(lambda n: n.valueType == NotificationPayload.CardViewsUpdated)
-    run_id = start_run(ui, "work", propagate=False)
-    try:
-        live = wait_for_state(ui, run_id, RemoteExecutionState.running)
-    except AssertionError:
-        status = ui.call("RunStatusRequest", runId=run_id)
-        assert not status.failure, status.failure and text(status.failure.diagnostic)
-        raise
-    job = text(live.executionJobId)
+def test_remote_view_messages_do_not_wait_for_another_routes_reply(
+        project, remote_gateway, core_factory, tmp_path):
+    ui, _, run_id, job = remote_view_job(project, remote_gateway, core_factory, tmp_path, ["notes", "plot"])
+    notes, plot = (text(open_view(ui).session) for _ in range(2))
+    deadline = time.monotonic() + 5
+    while len(remote_gateway.view_responses) < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    first, second = remote_gateway.view_responses
+    notes_route, plot_route = bytes(first.route.bytes), bytes(second.route.bytes)
     payload = b"reply\0\xff"
-    remote_gateway.hold_view = "notes"
-    ui.call("ViewSendRequest", card=path("work"), view="notes", bytes=list(payload))
+    remote_gateway.hold_view = notes_route
+    ui.call("ViewSendRequest", session=notes, route=ZERO_ROUTE, bytes=payload)
     assert remote_gateway.view_stalled.wait(5)
     try:
-        ui.call("ViewSendRequest", card=path("work"), view="plot", bytes=list(payload))
+        ui.call("ViewSendRequest", session=plot, route=ZERO_ROUTE, bytes=payload)
+        ui.call("ViewCloseRequest", session=plot)
         deadline = time.monotonic() + 5
-        while len(remote_gateway.view_messages) < 2 and time.monotonic() < deadline:
+        while len(remote_gateway.view_messages) < 3 and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert remote_gateway.view_messages == [(job, "notes", payload), (job, "plot", payload)]
+        assert remote_gateway.view_messages[0] == (job, ViewEventKind.Message, notes_route, payload)
+        assert remote_gateway.view_messages[1:] == [
+            (job, ViewEventKind.Message, plot_route, payload),
+            (job, ViewEventKind.Close, plot_route, b""),
+        ]
     finally:
         remote_gateway.resume.set()
     remote_gateway.finish(job)

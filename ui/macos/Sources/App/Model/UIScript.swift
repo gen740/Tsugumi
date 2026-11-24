@@ -54,7 +54,7 @@ final class UIScript {
   static let shared = UIScript()
 
   enum Request: Equatable {
-    case card(CardRef), visual(CardRef), definitions(ProjectRef), versions(ProjectRef), workflowSettings(ProjectRef), settings, explainer, debug
+    case card(CardRef), definitions(ProjectRef), versions(ProjectRef), workflowSettings(ProjectRef), settings, explainer, debug
     case project(URL), newProject
   }
 
@@ -177,7 +177,6 @@ final class UIScript {
         case "card":
           let cat = CardEditorCategory(rawValue: w.count > 3 ? w[3] : "general") ?? .general
           request = .card(CardRef(path: ref.path, card: w[2], category: cat))
-        case "visual": request = .visual(CardRef(path: ref.path, card: w[2]))
         case "definitions": request = .definitions(ref)
         case "versions": request = .versions(ref)
         case "workflow-settings": request = .workflowSettings(ref)

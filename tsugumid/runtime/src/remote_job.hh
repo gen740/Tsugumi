@@ -52,7 +52,8 @@ struct RemoteJobState {
   bool display_pending = false;
   uint64_t display_sequence = 0;
   bool view_input_ready = false;
-  std::map<std::string, uint64_t> view_input_credits = {};
+  std::map<ViewUuid, uint64_t> view_input_credits = {};
+  std::optional<WorkerViewRequest> view_request = std::nullopt;
 };
 
 struct RemoteProbe {
@@ -103,13 +104,14 @@ class RemoteJobClient {
               std::string_view job_id, std::string_view spec,
               std::stop_token stop) const -> RemoteJobState;
   auto send_view(std::string_view service, std::string_view instance,
-                 std::string_view job_id, const WorkerDisplayData& display,
+                 std::string_view job_id, const WorkerViewEvent& event,
                  uint64_t offset, std::stop_token stop) const -> void;
   auto status(std::string_view service, std::string_view instance,
               std::string_view job_id, uint64_t log_offset,
               std::stop_token stop, uint64_t display_after = 0,
-              const std::map<std::string, uint64_t>& credits = {}) const
-      -> RemoteJobState;
+              const std::map<ViewUuid, uint64_t>& credits = {},
+              const std::optional<WorkerViewReply>& view_reply =
+                  std::nullopt) const -> RemoteJobState;
   // With a log cursor, the reply also carries the job log from there; only
   // the submitting core life may read it.
   auto cancel(std::string_view service, std::string_view instance,

@@ -56,15 +56,7 @@ table NamedValue {
 
 /// A live opaque message.
 table Display {
-  card:CardPath (id: 0, required);
-  view:string (id: 1, required);
-  bytes:[ubyte] (id: 2, required);
-  credit_id:uint64 = null (id: 3);
-}
-
-/// One view declared in a Card's definition. Type and blob are relayed unchanged.
-table CardView {
-  name:string (id: 0, required);
-  type:string (id: 1, required);
-  blob:string (id: 2, required);  // Immutable Nix store path to a single file.
+  session:string (id: 0, required);
+  bytes:[ubyte] (id: 1, required);
+  credit_id:uint64 = null (id: 2);
 }

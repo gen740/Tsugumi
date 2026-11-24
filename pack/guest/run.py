@@ -19,6 +19,7 @@ a setting, so this changes no build.
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -118,6 +119,36 @@ def start_core(project, work):
         time.sleep(0.05)
     log.flush()
     raise SystemExit("tsugumid did not start:\n" + (work / "tsugumid.log").read_text()[-4000:])
+
+
+
+def open_view_relay(endpoint, ready):
+    """Wait for the host's presentation subscription before starting the Workflow."""
+    with socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM) as listener:
+        listener.bind((socket.VMADDR_CID_ANY, 7417))
+        listener.listen(1)
+        listener.settimeout(30)
+        print("PACK-VIEWS-READY", flush=True)
+        stream, _ = listener.accept()
+        with stream:
+            relay = subprocess.Popen(
+                [os.environ["TSUGUMI_RPC"], "--endpoint", endpoint, "--schema", os.environ["TSUGUMI_SCHEMA"]],
+                stdin=stream, stdout=stream, stderr=subprocess.DEVNULL,
+            )
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and relay.poll() is None:
+        if ready.exists():
+            return relay
+        time.sleep(0.05)
+    stop_view_relay(relay)
+    raise RpcFailure("The packed view subscription did not open")
+
+
+def stop_view_relay(relay):
+    if relay is not None:
+        if relay.poll() is None:
+            relay.terminate()
+        relay.wait(timeout=10)
 
 
 def decode_value(value, folder):
@@ -250,12 +281,16 @@ def main():
         raise SystemExit("the Project has no trigger Card to start a run from")
     stage("core")
     began = time.monotonic()
-    core, socket = start_core(project, work)
-    rpc = Rpc(f"unix:{socket}", os.environ["TSUGUMI_SCHEMA"])
+    core, core_socket = start_core(project, work)
+    endpoint = f"unix:{core_socket}"
+    rpc = Rpc(endpoint, os.environ["TSUGUMI_SCHEMA"])
+    view_relay = None
     summary = {"start": start, "triggers": found}
     try:
         rpc.call("SessionHelloRequest", {})
         revision = rpc.call("ProjectInspectRequest", {})["rev"]
+        if request.get("views"):
+            view_relay = open_view_relay(endpoint, request_path.with_name("views.ready"))
         stage("run")
         accepted = rpc.call("RunRequest", {"base_rev": revision, "op_id": str(uuid.uuid4()), "origin": "pack",
                                           "card": {"segments": [start]},
@@ -285,7 +320,13 @@ def main():
                                **{k: f"{c['folder']}/{v}" for k, v in value.items() if k in ("json", "file")}}
                               for c in summary["cards"] for port, value in c.get("outputs", {}).items()
                               if value and value.get("result")]
+        if view_relay:
+            print(f"PACK-VIEWS-RUN-ENDED {run_id}", flush=True)
+            done = request_path.with_name("views.done")
+            while not done.exists() and view_relay.poll() is None and core.poll() is None:
+                time.sleep(0.05)
     finally:
+        stop_view_relay(view_relay)
         rpc.close()
         core.terminate()
         core.wait(timeout=30)

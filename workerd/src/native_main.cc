@@ -23,8 +23,10 @@
 #include <span>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
+#include "display_channel.hh"
 #include "tsugumi/card_abi.h"
 #include "tsugumi/protocol/card_generated.h"
 #include "tsugumi/protocol/worker_generated.h"
@@ -36,6 +38,13 @@ namespace C = Tsugumi::Card;
 namespace D = Tsugumi::Data;
 namespace W = Tsugumi::Worker;
 namespace frame = tsugumi::rpc::frame;
+namespace relay = tsugumi::workerd;
+using tsugumi::ViewControlKind;
+using tsugumi::ViewEventKind;
+using tsugumi::ViewUuid;
+using tsugumi::WorkerViewEvent;
+using tsugumi::WorkerViewReply;
+using tsugumi::WorkerViewRequest;
 using Clock = std::chrono::steady_clock;
 
 namespace {
@@ -57,21 +66,31 @@ auto id_bytes(const tsugumi::ArtifactId& id) -> ArtifactId {
 }
 
 struct ViewQueue {
-  std::deque<std::string> incoming;
   std::deque<std::string> outgoing;
-  size_t incoming_bytes = 0;
   size_t outgoing_bytes = 0;
   size_t credit = kViewBudget;
-  size_t returned_credit = 0;
   uint64_t queued_messages = 0;
   uint64_t forwarded_messages = 0;
+};
+
+struct RouteQueue {
+  size_t incoming_bytes = 0;
+  bool retired = false;
+  bool closed = false;
 };
 
 struct Host {
   std::mutex write_mutex;
   std::mutex view_mutex;
   std::condition_variable view_ready;
-  std::map<std::string, ViewQueue, std::less<>> views;
+  std::map<ViewUuid, ViewQueue> views;
+  std::map<ViewUuid, RouteQueue> routes;
+  std::map<ViewUuid, size_t> returned_credits;
+  std::deque<WorkerViewEvent> incoming;
+  std::mutex request_mutex;
+  uint64_t request_id = 0;
+  std::optional<ViewUuid> unregistering;
+  std::optional<WorkerViewReply> reply;
   bool stopping = false;
   std::mutex artifact_mutex;
   std::string artifact_directory;
@@ -115,15 +134,97 @@ auto interrupted(const Host& host, uint64_t call) -> bool {
   return host.stopping || (call != 0 && host.cancelled_id.load() == call);
 }
 
-auto send_display(void* context, const char* view, const uint8_t* bytes,
-                  size_t size) -> int {
-  if (size > TSUGUMI_MESSAGE_MAX || !view || (!bytes && size != 0)) return -1;
-  const auto name_size = ::strnlen(view, kMaxViewName);
-  if (name_size == 0 || name_size == kMaxViewName) return -1;
+auto abi_uuid(const uint8_t (&bytes)[16]) -> ViewUuid {
+  ViewUuid id;
+  std::ranges::copy(bytes, id.begin());
+  return id;
+}
+
+auto request_view(Host& host, WorkerViewRequest request)
+    -> std::optional<WorkerViewReply> {
+  try {
+    std::lock_guard request_lock(host.request_mutex);
+    {
+      std::lock_guard lock(host.view_mutex);
+      if (host.stopping) return {};
+      request.request_id = ++host.request_id;
+      if (request.kind == ViewControlKind::unregister_route)
+        host.unregistering = request.route;
+    }
+    flatbuffers::FlatBufferBuilder b;
+    relay::build_view_request(b, request);
+    if (!send_frame(host, b)) {
+      std::lock_guard lock(host.view_mutex);
+      host.stopping = true;
+      host.view_ready.notify_all();
+      return {};
+    }
+    std::unique_lock lock(host.view_mutex);
+    host.view_ready.wait(lock, [&] { return host.stopping || host.reply; });
+    return std::exchange(host.reply, std::nullopt);
+  } catch (const std::exception&) {
+    return {};
+  }
+}
+
+auto open_view(void* context, const char* view, uint32_t mode, uint32_t width,
+               uint32_t height, tsugumi_route* route,
+               tsugumi_view_session* session) -> int {
+  if (!view || !route || !session || mode > TSUGUMI_VIEW_FULLSCREEN ||
+      ((width == 0) != (height == 0)) ||
+      (width != 0 && mode != TSUGUMI_VIEW_WINDOW))
+    return -1;
+  const auto size = ::strnlen(view, kMaxViewName);
+  if (size == 0 || size == kMaxViewName) return -1;
+  try {
+    const auto reply =
+        request_view(*static_cast<Host*>(context),
+                     {0, ViewControlKind::open, std::string(view, size), mode,
+                      width, height});
+    if (!reply || !reply->ok || reply->route == ViewUuid{} ||
+        reply->session == ViewUuid{})
+      return -1;
+    std::ranges::copy(reply->route, route->bytes);
+    std::ranges::copy(reply->session, session->bytes);
+    return 0;
+  } catch (const std::exception&) {
+    return -1;
+  }
+}
+
+auto register_route(void* context, const tsugumi_view_session* session,
+                    tsugumi_route* route) -> int {
+  if (!session || !route) return -1;
+  const auto reply = request_view(*static_cast<Host*>(context),
+                                  {.request_id = 0,
+                                   .kind = ViewControlKind::register_route,
+                                   .view = {},
+                                   .session = abi_uuid(session->bytes)});
+  if (!reply || !reply->ok || reply->route == ViewUuid{}) return -1;
+  std::ranges::copy(reply->route, route->bytes);
+  return 0;
+}
+
+auto unregister_route(void* context, const tsugumi_route* route) -> int {
+  if (!route) return -1;
+  const auto reply = request_view(*static_cast<Host*>(context),
+                                  {.request_id = 0,
+                                   .kind = ViewControlKind::unregister_route,
+                                   .view = {},
+                                   .route = abi_uuid(route->bytes)});
+  return reply && reply->ok ? 0 : -1;
+}
+
+auto send_display(void* context, const tsugumi_view_session* session,
+                  const uint8_t* bytes, size_t size) -> int {
+  if (size > TSUGUMI_MESSAGE_MAX || !session || (!bytes && size != 0))
+    return -1;
+  const auto id = abi_uuid(session->bytes);
+  if (id == ViewUuid{}) return -1;
   auto& host = *static_cast<Host*>(context);
   try {
     std::unique_lock lock(host.view_mutex);
-    auto& queue = host.views[std::string(view, name_size)];
+    auto& queue = host.views[id];
     const auto call = host.call_id.load();
     host.view_ready.wait(lock, [&] {
       return interrupted(host, call) ||
@@ -141,21 +242,18 @@ auto send_display(void* context, const char* view, const uint8_t* bytes,
   }
 }
 
-auto receive_display(void* context, const char* view, tsugumi_bytes* out,
-                     int64_t timeout_ms) -> int {
+auto receive_display(void* context, tsugumi_view_event* out, int64_t timeout_ms)
+    -> int {
   thread_local std::string received;
   received.clear();
-  if (!out || !view) return -1;
+  if (!out) return -1;
   *out = {};
-  const auto name_size = ::strnlen(view, kMaxViewName);
-  if (name_size == 0 || name_size == kMaxViewName) return -1;
   auto& host = *static_cast<Host*>(context);
   try {
     std::unique_lock lock(host.view_mutex);
-    auto& queue = host.views[std::string(view, name_size)];
     const auto call = host.call_id.load();
     const auto ready = [&] {
-      return interrupted(host, call) || !queue.incoming.empty();
+      return interrupted(host, call) || !host.incoming.empty();
     };
     if (timeout_ms < 0) {
       host.view_ready.wait(lock, ready);
@@ -170,12 +268,21 @@ auto receive_display(void* context, const char* view, tsugumi_bytes* out,
         return 1;
     }
     if (interrupted(host, call)) return 2;
-    received = std::move(queue.incoming.front());
-    queue.incoming.pop_front();
-    queue.incoming_bytes -= message_cost(received.size());
-    queue.returned_credit += message_cost(received.size());
-    host.view_ready.notify_all();
-    *out = {reinterpret_cast<const uint8_t*>(received.data()), received.size()};
+    auto event = std::move(host.incoming.front());
+    host.incoming.pop_front();
+    if (event.kind == ViewEventKind::message) {
+      const auto cost = message_cost(event.bytes.size());
+      host.routes.at(event.route).incoming_bytes -= cost;
+      host.returned_credits[event.route] += cost;
+      host.view_ready.notify_all();
+    }
+    received = std::move(event.bytes);
+    out->kind = static_cast<uint32_t>(event.kind);
+    std::ranges::copy(event.route, out->route.bytes);
+    std::ranges::copy(event.session, out->session.bytes);
+    if (event.kind == ViewEventKind::message)
+      out->data = {reinterpret_cast<const uint8_t*>(received.data()),
+                   received.size()};
     return 0;
   } catch (const std::exception&) {
     return -1;
@@ -185,42 +292,35 @@ auto receive_display(void* context, const char* view, tsugumi_bytes* out,
 auto display_loop(Host& host) -> void {
   const auto ready = [](const auto& entry) {
     const auto& queue = entry.second;
-    return queue.returned_credit != 0 ||
-           (!queue.outgoing.empty() && queue.credit >= TSUGUMI_MESSAGE_MAX);
+    return !queue.outgoing.empty() && queue.credit >= TSUGUMI_MESSAGE_MAX;
   };
-  std::string previous;
+  ViewUuid previous{};
   for (;;) {
     flatbuffers::FlatBufferBuilder b;
     ViewQueue* forwarded = nullptr;
     {
       std::unique_lock lock(host.view_mutex);
       host.view_ready.wait(lock, [&] {
-        return host.stopping || std::ranges::any_of(host.views, ready);
+        return host.stopping || !host.returned_credits.empty() ||
+               std::ranges::any_of(host.views, ready);
       });
       if (host.stopping) return;
-      const auto end = host.views.end();
-      auto next = std::find_if(host.views.upper_bound(previous), end, ready);
-      if (next == end) next = std::find_if(host.views.begin(), end, ready);
-      auto& [view, queue] = *next;
-      previous = view;
-      const auto name = b.CreateString(view);
-      if (queue.returned_credit) {
-        const auto update = W::CreateWorkerDisplayCredit(
-            b, name, static_cast<uint32_t>(queue.returned_credit));
-        queue.returned_credit = 0;
-        W::FinishWorkerMessageBuffer(b, W::CreateWorkerMessage(
-            b, 0, W::WorkerPayload::WorkerDisplayCredit, update.Union()));
+      if (!host.returned_credits.empty()) {
+        auto credit =
+            host.returned_credits.extract(host.returned_credits.begin());
+        relay::build_display_credit(b, credit.key(), credit.mapped());
       } else {
+        const auto end = host.views.end();
+        auto next = std::find_if(host.views.upper_bound(previous), end, ready);
+        if (next == end) next = std::find_if(host.views.begin(), end, ready);
+        auto& [session, queue] = *next;
+        previous = session;
         const auto& bytes = queue.outgoing.front();
-        const auto update = W::CreateWorkerDisplay(
-            b, name, b.CreateVector(reinterpret_cast<const uint8_t*>(bytes.data()),
-                                     bytes.size()));
+        relay::build_display(b, session, bytes);
         queue.credit -= message_cost(bytes.size());
         queue.outgoing_bytes -= message_cost(bytes.size());
         queue.outgoing.pop_front();
         forwarded = &queue;
-        W::FinishWorkerMessageBuffer(b, W::CreateWorkerMessage(
-            b, 0, W::WorkerPayload::WorkerDisplay, update.Union()));
       }
       host.view_ready.notify_all();
     }
@@ -332,8 +432,8 @@ auto open_artifact(void* context, const tsugumi_artifact_id* id,
 }
 
 constexpr tsugumi_effects kEffects{
-    send_display, receive_display, cancelled, remaining_ms,
-    create_artifact, open_artifact};
+    open_view, register_route, unregister_route, send_display, receive_display,
+    cancelled, remaining_ms,   create_artifact,  open_artifact};
 
 auto control_loop(Host& host) -> void {
   while (auto bytes = read_frame(kControl)) {
@@ -345,18 +445,39 @@ auto control_loop(Host& host) -> void {
     if (message->value_as_WorkerCancel() && message->call_id()) {
       host.cancelled_id =
           std::max(host.cancelled_id.load(), *message->call_id());
-    } else if (const auto* data = message->value_as_WorkerDisplay();
+    } else if (const auto* data = message->value_as_WorkerViewEvent();
                data && message->call_id() == 0) {
-      if (data->view()->size() == 0 || data->view()->size() >= kMaxViewName ||
-          data->bytes()->size() > TSUGUMI_MESSAGE_MAX)
-        break;
-      auto& queue = host.views[data->view()->str()];
-      if (queue.incoming_bytes > kViewBudget - TSUGUMI_MESSAGE_MAX) break;
-      queue.incoming.emplace_back(data->bytes()->begin(), data->bytes()->end());
-      queue.incoming_bytes += message_cost(data->bytes()->size());
+      auto event = relay::view_event(*data);
+      if (!relay::valid_view_event(event)) break;
+      auto& route = host.routes[event.route];
+      if (event.kind == ViewEventKind::close) {
+        if (!route.retired && !std::exchange(route.closed, true))
+          host.incoming.push_back(std::move(event));
+      } else if (route.retired || route.closed) {
+        host.returned_credits[event.route] += message_cost(event.bytes.size());
+      } else {
+        if (route.incoming_bytes > kViewBudget - TSUGUMI_MESSAGE_MAX) break;
+        route.incoming_bytes += message_cost(event.bytes.size());
+        host.incoming.push_back(std::move(event));
+      }
+    } else if (const auto* reply = message->value_as_WorkerViewReply();
+               reply && message->call_id() == 0) {
+      if (reply->request_id() != host.request_id || host.reply) break;
+      if (host.unregistering && reply->ok()) {
+        auto& route = host.routes[*host.unregistering];
+        route.retired = true;
+        if (route.incoming_bytes)
+          host.returned_credits[*host.unregistering] +=
+              std::exchange(route.incoming_bytes, 0);
+        std::erase_if(host.incoming, [&](const auto& event) {
+          return event.route == *host.unregistering;
+        });
+      }
+      host.unregistering.reset();
+      host.reply = relay::view_reply(*reply);
     } else if (const auto* credit = message->value_as_WorkerDisplayCredit();
                credit && message->call_id() == 0) {
-      const auto found = host.views.find(credit->view()->string_view());
+      const auto found = host.views.find(relay::view_uuid(credit->address()));
       if (found == host.views.end() ||
           credit->bytes() > kViewBudget - found->second.credit)
         break;

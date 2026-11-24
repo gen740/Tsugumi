@@ -418,7 +418,11 @@ struct ExecutionBroker::State {
       return key == entry.worker_public_key;
     });
     peer_tls::Stream tls(context, peer.fd, false, client);
-    const bool view_message = request.body.AsViewSendRequest() != nullptr;
+    const auto* poll = request.body.AsStatusRequest();
+    const bool view_message =
+        request.body.AsViewSendRequest() ||
+        (poll && (poll->view_reply || poll->display_after ||
+                  !poll->display_credits.empty()));
     R::MessageT message;
     message.payload.Set(std::move(request));
     auto bytes = W::encode(std::move(message));
@@ -430,10 +434,13 @@ struct ExecutionBroker::State {
     const auto length = W::frame_length(tls.Read(4));
     const auto frame = tls.Read(length);
     auto reply = W::decode(frame);
-    // View bytes in a status reply are transient: they are never traced.
+    // Status can carry transient view traffic even in reply to a plain poll.
     const auto* answer = reply->payload.AsReply();
     const auto* status = answer ? answer->body.AsJobStatus() : nullptr;
-    if (!view_message && (!status || status->displays.empty()))
+    if (!view_message &&
+        (!status ||
+         (!status->view_request && !status->display_pending &&
+          status->displays.empty() && status->view_input_credits.empty())))
       trace::Observe(link, "remote worker service", "hostd execution broker",
                      false, frame, &trace::kFlatBufferCodec);
     Require(reply->payload.AsReply(), "Expected remote worker reply");

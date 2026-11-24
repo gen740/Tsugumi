@@ -212,7 +212,7 @@ def wait_invocation(c, run_id, card_path, check):
 
 
 def wait_for_display(c, run_id, check=lambda _: True):
-    """Wait for a display on a visible Card, failing if the run ends first."""
+    """Wait for a display in an open session, failing if the run ends first."""
     def matches(note):
         if note.valueType == NotificationPayload.DisplayUpdated:
             display = note.value.display

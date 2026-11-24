@@ -142,7 +142,7 @@ def test_session_requires_hello_and_matching_project(daemon):
         assert error.value.kind == "invalid_request"
         negotiated = connect().call("SessionHelloRequest")
         capabilities = {text(capability) for capability in negotiated.capabilities}
-        assert "ViewSetVisible" in capabilities
+        assert {"ViewClose", "ViewSend", "ViewCredit", "CardViewRead"} <= capabilities
         assert not any(cap.startswith("display:") for cap in capabilities)
         assert not any(cap.startswith("format:") for cap in capabilities)
         with pytest.raises(RpcFailure) as error:

@@ -73,7 +73,7 @@ struct Export {
                   storeGiB: store, signIdentity: sign, verbose: verbose)
   }
 
-  func run() throws {
+  @MainActor func run() throws {
     let fm = FileManager.default
     let started = Date()
     guard fm.fileExists(atPath: project.appendingPathComponent("tsugumi.json").path) else {
@@ -137,6 +137,13 @@ struct Export {
     try fm.createDirectory(at: macos, withIntermediateDirectories: true)
     let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
     try fm.copyItem(at: executable, to: macos.appendingPathComponent(name))
+    let distribution = executable.deletingLastPathComponent().deletingLastPathComponent()
+    let frameworks = contents.appendingPathComponent("Frameworks")
+    try fm.createDirectory(at: frameworks, withIntermediateDirectories: true)
+    try fm.copyItem(at: distribution.appendingPathComponent("Frameworks/libwasmtime.dylib"),
+                    to: frameworks.appendingPathComponent("libwasmtime.dylib"))
+    try fm.copyItem(at: distribution.appendingPathComponent("share/tsugumi-pack/view-licenses"),
+                    to: resources.appendingPathComponent("licenses"))
     try fm.copyItem(at: guest.appendingPathComponent("vmlinux"), to: resources.appendingPathComponent("vmlinux"))
     try fm.copyItem(at: guest.appendingPathComponent("run.erofs"), to: resources.appendingPathComponent("rootfs.erofs"))
     try fm.moveItem(at: payload, to: resources.appendingPathComponent("payload.erofs"))
@@ -146,7 +153,7 @@ struct Export {
       "CFBundleName": name, "CFBundleDisplayName": name, "CFBundleExecutable": name,
       "CFBundleIdentifier": identifier, "CFBundlePackageType": "APPL",
       "CFBundleShortVersionString": "1.0", "CFBundleVersion": "1",
-      "LSMinimumSystemVersion": "14.0", "NSHighResolutionCapable": true,
+      "LSMinimumSystemVersion": "26.0", "NSHighResolutionCapable": true,
     ]
     try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
       .write(to: contents.appendingPathComponent("Info.plist"))
@@ -182,11 +189,15 @@ struct Export {
 
   private func sign(_ app: URL) throws {
     let entitlements = FileManager.default.temporaryDirectory.appendingPathComponent("tsugumi-pack-\(UUID().uuidString).plist")
-    try PropertyListSerialization.data(fromPropertyList: ["com.apple.security.virtualization": true], format: .xml, options: 0)
+    try PropertyListSerialization.data(fromPropertyList: [
+      "com.apple.security.virtualization": true, "com.apple.security.cs.allow-jit": true,
+    ], format: .xml, options: 0)
       .write(to: entitlements)
     defer { try? FileManager.default.removeItem(at: entitlements) }
     var arguments = ["--force", "--sign", signIdentity, "--entitlements", entitlements.path]
     if signIdentity != "-" { arguments += ["--options", "runtime", "--timestamp=none"] }
+    let wasmtime = app.appendingPathComponent("Contents/Frameworks/libwasmtime.dylib")
+    try shell("/usr/bin/codesign", ["--force", "--sign", signIdentity, wasmtime.path])
     try shell("/usr/bin/codesign", arguments + [app.path])
   }
 }

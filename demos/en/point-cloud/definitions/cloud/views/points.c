@@ -160,9 +160,6 @@ int32_t tsugumi_view_start(WGPUDevice gpu, WGPUQueue commands,
   if (create_pipeline(format) || create_camera() ||
       tsugumi_view_resize(w, h, device_scale))
     return -1;
-  // A view can open before any worker exists. The Card also sends on each run.
-  const uint8_t ready = 1;
-  tsugumi_view_send(&ready, sizeof(ready));
   return 0;
 }
 

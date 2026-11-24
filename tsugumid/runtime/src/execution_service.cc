@@ -249,7 +249,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
       card_key + "|" + std::to_string(build.implementation_index);
   auto lease = workers_.acquire(worker_card, key, sp, reuse);
   sp.secrets.reset();
-  service_.set_view_receiver(node.path, lease.worker->view_receiver());
   s.worker_reused = lease.reused;
   if (!lease.replaced.empty() && request.log)
     request.log(
@@ -276,6 +275,12 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   invocation.deadline_grace = std::chrono::milliseconds(500);
   invocation.log = request.log;
   invocation.display = request.display;
+  invocation.view_control = [service = &service_, card = node.path,
+                             views = build.views,
+                             endpoint = lease.worker->view_receiver()](
+                                const WorkerViewRequest& control) {
+    return service->view_control(card, views, endpoint, control);
+  };
   invocation.on_timing = [&](int64_t begin, int64_t end) {
     request.on_timing(begin, end);
   };

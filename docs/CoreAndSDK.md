@@ -115,15 +115,17 @@ in
 
 - Each entry is `{ name; type; blob; }`. `type` is `html` or `dawn`. `blob` is one file in the Nix store: a self-contained HTML file for `html`, a Wasm binary for `dawn`.
 - Include SDK-provided views explicitly with `sdk.views`. LineChart and Points are HTML views in the SDK. Custom HTML can include its own JS and Wasm.
-- The UI shows declared views before execution and resolves their names. Undeclared or duplicate names produce a UI error.
-- Messages carry bytes in both directions through the worker, core and UI. The Card controls send pacing through [ABI backpressure](CardABI.md#display-messages).
+- The Card calls `view_open` by name to create a window. Each open creates a session and an opener route. A Card that receives a session from a port can send to that window and register its own route to receive responses.
+- PANEL opens in the project window on macOS and over the canvas on the Web. WINDOW opens a separate window and accepts an optional initial content size. FULLSCREEN opens a native fullscreen window on macOS and a browser child window with a fullscreen button on the Web. A packed app presents PANEL in its main window.
+- Messages travel to one session or one route through the worker, core and UI. The relay uses [ABI backpressure](CardABI.md#display-messages). A window retains its last frame after its routes go away. Closing the window gives every live route a close event.
 - View traffic is live. Use output ports and artifacts for results that people will inspect later. [Run history](RunHistory.md)
 
 ### html views
 
-The UI loads the file in an isolated frame without network access and transfers
-a `MessagePort` with a window message `{tsugumi: 1, port}`. The port carries
-`{type: "data", bytes: ArrayBuffer}` messages in both directions. The view
+The UI loads the file in an isolated frame without network access. Use
+`tsugumi.onmessage = (bytes) => { /* draw */ }` to receive Card messages.
+Use `tsugumi.send(bytes, route)` to send to a specific route, where `route` is
+a 16-byte `Uint8Array`. Omitting it sends to the opener's route. The view
 draws its empty state and handles resize. SDK views reassemble their own chunks.
 
 ### dawn views
@@ -144,9 +146,11 @@ A dawn view is a wasm32 module that draws to one WebGPU surface. Its contract is
 - **Calls:** the host checks the imports and exports, calls `abi` (it must return 0),
   then `start` and one `draw`. It draws again on the next display frame only when
   `draw` returns bit 0, and otherwise only after an event (message, resize, pointer,
-  key). `read` copies the current message only inside `message(size)`. `send` never
-  blocks; it returns negative when the host cannot take the bytes, and the bytes go to
-  the Card's `recv`. A negative return or a trap drops the instance and shows the error.
+  key). `read` copies the current message only inside `message(size)`.
+  `tsugumi_view_send(route, data, size)` takes a 16-byte route. An all-zero route
+  addresses the opener. Sending is nonblocking. The host rejects routes from
+  other windows and drops traffic for dead routes. A negative callback return
+  or a trap drops the instance and shows the error.
   All calls come from one thread; there is one instance per view.
 
 Both UIs translate the module's 32-bit descriptors with code generated at build time
@@ -186,7 +190,3 @@ These hold through the whole change ([Philosophy](Philosophy.md#a-laboratory-not
 - Definitions (code and environment) may be shared by the machine.
 
 See [Remote execution](RemoteExecution.md#data-left-on-a-worker) and [Where data is kept](security.md#8-where-data-is-kept-and-how-to-delete-it).
-
-## Open
-
-TODO(open): Display recording and recording of results that depend on view interaction.

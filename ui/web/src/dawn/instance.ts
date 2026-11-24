@@ -11,7 +11,6 @@ interface DawnDevice {
   queue: object
   lost: Promise<{ message: string }>
   onuncapturederror: ((event: { error: { message: string } }) => void) | null
-  destroy(): void
 }
 interface DawnGpu {
   requestAdapter(): Promise<{ requestDevice(): Promise<DawnDevice> } | null>
@@ -25,8 +24,42 @@ interface DawnContext {
 
 export const browserGpu = (): DawnGpu | undefined => (navigator as Navigator & { gpu?: DawnGpu }).gpu
 
+// Every canvas presented by this opener, including its child windows,
+// uses one device. Each view still owns its WebGPU handles and canvas context.
+interface SharedDawnDevice {
+  device: DawnDevice
+  format: string
+  errors: Set<(message: string) => void>
+}
+
+let gpuDevice: Promise<SharedDawnDevice> | undefined
+
+function sharedDevice() {
+  if (!gpuDevice) {
+    const pending = (async () => {
+      const gpu = browserGpu()
+      if (!gpu) throw new Error('WebGPU is unavailable')
+      const adapter = await gpu.requestAdapter()
+      if (!adapter) throw new Error('WebGPU did not provide an adapter')
+      const device = await adapter.requestDevice()
+      const errors = new Set<(message: string) => void>()
+      const report = (message: string) => { for (const listener of errors) listener(message) }
+      device.onuncapturederror = ({ error }) => report(error.message)
+      void device.lost.then(({ message }) => {
+        if (gpuDevice === pending) gpuDevice = undefined
+        report(message || 'WebGPU device lost')
+      })
+      return { device, errors, format: gpu.getPreferredCanvasFormat() }
+    })()
+    gpuDevice = pending
+    void pending.catch(() => { if (gpuDevice === pending) gpuDevice = undefined })
+  }
+  return gpuDevice
+}
+
 interface ViewHost {
-  send(bytes: Uint8Array<ArrayBuffer>): Promise<unknown>
+  send(bytes: Uint8Array<ArrayBuffer>, route: Uint8Array<ArrayBuffer>): Promise<unknown>
+  acceptsRoute?(route: Uint8Array<ArrayBuffer>): boolean
   onSendError(error?: unknown): void
   onGpuError(message: string): void
   onFatal(error: unknown): void
@@ -45,38 +78,35 @@ export class DawnViewInstance {
   private stopped = false
   private disposed = false
   private currentMessage?: Uint8Array<ArrayBuffer>
-  private readonly reverse: Uint8Array<ArrayBuffer>[] = []
+  private readonly reverse: { bytes: Uint8Array<ArrayBuffer>; route: Uint8Array<ArrayBuffer> }[] = []
   private reverseBytes = 0
   private sending = false
 
   private constructor(
     private readonly canvas: HTMLCanvasElement,
     private readonly context: DawnContext,
-    private readonly device: DawnDevice,
+    private readonly shared: SharedDawnDevice,
+    private readonly owner: Window & typeof globalThis,
     private readonly options: ViewHost,
   ) {}
 
   static async mount(module: WebAssembly.Module, canvas: HTMLCanvasElement, options: ViewHost, signal: AbortSignal) {
-    const gpu = browserGpu()
-    if (!gpu) throw new Error('WebGPU is unavailable')
-    const adapter = await gpu.requestAdapter()
     signal.throwIfAborted()
-    if (!adapter) throw new Error('WebGPU did not provide an adapter')
-    const format = gpu.getPreferredCanvasFormat()
+    const shared = await sharedDevice()
+    signal.throwIfAborted()
+    const owner = canvas.ownerDocument.defaultView
+    if (!owner) throw new Error('The WebGPU canvas has no window')
+    const { format } = shared
     const formatValue = textureFormatValue.get(format)
     if (formatValue === undefined) throw new Error(`Unsupported Dawn view texture format: ${format}`)
-    const device = await adapter.requestDevice()
-    let view: DawnViewInstance | undefined
+    const context = canvas.getContext('webgpu') as unknown as DawnContext | null
+    if (!context) throw new Error('Could not create the WebGPU canvas context')
+    const view = new DawnViewInstance(canvas, context, shared, owner, options)
     try {
-      signal.throwIfAborted()
-      const context = canvas.getContext('webgpu') as unknown as DawnContext | null
-      if (!context) throw new Error('Could not create the WebGPU canvas context')
-      view = new DawnViewInstance(canvas, context, device, options)
       view.start(module, format, formatValue)
       return view
     } catch (error) {
-      if (view) view.stop()
-      else device.destroy()
+      view.dispose()
       throw error
     }
   }
@@ -93,22 +123,20 @@ export class DawnViewInstance {
       webgpu: { ...webgpu },
       tsugumi: {
         tsugumi_view_read: (ptr: number, size: number) => this.read(ptr, size),
-        tsugumi_view_send: (ptr: number, size: number) => this.send(ptr, size),
+        tsugumi_view_send: (route: number, ptr: number, size: number) => this.send(route, ptr, size),
       },
     })
     this.exports = instance.exports
     this.memory = instance.exports.memory as WebAssembly.Memory
     checkViewAbi(this.call('abi'))
     this.resizeCanvas()
-    this.context.configure({ device: this.device, format, alphaMode: 'opaque' })
+    const { device, errors } = this.shared
+    this.context.configure({ device, format, alphaMode: 'opaque' })
     this.configured = true
-    this.device.onuncapturederror = ({ error }) => this.options.onGpuError(error.message)
-    void this.device.lost.then(({ message }) => {
-      if (!this.stopped) this.options.onGpuError(message || 'WebGPU device lost')
-    })
+    errors.add(this.options.onGpuError)
 
-    const deviceId = this.handles.add('Device', this.device)
-    const queueId = this.handles.add('Queue', this.device.queue)
+    const deviceId = this.handles.add('Device', device)
+    const queueId = this.handles.add('Queue', device.queue)
     this.call('start', deviceId, queueId, formatValue, this.canvas.width, this.canvas.height, this.scale)
     this.draw()
     if (!this.stopped) this.observe()
@@ -139,7 +167,7 @@ export class DawnViewInstance {
 
   private scheduleDraw() {
     if (!this.stopped && this.frame === undefined)
-      this.frame = requestAnimationFrame(() => {
+      this.frame = this.owner.requestAnimationFrame(() => {
         this.frame = undefined
         this.draw()
       })
@@ -170,7 +198,7 @@ export class DawnViewInstance {
   }
 
   private resizeCanvas(box?: ResizeObserverSize): boolean {
-    const scale = window.devicePixelRatio
+    const scale = this.owner.devicePixelRatio
     const width = Math.max(1, box?.inlineSize ?? Math.round(this.canvas.clientWidth * scale))
     const height = Math.max(1, box?.blockSize ?? Math.round(this.canvas.clientHeight * scale))
     const changed = this.canvas.width !== width || this.canvas.height !== height || this.scale !== scale
@@ -187,13 +215,13 @@ export class DawnViewInstance {
       if (!this.stopped && this.resizeCanvas(box))
         this.event('resize', canvas.width, canvas.height, this.scale)
     }
-    this.observer = new ResizeObserver(([entry]) => resize(entry?.devicePixelContentBoxSize?.[0]))
+    this.observer = new this.owner.ResizeObserver(([entry]) => resize(entry?.devicePixelContentBoxSize?.[0]))
     try {
       this.observer.observe(canvas, { box: 'device-pixel-content-box' })
     } catch {
       this.observer.observe(canvas)
     }
-    window.addEventListener('resize', () => resize(), { signal })
+    this.owner.addEventListener('resize', () => resize(), { signal })
 
     if (this.callback('pointer')) {
       const pointer = (event: MouseEvent, kind: number, dx = 0, dy = 0) => {
@@ -255,19 +283,20 @@ export class DawnViewInstance {
     return 0
   }
 
-  private send(ptr: number, size: number): number {
+  private send(routePtr: number, ptr: number, size: number): number {
     if (this.stopped) return -1
     // The relay accepts one full message while the pending bytes are at or below the limit.
     const src = (size >>> 0) <= messageMax && this.reverseBytes <= messageMax
       ? this.memoryBytes(ptr, size)
       : undefined
-    if (!src) {
+    const route = this.memoryBytes(routePtr, 16)
+    if (!src || !route || this.options.acceptsRoute?.(route) === false) {
       this.options.onSendError()
       return -1
     }
     const bytes = src.slice()
     this.reverseBytes += Math.max(1, bytes.length)
-    this.reverse.push(bytes)
+    this.reverse.push({ bytes, route: route.slice() })
     if (!this.sending) {
       this.sending = true
       queueMicrotask(() => { void this.drain() })
@@ -277,9 +306,9 @@ export class DawnViewInstance {
 
   private async drain() {
     while (this.reverse.length && !this.disposed) {
-      const bytes = this.reverse.shift()!
+      const { bytes, route } = this.reverse.shift()!
       try {
-        await this.options.send(bytes)
+        await this.options.send(bytes, route)
       } catch (error) {
         if (!this.disposed) this.options.onSendError(error)
       } finally {
@@ -300,14 +329,13 @@ export class DawnViewInstance {
     this.events.abort()
     this.canvas.removeAttribute(viewKeysAttribute)
     this.observer?.disconnect()
-    if (this.frame !== undefined) cancelAnimationFrame(this.frame)
+    if (this.frame !== undefined) this.owner.cancelAnimationFrame(this.frame)
     this.exports = undefined
     this.memory = undefined
     this.currentMessage = undefined
     this.handles = new Handles()
-    this.device.onuncapturederror = null
+    this.shared.errors.delete(this.options.onGpuError)
     if (this.configured) this.context.unconfigure()
-    this.device.destroy()
   }
 
   dispose() {

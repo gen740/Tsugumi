@@ -14,8 +14,10 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <thread>
+#include <utility>
 
 #include "display_channel.hh"
 #include "nix_store.hh"
@@ -197,6 +199,16 @@ class InvocationDisplay {
     ready_.notify_one();
   }
 
+  auto request(const WorkerViewRequest& request)
+      -> std::optional<WorkerViewReply> {
+    std::lock_guard lock(mutex_);
+    if (closed_ || stopping_) return WorkerViewReply{request.request_id, false};
+    request_ = request;
+    outstanding_request_ = request.request_id;
+    ready_.notify_one();
+    return std::nullopt;
+  }
+
  private:
   auto write() -> void {
     try {
@@ -206,9 +218,18 @@ class InvocationDisplay {
       for (;;) {
         std::unique_lock lock(mutex_);
         ready_.wait(lock, [&] {
-          return stopping_ || closed_ || !pending_.empty() || !credits_.empty();
+          return stopping_ || closed_ || request_ || !pending_.empty() ||
+                 !credits_.empty();
         });
         if (closed_) return;
+        if (request_) {
+          auto request = std::exchange(request_, std::nullopt);
+          lock.unlock();
+          flatbuffers::FlatBufferBuilder b;
+          workerd::build_view_request(b, *request);
+          workerd::write_display_frame(workerd::kDisplayChannelFd, b);
+          continue;
+        }
         if (!credits_.empty()) {
           auto credit = credits_.extract(credits_.begin());
           lock.unlock();
@@ -219,11 +240,12 @@ class InvocationDisplay {
         if (stopping_ && pending_.empty()) return;
         auto [display, complete] = std::move(pending_.front());
         pending_.pop_front();
-        in_flight_[display.view].emplace_back(
+        in_flight_[display.session].emplace_back(
             workerd::message_cost(display.bytes.size()), std::move(complete));
         lock.unlock();
-        workerd::write_display(workerd::kDisplayChannelFd, display.view,
-                               display.bytes);
+        flatbuffers::FlatBufferBuilder b;
+        workerd::build_display(b, display.session, display.bytes);
+        workerd::write_display_frame(workerd::kDisplayChannelFd, b);
       }
     } catch (const std::exception&) {
       ::shutdown(workerd::kDisplayChannelFd, SHUT_RDWR);
@@ -234,29 +256,46 @@ class InvocationDisplay {
     try {
       while (auto frame = workerd::read_display(workerd::kDisplayChannelFd)) {
         const auto* envelope = W::GetWorkerMessage(frame->data());
-        if (const auto* message = envelope->value_as_WorkerDisplay()) {
-          if (auto worker = target_.lock()) {
-            WorkerDisplayData display{message->view()->str(),
-                                      bytes(message->bytes())};
-            // Once the worker retires, reverse messages may still be in
-            // transit. Keep draining forward credits until the writer stops.
-            if (worker->send(display, [this, view = display.view,
-                                        cost = workerd::message_cost(
-                                            display.bytes.size())] {
-                  std::lock_guard lock(mutex_);
-                  credits_[view] += cost;
-                  ready_.notify_one();
-                }) != WorkerProc::ViewDelivery::accepted) {
-              target_.reset();
-            }
+        if (const auto* response = envelope->value_as_WorkerViewReply()) {
+          {
+            std::lock_guard lock(mutex_);
+            if (response->request_id() == 0 ||
+                response->request_id() != outstanding_request_)
+              break;
+            outstanding_request_ = 0;
           }
+          if (auto worker = target_.lock())
+            worker->reply(workerd::view_reply(*response));
+          continue;
+        }
+        if (const auto* message = envelope->value_as_WorkerViewEvent()) {
+          auto event = workerd::view_event(*message);
+          if (!workerd::valid_view_event(event)) break;
+          WorkerProc::DisplayCredit complete;
+          if (event.kind == ViewEventKind::message) {
+            complete = [this, route = event.route,
+                        cost = workerd::message_cost(event.bytes.size())] {
+              std::lock_guard lock(mutex_);
+              credits_[route] += cost;
+              ready_.notify_one();
+            };
+          }
+          // Continue to return credits while the worker retires.
+          const auto worker = target_.lock();
+          const auto delivery = worker ? worker->send(event, complete)
+                                       : WorkerProc::ViewDelivery::closed;
+          if (delivery == WorkerProc::ViewDelivery::full)
+            throw std::runtime_error(
+                "remote event exceeded the worker relay credit");
+          if (delivery == WorkerProc::ViewDelivery::closed && complete)
+            complete();
           continue;
         }
         const auto* credit = envelope->value_as_WorkerDisplayCredit();
         if (!credit) break;
         size_t bytes = credit->bytes();
         std::unique_lock lock(mutex_);
-        auto& view = in_flight_[credit->view()->str()];
+        auto& view = in_flight_[workerd::view_uuid(credit->address())];
         while (bytes) {
           if (view.empty() || bytes < view.front().first)
             throw std::runtime_error("invalid remote display credit");
@@ -273,10 +312,13 @@ class InvocationDisplay {
     ::shutdown(workerd::kDisplayChannelFd, SHUT_RDWR);
     std::unique_lock lock(mutex_);
     closed_ = true;
+    const auto request_id = std::exchange(outstanding_request_, 0);
     auto in_flight = std::move(in_flight_);
     auto pending = std::move(pending_);
     ready_.notify_all();
     lock.unlock();
+    if (request_id)
+      if (auto worker = target_.lock()) worker->reply({request_id, false});
     for (auto& [name, view] : in_flight)
       for (auto& [cost, complete] : view) complete();
     for (auto& [display, complete] : pending) complete();
@@ -286,12 +328,13 @@ class InvocationDisplay {
   std::mutex mutex_;
   std::condition_variable ready_;
   std::deque<std::pair<WorkerDisplayData, WorkerProc::DisplayCredit>> pending_;
-  std::map<std::string,
-           std::deque<std::pair<size_t, WorkerProc::DisplayCredit>>>
+  std::optional<WorkerViewRequest> request_;
+  uint64_t outstanding_request_ = 0;
+  std::map<ViewUuid, std::deque<std::pair<size_t, WorkerProc::DisplayCredit>>>
       in_flight_;
   bool stopping_ = false;
   bool closed_ = false;
-  std::map<std::string, size_t> credits_;
+  std::map<ViewUuid, size_t> credits_;
   std::thread reader_;
   std::thread writer_;
 };
@@ -407,6 +450,9 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   request.log = log;
   request.display = [&display](auto message, auto complete) {
     display.push(std::move(message), std::move(complete));
+  };
+  request.view_control = [&display](const auto& control) {
+    return display.request(control);
   };
   return workerd::run_invocation(
       [](std::unique_ptr<WorkerProc>, bool, const std::string&) {}, lease,

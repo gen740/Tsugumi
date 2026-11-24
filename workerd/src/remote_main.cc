@@ -72,7 +72,8 @@ struct Fd {
     if (value >= 0) ::close(value);
   }
 };
-// The adapter and the project each have an independent credit window per view.
+// The adapter and the project each have an independent credit windows per
+// session and route.
 class DisplayChannel {
  public:
   explicit DisplayChannel(Fd&& descriptor)
@@ -94,19 +95,27 @@ class DisplayChannel {
   auto take(R::JobStatusT& status, const R::StatusRequestT& query) -> void {
     std::lock_guard lock(mutex_);
     if (query.display_after == sequence_) replay_.reset();
+    if (!closed_ && request_ && query.view_reply &&
+        query.view_reply->request_id == request_->request_id) {
+      response_ = *query.view_reply;
+      request_.reset();
+      ready_.notify_all();
+    }
+    if (!closed_ && request_)
+      status.view_request = std::make_unique<W::WorkerViewRequestT>(*request_);
     for (const auto& credit : query.display_credits) {
-      const auto view = outbound_.find(credit->view);
+      const auto view = outbound_.find(view_uuid(credit->address.get()));
       if (view != outbound_.end() && credit->released <= view->second.sent)
         view->second.released =
             std::max(view->second.released, credit->released);
     }
     if (!replay_) {
       const auto next = std::ranges::find_if(pending_, [&](const auto& item) {
-        const auto& view = outbound_.at(item.view);
+        const auto& view = outbound_.at(view_uuid(item.session.get()));
         return view.sent - view.released <= kViewBudget - TSUGUMI_MESSAGE_MAX;
       });
       if (next != pending_.end()) {
-        auto& view = outbound_.at(next->view);
+        auto& view = outbound_.at(view_uuid(next->session.get()));
         const auto size = message_cost(next->bytes.size());
         view.queued -= size;
         view.sent += size;
@@ -124,9 +133,9 @@ class DisplayChannel {
       status.display_sequence = sequence_;
     }
     status.view_input_ready = input_ready_ && !closed_;
-    for (const auto& [name, view] : inbound_) {
+    for (const auto& [route, view] : inbound_) {
       auto credit = std::make_unique<R::DisplayCreditT>();
-      credit->view = name;
+      credit->address = std::make_unique<W::ViewUuid>(view_uuid(route));
       credit->released = view.released;
       status.view_input_credits.push_back(std::move(credit));
     }
@@ -136,21 +145,28 @@ class DisplayChannel {
   }
 
   auto send(const R::ViewSendRequestT& request) -> bool {
-    const auto& message = *request.display;
-    if (message.view.empty() || message.bytes.size() > TSUGUMI_MESSAGE_MAX)
-      return false;
+    const auto& raw = *request.event;
+    WorkerViewEvent event{static_cast<ViewEventKind>(raw.kind),
+                          view_uuid(raw.route.get()),
+                          view_uuid(raw.session.get()),
+                          std::string(raw.bytes.begin(), raw.bytes.end())};
+    if (!valid_view_event(event)) return false;
     std::lock_guard lock(mutex_);
     if (!input_ready_ || closed_) return false;
-    auto& view = inbound_[message.view];
-    if (request.offset < view.accepted)
-      return true;  // Retried after a lost reply.
-    if (request.offset != view.accepted ||
-        view.queued > kViewBudget - TSUGUMI_MESSAGE_MAX)
-      return false;
-    view.pending.emplace_back(message.bytes.begin(), message.bytes.end());
-    const auto cost = message_cost(message.bytes.size());
-    view.queued += cost;
-    view.accepted += cost;
+    auto& route = inbound_[event.route];
+    if (event.kind == ViewEventKind::close) {
+      if (std::exchange(route.closed, true)) return true;
+    } else {
+      if (request.offset < route.accepted)
+        return true;  // Retried after a lost reply.
+      if (route.closed || request.offset != route.accepted ||
+          route.queued > kViewBudget - TSUGUMI_MESSAGE_MAX)
+        return false;
+      const auto cost = message_cost(event.bytes.size());
+      route.queued += cost;
+      route.accepted += cost;
+    }
+    route.pending.push_back(std::move(event));
     ready_.notify_all();
     return true;
   }
@@ -169,10 +185,11 @@ class DisplayChannel {
     uint64_t released = 0;
   };
   struct Inbound {
-    std::deque<std::string> pending;
+    std::deque<WorkerViewEvent> pending;
     size_t queued = 0;
     size_t in_flight = 0;
     uint64_t accepted = 0, released = 0;
+    bool closed = false;
   };
 
   auto read() -> void {
@@ -186,8 +203,17 @@ class DisplayChannel {
         while (auto frame = read_display(socket_.value)) {
           const auto* envelope = W::GetWorkerMessage(frame->data());
           std::lock_guard lock(mutex_);
+          if (const auto* request = envelope->value_as_WorkerViewRequest()) {
+            if (request_ || response_ || request->request_id() <= request_id_ ||
+                request->kind() > W::ViewControlKind::Unregister)
+              break;
+            request_id_ = request->request_id();
+            request_.emplace();
+            request->UnPackTo(&*request_);
+            continue;
+          }
           if (const auto* credit = envelope->value_as_WorkerDisplayCredit()) {
-            const auto view = inbound_.find(credit->view()->str());
+            const auto view = inbound_.find(view_uuid(credit->address()));
             if (view == inbound_.end() || credit->bytes() > view->second.in_flight)
               break;
             view->second.in_flight -= credit->bytes();
@@ -195,11 +221,11 @@ class DisplayChannel {
             continue;
           }
           const auto* message = envelope->value_as_WorkerDisplay();
-          if (!message || !message->view()->size() ||
+          if (!message || view_uuid(message->session()) == ViewUuid{} ||
               message->bytes()->size() > TSUGUMI_MESSAGE_MAX)
             break;
           const auto size = message_cost(message->bytes()->size());
-          auto& view = outbound_[message->view()->str()];
+          auto& view = outbound_[view_uuid(message->session())];
           if (view.queued > kViewBudget - TSUGUMI_MESSAGE_MAX) break;
           view.queued += size;
           pending_.emplace_back();
@@ -215,23 +241,38 @@ class DisplayChannel {
   }
 
   auto write() -> void {
-    std::string last;
+    ViewUuid last{};
     const auto has_credit = [](const auto& entry) {
       return entry.second.credit != 0;
     };
-    const auto can_send = [](const auto& entry) {
-      const auto& view = entry.second;
-      return !view.pending.empty() &&
-             view.in_flight <= kViewBudget - TSUGUMI_MESSAGE_MAX;
+    const auto has_capacity = [](const Inbound& route) {
+      return route.in_flight <= kViewBudget - TSUGUMI_MESSAGE_MAX;
+    };
+    const auto can_send = [&](const auto& entry) {
+      const auto& route = entry.second;
+      return !route.pending.empty() &&
+             (route.pending.front().kind == ViewEventKind::close ||
+              has_capacity(route));
     };
     try {
       for (;;) {
         std::unique_lock lock(mutex_);
         ready_.wait(lock, [&] {
-          return closed_ || std::ranges::any_of(outbound_, has_credit) ||
+          return closed_ || response_ ||
+                 std::ranges::any_of(outbound_, has_credit) ||
                  std::ranges::any_of(inbound_, can_send);
         });
         if (closed_) return;
+        if (response_) {
+          const auto response = std::exchange(response_, std::nullopt);
+          lock.unlock();
+          flatbuffers::FlatBufferBuilder b;
+          build_view_reply(b, {response->request_id, response->ok,
+                               view_uuid(response->session.get()),
+                               view_uuid(response->route.get())});
+          write_display_frame(socket_.value, b);
+          continue;
+        }
         // Credit can unblock the other direction even when data cannot move.
         const auto credit_entry = std::ranges::find_if(outbound_, has_credit);
         if (credit_entry != outbound_.end()) {
@@ -245,15 +286,19 @@ class DisplayChannel {
         auto next = std::find_if(inbound_.upper_bound(last), end, can_send);
         if (next == end) next = std::find_if(inbound_.begin(), end, can_send);
         last = next->first;
-        auto& view = next->second;
-        auto bytes = std::move(view.pending.front());
-        view.pending.pop_front();
-        const auto cost = message_cost(bytes.size());
-        view.queued -= cost;
-        view.released += cost;
-        view.in_flight += cost;
+        auto& route = next->second;
+        auto event = std::move(route.pending.front());
+        route.pending.pop_front();
+        if (event.kind == ViewEventKind::message) {
+          const auto cost = message_cost(event.bytes.size());
+          route.queued -= cost;
+          route.released += cost;
+          route.in_flight += cost;
+        }
         lock.unlock();
-        write_display(socket_.value, last, bytes);
+        flatbuffers::FlatBufferBuilder b;
+        build_view_event(b, event);
+        write_display_frame(socket_.value, b);
       }
     } catch (const std::exception&) {
       ::shutdown(socket_.value, SHUT_RDWR);
@@ -266,8 +311,11 @@ class DisplayChannel {
   std::deque<W::WorkerDisplayT> pending_;
   std::optional<W::WorkerDisplayT> replay_;
   uint64_t sequence_ = 0;
-  std::map<std::string, Outbound> outbound_;
-  std::map<std::string, Inbound> inbound_;
+  std::map<ViewUuid, Outbound> outbound_;
+  std::map<ViewUuid, Inbound> inbound_;
+  uint64_t request_id_ = 0;
+  std::optional<W::WorkerViewRequestT> request_;
+  std::optional<W::WorkerViewReplyT> response_;
   bool input_ready_ = false;
   std::optional<std::chrono::steady_clock::time_point> closed_;
   std::thread reader_;

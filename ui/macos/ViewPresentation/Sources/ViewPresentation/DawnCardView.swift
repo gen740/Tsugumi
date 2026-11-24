@@ -6,87 +6,43 @@ import QuartzCore
 import SwiftUI
 import TsugumiViewHostC
 
-struct DawnCardView: View {
-  let session: ProjectSession
-  let cardKey: CardKey
-  let index: Int
-  let view: CardViewDeclaration
-  @State private var host: DawnViewHost?
-  @State private var error: String?
-
-  private struct Selection: Hashable {
-    let card: CardKey
-    let index: Int
-    let view: CardViewDeclaration
-  }
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      if let host {
-        DawnViewRepresentable(host: host).id(ObjectIdentifier(host))
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
-      } else if error == nil {
-        ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-      }
-      if let message = error ?? host?.error {
-        Text(verbatim: message).font(.caption).foregroundStyle(.red).textSelection(.enabled)
-      }
-    }
-    .task(id: Selection(card: cardKey, index: index, view: view)) { await show() }
-  }
-
-  private func show() async {
-    host = nil
-    error = nil
-    do {
-      let wasm = try await session.viewFiles.read(card: path(cardKey), index: index, name: view.name)
-      try Task.checkCancellation()
-      let created = DawnViewHost(session: session, cardKey: cardKey, name: view.name, wasm: wasm)
-      host = created
-      defer { created.close() }
-      while !Task.isCancelled { try await Task.sleep(for: .seconds(3600)) }
-    } catch {
-      if !Task.isCancelled { self.error = error.localizedDescription }
-    }
-  }
-}
-
-private struct DawnViewRepresentable: NSViewRepresentable {
+struct DawnViewRepresentable: NSViewRepresentable {
   let host: DawnViewHost
 
-  func makeNSView(context: Context) -> DawnLayerView { DawnLayerView(host: host) }
+  func makeNSView(context: Context) -> DawnLayerView { host.view }
   func updateNSView(_ view: DawnLayerView, context: Context) {}
   static func dismantleNSView(_ view: DawnLayerView, coordinator: ()) { view.stopDrawing() }
 }
 
-/// Owns the Wasm instance and its relay attachment. Every native call, including
+/// Owns the Wasm instance and its view. Every native call, including
 /// the synchronous reverse message callback, runs on the main actor.
-@MainActor @Observable private final class DawnViewHost: NSObject {
-  private let session: ProjectSession
-  private let cardKey: CardKey
-  private let name: String
+@MainActor @Observable final class DawnViewHost: NSObject {
+  private let acceptsRoute: @MainActor (UUID) -> Bool
+  private let sendToCard: (UUID, Data) async throws -> Void
+  @ObservationIgnored lazy var view = DawnLayerView(host: self)
+  @ObservationIgnored private var outbox = CardViewOutbox()
   @ObservationIgnored private var wasm: Data?
-  @ObservationIgnored private var attachment: UUID?
   @ObservationIgnored private var native: OpaquePointer?
   @ObservationIgnored private var accepts: UInt32 = 0
   @ObservationIgnored private var link: CADisplayLink?
-  @ObservationIgnored private var reverse: [Data] = []
+  @ObservationIgnored private var reverse: [(UUID, Data)] = []
   @ObservationIgnored private var reverseBytes = 0
   @ObservationIgnored private var reverseTask: Task<Void, Never>?
   private(set) var error: String?
 
-  init(session: ProjectSession, cardKey: CardKey, name: String, wasm: Data) {
-    self.session = session
-    self.cardKey = cardKey
-    self.name = name
+  init(wasm: Data, acceptsRoute: @escaping @MainActor (UUID) -> Bool,
+       sendToCard: @escaping (UUID, Data) async throws -> Void) {
+    self.acceptsRoute = acceptsRoute
+    self.sendToCard = sendToCard
     self.wasm = wasm
     super.init()
   }
 
-  private static let send: tsugumi_view_host_send_fn = { context, bytes, size in
-    guard let context else { return -1 }
+  private static let send: tsugumi_view_host_send_fn = { context, route, bytes, size in
+    guard let context, let route else { return -1 }
     return MainActor.assumeIsolated {
-      Unmanaged<DawnViewHost>.fromOpaque(context).takeUnretainedValue().enqueue(bytes, size: Int(size))
+      Unmanaged<DawnViewHost>.fromOpaque(context).takeUnretainedValue()
+        .enqueue(viewRoute(route), bytes: bytes, size: Int(size))
     }
   }
 
@@ -108,10 +64,8 @@ private struct DawnViewRepresentable: NSViewRepresentable {
     accepts = tsugumi_view_host_accepts(created)
     installDisplayLink(for: view)
     drawFrame()
-    guard native != nil else { return }
-    attachment = session.cardViews.attach(cardKey, view: name) { [weak self] message, complete in
-      if let self { receive(message, complete: complete) }
-      else { complete() }
+    while native != nil, let (message, complete) = outbox.take() {
+      receive(message, complete: complete)
     }
   }
 
@@ -160,10 +114,7 @@ private struct DawnViewRepresentable: NSViewRepresentable {
 
   func close() {
     stopDrawing()
-    if let attachment {
-      session.cardViews.detach(attachment)
-      self.attachment = nil
-    }
+    outbox.discard()
     if let native {
       tsugumi_view_host_destroy(native)
       self.native = nil
@@ -174,6 +125,14 @@ private struct DawnViewRepresentable: NSViewRepresentable {
     reverseTask = nil
     reverse.removeAll()
     reverseBytes = 0
+  }
+
+  func send(_ message: CardViewMessage, complete: @escaping () -> Void) {
+    if wasm != nil {
+      outbox.put(message, complete: complete)
+    } else {
+      receive(message, complete: complete)
+    }
   }
 
   private func receive(_ message: CardViewMessage, complete: () -> Void) {
@@ -205,10 +164,11 @@ private struct DawnViewRepresentable: NSViewRepresentable {
     finish(tsugumi_view_host_key(native, kind, code, dawnModifiers(event.modifierFlags)), native: native)
   }
 
-  private func enqueue(_ bytes: UnsafePointer<UInt8>?, size: Int) -> Int32 {
+  private func enqueue(_ route: UUID, bytes: UnsafePointer<UInt8>?, size: Int) -> Int32 {
     let limit = 1 << 24
-    guard size <= limit, reverseBytes <= limit, size == 0 || bytes != nil else { return -1 }
-    reverse.append(bytes.map { Data(bytes: $0, count: size) } ?? Data())
+    guard acceptsRoute(route), size <= limit, reverseBytes <= limit,
+          size == 0 || bytes != nil else { return -1 }
+    reverse.append((route, bytes.map { Data(bytes: $0, count: size) } ?? Data()))
     reverseBytes += max(1, size)
     if reverseTask == nil {
       reverseTask = Task { await flushReverse() }
@@ -217,17 +177,16 @@ private struct DawnViewRepresentable: NSViewRepresentable {
   }
 
   private func flushReverse() async {
-    var batch: [Data] = []
+    var batch: [(UUID, Data)] = []
     while !Task.isCancelled {
       // Drain each batch in arrival order without shifting the queue per send.
       if batch.isEmpty {
         batch = Array(reverse.reversed())
         reverse.removeAll()
       }
-      guard let bytes = batch.popLast() else { break }
+      guard let (route, bytes) = batch.popLast() else { break }
       do {
-        guard let rpc = session.rpc else { throw CardViewFileError.unavailable }
-        try await rpc.sendView(card: path(cardKey), view: name, bytes: bytes)
+        try await sendToCard(route, bytes)
       } catch {
         if !Task.isCancelled { self.error = error.localizedDescription }
       }

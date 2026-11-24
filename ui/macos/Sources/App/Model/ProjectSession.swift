@@ -1,3 +1,4 @@
+import TsugumiViewPresentation
 import TsugumiAgentClient
 import FlatBuffers
 import Foundation
@@ -314,11 +315,7 @@ final class ProjectSession {
     }
   }
   private(set) var cardStates: [CardKey: CardRunState] = [:]
-  /// Live view traffic of the Cards whose view windows are open (never recorded).
-  let cardViews = CardViewRelay()
-  /// How declared view files are read from the project core.
-  var viewFiles = CardViewFiles.unavailable
-  @ObservationIgnored private var displayViewers: [UUID: CardKey] = [:]
+  let cardViews = CardViewPresentation()
   private(set) var lastFinished: Date?
   private(set) var remoteHistoryRevision = 0
   private(set) var recordingRevision = 0
@@ -413,6 +410,7 @@ final class ProjectSession {
   /// host keeps project execution alive. The caller first settles unsaved edits.
   func close() async {
     closed = true
+    cardViews.closeAll()
     startTask?.cancel()
     terminals.closeAll()
     listenTask?.cancel()
@@ -452,7 +450,6 @@ final class ProjectSession {
       let opened = try await c.open(viewId: viewId)
       if Task.isCancelled || closed { await c.close(); return }
       client = c
-      viewFiles = .rpc { [weak self] in self?.client }
       receiveProjectSnapshot(opened.snapshot, projectId: ep.projectId)
       subscription = opened.subscriptionId
       lastSeq = opened.seq ?? 1
@@ -461,7 +458,6 @@ final class ProjectSession {
         makeRepositoryOnConnect = false
         _ = try? await c.versionInit(opId: UUID(), origin: "ui")
       }
-      await refreshVisibleDisplays()
       await restoreCardStates(c)
     } catch {
       guard !Task.isCancelled, !closed else { return }
@@ -580,6 +576,7 @@ final class ProjectSession {
   /// queued behind that work. Nothing here waits.
   func endForQuit() {
     closed = true
+    cardViews.closeAll()
     startTask?.cancel()
     listenTask?.cancel()
     reconnectTask?.cancel()
@@ -648,7 +645,7 @@ final class ProjectSession {
       if let d = (e.payload.value as? Tsugumi_RPC_DocPatchedT)?.delta { applyDelta(d) }
     case .runevent:
       if let r = e.payload.value as? Tsugumi_RPC_RunEventT { applyRunEvent(r) }
-    case .cardviewsupdated, .displayupdated:
+    case .viewopened, .viewrouteregistered, .displayupdated:
       applyViewNotification(e.payload)
     case .runcategorydeleteresult:
       recordingRevision += 1
@@ -662,29 +659,36 @@ final class ProjectSession {
     return true
   }
 
-  /// Declarations and data of Card views, kept only while a window shows the Card.
-  func applyViewNotification(_ payload: Tsugumi_RPC_NotificationPayloadUnion) {
+  private func applyViewNotification(_ payload: Tsugumi_RPC_NotificationPayloadUnion) {
+    guard let client, let subscription else { return }
     switch payload.type {
-    case .cardviewsupdated:
-      if let u = payload.value as? Tsugumi_RPC_CardViewsUpdatedT, viewing(key(u.card.path)) {
-        cardViews.declare(key(u.card.path), u.views.compactMap { $0 }.map(CardViewDeclaration.init),
-                          failure: u.failure.map { $0.diagnostic ?? "\($0.kind)" })
+    case .viewopened:
+      guard let u = payload.value as? Tsugumi_RPC_ViewOpenedT,
+            let id = UUID(uuidString: u.session), let mode = CardViewMode(rawValue: u.mode) else { return }
+      let opening = CardViewOpening(id: id, card: u.card.path, name: u.name, type: u.type,
+                                    mode: mode, width: u.width, height: u.height)
+      let files = CardViewFiles { session, offset in
+        let page = try await client.readCardView(session: session, offset: offset)
+        return CardViewFilePage(bytes: Data(page.bytes), eof: page.eof == true, nextOffset: page.nextOffset)
       }
+      cardViews.open(opening, files: files, send: { route, bytes in
+        try await client.sendView(session: id, route: route, bytes: bytes)
+      }, close: {
+        try await client.closeView(session: id)
+      })
+    case .viewrouteregistered:
+      guard let registered = payload.value as? Tsugumi_RPC_ViewRouteRegisteredT,
+            let session = UUID(uuidString: registered.session),
+            let route = UUID(uuidString: registered.route) else { return }
+      cardViews.registerRoute(route, session: session)
     case .displayupdated:
-      if let d = (payload.value as? Tsugumi_RPC_DisplayUpdatedT)?.display {
-        let card = d.card.path
-        let view = d.view
-        let size = UInt32(d.bytes.count)
-        let complete = { [client, subscription, credit = d.creditId] in
-          guard let client, let subscription, let credit else { return }
-          Task { try? await client.returnViewCredit(subscription: subscription, card: card,
-                                                    view: view, bytes: size, creditId: credit) }
-        }
-        if viewing(key(card)) {
-          cardViews.receive(key(card), view: view, bytes: Data(d.bytes), complete: complete)
-        } else {
-          complete()
-        }
+      guard let d = (payload.value as? Tsugumi_RPC_DisplayUpdatedT)?.display,
+            let id = UUID(uuidString: d.session) else { return }
+      let size = UInt32(d.bytes.count)
+      cardViews.receive(id, bytes: Data(d.bytes)) { [credit = d.creditId] in
+        guard let credit else { return }
+        Task { try? await client.returnViewCredit(subscription: subscription, session: id,
+                                                  bytes: size, creditId: credit) }
       }
     default:
       break
@@ -754,8 +758,6 @@ final class ProjectSession {
     }
     resolution = r
     diagnostics = all
-    // A result belongs to a Card of the current document.
-    for k in cardViews.cards where r[k] == nil { cardViews.forget(k) }
   }
 
   /// What a Card's invocation says about the Card, from a notification or from the run's record.
@@ -1204,7 +1206,6 @@ final class ProjectSession {
 
   /// A Card that took a name another Card had starts without that Card's result and run state.
   func forgetResult(_ k: CardKey) {
-    cardViews.forget(k)
     cardStates[k] = nil
   }
 
@@ -1219,27 +1220,6 @@ final class ProjectSession {
     let file = prefix + "tsugumi.lock"
     guard sources[file] != nil, let text = carriedText(file) else { return nil }
     return try? JSONValue.parse(text)
-  }
-
-  /// View traffic is kept only for Cards a window shows.
-  private func viewing(_ card: CardKey) -> Bool { displayViewers.values.contains(card) }
-
-  func openDisplayViewer(_ id: UUID, card: CardKey) {
-    let alreadyOpen = displayViewers.values.contains(card)
-    displayViewers[id] = card
-    if !alreadyOpen { Task { await refreshVisibleDisplays() } }
-  }
-
-  func closeDisplayViewer(_ id: UUID) {
-    guard let card = displayViewers.removeValue(forKey: id), !displayViewers.values.contains(card) else { return }
-    cardViews.forget(card)
-    Task { await refreshVisibleDisplays() }
-  }
-
-  func refreshVisibleDisplays() async {
-    guard let client, let subscription else { return }
-    let cards = Set(displayViewers.values).sorted().map(path)
-    try? await client.setVisible(subscription: subscription, cards: cards, enabled: !cards.isEmpty)
   }
 
   // MARK: - Runs

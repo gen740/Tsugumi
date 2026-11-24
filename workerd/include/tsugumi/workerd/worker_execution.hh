@@ -39,6 +39,7 @@ struct Invocation {
   std::chrono::milliseconds deadline_grace{0};
   WorkerProc::LogSink log;
   WorkerProc::DisplaySink display;
+  WorkerProc::ViewControl view_control;
   std::function<void(int64_t, int64_t)> on_timing;
   std::function<void(InvocationResult&)> validate;
 };

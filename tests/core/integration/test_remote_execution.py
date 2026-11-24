@@ -28,6 +28,7 @@ from harness.file_events import process_file
 from harness.host import Host
 from harness.real_cards import PYTHON_BINDINGS, log, python_run
 from harness.values import collected_items
+from harness.views import open_view, return_credit
 from projects import (
     card,
     conn,
@@ -44,6 +45,7 @@ from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
 from Tsugumi.Data.RunState import RunState
+from Tsugumi.Trace.Client import Client
 from tsugumi_client import path, text
 
 pytestmark = pytest.mark.environment
@@ -374,7 +376,7 @@ from card import Output
 import tsugumi
 
 def run(input):
-    tsugumi.send("notes", {payload!r})
+    tsugumi.send(tsugumi.view_open("notes").session, {payload!r})
     wait_for_release()
     return Output()
 """
@@ -385,19 +387,17 @@ def run(input):
                   "_nix": entry(python_run(source), views)}
     write(project, {"work": definition}, [card("work", "work")], [],
           {"definitions/work/notes.html": "<!doctype html><p>Empty view</p>"})
-    client = core_factory().connect()
+    client = core_factory().connect(client=Client.Web)
     subscription = text(client.open().subscriptionId)
-    client.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("work")])
-    declared = client.wait_notification(lambda n: n.valueType == NotificationPayload.CardViewsUpdated,
-                                        timeout=RUN_LIST_TIMEOUT_SECONDS).value
-    note, = declared.views
-    assert text(note.name) == "notes" and text(note.type) == "html"
-    assert Path(text(note.blob)).is_file()
-
     run_id = start_run(client, "work")
     active = wait_invocation(client, run_id, "work", lambda row: row.executionState == RemoteExecutionState.running)
-    shown = wait_for_display(client, run_id).value.display
-    assert shown.card.segments == [b"work"] and text(shown.view) == "notes"
+    note = open_view(client, timeout=RUN_LIST_TIMEOUT_SECONDS)
+    assert note.card.segments == [b"work"]
+    assert text(note.name) == "notes" and text(note.type) == "html"
+    session = text(note.session)
+    assert b"Empty view" in bytes(client.call("CardViewReadRequest", session=session).bytes)
+    shown = wait_for_display(client, run_id, lambda update: text(update.session) == session).value.display
+    return_credit(client, subscription, shown)
     chunk = bytes(shown.bytes)
     assert struct.unpack_from("<4I", chunk) == (0x4D475354, 0, 0, 1)
     assert chunk[16:] == payload
