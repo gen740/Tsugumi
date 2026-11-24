@@ -1,4 +1,4 @@
-import { definitionFixture, layoutFixture, textBytes } from './documentFixture'
+import { definitionFixture, layoutFixture, textBytes, cardFixture, projectFixture } from './documentFixture'
 // Focused regressions: advance replies and external reads explicitly, without timers.
 import assert from 'node:assert/strict'
 import { Builder } from 'flatbuffers'
@@ -29,8 +29,8 @@ function session() {
   s.projectId = 'p'; s.connected = true; s.client = {}
   s.refreshDerivedLayout = () => {}; s.refreshVisibleDisplays = async () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 0n,
-    projectJson: '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}', layout: [],
-    definitions: [definitionFixture('a', '{"type":"input"}', '{"content":"before"}')], resolution: [resolved(['a'], 1)],
+    projectJson: projectFixture({"canvas":{"cards":[{"id":"a"}],"connections":[]},"name":"t"}), layout: [],
+    definitions: [definitionFixture('a', cardFixture('input'), '{"content":"before"}')], resolution: [resolved(['a'], 1)],
   }))
   return s
 }
@@ -92,7 +92,7 @@ function saved(s: any, request: H.ProjectOperateRequestT, edits = inverse('inver
   await draft.startDraftEdit('a')
   draft.inlineDraft.content = 'mine'
   draft.applyDelta(Object.assign(new R.DocumentDeltaT(), { baseRev: 0n, rev: 1n, origin: 'agent',
-    definitionsUpsert: [definitionFixture('a', '{"type":"draft"}', '{"content":"agent","description":"unrelated"}')] }))
+    definitionsUpsert: [definitionFixture('a', cardFixture('draft'), '{"content":"agent","description":"unrelated"}')] }))
   const bases: string[] = []
   draft.operateProject = async (request: H.ProjectOperateRequestT) => {
     const json = (request.body as H.ProjectEditsT).edits[0].value as H.ProjectJSONEditT
@@ -114,13 +114,13 @@ function saved(s: any, request: H.ProjectOperateRequestT, edits = inverse('inver
 for (const echoFirst of [false, true]) {
   const s = session()
   const prefix = 'externals/sub/'
-  s.confirmedDefinitions.set('sub', parse('{"type":"subgraph","external":"sub"}'))
-  s.confirmedProject = parse('{"canvas":{"cards":[{"id":"sub"}],"connections":[]}}')
+  s.confirmedDefinitions.set('sub', parse('{"type":"subgraph","symbol":"link"}'))
+  s.confirmedProject = parse(projectFixture({"canvas":{"cards":[{"id":"sub"}],"connections":[]},"name":"t"}))
   const source = (file: string, documentJson: string) =>
     Object.assign(new R.SourceInfoT(), { path: prefix + file, document: textBytes(documentJson) })
   s.applySources([
-    source('tsugumi.json', '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}'),
-    source('definitions/a/_card.json', '{"type":"input"}'),
+    source('tsugumi.json', projectFixture({"canvas":{"cards":[{"id":"a"}],"connections":[]},"name":"t"})),
+    source('definitions/a/_card.json', cardFixture('input')),
   ], [])
   s.client.readFile = async () => { throw new Error('Unexpected extra file read') }
   let calls = 0
@@ -187,7 +187,7 @@ for (const draft of [false, true]) {
   edit.begin('1', s.rev)
   if (draft) { await s.startDraftEdit('a'); s.inlineDraft.content = 'mine' }
   const fields = (n: number) => ({ definitionsUpsert: [definitionFixture('a',
-    '{"type":"input"}',
+    cardFixture('input'),
     JSON.stringify({ content: String(n), description: 'unrelated' }))], resolution: [resolved(['a'], n)] })
   const publish = (n: number) => s.applyDelta(Object.assign(new R.DocumentDeltaT(), { baseRev: s.rev, rev: s.rev + 1n, origin: 'agent', ...fields(n) }))
   publish(2)
@@ -318,9 +318,9 @@ for (const third of [false, true]) {
     const body = request.body as H.ProjectReplaceDocumentsT
     revisions.push(body.expectedRev)
     if (body.expectedRev !== s.rev) throw new RPCFailure({ kind: D.FailureKind.revision_conflict })
-    return saved(s, request, inverse('raw'), { definitionsUpsert: [definitionFixture('a', '{"type":"draft"}', '{"content":"mine"}')] })
+    return saved(s, request, inverse('raw'), { definitionsUpsert: [definitionFixture('a', cardFixture('draft'), '{"content":"mine"}')] })
   }
-  const save = (overwrite: boolean) => edit.replaceDocuments(s, [['definitions/a/_card.json', parse('{"type":"draft"}')], ['definitions/a/README.md', 'mine']], overwrite)
+  const save = (overwrite: boolean) => edit.replaceDocuments(s, [['definitions/a/_card.json', parse(cardFixture('draft'))], ['definitions/a/README.md', 'mine']], overwrite)
   assert.equal(await save(false), false)
   assert.equal(edit.conflictRev, 1n)
   assert.equal(edit.error, undefined)

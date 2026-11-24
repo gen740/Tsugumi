@@ -150,9 +150,9 @@ extension SyncTests {
     _ = try await agent.connect(token: daemon.endpoint.token, expectedProjectId: nil)
     func save(_ description: String, _ content: String) async throws {
       let snapshot = try await agent.inspect()
-      let readme = Documents.printReadme(description: description, body: content)
+      let readme = Documents.printReadme(title: "a", description: description, body: content)
       _ = try await agent.save(baseRev: snapshot.rev ?? 0, opId: UUID(), origin: "agent", changes: [
-        Change.putDefinition(id: "a", cardJSON: #"{"type":"draft"}"#, readme: readme),
+        Change.putDefinition(id: "a", cardJSON: fixtureCardJSON(.draft), readme: readme),
       ])
       try await waitForModel { !(session.rev <= (snapshot.rev ?? 0)) }
       #expect(session.rev > (snapshot.rev ?? 0))

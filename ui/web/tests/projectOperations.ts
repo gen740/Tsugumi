@@ -1,4 +1,4 @@
-import { layoutBytes } from './documentFixture'
+import { layoutBytes, cardFixture, projectFixture } from './documentFixture'
 // Run this file alone with esbuild; the transport is advanced explicitly.
 import assert from 'node:assert/strict'
 import { Builder, ByteBuffer } from 'flatbuffers'
@@ -22,7 +22,7 @@ function deferred<T>() {
 }
 function delta(baseRev: bigint, opId: string, name: string) {
   return Object.assign(new R.DocumentDeltaT(), { baseRev, rev: baseRev + 1n, opId, origin: 'ui',
-    projectJson: `{"name":"${name}","canvas":{"cards":[],"connections":[]}}` })
+    projectJson: projectFixture({ name }) })
 }
 function result(d: R.DocumentDeltaT) {
   const inverse = new H.ProjectEditsT([new H.ProjectEditT(H.ProjectEditValue.ProjectFieldEdit,
@@ -39,7 +39,7 @@ for (const echoFirst of [false, true]) {
   s.projectId = 'p'; s.client = {}; s.connected = true
   s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
-    rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layout: [],
+    rev: 0n, projectJson: projectFixture({"name":"old","canvas":{"cards":[],"connections":[]}}), layout: [],
   }))
   const entered = deferred<H.ProjectOperateRequestT>(), reply = deferred<R.SaveResultT>()
   s.operateProject = (request: H.ProjectOperateRequestT) => { entered.resolve(request); return reply.promise }
@@ -112,7 +112,7 @@ for (const echoFirst of [false, true]) {
   s.projectId = 'p'; s.client = {}; s.connected = true
   s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
-    rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layout: layoutBytes('{"flow":"topToBottom"}'),
+    rev: 0n, projectJson: projectFixture({"name":"old","canvas":{"cards":[],"connections":[]}}), layout: layoutBytes('{"flow":"topToBottom"}'),
   }))
   const first = deferred<H.ProjectOperateRequestT>(), second = deferred<H.ProjectOperateRequestT>()
   const firstReply = deferred<R.SaveResultT>(), secondReply = deferred<R.SaveResultT>()
@@ -145,10 +145,10 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   const s = new ProjectSession('/test', 'intent-' + action, 'test') as any
   s.projectId = 'p'; s.client = { readFile: () => { throw new Error('client source read') } }; s.connected = true
   s.refreshDerivedLayout = () => {}
-  s.cardIdProvider = async () => 'new-card'
+  s.cardIdProvider = async () => 'new_card'
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
-    rev: 0n, projectJson: '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}', layout: layoutBytes('{"cards":{"a":{"x":0,"y":0}}}'),
-    definitions: [new R.DefinitionT('a', '{"type":"draft"}')],
+    rev: 0n, projectJson: projectFixture({"canvas":{"cards":[{"id":"a"}],"connections":[]},"name":"t"}), layout: layoutBytes('{"cards":{"a":{"x":0,"y":0}}}'),
+    definitions: [new R.DefinitionT('a', cardFixture('draft'))],
   }))
   const requests: H.ProjectOperateRequestT[] = []
   s.operateProject = async (request: H.ProjectOperateRequestT) => {
@@ -186,7 +186,7 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   s.layoutHost = { ...s.layoutHost, complete: () => placement.promise }
   fake.operateProject = async (request: H.ProjectOperateRequestT) => {
     const d = delta(0n, String(request.opId), 'draft')
-    d.projectJson = '{"canvas":{"cards":[{"id":"draft"}],"connections":[]}}'
+    d.projectJson = projectFixture({"canvas":{"cards":[{"id":"draft"}],"connections":[]},"name":"t"})
     return result(d)
   }
   const canvas = new CanvasController(s, new WorkflowTab([]))
@@ -209,7 +209,7 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   s.projectId = 'p'; s.client = {}; s.connected = true
   s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
-    rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layout: [],
+    rev: 0n, projectJson: projectFixture({"name":"old","canvas":{"cards":[],"connections":[]}}), layout: [],
   }))
   const entered = deferred<H.ProjectOperateRequestT>(), undoEntered = deferred<H.ProjectOperateRequestT>()
   const reply = deferred<R.SaveResultT>(), undoReply = deferred<R.SaveResultT>()
@@ -241,8 +241,8 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   s.projectId = 'p'; s.client = {}; s.connected = true
   s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
-    rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[{"id":"a"}],"connections":[]}}', layout: [],
-    definitions: [new R.DefinitionT('a', '{"type":"draft"}', '---\ndescription: old\n---\n')],
+    rev: 0n, projectJson: projectFixture({"name":"old","canvas":{"cards":[{"id":"a"}],"connections":[]}}), layout: [],
+    definitions: [new R.DefinitionT('a', cardFixture('draft'), '---\ntitle: A\ndescription: old\n---\n')],
   }))
   const requests: H.ProjectOperateRequestT[] = []
   s.operateProject = async (request: H.ProjectOperateRequestT) => {
@@ -282,7 +282,7 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
 {
   const { cardIds } = await import('./cardIds')
   const s = cardIds(new ProjectSession('/test', 'fixture-smoke', 'test'))
-  s.project = parse('{"name":"fixture","canvas":{"cards":[],"connections":[]}}')
+  s.project = parse(projectFixture({"name":"fixture","canvas":{"cards":[],"connections":[]}}))
   s.confirmedProject = parse(serialize(s.project))
   const card = await s.addCard('draft', [], { x: 10, y: 20 })
   const binary = [0, 255, 128, 195, 40]

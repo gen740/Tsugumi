@@ -1,3 +1,4 @@
+import { cardFixture, projectFixture } from './documentFixture'
 import { addCodeCard, cardIds } from './cardIds'
 // A wire to or from a Draft is dotted, whatever else it shows, until the Draft
 // has code. The Mac app checks the same (UILogicTests: draftWiresAreDotted).
@@ -18,7 +19,7 @@ const { WireLayer } = await import('../src/ui/cardNode')
 
 const session = () => {
   const s = cardIds(new ProjectSession('/p', 'k', 'p'))
-  s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
+  s.project = parse(projectFixture({"name":"t","canvas":{"cards":[],"connections":[]}}))
   s.layout = parse('{}')
   return s
 }
@@ -66,10 +67,7 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
 
   // Implement the Draft and rebind its wire ends: the wires are solid again.
   await s.applyMutation((x) => {
-    x.updateCard(draft, (c) => {
-      c.set('type', 'code')
-      c.set('inputs', parse('[{"name":"in"}]'))
-    })
+    x.setCardDefinition(draft, { card: parse(cardFixture('code', { inputs: [{ name: 'in' }] })), meta: x.cardMeta(draft) })
     x.updateGraph([], (g) => g.set('connections', parse(`[
       {"from":{"card":"start","port":"out"},"to":{"card":"plan","port":"in"}},
       {"from":{"card":"plan","port":"out"},"to":{"card":"log","port":"in"}}

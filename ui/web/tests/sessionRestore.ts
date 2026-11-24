@@ -1,3 +1,4 @@
+import { projectFixture } from './documentFixture'
 // What the session shows without having been told as it happened: the Cards of
 // the last run when a project is opened, and a run while the tab is in the background.
 import assert from 'node:assert/strict'
@@ -27,7 +28,7 @@ type Inner = {
 }
 const session = () => {
   const s = new ProjectSession('/p', 'k', 'p')
-  s.project = parse('{"name":"t","canvas":{"cards":[{"id":"a"}],"connections":[]}}')
+  s.project = parse(projectFixture({"name":"t","canvas":{"cards":[{"id":"a"}],"connections":[]}}))
   s.layout = parse('{}')
   return { s, inner: s as unknown as Inner }
 }

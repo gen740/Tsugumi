@@ -69,7 +69,7 @@ import TsugumiTestSupport
     }
   }
 
-  static let sinkCard = #"{"type":"code","inputs":[{"name":"in"}]}"#
+  static let sinkCard = fixtureCardJSON(.code, [("inputs", .array([.object([("name", .string("in"))])]))])
   static let sinkSources = [
     "_outputs.fbs": "table Outputs {}\nroot_type Outputs;\n",
     "default.nix": #"""
@@ -92,8 +92,10 @@ import TsugumiTestSupport
       for id in cards {
         let d = p.appendingPathComponent("definitions/\(id)")
         try fm.createDirectory(at: d, withIntermediateDirectories: true)
-        let definition = id == "start" ? #"{"type":"trigger"}"# : sinkCard
+        let definition = id == "start" ? fixtureCardJSON(.trigger) : sinkCard
         try Data(definition.utf8).write(to: d.appendingPathComponent("_card.json"))
+        try Data(Documents.printReadme(title: id, description: "", body: "").utf8)
+          .write(to: d.appendingPathComponent("README.md"))
         if id != "start" {
           for (name, contents) in sinkSources {
             try Data(contents.utf8).write(to: d.appendingPathComponent(name))
@@ -101,7 +103,8 @@ import TsugumiTestSupport
         }
       }
       let list = cards.map { "{\"id\": \"\($0)\"}" }.joined(separator: ", ")
-      try Data("{\"name\": \"sync\", \"nixPath\": [], \"canvas\": {\"cards\": [\(list)], \"connections\": []}}".utf8)
+      let project = fixtureProjectJSON(#"{"name":"sync","canvas":{"cards":[\#(list)],"connections":[]}}"#)
+      try Data(project.utf8)
         .write(to: p.appendingPathComponent("tsugumi.json"))
       return p
     } catch {
@@ -184,7 +187,7 @@ import TsugumiTestSupport
     #expect(w.session == nil)
     #expect(s.inlineDraft == nil && s.cardMeta(b)?["content"]?.string == "before closing")
     let saved = try String(contentsOf: dir.appendingPathComponent("definitions/\(b)/README.md"), encoding: .utf8)
-    #expect(Documents.parseReadme(saved).body == "before closing", "Closing waits for the transaction on disk")
+    #expect(Documents.parseReadme(saved)?.body == "before closing", "Closing waits for the transaction on disk")
     try await checkUnreachableTsugumid(in: dir)
   }
 

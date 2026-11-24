@@ -1,12 +1,13 @@
+import { cardFixture, projectFixture } from './documentFixture'
 import { hostEdits } from './cardIds'
 import assert from 'node:assert/strict'
 import { Builder, ByteBuffer } from 'flatbuffers'
 import { R, RPCClient, RequestPayload, s as text } from '../src/wire/rpc'
-import { clone, get, parse, serialize } from '../shared/json'
+import { clone, get, parse, serialize, str } from '../shared/json'
 
 const { ProjectSession } = await import('../src/model/session')
 const requests: { name: string; prefix: string }[] = []
-const ids = ['aggregate-7k2q', 'aggregate-9m3r', 'inside-8p4s']
+const ids = ['aggregate', 'aggregate_2', 'inside']
 const allocator = new RPCClient({ close() {}, async call(frame) {
   const message = R.Message.getRootAsMessage(new ByteBuffer(frame)).unpack()
   const request = message.payload as R.RequestT
@@ -20,7 +21,7 @@ const allocator = new RPCClient({ close() {}, async call(frame) {
   return builder.asUint8Array().slice()
 } })
 const session = hostEdits(new ProjectSession('/p', 'k', 'p'))
-session.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
+session.project = parse(projectFixture({"name":"t","canvas":{"cards":[],"connections":[]}}))
 session.confirmedProject = clone(session.project)
 session.layout = parse('{}')
 session.confirmedLayout = parse('{}')
@@ -33,8 +34,8 @@ const a = await session.addCard('draft', [], { x: 0, y: 0 }, 'Aggregate')
 const b = await session.addCard('draft', [], { x: 400, y: 0 }, 'Aggregate')
 assert.equal(a, ids[0]); assert.equal(b, ids[1])
 assert.notEqual(a, b)
-assert.equal(session.displayName(a), a)
-assert.equal(session.displayName(b), b)
+assert.equal(session.displayName(a), str(get(session.cardMeta(a), 'title')))
+assert.equal(session.displayName(b), str(get(session.cardMeta(b), 'title')))
 await session.connect([a, 'out'], [b, 'in'], [])
 await session.save()
 const project = serialize(session.project), layout = serialize(session.layout), dir = session.definitionDir(a)
@@ -42,12 +43,15 @@ const closeView = session.liveViews.observe(a, () => {})
 const views = session.liveViews.get(a)!
 views.declare([{ name: 'chart', type: 'html', blob: '/nix/store/chart' }])
 const originalView = views.views[0]
-await session.applyMutation(x => x.updateMeta(a, m => m.set('description', '集計の説明')))
-assert.equal(session.displayName(a), a)
-assert.equal(session.nodeData(a).title, a)
+await session.applyMutation(x => x.updateMeta(a, m => {
+  m.set('title', '集計')
+  m.set('description', '集計の説明')
+}))
+assert.equal(session.displayName(a), '集計')
+assert.equal(session.nodeData(a).title, '集計')
 assert.equal(session.cardDescription(a), '集計の説明')
-assert.equal(session.nodeData(a, { meta: parse('{"name":"Preview"}') }).title, a)
-assert.equal(session.nodeData(a, { meta: parse('{"name":""}') }).title, a)
+assert.equal(session.nodeData(a, { meta: parse('{"title":"Preview"}') }).title, 'Preview')
+assert.equal(session.nodeData(a, { meta: parse('{"title":""}') }).title, '集計')
 assert.equal(serialize(session.project), project)
 assert.equal(serialize(session.layout), layout)
 assert.equal(session.definitionDir(a), dir)
@@ -57,15 +61,16 @@ assert.equal(text(requests[0].name), 'aggregate')
 assert.ok(saves >= 2)
 
 // Nested scopes use the same allocator through the operation transport.
-session.confirmedDefinitions.set('outer', parse('{"type":"subgraph","external":"nested"}'))
+session.confirmedDefinitions.set('outer', parse(cardFixture('subgraph')))
 const projectValue = JSON.parse(serialize(session.project))
 projectValue.canvas.cards.push({ id: 'outer' })
 session.project = parse(JSON.stringify(projectValue))
-session.externals.set('externals/nested/', { project: parse('{"name":"nested","canvas":{"cards":[],"connections":[]}}'), layout: parse('{}'), definitions: new Map() })
+session.confirmedDefinitionMeta.set('outer', parse('{"title":"Outer","description":""}'))
+session.externals.set('externals/outer/', { project: parse(projectFixture({ name: 'nested', boundary: { inputs: [], outputs: [] } })), layout: parse('{}'), definitions: new Map() })
 const inner = await session.addCard('draft', ['outer'], { x: 0, y: 0 }, 'Inside')
 await new Promise<void>(resolve => setImmediate(resolve)) // Read the external documents from the confirmed delta.
 assert.equal(inner, `outer/${ids[2]}`)
-assert.deepEqual(requests[2], { name: 'inside', prefix: 'externals/nested/' })
-assert.equal(session.displayPath(['outer', ids[2]]), `outer/${ids[2]}`)
-assert.equal(session.displayName(inner), ids[2])
+assert.deepEqual(requests[2], { name: 'inside', prefix: 'externals/outer/' })
+assert.equal(session.displayPath(['outer', ids[2]]), 'Outer/' + session.displayName(inner))
+assert.equal(session.displayName(inner), str(get(session.cardMeta(inner), 'title')))
 console.log('Card identity: core ids, unique ids, description edits, exact wires and nested scopes passed')

@@ -1,3 +1,4 @@
+import { projectFixture } from './documentFixture'
 import { cardIds } from './cardIds'
 import assert from 'node:assert/strict'
 import { Builder } from 'flatbuffers'
@@ -12,7 +13,7 @@ import * as H from '../shared/gen/tsugumi/host'
 import { R, cardPath } from '../src/wire/rpc'
 
 const session = cardIds(new ProjectSession('/input-test', 'input-test', 'input-test'))
-session.project = parse('{"name":"input-test","canvas":{"cards":[],"connections":[]}}')
+session.project = parse(projectFixture({"name":"input-test","canvas":{"cards":[],"connections":[]}}))
 session.layout = parse('{}')
 let operations = 0
 const operate = session.operateProject

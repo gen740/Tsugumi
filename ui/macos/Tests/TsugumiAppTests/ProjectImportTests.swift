@@ -29,7 +29,7 @@ extension ChatResumeTests {
       func written(_ id: String) throws -> String? {
         let url = dir.appendingPathComponent("definitions/\(id)/README.md")
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        return Documents.parseReadme(try String(contentsOf: url, encoding: .utf8)).description
+        return Documents.parseReadme(try String(contentsOf: url, encoding: .utf8))?.description
       }
 
       // The editor captures its base before the open's derivation completes.
@@ -40,7 +40,7 @@ extension ChatResumeTests {
       let layoutURL = dir.appendingPathComponent("layout.bin")
       let layoutBytes = try? Data(contentsOf: layoutURL)
       let code = CardEditorModel(session: s, cardKey: "a")
-      code.meta = .object([("description", .string("logs the value"))])
+      code.meta?["description"] = .string("logs the value")
       release.continuation.finish()
       await s.refreshDerivedLayout().value
       #expect(s.rev == openedRev)
@@ -55,14 +55,14 @@ extension ChatResumeTests {
       #expect(s.cardDescription("a") == "logs the value")
       #expect(s.cardDefinition("a")?["description"] == nil)
 
-      // Saving the summary preserves the external reference in _card.json.
+      // Saving the summary preserves the subgraph and its path.
       let k = try await s.importProject(from: other, in: [], at: CGPoint(x: 400, y: 0))
       await s.save()
       #expect(s.saveError == nil)
       let name = path(k).last!
       #expect(try Data(contentsOf: dir.appendingPathComponent("externals/\(name)/definitions/a/.asset.bin")) == blob)
       let link = CardEditorModel(session: s, cardKey: k)
-      link.meta = .object([("description", .string("the imported graph"))])
+      link.meta?["description"] = .string("the imported graph")
       #expect(await link.apply())
       #expect(try written(name) == "the imported graph")
       #expect(s.nodeData(k).summary == "the imported graph")

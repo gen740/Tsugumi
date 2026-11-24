@@ -8,8 +8,8 @@ import TsugumiRPC
 //   Markdown (notes/<id>.md) are one layout view, the JSON object hostd edits
 //   under "layout.bin": {flow, cards: {key: place}, boundaries: {scope: bars},
 //   boundary, notes: [{id, text, ...}], groups}.
-// - A Card's README.md (front matter `description`, Markdown body) and its
-//   _comments.json are one note object: {description, content, comments}.
+// - A Card's README.md (front matter `title` and `description`, Markdown body) and its
+//   _comments.json are one note object: {title, description, content, comments}.
 enum Documents {
   // MARK: - Layout
 
@@ -69,40 +69,43 @@ enum Documents {
 
   // MARK: - README.md
 
-  /// A README.md: its front matter's description and its body.
-  static func parseReadme(_ text: String) -> (description: String, body: String) {
-    guard text.hasPrefix("---\n"), let end = text.range(of: "\n---\n", range: text.index(text.startIndex, offsetBy: 3)..<text.endIndex)
-    else { return ("", text) }
-    var description = ""
+  /// A Card's required README front matter and its Markdown body.
+  static func parseReadme(_ text: String) -> (title: String, description: String, body: String)? {
+    guard text.hasPrefix("---\n"), let end = text.range(of: "\n---\n"),
+          end.lowerBound >= text.index(text.startIndex, offsetBy: 4) else { return nil }
     let start = text.index(text.startIndex, offsetBy: 4)
-    if end.lowerBound >= start {
-      for line in text[start..<end.lowerBound].split(separator: "\n") {
-        if line.hasPrefix("description: ") { description = String(line.dropFirst("description: ".count)) }
-      }
+    var fields: [String: String] = [:]
+    for line in text[start..<end.lowerBound].split(separator: "\n", omittingEmptySubsequences: false) {
+      let parts = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+      guard parts.count == 2, parts[1].hasPrefix(" "), !parts[1].utf8.contains(13) else { return nil }
+      let key = String(parts[0])
+      guard ["title", "description"].contains(key), fields[key] == nil else { return nil }
+      fields[key] = String(parts[1].dropFirst())
     }
+    guard let title = fields["title"], !title.trimmingCharacters(in: .whitespaces).isEmpty,
+          let description = fields["description"] else { return nil }
     var body = String(text[end.upperBound...])
     if body.hasPrefix("\n") { body.removeFirst() }
-    return (description, body)
+    return (title, description, body)
   }
 
-  /// The text of a README.md; nil when it says nothing. The description is
-  /// one line: line breaks become spaces.
-  static func printReadme(description: String, body: String) -> String? {
-    let line = description.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
-      .filter { !$0.isEmpty }.joined(separator: " ")
-    if line.isEmpty && body.isEmpty { return nil }
-    let front = line.isEmpty ? (body.hasPrefix("---\n") ? "---\n---\n" : "") : "---\ndescription: \(line)\n---\n"
-    return front + (front.isEmpty || body.isEmpty ? "" : "\n") + body
+  /// The two front matter values occupy one line each.
+  static func printReadme(title: String, description: String, body: String) -> String {
+    func line(_ value: String) -> String {
+      value.replacingOccurrences(of: #"\s*[\r\n]+\s*"#, with: " ", options: .regularExpression)
+    }
+    return "---\ntitle: \(line(title))\ndescription: \(line(description))\n---\n" + (body.isEmpty ? "" : "\n" + body)
   }
 
   // MARK: - A Card's note object
 
-  /// {description, content, comments} from a Card's README.md and _comments.json.
+  /// {title, description, content, comments} from a Card's README.md and _comments.json.
   static func cardNotes(readme: String?, comments: String?) -> JSONValue? {
     var out: [(String, JSONValue)] = []
-    if let readme {
-      let r = parseReadme(readme)
-      if !r.description.isEmpty { out.append(("description", .string(r.description))) }
+    if let readme { out.append(("readmeText", .string(readme))) }
+    if let readme, let r = parseReadme(readme) {
+      out.append(("title", .string(r.title)))
+      out.append(("description", .string(r.description)))
       if !r.body.isEmpty { out.append(("content", .string(r.body))) }
     }
     if let comments, let list = (try? JSONValue.parse(comments))?["comments"]?.array, !list.isEmpty {
@@ -114,7 +117,14 @@ enum Documents {
   /// A note object as the README.md text and the _comments.json document it is.
   static func splitCardNotes(_ notes: JSONValue?) -> (readme: String?, comments: JSONValue?) {
     guard let notes else { return (nil, nil) }
-    let readme = printReadme(description: notes["description"]?.string ?? "", body: notes["content"]?.string ?? "")
+    let original = notes["readmeText"]?.string
+    let saved = original.flatMap(parseReadme)
+    let description = notes["description"]?.string ?? "", body = notes["content"]?.string ?? ""
+    // The write guard compares the exact original bytes; both front matter orders are valid.
+    var readme = original
+    if let title = notes["title"]?.string, saved?.title != title || saved?.description != description || saved?.body != body {
+      readme = printReadme(title: title, description: description, body: body)
+    }
     let list = notes["comments"]?.array ?? []
     return (readme, list.isEmpty ? nil : .object([("comments", .array(list))]))
   }

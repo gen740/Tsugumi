@@ -1,7 +1,9 @@
+import { recordSettings } from '../src/model/cardFields'
+import { projectFixture } from './documentFixture'
 import { addCodeCard, cardIds } from './cardIds'
 import assert from 'node:assert/strict'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
-import { parse } from '../shared/json'
+import { get, num, numText, parse, str } from '../shared/json'
 import { D, R } from '../src/wire/rpc'
 
 const page = globalThis as Record<string, unknown>
@@ -10,51 +12,37 @@ page.window = globalThis
 page.matchMedia = () => ({ matches: false, addEventListener() {} })
 page.EventSource = class { addEventListener() {} close() {} }
 const { ProjectSession } = await import('../src/model/session')
-const { CardSettingsEditor } = await import('../src/ui/cardSettings')
+const { CardEditorModel, CardSettingsEditor } = await import('../src/ui/cardSettings')
 
 const session = cardIds(new ProjectSession('/p', 'k', 'p'))
-session.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
+session.project = parse(projectFixture({"name":"t","canvas":{"cards":[],"connections":[]}}))
 session.layout = parse('{}')
 session.connected = true
 const card = await addCodeCard(session, { x: 0, y: 0 })
-session.updateCard(card, def => def.set('executionService', 'local'))
-await session.save()
-const show = (nativeSystem: string, systems: string[]) => {
-  session.executionServices = [Object.assign(new R.ExecutionServiceT(), { id: 'local', nativeSystem, systems })]
-  return renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
+const editor = new CardEditorModel(session, card)
+for (const value of recordSettings) {
+  editor.setSetting('recordIO', value)
+  editor.setSetting('recordLogs', value)
+  assert.ok(await editor.apply())
+  assert.equal(str(get(session.cardDefinition(card), 'recordIO')), value)
+  assert.equal(str(get(session.cardDefinition(card), 'recordLogs')), value)
 }
+const bits = [0, 63]
+editor.setSetting('workerCapabilities', bits.map(num))
+editor.setSetting('system', 'x86_64-linux')
+assert.ok(await editor.apply())
 
-const linux = show('aarch64-linux', ['aarch64-linux', 'x86_64-linux'])
-assert.match(linux, /<option value="x86_64-linux">/)
-
-session.updateCard(card, (def) => def.set('system', 'x86_64-linux'))
-await session.save()
-const unavailable = show('aarch64-linux', ['aarch64-linux'])
-assert.match(unavailable, /<option value="x86_64-linux" disabled="" selected="">/)
-
-session.updateCard(card, (def) => def.set('system', undefined))
-await session.save()
-const darwin = show('aarch64-darwin', ['aarch64-darwin'])
-assert.doesNotMatch(darwin, /<option value="x86_64-linux"/)
-
-session.executionServices = [
-  Object.assign(new R.ExecutionServiceT(), { id: 'local', nativeSystem: 'aarch64-linux', systems: ['aarch64-linux'] }),
-  Object.assign(new R.ExecutionServiceT(), { id: 'worker', nativeSystem: 'x86_64-linux', systems: ['x86_64-linux'], resourceLimits: true }),
-]
-session.updateCard(card, (def) => {
-  def.set('executionService', 'worker')
-  def.set('sandbox', parse('{"filesystem":false,"limits":{"cpu":1,"memoryMiB":1024}}'))
-})
-await session.save()
-const remote = renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
-assert.match(remote, /<option value="worker" selected="">worker/)
-assert.doesNotMatch(remote, /<option value="aarch64-linux"/)
-assert.match(remote, /<input(?=[^>]*name="cpu")(?=[^>]*value="1(?:\.0)?")[^>]*>/)
-assert.match(remote, /<input(?=[^>]*name="memoryMiB")(?=[^>]*value="1024")[^>]*>/)
-
-session.executionServices = session.executionServices.filter((entry) => entry.id === 'local')
-const missingService = renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
-assert.match(missingService, /<option value="worker" disabled="" selected="">worker/)
+const def = session.cardDefinition(card)
+for (const field of ['timeoutSeconds', 'buildTimeoutSeconds']) assert.equal(numText(get(def, field)), '0')
+assert.equal(Number(numText(get(def, 'sandbox', 'limits', 'cpu'))), 0)
+assert.equal(numText(get(def, 'sandbox', 'limits', 'memoryMiB')), '0')
+const markup = renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
+assert.match(markup, /<option value="x86_64-linux" selected="">/)
+assert.match(markup, /0 = 上限なし|0 = no limit/i)
+assert.match(markup, /0, 63/)
+assert.doesNotMatch(markup, /<option value="">この実行環境の既定/)
+assert.match(markup, /<input(?=[^>]*name="cpu")(?=[^>]*value="0(?:\.0)?")[^>]*>/)
+assert.match(markup, /<input(?=[^>]*name="memoryMiB")(?=[^>]*value="0")[^>]*>/)
 
 const runEvents = session as unknown as { applyRunEvent(event: R.RunEventT): void }
 session.runStatus = Object.assign(new R.RunStatusT(), { runId: 'current', state: D.RunState.running })

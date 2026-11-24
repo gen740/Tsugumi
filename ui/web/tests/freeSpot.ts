@@ -1,3 +1,4 @@
+import { projectFixture } from './documentFixture'
 import { cardIds } from './cardIds'
 import assert from 'node:assert/strict'
 import { get, parse, str } from '../shared/json'
@@ -13,7 +14,7 @@ const { ProjectSession } = await import('../src/model/session')
 const { WorkflowTab } = await import('../src/model/workspace')
 
 const s = cardIds(new ProjectSession('/p', 'k', 'p'))
-s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
+s.project = parse(projectFixture({"name":"t","canvas":{"cards":[],"connections":[]}}))
 s.layout = parse('{}')
 s.connected = true
 const cv = new CanvasController(s, new WorkflowTab([]))

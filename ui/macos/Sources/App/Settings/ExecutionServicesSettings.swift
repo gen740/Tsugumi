@@ -36,8 +36,13 @@ struct ExecutionServicesSettings: View {
       if let entry = draft {
         Section {
           TextField("名前", text: field(\.name))
-          TextField("ワーカーの grade", text: field(\.grade))
-            .help("64 bit の符号なし整数（10 進数または 0x から始まる 16 進数）です。条件を満たす空きワーカーのうち、最小の値を選びます。")
+          LabeledContent("ワーカーの対応ビット") {
+            WorkerBitsEditor(bits: Binding(get: { draft?.workerCapabilities ?? [] }, set: { value in
+              draft?.workerCapabilities = value
+              message = nil
+            }))
+          }
+          .help("このワーカーが持つビットを 0〜63 から選びます。")
           TextField("サービス ID", text: field(\.id)).disabled(original != nil).monospaced()
           TextField("実行デーモンの接続先", text: field(\.endpoint), prompt: Text(verbatim: "tls://worker.example:8765"))
             .disabled(entry.id == "local").monospaced().help("TLS 接続先を入力してください（例: tls://worker.example:8765）。")
@@ -50,19 +55,19 @@ struct ExecutionServicesSettings: View {
             LabeledContent("最大同時ジョブ数", value: String(caps.maxConcurrentJobs))
           }
           HStack {
-            Button(original == nil ? "登録" : "接続を確認して更新") {
+            Button(entry.id == "local" ? "保存" : original == nil ? "登録" : "接続を確認して更新") {
               busy = true
               message = nil
               Task {
                 defer { busy = false }
                 do {
                   var input = entry
-                  let verifying = original != nil
+                  let verifying = original != nil && entry.id != "local"
                   input.verify = verifying
                   adopt(try await ExecutionServices.put(input))
                   choose(entries.first { $0.id == entry.id })
                   refreshServices()
-                  report(verifying ? String(localized: "接続を確認しました。") : String(localized: "公開鍵を登録しました。authorized_keys にホストの公開鍵を追加してから接続を確認してください。"))
+                  report(entry.id == "local" ? String(localized: "保存しました。") : verifying ? String(localized: "接続を確認しました。") : String(localized: "公開鍵を登録しました。authorized_keys にホストの公開鍵を追加してから接続を確認してください。"))
                 } catch { report(error.localizedDescription, failed: true) }
               }
             }.buttonStyle(.borderedProminent).disabled(!valid(entry))
@@ -107,7 +112,7 @@ struct ExecutionServicesSettings: View {
       next.name = entry.name
       next.endpoint = entry.endpoint
       next.workerPublicKey = entry.workerPublicKey
-      next.grade = entry.grade
+      next.workerCapabilities = entry.workerCapabilities
     }
     draft = next
     original = entry?.id
@@ -121,17 +126,9 @@ struct ExecutionServicesSettings: View {
     })
   }
 
-  private func numberField(_ key: WritableKeyPath<ExecutionServiceRegistration, UInt32>) -> Binding<UInt32> {
-    Binding(get: { draft?[keyPath: key] ?? 0 }, set: { value in
-      draft?[keyPath: key] = value
-      message = nil
-    })
-  }
-
   private func valid(_ entry: ExecutionServiceRegistration) -> Bool {
     guard [entry.id, entry.name].allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { return false }
-    let hex = entry.grade.lowercased().hasPrefix("0x")
-    guard UInt64(hex ? String(entry.grade.dropFirst(2)) : entry.grade, radix: hex ? 16 : 10) != nil else { return false }
+    guard WorkerBits.valid(entry.workerCapabilities) else { return false }
     return (entry.id == "local" || (!entry.endpoint.isEmpty && !entry.workerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
   }
 

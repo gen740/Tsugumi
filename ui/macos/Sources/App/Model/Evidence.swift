@@ -1,3 +1,4 @@
+import TsugumiAgentClient
 import Foundation
 import TsugumiRPC
 
@@ -30,7 +31,7 @@ struct EvidenceTarget: Hashable, Identifiable {
       return UInt64(s)
     }
     func validCard(_ parts: [String]) -> Bool {
-      !parts.isEmpty && parts.allSatisfy { $0.count <= 128 && $0 != "." && $0 != ".." && $0.range(of: #"^[A-Za-z0-9_.-]+$"#, options: .regularExpression) != nil }
+      !parts.isEmpty && parts.allSatisfy { validName(String($0)) }
     }
     let kind = part(1)!, query = part(3), fragment = part(4)
     var parts = part(2)!.components(separatedBy: "/")

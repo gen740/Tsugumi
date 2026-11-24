@@ -1,3 +1,4 @@
+import { validName } from '../model/names'
 import { useEffect, useState } from 'react'
 import { L } from '../i18n'
 import * as H from '../../shared/gen/tsugumi/host'
@@ -12,8 +13,6 @@ import { Button, Empty, Form, Row, Section, Spinner, TextField } from './control
 // hostd never sends a value back.
 const cardSecrets = (type: H.RequestPayload, value: H.RequestT['value']) =>
   hostCall<H.CardSecretListT>(type, value, H.ReplyPayload.CardSecretList)
-
-const NAME = /^[a-z][a-z0-9_]{0,63}$/
 
 export function CardSecretsSettings({ session }: { session: ProjectSession }) {
   useObserve(session)
@@ -37,7 +36,7 @@ export function CardSecretsSettings({ session }: { session: ProjectSession }) {
     catch (e) { setProblem(errorText(e)) }
     finally { setBusy(false) }
   }
-  const valid = NAME.test(name) && value.length > 0
+  const valid = validName(name) && value.length > 0
   if (!project) return <Empty small icon="key" title={L('プロジェクトの実行環境に接続すると設定できます')} />
 
   return <Form>
