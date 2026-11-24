@@ -183,9 +183,7 @@ class RealEnvironmentFixture : public EnvironmentFixture {
   auto DaemonBinary() -> std::string override { return TSUGUMI_PROJECT_BINARY; }
 };
 TEST_F(RealEnvironmentFixture, AuthenticatesTheRealProjectServiceBeforeReady) {
-  Write(
-      project / "tsugumi.json",
-      R"({"name":"Environment","nixPath": [],"canvas":{"cards":[],"connections":[]}})");
+  Write(project / "tsugumi.json", initial_project_json("Environment", {}));
   struct Startup {
     std::mutex mutex;
     std::condition_variable changed;
