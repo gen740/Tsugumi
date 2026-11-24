@@ -1220,12 +1220,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       member.execution = prepared.get();
       member.execution_list = batch.execution_list;
       if (index == 0) member.prepared = std::move(work.prepared);
-      if (builds)
+      if (code)
         member.implementation =
             &implementations.at(index % implementations.size());
       const auto inputs_index =
-          builds ? index / static_cast<uint32_t>(implementations.size())
-                 : index;
+          code ? index / static_cast<uint32_t>(implementations.size()) : index;
       member.inputs = batch_inputs(node, work.groups, inputs_index);
       auto produced = invoke(member, worker_lane);
       {
