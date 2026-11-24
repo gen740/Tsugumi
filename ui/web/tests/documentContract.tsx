@@ -6,12 +6,15 @@ import { implementedCard, recordSettings } from '../src/model/cardFields'
 import { cardNotes, parseReadme, printReadme, splitCardNotes } from '../src/model/documents'
 import { cardStem, nextInputName, validName } from '../src/model/names'
 
-const readme = '---\ndescription: \ntitle: 集計: Results\n---\n\nSteps'
-assert.deepEqual(parseReadme(readme), { title: '集計: Results', description: '', body: 'Steps' })
-const notes = cardNotes(readme, null)
-assert.equal(splitCardNotes(notes).readme, readme, 'the selected value keeps the original byte order')
+for (const description of ['description:', 'description: ']) {
+  const readme = `---\n${description}\ntitle: 集計: Results\n---\n\nSteps`
+  assert.deepEqual(parseReadme(readme), { title: '集計: Results', description: '', body: 'Steps' })
+  const notes = cardNotes(readme, null)
+  assert.equal(splitCardNotes(notes).readme, readme, 'the selected value keeps the original bytes')
+}
 assert.equal(printReadme({ title: '集計: Results', description: '', body: '' }), '---\ntitle: 集計: Results\ndescription: \n---\n')
 assert.equal(parseReadme('---\ntitle: Missing description\n---\n'), undefined)
+assert.equal(parseReadme('---\ntitle: Results\ndescription:missing space\n---\n'), undefined)
 assert.equal(parseReadme('---\ntitle: Results\ndescription: \nunknown: value\n---\n'), undefined)
 
 const executable = ['type', 'symbol', 'inputs', 'maxRuns', 'reuseWorker', 'timeoutSeconds',
