@@ -116,12 +116,12 @@ send('first', [7], cardPath(['different']), 99n)
 send('second', [])
 flush()
 assert.deepEqual(firstMessages, [
-  { type: 'data', bytes: Uint8Array.of(0, 255, 128) },
-  { type: 'data', bytes: Uint8Array.of(6) },
+  { bytes: Uint8Array.of(0, 255, 128) },
+  { bytes: Uint8Array.of(6) },
 ])
 assert.deepEqual(secondMessages, [
-  { type: 'data', bytes: Uint8Array.of(1, 0, 2) },
-  { type: 'data', bytes: new Uint8Array() },
+  { bytes: Uint8Array.of(1, 0, 2) },
+  { bytes: new Uint8Array() },
 ])
 assert.deepEqual([...entry.unknown], ['unexpected'])
 assert.deepEqual(credits, [99n], 'data discarded by the UI returns its credit')

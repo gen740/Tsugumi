@@ -7,7 +7,7 @@ export type SendHtmlView = (view: LiveView, bytes: Uint8Array<ArrayBuffer>) => P
 export type ReadHtmlView = (view: LiveView, signal: AbortSignal) => Promise<string>
 
 /** Each mount owns both frame contexts and the subscription to its view. */
-export function HtmlViewFrame({ view, card, read, send }: { view: LiveView; card: CardLiveViews; read: ReadHtmlView; send?: SendHtmlView }) {
+export function HtmlViewFrame({ view, card, read, send }: { view: LiveView; card: CardLiveViews; read: ReadHtmlView; send: SendHtmlView }) {
   const frame = useRef<HTMLIFrameElement>(null)
   const [error, setError] = useState('')
   const [messageError, setMessageError] = useState('')
@@ -63,7 +63,6 @@ export function HtmlViewFrame({ view, card, read, send }: { view: LiveView; card
       while (reverse.length && !loading.signal.aborted) {
         const bytes = reverse.shift()!
         try {
-          if (!send) throw new Error(L('接続していません'))
           await send(view, bytes)
         } catch (cause) {
           if (!loading.signal.aborted) setMessageError(errorText(cause))

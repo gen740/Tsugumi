@@ -24,7 +24,7 @@ export function CardViewsWindow({ session, cardKey }: { session: ProjectSession;
   </div>
 }
 
-export function CardViewsPanel({ card, read, send }: { card?: CardLiveViews; read: ReadHtmlView; send?: SendHtmlView }) {
+export function CardViewsPanel({ card, read, send }: { card?: CardLiveViews; read: ReadHtmlView; send: SendHtmlView }) {
   if (card?.failure !== undefined)
     return <div className="card-views">
       <p className="caption" role="alert">{L('ビューの宣言を評価できませんでした: {0}', card.failure)}</p>
