@@ -670,10 +670,6 @@ extension ProjectSession {
     selectionOperation(.deletedefinitions, cards: [key([id])], in: [])
   }
 
-  func clearBuildCache() async throws -> Tsugumi_RPC_ProjectCacheClearResultT {
-    guard let rpc else { throw RPCError.disconnected }
-    return try await rpc.clearCache(opId: UUID())
-  }
 
   func deleteRunScratch(paths: [String]) async throws -> Tsugumi_RPC_RunScratchDeleteResultT {
     guard let rpc else { throw RPCError.disconnected }

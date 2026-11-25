@@ -1,5 +1,7 @@
 import AppKit
 import SwiftUI
+import TsugumiAgentClient
+import TsugumiLauncher
 import TsugumiRPC
 
 // MARK: - Card database
@@ -536,7 +538,14 @@ private struct CacheSettings: View {
       $0.path != "runs/" + (session.cacheUsage?.protectedRun ?? "")
     }
   }
-  @State private var clearTarget: ProjectSession?
+  private struct CacheProject {
+    let id: String
+    let name: String
+    let path: String?
+  }
+
+  @State private var clearTarget: CacheProject?
+  @State private var environments: [String: CacheProject] = [:]
   @State private var result: Tsugumi_RPC_ProjectCacheClearResultT?
   @State private var working = false
   @State private var message: String?
@@ -557,18 +566,21 @@ private struct CacheSettings: View {
             }
             if let error = session.cacheUsage?.error { Text(error).font(.caption).textSelection(.enabled) }
             ForEach((session.cacheUsage?.projects ?? []).compactMap { $0 }, id: \.project) { project in
-              let target = project.project == session.cacheUsage?.currentProject ? session : model.sessions.values.first { $0.identity.id == project.project }
+              let target = cacheProject(project)
+              let open = model.sessions[target.id]
               Divider()
               HStack {
-                Text(project.name).font(.headline)
+                Text(target.name).font(.headline)
                 Spacer()
                 Button("削除", role: .destructive) { clearTarget = target; confirm = true }
-                  .disabled(target == nil || target?.connected != true || target?.runActive == true || working)
+                  .disabled(open?.runActive == true || working)
+              }
+              if let path = target.path {
+                Text(path).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
               }
               LabeledContent("ビルドキャッシュ", value: bytes(project.buildBytes))
               LabeledContent("実行の scratch（合計）", value: bytes(project.scratchBytes))
               LabeledContent("root の最終使用", value: project.lastUsed.map { Date(timeIntervalSince1970: Double($0) / 1000).formatted() } ?? String(localized: "不明"))
-              if target == nil { Text("削除するにはこのプロジェクトを開いてください。").font(.caption).foregroundStyle(.secondary) }
               if let error = project.error { Text(error).font(.caption).textSelection(.enabled) }
             }
           }
@@ -615,16 +627,16 @@ private struct CacheSettings: View {
         }
       }
       if let message { Text(message).foregroundStyle(.red).textSelection(.enabled) }
-      Spacer()
-      HStack {
-        Spacer()
-        if working { ProgressView().controlSize(.small) }
-        Button("削除", role: .destructive) { clearTarget = session; confirm = true }
-          .disabled(working || session.runActive || !session.connected)
+      if working {
+        ProgressView().controlSize(.small).frame(maxWidth: .infinity, alignment: .trailing)
       }
     }
     .padding(16)
-    .task { await session.refreshCacheUsage() }
+    .task {
+      async let usage: Void = session.refreshCacheUsage()
+      async let names: Void = loadEnvironmentNames()
+      _ = await (usage, names)
+    }
     .confirmationDialog("選択した過去の scratch を削除しますか？", isPresented: $confirmScratch) {
       Button("削除", role: .destructive) {
         working = true
@@ -637,9 +649,12 @@ private struct CacheSettings: View {
       }
       Button("キャンセル", role: .cancel) {}
     }
-    .confirmationDialog("「\((clearTarget ?? session).scopeName([]))」のビルドキャッシュを削除しますか？", isPresented: $confirm) {
-      Button("削除", role: .destructive) { clear() }
+    .confirmationDialog("ビルドキャッシュを削除しますか？", isPresented: $confirm, titleVisibility: .visible,
+                        presenting: clearTarget) { target in
+      Button("削除", role: .destructive) { clear(target) }
       Button("キャンセル", role: .cancel) {}
+    } message: { target in
+      Text([target.name, target.path].compactMap { $0 }.joined(separator: "\n"))
     }
   }
 
@@ -648,15 +663,43 @@ private struct CacheSettings: View {
       ?? String(localized: "計測中または取得できません")
   }
 
-  private func clear() {
+  private func cacheProject(_ usage: Tsugumi_RPC_ProjectCacheUsageT) -> CacheProject {
+    let id = usage.project
+    if let open = model.sessions[id] {
+      return CacheProject(id: id, name: open.scopeName([]), path: open.identity.url.path)
+    }
+    if let environment = environments[id] { return environment }
+    if let recent = model.recents.first(where: {
+      (try? ProjectIdentity(url: URL(fileURLWithPath: $0.path)))?.id == id
+    }) {
+      return CacheProject(id: id, name: recent.name, path: recent.path)
+    }
+    return CacheProject(id: id, name: usage.name == "project" ? id : usage.name, path: nil)
+  }
+
+  private func loadEnvironmentNames() async {
+    let request = Tsugumi_Host_EnvironmentListRequestT()
+    guard let reply: Tsugumi_Host_EnvironmentListT = try? await CoreHostClient.shared.hostCall(.environmentlistrequest, request)
+    else { return }
+    for entry in reply.environments.compactMap({ $0 }) where !entry.state.project.isEmpty {
+      let id = entry.state.key
+      environments[id] = CacheProject(id: id, name: entry.name, path: entry.state.project)
+    }
+  }
+
+  private func clear(_ target: CacheProject) {
     working = true
     message = nil
     Task {
+      defer { working = false }
       do {
-        result = try await (clearTarget ?? session).clearBuildCache()
+        let request = Tsugumi_Host_HostRuntimeRequestT()
+        request.action = .clearprojectbuildcache
+        request.projectId = target.id
+        let reply: Tsugumi_Host_HostRuntimeT = try await CoreHostClient.shared.hostCall(.hostruntimerequest, request)
+        result = reply.buildCache
         await session.refreshCacheUsage()
       } catch { message = String(localized: "削除できませんでした: \(String(describing: error))") }
-      working = false
     }
   }
 }

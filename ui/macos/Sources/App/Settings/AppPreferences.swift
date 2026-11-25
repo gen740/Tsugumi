@@ -129,6 +129,7 @@ struct SkillFolder: Codable, Hashable, Identifiable {
 final class AppPreferences {
   static let shared = AppPreferences()
   @ObservationIgnored private let d = UserDefaults.standard
+  private let launchLanguageOverride: Language?
 
   /// The app's language: Japanese unless English is chosen, whatever the
   /// system's. The host uses it to present neutral Git records and shares it
@@ -203,7 +204,15 @@ final class AppPreferences {
   var skillFolders: [SkillFolder] { didSet { saveSkills() } }
 
   init() {
-    let selectedLanguage = Language(rawValue: CorePreferences.shared.string(forKey: "app.language") ?? d.stringArray(forKey: "AppleLanguages")?.first ?? "") ?? .ja
+    let defaults = UserDefaults.standard
+    let arguments = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
+    let override = (arguments["app.language"] as? String).flatMap(Language.init(rawValue:))
+    launchLanguageOverride = override
+    // AppleLanguages from the global domain is the system preference. Only
+    // an app-specific choice should override the app's Japanese default.
+    let appDomain = Bundle.main.bundleIdentifier.flatMap { defaults.persistentDomain(forName: $0) }
+    let saved = (appDomain?["AppleLanguages"] as? [String])?.first.flatMap(Language.init(rawValue:))
+    let selectedLanguage = override ?? saved ?? .ja
     language = selectedLanguage
     languageRestart = LanguageRestart(running: selectedLanguage)
     quitAfterLastWindowClosed = d.bool(forKey: "app.quitAfterLastWindowClosed")
@@ -239,7 +248,8 @@ final class AppPreferences {
 
   func syncHostSettings() {
     let core = CorePreferences.shared
-    if let value = core.string(forKey: "app.language"), let next = Language(rawValue: value), language != next { language = next }
+    if launchLanguageOverride == nil, let value = core.string(forKey: "app.language"),
+       let next = Language(rawValue: value), language != next { language = next }
     if let data = core.data(forKey: "agent.skillFolders"), let folders = try? JSONDecoder().decode([SkillFolder].self, from: data), skillFolders != folders { skillFolders = folders }
   }
 
@@ -271,7 +281,10 @@ final class AppPreferences {
   /// Applied when the preferences load too (TsugumiApp's first property, before
   /// any string is localized), so a first launch is in Japanese.
   private func applyLanguage() {
-    if d.stringArray(forKey: "AppleLanguages") != [language.rawValue] { d.set([language.rawValue], forKey: "AppleLanguages") }
+    guard launchLanguageOverride == nil else { return }
+    let selected = [language.rawValue]
+    let appDomain = Bundle.main.bundleIdentifier.flatMap { d.persistentDomain(forName: $0) }
+    if appDomain?["AppleLanguages"] as? [String] != selected { d.set(selected, forKey: "AppleLanguages") }
   }
 }
 

@@ -123,7 +123,7 @@ table EnvironmentList { environments:[EnvironmentEntry]; }
 // Native hosts report vm_state="unavailable"; no VM is booted by this query.
 // Command carries the operator tool's explicit supervisor diagnosis. Project
 // UIs use EnvironmentRequest; ordinary state queries do not boot a VM.
-enum RuntimeAction:ubyte { State, Shutdown, CleanupStore, ForgetProject, Reset, DeleteEnvironment, Command, VerifyStore }
+enum RuntimeAction:ubyte { State, Shutdown, CleanupStore, ForgetProject, Reset, DeleteEnvironment, Command, VerifyStore, ClearProjectBuildCache }
 // Snapshot for the app's quit confirmation, including work from other clients.
 // Connections alone are not work. This neither stops nor transfers any work.
 /// -> HostActivity. Agent turns, host requests and project-core activity.
@@ -147,6 +147,7 @@ table HostRuntime { vm_state:string (required); store_path:string; store_exists:
   vm_resources:VMResources; vm_default_resources:VMResources; vm_limits:VMResources;
   // The store disk file now, in GiB (0 before it exists). Set by the helper.
   store_disk_gib:uint;
+  build_cache:Tsugumi.RPC.ProjectCacheClearResult;
 }
 /// CPUs, memory (GiB) and store disk (GiB) of the shared VM.
 table VMResources { cpus:uint; memory_gib:uint; store_gib:uint; }

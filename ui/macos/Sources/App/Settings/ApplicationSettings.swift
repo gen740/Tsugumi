@@ -207,7 +207,7 @@ private struct GeneralSettings: View {
         VStack(alignment: .leading, spacing: 6) {
           Text(verbatim: text.title).fontWeight(.semibold)
           Text(verbatim: text.message).foregroundStyle(.secondary)
-          Button { Updater.shared.restart() } label: { Text(verbatim: text.now) }
+          Button { LanguageRestartNotice.restart() } label: { Text(verbatim: text.now) }
         }
         .fixedSize(horizontal: false, vertical: true)
       }
@@ -370,22 +370,7 @@ private struct EditorSettings: View {
 
   var body: some View {
     @Bindable var prefs = prefs
-    HStack(alignment: .top, spacing: 0) {
-      Form {
-        Picker("インデント幅", selection: $prefs.indentWidth) {
-          Text("2").tag(2)
-          Text("4").tag(4)
-          Text("8").tag(8)
-        }
-        .pickerStyle(.segmented)
-        Toggle("インデントガイドを表示", isOn: $prefs.showIndentGuides)
-        Stepper("文字サイズ: \(Int(prefs.editorFontSize))", value: $prefs.editorFontSize, in: 9...24)
-        Picker("配色", selection: $prefs.editorTheme) {
-          ForEach(EditorTheme.allCases) { Text($0.label).tag($0) }
-        }
-      }
-      .formStyle(.grouped)
-      .frame(width: 280)
+    VStack(spacing: 0) {
       VStack(alignment: .leading, spacing: 6) {
         Picker("", selection: $language) {
           Text("Python").tag("python")
@@ -402,6 +387,22 @@ private struct EditorSettings: View {
         InfoButton("サンプルは編集して試せます（保存されません）。Tab はインデント幅の空白を入れます。")
       }
       .padding(12)
+      .frame(minHeight: 126)
+      Form {
+        Picker("インデント幅", selection: $prefs.indentWidth) {
+          Text("2").tag(2)
+          Text("4").tag(4)
+          Text("8").tag(8)
+        }
+        .pickerStyle(.segmented)
+        Toggle("インデントガイドを表示", isOn: $prefs.showIndentGuides)
+        Stepper("文字サイズ: \(Int(prefs.editorFontSize))", value: $prefs.editorFontSize, in: 9...24)
+        Picker("配色", selection: $prefs.editorTheme) {
+          ForEach(EditorTheme.allCases) { Text($0.label).tag($0) }
+        }
+      }
+      .formStyle(.grouped)
+
     }
   }
 }

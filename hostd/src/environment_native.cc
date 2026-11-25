@@ -346,6 +346,33 @@ auto EnvironmentProcess::Busy(const Tsugumi::Host::EnvironmentStateT& ready)
   if (!activity) throw std::runtime_error("Missing project activity");
   return activity->busy();
 }
+auto EnvironmentProcess::ClearBuildCache(
+    const Tsugumi::Host::EnvironmentStateT& ready)
+    -> Tsugumi::RPC::ProjectCacheClearResultT {
+  namespace R = Tsugumi::RPC;
+  auto connection = ProjectConnection(ready);
+  auto result =
+      connection
+          ->Call([](uint64_t id) {
+            flatbuffers::FlatBufferBuilder b;
+            auto value = R::CreateProjectCacheClearRequest(
+                b, b.CreateString(crypto::uuid4()));
+            auto request = R::CreateRequest(
+                b, R::RequestPayload::ProjectCacheClearRequest, value.Union());
+            R::FinishMessageBuffer(
+                b, R::CreateMessage(b, id, R::Payload::Request, request.Union()));
+            return client::Bytes(b.GetBufferPointer(),
+                                 b.GetBufferPointer() + b.GetSize());
+          })
+          .get();
+  if (result.error) throw std::runtime_error(result.error.message);
+  const auto* reply = R::GetMessage(result.bytes.data())->payload_as_Reply();
+  const auto* cache = reply ? reply->value_as_ProjectCacheClearResult() : nullptr;
+  if (!cache) throw std::runtime_error("Missing project cache clear result");
+  Tsugumi::RPC::ProjectCacheClearResultT out;
+  cache->UnPackTo(&out);
+  return out;
+}
 auto EnvironmentProcess::Requirements(
     const Tsugumi::Host::EnvironmentStateT& ready)
     -> Tsugumi::RPC::ProjectHostRequirementsT {

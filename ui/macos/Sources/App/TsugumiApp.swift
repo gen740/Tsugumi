@@ -5,8 +5,8 @@ import TsugumiLauncher
 @main
 struct TsugumiApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-  private let model = AppModel.shared
   private let prefs = AppPreferences.shared
+  private let model = AppModel.shared
 
   init() {
     // A project folder given on the command line is opened by the app itself
@@ -71,7 +71,7 @@ struct TsugumiApp: App {
     .defaultSize(width: 900, height: 560)
     .restorationBehavior(.disabled)
 
-    WindowGroup("成果物", id: "artifacts", for: CardRef.self) { $ref in
+    WindowGroup("Artifacts", id: "artifacts", for: CardRef.self) { $ref in
       if let ref { DetailHost(path: ref.path) { CardArtifactsView(session: $0, cardKey: ref.card) } }
     }
     .defaultSize(width: 900, height: 560)
@@ -99,8 +99,11 @@ struct TsugumiApp: App {
       ApplicationSettings()
         .environment(model)
         .environment(prefs)
-        .frame(width: 760, height: 520)
+        .frame(width: 760)
+        .frame(minHeight: 420, idealHeight: 520, maxHeight: .infinity)
     }
+    .windowResizability(.contentSize)
+    .defaultSize(width: 760, height: 520)
     .restorationBehavior(.disabled)
   }
 }
