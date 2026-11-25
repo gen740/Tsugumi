@@ -18,18 +18,18 @@ struct DawnViewRepresentable: NSViewRepresentable {
 /// Owns the AppKit side of a Dawn view. The renderer and its synchronous
 /// callbacks live on the view thread, while this object handles presentation.
 @MainActor @Observable final class DawnViewHost: NSObject {
-  private let sendToCard: (UUID, Data) async throws -> Void
+  private let sendToCard: (String, Data) async throws -> Void
   let flags: UInt32
   @ObservationIgnored lazy var view = DawnLayerView(host: self)
   @ObservationIgnored private var outbox = CardViewOutbox()
   @ObservationIgnored private var wasm: Data?
   @ObservationIgnored private var worker: DawnViewWorker?
-  @ObservationIgnored private var routes: Set<UUID>
+  @ObservationIgnored private var recipients: Set<String>
   @ObservationIgnored private var accepts: UInt32 = 0
   @ObservationIgnored private var link: CADisplayLink?
   @ObservationIgnored private var drawing = false
   @ObservationIgnored private var drawRequested = false
-  @ObservationIgnored private var reverse: [(UUID, Data, () -> Void)] = []
+  @ObservationIgnored private var reverse: [(String, Data, () -> Void)] = []
   @ObservationIgnored private var reverseTask: Task<Void, Never>?
   @ObservationIgnored private var audio: DawnAudio?
   @ObservationIgnored private var gamepadTimer: Timer?
@@ -39,30 +39,31 @@ struct DawnViewRepresentable: NSViewRepresentable {
   private(set) var waiting = false
   private(set) var error: String?
 
-  init(wasm: Data, flags: UInt32, routes: Set<UUID>,
-       sendToCard: @escaping (UUID, Data) async throws -> Void) {
+  init(wasm: Data, flags: UInt32, recipients: Set<String>,
+       sendToCard: @escaping (String, Data) async throws -> Void) {
     self.flags = flags
-    self.routes = routes
+    self.recipients = recipients
     self.sendToCard = sendToCard
     self.wasm = wasm
     super.init()
   }
 
-  func registerRoute(_ route: UUID) {
-    routes.insert(route)
-    worker?.registerRoute(route)
+  func setRecipient(_ card: String, registered: Bool) {
+    if registered { recipients.insert(card) }
+    else { recipients.remove(card) }
+    worker?.setRecipient(card, registered: registered)
   }
 
   private func create(in layer: CAMetalLayer, width: UInt32, height: UInt32, scale: Float) {
     guard let wasm else { return }
     self.wasm = nil
-    guard let worker = DawnViewWorker(routes: routes, onWaiting: { [weak self] waiting in
+    guard let worker = DawnViewWorker(recipients: recipients, onWaiting: { [weak self] waiting in
       guard let self, !closed else { return }
       self.waiting = waiting
       if waiting { view.releasePointer() }
-    }, onSend: { [weak self] route, data, complete in
+    }, onSend: { [weak self] to, data, complete in
       guard let self, !closed else { complete(); return }
-      enqueue(route, bytes: data, complete: complete)
+      enqueue(to, bytes: data, complete: complete)
     }, onAudioFailure: { [weak self] diagnostic in
       self?.fail(diagnostic)
     }) else {
@@ -303,16 +304,16 @@ struct DawnViewRepresentable: NSViewRepresentable {
     }
   }
 
-  private func enqueue(_ route: UUID, bytes: Data, complete: @escaping () -> Void) {
-    reverse.append((route, bytes, complete))
+  private func enqueue(_ to: String, bytes: Data, complete: @escaping () -> Void) {
+    reverse.append((to, bytes, complete))
     if reverseTask == nil { reverseTask = Task { await flushReverse() } }
   }
 
   private func flushReverse() async {
     while !Task.isCancelled, !reverse.isEmpty {
-      let (route, bytes, complete) = reverse.removeFirst()
+      let (to, bytes, complete) = reverse.removeFirst()
       do {
-        try await sendToCard(route, bytes)
+        try await sendToCard(to, bytes)
       } catch {
         if !Task.isCancelled { self.error = error.localizedDescription }
       }

@@ -11,25 +11,31 @@ function initializeCardView() {
   const max = 1 << 24
   let port, used = 0, reportedDrop = false
   const pending = []
+  const replies = new Map()
+  let nextSend = 0
   const flush = () => {
     if (!port) return
-    for (const { bytes, route } of pending.splice(0))
-      port.postMessage({ type: 'data', bytes, route }, [bytes, route])
+    for (const data of pending.splice(0)) port.postMessage(data, [data.bytes])
   }
 
   window.tsugumi = {
     onmessage: null,
-    send(bytes, route = new Uint8Array(16)) {
-      if (!(bytes instanceof Uint8Array) || !(route instanceof Uint8Array) || route.byteLength !== 16)
-        throw new TypeError('Expected Uint8Array bytes and a 16-byte route')
-      if (bytes.byteLength > max || used > max) {
+    async send(bytes, to) {
+      if (!(bytes instanceof Uint8Array) || typeof to !== 'string' || !to || to.includes('\0'))
+        throw new TypeError('Expected Uint8Array bytes and a Card path or "*"')
+      const size = Math.max(1, bytes.byteLength) + 2 * to.length
+      if (bytes.byteLength > max || to.length > max / 2 || used > max) {
         if (!reportedDrop && port) port.postMessage({ type: 'dropped' })
         reportedDrop = true
-        return
+        throw new Error('The view message queue is full')
       }
-      used += Math.max(1, bytes.byteLength)
-      pending.push({ bytes: new Uint8Array(bytes).buffer, route: new Uint8Array(route).buffer })
-      flush()
+      used += size
+      const id = ++nextSend
+      return await new Promise((resolve, reject) => {
+        replies.set(id, { size, resolve, reject })
+        pending.push({ type: 'data', id, bytes: new Uint8Array(bytes).buffer, to })
+        flush()
+      })
     },
   }
 
@@ -38,9 +44,14 @@ function initializeCardView() {
     removeEventListener('message', connect)
     port = event.data.port
     port.onmessage = ({ data }) => {
-      if (data?.type === 'reverseCredit') {
-        used -= Math.max(1, data.size)
+      if (data?.type === 'sendResult') {
+        const reply = replies.get(data.id)
+        if (!reply) return
+        replies.delete(data.id)
+        used -= reply.size
         reportedDrop = false
+        if (data.error) reply.reject(new Error(data.error))
+        else reply.resolve()
       } else if (data?.type === 'data') {
         try {
           window.tsugumi.onmessage?.(new Uint8Array(data.bytes))
@@ -103,14 +114,15 @@ function mount(html) {
       } else if (data?.type === 'dropped') {
         notify({ tsugumi: 'messageDropped' })
       } else if (data?.type === 'data' && data.bytes instanceof ArrayBuffer &&
-        data.route instanceof ArrayBuffer && data.route.byteLength === 16) {
-        if (data.bytes.byteLength > messageMax || view.reverseBytes > budget - messageMax) {
+        typeof data.to === 'string' && Number.isSafeInteger(data.id)) {
+        const size = Math.max(1, data.bytes.byteLength) + 2 * data.to.length
+        if (data.bytes.byteLength > messageMax || data.to.length > messageMax / 2 || view.reverseBytes > budget - messageMax) {
           notify({ tsugumi: 'messageDropped' })
-          view.port.postMessage({ type: 'reverseCredit', size: data.bytes.byteLength })
+          view.port.postMessage({ type: 'sendResult', id: data.id, error: 'The view message queue is full' })
           return
         }
-        view.reverseBytes += Math.max(1, data.bytes.byteLength)
-        notify({ tsugumi: 'send', bytes: data.bytes, route: data.route }, [data.bytes, data.route])
+        view.reverseBytes += size
+        notify({ tsugumi: 'send', bytes: data.bytes, to: data.to, id: data.id }, [data.bytes])
       }
     }
     frame.contentWindow.postMessage({ tsugumi: 1, port: port2 }, '*', [port2])
@@ -132,10 +144,10 @@ window.tsugumiView = message => {
       current.pending.push({ bytes: message.bytes, ticket: message.ticket })
       flush(current)
       return
-    case 'reverseCredit':
-      if (current && Number.isInteger(message.size) && message.size >= 0) {
-        current.reverseBytes = Math.max(0, current.reverseBytes - Math.max(1, message.size))
-        current.port?.postMessage({ type: 'reverseCredit', size: message.size })
+    case 'sendResult':
+      if (current && Number.isSafeInteger(message.id) && Number.isInteger(message.size) && message.size >= 0) {
+        current.reverseBytes = Math.max(0, current.reverseBytes - message.size)
+        current.port?.postMessage({ type: 'sendResult', id: message.id, error: message.error })
       }
   }
 }

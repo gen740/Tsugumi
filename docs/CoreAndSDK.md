@@ -116,16 +116,16 @@ in
 - Include SDK-provided views explicitly with `sdk.views`. LineChart and Points are HTML views in the SDK. Custom HTML can include its own JS and Wasm.
 - The Card calls `view_open` by name to create a window. Each open creates a session and an opener route. A Card that receives a session from a port can send to that window and register its own route to receive responses.
 - PANEL opens in the project window on macOS and docked over the canvas on the Web. WINDOW opens a separate window on macOS and a movable, resizable window inside the page on the Web; both accept an optional initial content size. FULLSCREEN opens a native fullscreen window on macOS; on the Web its in-page window fills the browser page, and its **Enter fullscreen** button enters the browser's full screen. Web views never open browser popups: every view window stays in the same page, shares its connection, and can be detached from or docked back to the panel, minimized to the strip at the bottom left and restored. A minimized view keeps receiving messages, sound and input; only drawing pauses. A packed app presents PANEL in its main window and requires macOS 26 or later.
-- Messages travel to one session or one route through the worker, core and UI. The relay uses [ABI backpressure](CardABI.md#display-messages). A window retains its last frame after its routes go away. A user or any Card holding the session UUID can close the window. `view_close(session)` works between calls, and repeated closes succeed without another event. Closing gives every live route a close event and drops later sends.
+- Cards send to a window by session. Views send to live Card processes registered on that window by project-root Card path or `"*"`. The relay uses [ABI backpressure](CardABI.md#display-messages). A window retains its last frame after its routes go away. A user or any Card holding the session UUID can close the window. `view_close(session)` works between calls, and repeated closes succeed without another event. Closing gives every live route a close event and drops later sends.
 - View traffic is live. Use output ports and artifacts for results that people will inspect later. [Run history](RunHistory.md)
 
 ### Passing a window between Cards
 
 A title Card can open a view and pass its session in a port alongside the
-initial state. The play Card registers its own route on that session and
-sends the route to the view in a message. The view can direct input to the
-play Card using that route. Passing the same session to a shop Card lets
-it register another route and render into the same window. If the window
+initial state. The play Card registers on that session with `route_register`.
+The view can direct input to it by its project-root path, such as
+`screens/play`. Passing the same session to a shop Card lets it register
+and render into the same window. If the window
 closes during the handoff, route registration reports `TSUGUMI_VIEW_WINDOW_CLOSED`
 so the next Card can end cleanly.
 
@@ -133,9 +133,11 @@ so the next Card can end cleanly.
 
 The UI loads the file in an isolated frame without network access. Use
 `tsugumi.onmessage = (bytes) => { /* draw */ }` to receive Card messages.
-Use `tsugumi.send(bytes, route)` to send to a specific route, where `route` is
-a 16-byte `Uint8Array`. Omitting it sends to the opener's route. The view
-draws its empty state and handles resize. SDK views reassemble their own chunks.
+Use `await tsugumi.send(bytes, to)`, where `bytes` is a `Uint8Array` and
+`to` is a project-root Card path or `"*"` for all Cards registered on the
+window. The Promise rejects when the address has no live recipient.
+The view draws its empty state and handles resize. SDK views reassemble
+their own chunks.
 
 ### dawn views
 
@@ -156,10 +158,12 @@ A dawn view is a wasm32 module that draws to one WebGPU surface. Its contract is
   then `start` and one `draw`. It draws again on the next display frame only when
   `draw` returns bit 0, and otherwise after an event.
   `read` copies incoming bytes during `message`, `text` or `composition`.
-  `tsugumi_view_send(route, data, size)` takes a 16-byte route. An all-zero route
-  addresses the opener. Sending is nonblocking. The host rejects routes from
-  other windows and drops traffic for dead routes. A negative callback return
-  or a trap drops the instance and shows the error.
+  `tsugumi_view_send(to, data, size)` takes a NUL-terminated UTF-8 address.
+  Use a project-root Card path or `"*"` for all registered Cards.
+  Sending is nonblocking. It returns zero when queued and a negative value
+  when the address has no registered recipient or the host cannot queue the
+  message. A negative callback return or a trap drops the instance and shows
+  the error.
   Each instance runs all its calls on its own thread.
 - The view clock is an unsigned count of 48 kHz frames since the view started.
   Input timestamps are translated from the host clock. Draw receives the

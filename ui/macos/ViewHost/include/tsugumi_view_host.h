@@ -10,8 +10,7 @@ extern "C" {
 typedef struct tsugumi_view_host tsugumi_view_host;
 typedef struct tsugumi_view_stop tsugumi_view_stop;
 
-typedef int32_t (*tsugumi_view_host_send_fn)(void* context,
-                                             const uint8_t* route,
+typedef int32_t (*tsugumi_view_host_send_fn)(void* context, const char* to,
                                              const uint8_t* bytes,
                                              uint32_t size);
 typedef void (*tsugumi_view_host_waiting_fn)(void* context, int32_t waiting);

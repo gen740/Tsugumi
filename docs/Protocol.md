@@ -443,7 +443,7 @@ No fields.
 | --- | --- | --- |
 | [`ViewSave`](#viewsave) | ViewSaveResult | CAS on view_rev only. |
 | [`CardViewRead`](#cardviewread) | FileContent | Read a page of the immutable view file pinned by the open session. Only its presenting subscription may read it. FileContent.name is the declared view name and hash is the Nix store path. offset defaults to 0 and limit_bytes defaults to 1 MiB (1..1048576). This RPC is transient. |
-| [`ViewSend`](#viewsend) | Ack | Send opaque bytes to one route in the sending window. The all-zero route selects the opener's route. Messages to a dead route are dropped. |
+| [`ViewSend`](#viewsend) | Ack | Send opaque bytes to live processes of a Card registered on this window. The address is a project-root Card path or "*" for all registered Cards. An address without a live recipient returns an error. |
 | [`ViewCredit`](#viewcredit) | Ack | Return display capacity after the UI forwards or discards a message. |
 | [`ViewClose`](#viewclose) | Ack | Close a view owned by this subscription. Each live route receives one close event. Repeating a completed close has no effect. |
 
@@ -468,7 +468,7 @@ No fields.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `session` | `string` | yes |  |
-| `route` | `string` | yes |  |
+| `to` | `string` | yes |  |
 | `bytes` | `[ubyte]` | yes |  |
 
 ### ViewCredit
@@ -567,15 +567,15 @@ Sent from `tsugumid` to connected clients.
 - `TraceChanged`
 - `RunCategoryDeleteResult`
 - `ViewOpened`
-- `ViewRouteRegistered`
+- `ViewRecipientChanged`
 - `ViewClosed`
 
 Card views open through the Card ABI. The presenting subscription receives
 `ViewOpened` before any `DisplayUpdated` for the session and owns the
-file reads, sends, credits and close. `ViewRouteRegistered` binds a route
-to a session for the lifetime of the window. The presenting subscription
-receives `ViewClosed` when the window closes. Session and route IDs use canonical
-UUID text. The all-zero route selects the opening Card’s route. View RPCs
+file reads, sends, credits and close. `ViewRecipientChanged` reports when
+a Card path gains its first live recipient or loses its last one on a window.
+The presenting subscription receives `ViewClosed` when the window closes.
+Session IDs use canonical UUID text. View RPCs
 and notifications are excluded from RPC traces.
 
 ### Run events

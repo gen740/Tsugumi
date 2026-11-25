@@ -123,7 +123,7 @@ The worker builds the process environment at launch and fixes it for the life of
 
 ### Showing Card views
 
-A Card declares its views in `default.nix`. Each is one immutable file in the Nix store. When a Card opens a declared view, the project core pins the file and binds a random session UUID to the presenting subscription. Other Card processes can send opaque bytes to the window if they know its session. The presenting host sends to one route of that window. The core checks the route's membership and drops sends to dead routes. View traffic is transient.
+A Card declares its views in `default.nix`. Each is one immutable file in the Nix store. When a Card opens a declared view, the project core pins the file and binds a random session UUID to the presenting subscription. Other Card processes can send opaque bytes to the window if they know its session. The presenting host sends to a Card path or broadcasts to the window. The core delivers only to live Card processes registered on that session and returns an error when the address has no live recipient. View traffic is transient.
 
 The host loads an `html` view in an isolated frame and carries its data over a transferred `MessagePort`. A `dawn` view is a Wasm module that imports the listed WebGPU and message functions. The Mac app runs it in its app process on wasmtime with native Dawn. The Web UI runs it in the page with WebGPU. [Views](CoreAndSDK.md#views)
 

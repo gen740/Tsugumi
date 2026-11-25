@@ -512,11 +512,17 @@ auto message_import(void*, wasmtime_caller_t* caller,
         results[0] = i32(0);
       }
     } else if (size <= TSUGUMI_MESSAGE_MAX && host.send) {
-      const auto route = static_cast<uint32_t>(args[0].of.i32);
-      if (!in_bounds(memory, route, 16)) return nullptr;
+      const auto address = static_cast<uint32_t>(args[0].of.i32);
+      if (!address || !in_bounds(memory, address, 1)) return nullptr;
+      const auto* to = reinterpret_cast<const char*>(memory.base + address);
+      // At most 16 path segments of 64 characters, including separators
+      // and the NUL terminator.
+      constexpr uint64_t kAddressMaxBytes = 16 * 65;
+      if (!*to || !std::memchr(to, 0, std::min(kAddressMaxBytes,
+                                              memory.size - address)))
+        return nullptr;
       const auto* bytes = offset ? memory.base + offset : memory.base;
-      results[0] =
-          i32(host.send(host.send_context, memory.base + route, bytes, size));
+      results[0] = i32(host.send(host.send_context, to, bytes, size));
     }
     return nullptr;
   } catch (const std::exception& error) {

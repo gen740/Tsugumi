@@ -658,7 +658,7 @@ final class ProjectSession {
       if let d = (e.payload.value as? Tsugumi_RPC_DocPatchedT)?.delta { applyDelta(d) }
     case .runevent:
       if let r = e.payload.value as? Tsugumi_RPC_RunEventT { applyRunEvent(r) }
-    case .viewopened, .viewrouteregistered, .viewclosed, .displayupdated:
+    case .viewopened, .viewrecipientchanged, .viewclosed, .displayupdated:
       applyViewNotification(e.payload)
     case .runcategorydeleteresult:
       recordingRevision += 1
@@ -740,18 +740,17 @@ final class ProjectSession {
         let page = try await client.readCardView(session: session, offset: offset)
         return CardViewFilePage(bytes: Data(page.bytes), eof: page.eof == true, nextOffset: page.nextOffset)
       }
-      cardViews.open(opening, files: files, send: { route, bytes in
-        try await client.sendView(session: id, route: route, bytes: bytes)
+      cardViews.open(opening, files: files, send: { to, bytes in
+        try await client.sendView(session: id, to: to, bytes: bytes)
       }, close: { [weak self] in
         if let hostProject { await self?.reportView(opening, project: hostProject, closed: true) }
         try await client.closeView(session: id)
       })
       if let hostProject { Task { await reportView(opening, project: hostProject) } }
-    case .viewrouteregistered:
-      guard let registered = payload.value as? Tsugumi_RPC_ViewRouteRegisteredT,
-            let session = UUID(uuidString: registered.session),
-            let route = UUID(uuidString: registered.route) else { return }
-      cardViews.registerRoute(route, session: session)
+    case .viewrecipientchanged:
+      guard let recipient = payload.value as? Tsugumi_RPC_ViewRecipientChangedT,
+            let session = UUID(uuidString: recipient.session) else { return }
+      cardViews.setRecipient(recipient.path, registered: recipient.registered, session: session)
     case .viewclosed:
       guard let closed = payload.value as? Tsugumi_RPC_ViewClosedT,
             let id = UUID(uuidString: closed.session),

@@ -48,8 +48,7 @@ export function DawnViewCanvas({ view, read, send, hidden = false }: { view: Liv
     let instance: BrowserView
     try {
       instance = new BrowserView(canvas, textarea, view.flags, {
-        send: (bytes, route) => send(view, bytes, route),
-        acceptsRoute: route => view.acceptsRoute(route),
+        send: (bytes, to) => send(view, bytes, to),
         fatal: setError,
         gpuError: setGpuError,
         sendError: cause => setSendError(cause || L('ビューのメッセージを送信できませんでした')),

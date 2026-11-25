@@ -37,7 +37,6 @@ sys.path.insert(0, str(ROOT / "tests" / "core"))
 
 from harness.daemon import Daemon  # noqa: E402
 from harness.observations import read_pages  # noqa: E402
-from harness.views import ZERO_ROUTE  # noqa: E402
 from projects import start_run, wait_run  # noqa: E402
 from tsugumi_client import RpcFailure, path, text  # noqa: E402
 from Tsugumi.Data.CardState import CardState  # noqa: E402
@@ -147,7 +146,7 @@ def send_seed(c, subscription: str, timeout: float) -> None:
     ).value.display
     c.call("ViewCreditRequest", subscriptionId=subscription, session=session,
            bytes=1, creditId=ready.creditId)
-    c.call("ViewSendRequest", session=session, route=ZERO_ROUTE, bytes=b"\x0a")
+    c.call("ViewSendRequest", session=session, to="settings", bytes=b"\x0a")
 
 
 def harvest(demo: str, tmp: Path, staging: Path, sandbox: bool, timeout: float) -> dict:

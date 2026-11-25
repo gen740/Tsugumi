@@ -339,10 +339,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
   };
   struct CloseReceiver {
     WorkerProc::ViewReceiver& receiver;
-    ~CloseReceiver() {
-      std::lock_guard lock(receiver.mutex);
-      receiver.remote = nullptr;
-    }
+    ~CloseReceiver() { receiver.close(); }
   } close_receiver{*receiver};
   struct DisplayProgress {
     std::mutex mutex;
@@ -609,6 +606,5 @@ auto RemoteExecutionService::release_completed() -> void {
     });
   }
 }
-
 
 }  // namespace tsugumi

@@ -15,8 +15,8 @@ export type AudioRequest = { frame: number; frames: number }
 export type AudioChunk = { frame: number; samples?: Float32Array<ArrayBuffer> }
 
 export type ViewCommand =
-  | { type: 'start'; bytes: Uint8Array<ArrayBuffer>; canvas: OffscreenCanvas; size: ViewSize; routes: string[]; refreshPeriod: number; visible: boolean }
-  | { type: 'route'; route: string }
+  | { type: 'start'; bytes: Uint8Array<ArrayBuffer>; canvas: OffscreenCanvas; size: ViewSize; recipients: string[]; refreshPeriod: number; visible: boolean }
+  | { type: 'recipient'; card: string; registered: boolean }
   | { type: 'resize'; size: ViewSize; at: number; id: number }
   | { type: 'refresh'; period: number }
   | { type: 'visible'; visible: boolean }
@@ -31,9 +31,6 @@ export type ViewNotice =
   | { type: 'ready'; features: ViewFeatures }
   | { type: 'call'; started: boolean }
   | { type: 'complete'; id: number; error?: string; png?: Uint8Array<ArrayBuffer> }
-  | { type: 'send'; id: number; bytes: Uint8Array<ArrayBuffer>; route: Uint8Array<ArrayBuffer> }
+  | { type: 'send'; id: number; bytes: Uint8Array<ArrayBuffer>; to: string }
   | { type: 'fatal' | 'gpuError' | 'sendError'; message: string }
   | { type: 'textArea'; area: TextArea | null }
-
-export const routeKey = (route: Uint8Array) =>
-  Array.from(route, byte => byte.toString(16).padStart(2, '0')).join('')

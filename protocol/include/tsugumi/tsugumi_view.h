@@ -100,14 +100,12 @@ TSUGUMI_VIEW_WEBGPU_IMPORTS(TSUGUMI_VIEW_DECLARE_IMPORT_)
 
 /* module "tsugumi" */
 
-/* Send bytes to a route of this window. A route of all zero bytes means
- * the route returned by view_open. The host rejects a route from another
- * window and drops messages for a dead route. Never blocks. The host
- * copies the route and data before returning. Returns 0 when accepted
- * and a negative value when the host cannot accept the message. */
+/* Send bytes to a project-root Card path, or "*" for all registered Cards
+ * on this window. The host copies the UTF-8, NUL-terminated address and data.
+ * Returns 0 when queued, negative for an unknown or unregistered address
+ * or if the host cannot accept the message. Never blocks. */
 TSUGUMI_VIEW_IMPORT_("tsugumi", tsugumi_view_send)
-int32_t tsugumi_view_send(const uint8_t* route /* 16 bytes */,
-                          const uint8_t* data, uint32_t size);
+int32_t tsugumi_view_send(const char* to, const uint8_t* data, uint32_t size);
 
 /* Copy the current incoming bytes into dst. Valid only inside message, text
  * and composition; size must equal the size passed to the export.

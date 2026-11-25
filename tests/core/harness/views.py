@@ -6,7 +6,6 @@ from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from tsugumi_client import text
 
 EMPTY_OUTPUTS = "table Outputs {} root_type Outputs;"
-ZERO_ROUTE = str(uuid.UUID(int=0))
 MESSAGE_MAX = 1 << 24
 # These C fixtures exercise the relay across processes. They make no network
 # calls and run without host-specific sandbox tools.

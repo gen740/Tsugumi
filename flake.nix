@@ -25,7 +25,7 @@
   };
 
   inputs.tsugumi-kit = {
-    url = "github:gen740/tsugumi-kit/feat/view-close";
+    url = "github:gen740/tsugumi-kit/feat/view-send-by-path";
     inputs.nixpkgs.follows = "nixpkgs";
     inputs.flake-parts.follows = "flake-parts";
   };

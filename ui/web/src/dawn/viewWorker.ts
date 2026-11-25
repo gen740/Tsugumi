@@ -1,6 +1,6 @@
 import { DawnViewInstance } from './instance'
 import { loadView } from './loadView'
-import { routeKey, sampleRate, type AudioChunk, type AudioClock, type AudioRequest, type ViewCommand, type ViewNotice } from './workerProtocol'
+import { sampleRate, type AudioChunk, type AudioClock, type AudioRequest, type ViewCommand, type ViewNotice } from './workerProtocol'
 
 const worker = globalThis as unknown as {
   postMessage(notice: ViewNotice, transfer?: Transferable[]): void
@@ -9,7 +9,7 @@ const worker = globalThis as unknown as {
 const post = (notice: ViewNotice, transfer?: Transferable[]) => worker.postMessage(notice, transfer)
 const errorText = (cause: unknown) => cause instanceof Error ? cause.message : String(cause)
 
-const routes = new Set<string>()
+const recipients = new Set<string>()
 let instance: DawnViewInstance | undefined
 let visible = true
 let clock: AudioClock | undefined
@@ -30,16 +30,16 @@ function onAudio(port: MessagePort, initialClock: AudioClock) {
 async function run(command: ViewCommand) {
   switch (command.type) {
     case 'start': {
-      for (const route of command.routes) routes.add(route)
+      for (const card of command.recipients) recipients.add(card)
       visible = command.visible
       const { module } = await loadView(command.bytes)
       instance = await DawnViewInstance.mount(module, command.canvas, command.size, {
-        send: (bytes, route) => new Promise<void>((resolve, reject) => {
+        send: (bytes, to) => new Promise<void>((resolve, reject) => {
           const id = ++nextSend
           sendReply = error => error ? reject(new Error(error)) : resolve()
-          post({ type: 'send', id, bytes, route }, [bytes.buffer, route.buffer])
+          post({ type: 'send', id, bytes, to }, [bytes.buffer])
         }),
-        acceptsRoute: route => route.every(byte => byte === 0) || routes.has(routeKey(route)),
+        acceptsRecipient: to => to === '*' ? recipients.size !== 0 : recipients.has(to),
         onSendError: cause => post({ type: 'sendError', message: cause === undefined ? '' : errorText(cause) }),
         onGpuError: message => post({ type: 'gpuError', message }),
         onFatal: cause => post({ type: 'fatal', message: errorText(cause) }),
@@ -49,8 +49,9 @@ async function run(command: ViewCommand) {
       post({ type: 'ready', features: instance.features })
       break
     }
-    case 'route':
-      routes.add(command.route)
+    case 'recipient':
+      if (command.registered) recipients.add(command.card)
+      else recipients.delete(command.card)
       break
     case 'visible':
       visible = command.visible

@@ -3,6 +3,9 @@ import { checkViewAbi, viewExport, type ViewCallback } from './loadView'
 import { sampleRate, type DawnInput, type TextArea, type ViewSize } from './workerProtocol'
 
 const messageMax = 1 << 24
+// A project path has at most 16 segments of 64 characters, plus separators.
+const addressMaxBytes = 16 * 65 // Includes the NUL terminator.
+const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 const mapRead = 1
 const copyDst = 8
 const copySrc = 1
@@ -40,8 +43,8 @@ interface DawnContext {
 }
 
 interface ViewHost {
-  send(bytes: Uint8Array<ArrayBuffer>, route: Uint8Array<ArrayBuffer>): Promise<unknown>
-  acceptsRoute(route: Uint8Array<ArrayBuffer>): boolean
+  send(bytes: Uint8Array<ArrayBuffer>, to: string): Promise<unknown>
+  acceptsRecipient(to: string): boolean
   onSendError(error?: unknown): void
   onGpuError(message: string): void
   onFatal(error: unknown): void
@@ -63,7 +66,7 @@ export class DawnViewInstance {
   // A hidden (minimized) view keeps receiving calls, but is not drawn.
   private hidden = false
   private currentBytes?: Uint8Array<ArrayBuffer>
-  private readonly reverse: { bytes: Uint8Array<ArrayBuffer>; route: Uint8Array<ArrayBuffer> }[] = []
+  private readonly reverse: { bytes: Uint8Array<ArrayBuffer>; to: string }[] = []
   private reverseBytes = 0
   private sending = false
   private origin = 0
@@ -116,7 +119,7 @@ export class DawnViewInstance {
         webgpu: { ...webgpu },
         tsugumi: {
           tsugumi_view_read: (ptr: number, length: number) => this.read(ptr, length),
-          tsugumi_view_send: (route: number, ptr: number, length: number) => this.send(route, ptr, length),
+          tsugumi_view_send: (to: number, ptr: number, length: number) => this.send(to, ptr, length),
         },
       })
       this.exports = instance.exports
@@ -372,19 +375,32 @@ export class DawnViewInstance {
     return 0
   }
 
-  private send(routePtr: number, ptr: number, size: number): number {
+  private address(ptr: number): string | undefined {
+    const offset = ptr >>> 0
+    const remaining = Math.min(addressMaxBytes, (this.memory?.buffer.byteLength ?? 0) - offset)
+    const bytes = offset && remaining > 0 ? this.memoryBytes(offset, remaining) : undefined
+    const end = bytes?.indexOf(0) ?? -1
+    if (!bytes || end <= 0) return undefined
+    try {
+      return utf8.decode(bytes.subarray(0, end))
+    } catch {
+      return undefined
+    }
+  }
+
+  private send(toPtr: number, ptr: number, size: number): number {
     if (this.stopped) return -1
     const src = (size >>> 0) <= messageMax && this.reverseBytes <= messageMax
       ? this.memoryBytes(ptr, size)
       : undefined
-    const route = this.memoryBytes(routePtr, 16)
-    if (!src || !route || !this.options.acceptsRoute(route)) {
+    const to = this.address(toPtr)
+    if (!src || to === undefined || !this.options.acceptsRecipient(to)) {
       this.options.onSendError()
       return -1
     }
     const bytes = src.slice()
     this.reverseBytes += Math.max(1, bytes.length)
-    this.reverse.push({ bytes, route: route.slice() })
+    this.reverse.push({ bytes, to })
     if (!this.sending) {
       this.sending = true
       queueMicrotask(() => { void this.drain() })
@@ -394,10 +410,10 @@ export class DawnViewInstance {
 
   private async drain() {
     while (this.reverse.length && !this.stopped) {
-      const { bytes, route } = this.reverse.shift()!
+      const { bytes, to } = this.reverse.shift()!
       const size = Math.max(1, bytes.length)
       try {
-        await this.options.send(bytes, route)
+        await this.options.send(bytes, to)
       } catch (error) {
         if (!this.stopped) this.options.onSendError(error)
       } finally {
