@@ -43,7 +43,7 @@ node docs/site/player/build.mjs
 
 ### After an SDK interface change
 
-Rebuild `tsugumid` and `tsugumi-worker` from the same checkout before recording. Each project uses the SDK pinned in its own `tsugumi.lock`. Install the Web dependencies (`npm ci` in `ui/web/`) and generate its protocol bindings (`nix develop --command npm run gen` there). Then, from the repository root, refresh every runnable demo and the guide, including their resolved ports:
+Rebuild `tsugumid` and `tsugumi-worker` from the same checkout before recording. Each project uses the SDK pinned in its own `tsugumi.lock`. Install the Web dependencies (`npm ci` in `ui/web/`) and generate its protocol bindings (`nix develop --command npm run gen` there). Then, from the repository root, refresh the recorded demos and the guide, including their resolved ports:
 
 ```sh
 nix develop --command python3 - <<'PYTHON'
@@ -59,11 +59,10 @@ PYTHON
 node docs/site/player/svg.mjs
 ```
 
-`harvest.py` produces `player-data/assets/ports.json` and each `<id>.run.json`. The recorder captures the execution timeline and the list of retained artifacts.
-It does not capture live view messages. The images in `player-data/assets/`
-belong to the recordings that reference them. Cas A and GW150914 require
-external data access. Glowroot's WebGPU game needs a player to progress, so
-the gallery previews its graph. `build.mjs` embeds the current Card sources, descriptions and narration in `player-data/<id>.json` and `index.json`, and rebuilds `site/js/player.js` and `site/player.css`. `svg.mjs` then refreshes the gallery SVGs and the README's scenes, including the source-code scene. Recording and SVG rendering need daemon sockets and headless Chrome; they cannot run in a sandbox that forbids listeners or app launches. The old records and SVGs remain evidence of their original runs until a person runs these commands. Finally regenerate and check the documentation with `nix run .#build-doc` and `nix run .#test-doc`.
+`harvest.py` produces `player-data/assets/ports.json` and each `<id>.run.json`. The recorder captures the execution timeline, artifact inventory and selected
+retained images and Markdown. Live view messages are transient. Cas A and
+GW150914 require external data access. The gallery previews the Glowroot and
+point-cloud graphs. Their game and WebGPU views run in the app. `build.mjs` embeds the current Card sources, descriptions and narration in `player-data/<id>.json` and `index.json`, and rebuilds `site/js/player.js` and `site/player.css`. `svg.mjs` then refreshes the gallery SVGs and the README's scenes, including the source-code scene. Recording and SVG rendering need daemon sockets and headless Chrome; they cannot run in a sandbox that forbids listeners or app launches. The old records and SVGs remain evidence of their original runs until a person runs these commands. Finally regenerate and check the documentation with `nix run .#build-doc` and `nix run .#test-doc`.
 
 Each recording identifies the graph it ran, including port-to-port wires and child Workflow boundaries. When the graph differs, the player previews the Workflow in wire order. A successful harvest replaces the recording's JSON only after the run succeeds.
 
