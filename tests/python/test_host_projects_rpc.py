@@ -75,13 +75,16 @@ def host(tmp_path):
                 builder.Finish(envelope.Pack(builder), file_identifier=b"TSH1")
                 data = builder.Output()
                 peer.sendall(struct.pack("<I", len(data)) + data)
-                size, = struct.unpack("<I", read_exact(peer, 4))
-                assert 0 < size <= 16 << 20
-                data = read_exact(peer, size)
-                assert Message.MessageBufferHasIdentifier(data, 0)
-                reply = MessageT.InitFromPackedBuf(data)
-                assert reply.requestId == i and reply.payloadType == Payload.Reply
-                return reply.payload
+                while True:
+                    size, = struct.unpack("<I", read_exact(peer, 4))
+                    assert 0 < size <= 16 << 20
+                    data = read_exact(peer, size)
+                    assert Message.MessageBufferHasIdentifier(data, 0)
+                    reply = MessageT.InitFromPackedBuf(data)
+                    if reply.requestId == 0 and reply.payloadType == Payload.Event:
+                        continue
+                    assert reply.requestId == i and reply.payloadType == Payload.Reply
+                    return reply.payload
 
             def view(value):
                 if isinstance(value, bytes): return value.decode()
