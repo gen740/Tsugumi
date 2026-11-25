@@ -46,8 +46,10 @@ auto RandomName() -> std::string {
 
 }  // namespace
 
-auto LaunchFromEnvironment(const f::path& executable) -> Launch {
+auto LaunchFromEnvironment(const f::path& executable, std::string application)
+    -> Launch {
   Launch launch;
+  launch.application = std::move(application);
   const auto self = f::weakly_canonical(executable);
   // A checkout's build/cli/tsugumi, or an installed runtime's bin/tsugumi.
   launch.root = !Env("TSUGUMI_REPO").empty() ? f::path(Env("TSUGUMI_REPO"))
@@ -117,9 +119,16 @@ auto EnsureHost(const Launch& launch) -> Ready {
   ::chmod(parent.c_str(), 0700);
   const auto state_log = launch.state / "host.log";
   const auto log_path = f::exists(launch.state) ? state_log : parent / (".host-startup-" + RandomName() + ".log");
-  std::vector<std::string> args = {launch.hostd.string(), "--ensure", "--state-dir", launch.state.string(),
-                                   "--unix", (sockets / "agent.sock").string(),
-                                   "--repo-root", launch.root.string()};
+  std::vector<std::string> args = {launch.hostd.string(),
+                                   "--ensure",
+                                   "--state-dir",
+                                   launch.state.string(),
+                                   "--application-name",
+                                   launch.application,
+                                   "--unix",
+                                   (sockets / "agent.sock").string(),
+                                   "--repo-root",
+                                   launch.root.string()};
   if (const auto demos = Env("TSUGUMI_DEMOS_DIR"); !demos.empty())
     args.insert(args.end(), {"--demos-dir", demos});
   args.insert(args.end(), launch.runtime.begin(), launch.runtime.end());

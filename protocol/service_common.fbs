@@ -4,7 +4,10 @@ namespace Tsugumi.Service;
 attribute "trace_secret";
 table HelloRequest { token:string (required, trace_secret); client:Tsugumi.Trace.Client; }
 table HelloResult { server_id:string (required); principal:string (required); }
-table Failure { code:string (required); message:string (required); request_id:string; }
+// Present when project conversations are locked. Identity is optional when
+// the contender cannot verify the process that holds the lock.
+table ConversationLock { pid:uint; application:string; }
+table Failure { code:string (required); message:string (required); request_id:string; conversation_lock:ConversationLock; }
 table Acknowledgement { accepted:bool; }
 // Ordinary calls identify a stored provider and a conversation's model choice.
 // purpose: guide/summary asks the host to choose provider/model from settings;

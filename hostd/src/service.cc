@@ -123,7 +123,8 @@ struct Service::State {
         [this](const std::string& resource, Tsugumi::Service::Access access) {
           return this->access->HasGrant(resource, access);
         },
-        [this](const std::string& id) { return turns->running.contains(id); });
+        [this](const std::string& id) { return turns->running.contains(id); },
+        options.application);
     access = std::make_unique<host::Access>(
         state_gate, db, registry, *conversations, stopping,
         host::Access::Dependencies{
@@ -1160,6 +1161,18 @@ auto Service::dispatch(RequestIn request) -> void {
                    "The operation was cancelled", {});
     } catch (const host::ProjectFailure& e) {
       bytes = fail(request.request_id, e.code, state_->Scrub(e.what()), {});
+    } catch (const host::ConversationLockFailure& e) {
+      S::FailureT failure;
+      failure.code = e.code;
+      failure.message = state_->Scrub(e.what());
+      failure.conversation_lock = std::make_unique<S::ConversationLockT>();
+      if (e.holder) {
+        failure.conversation_lock->pid = e.holder->pid;
+        failure.conversation_lock->application =
+            state_->Scrub(e.holder->application);
+      }
+      bytes = host ? wire::HostReply(request.request_id, std::move(failure))
+                   : wire::AgentReply(request.request_id, std::move(failure));
     } catch (const Failure& e) {
       bytes = fail(request.request_id, e.code, state_->Scrub(e.what()),
                    e.request_id);

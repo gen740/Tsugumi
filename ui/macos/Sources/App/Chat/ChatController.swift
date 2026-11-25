@@ -275,11 +275,20 @@ final class ChatController {
             updatedAt: Date(timeIntervalSince1970: (item["updatedAt"] as? Double ?? 0) / 1000), messages: item["messages"] as? Int ?? 0)
         }
         if currentId.isEmpty {
+          status = nil
           if let id = sessions.first?.id { select(id) }
           else { newSession() }
         }
+      } catch let failure as CoreHostFailure where failure.code == "busy" {
+        displayedId = ""
+        status = failure.description
       } catch { status = String(describing: error) }
     }
+  }
+
+  func retryLoad() {
+    if currentId.isEmpty { refreshSessions() }
+    else { select(currentId) }
   }
 
   func select(_ id: String) {
@@ -312,6 +321,7 @@ final class ChatController {
       do { try await agent.open() } catch {
         guard !Task.isCancelled, self.agent === agent, selection == answer else { return }
         loading = false
+        displayedId = ""
         self.status = String(describing: error)
         return
       }

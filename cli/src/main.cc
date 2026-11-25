@@ -73,7 +73,8 @@ auto HostPaths(const f::path& executable, const std::vector<std::string>& args)
   if (project.empty())
     throw std::runtime_error(
         "Open this project in Tsugumi to create its project id");
-  const auto ready = EnsureHost(LaunchFromEnvironment(executable));
+  const auto ready =
+      EnsureHost(LaunchFromEnvironment(executable, "tsugumi host-path"));
   tsugumi::client::Options options;
   options.protocol = tsugumi::client::Protocol::Host;
   options.endpoint = "unix:" + ready.host_socket;
@@ -107,7 +108,7 @@ auto HostPaths(const f::path& executable, const std::vector<std::string>& args)
 }
 
 auto Open(const f::path& executable, const std::vector<std::string>& args) -> int {
-  auto launch = LaunchFromEnvironment(executable);
+  auto launch = LaunchFromEnvironment(executable, "tsugumi web");
   bool browser = true;
   std::string project;
   for (size_t i = 0; i < args.size(); ++i) {

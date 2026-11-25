@@ -371,6 +371,9 @@ enum ServiceWire {
     }
     guard let value else { throw CoreHostFailure(code: "protocol", message: "Missing service reply", requestID: nil) }
     if let failure = value as? Tsugumi_Service_FailureT {
+      if failure.code == "busy", let lock = failure.conversationLock {
+        throw CoreHostFailure.conversationLock(application: lock.application, pid: lock.pid, requestID: failure.requestId)
+      }
       throw CoreHostFailure(code: failure.code, message: failure.message, requestID: failure.requestId)
     }
     return value

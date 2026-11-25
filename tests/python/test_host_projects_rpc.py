@@ -1,6 +1,7 @@
 """Host-side project lifecycle through the binary Host contract."""
 from __future__ import annotations
 
+import fcntl
 import http.client
 import importlib
 import re
@@ -12,6 +13,7 @@ import json
 import os
 import subprocess
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -26,6 +28,108 @@ BINDINGS = Path(os.environ.get("TSUGUMI_PY_BINDINGS", BUILD / "generated/python"
 sys.path.insert(0, str(BINDINGS))
 pytestmark = pytest.mark.skipif(not HOST.exists() or not (BINDINGS / "Tsugumi/Host").exists(),
                                 reason="needs built hostd and generated Host bindings")
+
+
+@contextmanager
+def running_host(args, publication, log_path):
+    with log_path.open("w") as log:
+        proc = subprocess.Popen([str(HOST), *args], stdout=subprocess.DEVNULL, stderr=log)
+    try:
+        assert process_file(proc, publication) is not None, "hostd did not publish startup state"
+        yield proc
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
+                raise
+
+
+def test_ensure_reports_the_live_holder_when_readiness_is_missing(tmp_path):
+    state = tmp_path / "state"
+    ready = state / "host.ready"
+    with tempfile.TemporaryDirectory(prefix="tsugumi-host-") as short:
+        args = ["--state-dir", str(state), "--unix", short + "/s",
+                "--socket-dir", short + "/b", "--no-websocket"]
+        with running_host([*args, "--application-name", "Tsugumi Dev"], ready, tmp_path / "holder.log") as holder:
+            reopened = subprocess.run([str(HOST), "--ensure", *args], stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.PIPE, timeout=10)
+            assert reopened.returncode == 0
+            ready.unlink()
+            blocked = subprocess.run([str(HOST), "--ensure", *args], capture_output=True, text=True, timeout=10)
+            assert blocked.returncode == 1
+            error = json.loads(blocked.stdout)
+            assert error["code"] == "host_state_locked"
+            assert error["lock_holder"] == {"pid": holder.pid, "application": "Tsugumi Dev"}
+            assert "Quit it and retry" in error["message"]
+            assert "pid" not in error
+            assert holder.poll() is None
+            assert not (state / "host.startup-error").exists()
+        # A copied or stale record can even name a live PID. Without the
+        # record's OS lock it does not identify whoever holds host.lock.
+        (state / "host.lock-owner").write_text(json.dumps({
+            "pid": os.getpid(), "application": "Stale", "hostname": socket.gethostname(),
+        }))
+        with (state / "host.lock").open("r+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            blocked = subprocess.run([str(HOST), "--ensure", *args], capture_output=True, text=True, timeout=10)
+            assert blocked.returncode == 1
+            error = json.loads(blocked.stdout)
+            assert error["code"] == "host_state_locked"
+            assert "lock_holder" not in error
+            assert "Stale" not in error["message"]
+        with running_host(args, ready, tmp_path / "restarted.log"):
+            assert ready.exists()
+        assert not ready.exists()
+
+
+@pytest.mark.parametrize("recovering", [False, True])
+def test_old_host_exit_preserves_replacement_publication_and_sockets(tmp_path, recovering):
+    state = tmp_path / "state"
+    web = tmp_path / "web"
+    web.mkdir()
+    (web / "index.html").write_text("<!doctype html>")
+    publication = state / ("host.startup-error" if recovering else "host.ready")
+
+    def prepare_state():
+        if recovering:
+            state.mkdir()
+            with sqlite3.connect(state / "execution.sqlite") as db:
+                db.execute("CREATE TABLE stale(value)")
+
+    def identity(path):
+        st = path.stat()
+        return st.st_dev, st.st_ino
+
+    prepare_state()
+    with tempfile.TemporaryDirectory(prefix="tsugumi-host-") as short:
+        args = ["--state-dir", str(state), "--unix", short + "/s",
+                "--socket-dir", short + "/b", "--no-websocket"]
+        if recovering:
+            args += ["--web-root", str(web), "--web-port", "0"]
+        moved = tmp_path / "moved"
+        with running_host(args, publication, tmp_path / "original.log") as original:
+            state.rename(moved)
+            prepare_state()
+            with running_host(args, publication, tmp_path / "replacement.log") as replacement:
+                paths = [publication]
+                if not recovering:
+                    paths += [Path(short) / "s", Path(short) / "s.host",
+                              Path(short) / "b/s", Path(short) / "b/s.c"]
+                before = [identity(path) for path in paths]
+                original.terminate()
+                assert original.wait(timeout=10) == int(recovering)
+                assert replacement.poll() is None
+                assert [identity(path) for path in paths] == before
+                for path in paths[1:]:
+                    # The replacement listeners still accept connections.
+                    with socket.socket(socket.AF_UNIX) as peer:
+                        peer.settimeout(3)
+                        peer.connect(str(path))
+            assert not publication.exists()
 
 
 @pytest.fixture

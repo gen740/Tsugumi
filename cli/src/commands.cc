@@ -211,7 +211,8 @@ auto PrintTools(const f::path& executable) -> void {
 }
 
 auto RunTool(const f::path& executable, const std::vector<std::string>& args) -> std::optional<int> {
-  AgentTools tools(LaunchFromEnvironment(executable));
+  AgentTools tools(LaunchFromEnvironment(
+      executable, args.empty() ? "tsugumi" : "tsugumi " + args.front()));
   const auto catalog = tools.Catalog();
   const auto families = Families(catalog);
   if (!args.empty() && std::find(families.begin(), families.end(), args[0]) != families.end()) {
@@ -263,7 +264,7 @@ auto RunCall(const f::path& executable, const std::vector<std::string>& args) ->
     std::cerr << "Usage: tsugumi call <RequestName> ['<json>']\n";
     return 64;
   }
-  AgentTools tools(LaunchFromEnvironment(executable));
+  AgentTools tools(LaunchFromEnvironment(executable, "tsugumi call"));
   try {
     std::cout << tools.Request(args[0], args.size() == 2 ? args[1] : "{}") << '\n';
     return 0;

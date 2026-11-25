@@ -20,6 +20,29 @@ public struct CoreHostFailure: LocalizedError, CustomStringConvertible, Sendable
     }
   }
   public var errorDescription: String? { description }
+
+  static func conversationLock(application: String?, pid: UInt32, requestID: String?) -> Self {
+    let message: String
+    if let application, !application.isEmpty, pid > 1 {
+      message = String(format: String(localized: "%@（PID %@）がこのプロジェクトの会話を開いています。そのプロセスを終了してから再読込してください。"), application, String(pid))
+    } else {
+      message = String(localized: "別の Tsugumi のホストサービスがこのプロジェクトの会話を開いています。そのホストサービスを終了してから再読込してください。")
+    }
+    return Self(code: "busy", message: message, requestID: requestID)
+  }
+
+  static func checkStartup(_ value: [String: Any]) throws {
+    guard value["code"] as? String == "host_state_locked" else { return }
+    let holder = value["lock_holder"] as? [String: Any]
+    let message: String
+    if let application = holder?["application"] as? String, !application.isEmpty,
+       let pid = holder?["pid"] as? Int, pid > 1 {
+      message = String(format: String(localized: "%@（PID %@）がホストの状態フォルダを使用しています。そのプロセスを終了してから再試行してください。"), application, String(pid))
+    } else {
+      message = String(localized: "別の Tsugumi のホストサービスが状態フォルダを使用しています。そのホストサービスを終了してから再試行してください。")
+    }
+    throw Self(code: "host_state_locked", message: message, requestID: nil)
+  }
 }
 
 public struct HostStateFormatMismatch: LocalizedError, CustomStringConvertible, Sendable {
@@ -226,7 +249,10 @@ public actor CoreHostClient {
     let bundledDemos = Bundle.main.url(forResource: "demos", withExtension: nil)
     let demos = bundledDemos?.path ?? ProcessInfo.processInfo.environment["TSUGUMI_DEMOS_DIR"]
     let root = bundledDemos?.deletingLastPathComponent() ?? Self.repository
-    daemon.arguments = ["--ensure", "--state-dir", state.path, "--unix", directory.appendingPathComponent("agent.sock").path,
+    let application = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+      ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Tsugumi"
+    daemon.arguments = ["--ensure", "--state-dir", state.path, "--application-name", application,
+                        "--unix", directory.appendingPathComponent("agent.sock").path,
                         "--listen", "127.0.0.1:0", "--repo-root", root.path]
     if let demos, !demos.isEmpty { daemon.arguments! += ["--demos-dir", demos] }
     daemon.arguments! += runtimeArguments ?? HostRuntimeConfiguration.arguments(support: state.deletingLastPathComponent())
@@ -261,6 +287,7 @@ public actor CoreHostClient {
     guard let value else {
       throw CoreHostFailure(code: "unavailable", message: "The host service exited during startup; see \(log.path)", requestID: nil)
     }
+    try CoreHostFailure.checkStartup(value)
     if log != stateLog, value["pid"] as? Int32 == daemon.processIdentifier {
       if rename(log.path, stateLog.path) != 0 {
         throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)

@@ -87,12 +87,12 @@ auto CreateConversationTables(sql::Db& db) -> void {
 
 struct ConversationStore::ProjectStore {
   std::filesystem::path path;
-  fs::FileLock lock;
+  host::ProcessLock lock;
   sql::Db db;
-  ProjectStore(std::filesystem::path p, fs::FileLock l);
+  ProjectStore(std::filesystem::path p, host::ProcessLock l);
 };
 ConversationStore::ProjectStore::ProjectStore(std::filesystem::path p,
-                                              fs::FileLock l)
+                                              host::ProcessLock l)
     : path(std::move(p)),
       lock(std::move(l)),
       db((path / "agent.sqlite").string(),
@@ -108,13 +108,14 @@ ConversationStore::ProjectStore::ProjectStore(std::filesystem::path p,
 ConversationStore::ConversationStore(host::StateGate& g, sql::Db& home,
                                      host::ProjectRegistry& projects,
                                      Scrub redact, HasGrant grant,
-                                     IsRunning busy)
+                                     IsRunning busy, std::string app)
     : gate(g),
       db(home),
       registry(projects),
       scrub(std::move(redact)),
       has_grant(std::move(grant)),
-      is_running(std::move(busy)) {
+      is_running(std::move(busy)),
+      application(std::move(app)) {
   db.exec(
       "UPDATE conversation_turns SET state='interrupted' WHERE "
       "state='running'");
@@ -165,10 +166,10 @@ auto ConversationStore::ProjectDatabase(const std::string& project, bool create)
   std::erase_if(project_stores, [&](const auto& entry) {
     return entry.first != project && entry.second->path == path;
   });
-  auto lock = fs::FileLock::try_acquire(path / "agent.lock");
-  if (!lock)
-    throw Failure("busy",
-                  "Another Agent host has this project's conversations open");
+  std::optional<host::LockHolder> holder;
+  auto lock =
+      host::ProcessLock::TryAcquire(path / "agent.lock", application, holder);
+  if (!lock) throw host::ConversationLockFailure(std::move(holder));
   auto store = std::make_unique<ProjectStore>(path, std::move(*lock));
   auto identity =
       store->db.prepare("SELECT 1 FROM conversations WHERE project<>? LIMIT 1");

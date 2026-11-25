@@ -1,5 +1,6 @@
 // Reading an interrupted conversation never starts work.
 import assert from 'node:assert/strict'
+import { L } from '../src/i18n'
 
 const operation = { kind: 'tool', id: 'call-7', name: 'project_save', arguments: '{"changes":[]}' }
 const conversation = { id: 's', rows: [], messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }], archive: [], tools: [], usage: { inputTokens: 0, outputTokens: 0 }, updatedAt: 0 }
@@ -49,3 +50,44 @@ try {
   assert.equal(requests.filter(r => r.url === '/api/chat/resume').length, 1)
 } finally { globalThis.fetch = previousFetch }
 console.log('Interrupted chat: opening/refresh/reconnect only read; Resume and new messages are explicit')
+
+const lockMessage = L('{0}（PID {1}）がこのプロジェクトの会話を開いています。そのプロセスを終了してから再読込してください。', 'Tsugumi Dev', 2345)
+let locked = true
+globalThis.fetch = (async (url: string) => {
+  if (locked) return { ok: false, json: async () => ({ code: 'busy', error: lockMessage }) } as Response
+  if (url === '/api/chat/sessions')
+    return { ok: true, json: async () => [{ id: 's' }] } as Response
+  assert.equal(url, '/api/chat/conversation')
+  return { ok: true, json: async () => ({ ...snapshot, permissions: [], provider: {} }) } as Response
+}) as typeof fetch
+try {
+  const c = Object.create(ChatController.prototype) as any
+  Object.assign(c, { currentId: '', turn: 0, reload: 0, available: true,
+    session: { dir: '/p' }, folders: [], changed() {}, reloadSkills() {} })
+  const init = c.init.bind(c)
+  let loading = init()
+  c.init = () => (loading = init())
+  let reading: Promise<unknown>
+  const reread = c.reread.bind(c)
+  c.reread = (id: string) => (reading = reread(id))
+  await loading
+  assert.equal(c.loadError, L('エラー: {0}', lockMessage))
+  assert.equal(c.currentId, '')
+  locked = false
+  c.retryLoad()
+  await loading
+  await reading!
+  assert.equal(c.currentId, 's')
+  assert.equal(c.ready, true)
+  assert.equal(c.loadError, undefined)
+  locked = true
+  c.retryLoad()
+  await reading!
+  assert.equal(c.ready, false)
+  assert.equal(c.loadError, L('エラー: {0}', lockMessage))
+  locked = false
+  c.retryLoad()
+  await reading!
+  assert.equal(c.ready, true)
+} finally { globalThis.fetch = previousFetch }
+console.log('Conversation lock: the chat shows the holder and Reload retries the conversation list')

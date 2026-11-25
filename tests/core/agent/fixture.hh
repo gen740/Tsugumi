@@ -187,6 +187,8 @@ class AgentFixture : public ::testing::Test {
         TSUGUMI_HOST_BINARY,
         "--state-dir",
         (directory.path / "state").string(),
+        "--application-name",
+        "Tsugumi RPC fixture",
         "--unix",
         (directory.path / "agent.sock").string(),
         "--socket-dir",
