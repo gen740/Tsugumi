@@ -51,7 +51,7 @@ inline auto view_request(const W::WorkerViewRequest& request)
 }
 
 inline auto view_reply(const W::WorkerViewReply& reply) -> WorkerViewReply {
-  return {reply.request_id(), reply.ok(), view_uuid(reply.session()),
+  return {reply.request_id(), reply.status(), view_uuid(reply.session()),
           view_uuid(reply.route())};
 }
 
@@ -131,7 +131,7 @@ inline auto build_view_reply(flatbuffers::FlatBufferBuilder& b,
   const auto route = view_uuid(reply.route);
   finish_display_frame(
       b, W::WorkerPayload::WorkerViewReply,
-      W::CreateWorkerViewReply(b, reply.request_id, reply.ok,
+      W::CreateWorkerViewReply(b, reply.request_id, reply.status,
                                reply.session == ViewUuid{} ? nullptr : &session,
                                reply.route == ViewUuid{} ? nullptr : &route)
           .Union());

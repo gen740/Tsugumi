@@ -176,9 +176,9 @@ TEST(LocalWorker, DiscardsStaleRepliesAndRelaysViewsWhileIdle) {
   const auto receiver = worker.view_receiver().lock();
   ASSERT_TRUE(receiver);
   const ViewUuid route{2};
-  EXPECT_FALSE(receiver->reply({2, true, session, route}));
-  EXPECT_TRUE(receiver->reply({1, true, session, route}));
-  EXPECT_FALSE(receiver->reply({1, true, session, route}));
+  EXPECT_FALSE(receiver->reply({2, 0, session, route}));
+  EXPECT_TRUE(receiver->reply({1, 0, session, route}));
+  EXPECT_FALSE(receiver->reply({1, 0, session, route}));
   EXPECT_EQ(receiver->send({ViewEventKind::close, route, session, {}}),
             WorkerProc::ViewDelivery::accepted);
   EXPECT_EQ(receiver->send({ViewEventKind::close, route, session, {}}),
@@ -197,7 +197,7 @@ TEST(LocalWorker, DiscardsStaleRepliesAndRelaysViewsWhileIdle) {
     EXPECT_TRUE(seen.insert(message->value_type()).second);
     if (const auto* reply = message->value_as_WorkerViewReply()) {
       EXPECT_EQ(reply->request_id(), 1);
-      EXPECT_TRUE(reply->ok());
+      EXPECT_EQ(reply->status(), 0);
       ASSERT_TRUE(reply->session());
       EXPECT_EQ(reply->session()->bytes()->Get(0), 1);
     }

@@ -484,14 +484,14 @@ def test_remote_view_control_replay_and_bidirectional_credits(worker):
         assert first.View() == b"data"
         replay = poll().ViewRequest()
         assert replay.RequestId() == 1 and replay.View() == b"data"
-        reply = WorkerViewReplyT(requestId=1, ok=True, session=data, route=data_route)
+        reply = WorkerViewReplyT(requestId=1, status=0, session=data, route=data_route)
         # Lose the first status outcome and retry the same reply, including while
         # the next request is outstanding. It must only release the first waiter.
         poll(reply)
         second = poll_until(lambda status: status.ViewRequest(), reply).ViewRequest()
         assert second.RequestId() == 2 and second.View() == b"control"
         assert (second.Mode(), second.Width(), second.Height()) == (1, 640, 480)
-        reply = WorkerViewReplyT(requestId=2, ok=True, session=control, route=control_route)
+        reply = WorkerViewReplyT(requestId=2, status=0, session=control, route=control_route)
         maximum = 1 << 24
         poll_until(lambda status: len(messages) >= 2 and status.ViewInputReady(), reply)
         assert messages == [(1, maximum, 1), (1, maximum, 2)]
@@ -628,7 +628,7 @@ def test_real_remote_artifact_boundary(worker, case):
                 assert response.bodyType == R.ReplyBody.Ack, vars(response.body)
             if status.viewRequest:
                 assert status.viewRequest.requestId == 1 and status.viewRequest.view == b"data"
-                view_reply = WorkerViewReplyT(requestId=1, ok=True,
+                view_reply = WorkerViewReplyT(requestId=1, status=0,
                                               session=ViewUuidT(bytes=list(session)),
                                               route=route)
             if status.displaySequence > display_after:

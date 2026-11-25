@@ -204,7 +204,7 @@ class DisplayChannel {
           std::lock_guard lock(mutex_);
           if (const auto* request = envelope->value_as_WorkerViewRequest()) {
             if (request_ || response_ || request->request_id() <= request_id_ ||
-                request->kind() > W::ViewControlKind::Unregister)
+                request->kind() > W::ViewControlKind::Close)
               break;
             request_id_ = request->request_id();
             request_.emplace();
@@ -266,7 +266,7 @@ class DisplayChannel {
           const auto response = std::exchange(response_, std::nullopt);
           lock.unlock();
           flatbuffers::FlatBufferBuilder b;
-          build_view_reply(b, {response->request_id, response->ok,
+          build_view_reply(b, {response->request_id, response->status,
                                view_uuid(response->session.get()),
                                view_uuid(response->route.get())});
           write_display_frame(socket_.value, b);

@@ -402,7 +402,7 @@ def test_post_return_open_and_send_keep_opaque_bytes_and_session(tmp_path):
         session, route = ViewUuidT(bytes=[1] * 16), ViewUuidT(bytes=[2] * 16)
         send_message(control, WorkerMessageT(
             callId=0, valueType=WorkerPayload.WorkerViewReply,
-            value=WorkerViewReplyT(requestId=1, ok=True, route=route, session=session),
+            value=WorkerViewReplyT(requestId=1, status=0, route=route, session=session),
         ))
         message = receive(data)
         assert message.callId == 0 and message.valueType == WorkerPayload.WorkerDisplay
@@ -465,7 +465,7 @@ def test_idle_routes_recv_close_and_reverse_credit(tmp_path):
         assert bytes(register.value.session.bytes) == bytes(session.bytes)
         send_message(control, WorkerMessageT(
             callId=0, valueType=WorkerPayload.WorkerViewReply,
-            value=WorkerViewReplyT(requestId=1, ok=True, route=route),
+            value=WorkerViewReplyT(requestId=1, status=0, route=route),
         ))
         payload = b"\x00\xff\x80z"
         for kind, value in ((ViewEventKind.Message, payload), (ViewEventKind.Close, None)):
@@ -485,7 +485,7 @@ def test_idle_routes_recv_close_and_reverse_credit(tmp_path):
         assert bytes(unregister.route.bytes) == bytes(route.bytes)
         send_message(control, WorkerMessageT(
             callId=0, valueType=WorkerPayload.WorkerViewReply,
-            value=WorkerViewReplyT(requestId=2, ok=True),
+            value=WorkerViewReplyT(requestId=2, status=0),
         ))
         send_call(data, tmp_path, 2)
         assert receive(data).valueType == WorkerPayload.WorkerResult
@@ -516,7 +516,7 @@ def test_one_shot_result_waits_for_queued_view_data(tmp_path):
         session, route = ViewUuidT(bytes=[1] * 16), ViewUuidT(bytes=[2] * 16)
         send_message(control, WorkerMessageT(
             callId=0, valueType=WorkerPayload.WorkerViewReply,
-            value=WorkerViewReplyT(requestId=request.value.requestId, ok=True,
+            value=WorkerViewReplyT(requestId=request.value.requestId, status=0,
                                    session=session, route=route),
         ))
         maximum = 1 << 24

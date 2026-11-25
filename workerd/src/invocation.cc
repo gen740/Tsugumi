@@ -206,7 +206,7 @@ class InvocationDisplay {
   auto request(const WorkerViewRequest& request)
       -> std::optional<WorkerViewReply> {
     std::lock_guard lock(mutex_);
-    if (closed_ || stopping_) return WorkerViewReply{request.request_id, false};
+    if (closed_ || stopping_) return WorkerViewReply{request.request_id};
     request_ = request;
     outstanding_request_ = request.request_id;
     ready_.notify_one();

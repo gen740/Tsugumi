@@ -34,6 +34,8 @@ enum {
   TSUGUMI_VIEW_LOCK_POINTER = 1u << 1,
 };
 
+#define TSUGUMI_VIEW_WINDOW_CLOSED (-2)
+
 typedef struct tsugumi_effects {
   /* View effects are valid from any thread for the life of the process. */
   /* Open a declared view. 0 ok, <0 error. Both dimensions may be nonzero
@@ -41,7 +43,11 @@ typedef struct tsugumi_effects {
   int (*view_open)(void* host, const char* view, uint32_t mode, uint32_t flags,
                    uint32_t width, uint32_t height, tsugumi_route* route,
                    tsugumi_view_session* session);
-  /* Register a mailbox for a session, or drop a route. 0 ok, <0 error. */
+  /* Close a window by session UUID. 0 ok (including an already closed
+   * window), <0 error. Every live route receives a close event. */
+  int (*view_close)(void* host, const tsugumi_view_session* session);
+  /* Register a mailbox for a session. 0 ok, TSUGUMI_VIEW_WINDOW_CLOSED
+   * if the window is gone, <0 other error. Unregister drops a route. */
   int (*route_register)(void* host, const tsugumi_view_session* session,
                         tsugumi_route* route);
   int (*route_unregister)(void* host, const tsugumi_route* route);

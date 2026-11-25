@@ -9,7 +9,7 @@ namespace tsugumi {
 
 using ViewUuid = std::array<uint8_t, 16>;
 enum class ViewEventKind { message, close };
-enum class ViewControlKind { open, register_route, unregister_route };
+enum class ViewControlKind { open, register_route, unregister_route, close };
 
 struct WorkerDisplayData {
   ViewUuid session;
@@ -33,7 +33,7 @@ struct WorkerViewRequest {
 
 struct WorkerViewReply {
   uint64_t request_id;
-  bool ok;
+  int status = -1;
   ViewUuid session = {}, route = {};
 };
 

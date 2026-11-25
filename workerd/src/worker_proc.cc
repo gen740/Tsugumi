@@ -1223,7 +1223,7 @@ auto WorkerProc::read_data() -> void {
           std::lock_guard lock(display_mutex_);
           if (message->call_id() != 0 || awaiting_view_reply_ ||
               request.request_id <= view_request_id_ ||
-              raw->kind() > W::ViewControlKind::Unregister)
+              raw->kind() > W::ViewControlKind::Close)
             throw Failed(FailureKind::worker_failed,
                          "invalid worker view request");
           view_request_id_ = request.request_id;
@@ -1234,9 +1234,9 @@ auto WorkerProc::read_data() -> void {
           std::lock_guard lock(data_mutex_);
           handler = view_control_;
         }
-        auto reply =
-            handler ? (*handler)(request)
-                    : std::optional{WorkerViewReply{request.request_id, false}};
+        auto reply = handler
+                         ? (*handler)(request)
+                         : std::optional{WorkerViewReply{request.request_id}};
         if (reply) {
           reply->request_id = request.request_id;
           reply_view(*reply);

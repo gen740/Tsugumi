@@ -35,8 +35,9 @@ static void *serve(void *unused) {
             if (event.data.size != 0 || memcmp(&event.session, &left, sizeof(left)))
                 break;
             tsugumi_route unused_route;
-            if (effects->send(host, &left, NULL, 0) ||
-                effects->route_register(host, &left, &unused_route) >= 0)
+            const uint8_t dropped = 42;
+            if (effects->send(host, &left, &dropped, 1) ||
+                effects->route_register(host, &left, &unused_route) != TSUGUMI_VIEW_WINDOW_CLOSED)
                 break;
             effects->send(host, &right, event.route.bytes, sizeof(event.route.bytes));
             continue;
@@ -47,6 +48,9 @@ static void *serve(void *unused) {
         } else if (event.data.size == 1 && event.data.data[0] == 2) {
             if (effects->route_unregister(host, &dead)) break;
             effects->send(host, &right, dead.bytes, sizeof(dead.bytes));
+        } else if (event.data.size == 1 && event.data.data[0] == 3) {
+            if (effects->view_close(host, &left) || effects->view_close(host, &left))
+                break;
         } else {
             uint8_t response[17];
             memcpy(response, event.route.bytes, 16);
@@ -215,12 +219,17 @@ def test_routes_are_private_to_the_window_and_close_once_after_return(project, t
     send(ui, left, extra)
     assert bytes(display(ui, right).bytes) == uuid.UUID(extra).bytes + b"\0"
 
-    ui.call("ViewCloseRequest", session=left)
-    ui.call("ViewCloseRequest", session=left)
+    send(ui, right, payload=b"\3")  # The opener closes from its idle thread.
+    ui.wait_notification(lambda note: note.valueType == NotificationPayload.ViewClosed
+                         and text(note.value.session) == left, timeout=15)
     seen = {route_from(display(ui, right).bytes) for _ in range(2)}
     assert seen == {opener, extra}
     send(ui, right, payload=b"\xff")
     assert bytes(display(ui, right).bytes) == uuid.UUID(other_route).bytes + b"\xff"
+    assert not any(
+        (note.valueType == NotificationPayload.ViewClosed and text(note.value.session) == left)
+        or (note.valueType == NotificationPayload.DisplayUpdated and text(note.value.display.session) == left)
+        for note in ui.notifications.copy())
     ui.call("ViewCloseRequest", session=right)
 
 
@@ -323,6 +332,8 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     if (registered >= 0 || call->effects->send(call->host, &session, NULL, 0))
         return 2;
 #else
+    if (registered == TSUGUMI_VIEW_WINDOW_CLOSED)
+        return write_result(result, result_bytes, sizeof(result_bytes));
     if (registered)
         return 2;
     if (call->effects->send(call->host, &session, route.bytes, sizeof(route.bytes)))
@@ -333,9 +344,11 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
         memcmp(&event.session, &session, sizeof(session)) ||
         event.data.size != 1 || event.data.data[0] != 0xfe)
         return 4;
+    if (call->effects->view_close(call->host, &session))
+        return 5;
     if (call->effects->recv(call->host, &event, 10000) || event.kind != 1 ||
         memcmp(&event.route, &route, sizeof(route)))
-        return 5;
+        return 6;
 #endif
     return write_result(result, result_bytes, sizeof(result_bytes));
 }
@@ -367,5 +380,8 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     second = run(ui, "next")
     route = route_from(display(ui, session).bytes)
     send(ui, session, route, b"\xfe")
-    ui.call("ViewCloseRequest", session=session)
+    ui.wait_notification(lambda note: note.valueType == NotificationPayload.ViewClosed
+                         and text(note.value.session) == session, timeout=15)
     assert wait_run(ui, second).state == RunState.succeeded
+    # A subsequent Card can treat a closed session as a clean handoff end.
+    assert wait_run(ui, run(ui, "next")).state == RunState.succeeded

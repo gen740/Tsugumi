@@ -241,7 +241,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             if controls:
                 if body.viewReply:
                     answer = body.viewReply
-                    assert answer.ok and answer.requestId == controls[0].requestId
+                    assert answer.status == 0 and answer.requestId == controls[0].requestId
                     self.view_responses.append(answer)
                     if self.lose_view_response:
                         self.lose_view_response = False

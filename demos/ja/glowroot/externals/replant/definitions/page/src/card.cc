@@ -6,6 +6,7 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
   const auto* offer = inputs.offer;
   auto turn = game::own_turn(offer->turn());
   game::Page page(game::session_of(*turn.view));
+  if (page.closed()) return {};
   game::Stopwatch clock;
   Card::Output output;
 

@@ -501,7 +501,7 @@ auto RemoteJobClient::status(
   if (view_reply) {
     body.view_reply = std::make_unique<W::WorkerViewReplyT>();
     body.view_reply->request_id = view_reply->request_id;
-    body.view_reply->ok = view_reply->ok;
+    body.view_reply->status = view_reply->status;
     if (view_reply->session != ViewUuid{})
       body.view_reply->session = pack_view_uuid(view_reply->session);
     if (view_reply->route != ViewUuid{})

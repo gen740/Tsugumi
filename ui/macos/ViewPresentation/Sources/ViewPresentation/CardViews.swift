@@ -310,18 +310,26 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
 
   public func close(_ id: UUID) { close(id, windowIsClosing: false) }
 
-  private func close(_ id: UUID, windowIsClosing: Bool) {
-    guard let view = views.removeValue(forKey: id) else { return }
+  @discardableResult
+  public func sessionClosed(_ id: UUID) -> CardViewOpening? {
+    close(id, windowIsClosing: false, notifyCore: false)
+  }
+
+  @discardableResult
+  private func close(_ id: UUID, windowIsClosing: Bool, notifyCore: Bool = true) -> CardViewOpening? {
+    guard let view = views.removeValue(forKey: id) else { return nil }
     panelIDs.removeAll { $0 == id }
     let window = view.window
     view.tearDown()
     if !windowIsClosing { window?.close() }
     closeEmptyPackedWindow()
+    guard notifyCore else { return view.opening }
     pendingCloses += 1
     Task { [request = view.requestClose] in
       defer { pendingCloses -= 1 }
       try? await request()
     }
+    return view.opening
   }
 
   public func closeAll() {

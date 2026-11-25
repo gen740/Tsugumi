@@ -174,7 +174,7 @@ auto open_view(void* context, const char* view, uint32_t mode, uint32_t flags,
         request_view(*static_cast<Host*>(context),
                      {0, ViewControlKind::open, std::string(view, size), mode,
                       flags, width, height});
-    if (!reply || !reply->ok || reply->route == ViewUuid{} ||
+    if (!reply || reply->status != 0 || reply->route == ViewUuid{} ||
         reply->session == ViewUuid{})
       return -1;
     std::ranges::copy(reply->route, route->bytes);
@@ -185,6 +185,18 @@ auto open_view(void* context, const char* view, uint32_t mode, uint32_t flags,
   }
 }
 
+auto close_view(void* context, const tsugumi_view_session* session) -> int {
+  if (!session) return -1;
+  const auto id = abi_uuid(session->bytes);
+  if (id == ViewUuid{}) return -1;
+  const auto reply = request_view(*static_cast<Host*>(context),
+                                  {.request_id = 0,
+                                   .kind = ViewControlKind::close,
+                                   .view = {},
+                                   .session = id});
+  return reply && reply->status == 0 ? 0 : -1;
+}
+
 auto register_route(void* context, const tsugumi_view_session* session,
                     tsugumi_route* route) -> int {
   if (!session || !route) return -1;
@@ -193,7 +205,9 @@ auto register_route(void* context, const tsugumi_view_session* session,
                                    .kind = ViewControlKind::register_route,
                                    .view = {},
                                    .session = abi_uuid(session->bytes)});
-  if (!reply || !reply->ok || reply->route == ViewUuid{}) return -1;
+  if (!reply) return -1;
+  if (reply->status == TSUGUMI_VIEW_WINDOW_CLOSED) return reply->status;
+  if (reply->status != 0 || reply->route == ViewUuid{}) return -1;
   std::ranges::copy(reply->route, route->bytes);
   return 0;
 }
@@ -205,7 +219,7 @@ auto unregister_route(void* context, const tsugumi_route* route) -> int {
                                    .kind = ViewControlKind::unregister_route,
                                    .view = {},
                                    .route = abi_uuid(route->bytes)});
-  return reply && reply->ok ? 0 : -1;
+  return reply && reply->status == 0 ? 0 : -1;
 }
 
 auto send_display(void* context, const tsugumi_view_session* session,
@@ -443,8 +457,9 @@ auto open_artifact(void* context, const tsugumi_artifact_id* id,
 }
 
 constexpr tsugumi_effects kEffects{
-    open_view, register_route, unregister_route, send_display, receive_display,
-    cancelled, remaining_ms,   create_artifact,  open_artifact};
+    open_view,       close_view,      register_route, unregister_route,
+    send_display,    receive_display, cancelled,      remaining_ms,
+    create_artifact, open_artifact};
 
 auto control_loop(Host& host) -> void {
   while (auto bytes = read_frame(kControl)) {
@@ -474,7 +489,7 @@ auto control_loop(Host& host) -> void {
     } else if (const auto* reply = message->value_as_WorkerViewReply();
                reply && message->call_id() == 0) {
       if (reply->request_id() != host.request_id || host.reply) break;
-      if (host.unregistering && reply->ok()) {
+      if (host.unregistering && reply->status() == 0) {
         auto& route = host.routes[*host.unregistering];
         route.retired = true;
         if (route.incoming_bytes)

@@ -130,7 +130,8 @@ def render() -> str:
     out += ["", "Card views open through the Card ABI. The presenting subscription receives",
             "`ViewOpened` before any `DisplayUpdated` for the session and owns the",
             "file reads, sends, credits and close. `ViewRouteRegistered` binds a route",
-            "to a session for the lifetime of the window. Session and route IDs use canonical",
+            "to a session for the lifetime of the window. The presenting subscription",
+            "receives `ViewClosed` when the window closes. Session and route IDs use canonical",
             "UUID text. The all-zero route selects the opening Card’s route. View RPCs",
             "and notifications are excluded from RPC traces."]
     out += ["", "### Run events", "", "The `value` inside a `RunEvent` has one of these types.", ""]
