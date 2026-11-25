@@ -174,7 +174,7 @@ void Service::run(RequestIn& req) {
     if (store_->halted())
       throw Failed(FailureKind::persistence_failed,
                    "changes are halted after a persistence failure");
-    if (const auto* inputs = r->inputs()) {
+    if (const auto* inputs = r->inputs(); inputs && inputs->size() != 0) {
       if (!packed_debug())
         throw Failed(FailureKind::unsupported,
                      "typed starting values require a packed debug app");

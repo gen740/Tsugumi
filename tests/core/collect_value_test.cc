@@ -60,7 +60,7 @@ TEST(CollectValue, PreservesOpaqueSchemaAndBytes) {
     EXPECT_EQ(item->schema()->str(), member.schema);
     ASSERT_NE(item->bytes(), nullptr);
     const auto* data = reinterpret_cast<const char*>(item->bytes()->data());
-    EXPECT_EQ(std::string_view(data, item->bytes()->size()), member.bytes);
+    EXPECT_EQ(std::string_view(data, item->bytes()->size()), member.bytes.view());
     if (!member.bytes.empty())
       EXPECT_EQ((data - value.bytes.data()) % FLATBUFFERS_MAX_ALIGNMENT, 0);
   }

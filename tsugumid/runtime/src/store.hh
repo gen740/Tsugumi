@@ -81,7 +81,7 @@ struct StoreOptions {
   // Fault injection for tests ("" disables): after_prepare, partial_apply,
   // before_commit.
   std::string fault;
-  std::filesystem::path alternate_state_dir;
+  std::filesystem::path alternate_state_dir{};
   bool evaluate_params = true;
 };
 
