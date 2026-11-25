@@ -141,10 +141,11 @@ private func viewDocument(_ out: Outside) -> String {
   #expect(probe.sent[1].0 == "screens/a")
   #expect(probe.sent[1].1 == Data([8]))
 
+  let closedLog = probe.log
   host.close()
   host.send(.data(Data([2])))
   try await Task.sleep(for: .milliseconds(300))
-  #expect(probe.log.last == "data:9")
+  #expect(probe.log == closedLog)
   #expect(out.requests.isEmpty)
 }
 
