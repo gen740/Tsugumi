@@ -3,7 +3,7 @@ import { L } from '../i18n'
 import type { LiveView, ViewMessage } from '../model/liveViews'
 import { errorText } from '../model/session'
 
-export type SendHtmlView = (view: LiveView, bytes: Uint8Array<ArrayBuffer>, route: Uint8Array<ArrayBuffer>) => Promise<unknown>
+export type SendHtmlView = (view: LiveView, bytes: Uint8Array<ArrayBuffer>, to: string) => Promise<unknown>
 export type ReadHtmlView = (view: LiveView, signal: AbortSignal) => Promise<string>
 
 /** Each mount owns both frame contexts and the subscription to its view. */
@@ -25,7 +25,7 @@ export function HtmlViewFrame({ view, read, send }: { view: LiveView; read: Read
     const outstanding = new Map<number, () => void>()
     const messageMax = 1 << 24
     let reverseBytes = 0
-    const reverse: { bytes: Uint8Array<ArrayBuffer>; route: Uint8Array<ArrayBuffer> }[] = []
+    const reverse: { bytes: Uint8Array<ArrayBuffer>; to: string; id: number; size: number }[] = []
     let sending = false
     const release = () => {
       for (const message of pending) message.complete?.()
@@ -63,14 +63,16 @@ export function HtmlViewFrame({ view, read, send }: { view: LiveView; read: Read
       if (sending || loading.signal.aborted) return
       sending = true
       while (reverse.length && !loading.signal.aborted) {
-        const { bytes, route } = reverse.shift()!
+        const { bytes, to, id, size } = reverse.shift()!
+        let error: string | undefined
         try {
-          await send(view, bytes, route)
+          await send(view, bytes, to)
         } catch (cause) {
-          if (!loading.signal.aborted) setMessageError(errorText(cause))
+          error = errorText(cause)
+          if (!loading.signal.aborted) setMessageError(error)
         } finally {
-          reverseBytes -= Math.max(1, bytes.length)
-          if (!loading.signal.aborted) post({ type: 'reverseCredit', size: bytes.length })
+          reverseBytes -= size
+          if (!loading.signal.aborted) post({ type: 'sendResult', id, size, error })
         }
       }
       sending = false
@@ -87,14 +89,16 @@ export function HtmlViewFrame({ view, read, send }: { view: LiveView; read: Read
       } else if (data?.tsugumi === 'messageDropped') {
         setMessageError(L('ビューのメッセージを送信できませんでした'))
       } else if (data?.tsugumi === 'send' && data.bytes instanceof ArrayBuffer &&
-        data.route instanceof ArrayBuffer && data.route.byteLength === 16) {
+        typeof data.to === 'string' && Number.isSafeInteger(data.id)) {
         const bytes = new Uint8Array(data.bytes)
-        if (bytes.length > messageMax || reverseBytes > messageMax) {
-          setMessageError(L('ビューのメッセージを送信できませんでした'))
-          post({ type: 'reverseCredit', size: bytes.length })
+        const size = Math.max(1, bytes.length) + 2 * data.to.length
+        if (bytes.length > messageMax || data.to.length > messageMax / 2 || reverseBytes > messageMax) {
+          const error = L('ビューのメッセージを送信できませんでした')
+          setMessageError(error)
+          post({ type: 'sendResult', id: data.id, size, error })
         } else {
-          reverseBytes += Math.max(1, bytes.length)
-          reverse.push({ bytes, route: new Uint8Array(data.route) })
+          reverseBytes += size
+          reverse.push({ bytes, to: data.to, id: data.id, size })
           void flushReverse()
         }
       }

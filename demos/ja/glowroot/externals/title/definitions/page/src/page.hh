@@ -114,8 +114,6 @@ class Page {
 
   auto show(Scene& scene) -> void {
     if (left_) return;
-    scene.value.reply = std::make_unique<glow::screen::Route>(
-        flatbuffers::span<const uint8_t, 16>(route_.bytes));
     flatbuffers::FlatBufferBuilder builder(4096);
     builder.Finish(glow::screen::Scene::Pack(builder, &scene.value));
     // A full queue to the window only delays the next frame; a closed window

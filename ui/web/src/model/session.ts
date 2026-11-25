@@ -810,9 +810,9 @@ export class ProjectSession extends Observable {
         this.reportLiveView(view, false)
         break
       }
-      case R.NotificationPayload.ViewRouteRegistered: {
-        const { session, route } = e.value as R.ViewRouteRegisteredT
-        this.liveViews.get(s(session))?.registerRoute(s(route))
+      case R.NotificationPayload.ViewRecipientChanged: {
+        const { session, path, registered } = e.value as R.ViewRecipientChangedT
+        this.liveViews.get(s(session))?.setRecipient(s(path), registered)
         break
       }
       case R.NotificationPayload.ViewClosed: {

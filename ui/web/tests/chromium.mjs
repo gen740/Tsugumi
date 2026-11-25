@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 
 export async function runInChromium(browser, html, expression, flags = ['--disable-gpu']) {
   const proc = spawn(browser, [
-    '--headless', '--no-sandbox', ...flags, '--disable-dev-shm-usage', '--no-first-run',
+    '--headless', '--mute-audio', '--no-sandbox', ...flags, '--disable-dev-shm-usage', '--no-first-run',
     '--no-default-browser-check', '--disable-background-networking', '--use-mock-keychain',
     `--user-data-dir=${html + '.profile'}`, '--remote-debugging-pipe', 'about:blank',
   ], { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] })

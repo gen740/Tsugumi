@@ -129,10 +129,10 @@ def render() -> str:
         out.append(f"- `{n}`")
     out += ["", "Card views open through the Card ABI. The presenting subscription receives",
             "`ViewOpened` before any `DisplayUpdated` for the session and owns the",
-            "file reads, sends, credits and close. `ViewRouteRegistered` binds a route",
-            "to a session for the lifetime of the window. The presenting subscription",
-            "receives `ViewClosed` when the window closes. Session and route IDs use canonical",
-            "UUID text. The all-zero route selects the opening Card’s route. View RPCs",
+            "file reads, sends, credits and close. `ViewRecipientChanged` reports when",
+            "a Card path gains its first live recipient or loses its last one on a window.",
+            "The presenting subscription receives `ViewClosed` when the window closes.",
+            "Session IDs use canonical UUID text. View RPCs",
             "and notifications are excluded from RPC traces."]
     out += ["", "### Run events", "", "The `value` inside a `RunEvent` has one of these types.", ""]
     for n in union_members(text, "RunEventValue"):

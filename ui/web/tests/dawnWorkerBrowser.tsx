@@ -6,6 +6,7 @@ import { encodeView, i32, i64 } from './dawnFixture'
 const constant = (value: number) => [0x41, value]
 const mark = (value: number) => [
   ...constant(0), ...constant(value), 0x3a, 0, 0,
+  ...constant(16), ...constant(42), 0x3a, 0, 0,
   ...constant(16), ...constant(0), ...constant(1), 0x10, 0, 0x1a,
 ]
 const bytes = encodeView({
@@ -48,9 +49,13 @@ async function test() {
   doc.body.append(host)
   const root = createRoot(host)
   const view = new LiveView('dawn', 'card', 'dawn', 'dawn', 1, 320, 240)
+  view.setRecipient('card', true)
   const messages: number[] = []
   const show = (hidden: boolean) => root.render(<DawnViewCanvas view={view} read={async () => bytes.slice()}
-    send={async (_, data) => { messages.push(data[0]) }} hidden={hidden} />)
+    send={async (_, data, to) => {
+      if (to !== '*') throw new Error('Unexpected Dawn address')
+      messages.push(data[0])
+    }} hidden={hidden} />)
   const draws = () => messages.filter(value => value === 1).length
   try {
     show(false)

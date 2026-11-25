@@ -20,7 +20,7 @@ from harness import remote_worker as R
 from harness.fixtures import add_worker, worker_project
 from harness.scenario import Project
 from harness.scenario import FILE_OUTPUT
-from harness.views import ZERO_ROUTE, declaration, display, open_view, return_credit
+from harness.views import declaration, display, open_view, return_credit
 from projects import start_run, wait_invocation, wait_run, wait_run_notification
 from Tsugumi.Data.CardState import CardState
 from uuid import uuid4
@@ -543,10 +543,10 @@ def test_remote_view_messages_do_not_wait_for_another_routes_reply(
     notes_route, plot_route = bytes(first.route.bytes), bytes(second.route.bytes)
     payload = b"reply\0\xff"
     remote_gateway.hold_view = notes_route
-    ui.call("ViewSendRequest", session=notes, route=ZERO_ROUTE, bytes=payload)
+    ui.call("ViewSendRequest", session=notes, to="work", bytes=payload)
     assert remote_gateway.view_stalled.wait(5)
     try:
-        ui.call("ViewSendRequest", session=plot, route=ZERO_ROUTE, bytes=payload)
+        ui.call("ViewSendRequest", session=plot, to="work", bytes=payload)
         ui.call("ViewCloseRequest", session=plot)
         deadline = time.monotonic() + 5
         while len(remote_gateway.view_messages) < 3 and time.monotonic() < deadline:

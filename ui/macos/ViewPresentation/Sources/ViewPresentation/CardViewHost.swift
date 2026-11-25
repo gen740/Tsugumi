@@ -34,21 +34,28 @@ import WebKit
     (() => {
       let port, used = 0, reportedDrop = false
       const queued = []
+      const replies = new Map()
+      let nextSend = 0
       const max = 1 << 24
       const api = {
         onmessage: null,
-        send(bytes, route = new Uint8Array(16)) {
-          if (!(bytes instanceof Uint8Array) || !(route instanceof Uint8Array) || route.length !== 16)
-            throw new TypeError('send expects bytes and a 16-byte route')
-          if (bytes.byteLength > max || used > max) {
+        async send(bytes, to) {
+          if (!(bytes instanceof Uint8Array) || typeof to !== 'string' || !to || to.includes(String.fromCharCode(0)))
+            throw new TypeError('Expected Uint8Array bytes and a Card path or "*"')
+          const size = Math.max(1, bytes.byteLength) + 2 * to.length
+          if (bytes.byteLength > max || to.length > max / 2 || used > max) {
             if (port && !reportedDrop) port.postMessage({ type: 'dropped' })
             reportedDrop = true
-            return
+            throw new Error('The view message queue is full')
           }
-          used += Math.max(1, bytes.byteLength)
-          const data = { type: 'data', bytes: new Uint8Array(bytes).buffer, route: new Uint8Array(route).buffer }
-          if (port) port.postMessage(data, [data.bytes, data.route])
-          else queued.push(data)
+          used += size
+          const id = ++nextSend
+          return await new Promise((resolve, reject) => {
+            replies.set(id, { size, resolve, reject })
+            const data = { type: 'data', bytes: new Uint8Array(bytes).buffer, to, id }
+            if (port) port.postMessage(data, [data.bytes])
+            else queued.push(data)
+          })
         }
       }
       Object.defineProperty(window, 'tsugumi', { value: api })
@@ -56,13 +63,18 @@ import WebKit
         if (event.source !== parent || event.data?.tsugumi !== 1) return
         event.stopImmediatePropagation()
         port = event.data.port
-        for (const data of queued) port.postMessage(data, [data.bytes, data.route])
+        for (const data of queued) port.postMessage(data, [data.bytes])
         queued.length = 0
         if (reportedDrop) port.postMessage({ type: 'dropped' })
         port.onmessage = ({ data }) => {
-          if (data?.type === 'reverseCredit') {
-            used -= Math.max(1, data.size)
+          if (data?.type === 'sendResult') {
+            const reply = replies.get(data.id)
+            if (!reply) return
+            replies.delete(data.id)
+            used -= reply.size
             reportedDrop = false
+            if (data.error) reply.reject(new Error(data.error))
+            else reply.resolve()
           } else if (data?.type === 'data') {
             try { api.onmessage?.(new Uint8Array(data.bytes)) }
             finally { port.postMessage({ type: 'credit' }) }
@@ -86,19 +98,18 @@ import WebKit
         } else if (data?.type === 'dropped') {
           webkit.messageHandlers.tsugumiViewInput.postMessage({ dropped: true })
         } else if (data?.type === 'data' && data.bytes instanceof ArrayBuffer &&
-                   data.route instanceof ArrayBuffer && data.route.byteLength === 16) {
+                   typeof data.to === 'string' && Number.isSafeInteger(data.id)) {
           const bytes = new Uint8Array(data.bytes)
-          if (bytes.length > max || reverseBytes > max) {
+          if (bytes.length > max || data.to.length > max / 2 || reverseBytes > max) {
             webkit.messageHandlers.tsugumiViewInput.postMessage({ dropped: true })
-            port.postMessage({ type: 'reverseCredit', size: bytes.length })
+            port.postMessage({ type: 'sendResult', id: data.id, error: 'The view message queue is full' })
             return
           }
           const parts = []
           for (let i = 0; i < bytes.length; i += 16384)
             parts.push(String.fromCharCode(...bytes.subarray(i, i + 16384)))
-          reverseBytes += Math.max(1, bytes.length)
-          const route = btoa(String.fromCharCode(...new Uint8Array(data.route)))
-          webkit.messageHandlers.tsugumiViewInput.postMessage({ bytes: btoa(parts.join('')), route })
+          reverseBytes += Math.max(1, bytes.length) + 2 * data.to.length
+          webkit.messageHandlers.tsugumiViewInput.postMessage({ bytes: btoa(parts.join('')), to: data.to, id: data.id })
         }
       }
       frame.contentWindow.postMessage({ tsugumi: 1, port: channel.port2 }, '*', [channel.port2])
@@ -128,9 +139,9 @@ import WebKit
     admission = { text, resolve }
     flush()
   })
-  window.tsugumiReverseCredit = size => {
-    reverseBytes -= Math.max(1, size)
-    port?.postMessage({ type: 'reverseCredit', size })
+  window.tsugumiSendResult = (id, size, error) => {
+    reverseBytes -= size
+    port?.postMessage({ type: 'sendResult', id, error })
   }
   window.tsugumiClose = () => {
     admission?.resolve()
@@ -158,10 +169,9 @@ import WebKit
   }
 
   let web: WKWebView
-  @ObservationIgnored private let sendToCard: ((UUID, Data) async throws -> Void)?
-  @ObservationIgnored private var reverse: [(UUID, Data)] = []
+  @ObservationIgnored private let sendToCard: ((String, Data) async throws -> Void)?
+  @ObservationIgnored private var reverse: [(to: String, bytes: Data, id: Int, size: Int)] = []
   @ObservationIgnored private var sendingReverse = false
-  @ObservationIgnored private var reverseBytes = 0
   private(set) var error: String?
   @ObservationIgnored private var outbox = CardViewOutbox()
   @ObservationIgnored private var mounted = false
@@ -171,7 +181,7 @@ import WebKit
 
   /// `configure` lets tests add their own observers before anything loads.
   init(configure: (WKWebViewConfiguration) -> Void = { _ in },
-       sendToCard: ((UUID, Data) async throws -> Void)? = nil) {
+       sendToCard: ((String, Data) async throws -> Void)? = nil) {
     self.sendToCard = sendToCard
     let configuration = WKWebViewConfiguration()
     configuration.websiteDataStore = .nonPersistent()
@@ -251,35 +261,31 @@ import WebKit
     if message["dropped"] as? Bool == true {
       error = String(localized: "ビューのメッセージを送信できませんでした")
     } else if let text = message["bytes"] as? String, let bytes = Data(base64Encoded: text),
-              bytes.count <= 1 << 24, let routeText = message["route"] as? String,
-              let routeBytes = Data(base64Encoded: routeText), routeBytes.count == 16 {
-      let route = routeBytes.withUnsafeBytes { viewRoute($0.bindMemory(to: UInt8.self).baseAddress!) }
-      if reverseBytes <= 1 << 24 {
-        reverseBytes += max(1, bytes.count)
-        reverse.append((route, bytes))
-        flushReverse()
-      } else {
-        error = String(localized: "ビューのメッセージを送信できませんでした")
-      }
-      web.evaluateJavaScript("tsugumiReverseCredit(\(bytes.count))", completionHandler: nil)
+              bytes.count <= 1 << 24, let to = message["to"] as? String,
+              let id = message["id"] as? Int {
+      let size = max(1, bytes.count) + 2 * to.utf16.count
+      reverse.append((to, bytes, id, size))
+      flushReverse()
     }
   }
 
   private func flushReverse() {
     guard !closed, !sendingReverse, !reverse.isEmpty else { return }
-    let (route, bytes) = reverse.removeFirst()
+    let (to, bytes, id, size) = reverse.removeFirst()
     sendingReverse = true
     Task {
-      defer {
-        reverseBytes -= max(1, bytes.count)
-        sendingReverse = false
-        flushReverse()
-      }
+      defer { sendingReverse = false; flushReverse() }
+      var failure = ""
       do {
         guard let sendToCard else { throw CardViewFileError.unavailable }
-        try await sendToCard(route, bytes)
+        try await sendToCard(to, bytes)
       } catch {
-        if !closed { self.error = error.localizedDescription }
+        failure = error.localizedDescription
+        if !closed { self.error = failure }
+      }
+      if !closed {
+        _ = try? await web.callAsyncJavaScript("tsugumiSendResult(id, size, error)",
+          arguments: ["id": id, "size": size, "error": failure], contentWorld: .page)
       }
     }
   }

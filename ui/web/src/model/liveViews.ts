@@ -1,4 +1,4 @@
-import { routeKey, type ViewInput } from '../dawn/workerProtocol'
+import type { ViewInput } from '../dawn/workerProtocol'
 import type { CardKey } from './session'
 
 export const ViewMode = { panel: 0, window: 1, fullscreen: 2 } as const
@@ -6,7 +6,7 @@ export const ViewMode = { panel: 0, window: 1, fullscreen: 2 } as const
 export type ViewMessage = { bytes: Uint8Array<ArrayBuffer>; complete?: () => void; at?: number }
 
 export interface LiveViewRenderer {
-  registerRoute(route: string): void
+  setRecipient(card: string, registered: boolean): void
   sendInput(event: ViewInput): Promise<void>
   snapshot(): Promise<Uint8Array<ArrayBuffer>>
   dispose(): void
@@ -15,7 +15,7 @@ export interface LiveViewRenderer {
 export class LiveView {
   private receive?: (message: ViewMessage) => void
   private readonly pending: ViewMessage[] = []
-  private readonly routes = new Set<string>()
+  private readonly recipients = new Set<string>()
   private closed = false
   private renderer?: LiveViewRenderer
 
@@ -25,16 +25,10 @@ export class LiveView {
     readonly flags = 0,
   ) {}
 
-  registerRoute(route: string) {
-    const key = route.replaceAll('-', '')
-    this.routes.add(key)
-    this.renderer?.registerRoute(key)
-  }
-
-  acceptsRoute(route: Uint8Array) {
-    if (this.closed || route.length !== 16) return false
-    if (route.every(byte => byte === 0)) return true
-    return this.routes.has(routeKey(route))
+  setRecipient(card: string, registered: boolean) {
+    if (registered) this.recipients.add(card)
+    else this.recipients.delete(card)
+    this.renderer?.setRecipient(card, registered)
   }
 
   attachRenderer(renderer: LiveViewRenderer): () => void {
@@ -44,7 +38,7 @@ export class LiveView {
     }
     this.renderer?.dispose()
     this.renderer = renderer
-    for (const route of this.routes) renderer.registerRoute(route)
+    for (const card of this.recipients) renderer.setRecipient(card, true)
     return () => {
       if (this.renderer === renderer) this.renderer = undefined
       renderer.dispose()
@@ -86,7 +80,7 @@ export class LiveView {
     this.closed = true
     this.renderer?.dispose()
     this.renderer = undefined
-    this.routes.clear()
+    this.recipients.clear()
     this.receive = undefined
     for (const message of this.pending.splice(0)) message.complete?.()
   }

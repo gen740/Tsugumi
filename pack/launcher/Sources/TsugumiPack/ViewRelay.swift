@@ -124,16 +124,16 @@ import Virtualization
         let page = try await call("CardViewReadRequest", ["session": session, "offset": offset, "limit_bytes": 1 << 20])
         return CardViewFilePage(bytes: Data(page.bytes ?? []), eof: page.eof == true, nextOffset: page.nextOffset)
       }
-      presentation.open(opening, files: files, send: { [weak self] route, bytes in
+      presentation.open(opening, files: files, send: { [weak self] to, bytes in
         _ = try await self?.call("ViewSendRequest", [
-          "session": session, "route": route.uuidString.lowercased(), "bytes": Array(bytes),
+          "session": session, "to": to, "bytes": Array(bytes),
         ])
       }, close: { [weak self] in
         _ = try await self?.call("ViewCloseRequest", ["session": session])
       })
-    case "ViewRouteRegistered":
-      guard let session = value.session, let route = value.route else { return }
-      presentation.registerRoute(route, session: session)
+    case "ViewRecipientChanged":
+      guard let session = value.session, let path = value.path else { return }
+      presentation.setRecipient(path, registered: value.registered == true, session: session)
     case "ViewClosed":
       if let session = value.session { presentation.sessionClosed(session) }
     case "DisplayUpdated":
@@ -224,7 +224,8 @@ private struct PackViewValue: Decodable {
   let seq: UInt64?
   let diagnostic: String?
   let session: UUID?
-  let route: UUID?
+  let path: String?
+  let registered: Bool?
   let card: Card?
   let name: String?
   let type: String?

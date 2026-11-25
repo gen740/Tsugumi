@@ -36,13 +36,6 @@ public enum CardViewInput: Sendable {
   case gamepad(pad: UInt32, kind: UInt32, buttons: UInt32, lx: Float, ly: Float, rx: Float, ry: Float, lt: Float, rt: Float)
 }
 
-let openerViewRoute = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
-
-func viewRoute(_ bytes: UnsafePointer<UInt8>) -> UUID {
-  UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-              bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
-}
-
 /// What a view host passes on to its view, in the order the core sent it.
 enum CardViewMessage: Equatable {
   /// Opaque bytes the Card sent to this view.
@@ -126,7 +119,7 @@ enum CardViewFileError: LocalizedError {
   var html: HTMLViewHost?
   var dawn: DawnViewHost?
   var error: String?
-  @ObservationIgnored var routes: Set<UUID> = []
+  @ObservationIgnored var recipients: Set<String> = []
   @ObservationIgnored private var outbox = CardViewOutbox()
   @ObservationIgnored private var load: Task<Void, Never>?
   @ObservationIgnored var window: NSWindow?
@@ -142,7 +135,7 @@ enum CardViewFileError: LocalizedError {
   }
 
   init(_ opening: CardViewOpening, files: CardViewFiles,
-       send: @escaping @MainActor (UUID, Data) async throws -> Void,
+       send: @escaping @MainActor (String, Data) async throws -> Void,
        close: @escaping @MainActor () async throws -> Void) {
     self.opening = opening
     requestClose = close
@@ -157,7 +150,7 @@ enum CardViewFileError: LocalizedError {
         try Task.checkCancellation()
         guard let self else { return }
         if opening.type == "dawn" {
-          dawn = DawnViewHost(wasm: file, flags: opening.flags, routes: routes, sendToCard: send)
+          dawn = DawnViewHost(wasm: file, flags: opening.flags, recipients: recipients, sendToCard: send)
         } else {
           guard let source = String(data: file, encoding: .utf8) else { throw CardViewFileError.notText }
           let host = HTMLViewHost(sendToCard: send)
@@ -175,10 +168,6 @@ enum CardViewFileError: LocalizedError {
         outbox.discard()
       }
     }
-  }
-
-  func acceptsRoute(_ route: UUID) -> Bool {
-    route == openerViewRoute || routes.contains(route)
   }
 
   func receive(_ message: CardViewMessage, complete: @escaping () -> Void) {
@@ -267,7 +256,7 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
   public var openings: [CardViewOpening] { views.values.map(\.opening) }
 
   public func open(_ opening: CardViewOpening, files: CardViewFiles,
-                   send: @escaping @MainActor (UUID, Data) async throws -> Void,
+                   send: @escaping @MainActor (String, Data) async throws -> Void,
                    close: @escaping @MainActor () async throws -> Void) {
     guard views[opening.id] == nil else { return }
     let view = OpenCardView(opening, files: files, send: send, close: close)
@@ -281,14 +270,11 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
     }
   }
 
-  /// A route remains associated with its session even if the receiver ends.
-  public func registerRoute(_ route: UUID, session: UUID) {
-    views[session]?.routes.insert(route)
-    views[session]?.dawn?.registerRoute(route)
-  }
-
-  func acceptsRoute(_ route: UUID, session: UUID) -> Bool {
-    views[session]?.acceptsRoute(route) == true
+  public func setRecipient(_ card: String, registered: Bool, session: UUID) {
+    guard let view = views[session] else { return }
+    if registered { view.recipients.insert(card) }
+    else { view.recipients.remove(card) }
+    view.dawn?.setRecipient(card, registered: registered)
   }
 
   public func receive(_ session: UUID, bytes: Data, complete: @escaping () -> Void = {}) {

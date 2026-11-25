@@ -33,13 +33,6 @@ private func opening(_ id: UUID = UUID(), type: String = "html") -> CardViewOpen
     }, send: { _, _ in }, close: { closed.append(view.id) })
   }
 
-  let route = UUID()
-  #expect(!presentation.acceptsRoute(route, session: first.id))
-  presentation.registerRoute(route, session: first.id)
-  #expect(presentation.acceptsRoute(route, session: first.id))
-  #expect(!presentation.acceptsRoute(route, session: second.id))
-  #expect(presentation.acceptsRoute(openerViewRoute, session: second.id))
-
   presentation.receive(first.id, bytes: Data([1])) { credits.append(1) }
   presentation.receive(second.id, bytes: Data([2])) { credits.append(2) }
   presentation.receive(first.id, bytes: Data([3])) { credits.append(3) }
@@ -48,7 +41,6 @@ private func opening(_ id: UUID = UUID(), type: String = "html") -> CardViewOpen
   presentation.close(first.id)
   presentation.close(first.id)
   #expect(credits == [1, 3])
-  #expect(!presentation.acceptsRoute(route, session: first.id))
   #expect(presentation.openings.map(\.id) == [second.id])
   presentation.receive(first.id, bytes: Data([4])) { credits.append(4) }
   #expect(presentation.sessionClosed(second.id)?.id == second.id)
@@ -112,10 +104,9 @@ private func viewDocument(_ out: Outside) -> String {
   const note = entry => { log.push(entry); document.body.dataset.log = JSON.stringify(log) }
   note('ready')
   tsugumi.onmessage = bytes => note('data:' + Array.from(bytes).join(','))
-  tsugumi.send(new Uint8Array([0, 255]))
-  const route = new Uint8Array(18)
-  for (let i = 0; i < 16; i++) route[i + 1] = i
-  tsugumi.send(new Uint8Array([8]), route.subarray(1, 17))
+  tsugumi.send(new Uint8Array([0, 255]), '*').then(() => note('send-ok'))
+  tsugumi.send(new Uint8Array([8]), 'screens/a')
+  tsugumi.send(new Uint8Array([9]), 'unregistered').catch(() => note('send-rejected'))
   fetch('\(out.address("fetch"))').catch(() => {})
   new Image().src = '\(out.address("image"))'
   try { new WebSocket('ws://127.0.0.1:\(out.port)/socket') } catch {}
@@ -126,13 +117,14 @@ private func viewDocument(_ out: Outside) -> String {
   """
 }
 
-@MainActor @Test func htmlMessagesUseOrderedBytesAndNetworkOrderRoutesWithoutNetworkAccess() async throws {
+@MainActor @Test func htmlMessagesUseOrderedBytesAndCardPathsWithoutNetworkAccess() async throws {
   NSApplication.shared.setActivationPolicy(.prohibited)
   let out = try Outside()
   defer { out.stop() }
   let probe = Probe()
-  let host = HTMLViewHost(configure: { probe.install($0) }, sendToCard: { route, bytes in
-    probe.sent.append((route.uuidString.lowercased(), bytes))
+  let host = HTMLViewHost(configure: { probe.install($0) }, sendToCard: { to, bytes in
+    if to == "unregistered" { throw CardViewFileError.unavailable }
+    probe.sent.append((to, bytes))
   })
   defer { host.close() }
   host.web.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
@@ -141,17 +133,19 @@ private func viewDocument(_ out: Outside) -> String {
   host.send(.data(Data([0, 255, 0, 10])))
   try await host.mount(viewDocument(out))
   host.send(.data(Data([9])))
-  try await waitForModel("the view exchanged messages") { probe.log.last == "data:9" && probe.sent.count == 2 }
-  #expect(probe.log == ["ready", "data:0,255,0,10", "data:9"])
-  #expect(probe.sent[0].0 == "00000000-0000-0000-0000-000000000000")
+  try await waitForModel("the view exchanged messages") { probe.log.contains("data:9") && probe.log.contains("send-rejected") && probe.sent.count == 2 }
+  #expect(probe.log.filter { $0 == "ready" || $0.hasPrefix("data:") } == ["ready", "data:0,255,0,10", "data:9"])
+  #expect(probe.log.contains("send-ok"))
+  #expect(probe.sent[0].0 == "*")
   #expect(probe.sent[0].1 == Data([0, 255]))
-  #expect(probe.sent[1].0 == "00010203-0405-0607-0809-0a0b0c0d0e0f")
+  #expect(probe.sent[1].0 == "screens/a")
   #expect(probe.sent[1].1 == Data([8]))
 
+  let closedLog = probe.log
   host.close()
   host.send(.data(Data([2])))
   try await Task.sleep(for: .milliseconds(300))
-  #expect(probe.log.last == "data:9")
+  #expect(probe.log == closedLog)
   #expect(out.requests.isEmpty)
 }
 
