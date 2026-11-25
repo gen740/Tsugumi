@@ -17,7 +17,6 @@
 #include <optional>
 #include <stdexcept>
 
-#include "tsugumi/rpc/unix_socket.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
@@ -103,28 +102,19 @@ void TransportServer::start() {
   set_nonblock(wake_w_);
   // The caller holds the project lock, so a leftover socket file is ours to
   // replace.
-  auto listen_unix = [](const std::string& path) {
+  auto listen_unix = [](const std::string& path,
+                        unix_socket::Binding& binding) {
     int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0)
       throw std::runtime_error("create unix socket: " +
                                std::string(std::strerror(errno)));
     ::fcntl(fd, F_SETFD, FD_CLOEXEC);
-    sockaddr_un addr{};
     try {
-      addr = unix_socket::Address(path);
+      binding.Bind(fd, path);
     } catch (...) {
       ::close(fd);
       throw;
     }
-    ::unlink(path.c_str());
-    int rc = ::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr);
-    if (rc != 0) {
-      int err = errno;
-      ::close(fd);
-      throw std::runtime_error("bind unix socket: " +
-                               std::string(std::strerror(err)));
-    }
-    ::chmod(path.c_str(), 0600);
     if (::listen(fd, 64) != 0) {
       int err = errno;
       ::close(fd);
@@ -134,9 +124,10 @@ void TransportServer::start() {
     set_nonblock(fd);
     return fd;
   };
-  if (!opts_.unix_path.empty()) unix_fd_ = listen_unix(opts_.unix_path);
+  if (!opts_.unix_path.empty())
+    unix_fd_ = listen_unix(opts_.unix_path, unix_binding_);
   if (!opts_.ws_unix_path.empty())
-    ws_unix_fd_ = listen_unix(opts_.ws_unix_path);
+    ws_unix_fd_ = listen_unix(opts_.ws_unix_path, ws_unix_binding_);
   if (opts_.tcp_port >= 0) {
     tcp_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
     int one = 1;
@@ -164,10 +155,10 @@ void TransportServer::stop() {
   if (thread_.joinable()) thread_.join();
   for (auto& [_, c] : conns_) ::close(c->fd);
   conns_.clear();
+  unix_binding_.Remove();
+  ws_unix_binding_.Remove();
   for (int fd : {unix_fd_, ws_unix_fd_, tcp_fd_, wake_r_, wake_w_})
     if (fd >= 0) ::close(fd);
-  if (!opts_.unix_path.empty()) ::unlink(opts_.unix_path.c_str());
-  if (!opts_.ws_unix_path.empty()) ::unlink(opts_.ws_unix_path.c_str());
 }
 
 void TransportServer::wake() {

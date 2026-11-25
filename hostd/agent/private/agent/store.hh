@@ -40,7 +40,8 @@ struct ConversationStore {
   using IsRunning = std::function<bool(const std::string&)>;
   ConversationStore(host::StateGate& gate, sql::Db& home,
                     host::ProjectRegistry& registry, Scrub scrub,
-                    HasGrant has_grant, IsRunning is_running);
+                    HasGrant has_grant, IsRunning is_running,
+                    std::string application = "tsugumi-hostd");
   ~ConversationStore();
   auto OpenedPath(const std::string& project)
       -> std::optional<std::filesystem::path>;
@@ -88,6 +89,7 @@ struct ConversationStore {
   Scrub scrub;
   HasGrant has_grant;
   IsRunning is_running;
+  std::string application;
   std::map<std::string, std::unique_ptr<ProjectStore>> project_stores;
 };
 }  // namespace tsugumi::agent

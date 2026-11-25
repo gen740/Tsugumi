@@ -285,7 +285,27 @@ TEST_F(ConversationStoreFixture,
   };
   // An unscoped lookup skips the locked project and reports it in the host log.
   EXPECT_EQ(get().Code(), "not_found");
-  EXPECT_EQ(create().Code(), "busy");
+  const auto blocked = create();
+  ASSERT_EQ(blocked.Code(), "busy");
+  const auto* failure = blocked.Failure();
+  const auto* owner = failure->conversation_lock();
+  ASSERT_NE(owner, nullptr);
+  ASSERT_NE(owner->application(), nullptr);
+  EXPECT_EQ(owner->application()->str(), "Tsugumi RPC fixture");
+  EXPECT_EQ(owner->pid(), static_cast<uint32_t>(service.Pid()));
+  EXPECT_NE(failure->message()->str().find(
+                "Tsugumi RPC fixture (PID " + std::to_string(owner->pid()) +
+                ") has this project's conversations open. Quit it"),
+            std::string::npos);
+  const auto list = Call(
+      *other_human, A::RequestPayload::ConversationListRequest,
+      [&](Builder& b) {
+        return A::CreateConversationListRequest(b, b.CreateString(project_id))
+            .Union();
+      });
+  ASSERT_EQ(list.Code(), "busy");
+  ASSERT_NE(list.Failure()->conversation_lock(), nullptr);
+  EXPECT_EQ(list.Failure()->conversation_lock()->pid(), owner->pid());
   EXPECT_EQ(Scalar(directory.path / "project/.tsugumi/agent.sqlite",
                    "SELECT count(*) FROM conversations"),
             1);

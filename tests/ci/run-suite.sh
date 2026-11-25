@@ -23,6 +23,7 @@ if [[ "$system" == x86_64-linux || "${TSUGUMI_FULL_RULES:-0}" == 1 ]]; then full
 # locking, environment/process lifecycle, path handling and RPC transport.
 native_settings=(
   'NativeEnvironment.*' 'NativeTerminalTest.*' 'AttachedFolderTest.*' 'HostFormat.*'
+  'EnvironmentAdapterTest.ShutdownPreservesReplacementControlFiles'
   'BinaryCaches.NixDownloadsFromAPrivateCacheWithTheHostSnapshot'
   'ConversationStoreTest.ProjectDatabasesKeepTheirLocksAndRecoverySeparateFromHome'
   'ConversationStoreTest.KnownConversationsRemainReadableWhileAnotherProjectIsLocked'

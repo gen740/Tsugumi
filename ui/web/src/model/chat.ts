@@ -125,7 +125,7 @@ export class ChatController extends Observable {
   private contentRevision = 0
   loading = false
   private displayedId = ''
-  get ready() { return !this.loading && !!this.currentId && this.displayedId === this.currentId }
+  get ready() { return !this.loading && !this.loadError && !!this.currentId && this.displayedId === this.currentId }
   /** A save of the Agent waiting for the user: what it would give Cards. */
   /** A save waiting for the user's approval: of this chat's Agent, or of
    *  Claude Code (from) working on the project through the plugin. */
@@ -234,8 +234,14 @@ export class ChatController extends Observable {
   private async init() {
     const turn = this.turn
     if (!await this.refreshSessions() || turn !== this.turn) return
-    this.select(this.sessions[0]?.id ?? await this.createSession())
-    void this.reloadSkills()
+    try {
+      const id = this.sessions[0]?.id ?? await this.createSession()
+      if (turn !== this.turn) return
+      this.select(id)
+      void this.reloadSkills()
+    } catch (e) {
+      if (turn === this.turn) this.showLoadError(e)
+    }
   }
 
   // ---- Sessions ------------------------------------------------------------------
@@ -245,7 +251,20 @@ export class ChatController extends Observable {
       this.sessions = await api<SessionInfo[]>('/api/chat/sessions', { path: this.session.dir })
       this.changed()
       return true
-    } catch (e) { this.status = L('エラー: {0}', (e as Error).message ?? e); this.changed(); return false }
+    } catch (e) {
+      if (this.currentId) {
+        this.status = L('エラー: {0}', (e as Error).message ?? e)
+        this.changed()
+      } else this.showLoadError(e)
+      return false
+    }
+  }
+
+  private showLoadError(error: unknown) {
+    this.loading = false
+    this.status = L('エラー: {0}', (error as Error).message ?? error)
+    this.loadError = this.status
+    this.changed()
   }
 
   /** Reads the open conversation again (its turn keeps running on the server). */
@@ -274,10 +293,7 @@ export class ChatController extends Observable {
       this.changed()
     } catch (e) {
       if (this.currentId !== id || request !== this.reload || turn !== this.turn) return
-      this.loading = false
-      this.status = L('エラー: {0}', (e as Error).message ?? e)
-      this.loadError = this.status
-      this.changed()
+      this.showLoadError(e)
     }
   }
 

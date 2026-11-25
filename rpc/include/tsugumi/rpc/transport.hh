@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "tsugumi/rpc/trace.hh"
+#include "tsugumi/rpc/unix_binding.hh"
 
 namespace tsugumi {
 
@@ -133,6 +134,7 @@ class TransportServer {
   RequestSink* sink_;
   int unix_fd_ = -1;
   int ws_unix_fd_ = -1;
+  unix_socket::Binding unix_binding_, ws_unix_binding_;
   int tcp_fd_ = -1;
   int wake_r_ = -1;
   int wake_w_ = -1;

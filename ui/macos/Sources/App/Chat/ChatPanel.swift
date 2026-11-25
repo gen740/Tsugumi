@@ -217,7 +217,7 @@ struct ChatPanel: View {
           } else if chat.contextFull {
             Button("新しい会話") { chat.newSession() }.controlSize(.small).buttonStyle(.borderedProminent)
           } else if chat.failed { Button("再試行") { chat.retry() }.controlSize(.small) }
-          if !chat.ready && !chat.loading { Button("再読込") { chat.select(chat.currentId) }.controlSize(.small) }
+          if !chat.ready && !chat.loading { Button("再読込") { chat.retryLoad() }.controlSize(.small) }
           if chat.interrupted && !chat.busy { Button("再開") { chat.resume() }.controlSize(.small) }
           if chat.canContinue && !chat.busy { Button("続ける") { chat.continueWork() }.controlSize(.small) }
         }

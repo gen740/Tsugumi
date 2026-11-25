@@ -32,8 +32,10 @@ import { EventsPageT } from '../shared/gen/tsugumi/agent/events-page'
 import { SequencedEventT } from '../shared/gen/tsugumi/agent/sequenced-event'
 import { EventT } from '../shared/gen/tsugumi/agent/event'
 import { FailureT } from '../shared/gen/tsugumi/service/failure'
+import { ConversationLockT } from '../shared/gen/tsugumi/service/conversation-lock'
 import { Message as HostMessage, MessageT as HostMessageT } from '../shared/gen/tsugumi/host/message'
 import { hostProjectErrorText } from '../src/host/hostProjects'
+import { language } from '../src/i18n'
 
 const high = (1n << 64n) - 2n
 const sent = Message.getRootAsMessage(new fb.ByteBuffer(encodeRequest('ConversationSendRequest', {
@@ -67,6 +69,12 @@ assert.equal(decoded.value.events[0].event.input, '{"x":1}')
 const failure = decodeReply(reply(ReplyPayload.Failure, new FailureT('grant_required', 'Ask first', 'permission-1')), false)
 assert.ok(failure.error instanceof CoreHostError)
 assert.equal(failure.error.requestId, 'permission-1')
+const locked = decodeReply(reply(ReplyPayload.Failure,
+  new FailureT('busy', 'Internal diagnostic', null, new ConversationLockT(2345, 'Tsugumi Dev'))), false).error!
+assert.equal(locked.code, 'busy')
+assert.equal(hostProjectErrorText(locked.code, locked.message), language() === 'en'
+  ? "Tsugumi Dev (PID 2345) has this project's conversations open. Quit that process, then reload to open them here."
+  : 'Tsugumi Dev（PID 2345）がこのプロジェクトの会話を開いています。そのプロセスを終了してから再読込してください。')
 console.log('Agent/Host binary protocol: exact uint64, separation, typed events and failures passed')
 
 async function browserRequest(type: H.RequestPayload, value: H.RequestT['value']) {

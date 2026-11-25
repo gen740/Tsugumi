@@ -222,7 +222,7 @@ class Server {
 }  // namespace
 
 auto RunMcp(const std::filesystem::path& executable) -> int {
-  Server server(LaunchFromEnvironment(executable));
+  Server server(LaunchFromEnvironment(executable, "tsugumi mcp"));
   return server.Run();
 }
 

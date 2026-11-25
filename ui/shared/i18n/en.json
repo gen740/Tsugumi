@@ -1,6 +1,10 @@
 {
   "状態データの形式が異なります": "Incompatible State Format",
   "この状態データは別のバージョンの Tsugumi で書き込まれました。": "This state was written by a different Tsugumi version.",
+  "{0}（PID {1}）がホストの状態フォルダを使用しています。そのプロセスを終了してから再試行してください。": {"text": "{0} (PID {1}) is using the host state folder. Quit that process and try again.", "mac": ["@", "@"]},
+  "別の Tsugumi のホストサービスが状態フォルダを使用しています。そのホストサービスを終了してから再試行してください。": "Another Tsugumi host service is using the state folder. Quit that host service and try again.",
+  "{0}（PID {1}）がこのプロジェクトの会話を開いています。そのプロセスを終了してから再読込してください。": {"text": "{0} (PID {1}) has this project's conversations open. Quit that process, then reload to open them here.", "mac": ["@", "@"]},
+  "別の Tsugumi のホストサービスがこのプロジェクトの会話を開いています。そのホストサービスを終了してから再読込してください。": "Another Tsugumi host service has this project's conversations open. Quit that host service, then reload to open them here.",
   "元のファイルを別名で保存し、新しい状態データを作成します。": "The original file will be kept under a new name and a fresh store will be created.",
   "別名で保存して再作成…": "Move Aside and Recreate…",
   "別名で保存して再作成": "Move Aside and Recreate",

@@ -1,3 +1,4 @@
+#include <fcntl.h>
 #include <pthread.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -11,6 +12,7 @@
 #include <thread>
 
 #include "host/execution_broker.hh"
+#include "host/process_lock.hh"
 #include "host/service.hh"
 #include "host/store.hh"
 #include "host/web_pages.hh"
@@ -37,6 +39,39 @@ class HostContract final : public RequestSink {
 
  private:
   Service& host_;
+};
+
+class StateDirectory {
+ public:
+  explicit StateDirectory(const std::filesystem::path& path)
+      : path_(path),
+        fd_(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC)) {
+    if (fd_ < 0) throw std::runtime_error("Cannot open host state directory");
+  }
+  StateDirectory(const StateDirectory&) = delete;
+  auto operator=(const StateDirectory&) -> StateDirectory& = delete;
+  ~StateDirectory() { ::close(fd_); }
+
+  auto IsCurrent() const -> bool {
+    struct stat original{}, current{};
+    return ::fstat(fd_, &original) == 0 &&
+           ::stat(path_.c_str(), &current) == 0 &&
+           original.st_dev == current.st_dev &&
+           original.st_ino == current.st_ino;
+  }
+
+  auto Remove(const std::filesystem::path& file) const -> void {
+    if (!IsCurrent()) return;
+    // Even if the path is renamed after the check, unlink in the opened
+    // directory. A new host at the original path owns different files.
+    if (::unlinkat(fd_, file.filename().c_str(), 0) != 0 && errno != ENOENT)
+      throw std::runtime_error("Cannot remove " + file.string());
+    ::fsync(fd_);
+  }
+
+ private:
+  const std::filesystem::path& path_;
+  int fd_;
 };
 }  // namespace
 
@@ -72,6 +107,8 @@ auto RunHost(int argc, char** argv) -> int {
           throw std::runtime_error("Invalid state file format");
       } else if (arg == "--state-dir")
         options.state_dir = next();
+      else if (arg == "--application-name")
+        options.application = next();
       else if (arg == "--unix")
         listener.unix_path = next();
       else if (arg == "--vmhost")
@@ -117,20 +154,42 @@ auto RunHost(int argc, char** argv) -> int {
       throw std::runtime_error("--state-dir is required");
     std::filesystem::create_directories(options.state_dir);
     ::chmod(options.state_dir.c_str(), 0700);
+    const StateDirectory state(options.state_dir);
     // The short-lived startup lock is released both on publication and on exit.
     auto starting = std::optional{
         fs::FileLock::acquire(options.state_dir / "host.starting")};
-    auto lock = fs::FileLock::try_acquire(options.state_dir / "host.lock");
+    std::optional<LockHolder> holder;
+    auto lock = ProcessLock::TryAcquire(options.state_dir / "host.lock",
+                                        options.application, holder);
+    if (!state.IsCurrent())
+      throw std::runtime_error(
+          "The host state directory moved. Retry startup.");
     const auto ready_file = options.state_dir / "host.ready";
     const auto failure_file = options.state_dir / "host.startup-error";
     if (!lock) {
-      if (!move_aside.empty())
-        throw std::runtime_error("Another host owns the state directory");
+      const auto message = holder ? holder->Description() +
+                                        " holds the host state directory. "
+                                        "Quit it and retry."
+                                  : "Another Tsugumi host holds the state "
+                                    "directory. Quit that host and retry.";
+      if (!move_aside.empty()) throw std::runtime_error(message);
       if (!ensure) return 4;
       if (const auto ready = fs::read_file(ready_file))
         std::cout << *ready << std::endl;
-      else
-        std::cout << fs::read_file_or_throw(failure_file) << std::endl;
+      else if (const auto failure = fs::read_file(failure_file))
+        std::cout << *failure << std::endl;
+      else {
+        json::Members diagnostic{{"code", json::Quote("host_state_locked")},
+                                 {"message", json::Quote(message)}};
+        if (holder)
+          diagnostic.emplace(
+              "lock_holder",
+              json::Encode(json::Members{
+                  {"pid", std::to_string(holder->pid)},
+                  {"application", json::Quote(holder->application)}}));
+        std::cout << json::Encode(diagnostic) << std::endl;
+        return 1;
+      }
       return 0;
     }
     if (!move_aside.empty()) {
@@ -145,8 +204,8 @@ auto RunHost(int argc, char** argv) -> int {
       sql::move_aside(sql::FormatMismatch(move_aside, found_format, expected));
       return 0;
     }
-    fs::remove_file_durable(ready_file);
-    fs::remove_file_durable(failure_file);
+    state.Remove(ready_file);
+    state.Remove(failure_file);
     if (listener.unix_path.empty())
       listener.unix_path = (options.state_dir / "agent.sock").string();
     options.user_token = crypto::random_token(32);
@@ -258,11 +317,12 @@ auto RunHost(int argc, char** argv) -> int {
           std::lock_guard guard(recovery_mutex);
           if (moved) break;
         } while (true);
+        if (!state.IsCurrent()) return 1;
         starting.emplace(
             fs::FileLock::acquire(options.state_dir / "host.starting"));
-        fs::remove_file_durable(failure_file);
+        state.Remove(failure_file);
         recovery.stop();
-        if (signal != SIGUSR1) return 1;
+        if (signal != SIGUSR1 || !state.IsCurrent()) return 1;
       }
     }
     auto& host = *service;
@@ -287,8 +347,11 @@ auto RunHost(int argc, char** argv) -> int {
                               : "ws://" + listener.tcp_host + ":" +
                                     std::to_string(server.bound_tcp_port()) +
                                     "/rpc";
+    if (!state.IsCurrent())
+      throw std::runtime_error(
+          "The host state directory moved. Retry startup.");
     fs::write_atomic(
-        options.state_dir / "host.ready",
+        ready_file,
         json::Encode(json::Members{
             {"endpoint", json::Quote(endpoint)},
             {"unix_socket", json::Quote(listener.unix_path)},
@@ -314,7 +377,7 @@ auto RunHost(int argc, char** argv) -> int {
     do {
       sigwait(&signals, &signal);
     } while (signal == SIGUSR1);
-    fs::remove_file_durable(options.state_dir / "host.ready");
+    state.Remove(ready_file);
     host.Shutdown();
     server.stop();
     host_server.stop();
