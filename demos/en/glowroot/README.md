@@ -1,6 +1,6 @@
 # Glowroot
 
-A small incremental game whose screens are Cards. Run the Workflow: `title`
+A small incremental game whose screens are Cards. Run the Workflow: `title/page`
 opens the game's window (a Dawn view), and each screen in turn draws to the
 same window. Click the sprout for light, buy roots that grow light on their
 own, replant for seeds and spend them on the skill tree. After the third

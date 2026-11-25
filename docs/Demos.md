@@ -109,8 +109,9 @@ Makes one value of a random walk every 100 ms. The `settings` Card opens the **s
 Click the sprout to gather light and buy roots for passive income. Replant for
 seeds, spend them on skills, then buy Bloom after the third replant.
 
-The title Card opens a Dawn window and sends its session with the game state.
-The grow, skills, replant and ending subgraphs take turns drawing to that window.
+`title/page` opens a Dawn window and sends its session with the game state.
+Each screen is a subgraph. The grow, skills, replant and ending pages take turns
+drawing to the same window.
 After playing, open `replant/apply` or `skills/validate` and choose **Run Only This
 Card (Last Inputs)** to try a rule with the saved state. Adjust the game's
 balance in the Cards' `params.nix` files.
