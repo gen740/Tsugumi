@@ -49,16 +49,21 @@ auto path_bytes(const std::string& path) -> tsugumi_bytes {
 
 struct ActiveCall {
   explicit ActiveCall(const ExecutionRequest& request)
-      : stage(request.directory / "packed-artifacts") {}
+      : artifacts(request.directory / "packed-artifacts") {}
 
   ~ActiveCall() {
-    if (!has_stage) return;
-    std::error_code error;
-    fsys::remove_all(stage, error);
+    if (!has_artifacts) return;
+    try {
+      fs::clear_staging(artifacts);
+      fsys::remove(artifacts);
+    } catch (const std::exception& error) {
+      std::fprintf(stderr, "Cannot clear packed artifact staging: %s\n",
+                   error.what());
+    }
   }
 
-  fsys::path stage;
-  bool has_stage = false;
+  fsys::path artifacts;
+  bool has_artifacts = false;
   pack::ResultMemory result;
   std::atomic_flag result_requested;
   std::mutex artifacts_mutex;
@@ -95,6 +100,7 @@ class FastCard {
       closed_ = true;
     }
     view_ready_.notify_all();
+    receiver_->close();
   }
 
   auto check_deadline(Tick now) -> void {
@@ -148,18 +154,22 @@ class FastCard {
       }
     }
     if (request.on_timing) request.on_timing(begin, now_ms());
-    publish_artifacts(request, active);
-
-    if (failure) return {{}, std::move(failure)};
-    if (const auto* error = result->root().failure()) {
-      auto kind = error->kind();
-      if (kind == FailureKind::unspecified ||
-          !*Tsugumi::Data::EnumNameFailureKind(kind))
-        kind = FailureKind::worker_failed;
-      return {{},
-              FailureData::make(
-                  kind, error->message() ? error->message()->str() : "")};
+    if (result) {
+      if (const auto* error = result->root().failure()) {
+        auto kind = error->kind();
+        if (kind == FailureKind::unspecified ||
+            !*Tsugumi::Data::EnumNameFailureKind(kind))
+          kind = FailureKind::worker_failed;
+        failure = FailureData::make(
+            kind, error->message() ? error->message()->str() : "");
+      }
     }
+    try {
+      publish_artifacts(request, active);
+    } catch (const std::exception&) {
+      if (!failure) throw;
+    }
+    if (failure) return {{}, std::move(failure)};
     std::vector<RawOutput> raw;
     if (const auto* ports = result->root().outputs()) {
       raw.reserve(ports->size());
@@ -292,9 +302,9 @@ class FastCard {
     std::lock_guard lock(active->artifacts_mutex);
     auto id = *parse_artifact_id(crypto::uuid4());
     const auto directory =
-        active->stage / std::to_string(active->created.size());
+        active->artifacts / "outputs" / std::to_string(active->created.size());
+    active->has_artifacts = true;
     fsys::create_directories(directory);
-    active->has_stage = true;
     active->paths.push_back(directory.string());
     std::ranges::copy(id, out->bytes);
     *path = path_bytes(active->paths.back());
@@ -316,8 +326,14 @@ class FastCard {
     }
     const auto resolved = service_.resolve_artifact(id);
     if (resolved.empty()) return -1;
+    // Provide the same directory shape as a worker invocation. A Card can
+    // copy it with metadata without inheriting the store's sealed directories.
+    const auto input = active->artifacts / "inputs" / artifact_id_text(id);
+    active->has_artifacts = true;
+    fsys::create_directories(input.parent_path());
+    fs::link_artifact(resolved, input);
     *path =
-        path_bytes(active->opened.emplace(id, resolved.string()).first->second);
+        path_bytes(active->opened.emplace(id, input.string()).first->second);
     return 0;
   }
 
@@ -325,8 +341,9 @@ class FastCard {
       -> void {
     if (active.created.empty()) return;
     const auto target = service_.artifact_destination(request.summary);
+    const auto outputs = active.artifacts / "outputs";
     const int directory = ::open(
-        active.stage.c_str(), O_DIRECTORY | O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        outputs.c_str(), O_DIRECTORY | O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (directory < 0)
       throw Failed(FailureKind::output_invalid,
                    "Cannot open packed artifact staging");
