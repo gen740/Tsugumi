@@ -13,9 +13,8 @@ import pytest
 from conftest import demo_environment
 from projects import start_run, wait_run
 from harness.document import set_param
-from harness.observations import read_pages
-from test_demos import connect, recorded_output, stderr
-from tsugumi_client import path, text
+from test_demos import artifact_member, connect, recorded_output, stderr
+from tsugumi_client import text
 from Tsugumi.Data.RunState import RunState
 
 pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_DEMO_RUNS") != "1",
@@ -23,10 +22,7 @@ pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_DEMO_RUNS") != "1",
 
 
 def result(c, run_id, card):
-    artifacts = c.call("ArtifactListRequest", runId=run_id, card=path(card)).artifacts
-    artifact = next(row for row in artifacts if text(row.output) == "result")
-    return json.loads(read_pages(c, "ArtifactReadRequest", artifactId=text(artifact.artifactId),
-                                 member="result.json", page_bytes=65536))
+    return json.loads(artifact_member(c, run_id, card, "result.json"))
 
 
 def network(tmp_path, c, run_id):

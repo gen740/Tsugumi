@@ -224,10 +224,10 @@ class VMEnv:
         self.ready = read_ready(self.control / "server.ready")
         return self
 
-    def client(self):
+    def client(self, *, client=0):
         from tsugumi_client import Client
         c = Client(ws=f"ws://127.0.0.1:{self.port}/rpc")
-        c.hello(token=self.ready["token"])
+        c.hello(token=self.ready["token"], client=client)
         return c
 
     def exec(self, script: str) -> str:

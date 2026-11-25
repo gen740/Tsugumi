@@ -26,12 +26,12 @@ from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
+from Tsugumi.Trace.Client import Client
 
 def connect(env):
-    c = env.client()
     if getattr(env, "client_hello", False):
-        c.hello()
-    return c
+        return env.connect(client=Client.Web)
+    return env.client(client=Client.Web)
 
 
 def recorded_output(tmp_path, client, run_id, *card, port):
@@ -39,6 +39,13 @@ def recorded_output(tmp_path, client, run_id, *card, port):
     output = next(row for row in record.outputs if text(row.name) == port)
     return reference_json(tmp_path, bytes(output.schemaBfbs), bytes(output.inlineBytes),
                           root_type=text(output.rootType))
+
+
+def artifact_member(client, run_id, card, member):
+    artifacts = client.call("ArtifactListRequest", runId=run_id, card=path(card)).artifacts
+    artifact, = (row for row in artifacts if any(text(m.path) == member for m in row.members))
+    return read_pages(client, "ArtifactReadRequest", artifactId=text(artifact.artifactId),
+                      member=member, page_bytes=65536)
 
 
 def stderr(c, run_id, *card):
@@ -146,9 +153,7 @@ def test_collatz_27(collatz):
     st = wait_run(c, rid)
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     expected = collatz_reference(27)
-    # The agreed sequence is kept as a CSV file (a File artifact of record).
-    art = next(a for a in c.call("ArtifactListRequest", runId=rid).artifacts if text(a.output) == "table")
-    content = bytes(c.call("ArtifactReadRequest", artifactId=text(art.artifactId)).bytes).decode()
+    content = artifact_member(c, rid, "record", "collatz.csv").decode()
     rows = list(csv.DictReader(io.StringIO(content)))
     assert [(int(row["k"]), int(row["a_k"]), row["parity"]) for row in rows] == [
         (index, value, "odd" if value % 2 else "even") for index, value in enumerate(expected)
@@ -176,9 +181,7 @@ def test_report_uses_the_requested_heading(tmp_path):
         set_typed_param(c, "render", "heading", heading)
         run_id = start_run(c, ["start"])
         assert wait_run(c, run_id).state == RunState.succeeded
-        report = next(a for a in c.call("ArtifactListRequest", runId=run_id).artifacts if text(a.output) == "report")
-        summary = json.loads(read_pages(c, "ArtifactReadRequest", artifactId=text(report.artifactId),
-                                        member="summary.json", page_bytes=65536))
+        summary = json.loads(artifact_member(c, run_id, "render", "summary.json"))
         assert summary["heading"] == heading and summary["rows"] > 0
 
         set_typed_param(c, "aggregate", "fail_on_purpose", True)
@@ -279,21 +282,20 @@ def test_live_stream_keeps_chart_on_cancel_and_resets_on_rerun(live):
     assert wait_run(c, rid2).state == RunState.cancelled
 
 
-@pytest.mark.parametrize("demo,output,members", [
+@pytest.mark.parametrize("demo,card,members", [
     ("casa", "rgb", {"casa-rgb.png", "provenance.json"}),
-    ("gw150914", "plots", {"chirp.png", "snr.csv"}),
+    ("gw150914", "chirp", {"chirp.png", "snr.csv"}),
 ])
 @pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_NETWORK_DEMOS") != "1",
                     reason="downloads observations from HEASARC or GWOSC")
-def test_network_demo_keeps_results(tmp_path, demo, output, members):
+def test_network_demo_keeps_results(tmp_path, demo, card, members):
     env = demo_environment(tmp_path, demo, language="en")
     try:
         client = connect(env)
         run_id = start_run(client, "start")
         status = wait_run(client, run_id, timeout=900)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-        artifacts = client.call("ArtifactListRequest", runId=run_id).artifacts
-        artifact = next(row for row in artifacts if text(row.output) == output)
+        artifact, = client.call("ArtifactListRequest", runId=run_id, card=path(card)).artifacts
         assert members <= {text(member.path) for member in artifact.members}
     finally:
         env.cleanup()

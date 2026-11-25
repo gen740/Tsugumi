@@ -56,15 +56,15 @@ RUN = {v: k for k, v in vars(RunState).items() if not k.startswith("_")}
 
 # Preview selected retained results. View messages are never read into a recording.
 PREVIEWS = {
-    "report": {("render", "report"): "report.md"},
-    "casa": {("rgb", "rgb"): "casa-rgb.png", ("spectrum", "spectrum"): "casa-spectrum.png"},
-    "gw150914": {("chirp", "plots"): "chirp.png"},
+    "report": {"render": "report.md"},
+    "casa": {"rgb": "casa-rgb.png", "spectrum": "casa-spectrum.png"},
+    "gw150914": {"chirp": "chirp.png"},
     "max-flow": {
-        ("flow", "figure"): "flow.png",
-        ("cut", "figure"): "cut.png",
-        ("sweep", "result"): "sweep.png",
-        ("verify", "result"): "summary.md",
-        ("whatif", "result"): "summary.md",
+        "flow": "flow.png",
+        "cut": "cut.png",
+        "sweep": "sweep.png",
+        "verify": "summary.md",
+        "whatif": "summary.md",
     },
 }
 
@@ -205,11 +205,10 @@ def harvest(demo: str, tmp: Path, staging: Path, sandbox: bool, timeout: float) 
         previews = PREVIEWS.get(demo, {})
         for a in c.call("ArtifactListRequest", runId=run_id, limit=50).artifacts:
             card = "/".join(text(segment) for segment in a.card.segments)
-            output = text(a.output)
             artifact_id = text(a.artifactId)
             members = [{"path": text(m.path), "size": int(m.sizeBytes or 0)} for m in a.members]
-            artifacts.append({"card": card, "output": output, "name": artifact_id, "members": members})
-            preview = previews.get((card, output))
+            artifacts.append({"card": card, "output": artifact_id, "name": artifact_id, "members": members})
+            preview = previews.get(card)
             if preview and any(member["path"] == preview for member in members):
                 outputs[card] = artifact_preview(c, artifact_id, preview, demo, card, staging)
         return {
