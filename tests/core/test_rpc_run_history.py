@@ -117,6 +117,9 @@ def test_deleting_history_removes_records_and_artifacts_without_resurrection(cor
     runs = [successful_run(client) for _ in range(3)]
     run_ids = [run_id for run_id, _ in runs]
     artifacts = [client.call("ArtifactListRequest", runId=run_id).artifacts[0] for run_id in run_ids]
+    # Object APIs can encode an empty ID vector alongside a run filter.
+    by_run = client.call("ArtifactListRequest", runId=run_ids[0], artifactIds=[])
+    assert [text(artifact.artifactId) for artifact in by_run.artifacts] == [text(artifacts[0].artifactId)]
     artifact_ids = [text(artifact.artifactId) for artifact in artifacts]
     assert len(set(artifact_ids)) == len(run_ids)
     words = [tuple(map(int, text(artifact.label).split("."))) for artifact in artifacts]

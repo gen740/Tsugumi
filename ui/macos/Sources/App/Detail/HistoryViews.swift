@@ -125,9 +125,13 @@ struct CardExecutionView: View {
           List(selection: Binding(get: { runId }, set: selectRun)) {
             ForEach(filtered, id: \.status.runId) { r in
               if let id = r.status.runId {
-                ExecutionHistoryRunRow(run: r, target: session.displayPath(r.target.path))
-                  .contentShape(Rectangle())
-                  .tag(id)
+                Button { selectRun(id) } label: {
+                  ExecutionHistoryRunRow(run: r, target: session.displayPath(r.target.path))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .tag(id)
               }
             }
           }

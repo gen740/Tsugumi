@@ -1096,15 +1096,17 @@ auto Service::record_artifacts(const InvocationSummaryData& invocation,
 void Service::artifact_list(RequestIn& req) {
   const auto* r = project_request(req)->value_as_ArtifactListRequest();
   const auto* ids = r->artifact_ids();
-  if (ids && (r->run_id() || r->card() || r->invocation() || r->cursor() ||
-              r->limit()))
+  const bool by_run = r->run_id() || r->card() || r->invocation() ||
+                      r->cursor() || r->limit();
+  if (by_run && ids && ids->size() != 0)
     throw Failed(FailureKind::invalid_request,
                  "artifact_ids cannot be combined with run filters");
-  if (ids && ids->size() > 500)
+  const bool by_id = ids && !by_run;
+  if (by_id && ids->size() > 500)
     throw Failed(FailureKind::invalid_request,
                  "at most 500 artifact ids may be requested");
   std::string run_id;
-  if (!ids) {
+  if (!by_id) {
     if (!r->run_id())
       throw Failed(FailureKind::invalid_request, "run_id is required");
     require_run_id(*r->run_id(), "run_id");
@@ -1120,7 +1122,7 @@ void Service::artifact_list(RequestIn& req) {
   std::string after;
   if (r->cursor()) after = history_->open_cursor(r->cursor()->str()).second;
   auto rows = history_->read([&](sql::Db& db) {
-    if (ids) {
+    if (by_id) {
       std::vector<ArtifactData> found;
       std::set<ArtifactKey> seen;
       for (const auto* text : *ids) {
@@ -1136,7 +1138,7 @@ void Service::artifact_list(RequestIn& req) {
       throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
     return History::artifacts(db, run_id, card, inv, after, limit + 1);
   });
-  bool more = !ids && rows.size() > limit;
+  bool more = !by_id && rows.size() > limit;
   if (more) rows.resize(limit);
   FBB b;
   std::vector<flatbuffers::Offset<R::ArtifactInfo>> out;
