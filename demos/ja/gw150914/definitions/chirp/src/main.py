@@ -1,3 +1,4 @@
+from tsugumi import Image, send
 from card import Artifact, Input, Output, params as card_params
 import os
 
@@ -54,5 +55,5 @@ def run(inputs: Input) -> Output:
     with open(os.path.join(directory, "snr.csv"), "w") as fh:
         fh.write("detector,peak_time,snr\n" + "".join(f"{d},{pt},{s}\n" for d, pt, s in rows))
     print(f"L1 vs H1: shift {shift_ms:+.1f} ms, sign {sign}; " + ", ".join(f"{d} SNR {s}" for d, _, s in rows))
-    # TODO(open): Port the demo display.
+    send(Image(data, alt="GW150914 strain and spectrogram"))
     return Output(plots=artifact)

@@ -2,6 +2,7 @@
 centred on Cas A (its position converted with the event file's own x, y
 coordinate keywords, so every observation is centred the same way). CIAO's
 dmcopy does the binning."""
+from tsugumi import Markdown, send
 from card import Artifact, Input, Output, params
 import json
 import math
@@ -77,5 +78,8 @@ def run(input: Input) -> Output:
                     "selected": selected, "bands": bands, "tool": {"name": "CIAO", "version": tool.version.decode(), "path": root}}
     (dest / "provenance.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
     print(json.dumps(manifest, ensure_ascii=False))
-    # TODO(open): Port the demo display.
+    rows = ["| Band | Energy (eV) | Photons |", "| --- | ---: | ---: |"]
+    for band in manifest["bands"]:
+        rows.append(f"| {band['color']} | {band['min_ev']:g}–{band['max_ev']:g} | {band['photons']:,} |")
+    send(Markdown("\n".join(rows)))
     return Output(images=artifact)

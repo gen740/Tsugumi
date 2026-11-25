@@ -13,5 +13,5 @@ in
     src = ./src;
   });
   api = sdk.juliaApi common;
-  # TODO(open): Port the demo display.
+  views = builtins.filter (view: view.name == "markdown") sdk.views;
 }

@@ -1,3 +1,4 @@
+from tsugumi import LineChart, LineSeries, send
 from card import Artifact, Input, Output, params as card_params
 import os
 
@@ -43,5 +44,5 @@ def run(inputs: Input) -> Output:
                        "x": t[keep].tolist(), "y": (w[keep] / w_std).tolist()})
         print(f"{det}: {len(h)} samples at {fs} Hz from GPS {t0:.0f}")
     np.savez(os.path.join(directory, "whitened.npz"), fs=fs, **saved)
-    # TODO(open): Port the demo display.
+    send(LineChart([LineSeries(**values) for values in series]))
     return Output(whitened=artifact)

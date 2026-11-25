@@ -1,11 +1,13 @@
 """The minimum cut by networkx: max-flow = min-cut is asserted, and the network is
 drawn with the source side, the sink side and the cut edges marked."""
-import json
+from card import Artifact, Input, Output
+from flow.Cut import CutT
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import networkx as nx
 
-from tsugumi import Failure
+from tsugumi import Failure, Image, send
 
 
 def positions(nodes):
@@ -18,8 +20,8 @@ def positions(nodes):
     return pos
 
 
-def main(inputs, report):
-    f = inputs.flow
+def run(inputs: Input) -> Output:
+    f = inputs.require("flow")
     nodes = f.nodes.decode().split()
     edges = [(nodes[u], nodes[v], int(c)) for u, v, c in zip(f.tail, f.head, f.capacity)]
     amounts = [int(x) for x in f.flow]
@@ -52,20 +54,23 @@ def main(inputs, report):
     ax.set_title(f"最小カット = {capacity} = 最大流（赤の辺 {len(crossing)} 本の容量の和、青は s 側、橙は t 側）", fontsize=11)
     ax.set_axis_off()
     fig.tight_layout()
-    report.figure()
-    report.log("result: " + json.dumps({"capacity": capacity, "source_side": sorted(source_side), "cut_edges": [[u, v, c] for u, v, c in crossing]}))
+    artifact, directory = Artifact.dir()
+    png = Path(directory) / "cut.png"
+    fig.savefig(png)
+    plt.close(fig)
+    send(Image(png.read_bytes()))
     names = f.nodes
     side = ' '.join(sorted(source_side))
     tail = f.tail
     head = f.head
     caps = f.capacity
     flow = f.flow
-    return {'cut': {
-        'nodes': names,
-        'tail': tail,
-        'head': head,
-        'capacity': caps,
-        'flow': flow,
-        'value': f.value,
-        'source_side': side,
-    }}
+    return Output(cut=CutT(
+        nodes=names,
+        tail=tail,
+        head=head,
+        capacity=caps,
+        flow=flow,
+        value=f.value,
+        sourceSide=side,
+    ), figure=artifact)

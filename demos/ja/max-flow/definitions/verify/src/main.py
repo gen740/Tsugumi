@@ -1,12 +1,14 @@
 """The same answer by other routes: scipy's maximum_flow (another implementation)
 and a brute force over every s-t cut, which also counts the minimum cuts."""
+from card import Artifact, Input, Output
 import json
+from pathlib import Path
 
 import numpy as np
 from scipy.sparse import csr_array
 from scipy.sparse.csgraph import maximum_flow
 
-from tsugumi import Failure
+from tsugumi import Failure, Markdown, send
 
 BRUTE_LIMIT = 22  # 2^22 subsets is about a second here; beyond that it is skipped and says so
 
@@ -25,8 +27,8 @@ def brute_force(n, tail, head, capacity):
     return best, codes[total == best], subsets.size
 
 
-def main(inputs, report):
-    c = inputs.cut
+def run(inputs: Input) -> Output:
+    c = inputs.require("cut")
     nodes = c.nodes.decode().split()
     tail, head, capacity = c.tail, c.head, c.capacity
     value = int(c.value)
@@ -54,5 +56,9 @@ def main(inputs, report):
             lines.append(f"- ほか {len(minimum_cuts) - 6} 個")
     else:
         lines += ["", f"節点が多い（内側 {len(nodes) - 2} 個）ので、総当たりは省きました。"]
-    report.markdown("\n".join(lines))
-    report.log("result: " + json.dumps({"networkx": value, "scipy": by_scipy, "minimum_cuts": minimum_cuts}))
+    artifact, directory = Artifact.dir()
+    markdown = "\n".join(lines)
+    (Path(directory) / "summary.md").write_text(markdown)
+    send(Markdown(markdown))
+    (Path(directory) / "result.json").write_text(json.dumps({"networkx": value, "scipy": by_scipy, "minimum_cuts": minimum_cuts}, indent=2))
+    return Output(result=artifact)

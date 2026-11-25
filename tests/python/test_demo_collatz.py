@@ -7,22 +7,14 @@ runs, with all four languages using resident workers: 27 gives the same
 
 from __future__ import annotations
 
-# TODO(Card ABI): the bundled demos are still on the previous Card ABI and are ported once the
-# recording of displays is designed (docs/Demos.md, "TODO: port the demos to
-# the current Card ABI"). Until then these demo runs are skipped, not ported.
-import pytest
-
-pytest.skip("TODO(Card ABI): demos are postponed until display recording is designed; "
-            "see docs/Demos.md", allow_module_level=True)
-
 import os
 
 import pytest
 
 from conftest import demo_environment
 from projects import start_run, wait_run
-from harness.document import set_param as set_typed_param
-from test_demos import collected_collatz, collatz_reference, connect, edit_card, set_param
+from harness.document import set_param
+from test_demos import collatz_reference, connect, recorded_output
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
@@ -37,7 +29,7 @@ def demo(tmp_path):
     env.cleanup()
 
 
-def test_collatz_27_in_four_languages(demo):
+def test_collatz_27_in_four_languages(demo, tmp_path):
     c = connect(demo)
     rid = start_run(c, ["start"])
     st = wait_run(c, rid)
@@ -45,21 +37,21 @@ def test_collatz_27_in_four_languages(demo):
     assert c.call("RunRecordRequest", runId=rid, card=path("compare")).status.state == CardState.succeeded
     expected = collatz_reference(27)
     for lang in ("collatz_jl", "collatz_r"):
-        assert collected_collatz(c, rid, lang, "collect") == expected, lang
+        assert recorded_output(tmp_path / lang, c, rid, lang, "collect", port="sequence")["values"] == expected
 
 
-def test_collatz_r_fails_rather_than_round(demo):
+def test_collatz_r_fails_rather_than_round(demo, tmp_path):
     """R holds an integer exactly only below 2^53: past it the R Card in Card fails and says so, and Julia, which
     computes in UInt64, still returns the exact sequence. (4^28 - 1) / 3 is odd and not a double (2^53 < n), and
     3n + 1 = 2^56 sends it to 1 in 56 halvings."""
     c = connect(demo)
     n = (4 ** 28 - 1) // 3
     for card in ("collatz_cpp", "collatz_py", "collatz_jl", "collatz_r"):
-        set_typed_param(c, card + "/initial", "value", str(n))
+        set_param(c, card + "/initial", "value", str(n))
     rid = start_run(c, ["start"])
     st = wait_run(c, rid)
     assert st.state == RunState.failed
     assert c.call("RunRecordRequest", runId=rid, card=path("collatz_r", "check")).status.state == CardState.failed
     # The failed run waits for the branches that go on: Julia has the exact sequence.
     expected = [n] + [2 ** k for k in range(56, -1, -1)]
-    assert collected_collatz(c, rid, "collatz_jl", "collect") == expected
+    assert recorded_output(tmp_path / "julia", c, rid, "collatz_jl", "collect", port="sequence")["values"] == expected

@@ -13,5 +13,4 @@ in
     src = ./src;
   });
   api = sdk.juliaApi common;
-  # TODO(open): Port the demo display.
 }

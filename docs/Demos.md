@@ -9,14 +9,18 @@ Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of ex
 
 ## Demo status
 
-The demos and Drafts in `demos/en` and `demos/ja` declare their Nix sources in `tsugumi.json` and pin them in `tsugumi.lock`. The project files use the current contracts. TODO(open): Port the demo displays and finish exercising Card bodies against the pinned SDKs. Demo execution stays skipped in tests. The site player uses recorded material where available.
+The projects pin their Nix sources in `tsugumi.lock`. Their Cards send
+interactive displays to declared views and return results through typed ports
+or retained artifacts. Live view messages are not saved in run history.
+The site player can replay recorded timelines. Cas A and GW150914 need
+external observation downloads. Glowroot needs interactive input.
 
 | Demo | Subject | What it shows |
 | --- | --- | --- |
 | [Data to report](#data-to-report-report) | Aggregating a sales table into a report | Reproduction by seed, failure and `blocked`, rerunning one Card with saved inputs, artifacts, child Workflows |
 | [Collatz (C++ / Python / Julia / R)](#collatz-c--python--julia--r-collatz) | The Collatz sequence | Cross-checking independent implementations in four languages, branches, merges and loops, `maxRuns`, detecting integer overflow |
-| [Python → Ruby → C++](#python--ruby--c-ruby-pipeline) | Passing a typed integer across languages | Ruby Hash outputs, parameters, resident run-start state, live displays |
-| [Live Stream](#live-stream-live-stream) | Plotting a random walk as it goes | Feedback loops, cancellation and an HTML line chart |
+| [Python → Ruby → C++](#python--ruby--c-ruby-pipeline) | Passing a typed integer across languages | Ruby Hash outputs, parameters and live displays |
+| [Live Stream](#live-stream-live-stream) | Plotting a random walk as it goes | Feedback loops, cancellation and the SDK line chart |
 | [Glowroot](#glowroot-glowroot) | Growing an incremental game from a sprout | Card in Card screens, a shared Dawn window, sound and pure rules with saved inputs |
 | [Cas A · Chandra RGB](#cas-a--chandra-rgb-casa) | X-ray observation of a supernova remnant | Observation data pinned with Nix, rerunning per Card, version history |
 | [Maximum flow and minimum cut](#maximum-flow-and-minimum-cut-max-flow) | Maximum flow and minimum cut | Checking max flow = min cut three ways, and that only bottlenecks change the flow |
@@ -38,7 +42,7 @@ Every Card has a summary in `README.md`, readable on the Canvas (by hovering, fo
 Python emits the `value` parameter (21). Ruby multiplies it by `factor` (2), displays
 input / factor / result in a table, and sends the typed result to C++. Its display
 reads `C++ received 42`. Change Ruby's factor and rerun it to reuse the saved Python
-input. A resident worker can keep state across invocations. Turn off worker reuse to start with fresh state.
+input.
 
 ### Data to report (`report`)
 
@@ -64,7 +68,7 @@ The iteration itself is drawn with the Cards' wires, so the behaviour of branche
 - Set the `value` in each implementation’s `initial/params.nix` to `"2"`: the odd side's `triple` is never chosen and is `skipped`.
 - Make `maxRuns` of `check` inside smaller: it stops at the iteration limit (`execution_limit`). With a starting value for which `3n+1` exceeds 64 bits, `integer overflow` is detected.
 - Set each implementation’s `value` to the decimal string for a large integer such as 2^60: R's `check` fails, saying it is "not below 2^53" (Julia, C++ and Python return 61 values).
-- Open `collatz_jl` or `collatz_r` and look at the record of `collect`: each invocation's display is the sequence so far.
+- Open `collatz_jl` or `collatz_r` and look at the record of `collect`: the live view shows the sequence so far.
 
 ### Signal detection variants (`signal-sweep`)
 

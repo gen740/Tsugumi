@@ -1,4 +1,5 @@
 """Writes report.md and summary.json in an Artifact."""
+from tsugumi import Markdown, send
 from card import Artifact, Input, Output, params
 import json
 import os
@@ -22,5 +23,5 @@ def run(inputs: Input) -> Output:
         f.write(document)
     with open(os.path.join(out, "summary.json"), "w") as f:
         json.dump({"heading": heading, "rows": s.rows, "revenue": s.revenue, "regions": data}, f, indent=2)
-    # TODO(open): Port the demo display.
+    send(Markdown(document))
     return Output(report=artifact)

@@ -6,35 +6,26 @@ configuration); without it a host tsugumid is used.
 
 from __future__ import annotations
 
-# TODO(Card ABI): the bundled demos are still on the previous Card ABI and are ported once the
-# recording of displays is designed (docs/Demos.md, "TODO: port the demos to
-# the current Card ABI"). Until then these demo runs are skipped, not ported.
-import pytest
-
-pytest.skip("TODO(Card ABI): demos are postponed until display recording is designed; "
-            "see docs/Demos.md", allow_module_level=True)
-
-
-import base64
 import csv
 import io
 import json
+import os
 import shutil
+import struct
 
 import pytest
 
 from conftest import ROOT, Daemon, demo_environment, write_project
 from harness.observations import read_pages
 from harness.values import reference_json
-from harness.views import ZERO_ROUTE
-from projects import start_run, wait_for_display as first_display, wait_invocation, wait_run
+from harness.views import ZERO_ROUTE, return_credit
+from projects import start_run, wait_for_display, wait_invocation, wait_run
 from harness.document import set_param as set_typed_param
-from tsugumi_client import line_chart_series, change, new_id, path, text
+from tsugumi_client import change, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
-from Tsugumi.RPC.RunEventValue import RunEventValue
 
 def connect(env):
     c = env.client()
@@ -43,25 +34,11 @@ def connect(env):
     return c
 
 
-def edit_card(env, c, card: str, fn, raw=lambda s: s):
-    """Changes a Card's settings (its _card.json) through a save; `raw`
-    rewrites the JSON text after `fn` (spellings JSON numbers cannot keep)."""
-    snap = c.call("ProjectInspectRequest")
-    d = next(x for x in snap.definitions if text(x.id) == card)
-    body = json.loads(text(d.cardJson))
-    fn(body)
-    notes = {"keepReadme": True, "keepComments": True}
-    return c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test",
-                  changes=[change("PutDefinition", id=card, cardJson=raw(json.dumps(body)), **notes)])
-
-
-def set_param(body: dict, name: str, value):
-    set_typed_param(body, name, value)
-
-
-def display_text(c, run_id, *card):
-    rec = c.call("RunRecordRequest", runId=run_id, card=path(*card))
-    return text(rec.record.display.value.text) if rec.record and rec.record.display else None
+def recorded_output(tmp_path, client, run_id, *card, port):
+    record = client.call("RunRecordRequest", runId=run_id, card=path(*card)).record
+    output = next(row for row in record.outputs if text(row.name) == port)
+    return reference_json(tmp_path, bytes(output.schemaBfbs), bytes(output.inlineBytes),
+                          root_type=text(output.rootType))
 
 
 def stderr(c, run_id, *card):
@@ -114,10 +91,7 @@ def test_signal_sweep_collects_all_comparisons(tmp_path):
         assert batch.complete and not batch.failed and batch.invocationCount == 6
         summary = client.call("RunInvocationsRequest", runId=run_id, card=path("summary"))
         assert len(summary.records) == 1
-        record = client.call("RunRecordRequest", runId=run_id, card=path("summary"))
-        output, = record.record.outputs
-        assert reference_json(tmp_path / "summary", bytes(output.schemaBfbs), bytes(output.inlineBytes),
-                              root_type=text(output.rootType)) == {"comparisons": 6, "detections": 3}
+        assert recorded_output(tmp_path / "summary", client, run_id, "summary", port="out") == {"comparisons": 6, "detections": 3}
     finally:
         env.cleanup()
 
@@ -140,10 +114,7 @@ def without_julia_and_r(dst):
     card["inputs"] = [i for i in card["inputs"] if i["name"] in ("cpp", "python")]
     (compare / "_card.json").write_text(json.dumps(card))
     code = (compare / "src" / "main.py").read_text()
-    for old, new in [('        "Julia": list(inputs.julia.values),\n        "R": list(inputs.r.values),\n', ""),
-                     ("C++, Python, Julia and R agree", "C++ and Python agree")]:
-        assert old in code, old
-        code = code.replace(old, new)
+    code = code.replace('        "Julia": list(inputs.julia.values),\n        "R": list(inputs.r.values),\n', "")
     (compare / "src" / "main.py").write_text(code)
 
 
@@ -167,12 +138,6 @@ def collatz_reference(n):
         n = n // 2 if n % 2 == 0 else 3 * n + 1
         seq.append(n)
     return seq
-
-
-def collected_collatz(client, run_id, *card):
-    display = display_text(client, run_id, *card)
-    _, _, sequence = display.partition(":")
-    return [int(value) for value in sequence.split()]
 
 
 def test_collatz_27(collatz):
@@ -216,7 +181,7 @@ def test_report_uses_the_requested_heading(tmp_path):
                                         member="summary.json", page_bytes=65536))
         assert summary["heading"] == heading and summary["rows"] > 0
 
-        edit_card(env, c, "aggregate", lambda b: set_param(b, "fail_on_purpose", True))
+        set_typed_param(c, "aggregate", "fail_on_purpose", True)
         failed = start_run(c, ["start"])
         assert wait_run(c, failed).state == RunState.failed
         aggregate = c.call("RunRecordRequest", runId=failed, card=path("aggregate"))
@@ -226,14 +191,22 @@ def test_report_uses_the_requested_heading(tmp_path):
         env.cleanup()
 
 
-def live_points(c, rid):
-    rec = c.call("RunRecordRequest", runId=rid, card=path("plot"))
-    if rec.record.display is None:
-        # A cancel that lands in an invocation before it has shown anything ends
-        # that invocation without a display; the last chart is the one before.
-        rec = c.call("RunRecordRequest", runId=rid, card=path("plot"), invocation=rec.record.summary.invocation - 1)
-    series = line_chart_series(rec.record.display.value)
-    return [float(x) for x in series[0].x], rec.aggregate.calls
+def chart_session(client):
+    return text(client.wait_notification(
+        lambda note: (note.valueType == NotificationPayload.ViewOpened
+                      and text(note.value.name) == "line-chart"), timeout=180,
+    ).value.session)
+
+
+def chart_points(client, subscription, session, run_id):
+    update = wait_for_display(client, run_id, lambda value: text(value.session) == session).value.display
+    payload = bytes(update.bytes)
+    return_credit(client, subscription, update)
+    metadata_size, = struct.unpack_from("<I", payload)
+    metadata_end = 4 + metadata_size
+    series = json.loads(payload[4:metadata_end])["series"]
+    values = next(row for row in series if row["id"] == "value")
+    return list(struct.unpack_from(f"<{values['count']}d", payload, metadata_end + values["offset"] * 8))
 
 
 def send_stream_seed(client, subscription):
@@ -259,9 +232,10 @@ def test_live_stream_complete_and_ordered(live):
     subscription = text(c.open().subscriptionId)
     run_id = start_run(c, ["start"], concurrency=2)
     send_stream_seed(c, subscription)
+    session = chart_session(c)
+    for i in range(65):
+        assert chart_points(c, subscription, session, run_id) == list(range(max(0, i - 59), i + 1))
     assert wait_run(c, run_id).state == RunState.succeeded
-    xs, _ = live_points(c, run_id)
-    assert xs == list(range(5, 65))
 
 
 def test_live_stream_keeps_chart_on_cancel_and_resets_on_rerun(live):
@@ -294,12 +268,32 @@ def test_live_stream_keeps_chart_on_cancel_and_resets_on_rerun(live):
     assert st.state == RunState.cancelling
     final = wait_run(c, rid)
     assert final.state == RunState.cancelled
-    xs, calls = live_points(c, rid)
-    assert calls == 1 and xs == [0.0]  # the last chart is kept
+    assert chart_points(c, subscription, chart_session(c), rid) == [0.0]
+    record = c.call("RunRecordRequest", runId=rid, card=path("plot"))
+    assert record.aggregate.calls == 1
     # A new run starts the reused plotting worker's series from the beginning.
     rid2 = start_run(c, ["start"])
     send_stream_seed(c, subscription)
-    first = first_display(c, rid2)
-    assert line_chart_series(first.value.display.value)[0].x == (0.0,)
+    assert chart_points(c, subscription, chart_session(c), rid2) == [0.0]
     c.call("RunCancelRequest", runId=rid2)
     assert wait_run(c, rid2).state == RunState.cancelled
+
+
+@pytest.mark.parametrize("demo,output,members", [
+    ("casa", "rgb", {"casa-rgb.png", "provenance.json"}),
+    ("gw150914", "plots", {"chirp.png", "snr.csv"}),
+])
+@pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_NETWORK_DEMOS") != "1",
+                    reason="downloads observations from HEASARC or GWOSC")
+def test_network_demo_keeps_results(tmp_path, demo, output, members):
+    env = demo_environment(tmp_path, demo, language="en")
+    try:
+        client = connect(env)
+        run_id = start_run(client, "start")
+        status = wait_run(client, run_id, timeout=900)
+        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        artifacts = client.call("ArtifactListRequest", runId=run_id).artifacts
+        artifact = next(row for row in artifacts if text(row.output) == output)
+        assert members <= {text(member.path) for member in artifact.members}
+    finally:
+        env.cleanup()

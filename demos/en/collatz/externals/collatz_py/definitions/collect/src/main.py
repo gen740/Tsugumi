@@ -1,3 +1,4 @@
+from tsugumi import Markdown, send
 from card import Input, Output
 from collatz.Sequence import SequenceT
 
@@ -11,5 +12,5 @@ def run(input: Input) -> Output:
         values.append(arrival.seed)
     else:
         values.append(arrival.value)
-    # TODO(open): Port the demo display.
+    send(Markdown("Sequence: " + " ".join(map(str, values))))
     return Output(sequence=SequenceT(values=list(values))) if values[-1] == 1 else Output()

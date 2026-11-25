@@ -1,11 +1,13 @@
 """Every edge raised in turn: the gain in max flow, edge by edge. An edge off the
 cut must gain nothing, since the cut it is off of keeps its capacity."""
+from card import Artifact, Input, Output, params
 import json
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import networkx as nx
 
-from tsugumi import Failure
+from tsugumi import Failure, Image, send
 
 
 def max_flow(edges, raised, by):
@@ -15,9 +17,9 @@ def max_flow(edges, raised, by):
     return nx.maximum_flow_value(graph, "s", "t")
 
 
-def main(inputs, report):
-    c = inputs.cut
-    raise_by = int(inputs.params.raiseBy)
+def run(inputs: Input) -> Output:
+    c = inputs.require("cut")
+    raise_by = int(params.raise_by)
     nodes = c.nodes.decode().split()
     edges = [(nodes[u], nodes[v], int(x)) for u, v, x in zip(c.tail, c.head, c.capacity)]
     side = set(c.sourceSide.decode().split())
@@ -49,5 +51,10 @@ def main(inputs, report):
     ax.set_title(f"各辺の容量を {raise_by} 増やしたとき（元の最大流 {base}）: 増えるのは {len(rows)} 本中 {gainers} 本、赤はカットの {cut_edges} 本", fontsize=11)
     ax.grid(True, axis="y", alpha=0.25)
     fig.tight_layout()
-    report.figure()
-    report.log("result: " + json.dumps({"base": base, "rows": rows}))
+    artifact, directory = Artifact.dir()
+    png = Path(directory) / "sweep.png"
+    fig.savefig(png)
+    plt.close(fig)
+    send(Image(png.read_bytes()))
+    (Path(directory) / "result.json").write_text(json.dumps({"base": base, "rows": rows}, indent=2))
+    return Output(result=artifact)

@@ -269,6 +269,10 @@ def demo_environment(tmp_path: Path, demo: str, edit=None, language: str = "ja")
     for development. `edit(copy)` changes the copy before it is served."""
     dst = tmp_path / demo
     shutil.copytree(ROOT / "demos" / language / demo, dst)
+    for manifest in dst.rglob("tsugumi.json"):
+        doc = json.loads(manifest.read_text())
+        doc["recordIO"] = True
+        manifest.write_text(json.dumps(doc))
     if edit:
         edit(dst)
     if os.environ.get("TSUGUMI_TEST_SHARED_VM") == "1":

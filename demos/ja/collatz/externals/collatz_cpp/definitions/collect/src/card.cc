@@ -20,7 +20,9 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
   }
   uint64_t n = arrival_value(inputs);
   values.push_back(n);
-  // TODO(open): Port the demo display.
+  std::string sequence = "Sequence:";
+  for (const auto value : values) sequence += " " + std::to_string(value);
+  card::display::send(card::display::Markdown{sequence});
   Card::Output out;
   if (n == 1) out.sequence.emplace().values = values;
   return out;
