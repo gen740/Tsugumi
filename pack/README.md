@@ -1,5 +1,9 @@
 # tsugumi-pack: a Project as a standalone Mac app
 
+<!-- TODO: Bind each declared host path to a folder named for it under the
+     packed application's Application Support directory when the pack launcher
+     supports host folder mounts. -->
+
 ```sh
 tsugumi-pack ./Temperature --output ./Temperature.app
 ./Temperature.app/Contents/MacOS/Temperature --output ./temperatures

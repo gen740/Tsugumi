@@ -791,31 +791,33 @@ private struct GeneralCategory: View {
   }
 }
 
-/// Folders of the Mac this Card's worker may read: each at
-/// /host/<name> in the worker, read-only unless allowed to write. Only the
-/// folder's path is kept in the project.
 private struct HostFoldersEditor: View {
   @Bindable var model: CardEditorModel
 
   var body: some View {
     let folders = model.definition?["grants"]?["hostPaths"]?.array ?? []
+    let scope = model.session.projectPrefix(Array(path(model.cardKey).dropLast())) ?? ""
+    let project = scope.isEmpty ? model.session.project : model.session.external(scope)?.project
+    let names = project?["hostPaths"]?.array?.compactMap { $0["name"]?.string } ?? []
+    let available = names.filter { name in !folders.contains { $0["name"]?.string == name } }
     VStack(alignment: .leading, spacing: 6) {
       HStack {
         Text("ホストのフォルダへのアクセスを許可する")
         Spacer()
-        Button("フォルダを追加…") { add() }
+        Menu("フォルダを追加…") {
+          ForEach(available, id: \.self) { name in
+            Button(name) { edit { $0.append(.object([("name", .string(name)), ("write", .bool(false))])) } }
+          }
+        }
+        .disabled(available.isEmpty)
       }
       ForEach(folders.indices, id: \.self) { i in
         let f = folders[i]
-        let path = f["path"]?.string ?? ""
-        var isDir: ObjCBool = false
-        let present = FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+        let name = f["name"]?.string ?? ""
         HStack(spacing: 6) {
-          Image(systemName: present ? "folder" : "folder.badge.questionmark").foregroundStyle(present ? Color.secondary : Color.orange)
           VStack(alignment: .leading, spacing: 1) {
-            Text(path).lineLimit(1).truncationMode(.middle).font(.callout)
-            Text(present ? "TSUGUMI_GRANT_\(grantName(f["name"]?.string ?? ""))" : String(localized: "この Mac にはありません（実行すると失敗します）"))
-              .font(.caption).foregroundStyle(present ? Color.secondary : Color.orange)
+            Text("/host/\(name)").font(.callout)
+            Text("TSUGUMI_GRANT_\(name.uppercased())").font(.caption).foregroundStyle(.secondary)
           }
           Spacer()
           Toggle("書き込み", isOn: Binding(get: { f["write"]?.bool == true }, set: { v in
@@ -826,8 +828,10 @@ private struct HostFoldersEditor: View {
           Button { edit { $0.remove(at: i) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
         }
       }
-      Text(String(localized: "Card は TSUGUMI_GRANT_<名前> からフォルダのパスを取得できます。共有 VM での追加・変更はプロジェクトを開き直すと反映されます。"))
-        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      if available.isEmpty {
+        Text("フォルダ名はプロジェクト設定の「ホストパス」で宣言できます。")
+          .font(.caption).foregroundStyle(.secondary)
+      }
     }
   }
 
@@ -837,24 +841,6 @@ private struct HostFoldersEditor: View {
     var grants = JSONValue.object(model.definition?["grants"]?.object ?? [])
     grants["hostPaths"] = list.isEmpty ? nil : .array(list)
     model.definition?["grants"] = grants
-  }
-
-  private func grantName(_ name: String) -> String {
-    String(name.uppercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "_" })
-  }
-
-  private func add() {
-    let panel = NSOpenPanel()
-    panel.canChooseDirectories = true
-    panel.canChooseFiles = false
-    panel.allowsMultipleSelection = false
-    guard panel.runModal() == .OK, let url = panel.url else { return }
-    let taken = Set((model.definition?["grants"]?["hostPaths"]?.array ?? []).compactMap { $0["name"]?.string }.map(grantName))
-    let base = String(url.lastPathComponent.map { $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) ? $0 : "-" })
-    var name = base.isEmpty || base == "." || base == ".." ? "folder" : base
-    var n = 2
-    while taken.contains(grantName(name)) { name = "\(base)-\(n)"; n += 1 }
-    edit { $0.append(.object([("path", .string(url.path)), ("name", .string(name)), ("write", .bool(false))])) }
   }
 }
 

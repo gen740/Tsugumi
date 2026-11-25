@@ -210,4 +210,4 @@ for the conversation. Successful source edits save one validated revision. Repli
 include bounded stdout/stderr and paths to the full output.
 
 `project_copy` copies attached, Card or conversation scratch files into Card source
-paths and returns their sizes and hashes. Data can also stay attached. Add the folder under `grants.hostPaths` and read the path from the named `TSUGUMI_GRANT_<NAME>` variable during execution.
+paths and returns their sizes and hashes. Data can also stay attached. Declare a host path name and its purpose in `tsugumi.json`, grant it by name in `grants.hostPaths`, and read `TSUGUMI_GRANT_<NAME>` during execution. Ask the user to bind the name to their folder in Project Settings > Host Paths.

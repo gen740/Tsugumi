@@ -48,6 +48,8 @@ class Settings {
   auto CardSecretValues(const std::string& project,
                         const std::vector<std::string>& names)
       -> std::vector<std::pair<std::string, std::string>>;
+  auto HostPaths(const std::string& project)
+      -> Tsugumi::Host::HostPathBindingsT;
   auto AllowUnscopedHelpers() -> bool;
   // vm.cpus, vm.memoryGiB and vm.storeGiB of the host; 0 (the default)
   // takes VMDefaultResources' value.

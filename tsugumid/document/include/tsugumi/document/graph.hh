@@ -49,7 +49,6 @@ struct ParamDef {
 };
 
 struct HostFolder {
-  std::string path;  // on the Mac
   std::string name;  // /host/<name> in the worker
   bool write = false;
 };

@@ -380,6 +380,15 @@ auto parse_external_project(const std::string& rel, const std::string& text)
   require_field(p.logLimitBytes().has_value(), rel, "logLimitBytes");
   require_field(p.outputLimitBytes().has_value(), rel, "outputLimitBytes");
   require_field(p.outputLimitEntries().has_value(), rel, "outputLimitEntries");
+  if (const auto* paths = p.hostPaths()) {
+    std::set<std::string_view> names;
+    for (const auto* path : *paths) {
+      const auto name = path->name()->string_view();
+      check_name(name, rel + " hostPaths name");
+      if (!names.insert(name).second)
+        invalid(rel + ": duplicate hostPaths name " + std::string(name));
+    }
+  }
   check_nix_path(p.nixPath(), rel);
   check_tracked_paths(p, rel);
   check_log_limit(p, rel);
@@ -484,12 +493,9 @@ auto parse_card_json(const std::string& id, const std::string& text,
         require_field(folder->write().has_value(), rel,
                       "grants.hostPaths.write");
         const auto name = folder->name()->str();
-        if (!folder->path()->string_view().starts_with('/') || !valid_id(name))
-          invalid(rel +
-                  ": grants.hostPaths entries need an absolute path and a "
-                  "valid name");
-        if (!variables.insert(grant_environment(name)).second)
-          invalid(rel + ": duplicate grants.hostPaths variable for " + name);
+        check_name(name, rel + " grants.hostPaths name");
+        if (!variables.insert(name).second)
+          invalid(rel + ": duplicate grants.hostPaths name " + name);
       }
     }
     if (card.systems()->size() == 0)
@@ -585,6 +591,19 @@ auto check_scope(const Document& doc, const D::Project& project,
   const auto definitions = prefix + "definitions/";
   const auto externals = prefix + "externals/";
   std::map<std::string, D::CardType> cards;
+  std::set<std::string_view> host_paths;
+  if (const auto* paths = project.hostPaths())
+    for (const auto* path : *paths)
+      host_paths.insert(path->name()->string_view());
+  const auto check_host_paths = [&](const D::Card& definition,
+                                    const std::string& dir) {
+    if (const auto* grants = definition.grants())
+      if (const auto* paths = grants->hostPaths())
+        for (const auto* path : *paths)
+          if (!host_paths.contains(path->name()->string_view()))
+            invalid(dir + "_card.json: unknown host path '" +
+                    path->name()->str() + "' in " + prefix + "tsugumi.json");
+  };
   int triggers = 0;
   for (const auto* card : *graph.cards()) {
     const auto id = card->id()->str();
@@ -599,6 +618,7 @@ auto check_scope(const Document& doc, const D::Project& project,
                 {{"card", id}, {"definition", id}});
       if (!it->second.readme) invalid(dir + "README.md is missing");
       type = *it->second.card().type();
+      check_host_paths(it->second.card(), dir);
     } else {
       const auto it = doc.sources.find(dir + "_card.json");
       if (it == doc.sources.end() || !it->second.document)
@@ -608,7 +628,9 @@ auto check_scope(const Document& doc, const D::Project& project,
         invalid(dir + "README.md is missing");
       const auto parsed =
           parse_card_json(id, *it->second.document, dir + "_card.json");
-      type = *document_text::root<D::Card>(parsed.buffer).type();
+      const auto& definition = document_text::root<D::Card>(parsed.buffer);
+      type = *definition.type();
+      check_host_paths(definition, dir);
     }
     cards.emplace(id, type);
     if (type == D::CardType::trigger) ++triggers;
@@ -681,6 +703,8 @@ auto execution_text(Schema schema, const std::string& buffer) -> std::string {
     auto fields = json::Object(document_text::print(schema, buffer));
     fields.erase("name");
     fields.erase("agentExclude");
+    fields.erase(
+        "hostPaths");  // descriptions and declarations do not affect a run
     return json::Encode(fields);
   }
   return document_text::print(schema, buffer);

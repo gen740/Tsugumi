@@ -237,7 +237,7 @@ class Builder {
       if (const auto* folders = grants->hostPaths())
         for (const auto* folder : *folders)
           s.grants.host_paths.push_back(
-              {folder->path()->str(), folder->name()->str(), *folder->write()});
+              {folder->name()->str(), *folder->write()});
     }
     if (const auto* secrets = d.secrets())
       for (const auto* name : *secrets) s.secrets.push_back(name->str());

@@ -109,7 +109,8 @@ isolation.
 
 **Before P1 (`24fc2d2c`).**
 
-- `grants.network` and optional `grants.hostPaths` are set in `_card.json`. A host folder with `write: false` is mounted read-only at `/host/<name>`. See [Outside access](features.md#outside-access).
+- `grants.network` and optional `grants.hostPaths` are set in `_card.json`. Each host path grant gives a name declared with a description in the containing `tsugumi.json`. Names follow `[a-z][a-z0-9_]{0,63}`. Host settings bind each name to a folder for that project on the current machine. A run stops before execution if it needs an unbound name.
+- With filesystem isolation, the native Linux worker and the Mac app's shared Linux VM mount the folder at `/host/<name>` and set `TSUGUMI_GRANT_<NAME>` to that path. `write: false` gives a read-only mount. These grants require filesystem isolation and a Linux worker. On macOS, use the shared VM. See [Outside access](features.md#outside-access).
 - There is no GUI grant.
 - For a Card with the network, the worker passes on `SSL_CERT_FILE` and `NIX_SSL_CERT_FILE` from its own environment, which it inherits from its launcher (`workerd/src/worker_proc.cc`, `workerd/src/local_client.cc`).
 
@@ -160,10 +161,9 @@ user's Mach services and local credential sockets. The worker retains its
 launch uid on macOS.
 
 Seatbelt filesystem isolation is reported as partial. The Card can see
-host file metadata, read the full Nix store and selected system paths, and
-access grants at their original paths. Bubblewrap exposes only the realized
-closure and remaps the granted filesystem views. Seatbelt applies read and
-write rules to the original host paths.
+host file metadata and read the full Nix store and selected system paths.
+Bubblewrap exposes only the realized closure and mounts named host folders at
+`/host/<name>`. macOS runs Cards with host path grants in its shared Linux VM.
 
 **Before P1 (`24fc2d2c`).**
 

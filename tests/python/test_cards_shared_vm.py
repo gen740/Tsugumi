@@ -55,11 +55,11 @@ def reload(c):
             time.sleep(0.05)
 
 
-def load(env, defs, cards, conns):
+def load(env, defs, cards, conns, *, host_paths=()):
     """Replaces the project's documents and takes them in with Reload."""
     root = env.project
     shutil.rmtree(root / "definitions", ignore_errors=True)
-    write(root, defs, cards, conns)
+    write(root, defs, cards, conns, host_paths=host_paths)
     c = env.client()
     reload(c)
     return c

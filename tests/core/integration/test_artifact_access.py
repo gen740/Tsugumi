@@ -36,6 +36,7 @@ def test_invocation_can_open_a_sealed_artifact_by_uuid(core_factory, project):
         std::ofstream(private_output / "hidden.txt") << "ungranted";
         out.artifact(id);
     """, declarations=declarations, outputs=DIRECTORY)
+    sandboxed_grant = sys.platform == "linux"
     sink = native_card(r"""
         tsugumi_artifact_id ungranted;
         const auto* port = in.inputs()->Get(0);
@@ -61,6 +62,7 @@ def test_invocation_can_open_a_sealed_artifact_by_uuid(core_factory, project):
 #ifdef __linux__
         if (errno != EROFS) return 8;
 #endif
+#ifdef __linux__
         const char* granted_project = std::getenv("TSUGUMI_GRANT_PROJECT");
         if (!granted_project) return 9;
         if (auto* listing = opendir((fs::path(granted_project) / ".tsugumi/artifacts").c_str())) {
@@ -73,13 +75,20 @@ def test_invocation_can_open_a_sealed_artifact_by_uuid(core_factory, project):
           }
           closedir(listing);
         }
+#endif
         out.number(contents.size());
     """, declarations=declarations, inputs=["doc"], recordIO="on",
-        grants={"hostPaths": [{"name": "project", "path": str(project), "write": True}]})
+        grants={"hostPaths": [{"name": "project", "write": True}]} if sandboxed_grant else {})
     write_nix_project(project, {"source": source, "sink": sink},
                       [card("source", "source"), card("sink", "sink")],
-                      [conn("source", "doc", "sink", "doc")])
-    client = core_factory(project_root=project).connect()
+                      [conn("source", "doc", "sink", "doc")],
+                      host_paths=("project",) if sandboxed_grant else ())
+    daemon = core_factory(project_root=project)
+    if sandboxed_grant:
+        (daemon.control / "host-path-bindings.json").write_text(json.dumps({
+            "project": {"path": str(project.resolve()), "write": True},
+        }))
+    client = daemon.connect()
     previous = 0
     for _ in range(2):
         run_id, status = run_and_wait(client, "source")

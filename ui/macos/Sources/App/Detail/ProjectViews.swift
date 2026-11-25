@@ -159,6 +159,7 @@ struct ProjectSettingsContent: View {
     case .canvas: CanvasProjectSettings(session: session)
     case .history: RunHistorySettings(session: session)
     case .cache: CacheSettings(session: session)
+    case .hostPaths: HostPathsSettings(session: session)
     case .secrets: CardSecretsSettings(session: session)
     }
   }

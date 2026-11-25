@@ -86,8 +86,9 @@ TEST(ProjectDocument, RejectsInvalidValuesAndNames) {
           CardCase{R"({"type":"code","timeoutSeconds":-1})", "timeoutSeconds"},
           CardCase{R"({"type":"code","systems":[]})", "systems"},
           CardCase{R"({"type":"code","systems":["riscv64-linux"]})", "systems"},
-          CardCase{R"({"type":"code","systems":["x86_64-linux","x86_64-linux"]})",
-                   "duplicate systems"},
+          CardCase{
+              R"({"type":"code","systems":["x86_64-linux","x86_64-linux"]})",
+              "duplicate systems"},
           CardCase{R"({"type":"code","workerCapabilities":[64]})",
                    "workerCapabilities"},
           CardCase{R"({"type":"code","workerCapabilities":[0,0]})",
@@ -106,8 +107,10 @@ TEST(ProjectDocument, RejectsInvalidValuesAndNames) {
           CardCase{R"({"type":"code","grants":{"network":false}})",
                    "grants.gui"},
           CardCase{
-              R"({"type":"code","grants":{"network":false,"gui":false,"hostPaths":[{"name":"data","path":"/data"}]}})",
+              R"({"type":"code","grants":{"network":false,"gui":false,"hostPaths":[{"name":"data"}]}})",
               "grants.hostPaths.write"},
+          {R"({"type":"code","grants":{"network":false,"gui":false,"hostPaths":[{"name":"data","path":"/data","write":false}]}})",
+           "path"},
       }) {
     SCOPED_TRACE(patch);
     Invalid([&] { parse_card_json("card", test::card_json(patch)); }, error);

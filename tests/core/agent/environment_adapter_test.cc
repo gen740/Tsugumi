@@ -17,12 +17,28 @@
 namespace tsugumi::test {
 namespace {
 namespace H = Tsugumi::Host;
-auto HostFolderCard(const std::string& name, const std::filesystem::path& path,
-                    bool writable) -> std::string {
+auto HostFolderCard(const std::string& name, bool writable) -> std::string {
   return FixtureCodeCard(json::Encode(json::Members{
       {"grants", R"({"network":false,"gui":false,"hostPaths":[{"name":)" +
-                     Quote(name) + R"(,"path":)" + Quote(path.string()) +
-                     R"(,"write":)" + (writable ? "true" : "false") + "}]}"}}));
+                     Quote(name) + R"(,"write":)" +
+                     (writable ? "true" : "false") + "}]}"}}));
+}
+auto HostPathSettings(const std::filesystem::path& project,
+                      const std::filesystem::path& data)
+    -> std::function<H::HostPathBindingsT(const std::string&)> {
+  Write(project / ".tsugumi/project-id", "abcdef");
+  return [data = std::filesystem::canonical(data)](const std::string& id) {
+    EXPECT_EQ(id, "abcdef");
+    H::HostPathBindingsT settings;
+    for (const auto* scope : {"", "externals/nested/"}) {
+      auto binding = std::make_unique<H::HostPathBindingT>();
+      binding->scope = scope;
+      binding->name = "data";
+      binding->path = data.string();
+      settings.bindings.push_back(std::move(binding));
+    }
+    return settings;
+  };
 }
 class HelperDouble final : public host::EnvironmentProcess {
  public:
@@ -38,6 +54,7 @@ class HelperDouble final : public host::EnvironmentProcess {
   bool die = false;
   bool change_requirements = false;
   std::string log;
+  auto Busy(const H::EnvironmentStateT&) -> bool override { return false; }
   auto Guest() const -> bool override { return guest; }
   Tsugumi::RPC::ProjectHostRequirementsT accepted;
   auto Requirements(const H::EnvironmentStateT&)
@@ -226,18 +243,17 @@ TEST(EnvironmentAdapterTest,
   Write(
       project / "tsugumi.json",
       FixtureProjectDocument(
-          R"({"nixPath": [],"canvas":{"cards":[{"id":"a"},{"id":"nested"}],"connections":[]}})"));
-  Write(project / "definitions/a/_card.json",
-        HostFolderCard("data", data, false));
+          R"({"nixPath": [],"hostPaths":[{"name":"data","description":"Input data"}],"canvas":{"cards":[{"id":"a"},{"id":"nested"}],"connections":[]}})"));
+  Write(project / "definitions/a/_card.json", HostFolderCard("data", false));
   Write(project / "definitions/a/README.md", host::CardReadme("a"));
   Write(project / "definitions/nested/_card.json",
         R"({"type":"subgraph","symbol":"link"})");
   Write(
       project / "externals/nested/tsugumi.json",
       FixtureProjectDocument(
-          R"({"nixPath": [],"canvas":{"cards":[{"id":"b"}],"connections":[]}})"));
+          R"({"nixPath": [],"hostPaths":[{"name":"data","description":"Input data"}],"canvas":{"cards":[{"id":"b"}],"connections":[]}})"));
   Write(project / "externals/nested/definitions/b/_card.json",
-        HostFolderCard("data", data, true));
+        HostFolderCard("data", true));
   Write(project / "externals/nested/definitions/b/README.md",
         host::CardReadme("b"));
   Write(project / "definitions/nested/README.md", host::CardReadme("nested"));
@@ -249,6 +265,7 @@ TEST(EnvironmentAdapterTest,
   options.socket_directory = directory.path / "sockets";
   options.run_scratch_directory = directory.path / "run-scratch";
   options.process = helper;
+  options.host_paths = HostPathSettings(project, data);
   host::Environments service(
       options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
   H::EnvironmentRequestT input;
@@ -266,7 +283,7 @@ TEST(EnvironmentAdapterTest,
             (CardPath{"nested", "b"}));
   const auto& mounts = helper->received.mounts;
   ASSERT_EQ(mounts.size(), 4u);
-  EXPECT_EQ(mounts[2].path, data.string());
+  EXPECT_EQ(mounts[2].path, std::filesystem::canonical(data).string());
   EXPECT_FALSE(mounts[2].read_only);
   EXPECT_EQ(mounts[3].path, chat.string());
   EXPECT_TRUE(mounts[3].read_only);
@@ -282,7 +299,7 @@ TEST(EnvironmentAdapterTest,
   EXPECT_EQ(helper->launches, 1);
   EXPECT_EQ(helper->signals, 0);
   Write(project / "externals/nested/definitions/b/_card.json",
-        HostFolderCard("data", data, true));
+        HostFolderCard("data", true));
   Write(project / "externals/nested/definitions/b/README.md",
         host::CardReadme("b"));
   // A guest keeps the folders of its start: any other set starts it again.
@@ -401,9 +418,8 @@ TEST(EnvironmentAdapterTest,
   Write(
       project / "tsugumi.json",
       FixtureProjectDocument(
-          R"({"nixPath": [],"canvas":{"cards":[{"id":"a"}],"connections":[]}})"));
-  Write(project / "definitions/a/_card.json",
-        HostFolderCard("data", data, false));
+          R"({"nixPath": [],"hostPaths":[{"name":"data","description":"Input data"}],"canvas":{"cards":[{"id":"a"}],"connections":[]}})"));
+  Write(project / "definitions/a/_card.json", HostFolderCard("data", false));
   Write(project / "definitions/a/README.md", host::CardReadme("a"));
   auto helper = std::make_shared<HelperDouble>();
   helper->guest = true;
@@ -414,6 +430,7 @@ TEST(EnvironmentAdapterTest,
   options.socket_directory = directory.path / "sockets";
   options.run_scratch_directory = directory.path / "run-scratch";
   options.process = helper;
+  options.host_paths = HostPathSettings(project, data);
   host::Environments service(
       options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
   H::EnvironmentRequestT input;

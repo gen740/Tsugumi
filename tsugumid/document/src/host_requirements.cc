@@ -14,7 +14,8 @@ auto host_requirements(const Resolution& resolution, uint64_t rev)
       auto value = std::make_unique<Tsugumi::RPC::HostFolderRequirementT>();
       value->card = std::make_unique<Tsugumi::Data::CardPathT>();
       value->card->segments = node.path;
-      value->path = folder.path;
+      value->name = folder.name;
+      value->scope = node.project_dir;
       value->write = folder.write;
       result.folders.push_back(std::move(value));
     }

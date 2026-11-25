@@ -98,7 +98,7 @@ def registered_remote(monkeypatch, resource_limits):
     (False, {"workerCapabilities": [63], "sandbox": {"pid": False}}, False),
     (False, {"workerCapabilities": [63], "sandbox": {"ipc": False, "identity": False}}, True),
     (False, {"workerCapabilities": [63], "grants": {"hostPaths": []}}, True),
-    (False, {"workerCapabilities": [63], "grants": {"hostPaths": [{"path": "/data", "name": "data", "write": False}]}},
+    (False, {"workerCapabilities": [63], "grants": {"hostPaths": [{"name": "data", "write": False}]}},
      False),
     (True, {"workerCapabilities": [1], "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}},
      False),
@@ -112,7 +112,7 @@ def test_worker_validation_checks_capabilities_and_resources(
     """Placement filters the broker catalog before a run starts."""
     definition = {"type": "code", "_outputs": MSG_FBS,
                   "_nix": '{ pkgs, inputs, params, ... }: { run = "true"; }', **settings}
-    write(project, {"work": definition}, [card("work", "work")], [])
+    write(project, {"work": definition}, [card("work", "work")], [], host_paths=("data",))
     client = core_factory().connect()
     services = {text(service.id): service for service in client.call("ProjectInspectRequest").executionServices}
     assert list(services) == ["local", "cluster"]

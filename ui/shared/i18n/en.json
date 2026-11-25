@@ -1736,5 +1736,23 @@
   "Nix 式を評価しています": "Evaluating a Nix expression",
   "Nix 式を評価": "Evaluate Nix expression",
   "保存済みの定義と現在の接続で SDK をビルドし、share/tsugumi/api/ のファイルを表示します": "Build the SDK from the saved definition and current wiring and show the files in share/tsugumi/api/",
-  "出力の上限に達したため、一部のファイルのみ表示しています": "Showing partial results because the output limit was reached"
+  "出力の上限に達したため、一部のファイルのみ表示しています": "Showing partial results because the output limit was reached",
+  "ホストパス": "Host Paths",
+  "ホストパスを更新しました。もう一度実行してください。": "Host paths refreshed. Run the Card again.",
+  "ホストパスを更新するために再接続しています。接続後にもう一度実行してください。": "Reconnecting to refresh host paths. Run the Card again after reconnecting.",
+  "フォルダ名はプロジェクト設定の「ホストパス」で宣言できます。": "Declare folder names in Project Settings > Host Paths.",
+  "プロジェクトの tsugumi.json とこのホストの hostd": "The project’s tsugumi.json and this host’s hostd settings",
+  "ホストパス「{0}」のフォルダを選んでください。": {
+    "text": "Choose the folder for host path “{0}”.",
+    "mac": [
+      "@"
+    ]
+  },
+  "フォルダを割り当てました。もう一度実行してください。": "Folder bound. Run the Card again.",
+  "名前と用途をプロジェクトに保存します。フォルダの割り当てはこのホストに保存します。": "The project stores names and purposes. This host stores folder bindings.",
+  "最上位のプロジェクト": "Root project",
+  "未割り当て": "Unbound",
+  "フォルダを選ぶ…": "Choose Folder…",
+  "割り当てを解除": "Remove Binding",
+  "用途": "Purpose"
 }

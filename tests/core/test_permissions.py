@@ -27,17 +27,20 @@ def test_checked_save_widening_permissions_needs_approval(tmp_path, core_factory
     """The same checked save requires every widening for all origin labels."""
     root = tmp_path / "p"
     builtin_project(root)
+    manifest = root / "tsugumi.json"
+    manifest.write_text(json.dumps(dict(json.loads(manifest.read_text()),
+                                        hostPaths=[{"name": "data", "description": "Input data"}])))
     d = core_factory(project_root=root)
     c = d.connect()
     body = card_json(c, "src")
     wide = dict(body, sandbox={"filesystem": False},
-                grants={"network": True, "hostPaths": [{"path": "/data", "name": "data", "write": False}]})
+                grants={"network": True, "hostPaths": [{"name": "data", "write": False}]})
     for origin in ("agent", "ui", "external"):
         with pytest.raises(RpcFailure) as rejected:
             save(c, [put("src", wide)], origin=origin, check=True)
         assert rejected.value.kind == "approval_required"
         asked = permissions(rejected.value)
-        assert sorted(asked) == ["host_folder_read src /data", "network src", "sandbox_off src"]
+        assert sorted(asked) == ["host_folder_read src data", "network src", "sandbox_off src"]
     # Approving only part of it is not enough.
     try:
         save(c, [put("src", wide)], approved=asked[:1], origin="external", check=True)
@@ -47,12 +50,12 @@ def test_checked_save_widening_permissions_needs_approval(tmp_path, core_factory
     save(c, [put("src", wide)], approved=asked, origin="external", check=True)
     assert card_json(c, "src")["grants"]["network"] is True
     # Making the folder writable is another widening; narrowing is not.
-    writable = dict(wide, grants={**wide["grants"], "hostPaths": [{"path": "/data", "name": "data", "write": True}]})
+    writable = dict(wide, grants={**wide["grants"], "hostPaths": [{"name": "data", "write": True}]})
     try:
         save(c, [put("src", writable)])
         raise AssertionError("write access without approval")
     except RpcFailure as e:
-        assert permissions(e) == ["host_folder_write src /data"]
+        assert permissions(e) == ["host_folder_write src data"]
     save(c, [put("src", body)])
     assert not card_json(c, "src")["grants"]["network"]
     # With the same token and origin, explicit comparison off permits widening.
@@ -67,6 +70,9 @@ def test_reload_checks_every_permission_widening(tmp_path, core_factory):
     work = card("work", "code")
     cards = [card_in_card("inner", [work], [], {"inputs": {}, "outputs": {}})]
     write(root, {"code": definition}, cards, [])
+    manifest = root / "externals/inner/tsugumi.json"
+    manifest.write_text(json.dumps(dict(json.loads(manifest.read_text()),
+                                        hostPaths=[{"name": "data", "description": "Input data"}])))
     rel = "externals/inner/definitions/work/_card.json"
     cid = "inner/work"
     client = core_factory(project_root=root).connect()
@@ -76,9 +82,9 @@ def test_reload_checks_every_permission_widening(tmp_path, core_factory):
     wide = dict(body, workerCapabilities=[63],
                 sandbox={"filesystem": False, "pid": False, "limits": {"cpu": 1, "memoryMiB": 1024}},
                 grants={"network": True, "gui": True,
-                        "hostPaths": [{"path": "/data", "name": "data", "write": True}]})
+                        "hostPaths": [{"name": "data", "write": True}]})
     expected = {f"network {cid}",
-                f"sandbox_off {cid}", f"sandbox_options {cid}", f"gui {cid}", f"host_folder_write {cid} /data"}
+                f"sandbox_off {cid}", f"sandbox_options {cid}", f"gui {cid}", f"host_folder_write {cid} data"}
     path.write_text(json.dumps(card_document(wide)))
 
     def reload(approved=(), *, check=True, origin="external"):

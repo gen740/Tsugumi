@@ -45,6 +45,22 @@ table ProviderSetRequest { profile:string (required); id:string (required); prov
 table CardSecretListRequest { project_id:string (required); }
 table CardSecretSetRequest { project_id:string (required); name:string (required); value:string (trace_secret); remove:bool; }
 table CardSecretList { names:[string]; }
+
+// Human-only per-machine bindings. An empty scope refers to the root project.
+table HostPathBinding {
+  scope:string;
+  name:string (required);
+  path:string (required, trace_secret);
+}
+table HostPathListRequest { project_id:string (required); }
+table HostPathSetRequest {
+  project_id:string (required);
+  scope:string;
+  name:string (required);
+  path:string (trace_secret);
+  remove:bool;
+}
+table HostPathBindings { bindings:[HostPathBinding]; }
 // Availability uses exactly the same key policy as model requests.
 table ProviderStatusRequest { profile:string (required); id:string (required); }
 // Model choices for guide/summary are read from host settings and catalogs.
@@ -610,7 +626,7 @@ union RequestPayload {
   DemoListRequest, DemoReadRequest, VersionNoteRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest, EnvironmentListRequest,
   HostTraceRequest:Tsugumi.Trace.HostTraceRequest, HostPageRequest,
   HostHomeRequest, HostRevealRequest, HostFolderListRequest, HostFolderCreateRequest,
-  CardSecretListRequest, CardSecretSetRequest,
+  CardSecretListRequest, CardSecretSetRequest, HostPathListRequest, HostPathSetRequest,
   RunCategoryDeleteRequest,
   TemplateListRequest, HostTemplateAddRequest,
   ViewWindowsRequest, ViewActionRequest, ViewPresentationRequest, ViewActionCompleteRequest,
@@ -627,7 +643,7 @@ union ReplyPayload {
   PermissionKinds,
   ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, Identifier, InputTypes, HostActivity,
   HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList, HostHome, FolderListing,
-  CardSecretList,
+  CardSecretList, HostPathBindings,
   RunCategoryDeleteResult:Tsugumi.RPC.RunCategoryDeleteResult,
   TemplateList,
   ViewWindows, ViewActionResult,

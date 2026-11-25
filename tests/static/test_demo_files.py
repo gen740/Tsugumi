@@ -82,7 +82,7 @@ def check_front_matter(path):
     assert fields["title"].strip(), path
 
 
-def check_card(definition):
+def check_card(definition, host_paths):
     path = definition / "_card.json"
     card = json.loads(path.read_text())
     required = CARD_FIELDS[card["type"]]
@@ -106,7 +106,8 @@ def check_card(definition):
         assert {"network", "gui"} <= grants.keys() <= {"network", "gui", "hostPaths"}, path
         assert type(grants["network"]) is type(grants["gui"]) is bool, path
         for folder in grants.get("hostPaths", []):
-            assert folder.keys() == {"path", "name", "write"} and type(folder["write"]) is bool, path
+            assert folder.keys() == {"name", "write"} and type(folder["write"]) is bool, path
+            assert folder["name"] in host_paths, path
         bits = card["workerCapabilities"]
         assert all(type(bit) is int and 0 <= bit < 64 for bit in bits), path
         assert len(set(bits)) == len(bits), path
@@ -129,7 +130,14 @@ def test_demo_project_files_are_explicit(manifest):
     doc = json.loads(manifest.read_text())
     child = manifest.parent.parent.name == "externals"
     optional = ["boundary"] if child and "boundary" in doc else []
+    if "hostPaths" in doc:
+        optional.append("hostPaths")
     assert list(doc) == PROJECT_FIELDS + optional
+    paths = doc.get("hostPaths", [])
+    assert all(entry.keys() == {"name", "description"} and NAME.fullmatch(entry["name"])
+               and isinstance(entry["description"], str) for entry in paths), manifest
+    host_paths = {entry["name"] for entry in paths}
+    assert len(host_paths) == len(paths), manifest
     assert doc["formatVersion"] == 1
     assert all(isinstance(doc[key], list) for key in ("nixPath", "trackedPaths", "agentExclude"))
     assert all(type(doc[key]) is bool for key in ("recordLogs", "recordIO"))
@@ -143,7 +151,7 @@ def test_demo_project_files_are_explicit(manifest):
     root = manifest.parent
     folders = {path.name: path for path in (root / "definitions").glob("*") if path.is_dir()}
     assert folders.keys() == by_id
-    kinds = {cid: check_card(path) for cid, path in folders.items()}
+    kinds = {cid: check_card(path, host_paths) for cid, path in folders.items()}
     children = {cid for cid, kind in kinds.items() if kind == "subgraph"}
     assert {path.name for path in (root / "externals").glob("*") if path.is_dir()} == children
     for cid in children:

@@ -14,12 +14,14 @@ extension Tsugumi_Trace_Mode: @unchecked Sendable {}
 public struct RPCFailure: Error, CustomStringConvertible, Sendable {
   public let kind: FailureKind
   public let permissions: [String]
+  public let args: [String: String]
   public let diagnostic: String?
   public let currentRev: UInt64?
 
   public init(_ f: Tsugumi_Data_FailureT) {
     kind = f.kind
     permissions = f.args.compactMap { $0 }.filter { $0.key == "permission" }.map(\.value)
+    args = Dictionary(f.args.compactMap { $0 }.map { ($0.key, $0.value) }, uniquingKeysWith: { _, last in last })
     diagnostic = f.diagnostic
     currentRev = f.currentRev
   }
@@ -27,6 +29,7 @@ public struct RPCFailure: Error, CustomStringConvertible, Sendable {
   public init(kind: FailureKind, diagnostic: String) {
     self.kind = kind
     permissions = []
+    args = [:]
     self.diagnostic = diagnostic
     currentRev = nil
   }

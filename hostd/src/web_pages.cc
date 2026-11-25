@@ -198,7 +198,7 @@ auto WebPages::Handle(const RequestIn& request, const H::Request& r)
     result.vm = home_.vm;
     // /host/<name> needs bubblewrap: on a Mac, the shared VM.
 #ifdef __APPLE__
-    result.host_folders = true;
+    result.host_folders = home_.vm;
 #else
     result.host_folders = true;
 #endif

@@ -263,7 +263,7 @@
     {
       "name": "project_edit",
       "mutating": true,
-      "description": "Apply guarded changes atomically; returns the save result. Structured selectors use field for object members or match for array keys; old_value/new_value use present to distinguish absence from a JSON value. Text replacement expects one match unless expected_matches is given. File put/remove/move use inspected hashes or missing flags. Moving a subgraph’s _card.json within its project also moves the child project. Examples: demo_read reference/cards.md.",
+      "description": "Apply guarded changes atomically; returns the save result. Structured selectors use field for object members or match for array keys; old_value/new_value use present to distinguish absence from a JSON value. Text replacement expects one match unless expected_matches is given. File put/remove/move use inspected hashes or missing flags. Moving a subgraph’s _card.json within its project also moves the child project. Host path grants reference a name declared in the containing tsugumi.json. Examples: demo_read reference/cards.md.",
       "inputSchema": {
         "type": "object",
         "properties": {

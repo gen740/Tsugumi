@@ -33,6 +33,9 @@ HostStore::HostStore(const std::filesystem::path& directory)
       "CREATE TABLE IF NOT EXISTS providers(conversation TEXT PRIMARY KEY, "
       "json TEXT NOT NULL);");
   db.exec(
+      "CREATE TABLE IF NOT EXISTS host_path_bindings(project TEXT NOT NULL, "
+      "scope TEXT NOT NULL, name TEXT NOT NULL, path TEXT NOT NULL, "
+      "PRIMARY KEY(project,scope,name));"
       "CREATE TABLE IF NOT EXISTS setting_values(scope TEXT NOT NULL, "
       "key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope,key));"
       "CREATE TABLE IF NOT EXISTS settings_revision(revision INTEGER NOT NULL,"
