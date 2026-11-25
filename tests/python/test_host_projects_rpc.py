@@ -1,9 +1,11 @@
 """Host-side project lifecycle through the binary Host contract."""
 from __future__ import annotations
 
+import http.client
 import importlib
 import re
 import socket
+import sqlite3
 import struct
 import sys
 import json
@@ -11,6 +13,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from harness.file_events import process_file
 
@@ -143,3 +146,132 @@ def test_demo_and_duplicate_are_writable_and_drop_run_state(host, tmp_path):
         (copied / "tsugumi.json").write_text('{"name":"editable"}')
         (copied / "new-directory").mkdir()
     assert Path(call("HostDemoCopyRequest", {"parent": str(tmp_path), "id": "sample"})["path"]).name == "sample-2"
+
+
+def test_host_state_recovery_preserves_an_old_execution_store(tmp_path):
+    state = tmp_path / "state"
+    state.mkdir()
+    store = state / "execution.sqlite"
+    # An unclean exit leaves the committed row only in the WAL.
+    subprocess.run([sys.executable, "-c", """
+import os, sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+db.executescript("PRAGMA journal_mode=WAL; CREATE TABLE evidence(value); INSERT INTO evidence VALUES('keep')")
+os._exit(0)
+""", str(store)], check=True)
+    wal = state / "execution.sqlite-wal"
+    assert wal.is_file()
+    web = tmp_path / "web"
+    web.mkdir()
+    (web / "index.html").write_text("<!doctype html>")
+    with tempfile.TemporaryDirectory(prefix="tsugumi-host-") as short:
+        with (tmp_path / "host.log").open("w") as log:
+            proc = subprocess.Popen([
+                str(HOST), "--ensure", "--state-dir", str(state), "--unix", short + "/s",
+                "--socket-dir", short + "/b", "--web-root", str(web), "--web-port", "0",
+                "--no-websocket",
+            ], stdout=subprocess.PIPE, stderr=log)
+        try:
+            diagnostic = process_file(proc, state / "host.startup-error")
+            assert diagnostic is not None, (tmp_path / "host.log").read_text()
+            issue = json.loads(diagnostic.read_text())
+            assert issue["state_format_path"] == str(store.resolve())
+            assert issue["message"].startswith("This state was written by a different Tsugumi version.")
+            assert issue["found_format"] == 0
+            assert wal.is_file()
+            assert not list(state.glob("*.stale-*"))
+            url = urlsplit(issue["recovery_url"])
+            peer = http.client.HTTPConnection(url.hostname, url.port, timeout=10)
+
+            def request(method, path, headers=None):
+                peer.request(method, path, headers=headers or {})
+                response = peer.getresponse()
+                return response, response.read()
+
+            try:
+                response, _ = request("GET", f"/?{url.query}")
+                assert response.status == 302
+                cookie = response.getheader("Set-Cookie").split(";", 1)[0]
+                headers = {"Cookie": cookie, "Origin": f"http://{url.netloc}",
+                           "X-Tsugumi-Recovery": issue["recovery_token"]}
+                endpoint = "/api/host/startup-error"
+                assert request("POST", endpoint, {**headers, "Origin": "http://example.org"})[0].status == 403
+                assert request("GET", endpoint, headers)[0].status == 200
+                assert request("POST", endpoint, headers)[0].status == 200
+            finally:
+                peer.close()
+            assert process_file(proc, state / "host.ready") is not None, (tmp_path / "host.log").read_text()
+            fresh = sqlite3.connect(store)
+            try:
+                assert fresh.execute("PRAGMA user_version").fetchone()[0] > 0
+                assert "worker_capabilities" in {row[1] for row in fresh.execute("PRAGMA table_info(services)")}
+            finally:
+                fresh.close()
+            backup, = [entry for entry in state.glob("execution.sqlite.stale-*")
+                       if not entry.name.endswith(("-wal", "-shm"))]
+            assert Path(f"{backup}-wal").is_file()
+            original = sqlite3.connect(f"{backup.as_uri()}?mode=ro", uri=True)
+            try:
+                assert original.execute("SELECT value FROM evidence").fetchall() == [("keep",)]
+                assert original.execute("PRAGMA user_version").fetchone() == (0,)
+            finally:
+                original.close()
+        finally:
+            proc.terminate()
+            proc.wait(timeout=10)
+            proc.stdout.close()
+
+
+@pytest.mark.parametrize(("name", "kind"), [
+    ("agent.sqlite", "incompatible_state"),
+    ("document.sqlite", "incompatible_state"),
+    ("runs.sqlite", "incompatible_history"),
+])
+def test_project_state_recovery_requires_an_explicit_request(host, tmp_path, name, kind):
+    from Tsugumi.Host.EnvironmentAction import EnvironmentAction
+    from Tsugumi.Host.EnvironmentPhase import EnvironmentPhase
+
+    call, _, _ = host
+    project = tmp_path / "project"
+    project.mkdir()
+    write_project(project, {"name": "Project"})
+    folder = project / ".tsugumi"
+    folder.mkdir()
+    store = folder / name
+    with sqlite3.connect(store) as db:
+        db.executescript("CREATE TABLE evidence(value); INSERT INTO evidence VALUES('keep')")
+    if name == "runs.sqlite":
+        artifact = folder / "artifacts/8"
+        artifact.mkdir(parents=True)
+        (artifact / "saved").write_text("keep")
+    if name == "document.sqlite":
+        staged = folder / "document-files"
+        staged.mkdir()
+        (staged / "saved").write_text("keep")
+    fields = {"project": str(project)}
+    result = call("EnvironmentRequest", {**fields, "action": EnvironmentAction.Start})
+    issue = result["startupError"]
+    assert issue["kind"] == kind
+    assert issue["path"] == str(store.resolve())
+    assert store.is_file()
+    assert not list(folder.glob("*.stale-*"))
+    recover = {**fields, "action": EnvironmentAction.MoveStateAside, "stale_store": issue["path"]}
+    assert "code" in call("EnvironmentRequest", recover, external=True)
+    assert store.is_file()
+    assert "code" not in call("EnvironmentRequest", recover)
+    assert not store.exists()
+    assert "code" in call("EnvironmentRequest", recover)
+    moved, = folder.glob(f"{name}.stale-*")
+    with sqlite3.connect(f"{moved.as_uri()}?mode=ro", uri=True) as db:
+        assert db.execute("SELECT value FROM evidence").fetchall() == [("keep",)]
+    result = call("EnvironmentRequest", {**fields, "action": EnvironmentAction.Start})
+    assert result["phase"] == EnvironmentPhase.Ready, result
+    if name != "agent.sqlite":
+        with sqlite3.connect(store) as db:
+            assert db.execute("PRAGMA user_version").fetchone()[0] > 0
+            if name == "runs.sqlite":
+                assert db.execute("SELECT value FROM run_counter").fetchone() == (8,)
+                assert (artifact / "saved").read_text() == "keep"
+    if name == "document.sqlite":
+        backup, = folder.glob("document-files.stale-*")
+        assert (backup / "saved").read_text() == "keep"

@@ -39,7 +39,8 @@ class WebPages {
   auto Stop() -> void;
 
   /** Starts serving when it does not yet. Throws when the port is taken. */
-  auto Serve(const std::filesystem::path& root, int port, bool port_chosen) -> void;
+  auto Serve(const std::filesystem::path& root, int port, bool port_chosen,
+             const std::string& key) -> void;
   /** The origin, without the key; empty while not serving. */
   auto Url() -> std::string;
   /** Opens the page in the default browser. False: not serving. */

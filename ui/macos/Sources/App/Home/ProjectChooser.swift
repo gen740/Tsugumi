@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import TsugumiRPC
+import TsugumiAgentClient
 
 /// Home (new, existing and recent projects) and the demo list, entered
 /// from "Browse Demos" with a way back. Both follow the window's size: lists
@@ -23,7 +24,14 @@ struct ProjectChooser: View {
       HomeSidebar(showDemos: $showDemos, onNew: { showNew = true }, onOpen: openPanel)
         .frame(width: 250)
       VStack(spacing: 0) {
-        if showDemos { demos } else { recents }
+        if let issue = model.staleHostState {
+          StateFormatRecoveryView(path: issue.path) {
+            try await CoreHostClient.shared.moveStateAside(issue)
+            await model.refreshHome()
+          }
+          .id(issue.path)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if showDemos { demos } else { recents }
         if case .ready(let v) = Updater.shared.state {
           HStack {
             Label("Tsugumi \(v) の準備ができました。「再起動して更新」で更新できます。", systemImage: "arrow.down.circle")

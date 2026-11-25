@@ -5,9 +5,10 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <filesystem>
+#include <functional>
 #include <mutex>
 #include <set>
-#include <filesystem>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -23,6 +24,10 @@ struct WebEdgeOptions {
   // any free port (the page's localStorage is per origin).
   bool port_chosen = false;
   std::string key;         // the page key, exchanged once for the cookie
+  std::string recovery;
+  std::string recovery_token;
+  std::function<void()> move_state_aside;
+  std::function<void()> state_moved;
   std::string user_token;  // the Host Hello token the page's cookie unlocks
 };
 

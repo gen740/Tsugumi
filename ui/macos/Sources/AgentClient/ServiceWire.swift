@@ -46,6 +46,7 @@ enum ServiceWire {
         v.action = fields["action"] as? Tsugumi_Host_EnvironmentAction ?? .state
         v.origins = (fields["origins"] as? [String] ?? []).map(Optional.some)
         v.folders = (fields["folders"] as? [String] ?? []).map(Optional.some)
+        v.staleStore = fields["stale_store"] as? String
         return (Tsugumi_Host_RequestPayload.environmentrequest.rawValue, v)
       case "HostTerminalRequest":
         let v = Tsugumi_Host_HostTerminalRequestT()
@@ -462,7 +463,7 @@ enum ServiceWire {
       if let error = v.startupError {
         result["startup_error"] = ["kind": error.kind ?? "", "found": error.found ?? "",
                                    "expected": error.expected ?? "", "source": error.source ?? "",
-                                   "message": error.message ?? ""]
+                                   "message": error.message ?? "", "path": error.path ?? ""]
       }
       return result
     case let v as Tsugumi_Host_HostTerminalT: return ["session": v.session]

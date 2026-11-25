@@ -4,6 +4,8 @@
 #include <sqlite3.h>
 
 #include <cstdint>
+#include <filesystem>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -15,6 +17,18 @@ class Error : public std::runtime_error {
  public:
   using std::runtime_error::runtime_error;
 };
+
+class FormatMismatch : public Error {
+ public:
+  FormatMismatch(std::filesystem::path path, int64_t found, int expected);
+  const std::filesystem::path path;
+  const int64_t found;
+  const int expected;
+};
+
+// The caller holds the store's ownership lock and has closed its connections.
+auto move_aside(const FormatMismatch& mismatch,
+                const std::filesystem::path& companion = {}) -> void;
 
 class Stmt {
  public:
@@ -62,18 +76,27 @@ class Stmt {
   sqlite3_stmt* s_ = nullptr;
 };
 
+struct FormatVersion {
+  int value;
+};
+
 class Db {
  public:
   explicit Db(const std::string& path, bool readonly = false);
+  Db(const std::string& path, FormatVersion format);
   Db(const Db&) = delete;
   Db& operator=(const Db&) = delete;
   ~Db();
   sqlite3* get() const { return db_; }
   void exec(std::string_view sql);
+  auto check_format(int expected) -> void;
+  auto initialize_format(int expected, const std::function<void()>& create)
+      -> void;
   Stmt prepare(std::string_view sql) { return Stmt(db_, sql); }
   int changes() const { return sqlite3_changes(db_); }
 
  private:
+  auto has_format(int expected) -> bool;
   sqlite3* db_ = nullptr;
 };
 

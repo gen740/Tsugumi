@@ -1,12 +1,110 @@
 #include "tsugumi/util/sqlite.hh"
 
+#include <fcntl.h>
+
+#include <cerrno>
+#include <cstdio>
+#include <ctime>
+#include <system_error>
+#include <vector>
+
+#include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/fs.hh"
+
 namespace tsugumi::sql {
 
 namespace {
 [[noreturn]] void fail(sqlite3* db, const std::string& what) {
   throw Error(what + ": " + (db ? sqlite3_errmsg(db) : "sqlite error"));
 }
+auto rename_without_replacing(const std::filesystem::path& from,
+                              const std::filesystem::path& to) -> void {
+#ifdef __APPLE__
+  const auto result = ::renamex_np(from.c_str(), to.c_str(), RENAME_EXCL);
+#else
+  const auto result = ::renameat2(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(),
+                                  RENAME_NOREPLACE);
+#endif
+  if (result != 0)
+    throw std::filesystem::filesystem_error(
+        "Cannot move state file aside", from, to,
+        std::error_code(errno, std::generic_category()));
+}
 }  // namespace
+
+FormatMismatch::FormatMismatch(std::filesystem::path path_, int64_t found_,
+                               int expected_)
+    : Error("This state was written by a different Tsugumi version. " +
+            path_.string() + " (format " + std::to_string(found_) +
+            ", expected " + std::to_string(expected_) + ")"),
+      path(std::move(path_)),
+      found(found_),
+      expected(expected_) {}
+
+auto move_aside(const FormatMismatch& mismatch,
+                const std::filesystem::path& companion) -> void {
+  namespace f = std::filesystem;
+  const auto& path = mismatch.path;
+  if (!f::is_regular_file(f::symlink_status(path)))
+    throw Error("Expected a regular state file: " + path.string());
+
+  for (const auto* suffix : {"-journal", "-wal", "-shm"})
+    if (f::is_symlink(f::symlink_status(path.string() + suffix)))
+      throw Error("State sidecars must not be symbolic links: " +
+                  path.string());
+
+  // Recheck after confirmation, in case another instance replaced the store.
+  try {
+    Db db(path.string(), true);
+    db.check_format(mismatch.expected);
+    throw Error("The state file no longer has an incompatible format: " +
+                path.string());
+  } catch (const FormatMismatch& current) {
+    if (current.found != mismatch.found)
+      throw Error("The state file changed after confirmation: " +
+                  path.string());
+  }
+
+  const auto now = std::time(nullptr);
+  std::tm utc{};
+  gmtime_r(&now, &utc);
+  char date[20]{};
+  std::strftime(date, sizeof(date), "%Y%m%dT%H%M%SZ", &utc);
+  const auto stamp = std::string(".stale-") + date + "-" + crypto::uuid4();
+  const auto backup = path.string() + stamp;
+  std::vector<std::pair<f::path, f::path>> files;
+  if (!companion.empty()) {
+    const auto entry = f::symlink_status(companion);
+    if (f::exists(entry)) {
+      if (!f::is_directory(entry))
+        throw Error("Expected a state directory: " + companion.string());
+      files.emplace_back(companion, companion.string() + stamp);
+    }
+  }
+  for (const auto* suffix : {"-journal", "-wal", "-shm", ""}) {
+    const f::path from = path.string() + suffix;
+    const auto entry = f::symlink_status(from);
+    if (!f::exists(entry) && *suffix) continue;
+    const f::path to = backup + suffix;
+    if (!f::is_regular_file(entry) || f::exists(f::symlink_status(to)))
+      throw Error("Cannot move state file aside: " + from.string());
+    files.emplace_back(from, to);
+  }
+  size_t moved = 0;
+  try {
+    for (const auto& [from, to] : files) {
+      rename_without_replacing(from, to);
+      ++moved;
+    }
+  } catch (...) {
+    while (moved) {
+      const auto& [from, to] = files[--moved];
+      rename_without_replacing(to, from);
+    }
+    throw;
+  }
+  fs::fsync_dir(path.parent_path());
+}
 
 Stmt::Stmt(sqlite3* db, std::string_view sql) : db_(db) {
   if (sqlite3_prepare_v2(db, sql.data(), static_cast<int>(sql.size()), &s_,
@@ -96,6 +194,17 @@ Db::Db(const std::string& path, bool readonly) {
   sqlite3_db_config(db_, SQLITE_DBCONFIG_TRUSTED_SCHEMA, 0, nullptr);
 }
 
+Db::Db(const std::string& path, FormatVersion format)
+    : Db([&] {
+        // Closing an incompatible writer could checkpoint its WAL. Check
+        // before opening any writer while the caller holds ownership.
+        if (std::filesystem::exists(path)) {
+          Db reader(path, true);
+          reader.check_format(format.value);
+        }
+        return path;
+      }()) {}
+
 Db::~Db() {
   if (db_) sqlite3_close_v2(db_);
 }
@@ -108,6 +217,28 @@ void Db::exec(std::string_view sql) {
     sqlite3_free(err);
     throw Error(msg);
   }
+}
+
+auto Db::has_format(int expected) -> bool {
+  auto version = prepare("PRAGMA user_version");
+  if (!version.step()) throw Error("SQLite did not return a format version");
+  const auto found = version.i64(0);
+  if (found == expected) return true;
+  if (found == 0 && !prepare("SELECT 1 FROM sqlite_schema LIMIT 1").step())
+    return false;
+  throw FormatMismatch(sqlite3_db_filename(db_, "main"), found, expected);
+}
+
+auto Db::check_format(int expected) -> void { has_format(expected); }
+
+auto Db::initialize_format(int expected, const std::function<void()>& create)
+    -> void {
+  Transaction transaction(*this);
+  if (!has_format(expected)) {
+    create();
+    exec("PRAGMA user_version=" + std::to_string(expected));
+  }
+  transaction.commit();
 }
 
 Transaction::Transaction(Db& db, bool write) : db_(db) {

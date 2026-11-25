@@ -191,6 +191,7 @@ final class ProjectSession {
   let terminals: ProjectTerminals
   /// Closed for good (close): it will not connect again.
   private(set) var closed = false
+  private(set) var staleHostState: HostStateFormatMismatch?
   private(set) var connectionMessage: String?
   @ObservationIgnored private var client: RPCClient?
   @ObservationIgnored private var subscription: String?
@@ -369,6 +370,7 @@ final class ProjectSession {
 
   func start() {
     guard startTask == nil else { return }
+    staleHostState = nil
     // Shown as starting at once: the loading card, never a "stopped" page
     // for the moment before the environment reports its state.
     switch environment {
@@ -474,6 +476,7 @@ final class ProjectSession {
     } catch {
       guard !Task.isCancelled, !closed else { return }
       setConnected(false)
+      staleHostState = error as? HostStateFormatMismatch
       connectionFailed = error is Unreached
       connectionMessage = (error as? RPCFailure)?.kind == .projectInUse
         ? String(localized: "別の画面でこのプロジェクトを開いています。")

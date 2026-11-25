@@ -78,7 +78,7 @@ table Account { client_id:string (required); email:string; signed_in:bool; plan_
 table SignInStatus { attempt_id:string; state:string (required); message:string; accounts:[Account]; welcome:string; revoked:bool; client_id:string; plan_enabled:bool; }
 // Environments outlive clients and hostd restarts. Stop is explicit. Start
 // updates origins only; folders change through explicit add/remove operations.
-enum EnvironmentAction:ubyte { State, Start, Stop, AddFolders, RemoveFolders }
+enum EnvironmentAction:ubyte { State, Start, Stop, AddFolders, RemoveFolders, MoveStateAside }
 enum EnvironmentPhase:ubyte { Stopped, Starting, Ready, Failed }
 enum EnvironmentFailureCode:ubyte { None, ProcessExit, Cancelled, LaunchFailed }
 table EnvironmentRequest {
@@ -86,12 +86,12 @@ table EnvironmentRequest {
   action:EnvironmentAction;
   origins:[string];
   folders:[string];
+  stale_store:string;
 }
 // Why a project daemon could not open its project (its control folder's
 // server.startup-error). kind: incompatible_history, resource_limit or
-// project_open_failed; found, expected and source describe a history version
-// mismatch.
-table StartupError { kind:string; found:string; expected:string; source:string; message:string; }
+// incompatible_state or project_open_failed. Format mismatches include the file path.
+table StartupError { kind:string; found:string; expected:string; source:string; message:string; path:string; }
 // Host-selected attached roots in the running project environment.
 table AttachedRoot { host_path:string (required); execution_path:string (required); }
 table EnvironmentState {
@@ -109,7 +109,7 @@ table EnvironmentState {
   message:string;
   recovery:string;
   log:string;
-  // The daemon's structured history mismatch diagnostic, for explicit recovery.
+  // The structured state format mismatch diagnostic, for explicit recovery.
   startup_error:StartupError;
   execution_scope_unavailable:bool;
   folders:[string];

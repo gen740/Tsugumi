@@ -275,12 +275,14 @@ int run_daemon(int argc, char** argv) {
   };
   try {
     service.open();
-  } catch (const IncompatibleHistory& e) {
+  } catch (const sql::FormatMismatch& e) {
     S::StartupErrorT error;
-    error.kind = "incompatible_history";
-    error.found = e.found;
-    error.expected = e.expected;
-    error.source = e.source;
+    error.kind = e.path.filename() == "runs.sqlite" ? "incompatible_history"
+                                                    : "incompatible_state";
+    error.found = std::to_string(e.found);
+    error.expected = std::to_string(e.expected);
+    error.source = "local";
+    error.path = e.path.string();
     return report_startup_failure(std::move(error), e);
   } catch (const std::exception& e) {
     S::StartupErrorT error;

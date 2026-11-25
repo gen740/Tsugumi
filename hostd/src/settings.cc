@@ -235,11 +235,7 @@ auto Verify(const std::string& token, const std::string& issuer,
 }
 class SqlSecrets final : public SecretStore {
  public:
-  explicit SqlSecrets(sql::Db& db) : db_(db) {
-    db_.exec(
-        "CREATE TABLE IF NOT EXISTS secrets(id TEXT PRIMARY KEY, value TEXT "
-        "NOT NULL)");
-  }
+  explicit SqlSecrets(sql::Db& db) : db_(db) {}
   auto Get(const std::string& key) -> std::string override {
     auto q = db_.prepare("SELECT value FROM secrets WHERE id=?");
     q.bind(1, key);

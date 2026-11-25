@@ -156,6 +156,16 @@ auto EnsureHost(const Launch& launch) -> Ready {
     throw std::runtime_error("the Tsugumi host did not start; see " + log_path.string());
   }
   const auto value = json::Object(line);
+  if (const auto message = json::Text(value, "message"); !message.empty()) {
+    const auto recovery = json::Text(value, "recovery_url");
+    if (json::UInt(json::Get(value, "pid", "0")) != static_cast<uint64_t>(child)) {
+      ::waitpid(child, nullptr, 0);
+      f::remove(sockets);
+    }
+    throw std::runtime_error(
+        message +
+        (recovery.empty() ? "" : "\nTsugumi state recovery: " + recovery));
+  }
   Ready ready;
   ready.unix_socket = json::Text(value, "unix_socket");
   ready.host_socket = json::Text(value, "host_socket");

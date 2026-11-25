@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <charconv>
 #include <cstdio>
 #include <functional>
 #include <set>
@@ -564,34 +565,40 @@ auto History::open_live_logs() -> std::unique_ptr<sql::Db> {
   return db;
 }
 
-History::History(const std::filesystem::path& db_path, std::string fault)
+History::History(const std::filesystem::path& db_path, std::string fault,
+                 const std::filesystem::path& run_scratch)
     : path_(db_path), fault_(std::move(fault)) {
-  if (std::filesystem::exists(path_)) check_version();
-  writer_db_ = std::make_unique<sql::Db>(path_.string());
+  writer_db_ = std::make_unique<sql::Db>(path_.string(),
+                                         sql::FormatVersion{kHistoryVersion});
   // Single process owns the database (guarded by the project lock).
   writer_db_->exec("PRAGMA journal_mode=WAL");
   writer_db_->exec("PRAGMA synchronous=FULL");
   writer_db_->exec("PRAGMA foreign_keys=ON");
-  init_schema(*writer_db_);
+  writer_db_->initialize_format(kHistoryVersion, [&] {
+    init_schema(*writer_db_);
+    // Files may outlive a moved-aside history. Reserve their run numbers so a
+    // new run cannot overwrite them or remove them through its cleanup action.
+    uint64_t last_run = 0;
+    for (const auto& directory :
+         {path_.parent_path() / "artifacts", run_scratch / "runs"}) {
+      if (!std::filesystem::is_directory(
+              std::filesystem::symlink_status(directory)))
+        continue;
+      for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+        const auto name = entry.path().filename().string();
+        if (!crypto::is_run_id(name)) continue;
+        uint64_t number = 0;
+        const auto result =
+            std::from_chars(name.data(), name.data() + name.size(), number);
+        if (result.ec == std::errc{}) last_run = std::max(last_run, number);
+      }
+    }
+    if (last_run)
+      writer_db_->prepare("INSERT INTO run_counter VALUES(1,?)")
+          .bind(1, last_run)
+          .run();
+  });
   writer_ = std::thread([this] { writer_loop(); });
-}
-
-// A fresh database has no tables or version. A history written with a
-// different schema is rejected before the writer opens it.
-auto History::check_version() const -> void {
-  sql::Db db(path_.string(), true);
-  auto version = db.prepare("PRAGMA user_version");
-  const auto stored = version.step() ? version.i64(0) : 0;
-  if (stored == kHistoryVersion) return;
-  auto tables =
-      db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1");
-  if (stored == 0 && !tables.step()) return;
-  throw IncompatibleHistory(
-      "the run history " + path_.string() + " has schema version " +
-          std::to_string(stored) + ", but this Tsugumi requires " +
-          std::to_string(kHistoryVersion) +
-          ". The history file is kept as it is.",
-      std::to_string(stored), std::to_string(kHistoryVersion), "local");
 }
 
 History::~History() {
@@ -633,7 +640,6 @@ CREATE TABLE IF NOT EXISTS last_inputs(
 CREATE TABLE IF NOT EXISTS receipts(
   op_id TEXT PRIMARY KEY, kind TEXT NOT NULL, digest TEXT NOT NULL, result BLOB NOT NULL);
 )SQL");
-  db.exec("PRAGMA user_version=" + std::to_string(kHistoryVersion));
 }
 
 History::ReaderLease History::acquire_reader() {

@@ -697,6 +697,11 @@ export class ProjectSession extends Observable {
     this.resetLiveViews()
   }
 
+  async moveStateAside(path: string) {
+    await this.environmentHost.moveStateAside(this.dir, path)
+    this.start()
+  }
+
   async stopEnvironment() {
     this.connectionEpoch = Symbol()
     this.connecting?.abort()

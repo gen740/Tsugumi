@@ -35,6 +35,8 @@ auto FoldAscii(std::string text) -> std::string {
   return text;
 }
 
+}  // namespace
+
 // Conversation records contain no provisioning, host capabilities or settings.
 auto CreateConversationTables(sql::Db& db) -> void {
   db.exec(
@@ -83,8 +85,6 @@ auto CreateConversationTables(sql::Db& db) -> void {
       "NOT NULL, PRIMARY KEY(conversation,parent_call,task))");
 }
 
-}  // namespace
-
 struct ConversationStore::ProjectStore {
   std::filesystem::path path;
   fs::FileLock lock;
@@ -95,12 +95,14 @@ ConversationStore::ProjectStore::ProjectStore(std::filesystem::path p,
                                               fs::FileLock l)
     : path(std::move(p)),
       lock(std::move(l)),
-      db((path / "agent.sqlite").string()) {
+      db((path / "agent.sqlite").string(),
+         sql::FormatVersion{kAgentFormatVersion}) {
   ::chmod((path / "agent.sqlite").c_str(), 0600);
   // hostd writes the original host folder, never the VM's virtiofs mount.
   // DELETE keeps a quiescent project copy self-contained (no WAL sidecar).
   db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;");
-  CreateConversationTables(db);
+  db.initialize_format(kAgentFormatVersion,
+                       [&] { CreateConversationTables(db); });
 }
 
 ConversationStore::ConversationStore(host::StateGate& g, sql::Db& home,
@@ -113,7 +115,6 @@ ConversationStore::ConversationStore(host::StateGate& g, sql::Db& home,
       scrub(std::move(redact)),
       has_grant(std::move(grant)),
       is_running(std::move(busy)) {
-  CreateConversationTables(db);
   db.exec(
       "UPDATE conversation_turns SET state='interrupted' WHERE "
       "state='running'");
