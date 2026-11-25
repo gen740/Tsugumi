@@ -174,7 +174,7 @@ struct EnvironmentSetupView: View {
                                : String(localized: "アプリに VM イメージが含まれていません。開発中は nix run .#guest-image で用意してください。")) {
               EmptyView()
             }
-          case nil:
+          case .hostStateFormatMismatch?, nil:
             ProgressView("実行環境の状態を確認しています…")
           }
         }
