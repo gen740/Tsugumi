@@ -1,0 +1,42 @@
+// The game's values on the wires. Every screen passes a Turn on.
+namespace glow;
+
+/// The window's session: knowing it lets a Card draw to the window.
+struct ViewSession { bytes:[ubyte:16]; }
+table View { session:ViewSession (required); }
+
+/// Multipliers from the skill tree (set by skills/validate).
+table Boosts { click:double = 1; roots:double = 1; seeds:double = 1; }
+
+table GameState {
+  light:double;       // light to spend now
+  lifetime:double;    // light grown since the last replant
+  total:double;       // light grown in the whole game
+  roots:[uint];       // roots owned, by kind
+  seeds:uint;         // seeds to spend on the skill tree
+  nodes:[ubyte];      // skill nodes owned (1) or not (0), by index
+  replants:uint;
+  elapsed_ms:ulong;   // play time, measured by the page Cards
+  clicks:ulong;
+  boosts:Boosts;
+  bloom:bool;         // the Bloom node is bought: the ending follows
+}
+
+table Turn { state:GameState (required); view:View (required); }
+
+/// skills/page -> skills/validate: buy one node of the tree.
+table Purchase { turn:Turn (required); node:ubyte; }
+
+/// One node of the tree as skills/validate prices it.
+/// state: 0 locked, 1 can buy, 2 too few seeds, 3 owned.
+table NodeOffer { name:string; effect:string; note:string; cost:uint; state:ubyte; parent:short = -1; }
+/// skills/validate -> skills/page. bought: the node just bought, or -1.
+table SkillOffer { turn:Turn (required); nodes:[NodeOffer]; bought:short = -1; note:string; }
+
+/// replant/apply -> replant/page: what replanting now would give.
+table ReplantOffer { turn:Turn (required); next:GameState (required); seeds:uint;
+                     next_seed_at:double; ready:bool; }
+
+/// grow/score -> ending: how the game went.
+table Summary { turn:Turn (required); minutes:double; replants:uint; nodes:uint; clicks:ulong;
+                total:double; rating:string; }

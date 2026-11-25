@@ -70,6 +70,19 @@
       ]
     },
     {
+      "id": "glowroot",
+      "title": "Glowroot",
+      "field": "基本の機能を知る",
+      "description": "一つの Dawn ビューを引き継ぐ画面で、光を育て、スキルを買い、植え替えて開花を目指す。",
+      "path": "glowroot",
+      "tags": [
+        "C++",
+        "Dawn",
+        "Card in Card",
+        "ループ"
+      ]
+    },
+    {
       "id": "plots",
       "title": "Plots (matplotlib, Plotly, Altair)",
       "field": "基本の機能を知る",

@@ -1,0 +1,62 @@
+{
+  "formatVersion": 1,
+  "name": "Glowroot: replant",
+  "nixPath": [
+    {
+      "name": "nixpkgs",
+      "url": "github:NixOS/nixpkgs/nixos-unstable"
+    },
+    {
+      "name": "tsugumi-kit",
+      "url": "github:gen740/tsugumi-kit/main"
+    }
+  ],
+  "trackedPaths": [],
+  "agentExclude": [
+    ".git",
+    ".DS_Store"
+  ],
+  "recordLogs": true,
+  "recordIO": true,
+  "logLimitBytes": 134217728,
+  "outputLimitBytes": 68719476736,
+  "outputLimitEntries": 1000,
+  "canvas": {
+    "cards": [
+      {
+        "id": "apply"
+      },
+      {
+        "id": "page"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "apply",
+          "port": "offer"
+        },
+        "to": {
+          "card": "page",
+          "port": "offer"
+        }
+      }
+    ]
+  },
+  "boundary": {
+    "inputs": [
+      {
+        "name": "turn",
+        "card": "apply",
+        "port": "turn"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "done",
+        "card": "page",
+        "port": "done"
+      }
+    ]
+  }
+}

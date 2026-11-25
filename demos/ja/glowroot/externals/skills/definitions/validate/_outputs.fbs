@@ -1,0 +1,4 @@
+include "game.fbs";
+namespace glow;
+table Outputs { offer:SkillOffer (required); }
+root_type Outputs;

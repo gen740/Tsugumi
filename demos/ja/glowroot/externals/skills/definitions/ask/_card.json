@@ -1,0 +1,14 @@
+{
+  "type": "merge",
+  "symbol": "arrow.triangle.merge",
+  "inputs": [
+    {
+      "name": "enter"
+    },
+    {
+      "name": "again"
+    }
+  ],
+  "maxRuns": 100000,
+  "recordIO": "project"
+}
