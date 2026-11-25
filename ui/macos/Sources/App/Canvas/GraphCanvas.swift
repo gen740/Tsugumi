@@ -137,7 +137,12 @@ struct GraphCanvas: View {
   private var currentCamera: (x: Double, y: Double, zoom: Double) { session.cameraUnobserved(scopeKey) ?? (40, 40, 1) }
 
   private final class LayoutPass {
-    var count = 0
+    private(set) var count = 0
+
+    func next() -> Int {
+      count += 1
+      return count
+    }
   }
   @State private var layoutPass = LayoutPass()
 
@@ -148,43 +153,23 @@ struct GraphCanvas: View {
   }
   private var cam: CanvasCamera { CanvasCamera(x: camera.x, y: camera.y, zoom: camera.zoom) }
 
-  var body: some View {
+  private var settledLayout: GraphCanvas {
     var layout = self
     layout.layoutCamera = currentCamera
-    let settled = layout
+    return layout
+  }
+
+  var body: some View {
+    let settled = settledLayout
     let routed = settled.routedWires()
+    let pass = layoutPass.next()
     let _ = redrawn
     GeometryReader { geo in
       ZStack(alignment: .topLeading) {
         background
-        let _ = layoutPass.count += 1
-        CanvasPanHost(session: session, scope: scopeKey, base: settled.cam, pass: layoutPass.count, margin: Self.overscan,
+        CanvasPanHost(session: session, scope: scopeKey, base: settled.cam, pass: pass, margin: Self.overscan,
                       solid: settled.solid(routed), onSettled: { redrawn += 1 }) {
-          // The wires are drawn over the whole of it; the rest is placed in the canvas's own part.
-          let m = Self.overscan
-          let toLayer = settled.cam.transform.concatenating(CGAffineTransform(translationX: m, y: m))
-          ZStack(alignment: .topLeading) {
-            ZStack(alignment: .topLeading) {
-              ForEach(session.groups(in: tab.scope).compactMap { $0["id"]?.string }, id: \.self) { id in
-                settled.groupFrame(id)
-              }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(m)
-            WireLayer(wires: routed.map {
-              let path = $0.path.applying(toLayer)
-              let count = $0.count.map { "×\($0)" } ?? ($0.executionList && session.runActive ? "×?" : nil)
-              return WireDraw(path: path, style: $0.style, dotted: $0.dotted, executionList: $0.executionList,
-                              countLabel: count, countAt: count == nil ? nil : path.midPoint, thread: $0.thread)
-            },
-                      animate: prefs.animateLines && session.runActive, zoom: settled.camera.zoom, presences: session.presences)
-            if tab.showNixReferences { settled.nixLayer(transform: toLayer) }
-            ZStack(alignment: .topLeading) { settled.panned(routed) }
-              .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-              .coordinateSpace(name: "canvas")
-              .padding(m)
-            if debug.showHitAreas { settled.hitAreaLayer(routed, transform: toLayer) }
-          }
+          settled.canvasLayer(routed)
         }
         // In the view's own space (where the pointer is), not the canvas's.
         if let p = pending {
@@ -299,15 +284,7 @@ struct GraphCanvas: View {
       .onReceive(NotificationCenter.default.publisher(for: .canvasAddNote)) { n in
         if (n.object as? UUID) == tab.id { addNote() }
       }
-      .onReceive(NotificationCenter.default.publisher(for: .canvasAddBuiltin)) { n in
-        guard (n.object as? UUID) == tab.id else { return }
-        let at = world(CGPoint(x: size.width / 2 - 120, y: size.height / 2 - 60))
-        if let raw = n.userInfo?["template"] as? String, let kind = DefinitionTemplate(rawValue: raw) {
-          addBuiltin(kind, at: at)
-        } else {
-          templatePlacement = TemplatePlacement(scope: tab.scope, point: at)
-        }
-      }
+      .onReceive(NotificationCenter.default.publisher(for: .canvasAddBuiltin), perform: addBuiltinFromToolbar)
       .sheet(item: $templatePlacement) { placement in
         TemplatePicker(session: session, placement: placement)
       }
@@ -326,6 +303,44 @@ struct GraphCanvas: View {
       .sheet(item: Binding(get: { editingGroup.map(IdBox.init) }, set: { editingGroup = $0?.id })) { box in
         GroupEditor(session: session, scope: tab.scope, groupId: box.id)
       }
+    }
+  }
+
+  private func addBuiltinFromToolbar(_ n: Notification) {
+    guard (n.object as? UUID) == tab.id else { return }
+    let at = world(CGPoint(x: size.width / 2 - 120, y: size.height / 2 - 60))
+    if let raw = n.userInfo?["template"] as? String, let kind = DefinitionTemplate(rawValue: raw) {
+      addBuiltin(kind, at: at)
+    } else {
+      templatePlacement = TemplatePlacement(scope: tab.scope, point: at)
+    }
+  }
+
+  private func canvasLayer(_ routed: [RoutedWire]) -> some View {
+    // The wires are drawn over the whole of it; the rest is placed in the canvas's own part.
+    let m = Self.overscan
+    let toLayer = cam.transform.concatenating(CGAffineTransform(translationX: m, y: m))
+    return ZStack(alignment: .topLeading) {
+      ZStack(alignment: .topLeading) {
+        ForEach(session.groups(in: tab.scope).compactMap { $0["id"]?.string }, id: \.self) { id in
+          groupFrame(id)
+        }
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      .padding(m)
+      WireLayer(wires: routed.map {
+        let path = $0.path.applying(toLayer)
+        let count = $0.count.map { "×\($0)" } ?? ($0.executionList && session.runActive ? "×?" : nil)
+        return WireDraw(path: path, style: $0.style, dotted: $0.dotted, executionList: $0.executionList,
+                        countLabel: count, countAt: count == nil ? nil : path.midPoint, thread: $0.thread)
+      },
+                animate: prefs.animateLines && session.runActive, zoom: camera.zoom, presences: session.presences)
+      if tab.showNixReferences { nixLayer(transform: toLayer) }
+      ZStack(alignment: .topLeading) { panned(routed) }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .coordinateSpace(name: "canvas")
+        .padding(m)
+      if debug.showHitAreas { hitAreaLayer(routed, transform: toLayer) }
     }
   }
 
