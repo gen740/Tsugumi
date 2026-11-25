@@ -1,6 +1,3 @@
-# The embedded SDK uses stats::setNames when a Card emits no ports.
-library(stats)
-
 # R keeps integers exactly only as doubles, up to 2^53. A larger value arrives as a string (the worker never
 # rounds it for us): the Card fails rather than answer with a rounded number.
 exact <- function(x, what = "a value") {

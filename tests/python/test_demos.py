@@ -205,6 +205,9 @@ def chart_points(client, subscription, session, run_id):
     update = wait_for_display(client, run_id, lambda value: text(value.session) == session).value.display
     payload = bytes(update.bytes)
     return_credit(client, subscription, update)
+    magic, _, index, count = struct.unpack_from("<IQII", payload)
+    assert (magic, index, count) == (0x4D475354, 0, 1)
+    payload = payload[20:]
     metadata_size, = struct.unpack_from("<I", payload)
     metadata_end = 4 + metadata_size
     series = json.loads(payload[4:metadata_end])["series"]
