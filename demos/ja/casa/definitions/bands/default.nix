@@ -24,5 +24,5 @@ in
     ];
   });
   api = sdk.pythonApi common;
-  # TODO(open): Port the demo display.
+  views = builtins.filter (view: view.name == "markdown") sdk.views;
 }

@@ -1,6 +1,9 @@
-def main(inputs, report):
-    outputs = {}
-    value = inputs.params.value
-    outputs.update({'out': {'value': value}})
-    report.scalar(value, 'Python')
-    return outputs
+from card import Input, Output, params
+from sample.Number import NumberT
+from tsugumi import Markdown, send
+
+
+def run(_input: Input) -> Output:
+    value = params.value
+    send(Markdown(f"**Python**: {value}"))
+    return Output(out=NumberT(value=value))

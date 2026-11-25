@@ -1,5 +1,5 @@
 #include <card.hh>
-auto run(const Card::Inputs& inputs) -> Card::Output {
+auto run(const Card::Inputs&) -> Card::Output {
   Card::Output out;
   auto& readings = out.numbers.emplace();
   readings.values = {1.25, 2.5, 3.75};

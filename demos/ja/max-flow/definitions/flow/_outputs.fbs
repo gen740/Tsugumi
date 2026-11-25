@@ -1,3 +1,5 @@
+include "tsugumi/artifact.fbs";
+
 namespace flow;
 table Flow {
   nodes:string;
@@ -7,5 +9,5 @@ table Flow {
   flow:[ulong];
   value:ulong;
 }
-table Outputs { flow:Flow (required); }
+table Outputs { flow:Flow (required); figure:tsugumi.Artifact (required); }
 root_type Outputs;

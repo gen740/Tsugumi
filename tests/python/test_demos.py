@@ -6,62 +6,46 @@ configuration); without it a host tsugumid is used.
 
 from __future__ import annotations
 
-# TODO(Card ABI): the bundled demos are still on the previous Card ABI and are ported once the
-# recording of displays is designed (docs/Demos.md, "TODO: port the demos to
-# the current Card ABI"). Until then these demo runs are skipped, not ported.
-import pytest
-
-pytest.skip("TODO(Card ABI): demos are postponed until display recording is designed; "
-            "see docs/Demos.md", allow_module_level=True)
-
-
-import base64
 import csv
 import io
 import json
+import os
 import shutil
+import struct
 
 import pytest
 
 from conftest import ROOT, Daemon, demo_environment, write_project
 from harness.observations import read_pages
 from harness.values import reference_json
-from harness.views import ZERO_ROUTE
-from projects import start_run, wait_for_display as first_display, wait_invocation, wait_run
+from harness.views import ZERO_ROUTE, return_credit
+from projects import start_run, wait_for_display, wait_invocation, wait_run
 from harness.document import set_param as set_typed_param
-from tsugumi_client import line_chart_series, change, new_id, path, text
+from tsugumi_client import change, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
-from Tsugumi.RPC.RunEventValue import RunEventValue
+from Tsugumi.Trace.Client import Client
 
-def connect(env):
-    c = env.client()
+def connect(env, *, client=0):
     if getattr(env, "client_hello", False):
-        c.hello()
-    return c
+        return env.connect(client=client)
+    return env.client(client=client)
 
 
-def edit_card(env, c, card: str, fn, raw=lambda s: s):
-    """Changes a Card's settings (its _card.json) through a save; `raw`
-    rewrites the JSON text after `fn` (spellings JSON numbers cannot keep)."""
-    snap = c.call("ProjectInspectRequest")
-    d = next(x for x in snap.definitions if text(x.id) == card)
-    body = json.loads(text(d.cardJson))
-    fn(body)
-    notes = {"keepReadme": True, "keepComments": True}
-    return c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test",
-                  changes=[change("PutDefinition", id=card, cardJson=raw(json.dumps(body)), **notes)])
+def recorded_output(tmp_path, client, run_id, *card, port):
+    record = client.call("RunRecordRequest", runId=run_id, card=path(*card)).record
+    output = next(row for row in record.outputs if text(row.name) == port)
+    return reference_json(tmp_path, bytes(output.schemaBfbs), bytes(output.inlineBytes),
+                          root_type=text(output.rootType))
 
 
-def set_param(body: dict, name: str, value):
-    set_typed_param(body, name, value)
-
-
-def display_text(c, run_id, *card):
-    rec = c.call("RunRecordRequest", runId=run_id, card=path(*card))
-    return text(rec.record.display.value.text) if rec.record and rec.record.display else None
+def artifact_member(client, run_id, card, member):
+    artifacts = client.call("ArtifactListRequest", runId=run_id, card=path(card)).artifacts
+    artifact, = (row for row in artifacts if any(text(m.path) == member for m in row.members))
+    return read_pages(client, "ArtifactReadRequest", artifactId=text(artifact.artifactId),
+                      member=member, page_bytes=65536)
 
 
 def stderr(c, run_id, *card):
@@ -114,10 +98,7 @@ def test_signal_sweep_collects_all_comparisons(tmp_path):
         assert batch.complete and not batch.failed and batch.invocationCount == 6
         summary = client.call("RunInvocationsRequest", runId=run_id, card=path("summary"))
         assert len(summary.records) == 1
-        record = client.call("RunRecordRequest", runId=run_id, card=path("summary"))
-        output, = record.record.outputs
-        assert reference_json(tmp_path / "summary", bytes(output.schemaBfbs), bytes(output.inlineBytes),
-                              root_type=text(output.rootType)) == {"comparisons": 6, "detections": 3}
+        assert recorded_output(tmp_path / "summary", client, run_id, "summary", port="out") == {"comparisons": 6, "detections": 3}
     finally:
         env.cleanup()
 
@@ -140,10 +121,7 @@ def without_julia_and_r(dst):
     card["inputs"] = [i for i in card["inputs"] if i["name"] in ("cpp", "python")]
     (compare / "_card.json").write_text(json.dumps(card))
     code = (compare / "src" / "main.py").read_text()
-    for old, new in [('        "Julia": list(inputs.julia.values),\n        "R": list(inputs.r.values),\n', ""),
-                     ("C++, Python, Julia and R agree", "C++ and Python agree")]:
-        assert old in code, old
-        code = code.replace(old, new)
+    code = code.replace('        "Julia": list(inputs.julia.values),\n        "R": list(inputs.r.values),\n', "")
     (compare / "src" / "main.py").write_text(code)
 
 
@@ -169,21 +147,13 @@ def collatz_reference(n):
     return seq
 
 
-def collected_collatz(client, run_id, *card):
-    display = display_text(client, run_id, *card)
-    _, _, sequence = display.partition(":")
-    return [int(value) for value in sequence.split()]
-
-
 def test_collatz_27(collatz):
     c = connect(collatz)
     rid = start_run(c, ["start"])
     st = wait_run(c, rid)
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     expected = collatz_reference(27)
-    # The agreed sequence is kept as a CSV file (a File artifact of record).
-    art = next(a for a in c.call("ArtifactListRequest", runId=rid).artifacts if text(a.output) == "table")
-    content = bytes(c.call("ArtifactReadRequest", artifactId=text(art.artifactId)).bytes).decode()
+    content = artifact_member(c, rid, "record", "collatz.csv").decode()
     rows = list(csv.DictReader(io.StringIO(content)))
     assert [(int(row["k"]), int(row["a_k"]), row["parity"]) for row in rows] == [
         (index, value, "odd" if value % 2 else "even") for index, value in enumerate(expected)
@@ -211,12 +181,10 @@ def test_report_uses_the_requested_heading(tmp_path):
         set_typed_param(c, "render", "heading", heading)
         run_id = start_run(c, ["start"])
         assert wait_run(c, run_id).state == RunState.succeeded
-        report = next(a for a in c.call("ArtifactListRequest", runId=run_id).artifacts if text(a.output) == "report")
-        summary = json.loads(read_pages(c, "ArtifactReadRequest", artifactId=text(report.artifactId),
-                                        member="summary.json", page_bytes=65536))
+        summary = json.loads(artifact_member(c, run_id, "render", "summary.json"))
         assert summary["heading"] == heading and summary["rows"] > 0
 
-        edit_card(env, c, "aggregate", lambda b: set_param(b, "fail_on_purpose", True))
+        set_typed_param(c, "aggregate", "fail_on_purpose", True)
         failed = start_run(c, ["start"])
         assert wait_run(c, failed).state == RunState.failed
         aggregate = c.call("RunRecordRequest", runId=failed, card=path("aggregate"))
@@ -226,14 +194,25 @@ def test_report_uses_the_requested_heading(tmp_path):
         env.cleanup()
 
 
-def live_points(c, rid):
-    rec = c.call("RunRecordRequest", runId=rid, card=path("plot"))
-    if rec.record.display is None:
-        # A cancel that lands in an invocation before it has shown anything ends
-        # that invocation without a display; the last chart is the one before.
-        rec = c.call("RunRecordRequest", runId=rid, card=path("plot"), invocation=rec.record.summary.invocation - 1)
-    series = line_chart_series(rec.record.display.value)
-    return [float(x) for x in series[0].x], rec.aggregate.calls
+def chart_session(client):
+    return text(client.wait_notification(
+        lambda note: (note.valueType == NotificationPayload.ViewOpened
+                      and text(note.value.name) == "line-chart"), timeout=180,
+    ).value.session)
+
+
+def chart_points(client, subscription, session, run_id):
+    update = wait_for_display(client, run_id, lambda value: text(value.session) == session).value.display
+    payload = bytes(update.bytes)
+    return_credit(client, subscription, update)
+    magic, _, index, count = struct.unpack_from("<IQII", payload)
+    assert (magic, index, count) == (0x4D475354, 0, 1)
+    payload = payload[20:]
+    metadata_size, = struct.unpack_from("<I", payload)
+    metadata_end = 4 + metadata_size
+    series = json.loads(payload[4:metadata_end])["series"]
+    values = next(row for row in series if row["id"] == "value")
+    return list(struct.unpack_from(f"<{values['count']}d", payload, metadata_end + values["offset"] * 8))
 
 
 def send_stream_seed(client, subscription):
@@ -253,19 +232,20 @@ def send_stream_seed(client, subscription):
 
 
 def test_live_stream_complete_and_ordered(live):
-    c = connect(live)
+    c = connect(live, client=Client.Web)
     set_typed_param(c, "settings", "interval_ms", 0)
     set_typed_param(c, "settings", "samples", 65)
     subscription = text(c.open().subscriptionId)
     run_id = start_run(c, ["start"], concurrency=2)
     send_stream_seed(c, subscription)
+    session = chart_session(c)
+    for i in range(65):
+        assert chart_points(c, subscription, session, run_id) == list(range(max(0, i - 59), i + 1))
     assert wait_run(c, run_id).state == RunState.succeeded
-    xs, _ = live_points(c, run_id)
-    assert xs == list(range(5, 65))
 
 
 def test_live_stream_keeps_chart_on_cancel_and_resets_on_rerun(live):
-    c = connect(live)
+    c = connect(live, client=Client.Web)
     opened = c.open()
     subscription = text(opened.subscriptionId)
     # Keep the first sample and then wait for cancellation, rather than racing
@@ -275,8 +255,8 @@ def test_live_stream_keeps_chart_on_cancel_and_resets_on_rerun(live):
     src = next(s for s in snap.sources if text(s.path) == source)
     code = bytes(c.call("ProjectFileReadRequest", path=source, atRev=snap.rev).bytes).decode()
     delay = "while (std::chrono::steady_clock::now() < until)"
-    code = code.replace("  auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(s.interval_ms);\n", "")
-    code = code.replace(delay, "while (s.index > 0)")
+    code = code.replace("  auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(s->interval_ms());\n", "")
+    code = code.replace(delay, "while (s->index() > 0)")
     c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test",
            changes=[change("PutSource", path=source, bytes=list(code.encode()), baseHash=text(src.hash))])
     def wait_for_blocked_sample(rid):
@@ -294,12 +274,31 @@ def test_live_stream_keeps_chart_on_cancel_and_resets_on_rerun(live):
     assert st.state == RunState.cancelling
     final = wait_run(c, rid)
     assert final.state == RunState.cancelled
-    xs, calls = live_points(c, rid)
-    assert calls == 1 and xs == [0.0]  # the last chart is kept
+    assert chart_points(c, subscription, chart_session(c), rid) == [0.0]
+    record = c.call("RunRecordRequest", runId=rid, card=path("plot"))
+    assert record.aggregate.calls == 1
     # A new run starts the reused plotting worker's series from the beginning.
     rid2 = start_run(c, ["start"])
     send_stream_seed(c, subscription)
-    first = first_display(c, rid2)
-    assert line_chart_series(first.value.display.value)[0].x == (0.0,)
+    assert chart_points(c, subscription, chart_session(c), rid2) == [0.0]
     c.call("RunCancelRequest", runId=rid2)
     assert wait_run(c, rid2).state == RunState.cancelled
+
+
+@pytest.mark.parametrize("demo,trigger,card,members", [
+    ("casa", "load", "rgb", {"casa-rgb.png", "provenance.json"}),
+    ("gw150914", "start", "chirp", {"chirp.png", "snr.csv"}),
+])
+@pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_NETWORK_DEMOS") != "1",
+                    reason="downloads observations from HEASARC or GWOSC")
+def test_network_demo_keeps_results(tmp_path, demo, trigger, card, members):
+    env = demo_environment(tmp_path, demo, language="en")
+    try:
+        client = connect(env)
+        run_id = start_run(client, trigger)
+        status = wait_run(client, run_id, timeout=900)
+        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        artifact, = client.call("ArtifactListRequest", runId=run_id, card=path(card)).artifacts
+        assert members <= {text(member.path) for member in artifact.members}
+    finally:
+        env.cleanup()
