@@ -92,6 +92,8 @@ auto RunHost(int argc, char** argv) -> int {
         broker_dir = next();
       else if (arg == "--usage-scratch-dir")
         options.environment.run_scratch_directory = next();
+      else if (arg == "--repo-root")
+        options.repo_root = next();
       else if (arg == "--demos-dir")
         options.demos_dir = next();
       else if (arg == "--web-root")

@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(os.environ["TSUGUMI_DEMOS_DIR"])
 
-DEMOS = json.loads((ROOT / "demos" / "ja" / "index.json").read_text())["demos"]
-DEMO_PROJECTS = sorted((ROOT / "demos").rglob("tsugumi.json"))
+DEMOS = json.loads((ROOT / "ja" / "index.json").read_text())["demos"]
+DEMO_PROJECTS = sorted(ROOT.rglob("tsugumi.json"))
 NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
 PROJECT_FIELDS = [
     "formatVersion", "name", "nixPath", "trackedPaths", "agentExclude",
@@ -37,7 +38,7 @@ def test_demo_catalogs_list_the_same_projects():
     ids = [demo["id"] for demo in DEMOS]
     assert len(ids) == len(set(ids))
     for language in ("ja", "en"):
-        directory = ROOT / "demos" / language
+        directory = ROOT / language
         entries = json.loads((directory / "index.json").read_text())["demos"]
         assert [entry["id"] for entry in entries] == ids
         assert {entry["path"] for entry in entries} == {
@@ -46,7 +47,7 @@ def test_demo_catalogs_list_the_same_projects():
 
 
 def test_every_implemented_demo_has_a_field():
-    """The guide's first questions list the demos by field (demos/index.json
+    """The guide's first questions list the demos by field (the demo catalog
     "field"): each implemented demo is in one; a Draft is listed apart."""
     bad = [d["id"] for d in DEMOS if bool(d.get("field", "").strip()) == d["id"].endswith("-draft")]
     assert not bad, bad
@@ -54,8 +55,8 @@ def test_every_implemented_demo_has_a_field():
 
 @pytest.mark.parametrize("demo", ["csharp-calibration", "signal-sweep"])
 def test_localized_demos_share_executable_definitions(demo):
-    japanese = ROOT / "demos" / "ja" / demo
-    english = ROOT / "demos" / "en" / demo
+    japanese = ROOT / "ja" / demo
+    english = ROOT / "en" / demo
     docs = [json.loads((root / "tsugumi.json").read_text()) for root in (japanese, english)]
     for doc in docs:
         del doc["name"]
@@ -69,7 +70,7 @@ def test_localized_demos_share_executable_definitions(demo):
 
 @pytest.mark.parametrize("language", ["ja", "en"])
 def test_demo_locks_and_parameters(language):
-    for manifest in (ROOT / "demos" / language).rglob("tsugumi.json"):
+    for manifest in (ROOT / language).rglob("tsugumi.json"):
         declarations = {entry["name"]: entry["url"] for entry in json.loads(manifest.read_text())["nixPath"]}
         lock = json.loads(manifest.with_name("tsugumi.lock").read_text())
         entries = lock["entries"]

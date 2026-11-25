@@ -1,4 +1,0 @@
----
-title: ruby
-description: Multiplies a typed input; change factor and rerun
----

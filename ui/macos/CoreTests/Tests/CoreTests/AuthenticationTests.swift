@@ -91,7 +91,7 @@ private final class AuthenticationFixture {
                         "--socket-dir", directory.appendingPathComponent("b").path,
                         "--usage-scratch-dir", URL(fileURLWithPath: canonical).appendingPathComponent("scratch").path,
                         "--unix", directory.appendingPathComponent("agent.sock").path,
-                        "--listen", "127.0.0.1:0", "--demos-dir", root.appendingPathComponent("demos").path]
+                        "--listen", "127.0.0.1:0"]
     daemon.standardOutput = FileHandle.nullDevice
     daemon.standardError = FileHandle.nullDevice
     provider.executableURL = URL(fileURLWithPath: "/usr/bin/env")

@@ -1,4 +1,0 @@
----
-title: halve
-description: Halves an even number and sends it back to loop
----

@@ -19,7 +19,7 @@ import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { preparePlayer, finalsFromRun, flowOf, readJson, readLayout, readProject, stepsFromRun } from './build.mjs'
+import { demosDir, preparePlayer, finalsFromRun, flowOf, readJson, readLayout, readProject, stepsFromRun } from './build.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SITE = path.dirname(HERE)
@@ -836,7 +836,7 @@ const SETTINGS = { left: 120, top: 70, width: 1200, height: 760, side: 160, file
 function sourceSvg() {
   const data = casaInWindow()
   const T = SOURCE_T, Z = SETTINGS
-  const dir = path.join(ROOT, 'demos', 'en', 'casa', 'definitions', 'spectrum')
+  const dir = path.join(demosDir(), 'en', 'casa', 'definitions', 'spectrum')
   const code = fs.readFileSync(path.join(dir, 'src', 'main.py'), 'utf8').replace(/\n$/, '')
   const lines = highlighted(code)
   // The call that puts the figure in the Card's display (the docstring names it too: the last one).
@@ -909,7 +909,7 @@ ${lines.slice(first, last).map((l, j) => `<div class="s-line"><span class="s-no"
 /** A Card in Card's inner Workflow as player data: its Cards, wires and layout (read as build.mjs reads a demo), and its
  *  part of the demo's recorded run (the timeline's `<card>/<inner>` entries). */
 function innerDemo(demo, card) {
-  const root = path.join(ROOT, 'demos', 'en', demo)
+  const root = path.join(demosDir(), 'en', demo)
   const inner = path.join(root, 'externals', card)
   const portsOf = readJson(path.join(DATA, 'assets', 'ports.json'), {})
   const { doc, wires, cards } = readProject(inner, portsOf[demo], `${card}/`)
@@ -965,8 +965,8 @@ ${subgraphs.map((id) => `<div class="b-row b-child${id === data.card ? ' on' : '
   })
 }
 
-// The demos of demos/index.json with a recorded run (player-data/index.json says which).
-const shipped = new Set(JSON.parse(fs.readFileSync(path.join(ROOT, 'demos', 'en', 'index.json'), 'utf8')).demos.map((d) => d.id))
+// The demos in the pinned catalog with a recorded run (player-data/index.json says which).
+const shipped = new Set(JSON.parse(fs.readFileSync(path.join(demosDir(), 'en', 'index.json'), 'utf8')).demos.map((d) => d.id))
 const recorded = JSON.parse(fs.readFileSync(path.join(DATA, 'index.json'), 'utf8')).demos.filter((d) => d.recorded && shipped.has(d.id)).map((d) => d.id)
 const ids = process.argv.slice(2).length ? process.argv.slice(2) : recorded
 const write = async (file, spec) => {

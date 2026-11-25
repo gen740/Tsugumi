@@ -1,5 +1,11 @@
 # Capture scripts
 
+Resolve the pinned demo projects before taking screenshots.
+
+```sh
+export TSUGUMI_DEMOS_DIR=$(nix build --no-link --print-out-paths .#demos)
+```
+
 Open a copy of a demo and capture it with `ui/macos/tools/run-ui.sh` (no other Tsugumi may be running).
 
 The published images are in English: `TSUGUMI_UI_LANGUAGE=en` runs the app in English for that launch, and settings after the project folder (`-agent.provider anthropic -agent.model claude-sonnet-5-5`) hold for that launch only. The saved settings are left as they are.
@@ -7,20 +13,20 @@ The published images are in English: `TSUGUMI_UI_LANGUAGE=en` runs the app in En
 The `live-stream.ui` script captures the `plot` Card's panel during the random walk and after the run ends. The `settings` Card opens the **seed** panel when the run starts: when its slider turns blue, click its centre tick to start the stream. The `plot` panel opens when the Card starts receiving samples and retains its last chart.
 
 ```bash
-cp -R demos/en/live-stream /tmp/shot-live && TSUGUMI_UI_LANGUAGE=en ui/macos/tools/run-ui.sh dist/Tsugumi.app ui/macos/tools/screenshots/live-stream.ui /tmp/shots /tmp/shot-live
+cp -R "$TSUGUMI_DEMOS_DIR/en/live-stream" /tmp/shot-live && chmod -R u+w /tmp/shot-live && TSUGUMI_UI_LANGUAGE=en ui/macos/tools/run-ui.sh dist/Tsugumi.app ui/macos/tools/screenshots/live-stream.ui /tmp/shots /tmp/shot-live
 ```
 
 The README's images all at once (`readme.ui`: Cas A's workflow, timeline and card-source, and the thrush's guide with `$demo`, which points at the spectrum Card on the Canvas; the chat makes one request to the model connected in the settings). The README's images are taken with the deep observation (ObsID 114, 520 MB, fetched once on the first run), so rewrite the copy's `load` before capturing:
 
 ```bash
-cp -R demos/en/casa /tmp/shot-readme && python3 ui/macos/tools/screenshots/casa-obsid114.py /tmp/shot-readme && TSUGUMI_UI_LANGUAGE=en ui/macos/tools/run-ui.sh dist/Tsugumi.app ui/macos/tools/screenshots/readme.ui /tmp/shots /tmp/shot-readme \
+cp -R "$TSUGUMI_DEMOS_DIR/en/casa" /tmp/shot-readme && chmod -R u+w /tmp/shot-readme && python3 ui/macos/tools/screenshots/casa-obsid114.py /tmp/shot-readme && TSUGUMI_UI_LANGUAGE=en ui/macos/tools/run-ui.sh dist/Tsugumi.app ui/macos/tools/screenshots/readme.ui /tmp/shots /tmp/shot-readme \
   -agent.provider anthropic -agent.model claude-sonnet-5-5
 ```
 
 The child Workflow's image (`subworkflow.ui`, collatz):
 
 ```bash
-cp -R demos/en/collatz /tmp/shot-sub && TSUGUMI_UI_LANGUAGE=en ui/macos/tools/run-ui.sh dist/Tsugumi.app ui/macos/tools/screenshots/subworkflow.ui /tmp/shots /tmp/shot-sub \
+cp -R "$TSUGUMI_DEMOS_DIR/en/collatz" /tmp/shot-sub && chmod -R u+w /tmp/shot-sub && TSUGUMI_UI_LANGUAGE=en ui/macos/tools/run-ui.sh dist/Tsugumi.app ui/macos/tools/screenshots/subworkflow.ui /tmp/shots /tmp/shot-sub \
   -agent.provider anthropic -agent.model claude-sonnet-5-5
 ```
 

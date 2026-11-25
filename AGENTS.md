@@ -29,7 +29,7 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 | [pack/](pack/) | `tsugumi-pack`: exports a Project as a standalone Mac app ([design](pack/README.md)) |
 | [plugins/](plugins/) | Claude Code plugin; [installation and usage](docs/claude-code.md) |
 | [nix/](nix/) | Runtime, remote worker and CLI packages, Card evaluation entry; flake outputs, checks and development shell. The language SDKs and example templates live in [tsugumi-kit](https://github.com/gen740/tsugumi-kit), pinned in `flake.lock`; templates are copied from the Project (`templates/`) and Host stores ([Templates](docs/CoreAndSDK.md#templates)) |
-| [demos/](demos/) | Matching Japanese and English demos and Drafts (`ja/`, `en/`): change both |
+| [tsugumi-demos](https://github.com/gen740/tsugumi-demos) | Japanese and English demos and Drafts (`ja/`, `en/`), pinned in `flake.lock`. Commit both languages there, then run `nix flake update tsugumi-demos` here. |
 | [tests/](tests/) | Core, host, remote worker, static and prompt tests; [commands and manual tools](tests/README.md). SDK tests live in tsugumi-kit |
 | [docs/](docs/) | User documents ([index](docs/README.md)), assets and [documentation site tooling](docs/site/README.md) |
 

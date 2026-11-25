@@ -70,9 +70,10 @@ auto Event(std::string kind, std::string text = "") -> H::GuideInputT {
   e.text = std::move(text);
   return e;
 }
-const std::filesystem::path root = TSUGUMI_GUIDE_TEST_ROOT;
-auto ReadResource(const std::filesystem::path& relative) -> std::string {
-  const auto path = root / relative;
+const std::filesystem::path guide =
+    std::filesystem::path(TSUGUMI_GUIDE_TEST_ROOT) / "hostd/agent/Shared";
+const std::filesystem::path demos = TSUGUMI_DEMOS_DIR;
+auto ReadResource(const std::filesystem::path& path) -> std::string {
   if (!std::filesystem::is_regular_file(path))
     throw std::runtime_error("Missing guide test resource: " + path.string());
   return Read(path);
@@ -80,10 +81,9 @@ auto ReadResource(const std::filesystem::path& relative) -> std::string {
 
 TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
   for (const auto& language : {"ja", "en"}) {
-    const auto script = Parse(
-        ReadResource(std::filesystem::path("hostd/agent/Shared") /
-                     (std::string(language) == "en" ? "guide-script.en.json"
-                                                    : "guide-script.json")));
+    const auto script = Parse(ReadResource(
+        guide / (std::string(language) == "en" ? "guide-script.en.json"
+                                               : "guide-script.json")));
     const auto tours = Members(script, "/tours");
     std::map<std::string, Dom> steps;
     for (const auto& [demo, tour] : tours) {
@@ -91,15 +91,14 @@ TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
         for (const auto& [id, step] : Members(tour, "/" + std::string(group)))
           steps[demo + "/" + id] = step;
     }
-    const auto index = Parse(
-        ReadResource(std::filesystem::path("demos") / language / "index.json"));
+    const auto index = Parse(ReadResource(demos / language / "index.json"));
     for (const auto& [demo, tour] : tours) {
       (void)tour;
       std::string folder;
       for (const auto& entry : Array(index, "/demos"))
         if (String(entry, "/id") == demo) folder = String(entry, "/path");
       ASSERT_FALSE(folder.empty());
-      const auto dir = std::filesystem::path("demos") / language / folder;
+      const auto dir = demos / language / folder;
       const auto project = Parse(ReadResource(dir / "tsugumi.json"));
       std::set<std::string> cards;
       for (const auto& card : Array(project, "/canvas/cards"))
@@ -138,10 +137,9 @@ TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
         if (h.starts_with("param:")) {
           const auto opened = String(step, "/show/open");
           ASSERT_TRUE(opened.starts_with("card:"));
-          const auto params = ReadResource(
-              dir / "definitions" / opened.substr(5) / "params.nix");
-          const std::regex assignment("(^|[;{])\\s*" + h.substr(6) +
-                                      "\\s*=");
+          const auto params = ReadResource(dir / "definitions" /
+                                           opened.substr(5) / "params.nix");
+          const std::regex assignment("(^|[;{])\\s*" + h.substr(6) + "\\s*=");
           EXPECT_TRUE(std::regex_search(params, assignment));
         }
       }
@@ -164,8 +162,7 @@ class GuideFixture : public AgentFixture {
     // hostd resolves $demo against its installed catalog, never a client list.
     for (const auto& language : {"ja", "en"})
       Write(directory.path / "demos" / language / "index.json",
-            ReadResource(std::filesystem::path("demos") / language /
-                         "index.json"));
+            ReadResource(demos / language / "index.json"));
     AgentFixture::SetUp();
   }
   auto Choose(const H::GuideStateT& s, const std::string& choice,
@@ -214,8 +211,7 @@ TEST_F(GuideFixture,
        TourRunsWithoutConfirmationsThroughFailureRetryChangeAndFarewell) {
   const std::string lang = "ja";
   const std::string demo = "report";
-  const auto script =
-      Parse(ReadResource("hostd/agent/Shared/guide-script.json"));
+  const auto script = Parse(ReadResource(guide / "guide-script.json"));
   const auto next = Members(script, "/tours/report/steps/result/next");
   const auto choose_destination = [&](const H::GuideStateT& state,
                                       std::string_view destination) {
@@ -334,10 +330,9 @@ TEST_F(GuideFixture, DemoCommandDistinguishesUnknownProjectsAndBundledCopies) {
   e.title = "My analysis";
   auto s = Advance(*host, e);
   EXPECT_EQ(s.step, "otherProject");
-  const auto index = Parse(ReadResource("demos/en/index.json"));
+  const auto index = Parse(ReadResource(demos / "en/index.json"));
   for (const auto& demo : Array(index, "/demos"))
-    if (String(demo, "/id") == "report")
-      e.title = String(demo, "/title");
+    if (String(demo, "/id") == "report") e.title = String(demo, "/title");
   s = Advance(*host, e, "desktop", "en");
   ASSERT_EQ(s.step, "report/start");
   ASSERT_NE(s.tour, nullptr);

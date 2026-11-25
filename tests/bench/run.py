@@ -10,7 +10,6 @@ import json
 import os
 from pathlib import Path
 import platform
-import shutil
 import socket
 import subprocess
 import tempfile
@@ -18,6 +17,7 @@ import uuid
 
 from measure_stages import (ROOT, UNAVAILABLE, Daemon, path, print_table, run_once,
                             summarize, summary, text)
+from harness.demos import copy_demo
 from harness.real_cards import PYTHON_BINDINGS
 from projects import SINK, card, conn, write_nix_project as write
 from test_worker_loading import native_card
@@ -297,7 +297,7 @@ def execute_bundle(root, scenario, timeout, remote, runs, metadata):
 def stage_project(root, scenario):
     """Current-format versions of the original stage probe's three workloads."""
     if scenario == "collatz":
-        shutil.copytree(ROOT / "demos/en/collatz", root)
+        copy_demo("en", "collatz", root)
         return root
     if scenario == "builtin-chain":
         definitions = {"trigger": {"type": "trigger"}, "merge": {"type": "merge", "inputs": [{"name": "start"}]}, "sink": SINK}

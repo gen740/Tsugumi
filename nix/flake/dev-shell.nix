@@ -41,6 +41,7 @@
               nodejs
             ]
             ++ lib.optionals stdenv.hostPlatform.isLinux [ bubblewrap ];
+          TSUGUMI_DEMOS_DIR = config.packages.demos;
           MACOSX_DEPLOYMENT_TARGET = "26.0";
           # webgpu.yml for the dawn view generator (ui/shared/dawn).
           TSUGUMI_WEBGPU_HEADERS = inputs.webgpu-headers;

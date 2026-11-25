@@ -22,6 +22,7 @@ runCommand "tsugumi-${lib.fileContents ../VERSION}"
     cp -R ${../third-party}/. $out/share/licenses/
     ln -s ${web}/share/tsugumi $out/share/tsugumi
     makeWrapper ${tsugumid}/bin/tsugumi $out/bin/tsugumi \
+      --set TSUGUMI_DEMOS_DIR ${web}/share/tsugumi/demos \
       --set-default TSUGUMI_REPO ${web}/share/tsugumi \
       --set-default TSUGUMID ${tsugumid}/bin/tsugumid \
       --set-default TSUGUMI_HOSTD ${tsugumid}/bin/tsugumi-hostd \

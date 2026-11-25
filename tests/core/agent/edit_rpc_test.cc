@@ -85,8 +85,8 @@ TEST_F(AgentProjectFixture,
   const auto conversation = Conversation("reference-draft-edit");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
-  const auto reference = Read(std::filesystem::path(TSUGUMI_GUIDE_TEST_ROOT) /
-                              "demos/reference/cards.md");
+  const auto reference = Read(std::filesystem::path(TSUGUMI_DEMOS_DIR) /
+                              "reference/cards.md");
   const auto fence = reference.find("```json\n");
   ASSERT_NE(fence, std::string::npos);
   const auto begin = fence + std::string("```json\n").size();

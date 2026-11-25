@@ -1,4 +1,0 @@
----
-title: generate
-description: seed から売上表の CSV を作る
----

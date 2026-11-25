@@ -1,4 +1,0 @@
----
-title: compare
-description: Checks that every language's sequence is the same, and fails if not
----

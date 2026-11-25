@@ -13,7 +13,7 @@
 namespace tsugumi::cli {
 
 struct Launch {
-  std::filesystem::path root;      // checkout or installed runtime (VERSION, demos)
+  std::filesystem::path root;      // checkout or installed runtime (VERSION)
   std::filesystem::path hostd;
   std::filesystem::path state;     // hostd's state folder
   std::filesystem::path web_root;  // the built page

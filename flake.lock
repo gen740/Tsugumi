@@ -58,8 +58,25 @@
         "flake-parts": "flake-parts",
         "hosq": "hosq",
         "nixpkgs": "nixpkgs",
+        "tsugumi-demos": "tsugumi-demos",
         "tsugumi-kit": "tsugumi-kit",
         "webgpu-headers": "webgpu-headers"
+      }
+    },
+    "tsugumi-demos": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1795620004,
+        "narHash": "sha256-pRzDuk/6pCqu3T3lAxVrCAJnKZTbzuhaV7HtKxMPJbc=",
+        "owner": "gen740",
+        "repo": "tsugumi-demos",
+        "rev": "e9641613ee6b8e3f789d04ca049de14cf87ce39d",
+        "type": "github"
+      },
+      "original": {
+        "owner": "gen740",
+        "repo": "tsugumi-demos",
+        "type": "github"
       }
     },
     "tsugumi-kit": {

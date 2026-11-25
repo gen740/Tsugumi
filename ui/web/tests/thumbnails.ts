@@ -11,9 +11,8 @@ import type { DemoData } from '../src/ui/demoPlayer'
 
 const { CardGeometry } = await import('../src/model/canvasKit')
 const { Canvas, IDLE } = await import('../src/ui/demoPlayer')
-const root = process.argv[2]
 const data = path.join(process.env.TSUGUMI_SITE_PLAYER_DIR!, 'player-data')
-const ids = JSON.parse(fs.readFileSync(path.join(root, 'demos', 'ja', 'index.json'), 'utf8')).demos.map((d: { id: string }) => d.id) as string[]
+const ids = JSON.parse(fs.readFileSync(path.join(process.env.TSUGUMI_DEMOS_DIR!, 'ja', 'index.json'), 'utf8')).demos.map((d: { id: string }) => d.id) as string[]
 assert.ok(ids.length > 0)
 
 const node = (kind: CardKind, inputs = [] as { name: string }[], outputs = [] as { name: string }[]) => ({

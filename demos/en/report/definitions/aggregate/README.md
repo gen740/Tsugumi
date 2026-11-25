@@ -1,4 +1,0 @@
----
-title: aggregate
-description: Totals sales and quantity per region (fail_on_purpose reproduces a failure)
----

@@ -1,4 +1,0 @@
----
-title: loop
-description: Merges the first state and the state generate returns, and passes it to generate
----

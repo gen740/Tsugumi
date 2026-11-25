@@ -1,5 +1,0 @@
-include "tsugumi/artifact.fbs";
-
-namespace collatz;
-table Outputs { table:tsugumi.Artifact (required); }
-root_type Outputs;

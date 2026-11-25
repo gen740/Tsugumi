@@ -19,14 +19,14 @@ git -C "$repo" archive --format=tar --prefix=tsugumi/ HEAD \
   hostd/CMakeLists.txt hostd/cmake hostd/src hostd/cache hostd/private hostd/agent/src hostd/agent/private hostd/agent/Shared \
   client/CMakeLists.txt client/cmake client/include client/src cli/CMakeLists.txt cli/src workerd \
   protocol/CMakeLists.txt protocol/include protocol/trace_codec.cc 'protocol/*.fbs' \
-  nix/core.nix nix/core-source.nix nix/cli.nix nix/web.nix nix/client-wasm.nix nix/card-entry.nix nix/worker.nix \
+  nix/core.nix nix/core-source.nix nix/cli.nix nix/demos.nix nix/web.nix nix/client-wasm.nix nix/card-entry.nix nix/worker.nix \
   third-party \
   vm/guest/CMakeLists.txt vm/guest/src vm/guest/vm-system.nix \
   ui/web/package.json ui/web/package-lock.json 'ui/web/tsconfig*.json' \
-  ui/web/scripts/build.mjs ui/web/scripts/build-client.sh ui/web/scripts/gen.sh ui/web/scripts/check-boundaries.mjs \
+  ui/web/scripts/build.mjs ui/web/scripts/install-viewer.mjs ui/web/scripts/build-client.sh ui/web/scripts/gen.sh ui/web/scripts/check-boundaries.mjs \
   ui/web/src ui/web/shared ui/web/third-party ui/shared/modules \
-  ui/shared/i18n/en.json \
-  demos docs/CardGuide.md docs/site/player/build.mjs docs/site/player/narration.json \
+  ui/shared/i18n/en.json ui/shared/dawn \
+  docs/CardGuide.md docs/site/player/build.mjs docs/site/player/narration.json \
   docs/site/player-data/assets docs/assets/tsugumi-icon.svg | tar -xf - -C "$stage"
 rm "$stage/tsugumi/hostd/agent/Shared/generate.py" "$stage/tsugumi/hostd/agent/Shared/mcp-transport.md"
 find "$stage" -type f -name README.md -delete
@@ -46,14 +46,18 @@ cat >> "$stage/tsugumi/flake.nix" <<'NIX'
         { pkgs, ... }:
         let
           tsugumid = pkgs.callPackage ./nix/core.nix {
-            hosq = inputs.hosq;
+            inherit (inputs) hosq webgpu-headers;
             cardNixpkgs = {
               rev = inputs.nixpkgs.rev;
               narHash = inputs.nixpkgs.narHash;
             };
           };
           client-wasm = pkgs.callPackage ./nix/client-wasm.nix { };
-          web = pkgs.callPackage ./nix/web.nix { inherit client-wasm; };
+          demos = pkgs.callPackage ./nix/demos.nix { inherit (inputs) tsugumi-demos; };
+          web = pkgs.callPackage ./nix/web.nix {
+            inherit client-wasm demos;
+            inherit (inputs) webgpu-headers;
+          };
           cli = pkgs.callPackage ./nix/cli.nix { inherit tsugumid web; };
         in
         {

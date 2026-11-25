@@ -22,6 +22,12 @@ const DATA = path.join(SITE, 'player-data')
 const ASSETS = path.join(DATA, 'assets')
 const require = createRequire(path.join(WEB, 'package.json'))
 
+export function demosDir() {
+  const directory = process.env.TSUGUMI_DEMOS_DIR
+  if (!directory) throw new Error('Set TSUGUMI_DEMOS_DIR to the pinned demos tree (provided by nix develop)')
+  return path.resolve(directory)
+}
+
 // Importing the readers or selecting a shared build does not load Web dependencies.
 let prepared
 export function preparePlayer() {
@@ -447,7 +453,7 @@ async function main() {
   const guideDir = fs.mkdtempSync(path.join(process.env.TMPDIR ?? '/tmp', 'tsg-guide-'))
   writeGuideProject(guideDir)
   const entries = [
-    ...readJson(path.join(ROOT, 'demos', 'en', 'index.json')).demos.map((d) => ({ ...d, root: path.join(ROOT, 'demos', 'en', d.path) })),
+    ...readJson(path.join(demosDir(), 'en', 'index.json')).demos.map((d) => ({ ...d, root: path.join(demosDir(), 'en', d.path) })),
     { id: 'card-guide', title: 'Your first Card', description: 'start → convert from the Card guide.', tags: ['C++', 'Guide'], root: guideDir },
   ]
   const index = []

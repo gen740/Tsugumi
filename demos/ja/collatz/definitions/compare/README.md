@@ -1,4 +1,0 @@
----
-title: compare
-description: 各言語の数列が同じか確かめ、違えば失敗にする
----

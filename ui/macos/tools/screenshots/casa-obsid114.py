@@ -1,5 +1,5 @@
 """Points a copy of the Cas A demo at the deep observation (ObsID 114, 50 ks):
-   python3 ui/macos/tools/screenshots/casa-obsid114.py <copy of demos/en/casa>"""
+   python3 ui/macos/tools/screenshots/casa-obsid114.py <copy of the pinned en/casa project>"""
 import json
 import sys
 from pathlib import Path

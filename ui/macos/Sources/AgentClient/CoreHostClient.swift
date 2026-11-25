@@ -214,9 +214,12 @@ public actor CoreHostClient {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     let daemon = Process()
     daemon.executableURL = try executable("tsugumi-hostd", environment: "TSUGUMI_HOSTD", component: "hostd")
-    let demos = Bundle.main.url(forResource: "demos", withExtension: nil) ?? Self.repository.appendingPathComponent("demos")
+    let bundledDemos = Bundle.main.url(forResource: "demos", withExtension: nil)
+    let demos = bundledDemos?.path ?? ProcessInfo.processInfo.environment["TSUGUMI_DEMOS_DIR"]
+    let root = bundledDemos?.deletingLastPathComponent() ?? Self.repository
     daemon.arguments = ["--ensure", "--state-dir", state.path, "--unix", directory.appendingPathComponent("agent.sock").path,
-                        "--listen", "127.0.0.1:0", "--demos-dir", demos.path]
+                        "--listen", "127.0.0.1:0", "--repo-root", root.path]
+    if let demos, !demos.isEmpty { daemon.arguments! += ["--demos-dir", demos] }
     daemon.arguments! += runtimeArguments ?? HostRuntimeConfiguration.arguments(support: state.deletingLastPathComponent())
     // The built Web UI the app carries: the host serves it whichever client started it.
     let web = ProcessInfo.processInfo.environment["TSUGUMI_WEB_ROOT"].map { URL(fileURLWithPath: $0) }

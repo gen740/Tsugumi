@@ -1,4 +1,0 @@
----
-title: summary
-description: 集約した比較のうち検出できた件数を数える
----

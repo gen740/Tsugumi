@@ -30,6 +30,11 @@
     inputs.flake-parts.follows = "flake-parts";
   };
 
+  inputs.tsugumi-demos = {
+    url = "github:gen740/tsugumi-demos";
+    flake = false;
+  };
+
   outputs =
     inputs:
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {

@@ -117,7 +117,8 @@ cp -R "$repo/build-host/Resources/formatters" "$app/Contents/Resources/formatter
 cp -R "$repo/build-host/Resources/git" "$app/Contents/Resources/git"
 cp -R "$repo/build-host/Resources/git-licenses" "$licenses/git"
 cp -R "$repo/build-host/Resources/view-licenses/". "$licenses/"
-cp -R "$repo/demos" "$app/Contents/Resources/demos"
+cp -R "$web_out/share/tsugumi/demos" "$app/Contents/Resources/demos"
+chmod -R u+w "$app/Contents/Resources/demos"
 # The page hostd serves (CoreHostClient passes it as --web-root) and its licences.
 cp -R "$web_out/share/tsugumi/ui/web/dist/public" "$app/Contents/Resources/web"
 mkdir -p "$licenses/web"
