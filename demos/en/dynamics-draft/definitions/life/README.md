@@ -1,9 +1,0 @@
----
-title: life
-description: Advance the Game of Life
----
-
-Uses the size and seed in its params.nix. Fills a board of size/4 cells per side (a torus joined top to bottom and left to right) at density 0.3 with random numbers by seed, advances Conway's Game of Life 200 generations, and shows the final board as a PNG at 4 pixels per cell. The number of generations and the density are parameters. First asserts that a board with a single glider, advanced 4 generations, moves it one cell diagonally. Logs the first, last and maximum number of live cells per generation. Uses numpy and pillow.
-
-Planned inputs:
-- start: the Trigger

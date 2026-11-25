@@ -1,6 +1,0 @@
----
-title: tariffs
-description: The shape of the tariff, and operation
----
-
-Runs the same battery optimally under four contracts (flat with exports at the same price, flat with cheaper exports, time-of-use, market-linked) and compares the saving, the number of cycles and how the stored energy moves.

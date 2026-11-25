@@ -1,4 +1,0 @@
----
-title: aggregate
-description: 観測値の平均・最小値・最大値を計算する。
----

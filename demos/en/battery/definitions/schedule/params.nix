@@ -1,3 +1,0 @@
-{
-  tariff = "spot";
-}

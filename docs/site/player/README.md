@@ -34,12 +34,10 @@ Recording runs is a separate step. It needs a `tsugumid` build and Nix (the firs
 
 ```sh
 # The default is <repo>/build. For a build elsewhere, set TSUGUMI_BUILD_DIR
-# Runs every demo except the Drafts, isolated (Seatbelt)
+# Record the demos that can run without a person interacting with a view.
 nix develop --command python3 docs/site/player/harvest.py --ports \
-  report collatz live-stream plots casa card-guide \
-  gw150914 protein-6lu7 exoplanet-transit seismic-trench \
-  mnist-classifiers newton pharmacokinetics max-flow dose-response molecules cell-count \
-  survival meta-analysis rna-seq simpson battery gillespie heat-inverse ecology-models
+  report collatz signal-sweep live-stream casa gw150914 max-flow \
+  csharp-calibration ruby-pipeline go-pipeline rust-pipeline card-guide
 node docs/site/player/build.mjs
 ```
 

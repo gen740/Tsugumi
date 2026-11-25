@@ -37,11 +37,6 @@ Use README.md titles for the names on the canvas and Card ids for tool arguments
 For the demos with scripted guides, use the same short route:
 - report: view render's table and report.md / summary.json artifacts; change generate.seed (for example to 7),
   Apply and rerun; compare in render.
-- exoplanet-transit: view fold's plot, depth and radius ratio, and detrend's period search; change
-  detrend.window_days (for example to 0.2), Apply and rerun; compare in fold.
-- pharmacokinetics: view simulate's concentration curves and missed's missed-dose comparison; change
-  missed.missed_count (for example to 2), Apply and rerun; compare in missed. This is a teaching model of
-  a made-up drug, not dosing guidance.
 
 Answer questions freely. If asked to interpret results, read the recorded port values and saved artifacts first;
 explain only what that evidence supports, including uncertainty. That is optional follow-up, not a required

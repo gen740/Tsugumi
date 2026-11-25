@@ -1,6 +1,0 @@
----
-title: generate
-description: Make synthetic plate data
----
-
-Makes synthetic data for the made-up compounds A and B: four-parameter logistic curves with true parameters, plus normal noise, from random numbers by seed. concentrations concentrations, diluted dilution-fold from top_um, with replicates replicates each. These are not real drugs, and this is not medical advice.

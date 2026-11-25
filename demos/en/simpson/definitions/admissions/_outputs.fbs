@@ -1,5 +1,0 @@
-include "tsugumi/artifact.fbs";
-
-namespace simpson;
-table Outputs { admissions:tsugumi.Artifact (required); }
-root_type Outputs;

@@ -1,5 +1,0 @@
-include "tsugumi/artifact.fbs";
-
-namespace simpson;
-table Outputs { penguins:tsugumi.Artifact (required); }
-root_type Outputs;

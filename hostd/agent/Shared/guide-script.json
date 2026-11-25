@@ -24,13 +24,11 @@
               }
             ],
             "choices": [
-              "ほかのデモ",
               "もっと詳しく"
             ]
           },
           "text": "「Data to report」は、表を作って集計し、レポートに残すまでを Card でつないだ定番のデモです。\n\nいまは決まった案内だけできます（通信も料金もかかりません）。初回の準備か設定の「API」で Claude（Anthropic の API キー）か Codex（OpenAI の API キーか ChatGPT のサインイン）とつなぐと、興味に合わせて選んだり、自由な質問に答えたりできます。",
           "next": {
-            "ほかのデモ": "exoplanet-transit/pick",
             "もっと詳しく": "about"
           }
         },
@@ -44,15 +42,9 @@
                 "demo": "report",
                 "label": "このデモを開く"
               }
-            ],
-            "choices": [
-              "ほかのデモ"
             ]
           },
-          "text": "seed から作った売上の CSV を Python で地域ごとに集計し、Markdown と JSON のレポートを成果物に残します。保管には Card in Card（externals/<id>/ に子 Workflow を持つ Card）を使い、わざと失敗させるスイッチもあります。",
-          "next": {
-            "ほかのデモ": "exoplanet-transit/pick"
-          }
+          "text": "seed から作った売上の CSV を Python で地域ごとに集計し、Markdown と JSON のレポートを成果物に残します。保管には Card in Card（externals/<id>/ に子 Workflow を持つ Card）を使い、わざと失敗させるスイッチもあります。"
         }
       },
       "steps": {
@@ -141,292 +133,6 @@
           }
         }
       }
-    },
-    "exoplanet-transit": {
-      "keywords": [
-        "天文",
-        "宇宙",
-        "惑星",
-        "星",
-        "地震",
-        "タンパク",
-        "物理",
-        "観測",
-        "画像"
-      ],
-      "home": {
-        "pick": {
-          "show": {
-            "highlight": "demo:exoplanet-transit",
-            "say": "「Kepler-6 b」は、宇宙望遠鏡の観測データから系外惑星の大きさを求める天文のデモです。",
-            "actions": [
-              {
-                "kind": "open_demo",
-                "demo": "exoplanet-transit",
-                "label": "このデモを開く"
-              }
-            ],
-            "choices": [
-              "ほかのデモ",
-              "もっと詳しく"
-            ]
-          },
-          "text": "「Kepler-6 b」は、宇宙望遠鏡の観測データから系外惑星の大きさを求める天文のデモです。\n\nいまは決まった案内だけできます（通信も料金もかかりません）。初回の準備か設定の「API」で Claude（Anthropic の API キー）か Codex（OpenAI の API キーか ChatGPT のサインイン）とつなぐと、興味に合わせて選んだり、自由な質問に答えたりできます。",
-          "next": {
-            "ほかのデモ": "pharmacokinetics/pick",
-            "もっと詳しく": "about"
-          }
-        },
-        "about": {
-          "show": {
-            "highlight": "demo:exoplanet-transit",
-            "say": "Kepler 宇宙望遠鏡が記録した星の明るさ（ライトカーブ）を取り、惑星が星の前を横切るときの小さな減光を探して、その深さから惑星と星の半径の比を求めます。",
-            "actions": [
-              {
-                "kind": "open_demo",
-                "demo": "exoplanet-transit",
-                "label": "このデモを開く"
-              }
-            ],
-            "choices": [
-              "ほかのデモ"
-            ]
-          },
-          "text": "Kepler 宇宙望遠鏡が記録した星の明るさ（ライトカーブ）を取り、惑星が星の前を横切るときの小さな減光を探して、その深さから惑星と星の半径の比を求めます。データは公開アーカイブ（MAST）からネットワーク越しに取ります。",
-          "next": {
-            "ほかのデモ": "pharmacokinetics/pick"
-          }
-        }
-      },
-      "steps": {
-        "start": {
-          "show": {
-            "highlight": "run",
-            "say": "このデモは星の明るさの記録を解析します。実行したら fold を開き、位相で折り畳んだ図と、減光の深さ・半径比の推定値を見てみましょう。",
-            "actions": [
-              {
-                "kind": "run",
-                "label": "実行する"
-              }
-            ]
-          },
-          "finished": "result"
-        },
-        "result": {
-          "show": {
-            "highlight": "card:fold",
-            "say": "fold を開くと図・減光の深さ・半径比、detrend を開くと周期の探索を見られます。同じ設定のまま再実行して比べたり、トレンド除去の窓幅を変えて試したりできます。",
-            "actions": [
-              {
-                "kind": "run",
-                "label": "実行する"
-              }
-            ],
-            "choices": [
-              "パラメータを変えてみる",
-              "終了する"
-            ]
-          },
-          "next": {
-            "パラメータを変えてみる": "change",
-            "終了する": "farewell"
-          },
-          "finished": "result"
-        },
-        "change": {
-          "show": {
-            "open": "card:detrend",
-            "highlight": "param:window_days",
-            "say": "detrend の window_days を 0.2 など試したい値に変え、「適用」で保存してから再実行しましょう。fold を開いて比べられます。",
-            "actions": [
-              {
-                "kind": "run",
-                "label": "実行する"
-              }
-            ]
-          },
-          "finished": "result"
-        },
-        "failed": {
-          "show": {
-            "highlight": "logs",
-            "say": "実行は成功せずに終了しました。ログで理由を見て、原因に対処したら再実行できます。",
-            "actions": [
-              {
-                "kind": "run",
-                "label": "実行する"
-              }
-            ],
-            "choices": [
-              "終了する"
-            ]
-          },
-          "next": {
-            "終了する": "farewell"
-          },
-          "finished": "result"
-        },
-        "farewell": {
-          "show": {
-            "highlight": "chat",
-            "say": "このコピーは自由に編集できます。案内はいつでも $demo で呼べます。",
-            "actions": [
-              {
-                "kind": "show_demos",
-                "label": "ほかのデモ"
-              },
-              {
-                "kind": "new_project",
-                "label": "新規プロジェクト"
-              }
-            ],
-            "endTour": true
-          }
-        }
-      }
-    },
-    "pharmacokinetics": {
-      "keywords": [
-        "薬",
-        "医",
-        "生物",
-        "数値",
-        "微分",
-        "シミュ",
-        "グラフ",
-        "ライブ",
-        "統計",
-        "化学"
-      ],
-      "home": {
-        "pick": {
-          "show": {
-            "highlight": "demo:pharmacokinetics",
-            "say": "「薬物動態」は、架空の薬の血中濃度を微分方程式で計算し、飲み方を比べる数値計算のデモです。",
-            "actions": [
-              {
-                "kind": "open_demo",
-                "demo": "pharmacokinetics",
-                "label": "このデモを開く"
-              }
-            ],
-            "choices": [
-              "ほかのデモ",
-              "もっと詳しく"
-            ]
-          },
-          "text": "「薬物動態」は、架空の薬の血中濃度を微分方程式で計算し、飲み方を比べる数値計算のデモです。\n\nいまは決まった案内だけできます（通信も料金もかかりません）。初回の準備か設定の「API」で Claude（Anthropic の API キー）か Codex（OpenAI の API キーか ChatGPT のサインイン）とつなぐと、興味に合わせて選んだり、自由な質問に答えたりできます。",
-          "next": {
-            "ほかのデモ": "report/pick",
-            "もっと詳しく": "about"
-          }
-        },
-        "about": {
-          "show": {
-            "highlight": "demo:pharmacokinetics",
-            "say": "架空の薬の投与計画を比べる学習用のモデルです。simulate の濃度の曲線や missed の飲み忘れの比較図を見られます。投薬の指針ではありません。",
-            "actions": [
-              {
-                "kind": "open_demo",
-                "demo": "pharmacokinetics",
-                "label": "このデモを開く"
-              }
-            ],
-            "choices": [
-              "ほかのデモ"
-            ]
-          },
-          "next": {
-            "ほかのデモ": "report/pick"
-          }
-        }
-      },
-      "steps": {
-        "start": {
-          "show": {
-            "highlight": "run",
-            "say": "このデモは架空の薬の投与計画を比較します。実行したら simulate の濃度の曲線と missed の飲み忘れの比較図を開いてみましょう。学習用のモデルで、投薬の指針ではありません。",
-            "actions": [
-              {
-                "kind": "run",
-                "label": "実行する"
-              }
-            ]
-          },
-          "finished": "result"
-        },
-        "result": {
-          "show": {
-            "highlight": "card:missed",
-            "say": "missed の飲み忘れの比較図と simulate の濃度の曲線を開いてみましょう。同じ設定のまま再実行して比べたり、missed_count を変えて試したりできます。",
-            "actions": [
-              {
-                "kind": "run",
-                "label": "実行する"
-              }
-            ],
-            "choices": [
-              "パラメータを変えてみる",
-              "終了する"
-            ]
-          },
-          "next": {
-            "パラメータを変えてみる": "change",
-            "終了する": "farewell"
-          },
-          "finished": "result"
-        },
-        "change": {
-          "show": {
-            "open": "card:missed",
-            "highlight": "param:missed_count",
-            "say": "missed の missed_count を 2 など試したい値に変え、「適用」で保存してから再実行しましょう。missed を開いて比べられます。",
-            "actions": [
-              {
-                "kind": "run",
-                "label": "実行する"
-              }
-            ]
-          },
-          "finished": "result"
-        },
-        "failed": {
-          "show": {
-            "highlight": "logs",
-            "say": "実行は成功せずに終了しました。ログで理由を見て、原因に対処したら再実行できます。",
-            "actions": [
-              {
-                "kind": "run",
-                "label": "実行する"
-              }
-            ],
-            "choices": [
-              "終了する"
-            ]
-          },
-          "next": {
-            "終了する": "farewell"
-          },
-          "finished": "result"
-        },
-        "farewell": {
-          "show": {
-            "highlight": "chat",
-            "say": "このコピーは自由に編集できます。案内はいつでも $demo で呼べます。",
-            "actions": [
-              {
-                "kind": "show_demos",
-                "label": "ほかのデモ"
-              },
-              {
-                "kind": "new_project",
-                "label": "新規プロジェクト"
-              }
-            ],
-            "endTour": true
-          }
-        }
-      }
     }
   },
   "noConnection": {
@@ -447,25 +153,15 @@
   },
   "otherProject": {
     "show": {
-      "say": "決まった案内があるのは、この三つのデモのコピーだけです。開くと案内を始めます。",
+      "say": "「データからレポートへ」には固定のガイドがあります。コピーを開くと始まります。",
       "actions": [
         {
           "kind": "open_demo",
           "demo": "report",
           "label": "Data to report"
-        },
-        {
-          "kind": "open_demo",
-          "demo": "exoplanet-transit",
-          "label": "Kepler-6 b"
-        },
-        {
-          "kind": "open_demo",
-          "demo": "pharmacokinetics",
-          "label": "薬物動態"
         }
       ]
     },
-    "text": "決まった案内があるのは、この三つのデモのコピーだけです。開くと案内を始めます。\n\n初回の準備か設定の「API」で Claude か Codex（ChatGPT）とつなぐと、どのプロジェクトでも案内したり、質問に答えたりできます。"
+    "text": "「データからレポートへ」には固定のガイドがあります。コピーを開くと始まります。\n\n初回の準備か設定の「API」で Claude か Codex（ChatGPT）とつなぐと、どのプロジェクトでも案内したり、質問に答えたりできます。"
   }
 }

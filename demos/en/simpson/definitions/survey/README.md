@@ -1,6 +1,0 @@
----
-title: survey
-description: Compare the three stratifications side by side
----
-
-Lays out r and its 95% confidence interval for each stratum of species, sex and island in one figure, showing which stratifications reverse and which do not.

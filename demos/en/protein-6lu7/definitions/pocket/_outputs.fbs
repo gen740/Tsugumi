@@ -1,5 +1,0 @@
-include "tsugumi/artifact.fbs";
-
-namespace protein;
-table Outputs { pocket:tsugumi.Artifact (required); }
-root_type Outputs;

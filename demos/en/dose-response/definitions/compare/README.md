@@ -1,6 +1,0 @@
----
-title: compare
-description: Comparing the compounds (relative potency)
----
-
-Finds the ratio of the EC50s (relative potency) and its 95% interval from the bootstrap samples, and plots them. If the interval of the difference in Hill slopes does not contain 0, the curves are not parallel and the potency ratio depends on the level of effect.

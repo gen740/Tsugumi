@@ -24,13 +24,11 @@
               }
             ],
             "choices": [
-              "Other demos",
               "Tell me more"
             ]
           },
           "text": "\"Data to report\" is the classic demo that connects, with Cards, making a table, aggregating it and keeping a report.\n\nFor now I can only give the fixed guides (no communication, no charge). Connect Claude (an Anthropic API key) or Codex (an OpenAI API key or ChatGPT sign-in) on first start or under \"API\" in the settings, and I can choose to suit your interests and answer any question.",
           "next": {
-            "Other demos": "exoplanet-transit/pick",
             "Tell me more": "about"
           }
         },
@@ -44,15 +42,9 @@
                 "demo": "report",
                 "label": "Open this demo"
               }
-            ],
-            "choices": [
-              "Other demos"
             ]
           },
-          "text": "It aggregates a sales CSV made from a seed by region with Python, and keeps Markdown and JSON reports as artifacts. It files them with a Card in Card (a Card whose child Workflow lives at externals/<id>/), and has a switch to make it fail on purpose.",
-          "next": {
-            "Other demos": "exoplanet-transit/pick"
-          }
+          "text": "It aggregates a sales CSV made from a seed by region with Python, and keeps Markdown and JSON reports as artifacts. It files them with a Card in Card (a Card whose child Workflow lives at externals/<id>/), and has a switch to make it fail on purpose."
         }
       },
       "steps": {
@@ -141,292 +133,6 @@
           }
         }
       }
-    },
-    "exoplanet-transit": {
-      "keywords": [
-        "astronomy",
-        "space",
-        "planet",
-        "star",
-        "earthquake",
-        "protein",
-        "physics",
-        "observation",
-        "image"
-      ],
-      "home": {
-        "pick": {
-          "show": {
-            "highlight": "demo:exoplanet-transit",
-            "say": "\"Kepler-6 b\" is an astronomy demo that finds the size of an exoplanet from a space telescope's observations.",
-            "actions": [
-              {
-                "kind": "open_demo",
-                "demo": "exoplanet-transit",
-                "label": "Open this demo"
-              }
-            ],
-            "choices": [
-              "Other demos",
-              "Tell me more"
-            ]
-          },
-          "text": "\"Kepler-6 b\" is an astronomy demo that finds the size of an exoplanet from a space telescope's observations.\n\nFor now I can only give the fixed guides (no communication, no charge). Connect Claude (an Anthropic API key) or Codex (an OpenAI API key or ChatGPT sign-in) on first start or under \"API\" in the settings, and I can choose to suit your interests and answer any question.",
-          "next": {
-            "Other demos": "pharmacokinetics/pick",
-            "Tell me more": "about"
-          }
-        },
-        "about": {
-          "show": {
-            "highlight": "demo:exoplanet-transit",
-            "say": "It takes the brightness of a star recorded by the Kepler space telescope (a light curve), looks for the small dip when a planet crosses in front of the star, and from its depth finds the ratio of the planet's radius to the star's.",
-            "actions": [
-              {
-                "kind": "open_demo",
-                "demo": "exoplanet-transit",
-                "label": "Open this demo"
-              }
-            ],
-            "choices": [
-              "Other demos"
-            ]
-          },
-          "text": "It takes the brightness of a star recorded by the Kepler space telescope (a light curve), looks for the small dip when a planet crosses in front of the star, and from its depth finds the ratio of the planet's radius to the star's. The data is fetched over the network from a public archive (MAST).",
-          "next": {
-            "Other demos": "pharmacokinetics/pick"
-          }
-        }
-      },
-      "steps": {
-        "start": {
-          "show": {
-            "highlight": "run",
-            "say": "This demo analyses a star’s light curve. Run it, then open fold for the folded plot and the estimates of transit depth and radius ratio.",
-            "actions": [
-              {
-                "kind": "run",
-                "label": "Run it"
-              }
-            ]
-          },
-          "finished": "result"
-        },
-        "result": {
-          "show": {
-            "highlight": "card:fold",
-            "say": "Open fold for the plot, depth and radius ratio; detrend has the period search. You can run again with the same settings to compare, or try a different detrending window.",
-            "actions": [
-              {
-                "kind": "run",
-                "label": "Run it"
-              }
-            ],
-            "choices": [
-              "Try another parameter",
-              "Finish"
-            ]
-          },
-          "next": {
-            "Try another parameter": "change",
-            "Finish": "farewell"
-          },
-          "finished": "result"
-        },
-        "change": {
-          "show": {
-            "open": "card:detrend",
-            "highlight": "param:window_days",
-            "say": "Change detrend’s window_days to 0.2, or another value you want to try, and save with Apply. Then run again and compare in fold.",
-            "actions": [
-              {
-                "kind": "run",
-                "label": "Run it"
-              }
-            ]
-          },
-          "finished": "result"
-        },
-        "failed": {
-          "show": {
-            "highlight": "logs",
-            "say": "The run ended without success. Open the logs for the reason; you can fix the cause and retry.",
-            "actions": [
-              {
-                "kind": "run",
-                "label": "Run it"
-              }
-            ],
-            "choices": [
-              "Finish"
-            ]
-          },
-          "next": {
-            "Finish": "farewell"
-          },
-          "finished": "result"
-        },
-        "farewell": {
-          "show": {
-            "highlight": "chat",
-            "say": "You can edit this copy freely. Call me any time with $demo.",
-            "actions": [
-              {
-                "kind": "show_demos",
-                "label": "Other demos"
-              },
-              {
-                "kind": "new_project",
-                "label": "New Project"
-              }
-            ],
-            "endTour": true
-          }
-        }
-      }
-    },
-    "pharmacokinetics": {
-      "keywords": [
-        "drug",
-        "medic",
-        "biology",
-        "numeric",
-        "differential",
-        "simulat",
-        "graph",
-        "live",
-        "statistic",
-        "chemi"
-      ],
-      "home": {
-        "pick": {
-          "show": {
-            "highlight": "demo:pharmacokinetics",
-            "say": "\"Pharmacokinetics\" is a numerical demo that computes the blood concentration of a made-up drug with differential equations and compares ways of taking it.",
-            "actions": [
-              {
-                "kind": "open_demo",
-                "demo": "pharmacokinetics",
-                "label": "Open this demo"
-              }
-            ],
-            "choices": [
-              "Other demos",
-              "Tell me more"
-            ]
-          },
-          "text": "\"Pharmacokinetics\" is a numerical demo that computes the blood concentration of a made-up drug with differential equations and compares ways of taking it.\n\nFor now I can only give the fixed guides (no communication, no charge). Connect Claude (an Anthropic API key) or Codex (an OpenAI API key or ChatGPT sign-in) on first start or under \"API\" in the settings, and I can choose to suit your interests and answer any question.",
-          "next": {
-            "Other demos": "report/pick",
-            "Tell me more": "about"
-          }
-        },
-        "about": {
-          "show": {
-            "highlight": "demo:pharmacokinetics",
-            "say": "A teaching model that compares dosing plans for a made-up drug. View concentration curves in simulate and the missed-dose comparison in missed. This is not dosing guidance.",
-            "actions": [
-              {
-                "kind": "open_demo",
-                "demo": "pharmacokinetics",
-                "label": "Open this demo"
-              }
-            ],
-            "choices": [
-              "Other demos"
-            ]
-          },
-          "next": {
-            "Other demos": "report/pick"
-          }
-        }
-      },
-      "steps": {
-        "start": {
-          "show": {
-            "highlight": "run",
-            "say": "This demo compares dosing plans for a made-up drug. Run it, then open simulate for concentration curves and missed for the missed-dose comparison. This is a teaching model, not dosing guidance.",
-            "actions": [
-              {
-                "kind": "run",
-                "label": "Run it"
-              }
-            ]
-          },
-          "finished": "result"
-        },
-        "result": {
-          "show": {
-            "highlight": "card:missed",
-            "say": "Open missed for the missed-dose comparison and simulate for the concentration curves. You can run again with the same settings to compare, or try a different missed_count.",
-            "actions": [
-              {
-                "kind": "run",
-                "label": "Run it"
-              }
-            ],
-            "choices": [
-              "Try another parameter",
-              "Finish"
-            ]
-          },
-          "next": {
-            "Try another parameter": "change",
-            "Finish": "farewell"
-          },
-          "finished": "result"
-        },
-        "change": {
-          "show": {
-            "open": "card:missed",
-            "highlight": "param:missed_count",
-            "say": "Change missed’s missed_count to 2, or another value you want to try, and save with Apply. Then run again and compare in missed.",
-            "actions": [
-              {
-                "kind": "run",
-                "label": "Run it"
-              }
-            ]
-          },
-          "finished": "result"
-        },
-        "failed": {
-          "show": {
-            "highlight": "logs",
-            "say": "The run ended without success. Open the logs for the reason; you can fix the cause and retry.",
-            "actions": [
-              {
-                "kind": "run",
-                "label": "Run it"
-              }
-            ],
-            "choices": [
-              "Finish"
-            ]
-          },
-          "next": {
-            "Finish": "farewell"
-          },
-          "finished": "result"
-        },
-        "farewell": {
-          "show": {
-            "highlight": "chat",
-            "say": "You can edit this copy freely. Call me any time with $demo.",
-            "actions": [
-              {
-                "kind": "show_demos",
-                "label": "Other demos"
-              },
-              {
-                "kind": "new_project",
-                "label": "New Project"
-              }
-            ],
-            "endTour": true
-          }
-        }
-      }
     }
   },
   "noConnection": {
@@ -447,25 +153,15 @@
   },
   "otherProject": {
     "show": {
-      "say": "Only copies of these three demos have a fixed guide. Open one and the guide begins.",
+      "say": "Data to report has a fixed guide. Open a copy to start.",
       "actions": [
         {
           "kind": "open_demo",
           "demo": "report",
           "label": "Data to report"
-        },
-        {
-          "kind": "open_demo",
-          "demo": "exoplanet-transit",
-          "label": "Kepler-6 b"
-        },
-        {
-          "kind": "open_demo",
-          "demo": "pharmacokinetics",
-          "label": "Pharmacokinetics"
         }
       ]
     },
-    "text": "Only copies of these three demos have a fixed guide. Open one and the guide begins.\n\nConnect Claude or Codex (ChatGPT) on first start or under \"API\" in the settings, and I can guide you in any project and answer questions."
+    "text": "Data to report has a fixed guide. Open a copy to start.\n\nConnect Claude or Codex (ChatGPT) on first start or under \"API\" in the settings, and I can guide you in any project and answer questions."
   }
 }

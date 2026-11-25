@@ -1,3 +1,0 @@
-namespace cells;
-table Outputs {}
-root_type Outputs;

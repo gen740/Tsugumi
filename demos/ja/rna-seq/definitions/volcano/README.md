@@ -1,6 +1,0 @@
----
-title: volcano
-description: 火山プロット
----
-
-fdr と lfc の閾値で上昇・低下の遺伝子を数え、known に挙げた遺伝子に名前を付けて火山プロットを描く。

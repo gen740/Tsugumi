@@ -1,4 +1,0 @@
----
-title: start
-description: 毛皮の記録の読み込み（load）を始める
----

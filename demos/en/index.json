@@ -83,21 +83,6 @@
       ]
     },
     {
-      "id": "plots",
-      "title": "Plots (matplotlib, Plotly, Altair)",
-      "field": "Learn the basics",
-      "description": "matplotlib code written for a window becomes the Card's display as it is.",
-      "path": "plots",
-      "tags": [
-        "Python",
-        "matplotlib",
-        "Plotly",
-        "Altair",
-        "Live display",
-        "Branching, shared outputs and merging"
-      ]
-    },
-    {
       "id": "casa",
       "title": "Cas A · Chandra RGB",
       "field": "Space and Earth",
@@ -108,23 +93,6 @@
         "Pinned with Nix",
         "Astronomy",
         "Images"
-      ]
-    },
-    {
-      "id": "casa-draft",
-      "title": "Cas A · Chandra RGB (Draft)",
-      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Generate Cards\".",
-      "path": "casa-draft",
-      "tags": [
-        "Draft",
-        "Agent",
-        "Pinned with Nix",
-        "Astronomy",
-        "Images"
-      ],
-      "agentExclude": [
-        "ja/casa",
-        "en/casa"
       ]
     },
     {
@@ -158,137 +126,6 @@
       ]
     },
     {
-      "id": "protein-6lu7",
-      "title": "6LU7 · a protein and its binding pocket",
-      "field": "Life and medicine",
-      "description": "A protein's 3D structure, fetched to look at its binding pocket.",
-      "path": "protein-6lu7",
-      "tags": [
-        "Python",
-        "Network",
-        "Biology",
-        "Images"
-      ]
-    },
-    {
-      "id": "protein-6lu7-draft",
-      "title": "6LU7 · a protein and its binding pocket (Draft)",
-      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Generate Cards\".",
-      "path": "protein-6lu7-draft",
-      "tags": [
-        "Draft",
-        "Agent",
-        "Network",
-        "Biology",
-        "Images"
-      ],
-      "agentExclude": [
-        "ja/protein-6lu7",
-        "en/protein-6lu7"
-      ]
-    },
-    {
-      "id": "exoplanet-transit",
-      "title": "Kepler-6 b · an exoplanet transit",
-      "field": "Space and Earth",
-      "description": "A light curve folded to show an exoplanet's transit.",
-      "path": "exoplanet-transit",
-      "tags": [
-        "Python",
-        "Network",
-        "Astronomy",
-        "Images"
-      ]
-    },
-    {
-      "id": "exoplanet-transit-draft",
-      "title": "Kepler-6 b · an exoplanet transit (Draft)",
-      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Generate Cards\".",
-      "path": "exoplanet-transit-draft",
-      "tags": [
-        "Draft",
-        "Agent",
-        "Network",
-        "Astronomy",
-        "Images"
-      ],
-      "agentExclude": [
-        "ja/exoplanet-transit",
-        "en/exoplanet-transit"
-      ]
-    },
-    {
-      "id": "seismic-trench",
-      "title": "Japan Trench · hypocentre sections and the b-value",
-      "field": "Space and Earth",
-      "description": "A cross-section of hypocentres and the b-value, from an earthquake catalogue.",
-      "path": "seismic-trench",
-      "tags": [
-        "Python",
-        "Network",
-        "Earth science",
-        "Images"
-      ]
-    },
-    {
-      "id": "seismic-trench-draft",
-      "title": "Japan Trench · hypocentre sections and the b-value (Draft)",
-      "description": "The same plan as Drafts only: a start Card and three Drafts that state what each step takes and gives, ready for the Agent's \"Generate Cards\".",
-      "path": "seismic-trench-draft",
-      "tags": [
-        "Draft",
-        "Agent",
-        "Network",
-        "Earth science",
-        "Images"
-      ],
-      "agentExclude": [
-        "ja/seismic-trench",
-        "en/seismic-trench"
-      ]
-    },
-    {
-      "id": "mnist-classifiers",
-      "title": "MNIST · comparing classifiers of handwritten digits",
-      "field": "Statistics and machine learning",
-      "description": "The real MNIST fed to seven classifiers at once, comparing accuracy and time.",
-      "path": "mnist-classifiers",
-      "tags": [
-        "Python",
-        "Machine learning",
-        "Branching, shared outputs and merging",
-        "matplotlib",
-        "Plotly",
-        "Artifacts"
-      ]
-    },
-    {
-      "id": "newton",
-      "title": "Newton's method · starting points and convergence",
-      "field": "Numerical computation and optimisation",
-      "description": "A map of the complex plane showing how the starting point decides where it goes and how fast.",
-      "path": "newton",
-      "tags": [
-        "Python",
-        "Numerical computation",
-        "Fractals",
-        "Branching, shared outputs and merging"
-      ]
-    },
-    {
-      "id": "pharmacokinetics",
-      "title": "Pharmacokinetics · Tsugumicin, a made-up drug",
-      "field": "Life and medicine",
-      "description": "Teaching material comparing how concentration moves with the dosing interval. Not medical advice.",
-      "path": "pharmacokinetics",
-      "tags": [
-        "Python",
-        "Numerical computation",
-        "Interactive charts",
-        "Branching, shared outputs and merging"
-      ]
-    },
-    {
       "id": "max-flow",
       "title": "Maximum flow and minimum cut",
       "field": "Numerical computation and optimisation",
@@ -299,187 +136,6 @@
         "Graph theory",
         "Numerical computation",
         "Branching, shared outputs and merging"
-      ]
-    },
-    {
-      "id": "dose-response",
-      "title": "Dose–response curve",
-      "field": "Statistics and machine learning",
-      "description": "A fit and its confidence interval, checked on data whose true values are known.",
-      "path": "dose-response",
-      "tags": [
-        "Python",
-        "Synthetic data",
-        "Statistics",
-        "Fitting"
-      ]
-    },
-    {
-      "id": "molecules",
-      "title": "Molecular properties",
-      "field": "Chemistry and ecology",
-      "description": "Properties and structural formulas from SMILES, with RDKit.",
-      "path": "molecules",
-      "tags": [
-        "Python",
-        "Chemistry",
-        "RDKit",
-        "Interactive charts"
-      ]
-    },
-    {
-      "id": "cell-count",
-      "title": "Counting cells in images",
-      "field": "Life and medicine",
-      "description": "A counting method scored on synthetic images with known answers, then applied to real images of nuclei.",
-      "path": "cell-count",
-      "tags": [
-        "Python",
-        "Synthetic data",
-        "Images",
-        "Biology"
-      ]
-    },
-    {
-      "id": "survival",
-      "title": "Survival analysis",
-      "field": "Life and medicine",
-      "description": "How much the same hazard ratio moves with the subjects and the adjustment.",
-      "path": "survival",
-      "tags": [
-        "R",
-        "Statistics",
-        "Medicine",
-        "Images",
-        "Branching, shared outputs and merging",
-        "Artifacts"
-      ]
-    },
-    {
-      "id": "meta-analysis",
-      "title": "Meta-analysis: BCG vaccine",
-      "field": "Life and medicine",
-      "description": "How the conclusion moves with the pooling method and the trials left out.",
-      "path": "meta-analysis",
-      "tags": [
-        "R",
-        "Statistics",
-        "Medicine",
-        "Images",
-        "Branching, shared outputs and merging",
-        "Artifacts"
-      ]
-    },
-    {
-      "id": "rna-seq",
-      "title": "RNA-seq: airway and dexamethasone",
-      "field": "Life and medicine",
-      "description": "With DESeq2 and edgeR, how the number of differentially expressed genes changes with the threshold.",
-      "path": "rna-seq",
-      "tags": [
-        "R",
-        "Statistics",
-        "Biology",
-        "Images",
-        "Branching, shared outputs and merging",
-        "Artifacts"
-      ]
-    },
-    {
-      "id": "simpson",
-      "title": "Simpson's paradox",
-      "field": "Statistics and machine learning",
-      "description": "Two real datasets in which the whole and its strata point in opposite directions.",
-      "path": "simpson",
-      "tags": [
-        "R",
-        "Statistics",
-        "Images",
-        "Branching, shared outputs and merging",
-        "Artifacts"
-      ]
-    },
-    {
-      "id": "battery",
-      "title": "Scheduling a battery",
-      "field": "Numerical computation and optimisation",
-      "description": "Charging and discharging optimised by dynamic programming, under made-up prices.",
-      "path": "battery",
-      "tags": [
-        "Julia",
-        "Optimisation",
-        "Dynamic programming",
-        "Made-up data"
-      ]
-    },
-    {
-      "id": "gillespie",
-      "title": "Fluctuations in chemical reactions",
-      "field": "Chemistry and ecology",
-      "description": "A Gillespie simulation checked against theory.",
-      "path": "gillespie",
-      "tags": [
-        "Julia",
-        "Stochastic simulation",
-        "Chemical reactions",
-        "Checked against theory"
-      ]
-    },
-    {
-      "id": "heat-inverse",
-      "title": "An inverse problem in heat conduction",
-      "field": "Numerical computation and optimisation",
-      "description": "The naive inverse breaks down; regularisation recovers the answer.",
-      "path": "heat-inverse",
-      "tags": [
-        "Julia",
-        "Inverse problems",
-        "Regularisation",
-        "Made-up data"
-      ]
-    },
-    {
-      "id": "ecology-models",
-      "title": "Comparing ecological models",
-      "field": "Chemistry and ecology",
-      "description": "Predator–prey models fitted to fur-trade records and compared.",
-      "path": "ecology-models",
-      "tags": [
-        "Julia",
-        "Model comparison",
-        "Ecology",
-        "Public data"
-      ]
-    },
-    {
-      "id": "dynamics-draft",
-      "title": "Dynamical systems gallery (Draft)",
-      "description": "Six independent calculations (Lorenz, Mandelbrot, logistic map, Game of Life, Gray–Scott, double pendulum) as Drafts that only share their settings: the Agent's \"Generate Cards\" hands them to helpers that write them at the same time, a bird each.",
-      "path": "dynamics-draft",
-      "tags": [
-        "Draft",
-        "Agent",
-        "Splitting the work",
-        "Python",
-        "Images"
-      ]
-    },
-    {
-      "id": "mnist-classifiers-draft",
-      "title": "MNIST · comparing classifiers (Draft)",
-      "description": "Real MNIST digits are loaded and subsampled, and seven classifiers (kNN, logistic regression, an RBF SVM, a random forest, gradient boosting, an MLP and a CNN) wait as Drafts with a shared output type, each in its own Nix environment: the Agent's \"Generate Cards\" hands them to helpers that write them at the same time, a bird each, and then writes the comparison.",
-      "path": "mnist-classifiers-draft",
-      "tags": [
-        "Draft",
-        "Agent",
-        "Splitting the work",
-        "Python",
-        "Machine learning",
-        "Branching, shared outputs and merging"
-      ],
-      "agentExclude": [
-        "ja/mnist-classifiers",
-        "en/mnist-classifiers"
       ]
     },
     {
@@ -497,18 +153,6 @@
       ]
     },
     {
-      "id": "visualization",
-      "path": "visualization",
-      "title": "Visualization → report",
-      "description": "Aggregate typed measurements, draw three figures, and pass PNG/SVG/PDF and the plotted values to an offline report.",
-      "tags": [
-        "Python",
-        "Visualization",
-        "Artifacts"
-      ],
-      "field": "Programming and visualization"
-    },
-    {
       "id": "point-cloud",
       "path": "point-cloud",
       "title": "Interactive point cloud",
@@ -518,48 +162,6 @@
         "WebGPU"
       ],
       "field": "Programming and visualization"
-    },
-    {
-      "id": "marimo",
-      "path": "marimo",
-      "title": "marimo notebook → typed result",
-      "description": "Pass typed input and params into a notebook and retain its static HTML, figures and selected result.",
-      "tags": [
-        "Python",
-        "marimo",
-        "Artifacts"
-      ],
-      "field": "Programming and visualization"
-    },
-    {
-      "id": "r-reports",
-      "path": "r-reports",
-      "title": "R reports: R Markdown and Quarto",
-      "field": "Learn the basics",
-      "description": "Aggregate observations, render parameterized reports with tables and figures, and keep their HTML artifacts.",
-      "tags": [
-        "R",
-        "Quarto",
-        "R Markdown",
-        "Artifacts"
-      ]
-    },
-    {
-      "id": "r-reports-draft",
-      "path": "r-reports-draft",
-      "title": "R reports: R Markdown and Quarto (Draft)",
-      "description": "A plan in Draft Cards: aggregate observations, render tables and figures with R Markdown and Quarto, and save both HTML reports.",
-      "tags": [
-        "R",
-        "Quarto",
-        "R Markdown",
-        "Artifacts",
-        "Draft"
-      ],
-      "agentExclude": [
-        "ja/r-reports",
-        "en/r-reports"
-      ]
     },
     {
       "id": "go-pipeline",
@@ -574,23 +176,6 @@
       "field": "Learn the basics"
     },
     {
-      "id": "go-pipeline-draft",
-      "title": "Go pipeline (Draft)",
-      "description": "Python → Go → C++: multiply an owned typed integer and display the result. A plan to implement as three Draft Cards.",
-      "path": "go-pipeline-draft",
-      "tags": [
-        "Go",
-        "Python",
-        "C++",
-        "Draft",
-        "Agent"
-      ],
-      "agentExclude": [
-        "ja/go-pipeline",
-        "en/go-pipeline"
-      ]
-    },
-    {
       "id": "rust-pipeline",
       "title": "Rust pipeline",
       "description": "Python → Rust → C++: multiply a typed borrowed integer and return an owned result.",
@@ -601,23 +186,6 @@
         "C++"
       ],
       "field": "Learn the basics"
-    },
-    {
-      "id": "rust-pipeline-draft",
-      "title": "Rust pipeline (Draft)",
-      "description": "Python → Rust → C++: multiply a typed borrowed integer and return an owned result. A plan to implement as three Draft Cards.",
-      "path": "rust-pipeline-draft",
-      "tags": [
-        "Rust",
-        "Python",
-        "C++",
-        "Draft",
-        "Agent"
-      ],
-      "agentExclude": [
-        "ja/rust-pipeline",
-        "en/rust-pipeline"
-      ]
     }
   ]
 }

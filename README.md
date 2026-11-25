@@ -160,7 +160,7 @@ Most of the time you handle it as a single Card; when you want to check, you can
 ### Letting Tsugumi the thrush show you around
 
 The first time you open the app, the thrush in the bottom right asks "What would you like to do?". Choose between watching a demo run and having the AI implement Drafts, pick a field, and it takes you to a demo.
-In a project, the chat is the thrush. Write `$demo` and it flies around the screen, pointing at Cards, the Run button and a Card's settings, and explains one step at a time with choices to pick from (with an OpenAI or Anthropic API key, or a ChatGPT plan; without a key, three demos have a fixed script).
+In a project, the chat is the thrush. Write `$demo` and it flies around the screen, pointing at Cards, the Run button and a Card's settings, and explains one step at a time with choices to pick from (with an OpenAI or Anthropic API key, or a ChatGPT plan; without a key, Data to report has a fixed script).
 
 <a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="docs/assets/casa-guide.svg" alt="The thrush flying to the spectrum Card and explaining it in a speech bubble with choices" width="100%"></a>
 
@@ -174,7 +174,7 @@ Use the [installation guide](docs/INSTALL.md) for the macOS app or the `tsugumi`
 
 1. **Open a demo.** From "Browse Demos" on the home screen, choose "Open a Copy" on the demo you want. An editable copy is made for you; the bundled original is left unchanged.
 2. **Run it.** Once the first preparation is done, press "Run" at the top of the screen. Open a Card, change its code or its conditions, and rerun just that Card.
-3. **Let the thrush guide you.** Send `$demo` in the chat and the thrush points at the screen and guides you step by step. Without an API key, three demos (Data to report, Kepler-6 b and Pharmacokinetics) have a fixed script.
+3. **Let the thrush guide you.** Send `$demo` in the chat and the thrush points at the screen and guides you step by step. Without an API key, Data to report has a fixed script.
 4. **Connect the Agent (optional).** Register an Anthropic or OpenAI API key under "API" in the settings, or sign in with "Continue with ChatGPT", and the Agent can make Cards, and the thrush answers questions in any demo. The Agent is sent the conversation and what its tools read, such as sources and logs ([what is sent to the model](docs/security.md#what-is-sent-to-the-model)). Without the Agent, everything (making, editing and running Cards) can still be done on screen.
 
 The app and the Web UI are in Japanese by default; choose English under "General" in the settings.

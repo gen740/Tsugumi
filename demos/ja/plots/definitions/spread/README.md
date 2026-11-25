@@ -1,4 +1,0 @@
----
-title: spread
-description: 平均二乗距離が t に比例する様子を Altair で描く
----

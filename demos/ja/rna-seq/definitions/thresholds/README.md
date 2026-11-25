@@ -1,6 +1,0 @@
----
-title: thresholds
-description: 閾値と遺伝子の数
----
-
-FDR と log2FC の閾値の格子ごとに、基準を満たす遺伝子の数を表にする。

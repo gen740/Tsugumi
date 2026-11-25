@@ -33,6 +33,18 @@ CARD_FIELDS = {
 }
 
 
+def test_demo_catalogs_list_the_same_projects():
+    ids = [demo["id"] for demo in DEMOS]
+    assert len(ids) == len(set(ids))
+    for language in ("ja", "en"):
+        directory = ROOT / "demos" / language
+        entries = json.loads((directory / "index.json").read_text())["demos"]
+        assert [entry["id"] for entry in entries] == ids
+        assert {entry["path"] for entry in entries} == {
+            path.name for path in directory.iterdir() if path.is_dir()
+        }
+
+
 def test_every_implemented_demo_has_a_field():
     """The guide's first questions list the demos by field (demos/index.json
     "field"): each implemented demo is in one; a Draft is listed apart."""

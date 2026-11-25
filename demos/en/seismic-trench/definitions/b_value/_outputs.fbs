@@ -1,5 +1,0 @@
-include "tsugumi/artifact.fbs";
-
-namespace quake;
-table Outputs { fmd:tsugumi.Artifact (required); }
-root_type Outputs;

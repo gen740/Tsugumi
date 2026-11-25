@@ -1,4 +1,0 @@
----
-title: archive
-description: 両方のレポートフォルダに保存された HTML があることを確認する。
----

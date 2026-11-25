@@ -1,5 +1,0 @@
-include "tsugumi/artifact.fbs";
-
-namespace exo;
-table Outputs { detrended:tsugumi.Artifact (required); }
-root_type Outputs;

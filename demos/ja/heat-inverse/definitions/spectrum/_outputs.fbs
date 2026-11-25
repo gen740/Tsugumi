@@ -1,3 +1,0 @@
-namespace heat;
-table Outputs { }
-root_type Outputs;

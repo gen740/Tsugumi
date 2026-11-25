@@ -1,3 +1,0 @@
-{
-  stratify = "species";
-}

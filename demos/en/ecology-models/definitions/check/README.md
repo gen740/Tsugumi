@@ -1,6 +1,0 @@
----
-title: check
-description: Check RK4 with the conserved quantity
----
-
-Tables, for each step size, how well the Lotka–Volterra conserved quantity $V=cH-d\log H+bL-a\log L$ is kept along the orbit of the fitted values. Checks that halving the step shrinks the drift to about 1/16 (fourth-order accuracy); the Card fails if not.

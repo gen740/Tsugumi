@@ -1,3 +1,0 @@
-namespace battery;
-table Outputs { }
-root_type Outputs;

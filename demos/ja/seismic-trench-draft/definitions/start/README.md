@@ -1,4 +1,0 @@
----
-title: start
-description: 震源カタログの取得（load）を始める
----

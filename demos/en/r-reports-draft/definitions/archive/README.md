@@ -1,6 +1,0 @@
----
-title: archive
-description: Aggregate observations, render parameterized reports with tables and figures, and keep their HTML artifacts.
----
-
-archive: Receive both report directories; verify index.html and show that both reports are saved.

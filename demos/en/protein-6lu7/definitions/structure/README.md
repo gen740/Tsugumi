@@ -1,6 +1,0 @@
----
-title: structure
-description: Take out the Cα atoms and the inhibitor
----
-
-Reads the ATOM / HETATM records of the PDB and takes out the coordinates of the protein's Cα atoms and of the inhibitor (chain C, a parameter). Shows them as a 3D point cloud, Cα in blue and the inhibitor in red, and logs the number of residues and atoms per chain.

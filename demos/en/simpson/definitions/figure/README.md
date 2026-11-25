@@ -1,6 +1,0 @@
----
-title: figure
-description: Overlay the line for the whole and the lines for each stratum
----
-
-Overlays, on the same points, the regression line for the whole (dashed) and the regression lines for each stratum.

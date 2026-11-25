@@ -1,5 +1,0 @@
-include "tsugumi/artifact.fbs";
-
-namespace airway;
-table Outputs { counts:tsugumi.Artifact (required); }
-root_type Outputs;
