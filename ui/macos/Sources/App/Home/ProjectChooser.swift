@@ -27,6 +27,7 @@ struct ProjectChooser: View {
         if let issue = model.staleHostState {
           StateFormatRecoveryView(path: issue.path) {
             try await CoreHostClient.shared.moveStateAside(issue)
+            await model.refreshSetup()
             await model.refreshHome()
           }
           .id(issue.path)

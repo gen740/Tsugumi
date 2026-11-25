@@ -22,15 +22,24 @@ public struct CoreHostFailure: LocalizedError, CustomStringConvertible, Sendable
   public var errorDescription: String? { description }
 }
 
-public struct HostStateFormatMismatch: LocalizedError, Sendable {
+public struct HostStateFormatMismatch: LocalizedError, CustomStringConvertible, Sendable {
   public let path: String
   fileprivate let found: Int
   fileprivate let recoveryURL: URL?
   fileprivate let recoveryToken: String
 
+  init(path: String, found: Int, recoveryURL: URL?, recoveryToken: String) {
+    self.path = path
+    self.found = found
+    self.recoveryURL = recoveryURL
+    self.recoveryToken = recoveryToken
+  }
+
   public var errorDescription: String? {
     String(localized: "この状態データは別のバージョンの Tsugumi で書き込まれました。") + "\n" + path
   }
+  /// Interpolating the error shows the message, never the recovery key or token.
+  public var description: String { errorDescription ?? path }
 }
 
 /// A presentation snapshot of hostd's catalogs. Persistence and refresh policy
