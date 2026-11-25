@@ -160,16 +160,17 @@ struct GraphCanvas: View {
   }
 
   var body: some View {
-    let settled = settledLayout
-    let routed = settled.routedWires()
-    let pass = layoutPass.next()
-    let _ = redrawn
     GeometryReader { geo in
+      let _ = redrawn
+      let settled = settledLayout
+      let routed = settled.routedWires()
+      let layer = settled.canvasLayer(routed)
+      let pass = layoutPass.next()
       ZStack(alignment: .topLeading) {
         background
         CanvasPanHost(session: session, scope: scopeKey, base: settled.cam, pass: pass, margin: Self.overscan,
                       solid: settled.solid(routed), onSettled: { redrawn += 1 }) {
-          settled.canvasLayer(routed)
+          layer
         }
         // In the view's own space (where the pointer is), not the canvas's.
         if let p = pending {
@@ -669,9 +670,9 @@ struct GraphCanvas: View {
     let z = CGFloat(camera.zoom)
     return ZStack(alignment: .topLeading) {
       BoundaryBarView(title: String(localized: "この Card の入力"), ports: b.inputs, input: true, zoom: z, rect: b.top, cardTitle: session.displayName)
+        .contentShape(Rectangle())
         .placeScaled(at: screen(b.top.origin), size: b.top.size, zoom: camera.zoom)
         .gesture(boundaryMove(input: true, from: undragged(b.top.origin, input: true)))
-        .onTapGesture { returnToParent() }
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { returnToParent() }
         .help("親 Workflow に戻ります。ドラッグで移動できます。")
@@ -694,15 +695,23 @@ struct GraphCanvas: View {
     return CGPoint(x: p.x - d.offset.width / camera.zoom, y: p.y - d.offset.height / camera.zoom)
   }
 
-  /// Moves a boundary bar; the wires to its ports follow while dragging.
+  /// The input bar returns to the parent on a click. Past the drag threshold,
+  /// move the bar and its wires instead.
   private func boundaryMove(input: Bool, from origin: CGPoint) -> some Gesture {
-    DragGesture(minimumDistance: 3, coordinateSpace: .named("canvas"))
+    let threshold: CGFloat = 3
+    return DragGesture(minimumDistance: input ? 0 : threshold, coordinateSpace: .named("canvas"))
       .onChanged { v in
+        guard boundaryDrag != nil || hypot(v.translation.width, v.translation.height) >= threshold else { return }
         clearHover()
         boundaryDrag = (input, v.translation)
       }
       .onEnded { v in
+        let moved = boundaryDrag?.input == input
         boundaryDrag = nil
+        guard moved else {
+          if input { returnToParent() }
+          return
+        }
         var x = origin.x + v.translation.width / camera.zoom, y = origin.y + v.translation.height / camera.zoom
         if prefs.showGrid {
           x = snapToGrid(x, prefs.gridSize)

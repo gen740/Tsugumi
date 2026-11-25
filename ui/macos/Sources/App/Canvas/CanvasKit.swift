@@ -760,6 +760,9 @@ struct CanvasPanHost<Content: View>: NSViewRepresentable {
       wantsLayer = true
       layer?.masksToBounds = true
       mover.wantsLayer = true
+      // The canvas supplies window-relative coordinates. Keep the nested
+      // hosting view from adding the window's top inset a second time.
+      hosting.safeAreaRegions = []
       addSubview(mover)
       mover.addSubview(hosting)
     }
