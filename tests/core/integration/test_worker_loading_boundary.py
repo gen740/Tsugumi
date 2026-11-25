@@ -25,7 +25,7 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
 #include <tsugumi/card_abi.h>
 int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
   static const uint8_t wire[] = {RESULT_BYTES};
-  return write_result(result, wire, sizeof(wire));
+  return write_result(call, result, wire, sizeof(wire));
 }
 ''')
     with worker(tmp_path) as (p, data, _):
@@ -51,7 +51,7 @@ __attribute__((constructor)) static void load(void) {
 int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
   static const uint8_t wire[] = {RESULT_BYTES};
   if (getenv("startup_key")) return 1;
-  return write_result(result, wire, sizeof(wire));
+  return write_result(call, result, wire, sizeof(wire));
 }
 ''')
     with worker(tmp_path, startup={"startup_key": "test-value"}) as (_, data, _):

@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import MachO
 
 func validatePackedCardEntry(_ library: URL) throws {
   guard try isPackedMachO(library),
@@ -12,19 +13,60 @@ func validatePackedCardEntry(_ library: URL) throws {
     throw PackedRelocationError("lib/main.so does not export tsugumi_main")
   }
 }
-import MachO
 
 /// Copies a Darwin closure into the caller's private app staging directory.
 /// Keep each logical Card in its own destination so dyld sees distinct images.
-func installPackedClosure(roots: [URL], in destination: URL, cardID: String, identity: String) throws -> [String: URL] {
+func installPackedClosure(roots: [URL], in destination: URL, cardID: String, identity: String,
+                          shared: [String: URL] = [:]) throws -> [String: URL] {
   do {
-    let installed = try PackedClosure(roots: roots, destination: destination, cardID: cardID).install(identity: identity)
-    return roots.reduce(into: [:]) { paths, root in
-      paths[root.path] = installed[root.standardizedFileURL.path]
-    }
+    return try PackedClosure(roots: roots, destination: destination, cardID: cardID, shared: shared)
+      .install(identity: identity)
   } catch {
-    throw PackedRelocationError("Card \(cardID) closure: \(error.localizedDescription)")
+    throw PackedRelocationError("\(cardID) closure: \(error.localizedDescription)")
   }
+}
+
+func relocatePackedTree(_ root: URL, identity: String) throws {
+  _ = try PackedClosure(roots: [root], destination: root.deletingLastPathComponent(), cardID: "project")
+    .install(identity: identity)
+}
+
+/// The native launcher helpers carry only their Mach-O dependencies. In
+/// particular, the packed core must run on a Mac without a Nix installation.
+func installPackedExecutables(_ input: URL, helpers: URL,
+                              frameworks: URL, identity: String, entitlements: URL) throws {
+  let names = ["tsugumid-pack", "tsugumi-worker", "tsugumi-workerd", "tsugumi-rpc"]
+  var paths: [String: URL] = [:]
+  var seeds: [String: PackedMachO] = [:]
+  for name in names {
+    let source = input.appendingPathComponent(name).resolvingSymlinksInPath()
+    guard FileManager.default.isExecutableFile(atPath: source.path) else {
+      throw PackedRelocationError("missing native launcher helper: \(source.path)")
+    }
+    let target = helpers.appendingPathComponent(name)
+    paths[source.path] = target
+    seeds[source.path] = try PackedMachO(source: source, output: target)
+  }
+
+  let discovery = PackedClosure(destinations: paths, destination: helpers, cardID: "helpers")
+  _ = try discovery.resolveDependencies(in: seeds) { path in
+    let source = URL(fileURLWithPath: path)
+    guard path.hasPrefix("/nix/store/"), !source.lastPathComponent.hasPrefix("libnix"),
+          try isPackedMachO(source) else {
+      throw PackedRelocationError("unexpected dependency of the native launcher: \(path)")
+    }
+    let output = frameworks.appendingPathComponent(packedNamespace(path).prefix(12) + "-" + source.lastPathComponent)
+    paths[path] = output
+    return try PackedMachO(source: source, output: output)
+  }
+  _ = try PackedClosure(destinations: paths, destination: helpers, cardID: "helpers")
+    .install(identity: identity, executableEntitlements: entitlements)
+}
+
+func packedRuntimeClosure(_ roots: Set<String>) throws -> Set<String> {
+  let listing = try relocationTool("/usr/bin/env", ["nix-store", "--query", "--requisites"] + roots.sorted(),
+                                   captureStderr: false)
+  return Set(listing.split(whereSeparator: \.isNewline).map(String.init)).union(roots)
 }
 
 private struct PackedRelocationError: LocalizedError {
@@ -34,16 +76,25 @@ private struct PackedRelocationError: LocalizedError {
 
 private struct PackedClosure {
   let destinations: [String: URL]
+  let copiedRoots: [String]
   let cardID: String
   let destination: URL
   let fm = FileManager.default
 
-  init(roots: [URL], destination: URL, cardID: String) throws {
+  init(roots: [URL], destination: URL, cardID: String, shared: [String: URL] = [:]) throws {
     var destinations: [String: URL] = [:]
     var names: Set<String> = []
+    var copiedRoots: [String] = []
     for root in roots.map(\.standardizedFileURL) where destinations[root.path] == nil {
       let name = root.lastPathComponent
-      guard !name.isEmpty, names.insert(name.lowercased()).inserted else {
+      guard !name.isEmpty else {
+        throw PackedRelocationError("invalid closure root \(root.path)")
+      }
+      if let installed = shared[root.path] {
+        destinations[root.path] = installed
+        continue
+      }
+      guard names.insert(name.lowercased()).inserted else {
         throw PackedRelocationError("conflicting closure root \(root.path)")
       }
       guard destinations.keys.allSatisfy({
@@ -52,23 +103,32 @@ private struct PackedClosure {
         throw PackedRelocationError("overlapping closure root \(root.path)")
       }
       destinations[root.path] = destination.appendingPathComponent(name)
+      copiedRoots.append(root.path)
     }
     self.destinations = destinations
+    self.copiedRoots = copiedRoots
     self.destination = destination
     self.cardID = cardID
   }
 
-  func install(identity: String) throws -> [String: URL] {
+  init(destinations: [String: URL], destination: URL, cardID: String) {
+    self.destinations = destinations
+    self.copiedRoots = Array(destinations.keys)
+    self.destination = destination
+    self.cardID = cardID
+  }
+
+  func install(identity: String, executableEntitlements: URL? = nil) throws -> [String: URL] {
     try fm.createDirectory(at: destination, withIntermediateDirectories: true)
     var images: [String: PackedMachO] = [:]
     var bundles: Set<URL> = []
-    for root in destinations.keys.sorted() {
+    for root in copiedRoots.sorted() {
       let source = URL(fileURLWithPath: root)
       try copy(source, images: &images, bundles: &bundles)
     }
     let dependencies = try resolveDependencies(in: images)
 
-    let namespace = SHA256.hash(data: Data(cardID.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
+    let namespace = packedNamespace(cardID)
     for (index, image) in images.values.sorted(by: { $0.source.path < $1.source.path }).enumerated() {
       try rewrite(image, installName: "@rpath/\(namespace)/\(index)",
                   dependencies: dependencies[image.source.path, default: [:]])
@@ -76,10 +136,17 @@ private struct PackedClosure {
 
     // Sign leaf images before the containing code bundles seal their signatures.
     let signingArguments = ["--force", "--sign", identity, "--timestamp=none"]
-    let imagePaths = images.values.map { $0.output.path }.sorted()
+    let imagePaths = images.values.filter { !$0.isExecutable || executableEntitlements == nil }.map { $0.output.path }.sorted()
     for start in stride(from: 0, to: imagePaths.count, by: 24) {
       let batch = imagePaths[start..<min(start + 24, imagePaths.count)]
       _ = try relocationTool("/usr/bin/codesign", signingArguments + batch)
+    }
+    if let executableEntitlements {
+      var arguments = signingArguments + ["--entitlements", executableEntitlements.path]
+      if identity != "-" { arguments += ["--options", "runtime"] }
+      for executable in images.values.filter(\.isExecutable).map(\.output.path).sorted() {
+        _ = try relocationTool("/usr/bin/codesign", arguments + [executable])
+      }
     }
     for bundle in bundles.sorted(by: { $0.pathComponents.count > $1.pathComponents.count }) {
       _ = try relocationTool("/usr/bin/codesign", signingArguments + [bundle.path])
@@ -106,8 +173,10 @@ private struct PackedClosure {
     }
     let attributes = try fm.attributesOfItem(atPath: source.path)
     let type = attributes[.type] as? FileAttributeType
+    let inPlace = source.path == output.path
     switch type {
     case .typeSymbolicLink:
+      if inPlace { return }
       let target = try fm.destinationOfSymbolicLink(atPath: source.path)
       let absolute = target.hasPrefix("/") ? target : source.deletingLastPathComponent().path + "/" + target
       let normalized = (absolute as NSString).standardizingPath
@@ -124,7 +193,7 @@ private struct PackedClosure {
         throw PackedRelocationError("closure symlink \(source.path) points outside the bundle: \(target)")
       }
     case .typeDirectory:
-      try fm.createDirectory(at: output, withIntermediateDirectories: false)
+      if !inPlace { try fm.createDirectory(at: output, withIntermediateDirectories: false) }
       for child in try fm.contentsOfDirectory(atPath: source.path).sorted() {
         try copy(source.appendingPathComponent(child), images: &images, bundles: &bundles)
       }
@@ -136,7 +205,7 @@ private struct PackedClosure {
         bundles.insert(output)
       }
     case .typeRegular:
-      try fm.copyItem(at: source, to: output)
+      if !inPlace { try fm.copyItem(at: source, to: output) }
       if try isPackedMachO(source) {
         let mode = (attributes[.posixPermissions] as? Int ?? 0o555) | 0o200
         try fm.setAttributes([.posixPermissions: mode], ofItemAtPath: output.path)
@@ -147,7 +216,9 @@ private struct PackedClosure {
     }
   }
 
-  private func resolveDependencies(in images: [String: PackedMachO]) throws -> [String: [String: String]] {
+  func resolveDependencies(in seeds: [String: PackedMachO],
+                           discover: ((String) throws -> PackedMachO)? = nil) throws -> [String: [String: String]] {
+    var images = seeds
     // The dyld run-path stack contains paths from the image's loading ancestors.
     // Propagate known edges until all inherited run paths have been discovered.
     var parents: [String: Set<String>] = [:]
@@ -191,11 +262,10 @@ private struct PackedClosure {
     }
 
     var dependencies: [String: [String: String]] = [:]
-    let sortedImages = images.values.sorted { $0.source.path < $1.source.path }
     var changed = true
     while changed {
       changed = false
-      for image in sortedImages {
+      for image in images.values.sorted(by: { $0.source.path < $1.source.path }) {
         let executable = image.isExecutable ? image.source.path : nil
         let ownContext = Context(
           paths: image.rpaths.compactMap { image.expanded($0, executable: executable) },
@@ -218,7 +288,13 @@ private struct PackedClosure {
             dependencies[image.source.path]?.removeValue(forKey: dependency)
             continue
           }
-          guard images[target] != nil || isPackedSystemPath(target) else {
+          if images[target] == nil, !isPackedSystemPath(target), let discover {
+            images[target] = try discover(target)
+            changed = true
+          }
+          guard images[target] != nil ||
+                relocated(target).map({ $0.path != target && fm.fileExists(atPath: $0.path) }) == true ||
+                isPackedSystemPath(target) else {
             throw PackedRelocationError("dependency \(dependency) of \(image.source.path) resolves outside the supplied Mach-O closure: \(target)")
           }
           if let previous = dependencies[image.source.path]?[dependency], previous != target {
@@ -232,7 +308,7 @@ private struct PackedClosure {
         }
       }
     }
-    for image in sortedImages {
+    for image in images.values.sorted(by: { $0.source.path < $1.source.path }) {
       for dependency in image.dependencies where dependencies[image.source.path]?[dependency] == nil {
         throw PackedRelocationError("unresolved dependency \(dependency) of \(image.source.path)")
       }
@@ -339,6 +415,10 @@ private struct PackedMachO {
   }
 }
 
+private func packedNamespace(_ name: String) -> String {
+  SHA256.hash(data: Data(name.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
+}
+
 private func isPackedSystemPath(_ path: String) -> Bool {
   ["/usr/lib", "/System/Library"].contains { path == $0 || path.hasPrefix($0 + "/") }
 }
@@ -378,13 +458,13 @@ private func isPackedMachO(_ source: URL) throws -> Bool {
   return try loadable(file.read(upToCount: 16) ?? Data())
 }
 
-private func relocationTool(_ tool: String, _ arguments: [String]) throws -> String {
+private func relocationTool(_ tool: String, _ arguments: [String], captureStderr: Bool = true) throws -> String {
   let process = Process()
   process.executableURL = URL(fileURLWithPath: tool)
   process.arguments = arguments
   let output = Pipe()
   process.standardOutput = output
-  process.standardError = output
+  if captureStderr { process.standardError = output }
   try process.run()
   let data = output.fileHandleForReading.readDataToEndOfFile()
   process.waitUntilExit()

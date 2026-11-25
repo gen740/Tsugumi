@@ -12,17 +12,19 @@ The SDK interprets the payload bytes.
 int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 ```
 
-The call supplies a serialized `CardInput`, an opaque host pointer and an effects
-table. A successful ABI call returns a serialized `CardResult` containing output
-ports or a `CardFailure`. Parameters are embedded by the SDK at build time.
-The input envelope contains only connected ports that arrived for this call.
-It and its payloads are borrowed for the duration of the call.
+The call supplies an array of `tsugumi_input` descriptors, an opaque host pointer
+and an effects table. Each descriptor names a connected port that arrived for the
+call and carries its schema ID and a span of payload bytes. The array, strings
+and spans are borrowed until the entry returns. Parameters are embedded by the
+SDK at build time.
 
-The SDK returns a fresh libc `malloc` allocation in `result.data`. Ownership
-passes to the host as soon as the entry returns, regardless of status. The
-pointer must identify the start of the allocation. The worker releases it with
-`free` after verification and after copying the fields needed for its reply.
-This also applies to calls served by a resident worker.
+A successful ABI call returns a serialized `CardResult` containing output
+ports or a `CardFailure`. The SDK requests writable storage with
+`result_alloc(host, size)` and returns the base pointer and initialized length
+in `result`. The effect can succeed once per call. The host can lend process
+memory or a shared mapping. Once the entry returns, the storage belongs to the
+host regardless of status. The Card must neither free the storage nor access
+it after returning. The host releases it after its last reader finishes.
 
 ## Fixed schemas
 
@@ -77,6 +79,7 @@ came from. APIs and evidence links use the UUID. See
 | `remaining_ms` | Return the remaining deadline in milliseconds, or −1 for no deadline. |
 | `artifact_create` | Create a writable artifact directory. |
 | `artifact_open` | Open a sealed artifact by UUID and resolve it to its read-only directory. |
+| `result_alloc` | Lend an aligned buffer for a result up to the host's message limit. Returns null on failure. |
 
 The six view effects are available on any Card thread throughout the process
 lifetime, including between calls in a resident worker. On each thread the

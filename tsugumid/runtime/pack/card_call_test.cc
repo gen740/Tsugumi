@@ -6,6 +6,7 @@
 
 using tsugumi::pack::CardImage;
 using tsugumi::pack::OutputPort;
+using tsugumi::pack::ResultMemory;
 
 namespace {
 
@@ -30,9 +31,18 @@ int main(int argc, char** argv) {
   try {
     CardImage image(argv[1]);
     const auto expected = std::array{OutputPort{"out", true}};
-    tsugumi_call call{TSUGUMI_ABI_VERSION, {}, nullptr, nullptr};
+    tsugumi_effects effects{};
+    effects.result_alloc = [](void* host, size_t size) {
+      return static_cast<ResultMemory*>(host)->allocate(size);
+    };
+    tsugumi_call call{TSUGUMI_ABI_VERSION, nullptr, 0, nullptr, &effects};
+    const auto invoke = [&](std::span<const OutputPort> outputs, bool verify) {
+      ResultMemory memory;
+      call.host = &memory;
+      return image.call(call, memory, outputs, verify);
+    };
     for (const bool verify : {false, true}) {
-      const auto result = image.call(call, expected, verify);
+      const auto result = invoke(expected, verify);
       const auto* bytes = result.root().outputs()->Get(0)->bytes();
       const auto payload = result.payload();
       require(bytes->size() == 1 && bytes->Get(0) == 42, "Wrong port payload");
@@ -41,25 +51,27 @@ int main(int argc, char** argv) {
               "Port does not refer to the owned result");
     }
     const auto missing = std::array{OutputPort{"missing", true}};
-    rejects([&] { image.call(call, missing, false); },
+    rejects([&] { invoke(missing, false); },
             "Card omitted required output missing");
-    call.input.size = TSUGUMI_MESSAGE_MAX + 1;
-    rejects([&] { image.call(call, expected, false); },
-            "Card input exceeds 16 MiB");
     const uint8_t corrupt_fixture = 0;
-    call.input = {&corrupt_fixture, 1};
-    rejects([&] { image.call(call, expected, true); },
+    tsugumi_input input{"in", nullptr, {&corrupt_fixture, TSUGUMI_MESSAGE_MAX + 1}};
+    call.inputs = &input;
+    call.input_count = 1;
+    rejects([&] { invoke(expected, false); },
+            "Card input exceeds 16 MiB");
+    input.bytes.size = 1;
+    rejects([&] { invoke(expected, true); },
             "Invalid Card result FlatBuffer");
 
-    call.input = {};
-    tsugumi_effects effects{};
+    call.inputs = nullptr;
+    call.input_count = 0;
     effects.cancelled = [](void*) -> int { return 1; };
     call.effects = &effects;
-    rejects([&] { image.call(call, expected, false); },
+    rejects([&] { invoke(expected, false); },
             "Card invocation cancelled");
     effects.cancelled = nullptr;
     effects.remaining_ms = [](void*) -> int64_t { return 0; };
-    rejects([&] { image.call(call, expected, false); },
+    rejects([&] { invoke(expected, false); },
             "Card invocation exceeded its deadline");
   } catch (const std::exception& error) {
     std::fprintf(stderr, "%s\n", error.what());

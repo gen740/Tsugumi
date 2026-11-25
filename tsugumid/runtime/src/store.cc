@@ -350,9 +350,11 @@ std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc,
     doc->resolution = base->resolution;
     return doc;
   }
+  const auto read_params =
+      opts_.evaluate_params ? ParamsReader(evaluate_literal_params)
+                            : ParamsReader{};
   doc->resolution =
-      resolve(*doc, source_reader(opts_.root, *doc, pending),
-              evaluate_literal_params);
+      resolve(*doc, source_reader(opts_.root, *doc, pending), read_params);
   return doc;
 }
 

@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -94,6 +95,14 @@ class PreparedExecution {
   // Runs the invocation. Throws Failed when it cannot be started.
   virtual auto execute(const ExecutionRequest& request) -> ExecutionResult = 0;
 };
+
+#ifdef __APPLE__
+auto prepare_fast_pack_execution(Service& service, const Node& node)
+    -> std::unique_ptr<PreparedExecution>;
+auto load_fast_pack_images(Service& service, std::span<const std::string> libraries)
+    -> void;
+auto stop_fast_pack_images(Service& service) -> void;
+#endif
 
 class LocalExecutionService final {
  public:

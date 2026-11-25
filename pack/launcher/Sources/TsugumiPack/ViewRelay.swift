@@ -1,76 +1,64 @@
 import AppKit
+import Darwin
 import Foundation
 import TsugumiViewPresentation
-import Virtualization
 
-/// The pack guest exposes its existing JSON RPC adapter on a private virtio socket.
+/// Presents the native core's views and carries runtime RPCs over a private
+/// JSON adapter with inherited standard streams.
 @MainActor final class PackViewRelay {
-  static let port: UInt32 = 7417
   let presentation: CardViewPresentation
-  private let ready: URL
-  private let done: URL
-  private var runFinished = false
   private var stream: FileHandle?
+  private var process: Process?
   private var appKitStarted = false
   private var task: Task<Void, Never>?
   private var nextId: UInt64 = 0
-  private var replies: [UInt64: CheckedContinuation<PackViewValue, Error>] = [:]
+  private var replies: [UInt64: CheckedContinuation<[String: Any], Error>] = [:]
   private var subscription: String?
   private var lastSequence: UInt64?
   private let writer = DispatchQueue(label: "org.tsugumi.pack.views")
 
-  init(title: String, share: URL) {
-    presentation = CardViewPresentation(packedTitle: title)
-    ready = share.appendingPathComponent("views.ready")
-    done = share.appendingPathComponent("views.done")
+  init(title: String, debugClock: Bool) {
+    presentation = CardViewPresentation(packedTitle: title, debugClock: debugClock)
   }
 
-  func connect(_ device: VZVirtioSocketDevice) {
-    guard task == nil else { return }
+  func connect(adapter: URL, schema: URL, socket: URL) async throws {
+    let child = Process()
+    let inbound = Pipe()
+    let outbound = Pipe()
+    child.executableURL = adapter
+    child.arguments = ["--endpoint", "unix:\(socket.path)", "--schema", schema.path,
+                       "--timeout-ms", "60000"]
+    child.standardInput = outbound
+    child.standardOutput = inbound
+    try child.run()
+    process = child
+    stream = outbound.fileHandleForWriting
     task = Task {
-      do {
-        let connection = try await device.connect(toPort: Self.port)
-        let fd = dup(connection.fileDescriptor)
-        guard fd >= 0 else { throw PackError("Cannot duplicate the packed view connection") }
-        var yes: Int32 = 1
-        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, socklen_t(MemoryLayout<Int32>.size))
-        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-        stream = handle
-        let reader = Task {
-          for await frame in Self.frames(handle, retaining: connection) { apply(frame) }
-          disconnect()
-        }
-        defer { reader.cancel() }
-        _ = try await call("SessionHelloRequest", ["client": "MacOS"])
-        let opened = try await call("ProjectOpenRequest")
-        guard let id = opened.subscriptionId else { throw PackError("Missing packed view subscription") }
-        subscription = id
-        lastSequence = opened.seq
-        try Data().write(to: ready, options: .atomic)
-        await reader.value
-      } catch {
-        disconnect()
-        FileHandle.standardError.write(Data("Packed view connection: \(error.localizedDescription)\n".utf8))
-      }
+      for await line in Self.frames(inbound.fileHandleForReading) { apply(line) }
+      disconnect()
     }
-  }
-
-  func runEnded(_ runId: String) {
-    // Observe the end on the subscribed connection before settling the guest.
-    Task {
-      _ = try? await call("RunStatusRequest", ["run_id": runId])
-      runFinished = true
+    _ = try await call("SessionHelloRequest", ["client": "MacOS"])
+    let opened = try await call("ProjectOpenRequest")
+    guard let id = opened["subscription_id"] as? String else {
+      throw PackError("Missing packed view subscription")
     }
+    subscription = id
+    lastSequence = (opened["seq"] as? NSNumber)?.uint64Value
   }
 
   func disconnect() {
-    if let stream { shutdown(stream.fileDescriptor, SHUT_RDWR) }
+    let handle = stream
     stream = nil
-    for reply in replies.values { reply.resume(throwing: PackError("The packed view connection closed")) }
+    try? handle?.close()
+    if let process { stopChild(process) }
+    process = nil
+    task?.cancel()
+    task = nil
+    for reply in replies.values { reply.resume(throwing: PackError("The packed core connection closed")) }
     replies.removeAll()
   }
 
-  private func call(_ kind: String, _ body: [String: Any] = [:]) async throws -> PackViewValue {
+  func call(_ kind: String, _ body: [String: Any] = [:]) async throws -> [String: Any] {
     guard let stream else { throw PackError("The packed workflow has ended") }
     nextId += 1
     let id = nextId
@@ -84,22 +72,40 @@ import Virtualization
       replies[id] = reply
       writer.async {
         do { try stream.write(contentsOf: line) }
-        catch { shutdown(stream.fileDescriptor, SHUT_RDWR) }
+        catch {
+          Task { @MainActor in self.disconnect() }
+        }
       }
     }
   }
 
-  private func apply(_ frame: PackViewFrame) {
-    guard let payload = frame.payload, let value = payload.value else {
+  private func apply(_ line: Data) {
+    guard let json = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],
+          let payload = json["payload"] as? [String: Any],
+          let value = payload["value"] as? [String: Any] else {
       disconnect()
       return
     }
-    if frame.payloadType == "Reply", let id = frame.requestId, let reply = replies.removeValue(forKey: id) {
-      if payload.valueType == "Failure" {
-        reply.resume(throwing: PackError(value.diagnostic ?? "Packed view RPC failed"))
-      } else { reply.resume(returning: value) }
+    if json["payload_type"] as? String == "Reply", let id = json["request_id"] as? NSNumber,
+       let reply = replies.removeValue(forKey: id.uint64Value) {
+      if payload["value_type"] as? String == "Failure" {
+        reply.resume(throwing: PackError(value["diagnostic"] as? String ?? "Packed core RPC failed"))
+      } else {
+        reply.resume(returning: value)
+      }
       return
     }
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    guard let frame = try? decoder.decode(PackViewFrame.self, from: line) else {
+      disconnect()
+      return
+    }
+    applyNotification(frame)
+  }
+
+  private func applyNotification(_ frame: PackViewFrame) {
+    guard let payload = frame.payload, let value = payload.value else { return }
     guard frame.payloadType == "Notification", let subscription, payload.subscriptionId == subscription else { return }
     if let lastSequence, payload.seq != lastSequence + 1 {
       disconnect()
@@ -118,11 +124,14 @@ import Virtualization
       }
       let opening = CardViewOpening(id: id, card: value.card?.segments ?? [], name: name, type: type,
                                     mode: mode, width: value.width ?? 0, height: value.height ?? 0, flags: value.flags ?? 0)
+      print("View \(name)")
       let session = id.uuidString.lowercased()
       let files = CardViewFiles { [weak self] _, offset in
         guard let self else { throw PackError("The packed workflow has ended") }
         let page = try await call("CardViewReadRequest", ["session": session, "offset": offset, "limit_bytes": 1 << 20])
-        return CardViewFilePage(bytes: Data(page.bytes ?? []), eof: page.eof == true, nextOffset: page.nextOffset)
+        let bytes = (page["bytes"] as? [UInt8]) ?? []
+        let nextOffset = (page["next_offset"] as? NSNumber)?.uint64Value
+        return CardViewFilePage(bytes: Data(bytes), eof: page["eof"] as? Bool == true, nextOffset: nextOffset)
       }
       presentation.open(opening, files: files, send: { [weak self] route, bytes in
         _ = try await self?.call("ViewSendRequest", [
@@ -152,36 +161,34 @@ import Virtualization
     }
   }
 
-  private nonisolated static func frames(_ handle: FileHandle, retaining connection: VZVirtioSocketConnection)
-    -> AsyncStream<PackViewFrame> {
+  private nonisolated static func frames(_ handle: FileHandle) -> AsyncStream<Data> {
     AsyncStream { output in
       let read = Task.detached {
-        defer { withExtendedLifetime(connection) {}; output.finish() }
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        defer { output.finish() }
         var pending = Data()
-        while !Task.isCancelled, let chunk = try? handle.read(upToCount: 65536), !chunk.isEmpty {
-          pending.append(chunk)
+        var chunk = Data(count: 65536)
+        while !Task.isCancelled {
+          // FileHandle fills its requested byte count on a live pipe. Each
+          // RPC reply must be read even when it is shorter than a chunk.
+          let count = chunk.withUnsafeMutableBytes {
+            Darwin.read(handle.fileDescriptor, $0.baseAddress, $0.count)
+          }
+          if count < 0, errno == EINTR { continue }
+          guard count > 0 else { return }
+          pending.append(chunk.prefix(count))
+          guard pending.count <= 32 << 20 else { return }
           while let newline = pending.firstIndex(of: 10) {
-            guard let frame = try? decoder.decode(PackViewFrame.self, from: pending.prefix(upTo: newline)) else { return }
+            let frame = Data(pending.prefix(upTo: newline))
             pending.removeSubrange(...newline)
             output.yield(frame)
           }
         }
       }
-      output.onTermination = { _ in
-        read.cancel()
-        shutdown(handle.fileDescriptor, SHUT_RDWR)
-      }
+      output.onTermination = { _ in read.cancel() }
     }
   }
 
   func pollWindows() {
-    if runFinished, presentation.isIdle {
-      runFinished = false
-      do { try Data().write(to: done, options: .atomic) }
-      catch { disconnect() }
-    }
     guard let app = NSApp else { return }
     autoreleasepool {
       while let event = app.nextEvent(matching: .any, until: .distantPast, inMode: .default, dequeue: true) {
@@ -190,17 +197,9 @@ import Virtualization
       app.updateWindows()
     }
   }
-
-  func waitForWindows() {
-    while !presentation.isEmpty {
-      _ = RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.016))
-      pollWindows()
-    }
-  }
 }
 
 private struct PackViewFrame: Decodable {
-  let requestId: UInt64?
   let payloadType: String?
   let payload: PackViewPayload?
 }
@@ -220,9 +219,6 @@ private struct PackViewValue: Decodable {
     let creditId: UInt64?
   }
 
-  let subscriptionId: String?
-  let seq: UInt64?
-  let diagnostic: String?
   let session: UUID?
   let route: UUID?
   let card: Card?
@@ -233,7 +229,4 @@ private struct PackViewValue: Decodable {
   let width: UInt32?
   let height: UInt32?
   let display: Display?
-  let bytes: [UInt8]?
-  let eof: Bool?
-  let nextOffset: UInt64?
 }

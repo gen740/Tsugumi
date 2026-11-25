@@ -83,7 +83,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     pthread_t thread;
     if (pthread_create(&thread, NULL, serve, NULL)) return 3;
     pthread_detach(thread);
-    return write_result(result, result_bytes, sizeof(result_bytes));
+    return write_result(call, result, result_bytes, sizeof(result_bytes));
 }
 """
 
@@ -151,7 +151,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     if (effects->recv(host, &event, 50) != 1 ||
         effects->route_unregister(host, &second))
         return 3;
-    return write_result(result, result_bytes, sizeof(result_bytes));
+    return write_result(call, result, result_bytes, sizeof(result_bytes));
 }
 """)
     daemon = core_factory(mocked_builds=True, env={"TSUGUMI_MOCK_STORE": str(store)})
@@ -266,7 +266,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     while (access(RELEASE, F_OK)) usleep(1000);
     effects->send(host, &fast, (const uint8_t *)"ready", 5);
     pthread_join(thread, NULL);
-    return write_result(result, result_bytes, sizeof(result_bytes));
+    return write_result(call, result, result_bytes, sizeof(result_bytes));
 }
 """
     _, ui, _, subscription = setup(core_factory, project, tmp_path, source)
@@ -314,7 +314,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     FILE *file = fopen(CAPABILITY, "wb");
     if (!file || fwrite(&session, sizeof(session), 1, file) != 1 || fclose(file))
         return 2;
-    return write_result(result, result_bytes, sizeof(result_bytes));
+    return write_result(call, result, result_bytes, sizeof(result_bytes));
 }
 """)
     successor_source = capability + r"""
@@ -333,7 +333,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
         return 2;
 #else
     if (registered == TSUGUMI_VIEW_WINDOW_CLOSED)
-        return write_result(result, result_bytes, sizeof(result_bytes));
+        return write_result(call, result, result_bytes, sizeof(result_bytes));
     if (registered)
         return 2;
     if (call->effects->send(call->host, &session, route.bytes, sizeof(route.bytes)))
@@ -350,7 +350,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
         memcmp(&event.route, &route, sizeof(route)))
         return 6;
 #endif
-    return write_result(result, result_bytes, sizeof(result_bytes));
+    return write_result(call, result, result_bytes, sizeof(result_bytes));
 }
 """
     successor = native_card(tmp_path / "successor", successor_source)

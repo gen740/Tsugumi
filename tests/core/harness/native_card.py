@@ -14,9 +14,10 @@ from Tsugumi.Card.CardResult import CardResultT
 RESULT_WRITER = r"""
 #include <stdlib.h>
 #include <string.h>
-static inline int write_result(tsugumi_bytes* result, const uint8_t* data,
+static inline int write_result(const tsugumi_call* call, tsugumi_bytes* result,
+                               const uint8_t* data,
                                size_t size) {
-  uint8_t* owned = malloc(size);
+  uint8_t* owned = call->effects->result_alloc(call->host, size);
   if (!owned) return 1;
   memcpy(owned, data, size);
   *result = (tsugumi_bytes){owned, size};
@@ -28,7 +29,7 @@ static inline int write_result(tsugumi_bytes* result, const uint8_t* data,
 STATIC_RESULT_ENTRY = """
 int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
   if (call->abi_version != TSUGUMI_ABI_VERSION) return 1;
-  return write_result(result, result_bytes, sizeof(result_bytes));
+  return write_result(call, result, result_bytes, sizeof(result_bytes));
 }
 """
 

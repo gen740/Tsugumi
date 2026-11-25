@@ -3,9 +3,12 @@
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "tsugumi/document/definition_values.hh"
@@ -61,10 +64,77 @@ struct CreatedArtifact {
   bool keep;
 };
 
+namespace workerd {
+class SharedBuffer;
+}
+
+class PayloadBytes {
+ public:
+  PayloadBytes() = default;
+  PayloadBytes(std::string bytes) : storage_(std::move(bytes)) {}
+  PayloadBytes(std::string_view bytes) : PayloadBytes(std::string(bytes)) {}
+  PayloadBytes(const char* bytes) : PayloadBytes(std::string_view(bytes)) {}
+  PayloadBytes(const char* bytes, size_t size)
+      : PayloadBytes(std::string(bytes, size)) {}
+
+  static auto borrow(std::string_view bytes, std::shared_ptr<const void> owner)
+      -> PayloadBytes {
+    return PayloadBytes(Borrowed{bytes, std::move(owner)});
+  }
+
+  static auto shared(std::string_view bytes,
+                     std::shared_ptr<const workerd::SharedBuffer> buffer)
+      -> PayloadBytes {
+    return PayloadBytes(Borrowed{bytes, std::move(buffer)});
+  }
+
+  auto shared_buffer() const -> std::shared_ptr<const workerd::SharedBuffer> {
+    if (const auto* borrowed = std::get_if<Borrowed>(&storage_))
+      if (const auto* buffer =
+              std::get_if<std::shared_ptr<const workerd::SharedBuffer>>(
+                  &borrowed->owner))
+        return *buffer;
+    return {};
+  }
+
+  auto view() const -> std::string_view {
+    if (const auto* borrowed = std::get_if<Borrowed>(&storage_))
+      return borrowed->bytes;
+    return std::get<std::string>(storage_);
+  }
+
+  operator std::string_view() const { return view(); }
+  auto data() const -> const char* { return view().data(); }
+  auto size() const -> size_t { return view().size(); }
+  auto empty() const -> bool { return view().empty(); }
+  auto begin() const { return view().begin(); }
+  auto end() const { return view().end(); }
+
+  template <typename It>
+  auto assign(It first, It last) -> void {
+    storage_ = std::string(first, last);
+  }
+
+  friend auto operator==(const PayloadBytes& lhs, const PayloadBytes& rhs)
+      -> bool {
+    return lhs.view() == rhs.view();
+  }
+
+ private:
+  struct Borrowed {
+    std::string_view bytes;
+    std::variant<std::shared_ptr<const void>,
+                 std::shared_ptr<const workerd::SharedBuffer>> owner;
+  };
+
+  explicit PayloadBytes(Borrowed borrowed) : storage_(std::move(borrowed)) {}
+  std::variant<std::string, Borrowed> storage_;
+};
+
 struct Value {
   std::string name;
   types::TypeRef type;
-  std::string bytes;
+  PayloadBytes bytes;
   std::string schema;
 };
 

@@ -125,8 +125,6 @@ auto run_invocation(const ReleaseWorker& release_worker,
                  std::chrono::milliseconds(*invocation.timeout_ms +
                                            invocation.deadline_grace.count());
     const auto id = worker.next_call_id();
-    auto frame = worker_call_frame(id, invocation.inputs, invocation.outputs,
-                                   invocation.timeout_ms, stage_path, !reuse);
     const auto open = [&](const ArtifactKey& key,
                           std::stop_token stop) -> std::string {
       if (!invocation.resolve_artifact) return {};
@@ -146,8 +144,10 @@ auto run_invocation(const ReleaseWorker& release_worker,
     worker.set_logs(invocation.log);
     const auto begin = invocation.on_timing ? now_ms() : 0;
     between_calls = false;
-    auto outcome = worker.call(std::move(frame), id, invocation.cancel,
-                               deadline, open, stage.has_value());
+    auto outcome = worker.call_inputs(
+        {invocation.inputs, invocation.outputs, invocation.timeout_ms,
+         stage_path, !reuse},
+        id, invocation.cancel, deadline, open);
     result.failure = std::move(outcome.failure);
     between_calls = true;
     worker.set_logs(nullptr);
@@ -158,7 +158,9 @@ auto run_invocation(const ReleaseWorker& release_worker,
     // clones, which are new inodes, instead. Linux retires a fresh worker's
     // namespace and renames the staged tree.
 #ifdef __APPLE__
-    const bool clone = true;
+    // The export author ships all Cards together. Packed Cards honor the
+    // handoff when they return and leave no writers to their outputs.
+    const bool clone = !worker.packed();
 #else
     const bool clone = reuse;
 #endif

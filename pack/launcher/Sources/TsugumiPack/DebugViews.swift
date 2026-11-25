@@ -1,3 +1,4 @@
+import CoreFoundation
 import Foundation
 import TsugumiViewPresentation
 
@@ -12,9 +13,20 @@ import TsugumiViewPresentation
       let windows: [[String: Any]] = openings.map { view in
         ["session": view.id.uuidString.lowercased(), "card": ["segments": view.card],
          "name": view.name, "type": view.type, "mode": view.mode.rawValue,
-         "width": view.width, "height": view.height, "flags": view.flags]
+         "width": view.width, "height": view.height, "flags": view.flags,
+         "audio_requested": presentation.audioRequested(session: view.id)]
       }
       return ["windows": windows]
+    case "StepClockRequest":
+      guard let delta = body["milliseconds"] as? NSNumber,
+            CFGetTypeID(delta) != CFBooleanGetTypeID(),
+            let milliseconds = UInt64(delta.stringValue) else {
+        throw DebugSocket.SocketError("StepClock requires an unsigned millisecond count")
+      }
+      guard let elapsed = presentation.stepClock(milliseconds: milliseconds) else {
+        throw DebugSocket.SocketError("The Dawn test clock is disabled or out of range")
+      }
+      return ["elapsed_ms": elapsed]
     case "ViewActionRequest":
       let decoder = JSONDecoder()
       decoder.keyDecodingStrategy = .convertFromSnakeCase

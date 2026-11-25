@@ -59,7 +59,6 @@ clangStdenv.mkDerivation {
   src = import ./core-source.nix {
     inherit lib;
     extra = lib.optionals isDarwin [
-      ../pack/native
       ../ui/macos/ViewHost
       ../ui/shared/dawn
     ];

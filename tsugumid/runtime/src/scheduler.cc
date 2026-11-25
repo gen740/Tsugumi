@@ -26,6 +26,7 @@
 #include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/util/system.hh"
+#include "tsugumi/workerd/artifact_id.hh"
 #include "tsugumi/workerd/log.hh"
 #include "tsugumi/workerd/store.hh"
 #include "wire.hh"
@@ -468,6 +469,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   void card_log(const CardPath& card, uint64_t inv, LogStream stream,
                 proc::LineChunk received) {
+    if (svc_.packed_builds() && !svc_.packed_debug()) return;
     std::lock_guard<std::mutex> lock(log_policy_mu_);
     if (stream == LogStream::standard_output ||
         stream == LogStream::standard_error) {
@@ -533,13 +535,20 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     for (const auto& s : plan_.starts)
       if (!seeded.count(path_key(s)))
         nodes_[res.index.at(path_key(s))].start = true;
+    if (p_.injected_inputs)
+      for (const auto& input : *p_.injected_inputs)
+        if (input.card != p_.card) {
+          auto& node = nodes_[res.index.at(path_key(input.card))];
+          node.queues.at(input.value.name).push_back(injected_group(input.value));
+        }
     for (const auto& s : plan_.seeds) {
       NodeRt& n = nodes_[res.index.at(path_key(s))];
       std::set<std::string> outside;
       for (const auto& e : res.edges)
-        if (e.to == n.idx && !nodes_[e.from].in_targets)
+        if (e.to == n.idx && !nodes_[e.from].in_targets &&
+            n.queues.at(e.to_port).empty())
           outside.insert(e.to_port);
-      seed_saved(n, outside);
+      if (!outside.empty()) seed_saved(n, outside);
     }
     for (const auto& j : plan_.joins)
       seed_saved(nodes_[res.index.at(path_key(j.card))], j.saved_ports);
@@ -557,6 +566,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     for (const auto& value : saved.values)
       group.members.push_back(
           {std::make_shared<const Value>(value), saved.port, {}, activation});
+    return group;
+  }
+
+  auto injected_group(const Value& input) -> TokenGroup {
+    TokenGroup group{input.name, false, {}, ++token_seq_};
+    group.members.push_back(
+        {std::make_shared<const Value>(input), input.name, {}, 0});
     return group;
   }
 
@@ -698,6 +714,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     if (n.start && !n.start_fired) {
       if (!downstream_has_space(n)) return std::nullopt;
       n.start_fired = true;
+      if (p_.injected_inputs && n.node->path == p_.card) {
+        for (const auto& input : *p_.injected_inputs)
+          w.groups.push_back(injected_group(input.value));
+        return w;
+      }
       if (!n.queues.empty()) {
         try {
           const auto last = svc_.history().read([&](sql::Db& db) {
@@ -756,6 +777,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     journal("run", "started", std::nullopt, std::nullopt, "run started");
     for (const auto& note : seed_notes_)
       journal("run", "seeded", std::nullopt, std::nullopt, note);
+    if (svc_.packed_fast()) {
+      schedule_fast();
+      finalize();
+      return;
+    }
     for (uint32_t lane = 0;
          lane < std::min(p_.max_concurrency, kMaxParallelWorkers); ++lane)
       workers_.emplace_back([this, lane] { worker_loop(lane); });
@@ -808,6 +834,58 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     finalize();
   }
 
+  void schedule_fast() {
+    std::vector<std::future<void>> fan_out;
+    for (;;) {
+      std::vector<Work> ready;
+      bool parallel = false;
+      {
+        std::unique_lock lock(mu_);
+        if (!cancel_) {
+          close_exhausted_inputs();
+          for (auto& node : nodes_) {
+            if (running_ >= p_.max_concurrency) break;
+            auto work = take_ready(node);
+            if (!work) continue;
+            node.running = true;
+            work->activation = ++node.activations;
+            work->cancellation =
+                std::make_shared<BatchCancellation>(work_stop_.get_token());
+            ++running_;
+            ready.push_back(std::move(*work));
+          }
+        }
+        if (ready.empty()) {
+          if (running_ != 0) {
+            cv_.wait(lock);
+            continue;
+          }
+          if (!cancel_ && any_ready_locked())
+            stall_failure_ = stall_reason_locked();
+          break;
+        }
+        parallel = running_ > 1;
+      }
+      std::erase_if(fan_out, [](auto& worker) {
+        if (worker.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+          return false;
+        worker.get();
+        return true;
+      });
+      if (parallel) {
+        for (uint32_t lane = 0; lane < ready.size(); ++lane)
+          fan_out.push_back(std::async(
+              std::launch::async,
+              [this, work = std::move(ready[lane]), lane]() mutable {
+                execute_work(work, lane);
+              }));
+      } else {
+        execute_work(ready.front(), 0);
+      }
+    }
+    for (auto& worker : fan_out) worker.get();
+  }
+
   FailureData stall_reason_locked() {
     for (auto& n : nodes_) {
       if (!n.in_targets || n.running || n.halted || n.closed || n.node->is_virtual)
@@ -858,14 +936,18 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         w = std::move(tasks_.front());
         tasks_.pop_front();
       }
-      invoke_batch(w, lane);
-      {
-        std::lock_guard<std::mutex> l(mu_);
-        nodes_[w.node].running = false;
-        --running_;
-      }
-      cv_.notify_all();
+      execute_work(w, lane);
     }
+  }
+
+  void execute_work(Work& work, uint32_t lane) {
+    invoke_batch(work, lane);
+    {
+      std::lock_guard lock(mu_);
+      nodes_[work.node].running = false;
+      --running_;
+    }
+    cv_.notify_all();
   }
 
   // ---- invocation -----------------------------------------------------------
@@ -1083,7 +1165,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   }
 
   auto remember_inputs(NodeRt& rt, const Work& batch) -> void {
-    if (batch.from_saved ||
+    if ((svc_.packed_builds() && !svc_.packed_debug()) || batch.from_saved ||
         (rt.node->kind != CardType::Code && batch.groups.empty()))
       return;
     std::vector<SavedInputGroup> saved;
@@ -1264,6 +1346,12 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
            ++index)
         execute(index, lane);
       rt.invocations += started.load();
+    } else if (svc_.packed_fast() && count != 0) {
+      for (uint32_t index = 0; index < count && !work.cancellation->stop.load();
+           ++index)
+        execute(index, lane);
+      if (started.load() == 0) execute(0, lane);
+      rt.invocations += count;
     } else if (count != 0) {
       std::vector<std::future<void>> pending;
       {
@@ -1447,7 +1535,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                    ": " + *out.failure->diagnostic + "\n");
     InvocationRecordData rec;
     rec.summary = s;
-    rec.record_io = node.settings.record_io;
+    rec.record_io =
+        svc_.packed_builds() ? svc_.packed_debug() : node.settings.record_io;
     rec.input_sources = sources;
     if (s.state == CardState::succeeded) {
       // Records, artifacts and saved values are written in the save stage.
@@ -1665,6 +1754,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
            };
            try {
              validate_outputs(node, completed.outputs);
+             if (svc_.packed_debug())
+               for (const auto& value : completed.outputs)
+                 if (!flatbuffers::Verify(
+                         *value.type->schema(), *value.type->root(),
+                         reinterpret_cast<const uint8_t*>(value.bytes.data()),
+                         value.bytes.size()))
+                   throw Failed(FailureKind::output_invalid,
+                                "invalid FlatBuffer for output " + value.name);
            } catch (...) {
              trace_validation();
              throw;
@@ -1698,8 +1795,17 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     p.auxiliary_logs = std::move(result.auxiliary_logs);
     p.auxiliary_logs_truncated = result.auxiliary_logs_truncated;
     if (!p.failure) {
-      for (auto& value : result.outputs)
+      for (auto& value : result.outputs) {
+        if (svc_.packed_builds()) {
+          const std::string_view bytes = value.bytes;
+          for (const auto& id : History::output_artifact_ids(*value.type, bytes))
+            if (svc_.resolve_artifact(id).empty())
+              throw Failed(FailureKind::output_invalid,
+                           "unavailable artifact UUID in output " + value.name,
+                           {{"artifact", artifact_id_text(id)}});
+        }
         value.schema = schema_id(*value.type);
+      }
       p.outputs = std::move(result.outputs);
     }
     return p;
@@ -2183,11 +2289,18 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
     throw Failed(FailureKind::busy, "another run is active",
                  {{"run_id", *active_->status().run_id}});
   auto plan = Scheduler::plan(*doc->resolution, p.card, p.propagate);
-  const auto services = svc_.remote_targets();
-  for (const auto& path : plan.targets)
-    if (auto diagnostic =
-            svc_.execution_diagnostic(*doc->resolution->find(path), services))
-      plan.diagnostics.push_back(std::move(*diagnostic));
+  if (p.injected_inputs)
+    for (const auto& input : *p.injected_inputs)
+      if (std::ranges::find(plan.targets, input.card) == plan.targets.end())
+        throw Failed(FailureKind::input_invalid,
+                     "starting input would not reach " + path_key(input.card));
+  if (!svc_.packed_builds()) {
+    const auto services = svc_.remote_targets();
+    for (const auto& path : plan.targets)
+      if (auto diagnostic =
+              svc_.execution_diagnostic(*doc->resolution->find(path), services))
+        plan.diagnostics.push_back(std::move(*diagnostic));
+  }
   std::vector<std::string> errors;
   for (const auto& d : plan.diagnostics) {
     if (!d.error) continue;

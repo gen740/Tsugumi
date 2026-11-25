@@ -19,8 +19,8 @@ def checks(paths):
         entry["system"]: {check for job in entry["tests"]["include"] for check in job["checks"]}
         for entry in selected["matrix"]["include"]
     }
-    if selected["vm"] or selected["pack-guest"]:
-        matrix["aarch64-linux"] = {job for job in selection.GUEST if selected[job]}
+    if selected["vm"]:
+        matrix["aarch64-linux"] = {"vm"}
     return matrix
 
 
@@ -37,19 +37,21 @@ def test_shared_or_unclassified_paths_run_everything(path):
 
 def test_full_run_schedules_only_supported_jobs():
     plan = selection.select()
+    assert plan["pack-native"]
     assert {entry["system"]: [job["job"] for job in entry["tests"]["include"]]
             for entry in plan["matrix"]["include"]} == {
         "x86_64-linux": ["native-checks", "host-and-web", "kit-and-demos", "remote-execution"],
         "aarch64-darwin": ["native-checks", "swift", "kit"],
     }
-    assert checks(None)["aarch64-linux"] == {"vm", "pack-guest"}
+    assert checks(None)["aarch64-linux"] == {"vm"}
 
 
 def test_changed_paths_produce_only_selected_matrix_entries():
     assert not selection.select(["README.md"])["platform"]
     assert checks(["ui/macos/Package.swift"]) == {"aarch64-darwin": {"swift"}}
     assert checks(["tests/remote/test_worker.py"]) == {"x86_64-linux": {"remote-execution"}}
-    assert checks(["pack/build.sh"]) == {"aarch64-linux": {"pack-guest"}}
+    assert selection.select(["pack/build.sh"])["pack-native"]
+    assert not selection.select(["pack/build.sh"])["vm"]
     assert checks(["tests/core/agent/project_rpc_test.cc"])["aarch64-linux"] == {"vm"}
 
     boundary = selection.select(["ui/web/scripts/check-boundaries.mjs"])

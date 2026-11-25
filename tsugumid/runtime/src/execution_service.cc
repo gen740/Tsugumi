@@ -166,6 +166,8 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
                          : build.worker;
   if (!secrets->values.empty()) sp.secrets = std::move(secrets);
   sp.package = build.package;
+  sp.packed = service_.packed_builds() != nullptr;
+  sp.packed_debug = service_.packed_debug();
   sp.sandbox = node.settings.sandbox;
   sp.shared_vm = !service_.options().gcroots_dir.empty();
   sp.closure = build.environment.paths;

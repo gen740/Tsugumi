@@ -80,31 +80,17 @@ jobs:
     secrets:
       CACHIX_AUTH_TOKEN: ${{ github.event_name != 'pull_request' && github.actor != 'dependabot[bot]' && secrets.CACHIX_AUTH_TOKEN || '' }}
 
-  pack-guest:
-    name: tsugumi-pack guest
+  pack-native:
+    name: Native tsugumi-pack
     needs: changes
-    if: ${{ fromJSON(needs.changes.outputs.selection)['pack-guest'] }}
-    runs-on: ubuntu-24.04-arm
+    if: ${{ fromJSON(needs.changes.outputs.selection)['pack-native'] }}
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-nix
         with:
           cachix-token: ${{ github.event_name != 'pull_request' && github.actor != 'dependabot[bot]' && secrets.CACHIX_AUTH_TOKEN || '' }}
-      # pack/build.sh takes this folder as TSUGUMI_PACK_GUEST, so the guest
-      # need not be built on a Mac.
-      - name: Build the export and runner images
-        run: |
-          nix build -L ".#packages.aarch64-linux.pack-guest" -o build-pack-guest
-          mkdir -p dist/pack-guest
-          cp build-pack-guest/{vmlinux,export.erofs,run.erofs,identity} dist/pack-guest/
-      - uses: actions/upload-artifact@v4
-        with:
-          # The branch's commit, not a pull request's merge commit.
-          name: pack-guest-${{ github.event.pull_request.head.sha || github.sha }}
-          path: dist/pack-guest
-          compression-level: 0
-          retention-days: 7
-          if-no-files-found: error
+      - run: pack/build.sh
 
   prompt:
     name: Offline prompt scoring
@@ -127,7 +113,7 @@ jobs:
 
   result:
     name: CI
-    needs: [changes, static, platform, web-typecheck, vm, pack-guest, prompt, docs]
+    needs: [changes, static, platform, web-typecheck, vm, pack-native, prompt, docs]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     steps:

@@ -1,4 +1,4 @@
-add_library(tsugumi_pack_card STATIC card_call.cc)
+add_library(tsugumi_pack_card OBJECT card_call.cc)
 target_include_directories(tsugumi_pack_card PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(tsugumi_pack_card PUBLIC tsugumi_protocol flatbuffers::flatbuffers
   PRIVATE ${CMAKE_DL_LIBS})

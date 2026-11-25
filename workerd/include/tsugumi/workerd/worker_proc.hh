@@ -39,6 +39,8 @@ struct WorkerSpawn {
   // Remote supervision knows this leaf and cleans it on interruption.
   std::filesystem::path cgroup;
   bool shared_vm = false;
+  bool packed = false;
+  bool packed_debug = false;
   std::shared_ptr<WorkerSecrets> secrets;
   // The worker's work/ and tmp/ live with the process.
   // Local workerd retains process ownership while the core reads the channel.
@@ -72,7 +74,7 @@ struct WorkerSpawn {
 // The opaque output envelope the worker reported.
 struct RawOutput {
   std::string name;
-  std::string bytes;
+  PayloadBytes bytes;
 };
 
 struct WorkerOutcome {
@@ -128,6 +130,7 @@ class WorkerProc {
     std::function<void()> clear;
     std::function<void(bool)> terminate;
     std::function<void()> abandon;
+    bool packed = false;
   };
   explicit WorkerProc(Borrowed borrowed);
   ~WorkerProc();
@@ -141,6 +144,18 @@ class WorkerProc {
       std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
       std::optional<std::chrono::steady_clock::time_point> deadline,
       ArtifactOpen open_artifact = {}, bool create_artifacts = false);
+  struct CallInputs {
+    std::span<const Value> values;
+    const std::vector<types::PortType>& outputs;
+    std::optional<uint64_t> timeout_ms;
+    std::filesystem::path artifact_directory;
+    bool drain_display;
+  };
+  auto call_inputs(CallInputs inputs, uint64_t call_id,
+                   const std::atomic<bool>* cancel,
+                   std::optional<std::chrono::steady_clock::time_point> deadline,
+                   ArtifactOpen open_artifact) -> WorkerOutcome;
+  auto packed() const -> bool { return packed_; }
   uint64_t next_call_id() { return ++call_id_; }
   auto call_id() const -> uint64_t { return call_id_; }
   auto set_call_id(uint64_t value) -> void { call_id_ = value; }
@@ -175,6 +190,12 @@ class WorkerProc {
   std::optional<uint64_t> rss_bytes() const;
 
  private:
+  auto call_frame(
+      std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
+      std::optional<std::chrono::steady_clock::time_point> deadline,
+      ArtifactOpen open_artifact, bool create_artifacts,
+      std::span<const int> descriptors,
+      std::shared_ptr<const workerd::SharedBuffer> result) -> WorkerOutcome;
   auto start_data_reader() -> void;
   auto stop_data_reader() -> void;
   auto read_data() -> void;
@@ -191,6 +212,7 @@ class WorkerProc {
   int out_fd_ = -1;
   int err_fd_ = -1;
   bool alive_ = false;
+  bool packed_ = false;
   std::string scratch_;
   std::filesystem::path artifact_scratch_;
   std::filesystem::path cgroup_;
@@ -222,6 +244,7 @@ class WorkerProc {
   uint64_t awaiting_ = 0;
   bool data_closed_ = false;
   std::optional<WorkerOutcome> pending_;
+  std::shared_ptr<const workerd::SharedBuffer> packed_result_;
   ArtifactOpen open_artifact_;
   bool create_artifacts_ = false;
   std::vector<CreatedArtifact> created_artifacts_;

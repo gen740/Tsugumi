@@ -1,5 +1,7 @@
 #include "nix.hh"
 
+#include "packed_builds.hh"
+
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -269,11 +271,14 @@ auto CardBuildPlan::implementation(size_t index) const -> CardBuild {
 }
 
 auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
+  if (const auto* packed = svc_.packed_builds()) return packed->build(req);
   return build_plan(req, false);
 }
 
 auto NixRunner::declared_views(const BuildRequest& req)
     -> std::vector<schema::CardView> {
+  if (const auto* packed = svc_.packed_builds())
+    return packed->build(req).common.views;
   const SharedStoreDerivationTransport transport;
   auto view_request = req;
   view_request.target = {WorkerKind::native, native_system()};

@@ -131,6 +131,10 @@ class History {
                              const std::vector<SavedInputGroup>& groups)
       -> void;
   static void put_artifact(sql::Db& db, const ArtifactData& a);
+  // Inspect a packed output using its export-validated reflection schema.
+  // Debug calls verify the entire value separately before reading it.
+  static auto output_artifact_ids(const types::Type& type, std::string_view bytes)
+      -> std::set<ArtifactKey>;
   static void put_receipt(sql::Db& db, const std::string& op_id,
                           const std::string& kind, const std::string& digest,
                           const std::string& bytes);

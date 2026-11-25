@@ -1,158 +1,90 @@
-# tsugumi-pack: a Project as a standalone Mac app
+# tsugumi-pack
 
-<!-- TODO: Bind each declared host path to a folder named for it under the
-     packed application's Application Support directory when the pack launcher
-     supports host folder mounts. -->
-
-```sh
-tsugumi-pack ./Temperature --output ./Temperature.app
-./Temperature.app/Contents/MacOS/Temperature --output ./temperatures
-```
-
-Opened from the Finder, an app runs with its exported definition and shows
-the results folder in Documents when done.
-
-The exporter turns a Tsugumi Project into an app that the recipient runs
-offline on an Apple Silicon Mac, with no Tsugumi or Nix installed
-([issue #322](https://github.com/gen740/Tsugumi/issues/322)). It runs from a
-shell with no hostd; the UI export action and hostd's relay of its progress
-come later.
-
-## What it does
-
-1. **Stage the Project.** Its files are copied without `.tsugumi/` (run
-   history, versions) or `.git`: what a run produced stays with the author.
-2. **Evaluate and build every Card, once, at export.** `tsugumi-pack` boots
-   the export guest (below) with the network on and a store disk that is
-   kept between exports (`~/Library/Caches/tsugumi-pack/store.img`, sparse).
-   There `tsugumid --prepare-cards` opens the Project and, for every Code
-   Card, performs exactly the evaluation and build a run of that Card would
-   perform on the local service (`NixRunner::build`), whether or not a run
-   would reach it. Sources resolve against the locked URLs in each owning project's
-   `tsugumi.lock`. Update the locks before export if declarations lack matching entries.
-   For each Card it records the evaluation key (the project source
-   pins, the system and the content-addressed definition, contract,
-   parameter and upstream folders) and the build: plan, closure and run
-   list shape. A Card that does not build fails the export and is named.
-3. **Write the payload.** The Cards' runtime closures, minus what the app's
-   runner image already holds, go into `payload.erofs` with those records
-   (`cards.bin`) and the staged Project. No evaluator sources, derivations
-   or Nix database: nothing in the app evaluates.
-4. **Write the app.** `Contents/MacOS/<Name>` is a copy of the signed
-   `tsugumi-pack` executable; `Contents/Resources` holds `vmlinux`,
-   `rootfs.erofs` (the runner image), `payload.erofs` and `pack.json` (the
-   exported workflow entry points).
-
-The exported app requires macOS 26. A Card can open a view in the app's
-main window, a separate window, or native full screen. The guest stays
-available after the Workflow produces its results while any of its views
-remain open. View messages travel over a private virtio socket.
-
-The app, when run, boots the runner image with **no network device**. The
-payload's store is laid over the image's (a read-only overlay), the
-workflow uses a copy of the project on a temporary sparse disk. `tsugumid
---prepared-cards` runs the Workflow from its trigger through the same RPC
-the apps use. For each Card it computes the evaluation key as it would
-before evaluating, and uses the recorded build only if the key is the
-export's; a Card without a record, or one that changed, fails with that
-reason instead of being evaluated. Every Card's outputs (raw FlatBuffers
-bytes, JSON, and artifact directories), and logs are written under the results folder. `summary.json`
-lists every invocation and, under `results`, the outputs no other Card
-consumes: the Workflow's results. The guest then powers off; Ctrl-C stops it
-and removes the run's temporary folder and scratch disk.
-
-## Choices and why
-
-- **The run is an ordinary tsugumid run, without evaluation.** Scheduling,
-  workers, sandboxing, batches, branches and failures are tsugumid's own;
-  nothing in `pack/` schedules Cards. Only the step from a Card's definition
-  to its build is replaced: in an app the definitions are fixed, so
-  evaluating them again could only give the same builds. The first version
-  of this tool did evaluate in the app (offline, with nixpkgs and every
-  derivation shipped). The current exporter moves evaluation ahead of launch.
-- **`--prepare-cards` and `--prepared-cards` in tsugumid, not a build in
-  `pack/`.** Which files a Card's evaluation sees (generated contracts,
-  parameters, upstream exports) is tsugumid's logic, and so is the key that
-  says two evaluations are the same. The exporter reuses both, so an app's
-  builds cannot drift from the Workflow's; it also covers branches a run
-  would not take, which a recorded run cannot. Both modes use `/work` as the
-  work folder because the key names folders under its `scratch/`.
-- **A guest, with the closure placed in an image.** The Cards are Linux
-  programs with absolute `/nix/store` paths, so they need a Linux kernel;
-  a minimal guest with the closure in a read-only image runs them
-  unmodified. `nix bundle`'s default bundler would put the same files in a
-  self-extracting archive that unpacks them at every start, and still needs
-  a Linux kernel to run them.
-- **Two images from one definition.** The export image has Nix, a CA bundle
-  and the tools that write the payload; the runner image has tsugumid, its
-  run driver and the few tools `/init` uses, and no Nix. Both carry the same
-  tsugumid, so the keys computed in both match. `tsugumi-pack` needs nothing
-  but Virtualization.framework on the author's Mac. The kernel is the shared
-  VM's (`vm/guest/kernel.nix`).
-- **One executable for exporter and launcher.** It is the only program that
-  needs the virtualization entitlement; inside an app it finds `pack.json`
-  and becomes that app's launcher. The launcher only boots the guest, hands
-  over `request.json` and moves the results folder out. Viewing is left to
-  the files it writes (an image viewer, a text editor): there is no viewer in
-  this path.
-- **Values fixed at export.** Export packages the existing build results of
-  all participating definitions, so every Card's params and every Input
-  Card's values are those of the exported Project. The app takes no
-  parameters or files from the recipient: to run other values, change the
-  Project and export it again.
-- **Values are recorded in the app.** Record I/O is off by default, which
-  would leave the recipient without recorded output values. The app's copy turns it on
-  for every Code Card; it is a setting, outside what a build evaluates.
-- **Size.** What remains is what the Cards and tsugumid need to run.
-  The payload contains the Card closures. The runner image contains the
-  native runtime and the tools that launch the Workflow.
-
-## Layout
-
-| Path | What |
-| --- | --- |
-| [guest/default.nix](guest/default.nix) | The export and runner images (`packages.aarch64-linux.pack-guest`) and their `/init` |
-| [guest/export.sh](guest/export.sh) | Export mode: build every Card, write `payload.erofs` |
-| [guest/run.py](guest/run.py) | Run mode: apply the request, run from the trigger, write the results |
-| [launcher/](launcher/) | `tsugumi-pack` (Swift): exporter and app launcher |
-| [build.sh](build.sh) | Builds `dist/tsugumi-pack` (the signed command and the guest) |
-
-## Building
+Export a Tsugumi Project as a standalone Apple Silicon app for macOS 26 or
+later. Nix is used on the exporter's Mac to build the Cards.
 
 ```sh
-TSUGUMI_CODESIGN_IDENTITY="Apple Development" TSUGUMI_PACK_LINUX="orb -m nixos" pack/build.sh
+TSUGUMI_CODESIGN_IDENTITY="Apple Development" pack/build.sh
 dist/tsugumi-pack/bin/tsugumi-pack demos/en/glowroot --output Glowroot.app
+open Glowroot.app
 ```
 
-The guest needs an aarch64-linux Nix builder (`TSUGUMI_PACK_LINUX` names a
-command that runs a Linux shell seeing this checkout at the same path, such
-as an OrbStack NixOS machine; otherwise `nix build` with a configured Linux
-builder). `TSUGUMI_PACK_GUEST=DIR` uses a guest built elsewhere, such as
-CI's `pack-guest-<commit>` artifact (the aarch64-linux platform job builds
-it whenever `pack/` or the native runtime changes).
+The exported app runs its Workflow with the definitions and parameter values
+fixed at export. The trigger can be selected with `--start` when the Project
+has multiple triggers. A PANEL view opens in the app's main window. Separate
+windows and full-screen views use the same Dawn and HTML hosts as the macOS
+Tsugumi app.
 
-## Not done yet
+## Export
 
-- hostd integration and the UI's export action (the tool's progress lines
-  are already one per stage).
-- Progress in the Finder: an app opened there shows nothing until its
-  results folder opens.
-- Distribution signing: an app signed with a development certificate runs on
-  this Mac; another Mac needs Developer ID signing and notarization.
-- Cards built for x86_64-linux (Rosetta in the guest) and remote execution
-  services are not exported.
+The exporter stages the Project without its Git repository or local Tsugumi
+history. `tsugumid --prepare-native-cards` resolves the graph and validates
+the schemas, port names and types, including nested Cards. Every executable
+Card must declare `aarch64-darwin` in `systems`. Exports build every Card,
+including branches that may never run, from the Project's pinned Nix sources.
+A build error names the Card.
 
-## Native export preparation
+The exporter copies the library and runtime closure, bundles view blobs, and
+rewrites Mach-O install names and their dependency references. Separate
+Card libraries get distinct install names. The exporter signs the nested
+code and app with the selected identity. An Apple Development identity
+supports local testing. Distribution outside the development team requires
+Developer ID signing and notarization.
 
-`tsugumid --project PROJECT --prepare-native-cards MANIFEST.json` validates the
-resolved project's graph, including nested Cards, and builds each Code Card
-with its pinned sources and parameters for `aarch64-darwin`. A successful
-manifest names the build plans, closures, worker reuse settings, and declared
-host paths. The pack launcher contains the Darwin closure installer, which
-copies those files and signs the relocated Mach-O images.
+## Execution modes
 
-The launcher still uses the guest path described above. The native bundle
-format, both execution modes, and the debug endpoint need to be connected
-before the launcher can export and run a native app.
+- **Default.** Cards run in local processes under the Darwin worker's
+  Seatbelt rules. The runtime honors `reuseWorker`. The host lends a shared
+  result mapping, then passes read-only spans into that mapping to downstream
+  workers. The mapping lives as long as a reader holds it.
+- **Fast (`--fast`).** All Card libraries are loaded together at startup
+  with `RTLD_LOCAL` and stay resident. Each invocation calls the library
+  directly and borrows input spans from producer results. Independent branches
+  can run concurrently. Fast export shares a bundled copy of each declared
+  language runtime and rejects conflicting versions and multiple Go
+  libraries. Fast Cards share the process's privileges and address space.
+  Cancellation is cooperative. An invocation that runs past its hard deadline
+  terminates the packed app with a diagnostic.
 
-TODO: Consider an optional VM mode after the native launcher cutover.
+Packed execution trusts its bundled Cards to hand off results when they
+return. The app author fixes and ships those implementations together. The
+development worker still uses its ordinary result verification and artifact
+sealing rules. Both packed modes enforce the 16 MiB message limit and required
+outputs. Debug exports additionally verify result FlatBuffers.
+
+Each declared host path maps to a directory of the same name under the
+app's Application Support folder. Run history and kept artifacts are stored
+in the app's `.tsugumi` directory there. A release export records run
+metadata and kept artifacts. A debug export also records input and output
+values for inspection. Artifacts created without the keep flag expire when
+their run ends.
+
+## Debug exports
+
+Pass `--debug` at export to enable a local JSON RPC socket. The launcher
+prints the socket path. To choose it, pass `--debug-socket /absolute/path`
+to the app. The containing directory must be owned by the current user with
+mode `0700`. The socket uses mode `0600` and checks the peer UID.
+
+The endpoint accepts newline-delimited JSON RPC frames:
+
+- `ViewWindowsRequest` lists sessions, including whether a Dawn view
+  requested audio. `ViewActionRequest` sends pointer, key, text or gamepad
+  input and captures snapshots.
+- `PackRunRequest` starts at a Card path and accepts typed inputs as
+  `{name, schema, bytes}` entries. The schema and payload must match the
+  declared input port.
+- `RunStatusRequest`, `RunInvocationsRequest`, `RunLatestInvocationsRequest`,
+  `RunRecordRequest` and `RunValueReadRequest` inspect runs and values.
+- With `--test-clock`, `StepClockRequest` advances the Dawn presentation
+  clock by the requested number of milliseconds and reports `elapsed_ms`.
+  In this mode replay uses the manual clock for rendering and input. Audio
+  devices and gamepads are driven by the real clock in ordinary exports.
+  `ViewWindowsRequest` reports the Dawn module's `audio_requested` capability
+  in either debug configuration. Cards read their own clocks.
+- `RunCancelRequest` cancels a run. `PackQuitRequest` ends the debug app.
+
+A release export has no debug socket. The packed app's presentation uses
+a separate private connection to its own bundled runtime.
+
+TODO: Consider an optional VM export mode.

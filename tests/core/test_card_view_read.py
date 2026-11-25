@@ -21,7 +21,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     if (call->effects->view_open(call->host, "page", TSUGUMI_VIEW_PANEL,
                                  0, 0, 0, &route, &session))
         return 1;
-    return write_result(result, result_bytes, sizeof(result_bytes));
+    return write_result(call, result, result_bytes, sizeof(result_bytes));
 }
 """
 

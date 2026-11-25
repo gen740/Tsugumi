@@ -14,10 +14,10 @@ extern "C" int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
   const auto port = C::CreateCardPort(builder, name, {}, payload);
   builder.Finish(C::CreateCardResult(builder, builder.CreateVector(&port, 1)));
   const auto size = builder.GetSize();
-  auto* data = static_cast<uint8_t*>(std::malloc(size));
+  auto* data = call->effects->result_alloc(call->host, size);
   if (!data) return 1;
   std::memcpy(data, builder.GetBufferPointer(), size);
-  if (call->input.size == 1) std::memset(data, 0xff, size);
+  if (call->input_count == 1) std::memset(data, 0xff, size);
   *result = {data, size};
   return 0;
 }
