@@ -72,16 +72,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1795569892,
-        "narHash": "sha256-vskhHpxaQk4TaiIt0P7Kfq/ylvK5KyIhU6FpSom1KPo=",
+        "lastModified": 1795586172,
+        "narHash": "sha256-Y8bBLGAZMO12sg5W/XU9AbLuIrd5zZOniIxGG6OYjRo=",
         "owner": "gen740",
         "repo": "tsugumi-kit",
-        "rev": "cc20ce4f8d0e0aaa70042b467474e265c6ee2211",
+        "rev": "844137d487bada9ed3a365826c39c1303c581fc8",
         "type": "github"
       },
       "original": {
         "owner": "gen740",
-        "ref": "feat/view-close",
+        "ref": "feat/native-pack-abi",
         "repo": "tsugumi-kit",
         "type": "github"
       }
