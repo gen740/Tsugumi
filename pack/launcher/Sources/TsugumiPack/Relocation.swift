@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Darwin
 import MachO
 
 func validatePackedCardEntry(_ library: URL) throws {
@@ -27,8 +28,8 @@ func installPackedClosure(roots: [URL], in destination: URL, cardID: String, ide
 }
 
 func relocatePackedTree(_ root: URL, identity: String) throws {
-  _ = try PackedClosure(roots: [root], destination: root.deletingLastPathComponent(), cardID: "project")
-    .install(identity: identity)
+  _ = try PackedClosure(destinations: [root.path: root], destination: root.deletingLastPathComponent(),
+                        cardID: "project").install(identity: identity)
 }
 
 /// The native launcher helpers carry only their Mach-O dependencies. In
@@ -256,7 +257,7 @@ private struct PackedClosure {
         if isPackedSystemPath(normalized), _dyld_shared_cache_contains_path(normalized) {
           return normalized
         }
-        if fm.fileExists(atPath: candidate) { return url.resolvingSymlinksInPath().path }
+        if let resolved = canonicalURL(url) { return resolved.path }
       }
       return nil
     }
@@ -473,4 +474,10 @@ private func relocationTool(_ tool: String, _ arguments: [String], captureStderr
     throw PackedRelocationError("\(tool) failed for \(arguments.last ?? ""): \(message.trimmingCharacters(in: .whitespacesAndNewlines))")
   }
   return message
+}
+
+func canonicalURL(_ url: URL) -> URL? {
+  guard let path = realpath(url.path, nil) else { return nil }
+  defer { free(path) }
+  return URL(fileURLWithPath: String(cString: path))
 }

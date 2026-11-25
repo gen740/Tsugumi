@@ -227,12 +227,6 @@ struct Export {
   }
 }
 
-private func canonicalURL(_ url: URL) -> URL? {
-  guard let path = realpath(url.path, nil) else { return nil }
-  defer { free(path) }
-  return URL(fileURLWithPath: String(cString: path))
-}
-
 func shell(_ tool: String, _ arguments: [String]) throws {
   let process = Process()
   process.executableURL = URL(fileURLWithPath: tool)
