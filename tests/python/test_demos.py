@@ -249,8 +249,8 @@ def test_live_stream_keeps_chart_on_cancel_and_resets_on_rerun(live):
     src = next(s for s in snap.sources if text(s.path) == source)
     code = bytes(c.call("ProjectFileReadRequest", path=source, atRev=snap.rev).bytes).decode()
     delay = "while (std::chrono::steady_clock::now() < until)"
-    code = code.replace("  auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(s.interval_ms);\n", "")
-    code = code.replace(delay, "while (s.index > 0)")
+    code = code.replace("  auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(s->interval_ms());\n", "")
+    code = code.replace(delay, "while (s->index() > 0)")
     c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test",
            changes=[change("PutSource", path=source, bytes=list(code.encode()), baseHash=text(src.hash))])
     def wait_for_blocked_sample(rid):

@@ -15,5 +15,4 @@ in
   });
   api = sdk.pythonApi common;
   views = builtins.filter (view: view.name == "markdown") sdk.views;
-  views = builtins.filter (view: view.name == "markdown") sdk.views;
 }

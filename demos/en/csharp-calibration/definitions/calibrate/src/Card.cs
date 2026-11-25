@@ -4,8 +4,8 @@ using Newtonsoft.Json;
 using Tsugumi;
 
 public static class Card {
-    public static Outputs Run(Inputs inputs) {
-        var result = new Outputs();
+    public static Output Run(Input inputs) {
+        var result = new Output();
         var received = inputs.Numbers;
         double factor = Params.Current.Factor;
         var values = received.Values.Select(value => value * factor).ToList();

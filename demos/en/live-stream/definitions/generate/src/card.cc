@@ -14,26 +14,26 @@ static double noise(uint64_t seed, uint64_t index) {
 }
 
 auto run(const Card::Inputs& inputs) -> Card::Output {
-  const auto s = inputs.get<Card::input_types::state>("state");
+  const auto* s = inputs.state;
   // The sampling interval is the purpose of this wait, not a progress effect.
-  auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(s.interval_ms);
+  auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(s->interval_ms());
   while (std::chrono::steady_clock::now() < until) {
     if (card::cancelled())
       throw tsugumi::Failure(Tsugumi::Data::FailureKind::cancelled,
                              "cancelled while waiting for the next sample");
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
-  double value = s.value + noise(s.seed, s.index);
+  double value = s->value() + noise(s->seed(), s->index());
   Card::Output out;
   auto& sample = out.sample.emplace();
-  sample.index = s.index;
+  sample.index = s->index();
   sample.value = value;
-  if (s.index + 1 >= s.samples) return out;  // no feedback: the stream ends
+  if (s->index() + 1 >= s->samples()) return out;  // no feedback: the stream ends
   auto& next = out.next.emplace();
-  next.index = s.index + 1;
-  next.samples = s.samples;
-  next.interval_ms = s.interval_ms;
-  next.seed = s.seed;
+  next.index = s->index() + 1;
+  next.samples = s->samples();
+  next.interval_ms = s->interval_ms();
+  next.seed = s->seed();
   next.value = value;
   return out;
 }

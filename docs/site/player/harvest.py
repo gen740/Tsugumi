@@ -36,6 +36,7 @@ os.environ.setdefault("TSUGUMI_PY_BINDINGS", str(BUILD / "generated" / "python")
 sys.path.insert(0, str(ROOT / "tests" / "core"))
 
 from harness.daemon import Daemon  # noqa: E402
+from harness.observations import read_pages  # noqa: E402
 from harness.views import ZERO_ROUTE  # noqa: E402
 from projects import start_run, wait_run  # noqa: E402
 from tsugumi_client import RpcFailure, path, text  # noqa: E402
@@ -51,6 +52,31 @@ STATE = {v: k for k, v in vars(CardState).items() if not k.startswith("_")}
 PHASE = {v: k for k, v in vars(Phase).items() if not k.startswith("_")}
 OUTCOME = {v: k for k, v in vars(StageOutcome).items() if not k.startswith("_")}
 RUN = {v: k for k, v in vars(RunState).items() if not k.startswith("_")}
+
+
+# Preview selected retained results. View messages are never read into a recording.
+PREVIEWS = {
+    "report": {("render", "report"): "report.md"},
+    "casa": {("rgb", "rgb"): "casa-rgb.png", ("spectrum", "spectrum"): "casa-spectrum.png"},
+    "gw150914": {("chirp", "plots"): "chirp.png"},
+    "max-flow": {
+        ("flow", "figure"): "flow.png",
+        ("cut", "figure"): "cut.png",
+        ("sweep", "result"): "sweep.png",
+        ("verify", "result"): "summary.md",
+        ("whatif", "result"): "summary.md",
+    },
+}
+
+
+def artifact_preview(client, artifact_id, member, demo, card, staging):
+    content = read_pages(client, "ArtifactReadRequest", artifactId=artifact_id,
+                         member=member, page_bytes=65536)
+    if member.endswith(".md"):
+        return {"type": "text", "markdown": True, "text": content.decode("utf-8")}
+    filename = f"{demo}-{card}.png"
+    (staging / filename).write_bytes(content)
+    return {"type": "image", "src": f"assets/{filename}", "alt": f"{demo} · {card}"}
 
 
 def guide_files() -> dict[str, str]:
@@ -124,7 +150,7 @@ def send_seed(c, subscription: str, timeout: float) -> None:
     c.call("ViewSendRequest", session=session, route=ZERO_ROUTE, bytes=b"\x0a")
 
 
-def harvest(demo: str, tmp: Path, sandbox: bool, timeout: float) -> dict:
+def harvest(demo: str, tmp: Path, staging: Path, sandbox: bool, timeout: float) -> dict:
     root = project_copy(demo, tmp, sandbox)
     graph_id = subprocess.check_output(
         ["node", str(Path(__file__).with_name("build.mjs")), "--graph-id", str(root)], text=True,
@@ -175,9 +201,17 @@ def harvest(demo: str, tmp: Path, sandbox: bool, timeout: float) -> dict:
                 # What this Card sent in the whole run (a loop's branches differ per invocation).
                 "sent": sorted({text(p) for r in recs for p in (r.outputsSent or [])}),
             }
+        outputs = {}
+        previews = PREVIEWS.get(demo, {})
         for a in c.call("ArtifactListRequest", runId=run_id, limit=50).artifacts:
-            artifacts.append({"card": "/".join(text(s) for s in a.card.segments), "output": text(a.artifactId), "name": text(a.artifactId),
-                              "members": [{"path": text(m.path), "size": int(m.sizeBytes or 0)} for m in a.members]})
+            card = "/".join(text(segment) for segment in a.card.segments)
+            output = text(a.output)
+            artifact_id = text(a.artifactId)
+            members = [{"path": text(m.path), "size": int(m.sizeBytes or 0)} for m in a.members]
+            artifacts.append({"card": card, "output": output, "name": artifact_id, "members": members})
+            preview = previews.get((card, output))
+            if preview and any(member["path"] == preview for member in members):
+                outputs[card] = artifact_preview(c, artifact_id, preview, demo, card, staging)
         return {
             "graphId": graph_id,
             "run": {
@@ -185,7 +219,7 @@ def harvest(demo: str, tmp: Path, sandbox: bool, timeout: float) -> dict:
                 "host": f"{platform.system()} {platform.machine()}, tsugumid on the host",
                 "sandbox": "Seatbelt" if sandbox else "sandbox options off", "commit": subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True).strip(),
             },
-            "timeline": timeline, "outputs": {}, "artifacts": artifacts,
+            "timeline": timeline, "outputs": outputs, "artifacts": artifacts,
         }
     finally:
         daemon.close()
@@ -229,9 +263,11 @@ def main() -> int:
         ):
             try:
                 staging = Path(staging_dir)
-                result = harvest(demo, Path(tmp), sandbox, float(os.environ.get("HARVEST_TIMEOUT", "600")))
+                result = harvest(demo, Path(tmp), staging, sandbox, float(os.environ.get("HARVEST_TIMEOUT", "600")))
                 record = staging / f"{demo}.run.json"
                 record.write_text(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
+                for asset in staging.glob("*.png"):
+                    asset.replace(OUT / asset.name)
                 record.replace(OUT / record.name)
             except Exception as e:  # one demo failing does not stop the others
                 print(f"{demo}: FAILED {type(e).__name__}: {e}", flush=True)
