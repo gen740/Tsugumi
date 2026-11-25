@@ -419,17 +419,19 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
 
 public struct CardViewPanels<Header: View>: View {
   let presentation: CardViewPresentation
+  let showsLatest: Bool
   @ViewBuilder let header: () -> Header
   @State private var selected: UUID?
 
-  public init(presentation: CardViewPresentation, @ViewBuilder header: @escaping () -> Header) {
+  public init(presentation: CardViewPresentation, showsLatest: Bool = false, @ViewBuilder header: @escaping () -> Header) {
     self.presentation = presentation
+    self.showsLatest = showsLatest
     self.header = header
   }
 
   public var body: some View {
     let panels = presentation.panels
-    let shown = panels.first { $0.opening.id == selected } ?? panels.first
+    let shown = panels.first { $0.opening.id == selected } ?? (showsLatest ? panels.last : panels.first)
     VStack(spacing: 0) {
       if let shown {
         HStack {

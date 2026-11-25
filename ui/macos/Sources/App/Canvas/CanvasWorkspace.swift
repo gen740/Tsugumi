@@ -134,7 +134,7 @@ private struct CanvasCardViews: View {
       let height = min(500, max(0, geo.size.height - 74))
       let maxX = max(0, (geo.size.width - width) / 2 - 8)
       let maxY = max(0, (geo.size.height - height - 58) / 2)
-      CardViewPanels(presentation: presentation) {
+      CardViewPanels(presentation: presentation, showsLatest: true) {
         Image(systemName: "line.3.horizontal")
           .foregroundStyle(.secondary)
           .frame(width: 24, height: 24)
