@@ -1,4 +1,0 @@
----
-title: collect
-description: 6 件の比較を元の順序で集約
----

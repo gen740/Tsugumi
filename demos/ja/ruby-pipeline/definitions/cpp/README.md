@@ -1,4 +1,0 @@
----
-title: cpp
-description: Ruby の型付き出力を読む
----

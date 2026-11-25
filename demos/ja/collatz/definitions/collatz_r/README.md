@@ -1,4 +1,0 @@
----
-title: collatz_r
-description: 数列を R のループで求める子 Workflow（2^53 未満の値だけ）
----

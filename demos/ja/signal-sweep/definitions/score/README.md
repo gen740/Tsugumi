@@ -1,4 +1,0 @@
----
-title: score
-description: 信号強度としきい値の全組み合わせを比較
----

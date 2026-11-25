@@ -4,6 +4,8 @@ Run commands from the repository root. Build instructions are in [Installing and
 
 Run `tests/check-fast.sh` before every push: the static tests (`tests/static`: tests that only read files of the repository, which CI runs first in its own job) and the Web UI Nix checks, including the generated demo player (`--no-nix` skips it). Run the platform checks with `tests/ci-local.sh`. On macOS this runs the Mac checks locally and the Linux checks in Docker or OrbStack. Use `tests/ci-local.sh mac` or `tests/ci-local.sh linux` for one platform, and `tests/ci-local.sh agent` for the public Agent RPC fixtures.
 
+Tests that read bundled projects use the pinned [tsugumi-demos](https://github.com/gen740/tsugumi-demos) tree. `nix develop` sets `TSUGUMI_DEMOS_DIR` for manual runs. For an existing tool environment, set it with `export TSUGUMI_DEMOS_DIR=$(nix build --no-link --print-out-paths .#demos)`. The static checks use this tree even when Web checks are omitted with `--no-nix`.
+
 Every test command must run through `build-ci/bin/tsugumi-test-env` (already used by CI and `ci-local.sh`). With a CMake build, use `python3 tests/run-isolated.py COMMAND ...`, for example `python3 tests/run-isolated.py ctest --test-dir build --output-on-failure` or `python3 tests/run-isolated.py /usr/bin/swift test --package-path ui/macos`. The runner creates short private temporary, support, cache, socket and disk scratch roots, stops services before removing them even on command failure or termination, and names the new entries left in `/tmp`, `/var/tmp` and the shared scratch root (not the per-user temporary folder of macOS, where system services create entries of their own): on a dedicated machine (`CI` set, or inside a Nix build) that fails the run; elsewhere it is a report, because entries made by other work on the same machine cannot be told apart. It only lists shared entry names; it neither traverses real project scratch nor deletes escaped data. Killing the runner itself with SIGKILL cannot execute cleanup.
 
 ### Secret isolation
@@ -24,9 +26,9 @@ the full set.
 
 | Runner | Jobs on a full run |
 | --- | --- |
-| x86_64 Linux | Runtime build, Core and Agent RPC, host integration and Web behavior (including CLI/plugin adapters), SDK, real remote execution, Web TypeScript |
+| x86_64 Linux | Runtime build, Core and Agent RPC, host integration and Web behavior (including CLI/plugin adapters), SDK, bundled demos, real remote execution, Web TypeScript |
 | ARM Linux | Release guest image and VM lifetime tests (plus the native system and seccomp shell probes), tsugumi-pack guest |
-| ARM macOS | Runtime build, Core and Agent RPC with Seatbelt and other Mac integrations, Swift |
+| ARM macOS | Runtime build, Core and Agent RPC with Seatbelt and other Mac integrations, Swift, SDK, bundled demos |
 
 Separate runtime consumers reuse Cachix or the current run's read-only artifacts.
 The RPC job builds and executes its C++ tests on one runner. Linux runs every
@@ -64,9 +66,9 @@ build-ci/bin/tsugumi-test-env /usr/bin/swift test --package-path vm/macos/runtim
 build-ci/bin/tsugumi-test-env bash ui/macos/tools/test-app.sh
 ```
 
-Prose and `README.md` run the documentation build and tests. `docs/features.md` also runs prompt contracts, and `docs/CardGuide.md` runs its SDK examples and player consumers. Demo changes run documentation and the x86_64 Linux jobs that read bundled demos, including Guide RPC, version history, SDK, MCP and the Web player. Native core and worker changes run runtime consumers on x86_64 Linux and macOS, including the dedicated guest jobs on ARM Linux. Host-only changes select Host RPC and its consumers. Swift changes run Mac tests. CLI and plugin changes run adapter tests, with Mac tests also selected for CLI changes.
+Prose and `README.md` run the documentation build and tests. `docs/features.md` also runs prompt contracts, and `docs/CardGuide.md` runs its SDK examples and player consumers. A demo-only update to the `tsugumi-demos` pin runs documentation, Guide RPC, version history, MCP and the Web player on x86_64 Linux, and runs the bundled demo suite on both x86_64 Linux and macOS. Native core and worker changes run runtime consumers on x86_64 Linux and macOS, including the dedicated guest jobs on ARM Linux. Host-only changes select Host RPC and its consumers. Swift changes run Mac tests. CLI and plugin changes run adapter tests, with Mac tests also selected for CLI changes.
 
-`protocol/`, `flake.nix`, `flake.lock`, `nix/`, CMake, CI files and unclassified paths run everything, as do uncertain/empty diffs, nightly runs (03:17 JST) and manual dispatches. Local scripts use the same ownership partition (see Execution ownership and timing below). Branch protection requires only **CI**, the always-running gate: it requires static/selection success and every selected workflow/job to succeed, allowing only intentional skips. Remove individual platform and Documentation checks from required checks.
+Shared inputs such as `protocol/`, `flake.nix`, other `flake.lock` changes, `nix/`, CMake, CI files and unclassified paths run everything, as do uncertain/empty diffs, nightly runs (03:17 JST) and manual dispatches. Local scripts use the same ownership partition (see Execution ownership and timing below). Branch protection requires only **CI**, the always-running gate: it requires static/selection success and every selected workflow/job to succeed, allowing only intentional skips. Remove individual platform and Documentation checks from required checks.
 
 | Location | Coverage |
 | --- | --- |
@@ -110,7 +112,7 @@ The VM support directory and its store are disposable and removed at session end
 
 Version notes have socket-free tree and localization tests in `tests/core/agent/version_text_test.cc` (`tsugumi_host_settings_tests --gtest_filter='VersionNote.*:VersionText.*'`). `tests/core/agent/version_note_rpc_test.cc` exercises the human-only Host note request in both languages and the Agent's `version_diff` (`tsugumi_agent_rpc_tests --gtest_filter='AgentProjectFixture.VersionNote*'`); it needs Unix sockets. `ui/web/tests/versions.ts` checks the presentation request, retries and late responses without a browser. `tests/core/agent/version_find_test.cc` checks the Agent's `version_find` against fixed history replies, without sockets (`tsugumi_host_settings_tests --gtest_filter='VersionFind.*'`, Linux).
 
-For documentation changes, run `nix run .#build-doc` and `nix run .#test-doc`. These commands use the shared generated demo player (`nix build .#site-player`); Web checks also test its generated data. Without Nix, site and Web builds and Web tests generate the player from `ui/web/node_modules` and `ui/web/shared/gen`.
+For documentation changes, run `nix run .#build-doc` and `nix run .#test-doc`. These commands use the shared generated demo player (`nix build .#site-player`); Web checks also test its generated data. Manual site and Web builds and Web tests generate the player from `ui/web/node_modules` and `ui/web/shared/gen` with `TSUGUMI_DEMOS_DIR` set.
 
 ## Manual tools
 
@@ -152,6 +154,7 @@ the core pytest routes and the unfiltered CI runs of the C++ test targets.
 | Real definition evaluation | x86_64 Linux | The Mac suite also runs the C++ dependency invalidation tests. |
 | Web types, behavior and CLI/plugin/Web adapters | x86_64 Linux | |
 | Python SDK, ABI, language runtimes, C# sandbox and runnable examples | x86_64 Linux | |
+| Bundled demos | x86_64 Linux | The same demo suite runs on macOS. |
 | Swift and Seatbelt | macOS | |
 | Real remote execution | x86_64 Linux | Separate worker admission and core-to-worker suites in the remote job. |
 

@@ -11,7 +11,8 @@ import json
 from pathlib import Path
 import shutil
 
-from measure_stages import Daemon, ROOT, UNAVAILABLE, path, print_table, run_once, summary
+from measure_stages import Daemon, UNAVAILABLE, path, print_table, run_once, summary
+from harness.demos import copy_demo
 from run import workspace
 
 
@@ -31,7 +32,7 @@ def sequence_length(client, run_id, selected):
 
 def measure(language, directory, timeout):
     root = directory / f"collatz-{language}"
-    shutil.copytree(ROOT / "demos/en/collatz", root)
+    copy_demo("en", "collatz", root)
     selected = f"collatz_{language}"
     document = json.loads((root / "tsugumi.json").read_text())
     document["canvas"] = {"cards": [{"id": name} for name in ("start", "initial", selected)], "connections": [

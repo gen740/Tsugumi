@@ -15,7 +15,8 @@ import struct
 
 import pytest
 
-from conftest import ROOT, Daemon, demo_environment, write_project
+from conftest import Daemon, demo_environment, write_project
+from harness.demos import copy_demo, demos_dir
 from harness.observations import read_pages
 from harness.values import reference_json
 from harness.views import return_credit
@@ -61,7 +62,7 @@ def test_every_listed_demo_resolves(tmp_path):
         client = daemon.connect()
         rev = client.call("ProjectInspectRequest").rev
         for language in ("ja", "en"):
-            demos = ROOT / "demos" / language
+            demos = demos_dir() / language
             for entry in json.loads((demos / "index.json").read_text())["demos"]:
                 demo = entry["path"]
                 for child in project.iterdir():
@@ -70,8 +71,8 @@ def test_every_listed_demo_resolves(tmp_path):
                             shutil.rmtree(child)
                         else:
                             child.unlink()
-                shutil.copytree(demos / demo, project, dirs_exist_ok=True,
-                                ignore=shutil.ignore_patterns(".tsugumi-history"))
+                copy_demo(language, demo, project, dirs_exist_ok=True,
+                          ignore=shutil.ignore_patterns(".tsugumi-history"))
                 rev = client.call("ProjectReloadRequest", baseRev=rev, opId=new_id(), origin="test").rev
                 snapshot = client.call("ProjectInspectRequest")
                 assert snapshot.resolution, (language, demo)

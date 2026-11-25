@@ -26,6 +26,11 @@ extra-trusted-public-keys = tsugumi.cachix.org-1:am26Q4VFWYLyJ+t+O5j03MmMVmZ2Ifw
 step() { printf '\n== %s\n' "$1"; }
 export CORE_TEST_ENV="$root/build-ci/bin/tsugumi-test-env"
 core_run() { "$CORE_TEST_ENV" "$@"; }
+run_demos() {
+  local python
+  python=$(nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-python --no-link --print-out-paths)
+  bash tests/ci/run-suite.sh demos "$1" "$python/bin/python3"
+}
 system_name() { nix --extra-experimental-features 'nix-command flakes' eval --raw --impure --expr builtins.currentSystem; }
 
 linux_job() {
@@ -33,7 +38,7 @@ linux_job() {
   step "Build or fetch the native runtime, tests and Web CLI"
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 --no-link .#cli
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-core --out-link build-ci
-  local web system demo_python
+  local web system
   system=$(system_name)
   web=$(nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 '.#web^out' --no-link --print-out-paths)
   export TSUGUMI_WEB_DIST="$web/share/tsugumi/ui/web/dist"
@@ -45,9 +50,7 @@ linux_job() {
   bash tests/ci/run-suite.sh host "$system"
   step "Python tests"
   bash tests/ci/run-suite.sh kit "$system"
-  # TODO(Card ABI): the demo runs skip until the demos are ported (docs/Demos.md).
-  demo_python=$(nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-python --no-link --print-out-paths)
-  bash tests/ci/run-suite.sh demos "$system" "$demo_python/bin/python3"
+  run_demos "$system"
   bash tests/ci/run-suite.sh adapters "$system"
   step "Web UI typecheck and behavior contracts"
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 --no-link \
@@ -102,6 +105,7 @@ mac_job() {
   bash tests/ci/run-suite.sh host "$system"
   step "Card kit checks and the vendored ABI comparison"
   bash tests/ci/run-suite.sh kit "$system"
+  run_demos "$system"
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-runtime --out-link build-ci
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-mock --out-link build-ci-mock
   export TSUGUMI_MOCK_DAEMON="$root/build-ci-mock/libexec/tsugumi-tests/tsugumid-mock"

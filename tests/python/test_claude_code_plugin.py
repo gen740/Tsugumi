@@ -25,6 +25,8 @@ import pytest
 from harness.file_events import terminate_process, wait_for_file
 from conftest import BUILD, CLI, HOSTD, TSUGUMID, WEB_ROOT, write_project, write_card
 
+from harness.demos import demos_dir
+
 ROOT = Path(__file__).resolve().parents[2]
 
 pytestmark = pytest.mark.skipif(not CLI.exists() or not HOSTD.exists() or not TSUGUMID.exists(),
@@ -354,7 +356,7 @@ def test_tools_instructions_and_demo_catalog(plugin):
     for path in ("en/index.json", "en/report/definitions/generate/src/main.py"):
         text, error = mcp.call("demo_read", {"path": path})
         assert not error, text
-        expected = (ROOT / "demos" / path).read_text()
+        expected = (demos_dir() / path).read_text()
         assert (json.loads(text) == json.loads(expected)) if path.endswith(".json") else text == expected
     # Malformed requests are JSON-RPC errors, and the server goes on.
     assert mcp.request("initialize", [1])["error"]["code"] == -32602

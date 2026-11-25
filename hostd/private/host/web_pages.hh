@@ -22,7 +22,7 @@ struct WebHome {
   std::filesystem::path tsugumid;
   std::filesystem::path worker;
   std::filesystem::path nix_dir;
-  std::filesystem::path demos;
+  std::filesystem::path repo_root;
   bool vm = false;
 };
 

@@ -18,13 +18,16 @@ if(TSUGUMI_INSTALLED_CORE)
       ${CMAKE_CURRENT_SOURCE_DIR}/../../hostd/agent/Shared/guide-script.en.json
       DESTINATION share/tsugumi/guide-tests/hostd/agent/Shared
       COMPONENT guide-test-resources)
-    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../../demos
-      DESTINATION share/tsugumi/guide-tests
-      COMPONENT guide-test-resources)
   endif()
 else()
   set(_test_environment_daemon "$<TARGET_FILE:tsugumi-environment-daemon-double>")
   set(_test_guide_root ${PROJECT_SOURCE_DIR})
+endif()
+if(NOT TSUGUMI_TEST_TARGET STREQUAL "tsugumi_arm_shell_tests")
+  set(TSUGUMI_DEMOS_DIR "$ENV{TSUGUMI_DEMOS_DIR}" CACHE PATH "Pinned tsugumi-demos tree")
+  if(NOT EXISTS "${TSUGUMI_DEMOS_DIR}/en/index.json")
+    message(FATAL_ERROR "Set TSUGUMI_DEMOS_DIR to the pinned demos tree (provided by nix develop)")
+  endif()
 endif()
 set(_agent_rpc_target tsugumi_agent_rpc_tests)
 if(TSUGUMI_TEST_TARGET STREQUAL "tsugumi_arm_shell_tests")
@@ -42,6 +45,7 @@ target_include_directories(${_agent_rpc_target} PRIVATE $<TARGET_PROPERTY:tsugum
 target_link_libraries(${_agent_rpc_target} PRIVATE tsugumi_document tsugumi_json PkgConfig::SQLITE3 tsugumi_client tsugumi_worker_protocol tsugumi_peer_tls GTest::gtest_main hosq Threads::Threads)
 target_compile_options(${_agent_rpc_target} PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
 target_compile_definitions(${_agent_rpc_target} PRIVATE
+  TSUGUMI_DEMOS_DIR="${TSUGUMI_DEMOS_DIR}"
   TSUGUMI_GUIDE_TEST_ROOT="${_test_guide_root}"
   TSUGUMI_ENVIRONMENT_DAEMON="${_test_environment_daemon}"
   TSUGUMI_HOST_BINARY="$<TARGET_FILE:tsugumi-hostd>"

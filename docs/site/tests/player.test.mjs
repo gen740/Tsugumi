@@ -2,13 +2,13 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import { readJson, readProject } from '../player/build.mjs'
+import { demosDir, readJson, readProject } from '../player/build.mjs'
 
 const root = fileURLToPath(new URL('../../../', import.meta.url))
 const ports = readJson(path.join(root, 'docs/site/player-data/assets/ports.json'))
 
 test('player wires reach published ports and Draft Cards', () => {
-  const demos = path.join(root, 'demos', 'en')
+  const demos = path.join(demosDir(), 'en')
   let attachments = 0
   for (const entry of readJson(path.join(demos, 'index.json')).demos) {
     const { doc, cards, wires } = readProject(path.join(demos, entry.path), ports[entry.id])

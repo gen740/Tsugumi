@@ -1,4 +1,0 @@
----
-title: collect
-description: Gathers the six comparisons in their original order
----

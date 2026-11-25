@@ -1,3 +1,0 @@
-table Summary { comparisons:uint; detections:uint; }
-table Outputs { out:Summary (required); }
-root_type Outputs;

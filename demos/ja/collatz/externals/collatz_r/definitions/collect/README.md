@@ -1,4 +1,0 @@
----
-title: collect
-description: 届いた数列を表示し、1 に着いたらその数列を出す
----

@@ -397,7 +397,7 @@ TEST_F(AgentProjectFixture, ModelCallsIndexedActionsThroughTheProjectPath) {
 
 TEST_F(AgentFixture, ModelDemoListIsBoundedAndTheUICatalogKeepsItsMetadata) {
   namespace J = ::tsugumi::json;
-  const auto bundled = std::filesystem::path(TSUGUMI_GUIDE_TEST_ROOT) / "demos";
+  const auto bundled = std::filesystem::path(TSUGUMI_DEMOS_DIR);
   // Nix-installed fixtures have read-only directories. Write an owned copy
   // without inheriting their permissions.
   for (const auto& entry :

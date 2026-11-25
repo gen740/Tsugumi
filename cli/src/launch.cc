@@ -127,8 +127,10 @@ auto EnsureHost(const Launch& launch) -> Ready {
                                    launch.application,
                                    "--unix",
                                    (sockets / "agent.sock").string(),
-                                   "--demos-dir",
-                                   (launch.root / "demos").string()};
+                                   "--repo-root",
+                                   launch.root.string()};
+  if (const auto demos = Env("TSUGUMI_DEMOS_DIR"); !demos.empty())
+    args.insert(args.end(), {"--demos-dir", demos});
   args.insert(args.end(), launch.runtime.begin(), launch.runtime.end());
   if (f::exists(launch.web_root / "index.html")) {
     args.insert(args.end(), {"--web-root", launch.web_root.string()});

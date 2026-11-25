@@ -1,4 +1,0 @@
----
-title: triple
-description: 奇数を 3n+1 にして、ここまでの数列に足して loop に戻す（2^53 に届いたら失敗）
----

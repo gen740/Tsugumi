@@ -1,4 +1,0 @@
----
-title: generate
-description: Makes a CSV sales table from the seed
----

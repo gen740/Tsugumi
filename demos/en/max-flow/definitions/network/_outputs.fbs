@@ -1,9 +1,0 @@
-namespace flow;
-table Network {
-  nodes:string;
-  tail:[ulong];
-  head:[ulong];
-  capacity:[ulong];
-}
-table Outputs { network:Network (required); }
-root_type Outputs;

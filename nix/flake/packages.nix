@@ -47,16 +47,17 @@ in
           webgpu-headers
           ;
       };
+      demos = pkgs.callPackage ../demos.nix { inherit (inputs) tsugumi-demos; };
       ci-runtime = pkgs.callPackage ../ci-runtime.nix { inherit core; };
       ci-core = pkgs.callPackage ../core-tests.nix {
-        inherit core hosq;
+        inherit core demos hosq;
         runtime = ci-runtime;
         mock = ci-mock;
       };
       ci-mock = ci-core.override { target = "tsugumid-mock"; };
       client-wasm = pkgs.callPackage ../client-wasm.nix { };
       web = pkgs.callPackage ../web.nix {
-        inherit client-wasm;
+        inherit client-wasm demos;
         inherit (inputs) webgpu-headers;
       };
       kernel = pkgs.callPackage ../../vm/guest/kernel.nix { };
@@ -72,6 +73,7 @@ in
           ci-runtime
           ci-mock
           client-wasm
+          demos
           web
           ;
         ci-vm-tests = ci-core.override { target = "tsugumi_vm_lifetime_tests"; };

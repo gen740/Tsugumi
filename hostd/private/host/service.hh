@@ -15,6 +15,7 @@ struct HostOptions {
   std::filesystem::path state_dir;
   std::filesystem::path demos_dir;
   std::string application = "tsugumi-hostd";
+  std::filesystem::path repo_root;
   std::string broker_socket;
   std::string user_token;
   std::string external_token;

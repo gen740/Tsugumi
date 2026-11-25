@@ -17,6 +17,7 @@ SYSTEMS = {
     "x86_64-linux": "ubuntu-24.04",
     "aarch64-darwin": "macos-26",
 }
+DEMOS_PIN = "flake.lock:tsugumi-demos"
 NATIVE_TESTS = {"agent-rpc", "rpc"}
 CORE = NATIVE_TESTS | {"host", "remote-execution", "adapters", "swift", "vm", "kit", "view-abi"}
 PACK = {"pack-native"}
@@ -56,6 +57,8 @@ def consumers(path):
             "tests/core/cmake/host-rpc.cmake",
         }:
             return NATIVE_TESTS | {"vm"}
+        if path == "tests/core/harness/demos.py":
+            return {"rpc", "adapters", "demos"}
         if path == "tests/core/test_system.py":
             return {"rpc", "vm"}
         if path.endswith((".cc", ".hh", ".cmake", "/CMakeLists.txt")):
@@ -96,7 +99,7 @@ def consumers(path):
         return {"web-typecheck"}
     if path.startswith("ui/web/"):
         return WEB
-    if path.startswith("demos/"):
+    if path == DEMOS_PIN:
         # Guide and version tests, demo runs, the MCP plugin, and the Web player.
         return {"docs", "web-contracts", "adapters", "demos", "agent-rpc", "rpc"}
     if path.startswith("ui/shared/dawn/"):
@@ -136,7 +139,7 @@ def consumers(path):
     if path == "tests/python/test_host_projects_rpc.py":
         return {"agent-rpc"}
     if path.startswith("tests/python/"):
-        if path.rsplit("/", 1)[1].startswith("test_demo"):
+        if path.rsplit("/", 1)[1].startswith("test_demo") or path == "tests/python/test_collatz_compare.py":
             return {"demos"}
         # Includes shared adapter and demo harnesses.
         jobs = {"adapters"}
@@ -167,9 +170,12 @@ def select(paths=None):
         # Web consumers parallel to the cold C++ test build and RPC suites.
         "x86_64-linux": {"native-checks": NATIVE_TESTS | {"view-abi"}, "host-and-web": host_checks,
                          "kit-and-demos": {"kit", "demos"}, "remote-execution": {"remote-execution"}},
-        "aarch64-darwin": {"native-checks": NATIVE_TESTS | {"host", "view-abi"}, "swift": {"swift"}, "kit": {"kit"}},
+        "aarch64-darwin": {"native-checks": NATIVE_TESTS | {"host", "view-abi"}, "swift": {"swift"},
+                           "kit": {"kit"}, "demos": {"demos"}},
     }.items():
         selected = set().union(*(jobs for path, jobs in changes if system in systems_for(path)))
+        if system == "aarch64-darwin" and any(path == DEMOS_PIN for path, _ in changes):
+            selected.add("demos")
         lanes = []
         for job, checks in groups.items():
             if suites := selected & checks:
@@ -181,7 +187,8 @@ def select(paths=None):
 
 
 def systems_for(path):
-    if path.startswith(("demos/", "tests/python/test_demo")) or path in {
+    if path in {
+        DEMOS_PIN,
         "tests/python/test_host_projects_rpc.py",
     }:
         return {"x86_64-linux"}
@@ -190,6 +197,15 @@ def systems_for(path):
         if file not in NATIVE_CORE_FILES and file not in NATIVE_CORE_CASES:
             return {"x86_64-linux"}
     return SYSTEMS.keys()
+
+
+def without_demos_input(lock):
+    nodes = lock["nodes"]
+    name = nodes[lock["root"]]["inputs"].pop("tsugumi-demos")
+    node = nodes.pop(name)
+    if node.get("flake") is not False or node.get("inputs"):
+        raise ValueError("tsugumi-demos must be a non-flake leaf")
+    return lock, node
 
 
 def changed_paths(event, base, head):
@@ -202,7 +218,26 @@ def changed_paths(event, base, head):
             ["git", "diff", "--name-only", "--no-renames", "-z", *revision, "--"],
             check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
-        return result.stdout.decode("utf-8").rstrip("\0").split("\0") if result.stdout else None
+        if not result.stdout:
+            return None
+        paths = result.stdout.decode("utf-8").rstrip("\0").split("\0")
+        if "flake.lock" in paths:
+            try:
+                before = base
+                if event == "pull_request":
+                    before = subprocess.check_output(["git", "merge-base", base, head], text=True).strip()
+                old, old_pin = without_demos_input(
+                    json.loads(subprocess.check_output(["git", "show", f"{before}:flake.lock"]))
+                )
+                new, new_pin = without_demos_input(
+                    json.loads(subprocess.check_output(["git", "show", f"{head}:flake.lock"]))
+                )
+                if old == new and old_pin != new_pin:
+                    paths[paths.index("flake.lock")] = DEMOS_PIN
+            except (subprocess.CalledProcessError, KeyError, TypeError, ValueError):
+                # A missing or unrecognized lock stays a shared dependency.
+                pass
+        return paths
     except (subprocess.CalledProcessError, UnicodeError):
         print("Cannot determine changed paths; selecting all checks.", file=sys.stderr)
         return None

@@ -117,7 +117,7 @@ jobs:
         run: |
           path=$(nix build --no-link --print-out-paths .#ci-python)
           echo "python=$path/bin/python3" >> "$GITHUB_OUTPUT"
-      - name: Bundled demos
+      - name: Run bundled demos on ${{ inputs.system }}
         if: matrix.checks.demos
         run: bash tests/ci/run-suite.sh demos "$TSUGUMI_CI_SYSTEM" '${{ steps.demo-python.outputs.python }}'
 

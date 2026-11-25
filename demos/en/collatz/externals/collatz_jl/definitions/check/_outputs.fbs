@@ -1,4 +1,0 @@
-namespace collatz;
-table Walk { value:ulong; path:[ulong] (required); }
-table Outputs { value:Walk; }
-root_type Outputs;

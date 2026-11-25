@@ -1,4 +1,0 @@
----
-title: collatz_jl
-description: Child Workflow that finds the sequence with a Julia loop
----

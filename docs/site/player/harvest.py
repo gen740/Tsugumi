@@ -12,7 +12,7 @@ and RunRecordRequest of the run named in the file's `run` note.
   --no-sandbox                   run the Cards without Seatbelt, as tests/python does on a host
   --ports                        also write assets/ports.json: the core's resolved ports of every project
 Writes docs/site/player-data/assets/<demo>.run.json.
-`card-guide` is the project of docs/CardGuide.md instead of a folder in demos/.
+`card-guide` is the project of docs/CardGuide.md instead of a bundled demo.
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ import json
 import os
 import platform
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -36,6 +35,7 @@ os.environ.setdefault("TSUGUMI_PY_BINDINGS", str(BUILD / "generated" / "python")
 sys.path.insert(0, str(ROOT / "tests" / "core"))
 
 from harness.daemon import Daemon  # noqa: E402
+from harness.demos import copy_demo, demos_dir  # noqa: E402
 from harness.observations import read_pages  # noqa: E402
 from projects import start_run, wait_run  # noqa: E402
 from tsugumi_client import RpcFailure, path, text  # noqa: E402
@@ -95,7 +95,7 @@ def project_copy(demo: str, tmp: Path, sandbox: bool) -> Path:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content)
     else:
-        shutil.copytree(ROOT / "demos" / "en" / demo, dst)
+        copy_demo("en", demo, dst)
     if not sandbox:
         for f in dst.rglob("definitions/*/_card.json"):
             card = json.loads(f.read_text())
@@ -225,7 +225,7 @@ def harvest(demo: str, tmp: Path, staging: Path, sandbox: bool, timeout: float) 
 
 def resolved_ports() -> dict:
     """The core's resolved ports of every listed demo and of the guide's project (nothing runs)."""
-    names = [d["id"] for d in json.loads((ROOT / "demos" / "en" / "index.json").read_text())["demos"]] + ["card-guide"]
+    names = [d["id"] for d in json.loads((demos_dir() / "en" / "index.json").read_text())["demos"]] + ["card-guide"]
     out: dict[str, dict] = {}
     for demo in names:
         with tempfile.TemporaryDirectory(prefix="tsg-harvest-") as tmp:
