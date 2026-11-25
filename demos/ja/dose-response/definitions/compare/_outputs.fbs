@@ -1,3 +1,0 @@
-namespace dose;
-table Outputs { }
-root_type Outputs;

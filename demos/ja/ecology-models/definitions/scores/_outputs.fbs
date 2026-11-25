@@ -1,3 +1,0 @@
-namespace ecology;
-table Outputs { }
-root_type Outputs;

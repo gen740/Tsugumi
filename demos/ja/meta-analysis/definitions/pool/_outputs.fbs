@@ -1,5 +1,0 @@
-include "tsugumi/artifact.fbs";
-
-namespace bcg;
-table Outputs { pooled:tsugumi.Artifact (required); }
-root_type Outputs;

@@ -69,8 +69,7 @@ and removes the run's temporary folder and scratch disk.
   to its build is replaced: in an app the definitions are fixed, so
   evaluating them again could only give the same builds. The first version
   of this tool did evaluate in the app (offline, with nixpkgs and every
-  derivation shipped); dropping that took 156 MiB off cell-count's app and
-  the first result from 2.2 s to 0.9 s.
+  derivation shipped). The current exporter moves evaluation ahead of launch.
 - **`--prepare-cards` and `--prepared-cards` in tsugumid, not a build in
   `pack/`.** Which files a Card's evaluation sees (generated contracts,
   parameters, upstream exports) is tsugumid's logic, and so is the key that
@@ -105,13 +104,8 @@ and removes the run's temporary folder and scratch disk.
   would leave the recipient without recorded output values. The app's copy turns it on
   for every Code Card; it is a setting, outside what a build evaluates.
 - **Size.** What remains is what the Cards and tsugumid need to run.
-  Cell-count's payload (402 MiB) is its Cards' closures: Python 147 MiB,
-  SciPy 135, BLAS and LAPACK 55 each, NumPy 51, matplotlib 44, scikit-image
-  34 (unpacked). The runner image (155 MiB; 335 unpacked) is mostly glibc
-  47, ICU 40 (linked by tsugumid), python3-minimal 32 (the run driver),
-  tsugumid 28, util-linux 30 and Boost 18 (through the Nix libraries
-  tsugumid links). Smaller apps now depend on the Cards' own environments
-  and on a tsugumid build without the evaluator for the runner.
+  The payload contains the Card closures. The runner image contains the
+  native runtime and the tools that launch the Workflow.
 
 ## Layout
 
@@ -127,7 +121,7 @@ and removes the run's temporary folder and scratch disk.
 
 ```sh
 TSUGUMI_CODESIGN_IDENTITY="Apple Development" TSUGUMI_PACK_LINUX="orb -m nixos" pack/build.sh
-dist/tsugumi-pack/bin/tsugumi-pack demos/en/cell-count --output CellCount.app
+dist/tsugumi-pack/bin/tsugumi-pack demos/en/glowroot --output Glowroot.app
 ```
 
 The guest needs an aarch64-linux Nix builder (`TSUGUMI_PACK_LINUX` names a
@@ -136,40 +130,6 @@ as an OrbStack NixOS machine; otherwise `nix build` with a configured Linux
 builder). `TSUGUMI_PACK_GUEST=DIR` uses a guest built elsewhere, such as
 CI's `pack-guest-<commit>` artifact (the aarch64-linux platform job builds
 it whenever `pack/` or the native runtime changes).
-
-## First end-to-end check
-
-`demos/en/cell-count` (seven Python and Bash Cards), exported and
-run on an M-series Mac (14 CPUs; the guest gets 8 GiB), 2026-11-18. This
-measurement predates the current Card ABI. TODO(open): Repeat the check after the demo display port
-([Demos](../docs/Demos.md)).
-
-| | |
-| --- | --- |
-| | Now | Evaluating in the app (first version) |
-| --- | --- | --- |
-| Export, store disk warm | 22 s | 58 s |
-| App size | 586 MiB: payload 402 (104 store paths), runner image 155, kernel 14 | 728 MiB: payload 544 (4,804 paths), image 170, kernel 14 |
-| Download (`ditto -c -k` zip) | 396 MiB | 466 MiB |
-| Boot to tsugumid ready | 0.6 s | 1.9 s |
-| First Code Card result (`mitosis`) / first figure (`generate`) | 0.9 s / 1.7 s | 2.2–2.6 s / 3.6 s |
-| Whole Workflow, results written | 21.8 s | 23.8–24.8 s |
-
-The first export with an empty store disk took 77 s (builds 28 s). The
-batch of threshold variants took 18 s per run.
-
-**Offline.** The app's guest has no network device at all, and its image
-has no Nix, so nothing in it can download or build; tsugumid's log records
-no evaluation. Every Card still ran, which shows the payload is complete. (The Mac's own network was left on: this Mac is
-shared, and the guest's isolation does not depend on it.)
-
-The original check compared the image and diagnostic outputs with those of the
-same project run through a standalone `tsugumid` on aarch64 Linux.
-
-Not checked here: a second Mac without Tsugumi or Nix (nothing on this Mac
-is used by the app, but its development signature would need Developer ID
-signing to open elsewhere), and opening an app from the Finder (this Mac is
-shared, so nothing was brought to the front).
 
 ## Not done yet
 

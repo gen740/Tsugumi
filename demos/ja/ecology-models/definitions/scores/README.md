@@ -1,6 +1,0 @@
----
-title: scores
-description: 評価を並べる
----
-
-対数 RMSE、AIC、AICc、BIC、残した年の予測誤差、同じ解に届いた初期値の数、最良のパラメータを表にする。

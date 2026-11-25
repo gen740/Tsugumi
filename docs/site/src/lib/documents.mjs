@@ -65,46 +65,16 @@ const STORY = [
 const OFF_THE_LIST = new Set(['docs/INSTALL.md', 'docs/Demos.md', 'docs/Limitations.md'])
 
 /** The demos of the gallery on Home, by what they are about, in plain words (demos/index.json has the rest). */
+const demos = JSON.parse(fs.readFileSync(path.join(ROOT, 'demos/en/index.json'), 'utf8')).demos
+const byId = new Map(demos.map(({ id, title, description }) => [id, [id, title, description]]))
 const GALLERY = [
-  ['The basics', [
-    ['report', 'Data to report', 'Generate data, aggregate it and write a report. Change a step in the middle and rerun from there.'],
-    ['collatz', 'Collatz (C++ / Python / Julia / R)', 'The same computation in four languages, compared while following its branch and loop.'],
-    ['plots', 'Plots', 'matplotlib code written for a window becomes the Card\'s display as it is.'],
-    ['live-stream', 'Live Stream', 'A time series plotted while the run is still going.'],
-  ]],
-  ['Public data', [
-    ['casa', 'Cas A · Chandra RGB', 'An X-ray observation split into three energy bands for an RGB image, with the spectrum of the same photons to match lines to colours.'],
-    ['gw150914', 'GW150914', 'The chirp of a gravitational wave, extracted from public data and plotted.'],
-    ['protein-6lu7', '6LU7', 'A protein\'s 3D structure, fetched to look at its binding pocket.'],
-    ['exoplanet-transit', 'Kepler-6 b', 'A light curve folded to show an exoplanet\'s transit.'],
-    ['seismic-trench', 'Japan Trench', 'A cross-section of hypocentres and the b-value, from an earthquake catalogue.'],
-  ]],
-  ['Machine learning and computation', [
-    ['mnist-classifiers', 'MNIST · comparing classifiers', 'The real MNIST fed to seven classifiers at once, comparing accuracy and time.'],
-    ['newton', 'Newton\'s method', 'A map of the complex plane showing how the starting point decides where it goes and how fast.'],
-    ['max-flow', 'Maximum flow and minimum cut', 'On a made-up network, which edge to widen to increase the flow.'],
-    ['pharmacokinetics', 'Pharmacokinetics (a made-up drug)', 'Teaching material comparing how concentration moves with the dosing interval. Not medical advice.'],
-    ['dose-response', 'Dose–response curve (synthetic data)', 'A fit and its confidence interval, checked on data whose true values are known.'],
-    ['molecules', 'Molecular properties', 'Properties and structural formulas from SMILES, with RDKit.'],
-    ['cell-count', 'Counting cells in images', 'A counting method scored on synthetic images with known answers, then applied to real images of nuclei.'],
-  ]],
-  ['Statistics in R', [
-    ['survival', 'Survival analysis', 'How much the same hazard ratio moves with the subjects and the adjustment.'],
-    ['meta-analysis', 'Meta-analysis: the BCG vaccine', 'How the conclusion moves with the pooling method and the trials left out.'],
-    ['rna-seq', 'RNA-seq: airway', 'With DESeq2 and edgeR, how the number of differentially expressed genes changes with the threshold.'],
-    ['simpson', 'A correlation that reverses when stratified', 'Two real datasets in which the whole and its strata point in opposite directions.'],
-  ]],
-  ['Simulation in Julia', [
-    ['battery', 'Scheduling a battery', 'Charging and discharging optimised by dynamic programming, under made-up prices.'],
-    ['gillespie', 'Fluctuations in chemical reactions', 'A Gillespie simulation checked against theory.'],
-    ['heat-inverse', 'An inverse problem in heat conduction', 'The naive inverse breaks down; regularisation recovers the answer.'],
-    ['ecology-models', 'Comparing ecological models', 'Predator–prey models fitted to fur-trade records and compared.'],
-  ]],
-  ['Left to the Agent', [
-    ['dynamics-draft', 'Dynamical systems gallery', 'The Agent splits six Drafts among helpers and implements them at the same time.'],
-    ['mnist-classifiers-draft', 'MNIST · comparing classifiers', 'Helpers implement seven classifiers at the same time, and the Agent merges them into a comparison.'],
-  ]],
-]
+  ['The basics', ['report', 'collatz', 'signal-sweep', 'live-stream']],
+  ['Interactive views', ['glowroot', 'point-cloud']],
+  ['Public data', ['casa', 'gw150914']],
+  ['Cross-language pipelines', ['csharp-calibration', 'ruby-pipeline', 'go-pipeline', 'rust-pipeline']],
+  ['Network algorithms', ['max-flow']],
+  ['Left to the Agent', ['gw150914-draft']],
+].map(([group, ids]) => [group, ids.map(id => byId.get(id))])
 const DOWNLOAD = `${REPO}/releases/latest`
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8')

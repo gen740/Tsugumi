@@ -1,6 +1,0 @@
----
-title: cohort
-description: 対象者を選ぶ
----
-
-年齢の範囲（age_min, age_max）と ECOG の上限（ecog_max、3 なら制限なし）で対象者を絞り、人数と死亡数を全体と並べて示す。

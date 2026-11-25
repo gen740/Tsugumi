@@ -1,3 +1,0 @@
-namespace mnist;
-table Outputs {}
-root_type Outputs;

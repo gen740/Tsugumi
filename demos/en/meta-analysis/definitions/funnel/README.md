@@ -1,6 +1,0 @@
----
-title: funnel
-description: Funnel plot
----
-
-Plots effect sizes against their standard errors, with the regression test for asymmetry and the result of trim and fill. With large heterogeneity, reading asymmetry gets difficult.

@@ -1,3 +1,0 @@
-namespace pk;
-table Outputs {}
-root_type Outputs;

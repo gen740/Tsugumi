@@ -1,4 +1,0 @@
----
-title: start
-description: 試験の効果量の計算（trials）を始める
----

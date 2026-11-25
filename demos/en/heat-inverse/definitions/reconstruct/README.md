@@ -1,6 +1,0 @@
----
-title: reconstruct
-description: Recover with the chosen λ
----
-
-Lays the recovery with the chosen λ (the discrepancy principle's value if lambda is 0, the given value if positive), and with λ too_far_factor times smaller and larger, next to the truth.

@@ -1,4 +1,0 @@
----
-title: summary
-description: Draws the trajectories and the distribution of final positions with matplotlib
----

@@ -1,6 +1,0 @@
----
-title: applications
-description: Plot how applications were skewed
----
-
-Plots each department's admission rate as points sized by the number of applicants, with the overall rate as a dashed line. Shows that where men and women applied creates the overall difference.

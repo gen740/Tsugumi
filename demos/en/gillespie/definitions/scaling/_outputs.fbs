@@ -1,4 +1,0 @@
-namespace gillespie;
-table Scaling { volumes:[double]; means:[double]; cvs:[double]; theory_cvs:[double]; runs:ulong; }
-table Outputs { scaling:Scaling (required); }
-root_type Outputs;

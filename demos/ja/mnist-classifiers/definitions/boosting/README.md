@@ -1,6 +1,0 @@
----
-title: boosting
-description: 勾配ブースティング
----
-
-前の木の誤りを次の木が直していく決定木の和（xgboost、1 スレッド）。rounds は回数、max_depth は木の深さ、eta は学習率。正解率・時間・間違いの内訳と、回数ごとのテスト誤り率を表示し、テスト全枚の予測を compare に渡す。

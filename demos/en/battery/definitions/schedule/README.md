@@ -1,6 +1,0 @@
----
-title: schedule
-description: Decide the operation by dynamic programming
----
-
-With dynamic programming over the stored energy, finds, backwards in time, the charging and discharging with the lowest bill. Plots the operation and the saving under the tariff (flat, tou or spot).

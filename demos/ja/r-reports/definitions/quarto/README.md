@@ -1,4 +1,0 @@
----
-title: quarto
-description: Render an R report to saved HTML. Connect data, edit the report source and set params. PDF is not supported.
----

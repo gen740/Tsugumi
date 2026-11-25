@@ -1,6 +1,0 @@
----
-title: trajectories
-description: Trajectories and the rate equation
----
-
-Simulates the production and decay of mRNA (∅ → X, X → ∅) runs times with Gillespie's method. Overlays shown_runs trajectories, the mean of all runs and the solution of the rate equation.

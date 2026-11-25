@@ -1,6 +1,0 @@
----
-title: score
-description: Count and score
----
-
-Matches the centroids of the regions found one to one with the true centres (within a radius) and gives the count error, precision and recall. Overlays what was found, what was extra and what was missed, for threshold only and watershed side by side.

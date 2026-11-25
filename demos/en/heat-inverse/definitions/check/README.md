@@ -1,6 +1,0 @@
----
-title: check
-description: Check the forward and inverse problems
----
-
-Checks in a table the conservation of total heat, the analytic decay of a cosine mode, agreement with implicit time integration, recovery without noise at an early time, and the maximum principle. The Card fails if anything is off.

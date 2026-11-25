@@ -1,6 +1,0 @@
----
-title: real
-description: Count a real image
----
-
-Applies the same procedure to a real image of nuclei and shows the counts and outlines of threshold only and watershed. The true count is not known, so it is not scored.

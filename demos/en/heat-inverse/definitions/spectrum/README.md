@@ -1,6 +1,0 @@
----
-title: spectrum
-description: Decay of the singular values
----
-
-Shows how the singular values of the forward problem's matrix fall with time, and from which mode the measurement's components sink to the height of the noise (a Picard plot).

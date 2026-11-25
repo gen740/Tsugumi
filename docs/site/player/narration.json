@@ -34,18 +34,6 @@
     },
     "finale": "After the set number of values, no next state came out and the stream ended. In the app you can stop it partway, and the chart up to there stays."
   },
-  "plots": {
-    "intro": "A demo that plots random walks with the same matplotlib, Plotly and Altair code you would write anywhere else. No Tsugumi-specific drawing calls are used.",
-    "cards": {
-      "start": "The run begins at the start Card.",
-      "simulate": "Makes ±1 random walks with numpy.",
-      "summary": "Four Cards draw figures from the same walks. Report publishes the Matplotlib animation, Plotly figure and Altair chart through explicit report.figure calls.",
-      "diffusion": "Draws with FuncAnimation how the distribution spreads as √t.",
-      "explore": "Makes a Plotly scatter plot of each walker's final position and farthest distance.",
-      "spread": "Draws with Altair the mean squared distance growing in proportion to t, next to the theory."
-    },
-    "finale": "Four figures were made. In the app the animation moves, and the Plotly and Altair figures can be zoomed and hovered. Here the same values are drawn simply."
-  },
   "casa": {
     "intro": "A demo that pins an X-ray observation of the supernova remnant Cassiopeia A and the analysis tool CIAO with Nix, and splits the photons into three energy bands for an RGB image.",
     "cards": {
@@ -67,36 +55,6 @@
     },
     "finale": "In the app you can change the pass band and rerun only the analysis Cards, without fetching again."
   },
-  "protein-6lu7": {
-    "intro": "A demo that examines the binding pocket in the structure of 6LU7 (the SARS-CoV-2 main protease with the inhibitor N3) from RCSB PDB.",
-    "cards": {
-      "start": "The run begins at the start Card.",
-      "load": "Fetches the PDB file and shows its size and SHA-256.",
-      "structure": "Takes out the coordinates of the Cα atoms and the inhibitor and shows them as a 3D point cloud.",
-      "pocket": "Tables the residues near the inhibitor and marks them on a contact map."
-    },
-    "finale": "In the app you can change cutoff and rerun only pocket, without fetching again."
-  },
-  "exoplanet-transit": {
-    "intro": "A demo that finds an exoplanet's transit in MAST's light curve of Kepler-6.",
-    "cards": {
-      "start": "The run begins at the start Card.",
-      "load": "Fetches the light curve's FITS and shows its size and SHA-256.",
-      "detrend": "Removes the trend and searches for the period with Box Least Squares.",
-      "fold": "Folds the phase by the period and finds the planet-to-star radius ratio from the depth of the dip."
-    },
-    "finale": "In the app you can change window_days and rerun only the analysis Cards, without fetching again."
-  },
-  "seismic-trench": {
-    "intro": "A demo that finds a section of the Japan Trench and the b-value from USGS's earthquake catalogue.",
-    "cards": {
-      "start": "The run begins at the start Card.",
-      "load": "Fetches the hypocentres' CSV and shows its size and SHA-256.",
-      "section": "Cuts out a band of latitude and draws a map of epicentres and a longitude–depth section.",
-      "b_value": "Plots the cumulative frequency and finds the b-value of the Gutenberg–Richter law by maximum likelihood."
-    },
-    "finale": "In the app you can change the band of latitude or mc and rerun only the analysis Cards, without fetching again."
-  },
   "card-guide": {
     "intro": "Follow a temperature conversion using a C++ Card parameter.",
     "cards": {
@@ -104,58 +62,6 @@
       "convert": "Applies the scale and offset, sends 68 °F to the live view and returns the Fahrenheit value."
     },
     "finale": "Change the Celsius parameter in Card Settings and rerun to compare the two results."
-  },
-  "draft": {
-    "intro": "A Draft is a Card that says in words what it receives, what it does and what it passes on. It has no code yet. With \"Generate Cards\" in the app, the Agent writes code from these words, runs it and checks."
-  },
-  "dynamics-draft": {
-    "intro": "Six Drafts that depend on no other. With \"Generate Cards\" in the app, the Agent splits them among helpers and implements them at the same time."
-  },
-  "mnist-classifiers-draft": {
-    "intro": "Implemented up to the data Cards; the seven classifiers and the comparison are Drafts. With \"Generate Cards\" in the app, the Agent has helpers implement the seven classifiers at the same time, then writes the comparison."
-  },
-  "mnist-classifiers": {
-    "intro": "A demo that feeds the real MNIST to seven classifiers at once and compares accuracy and time. Each classifier has its own Nix environment.",
-    "cards": {
-      "start": "The run begins at the start Card.",
-      "load": "Reads the MNIST files pinned by their Nix hash. No network while running.",
-      "prepare": "Takes a subset keeping the share of each digit, and scales the pixels.",
-      "knn": "The seven branches run at the same time. k-nearest neighbours shows the digits it got wrong and their neighbours.",
-      "logistic": "Logistic regression. Shows each digit's weights as an image.",
-      "svm": "An SVM with an RBF kernel. Shows the number of support vectors.",
-      "forest": "A random forest. Shows the pixels that mattered as an image.",
-      "boosting": "Gradient boosting (xgboost). Shows the error rate by round.",
-      "mlp": "A fully connected network (torch). Shows how the loss went.",
-      "cnn": "A small convolutional network (torch). Shows what the first layer picks out.",
-      "compare": "Waits for every branch, recomputes the accuracies from the predictions to cross-check, and makes a ranking.",
-      "tradeoff": "Plots accuracy against time with Plotly.",
-      "recall": "Tables recall by model and digit.",
-      "hard": "Lays out the images many models got wrong."
-    },
-    "finale": "The seven results are lined up on the same footing. In the app you can change one classifier's settings and rerun just that branch."
-  },
-  "newton": {
-    "intro": "A demo that solves z³ − 1 = 0 by Newton's method on the complex plane, to see how the starting point decides where it goes and how fast.",
-    "cards": {
-      "start": "The run begins at the start Card.",
-      "roots": "Finds the roots and their multiplicities from eigenvalues, without Newton's method.",
-      "orbits": "Draws how the error falls for each starting point.",
-      "order": "Estimates the order of convergence from the errors and sets it next to the theory.",
-      "basins": "Starts from every point of a grid and maps which root each reaches.",
-      "trouble": "Lays out cases that lose quadratic convergence and cases that do not converge."
-    },
-    "finale": "The map of where points converge is done. In the app you can change where to zoom and rerun just that Card."
-  },
-  "pharmacokinetics": {
-    "intro": "Teaching material comparing how concentration moves with the dosing interval, in a model of a made-up drug, \"Tsugumicin\". The values are not those of any real drug, and this is not medical advice.",
-    "cards": {
-      "start": "The run begins at the start Card.",
-      "simulate": "Solves the differential equation and draws the concentration over time.",
-      "check": "Checks the numerical solution against closed forms. Fails if they differ much.",
-      "window": "Overlays the concentration in the last dosing interval and compares peaks and troughs.",
-      "missed": "Draws the concentration when doses are missed partway."
-    },
-    "finale": "The differences between dosing plans are lined up. Again: teaching material from a made-up model."
   },
   "max-flow": {
     "intro": "A demo that checks, on a made-up network made from a seed, that the maximum flow equals the minimum cut.",
@@ -169,149 +75,5 @@
       "sweep": "For every edge, lays out the gain from raising its capacity."
     },
     "finale": "It shows which edges to widen to increase the flow. In the app you can try other edges and amounts."
-  },
-  "dose-response": {
-    "intro": "A demo that fits a Hill curve to synthetic data of made-up compounds and puts a confidence interval on the EC50. These are not real drugs.",
-    "cards": {
-      "start": "The run begins at the start Card.",
-      "generate": "Makes a synthetic plate with noise on the true curves.",
-      "fit": "Fits the four parameters and draws the data and the curves.",
-      "bootstrap": "Finds intervals by bootstrap and checks whether they contain the true values.",
-      "compare": "Shows the ratio of the two compounds' potencies and its interval.",
-      "range": "Draws how the interval's width changes with the highest concentration."
-    },
-    "finale": "The true values are known, so you can check on the spot whether they were recovered."
-  },
-  "molecules": {
-    "intro": "A demo that finds properties and structural formulas with RDKit from SMILES, strings that write molecules.",
-    "cards": {
-      "start": "The run begins at the start Card.",
-      "properties": "Tables molecular weight, logP and more. A SMILES that cannot be read is skipped, with the reason.",
-      "structures": "Draws the structural formulas side by side.",
-      "lipinski": "Checks Lipinski's Rule of Five.",
-      "chemspace": "Draws a map of molecular weight and logP with Plotly.",
-      "similarity": "Makes a heat map of how alike the structures are."
-    },
-    "finale": "In the app, paste your own molecule and it joins every Card."
-  },
-  "cell-count": {
-    "intro": "A demo that scores ways of counting cells on synthetic images with known answers, and applies the same procedure to a real image of nuclei.",
-    "cards": {
-      "generate": "Makes a synthetic image of cells with known centres.",
-      "preprocess": "Subtracts the background and blurs.",
-      "segment": "Separates regions with a threshold and watershed.",
-      "score": "Matches them with the answers and scores both methods.",
-      "sweep": "Changes the number of cells and the noise, and tables where it breaks down.",
-      "mitosis": "Starts the workflow and exports the store path of a hash-pinned image of nuclei.",
-      "real": "Applies the same procedure to the real image. There is no ground truth, so it is not scored."
-    },
-    "finale": "What separating touching cells gains is compared in scores."
-  },
-  "survival": {
-    "intro": "A demo with the lung cancer trial data of R's survival package, showing how much the same hazard ratio moves with the subjects and the adjustment. An example of statistical method, not advice.",
-    "cards": {
-      "start": "The run begins at the start Card.",
-      "load": "Adds columns to the data and tables a summary of the variables.",
-      "cohort": "Chooses subjects by age and the like.",
-      "km": "Kaplan–Meier curves and the log-rank test.",
-      "cox": "Finds hazard ratios with a Cox model.",
-      "zph": "Checks the proportional hazards assumption.",
-      "specs": "Lays out the hazard ratio for each combination of subjects and adjustment in one figure."
-    },
-    "finale": "Even with the same data, how much the conclusion moves with the choices is laid out."
-  },
-  "meta-analysis": {
-    "intro": "An R demo comparing, over 13 trials of the BCG vaccine, how the conclusion moves with the pooling method and the trials left out. An example of statistical method, not advice about vaccination.",
-    "cards": {
-      "start": "The run begins at the start Card.",
-      "trials": "Finds each trial's effect size and variance.",
-      "pool": "Pools with fixed and random effects and draws a forest plot.",
-      "funnel": "Looks for publication bias with a funnel plot.",
-      "moderator": "Runs a meta-regression on latitude.",
-      "sensitivity": "Lays out the results when each trial is left out, or the estimator changes."
-    },
-    "finale": "The conclusion under each choice is laid out. In the app you can try leaving out other trials."
-  },
-  "rna-seq": {
-    "intro": "An R demo that finds differentially expressed genes with DESeq2 and edgeR on airway's real data. A cell-culture experiment; it shows no effect of treatment.",
-    "cards": {
-      "start": "The run begins at the start Card.",
-      "load": "Reads the count matrix and gene names.",
-      "filter": "Removes genes with few reads.",
-      "normalize": "Normalises by size factors and compares before and after.",
-      "pca": "Looks at treatment and cell line by principal component analysis.",
-      "deseq": "Tests with DESeq2.",
-      "volcano": "Counts at the thresholds and draws a volcano plot.",
-      "thresholds": "Tables the number of genes for each combination of thresholds.",
-      "top": "Looks at the top genes and the ranks of known responsive genes.",
-      "edger": "Tests the same counts with edgeR.",
-      "compare": "Overlays the two methods' results to compare them.",
-      "design": "Lays out how the results change with the design."
-    },
-    "finale": "It shows that \"the number of differentially expressed genes\" changes with thresholds and design."
-  },
-  "simpson": {
-    "intro": "An R demo that checks, on two real datasets, examples where the overall trend and the trend within strata point in opposite directions.",
-    "cards": {
-      "start": "The run begins at the start Card.",
-      "penguins": "Reads the penguins' bill data.",
-      "correlate": "Splits into strata and finds the correlations.",
-      "figure": "Overlays the overall line and the lines for each stratum.",
-      "survey": "Lays out, for each way of splitting, where it reverses.",
-      "admissions": "Compares Berkeley's 1973 applications by department and overall.",
-      "applications": "Draws the admission rates with the numbers of applicants."
-    },
-    "finale": "Which value to read is not decided by the data alone. The question decides it."
-  },
-  "battery": {
-    "intro": "A Julia demo that optimises the charging and discharging of a home battery by dynamic programming, on made-up price data.",
-    "cards": {
-      "start": "The run begins at the start Card.",
-      "market": "Makes consumption, solar and prices. All of it is made-up data.",
-      "schedule": "Finds the charging and discharging with the lowest bill.",
-      "capacities": "Compares the saving at other capacities.",
-      "tariffs": "Runs the same battery under each contract and compares.",
-      "check": "Checks the result against exhaustive search. Fails if anything is off."
-    },
-    "finale": "How operation changes with the tariff and the capacity is laid out."
-  },
-  "gillespie": {
-    "intro": "A Julia demo that simulates fluctuations in chemical reactions with Gillespie's method and checks them against theory.",
-    "cards": {
-      "start": "The run begins at the start Card.",
-      "trajectories": "Overlays trajectories, their mean and the solution of the rate equation.",
-      "stationary": "Compares the distribution of end points with the theoretical Poisson distribution.",
-      "scaling": "Changes the volume and compares the size of fluctuations with theory.",
-      "binding": "Compares a binding reaction with the exact solution and the rate equation.",
-      "check": "Checks the results against closed forms. Fails if anything is off."
-    },
-    "finale": "The simulation was confirmed, in numbers, to agree with the theory."
-  },
-  "heat-inverse": {
-    "intro": "A Julia demo of an inverse problem, recovering an initial temperature from measured ones, to see what regularisation does. The data is made up.",
-    "cards": {
-      "start": "The run begins at the start Card.",
-      "forward": "Makes the temperature at time T from a made-up initial temperature, with noise added.",
-      "spectrum": "Shows which components sink into the noise.",
-      "naive": "Shows that solving backwards as it is diverges.",
-      "tikhonov": "Compares strengths of regularisation.",
-      "reconstruct": "Lays out recoveries at the chosen strength, too small and too large.",
-      "horizon": "Shows that the later the measurement, the more detail is lost.",
-      "check": "Checks against conservation laws and analytic solutions. Fails if anything is off."
-    },
-    "finale": "The naive solution breaks down, and regularisation recovers it: both are laid out."
-  },
-  "ecology-models": {
-    "intro": "A Julia demo that fits predator–prey models to the fur records of hares and lynx and compares them.",
-    "cards": {
-      "start": "The run begins at the start Card.",
-      "load": "Reads the fur records of 1900–1920.",
-      "fit": "Fits three models and overlays them on the records.",
-      "forecast": "Fits up to a year partway and predicts the rest.",
-      "scores": "Tables errors and AICc to compare.",
-      "phase": "Extends the solutions ahead and compares them in phase diagrams.",
-      "check": "Checks with the conserved quantity and an existing case study."
-    },
-    "finale": "Fit and prediction errors can be compared in the same table. In the app you can change the fitting period and rerun just that Card."
   }
 }

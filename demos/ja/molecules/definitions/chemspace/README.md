@@ -1,6 +1,0 @@
----
-title: chemspace
-description: 分子量と logP の地図
----
-
-分子量と logP を対話できる散布図にする。ホバーで名前・分子式・TPSA・違反した規則が分かる。

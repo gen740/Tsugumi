@@ -1,4 +1,0 @@
----
-title: start
-description: プレートの合成データ作り（generate）を始める
----

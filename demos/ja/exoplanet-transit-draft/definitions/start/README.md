@@ -1,4 +1,0 @@
----
-title: start
-description: ライトカーブの取得（load）を始める
----

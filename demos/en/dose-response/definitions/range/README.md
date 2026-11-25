@@ -1,6 +1,0 @@
----
-title: range
-description: Concentration range and the width of the interval
----
-
-Remakes synthetic data with the same settings, changing only the highest concentration, refits it, and plots the width of the EC50's 95% interval (upper ÷ lower) against the highest concentration. Shows the interval opening up where the measured range does not bracket the true EC50.
