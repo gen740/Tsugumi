@@ -263,6 +263,7 @@ def test_the_casa_demo_carries_its_trials(tmp_path, core_factory, language):
     """The Cas A project exposes its trials and can return to its original Drafts."""
     root = tmp_path / "casa"
     copy_demo(language, "casa", root)
+    expected = json.loads((root / "tsugumi.json").read_text())
     daemon = core_factory(project_root=root)
     c = daemon.connect()
     c.call("VersionInitRequest", opId=new_id(), origin="test")
@@ -299,7 +300,7 @@ def test_the_casa_demo_carries_its_trials(tmp_path, core_factory, language):
     # Returning to the implemented tip restores its real ports and exact document.
     c.call("VersionCheckoutRequest", baseRev=snap.rev, opId=new_id(), origin="test", commit=head)
     restored = c.call("ProjectInspectRequest")
-    assert json.loads(text(restored.projectJson)) == json.loads((demo / "tsugumi.json").read_text())
+    assert json.loads(text(restored.projectJson)) == expected
     assert not graph(c).dirty
 
 
