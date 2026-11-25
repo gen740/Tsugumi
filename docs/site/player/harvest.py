@@ -158,7 +158,7 @@ def harvest(demo: str, tmp: Path, staging: Path, sandbox: bool, timeout: float) 
     daemon = Daemon(root).start()
     began = time.time()
     try:
-        c = daemon.connect(client=Client.Web)
+        c = daemon.connect(client=Client.Web) if demo == "live-stream" else daemon.connect()
         snapshot = c.call("ProjectInspectRequest")
         trigger = next(text(d.id) for d in snapshot.definitions
                        if json.loads(text(d.cardJson))["type"] == "trigger")

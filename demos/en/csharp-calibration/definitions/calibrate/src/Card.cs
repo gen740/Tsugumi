@@ -12,7 +12,7 @@ public static class Card {
         // Json.NET is pinned by packages.lock.json; its reflection-based serializer
         // is usable in the process-owned runtime, without runtime downloads.
         Console.WriteLine(JsonConvert.SerializeObject(new { factor, values }));
-        result.Numbers = new outputs.numbers.sample.NumbersT {
+        result.Numbers = new sample.NumbersT {
             Values = values, Label = received.Label
         };
         Effects.Send(new LineChart([new Series("calibrated", received.Label,

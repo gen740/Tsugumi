@@ -28,10 +28,10 @@ from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.Trace.Client import Client
 
-def connect(env):
+def connect(env, *, client=0):
     if getattr(env, "client_hello", False):
-        return env.connect(client=Client.Web)
-    return env.client(client=Client.Web)
+        return env.connect(client=client)
+    return env.client(client=client)
 
 
 def recorded_output(tmp_path, client, run_id, *card, port):
@@ -229,7 +229,7 @@ def send_stream_seed(client, subscription):
 
 
 def test_live_stream_complete_and_ordered(live):
-    c = connect(live)
+    c = connect(live, client=Client.Web)
     set_typed_param(c, "settings", "interval_ms", 0)
     set_typed_param(c, "settings", "samples", 65)
     subscription = text(c.open().subscriptionId)
@@ -242,7 +242,7 @@ def test_live_stream_complete_and_ordered(live):
 
 
 def test_live_stream_keeps_chart_on_cancel_and_resets_on_rerun(live):
-    c = connect(live)
+    c = connect(live, client=Client.Web)
     opened = c.open()
     subscription = text(opened.subscriptionId)
     # Keep the first sample and then wait for cancellation, rather than racing
