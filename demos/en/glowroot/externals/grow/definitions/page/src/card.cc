@@ -108,6 +108,7 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
   auto& state = *turn.state;
   state.roots.resize(P.root_costs.size(), 0);
   game::Page page(game::session_of(*turn.view));
+  if (page.closed()) return {};
   Card::Output output;
 
   if (state.bloom) {

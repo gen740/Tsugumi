@@ -51,10 +51,11 @@ private func opening(_ id: UUID = UUID(), type: String = "html") -> CardViewOpen
   #expect(!presentation.acceptsRoute(route, session: first.id))
   #expect(presentation.openings.map(\.id) == [second.id])
   presentation.receive(first.id, bytes: Data([4])) { credits.append(4) }
-  presentation.close(second.id)
+  #expect(presentation.sessionClosed(second.id)?.id == second.id)
+  #expect(presentation.sessionClosed(second.id) == nil)
   #expect(credits == [1, 3, 4, 2])
-  try await waitForModel("each close reached the relay") { presentation.isIdle }
-  #expect(closed.count == 2 && Set(closed) == [first.id, second.id])
+  try await waitForModel("the user close reached the relay") { presentation.isIdle }
+  #expect(closed == [first.id])
 }
 
 @MainActor @Test func viewFilesAreReadPageByPageWithinTheLimit() async throws {

@@ -71,7 +71,7 @@ table WorkerStart { environment:[EnvVar] (required); }
 
 struct ViewUuid { bytes:[ubyte:16]; }
 enum ViewEventKind:ubyte { Message, Close }
-enum ViewControlKind:ubyte { Open, Register, Unregister }
+enum ViewControlKind:ubyte { Open, Register, Unregister, Close }
 
 table WorkerDisplay {
   session:ViewUuid (required);
@@ -106,7 +106,7 @@ table WorkerViewRequest {
 
 table WorkerViewReply {
   request_id:ulong;
-  ok:bool;
+  status:int = -1;
   session:ViewUuid;
   route:ViewUuid;
 }

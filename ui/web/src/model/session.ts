@@ -440,6 +440,10 @@ export class ProjectSession extends Observable {
         view.type, view.mode, view.width, view.height, view.flags)
       await owner.call(H.RequestPayload.ViewPresentationRequest,
         new H.ViewPresentationRequestT(project, window, closed), H.ReplyPayload.Acknowledgement)
+      if (!closed && this.liveViews.get(view.session) !== view) {
+        await owner.call(H.RequestPayload.ViewPresentationRequest,
+          new H.ViewPresentationRequestT(project, window, true), H.ReplyPayload.Acknowledgement)
+      }
     })().catch(() => {})
   }
 
@@ -809,6 +813,10 @@ export class ProjectSession extends Observable {
       case R.NotificationPayload.ViewRouteRegistered: {
         const { session, route } = e.value as R.ViewRouteRegisteredT
         this.liveViews.get(s(session))?.registerRoute(s(route))
+        break
+      }
+      case R.NotificationPayload.ViewClosed: {
+        this.removeLiveView(s((e.value as R.ViewClosedT).session))
         break
       }
       case R.NotificationPayload.DisplayUpdated: {
@@ -1223,12 +1231,16 @@ export class ProjectSession extends Observable {
   }
 
   closeLiveView(session: string) {
+    if (this.removeLiveView(session)) void this.client?.closeView(session).catch(() => {})
+  }
+
+  private removeLiveView(session: string): boolean {
     const view = this.liveViews.get(session)
-    if (!view) return
+    if (!view) return false
     this.liveViews.close(session)
     this.reportLiveView(view, true)
-    void this.client?.closeView(session).catch(() => {})
     this.changed()
+    return true
   }
 
   // ---- Runs --------------------------------------------------------------------

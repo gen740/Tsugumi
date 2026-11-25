@@ -386,8 +386,18 @@ from card import Output
 import tsugumi
 
 def run(input):
-    tsugumi.send(tsugumi.view_open("notes").session, {payload!r})
+    view = tsugumi.view_open("notes")
+    tsugumi.send(view.session, {payload!r})
     wait_for_release()
+    tsugumi.view_close(view.session)
+    event = tsugumi.recv(10000)
+    assert (event.kind, event.session, event.route) == ("close", view.session, view.route)
+    try:
+        tsugumi.route_register(view.session)
+    except tsugumi.WindowClosed:
+        pass
+    else:
+        raise AssertionError("Registered a route on a closed window")
     return Output()
 """
     views = 'views = [{ name = "notes"; type = "html"; blob = ./notes.html; }];'
@@ -410,6 +420,10 @@ def run(input):
     return_credit(client, subscription, shown)
     assert bytes(shown.bytes) == payload
     remote_gates(active)
+    client.wait_notification(
+        lambda n: n.valueType == NotificationPayload.ViewClosed and text(n.value.session) == session,
+        timeout=RUN_LIST_TIMEOUT_SECONDS,
+    )
     status = wait_run(client, run_id)
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     result = remote_results[text(active.executionJobId)]

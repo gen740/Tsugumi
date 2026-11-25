@@ -134,6 +134,8 @@ import Virtualization
     case "ViewRouteRegistered":
       guard let session = value.session, let route = value.route else { return }
       presentation.registerRoute(route, session: session)
+    case "ViewClosed":
+      if let session = value.session { presentation.sessionClosed(session) }
     case "DisplayUpdated":
       guard let d = value.display, let id = d.session else { return }
       let bytes = Data(d.bytes)

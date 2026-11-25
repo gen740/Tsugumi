@@ -81,7 +81,13 @@ struct Event {
 class Page {
  public:
   explicit Page(const tsugumi_view_session& session)
-      : session_(session), route_(card::display::route_register(session)) {}
+      : session_(session) {
+    try {
+      route_ = card::display::route_register(session);
+    } catch (const card::display::WindowClosed&) {
+      left_ = true;
+    }
+  }
   Page(const tsugumi_view_session& session, const tsugumi_route& route)
       : session_(session), route_(route) {}
   Page(const Page&) = delete;
@@ -94,12 +100,20 @@ class Page {
     }
   }
 
+  auto closed() const -> bool { return left_; }
+
+  auto close() -> void {
+    card::display::view_close(session_);
+    left_ = true;
+  }
+
   auto leave() -> void {
     if (!left_) card::display::route_unregister(route_);
     left_ = true;
   }
 
   auto show(Scene& scene) -> void {
+    if (left_) return;
     scene.value.reply = std::make_unique<glow::screen::Route>(
         flatbuffers::span<const uint8_t, 16>(route_.bytes));
     flatbuffers::FlatBufferBuilder builder(4096);
@@ -112,6 +126,7 @@ class Page {
   // Waits at most timeout_ms for the player. Time itself is measured by the
   // caller with a monotonic clock; the timeout only bounds the wait.
   auto next(int64_t timeout_ms = 100) -> Event {
+    if (left_) return {Event::kClosed, {}};
     const auto received = card::display::recv(timeout_ms);
     using card::display::ReceiveStatus;
     switch (received.status) {
@@ -134,7 +149,7 @@ class Page {
 
  private:
   tsugumi_view_session session_;
-  tsugumi_route route_;
+  tsugumi_route route_{};
   bool left_ = false;
 };
 

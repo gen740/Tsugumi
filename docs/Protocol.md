@@ -247,7 +247,7 @@ No fields.
 | Request | Response | Description |
 | --- | --- | --- |
 | [`RunPlan`](#runplan) | RunPlanResult | Preview the Cards a run reaches; propagate defaults to true. |
-| [`Run`](#run) | RunAccepted | Start a run at base_rev. propagate defaults to true, max_concurrency to 4 (1..64). Omitted nix_jobs and nix_cores use the environment defaults for local builds. |
+| [`Run`](#run) | RunAccepted | Start a run at base_rev. If a required host path is unbound, ask the user to choose a folder in Project Settings > Host Paths. propagate defaults to true, max_concurrency to 4 (1..64). Omitted nix_jobs and nix_cores use the environment defaults for local builds. |
 | [`RunCancel`](#runcancel) | RunStatus | Cancel run_id. |
 | [`RunStatus`](#runstatus) | RunStatus | Read run_id; omitted selects the active run, then the latest locally started run, then idle. An active run lists its Cards in progress with their stage and derivations being built. |
 
@@ -568,11 +568,13 @@ Sent from `tsugumid` to connected clients.
 - `RunCategoryDeleteResult`
 - `ViewOpened`
 - `ViewRouteRegistered`
+- `ViewClosed`
 
 Card views open through the Card ABI. The presenting subscription receives
 `ViewOpened` before any `DisplayUpdated` for the session and owns the
 file reads, sends, credits and close. `ViewRouteRegistered` binds a route
-to a session for the lifetime of the window. Session and route IDs use canonical
+to a session for the lifetime of the window. The presenting subscription
+receives `ViewClosed` when the window closes. Session and route IDs use canonical
 UUID text. The all-zero route selects the opening Card’s route. View RPCs
 and notifications are excluded from RPC traces.
 
@@ -691,6 +693,8 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `HostFolderCreateRequest` | `parent: string` (required), `name: string` (required) |
 | `CardSecretListRequest` | `project_id: string` (required) |
 | `CardSecretSetRequest` | `project_id: string` (required), `name: string` (required), `value: string`, `remove: bool` |
+| `HostPathListRequest` | `project_id: string` (required) |
+| `HostPathSetRequest` | `project_id: string` (required), `scope: string`, `name: string` (required), `path: string`, `remove: bool` |
 | `RunCategoryDeleteRequest` | `project_id: string` (required), `run_id: string` (required), `category: Tsugumi.RPC.RunRecordCategory`, `op_id: string` (required) |
 | `TemplateListRequest` | `project_id: string` (required) |
 | `HostTemplateAddRequest` | `addition: TemplateAdd` (required) |
@@ -699,4 +703,4 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `ViewPresentationRequest` | `project_id: string` (required), `window: ViewWindow` (required), `closed: bool` |
 | `ViewActionCompleteRequest` | `request: string` (required), `session: string` (required), `png: [ubyte]`, `error: string` |
 
-Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`, `HostHome`, `FolderListing`, `CardSecretList`, `RunCategoryDeleteResult`, `TemplateList`, `ViewWindows`, `ViewActionResult`.
+Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`, `HostHome`, `FolderListing`, `CardSecretList`, `HostPathBindings`, `RunCategoryDeleteResult`, `TemplateList`, `ViewWindows`, `ViewActionResult`.

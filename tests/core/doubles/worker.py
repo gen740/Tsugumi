@@ -277,7 +277,7 @@ class Worker:
                     )
                     self.check_cancel()
                     reply, self.view_reply = self.view_reply, None
-                if reply.ok:
+                if reply.status == 0:
                     display = WorkerDisplayT(session=reply.session, bytes=action["text"].encode())
                     self.data.send(0, WorkerPayload.WorkerDisplay, display)
             else:

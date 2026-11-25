@@ -658,7 +658,7 @@ final class ProjectSession {
       if let d = (e.payload.value as? Tsugumi_RPC_DocPatchedT)?.delta { applyDelta(d) }
     case .runevent:
       if let r = e.payload.value as? Tsugumi_RPC_RunEventT { applyRunEvent(r) }
-    case .viewopened, .viewrouteregistered, .displayupdated:
+    case .viewopened, .viewrouteregistered, .viewclosed, .displayupdated:
       applyViewNotification(e.payload)
     case .runcategorydeleteresult:
       recordingRevision += 1
@@ -752,6 +752,13 @@ final class ProjectSession {
             let session = UUID(uuidString: registered.session),
             let route = UUID(uuidString: registered.route) else { return }
       cardViews.registerRoute(route, session: session)
+    case .viewclosed:
+      guard let closed = payload.value as? Tsugumi_RPC_ViewClosedT,
+            let id = UUID(uuidString: closed.session),
+            let opening = cardViews.sessionClosed(id) else { return }
+      if endpointOverride == nil, let projectId {
+        Task { await reportView(opening, project: projectId, closed: true) }
+      }
     case .displayupdated:
       guard let d = (payload.value as? Tsugumi_RPC_DisplayUpdatedT)?.display,
             let id = UUID(uuidString: d.session) else { return }

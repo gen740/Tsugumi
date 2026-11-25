@@ -1398,6 +1398,9 @@ table ViewRouteRegistered {
   route:string (required);
 }
 
+/// Sent to the presenting subscription when the session closes.
+table ViewClosed { session:string (required); }
+
 /// An absent end_offset and unspecified stream indicate invocation log
 /// metadata changed without new stream bytes.
 table LogAvailable {
@@ -1418,6 +1421,7 @@ union NotificationPayload {
   RunCategoryDeleteResult = 6,
   ViewOpened = 7,
   ViewRouteRegistered = 8,
+  ViewClosed = 9,
 }
 
 // ---- Frame -------------------------------------------------------------------

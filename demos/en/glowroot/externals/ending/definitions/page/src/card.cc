@@ -32,7 +32,7 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
     if (event.kind == game::Event::kClosed) break;
     if (event.kind == game::Event::kButton && event.button == "finish") break;
   }
-  page.leave();
+  if (!page.closed()) page.close();
   Card::Output output;
   auto& result = output.result.emplace();
   result.minutes = summary->minutes();

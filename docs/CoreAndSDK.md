@@ -116,7 +116,7 @@ in
 - Include SDK-provided views explicitly with `sdk.views`. LineChart and Points are HTML views in the SDK. Custom HTML can include its own JS and Wasm.
 - The Card calls `view_open` by name to create a window. Each open creates a session and an opener route. A Card that receives a session from a port can send to that window and register its own route to receive responses.
 - PANEL opens in the project window on macOS and docked over the canvas on the Web. WINDOW opens a separate window on macOS and a movable, resizable window inside the page on the Web; both accept an optional initial content size. FULLSCREEN opens a native fullscreen window on macOS; on the Web its in-page window fills the browser page, and its **Enter fullscreen** button enters the browser's full screen. Web views never open browser popups: every view window stays in the same page, shares its connection, and can be detached from or docked back to the panel, minimized to the strip at the bottom left and restored. A minimized view keeps receiving messages, sound and input; only drawing pauses. A packed app presents PANEL in its main window and requires macOS 26 or later.
-- Messages travel to one session or one route through the worker, core and UI. The relay uses [ABI backpressure](CardABI.md#display-messages). A window retains its last frame after its routes go away. Closing the window gives every live route a close event.
+- Messages travel to one session or one route through the worker, core and UI. The relay uses [ABI backpressure](CardABI.md#display-messages). A window retains its last frame after its routes go away. A user or any Card holding the session UUID can close the window. `view_close(session)` works between calls, and repeated closes succeed without another event. Closing gives every live route a close event and drops later sends.
 - View traffic is live. Use output ports and artifacts for results that people will inspect later. [Run history](RunHistory.md)
 
 ### Passing a window between Cards
@@ -125,7 +125,9 @@ A title Card can open a view and pass its session in a port alongside the
 initial state. The play Card registers its own route on that session and
 sends the route to the view in a message. The view can direct input to the
 play Card using that route. Passing the same session to a shop Card lets
-it register another route and render into the same window.
+it register another route and render into the same window. If the window
+closes during the handoff, route registration reports `TSUGUMI_VIEW_WINDOW_CLOSED`
+so the next Card can end cleanly.
 
 ### html views
 

@@ -2889,7 +2889,7 @@ auto Service::view_control(
     const CardPath& card, const std::vector<schema::CardView>& views,
     const std::weak_ptr<WorkerProc::ViewReceiver>& endpoint,
     const WorkerViewRequest& request) -> WorkerViewReply {
-  WorkerViewReply reply{.request_id = request.request_id, .ok = false};
+  WorkerViewReply reply{.request_id = request.request_id};
   if (!request.request_id || endpoint.expired()) return reply;
   switch (request.kind) {
     case ViewControlKind::open: {
@@ -2940,13 +2940,28 @@ auto Service::view_control(
             *conn, subscription,
             view_route_registered_note(session, view_text(reply.route)));
       }
-      reply.ok = true;
+      reply.status = 0;
+      return reply;
+    }
+    case ViewControlKind::close: {
+      if (request.session == ViewUuid{}) return reply;
+      std::lock_guard lock(subs_mu_);
+      const auto found = view_sessions_.find(request.session);
+      if (found != view_sessions_.end()) {
+        end_view(found->first, found->second);
+        view_sessions_.erase(found);
+      }
+      reply.status = 0;
       return reply;
     }
     case ViewControlKind::register_route: {
+      if (request.session == ViewUuid{}) return reply;
       std::lock_guard lock(subs_mu_);
       const auto found = view_sessions_.find(request.session);
-      if (found == view_sessions_.end()) return reply;
+      if (found == view_sessions_.end()) {
+        reply.status = TSUGUMI_VIEW_WINDOW_CLOSED;
+        return reply;
+      }
       auto& routes = found->second.routes;
       do {
         reply.route = parse_view_uuid(crypto::uuid4());
@@ -2958,7 +2973,7 @@ auto Service::view_control(
             *view.conn, view.subscription,
             view_route_registered_note(view_text(request.session),
                                        view_text(reply.route)));
-      reply.ok = true;
+      reply.status = 0;
       return reply;
     }
     case ViewControlKind::unregister_route: {
@@ -2969,7 +2984,7 @@ auto Service::view_control(
         if (auto target = found->second.lock();
             target && target == endpoint.lock()) {
           found->second.reset();
-          reply.ok = true;
+          reply.status = 0;
         }
         break;
       }
@@ -3006,7 +3021,18 @@ auto Service::owned_view(const RequestIn& req, const ViewUuid& session)
 
 auto Service::end_view(const ViewUuid& session, const ViewSession& view)
     -> void {
-  if (view.conn) server_->close_view(*view.conn, view_text(session));
+  if (view.conn) {
+    const auto id = view_text(session);
+    server_->close_view(*view.conn, id);
+    Note note;
+    note.kind = Note::Kind::ViewControl;
+    note.approx_bytes += id.size();
+    note.build = std::make_shared<const Note::Build>([id](FBB& b) {
+      const auto value = R::CreateViewClosed(b, b.CreateString(id));
+      return std::make_pair(R::NotificationPayload::ViewClosed, value.Union());
+    });
+    server_->view_note(*view.conn, view.subscription, std::move(note));
+  }
   for (const auto& [route, endpoint] : view.routes)
     if (auto receiver = endpoint.lock())
       receiver->send({ViewEventKind::close, route, session, {}});
