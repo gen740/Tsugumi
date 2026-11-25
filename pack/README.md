@@ -181,3 +181,18 @@ shared, so nothing was brought to the front).
   this Mac; another Mac needs Developer ID signing and notarization.
 - Cards built for x86_64-linux (Rosetta in the guest) and remote execution
   services are not exported.
+
+## Native export preparation
+
+`tsugumid --project PROJECT --prepare-native-cards MANIFEST.json` validates the
+resolved project's graph, including nested Cards, and builds each Code Card
+with its pinned sources and parameters for `aarch64-darwin`. A successful
+manifest names the build plans, closures, worker reuse settings, and declared
+host paths. The pack launcher contains the Darwin closure installer, which
+copies those files and signs the relocated Mach-O images.
+
+The launcher still uses the guest path described above. The native bundle
+format, both execution modes, and the debug endpoint need to be connected
+before the launcher can export and run a native app.
+
+TODO: Consider an optional VM mode after the native launcher cutover.

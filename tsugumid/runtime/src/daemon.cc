@@ -52,6 +52,7 @@ struct Options {
   bool project_shell = false;
   stdfs::path substituters_file;
   stdfs::path prepare_cards;
+  stdfs::path prepare_native_cards;
   stdfs::path prepared_cards;
   std::string fault;
 };
@@ -71,7 +72,10 @@ void usage() {
       "                [--host-folders DIR] [--substituters-file FILE]\n"
       "       tsugumid --project DIR --prepare-cards FILE [options]\n"
       "                builds every Code Card without running any, writes one\n"
-      "                JSON line per Card to FILE and exits\n"
+      "                FlatBuffer manifest to FILE and exits\n"
+      "       tsugumid --project DIR --prepare-native-cards FILE [options]\n"
+      "                validates and builds for aarch64-darwin, writing one\n"
+      "                JSON manifest to FILE\n"
       "       --prepared-cards FILE  runs those builds; evaluates no Card\n");
 }
 
@@ -130,6 +134,8 @@ std::optional<Options> parse(int argc, char** argv) {
       o.substituters_file = next();
     else if (a == "--prepare-cards")
       o.prepare_cards = next();
+    else if (a == "--prepare-native-cards")
+      o.prepare_native_cards = next();
     else if (a == "--prepared-cards")
       o.prepared_cards = next();
     else if (a == "--help")
@@ -138,6 +144,11 @@ std::optional<Options> parse(int argc, char** argv) {
       throw std::runtime_error("unknown option " + a);
   }
   if (o.project.empty()) throw std::runtime_error("--project is required");
+  if (!o.prepare_native_cards.empty() &&
+      (!o.prepare_cards.empty() || !o.prepared_cards.empty()))
+    throw std::runtime_error(
+        "--prepare-native-cards cannot be combined with --prepare-cards or "
+        "--prepared-cards");
   // Fault injection exists for the persistence tests only and needs an explicit
   // opt-in.
   if (const char* f = std::getenv("TSUGUMI_FAULT");
@@ -291,6 +302,20 @@ int run_daemon(int argc, char** argv) {
     if (failure && failure->failure.kind == FailureKind::invalid_document)
       error.kind = "invalid_document";
     return report_startup_failure(std::move(error), e);
+  }
+  if (!opt.prepare_native_cards.empty()) {
+    const auto manifest = service.prepare_native_cards();
+    service.shutdown();
+    if (!manifest) return 1;
+    try {
+      fs::write_atomic(stdfs::absolute(opt.prepare_native_cards), *manifest,
+                       0600);
+    } catch (const std::exception& error) {
+      log::error("cannot write " + opt.prepare_native_cards.string() + ": " +
+                 error.what());
+      return 2;
+    }
+    return 0;
   }
   if (!opt.prepare_cards.empty()) {
     std::ofstream out(opt.prepare_cards, std::ios::trunc);
