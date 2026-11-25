@@ -43,13 +43,13 @@ std::vector<std::string> widenings(const Resolution* before,
       const HostFolder* had = nullptr;
       if (b)
         for (const auto& g : b->settings.grants.host_paths)
-          if (g.path == f.path) had = &g;
+          if (g.name == f.name) had = &g;
       if (!had)
         out.push_back(
             std::string(f.write ? "host_folder_write " : "host_folder_read ") +
-            key + " " + f.path);
+            key + " " + f.name);
       else if (f.write && !had->write)
-        out.push_back("host_folder_write " + key + " " + f.path);
+        out.push_back("host_folder_write " + key + " " + f.name);
     }
   }
   return out;

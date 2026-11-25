@@ -345,13 +345,39 @@ struct Environments::Impl {
     launch.folders = entry.folders;
     launch.mounts = {{"project", launch.project, false},
                      {"control", launch.control, false}};
+    json::Members bindings;
+    std::map<std::string, std::string> paths;
+    if (options.host_paths) {
+      const auto id = fs::read_file(std::filesystem::path(launch.project) /
+                                    ".tsugumi/project-id");
+      if (id && crypto::is_short_id(*id)) {
+        for (const auto& binding : options.host_paths(*id).bindings) {
+          std::error_code ec;
+          if (std::filesystem::canonical(binding->path, ec) == binding->path &&
+              std::filesystem::is_directory(binding->path, ec))
+            paths.emplace(binding->scope + binding->name, binding->path);
+        }
+      }
+    }
     if (options.process->Guest()) {
       std::map<std::string, bool> host_folders;
       if (entry.requirements)
-        for (const auto& folder : entry.requirements->folders)
-          if (std::filesystem::is_directory(folder->path))
-            host_folders[folder->path] =
-                host_folders[folder->path] || folder->write;
+        for (const auto& folder : entry.requirements->folders) {
+          const auto key = folder->scope + folder->name;
+          if (const auto it = paths.find(key); it != paths.end())
+            host_folders[it->second] |= folder->write;
+        }
+      // A name may already be bound when a new Card first grants it. Ship
+      // the name with an empty tag until the environment mounts its folder.
+      for (const auto& [key, path] : paths) {
+        const auto mount = host_folders.find(path);
+        bindings[key] = json::Encode(json::Members{
+            {"path", json::Quote(mount == host_folders.end()
+                                     ? ""
+                                     : crypto::sha256_hex(path).substr(0, 16))},
+            {"write",
+             mount != host_folders.end() && mount->second ? "true" : "false"}});
+      }
       for (const auto& [path, write] : host_folders)
         launch.mounts.push_back(
             {"host-" + crypto::sha256_hex(path).substr(0, 16), path, !write});
@@ -359,7 +385,12 @@ struct Environments::Impl {
         if (path.starts_with("/") && std::filesystem::is_directory(path))
           launch.mounts.push_back(
               {"chat-" + crypto::sha256_hex(path).substr(0, 16), path, true});
+    } else {
+      for (const auto& [key, path] : paths)
+        bindings[key] = json::Encode(
+            json::Members{{"path", json::Quote(path)}, {"write", "true"}});
     }
+    launch.host_path_bindings = json::Encode(bindings);
     return launch;
   }
   auto Start(Entry& entry, const H::EnvironmentRequestT& request) -> void {
@@ -411,8 +442,15 @@ struct Environments::Impl {
       // running project leaves it with files it can no longer reach, so a
       // different plan starts the project again.
       if (options.process->Guest() && next.mounts != previous) {
+        if (options.process->Busy(entry.state))
+          throw std::runtime_error(
+              "Stop the active run before changing shared host folders");
         Stop(entry);
       } else {
+        fs::write_atomic(std::filesystem::path(entry.state.control_dir) /
+                             "host-path-bindings.json",
+                         next.host_path_bindings,
+                         options.process->Guest() ? 0644 : 0600);
         entry.mounted = next.mounts;
         Authorize(entry);
         Notify(entry);
@@ -497,6 +535,9 @@ struct Environments::Impl {
                        0600);
       // Recorded before the launch: a launch that fails after the process has
       // started (its reply was lost) leaves a process holding these mounts.
+      fs::write_atomic(control / "host-path-bindings.json",
+                       launch.host_path_bindings,
+                       options.process->Guest() ? 0644 : 0600);
       entry.mounted = launch.mounts;
       launch.stop = start_stop.get_token();
       if (!launch.stop.stop_requested())
@@ -512,7 +553,9 @@ struct Environments::Impl {
               if (!ReadReady(entry)) return false;
               if (options.process->Guest()) {
                 entry.requirements = options.process->Requirements(entry.state);
-                if (launch.mounts != Plan(entry).mounts)
+                const auto accepted = Plan(entry);
+                if (launch.mounts != accepted.mounts ||
+                    launch.host_path_bindings != accepted.host_path_bindings)
                   throw std::runtime_error(
                       "Host requirements changed during "
                       "startup; retry the environment");
@@ -778,6 +821,32 @@ auto Environments::Attach(
     }
     throw std::runtime_error(message);
   }
+}
+auto Environments::ChangeHostPaths(const std::string& project,
+                                   const std::function<std::string()>& change)
+    -> std::string {
+  auto [entry, path] = impl_->EntryFor(project);
+  std::lock_guard lock(entry->mutex);
+  entry->state.project = std::move(path);
+  impl_->CheckDeath(*entry);
+  const bool ready = impl_->ReadReady(*entry);
+  if (ready && impl_->options.process->Busy(entry->state))
+    throw std::runtime_error(
+        "Stop the active run before changing shared host folders");
+  auto reply = change();
+  const auto* result = H::GetMessage(reply.data())->payload_as_Reply();
+  if (ready && result && result->value_as_HostPathBindings()) {
+    H::EnvironmentRequestT restart;
+    restart.project = entry->state.project;
+    restart.action = H::EnvironmentAction::Start;
+    restart.origins = entry->origins;
+    impl_->Start(*entry, restart);
+    if (entry->state.phase != H::EnvironmentPhase::Ready)
+      throw std::runtime_error(
+          "Host path binding saved; could not refresh the project: " +
+          entry->state.message);
+  }
+  return reply;
 }
 auto Environments::List() -> H::EnvironmentListT {
   std::vector<std::shared_ptr<Impl::Entry>> entries;

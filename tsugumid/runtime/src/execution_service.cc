@@ -199,19 +199,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   if (sp.shared_vm) sp.hidden_paths.push_back(state_dir.string());
   sp.network = node.settings.grants.network;
   sp.gui = node.settings.grants.gui;
-  for (const auto& f : node.settings.grants.host_paths) {
-    std::string source = f.path;
-    if (const auto& root = service_.options().host_folders; !root.empty())
-      source = (root / crypto::sha256_hex(f.path).substr(0, 16)).string();
-    std::error_code ec;
-    const auto status = std::filesystem::status(source, ec);
-    if (!std::filesystem::is_directory(status) &&
-        (sp.shared_vm || !std::filesystem::is_regular_file(status)))
-      throw Failed(FailureKind::not_found,
-                   "host path grant " + f.name + " is not available: " + f.path,
-                   {{"path", f.path}});
-    sp.binds.push_back({source, "/host/" + f.name, f.write, f.name});
-  }
+  sp.binds = service_.host_path_binds(node);
 
   const auto destination = service_.artifact_destination(s);
   sp.artifact_store = (state_dir / "artifacts").string();

@@ -66,7 +66,7 @@ def conn(a: str, ap: str, b: str, bp: str) -> dict:
 
 
 def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None = None, name: str = "test",
-          *, locked=()) -> None:
+          *, locked=(), host_paths=()) -> None:
     """Writes a project. `defs` are the bodies of _card.json by name; a body
     may carry "_outputs" (its _outputs.fbs), "_params" (its params.nix) and
     "_nix" (its default.nix).
@@ -116,16 +116,20 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
     for rel, data in files.items():
         if not any(rel.startswith(p) for p in defs_names):
             put(root / rel, data)
-    put(root / "tsugumi.json", json.dumps(project_document(
+    document = project_document(
         name=name, nixPath=declarations(locked),
-        canvas={"cards": [{"id": c["id"]} for c in cards], "connections": conns})))
+        canvas={"cards": [{"id": c["id"]} for c in cards], "connections": conns})
+    if host_paths:
+        document["hostPaths"] = [dict(name=name, description=f"Test folder {name}") for name in host_paths]
+    put(root / "tsugumi.json", json.dumps(document))
     if locked:
         write_lock(root, locked)
 
 
-def write_nix_project(root, defs, cards, conns, files=None, name="test", *, locked=None):
+def write_nix_project(root, defs, cards, conns, files=None, name="test", *, locked=None, host_paths=()):
     """Write a project for the real evaluator with pinned fixture dependencies."""
-    write(root, defs, cards, conns, files, name, locked=test_lock_entries() if locked is None else locked)
+    write(root, defs, cards, conns, files, name, locked=test_lock_entries() if locked is None else locked,
+          host_paths=host_paths)
 
 
 def builtin_project(root: Path, text: str = "hello", extra_cards=(), extra_conns=()) -> None:

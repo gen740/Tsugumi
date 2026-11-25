@@ -43,9 +43,7 @@ table Input {
 /// A folder the worker may read: a folder of the Mac, seen in the worker as
 /// /host/<name>.
 table HostFolder {
-  /// Absolute path on the Mac.
-  path:string (required);
-  /// Folder name under /host (an id).
+  /// Name declared in the containing project, also used under /host.
   name:string (required);
   /// false: read-only.
   write:bool = null;

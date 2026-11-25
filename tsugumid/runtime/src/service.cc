@@ -28,6 +28,7 @@
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/store.hh"
@@ -329,9 +330,13 @@ namespace {
 auto unsupported_local_option(const Settings& settings,
                               const RemoteTarget& target) -> std::string {
 #ifdef __linux__
+  if (!settings.grants.host_paths.empty() && !settings.sandbox.filesystem)
+    return "named host paths require sandbox.filesystem";
   // Without bubblewrap only the plain worker could run, which enforces none
   // of these: the Card fails instead of running without what it selected.
   if (!target.namespace_isolation) {
+    if (!settings.grants.host_paths.empty())
+      return "named host paths require a Linux worker with bubblewrap";
     if (settings.sandbox.filesystem)
       return "sandbox.filesystem requires a Linux worker with bubblewrap";
     if (!settings.grants.network)
@@ -345,6 +350,8 @@ auto unsupported_local_option(const Settings& settings,
       return "sandbox.identity requires a Linux worker with bubblewrap";
   }
 #elif defined(__APPLE__)
+  if (!settings.grants.host_paths.empty())
+    return "named host paths on macOS require the shared Linux VM";
   if ((settings.sandbox.filesystem || settings.sandbox.pid ||
        settings.sandbox.ipc || settings.sandbox.identity ||
        !settings.grants.network) &&
@@ -495,6 +502,64 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
 
 auto Service::remote_execution() -> RemoteExecutionService& {
   return *remote_execution_;
+}
+
+auto Service::host_path_binds(const Node& node) const
+    -> std::vector<WorkerSpawn::Bind> {
+  if (node.settings.grants.host_paths.empty()) return {};
+  json::Members bindings;
+  if (!opts_.control_dir.empty())
+    if (const auto text =
+            fs::read_file(opts_.control_dir / "host-path-bindings.json"))
+      bindings = json::Object(*text);
+  std::vector<WorkerSpawn::Bind> result;
+  for (const auto& grant : node.settings.grants.host_paths) {
+    const auto key = node.project_dir + grant.name;
+    auto hint = std::vector<std::pair<std::string, std::string>>{
+        {"host_path_name", grant.name},
+        {"host_path_scope", node.project_dir},
+        {"card", path_key(node.path)}};
+    const auto entry = bindings.find(key);
+    if (entry == bindings.end())
+      throw Failed(FailureKind::not_found,
+                   "Host path '" + grant.name +
+                       "' is unbound. Choose its folder in Project Settings > "
+                       "Host Paths.",
+                   hint);
+    const auto binding = json::Object(entry->second);
+    const auto path = json::Text(binding, "path");
+    if (!opts_.host_folders.empty() &&
+        (path.empty() ||
+         (grant.write && json::Get(binding, "write") != "true"))) {
+      hint.emplace_back("host_path_refresh", "true");
+      throw Failed(FailureKind::not_found,
+                   "Host path '" + grant.name +
+                       "' needs an updated VM share. Reconnect the project and "
+                       "try again.",
+                   std::move(hint));
+    }
+    stdfs::path source;
+    if (opts_.host_folders.empty()) {
+      source = path;
+      std::error_code ec;
+      if (!source.is_absolute() || stdfs::canonical(source, ec) != source)
+        source.clear();
+    } else if (path.size() == 16 &&
+               path.find_first_not_of("0123456789abcdef") == path.npos) {
+      source = opts_.host_folders / path;
+    }
+    std::error_code ec;
+    if (source.empty() || !stdfs::is_directory(source, ec) ||
+        (grant.write && json::Get(binding, "write") != "true"))
+      throw Failed(FailureKind::not_found,
+                   "Host path '" + grant.name +
+                       "' is unavailable. Choose its folder in Project "
+                       "Settings > Host Paths.",
+                   hint);
+    result.push_back(
+        {source.string(), "/host/" + grant.name, grant.write, grant.name});
+  }
+  return result;
 }
 
 auto Service::card_secrets(const Node& node, std::stop_token stop) const
@@ -1247,12 +1312,11 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
                          : Guarantee::unavailable;
     auto filesystem = isolation;
     auto network = isolation;
-    bool host_paths = !remote && target.namespace_isolation;
+    const bool host_paths = !remote && target.namespace_isolation;
 #ifdef __APPLE__
     if (!remote && worker_has_seatbelt()) {
       isolation = Guarantee::enforced;
       network = filesystem = Guarantee::partial;
-      host_paths = true;
     }
 #endif
     const auto sandbox = R::CreateSandboxCapabilities(

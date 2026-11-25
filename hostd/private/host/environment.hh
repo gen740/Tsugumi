@@ -41,6 +41,7 @@ struct EnvironmentLaunch {
   std::string key, project, control;
   std::vector<std::string> origins, folders;
   std::vector<EnvironmentMount> mounts;
+  std::string host_path_bindings;
   // The VM helper has a separate, named startup environment contract.
   bool vm_helper = false;
   std::vector<std::string> arguments;
@@ -99,6 +100,8 @@ struct EnvironmentOptions {
   std::filesystem::path worker;
   std::filesystem::path nix_dir;  // installed Card evaluator
   std::shared_ptr<EnvironmentProcess> process;
+  std::function<Tsugumi::Host::HostPathBindingsT(const std::string&)>
+      host_paths;
   std::function<std::function<void()>(const std::filesystem::path&)>
       reserve_project_identity;
 };
@@ -115,6 +118,9 @@ class Environments {
   ~Environments();
   auto Handle(const Tsugumi::Host::EnvironmentRequestT& request) -> State;
   auto List() -> Tsugumi::Host::EnvironmentListT;
+  auto ChangeHostPaths(const std::string& project,
+                       const std::function<std::string()>& change)
+      -> std::string;
   // Commit registration under the same project lock as mount changes. The
   // callback must commit its whole batch or throw without changing resources.
   auto Attach(

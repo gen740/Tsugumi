@@ -1090,11 +1090,11 @@ export class ProjectSession extends Observable {
     return result.rev ?? this.rev
   }
 
-  setProjectField(name: string, value: J) {
-    const before = clone(this.project), after = clone(before)
+  setProjectField(name: string, value: J | undefined, scope = '') {
+    const before = clone(scope ? this.external(scope)?.project : this.project), after = clone(before)
     if (!isObj(after)) throw new Error('Invalid project')
     after.set(name, value)
-    this.editJSON('tsugumi.json', before, after)
+    this.editJSON(scope + 'tsugumi.json', before, after)
   }
 
   async replaceDocuments(expectedRev: bigint, documents: [string, J | undefined][]) {
@@ -1233,6 +1233,8 @@ export class ProjectSession extends Observable {
 
   // ---- Runs --------------------------------------------------------------------
 
+  hostPathPrompt?: { scope: string; name: string }
+
   async run(card: string[], propagate: boolean) {
     await this.finishDraftEdit()
     if (this.inlineDraft) throw new RPCFailure({ kind: D.FailureKind.validation_failed, diagnostic: L('変更を保存できないため実行できません。') })
@@ -1252,6 +1254,16 @@ export class ProjectSession extends Observable {
       }
       this.changed()
     } catch (e) {
+      if (e instanceof RPCFailure && e.kind === D.FailureKind.not_found && e.args.host_path_name && this.projectId) {
+        if (e.args.host_path_refresh === 'true') {
+          await this.withEnvironmentChange(async () => {})
+          this.notice = L('ホストパスを更新しました。もう一度実行してください。')
+          this.changed()
+          return
+        }
+        this.hostPathPrompt = { scope: e.args.host_path_scope ?? '', name: e.args.host_path_name }
+        this.changed()
+      }
       if (e instanceof RPCError && e.code === 'disconnected') this.reconnect() // never re-send blindly
       throw e
     }

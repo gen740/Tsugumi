@@ -161,8 +161,10 @@ table ProjectSnapshot {
 /// Host policy and mount availability do not change this description.
 table HostFolderRequirement {
   card:Tsugumi.Data.CardPath (id: 0, required);
-  path:string (id: 1, required);
+  name:string (id: 1, required);
   write:bool (id: 2);
+  /// The directory containing the declaring document, empty at the root.
+  scope:string (id: 3, required);
 }
 
 table ProjectHostRequirements {
@@ -601,7 +603,7 @@ table RunPlanRequest {
   propagate:bool = null (id: 2);
 }
 
-/// -> RunAccepted. Start a run at base_rev. propagate defaults to true, max_concurrency to 4 (1..64). Omitted nix_jobs and nix_cores use the environment defaults for local builds.
+/// -> RunAccepted. Start a run at base_rev. If a required host path is unbound, ask the user to choose a folder in Project Settings > Host Paths. propagate defaults to true, max_concurrency to 4 (1..64). Omitted nix_jobs and nix_cores use the environment defaults for local builds.
 table RunRequest {
   base_rev:uint64 = null (id: 0);
   op_id:string (id: 1, required);

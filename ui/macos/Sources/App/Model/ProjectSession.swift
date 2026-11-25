@@ -1088,9 +1088,11 @@ final class ProjectSession {
     return try await operate(.projectedits, body: body).rev ?? rev
   }
 
-  func setProjectField(_ name: String, _ value: JSONValue) {
-    var after = project; after[name] = value
-    editJSON("tsugumi.json", old: project, new: after)
+  func setProjectField(_ name: String, _ value: JSONValue?, scope: String = "") {
+    guard let before = scope.isEmpty ? project : external(scope)?.project else { return }
+    var after = before
+    after[name] = value
+    editJSON(scope + "tsugumi.json", old: before, new: after)
   }
 
   func replaceDocuments(_ revision: UInt64, _ documents: [(String, JSONValue?)]) async throws -> UInt64 {
@@ -1316,6 +1318,20 @@ final class ProjectSession {
         cardStates = [:]
         timeline = []
       }
+    } catch let failure as RPCFailure where failure.kind == .notFound && failure.args["host_path_name"] != nil {
+      guard let projectId, let name = failure.args["host_path_name"] else { throw failure }
+      if failure.args["host_path_refresh"] == "true" {
+        reconnect()
+        notice = String(localized: "ホストパスを更新するために再接続しています。接続後にもう一度実行してください。")
+        return
+      }
+      let scope = failure.args["host_path_scope"] ?? ""
+      let declarations = (scope.isEmpty ? project : external(scope)?.project)?["hostPaths"]?.array ?? []
+      let description = declarations.first { $0["name"]?.string == name }?["description"]?.string
+      guard let folder = await HostPathsSettings.chooseFolder(name, description: description) else { throw failure }
+      _ = try await HostPathsSettings.setBinding(project: projectId, scope: scope, name: name, folder: folder)
+      reconnect()
+      notice = String(localized: "フォルダを割り当てました。もう一度実行してください。")
     } catch RPCError.disconnected {
       // Never re-send blindly: look the operation up after reconnecting.
       reconnect()

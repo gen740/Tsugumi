@@ -9,7 +9,6 @@ import { WorkerBitsEditor } from './workerBits'
 // project's copy).
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import * as H from '../../shared/gen/tsugumi/host'
-import { api } from '../api'
 import { hostCall } from '../wire/host'
 import { app } from '../model/app'
 import { Observable, useObserve } from '../model/observable'
@@ -26,7 +25,6 @@ import { CodeEditor, EditorMarker } from './editor'
 import { CardArtifactsView, CardExecutionView } from './history'
 import { CardLogView, DependenciesCategory } from './cardLog'
 import { Icon } from './icons'
-import { FolderPicker } from './sidebar'
 import { SymbolPicker } from './symbolPicker'
 import { L } from '../i18n'
 import { splitCardNotes } from '../model/documents'
@@ -805,72 +803,42 @@ function setGrant(model: CardEditorModel, key: string, value: J | undefined) {
   model.setSetting('grants', next)
 }
 
-/** Folders of the host this Card's worker may read: each at
- *  /host/<name> in the worker, read-only unless allowed to write. Only the
- *  folder's path is kept in the project. */
-const grantName = (name: string) => name.toUpperCase().replace(/[^A-Z0-9]/g, '_')
-
 function HostFoldersEditor({ model }: { model: CardEditorModel }) {
   const folders = arr(get(get(model.definition, 'grants'), 'hostPaths')) ?? []
-  const usable = app.status?.hostFolders ?? true
-  const [picking, setPicking] = useState(false)
-  const [present, setPresent] = useState<Record<string, boolean>>({})
-  const paths = folders.map((f) => str(get(f, 'path')) ?? '')
-  const pathsKey = paths.join('\n')
-  useEffect(() => {
-    let alive = true
-    for (const p of paths) {
-      if (!p || p in present) continue
-      void api(`/api/fs?path=${encodeURIComponent(p)}`).then(() => true, () => false).then((ok) => {
-        if (alive) setPresent((x) => ({ ...x, [p]: ok }))
-      })
-    }
-    return () => {
-      alive = false
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathsKey])
+  const scope = model.session.projectPrefix(path(model.cardKey).slice(0, -1))
+  const project = scope ? model.session.external(scope)?.project : model.session.project
+  const available = (arr(get(project, 'hostPaths')) ?? []).flatMap((entry) => {
+    const name = str(get(entry, 'name'))
+    return name && !folders.some(f => str(get(f, 'name')) === name) ? [name] : []
+  })
   const edit = (fn: (list: J[]) => void) => {
     const list = folders.map((f) => clone(f))
     fn(list)
     setGrant(model, 'hostPaths', list.length ? list : undefined)
-  }
-  const add = (p: string) => {
-    const taken = new Set(folders.map((f) => grantName(str(get(f, 'name')) ?? '')))
-    const last = p.replace(/\/+$/, '').split('/').pop() ?? ''
-    const base = [...last].map((c) => (/[A-Za-z0-9\-_.]/.test(c) ? c : '-')).join('')
-    let name = !base || base === '.' || base === '..' ? 'folder' : base
-    for (let n = 2; taken.has(grantName(name)); n++) name = `${base}-${n}`
-    edit((l) => l.push(obj([['path', p], ['name', name], ['write', false]])))
   }
   return (
     <div className="col gap6 fill">
       <div className="row center">
         <span>{L('ホストのフォルダへのアクセスを許可する')}</span>
         <span className="spacer" />
-        <Button disabled={!usable} onClick={() => setPicking(true)}>{L('フォルダを追加…')}</Button>
+        <Button disabled={!available.length} onClick={(e) => showMenu(e, available.map(name => ({
+          label: name,
+          action: () => edit(list => list.push(obj([['name', name], ['write', false]]))),
+        })))}>{L('フォルダを追加…')}</Button>
       </div>
       {folders.map((f, i) => {
-        const p = str(get(f, 'path')) ?? ''
-        const ok = present[p] !== false
-        return (
-          <div key={i} className="row gap6 center host-folder">
-            <Icon name={ok && usable ? 'folder' : 'folder.badge.questionmark'} style={{ color: ok && usable ? 'var(--secondary)' : 'var(--orange)' }} />
-            <div className="col flex1 min0">
-              <span className="callout ellipsis" title={p}>{p}</span>
-              <span className="caption" style={{ color: ok && usable ? 'var(--secondary)' : 'var(--orange)' }}>
-                {!usable ? L('この Web UI では使えません（実行すると失敗します）') : ok ? `TSUGUMI_GRANT_${grantName(str(get(f, 'name')) ?? '')}` : L('このホストにはありません（実行すると失敗します）')}
-              </span>
-            </div>
-            <Toggle kind="checkbox" label={L('書き込み')} help={L('オフは読み取り専用')} checked={bool(get(f, 'write'))!}
-              onChange={(v) => edit((l) => isObj(l[i]) && (l[i] as JObj).set('write', v))} />
-            <Button kind="borderless" iconOnly icon="minus.circle" help={L('削除')} onClick={() => edit((l) => l.splice(i, 1))} />
+        const name = str(get(f, 'name')) ?? ''
+        return <div key={name} className="row gap6 center host-folder">
+          <div className="col flex1 min0">
+            <span className="callout">/host/{name}</span>
+            <span className="caption secondary">TSUGUMI_GRANT_{name.toUpperCase()}</span>
           </div>
-        )
+          <Toggle kind="checkbox" label={L('書き込み')} help={L('オフは読み取り専用')} checked={bool(get(f, 'write')) === true}
+            onChange={(v) => edit((l) => (l[i] as JObj).set('write', v))} />
+          <Button kind="borderless" iconOnly icon="minus.circle" help={L('削除')} onClick={() => edit((l) => l.splice(i, 1))} />
+        </div>
       })}
-      {!usable && <div className="caption" style={{ color: 'var(--orange)' }}>{L('macOS 上の Web UI では、フォルダを Card に共有できません（Mac アプリの共通 VM が必要です）。この設定のある Card を実行すると失敗します。')}</div>}
-      <div className="caption secondary">{L('Card は TSUGUMI_GRANT_<名前> からフォルダのパスを取得できます。共有 VM での追加・変更はプロジェクトを開き直すと反映されます。')}</div>
-      {picking && <FolderPicker message={L('worker から読めるようにするフォルダを選んでください')} onClose={() => setPicking(false)} onPick={(p) => { setPicking(false); add(p) }} />}
+      {!available.length && <div className="caption secondary">{L('フォルダ名はプロジェクト設定の「ホストパス」で宣言できます。')}</div>}
     </div>
   )
 }

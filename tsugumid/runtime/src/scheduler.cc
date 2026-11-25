@@ -2202,6 +2202,8 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
     throw Failed(FailureKind::validation_failed, msg,
                  {{"count", std::to_string(errors.size())}});
   }
+  for (const auto& path : plan.build_candidates)
+    svc_.host_path_binds(*doc->resolution->find(path));
   RunSummaryData s;
   s.status.state = RunState::queued;
   s.status.rev = doc->rev;

@@ -54,6 +54,12 @@ table NixPathEntry {
   url:string (required);
 }
 
+/// A folder the user binds on the machine running the project.
+table HostPath {
+  name:string (required);
+  description:string (required);
+}
+
 table Project {
   /// The project file format. It changes only when the format changes, and
   /// the core refuses a project whose format differs from its own.
@@ -74,6 +80,8 @@ table Project {
   /// Optional: present only in a child project (externals/<id>/), the ports
   /// it has as a Card in Card.
   boundary:Boundary;
+  /// Optional. The project describes each folder; host settings supply it.
+  hostPaths:[HostPath];
 }
 
 root_type Project;

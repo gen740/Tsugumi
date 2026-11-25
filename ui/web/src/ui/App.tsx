@@ -16,6 +16,7 @@ import { Button, Empty, MenuHost, Sheet, Spinner, TextField } from './controls'
 import { GuideFlyer, GuideInvite, GuideSetupSheet, setGuideWindow } from './guide'
 import { ProjectChooser, SetupView } from './home'
 import { FolderPicker } from './sidebar'
+import { HostPathPrompt } from './hostPaths'
 import { WindowHost } from './windows'
 import { WorkflowTabs } from './workbench'
 import { L } from '../i18n'
@@ -266,6 +267,7 @@ export function App() {
       {body}
       <WindowHost />
       <MenuHost />
+      {workspace.session && <HostPathPrompt session={workspace.session} />}
       {!detached && <GuideFlyer />}
       {!detached && !app.setupNeeded && app.status && <GuideSetupSheet />}
       {!detached && <GuideInvite />}

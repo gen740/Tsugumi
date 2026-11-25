@@ -26,7 +26,10 @@ the person's decision.
   grants (network and gui both false), systems (the Nix systems the Card works on, at least one; initially the
   host's native Linux system), and workerCapabilities ([]). A worker whose native system is listed builds and runs
   the Card natively; any other worker runs the first entry emulated.
-  grants.hostPaths and secrets are optional. Each hostPaths entry supplies name, path and write.
+  grants.hostPaths and secrets are optional. Each host path grant supplies name and write. Declare each
+  name with its description in the containing tsugumi.json's optional hostPaths array. Hostd stores
+  the user's folder binding per machine. If a run reports an unbound host path, ask the user to
+  choose its folder in Project Settings > Host Paths.
   Merge also requires inputs (at least one, typically a and b), maxRuns (1) and recordIO ("project").
   Collect also requires maxRuns (1) and recordIO ("project"). Draft, Trigger and Subgraph contain only type and symbol.
   Zero timeouts or sandbox limits mean unlimited. Record settings inherit the project with "project" and

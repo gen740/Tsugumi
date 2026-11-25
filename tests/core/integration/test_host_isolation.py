@@ -10,11 +10,13 @@ folder there, a write succeeds and is gone with the sandbox."""
 
 from __future__ import annotations
 
+import json
+import os
 import socket
 
-from projects import card, conn, run_and_wait, write_nix_project as write
+from projects import card, conn, run_and_wait, start_run, write_nix_project as write
 from harness.real_cards import TXT, accept_in_background, python_card, txt_main
-from tsugumi_client import path, text
+from tsugumi_client import RpcFailure, path, text
 from Tsugumi.Data.RunState import RunState
 
 
@@ -74,7 +76,6 @@ def test_a_sandboxed_card_reaches_no_port_and_no_file_of_this_host(core_factory,
 
 
 def test_linux_switches_and_named_grants(core_factory, tmp_path):
-    import os
     import sys
     import pytest
 
@@ -103,6 +104,9 @@ def test_linux_switches_and_named_grants(core_factory, tmp_path):
     assert os.readlink("/proc/self/ns/pid") != {original_pid!r}
     assert os.readlink("/proc/self/ns/ipc") != {original_ipc!r}
     assert not os.path.isfile({str(outside)!r})
+    assert os.environ["TSUGUMI_GRANT_SAMPLE_DATA"] == "/host/sample_data"
+    assert os.environ["TSUGUMI_GRANT_RESULT"] == "/host/result"
+    assert sorted(os.listdir("/host")) == ["result", "sample_data"]
     sample = os.environ["TSUGUMI_GRANT_SAMPLE_DATA"] + "/data"
     assert open(sample).read() == "readable"
     try:
@@ -114,13 +118,23 @@ def test_linux_switches_and_named_grants(core_factory, tmp_path):
     with open(os.environ["TSUGUMI_GRANT_RESULT"] + "/data", "w") as f:
         f.write("staged\\n")
     RESULT = 'isolated'"""), outputs=TXT, grants={"hostPaths": [
-                {"name": "sample-data", "path": str(shared), "write": False},
-                {"name": "result", "path": str(writable), "write": True},
+                {"name": "sample_data", "write": False},
+                {"name": "result", "write": True},
             ]}),
     }
     root = tmp_path / "p"
-    write(root, scripts, [card(name, name) for name in scripts], [])
-    client = core_factory(project_root=root).connect()
+    write(root, scripts, [card(name, name) for name in scripts], [],
+          host_paths=("sample_data", "result"))
+    daemon = core_factory(project_root=root)
+    client = daemon.connect()
+    with pytest.raises(RpcFailure, match="Host path 'sample_data' is unbound") as failure:
+        start_run(client, "enabled")
+    assert failure.value.args_map["host_path_name"] == "sample_data"
+    assert not client.call("RunHistoryRequest").runs
+    (daemon.control / "host-path-bindings.json").write_text(json.dumps({
+        "sample_data": {"path": str(shared.resolve()), "write": True},
+        "result": {"path": str(writable.resolve()), "write": True},
+    }))
     for name in scripts:
         run_id, status = run_and_wait(client, name)
         assert status.state == RunState.succeeded, log_of(client, run_id, name, 2)

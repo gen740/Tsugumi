@@ -326,7 +326,13 @@ Set `grants.network` to true to allow network access. TLS uses the Nix `cacert` 
 
 List the Nix systems the Card works on in `systems` and any required worker capability bits in `workerCapabilities`. A worker whose native system is listed builds and runs the Card natively; any other worker runs the first entry under an emulator. See [Worker selection](RemoteExecution.md#worker-selection). Write all four isolation flags and both resource limits in `sandbox`. Use zero for an unlimited CPU or memory budget. A Linux worker with delegated cgroup v2 applies nonzero limits to the Card's process.
 
-Set `grants.network` or `grants.gui` to enable that access on a supported worker. Add named paths with `grants.hostPaths` entries containing `name`, an absolute `path` and an optional `write` flag. The Card reads the worker-visible path from `TSUGUMI_GRANT_<NAME>`, using uppercase letters and underscores in place of other separators. For example, `sample-data` becomes `TSUGUMI_GRANT_SAMPLE_DATA`.
+Set `grants.network` or `grants.gui` to enable that access on a supported worker. Declare the folder's purpose in **Project Settings → Host Paths** or in the containing `tsugumi.json`:
+
+```json
+"hostPaths": [{"name": "sample_data", "description": "Input samples for calibration"}]
+```
+
+In Card settings, choose the declared name and enable writes if needed. In `_card.json`, this is `"hostPaths": [{"name": "sample_data", "write": false}]` under `grants`. The filesystem-isolated Linux worker (including the Mac app’s shared VM) sees the folder at `/host/sample_data` and receives `TSUGUMI_GRANT_SAMPLE_DATA`. Tsugumi asks for the folder when a run first needs a name with no binding. Configure bindings ahead of time in Project Settings or with `tsugumi host-path bind PROJECT sample_data FOLDER`. Use `host-path list PROJECT` to list bindings and `host-path unbind PROJECT sample_data` to remove one. For a child project, qualify the name, for example `externals/analysis/sample_data`.
 
 Connection details and credentials belong to the host; see [Remote execution](RemoteExecution.md). Worker state follows the [worker state rules](#worker-state).
 

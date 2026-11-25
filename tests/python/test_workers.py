@@ -6,17 +6,21 @@ the network grant and granted Mac folders reach the Card as configured."""
 
 from __future__ import annotations
 
+import json
 import os
 import re
+from contextlib import closing
+from pathlib import Path
 
 import pytest
 
+from harness.host import HostConnection
 from harness.observations import decode_scalar, read_output
 from harness.real_cards import NUM, ONE_MAIN, TXT, log, python_card, txt_main
 from conftest import real_environment
-from projects import card, conn, run_and_wait, write_nix_project as write
+from projects import card, conn, run_and_wait, start_run, write_nix_project as write
 from test_cards_shared_vm import load, shown
-from tsugumi_client import path, text
+from tsugumi_client import RpcFailure, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
@@ -174,6 +178,7 @@ GRANTS_BODY = """
     found = []
     data, out = os.environ.get("TSUGUMI_GRANT_DATA"), os.environ.get("TSUGUMI_GRANT_OUT")
     if data:
+        assert data == "/host/data"
         found.append(open(os.path.join(data, "hello.txt")).read())
         try:
             open(os.path.join(data, "new.txt"), "w").write("x")
@@ -181,6 +186,7 @@ GRANTS_BODY = """
         except OSError:
             found.append("read-only")
     if out:
+        assert out == "/host/out"
         open(os.path.join(out, "made.txt"), "w").write("made")
     if not data and not out:
         found.append("no folder" if not os.path.exists("/host") or not os.listdir("/host") else "folders visible")
@@ -194,16 +200,24 @@ def test_mac_folders_are_read_only_unless_written(env, tmp_path):
     shared.mkdir()
     (shared / "hello.txt").write_text("from the Mac")
     probe = txt_main(GRANTS_BODY)
-    read = python_card(probe, outputs=TXT, inputs=["go"], recordIO="on",
-                       grants={"hostPaths": [{"path": str(shared), "name": "data"}]})
-    write_ = python_card(probe, outputs=TXT, inputs=["go"], recordIO="on",
-                         grants={"hostPaths": [{"path": str(shared), "name": "out", "write": True}]})
-    other = python_card(probe, outputs=TXT, inputs=["go"], recordIO="on")
-    load(env, {"trigger": {"type": "trigger"}, "read": read, "write": write_, "other": other},
+    settings = dict(outputs=TXT, inputs=["go"], recordIO="on", systems=["aarch64-linux"])
+    read = python_card(probe, **settings,
+                       grants={"hostPaths": [{"name": "data", "write": False}]})
+    write_ = python_card(probe, **settings,
+                         grants={"hostPaths": [{"name": "out", "write": True}]})
+    other = python_card(probe, **settings)
+    c = load(env, {"trigger": {"type": "trigger"}, "read": read, "write": write_, "other": other},
          [card("start", "trigger"), card("read", "read"), card("write", "write"),
-          card("other", "other")], [conn("start", "out", n, "go") for n in ("read", "write", "other")])
-    # The share is set when the project's environment starts.
-    env.stop()
+          card("other", "other")], [conn("start", "out", n, "go") for n in ("read", "write", "other")],
+         host_paths=("data", "out"))
+    with pytest.raises(RpcFailure, match="Host path 'data' is unbound"):
+        start_run(c, "start")
+    project = text(c.call("ProjectInspectRequest").projectId)
+    c.close()
+    host_ready = Path(env.vm.directory.name) / "host-core/host.ready"
+    with closing(HostConnection(json.loads(host_ready.read_text()))) as host:
+        for name in ("data", "out"):
+            host.call("HostPathSetRequest", projectId=project, name=name, path=str(shared))
     env.start()
     c = env.client()
     run_id, st = run_and_wait(c, "start")

@@ -319,6 +319,35 @@ class HostPolicyTest : public ::testing::Test {
     return service->Resolve({{"profile", Quote("desktop")}});
   }
 };
+TEST_F(HostPolicyTest, HostPathBindingsAreScopedAndSurviveReopening) {
+  Open();
+  H::HostPathListRequestT list;
+  list.project_id = "abcdef";
+  const auto initial = Call(list);
+  ASSERT_NE(initial->value.AsHostPathBindings(), nullptr);
+  EXPECT_TRUE(initial->value.AsHostPathBindings()->bindings.empty());
+  H::HostPathSetRequestT bind;
+  bind.project_id = list.project_id;
+  bind.scope = "externals/child/";
+  bind.name = "data";
+  bind.path = "relative";
+  EXPECT_NE(Call(bind)->value.AsFailure(), nullptr);
+  bind.path = directory.path.string();
+  ASSERT_NE(Call(bind)->value.AsHostPathBindings(), nullptr);
+  Open();
+  const auto stored = Call(list);
+  ASSERT_NE(stored->value.AsHostPathBindings(), nullptr);
+  const auto& bindings = stored->value.AsHostPathBindings()->bindings;
+  ASSERT_EQ(bindings.size(), 1u);
+  EXPECT_EQ(bindings.front()->scope, bind.scope);
+  EXPECT_EQ(bindings.front()->name, bind.name);
+  EXPECT_EQ(bindings.front()->path,
+            std::filesystem::canonical(directory.path).string());
+  list.project_id = "ghjkmp";
+  EXPECT_TRUE(Call(list)->value.AsHostPathBindings()->bindings.empty());
+  bind.remove = true;
+  EXPECT_TRUE(Call(bind)->value.AsHostPathBindings()->bindings.empty());
+}
 TEST_F(HostPolicyTest, KeysAreStoredInHostdAndStatusAgreesWithResolution) {
   Open();
   EXPECT_FALSE(Status().configured);

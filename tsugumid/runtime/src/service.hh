@@ -142,6 +142,8 @@ class Service : public RequestSink {
       -> std::vector<RemoteTarget>;
   // The values of a Card's declared secrets for one invocation, from hostd.
   // Throws Failed (before anything of the Card runs) when one is missing.
+  auto host_path_binds(const Node& node) const
+      -> std::vector<WorkerSpawn::Bind>;
   auto card_secrets(const Node& node, std::stop_token stop = {}) const
       -> std::vector<std::pair<std::string, std::string>>;
   static auto execution_diagnostic(const Node& node,

@@ -240,6 +240,9 @@ struct Service::State {
             std::lock_guard lock(mutex);
             events->Publish(wire::HostEvent(value));
           });
+    options.environment.host_paths = [this](const std::string& project) {
+      return host_settings->HostPaths(project);
+    };
     options.environment.reserve_project_identity =
         [this](const std::filesystem::path& root) {
           std::lock_guard lock(mutex);
@@ -848,7 +851,14 @@ struct Service::State {
     }
     if (host::Settings::Handles(r->value_type())) {
       Human(human);
+      std::optional<std::filesystem::path> host_path_project;
+      if (const auto* binding = r->value_as_HostPathSetRequest())
+        host_path_project = registry.Location(binding->project_id()->str());
       lock.unlock();
+      if (host_path_project && environments)
+        return environments->ChangeHostPaths(host_path_project->string(), [&] {
+          return host_settings->Handle(*r, request.request_id);
+        });
       auto reply = host_settings->Handle(*r, request.request_id);
       if (r->value_type() == H::RequestPayload::SettingsUpdateRequest) {
         const auto* result = H::GetMessage(reply.data())->payload_as_Reply();

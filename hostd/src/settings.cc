@@ -294,11 +294,23 @@ auto CardSecretPrefix(const std::string& project) -> std::string {
   return std::string(kCardSecret) + project + "/";
 }
 // The same rule as a Card's `secrets` entries: [a-z][a-z0-9_]{0,63}.
-auto ValidCardSecretName(std::string_view name) -> bool {
+auto ValidBindingName(std::string_view name) -> bool {
   return !name.empty() && name.size() <= 64 && name[0] >= 'a' &&
          name[0] <= 'z' && std::ranges::all_of(name, [](char c) {
            return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
          });
+}
+auto ValidHostPathScope(std::string_view scope) -> bool {
+  while (!scope.empty()) {
+    if (!scope.starts_with("externals/")) return false;
+    scope.remove_prefix(std::string_view("externals/").size());
+    const auto end = scope.find('/');
+    if (end == std::string_view::npos ||
+        !ValidBindingName(scope.substr(0, end)))
+      return false;
+    scope.remove_prefix(end + 1);
+  }
+  return true;
 }
 auto IsSetting(const j::Members& defaults, const std::string& key) -> bool {
   return defaults.contains(key) || key == "agent.drawThoughts" ||
@@ -771,6 +783,8 @@ auto Settings::Handles(H::RequestPayload type) -> bool {
     case H::RequestPayload::SignInBeginRequest:
     case H::RequestPayload::SignInActionRequest:
     case H::RequestPayload::SignInStatusRequest:
+    case H::RequestPayload::HostPathListRequest:
+    case H::RequestPayload::HostPathSetRequest:
     case H::RequestPayload::CardSecretListRequest:
     case H::RequestPayload::CardSecretSetRequest:
       return true;
@@ -958,11 +972,54 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           s.Publish<H::ProviderChangedT>(profile);
         return agent::wire::HostReply(id, after);
       }
+      case H::RequestPayload::HostPathListRequest:
+        return agent::wire::HostReply(
+            id,
+            HostPaths(
+                request.value_as_HostPathListRequest()->project_id()->str()));
+      case H::RequestPayload::HostPathSetRequest: {
+        const auto& p = *request.value_as_HostPathSetRequest();
+        const auto project = p.project_id()->str();
+        const auto scope = Text(p.scope());
+        const auto name = p.name()->str();
+        if (!crypto::is_short_id(project))
+          throw std::runtime_error("Invalid project id");
+        if (!ValidHostPathScope(scope) || !ValidBindingName(name))
+          throw std::runtime_error("Invalid host path scope or name");
+        if (p.remove()) {
+          s.db.prepare(
+                  "DELETE FROM host_path_bindings "
+                  "WHERE project=? AND scope=? AND name=?")
+              .bind(1, project)
+              .bind(2, scope)
+              .bind(3, name)
+              .run();
+        } else {
+          const auto input = Text(p.path());
+          if (input.find('\0') != std::string::npos ||
+              !std::filesystem::path(input).is_absolute())
+            throw std::runtime_error("Choose an absolute folder on this host");
+          std::error_code ec;
+          const auto path = std::filesystem::canonical(input, ec);
+          if (ec || !std::filesystem::is_directory(path, ec))
+            throw std::runtime_error("The selected host folder is unavailable");
+          s.db.prepare(
+                  "INSERT INTO host_path_bindings VALUES(?,?,?,?) "
+                  "ON CONFLICT(project,scope,name) DO UPDATE SET "
+                  "path=excluded.path")
+              .bind(1, project)
+              .bind(2, scope)
+              .bind(3, name)
+              .bind(4, path.string())
+              .run();
+        }
+        return agent::wire::HostReply(id, HostPaths(project));
+      }
       case H::RequestPayload::CardSecretSetRequest: {
         const auto& p = *request.value_as_CardSecretSetRequest();
         const auto project = p.project_id()->str(), name = p.name()->str();
         const auto prefix = CardSecretPrefix(project);
-        if (!ValidCardSecretName(name))
+        if (!ValidBindingName(name))
           throw std::runtime_error("Invalid Card secret name");
         if (p.remove()) {
           s.secrets->Erase(prefix + name);
@@ -1063,6 +1120,26 @@ auto Settings::Redact(std::string text) -> std::string {
   while (rows.step()) remove(s.secrets->Get(rows.text(0) + ":" + rows.text(1)));
   return text;
 }
+auto Settings::HostPaths(const std::string& project) -> H::HostPathBindingsT {
+  if (!crypto::is_short_id(project))
+    throw std::runtime_error("Invalid project id");
+  auto& s = *state_;
+  std::lock_guard lock(s.mutex);
+  H::HostPathBindingsT out;
+  auto rows = s.db.prepare(
+      "SELECT scope,name,path FROM host_path_bindings WHERE project=? "
+      "ORDER BY scope,name");
+  rows.bind(1, project);
+  while (rows.step()) {
+    auto binding = std::make_unique<H::HostPathBindingT>();
+    binding->scope = rows.text(0);
+    binding->name = rows.text(1);
+    binding->path = rows.text(2);
+    out.bindings.push_back(std::move(binding));
+  }
+  return out;
+}
+
 auto Settings::CardSecretValues(const std::string& project,
                                 const std::vector<std::string>& names)
     -> std::vector<std::pair<std::string, std::string>> {
@@ -1071,7 +1148,7 @@ auto Settings::CardSecretValues(const std::string& project,
   const auto prefix = CardSecretPrefix(project);
   std::vector<std::pair<std::string, std::string>> out;
   for (const auto& name : names) {
-    if (!ValidCardSecretName(name)) continue;
+    if (!ValidBindingName(name)) continue;
     auto value = s.secrets->Get(prefix + name);
     if (!value.empty()) out.emplace_back(name, std::move(value));
   }
