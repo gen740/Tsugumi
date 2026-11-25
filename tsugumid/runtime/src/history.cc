@@ -579,10 +579,12 @@ History::History(const std::filesystem::path& db_path, std::string fault,
     // Files may outlive a moved-aside history. Reserve their run numbers so a
     // new run cannot overwrite them or remove them through its cleanup action.
     uint64_t last_run = 0;
+    const auto scratch_runs = run_scratch.empty() ? std::filesystem::path{}
+                                                  : run_scratch / "runs";
     for (const auto& directory :
-         {path_.parent_path() / "artifacts", run_scratch / "runs"}) {
-      if (!std::filesystem::is_directory(
-              std::filesystem::symlink_status(directory)))
+         {path_.parent_path() / "artifacts", scratch_runs}) {
+      if (directory.empty() || !std::filesystem::is_directory(
+                                   std::filesystem::symlink_status(directory)))
         continue;
       for (const auto& entry : std::filesystem::directory_iterator(directory)) {
         const auto name = entry.path().filename().string();
