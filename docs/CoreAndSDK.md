@@ -41,6 +41,8 @@ The Card's top-level `api` attribute is a code-generation derivation. Its output
 
 The [generic evaluation tool](features.md#evaluating-a-card-expression) runs a Nix expression in the saved Card's directory on the local system. It can return a JSON value or build one derivation and return its regular output files. **Build SDK** in the Mac and Web Card editors builds `(import ./. { inherit params inputs; }).api` with that tool and shows `share/tsugumi/api/` read-only.
 
+In the Tsugumi guest, the shared Nix daemon requires the sandbox, disables sandbox fallback and runs builds locally. The guest supervisor tells each project service to rely on those daemon settings. Only root is a trusted Nix client in the guest. On other hosts, explicit builds through a Nix daemon require a trusted client so the daemon accepts the sandbox and local-build settings.
+
 ## What the core evaluates
 
 The result of a Card's `default.nix` may define only these attributes:
