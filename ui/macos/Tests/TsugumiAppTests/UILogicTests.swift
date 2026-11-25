@@ -267,7 +267,7 @@ import TsugumiTestSupport
   #expect(definitionKind(try JSONValue.parse(fixtureCardJSON(.subgraph))) == .subgraph)
   #expect(definitionKind(try JSONValue.parse(#"{"type":"invalid"}"#)) == .invalid, "not a type name")
 
-  // The core's diagnostic (file and message) is what the Card says.
+  // The diagnostic belongs to the callout outside the Card body.
   let missing = #"definitions/old/_card.json: "type" is required (one of code, draft, trigger, merge, collect, subgraph)"#
   let delta = Tsugumi_RPC_DocumentDeltaT()
   delta.baseRev = 0; delta.rev = 1; delta.origin = "agent"
@@ -291,9 +291,9 @@ import TsugumiTestSupport
     #expect(d.idleText == String(localized: "定義エラー"))
   }
   let old = s.nodeData("old")
-  #expect(old.summary == missing && old.errors == [missing])
-  #expect(CardGeometry(old, flow: .topToBottom).summary, "the diagnostic has its row")
-  #expect(s.nodeData("future").summary == String(localized: "Card の定義を読めません"), "without a diagnostic yet")
+  #expect(old.summary == nil && old.errors == [missing])
+  #expect(!CardGeometry(old, flow: .topToBottom).summary)
+  #expect(s.nodeData("future").errors == [String(localized: "Card の定義を読めません")], "without a diagnostic yet")
 
   // A version from before `type` (or one this build cannot read) has no kind.
   #expect(CardKind.named("") == .invalid && CardKind.named("something new") == .invalid && CardKind.named("merge") == .merge)
