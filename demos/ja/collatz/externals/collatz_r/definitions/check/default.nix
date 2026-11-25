@@ -20,7 +20,7 @@ in
 {
   run = (sdk.rCard (common // { src = ./src; })).overrideAttrs (old: {
     buildCommand = builtins.replaceStrings
-      [ (toString sdkSource) ]
+      [ "${sdkSource}" ]
       [ (toString sdkRuntime) ]
       old.buildCommand;
   });

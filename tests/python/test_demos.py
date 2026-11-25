@@ -285,17 +285,17 @@ def test_live_stream_keeps_chart_on_cancel_and_resets_on_rerun(live):
     assert wait_run(c, rid2).state == RunState.cancelled
 
 
-@pytest.mark.parametrize("demo,card,members", [
-    ("casa", "rgb", {"casa-rgb.png", "provenance.json"}),
-    ("gw150914", "chirp", {"chirp.png", "snr.csv"}),
+@pytest.mark.parametrize("demo,trigger,card,members", [
+    ("casa", "load", "rgb", {"casa-rgb.png", "provenance.json"}),
+    ("gw150914", "start", "chirp", {"chirp.png", "snr.csv"}),
 ])
 @pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_NETWORK_DEMOS") != "1",
                     reason="downloads observations from HEASARC or GWOSC")
-def test_network_demo_keeps_results(tmp_path, demo, card, members):
+def test_network_demo_keeps_results(tmp_path, demo, trigger, card, members):
     env = demo_environment(tmp_path, demo, language="en")
     try:
         client = connect(env)
-        run_id = start_run(client, "start")
+        run_id = start_run(client, trigger)
         status = wait_run(client, run_id, timeout=900)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         artifact, = client.call("ArtifactListRequest", runId=run_id, card=path(card)).artifacts
