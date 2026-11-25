@@ -180,15 +180,12 @@ TEST(HostComponents, RetiringUnlinkedOAuthCredentialsKeepsCurrentAccounts) {
         "CREATE TABLE accounts(profile TEXT,id TEXT,json TEXT NOT NULL,"
         "PRIMARY KEY(profile,id));"
         "INSERT INTO accounts VALUES('desktop','retired','{}')");
-    sql::Db old_host((directory.path / "host.sqlite").string());
-    old_host.exec(
-        "CREATE TABLE credentials(id TEXT PRIMARY KEY,json TEXT NOT NULL);"
-        R"(INSERT INTO credentials VALUES('retired','{"refresh_token":"old"}'))");
   }
   ASSERT_TRUE(std::filesystem::remove(retired_path));
   host::HostStore store(directory.path);
   host::StateGate gate;
   host::Credentials credentials(gate, store.db, {});
+  credentials.Save("retired", {{"refresh_token", Quote("old")}});
   credentials.Save("current", {{"refresh_token", Quote("new")}});
   store.db.exec("INSERT INTO accounts VALUES('web','current','{}')");
   ASSERT_NO_THROW(credentials.Get("retired"));

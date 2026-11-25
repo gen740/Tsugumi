@@ -22,7 +22,13 @@ struct WorkflowTabs: View {
   }
 
   @ViewBuilder private var projectContent: some View {
-    if EnvironmentOverlay.hasProblem(session) {
+    if let issue = session.staleHostState {
+      StateFormatRecoveryView(path: issue.path) {
+        try await CoreHostClient.shared.moveStateAside(issue)
+        session.start()
+      }
+      .id(issue.path)
+    } else if EnvironmentOverlay.hasProblem(session) {
       // Nothing of the canvas stays behind the problem: it replaces the content.
       EnvironmentProblemView(session: session, onSwitchProject: onSwitchProject)
     } else {
@@ -233,7 +239,7 @@ enum EnvironmentOverlay {
   /// What the loading card says while the environment starts or the project
   /// opens; nil once connected or when there is a problem to show instead.
   static func loading(_ session: ProjectSession) -> LoadingContent? {
-    guard !session.connected else { return nil }
+    guard !session.connected, session.staleHostState == nil else { return nil }
     let dirty = session.dirty
     switch session.environment {
     case .failed, .stopped, .incompatibleHistory:
@@ -357,6 +363,18 @@ struct EnvironmentProblemView: View {
   }
 
   var body: some View {
+    if case .incompatibleHistory(let issue) = session.environment, let path = issue.path {
+      StateFormatRecoveryView(path: path) {
+        try await session.environments.moveStateAside(session.identity, path: path)
+        session.start()
+      }
+      .id(path)
+    } else {
+      problemView
+    }
+  }
+
+  @ViewBuilder private var problemView: some View {
     let p = problem
     ScrollView {
       VStack(alignment: .leading, spacing: 18) {
@@ -563,4 +581,42 @@ func formatDuration(_ seconds: Double) -> String {
   // One form everywhere (run, stages, timeline, history): hh:mm:ss.xx.
   let cs = Int((max(0, seconds) * 100).rounded(.down))
   return String(format: "%02d:%02d:%02d.%02d", cs / 360_000, cs / 6000 % 60, cs / 100 % 60, cs % 100)
+}
+
+struct StateFormatRecoveryView: View {
+  let path: String
+  let moveAside: () async throws -> Void
+  @State private var confirming = false
+  @State private var moving = false
+  @State private var errorMessage: String?
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Label("状態データの形式が異なります", systemImage: "exclamationmark.triangle")
+        .font(.title2.bold())
+      Text("この状態データは別のバージョンの Tsugumi で書き込まれました。")
+      Text(path).font(.callout.monospaced()).textSelection(.enabled)
+      Text("元のファイルを別名で保存し、新しい状態データを作成します。")
+      Button("別名で保存して再作成…") { confirming = true }
+        .buttonStyle(.borderedProminent)
+        .disabled(moving)
+      if let errorMessage {
+        Text(errorMessage).foregroundStyle(.red).textSelection(.enabled)
+      }
+    }
+    .padding(24)
+    .confirmationDialog("別名で保存して再作成しますか？", isPresented: $confirming, titleVisibility: .visible) {
+      Button("別名で保存して再作成") {
+        moving = true
+        errorMessage = nil
+        Task {
+          defer { moving = false }
+          do { try await moveAside() }
+          catch { errorMessage = error.localizedDescription }
+        }
+      }
+    } message: {
+      Text(path)
+    }
+  }
 }

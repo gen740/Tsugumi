@@ -1,8 +1,5 @@
 #include "host/environment.hh"
 
-#include "tsugumi/protocol/runtime_state_generated.h"
-#include "tsugumi/util/flat_file.hh"
-
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -10,16 +7,20 @@
 
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
 #include <mutex>
 #include <thread>
 
+#include "agent/store.hh"
 #include "host/projects.hh"
 #include "host/vm_process.hh"
 #include "tsugumi/document/host_requirements.hh"
+#include "tsugumi/protocol/runtime_state_generated.h"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json_object.hh"
 #include "tsugumi/workerd/scratch_policy.hh"
@@ -34,6 +35,29 @@ auto Strings(const std::vector<std::string>& values) -> std::string {
   for (const auto& value : values) encoded.push_back(json::Quote(value));
   return json::Encode(encoded);
 }
+auto ProjectStatePath(const std::string& project,
+                      const std::filesystem::path& name)
+    -> std::filesystem::path {
+  namespace f = std::filesystem;
+  const auto directory = f::path(project) / ".tsugumi";
+  if (f::is_symlink(f::symlink_status(directory)))
+    throw std::runtime_error(
+        "Project state directory must not be a symbolic link");
+  for (const auto* suffix : {"", "-journal", "-wal", "-shm"})
+    if (f::is_symlink(f::symlink_status(directory / (name.string() + suffix))))
+      throw std::runtime_error("Project state must not be a symbolic link");
+  return directory / name;
+}
+
+auto FormatNumber(const std::string& text) -> int {
+  int result = 0;
+  const auto [end, error] =
+      std::from_chars(text.data(), text.data() + text.size(), result);
+  if (end != text.data() + text.size() || error != std::errc{})
+    throw std::runtime_error("Invalid store version");
+  return result;
+}
+
 auto PrivateDirectory(const std::filesystem::path& path) -> void {
   std::filesystem::create_directories(path);
   struct stat st{};
@@ -210,10 +234,11 @@ struct Environments::Impl {
     entry.state.unix_socket.clear();
     entry.state.pid = 0;
   }
-  auto Failed(Entry& entry, const std::string& message,
-              const EnvironmentFailure* failure = nullptr,
-              H::EnvironmentFailureCode code =
-                  H::EnvironmentFailureCode::LaunchFailed) -> void {
+  auto Failed(
+      Entry& entry, const std::string& message,
+      const EnvironmentFailure* failure = nullptr,
+      H::EnvironmentFailureCode code = H::EnvironmentFailureCode::LaunchFailed,
+      const sql::FormatMismatch* mismatch = nullptr) -> void {
     Revoke(entry);
     ClearEndpoint(entry);
     entry.state.phase = H::EnvironmentPhase::Failed;
@@ -230,18 +255,31 @@ struct Environments::Impl {
           "\n" + log.substr(log.size() > 4096 ? log.size() - 4096 : 0);
     }
     entry.state.startup_error.reset();
-    if (const auto raw =
-            fs::read_file(std::filesystem::path(entry.state.control_dir) /
-                          "server.startup-error"))
+    auto out = std::make_unique<H::StartupErrorT>();
+    if (mismatch) {
+      out->kind = "incompatible_state";
+      out->found = std::to_string(mismatch->found);
+      out->expected = std::to_string(mismatch->expected);
+      out->source = "local";
+      out->message = mismatch->what();
+      out->path = mismatch->path.string();
+    } else if (const auto raw = fs::read_file(
+                   std::filesystem::path(entry.state.control_dir) /
+                   "server.startup-error")) {
       if (const auto error = flat::decode<Tsugumi::State::StartupError>(*raw)) {
-        auto out = std::make_unique<H::StartupErrorT>();
         out->kind = error->kind;
         out->found = error->found;
         out->expected = error->expected;
         out->source = error->source;
         out->message = error->message;
-        entry.state.startup_error = std::move(out);
+        const auto name = std::filesystem::path(error->path).filename();
+        if (name == "runs.sqlite" || name == "document.sqlite")
+          out->path =
+              (std::filesystem::path(entry.state.project) / ".tsugumi" / name)
+                  .string();
       }
+    }
+    if (!out->kind.empty()) entry.state.startup_error = std::move(out);
     Notify(entry);
   }
   auto Alive(int64_t pid, bool child) -> bool {
@@ -485,6 +523,12 @@ struct Environments::Impl {
       const auto scratch = options.run_scratch_directory.empty()
                                ? run_scratch_root()
                                : options.run_scratch_directory;
+      const auto agent_store =
+          ProjectStatePath(entry.state.project, "agent.sqlite");
+      if (std::filesystem::exists(agent_store)) {
+        sql::Db db(agent_store.string(), true);
+        db.check_format(agent::kAgentFormatVersion);
+      }
       if (options.process->Guest() && !entry.requirements)
         entry.requirements = load_host_requirements(entry.state.project);
       auto launch = Plan(entry);
@@ -567,6 +611,9 @@ struct Environments::Impl {
       Stop(entry);
       Failed(entry, "Environment start cancelled", nullptr,
              H::EnvironmentFailureCode::Cancelled);
+    } catch (const sql::FormatMismatch& error) {
+      Failed(entry, error.what(), nullptr,
+             H::EnvironmentFailureCode::LaunchFailed, &error);
     } catch (const std::exception& error) {
       if (entry.pid) Stop(entry);
       if (start_stop.stop_requested())
@@ -577,6 +624,49 @@ struct Environments::Impl {
                dynamic_cast<const EnvironmentFailure*>(&error));
     }
   }
+  auto MoveStateAside(Entry& entry, const H::EnvironmentRequestT& request)
+      -> void {
+    const auto* issue = entry.state.startup_error.get();
+    if (entry.pid || entry.state.phase != H::EnvironmentPhase::Failed ||
+        !issue ||
+        (issue->kind != "incompatible_history" &&
+         issue->kind != "incompatible_state") ||
+        issue->path.empty() || request.stale_store != issue->path)
+      throw std::runtime_error(
+          "The project has no matching incompatible state file");
+    const auto name = std::filesystem::path(issue->path).filename();
+    const auto path = ProjectStatePath(entry.state.project, name);
+    if (path != issue->path ||
+        (name != "runs.sqlite" && name != "document.sqlite" &&
+         name != "agent.sqlite"))
+      throw std::runtime_error("Invalid project state file");
+    const auto lock_file =
+        path.parent_path() /
+        (name == "agent.sqlite" ? "agent.lock" : "tsugumid.lock");
+    if (std::filesystem::is_symlink(std::filesystem::symlink_status(lock_file)))
+      throw std::runtime_error(
+          "Project state lock must not be a symbolic link");
+    {
+      auto lock = fs::FileLock::try_acquire(lock_file);
+      if (!lock)
+        throw std::runtime_error("Another process owns this state file");
+      // The document journal can reference staged source files by name.
+      const auto companion = name == "document.sqlite"
+                                 ? path.parent_path() / "document-files"
+                                 : std::filesystem::path{};
+      sql::move_aside(sql::FormatMismatch(path, FormatNumber(issue->found),
+                                          FormatNumber(issue->expected)),
+                      companion);
+    }
+    entry.state.phase = H::EnvironmentPhase::Stopped;
+    entry.state.startup_error.reset();
+    entry.state.message.clear();
+    entry.state.recovery.clear();
+    entry.state.log.clear();
+    entry.state.failure_code = H::EnvironmentFailureCode::None;
+    Notify(entry);
+  }
+
   // A guest launch whose reply was lost may have left a process this entry
   // holds no pid for. Adopt it once it is ready, or learn that nothing runs,
   // so that the caller can judge its mounts and stop it.
@@ -890,6 +980,9 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
       if (entry->state.phase != H::EnvironmentPhase::Ready)
         entry->requirements.reset();
       impl_->Start(*entry, request);
+      break;
+    case H::EnvironmentAction::MoveStateAside:
+      impl_->MoveStateAside(*entry, request);
       break;
     case H::EnvironmentAction::Stop:
       impl_->Stop(*entry);

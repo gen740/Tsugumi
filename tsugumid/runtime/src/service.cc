@@ -298,8 +298,6 @@ void Service::open() {
           ? stdfs::temp_directory_path() / ("tsugumi-" + store_->project_id())
           : opts_.scratch_dir;
   nix_ = std::make_unique<NixRunner>(*this, scratch / "nix");
-  history_ = std::make_unique<History>(store_->state_dir() / "runs.sqlite",
-                                       opts_.fault);
   versions_ = std::make_unique<Versions>(opts_.root);
 
   if (!packed_builds_)
@@ -307,6 +305,8 @@ void Service::open() {
   run_scratch_ = disk_scratch_path(opts_.run_scratch_dir.empty()
                                        ? default_run_scratch(opts_.root)
                                        : opts_.run_scratch_dir);
+  history_ = std::make_unique<History>(store_->state_dir() / "runs.sqlite",
+                                       opts_.fault, run_scratch_);
   execution_service_ =
       std::make_unique<LocalExecutionService>(*this, scratch / "workers");
   remote_execution_ =

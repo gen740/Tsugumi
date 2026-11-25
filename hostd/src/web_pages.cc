@@ -12,7 +12,6 @@
 
 #include "agent/wire.hh"
 #include "host/failure.hh"
-#include "tsugumi/util/crypto.hh"
 
 extern char** environ;
 
@@ -94,7 +93,7 @@ auto WebPages::Stop() -> void {
 }
 
 auto WebPages::Serve(const std::filesystem::path& root, int port,
-                     bool port_chosen) -> void {
+                     bool port_chosen, const std::string& key) -> void {
   std::lock_guard lock(mutex_);
   if (edge_) return;
   struct stat st{};
@@ -106,7 +105,7 @@ auto WebPages::Serve(const std::filesystem::path& root, int port,
   options.root = root;
   options.port = port;
   options.port_chosen = port_chosen;
-  options.key = crypto::random_token(32);
+  options.key = key;
   options.user_token = user_token_;
   auto edge = std::make_unique<WebEdge>(std::move(options), host_, agent_);
   edge->start();

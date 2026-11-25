@@ -22,5 +22,5 @@ def read_startup_error(path):
     return {
         "kind": _text(error.Kind()), "found": _text(error.Found()),
         "expected": _text(error.Expected()), "source": _text(error.Source()),
-        "message": _text(error.Message()),
+        "message": _text(error.Message()), "path": _text(error.Path()),
     }

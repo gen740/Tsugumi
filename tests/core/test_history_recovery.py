@@ -20,6 +20,10 @@ def test_incompatible_history_is_preserved(project):
     assert failure.value.record["found"] == "999"
     assert int(failure.value.record["expected"]) != 999
     assert failure.value.record["source"] == "local"
+    assert failure.value.record["path"] == str(database.resolve())
+    assert failure.value.record["message"].startswith(
+        "This state was written by a different Tsugumi version."
+    )
     with sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True) as connection:
         assert connection.execute("PRAGMA user_version").fetchone() == (999,)
         assert connection.execute("SELECT value FROM evidence").fetchall() == [("retained",)]

@@ -23,12 +23,13 @@ table ServerReady {
 
 /// control/server.startup-error: why the daemon could not open the project.
 table StartupError {
-  /// incompatible_history, resource_limit or project_open_failed.
+  /// incompatible_history, incompatible_state, resource_limit or project_open_failed.
   kind:string;
   found:string;
   expected:string;
   source:string;
   message:string;
+  path:string;
 }
 
 /// control/origins: the Web origins the host currently allows.

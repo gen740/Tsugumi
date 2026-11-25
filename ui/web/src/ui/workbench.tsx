@@ -283,10 +283,17 @@ function EnvironmentProblemView({ session, onSwitchProject }: { session: Project
   useObserve(session)
   const [showLog, setShowLog] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [moving, setMoving] = useState(false)
+  const [moveError, setMoveError] = useState('')
   const env = session.environment
   const historyMismatch = env.state === 'failed' ? env.historyVersionMismatch : undefined
   let p: Problem
-  if (historyMismatch) {
+  const staleStore = historyMismatch?.path
+  if (staleStore) {
+    p = { icon: 'clock.arrow.circlepath', color: 'orange', title: L('状態データの形式が異なります'),
+      message: L('この状態データは別のバージョンの Tsugumi で書き込まれました。') + '\n' + staleStore,
+      recovery: L('元のファイルを別名で保存し、新しい状態データを作成します。'), log: '', canStop: false }
+  } else if (historyMismatch) {
     p = { icon: 'clock.arrow.circlepath', color: 'orange', title: L('実行履歴の形式が異なります'),
       message: L('実行履歴の形式は {0} です。このバージョンの Tsugumi には {1} が必要です。', historyMismatch.found, historyMismatch.expected),
       recovery: L('プロジェクトを閉じ、.tsugumi/runs.sqlite を別の場所に保管してから開き直してください。'),
@@ -330,11 +337,21 @@ function EnvironmentProblemView({ session, onSwitchProject }: { session: Project
         {p.recovery && <ProblemSection title={L('どうすればよいか')}><div className="selectable wrap-pre">{p.recovery}</div></ProblemSection>}
         {session.dirty && <span className="label callout" style={{ color: 'var(--orange)' }}><Icon name="pencil.circle" />{L('保存できていない変更は保持しています（起動すると保存します）')}</span>}
         <div className="row gap8 center">
-          <Button kind="prominent" onClick={() => session.start()}>{p.canStop ? L('再試行') : L('起動')}</Button>
+          {staleStore ? (
+            <Button kind="prominent" disabled={moving} onClick={async () => {
+              if (!window.confirm(L('別名で保存して再作成しますか？') + '\n' + staleStore)) return
+              setMoveError('')
+              setMoving(true)
+              try { await session.moveStateAside(staleStore) }
+              catch (error) { setMoveError(String(error)) }
+              finally { setMoving(false) }
+            }}>{L('別名で保存して再作成…')}</Button>
+          ) : <Button kind="prominent" onClick={() => session.start()}>{p.canStop ? L('再試行') : L('起動')}</Button>}
           {p.canStop && <Button onClick={() => void session.stopEnvironment()}>{L('環境を停止')}</Button>}
           <span className="spacer" />
           {onSwitchProject && <Button onClick={onSwitchProject}>{L('別のプロジェクトを開く…')}</Button>}
         </div>
+        {moveError && <p role="alert">{moveError}</p>}
         {p.log && (
           <div className="col gap6">
             <button type="button" className="disclosure-head headline callout" aria-expanded={showLog} onClick={() => setShowLog(!showLog)}>

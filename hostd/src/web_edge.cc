@@ -16,6 +16,7 @@
 #include <utility>
 
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/log.hh"
 
 namespace tsugumi::host {
@@ -355,6 +356,32 @@ auto WebEdge::serve(int fd) -> void {
                 (query.empty() ? "" : "?" + query) + "\r\n");
     return void(Release(fd));
   }
+  if (!options_.recovery.empty() && r.path == "/api/host/startup-error") {
+    const bool browser = authorized();
+    const bool native =
+        crypto::equal_secret(r.headers["x-tsugumi-key"], options_.key);
+    constexpr auto content_type = "application/json; charset=utf-8";
+    if (r.method == "GET" && browser) {
+      Respond(fd, "200 OK", content_type, options_.recovery);
+    } else if (r.method == "POST" &&
+               (native ||
+                (browser && r.headers["origin"] == "http://" + host)) &&
+               crypto::equal_secret(r.headers["x-tsugumi-recovery"],
+                                    options_.recovery_token)) {
+      try {
+        options_.move_state_aside();
+        Respond(fd, "200 OK", content_type, "{}");
+        options_.state_moved();
+      } catch (const std::exception& error) {
+        Respond(
+            fd, "409 Conflict", content_type,
+            json::Encode(json::Members{{"error", json::Quote(error.what())}}));
+      }
+    } else {
+      Respond(fd, "403 Forbidden", content_type, R"({"error":"forbidden"})");
+    }
+    return void(Release(fd));
+  }
   if (r.path == "/rpc/host" || r.path == "/rpc/agent") {
     const bool to_host = r.path == "/rpc/host";
     const auto& key = r.headers["sec-websocket-key"];
@@ -362,9 +389,11 @@ auto WebEdge::serve(int fd) -> void {
                         key.substr(0, 22).find_first_not_of(
                             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/") ==
                             std::string::npos;
-    if (r.method != "GET" || !authorized() || r.headers["origin"] != "http://" + host ||
+    if (!host_ || !agent_ || r.method != "GET" || !authorized() ||
+        r.headers["origin"] != "http://" + host ||
         Lower(r.headers["upgrade"]) != "websocket" ||
-        r.headers["sec-websocket-protocol"] != (to_host ? "tsugumi.host.v1" : "tsugumi.agent.v1") ||
+        r.headers["sec-websocket-protocol"] !=
+            (to_host ? "tsugumi.host.v1" : "tsugumi.agent.v1") ||
         r.headers["sec-websocket-version"] != "13" || !key_ok) {
       Respond(fd, "403 Forbidden", "text/plain", "forbidden");
       return void(Release(fd));
@@ -392,7 +421,7 @@ auto WebEdge::serve(int fd) -> void {
       Respond(fd, "401 Unauthorized", "application/json; charset=utf-8",
               R"({"error":"This page has no key. Open it again from the URL (?key=...) the host printed when it started."})");
     } else if (r.method == "POST" && r.path == "/api/host/connect" &&
-               r.headers["x-tsugumi"] == "1") {
+               r.headers["x-tsugumi"] == "1" && options_.recovery.empty()) {
       Respond(fd, "200 OK", "application/json; charset=utf-8",
               R"({"token":")" + options_.user_token + R"("})");
     } else {

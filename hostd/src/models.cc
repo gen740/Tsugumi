@@ -5,6 +5,7 @@
 #include "agent/wire.hh"
 #include "host/failure.hh"
 #include "host/settings.hh"
+#include "host/store.hh"
 #include "host/wire_helpers.hh"
 #include "tsugumi/util/json_object.hh"
 
@@ -21,6 +22,7 @@ auto Models::StoredChatGPTModels(const std::filesystem::path& state_dir)
     -> std::vector<std::string> {
   std::vector<std::string> models;
   sql::Db model_db((state_dir / "host.sqlite").string(), true);
+  model_db.check_format(HostStore::kHostFormatVersion);
   auto q =
       model_db.prepare("SELECT models FROM model_lists WHERE id='chatgpt'");
   while (q.step())
@@ -51,6 +53,7 @@ auto Models::ContextWindowTokens(const std::filesystem::path& state_dir,
                                  std::string_view account_profile) -> uint32_t {
   if (std::filesystem::exists(state_dir / "host.sqlite")) {
     sql::Db catalog((state_dir / "host.sqlite").string(), true);
+    catalog.check_format(HostStore::kHostFormatVersion);
     auto q = catalog.prepare(
         "SELECT models FROM model_lists WHERE id=? AND connection=?");
     q.bind(1, std::string(provider))

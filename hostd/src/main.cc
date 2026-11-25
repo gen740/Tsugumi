@@ -3,18 +3,23 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <charconv>
 #include <chrono>
 #include <csignal>
 #include <iostream>
+#include <mutex>
 #include <thread>
 
+#include "host/execution_broker.hh"
 #include "host/service.hh"
+#include "host/store.hh"
 #include "host/web_pages.hh"
 #include "host/wire_endpoint.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/log.hh"
+#include "tsugumi/util/sqlite.hh"
 
 namespace tsugumi::host {
 namespace json = ::tsugumi::json;
@@ -45,6 +50,8 @@ auto RunHost(int argc, char** argv) -> int {
     listener.allow_missing_origin = true;
     std::filesystem::path broker_dir;
     bool ensure = false;
+    std::filesystem::path move_aside;
+    int found_format = 0;
     std::filesystem::path web_root;
     int web_port = 8780;
     bool web_port_chosen = false;
@@ -56,7 +63,14 @@ auto RunHost(int argc, char** argv) -> int {
       };
       if (arg == "--ensure")
         ensure = true;
-      else if (arg == "--state-dir")
+      else if (arg == "--move-state-aside") {
+        move_aside = next();
+        const auto found = next();
+        const auto [end, error] = std::from_chars(
+            found.data(), found.data() + found.size(), found_format);
+        if (end != found.data() + found.size() || error != std::errc{})
+          throw std::runtime_error("Invalid state file format");
+      } else if (arg == "--state-dir")
         options.state_dir = next();
       else if (arg == "--unix")
         listener.unix_path = next();
@@ -108,12 +122,31 @@ auto RunHost(int argc, char** argv) -> int {
         fs::FileLock::acquire(options.state_dir / "host.starting")};
     auto lock = fs::FileLock::try_acquire(options.state_dir / "host.lock");
     const auto ready_file = options.state_dir / "host.ready";
+    const auto failure_file = options.state_dir / "host.startup-error";
     if (!lock) {
+      if (!move_aside.empty())
+        throw std::runtime_error("Another host owns the state directory");
       if (!ensure) return 4;
-      std::cout << fs::read_file_or_throw(ready_file) << std::endl;
+      if (const auto ready = fs::read_file(ready_file))
+        std::cout << *ready << std::endl;
+      else
+        std::cout << fs::read_file_or_throw(failure_file) << std::endl;
+      return 0;
+    }
+    if (!move_aside.empty()) {
+      const auto dir = std::filesystem::canonical(options.state_dir);
+      int expected = 0;
+      if (move_aside == dir / "host.sqlite")
+        expected = HostStore::kHostFormatVersion;
+      else if (move_aside == dir / "execution.sqlite")
+        expected = ExecutionBroker::kExecutionFormatVersion;
+      else
+        throw std::runtime_error("Unknown host state file");
+      sql::move_aside(sql::FormatMismatch(move_aside, found_format, expected));
       return 0;
     }
     fs::remove_file_durable(ready_file);
+    fs::remove_file_durable(failure_file);
     if (listener.unix_path.empty())
       listener.unix_path = (options.state_dir / "agent.sock").string();
     options.user_token = crypto::random_token(32);
@@ -125,6 +158,7 @@ auto RunHost(int argc, char** argv) -> int {
     sigaddset(&signals, SIGTERM);
     sigaddset(&signals, SIGINT);
     sigaddset(&signals, SIGHUP);
+    sigaddset(&signals, SIGUSR1);
     ::pthread_sigmask(SIG_BLOCK, &signals, nullptr);
     // Detached project daemons must reconnect to the same broker after a
     // hostd restart, even when its UI RPC sockets get a new temp directory.
@@ -163,7 +197,75 @@ auto RunHost(int argc, char** argv) -> int {
       options.environment.directory = options.vm.support / "environments";
     }
     options.broker_socket = (broker_dir / "s").string();
-    Service host(options);
+    if (web_root.empty())
+      web_root = binary_dir.parent_path() / "share/tsugumi/ui/web/dist/public";
+    const bool have_web = std::filesystem::exists(web_root / "index.html");
+    const auto web_key = crypto::random_token(32);
+    std::unique_ptr<Service> service;
+    bool reported = false;
+    while (!service) {
+      try {
+        service = std::make_unique<Service>(options);
+      } catch (const sql::FormatMismatch& error) {
+        log::error(error.what());
+        const auto token = crypto::random_token(32);
+        json::Members diagnostic{
+            {"state_format_path", json::Quote(error.path.string())},
+            {"message", json::Quote(error.what())},
+            {"found_format", std::to_string(error.found)},
+            {"recovery_token", json::Quote(token)}};
+        if (!have_web) {
+          if (ensure) std::cout << json::Encode(diagnostic) << std::endl;
+          return 1;
+        }
+        std::mutex recovery_mutex;
+        bool moved = false;
+        const auto main_thread = pthread_self();
+        WebEdgeOptions edge_options;
+        edge_options.root = web_root;
+        edge_options.port = web_port;
+        edge_options.port_chosen = web_port_chosen;
+        edge_options.key = web_key;
+        edge_options.recovery = json::Encode(diagnostic);
+        edge_options.recovery_token = token;
+        edge_options.move_state_aside = [&] {
+          std::lock_guard guard(recovery_mutex);
+          if (moved) return;
+          sql::move_aside(error);
+          moved = true;
+        };
+        edge_options.state_moved = [main_thread] {
+          pthread_kill(main_thread, SIGUSR1);
+        };
+        WebEdge recovery(std::move(edge_options), nullptr, nullptr);
+        recovery.start();
+        web_port = recovery.port();
+        web_port_chosen = true;
+        const auto url = recovery.page_url();
+        diagnostic.emplace("recovery_url", json::Quote(url));
+        diagnostic.emplace("pid", std::to_string(::getpid()));
+        const auto result = json::Encode(diagnostic);
+        fs::write_atomic(failure_file, result, 0600);
+        starting.reset();
+        if (ensure && !reported) std::cout << result << std::endl;
+        if (!ensure)
+          std::cout << "Tsugumi state recovery: " << url << std::endl;
+        reported = true;
+        int signal = 0;
+        do {
+          sigwait(&signals, &signal);
+          if (signal != SIGUSR1) break;
+          std::lock_guard guard(recovery_mutex);
+          if (moved) break;
+        } while (true);
+        starting.emplace(
+            fs::FileLock::acquire(options.state_dir / "host.starting"));
+        fs::remove_file_durable(failure_file);
+        recovery.stop();
+        if (signal != SIGUSR1) return 1;
+      }
+    }
+    auto& host = *service;
     TransportServer server(listener, &host);
     auto host_listener = listener;
     HostEndpoint(host_listener);
@@ -176,10 +278,8 @@ auto RunHost(int argc, char** argv) -> int {
     host_server.start();
     // The Web UI is served whenever its built page is in place: the one given,
     // else an installation's share/tsugumi/ui/web/dist/public.
-    if (web_root.empty())
-      web_root = binary_dir.parent_path() / "share/tsugumi/ui/web/dist/public";
-    if (std::filesystem::exists(web_root / "index.html"))
-      host.web().Serve(web_root, web_port, web_port_chosen);
+    if (have_web)
+      host.web().Serve(web_root, web_port, web_port_chosen, web_key);
     else
       log::info("No Web UI at " + web_root.string() + "; not serving it");
     const auto endpoint = listener.tcp_port < 0
@@ -208,9 +308,12 @@ auto RunHost(int argc, char** argv) -> int {
             {"pid", std::to_string(::getpid())}}),
         0600);
     starting.reset();
-    if (ensure) std::cout << fs::read_file_or_throw(ready_file) << std::endl;
+    if (ensure && !reported)
+      std::cout << fs::read_file_or_throw(ready_file) << std::endl;
     int signal = 0;
-    sigwait(&signals, &signal);
+    do {
+      sigwait(&signals, &signal);
+    } while (signal == SIGUSR1);
     fs::remove_file_durable(options.state_dir / "host.ready");
     host.Shutdown();
     server.stop();

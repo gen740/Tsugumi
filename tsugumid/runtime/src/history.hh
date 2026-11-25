@@ -23,16 +23,6 @@
 
 namespace tsugumi {
 
-struct IncompatibleHistory : std::runtime_error {
-  std::string found, expected, source;
-  IncompatibleHistory(std::string message, std::string stored,
-                      std::string required, std::string location)
-      : std::runtime_error(std::move(message)),
-        found(std::move(stored)),
-        expected(std::move(required)),
-        source(std::move(location)) {}
-};
-
 struct InvocationRecordData {
   InvocationSummaryData summary;
   std::vector<Value> inputs;   // only when record_io
@@ -92,7 +82,8 @@ class History {
  public:
   // `fault` (tests only): "history_invocation" makes every invocation record
   // write fail.
-  History(const std::filesystem::path& db_path, std::string fault = {});
+  History(const std::filesystem::path& db_path, std::string fault = {},
+          const std::filesystem::path& run_scratch = {});
   ~History();
   using Work = std::function<void(sql::Db&)>;
   // Ordered async write. Blocks while the queue is full (backpressure).
@@ -282,7 +273,6 @@ class History {
   };
   void writer_loop();
   void init_schema(sql::Db& db);
-  auto check_version() const -> void;
   ReaderLease acquire_reader();
   void release_reader(std::unique_ptr<sql::Db> db);
 
