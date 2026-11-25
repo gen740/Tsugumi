@@ -374,7 +374,7 @@ struct EnvironmentProblemView: View {
     }
   }
 
-  private var problemView: some View {
+  @ViewBuilder private var problemView: some View {
     let p = problem
     ScrollView {
       VStack(alignment: .leading, spacing: 18) {
