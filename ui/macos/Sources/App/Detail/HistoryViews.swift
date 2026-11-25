@@ -679,8 +679,12 @@ private struct ArtifactFilesView: View {
     do {
       let artifacts = try await rpc.artifacts(runId: runId, card: path(cardKey))
       guard !Task.isCancelled else { return }
-      files = artifacts.flatMap { artifact in
-        let directory = artifact.label.map { "@" + $0.replacingOccurrences(of: ".", with: "/") } ?? artifact.artifactId
+      files = artifacts.flatMap { artifact -> [File] in
+        guard let invocation = artifact.invocation,
+              let counter = artifact.label?.split(separator: ".").last else { return [] }
+        // The label starts with the global invocation sequence. The storage
+        // directory uses the invocation index within this Card and run.
+        let directory = "@\(invocation)/\(counter)"
         return artifact.members.compactMap { member in
           member.map {
             File(artifact: artifact.artifactId, member: $0.path, path: "\(directory)/\($0.path)", size: $0.sizeBytes ?? 0)
