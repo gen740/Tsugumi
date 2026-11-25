@@ -241,27 +241,32 @@ struct ExecutionBroker::State {
   State(std::filesystem::path dir, std::string path, CardSecrets secrets)
       : state(std::move(dir)),
         socket(std::move(path)),
-        db((state / "execution.sqlite").string()),
+        db((state / "execution.sqlite").string(),
+           sql::FormatVersion{kExecutionFormatVersion}),
         identity(state / "execution-identity.pem"),
         card_secrets(std::move(secrets)) {
     ::chmod((state / "execution.sqlite").c_str(), 0600);
-    db.exec(
-        "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;"
-        "CREATE TABLE IF NOT EXISTS services(id TEXT PRIMARY KEY,name TEXT NOT "
-        "NULL,"
-        "endpoint TEXT NOT NULL,worker_public_key TEXT NOT NULL,capabilities "
-        "BLOB NOT "
-        "NULL,worker_capabilities BLOB NOT NULL,generation TEXT NOT NULL);"
-        "CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,identity TEXT "
-        "NOT NULL,"
-        "scope TEXT NOT NULL,capability TEXT NOT NULL UNIQUE);"
-        "CREATE TABLE IF NOT EXISTS project_services(project TEXT NOT NULL,"
-        "service TEXT NOT NULL,generation TEXT NOT NULL,PRIMARY "
-        "KEY(project,service));"
-        // The hostd project id each authorized core belongs to; Card secrets
-        // are resolved only within it.
-        "CREATE TABLE IF NOT EXISTS project_registry(project TEXT PRIMARY "
-        "KEY,registry TEXT NOT NULL)");
+    db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
+    db.initialize_format(kExecutionFormatVersion, [&] {
+      db.exec(
+          "CREATE TABLE IF NOT EXISTS services(id TEXT PRIMARY KEY,name TEXT "
+          "NOT "
+          "NULL,"
+          "endpoint TEXT NOT NULL,worker_public_key TEXT NOT NULL,capabilities "
+          "BLOB NOT "
+          "NULL,worker_capabilities BLOB NOT NULL,generation TEXT NOT NULL);"
+          "CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,identity "
+          "TEXT "
+          "NOT NULL,"
+          "scope TEXT NOT NULL,capability TEXT NOT NULL UNIQUE);"
+          "CREATE TABLE IF NOT EXISTS project_services(project TEXT NOT NULL,"
+          "service TEXT NOT NULL,generation TEXT NOT NULL,PRIMARY "
+          "KEY(project,service));"
+          // The hostd project id each authorized core belongs to; Card secrets
+          // are resolved only within it.
+          "CREATE TABLE IF NOT EXISTS project_registry(project TEXT PRIMARY "
+          "KEY,registry TEXT NOT NULL)");
+    });
     const auto file = state / "execution-scope-key";
     key = ReadKey(file);
     if (key.empty()) {

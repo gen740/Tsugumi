@@ -97,6 +97,13 @@ public actor EnvironmentManager {
     default: throw LauncherError.notReady("the environment is not ready")
     }
   }
+  public func moveStateAside(_ project: ProjectIdentity, path: String) async throws {
+    await prepare()
+    let reply = try await client.call("EnvironmentRequest", [
+      "project": project.url.path, "action": Tsugumi_Host_EnvironmentAction.movestateaside, "stale_store": path,
+    ])
+    _ = adopt(reply)
+  }
   public func stop(_ project: ProjectIdentity) async throws { _ = try await environment(project, .stop) }
   public func attachFolders(_ project: ProjectIdentity, _ paths: [String]) async throws -> (Endpoint, [(folder: String, resource: String)]) {
     await prepare()

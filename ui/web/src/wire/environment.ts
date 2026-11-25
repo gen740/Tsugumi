@@ -47,7 +47,7 @@ export function environmentState(value: H.EnvironmentStateT): EnvPublicState {
       const message = s(value.message)
       const error = value.startupError
       const mismatch: HistoryVersionMismatch | undefined = error
-        ? historyVersionMismatch({ kind: s(error.kind), found: s(error.found), expected: s(error.expected) })
+        ? historyVersionMismatch({ kind: s(error.kind), found: s(error.found), expected: s(error.expected), path: s(error.path) })
         : undefined
       return { state: 'failed', message, recovery: s(value.recovery), log: s(value.log), historyVersionMismatch: mismatch }
     }
@@ -61,15 +61,16 @@ export function environmentProgress(value: H.EnvironmentProgressT): EnvPublicSta
   return { state: 'starting', message: STAGES[stage] ? L(STAGES[stage]) : stage, stage, fraction: value.fraction ?? undefined }
 }
 
-async function request(project: string, action: H.EnvironmentAction) {
+async function request(project: string, action: H.EnvironmentAction, staleStore?: string) {
   return environmentState(await hostCall<H.EnvironmentStateT>(H.RequestPayload.EnvironmentRequest,
-    new H.EnvironmentRequestT(project, action, action === H.EnvironmentAction.Start ? [location.origin] : []),
+    new H.EnvironmentRequestT(project, action, action === H.EnvironmentAction.Start ? [location.origin] : [], [], staleStore),
     H.ReplyPayload.EnvironmentState))
 }
 
 export const environmentHost = {
   start: (project: string) => request(project, H.EnvironmentAction.Start),
   stop: (project: string) => request(project, H.EnvironmentAction.Stop),
+  moveStateAside: (project: string, path: string) => request(project, H.EnvironmentAction.MoveStateAside, path),
   async list() {
     const result = await hostCall<H.EnvironmentListT>(H.RequestPayload.EnvironmentListRequest,
       new H.EnvironmentListRequestT(), H.ReplyPayload.EnvironmentList)

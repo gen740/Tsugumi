@@ -16,6 +16,8 @@ namespace stdfs = std::filesystem;
 
 namespace {
 
+constexpr int kDocumentFormatVersion = 1;
+
 auto load_document(const stdfs::path& root) -> std::shared_ptr<Document> {
   try {
     return load_from_disk(root);
@@ -360,12 +362,14 @@ auto Store::recover_pending() -> void {
   const auto path = state_dir() / "document.sqlite";
   // Saved bytes and receipts can contain private project data.
   if (!stdfs::exists(path)) fs::write_atomic(path, "", 0600);
-  db_ = std::make_unique<sql::Db>(path.string());
+  db_ = std::make_unique<sql::Db>(path.string(),
+                                  sql::FormatVersion{kDocumentFormatVersion});
   // Return pages freed by the receipt budget to the filesystem on commit.
   db_->exec("PRAGMA auto_vacuum=FULL");
   // Sync the parent directory when deleting SQLite's rollback journal too.
   db_->exec("PRAGMA synchronous=EXTRA");
-  db_->exec(R"sql(
+  db_->initialize_format(kDocumentFormatVersion, [&] {
+    db_->exec(R"sql(
     CREATE TABLE IF NOT EXISTS document_state(
       id INTEGER PRIMARY KEY CHECK(id=1),
       rev INTEGER NOT NULL,
@@ -388,6 +392,7 @@ auto Store::recover_pending() -> void {
       hash TEXT
     );
   )sql");
+  });
   {
     auto pending = db_->prepare(
         "SELECT pending_op FROM document_state WHERE pending_op IS NOT NULL");

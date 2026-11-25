@@ -33,6 +33,7 @@ final class AppModel {
   private(set) var recents: [RecentProject] = []
   private(set) var homeLoaded = false
   private(set) var demosLoaded = false
+  private(set) var staleHostState: HostStateFormatMismatch?
   private(set) var recentsError: String?
   private(set) var demosError: String?
   @ObservationIgnored private let requestHome: ((String, [String: Any]) async throws -> [String: Any])?
@@ -143,8 +144,9 @@ final class AppModel {
 
   private func refreshRecents() async {
     recentsError = nil
-    do { try await loadRecents(); homeLoaded = true }
-    catch { recentsError = "\(error)" }
+    do { try await loadRecents(); homeLoaded = true; staleHostState = nil }
+    catch let issue as HostStateFormatMismatch { staleHostState = issue }
+    catch { staleHostState = nil; recentsError = "\(error)" }
   }
 
   private func refreshDefaults() async {
@@ -152,6 +154,7 @@ final class AppModel {
       let defaults = try await hostRequest("HostProjectDefaultsRequest")
       agentExcludeDefaults = defaults["agentExclude"] as? [String] ?? []
     }
+    catch is HostStateFormatMismatch {}
     catch { self.error = "\(error)" }
   }
 

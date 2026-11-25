@@ -22,6 +22,17 @@ public struct CoreHostFailure: LocalizedError, CustomStringConvertible, Sendable
   public var errorDescription: String? { description }
 }
 
+public struct HostStateFormatMismatch: LocalizedError, Sendable {
+  public let path: String
+  fileprivate let found: Int
+  fileprivate let recoveryURL: URL?
+  fileprivate let recoveryToken: String
+
+  public var errorDescription: String? {
+    String(localized: "この状態データは別のバージョンの Tsugumi で書き込まれました。") + "\n" + path
+  }
+}
+
 /// A presentation snapshot of hostd's catalogs. Persistence and refresh policy
 /// belong to hostd; this lets an open native menu draw without an actor hop.
 public final class ModelCatalogSnapshot: @unchecked Sendable {
@@ -169,8 +180,9 @@ public actor CoreHostClient {
 
   public func stopResident(waitForExit: Bool = true) async {
     HostProcessLifetime.shared.end()
-    let file = stateDirectory.appendingPathComponent("host.ready")
-    guard let data = try? Data(contentsOf: file),
+    let ready = stateDirectory.appendingPathComponent("host.ready")
+    let failure = stateDirectory.appendingPathComponent("host.startup-error")
+    guard let data = (try? Data(contentsOf: ready)) ?? (try? Data(contentsOf: failure)),
           let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let pid = value["pid"] as? Int32, pid > 1 else { return }
     if !waitForExit {
@@ -242,7 +254,51 @@ public actor CoreHostClient {
         throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
       }
     }
+    if let path = value["state_format_path"] as? String, let found = value["found_format"] as? Int {
+      throw HostStateFormatMismatch(path: path, found: found,
+        recoveryURL: (value["recovery_url"] as? String).flatMap(URL.init(string:)),
+        recoveryToken: value["recovery_token"] as? String ?? "")
+    }
     return value
+  }
+
+  public func moveStateAside(_ issue: HostStateFormatMismatch) async throws {
+    if let url = issue.recoveryURL,
+       let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+       let key = components.queryItems?.first(where: { $0.name == "key" })?.value {
+      // The native request authenticates with the same key as the local page.
+      var endpoint = components
+      endpoint.path = "/api/host/startup-error"
+      endpoint.query = nil
+      guard let recoveryURL = endpoint.url else { throw issue }
+      var request = URLRequest(url: recoveryURL)
+      request.httpMethod = "POST"
+      request.setValue(key, forHTTPHeaderField: "X-Tsugumi-Key")
+      request.setValue(issue.recoveryToken, forHTTPHeaderField: "X-Tsugumi-Recovery")
+      let (data, response) = try await URLSession.shared.data(for: request)
+      guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+        let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        throw CoreHostFailure(code: "state_recovery", message: object?["error"] as? String ?? issue.path, requestID: nil)
+      }
+      return
+    }
+
+    let state = stateDirectory
+    let daemon = Process()
+    daemon.executableURL = try executable("tsugumi-hostd", environment: "TSUGUMI_HOSTD", component: "hostd")
+    daemon.arguments = ["--state-dir", state.path, "--move-state-aside", issue.path, String(issue.found)]
+    daemon.standardInput = FileHandle.nullDevice
+    let errors = Pipe()
+    daemon.standardError = errors
+    let result: Int32 = try await withCheckedThrowingContinuation { continuation in
+      daemon.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
+      do { try daemon.run() }
+      catch { continuation.resume(throwing: error) }
+    }
+    if result != 0 {
+      let message = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+      throw CoreHostFailure(code: "state_recovery", message: message.isEmpty ? issue.path : message, requestID: nil)
+    }
   }
 
   public func traceConnection() async throws -> HostTraceConnection {

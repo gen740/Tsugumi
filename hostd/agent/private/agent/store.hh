@@ -16,6 +16,10 @@
 #include "tsugumi/util/sqlite.hh"
 
 namespace tsugumi::agent {
+inline constexpr int kAgentFormatVersion = 1;
+// The same tables also form part of the host database's schema.
+auto CreateConversationTables(sql::Db& db) -> void;
+
 // Owns project conversation databases and their lifetime locks. The Home
 // records share HostStore's connection. Requests retain the caller's gate and
 // turns/tools/helpers retain their original transactions on these databases.

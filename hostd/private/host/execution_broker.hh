@@ -15,6 +15,7 @@ namespace tsugumi::host {
 // capability through their private control share, never worker credentials.
 class ExecutionBroker {
  public:
+  static constexpr int kExecutionFormatVersion = 1;
   // Reads the values of the named Card secrets that are set for a hostd
   // project id, from hostd's secret store. An authorized project core asks for
   // the secrets one invocation declares, just before the call; the broker

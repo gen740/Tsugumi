@@ -1,4 +1,10 @@
 {
+  "状態データの形式が異なります": "Incompatible State Format",
+  "この状態データは別のバージョンの Tsugumi で書き込まれました。": "This state was written by a different Tsugumi version.",
+  "元のファイルを別名で保存し、新しい状態データを作成します。": "The original file will be kept under a new name and a fresh store will be created.",
+  "別名で保存して再作成…": "Move Aside and Recreate…",
+  "別名で保存して再作成": "Move Aside and Recreate",
+  "別名で保存して再作成しますか？": "Move aside and recreate this store?",
   "Card 名": "Card name",
   "Card 名を入力してください。": "Enter a Card name.",
   "0 = 上限なし": "0 = no limit",
