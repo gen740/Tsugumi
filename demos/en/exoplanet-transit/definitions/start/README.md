@@ -1,4 +1,0 @@
----
-title: start
-description: Starts fetching the light curve (load)
----

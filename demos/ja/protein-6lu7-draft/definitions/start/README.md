@@ -1,4 +1,0 @@
----
-title: start
-description: 立体構造の取得（load）を始める
----

@@ -1,6 +1,0 @@
----
-title: naive
-description: The naive inverse diverges
----
-
-Shows the result of applying the matrix's inverse to the measurements as it is. The noise (or, without it, rounding error) is multiplied by 1/σ and diverges.

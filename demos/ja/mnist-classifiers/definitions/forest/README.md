@@ -1,6 +1,0 @@
----
-title: forest
-description: ランダムフォレスト
----
-
-乱数で少しずつ変えた決定木の多数決（scikit-learn、1 スレッド）。trees は木の本数、max_depth は深さの上限。正解率・時間・間違いの内訳と、どの画素が効いたかの画像を表示し、テスト全枚の予測を compare に渡す。

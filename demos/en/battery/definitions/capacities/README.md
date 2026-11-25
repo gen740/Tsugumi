@@ -1,6 +1,0 @@
----
-title: capacities
-description: Capacity and savings
----
-
-Solves the same dynamic programme for other capacities and plots the saving and the saving per additional kWh (the marginal value). How operation differs by capacity is shown for the first 3 days.

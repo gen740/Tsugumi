@@ -1,6 +1,0 @@
----
-title: load
-description: lung データを読む
----
-
-survival パッケージ同梱の lung（NCCTG 進行肺がん試験の実データ、228 人）を CSV にし、女性・死亡の列を足して、変数の中央値・範囲・欠損を表で示す。

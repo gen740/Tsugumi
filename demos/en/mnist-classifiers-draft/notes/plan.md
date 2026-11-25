@@ -1,2 +1,0 @@
-Comparing MNIST classifiers
-load and prepare are implemented. The seven classifiers depend on no other, so the Agent can split them up and write them at the same time (delegate). When they are all there, write compare

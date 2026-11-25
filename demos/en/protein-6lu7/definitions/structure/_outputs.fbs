@@ -1,5 +1,0 @@
-include "tsugumi/artifact.fbs";
-
-namespace protein;
-table Outputs { atoms:tsugumi.Artifact (required); }
-root_type Outputs;

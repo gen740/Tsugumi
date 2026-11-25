@@ -1,3 +1,0 @@
-namespace newton;
-table Outputs {}
-root_type Outputs;

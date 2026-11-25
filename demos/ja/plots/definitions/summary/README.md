@@ -1,4 +1,0 @@
----
-title: summary
-description: 軌跡と最終位置の分布を matplotlib で描く
----

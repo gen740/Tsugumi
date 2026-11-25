@@ -1,6 +1,0 @@
----
-title: properties
-description: 分子の物性を計算する
----
-
-「名前: SMILES」の一覧と貼られた分子を RDKit で読み、分子量・logP（Crippen）・TPSA・水素結合のドナーとアクセプター・回転可能結合を表にする。読めない SMILES は理由を示して飛ばす。

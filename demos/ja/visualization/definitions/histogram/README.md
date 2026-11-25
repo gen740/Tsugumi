@@ -1,4 +1,0 @@
----
-title: histogram
-description: ヒストグラム
----

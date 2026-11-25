@@ -1,8 +1,6 @@
 # Visualization Cards
 
-> This page describes the planned visualization demo. See [demo status](Demos.md#demo-status).
-
-The **Visualization → report** demo includes editable Matplotlib Cards with a `default.nix` environment and a `figure` Artifact output. Set `kind` to change the figure. Each Card shows its figure live in its `image` view while it runs, and saves `plot.png`, `plot.svg` and `plot.pdf`; the saved files are what a later reader or a downstream Card uses. For an interactive chart, a Python Card can send a Plotly figure to the Python SDK's `plotly` view (`tsugumi.display.send(tsugumi.Plotly(fig))`, [Python SDK](https://github.com/gen740/tsugumi-kit/blob/main/docs/python-sdk.md)) and save its own HTML or JSON as an output. See the upstream [Matplotlib export API](https://matplotlib.org/stable/api/_as_gen/matplotlib.figure.Figure.savefig.html).
+A Matplotlib Card can declare its environment in `default.nix` and save figures through an Artifact output. Set `kind` to change the figure. Each Card shows its figure live in its `image` view while it runs, and saves `plot.png`, `plot.svg` and `plot.pdf`; the saved files are what a later reader or a downstream Card uses. For an interactive chart, a Python Card can send a Plotly figure to the Python SDK's `plotly` view (`tsugumi.display.send(tsugumi.Plotly(fig))`, [Python SDK](https://github.com/gen740/tsugumi-kit/blob/main/docs/python-sdk.md)) and save its own HTML or JSON as an output. See the upstream [Matplotlib export API](https://matplotlib.org/stable/api/_as_gen/matplotlib.figure.Figure.savefig.html).
 
 `default.nix` takes NumPy and Matplotlib from the project’s locked `<nixpkgs>` source. The Python SDK gives Matplotlib the kit's IPAexGothic as the Japanese fallback font, so Japanese labels render offline, the same in the live view and the saved files.
 
@@ -31,6 +29,4 @@ The Card accepts at most 1,000,000 rows, 64 MiB per input file and 100 plotted s
 
 Every successful output includes `plotted.csv` with the actual marks or histogram bins and `metadata.json` with the counts, library and kind. The invocation records its inputs. The `figure` Artifact directory is sealed and available from Run History. The live view is not saved: to look at an earlier result, open its saved figure. Change a parameter and run again to create a new result next to the earlier ones.
 
-The bilingual demo connects a typed aggregate to the three figure Cards and an HTML report. Change the aggregate's `offset` to update all figures without changing the data size. The report Card copies the saved figures and plotted values into one self-contained page, a small Python example independent of the [R report Cards](Reports.md).
-
-See `demos/en/visualization/definitions/line` for the complete Card definition; its helpers for reading rows and saving the figure folder are in the Card's own `main.py`.
+A downstream Python Card can collect saved figures and their plotted values in a self-contained HTML report.

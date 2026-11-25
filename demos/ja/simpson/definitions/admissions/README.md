@@ -1,6 +1,0 @@
----
-title: admissions
-description: Berkeley の出願を学科ごとに集計する
----
-
-UCBAdmissions（1973 年の実データ）の合格率とオッズ比を学科ごとと全体で表にし、Mantel–Haenszel の共通オッズ比を最後の行に加える。

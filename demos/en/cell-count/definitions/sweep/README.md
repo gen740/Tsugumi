@@ -1,6 +1,0 @@
----
-title: sweep
-description: Where it breaks down
----
-
-Remakes synthetic images at other densities and noise levels, counts them with the same procedure and gives the F1. Threshold only and watershed side by side, to see from where counting fails.

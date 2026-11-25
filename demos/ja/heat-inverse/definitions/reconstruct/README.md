@@ -1,6 +1,0 @@
----
-title: reconstruct
-description: 選んだ λ で復元する
----
-
-選んだ λ（lambda が 0 なら食い違い原理の値、正なら指定の値）と、too_far_factor 倍だけ小さい・大きい λ での復元を真の値と並べる。

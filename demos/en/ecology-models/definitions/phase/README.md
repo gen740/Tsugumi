@@ -1,6 +1,0 @@
----
-title: phase
-description: Phase diagrams, extended
----
-
-Computes each fitted model beyond the records and compares them in a hare–lynx phase diagram. Differences in the equations' nature show: closed orbits, spirals into an equilibrium, limit cycles.

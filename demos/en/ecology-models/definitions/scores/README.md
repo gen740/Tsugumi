@@ -1,6 +1,0 @@
----
-title: scores
-description: Lay out the scores
----
-
-Tables log RMSE, AIC, AICc, BIC, the prediction error for the years held out, the number of starting points that reached the same solution, and the best parameters.

@@ -1,4 +1,0 @@
----
-title: archive
-description: Check that both rendered report directories contain their saved HTML.
----

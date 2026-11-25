@@ -1,4 +1,0 @@
----
-title: notebook
-description: 入力を factor 倍し、セル出力を保存して数値を1回送信
----

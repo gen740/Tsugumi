@@ -1,4 +1,0 @@
----
-title: start
-description: airway のカウントの読み込み（load）を始める
----

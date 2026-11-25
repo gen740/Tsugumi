@@ -1,6 +1,0 @@
----
-title: cnn
-description: Convolutional neural network
----
-
-A small network of two convolutional and two fully connected layers (torch, CPU, 1 thread, fixed seed). channels is the number of filters in the first layer, epochs the number of passes over the training data. Shows the accuracy, the time, a breakdown of the mistakes and what the first layer picks out of a test image, and passes predictions for every test image to compare.

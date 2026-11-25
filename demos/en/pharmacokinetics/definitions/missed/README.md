@@ -1,6 +1,0 @@
----
-title: missed
-description: The effect of missed doses
----
-
-Draws, with superposed closed forms for each dosing plan, the concentration when missed_count doses from missed_at_h on are missed, and compares how much the time below the therapeutic range grows and how long it takes to recover.

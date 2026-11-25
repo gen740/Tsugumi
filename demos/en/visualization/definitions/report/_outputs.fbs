@@ -1,5 +1,0 @@
-include "tsugumi/artifact.fbs";
-
-namespace report;
-table Outputs { report:tsugumi.Artifact (required); }
-root_type Outputs;

@@ -198,28 +198,17 @@ class GuideFixture : public AgentFixture {
 };
 TEST_F(GuideFixture,
        InterestChoicesFallbackAndLanguageShareOneStateWithoutAModel) {
-  auto s = Advance(*host, Event("interest", "天文・地震・タンパク質のデータ"));
-  EXPECT_EQ(s.step, "exoplanet-transit/pick");
-  EXPECT_EQ(s.highlight, "demo:exoplanet-transit");
-  s = Choose(s, "もっと詳しく");
-  EXPECT_EQ(s.step, "exoplanet-transit/about");
-  s = Choose(s, "ほかのデモ");
-  EXPECT_EQ(s.step, "pharmacokinetics/pick");
-  s = Choose(s, "これは何？");
-  EXPECT_EQ(s.highlight, "demo:pharmacokinetics");
-  s = Choose(s, "ほかのデモ");
+  auto s = Advance(*host, Event("interest", "集計"));
   EXPECT_EQ(s.step, "report/pick");
+  EXPECT_EQ(s.highlight, "demo:report");
+  s = Choose(s, "もっと詳しく");
+  EXPECT_EQ(s.step, "report/about");
   const auto english = GuideGet(*host, "desktop", "en");
   EXPECT_EQ(english.step, s.step);
   EXPECT_NE(english.say, s.say);
-  const std::vector<std::pair<std::string, std::string>> interests{
-      {"Live display", "pharmacokinetics/pick"},
-      {"Aggregating data and reports", "report/pick"},
-      {"Anything", "report/pick"},
-      {"Astronomy, earthquakes and protein data", "exoplanet-transit/pick"}};
-  for (const auto& [text, step] : interests)
-    EXPECT_EQ(Advance(*host, Event("interest", text), "desktop", "en").step,
-              step);
+  for (const auto* interest : {"Aggregating data and reports", "Anything"})
+    EXPECT_EQ(Advance(*host, Event("interest", interest), "desktop", "en").step,
+              "report/pick");
 }
 TEST_F(GuideFixture,
        TourRunsWithoutConfirmationsThroughFailureRetryChangeAndFarewell) {
@@ -347,10 +336,10 @@ TEST_F(GuideFixture, DemoCommandDistinguishesUnknownProjectsAndBundledCopies) {
   EXPECT_EQ(s.step, "otherProject");
   const auto index = Parse(ReadResource("demos/en/index.json"));
   for (const auto& demo : Array(index, "/demos"))
-    if (String(demo, "/id") == "pharmacokinetics")
+    if (String(demo, "/id") == "report")
       e.title = String(demo, "/title");
   s = Advance(*host, e, "desktop", "en");
-  ASSERT_EQ(s.step, "pharmacokinetics/start");
+  ASSERT_EQ(s.step, "report/start");
   ASSERT_NE(s.tour, nullptr);
   EXPECT_EQ(s.tour->path, "/copy");
 }

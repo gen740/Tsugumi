@@ -1,6 +1,0 @@
----
-title: hard
-description: Digits that many models get wrong
----
-
-Test images ordered by how many models got them wrong, with the true digit and the digits the wrong models chose.

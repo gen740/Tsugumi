@@ -1,4 +1,0 @@
----
-title: start
-description: MNIST の読み込み（load）を始める
----

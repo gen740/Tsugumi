@@ -1,6 +1,0 @@
----
-title: tradeoff
-description: The trade-off between accuracy and time
----
-
-A Plotly scatter plot with training and prediction time across and accuracy up. A line shows which models no other beats (Pareto optimal).

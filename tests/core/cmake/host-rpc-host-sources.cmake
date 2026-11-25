@@ -16,6 +16,6 @@ if(NOT TSUGUMI_NATIVE_DARWIN_TESTS)
     agent/save_rpc_test.cc
     agent/layout_rpc_test.cc
     agent/edit_rpc_test.cc
-    agent/mnist_save_rpc_test.cc
+    agent/demo_draft_save_rpc_test.cc
   )
 endif()
