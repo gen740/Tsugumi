@@ -455,7 +455,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
             return 6;
     }
 #endif
-    return write_result(result, result_bytes, sizeof(result_bytes));
+    return write_result(call, result, result_bytes, sizeof(result_bytes));
 }
 """
     def package(marker, expected, *, opener=False):
