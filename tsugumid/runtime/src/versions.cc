@@ -160,7 +160,7 @@ struct VersionFiles {
   auto descends(const std::string& path) const -> bool {
     if (!Document::valid_version_path(path)) return false;
     if (path == "definitions" || path == "skills" || path == "externals" ||
-        path == "templates" ||
+        path == "templates" || path == "notes" ||
         Document::is_document_file(path + "/_card.json") || includes(path))
       return true;
     return std::any_of(extra.begin(), extra.end(), [&](const auto& p) {
