@@ -231,10 +231,10 @@ def test_a_project_with_a_note_runs_and_versions_the_note(tmp_path, core_factory
     (root / "notes" / "n1.md").write_text("A note without a final newline")
     daemon = core_factory(project_root=root)
     c = daemon.connect()
+    first = text(c.call("VersionInitRequest", opId=new_id(), origin="test").commit)
+    assert git(root, "show", first + ":notes/n1.md") == "A note without a final newline"
     _, run = run_and_wait(c, "start")
-    assert run.state == RunState.succeeded
-    commit = text(run.commit)
-    assert git(root, "show", commit + ":notes/n1.md") == "A note without a final newline"
+    assert run.state == RunState.succeeded and text(run.commit) == first
 
 
 def test_a_demo_history_becomes_its_versions(tmp_path, core_factory):
