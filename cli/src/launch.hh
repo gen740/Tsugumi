@@ -13,10 +13,11 @@
 namespace tsugumi::cli {
 
 struct Launch {
-  std::filesystem::path root;      // checkout or installed runtime (VERSION, demos)
+  std::filesystem::path root;      // checkout or installed runtime (VERSION)
   std::filesystem::path hostd;
   std::filesystem::path state;     // hostd's state folder
   std::filesystem::path web_root;  // the built page
+  std::string application;
   int web_port = 0;                // 0: the usual one, or any free port
   std::vector<std::string> runtime;  // native binaries, or the shared Mac VM
 };
@@ -30,7 +31,8 @@ struct Ready {
   long pid = 0;
 };
 
-auto LaunchFromEnvironment(const std::filesystem::path& executable) -> Launch;
+auto LaunchFromEnvironment(const std::filesystem::path& executable,
+                           std::string application = "tsugumi") -> Launch;
 /** Starts hostd detached when none runs, else reads the running one. */
 auto EnsureHost(const Launch& launch) -> Ready;
 

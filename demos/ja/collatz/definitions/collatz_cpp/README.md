@@ -1,4 +1,0 @@
----
-title: collatz_cpp
-description: 数列を C++ のループで求める子 Workflow
----

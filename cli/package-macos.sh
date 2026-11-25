@@ -78,7 +78,8 @@ codesign --force --sign "$sign_identity" --entitlements "$repo/vm/macos/Resource
 # hostd serves ui/web/dist/public; the command finds it under its root, as in the repository.
 cp -R "$web_out/share/tsugumi/ui/web/dist" "$tree/ui/web/dist"
 chmod -R u+w "$tree/ui/web/dist"
-cp -R "$repo/demos" "$tree/demos"
+cp -R "$web_out/share/tsugumi/demos" "$tree/demos"
+chmod -R u+w "$tree/demos"
 cp "$repo/flake.lock" "$tree/"
 
 mkdir -p "$tree/vm"

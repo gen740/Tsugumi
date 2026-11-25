@@ -8,7 +8,7 @@
       ...
     }:
     let
-      site = pkgs.callPackage ../docs-site.nix { inherit (config.packages) web; };
+      site = pkgs.callPackage ../docs-site.nix { inherit (config.packages) demos web; };
       describe = {
         dev-doc = "Serve the documentation site from the working tree with live reload";
         build-doc = "Build the documentation site into build/docs";

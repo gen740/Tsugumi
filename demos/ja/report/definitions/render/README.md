@@ -1,4 +1,0 @@
----
-title: render
-description: 集計を report.md と summary.json にして成果物に残す
----

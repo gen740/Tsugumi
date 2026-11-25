@@ -23,6 +23,7 @@ if [[ "$system" == x86_64-linux || "${TSUGUMI_FULL_RULES:-0}" == 1 ]]; then full
 # locking, environment/process lifecycle, path handling and RPC transport.
 native_settings=(
   'NativeEnvironment.*' 'NativeTerminalTest.*' 'AttachedFolderTest.*' 'HostFormat.*'
+  'EnvironmentAdapterTest.ShutdownPreservesReplacementControlFiles'
   'BinaryCaches.NixDownloadsFromAPrivateCacheWithTheHostSnapshot'
   'ConversationStoreTest.ProjectDatabasesKeepTheirLocksAndRecoverySeparateFromHome'
   'ConversationStoreTest.KnownConversationsRemainReadableWhileAnotherProjectIsLocked'
@@ -64,6 +65,14 @@ gtest() {
     run "$bin/$target" "--gtest_filter=$*"
   fi
 }
+if ! $list; then
+  case "$suite" in
+    core|adapters|demos)
+      TSUGUMI_DEMOS_DIR=$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths .#demos)
+      export TSUGUMI_DEMOS_DIR
+      ;;
+  esac
+fi
 case "$suite" in
   agent)
     if $full; then run "$bin/tsugumi_input_types_tests"; fi
@@ -119,7 +128,7 @@ case "$suite" in
     ;;
   demos)
     run "${3:?supply the demo Python executable from .#ci-python}" -m pytest -q -m 'not static' -n "${TSUGUMI_PYTEST_WORKERS:-2}" --dist loadfile \
-      --durations=40 tests/python/test_demo*.py
+      --durations=40 tests/python/test_demo*.py tests/python/test_collatz_compare.py
     ;;
   *) echo "Unknown suite: $suite" >&2; exit 2 ;;
 esac

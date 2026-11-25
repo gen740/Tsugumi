@@ -20,11 +20,13 @@ player.destroy()
 
 `nix build .#site-player` builds the player with the Web package's pinned dependencies and generated protocol bindings. The documentation site, Web package and Mac app take their player files from this shared output. These generated files are ignored by Git: `site/js/player.js`, `site/player.css`, and the top-level `player-data/*.json`. Recorded runs, images and `ports.json` in `player-data/assets/`, narration and handwritten scripts remain committed.
 
-Without Nix, install the Web dependencies (`npm ci` in `ui/web/`) and prepare `ui/web/shared/gen` (`npm run gen` there, with `flatc` on PATH), then run:
+For a local player build, install the Web dependencies (`npm ci` in `ui/web/`) and prepare `ui/web/shared/gen` (`npm run gen` there, with `flatc` on PATH), then run:
 
 ```sh
-node docs/site/player/build.mjs
+nix develop --command node docs/site/player/build.mjs
 ```
+
+The development shell sets `TSUGUMI_DEMOS_DIR` to the pinned demo tree.
 
 `build.mjs --out-dir <directory>` writes the same layout and copies the recorded assets into a separate output directory. It removes stray top-level JSON files for demos no longer present. Site and Web builds, Web tests and SVG rendering generate the player before using it; `TSUGUMI_SITE_PLAYER_DIR` selects an existing shared build.
 
@@ -38,7 +40,7 @@ Recording runs is a separate step. It needs a `tsugumid` build and Nix (the firs
 nix develop --command python3 docs/site/player/harvest.py --ports \
   report collatz signal-sweep live-stream casa gw150914 max-flow \
   csharp-calibration ruby-pipeline go-pipeline rust-pipeline card-guide
-node docs/site/player/build.mjs
+nix develop --command node docs/site/player/build.mjs
 ```
 
 ### After an SDK interface change
@@ -48,15 +50,16 @@ Rebuild `tsugumid` and `tsugumi-worker` from the same checkout before recording.
 ```sh
 nix develop --command python3 - <<'PYTHON'
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
-entries = json.loads(Path("demos/en/index.json").read_text())["demos"]
+entries = json.loads((Path(os.environ["TSUGUMI_DEMOS_DIR"]) / "en/index.json").read_text())["demos"]
 ids = [entry["id"] for entry in entries
        if not entry["id"].endswith("-draft") and entry["id"] not in {"glowroot", "point-cloud"}]
 subprocess.run([sys.executable, "docs/site/player/harvest.py", "--ports", *ids, "card-guide"], check=True)
 PYTHON
-node docs/site/player/svg.mjs
+nix develop --command node docs/site/player/svg.mjs
 ```
 
 `harvest.py` produces `player-data/assets/ports.json` and each `<id>.run.json`. The recorder captures the execution timeline, artifact inventory and selected
@@ -71,5 +74,5 @@ Each recording identifies the graph it ran, including port-to-port wires and chi
 For places like GitHub's README, where scripts do not run and only images can be placed, the replay is made into SVGs. Run this on a Mac and commit the SVGs it makes (it uses Chrome without a screen, and shrinks the tiles' images with `sips`).
 
 ```sh
-node docs/site/player/svg.mjs            # every demo with a record; list IDs for only those
+nix develop --command node docs/site/player/svg.mjs            # every demo with a record; list IDs for only those
 ```

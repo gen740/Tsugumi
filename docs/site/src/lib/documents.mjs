@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { demosDir } from '../../player/build.mjs'
 import { Marked } from 'marked'
 
 const ROOT = process.env.TSUGUMI_DOCS_ROOT ?? fileURLToPath(new URL('../../../../', import.meta.url))
@@ -64,8 +65,8 @@ const STORY = [
 /** What the list leaves out: reached from Home (the download, the gallery) or from the list of documents. */
 const OFF_THE_LIST = new Set(['docs/INSTALL.md', 'docs/Demos.md', 'docs/Limitations.md'])
 
-/** The demos of the gallery on Home, by what they are about, in plain words (demos/index.json has the rest). */
-const demos = JSON.parse(fs.readFileSync(path.join(ROOT, 'demos/en/index.json'), 'utf8')).demos
+/** The demos of the gallery on Home, by what they are about, in plain words (the demo catalog has the rest). */
+const demos = JSON.parse(fs.readFileSync(path.join(demosDir(), 'en/index.json'), 'utf8')).demos
 const byId = new Map(demos.map(({ id, title, description }) => [id, [id, title, description]]))
 const GALLERY = [
   ['The basics', ['report', 'collatz', 'signal-sweep', 'live-stream']],

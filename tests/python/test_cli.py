@@ -602,7 +602,8 @@ def test_a_copy_of_a_read_only_demo_can_be_edited(tmp_path):
     (root / "demos" / "ja" / "index.json").write_text('{"demos": [{"id": "d", "title": "D", "path": "d"}]}')
     for f in sorted(root.joinpath("demos").rglob("*"), reverse=True):
         f.chmod(0o555 if f.is_dir() else 0o444)
-    env = isolated_environment(tmp_path, TSUGUMI_REPO=str(root), TSUGUMI_PROJECTS_DIR=str(tmp_path / "projects"))
+    env = isolated_environment(tmp_path, TSUGUMI_REPO=str(root), TSUGUMI_DEMOS_DIR=str(root / "demos"),
+                               TSUGUMI_PROJECTS_DIR=str(tmp_path / "projects"))
     try:
         _, port, query = page_url(web(env).stdout)
         (tmp_path / "projects").mkdir()

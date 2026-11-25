@@ -25,6 +25,8 @@ import pytest
 from harness.file_events import terminate_process, wait_for_file
 from conftest import BUILD, CLI, HOSTD, TSUGUMID, WEB_ROOT, write_project, write_card
 
+from harness.demos import demos_dir
+
 ROOT = Path(__file__).resolve().parents[2]
 
 pytestmark = pytest.mark.skipif(not CLI.exists() or not HOSTD.exists() or not TSUGUMID.exists(),
@@ -58,14 +60,14 @@ def isolated_environment(root: Path, **values) -> dict:
     return env
 
 
-def _stop_matching_processes(argument: str, *, socket_directory: str | None = None):
+def _stop_matching_processes(*arguments: str, socket_directory: str | None = None):
     listing = subprocess.check_output(["ps", "-axww", "-o", "pid=,stat=,command="], text=True)
     for line in listing.splitlines():
         fields = line.split(maxsplit=2)
         if len(fields) != 3:
             continue
         pid, state, command = fields
-        if state.startswith("Z") or argument not in command:
+        if state.startswith("Z") or not all(argument in command for argument in arguments):
             continue
         if socket_directory is not None:
             # MCP's detached Web server has no per-test path in its arguments.
@@ -81,7 +83,8 @@ def stop_resident_services(root: Path, *, vm_helper: Path | None = None):
     directory = _socket_directories[root]
     # hostd creates sockets before it publishes host.ready. Its shutdown
     # stops and waits for the native project daemons it launched.
-    _stop_matching_processes(f" --state-dir {root / 'host-core'} --unix {directory.name}/")
+    _stop_matching_processes(f" --state-dir {root / 'host-core'} ",
+                             f" --unix {directory.name}/")
     if vm_helper is not None:
         _stop_matching_processes(f" {vm_helper} --support {root / 'support'} --image ")
     directory.cleanup()
@@ -353,7 +356,7 @@ def test_tools_instructions_and_demo_catalog(plugin):
     for path in ("en/index.json", "en/report/definitions/generate/src/main.py"):
         text, error = mcp.call("demo_read", {"path": path})
         assert not error, text
-        expected = (ROOT / "demos" / path).read_text()
+        expected = (demos_dir() / path).read_text()
         assert (json.loads(text) == json.loads(expected)) if path.endswith(".json") else text == expected
     # Malformed requests are JSON-RPC errors, and the server goes on.
     assert mcp.request("initialize", [1])["error"]["code"] == -32602

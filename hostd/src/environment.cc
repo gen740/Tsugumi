@@ -1,5 +1,6 @@
 #include "host/environment.hh"
 
+#include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -30,6 +31,33 @@ namespace H = Tsugumi::Host;
 namespace json = ::tsugumi::json;
 namespace {
 using namespace std::chrono_literals;
+
+struct FileIdentity {
+  dev_t device;
+  ino_t inode;
+
+  auto operator==(const FileIdentity&) const -> bool = default;
+
+  static auto Read(const std::filesystem::path& path)
+      -> std::optional<FileIdentity> {
+    struct stat file{};
+    if (::lstat(path.c_str(), &file) != 0) return std::nullopt;
+    return FileIdentity{file.st_dev, file.st_ino};
+  }
+
+  auto Remove(const std::filesystem::path& path) const -> void {
+    const auto name = path.filename();
+    const int dir =
+        ::open(path.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dir < 0) return;
+    struct stat file{};
+    if (::fstatat(dir, name.c_str(), &file, AT_SYMLINK_NOFOLLOW) == 0 &&
+        *this == FileIdentity{file.st_dev, file.st_ino})
+      ::unlinkat(dir, name.c_str(), 0);
+    ::close(dir);
+  }
+};
+
 auto Strings(const std::vector<std::string>& values) -> std::string {
   std::vector<std::string> encoded;
   for (const auto& value : values) encoded.push_back(json::Quote(value));
@@ -83,6 +111,9 @@ struct Environments::Impl {
     std::vector<EnvironmentMount> mounted;
     std::vector<std::string> folders;
     std::vector<std::string> origins;
+    std::optional<FileIdentity> control_directory;
+    std::optional<FileIdentity> ready_file;
+    std::optional<FileIdentity> capability_file;
     int64_t pid = 0;
     bool child = false;
   };
@@ -143,7 +174,7 @@ struct Environments::Impl {
       for (const auto& entry : snapshot) {
         std::lock_guard entry_lock(entry->mutex);
         try {
-          Stop(*entry);
+          Stop(*entry, true);
         } catch (const std::exception&) {
         }
       }
@@ -228,8 +259,12 @@ struct Environments::Impl {
   }
   auto Revoke(Entry& entry) -> void {
     authorization.revoke(entry.state.key);
-    std::filesystem::remove(std::filesystem::path(entry.state.control_dir) /
-                            "execution-broker-capability");
+    if (entry.capability_file) {
+      entry.capability_file->Remove(
+          std::filesystem::path(entry.state.control_dir) /
+          "execution-broker-capability");
+      entry.capability_file.reset();
+    }
   }
   auto ClearEndpoint(Entry& entry) -> void {
     entry.state.endpoint.clear();
@@ -323,6 +358,9 @@ struct Environments::Impl {
   }
   auto ReadReady(Entry& entry) -> bool {
     try {
+      const auto control = FileIdentity::Read(entry.state.control_dir);
+      const auto identity = FileIdentity::Read(entry.state.ready_file);
+      if (!control || !identity) return false;
       const auto raw = fs::read_file(entry.state.ready_file);
       const auto file =
           raw ? flat::decode<Tsugumi::State::ServerReady>(*raw) : std::nullopt;
@@ -334,7 +372,9 @@ struct Environments::Impl {
       ready.project_id = file->project_id;
       ready.unix_socket = file->unix_socket;
       const auto handle = options.process->Inspect(ready);
-      if (!handle) return false;
+      if (!handle || FileIdentity::Read(entry.state.ready_file) != identity ||
+          FileIdentity::Read(entry.state.control_dir) != control)
+        return false;
       if (options.process->Guest() && entry.mounted.empty()) {
         // Restore actual shares after a hostd restart, never guess from paths
         // currently present in either filesystem.
@@ -352,6 +392,8 @@ struct Environments::Impl {
         entry.mounted = std::move(mounted);
       }
       entry.pid = *handle;
+      entry.control_directory = control;
+      entry.ready_file = identity;
       ready.phase = H::EnvironmentPhase::Ready;
       ready.message.clear();
       ready.recovery.clear();
@@ -367,6 +409,8 @@ struct Environments::Impl {
   auto Authorize(Entry& entry) -> H::ExecutionAuthorizationT {
     auto grant = authorization.authorize(entry.state.key, entry.state.project,
                                          entry.state.control_dir);
+    entry.control_directory = FileIdentity::Read(entry.state.control_dir);
+    entry.capability_file = FileIdentity::Read(grant.capability_file);
     entry.state.execution_scope_unavailable = !grant.available;
     return grant;
   }
@@ -683,7 +727,17 @@ struct Environments::Impl {
                                   });
   }
 
-  auto Stop(Entry& entry) -> void {
+  auto Stop(Entry& entry, bool shutting_down = false) -> void {
+    // On shutdown, never discover and stop a service from a replacement
+    // readiness file. The explicit Stop request can still adopt a service.
+    if (shutting_down) {
+      const auto ready = FileIdentity::Read(entry.state.ready_file);
+      if (!entry.pid ||
+          FileIdentity::Read(entry.state.control_dir) !=
+              entry.control_directory ||
+          (ready && ready != entry.ready_file))
+        return;
+    }
     // State/Stop can be the first operation after an hostd restart.
     if (!entry.pid) ReadReady(entry);
     Revoke(entry);
@@ -696,7 +750,10 @@ struct Environments::Impl {
     }
     entry.pid = 0;
     entry.child = false;
-    std::filesystem::remove(entry.state.ready_file);
+    if (entry.ready_file) {
+      entry.ready_file->Remove(entry.state.ready_file);
+      entry.ready_file.reset();
+    }
     ClearEndpoint(entry);
     entry.state.phase = H::EnvironmentPhase::Stopped;
     entry.state.message.clear();

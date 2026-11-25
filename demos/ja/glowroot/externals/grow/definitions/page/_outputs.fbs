@@ -1,5 +1,0 @@
-include "game.fbs";
-include "scene.fbs";
-namespace glow;
-table Outputs { skills:Turn; replant:Turn; bloom:Turn; }
-root_type Outputs;

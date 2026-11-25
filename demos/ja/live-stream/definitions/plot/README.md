@@ -1,4 +1,0 @@
----
-title: plot
-description: 直近 window 点と平均を折れ線で描く
----

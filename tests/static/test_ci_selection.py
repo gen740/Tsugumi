@@ -1,6 +1,7 @@
 """CI selection must cover consumers, preserve prerequisites and fail open."""
 
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 
@@ -41,7 +42,7 @@ def test_full_run_schedules_only_supported_jobs():
     assert {entry["system"]: [job["job"] for job in entry["tests"]["include"]]
             for entry in plan["matrix"]["include"]} == {
         "x86_64-linux": ["native-checks", "host-and-web", "kit-and-demos", "remote-execution"],
-        "aarch64-darwin": ["native-checks", "swift", "kit"],
+        "aarch64-darwin": ["native-checks", "swift", "kit", "demos"],
     }
     assert checks(None)["aarch64-linux"] == {"vm"}
 
@@ -118,6 +119,40 @@ def test_empty_or_failed_push_diff_runs_all(monkeypatch):
         raise subprocess.CalledProcessError(128, "git diff")
     monkeypatch.setattr(subprocess, "run", failed)
     assert selection.changed_paths("push", "before", "head") is None
+
+
+def test_demos_pin_selects_demo_consumers_without_unrelated_jobs(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    def git(*args):
+        return subprocess.check_output(
+            ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", *args],
+            text=True,
+        ).strip()
+
+    def commit(message):
+        Path("flake.lock").write_text(json.dumps(lock))
+        git("add", "flake.lock")
+        git("commit", "-qm", message)
+        return git("rev-parse", "HEAD")
+
+    git("init", "-q")
+    lock = json.loads((ROOT / "flake.lock").read_text())
+    base = commit("Base")
+    root_inputs = lock["nodes"][lock["root"]]["inputs"]
+    lock["nodes"][root_inputs["tsugumi-demos"]]["locked"]["rev"] = "1" * 40
+    head = commit("Repin demos")
+    paths = selection.changed_paths("pull_request", base, head)
+    assert paths == [selection.DEMOS_PIN]
+    assert selection.select(paths)["docs"]
+    assert checks(paths) == {
+        "x86_64-linux": {"agent-rpc", "rpc", "adapters", "web-contracts", "demos"},
+        "aarch64-darwin": {"demos"},
+    }
+
+    lock["nodes"][root_inputs["nixpkgs"]]["locked"]["rev"] = "2" * 40
+    head = commit("Repin nixpkgs too")
+    assert selection.changed_paths("push", base, head) == ["flake.lock"]
 
 
 def test_ci_scripts_do_not_shadow_standard_modules():

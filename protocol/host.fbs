@@ -162,7 +162,7 @@ table ConversationChanged { conversation_id:string; answered_permission:string; 
 // detached page (a child workflow's) is never given another.
 table HostPageRequest { project:string; detached:bool; page:string; closed:bool; }
 // The Web UI's Home: this host's folders and the runtime hostd starts
-// (always in place with the shared VM). repo holds the bundled demos.
+// (always in place with the shared VM). repo is the launcher's checkout or installation root.
 table HostHomeRequest {}
 table RuntimeFile { path:string (required); ok:bool; }
 table HostHome {

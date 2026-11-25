@@ -175,16 +175,24 @@ public actor EnvironmentManager {
   public enum SetupStatus: Sendable, Equatable {
     case checked(virtualizationSupported: Bool, imageAvailable: Bool, imageVersion: String?)
     case failed(String)
+    /// hostd found host state written by another version. Not a setup problem:
+    /// the project chooser shows the state and lets the person move it aside.
+    case hostStateFormatMismatch
 
     public var ready: Bool {
-      if case .checked(let supported, let image, _) = self { return supported && image }
-      return false
+      switch self {
+      case .checked(let supported, let image, _): return supported && image
+      case .hostStateFormatMismatch: return true
+      case .failed: return false
+      }
     }
 
     static func query(_ runtime: () async throws -> Tsugumi_Host_HostRuntimeT) async -> SetupStatus {
       do {
         let reply = try await runtime()
         return .checked(virtualizationSupported: reply.virtualizationSupported, imageAvailable: reply.imageAvailable, imageVersion: reply.imageVersion)
+      } catch is HostStateFormatMismatch {
+        return .hostStateFormatMismatch
       } catch {
         return .failed(String(describing: error))
       }

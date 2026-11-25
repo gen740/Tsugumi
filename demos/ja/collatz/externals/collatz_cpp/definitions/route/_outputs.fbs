@@ -1,4 +1,0 @@
-namespace collatz;
-table Number { value:ulong; }
-table Outputs { a:Number; b:Number; }
-root_type Outputs;

@@ -130,4 +130,39 @@ import TsugumiTestSupport
     await reopened.opening?.value
     #expect(reopened.ready && reopened.currentId == "selected")
   }
+
+  @Test func aLockedConversationCanBeReloadedAfterTheHolderQuits() async throws {
+    actor Holder {
+      private(set) var running = false
+      func setRunning(_ value: Bool) { running = value }
+    }
+    let holder = Holder()
+    let dir = testTemporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let chat = ChatController(session: try session(at: dir), connection: { .fixture }, loadOnInit: false,
+      makeAgent: { id, _, provider in
+        Agent(id: id, transport: Transport(), provider: provider) { method, _ in
+          guard method == "ConversationCreateRequest" else { throw RPCError.unexpectedReply(method) }
+          if await holder.running {
+            throw CoreHostFailure.conversationLock(application: "Tsugumi Dev", pid: 2345, requestID: nil)
+          }
+          return snapshot(id, "Selected transcript")
+        }
+      })
+    chat.select("selected")
+    await chat.opening?.value
+    try #require(chat.ready)
+
+    await holder.setRunning(true)
+    chat.retryLoad()
+    await chat.opening?.value
+    #expect(!chat.ready)
+    #expect(chat.status?.contains("Tsugumi Dev") == true && chat.status?.contains("2345") == true)
+    #expect(chat.items.map(\.text) == ["Selected transcript"])
+
+    await holder.setRunning(false)
+    chat.retryLoad()
+    await chat.opening?.value
+    #expect(chat.ready && chat.status == nil)
+  }
 }

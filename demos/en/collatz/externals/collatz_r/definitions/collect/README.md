@@ -1,4 +1,0 @@
----
-title: collect
-description: Shows the sequence that arrived, and outputs it on reaching 1
----

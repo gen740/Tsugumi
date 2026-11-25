@@ -199,6 +199,35 @@ TEST(EnvironmentAdapterTest, HelperFailureRevokesAuthorizationAndCanBeRetried) {
   EXPECT_EQ(helper->signals.load(), 1);
   EXPECT_FALSE(authorization.active);
 }
+
+TEST(EnvironmentAdapterTest, ShutdownPreservesReplacementControlFiles) {
+  TemporaryDirectory directory;
+  Write(directory.path / "project/tsugumi.json", FixtureProjectDocument());
+  AuthorizationDouble authorization;
+  auto helper = std::make_shared<HelperDouble>();
+  host::EnvironmentOptions options;
+  options.directory = directory.path / "environments";
+  options.socket_directory = directory.path / "sockets";
+  options.run_scratch_directory = directory.path / "run-scratch";
+  options.process = helper;
+  host::Environments service(
+      options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
+  H::EnvironmentRequestT input;
+  input.project = (directory.path / "project").string();
+  input.action = H::EnvironmentAction::Start;
+  const auto ready = service.Handle(input);
+  ASSERT_EQ(ready.phase, H::EnvironmentPhase::Ready);
+  const auto control = std::filesystem::path(ready.control_dir);
+  std::filesystem::rename(control, control.string() + "-old");
+  Write(control / "server.ready", "replacement readiness");
+  Write(control / "execution-broker-capability", "replacement capability");
+
+  service.Shutdown();
+  EXPECT_EQ(helper->signals.load(), 0);
+  EXPECT_EQ(Read(control / "server.ready"), "replacement readiness");
+  EXPECT_EQ(Read(control / "execution-broker-capability"),
+            "replacement capability");
+}
 TEST(EnvironmentAdapterTest, FailureAndTimeoutIncludeBoundedDaemonTail) {
   TemporaryDirectory directory;
   Write(directory.path / "project/tsugumi.json", FixtureProjectDocument());

@@ -451,9 +451,24 @@ final class ServiceWireTests: XCTestCase {
     failure.code = "grant_required"
     failure.message = "Ask first"
     failure.requestId = "permission-1"
+    failure.conversationLock = nil
     XCTAssertThrowsError(try ServiceWire.decode(reply(failure, type: .failure), host: false)) { error in
       XCTAssertEqual((error as? CoreHostFailure)?.code, "grant_required")
       XCTAssertEqual((error as? CoreHostFailure)?.requestID, "permission-1")
+    }
+  }
+
+  func testConversationLockNamesTheHolderAndExplainsReloading() throws {
+    let lock = Tsugumi_Service_ConversationLockT()
+    lock.application = "Tsugumi Dev"
+    lock.pid = 2345
+    let failure = Tsugumi_Service_FailureT()
+    failure.code = "busy"
+    failure.message = "Internal diagnostic"
+    failure.conversationLock = lock
+    XCTAssertThrowsError(try ServiceWire.decodeReply(reply(failure, type: .failure), host: false)) { error in
+      XCTAssertEqual((error as? CoreHostFailure)?.code, "busy")
+      XCTAssertEqual(String(describing: error), String(format: String(localized: "%@（PID %@）がこのプロジェクトの会話を開いています。そのプロセスを終了してから再読込してください。"), "Tsugumi Dev", "2345"))
     }
   }
 

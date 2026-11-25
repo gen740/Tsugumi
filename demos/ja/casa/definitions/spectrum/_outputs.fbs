@@ -1,5 +1,0 @@
-include "tsugumi/artifact.fbs";
-
-namespace casa;
-table Outputs { spectrum:tsugumi.Artifact (required); }
-root_type Outputs;

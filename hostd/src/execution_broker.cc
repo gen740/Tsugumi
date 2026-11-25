@@ -27,6 +27,7 @@
 
 #include "agent/wire.hh"
 #include "tsugumi/rpc/peer_tls.hh"
+#include "tsugumi/rpc/unix_binding.hh"
 #include "tsugumi/rpc/unix_socket.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
@@ -235,6 +236,7 @@ struct ExecutionBroker::State {
   std::set<int> active;
   bool stopping = false;
   Socket listener, cancel_listener, wake_reader, wake_writer;
+  unix_socket::Binding binding, cancel_binding;
   std::vector<std::jthread> receivers;
   CardSecrets card_secrets;
 
@@ -273,8 +275,8 @@ struct ExecutionBroker::State {
       fs::write_atomic(file, crypto::random_token(32), 0600);
       key = ReadKey(file);
     }
-    Listen(listener, socket);
-    Listen(cancel_listener, socket + ".c");
+    Listen(listener, binding, socket);
+    Listen(cancel_listener, cancel_binding, socket + ".c");
     int wake[2];
     Require(::pipe(wake) == 0, "Cannot open execution broker wake pipe");
     wake_reader.fd = wake[0];
@@ -295,16 +297,13 @@ struct ExecutionBroker::State {
     }
   }
 
-  static auto Listen(Socket& listener, const std::string& path) -> void {
-    auto address = ParseEndpoint("unix:" + path);
+  static auto Listen(Socket& listener, unix_socket::Binding& binding,
+                     const std::string& path) -> void {
     listener.fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     Require(listener.fd >= 0, "Cannot open execution broker listener");
     Configure(listener.fd);
-    ::unlink(path.c_str());
-    Require(::bind(listener.fd, reinterpret_cast<sockaddr*>(&address.storage),
-                   address.size) == 0 &&
-                ::chmod(path.c_str(), 0600) == 0 &&
-                ::listen(listener.fd, 64) == 0,
+    binding.Bind(listener.fd, path);
+    Require(::listen(listener.fd, 64) == 0,
             "Cannot listen on execution broker socket");
     Require(::fcntl(listener.fd, F_SETFL, O_NONBLOCK) == 0,
             "Cannot configure execution broker listener");
@@ -597,8 +596,8 @@ struct ExecutionBroker::State {
       }
     }
     receivers.clear();
-    ::unlink(socket.c_str());
-    ::unlink((socket + ".c").c_str());
+    binding.Remove();
+    cancel_binding.Remove();
   }
 };
 

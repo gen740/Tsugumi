@@ -20,17 +20,49 @@ public struct CoreHostFailure: LocalizedError, CustomStringConvertible, Sendable
     }
   }
   public var errorDescription: String? { description }
+
+  static func conversationLock(application: String?, pid: UInt32, requestID: String?) -> Self {
+    let message: String
+    if let application, !application.isEmpty, pid > 1 {
+      message = String(format: String(localized: "%@（PID %@）がこのプロジェクトの会話を開いています。そのプロセスを終了してから再読込してください。"), application, String(pid))
+    } else {
+      message = String(localized: "別の Tsugumi のホストサービスがこのプロジェクトの会話を開いています。そのホストサービスを終了してから再読込してください。")
+    }
+    return Self(code: "busy", message: message, requestID: requestID)
+  }
+
+  static func checkStartup(_ value: [String: Any]) throws {
+    guard value["code"] as? String == "host_state_locked" else { return }
+    let holder = value["lock_holder"] as? [String: Any]
+    let message: String
+    if let application = holder?["application"] as? String, !application.isEmpty,
+       let pid = holder?["pid"] as? Int, pid > 1 {
+      message = String(format: String(localized: "%@（PID %@）がホストの状態フォルダを使用しています。そのプロセスを終了してから再試行してください。"), application, String(pid))
+    } else {
+      message = String(localized: "別の Tsugumi のホストサービスが状態フォルダを使用しています。そのホストサービスを終了してから再試行してください。")
+    }
+    throw Self(code: "host_state_locked", message: message, requestID: nil)
+  }
 }
 
-public struct HostStateFormatMismatch: LocalizedError, Sendable {
+public struct HostStateFormatMismatch: LocalizedError, CustomStringConvertible, Sendable {
   public let path: String
   fileprivate let found: Int
   fileprivate let recoveryURL: URL?
   fileprivate let recoveryToken: String
 
+  init(path: String, found: Int, recoveryURL: URL?, recoveryToken: String) {
+    self.path = path
+    self.found = found
+    self.recoveryURL = recoveryURL
+    self.recoveryToken = recoveryToken
+  }
+
   public var errorDescription: String? {
     String(localized: "この状態データは別のバージョンの Tsugumi で書き込まれました。") + "\n" + path
   }
+  /// Interpolating the error shows the message, never the recovery key or token.
+  public var description: String { errorDescription ?? path }
 }
 
 /// A presentation snapshot of hostd's catalogs. Persistence and refresh policy
@@ -214,9 +246,15 @@ public actor CoreHostClient {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     let daemon = Process()
     daemon.executableURL = try executable("tsugumi-hostd", environment: "TSUGUMI_HOSTD", component: "hostd")
-    let demos = Bundle.main.url(forResource: "demos", withExtension: nil) ?? Self.repository.appendingPathComponent("demos")
-    daemon.arguments = ["--ensure", "--state-dir", state.path, "--unix", directory.appendingPathComponent("agent.sock").path,
-                        "--listen", "127.0.0.1:0", "--demos-dir", demos.path]
+    let bundledDemos = Bundle.main.url(forResource: "demos", withExtension: nil)
+    let demos = bundledDemos?.path ?? ProcessInfo.processInfo.environment["TSUGUMI_DEMOS_DIR"]
+    let root = bundledDemos?.deletingLastPathComponent() ?? Self.repository
+    let application = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+      ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Tsugumi"
+    daemon.arguments = ["--ensure", "--state-dir", state.path, "--application-name", application,
+                        "--unix", directory.appendingPathComponent("agent.sock").path,
+                        "--listen", "127.0.0.1:0", "--repo-root", root.path]
+    if let demos, !demos.isEmpty { daemon.arguments! += ["--demos-dir", demos] }
     daemon.arguments! += runtimeArguments ?? HostRuntimeConfiguration.arguments(support: state.deletingLastPathComponent())
     // The built Web UI the app carries: the host serves it whichever client started it.
     let web = ProcessInfo.processInfo.environment["TSUGUMI_WEB_ROOT"].map { URL(fileURLWithPath: $0) }
@@ -249,6 +287,7 @@ public actor CoreHostClient {
     guard let value else {
       throw CoreHostFailure(code: "unavailable", message: "The host service exited during startup; see \(log.path)", requestID: nil)
     }
+    try CoreHostFailure.checkStartup(value)
     if log != stateLog, value["pid"] as? Int32 == daemon.processIdentifier {
       if rename(log.path, stateLog.path) != 0 {
         throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)

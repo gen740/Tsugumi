@@ -1,3 +1,0 @@
-namespace live;
-table Outputs {}
-root_type Outputs;

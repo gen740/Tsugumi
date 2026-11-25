@@ -92,6 +92,34 @@ def test_project_cannot_read_cache_credentials_or_change_daemon_trust(tmp_path):
         env.stop()
 
 
+def test_explicit_sdk_build_uses_the_guest_nix_sandbox(tmp_path):
+    root = tmp_path / "sdk-build"
+    write(root, {"sdk": {"type": "code", "buildTimeoutSeconds": 180, "_nix": """
+        { params, inputs }:
+        let pkgs = import <nixpkgs> {};
+        in {
+          api = pkgs.runCommand "guest-sdk-sandbox-test" { allowSubstitutes = false; } ''
+            if [ -e /persist ]; then
+              echo "guest store disk is visible to the builder" >&2
+              exit 1
+            fi
+            mkdir -p "$out/share/tsugumi/api"
+            printf 'sandboxed' > "$out/share/tsugumi/api/result"
+          '';
+        }
+        """}}, [card("sdk", "sdk")], [])
+    env = VMEnv(root).start()
+    try:
+        with env.client() as c:
+            result = c.call("EvaluateNixRequest", card=path("sdk"), build=True,
+                            expression="(import ./. { inherit params inputs; }).api")
+        assert result.failure is None, (text(result.failure.diagnostic), text(result.log))
+        assert [(text(f.path), bytes(f.content)) for f in result.files] == [
+            ("share/tsugumi/api/result", b"sandboxed")]
+    finally:
+        env.stop()
+
+
 def test_stopping_one_project_keeps_the_other_running(tmp_path):
     slow = project(tmp_path / "slow", HOLDING_MAIN, "slow")
     other = project(tmp_path / "other", ONE_MAIN, "other")

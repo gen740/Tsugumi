@@ -1,4 +1,5 @@
 import { validWorkerBits } from '../../shared/workerBits'
+import { L } from '../i18n'
 import * as H from '../../shared/gen/tsugumi/host'
 import { ModelSelectionRequestT } from '../../shared/gen/tsugumi/host/model-selection-request'
 import { RuntimeAction } from '../../shared/gen/tsugumi/host/runtime-action'
@@ -227,8 +228,14 @@ export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; val
   const reply = message.payload as any
   if (reply.valueType === (host ? H.ReplyPayload.Failure : AgentReplyPayload.Failure)) {
     const failure = reply.value
+    const lock = failure.code === 'busy' ? failure.conversationLock : undefined
+    const text = lock
+      ? lock.application && lock.pid > 1
+        ? L('{0}（PID {1}）がこのプロジェクトの会話を開いています。そのプロセスを終了してから再読込してください。', lock.application, lock.pid)
+        : L('別の Tsugumi のホストサービスがこのプロジェクトの会話を開いています。そのホストサービスを終了してから再読込してください。')
+      : failure.message
     return { id: message.requestId, value: undefined,
-      error: new CoreHostError(failure.code, failure.message, failure.requestId ?? undefined) }
+      error: new CoreHostError(failure.code, text, failure.requestId ?? undefined) }
   }
   let value = view(reply.value)
   if (host) {

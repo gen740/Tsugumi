@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import queue
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -18,6 +17,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 # Also support the documentation player harvester launched directly.
 sys.path.insert(0, str(ROOT / "tests" / "core"))
+
+from harness.demos import copy_demo
 BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build"))
 TSUGUMID = Path(os.environ.get("TSUGUMID", BUILD / "tsugumid" / "tsugumid"))
 WORKER = Path(os.environ.get("TSUGUMI_WORKER", BUILD / "workerd" / "tsugumi-worker"))
@@ -264,11 +265,11 @@ def real_environment(project: Path):
 
 
 def demo_environment(tmp_path: Path, demo: str, edit=None, language: str = "ja"):
-    """A fresh copy of a demo (of demos/<language>) served by the shared VM
+    """A fresh copy of a pinned demo served by the shared VM
     (TSUGUMI_TEST_SHARED_VM=1) or by a host tsugumid with sandboxing disabled
     for development. `edit(copy)` changes the copy before it is served."""
     dst = tmp_path / demo
-    shutil.copytree(ROOT / "demos" / language / demo, dst)
+    copy_demo(language, demo, dst)
     for manifest in dst.rglob("tsugumi.json"):
         doc = json.loads(manifest.read_text())
         doc["recordIO"] = True

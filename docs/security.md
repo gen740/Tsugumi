@@ -285,6 +285,10 @@ Helpers have separate scratch and command/output directories, including unscoped
 
 The host service keeps `host.sqlite` and `execution.sqlite` under `host-core`, with the process lock and log in `host.lock` and `host.log`. There is no separate folder-format marker. Project conversation and run-history databases remain outside this folder.
 
+Launchers use `tsugumi-hostd --ensure`. The first host takes `host.lock` and publishes `host.ready`. Later invocations return that readiness record or the published `host.startup-error` recovery record. If the lock is held and both records are missing, the launcher reports who is using the state folder when the process can be verified. Quit that host service before retrying. On exit, a host skips startup-file cleanup if the state folder has been replaced.
+
+The Mac launcher passes the bundle's display name as `--application-name`. The CLI passes its command name, such as `tsugumi web`. A direct launch defaults to `tsugumi-hostd`. The host and project conversation locks publish the name and hostd PID in `host.lock-owner` and `agent.lock-owner`, respectively. A contender uses this information only while the corresponding lock is held and it can verify a live local process that owns the record. Shared folders can be in use by a process whose identity the local machine cannot verify.
+
 When updating from a version that used `host-settings.sqlite`, use the old
 version to sign out of every ChatGPT account on the Mac and in each Web host
 profile. If the app cannot confirm server-side revocation, revoke the old

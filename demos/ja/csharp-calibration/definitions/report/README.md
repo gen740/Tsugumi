@@ -1,4 +1,0 @@
----
-title: report
-description: 校正後の値を集計し CSV を保存
----

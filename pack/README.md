@@ -5,7 +5,8 @@ later. Nix is used on the exporter's Mac to build the Cards.
 
 ```sh
 TSUGUMI_CODESIGN_IDENTITY="Apple Development" pack/build.sh
-dist/tsugumi-pack/bin/tsugumi-pack demos/en/glowroot --output Glowroot.app
+demos_dir=$(nix build --no-link --print-out-paths .#demos)
+dist/tsugumi-pack/bin/tsugumi-pack "$demos_dir/en/glowroot" --output Glowroot.app
 open Glowroot.app
 ```
 

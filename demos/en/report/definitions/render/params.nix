@@ -1,3 +1,0 @@
-{
-  heading = "Quarterly sales";
-}

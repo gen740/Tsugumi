@@ -1,5 +1,0 @@
-namespace collatz;
-table Verdict { equal:bool; count:ulong; }
-table Sequence { values:[ulong] (required); }
-table Outputs { verdict:Verdict (required); sequence:Sequence (required); }
-root_type Outputs;
