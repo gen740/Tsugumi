@@ -142,6 +142,7 @@ enum CardViewFileError: LocalizedError {
   }
 
   init(_ opening: CardViewOpening, files: CardViewFiles,
+       testClock: DawnTestClock?,
        send: @escaping @MainActor (UUID, Data) async throws -> Void,
        close: @escaping @MainActor () async throws -> Void) {
     self.opening = opening
@@ -157,7 +158,8 @@ enum CardViewFileError: LocalizedError {
         try Task.checkCancellation()
         guard let self else { return }
         if opening.type == "dawn" {
-          dawn = DawnViewHost(wasm: file, flags: opening.flags, routes: routes, sendToCard: send)
+          dawn = DawnViewHost(wasm: file, flags: opening.flags, routes: routes,
+                              testClock: testClock, sendToCard: send)
         } else {
           guard let source = String(data: file, encoding: .utf8) else { throw CardViewFileError.notText }
           let host = HTMLViewHost(sendToCard: send)
@@ -251,6 +253,19 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
   func windowWillClose(_ notification: Notification) { willClose() }
 }
 
+@MainActor final class DawnTestClock {
+  private(set) var milliseconds: UInt64 = 0
+  var seconds: Double { Double(milliseconds) / 1000 }
+
+  func advance(by delta: UInt64) -> Bool {
+    let next = milliseconds.addingReportingOverflow(delta)
+    // Keep millisecond increments representable in Double seconds.
+    guard !next.overflow, next.partialValue <= 1 << 52 else { return false }
+    milliseconds = next.partialValue
+    return true
+  }
+}
+
 /// Routes each display to the renderer for that session. Route lifetime lives in the project.
 @MainActor @Observable public final class CardViewPresentation {
   private var views: [UUID: OpenCardView] = [:]
@@ -258,8 +273,12 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
   private var pendingCloses = 0
   @ObservationIgnored private var packedMainWindow: NSWindow?
   private let packedTitle: String?
+  private let testClock: DawnTestClock?
 
-  public init(packedTitle: String? = nil) { self.packedTitle = packedTitle }
+  public init(packedTitle: String? = nil, debugClock: Bool = false) {
+    self.packedTitle = packedTitle
+    self.testClock = debugClock ? DawnTestClock() : nil
+  }
 
   public var hasPanels: Bool { !panelIDs.isEmpty }
   public var isEmpty: Bool { views.isEmpty }
@@ -270,7 +289,7 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
                    send: @escaping @MainActor (UUID, Data) async throws -> Void,
                    close: @escaping @MainActor () async throws -> Void) {
     guard views[opening.id] == nil else { return }
-    let view = OpenCardView(opening, files: files, send: send, close: close)
+    let view = OpenCardView(opening, files: files, testClock: testClock, send: send, close: close)
     views[opening.id] = view
     switch opening.mode {
     case .panel:
@@ -299,6 +318,18 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
   public func sendInput(_ input: CardViewInput, session: UUID) async throws {
     guard let dawn = views[session]?.dawn else { throw DawnViewError.unavailable }
     try await dawn.sendInput(input)
+  }
+
+  public func audioRequested(session: UUID) -> Bool {
+    views[session]?.dawn?.audioRequested == true
+  }
+
+  /// Advances Dawn presentation time and queues a frame for each open view.
+  public func stepClock(milliseconds: UInt64) -> UInt64? {
+    guard let testClock, testClock.advance(by: milliseconds) else { return nil }
+    let at = testClock.seconds
+    for view in views.values { view.dawn?.drawTestFrame(at: at) }
+    return testClock.milliseconds
   }
 
   public func snapshot(session: UUID) async throws -> Data {

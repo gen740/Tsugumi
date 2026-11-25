@@ -781,7 +781,7 @@ auto tsugumi_view_host_check(const uint8_t* wasm, size_t size, char* error,
 
 auto tsugumi_view_host_create(
     const uint8_t* wasm, size_t size, void* metal_layer, uint32_t width,
-    uint32_t height, float scale, tsugumi_view_stop* stop,
+    uint32_t height, float scale, double time_origin, tsugumi_view_stop* stop,
     tsugumi_view_host_send_fn send, tsugumi_view_host_waiting_fn waiting,
     void* send_context, char* error, size_t error_size) -> tsugumi_view_host* {
   try {
@@ -801,7 +801,7 @@ auto tsugumi_view_host_create(
     const auto queue = host->handles.add(Kind::Queue, host->gpu.queue.get());
     host->width = width;
     host->height = height;
-    host->started = uptime();
+    host->started = time_origin < 0 ? uptime() : time_origin;
     host->call(kStart.name, host->start,
                {i32(device), i32(queue), i32(kFormat), i32(width), i32(height),
                 f32(scale)});
