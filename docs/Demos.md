@@ -17,6 +17,7 @@ The demos and Drafts in `demos/en` and `demos/ja` declare their Nix sources in `
 | [Collatz (C++ / Python / Julia / R)](#collatz-c--python--julia--r-collatz) | The Collatz sequence | Cross-checking independent implementations in four languages, branches, merges and loops, `maxRuns`, detecting integer overflow |
 | [Python → Ruby → C++](#python--ruby--c-ruby-pipeline) | Passing a typed integer across languages | Ruby Hash outputs, parameters, resident run-start state, live displays |
 | [Live Stream](#live-stream-live-stream) | Plotting a random walk as it goes | Feedback loops, cancellation and an HTML line chart |
+| [Glowroot](#glowroot-glowroot) | Growing an incremental game from a sprout | Card in Card screens, a shared Dawn window, sound and pure rules with saved inputs |
 | [Plots](#plots-plots) | Diffusion of random walks | Matplotlib figures and `FuncAnimation` published through Report; Plotly and Altair become interactive charts |
 | [Cas A · Chandra RGB](#cas-a--chandra-rgb-casa) | X-ray observation of a supernova remnant | Observation data pinned with Nix, rerunning per Card, version history |
 | [Science demos](#science-demos-fetching-and-analysing-public-data) | Gravitational waves, a protein, an exoplanet, earthquakes | Fetching public data (sizes and SHA-256), analysing and plotting it |
@@ -102,6 +103,18 @@ Makes one value of a random walk every 100 ms. The `settings` Card opens the **s
 **Try**
 - Start a run and click a tick on the **seed** slider when it turns blue. Stop (Cancel) in the middle. It stops at once, and the chart up to that point stays.
 - Change `interval_ms`, `seed` or `samples` in `settings`, or `window` in `plot`, and run again. The new run starts a new chart.
+
+### Glowroot (`glowroot`)
+
+Click the sprout to gather light and buy roots for passive income. Replant for
+seeds, spend them on skills, then buy Bloom after the third replant.
+
+`title/page` opens a Dawn window and sends its session with the game state.
+Each screen is a subgraph. The grow, skills, replant and ending pages take turns
+drawing to the same window.
+After playing, open `replant/apply` or `skills/validate` and choose **Run Only This
+Card (Last Inputs)** to try a rule with the saved state. Adjust the game's
+balance in the Cards' `params.nix` files.
 
 ### Plots (`plots`)
 

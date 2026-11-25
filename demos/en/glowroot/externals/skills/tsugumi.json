@@ -1,0 +1,85 @@
+{
+  "formatVersion": 1,
+  "name": "Glowroot: skills",
+  "nixPath": [
+    {
+      "name": "nixpkgs",
+      "url": "github:NixOS/nixpkgs/nixos-unstable"
+    },
+    {
+      "name": "tsugumi-kit",
+      "url": "github:gen740/tsugumi-kit/main"
+    }
+  ],
+  "trackedPaths": [],
+  "agentExclude": [
+    ".git",
+    ".DS_Store"
+  ],
+  "recordLogs": true,
+  "recordIO": true,
+  "logLimitBytes": 134217728,
+  "outputLimitBytes": 68719476736,
+  "outputLimitEntries": 1000,
+  "canvas": {
+    "cards": [
+      {
+        "id": "ask"
+      },
+      {
+        "id": "validate"
+      },
+      {
+        "id": "page"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "ask",
+          "port": "out"
+        },
+        "to": {
+          "card": "validate",
+          "port": "request"
+        }
+      },
+      {
+        "from": {
+          "card": "validate",
+          "port": "offer"
+        },
+        "to": {
+          "card": "page",
+          "port": "offer"
+        }
+      },
+      {
+        "from": {
+          "card": "page",
+          "port": "buy"
+        },
+        "to": {
+          "card": "ask",
+          "port": "again"
+        }
+      }
+    ]
+  },
+  "boundary": {
+    "inputs": [
+      {
+        "name": "turn",
+        "card": "ask",
+        "port": "enter"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "back",
+        "card": "page",
+        "port": "back"
+      }
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+include "game.fbs";
+namespace glow;
+table Outputs { summary:Summary (required); }
+root_type Outputs;

@@ -1,0 +1,32 @@
+// The messages between the page Cards and the "screen" view (title/views).
+// Card -> view: Scene. View -> Card: Event, sent to Scene.reply.
+// Coordinates are in a 1280x720 screen; the view scales it to the window.
+namespace glow.screen;
+
+struct Route { bytes:[ubyte:16]; }
+
+/// align: 0 left, 1 centre, 2 right. With counter, "{}" in text shows value,
+/// and the view counts the shown number towards it.
+table Label { text:string; x:float; y:float; size:float = 24; color:uint = 0xffffffff;
+              align:ubyte; value:double; counter:bool; }
+/// style: 0 plain, 1 primary, 2 quiet.
+table Button { id:string; label:string; detail:string; x:float; y:float; w:float; h:float;
+               enabled:bool = true; style:ubyte; }
+/// state: 0 locked, 1 can buy, 2 too dear, 3 owned. parent indexes tree.
+table Node { id:string; label:string; detail:string; x:float; y:float; state:ubyte;
+             parent:short = -1; color:uint = 0xffffffff; }
+/// kind: 0 sparkle, 1 buy, 2 replant chime, 3 bloom.
+table Fx { kind:ubyte; x:float; y:float; }
+
+table Scene {
+  screen:string;      // the ambient pad and backdrop: title, grow, skills, replant, ending
+  reply:Route;        // where the view sends events from now on
+  text:[Label];
+  buttons:[Button];
+  tree:[Node];
+  fx:[Fx];
+  plant:float;        // the sprout's size, 0 to 1 (grow)
+  bloom:float;        // the bloom, 0 to 1 (grow, ending)
+}
+
+table Event { button:string; x:float; y:float; }

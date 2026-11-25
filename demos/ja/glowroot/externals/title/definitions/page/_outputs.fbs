@@ -1,0 +1,5 @@
+include "game.fbs";
+include "scene.fbs";
+namespace glow;
+table Outputs { turn:Turn; }
+root_type Outputs;

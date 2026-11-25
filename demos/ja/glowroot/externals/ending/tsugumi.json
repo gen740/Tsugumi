@@ -1,0 +1,62 @@
+{
+  "formatVersion": 1,
+  "name": "Glowroot: エンディング",
+  "nixPath": [
+    {
+      "name": "nixpkgs",
+      "url": "github:NixOS/nixpkgs/nixos-unstable"
+    },
+    {
+      "name": "tsugumi-kit",
+      "url": "github:gen740/tsugumi-kit/main"
+    }
+  ],
+  "trackedPaths": [],
+  "agentExclude": [
+    ".git",
+    ".DS_Store"
+  ],
+  "recordLogs": true,
+  "recordIO": true,
+  "logLimitBytes": 134217728,
+  "outputLimitBytes": 68719476736,
+  "outputLimitEntries": 1000,
+  "canvas": {
+    "cards": [
+      {
+        "id": "score"
+      },
+      {
+        "id": "page"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "score",
+          "port": "summary"
+        },
+        "to": {
+          "card": "page",
+          "port": "summary"
+        }
+      }
+    ]
+  },
+  "boundary": {
+    "inputs": [
+      {
+        "name": "turn",
+        "card": "score",
+        "port": "turn"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "result",
+        "card": "page",
+        "port": "result"
+      }
+    ]
+  }
+}

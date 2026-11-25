@@ -70,6 +70,19 @@
       ]
     },
     {
+      "id": "glowroot",
+      "title": "Glowroot",
+      "field": "Learn the basics",
+      "description": "Grow light, buy skills and replant in a game whose screens share one Dawn view.",
+      "path": "glowroot",
+      "tags": [
+        "C++",
+        "Dawn",
+        "Card in Card",
+        "Loops"
+      ]
+    },
+    {
       "id": "plots",
       "title": "Plots (matplotlib, Plotly, Altair)",
       "field": "Learn the basics",

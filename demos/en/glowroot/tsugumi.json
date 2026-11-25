@@ -1,0 +1,131 @@
+{
+  "formatVersion": 1,
+  "name": "Glowroot",
+  "nixPath": [
+    {
+      "name": "nixpkgs",
+      "url": "github:NixOS/nixpkgs/nixos-unstable"
+    },
+    {
+      "name": "tsugumi-kit",
+      "url": "github:gen740/tsugumi-kit/main"
+    }
+  ],
+  "trackedPaths": [],
+  "agentExclude": [
+    ".git",
+    ".DS_Store"
+  ],
+  "recordLogs": true,
+  "recordIO": true,
+  "logLimitBytes": 134217728,
+  "outputLimitBytes": 68719476736,
+  "outputLimitEntries": 1000,
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "title"
+      },
+      {
+        "id": "enter"
+      },
+      {
+        "id": "grow"
+      },
+      {
+        "id": "skills"
+      },
+      {
+        "id": "replant"
+      },
+      {
+        "id": "ending"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "title",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "title",
+          "port": "turn"
+        },
+        "to": {
+          "card": "enter",
+          "port": "title"
+        }
+      },
+      {
+        "from": {
+          "card": "enter",
+          "port": "out"
+        },
+        "to": {
+          "card": "grow",
+          "port": "turn"
+        }
+      },
+      {
+        "from": {
+          "card": "grow",
+          "port": "skills"
+        },
+        "to": {
+          "card": "skills",
+          "port": "turn"
+        }
+      },
+      {
+        "from": {
+          "card": "grow",
+          "port": "replant"
+        },
+        "to": {
+          "card": "replant",
+          "port": "turn"
+        }
+      },
+      {
+        "from": {
+          "card": "skills",
+          "port": "back"
+        },
+        "to": {
+          "card": "enter",
+          "port": "skills"
+        }
+      },
+      {
+        "from": {
+          "card": "replant",
+          "port": "done"
+        },
+        "to": {
+          "card": "enter",
+          "port": "replant"
+        }
+      },
+      {
+        "from": {
+          "card": "grow",
+          "port": "bloom"
+        },
+        "to": {
+          "card": "ending",
+          "port": "turn"
+        }
+      }
+    ]
+  }
+}
