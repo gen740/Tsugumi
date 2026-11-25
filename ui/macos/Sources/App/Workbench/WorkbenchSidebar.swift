@@ -10,6 +10,7 @@ struct WorkbenchSidebar: View {
   @Bindable var workspace: Workspace
   let session: ProjectSession
   @Bindable var tab: WorkflowTab
+  let onSwitchProject: (() -> Void)?
   @State private var defSearch = ""
   /// Expanded tree nodes; kept across searches and reloads.
   @State private var expanded: Set<String> = ["origin:"]
@@ -18,9 +19,21 @@ struct WorkbenchSidebar: View {
   var body: some View {
     VStack(spacing: 0) {
       List(selection: Binding(get: { tab.selection }, set: { tab.selection = $0 })) {
-        Section("Workflow 階層") {
-          ScopeRow(workspace: workspace, session: session, tab: tab, scope: [], depth: 0)
+        if let onSwitchProject {
+          Button(action: onSwitchProject) {
+            HStack(spacing: 6) {
+              Image(nsImage: NSApp.applicationIconImage)
+                .resizable().scaledToFit().frame(width: 22, height: 22)
+              Text(verbatim: "Tsugumi").font(.headline)
+            }
+          }
+          .buttonStyle(.plain)
+          .selectionDisabled()
+          .help(tip(String(localized: "Home へ戻る"), .home))
+          .accessibilityLabel("Home へ戻る")
+          .guideTarget("home")
         }
+        ScopeRow(workspace: workspace, session: session, tab: tab, scope: [], depth: 0)
         Section {
           definitions
         } header: {
@@ -70,12 +83,9 @@ struct WorkbenchSidebar: View {
   /// Externals of this project: their definitions (copied into the scope as
   /// new Cards) and the external itself (a new Card in Card, a copy of its own).
   @ViewBuilder private var definitions: some View {
-    TextField("検索", text: $defSearch).textFieldStyle(.roundedBorder)
     let exts = session.effectiveExternals.keys.filter { $0.split(separator: "/").count == 2 }.sorted()
-    if exts.isEmpty {
-      Text("externals にプロジェクトがありません。取り込みボタンから他のプロジェクトを取り込めます。組み込みの Card は Canvas の右クリックか + から追加します。")
-        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        .selectionDisabled()
+    if !exts.isEmpty || !session.unplacedDefinitions.isEmpty {
+      TextField("検索", text: $defSearch).textFieldStyle(.roundedBorder)
     }
     ForEach(exts, id: \.self) { prefix in
       let subgraph = prefix.split(separator: "/").last.map(String.init) ?? prefix

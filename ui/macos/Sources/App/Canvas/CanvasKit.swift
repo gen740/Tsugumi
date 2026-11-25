@@ -516,8 +516,7 @@ struct CardGeometry {
   }
 
   /// The outline itself (Card box, fan or funnel) inside `r`.
-  /// `cornerScale` shrinks the corners that stay the same at every zoom, for a
-  /// drawing much smaller than the canvas.
+  /// `cornerScale` scales the corner radius with the outline.
   func outline(in r: CGRect, cornerScale: CGFloat = 1) -> Path {
     switch shape {
     case .card:
@@ -780,12 +779,7 @@ struct CanvasPanHost<Content: View>: NSViewRepresentable {
     }
 
     func place() {
-      var (scale, dx, dy) = shift
-      if scale == 1, let pixel = window?.backingScaleFactor {
-        // A pan keeps the content on whole device pixels.
-        dx = (dx * pixel).rounded() / pixel
-        dy = (dy * pixel).rounded() / pixel
-      }
+      let (scale, dx, dy) = shift
       mover.frame = bounds
       mover.bounds = CGRect(x: -dx / scale, y: -dy / scale, width: bounds.width / scale, height: bounds.height / scale)
       let whole = CGRect(origin: .zero, size: bounds.size).insetBy(dx: -margin, dy: -margin)
@@ -842,21 +836,8 @@ struct CanvasDots: View {
 
   var body: some View {
     let camera = session.cameras[scope] ?? (40, 40, 1)
-    Canvas { ctx, sz in
-      guard shown else { return }
-      let step = spacing * camera.zoom
-      guard step >= 6 else { return }
-      var x = camera.x.truncatingRemainder(dividingBy: step)
-      let dot = Path(ellipseIn: CGRect(x: 0, y: 0, width: 1.6, height: 1.6))
-      while x < sz.width {
-        var y = camera.y.truncatingRemainder(dividingBy: step)
-        while y < sz.height {
-          ctx.fill(dot.offsetBy(dx: x, dy: y), with: .color(.secondary.opacity(0.35)))
-          y += step
-        }
-        x += step
-      }
-    }
+    CanvasGrid(camera: CanvasCamera(x: camera.x, y: camera.y, zoom: camera.zoom),
+               show: shown, size: spacing)
   }
 }
 
@@ -876,11 +857,10 @@ struct Settled<Key: Equatable, Content: View>: View, @MainActor Equatable {
 
 extension View {
   /// Places a view drawn at screen scale (`size` × `zoom`) with its top-left
-  /// corner at `topLeft` (screen units), on whole device pixels.
-  func placeScaled(at topLeft: CGPoint, size: CGSize, zoom: Double, pixel: CGFloat = 2) -> some View {
+  /// corner at `topLeft` (screen units), using the same coordinates as the wires.
+  func placeScaled(at topLeft: CGPoint, size: CGSize, zoom: Double) -> some View {
     let w = size.width * zoom, h = size.height * zoom
-    let x = (topLeft.x * pixel).rounded() / pixel, y = (topLeft.y * pixel).rounded() / pixel
-    return frame(width: w, height: h).position(x: x + w / 2, y: y + h / 2)
+    return frame(width: w, height: h).position(x: topLeft.x + w / 2, y: topLeft.y + h / 2)
   }
 
   /// Places a view of `size` world units (frames, notes, groups) laid out at
@@ -937,7 +917,7 @@ struct CardNodeView: View {
     let size = CGSize(width: g.size.width * z, height: g.size.height * z)
     let o = g.outlineRect
     let outline = CGRect(x: o.minX * z, y: o.minY * z, width: o.width * z, height: o.height * z)
-    let path = g.outline(in: outline)
+    let path = g.outline(in: outline, cornerScale: z)
     ZStack(alignment: .topLeading) {
       path.fill(fillColor)
         .shadow(color: .black.opacity(selected ? 0.2 : 0.07), radius: selected ? 4 : 1.5, y: 1)
@@ -987,7 +967,7 @@ struct CardNodeView: View {
     let g = CardGeometry(data, flow: flow)
     let z = CGFloat(zoom)
     let o = g.outlineRect
-    let outline = g.outline(in: CGRect(x: o.minX * z, y: o.minY * z, width: o.width * z, height: o.height * z))
+    let outline = g.outline(in: CGRect(x: o.minX * z, y: o.minY * z, width: o.width * z, height: o.height * z), cornerScale: z)
     // A rotated outline can wind opposite to a port rectangle. Appending
     // subpaths would then cut holes in their overlap, so take their union.
     var p = outline
@@ -1113,11 +1093,6 @@ struct CardNodeView: View {
       if edit == nil { Spacer(minLength: s(2)) }
       ForEach(data.permissions, id: \.rawValue) { p in
         Image(systemName: p.symbol).font(font(10)).foregroundStyle(p == .sandboxOff ? .orange : .secondary).help(p.label)
-      }
-      if !data.errors.isEmpty {
-        Image(systemName: "xmark.octagon.fill").font(font(11)).foregroundStyle(.red)
-      } else if !data.warnings.isEmpty {
-        Image(systemName: "exclamationmark.triangle.fill").font(font(11)).foregroundStyle(.yellow)
       }
       stateBadge
       if let toggle = onToggleCollapse, data.kind != .trigger, edit == nil {
@@ -1949,7 +1924,6 @@ struct CanvasSurface: View {
   var animateWires = false
   var fitKey: String = ""
   var maxZoom: Double = 1
-  @Environment(\.displayScale) private var displayScale
   @State private var camera = CanvasCamera()
   @State private var selection: Set<String> = []
   @State private var drag: (id: String, offset: CGSize)?
@@ -1961,6 +1935,7 @@ struct CanvasSurface: View {
     GeometryReader { geo in
       ZStack(alignment: .topLeading) {
         CanvasGrid(camera: camera, show: grid, size: gridSize)
+          .background(Color(nsColor: .textBackgroundColor))
           .contentShape(Rectangle())
           .onTapGesture { selection = [] }
           .gesture(DragGesture(minimumDistance: 2).onChanged { v in
@@ -1974,7 +1949,7 @@ struct CanvasSurface: View {
           CardNodeView(data: data(item), flow: flow, zoom: camera.zoom, selected: selection.contains(item.id),
                        onToggleCollapse: { toggle(item.id) })
             .placeScaled(at: camera.screen(origin(item)), size: CardGeometry(data(item), flow: flow).size,
-                         zoom: camera.zoom, pixel: displayScale)
+                         zoom: camera.zoom)
             .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .named("canvas"))
               .onChanged { v in
                 userAdjusted = true
@@ -2086,8 +2061,12 @@ struct CanvasGrid: View {
   var body: some View {
     Canvas { ctx, sz in
       guard show else { return }
-      let step = size * camera.zoom
-      guard step >= 6 else { return }
+      var step = size * camera.zoom
+      guard step.isFinite, step > 0 else { return }
+      // Every coarser grid is a subset of the finer one, anchored at the
+      // same world origin. Dot size and contrast stay constant.
+      let minimumSpacing = min(size, 12)
+      while step < minimumSpacing { step *= 2 }
       var x = camera.x.truncatingRemainder(dividingBy: step)
       let dot = Path(ellipseIn: CGRect(x: 0, y: 0, width: 1.6, height: 1.6))
       while x < sz.width {
@@ -2099,7 +2078,6 @@ struct CanvasGrid: View {
         x += step
       }
     }
-    .background(Color(nsColor: .textBackgroundColor))
   }
 }
 

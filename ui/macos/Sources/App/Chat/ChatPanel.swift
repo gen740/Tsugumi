@@ -14,6 +14,7 @@ struct ChatPanel: View {
   var tab: WorkflowTab?
   /// Whether the panel is open: opening it again shows the newest message.
   var shown = true
+  var onClose: (() -> Void)? = nil
   @State private var showList = false
   @State private var query = ""
   @State private var input = ""
@@ -70,11 +71,10 @@ struct ChatPanel: View {
 
   private var header: some View {
     HStack(spacing: 8) {
-      if !detached && GuideController.shared.available { GuideNest(busy: chat.busy) }
-      Button { showList.toggle() } label: { Image(systemName: showList ? "bubble.left.and.bubble.right.fill" : "list.bullet") }
+      Button { showList.toggle() } label: { Image(systemName: showList ? "bubble.left.and.bubble.right.fill" : "chevron.backward") }
         .buttonStyle(.borderless)
         .help(showList ? "会話に戻る" : "会話の一覧と検索")
-      Text(showList ? String(localized: "会話") : (chat.sessions.first { $0.id == chat.currentId }?.title ?? String(localized: "新しい会話")))
+      Text(showList ? String(localized: "会話") : (conversationTitle))
         .font(.headline).lineLimit(1)
       Spacer()
       Button { chat.newSession(); showList = false } label: { Image(systemName: "square.and.pencil") }
@@ -93,8 +93,14 @@ struct ChatPanel: View {
         SettingsLink { Text("接続設定…") }
       } label: { Image(systemName: "ellipsis.circle") }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+      if let onClose { ChatToggle(open: true, action: onClose) }
     }
     .padding(.horizontal, 10).padding(.vertical, 7)
+  }
+
+  private var conversationTitle: String {
+    let title = chat.sessions.first { $0.id == chat.currentId }?.title.trimmingCharacters(in: .whitespacesAndNewlines)
+    return title.flatMap { $0.isEmpty ? nil : $0 } ?? String(localized: "新しい会話")
   }
 
   // MARK: - Session list

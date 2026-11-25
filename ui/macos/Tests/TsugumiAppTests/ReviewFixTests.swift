@@ -96,9 +96,9 @@ import TsugumiRPC
     }
 
     accept("failed-stop")
-    let workspace = Workspace(), tab = WorkflowTab(scope: [])
+    let tab = WorkflowTab(scope: [])
     func toolbarHeight() -> CGFloat {
-      NSHostingView(rootView: CanvasRunControl(workspace: workspace, session: session, tab: tab)
+      NSHostingView(rootView: CanvasRunControl(session: session, tab: tab)
         .frame(width: 320)).fittingSize.height
     }
     let before = toolbarHeight()

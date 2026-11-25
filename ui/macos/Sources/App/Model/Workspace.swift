@@ -32,7 +32,7 @@ enum CardEditorCategory: String, Codable, CaseIterable, Identifiable {
     case .log: return String(localized: "ログ")
     case .dependencies: return String(localized: "依存")
     case .executions: return String(localized: "実行履歴")
-    case .artifacts: return String(localized: "成果物")
+    case .artifacts: return "Artifacts"
     case .notes: return String(localized: "コメント")
     }
   }
@@ -83,10 +83,8 @@ final class WorkflowTab: Identifiable {
   var back: [[String]] = []
   var selectedConnection: Int?
   var showNixReferences = false
-  var showNixList = false
   var selectedNixReference: String?
   var hoveredNixCard: CardKey?
-  var revealNixCard: CardKey?
 
   init(scope: [String], selection: Set<CardKey> = []) {
     self.scope = scope

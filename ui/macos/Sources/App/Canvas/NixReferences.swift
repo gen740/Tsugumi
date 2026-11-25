@@ -18,7 +18,7 @@ struct CardNixReference: Identifiable {
   }
 }
 
-/// Nested references meet the visible container. The list preserves the exact target.
+/// Nested references meet the visible container.
 func visibleNixCard(_ card: CardKey, scope: [String], visible: Set<CardKey>) -> CardKey? {
   let parts = path(card)
   guard parts.count > scope.count, Array(parts.prefix(scope.count)) == scope else { return nil }
@@ -41,13 +41,6 @@ func visibleNixLinks(_ references: [CardNixReference], scope: [String], visible:
   }
 }
 
-/// How many links the canvas draws at `scope`: Cards there are the
-/// resolution's entries one level below it.
-@MainActor func nixLinkCount(_ session: ProjectSession, scope: [String]) -> Int {
-  let visible = Set(session.resolution.keys.filter { path($0).count == scope.count + 1 && Array(path($0).prefix(scope.count)) == scope })
-  return visibleNixLinks(nixReferences(session), scope: scope, visible: visible).count
-}
-
 /// A hovered Card shows all of its links; otherwise the link picked on the canvas.
 func activeNixLinks(_ links: [NixLink], hovered: CardKey?, selected: String?) -> [NixLink] {
   links.filter {
@@ -68,68 +61,13 @@ func nixCurve(_ a: CGRect, _ b: CGRect) -> Path {
 }
 
 struct NixReferenceControls: View {
-  @Environment(\.openWindow) private var openWindow
-  let session: ProjectSession
   @Bindable var tab: WorkflowTab
 
   var body: some View {
-    HStack(spacing: 8) {
-      Toggle(isOn: $tab.showNixReferences) { Label("Nix 参照", systemImage: "snowflake") }
-        .toggleStyle(.button)
-        .help("配線から決まる Nix の Card 入力を表示します。")
-      // Turned on with nothing to draw here, the overlay says so instead of
-      // looking as if the button did nothing.
-      if tab.showNixReferences && nixLinkCount(session, scope: tab.scope) == 0 {
-        let all = nixReferences(session).count
-        Text(all == 0 ? "配線から決まる Nix の Card 入力はありません" : "この階層には参照がありません（一覧に \(all) 件）")
-          .foregroundStyle(.secondary)
-          .help("配線を通じて参照できる上流 Card を表示します。")
-      }
-      Button { tab.showNixList.toggle() } label: { Label("一覧", systemImage: "list.bullet") }
-        .help("Nix 参照一覧")
-        .popover(isPresented: $tab.showNixList) { referenceList }
-    }
-    .buttonStyle(.borderless)
-  }
-
-  private var referenceList: some View {
-    ScrollViewReader { proxy in
-      ScrollView {
-        VStack(alignment: .leading, spacing: 10) {
-          Text("Nix 参照一覧").font(.headline)
-          Text("参照元 → 参照先。配線を通じて参照できる上流 Card を表示します。")
-            .font(.caption).foregroundStyle(.secondary)
-          let refs = nixReferences(session)
-          if refs.isEmpty { Text("Card 間の Nix 参照はありません") }
-          ForEach(refs) { ref in
-            VStack(alignment: .leading, spacing: 6) {
-              HStack {
-                Button(ref.source) { jump(ref.source) }
-                Text("→")
-                Button(ref.target) { jump(ref.target) }.disabled(session.resolution[ref.target] == nil)
-              }
-              Text(ref.expression).font(.caption.monospaced()).textSelection(.enabled)
-              Button("Nix 定義を開く") {
-                tab.showNixList = false
-                openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: ref.source, category: .source, file: "default.nix"))
-              }
-            }
-            .padding(8).frame(maxWidth: .infinity, alignment: .leading)
-            .background(tab.selectedNixReference == ref.id ? Color.purple.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 6))
-            .id(ref.id)
-          }
-        }.padding(12)
-      }
-      .frame(width: 460, height: 420)
-      .onAppear { if let id = tab.selectedNixReference { proxy.scrollTo(id) } }
-      .onChange(of: tab.selectedNixReference) { _, id in if let id { proxy.scrollTo(id) } }
-    }
-  }
-
-  private func jump(_ card: CardKey) {
-    tab.enter(Array(path(card).dropLast()))
-    tab.selection = [card]
-    tab.revealNixCard = card
-    tab.showNixList = false
+    Toggle(isOn: $tab.showNixReferences) { Image(systemName: "snowflake") }
+      .toggleStyle(.button)
+      .buttonStyle(.borderless)
+      .help("配線から決まる Nix の Card 入力を表示します。")
+      .accessibilityLabel("Nix 参照")
   }
 }

@@ -8,7 +8,6 @@ import TsugumiRPC
 /// bars above and below the inner graph.
 struct GraphCanvas: View {
   @Environment(\.openWindow) private var openWindow
-  @Environment(\.displayScale) private var displayScale
   @Environment(AppPreferences.self) private var prefs
   @Bindable var workspace: Workspace
   let session: ProjectSession
@@ -43,17 +42,7 @@ struct GraphCanvas: View {
   @State private var selectionDrag: CGSize?
   /// Laid out again when this changes (the zoom has stopped, or a pan went far: CanvasPanHost).
   @State private var redrawn = 0
-  /// Counts the passes of the body (CanvasPanHost takes the content of a new pass only,
-  /// and the camera of the latest one, for what its views report in its terms: `live`).
-  private final class Passes {
-    var count = 0
-    var base = CanvasCamera()
-    func next(_ base: CanvasCamera) -> Int {
-      self.base = base
-      count += 1
-      return count
-    }
-  }
+
   /// The wires' paths as last routed. Routing is by far the costliest part of
   /// a pass (seconds, with a couple of hundred wires), and most passes change
   /// nothing it depends on (the Cards' and ports' places). When it is
@@ -138,28 +127,46 @@ struct GraphCanvas: View {
   @State private var routes = Routes()
   /// How far beyond the canvas, on every side, the content is laid out (CanvasPanHost).
   private static let overscan: CGFloat = 300
-  @State private var passes = Passes()
+  /// Child view builders may be evaluated later by the hosting view. Capture
+  /// the camera for their layout so the host applies the live transform once.
+  private var layoutCamera: (x: Double, y: Double, zoom: Double)?
   /// The camera as it is now, read without observing it: the content is laid
   /// out for the camera of when the body last ran, and CanvasPanHost shows it
   /// through the camera of the moment.
-  var camera: (x: Double, y: Double, zoom: Double) { session.cameraUnobserved(scopeKey) ?? (40, 40, 1) }
+  var camera: (x: Double, y: Double, zoom: Double) { layoutCamera ?? currentCamera }
+  private var currentCamera: (x: Double, y: Double, zoom: Double) { session.cameraUnobserved(scopeKey) ?? (40, 40, 1) }
+
+  private final class LayoutPass {
+    var count = 0
+  }
+  @State private var layoutPass = LayoutPass()
+
+  init(workspace: Workspace, session: ProjectSession, tab: WorkflowTab) {
+    self.workspace = workspace
+    self.session = session
+    self.tab = tab
+  }
   private var cam: CanvasCamera { CanvasCamera(x: camera.x, y: camera.y, zoom: camera.zoom) }
 
   var body: some View {
-    let routed = routedWires()
+    var layout = self
+    layout.layoutCamera = currentCamera
+    let settled = layout
+    let routed = settled.routedWires()
     let _ = redrawn
     GeometryReader { geo in
       ZStack(alignment: .topLeading) {
         background
-        CanvasPanHost(session: session, scope: scopeKey, base: cam, pass: passes.next(cam), margin: Self.overscan,
-                      solid: solid(routed), onSettled: { redrawn += 1 }) {
+        let _ = layoutPass.count += 1
+        CanvasPanHost(session: session, scope: scopeKey, base: settled.cam, pass: layoutPass.count, margin: Self.overscan,
+                      solid: settled.solid(routed), onSettled: { redrawn += 1 }) {
           // The wires are drawn over the whole of it; the rest is placed in the canvas's own part.
           let m = Self.overscan
-          let toLayer = cam.transform.concatenating(CGAffineTransform(translationX: m, y: m))
+          let toLayer = settled.cam.transform.concatenating(CGAffineTransform(translationX: m, y: m))
           ZStack(alignment: .topLeading) {
             ZStack(alignment: .topLeading) {
               ForEach(session.groups(in: tab.scope).compactMap { $0["id"]?.string }, id: \.self) { id in
-                groupFrame(id)
+                settled.groupFrame(id)
               }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -170,13 +177,13 @@ struct GraphCanvas: View {
               return WireDraw(path: path, style: $0.style, dotted: $0.dotted, executionList: $0.executionList,
                               countLabel: count, countAt: count == nil ? nil : path.midPoint, thread: $0.thread)
             },
-                      animate: prefs.animateLines && session.runActive, zoom: camera.zoom, presences: session.presences)
-            if tab.showNixReferences { nixLayer(transform: toLayer) }
-            ZStack(alignment: .topLeading) { panned(routed) }
+                      animate: prefs.animateLines && session.runActive, zoom: settled.camera.zoom, presences: session.presences)
+            if tab.showNixReferences { settled.nixLayer(transform: toLayer) }
+            ZStack(alignment: .topLeading) { settled.panned(routed) }
               .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
               .coordinateSpace(name: "canvas")
               .padding(m)
-            if debug.showHitAreas { hitAreaLayer(routed, transform: toLayer) }
+            if debug.showHitAreas { settled.hitAreaLayer(routed, transform: toLayer) }
           }
         }
         // In the view's own space (where the pointer is), not the canvas's.
@@ -285,9 +292,6 @@ struct GraphCanvas: View {
       // A scope shown for the first time (no saved camera) shows its whole flow
       // as soon as its Cards are there.
       .onChange(of: cardKeys.count) { fitIfNew() }
-      .onChange(of: tab.revealNixCard) { _, card in
-        if let card { reveal(card, in: size); tab.revealNixCard = nil }
-      }
       .onChange(of: geo.size) { size = geo.size }
       .onReceive(NotificationCenter.default.publisher(for: .canvasFitAll)) { n in
         if (n.object as? UUID) == tab.id || n.object == nil { fitAll() }
@@ -350,7 +354,7 @@ struct GraphCanvas: View {
 
   /// A point the content reports (in the terms of the pass that laid it out) as the canvas shows it now.
   private func live(_ p: CGPoint) -> CGPoint {
-    let base = passes.base, now = camera
+    let base = camera, now = currentCamera
     let scale = now.zoom / base.zoom
     return CGPoint(x: p.x * scale + now.x - base.x * scale, y: p.y * scale + now.y - base.y * scale)
   }
@@ -392,7 +396,7 @@ struct GraphCanvas: View {
     let lines = [
       String(format: "zoom %.3f · camera %.0f, %.0f · view %.0f×%.0f", c.zoom, c.x, c.y, size.width, size.height),
       "cards \(cardKeys.count) · wires \(wires) (+\(routed.count - wires) boundary) · notes \(noteIds.count)",
-      String(format: "routing %.1f ms%@ · pass %d", routes.lastSeconds * 1000, routes.busy ? " (routing…)" : "", passes.count),
+      String(format: "routing %.1f ms%@ · pass %d", routes.lastSeconds * 1000, routes.busy ? " (routing…)" : "", layoutPass.count),
       "scope /\(tab.scope.joined(separator: "/")) · selection \(tab.selection.count) · wire \(tab.selectedConnection.map(String.init) ?? "-")",
     ]
     return VStack(alignment: .leading, spacing: 1) {
@@ -447,7 +451,10 @@ struct GraphCanvas: View {
   }
 
   func screen(_ w: CGPoint) -> CGPoint { cam.screen(w) }
-  func world(_ s: CGPoint) -> CGPoint { cam.world(s) }
+  func world(_ s: CGPoint) -> CGPoint {
+    let c = currentCamera
+    return CanvasCamera(x: c.x, y: c.y, zoom: c.zoom).world(s)
+  }
 
   private func cardRect(_ k: CardKey) -> CGRect { CGRect(origin: origin(k), size: session.geometry(k).size) }
 
@@ -482,8 +489,7 @@ struct GraphCanvas: View {
       for link in links {
         let a = cardRect(link.source), b = cardRect(link.target)
         let selected = active.contains { $0.reference.id == link.reference.id }
-        let color = Color.purple
-          .opacity(tab.hoveredNixCard != nil && !selected ? 0.2 : 0.9)
+        let color: Color = tab.hoveredNixCard != nil && !selected ? .gray.opacity(0.15) : .purple.opacity(0.9)
         context.stroke(nixCurve(a, b).applying(transform), with: .color(color),
                        style: StrokeStyle(lineWidth: selected ? 3 : 1.5, dash: [7, 4]))
         let right = b.midX >= a.midX
@@ -648,14 +654,23 @@ struct GraphCanvas: View {
     let z = CGFloat(camera.zoom)
     return ZStack(alignment: .topLeading) {
       BoundaryBarView(title: String(localized: "この Card の入力"), ports: b.inputs, input: true, zoom: z, rect: b.top, cardTitle: session.displayName)
-        .placeScaled(at: screen(b.top.origin), size: b.top.size, zoom: camera.zoom, pixel: displayScale)
+        .placeScaled(at: screen(b.top.origin), size: b.top.size, zoom: camera.zoom)
         .gesture(boundaryMove(input: true, from: undragged(b.top.origin, input: true)))
-        .help("ドラッグで移動できます")
+        .onTapGesture { returnToParent() }
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { returnToParent() }
+        .help("親 Workflow に戻ります。ドラッグで移動できます。")
       BoundaryBarView(title: String(localized: "この Card の出力"), ports: b.outputs, input: false, zoom: z, rect: b.bottom, cardTitle: session.displayName)
-        .placeScaled(at: screen(b.bottom.origin), size: b.bottom.size, zoom: camera.zoom, pixel: displayScale)
+        .placeScaled(at: screen(b.bottom.origin), size: b.bottom.size, zoom: camera.zoom)
         .gesture(boundaryMove(input: false, from: undragged(b.bottom.origin, input: false)))
         .help("ドラッグで移動できます")
     }
+  }
+
+  private func returnToParent() {
+    let child = key(tab.scope)
+    tab.enter(Array(tab.scope.dropLast()))
+    tab.selection = [child]
   }
 
   /// A bar's position without the drag in progress.
@@ -715,7 +730,7 @@ struct GraphCanvas: View {
     let card: CardKey
     let data: CardNodeData
     let flow: FlowDirection
-    let zoom: Double
+    let camera: CanvasCamera
     let selected: Bool
     let editable: Bool
     let canRun: Bool
@@ -730,7 +745,7 @@ struct GraphCanvas: View {
     let canRun = data.kind == .trigger && session.connected && !session.runActive
     // A Draft being written is drawn every time: what is typed is read from the session as it changes.
     let key = data.draftEditing ? nil : CardSlot(
-      session: ObjectIdentifier(session), tab: ObjectIdentifier(tab), card: k, data: data, flow: flow, zoom: zoom,
+      session: ObjectIdentifier(session), tab: ObjectIdentifier(tab), card: k, data: data, flow: flow, camera: cam,
       selected: selected, editable: session.isEditable, canRun: canRun, presence: ObjectIdentifier(presence))
     return Settled(key: key) {
       CardNodeView(data: data, flow: flow, zoom: zoom, selected: selected,
@@ -758,11 +773,22 @@ struct GraphCanvas: View {
             .offset(x: -4, y: -8)
         }
       }
-      .placeScaled(at: screen(origin(k)), size: g.size, zoom: camera.zoom, pixel: displayScale)
+      .overlay(alignment: .top) {
+        if let problem = data.failure ?? data.errors.first ?? data.warnings.first {
+          DiagnosticCallout(text: problem, isError: data.failure != nil || !data.errors.isEmpty, zoom: zoom)
+            .alignmentGuide(.top) { $0[.bottom] + 3 * zoom }
+            .allowsHitTesting(false)
+        }
+      }
+      .contentShape(CardNodeView.hitShape(data, flow: flow, zoom: zoom, newPorts: session.isEditable))
+      .placeScaled(at: screen(origin(k)), size: g.size, zoom: zoom)
       .zIndex(data.draftEditing ? 1 : 0)
       .gesture(cardDrag(k))
       .onTapGesture(count: 2) { open(k) }
       .onTapGesture { select(k) }
+      .accessibilityAction(named: Text("Card の設定を開く")) {
+        openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: k))
+      }
       .contextMenu { CardMenu(workspace: workspace, session: session, tab: tab, cardKey: k, onGroup: groupSelection) }
   }
 
@@ -1155,7 +1181,6 @@ struct GraphCanvas: View {
       nixCurve(cardRect($0.source), cardRect($0.target)).strokedPath(StrokeStyle(lineWidth: tolerance * 2)).contains(w)
     }) {
       tab.selectedNixReference = ref.reference.id
-      tab.showNixList = true
       return
     }
     tab.selectedNixReference = nil
@@ -1421,6 +1446,37 @@ struct BoundaryBarView: View {
     }
     .accessibilityElement(children: .combine)
     .accessibilityLabel(title + ": " + ports.map(\.name).joined(separator: ", "))
+  }
+}
+
+private struct DiagnosticCallout: View {
+  let text: String
+  let isError: Bool
+  let zoom: CGFloat
+
+  var body: some View {
+    let color: Color = isError ? .red : .orange
+    let bubble = RoundedRectangle(cornerRadius: 7 * zoom)
+    VStack(spacing: 0) {
+      Label(text, systemImage: isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+        .font(.system(size: max(6, 10 * zoom)))
+        .foregroundStyle(color)
+        .lineLimit(2)
+        .frame(maxWidth: 235 * zoom)
+        .padding(.horizontal, 7 * zoom)
+        .padding(.vertical, 5 * zoom)
+        .background(.regularMaterial, in: bubble)
+        .overlay(bubble.strokeBorder(color.opacity(0.35)))
+      Path { path in
+        path.move(to: .zero)
+        path.addLine(to: CGPoint(x: 10 * zoom, y: 0))
+        path.addLine(to: CGPoint(x: 5 * zoom, y: 5 * zoom))
+        path.closeSubpath()
+      }
+      .fill(color.opacity(0.55))
+      .frame(width: 10 * zoom, height: 5 * zoom)
+    }
+    .fixedSize()
   }
 }
 

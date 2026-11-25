@@ -385,7 +385,7 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
                           backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
     window.title = title
-    window.contentView = NSHostingView(rootView: CardViewPanels(presentation: self))
+    window.contentView = NSHostingView(rootView: CardViewPanels(presentation: self) { EmptyView() })
     let delegate = CardViewWindowDelegate { [weak self] in
       guard let self else { return }
       packedMainWindow = nil
@@ -417,11 +417,15 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
   }
 }
 
-public struct CardViewPanels: View {
+public struct CardViewPanels<Header: View>: View {
   let presentation: CardViewPresentation
+  @ViewBuilder let header: () -> Header
   @State private var selected: UUID?
 
-  public init(presentation: CardViewPresentation) { self.presentation = presentation }
+  public init(presentation: CardViewPresentation, @ViewBuilder header: @escaping () -> Header) {
+    self.presentation = presentation
+    self.header = header
+  }
 
   public var body: some View {
     let panels = presentation.panels
@@ -429,6 +433,7 @@ public struct CardViewPanels: View {
     VStack(spacing: 0) {
       if let shown {
         HStack {
+          header()
           Picker("表示の切り替え", selection: Binding(get: { shown.opening.id }, set: { selected = $0 })) {
             ForEach(panels, id: \.opening.id) { view in
               Text(verbatim: "\(view.opening.card.joined(separator: "/")) / \(view.opening.name)")

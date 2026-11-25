@@ -1,4 +1,3 @@
-import TsugumiViewPresentation
 import AppKit
 import SwiftUI
 import TsugumiLauncher
@@ -36,7 +35,7 @@ struct WorkflowTabs: View {
         VStack(spacing: 0) {
           if workspace.tabs.count > 1 { tabBar }
           if let tab = workspace.active {
-            Workbench(workspace: workspace, session: session, tab: tab, onSwitchProject: onSwitchProject)
+            Workbench(workspace: workspace, session: session, tab: tab, showsCardViews: onSwitchProject != nil)
               .id(tab.id)
               .focusedSceneValue(\.workflowTab, tab)
               .onChange(of: tab.scope) { session.saveViewSoon(scope: tab.scope, selection: tab.selection) }
@@ -44,11 +43,11 @@ struct WorkflowTabs: View {
           }
         }
         if workspace.showChat {
-          // Wider by default; the width the user gives it is kept (per Mac).
-          // The chat is Tsugumi: the bird waits at its top left (GuideNest).
           ChatColumn(width: $chatWidth) {
-            ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active, shown: workspace.showChat)
+            ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active,
+                      shown: workspace.showChat, onClose: { workspace.showChat = false })
           }
+          .ignoresSafeArea(.container, edges: .top)
         }
       }
     }
@@ -59,17 +58,11 @@ struct WorkflowTabs: View {
     // whatever the window size, sidebar width or project name.
     NavigationSplitView(columnVisibility: $workspace.columns) {
       if let tab = workspace.active {
-        WorkbenchSidebar(workspace: workspace, session: session, tab: tab)
+        WorkbenchSidebar(workspace: workspace, session: session, tab: tab, onSwitchProject: onSwitchProject)
           .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 380)
       }
     } detail: {
-      HSplitView {
-        projectContent.frame(minWidth: 360)
-        if onSwitchProject != nil, session.cardViews.hasPanels {
-          CardViewPanels(presentation: session.cardViews)
-            .frame(minWidth: 250, idealWidth: 400)
-        }
-      }
+      projectContent.frame(minWidth: 360)
     }
     .tsugumiLoading(EnvironmentOverlay.loading(session), onCancel: EnvironmentOverlay.canCancel(session)
       ? { session.stopEnvironment() } : nil)
@@ -153,23 +146,26 @@ struct Workbench: View {
   @Bindable var workspace: Workspace
   let session: ProjectSession
   @Bindable var tab: WorkflowTab
-  var onSwitchProject: (() -> Void)? = nil
+  let showsCardViews: Bool
 
   var body: some View {
     VStack(spacing: 0) {
       if workspace.showBottom {
         VSplitView {
-          CanvasWorkspace(workspace: workspace, session: session, tab: tab, onSwitchProject: onSwitchProject)
-            .frame(minHeight: 240)
+          canvas
           LogTimelinePanel(workspace: workspace, session: session, tab: tab)
             .frame(minHeight: 140, idealHeight: 220)
         }
       } else {
-        CanvasWorkspace(workspace: workspace, session: session, tab: tab, onSwitchProject: onSwitchProject)
-          .frame(minHeight: 240, maxHeight: .infinity)
+        canvas
       }
     }
     .frame(minWidth: 360)
+  }
+
+  private var canvas: some View {
+    CanvasWorkspace(workspace: workspace, session: session, tab: tab, showsCardViews: showsCardViews)
+      .frame(minHeight: 240, maxHeight: .infinity)
   }
 }
 

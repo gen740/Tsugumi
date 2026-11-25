@@ -1,24 +1,27 @@
 import AppKit
 import SwiftUI
 import TsugumiRPC
+import TsugumiViewPresentation
 
 /// The canvas with its floating controls. The canvas reaches the top of the
 /// window; the project's title (with where the canvas is), the run control
 /// and the project's actions float on it with the same look.
 struct CanvasWorkspace: View {
-  @Environment(AppModel.self) private var model
-  @Environment(AppPreferences.self) private var prefs
   @Bindable var workspace: Workspace
   let session: ProjectSession
   @Bindable var tab: WorkflowTab
-  var onSwitchProject: (() -> Void)? = nil
+  let showsCardViews: Bool
   /// Where the window buttons and the sidebar button end (title bar).
   static let besideSidebarButton: CGFloat = 142
+  @State private var detailLeading: CGFloat = 0
 
   var body: some View {
     ZStack(alignment: .top) {
       GraphCanvas(workspace: workspace, session: session, tab: tab)
         .ignoresSafeArea(.container, edges: .top)
+      if showsCardViews, session.cardViews.hasPanels {
+        CanvasCardViews(presentation: session.cardViews)
+      }
       // The band along the top of the window moves the window (as a title
       // bar does; a double click zooms it). The canvas starts below it, so
       // the two never compete for a drag.
@@ -32,19 +35,25 @@ struct CanvasWorkspace: View {
         // The title keeps its room; only very long names are cut.
         breadcrumbs.layoutPriority(3)
         Spacer(minLength: 0)
-        CanvasRunControl(workspace: workspace, session: session, tab: tab).fixedSize().layoutPriority(2)
+        CanvasRunControl(session: session, tab: tab).fixedSize().layoutPriority(2)
         Spacer(minLength: 0)
         CanvasDraftControls(workspace: workspace, session: session, tab: tab).fixedSize().layoutPriority(1)
         CanvasCommentControls(workspace: workspace, session: session, tab: tab).fixedSize().layoutPriority(1)
-        projectActions.fixedSize().layoutPriority(2)
+        if !workspace.showChat {
+          ChatToggle(open: false) { workspace.showChat = true }
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(.regularMaterial, in: Capsule())
+            .fixedSize().layoutPriority(2)
+        }
       }
       // In the title bar's row, beside the window buttons: right of the
       // sidebar button while the sidebar is closed.
-      .padding(.leading, workspace.columns == .detailOnly ? Self.besideSidebarButton : 10)
+      .padding(.leading, max(10, Self.besideSidebarButton - detailLeading))
       .padding(.trailing, 10)
       .padding(.top, 11)
       .ignoresSafeArea(.container, edges: .top)
     }
+    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minX } action: { detailLeading = $0 }
     // At narrow widths the status moves above the left controls.
     .overlay(alignment: .bottom) {
       CanvasBottomControls {
@@ -54,35 +63,6 @@ struct CanvasWorkspace: View {
       }
       .padding(10)
     }
-  }
-
-  /// Back to Home (as the menu does, with its refusal while a run is on), chat:
-  /// beside the run control, the same look.
-  private var projectActions: some View {
-    HStack(spacing: 10) {
-      if let onSwitchProject {
-        Button(action: onSwitchProject) { Image(systemName: "house") }
-          .help(tip(String(localized: "Home へ戻る"), .home))
-          .accessibilityLabel("Home へ戻る")
-          .guideTarget("home")
-      }
-      Button { workspace.showChat.toggle() } label: {
-        // While the chat is closed, Tsugumi waits on its button.
-        if !workspace.showChat && onSwitchProject != nil && GuideController.shared.available {
-          GuideNest(busy: AppModel.shared.chat(for: session).busy, size: 22)
-        } else {
-          Image(systemName: workspace.showChat ? "bubble.left.and.text.bubble.right.fill" : "bubble.left.and.text.bubble.right")
-        }
-      }
-      .help(workspace.showChat ? "チャットを閉じる（\(AppPreferences.shared.shortcut(.toggleChat).label)）"
-                               : "チャットを開く（\(AppPreferences.shared.shortcut(.toggleChat).label)）")
-      .accessibilityLabel("チャット")
-      .guideTarget("chat")
-    }
-    .buttonStyle(.borderless)
-    .font(.callout)
-    .padding(.horizontal, 12).padding(.vertical, 7)
-    .background(.regularMaterial, in: Capsule())
   }
 
   /// The project's title and where the canvas is (Card in Card), in one place.
@@ -127,25 +107,11 @@ struct CanvasWorkspace: View {
   private var viewControls: some View {
     let zoom = session.cameras[key(tab.scope)]?.zoom ?? 1
     return HStack(spacing: 2) {
-      Button { setZoom(zoom / 1.2) } label: { Image(systemName: "minus.magnifyingglass") }.help(tip(String(localized: "縮小"), .zoomOut))
-      Button { setZoom(1) } label: { Text("\(Int((zoom * 100).rounded()))%").monospacedDigit().frame(minWidth: 42) }.help(tip("100% に戻す", .actualSize))
-      Button { setZoom(zoom * 1.2) } label: { Image(systemName: "plus.magnifyingglass") }.help(tip(String(localized: "拡大"), .zoomIn))
-      Divider().frame(height: 16)
-      Button { NotificationCenter.default.post(name: .canvasFitAll, object: tab.id) } label: { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }
-        .help(tip(String(localized: "全体表示"), .fitAll))
-      // Notes, groups and folding are in the canvas's context menu and the
-      // menu bar, where they are named; small icons for them read as nothing.
+      Text("\(Int((zoom * 100).rounded()))%").monospacedDigit().frame(minWidth: 42)
       Button { Task { await session.arrange(tab.scope) } } label: { Image(systemName: "rectangle.grid.2x2") }
         .help("整列（配置だけを変更）")
-      Button { Task { await session.untangle(tab.scope) } } label: { Image(systemName: "arrow.triangle.swap") }
-        .help("配線の交差を減らす（Card の位置は保持）")
       Divider().frame(height: 16)
-      Toggle(isOn: Binding(get: { prefs.showGrid }, set: { prefs.showGrid = $0 })) { Image(systemName: "grid") }
-        .toggleStyle(.button)
-        .help("グリッド")
-      Divider().frame(height: 16)
-      // The Nix references belong to the same bar as the other view controls.
-      NixReferenceControls(session: session, tab: tab)
+      NixReferenceControls(tab: tab)
     }
     .buttonStyle(.borderless)
     .padding(.horizontal, 10).padding(.vertical, 5)
@@ -153,26 +119,72 @@ struct CanvasWorkspace: View {
     .guideTarget("view", radius: 14)
   }
 
-  private func setZoom(_ z: Double) {
-    var c = session.cameras[key(tab.scope)] ?? (40, 40, 1)
-    let nz = max(0.2, min(3, z))
-    c.x = c.x * nz / c.zoom
-    c.y = c.y * nz / c.zoom
-    c.zoom = nz
-    session.cameras[key(tab.scope)] = c
-    session.saveViewSoon(scope: tab.scope, selection: tab.selection)
+}
+
+/// A live Card's view floats over the canvas. It stays at a readable scale
+/// when the graph is panned or zoomed, and the canvas keeps its full bounds.
+private struct CanvasCardViews: View {
+  let presentation: CardViewPresentation
+  @State private var offset = CGSize.zero
+  @GestureState private var drag = CGSize.zero
+
+  var body: some View {
+    GeometryReader { geo in
+      let width = min(680, max(0, geo.size.width - 32))
+      let height = min(500, max(0, geo.size.height - 74))
+      let maxX = max(0, (geo.size.width - width) / 2 - 8)
+      let maxY = max(0, (geo.size.height - height - 58) / 2)
+      CardViewPanels(presentation: presentation) {
+        Image(systemName: "line.3.horizontal")
+          .foregroundStyle(.secondary)
+          .frame(width: 24, height: 24)
+          .contentShape(Rectangle())
+          .gesture(DragGesture()
+            .updating($drag) { value, state, _ in state = value.translation }
+            .onEnded { value in
+              offset = CGSize(width: min(maxX, max(-maxX, offset.width + value.translation.width)),
+                              height: min(maxY, max(-maxY, offset.height + value.translation.height)))
+            })
+      }
+      .frame(width: width, height: height)
+      .background(.regularMaterial)
+      .clipShape(RoundedRectangle(cornerRadius: 9))
+      .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(.secondary.opacity(0.25)).allowsHitTesting(false) }
+      .shadow(color: .black.opacity(0.22), radius: 12, y: 4)
+      .position(x: geo.size.width / 2 + min(maxX, max(-maxX, offset.width + drag.width)),
+                y: (geo.size.height + 20) / 2 + min(maxY, max(-maxY, offset.height + drag.height)))
+    }
   }
 }
 
-/// Run / stop, the run's state and what it is doing now, elapsed time and
-/// the issue list. Per-Card counts and details are on the Cards, in the
+struct ChatToggle: View {
+  let open: Bool
+  let action: () -> Void
+  @Environment(GuideStage.self) private var stage: GuideStage?
+  @State private var guideFrame = CGRect.zero
+
+  var body: some View {
+    Button(action: action) { Image(systemName: "bubble.left.and.text.bubble.right") }
+      .buttonStyle(.borderless)
+      .font(.callout)
+      .help(open ? "チャットを閉じる（\(AppPreferences.shared.shortcut(.toggleChat).label)）"
+                 : "チャットを開く（\(AppPreferences.shared.shortcut(.toggleChat).label)）")
+      .accessibilityLabel("チャット")
+      .guideTarget("chat")
+      .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+        guideFrame = frame
+        stage?.corner = frame
+      }
+      .onDisappear { if stage?.corner == guideFrame { stage?.corner = .zero } }
+  }
+}
+
+/// Run / stop, the run's state and its elapsed time. Per-Card counts and details are on the Cards, in the
 /// history and on the timeline (a share of finished Cards says nothing about
 /// a run with loops, so there is no progress bar).
 struct CanvasRunControl: View {
-  @Bindable var workspace: Workspace
   let session: ProjectSession
   let tab: WorkflowTab
-  @State private var showIssues = false
   /// Shown as running: from the start, and for a moment after a quick run,
   /// so a short run reads as one step instead of a flicker.
   @State private var shownActive = false
@@ -182,7 +194,6 @@ struct CanvasRunControl: View {
     let state = session.runStatus?.state ?? .idle
     let label = session.stopRequested ? String(localized: "停止を要求中")
       : (shownActive && !session.runActive ? Tsugumi_Data_RunState.running.label : state.label)
-    let problems = session.diagnostics.filter(\.error).count + session.cardStates.values.filter { $0.state == .failed }.count
     HStack(spacing: 8) {
       // One button of a fixed size: its title and color change, nothing moves.
       Button {
@@ -220,30 +231,7 @@ struct CanvasRunControl: View {
                           : String(localized: "Run の状態と経過時間"))
         .accessibilityElement(children: .combine)
       }
-      Button { showIssues.toggle() } label: {
-        HStack(spacing: 2) {
-          Image(systemName: problems > 0 ? "exclamationmark.triangle.fill" : "checkmark.seal")
-          Text("\(problems)").monospacedDigit()
-        }
-        .foregroundStyle(problems > 0 ? .orange : .secondary)
-      }
-      .buttonStyle(.borderless)
-      .help(String(localized: "問題 \(problems) 件（一覧から対象の Card やログへ移動できます）"))
-      .popover(isPresented: $showIssues) {
-        IssueList(workspace: workspace, session: session, tab: tab).frame(width: 460, height: 320)
-      }
-      Divider().frame(height: 14)
-      Menu {
-        NewCardItems(add: { kind in
-          NotificationCenter.default.post(name: .canvasAddBuiltin, object: tab.id, userInfo: ["template": kind.rawValue])
-        }, pickTemplate: {
-          NotificationCenter.default.post(name: .canvasAddBuiltin, object: tab.id)
-        })
-      } label: { Image(systemName: "plus") }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-        .disabled(!session.isEditable)
-        .help("Card を追加")
-        .accessibilityLabel("Card を追加")
+
     }
     .font(.callout)
     .padding(.horizontal, 8).padding(.vertical, 5)
