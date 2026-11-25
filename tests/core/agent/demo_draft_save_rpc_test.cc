@@ -10,8 +10,8 @@ namespace json = ::tsugumi::json;
 
 TEST_F(AgentProjectFixture,
        ImplementsJapaneseBundledDraftsWithoutWritingLayout) {
-  const auto demo = std::filesystem::path(TSUGUMI_GUIDE_TEST_ROOT) / "demos" /
-                    "ja" / "gw150914-draft";
+  const auto demo =
+      std::filesystem::path(TSUGUMI_DEMOS_DIR) / "ja/gw150914-draft";
   const auto root = directory.path / "project";
   // Bundled fixtures in the Nix store are read-only; the opened project is a
   // writable copy, as it is when the app opens a demo.

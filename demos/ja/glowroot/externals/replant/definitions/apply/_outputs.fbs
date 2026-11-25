@@ -1,4 +1,0 @@
-include "game.fbs";
-namespace glow;
-table Outputs { offer:ReplantOffer (required); }
-root_type Outputs;

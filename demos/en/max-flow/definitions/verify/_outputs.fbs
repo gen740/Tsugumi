@@ -1,5 +1,0 @@
-include "tsugumi/artifact.fbs";
-
-namespace flow;
-table Outputs { result:tsugumi.Artifact (required); }
-root_type Outputs;

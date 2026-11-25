@@ -13,7 +13,7 @@
       ...
     }:
     let
-      inherit (config.packages) web;
+      inherit (config.packages) demos web;
       # Reuse the installed production host archives and compile only the
       # operation fixture. Web checks do not build the other C++ test targets.
       operationDriver = config.packages.ci-core.override {
@@ -36,7 +36,7 @@
         );
         web-typecheck = web.override { typecheckOnly = true; };
         web = pkgs.callPackage ../web-checks.nix {
-          inherit web operationDriver;
+          inherit demos web operationDriver;
         };
       };
       formatter = pkgs.treefmt.withConfig {
@@ -60,8 +60,6 @@
               "*.h"
               "*.hh"
             ];
-            # Demo Cards are formatted by the app's own Card formatter.
-            excludes = [ "demos/*" ];
           };
         };
       };

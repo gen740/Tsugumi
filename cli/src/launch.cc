@@ -119,7 +119,9 @@ auto EnsureHost(const Launch& launch) -> Ready {
   const auto log_path = f::exists(launch.state) ? state_log : parent / (".host-startup-" + RandomName() + ".log");
   std::vector<std::string> args = {launch.hostd.string(), "--ensure", "--state-dir", launch.state.string(),
                                    "--unix", (sockets / "agent.sock").string(),
-                                   "--demos-dir", (launch.root / "demos").string()};
+                                   "--repo-root", launch.root.string()};
+  if (const auto demos = Env("TSUGUMI_DEMOS_DIR"); !demos.empty())
+    args.insert(args.end(), {"--demos-dir", demos});
   args.insert(args.end(), launch.runtime.begin(), launch.runtime.end());
   if (f::exists(launch.web_root / "index.html")) {
     args.insert(args.end(), {"--web-root", launch.web_root.string()});

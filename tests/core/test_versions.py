@@ -7,12 +7,11 @@ in the note says what ran, from what the run did."""
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 
 import pytest
 
-from harness.daemon import ROOT
+from harness.demos import copy_demo
 from harness.file_events import wait_for_file
 from projects import SINK, MSG_FBS, MSG_SOURCE_NIX, builtin_project, card, conn, run_and_wait, write, write_nix_project
 from harness.document import card_document, params_nix, set_param
@@ -276,9 +275,9 @@ def test_a_demo_history_becomes_its_versions(tmp_path, core_factory):
 @pytest.mark.parametrize("language", ["en", "ja"])
 def test_the_casa_demo_carries_its_trials(tmp_path, core_factory, language):
     """The Cas A project exposes its trials and can return to its original Drafts."""
-    demo = ROOT / "demos" / language / "casa"
     root = tmp_path / "casa"
-    shutil.copytree(demo, root)
+    copy_demo(language, "casa", root)
+    expected = json.loads((root / "tsugumi.json").read_text())
     daemon = core_factory(project_root=root)
     c = daemon.connect()
     c.call("VersionInitRequest", opId=new_id(), origin="test")
@@ -315,7 +314,7 @@ def test_the_casa_demo_carries_its_trials(tmp_path, core_factory, language):
     # Returning to the implemented tip restores its real ports and exact document.
     c.call("VersionCheckoutRequest", baseRev=snap.rev, opId=new_id(), origin="test", commit=head)
     restored = c.call("ProjectInspectRequest")
-    assert json.loads(text(restored.projectJson)) == json.loads((demo / "tsugumi.json").read_text())
+    assert json.loads(text(restored.projectJson)) == expected
     assert not graph(c).dirty
 
 

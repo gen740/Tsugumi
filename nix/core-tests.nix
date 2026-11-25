@@ -14,6 +14,7 @@
   openssl,
   nix,
   core,
+  demos,
   hosq,
   runtime,
   mock,
@@ -49,7 +50,6 @@ clangStdenv.mkDerivation {
         ++ lib.optionals (!nativeDarwin) [
           ../hostd/agent/Shared/guide-script.json
           ../hostd/agent/Shared/guide-script.en.json
-          ../demos
           ../tests/fixtures/layout-invalid.json
           ../tests/fixtures/layout-scenes.json
           ../tests/fixtures/wire-routes.json
@@ -118,6 +118,7 @@ clangStdenv.mkDerivation {
     "-DTSUGUMI_CORE_TEST_SUPPORT=${core.testSupport}"
     "-DHOSQ_INCLUDE_DIR=${hosq}/include"
   ]
+  ++ lib.optional (target == null) "-DTSUGUMI_DEMOS_DIR=${demos}"
   ++ lib.optional nativeDarwin "-DTSUGUMI_NATIVE_DARWIN_TESTS=ON"
   ++ lib.optional (
     target == "tsugumi_arm_shell_tests"

@@ -193,7 +193,7 @@ auto WebPages::Handle(const RequestIn& request, const H::Request& r)
     result.documents =
         projects ? projects
                  : (f::path(result.home) / "Documents" / "Tsugumi").string();
-    result.repo = home_.demos.parent_path().string();
+    result.repo = home_.repo_root.string();
     result.vm = home_.vm;
     // /host/<name> needs bubblewrap: on a Mac, the shared VM.
 #ifdef __APPLE__

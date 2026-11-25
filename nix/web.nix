@@ -8,6 +8,7 @@
   flatbuffers,
   python3,
   client-wasm,
+  demos,
   webgpu-headers,
   typecheckOnly ? false,
 }:
@@ -50,7 +51,6 @@ buildNpmPackage {
         ../ui/web/third-party
         ../third-party/emscripten
         ../third-party/flatbuffers
-        ../demos
         ../VERSION
         ../docs/site/player/build.mjs
         ../docs/site/player/narration.json
@@ -68,6 +68,7 @@ buildNpmPackage {
     flatbuffers
     (python3.withPackages (ps: [ ps.pyyaml ]))
   ];
+  TSUGUMI_DEMOS_DIR = if typecheckOnly then null else demos;
   TSUGUMI_WEBGPU_HEADERS = webgpu-headers;
   TSUGUMI_WASM_CLIENT_DIR = if typecheckOnly then null else "${client-wasm}/share/tsugumi/client";
   buildPhase =
@@ -100,7 +101,9 @@ buildNpmPackage {
         share=$out/share/tsugumi
         mkdir -p $share/ui/web $testSupport
         cp -R ui/web/dist $share/ui/web/dist
-        cp -R demos VERSION $share/
+        mkdir -p "$share/demos"
+        cp -R "$TSUGUMI_DEMOS_DIR"/. "$share/demos/"
+        cp VERSION "$share/"
         # Checks reuse installation and generated bindings, without putting the
         # development tools in the distributed Web output's runtime closure.
         cp -R ui/web/node_modules $testSupport/node_modules

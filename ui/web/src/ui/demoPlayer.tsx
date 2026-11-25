@@ -565,7 +565,7 @@ function Player({ host, url, compact, autoplay }: { host: HTMLElement; url: stri
 // ---- API --------------------------------------------------------------------------------------
 
 export interface PlayerOptions {
-  /** The demo's id (`demos/index.json`, or `card-guide`). */
+  /** The demo ID from the pinned catalog, or `card-guide`. */
   demo: string
   /** Relative URL of its player-data/<id>.json. */
   data: string

@@ -1,4 +1,0 @@
----
-title: generate
-description: Makes the next point after an interval, and returns the state to loop until samples points are reached
----

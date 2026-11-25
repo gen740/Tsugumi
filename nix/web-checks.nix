@@ -13,6 +13,7 @@
   nodejs,
   operationDriver,
   web,
+  demos,
 }:
 let
   # Nixpkgs Chromium is Linux-only. Use the matching standalone headless
@@ -48,6 +49,7 @@ runCommand "tsugumi-web-checks"
     cp -R $testSources/. source/
     ln -s ${web.testSupport}/node_modules source/ui/web/node_modules
     cp -R ${web.testSupport}/gen source/ui/web/shared/gen
+    export TSUGUMI_DEMOS_DIR=${demos}
     export TSUGUMI_SITE_PLAYER_DIR=${web.sitePlayer}
     export TSUGUMI_WEB_PUBLIC_DIR=${web}/share/tsugumi/ui/web/dist/public
     export TSUGUMI_DOCUMENT_EDIT_DRIVER=${operationDriver}/libexec/tsugumi-tests/tsugumi_document_edit_driver

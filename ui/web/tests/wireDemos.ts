@@ -9,6 +9,7 @@ import { parseReadme } from '../src/model/documents'
 import type { FlowDirection } from '../src/model/prefs'
 
 const root = process.argv[2]
+const demosRoot = process.env.TSUGUMI_DEMOS_DIR!
 type Wire = { a: Pt; b: Pt; name: string }
 type Scene = { name: string; flow: FlowDirection; obstacles: Rect[]; wires: Wire[] }
 type Layout = { flow?: string; cards?: Record<string, Partial<Pt> & { collapsed?: boolean }>; boundary?: Record<string, Pt> }
@@ -143,7 +144,7 @@ function crossed(pts: Pt[], obstacles: Rect[]): number {
 }
 
 for (const scene of [
-  ...scopes('casa on the grid', path.join(root, 'demos/ja/casa'), 20),
+  ...scopes('casa on the grid', path.join(demosRoot, 'ja/casa'), 20),
 ]) {
   const routes = new WireRouter(scene.flow, scene.obstacles).routeAll(scene.wires)
   for (const [index, wire] of scene.wires.entries()) {
@@ -155,13 +156,13 @@ for (const scene of [
 }
 
 if (process.env.WIRE_ROUTES_WRITE || process.env.TSUGUMI_WIRE_BENCH === '1') {
-  const index: { demos: { path: string }[] } = read(path.join(root, 'demos/ja/index.json'))
-  const demos = index.demos.flatMap((d) => scopes(d.path, path.join(root, 'demos', 'ja', d.path)))
+  const index: { demos: { path: string }[] } = read(path.join(demosRoot, 'ja/index.json'))
+  const demos = index.demos.flatMap((d) => scopes(d.path, path.join(demosRoot, 'ja', d.path)))
   if (process.env.WIRE_ROUTES_WRITE) {
     const shared = ['report', 'live-stream', 'collatz/collatz_py']
       .map((name) => demos.find((scene) => scene.name === name)!)
       .concat(
-        scene('casa, grid 20', path.join(root, 'demos/ja/casa'), undefined, {}, 20).scene)
+        scene('casa, grid 20', path.join(demosRoot, 'ja/casa'), undefined, {}, 20).scene)
     const samples = shared.map(({ name, flow, obstacles, wires }) => ({ name, flow, obstacles, wires: wires.map(({ a, b }) => ({ a, b })) }))
     fs.writeFileSync(path.join(root, 'tests/fixtures/wire-routes.json'), JSON.stringify(samples) + '\n')
   }

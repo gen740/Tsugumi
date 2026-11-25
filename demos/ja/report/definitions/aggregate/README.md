@@ -1,4 +1,0 @@
----
-title: aggregate
-description: 地域ごとの売上と個数を集計する（fail_on_purpose で失敗を再現）
----

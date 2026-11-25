@@ -41,7 +41,7 @@ import TsugumiTestSupport
                         "--socket-dir", directory.appendingPathComponent("b").path,
                         "--usage-scratch-dir", canonicalDirectory(directory).appendingPathComponent("scratch").path,
                         "--unix", directory.appendingPathComponent("agent.sock").path,
-                        "--listen", "127.0.0.1:0", "--demos-dir", SyncTests.root.appendingPathComponent("demos").path]
+                        "--listen", "127.0.0.1:0"]
       if managed { try useHelperDouble() }
       core.standardOutput = FileHandle.nullDevice
       core.standardError = FileHandle.nullDevice
