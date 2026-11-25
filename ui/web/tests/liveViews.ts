@@ -102,24 +102,29 @@ send(first, [99], 3n)
 flush()
 assert.equal(credits.at(-1)?.creditId, 3n, 'an unloaded renderer returns credit')
 
-const route = Uint8Array.from({ length: 16 }, (_, i) => 0xf0 + i)
-const routeId = 'f0f1f2f3-f4f5-f6f7-f8f9-fafbfcfdfeff'
-assert.equal(a.acceptsRoute(route), false)
-notify(R.NotificationPayload.ViewRouteRegistered, new R.ViewRouteRegisteredT(first, routeId))
+const recipient = 'outer/a'
+const recipients: [string, boolean][] = []
+a.attachRenderer({
+  setRecipient: (path, registered) => { recipients.push([path, registered]) },
+  sendInput: async () => {},
+  snapshot: async () => new Uint8Array(),
+  dispose() {},
+})
+const notifyRecipient = (session: string, registered: boolean) =>
+  notify(R.NotificationPayload.ViewRecipientChanged, new R.ViewRecipientChangedT(session, recipient, registered))
+notifyRecipient(first, true)
+notifyRecipient(second, true)
+notifyRecipient(first, false)
 flush()
-assert.equal(a.acceptsRoute(route), true)
-assert.equal(b.acceptsRoute(route), false, 'a route from another window is rejected')
-assert.equal(b.acceptsRoute(new Uint8Array(16)), true, 'the zero route addresses the opener')
-await client.sendView(first, route, Uint8Array.of(0, 255))
-await client.sendView(second, new Uint8Array(16), new Uint8Array())
-assert.deepEqual(reverse.map(r => [r.session, r.route, r.bytes]), [
-  [first, routeId, [0, 255]],
-  [second, '00000000-0000-0000-0000-000000000000', []],
+assert.deepEqual(recipients, [[recipient, true], [recipient, false]])
+await client.sendView(first, recipient, Uint8Array.of(0, 255))
+await client.sendView(second, '*', new Uint8Array())
+assert.deepEqual(reverse.map(r => [r.session, r.to, r.bytes]), [
+  [first, recipient, [0, 255]],
+  [second, '*', []],
 ])
-assert.throws(() => client.sendView(first, new Uint8Array(15), new Uint8Array()), RangeError)
 live.closeLiveView(first)
 live.closeLiveView(first)
-assert.equal(a.acceptsRoute(route), false)
 assert.deepEqual(closes.map(r => r.session), [first])
 send(first, [42], 4n)
 flush()

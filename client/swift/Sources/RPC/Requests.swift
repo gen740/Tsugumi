@@ -195,10 +195,10 @@ public extension RPCClient {
     return try await call(.cardviewreadrequest, r)
   }
 
-  func sendView(session: UUID, route: UUID, bytes: Data) async throws {
+  func sendView(session: UUID, to: String, bytes: Data) async throws {
     let r = Tsugumi_RPC_ViewSendRequestT()
     r.session = session.uuidString.lowercased()
-    r.route = route.uuidString.lowercased()
+    r.to = to
     r.bytes = Array(bytes)
     let _: Tsugumi_RPC_AckT = try await call(.viewsendrequest, r)
   }

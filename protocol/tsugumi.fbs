@@ -826,11 +826,12 @@ table ViewCloseRequest {
   session:string (required);
 }
 
-/// -> Ack. Send opaque bytes to one route in the sending window. The all-zero
-/// route selects the opener's route. Messages to a dead route are dropped.
+/// -> Ack. Send opaque bytes to live processes of a Card registered on this
+/// window. The address is a project-root Card path or "*" for all registered
+/// Cards. An address without a live recipient returns an error.
 table ViewSendRequest {
   session:string (required);
-  route:string (required);
+  to:string (required);
   bytes:[ubyte] (required);
 }
 
@@ -1399,11 +1400,11 @@ table ViewOpened {
   flags:uint32;
 }
 
-/// A route belongs to this session. This association lasts until the view
-/// closes, even after the receiving process has dropped the route.
-table ViewRouteRegistered {
+/// The first process registered for a Card on this window, or the last left.
+table ViewRecipientChanged {
   session:string (required);
-  route:string (required);
+  path:string (required);
+  registered:bool;
 }
 
 /// Sent to the presenting subscription when the session closes.
@@ -1428,7 +1429,7 @@ union NotificationPayload {
   TraceChanged:Tsugumi.Trace.TraceChanged = 5,
   RunCategoryDeleteResult = 6,
   ViewOpened = 7,
-  ViewRouteRegistered = 8,
+  ViewRecipientChanged = 8,
   ViewClosed = 9,
 }
 

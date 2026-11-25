@@ -326,14 +326,25 @@ class Service : public RequestSink {
     std::string subscription;
     std::string name;
     std::shared_ptr<const ViewBlob> blob;
-    ViewUuid opener;
-    // An expired endpoint is a dead route that still belongs to the session.
-    std::map<ViewUuid, std::weak_ptr<WorkerProc::ViewReceiver>> routes;
+    struct Route {
+      std::string card;
+      std::weak_ptr<WorkerProc::ViewReceiver> endpoint;
+    };
+    std::map<ViewUuid, Route> routes;
   };
   // Subscription selection and session lifecycle share subs_mu_.
   std::map<ViewUuid, ViewSession> view_sessions_;
   auto owned_view(const RequestIn& req, const ViewUuid& session)
       -> ViewSession*;
+  auto add_view_route(const ViewUuid& session, ViewSession& view,
+                      const ViewUuid& route, const CardPath& card,
+                      const std::weak_ptr<WorkerProc::ViewReceiver>& endpoint)
+      -> void;
+  auto remove_view_routes(
+      const std::weak_ptr<WorkerProc::ViewReceiver>& endpoint) -> void;
+  auto remove_view_route(const ViewUuid& session, ViewSession& view,
+                         std::map<ViewUuid, ViewSession::Route>::iterator route)
+      -> void;
   auto end_view(const ViewUuid& session, const ViewSession& view) -> void;
   auto end_views(ConnId conn) -> void;
   static auto view_uuid(const flatbuffers::String& value) -> ViewUuid;

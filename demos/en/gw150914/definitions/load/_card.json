@@ -15,7 +15,7 @@
   "sandbox": {
     "filesystem": true,
     "pid": true,
-    "ipc": false,
+    "ipc": true,
     "identity": true,
     "limits": {
       "cpu": 0,

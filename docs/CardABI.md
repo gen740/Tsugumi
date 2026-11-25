@@ -69,9 +69,9 @@ came from. APIs and evidence links use the UUID. See
 
 | Effect | Contract |
 | --- | --- |
-| `view_open` | Open a declared view and return its session and the opener's route. |
+| `view_open` | Open a declared view, register the calling process, and return the session and route. |
 | `view_close` | Close the window by session UUID. Returns 0 when closed or already gone, and a negative value on error. |
-| `route_register` | Create a route for the calling process. Returns 0 on success, `TSUGUMI_VIEW_WINDOW_CLOSED` (−2) when the session is no longer live, and −1 on other errors. |
+| `route_register` | Register the calling process on the session and return a route. Returns 0 on success, `TSUGUMI_VIEW_WINDOW_CLOSED` (−2) when the session is no longer live, and −1 on other errors. |
 | `route_unregister` | Drop a route held by the calling process. |
 | `send` | Send bytes to one window by session. Returns 0 when accepted or dropped, and a negative value on error. |
 | `recv` | Wait for an event on any route of the calling process. Returns 0 for an event, 1 for timeout, 2 for cancellation and a negative value on error. A negative timeout waits indefinitely. |
@@ -80,6 +80,11 @@ came from. APIs and evidence links use the UUID. See
 | `artifact_create` | Create a writable artifact directory. |
 | `artifact_open` | Open a sealed artifact by UUID and resolve it to its read-only directory. |
 | `result_alloc` | Lend an aligned buffer for a result up to the host's message limit. Returns null on failure. |
+
+A view sends to a project-root Card path, or to `"*"` for all Cards
+registered on its window. Each matching live process receives the bytes
+once. Route UUIDs identify Card-side registrations for `recv` and
+`route_unregister`.
 
 The six view effects are available on any Card thread throughout the process
 lifetime, including between calls in a resident worker. On each thread the
@@ -112,7 +117,7 @@ receive the close event.
 Messages can carry up to `TSUGUMI_MESSAGE_MAX` (16 MiB). A larger send fails
 immediately. The relay applies backpressure at each hop. A Card send waits
 cancellably when the next hop lacks room for a maximum-size message. View
-sends are nonblocking and address one route.
+sends are nonblocking and address Card paths on the window.
 
 View traffic is transient. A Card can record any results it wants to keep in
 output ports or logs.

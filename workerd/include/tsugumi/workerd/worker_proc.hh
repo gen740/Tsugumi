@@ -114,6 +114,8 @@ class WorkerProc {
     std::function<ViewDelivery(const WorkerViewEvent&, DisplayCredit)> remote;
     auto send(const WorkerViewEvent& event, DisplayCredit complete = {})
         -> ViewDelivery;
+    std::function<void()> on_close;
+    auto close() -> void;
     auto reply(const WorkerViewReply& reply) -> bool;
   };
 

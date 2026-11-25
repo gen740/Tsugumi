@@ -251,9 +251,9 @@ function CardViewContent({ view, project, hidden }: { view: LiveView; project: P
     if (!client) throw new Error(L('接続していません'))
     return await client.readCardViewBytes(target.session, signal)
   }, [client])
-  const send: SendHtmlView = useCallback(async (target, bytes, route) => {
+  const send: SendHtmlView = useCallback(async (target, bytes, to) => {
     if (!client) throw new Error(L('接続していません'))
-    return await client.sendView(target.session, route, bytes)
+    return await client.sendView(target.session, to, bytes)
   }, [client])
   return <CardViewSurface view={view} read={read} readBytes={readBytes} send={send} hidden={hidden} />
 }

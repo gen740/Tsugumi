@@ -10,8 +10,7 @@ type DataCommand =
   | Omit<Extract<ViewCommand, { type: 'snapshot' }>, 'id'>
 
 type ViewControls = {
-  send(bytes: Uint8Array<ArrayBuffer>, route: Uint8Array<ArrayBuffer>): Promise<unknown>
-  acceptsRoute(route: Uint8Array<ArrayBuffer>): boolean
+  send(bytes: Uint8Array<ArrayBuffer>, to: string): Promise<unknown>
   fatal(error: string): void
   gpuError(error: string): void
   sendError(error: string): void
@@ -39,7 +38,7 @@ export class BrowserView implements LiveViewRenderer {
   private resizeAt = 0
   private resizeInFlight = false
   private refreshPeriod = 1000 / 60
-  private readonly routes = new Set<string>()
+  private readonly recipients = new Set<string>()
   private nextId = 0
   private inputPending = 0
   private started = false
@@ -81,7 +80,7 @@ export class BrowserView implements LiveViewRenderer {
   start(bytes: Uint8Array<ArrayBuffer>) {
     if (this.disposed) return
     const canvas = this.canvas.transferControlToOffscreen()
-    this.post({ type: 'start', bytes, canvas, size: this.size, routes: [...this.routes], refreshPeriod: this.refreshPeriod, visible: this.visible },
+    this.post({ type: 'start', bytes, canvas, size: this.size, recipients: [...this.recipients], refreshPeriod: this.refreshPeriod, visible: this.visible },
       [bytes.buffer, canvas])
     this.started = true
     this.measureRefreshPeriod()
@@ -142,9 +141,10 @@ export class BrowserView implements LiveViewRenderer {
     if (this.started) this.post({ type: 'visible', visible })
   }
 
-  registerRoute(route: string) {
-    this.routes.add(route)
-    if (this.started) this.post({ type: 'route', route })
+  setRecipient(card: string, registered: boolean) {
+    if (registered) this.recipients.add(card)
+    else this.recipients.delete(card)
+    if (this.started) this.post({ type: 'recipient', card, registered })
   }
 
   deliver(message: ViewMessage) {
@@ -270,10 +270,9 @@ export class BrowserView implements LiveViewRenderer {
     }
   }
 
-  private async send({ bytes, route, id }: Extract<ViewNotice, { type: 'send' }>) {
+  private async send({ bytes, to, id }: Extract<ViewNotice, { type: 'send' }>) {
     try {
-      if (!this.controls.acceptsRoute(route)) throw new Error('This route does not belong to the view')
-      await this.controls.send(bytes, route)
+      await this.controls.send(bytes, to)
       this.post({ type: 'sendResult', id })
     } catch (error) {
       this.post({ type: 'sendResult', id, error: errorText(error) })

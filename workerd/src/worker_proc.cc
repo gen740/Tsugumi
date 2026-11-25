@@ -15,6 +15,7 @@
 #include <set>
 #include <stdexcept>
 #include <system_error>
+#include <utility>
 
 #include "tsugumi/card_abi.h"
 #include "tsugumi/workerd/artifact_id.hh"
@@ -213,11 +214,11 @@ auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
   }
   if (restrict_files || sp.sandbox.ipc) {
     profile += "(deny network-outbound (remote unix-socket))\n";
-    // The worker's data and control sockets are inherited socketpairs. The
-    // resolver needs a host socket only when IPC isolation is disabled.
+    // The worker's data and control sockets are inherited socketpairs.
     if (sp.sandbox.ipc)
       profile += "(deny network-bind (local unix-socket))\n";
-    else if (sp.network)
+    // System DNS uses this socket even when IPC isolation is enabled.
+    if (sp.network)
       profile +=
           "(allow network-outbound (remote unix-socket "
           "(path-literal \"/private/var/run/mDNSResponder\")))\n";
@@ -885,11 +886,8 @@ auto WorkerProc::hand_over() -> std::array<int, 4> {
 }
 
 WorkerProc::~WorkerProc() {
-  if (view_receiver_) {
-    std::lock_guard lock(view_receiver_->mutex);
-    view_receiver_->worker = nullptr;
-  }
   if (borrowed_) {
+    if (view_receiver_) view_receiver_->close();
     stop_data_reader();
     stop_log_reader();
     for (auto* fd : {&data_fd_, &control_fd_, &out_fd_, &err_fd_})
@@ -1000,10 +998,7 @@ std::optional<uint64_t> WorkerProc::rss_bytes() const {
 }
 
 void WorkerProc::terminate(bool force) {
-  if (view_receiver_) {
-    std::lock_guard lock(view_receiver_->mutex);
-    view_receiver_->worker = nullptr;
-  }
+  if (view_receiver_) view_receiver_->close();
   stop_data_reader();
   if (borrowed_) {
     if (alive_) {
@@ -1108,6 +1103,17 @@ auto WorkerProc::ViewReceiver::send(const WorkerViewEvent& event,
   if (remote) return remote(event, std::move(complete));
   return worker ? worker->send_display(event, std::move(complete))
                 : ViewDelivery::closed;
+}
+
+auto WorkerProc::ViewReceiver::close() -> void {
+  std::function<void()> notify;
+  {
+    std::lock_guard lock(mutex);
+    worker = nullptr;
+    remote = nullptr;
+    notify = std::exchange(on_close, {});
+  }
+  if (notify) notify();
 }
 
 auto WorkerProc::ViewReceiver::reply(const WorkerViewReply& reply) -> bool {
@@ -1453,6 +1459,7 @@ auto WorkerProc::read_data() -> void {
     std::lock_guard lock(display_mutex_);
     data_stop_.request_stop();
   }
+  view_receiver_->close();
   display_ready_.notify_all();
   data_ready_.notify_one();
 }

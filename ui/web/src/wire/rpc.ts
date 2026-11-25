@@ -70,12 +70,6 @@ export interface LiveDisplayUpdate {
   bytes: Uint8Array<ArrayBuffer>
 }
 
-function viewRouteUuid(route: Uint8Array): string {
-  if (route.byteLength !== 16) throw new RangeError('View routes must contain 16 bytes')
-  const hex = Array.from(route, byte => byte.toString(16).padStart(2, '0')).join('')
-  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join('-')
-}
-
 export interface NotificationEvent {
   subscriptionId: string
   seq: bigint
@@ -327,11 +321,10 @@ export class RPCClient {
     }
   }
 
-  sendView(session: string, route: Uint8Array, bytes: Uint8Array) {
-    const address = viewRouteUuid(route)
-    const value = new R.ViewSendRequestT(session, address)
+  sendView(session: string, to: string, bytes: Uint8Array) {
+    const value = new R.ViewSendRequestT(session, to)
     value.pack = builder => R.ViewSendRequest.createViewSendRequest(
-      builder, builder.createString(session), builder.createString(address),
+      builder, builder.createString(session), builder.createString(to),
       R.ViewSendRequest.createBytesVector(builder, bytes),
     )
     return this.call<R.AckT>(RequestPayload.ViewSendRequest, value)

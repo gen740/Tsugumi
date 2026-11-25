@@ -1,9 +1,7 @@
 // The messages between the page Cards and the "screen" view (title/views).
-// Card -> view: Scene. View -> Card: Event, sent to Scene.reply.
+// Card -> view: Scene. View -> Card: Event, sent to the page Card for the active screen.
 // Coordinates are in a 1280x720 screen; the view scales it to the window.
 namespace glow.screen;
-
-struct Route { bytes:[ubyte:16]; }
 
 /// align: 0 left, 1 centre, 2 right. With counter, "{}" in text shows value,
 /// and the view counts the shown number towards it.
@@ -20,7 +18,6 @@ table Fx { kind:ubyte; x:float; y:float; }
 
 table Scene {
   screen:string;      // the ambient pad and backdrop: title, grow, skills, replant, ending
-  reply:Route;        // where the view sends events from now on
   text:[Label];
   buttons:[Button];
   tree:[Node];

@@ -12,7 +12,7 @@ from harness.fixtures import mock_plan
 from harness.host import Host, HostConnection, HostFailure
 from harness.native_card import native_card
 from harness.scenario import Project, run
-from harness.views import (EMPTY_OUTPUTS, NATIVE_VIEW_SETTINGS, ZERO_ROUTE, declaration,
+from harness.views import (EMPTY_OUTPUTS, NATIVE_VIEW_SETTINGS, declaration,
                            display, open_view)
 from tsugumi_client import Client, RpcFailure, make, new_id, text
 from Tsugumi.Host.EnvironmentAction import EnvironmentAction
@@ -150,7 +150,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
             call("CardViewReadRequest", session=new_id())
         call("ViewCreditRequest", subscriptionId=text(opened.subscriptionId),
              session=session, bytes=7, creditId=update.creditId)
-        call("ViewSendRequest", session=session, route=ZERO_ROUTE, bytes=marker)
+        call("ViewSendRequest", session=session, to="work", bytes=marker)
         call("ViewCloseRequest", session=session)
         # A later request is captured, so the recorder was on throughout.
         client.call("ProjectActivityRequest")
@@ -161,7 +161,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
         assert not {e.messageType for e in entries} & {
             b"ViewCloseRequest", b"ViewSendRequest", b"ViewCreditRequest",
             b"CardViewReadRequest", b"FileContent", b"ViewOpened",
-            b"ViewRouteRegistered", b"DisplayUpdated"}
+            b"ViewRecipientChanged", b"DisplayUpdated"}
         captured = "".join("".join(e.contentJson.decode().split()) for e in entries if e.contentJson)
         assert marker.decode() not in captured and ",".join(map(str, marker)) not in captured
 

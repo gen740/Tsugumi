@@ -18,7 +18,7 @@ import pytest
 from conftest import ROOT, Daemon, demo_environment, write_project
 from harness.observations import read_pages
 from harness.values import reference_json
-from harness.views import ZERO_ROUTE, return_credit
+from harness.views import return_credit
 from projects import start_run, wait_for_display, wait_invocation, wait_run
 from harness.document import set_param as set_typed_param
 from tsugumi_client import change, new_id, path, text
@@ -228,7 +228,7 @@ def send_stream_seed(client, subscription):
     ).value.display
     client.call("ViewCreditRequest", subscriptionId=subscription, session=session,
                 bytes=1, creditId=ready.creditId)
-    client.call("ViewSendRequest", session=session, route=ZERO_ROUTE, bytes=b"\x0a")
+    client.call("ViewSendRequest", session=session, to="settings", bytes=b"\x0a")
 
 
 def test_live_stream_complete_and_ordered(live):

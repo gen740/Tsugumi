@@ -16,7 +16,10 @@ const project = Object.assign(new Observable(), { liveViews: new LiveViews(), di
     }
     return viewHtml(name)
   },
-  sendView: async (session: string, route: Uint8Array, bytes: Uint8Array) => { replies.push([session, [...route], [...bytes]]) },
+  sendView: async (session: string, to: string, bytes: Uint8Array) => {
+    if (to === 'unregistered') throw new Error('No registered recipient')
+    replies.push([session, to, [...bytes]])
+  },
 }, closeLiveView(session: string) {
   if (this.liveViews.close(session)) {
     closed.push(session)
@@ -24,9 +27,9 @@ const project = Object.assign(new Observable(), { liveViews: new LiveViews(), di
   }
 } })
 const closed: string[] = []
-const replies: [string, number[], number[]][] = []
-const opener = Array(16).fill(0)
-const addressed = Array.from({ length: 16 }, (_, i) => 0xf0 + i)
+const replies: [string, string, number[]][] = []
+const broadcast = '*'
+const addressed = 'screens/a'
 let loadingSignal: AbortSignal | undefined
 let openCount = 0
 window.open = () => {
@@ -52,9 +55,10 @@ function viewHtml(session: string) {
     report('empty', document.getElementById('content').textContent)
     tsugumi.onmessage = bytes => {
       document.getElementById('content').textContent = Array.from(bytes).join(',')
-      tsugumi.send(bytes, Uint8Array.from(${JSON.stringify(addressed)}))
+      tsugumi.send(bytes, ${JSON.stringify(addressed)})
     }
-    tsugumi.send(Uint8Array.of(12, 0, 255))
+    tsugumi.send(Uint8Array.of(12, 0, 255), '*').then(() => report('send-ok'))
+    tsugumi.send(Uint8Array.of(9), 'unregistered').catch(error => report('send-rejected', error.message))
     if (session === 'first') {
       addEventListener('securitypolicyviolation', event => {
         if (event.blockedURI.includes('example.invalid')) report('blocked', event.effectiveDirective)
@@ -92,12 +96,14 @@ async function test() {
   first.deliver({ bytes: new Uint8Array(), complete: () => credits.push(2) })
   render()
   await until(() => replies.length === 4, 'panel reverse messages')
+  await until(() => reports.some(r => r.kind === 'send-ok') &&
+    reports.some(r => r.kind === 'send-rejected' && r.value === 'No registered recipient'), 'HTML send promises settle')
   equal(replies.filter(([session]) => session === 'first'), [
-    ['first', opener, [12, 0, 255]], ['first', addressed, [0, 255, 0, 128]], ['first', addressed, []],
+    ['first', broadcast, [12, 0, 255]], ['first', addressed, [0, 255, 0, 128]], ['first', addressed, []],
   ], 'First session gets exact bytes in order')
-  equal(replies.filter(([session]) => session === 'second'), [['second', opener, [12, 0, 255]]], 'Equal view names remain independent')
+  equal(replies.filter(([session]) => session === 'second'), [['second', broadcast, [12, 0, 255]]], 'Equal view names remain independent')
   equal(credits, [1, 2], 'The panel releases FIFO credits')
-  assert(document.querySelector('[role=alert]')?.textContent?.includes('unsupported'), 'Unsupported formats show a diagnostic')
+  assert(document.querySelector('[data-view-window="bad"] [role=alert]')?.textContent?.includes('unsupported'), 'Unsupported formats show a diagnostic')
   await until(() => ['connect-src', 'img-src', 'frame-src'].every(d => reports.some(r => r.kind === 'blocked' && r.value === d)), 'sandbox network restrictions')
   assert(reports.filter(r => r.kind === 'empty').every(r => r.origin === 'null' && r.value === 'empty'), 'Opaque frames own their empty state')
   assert(!reports.some(r => r.kind === 'network-open'), 'The frame could not make a network request')
@@ -137,8 +143,8 @@ async function test() {
   equal([body.width, Math.round(body.height)], [Math.min(640, innerWidth - 24), Math.min(480, innerHeight - 24 - 30)],
     'The window content has the requested size')
   await until(() => replies.some(([session, , bytes]) => session === 'win' && bytes[0] === 91), 'window HTML messages')
-  equal(replies.filter(([session]) => session === 'win'), [['win', opener, [12, 0, 255]], ['win', addressed, [91]]],
-    'The window uses the page connection and sends explicit routes')
+  equal(replies.filter(([session]) => session === 'win'), [['win', broadcast, [12, 0, 255]], ['win', addressed, [91]]],
+    'The window uses the page connection and sends explicit Card paths')
   equal(credits, [1, 2, 3], 'The window returns outstanding credit')
 
   // Focus follows clicks among several windows.

@@ -25,7 +25,7 @@
   };
 
   inputs.tsugumi-kit = {
-    url = "github:gen740/tsugumi-kit/feat/native-pack-abi";
+    url = "github:gen740/tsugumi-kit/feat/native-pack-view-path";
     inputs.nixpkgs.follows = "nixpkgs";
     inputs.flake-parts.follows = "flake-parts";
   };

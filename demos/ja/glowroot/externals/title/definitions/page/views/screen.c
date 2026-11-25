@@ -710,7 +710,17 @@ static void to_screen(float x, float y, float* sx, float* sy) {
 static void send_event(glow_str id, float x, float y) {
   uint8_t event[160];
   const uint32_t n = glow_event_write(event, sizeof event, id, x, y);
-  if (n) tsugumi_view_send(scene.reply, event, n);
+  static const struct { const char* screen; const char* card; } targets[] = {
+    {"title", "title/page"}, {"grow", "grow/page"}, {"skills", "skills/page"},
+    {"replant", "replant/page"}, {"ending", "ending/page"},
+  };
+  if (!n) return;
+  for (uint32_t i = 0; i < sizeof targets / sizeof targets[0]; ++i) {
+    if (glow_str_eq(scene.screen, targets[i].screen)) {
+      tsugumi_view_send(targets[i].card, event, n);
+      return;
+    }
+  }
 }
 
 static void hover(float x, float y) {

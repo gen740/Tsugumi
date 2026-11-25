@@ -245,21 +245,25 @@ def test_a_card_with_network_reaches_only_the_resolver_among_unix_sockets(core_f
         out = stdout_of_card(
             core_factory, tmp_path,
             connects(f'    reach("resolver", "/var/run/mDNSResponder")\n    reach("other", {other!r})'),
-            grants={"network": True}, sandbox={"ipc": False})
+            grants={"network": True}, sandbox={"ipc": True})
         assert "resolver: connected" in out
         assert "other: refused" in out
         assert not accepted
 
 
-def test_ipc_isolation_blocks_the_resolver_socket_even_with_network_granted(core_factory, tmp_path):
-    out = stdout_of_network_card(core_factory, tmp_path,
-                                 connects('    reach("resolver", "/var/run/mDNSResponder")'))
+def test_ipc_isolation_blocks_the_resolver_socket_without_network_granted(core_factory, tmp_path):
+    out = stdout_of_card(
+        core_factory, tmp_path, connects('    reach("resolver", "/var/run/mDNSResponder")'),
+        grants={"network": False}, sandbox={"ipc": True})
     assert "resolver: refused" in out
 
 
-def test_a_card_with_network_resolves_a_name(core_factory, tmp_path):
-    """A network-enabled card resolves the host's local name through mDNSResponder."""
+def test_ipc_isolated_card_with_network_resolves_a_name(core_factory, tmp_path):
+    """Resolve a local mDNS name without relying on external DNS."""
     host = subprocess.run(["/usr/sbin/scutil", "--get", "LocalHostName"], capture_output=True, text=True).stdout.strip()
+    if not host:
+        pytest.skip("this Mac has no LocalHostName")
+    # localhost can be answered from /etc/hosts without opening the resolver socket.
     name = f"{host}.local"
     try:
         socket.getaddrinfo(name, None)
@@ -275,7 +279,7 @@ def test_a_card_with_network_resolves_a_name(core_factory, tmp_path):
         print("name: resolved", flush=True)
     except OSError as e:
         print("name: unresolved", e, flush=True)""",
-        grants={"network": True}, sandbox={"ipc": False})
+        grants={"network": True}, sandbox={"ipc": True})
     assert "name: resolved" in out
 
 

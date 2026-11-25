@@ -9,7 +9,7 @@ from harness.daemon import write_project
 from harness.fixtures import mock_plan
 from harness.native_card import native_card
 from harness.scenario import Project, run
-from harness.views import (EMPTY_OUTPUTS, MESSAGE_MAX, NATIVE_VIEW_SETTINGS, ZERO_ROUTE,
+from harness.views import (EMPTY_OUTPUTS, MESSAGE_MAX, NATIVE_VIEW_SETTINGS,
                            declaration, display, open_view, return_credit)
 from projects import wait_run, wait_run_notification
 from Tsugumi.Data.RunState import RunState
@@ -109,17 +109,17 @@ def setup(core_factory, project, tmp_path, source, *, reuse=False):
 class ByteViewSend(ViewSendRequest.ViewSendRequestT):
     def Pack(self, builder):
         session = builder.CreateString(self.session)
-        route = builder.CreateString(self.route)
+        to = builder.CreateString(self.to)
         payload = builder.CreateByteVector(self.bytes)
         ViewSendRequest.Start(builder)
         ViewSendRequest.AddSession(builder, session)
-        ViewSendRequest.AddRoute(builder, route)
+        ViewSendRequest.AddTo(builder, to)
         ViewSendRequest.AddBytes(builder, payload)
         return ViewSendRequest.End(builder)
 
 
-def send(client, session, route=ZERO_ROUTE, payload=b""):
-    client.wait_reply(client.send("ViewSendRequest", ByteViewSend(session, route, payload)))
+def send(client, session, to="work", payload=b""):
+    client.wait_reply(client.send("ViewSendRequest", ByteViewSend(session, to, payload)))
 
 
 def route_from(data):
@@ -190,18 +190,18 @@ def test_routes_are_private_to_the_window_and_close_once_after_return(project, t
     first = display(ui, left)
     opener = route_from(first.bytes)
     other_route = route_from(display(ui, right).bytes)
-    assert len({left, right, opener, other_route, ZERO_ROUTE}) == 5
+    assert len({left, right, opener, other_route}) == 4
     assert wait_run(ui, run_id).state == RunState.succeeded
     assert wait_run_notification(other, run_id, timeout=15).state == RunState.succeeded
     assert not any(n.valueType in {NotificationPayload.ViewOpened, NotificationPayload.DisplayUpdated}
                    for n in other.notifications.copy())
 
-    denied(other, "ViewSendRequest", session=left, route=ZERO_ROUTE, bytes=b"x")
+    denied(other, "ViewSendRequest", session=left, to="work", bytes=b"x")
     denied(other, "ViewCloseRequest", session=left)
     denied(other, "ViewCreditRequest", subscriptionId=subscription, session=left,
            bytes=16, creditId=first.creditId)
     with pytest.raises(RpcFailure) as exc:
-        send(ui, left, other_route, b"x")
+        send(ui, left, "unknown/card", b"x")
     assert exc.value.kind == "invalid_request"
     with pytest.raises(RpcFailure) as exc:
         send(ui, left, payload=b"\0" * (MESSAGE_MAX + 1))
@@ -209,15 +209,13 @@ def test_routes_are_private_to_the_window_and_close_once_after_return(project, t
 
     send(ui, left, payload=b"\1")
     extra = route_from(display(ui, right).bytes)
-    send(ui, left, opener, b"\2")
+    send(ui, left, payload=b"\2")
     dead = route_from(display(ui, right).bytes)
     assert len({opener, other_route, extra, dead}) == 4
-    with pytest.raises(RpcFailure) as exc:
-        send(ui, right, dead, b"x")
-    assert exc.value.kind == "invalid_request"
-    send(ui, left, dead, b"x")  # Dead, but associated with this window.
-    send(ui, left, extra)
-    assert bytes(display(ui, right).bytes) == uuid.UUID(extra).bytes + b"\0"
+    send(ui, left)
+    reply = bytes(display(ui, right).bytes)
+    assert route_from(reply[:16]) in {opener, extra}
+    assert reply[16:] == b"\0"
 
     send(ui, right, payload=b"\3")  # The opener closes from its idle thread.
     ui.wait_notification(lambda note: note.valueType == NotificationPayload.ViewClosed
@@ -336,7 +334,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
         return write_result(call, result, result_bytes, sizeof(result_bytes));
     if (registered)
         return 2;
-    if (call->effects->send(call->host, &session, route.bytes, sizeof(route.bytes)))
+    if (call->effects->send(call->host, &session, (const uint8_t *)"registered", 10))
         return 3;
     tsugumi_view_event event;
     if (call->effects->recv(call->host, &event, 10000) || event.kind != 0 ||
@@ -367,7 +365,13 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     first = run(ui)
     session = text(open_view(ui).session)
     assert wait_run(ui, first).state == RunState.succeeded
-    send(ui, session, payload=b"\xff")  # The default route died with the opener.
+    ui.wait_notification(
+        lambda note: note.valueType == NotificationPayload.ViewRecipientChanged
+        and text(note.value.session) == session and text(note.value.path) == "work"
+        and not note.value.registered, timeout=15)
+    with pytest.raises(RpcFailure) as exc:
+        send(ui, session, payload=b"\xff")
+    assert exc.value.kind == "invalid_request"
 
     foreign_project = tmp_path / "foreign"
     write_project(foreign_project)
@@ -378,10 +382,110 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     assert wait_run(foreign_ui, run(foreign_ui)).state == RunState.succeeded
 
     second = run(ui, "next")
-    route = route_from(display(ui, session).bytes)
-    send(ui, session, route, b"\xfe")
+    assert bytes(display(ui, session).bytes) == b"registered"
+    send(ui, session, "next", b"\xfe")
     ui.wait_notification(lambda note: note.valueType == NotificationPayload.ViewClosed
                          and text(note.value.session) == session, timeout=15)
     assert wait_run(ui, second).state == RunState.succeeded
     # A subsequent Card can treat a closed session as a clean handoff end.
     assert wait_run(ui, run(ui, "next")).state == RunState.succeeded
+
+def test_card_path_and_broadcast_reach_each_registered_process(project, tmp_path, core_factory):
+    store = tmp_path / "store"
+    store.mkdir()
+    blob = store / "page.html"
+    blob.write_text("<p>fanout</p>")
+    capability = "#define SESSION_FILE " + json.dumps(str(tmp_path / "session")) + "\n"
+    source = capability + r"""
+#include <pthread.h>
+#include <stdio.h>
+
+#ifdef OPENER
+static const tsugumi_effects *opener_effects;
+static void *opener_host;
+static tsugumi_view_session opener_session;
+
+static void *receive_broadcast(void *unused) {
+    (void)unused;
+    tsugumi_view_event event;
+    if (opener_effects->recv(opener_host, &event, 15000) == 0 && event.kind == 0 &&
+        event.data.size == 1 && event.data.data[0] == '*')
+        opener_effects->send(opener_host, &opener_session, (const uint8_t *)"o*", 2);
+    return NULL;
+}
+#endif
+
+int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
+    const tsugumi_effects *effects = call->effects;
+    void *host = call->host;
+    tsugumi_view_session session;
+    tsugumi_route route;
+#ifdef OPENER
+    if (effects->view_open(host, "page", 0, 0, 0, 0, &route, &session))
+        return 1;
+    FILE *file = fopen(SESSION_FILE, "wb");
+    if (!file || fwrite(&session, sizeof(session), 1, file) != 1 || fclose(file))
+        return 2;
+#else
+    FILE *file = fopen(SESSION_FILE, "rb");
+    if (!file || fread(&session, sizeof(session), 1, file) != 1 || fclose(file))
+        return 2;
+    if (effects->route_register(host, &session, &route))
+        return 3;
+#endif
+    const uint8_t marker = MARKER;
+    if (effects->send(host, &session, &marker, 1))
+        return 4;
+#ifdef OPENER
+    opener_effects = effects;
+    opener_host = host;
+    opener_session = session;
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, receive_broadcast, NULL)) return 5;
+    pthread_detach(thread);
+#else
+    const char expected[] = EXPECTED;
+    for (size_t i = 0; i < sizeof(expected) - 1; ++i) {
+        tsugumi_view_event event;
+        if (effects->recv(host, &event, 15000) || event.kind != 0 ||
+            event.data.size != 1 || event.data.data[0] != expected[i])
+            return 5;
+        const uint8_t reply[] = {marker, event.data.data[0]};
+        if (effects->send(host, &session, reply, sizeof(reply)))
+            return 6;
+    }
+#endif
+    return write_result(result, result_bytes, sizeof(result_bytes));
+}
+"""
+    def package(marker, expected, *, opener=False):
+        defines = f"#define MARKER '{marker}'\n#define EXPECTED \"{expected}\"\n"
+        if opener:
+            defines += "#define OPENER\n"
+        return native_card(tmp_path / marker, defines + source)
+
+    daemon = core_factory(mocked_builds=True, env={"TSUGUMI_MOCK_STORE": str(store)})
+    ui = daemon.connect(client=Client.Web)
+    graph = Project(project)
+    graph.card("owner", {**NATIVE_VIEW_SETTINGS, "reuseWorker": True}, outputs=EMPTY_OUTPUTS,
+               plan=mock_plan([package("o", "*", opener=True)], views=[declaration(blob)]))
+    graph.card("work", NATIVE_VIEW_SETTINGS, outputs=EMPTY_OUTPUTS,
+               plan=mock_plan([package("a", "p*"), package("b", "p*")], execution_list=True))
+    graph.card("idle", {"type": "trigger"}).save(ui)
+    ui.open()
+
+    owner_run = run(ui, "owner")
+    session = text(open_view(ui).session)
+    assert bytes(display(ui, session).bytes) == b"o"
+    assert wait_run(ui, owner_run).state == RunState.succeeded
+    with pytest.raises(RpcFailure) as exc:
+        send(ui, session, "idle", b"!")
+    assert exc.value.kind == "invalid_request"
+
+    batch = run(ui, maxConcurrency=2, propagate=True)
+    assert {bytes(display(ui, session).bytes) for _ in range(2)} == {b"a", b"b"}
+    send(ui, session, "work", b"p")
+    assert {bytes(display(ui, session).bytes) for _ in range(2)} == {b"ap", b"bp"}
+    send(ui, session, "*", b"*")
+    assert {bytes(display(ui, session).bytes) for _ in range(3)} == {b"o*", b"a*", b"b*"}
+    assert wait_run(ui, batch).state == RunState.succeeded

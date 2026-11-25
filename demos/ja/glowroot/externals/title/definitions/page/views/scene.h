@@ -40,7 +40,6 @@ enum { GLOW_MAX_LABELS = 64, GLOW_MAX_BUTTONS = 32, GLOW_MAX_NODES = 32, GLOW_MA
 
 typedef struct {
   glow_str screen;
-  uint8_t reply[16];
   uint32_t label_count, button_count, node_count, fx_count;
   glow_label labels[GLOW_MAX_LABELS];
   glow_button buttons[GLOW_MAX_BUTTONS];

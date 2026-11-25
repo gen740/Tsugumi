@@ -73,9 +73,7 @@ int glow_scene_read(const uint8_t* data, uint32_t size, glow_scene* s) {
   const uint32_t t = u32(b, 0);
   if (!in(b, t, 4)) return -1;
   s->screen = str(b, t, 0);
-  const uint32_t reply = field(b, t, 1);
-  for (uint32_t i = 0; i < 16; ++i) s->reply[i] = reply && in(b, reply, 16) ? data[reply + i] : 0;
-  uint32_t first = 0, n = vec(b, t, 2, &first);
+  uint32_t first = 0, n = vec(b, t, 1, &first);
   s->label_count = 0;
   for (uint32_t i = 0; i < n && s->label_count < GLOW_MAX_LABELS; ++i) {
     const uint32_t e = ref(b, first + 4 * i);
@@ -90,7 +88,7 @@ int glow_scene_read(const uint8_t* data, uint32_t size, glow_scene* s) {
     l->value = f64(b, e, 6);
     l->counter = (uint8_t)scalar(b, e, 7, 1, 0);
   }
-  n = vec(b, t, 3, &first);
+  n = vec(b, t, 2, &first);
   s->button_count = 0;
   for (uint32_t i = 0; i < n && s->button_count < GLOW_MAX_BUTTONS; ++i) {
     const uint32_t e = ref(b, first + 4 * i);
@@ -106,7 +104,7 @@ int glow_scene_read(const uint8_t* data, uint32_t size, glow_scene* s) {
     x->enabled = (uint8_t)scalar(b, e, 7, 1, 1);
     x->style = (uint8_t)scalar(b, e, 8, 1, 0);
   }
-  n = vec(b, t, 4, &first);
+  n = vec(b, t, 3, &first);
   s->node_count = 0;
   for (uint32_t i = 0; i < n && s->node_count < GLOW_MAX_NODES; ++i) {
     const uint32_t e = ref(b, first + 4 * i);
@@ -121,7 +119,7 @@ int glow_scene_read(const uint8_t* data, uint32_t size, glow_scene* s) {
     x->parent = (int16_t)scalar(b, e, 6, 2, 0xffffu);
     x->color = scalar(b, e, 7, 4, 0xffffffffu);
   }
-  n = vec(b, t, 5, &first);
+  n = vec(b, t, 4, &first);
   s->fx_count = 0;
   for (uint32_t i = 0; i < n && s->fx_count < GLOW_MAX_FX; ++i) {
     const uint32_t e = ref(b, first + 4 * i);
@@ -131,8 +129,8 @@ int glow_scene_read(const uint8_t* data, uint32_t size, glow_scene* s) {
     x->x = f32(b, e, 1, 0);
     x->y = f32(b, e, 2, 0);
   }
-  s->plant = f32(b, t, 6, 0);
-  s->bloom = f32(b, t, 7, 0);
+  s->plant = f32(b, t, 5, 0);
+  s->bloom = f32(b, t, 6, 0);
   return 0;
 }
 

@@ -17,7 +17,7 @@ enum DawnViewError: LocalizedError {
   }
 }
 
-/// The queue, route set and Stop token are shared. The host, GPU and audio
+/// The queue, recipient set and Stop token are shared. The host, GPU and audio
 /// producer are owned exclusively by the one thread running the queue.
 final class DawnViewWorker: @unchecked Sendable {
   private struct Work {
@@ -28,22 +28,22 @@ final class DawnViewWorker: @unchecked Sendable {
   private let condition = NSCondition()
   private var pending: [Work] = []
   private var closed = false
-  private var routes: Set<UUID>
+  private var recipients: Set<String>
   private var reverseBytes = 0
   private var reverseCount = 0
   private let stop: OpaquePointer
   private let onWaiting: @MainActor (Bool) -> Void
-  private let onSend: @MainActor (UUID, Data, @escaping () -> Void) -> Void
+  private let onSend: @MainActor (String, Data, @escaping () -> Void) -> Void
   private let onAudioFailure: @MainActor (String?) -> Void
   private(set) var native: OpaquePointer?
   var audio: DawnAudioRing?
 
-  init?(routes: Set<UUID>, onWaiting: @escaping @MainActor (Bool) -> Void,
-        onSend: @escaping @MainActor (UUID, Data, @escaping () -> Void) -> Void,
+  init?(recipients: Set<String>, onWaiting: @escaping @MainActor (Bool) -> Void,
+        onSend: @escaping @MainActor (String, Data, @escaping () -> Void) -> Void,
         onAudioFailure: @escaping @MainActor (String?) -> Void) {
     guard let stop = tsugumi_view_stop_create() else { return nil }
     self.stop = stop
-    self.routes = routes
+    self.recipients = recipients
     self.onWaiting = onWaiting
     self.onSend = onSend
     self.onAudioFailure = onAudioFailure
@@ -63,9 +63,10 @@ final class DawnViewWorker: @unchecked Sendable {
     condition.unlock()
   }
 
-  func registerRoute(_ route: UUID) {
+  func setRecipient(_ card: String, registered: Bool) {
     condition.lock()
-    routes.insert(route)
+    if registered { recipients.insert(card) }
+    else { recipients.remove(card) }
     condition.unlock()
   }
 
@@ -106,10 +107,11 @@ final class DawnViewWorker: @unchecked Sendable {
     }
   }
 
-  private static let send: tsugumi_view_host_send_fn = { context, route, bytes, size in
-    guard let context, let route, size == 0 || bytes != nil else { return -1 }
+  private static let send: tsugumi_view_host_send_fn = { context, address, bytes, size in
+    guard let context, let address, let to = String(validatingCString: address),
+          size == 0 || bytes != nil else { return -1 }
     return Unmanaged<DawnViewWorker>.fromOpaque(context).takeUnretainedValue()
-      .send(viewRoute(route), bytes: bytes, size: Int(size))
+      .send(to, bytes: bytes, size: Int(size))
   }
 
   private static let waiting: tsugumi_view_host_waiting_fn = { context, waiting in
@@ -152,9 +154,9 @@ final class DawnViewWorker: @unchecked Sendable {
     return (image.png, result == -1 ? diagnostic : nil)
   }
 
-  private func send(_ route: UUID, bytes: UnsafePointer<UInt8>?, size: Int) -> Int32 {
+  private func send(_ to: String, bytes: UnsafePointer<UInt8>?, size: Int) -> Int32 {
     condition.lock()
-    guard !closed, route == openerViewRoute || routes.contains(route),
+    guard !closed, to == "*" ? !recipients.isEmpty : recipients.contains(to),
           size <= 1 << 24, reverseBytes <= 1 << 24, reverseCount < 4096 else {
       condition.unlock()
       return -1
@@ -164,7 +166,7 @@ final class DawnViewWorker: @unchecked Sendable {
     condition.unlock()
     let data = bytes.map { Data(bytes: $0, count: size) } ?? Data()
     DispatchQueue.main.async {
-      self.onSend(route, data) {
+      self.onSend(to, data) {
         self.condition.lock()
         self.reverseBytes -= max(1, size)
         self.reverseCount -= 1

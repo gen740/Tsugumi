@@ -111,11 +111,11 @@ The shared VM hides the project's control folder and state behind mounts even wh
 Native macOS applies the Card's PID, IPC and identity settings through Seatbelt.
 
 - PID isolation restricts process inspection and signals to the worker and its children. It denies global process enumeration and process-listing sysctls.
-- IPC isolation denies POSIX shared memory and named semaphores, System V IPC and connections to Unix sockets. The Card already has its inherited worker channels. The only allowed Mach lookup is `com.apple.trustd.agent` for certificate validation when the network is granted. IPC isolation blocks mDNSResponder's Unix socket, so the system DNS resolver requires IPC isolation to be off.
+- IPC isolation denies POSIX shared memory and named semaphores, System V IPC and Unix socket binds. The Card already has its inherited worker channels. With the network granted, the only allowed Mach lookup is `com.apple.trustd.agent` for certificate validation, and the only allowed outbound Unix socket connection is to `/private/var/run/mDNSResponder` for system DNS resolution.
 - Identity isolation keeps the launch uid and uses the worker's private environment and home, the file allowlist, and restrictions on process inspection, Mach services and host sockets. Ungranted home and application files and services such as `com.apple.SecurityServer` and `com.apple.securityd.xpc` are inaccessible. The file rules also apply with `sandbox.filesystem` off.
 - Filesystem isolation is partial. Host file metadata is visible and the entire Nix store and selected system paths are readable. Scratch keeps its original path. Named host path grants on macOS run in the shared Linux VM. Execution is limited to store paths, the worker, scratch and the explicit grants.
 
-The network guarantee is partial. With filesystem or identity isolation on, network access to the local host stays blocked even when granted. The DNS resolver socket is the only host Unix socket exception and requires IPC isolation to be off.
+The network guarantee is partial. With filesystem or identity isolation on, network access to the local host stays blocked even when granted, with the DNS resolver socket as the sole host Unix socket exception.
 
 The workspace and `HOME` are private to the process and survive calls of a resident worker. The worker clears temporary files between calls. Where remapping is available, `/tmp` is backed by the worker's disk scratch. With filesystem isolation enabled, the sandbox hides the project artifact store. The worker exposes a read-only directory for each sealed artifact a Card opens by UUID. Sharing an artifact UUID grants access within the project, including via run history. [Artifact access](SandboxContract.md#artifact-access)
 
@@ -123,7 +123,7 @@ The worker builds the process environment at launch and fixes it for the life of
 
 ### Showing Card views
 
-A Card declares its views in `default.nix`. Each is one immutable file in the Nix store. When a Card opens a declared view, the project core pins the file and binds a random session UUID to the presenting subscription. Other Card processes can send opaque bytes to the window if they know its session. The presenting host sends to one route of that window. The core checks the route's membership and drops sends to dead routes. View traffic is transient.
+A Card declares its views in `default.nix`. Each is one immutable file in the Nix store. When a Card opens a declared view, the project core pins the file and binds a random session UUID to the presenting subscription. Other Card processes can send opaque bytes to the window if they know its session. The presenting host sends to a Card path or broadcasts to the window. The core delivers only to live Card processes registered on that session and returns an error when the address has no live recipient. View traffic is transient.
 
 The host loads an `html` view in an isolated frame and carries its data over a transferred `MessagePort`. A `dawn` view is a Wasm module that imports the listed WebGPU and message functions. The Mac app runs it in its app process on wasmtime with native Dawn. The Web UI runs it in the page with WebGPU. [Views](CoreAndSDK.md#views)
 
