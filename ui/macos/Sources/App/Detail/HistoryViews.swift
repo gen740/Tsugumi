@@ -54,9 +54,9 @@ struct CardExecutionView: View {
   @State private var batchRevision = 0
   @State private var invocation: UInt64?
   @State private var record: Tsugumi_RPC_RecordResultT?
+  @State private var recordError: String?
   @State private var error: String?
   @State private var loaded = false
-  @State private var invocationsRunId: String?
   @State private var comparing = false
 
   enum Filter: String, CaseIterable, Identifiable {
@@ -106,7 +106,7 @@ struct CardExecutionView: View {
             .help(runId == active ? "進行中の実行を表示しています" : "過去の実行を表示しています。別の実行が進行中です。")
           Spacer()
           if runId != active, runs.contains(where: { $0.status.runId == active }) {
-            Button("進行中の実行を表示") { filter = .all; runId = active }.fixedSize()
+            Button("進行中の実行を表示") { filter = .all; selectRun(active) }.fixedSize()
           }
         }
         .font(.callout).lineLimit(1).padding(8).fixedSize(horizontal: false, vertical: true)
@@ -122,10 +122,14 @@ struct CardExecutionView: View {
               Button("実行を比較") { comparing = true }.fixedSize()
             }.padding(6).fixedSize(horizontal: false, vertical: true)
           }
-          List(filtered, id: \.status.runId, selection: $runId) { r in
-            ExecutionHistoryRunRow(run: r, target: session.displayPath(r.target.path))
-            // The selection is optional: the tag must be too, or a click selects nothing.
-            .tag(Optional(r.status.runId))
+          List(selection: Binding(get: { runId }, set: selectRun)) {
+            ForEach(filtered, id: \.status.runId) { r in
+              if let id = r.status.runId {
+                ExecutionHistoryRunRow(run: r, target: session.displayPath(r.target.path))
+                  .contentShape(Rectangle())
+                  .tag(id)
+              }
+            }
           }
           .overlay {
             if loaded && filtered.isEmpty {
@@ -171,6 +175,11 @@ struct CardExecutionView: View {
                 .font(.callout).foregroundStyle(.secondary).lineLimit(1)
                 .help("呼び出しが記録されると表示します。")
                 .padding(10).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else if let recordError {
+              ContentUnavailableView("履歴を読み込めませんでした", systemImage: "exclamationmark.triangle",
+                                     description: Text(recordError))
+            } else if record == nil {
+              ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if record?.exists == false {
               ContentUnavailableView("この実行では呼び出されていません", systemImage: "circle.dotted",
                                      description: Text("実行の対象に含まれなかったか、入力がそろう前に実行が終わりました。"))
@@ -323,8 +332,8 @@ struct CardExecutionView: View {
       let page = try await rpc.history(card: path(cardKey), limit: 100).runs.compactMap { $0 }
       guard !Task.isCancelled else { return }
       runs = page
-      runId = ExecutionHistorySelection.run(runId, available: runs.compactMap { $0.status.runId },
-                                             active: session.runActive ? session.currentRunId : nil)
+      selectRun(ExecutionHistorySelection.run(runId, available: runs.compactMap { $0.status.runId },
+                                             active: session.runActive ? session.currentRunId : nil))
       error = nil
     } catch {
       guard !Task.isCancelled else { return }
@@ -333,17 +342,20 @@ struct CardExecutionView: View {
     loaded = true
   }
 
+  private func selectRun(_ id: String?) {
+    guard runId != id else { return }
+    runId = id
+    invocations = []
+    batches = []
+    cursors = []
+    nextCursor = nil
+    invocation = nil
+    record = nil
+    recordError = nil
+  }
+
   private func loadInvocations() async {
-    guard let rpc = session.rpc, let selectedRun = runId else { invocations = []; return }
-    if invocationsRunId != selectedRun {
-      invocationsRunId = selectedRun
-      invocations = []
-      batches = []
-      cursors = []
-      nextCursor = nil
-      invocation = nil
-      record = nil
-    }
+    guard let rpc = session.rpc, let selectedRun = runId else { return }
     let cursor = cursors.last
     let result = try? await rpc.invocations(runId: selectedRun, card: path(cardKey), cursor: cursor)
     guard !Task.isCancelled, runId == selectedRun, cursor == cursors.last else { return }
@@ -358,9 +370,17 @@ struct CardExecutionView: View {
   private func loadRecord() async {
     guard let rpc = session.rpc, let selectedRun = runId else { record = nil; return }
     let selectedInvocation = invocation
-    let next = try? await rpc.record(runId: selectedRun, card: path(cardKey), invocation: selectedInvocation, followLatest: selectedInvocation == nil)
-    guard !Task.isCancelled, runId == selectedRun, invocation == selectedInvocation else { return }
-    record = next
+    do {
+      let next = try await rpc.record(runId: selectedRun, card: path(cardKey), invocation: selectedInvocation,
+                                      followLatest: selectedInvocation == nil)
+      guard !Task.isCancelled, runId == selectedRun, invocation == selectedInvocation else { return }
+      record = next
+      recordError = nil
+    } catch {
+      guard !Task.isCancelled, runId == selectedRun, invocation == selectedInvocation else { return }
+      record = nil
+      recordError = String(describing: error)
+    }
   }
 }
 
@@ -372,7 +392,10 @@ struct ExecutionHistoryRunRow: View {
     HStack {
       Image(systemName: run.status.state.symbol).foregroundStyle(run.status.state.color)
       VStack(alignment: .leading) {
-        Text(formatMillis(run.status.acceptedAt)).font(.callout).lineLimit(1)
+        if let id = run.status.runId {
+          Text("実行 ID \(id)").font(.callout.monospacedDigit().weight(.medium)).lineLimit(1)
+        }
+        Text(formatMillis(run.status.acceptedAt)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
         if let mark = runMark(run.status) { Text(mark).font(.caption).lineLimit(1) }
         Text("\(run.status.state.label) · 対象 \(target)")
           .font(.caption).foregroundStyle(.secondary).lineLimit(1).help(target)
@@ -524,162 +547,163 @@ private struct DeleteRunCategory: View {
 struct CardArtifactsView: View {
   let session: ProjectSession
   let cardKey: CardKey
-  @State private var runs: [Tsugumi_RPC_RunSummaryT] = []
-  @State private var runId: String?
-  @State private var artifacts: [Tsugumi_RPC_ArtifactInfoT] = []
-  @State private var artifactId: String?
-  @State private var member: String?
-  @State private var search = ""
-  @State private var preview: Preview?
-  @State private var error: String?
-  @State private var loaded = false
 
-  enum Preview {
-    case html(String)
-    case text(String)
-    case image(NSImage)
-    case binary(Int)
-  }
+  @State private var runs: [String] = []
+  @State private var currentRun: String?
+  @State private var cursor: String?
+  @State private var loaded = false
+  @State private var loadingMore = false
+  @State private var error: String?
 
   var body: some View {
     Group {
       if !loaded {
-        ProgressView("成果物を読み込んでいます…").frame(maxWidth: .infinity, maxHeight: .infinity)
-      } else if runs.isEmpty, let error {
-        ContentUnavailableView {
-          Label("成果物を読み込めませんでした", systemImage: "exclamationmark.triangle")
-        } description: { Text(error) } actions: { Button("再試行") { Task { await loadRuns() } } }
+        ProgressView("Artifacts を読み込んでいます…")
       } else if runs.isEmpty {
-        ContentUnavailableView("成果物のある実行はありません", systemImage: "shippingbox")
+        if let error {
+          ContentUnavailableView {
+            Label("Artifacts を読み込めませんでした", systemImage: "exclamationmark.triangle")
+          } description: { Text(error) } actions: { Button("再試行") { Task { await loadRuns() } } }
+        } else {
+          ContentUnavailableView("この Card の Artifacts はありません", systemImage: "shippingbox")
+        }
       } else {
-        content
+        VStack(spacing: 0) {
+          HStack {
+            Picker("実行", selection: $currentRun) {
+              ForEach(runs, id: \.self) { id in Text("実行 ID \(id)").tag(id) }
+            }
+            .fixedSize()
+            if let cursor {
+              Button("さらに表示") { Task { await loadRuns(after: cursor) } }.disabled(loadingMore)
+            }
+            Spacer()
+          }
+          .padding(8)
+          Divider()
+          if let currentRun {
+            ArtifactFilesView(session: session, cardKey: cardKey, runId: currentRun).id(currentRun)
+          }
+          if let error { Text(error).font(.caption).foregroundStyle(.red).padding(6) }
+        }
       }
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
     .navigationTitle(session.displayName(cardKey))
     .task(id: ExecutionHistoryRefresh(session: session, card: cardKey)) { await loadRuns() }
   }
 
-  private var content: some View {
-    VStack(spacing: 0) {
-      HStack {
-        Picker("実行", selection: $runId) {
-          if runs.isEmpty { Text("成果物のある実行はありません").tag(String?.none) }
-          ForEach(runs, id: \.status.runId) { r in
-            Text("\(formatMillis(r.status.acceptedAt)) · \(r.status.state.label)" + (runMark(r.status).map { " · " + $0 } ?? "")).tag(Optional(r.status.runId))
-          }
-        }
-        .frame(maxWidth: 360)
-        if let mark = runMark(runs.first { $0.status.runId == runId }?.status) { Text(mark).font(.caption) }
-        Spacer()
-        if let a = selectedArtifact, let m = member {
-          Button("書き出す…") { Task { await export(a, m) } }
-        }
-      }
-      .padding(6)
-      Divider()
-      HSplitView {
-        List(artifacts, id: \.artifactId, selection: $artifactId) { a in
-          VStack(alignment: .leading) {
-            Text(ArtifactText.name(a)).font(.callout.bold()).lineLimit(1).truncationMode(.middle)
-            Text(ArtifactText.caption(a)).font(.caption).foregroundStyle(.secondary)
-          }
-          .tag(Optional(a.artifactId))
-        }
-        .overlay {
-          if loaded && artifacts.isEmpty {
-            ContentUnavailableView("成果物はありません", systemImage: "shippingbox",
-                                   description: Text("成果物を出力した実行で確認できます。"))
-          }
-        }
-        .frame(minWidth: 180, idealWidth: 220)
-        VStack(spacing: 0) {
-          TextField("ファイルを検索", text: $search).textFieldStyle(.roundedBorder).padding(6)
-          List(members, id: \.path, selection: $member) { m in
-            HStack {
-              Image(systemName: "doc")
-              Text(m.path).lineLimit(1)
-              Spacer()
-              Text(ByteCountFormatter.string(fromByteCount: Int64(m.sizeBytes ?? 0), countStyle: .file)).font(.caption).foregroundStyle(.secondary)
-            }
-            .tag(Optional(m.path))
-          }
-        }
-        .frame(minWidth: 220, idealWidth: 280)
-        Group {
-          switch preview {
-          case .html(let html)?:
-            ArtifactHTMLPreview(html: html)
-          case .text(let t)?:
-            ScrollView { Text(t).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(8) }
-          case .image(let i)?:
-            Image(nsImage: i).resizable().scaledToFit().padding()
-          case .binary(let n)?:
-            ContentUnavailableView("プレビューできません", systemImage: "doc.questionmark", description: Text("バイナリ \(n) bytes。書き出して確認してください。"))
-          case nil:
-            ContentUnavailableView(member == nil ? "ファイルを選んでください" : "読み込み中…", systemImage: "eye")
-          }
-        }
-        .frame(minWidth: 260)
-      }
-      if let error { Text(error).font(.caption).foregroundStyle(.red).padding(6) }
+  private func loadRuns(after previous: String? = nil) async {
+    guard let rpc = session.rpc else {
+      error = String(localized: "実行環境に接続していません")
+      loaded = true
+      return
     }
-    // An artifact made without keep is listed while its run runs and is gone when it ends.
-    .task(id: "\(runId ?? "")|\(session.recordingRevision)|\(String(describing: session.lastFinished))") { await loadArtifacts() }
-    .task(id: "\(artifactId ?? "")|\(member ?? "")") { await loadPreview() }
-    .onChange(of: artifactId) { member = members.first?.path }
-  }
-
-  private var selectedArtifact: Tsugumi_RPC_ArtifactInfoT? { artifacts.first { $0.artifactId == artifactId } }
-
-  private var members: [Tsugumi_RPC_ArtifactMemberT] {
-    guard let a = selectedArtifact else { return [] }
-    return a.members.compactMap { $0 }.filter { search.isEmpty || $0.path.localizedCaseInsensitiveContains(search) }
-  }
-
-  private func loadRuns() async {
-    defer { loaded = true }
-    guard let rpc = session.rpc else { error = String(localized: "実行環境に接続していません"); return }
+    if previous != nil { loadingMore = true }
+    defer { if previous != nil { loadingMore = false } }
     do {
-      runs = try await rpc.history(card: path(cardKey), artifactsOnly: true, limit: 100).runs.compactMap { $0 }
-      if !runs.contains(where: { $0.status.runId == runId }) { runId = runs.first?.status.runId }
+      // Refresh the current results without discarding the loaded pages.
+      let limit = UInt32(previous == nil ? min(500, max(50, runs.count)) : 50)
+      let page = try await rpc.history(card: path(cardKey), artifactsOnly: true, cursor: previous, limit: limit)
+      guard !Task.isCancelled, previous == nil || previous == cursor else { return }
+      let ids = page.runs.compactMap { $0?.status.runId }
+      runs = previous == nil ? ids : runs + ids.filter { !runs.contains($0) }
+      cursor = page.nextCursor
+      if currentRun.flatMap({ runs.contains($0) ? $0 : nil }) == nil { currentRun = runs.first }
       error = nil
-    } catch { self.error = String(localized: "成果物を読み込めません: ") + "\(error)" }
-  }
-
-  private func loadArtifacts() async {
-    guard let rpc = session.rpc, let runId else { artifacts = []; return }
-    artifacts = (try? await rpc.artifacts(runId: runId, card: path(cardKey))) ?? []
-    if !artifacts.contains(where: { $0.artifactId == artifactId }) { artifactId = artifacts.first?.artifactId }
-    if !members.contains(where: { $0.path == member }) { member = members.first?.path }
-  }
-
-  private func loadPreview() async {
-    preview = nil
-    guard let rpc = session.rpc, let a = selectedArtifact, let member else { return }
-    do {
-      let data = try await rpc.readArtifact(id: a.artifactId, member: member)
+    } catch {
       guard !Task.isCancelled else { return }
-      if let html = ArtifactHTMLPreview.text(member: member, data: data) {
-        preview = .html(html)
-      } else if let img = NSImage(data: data), ["png", "jpg", "jpeg", "gif", "tiff", "pdf", "svg"].contains((member as NSString).pathExtension.lowercased()) {
-        preview = .image(img)
-      } else if let s = String(data: data.prefix(256 * 1024), encoding: .utf8) {
-        preview = .text(s + (data.count > 256 * 1024 ? String(localized: "\n…（先頭 256 KiB を表示）") : ""))
-      } else {
-        preview = .binary(data.count)
+      self.error = String(describing: error)
+    }
+    loaded = true
+  }
+}
+
+/// The host supplies sealed artifact directories and their members. A relative
+/// storage path identifies each file while export uses the artifact capability.
+private struct ArtifactFilesView: View {
+  let session: ProjectSession
+  let cardKey: CardKey
+  let runId: String
+
+  private struct File: Identifiable {
+    let artifact: String
+    let member: String
+    let path: String
+    let size: UInt64
+    var id: String { path }
+  }
+
+  @State private var files: [File] = []
+  @State private var loaded = false
+  @State private var error: String?
+  @State private var exporting = false
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      Text(verbatim: ".tsugumi/artifacts/\(runId)/\(cardKey)/")
+        .font(.caption.monospaced())
+        .foregroundStyle(.secondary)
+        .textSelection(.enabled)
+        .padding(8)
+      Divider()
+      List(files) { file in
+        HStack {
+          Image(systemName: "doc").foregroundStyle(.secondary)
+          Text(verbatim: file.path).lineLimit(1).truncationMode(.middle).help(file.path)
+          Spacer()
+          Text(ByteCountFormatter.string(fromByteCount: Int64(clamping: file.size), countStyle: .file))
+            .font(.caption).foregroundStyle(.secondary)
+          Button { Task { await download(file) } } label: { Image(systemName: "arrow.down.to.line") }
+            .buttonStyle(.borderless)
+            .disabled(exporting)
+            .help("コピーを保存…")
+            .accessibilityLabel("コピーを保存…")
+        }
+      }
+      .overlay {
+        if !loaded { ProgressView() }
+        else if files.isEmpty && error == nil {
+          ContentUnavailableView("この実行の Artifacts にファイルはありません", systemImage: "shippingbox")
+        }
+      }
+      if let error {
+        Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled).padding(8)
+      }
+    }
+    .task(id: ExecutionHistoryRefresh(session: session, card: cardKey)) { await loadFiles() }
+  }
+
+  private func loadFiles() async {
+    guard let rpc = session.rpc else { return }
+    do {
+      let artifacts = try await rpc.artifacts(runId: runId, card: path(cardKey))
+      guard !Task.isCancelled else { return }
+      files = artifacts.flatMap { artifact in
+        let directory = artifact.label.map { "@" + $0.replacingOccurrences(of: ".", with: "/") } ?? artifact.artifactId
+        return artifact.members.compactMap { member in
+          member.map {
+            File(artifact: artifact.artifactId, member: $0.path, path: "\(directory)/\($0.path)", size: $0.sizeBytes ?? 0)
+          }
+        }
       }
       error = nil
-    } catch { self.error = "\(error)" }
+    } catch {
+      guard !Task.isCancelled else { return }
+      self.error = String(describing: error)
+    }
+    loaded = true
   }
 
-  /// Exports through ArtifactRead; the core never receives a macOS path.
-  private func export(_ a: Tsugumi_RPC_ArtifactInfoT, _ m: String) async {
-    guard let rpc = session.rpc else { return }
-    let p = NSSavePanel()
-    p.nameFieldStringValue = (m as NSString).lastPathComponent
-    guard p.runModal() == .OK, let url = p.url else { return }
+  private func download(_ file: File) async {
+    guard let rpc = session.rpc, !exporting else { return }
+    exporting = true
+    defer { exporting = false }
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = (file.member as NSString).lastPathComponent
+    guard await panel.begin() == .OK, let destination = panel.url else { return }
     do {
-      try await rpc.readArtifact(id: a.artifactId, member: m).write(to: url)
-    } catch { self.error = "\(error)" }
+      try await rpc.readArtifact(id: file.artifact, member: file.member).write(to: destination, options: .atomic)
+    } catch { self.error = String(describing: error) }
   }
 }

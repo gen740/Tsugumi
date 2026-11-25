@@ -185,8 +185,8 @@ extension ProjectSession {
     var summary = m?["description"]?.string
     // What a Draft shows on its Card is what it says it will do.
     if kind == .draft, let content = m?["content"]?.string, !content.isEmpty { summary = content }
-    // A Card whose definition cannot be read says what the core says about it.
-    if kind == .invalid { summary = diags.first(where: \.error)?.message ?? String(localized: "Card の定義を読めません") }
+    let errors = diags.filter(\.error).map(\.message)
+    let invalid = kind == .invalid && errors.isEmpty ? [String(localized: "Card の定義を読めません")] : []
     if summary?.isEmpty ?? true { summary = nil }
     let editing = kind == .draft && inlineDraft?.card == k
     return CardNodeData(
@@ -197,7 +197,7 @@ extension ProjectSession {
       state: kind == .subgraph ? compositeState(k) : canvasCardState(k), executionList: executionList, stage: empty ? nil : stageProgress(k),
       invocation: empty ? 0 : state?.invocation ?? 0, runContinues: runActive, runMark: (state != nil || batch != nil ? runMark(runStatus) : nil),
       failure: state.flatMap { $0.state == .failed || $0.state == .blocked ? ($0.failure ?? $0.state.label) : nil },
-      errors: diags.filter(\.error).map(\.message), warnings: diags.filter { !$0.error }.map(\.message),
+      errors: errors + invalid, warnings: diags.filter { !$0.error }.map(\.message),
       collapsed: !editing && (collapsed ?? self.collapsed(k)), permissions: CardPermission.of(def),
       draftEditing: editing,
       portGrid: AppPreferences.shared.showGrid ? AppPreferences.shared.gridSize : nil,

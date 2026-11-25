@@ -516,6 +516,7 @@ struct CardSettingsEditor: View {
       if m.applying { ProgressView().controlSize(.small) }
       Button("再読込") { if m.unapplied { confirmReload = true } else { m.reload() } }
       Button("適用") { Task { _ = await m.apply() } }
+        .buttonStyle(.borderedProminent)
         .disabled(!m.unapplied || m.applying || !session.isEditable)
         .keyboardShortcut("s", modifiers: .command)
         .guideTarget("apply")

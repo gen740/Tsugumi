@@ -190,6 +190,12 @@ struct IssueList: View {
       out.append(Issue(error: s.state == .failed, title: "\(session.displayName(k)): \(s.state.label)",
                        detail: s.failure ?? "", card: path(k), isRunFailure: true))
     }
+    if let status = session.runStatus, status.state == .failed, let failure = status.failure {
+      let detail = failure.diagnostic ?? String(describing: failure.kind)
+      if !out.contains(where: { $0.detail == detail }) {
+        out.insert(Issue(error: true, title: status.state.label, detail: detail, card: nil, isRunFailure: true), at: 0)
+      }
+    }
     for d in session.diagnostics {
       out.append(Issue(error: d.error, title: d.message,
                        detail: [d.card.map { session.displayPath($0) }, d.path, d.code].compactMap { $0 }.joined(separator: " · "),
