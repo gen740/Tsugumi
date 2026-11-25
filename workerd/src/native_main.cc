@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "display_channel.hh"
+#include "packed_memory.hh"
 #include "tsugumi/card_abi.h"
 #include "tsugumi/protocol/card_generated.h"
 #include "tsugumi/protocol/worker_generated.h"
@@ -58,6 +59,28 @@ constexpr size_t kMaxViewName = kMaxFrame - TSUGUMI_MESSAGE_MAX - 1024;
 using Main = decltype(&tsugumi_main);
 using ArtifactId = std::array<uint8_t, 16>;
 
+using AlignedBytes = std::unique_ptr<uint8_t, decltype(&std::free)>;
+
+auto allocate_bytes(size_t size) -> AlignedBytes {
+  void* data = nullptr;
+  if (posix_memalign(&data, FLATBUFFERS_MAX_ALIGNMENT, size) != 0)
+    data = nullptr;
+  return AlignedBytes(static_cast<uint8_t*>(data), &std::free);
+}
+
+class WorkerFrame {
+ public:
+  explicit WorkerFrame(size_t size) : bytes_(allocate_bytes(size)), size_(size) {
+    if (!bytes_) throw std::bad_alloc();
+  }
+
+  auto data() const -> char* { return reinterpret_cast<char*>(bytes_.get()); }
+  auto size() const -> size_t { return size_; }
+
+ private:
+  AlignedBytes bytes_;
+  size_t size_;
+};
 
 struct ViewQueue {
   std::deque<std::string> outgoing;
@@ -90,6 +113,11 @@ struct Host {
   std::string artifact_directory;
   std::map<ArtifactId, std::string> opened;
   std::map<ArtifactId, std::string> created;
+  std::mutex result_mutex;
+  bool accepting_result = false;
+  AlignedBytes result{nullptr, &std::free};
+  uint8_t* shared_result = nullptr;
+  size_t result_capacity = 0;
   std::atomic<uint64_t> cancelled_id{0};
   std::atomic<uint64_t> call_id{0};
   std::atomic<Clock::duration::rep> deadline{Clock::duration::max().count()};
@@ -104,6 +132,15 @@ struct Failure {
 auto read_frame(int fd) -> std::optional<std::string> {
   try {
     return frame::Read(fd, kMaxFrame);
+  } catch (const frame::Error&) {
+    return std::nullopt;
+  }
+}
+
+auto read_worker_frame() -> std::optional<WorkerFrame> {
+  try {
+    return frame::Read(kData, kMaxFrame,
+                       [](size_t size) { return WorkerFrame(size); });
   } catch (const frame::Error&) {
     return std::nullopt;
   }
@@ -456,10 +493,25 @@ auto open_artifact(void* context, const tsugumi_artifact_id* id,
   }
 }
 
+auto result_alloc(void* ctx, size_t size) -> uint8_t* {
+  auto& host = *static_cast<Host*>(ctx);
+  std::lock_guard lock(host.result_mutex);
+  const auto max = host.shared_result ? TSUGUMI_MESSAGE_MAX : kMaxFrame;
+  if (!host.accepting_result || host.result_capacity || size == 0 || size > max)
+    return nullptr;
+  if (host.shared_result) {
+    host.result_capacity = size;
+    return host.shared_result;
+  }
+  host.result = allocate_bytes(size);
+  if (host.result) host.result_capacity = size;
+  return host.result.get();
+}
+
 constexpr tsugumi_effects kEffects{
     open_view,       close_view,      register_route, unregister_route,
     send_display,    receive_display, cancelled,      remaining_ms,
-    create_artifact, open_artifact};
+    create_artifact, open_artifact, result_alloc};
 
 auto control_loop(Host& host) -> void {
   while (auto bytes = read_frame(kControl)) {
@@ -534,18 +586,6 @@ auto load_card(const std::string& package, std::string& error)
 }
 
 // FlatBuffers tracks alignment relative to the end of its backing store.
-class InputAllocator final : public flatbuffers::Allocator {
- public:
-  auto allocate(size_t size) -> uint8_t* override {
-    void* data = nullptr;
-    if (posix_memalign(&data, FLATBUFFERS_MAX_ALIGNMENT, size) != 0)
-      throw std::bad_alloc();
-    return static_cast<uint8_t*>(data);
-  }
-
-  auto deallocate(uint8_t* data, size_t) -> void override { std::free(data); }
-};
-
 using Payload = flatbuffers::Vector<uint8_t>;
 
 auto aligned_payload(flatbuffers::FlatBufferBuilder& b, const Payload& data)
@@ -610,9 +650,39 @@ auto make_result(const C::CardResult& result, uint64_t id,
   return std::nullopt;
 }
 
+struct PackedCallMemory {
+  tsugumi::workerd::PackedMapping result;
+  std::vector<tsugumi::workerd::PackedMapping> inputs;
+};
+
+auto read_packed_memory(const W::WorkerCall& call) -> PackedCallMemory {
+  using tsugumi::workerd::receive_packed_descriptor;
+  if (!call.shared_inputs() ||
+      call.shared_inputs()->size() > call.inputs()->size())
+    throw std::runtime_error("invalid packed input list");
+  PackedCallMemory memory{
+      {receive_packed_descriptor(kData).get(), PROT_READ | PROT_WRITE}, {}};
+  std::optional<uint32_t> previous_port;
+  for (const auto* input : *call.shared_inputs()) {
+    if ((previous_port && input->port() <= *previous_port) ||
+        input->port() >= call.inputs()->size() ||
+        call.inputs()->Get(input->port())->bytes() ||
+        input->descriptor() > memory.inputs.size() ||
+        input->offset() > TSUGUMI_MESSAGE_MAX ||
+        input->size() > TSUGUMI_MESSAGE_MAX - input->offset())
+      throw std::runtime_error("invalid borrowed packed input");
+    previous_port = input->port();
+    if (input->descriptor() == memory.inputs.size())
+      memory.inputs.emplace_back(receive_packed_descriptor(kData).get(),
+                                 PROT_READ);
+  }
+  return memory;
+}
+
 auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
              const std::string& package, Main& entry,
-             std::string& load_error, flatbuffers::FlatBufferBuilder& reply)
+             std::string& load_error, flatbuffers::FlatBufferBuilder& reply,
+             PackedCallMemory* memory, bool debug)
     -> std::optional<Failure> {
   const auto stop = [&]() -> std::optional<Failure> {
     if (cancelled(&host))
@@ -622,21 +692,44 @@ auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
                      "the Card exceeded timeoutSeconds"};
     return std::nullopt;
   };
-  // The SDK borrows this envelope and its aligned payloads for the call.
-  InputAllocator allocator;
-  flatbuffers::FlatBufferBuilder b(1024, &allocator, false,
-                                   FLATBUFFERS_MAX_ALIGNMENT);
-  std::vector<flatbuffers::Offset<C::CardPort>> inputs;
-  for (const auto* input : *call.inputs()) {
-    flatbuffers::Offset<Payload> bytes;
-    if (const auto* payload = input->bytes()) bytes = aligned_payload(b, *payload);
-    const auto schema = input->schema() ? b.CreateString(input->schema()->string_view())
-                                        : flatbuffers::Offset<flatbuffers::String>{};
-    inputs.push_back(C::CreateCardPort(
-        b, b.CreateString(input->name()->string_view()), schema, bytes));
+  // Core aligns each payload in the frame. Align payloads from other senders
+  // before lending them to the SDK if they did not meet that requirement.
+  std::vector<AlignedBytes> aligned;
+  std::vector<tsugumi_input> inputs;
+  inputs.reserve(call.inputs()->size());
+  size_t shared_index = 0;
+  size_t total = 0;
+  for (uint32_t port = 0; port < call.inputs()->size(); ++port) {
+    const auto* input = call.inputs()->Get(port);
+    const auto* shared =
+        memory && shared_index < call.shared_inputs()->size()
+            ? call.shared_inputs()->Get(shared_index)
+            : nullptr;
+    tsugumi_bytes bytes{};
+    if (shared && shared->port() == port) {
+      const auto* data = memory->inputs[shared->descriptor()].data();
+      bytes = {data + shared->offset(), shared->size()};
+      ++shared_index;
+    } else if (const auto* payload = input->bytes()) {
+      bytes = {payload->data(), payload->size()};
+      if (bytes.size > TSUGUMI_MESSAGE_MAX)
+        return Failure{D::FailureKind::input_invalid, "input exceeds 16 MiB"};
+      if (bytes.size != 0 &&
+          reinterpret_cast<uintptr_t>(bytes.data) % FLATBUFFERS_MAX_ALIGNMENT) {
+        auto storage = allocate_bytes(bytes.size);
+        if (!storage) throw std::bad_alloc();
+        std::memcpy(storage.get(), bytes.data, bytes.size);
+        bytes.data = storage.get();
+        aligned.push_back(std::move(storage));
+      }
+    }
+    if (memory && bytes.size > TSUGUMI_MESSAGE_MAX - total)
+      return Failure{D::FailureKind::input_invalid, "inputs exceed 16 MiB"};
+    total += bytes.size;
+    inputs.push_back({input->name()->c_str(),
+                      input->schema() ? input->schema()->c_str() : nullptr,
+                      bytes});
   }
-  b.TrackMinAlign(FLATBUFFERS_MAX_ALIGNMENT);
-  b.Finish(C::CreateCardInput(b, b.CreateVector(inputs)));
   {
     std::lock_guard lock(host.artifact_mutex);
     host.created.clear();
@@ -650,28 +743,49 @@ auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
   if (!entry && load_error.empty()) entry = load_card(package, load_error);
   if (!entry) return Failure{D::FailureKind::worker_failed, load_error};
   if (auto failure = stop()) return failure;
-  const tsugumi_call abi{TSUGUMI_ABI_VERSION,
-                         {b.GetBufferPointer(), b.GetSize()},
-                         &host,
-                         &kEffects};
+  const tsugumi_call abi{TSUGUMI_ABI_VERSION, inputs.data(), inputs.size(),
+                         &host, &kEffects};
+  {
+    std::lock_guard lock(host.result_mutex);
+    host.accepting_result = true;
+    host.result_capacity = 0;
+    host.shared_result = memory ? memory->result.data() : nullptr;
+  }
   tsugumi_bytes returned{};
   const int status = entry(&abi, &returned);
-  const std::unique_ptr<void, decltype(&std::free)> result_owner(
-      const_cast<uint8_t*>(returned.data), &std::free);
+  const auto result_owner = [&] {
+    std::lock_guard lock(host.result_mutex);
+    host.accepting_result = false;
+    host.shared_result = nullptr;
+    return std::move(host.result);
+  }();
   if (auto failure = stop()) return failure;
   if (status != 0)
     return Failure{D::FailureKind::worker_failed,
                    "tsugumi_main returned " + std::to_string(status)};
-  if (!returned.data || returned.size > kMaxFrame)
+  const auto* allocated = memory ? memory->result.data() : result_owner.get();
+  if (!allocated || returned.data != allocated ||
+      returned.size < sizeof(flatbuffers::uoffset_t) ||
+      returned.size > host.result_capacity)
     return Failure{D::FailureKind::output_invalid, "invalid CardResult length"};
-  flatbuffers::Verifier verifier(returned.data, returned.size);
-  if (!verifier.VerifyBuffer<C::CardResult>(nullptr))
-    return Failure{D::FailureKind::output_invalid, "invalid CardResult buffer"};
-  return make_result(*flatbuffers::GetRoot<C::CardResult>(returned.data), id,
-                     reply);
+  if (!memory || debug) {
+    flatbuffers::Verifier verifier(returned.data, returned.size);
+    if (!verifier.VerifyBuffer<C::CardResult>(nullptr))
+      return Failure{D::FailureKind::output_invalid,
+                     "invalid CardResult buffer"};
+  }
+  const auto& root = *flatbuffers::GetRoot<C::CardResult>(returned.data);
+  if (!memory) return make_result(root, id, reply);
+  if (const auto* failure = root.failure()) return card_failure(*failure);
+  const auto packed = W::CreateWorkerSharedResult(reply, returned.size);
+  W::FinishWorkerMessageBuffer(
+      reply,
+      W::CreateWorkerMessage(reply, id, W::WorkerPayload::WorkerSharedResult,
+                             packed.Union()));
+  return std::nullopt;
 }
 
-auto serve(const std::string& package) -> int {
+auto serve(const std::string& package, bool packed, bool debug) -> int {
   // This context lives as long as the process, including when Card threads
   // enter send or recv after a call returns.
   Host host;
@@ -681,7 +795,7 @@ auto serve(const std::string& package) -> int {
   std::string load_error;
   uint64_t last_call = 0;
   bool started = false;
-  while (auto frame = read_frame(kData)) {
+  while (auto frame = read_worker_frame()) {
     flatbuffers::Verifier verifier(
         reinterpret_cast<const uint8_t*>(frame->data()), frame->size());
     if (!W::VerifyWorkerMessageBuffer(verifier)) std::_Exit(2);
@@ -693,7 +807,7 @@ auto serve(const std::string& package) -> int {
       for (const auto* env : *start->environment())
         success &=
             ::setenv(env->name()->c_str(), env->value()->c_str(), 1) == 0;
-      tsugumi::workerd::clear_secret(*frame);
+      tsugumi::workerd::wipe_secret({frame->data(), frame->size()});
       if (!success) std::_Exit(2);
       continue;
     }
@@ -701,6 +815,16 @@ auto serve(const std::string& package) -> int {
     const auto* call = message->value_as_WorkerCall();
     if (!call || !message->call_id() || *message->call_id() <= last_call)
       std::_Exit(2);
+    std::optional<PackedCallMemory> memory;
+    try {
+      if (packed)
+        memory.emplace(read_packed_memory(*call));
+      else if (call->shared_inputs())
+        std::_Exit(2);
+    } catch (const std::exception& error) {
+      std::fprintf(stderr, "%s\n", error.what());
+      std::_Exit(2);
+    }
     last_call = *message->call_id();
     const auto now = Clock::now();
     const auto maximum = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -716,10 +840,12 @@ auto serve(const std::string& package) -> int {
     host.call_id = last_call;
     flatbuffers::FlatBufferBuilder reply;
     if (const auto failure = execute(*call, host, last_call, package, entry,
-                                     load_error, reply)) {
+                                     load_error, reply,
+                                     memory ? &*memory : nullptr, debug)) {
       reply.Clear();
       failure_frame(reply, last_call, *failure);
     }
+    memory.reset();
     bool drain = call->drain_display();
     {
       std::lock_guard lock(host.artifact_mutex);
@@ -737,10 +863,13 @@ auto serve(const std::string& package) -> int {
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc != 3 || std::string_view(argv[1]) != "--package") return 2;
+  if ((argc != 3 && argc != 4) || std::string_view(argv[1]) != "--package")
+    return 2;
+  const std::string_view mode = argc == 4 ? argv[3] : "";
+  if (argc == 4 && mode != "--packed" && mode != "--packed-debug") return 2;
   ::signal(SIGPIPE, SIG_IGN);
   // Card subprocesses use stdout/stderr but do not inherit the ABI sockets.
   ::fcntl(kData, F_SETFD, FD_CLOEXEC);
   ::fcntl(kControl, F_SETFD, FD_CLOEXEC);
-  return serve(argv[2]);
+  return serve(argv[2], argc == 4, mode == "--packed-debug");
 }

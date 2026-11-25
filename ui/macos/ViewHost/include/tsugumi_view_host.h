@@ -45,11 +45,12 @@ __attribute__((visibility("default"))) int32_t tsugumi_view_host_check(
     const uint8_t* wasm, size_t size, char* error, size_t error_size);
 
 /* All host calls and callbacks run on the view thread. Copy callback data
- * before returning. Timestamps are in seconds on the AppKit monotonic uptime
- * clock. */
+ * before returning. Timestamps are seconds on the selected clock. A negative
+ * time_origin selects the current AppKit monotonic uptime. */
 __attribute__((visibility("default"))) tsugumi_view_host*
 tsugumi_view_host_create(const uint8_t* wasm, size_t size, void* metal_layer,
                          uint32_t width, uint32_t height, float scale,
+                         double time_origin,
                          tsugumi_view_stop* stop,
                          tsugumi_view_host_send_fn send,
                          tsugumi_view_host_waiting_fn waiting, void* context,

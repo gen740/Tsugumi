@@ -44,6 +44,10 @@ struct RunPlanData {
 };
 
 struct RunParams {
+  struct InjectedInput {
+    CardPath card;
+    Value value;
+  };
   std::string op_id;
   std::string
       commit;  // the project's version it starts from ("" when not versioned)
@@ -53,6 +57,7 @@ struct RunParams {
   uint32_t max_concurrency = 4;
   std::optional<uint32_t> nix_jobs;
   std::optional<uint32_t> nix_cores;
+  std::optional<std::vector<InjectedInput>> injected_inputs;
 };
 
 class Scheduler {

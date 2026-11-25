@@ -81,6 +81,8 @@ struct StoreOptions {
   // Fault injection for tests ("" disables): after_prepare, partial_apply,
   // before_commit.
   std::string fault;
+  std::filesystem::path alternate_state_dir{};
+  bool evaluate_params = true;
 };
 
 class Store {
@@ -141,7 +143,10 @@ class Store {
   std::string read_source(const Document& doc, const std::string& rel) const;
 
   // Snapshot + view storage helpers.
-  std::filesystem::path state_dir() const { return opts_.root / ".tsugumi"; }
+  std::filesystem::path state_dir() const {
+    return opts_.alternate_state_dir.empty() ? opts_.root / ".tsugumi"
+                                             : opts_.alternate_state_dir;
+  }
 
  private:
   auto recover_pending() -> void;

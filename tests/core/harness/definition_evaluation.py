@@ -67,7 +67,7 @@ def synthetic_sources(outputs=()):
                    "static const uint8_t result_bytes[] = {" + _result_literal(outputs) + "};\n"
                    "int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {\n"
                    "  (void)call;\n  fputs(VALUE \"\\n\", stdout);\n  fflush(stdout);\n"
-                   "  return write_result(result, result_bytes, sizeof(result_bytes));\n}\n"),
+                   "  return write_result(call, result, result_bytes, sizeof(result_bytes));\n}\n"),
     }
 
 

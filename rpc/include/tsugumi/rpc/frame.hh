@@ -96,16 +96,22 @@ inline auto WriteAll(int fd, const char* bytes, size_t size) -> void {
 }
 
 // One whole frame, or nullopt when the stream ends before a frame begins.
-inline auto Read(int fd, size_t max) -> std::optional<std::string> {
+template <typename Allocate>
+auto Read(int fd, size_t max, Allocate allocate)
+    -> std::optional<decltype(allocate(size_t{}))> {
   std::array<char, kPrefixBytes> prefix{};
   const auto got = ReadExact(fd, prefix.data(), prefix.size());
   if (got == 0) return std::nullopt;
   if (got < prefix.size())
     throw Error(Error::Kind::Truncated, "truncated frame prefix");
-  std::string bytes(DecodePrefix(prefix.data(), max), '\0');
+  auto bytes = allocate(DecodePrefix(prefix.data(), max));
   if (ReadExact(fd, bytes.data(), bytes.size()) < bytes.size())
     throw Error(Error::Kind::Truncated, "truncated frame");
   return bytes;
+}
+
+inline auto Read(int fd, size_t max) -> std::optional<std::string> {
+  return Read(fd, max, [](size_t size) { return std::string(size, '\0'); });
 }
 
 inline auto Write(int fd, std::string_view payload, size_t max) -> void {

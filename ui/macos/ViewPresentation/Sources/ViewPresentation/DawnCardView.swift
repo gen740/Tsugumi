@@ -26,6 +26,7 @@ struct DawnViewRepresentable: NSViewRepresentable {
   @ObservationIgnored private var worker: DawnViewWorker?
   @ObservationIgnored private var recipients: Set<String>
   @ObservationIgnored private var accepts: UInt32 = 0
+  @ObservationIgnored private let testClock: DawnTestClock?
   @ObservationIgnored private var link: CADisplayLink?
   @ObservationIgnored private var drawing = false
   @ObservationIgnored private var drawRequested = false
@@ -39,12 +40,13 @@ struct DawnViewRepresentable: NSViewRepresentable {
   private(set) var waiting = false
   private(set) var error: String?
 
-  init(wasm: Data, flags: UInt32, recipients: Set<String>,
+  init(wasm: Data, flags: UInt32, recipients: Set<String>, testClock: DawnTestClock?,
        sendToCard: @escaping (String, Data) async throws -> Void) {
     self.flags = flags
     self.recipients = recipients
     self.sendToCard = sendToCard
     self.wasm = wasm
+    self.testClock = testClock
     super.init()
   }
 
@@ -71,18 +73,24 @@ struct DawnViewRepresentable: NSViewRepresentable {
       return
     }
     self.worker = worker
+    let timeOrigin = testClock?.seconds ?? -1
     worker.submit { [weak self] worker in
-      let (accepts, diagnostic) = worker.create(wasm: wasm, layer: layer, width: width, height: height, scale: scale)
+      let (accepts, diagnostic) = worker.create(wasm: wasm, layer: layer, width: width, height: height,
+                                                scale: scale, timeOrigin: timeOrigin)
       DispatchQueue.main.async {
         guard let self, !self.closed else { return }
         guard let accepts else { self.fail(diagnostic); return }
         self.accepts = accepts
+        if let testClock = self.testClock {
+          self.drawTestFrame(at: testClock.seconds)
+          return
+        }
         self.requestDraw()
         // A background window may not receive display link callbacks yet.
         let refresh = max(1, self.view.window?.screen?.maximumFramesPerSecond ?? 60)
         self.enqueueDraw(present: CACurrentMediaTime() + 1.0 / Double(refresh))
         if accepts & UInt32(TSUGUMI_HOST_GAMEPAD) != 0 { self.watchGamepads() }
-        if accepts & UInt32(TSUGUMI_HOST_AUDIO) != 0 { self.startAudio() }
+        if self.audioRequested { self.startAudio() }
       }
     }
     while let (message, complete) = outbox.take() { send(message, complete: complete) }
@@ -99,7 +107,7 @@ struct DawnViewRepresentable: NSViewRepresentable {
   }
 
   private func installDisplayLink(for view: DawnLayerView) {
-    guard link == nil else { return }
+    guard link == nil, testClock == nil else { return }
     let link = view.displayLink(target: self, selector: #selector(drawFrame(_:)))
     link.isPaused = true
     link.add(to: .main, forMode: .common)
@@ -110,7 +118,7 @@ struct DawnViewRepresentable: NSViewRepresentable {
     guard !closed else { return }
     installDisplayLink(for: view)
     if worker != nil {
-      let at = CACurrentMediaTime()
+      let at = currentTime
       perform { tsugumi_view_host_resize($0, width, height, scale, at) }
     } else {
       create(in: layer, width: width, height: height, scale: scale)
@@ -123,6 +131,7 @@ struct DawnViewRepresentable: NSViewRepresentable {
   }
 
   private func requestDraw() {
+    guard testClock == nil else { return }
     drawRequested = true
     if !drawing { link?.isPaused = false }
   }
@@ -132,25 +141,38 @@ struct DawnViewRepresentable: NSViewRepresentable {
   }
 
   private func enqueueDraw(present: Double) {
-    guard !drawing, drawRequested, let worker, !closed else { return }
+    guard !drawing, drawRequested else { return }
     drawing = true
     drawRequested = false
     link?.isPaused = true
+    submitDraw(present: present) { [weak self] result in
+      guard let self else { return }
+      self.drawing = false
+      if let result, result & 1 != 0 || self.drawRequested { self.requestDraw() }
+    }
+  }
+
+  func drawTestFrame(at time: Double) {
+    submitDraw(present: time)
+  }
+
+  private func submitDraw(present: Double,
+                          complete: @escaping @MainActor (Int32?) -> Void = { _ in }) {
+    guard let worker, !closed else { complete(nil); return }
     worker.submit { [weak self] worker in
-      guard let native = worker.native else { return }
-      let result = tsugumi_view_host_draw(native, present)
+      let result = worker.native.map { tsugumi_view_host_draw($0, present) } ?? -1
       let area = result < 0 ? nil : worker.textArea()
       let diagnostic = worker.diagnostic
       DispatchQueue.main.async {
-        guard let self, !self.closed else { return }
-        self.drawing = false
-        guard self.finish(result, diagnostic: diagnostic) else { return }
+        guard let self, self.finish(result, diagnostic: diagnostic) else { complete(nil); return }
         if area != self.textArea {
           self.textArea = area
           self.view.updateIME()
         }
-        if result & 1 != 0 || self.drawRequested { self.requestDraw() }
+        complete(result)
       }
+    } cancel: {
+      DispatchQueue.main.async { complete(nil) }
     }
   }
 
@@ -218,7 +240,7 @@ struct DawnViewRepresentable: NSViewRepresentable {
       outbox.put(message, complete: complete)
       return
     }
-    let at = CACurrentMediaTime()
+    let at = currentTime
     perform({ native in
       switch message {
       case .data(let data):
@@ -231,6 +253,7 @@ struct DawnViewRepresentable: NSViewRepresentable {
 
   var acceptsKeys: Bool { accepts & UInt32(TSUGUMI_HOST_KEY | TSUGUMI_HOST_TEXT) != 0 }
   var acceptsComposition: Bool { accepts & UInt32(TSUGUMI_HOST_COMPOSITION) != 0 }
+  var audioRequested: Bool { accepts & UInt32(TSUGUMI_HOST_AUDIO) != 0 }
   var acceptsPointerLock: Bool { !closed && !waiting && flags & 2 != 0 }
   var hidesCursor: Bool { !closed && !waiting && flags & 1 != 0 }
 
@@ -248,8 +271,11 @@ struct DawnViewRepresentable: NSViewRepresentable {
     dispatch(.key(kind: kind, code: code, modifiers: dawnModifiers(event.modifierFlags)), at: event.timestamp)
   }
 
-  func dispatch(_ input: CardViewInput, at: Double,
+  private var currentTime: Double { testClock?.seconds ?? CACurrentMediaTime() }
+
+  func dispatch(_ input: CardViewInput, at inputTime: Double,
                 complete: @escaping @MainActor (Bool) -> Void = { _ in }) {
+    let at = testClock?.seconds ?? inputTime
     perform({ native in
       switch input {
       case let .pointer(kind, x, y, buttons, wheelX, wheelY, modifiers):
@@ -266,8 +292,9 @@ struct DawnViewRepresentable: NSViewRepresentable {
     }, complete: complete)
   }
 
-  func composition(_ string: String, cursor: UInt32, at: Double) {
+  func composition(_ string: String, cursor: UInt32, at inputTime: Double) {
     guard acceptsComposition else { return }
+    let at = testClock?.seconds ?? inputTime
     let data = Data(string.utf8)
     perform { native in
       data.withUnsafeBytes {
@@ -279,7 +306,7 @@ struct DawnViewRepresentable: NSViewRepresentable {
 
   func sendInput(_ input: CardViewInput) async throws {
     try await withCheckedThrowingContinuation { (reply: CheckedContinuation<Void, Error>) in
-      dispatch(input, at: CACurrentMediaTime()) { success in
+      dispatch(input, at: currentTime) { success in
         if success { reply.resume() } else { reply.resume(throwing: DawnViewError.unavailable) }
       }
     }
@@ -287,9 +314,10 @@ struct DawnViewRepresentable: NSViewRepresentable {
 
   func snapshot() async throws -> Data {
     guard let worker, !closed else { throw DawnViewError.unavailable }
+    let testTime = testClock?.seconds
     return try await withCheckedThrowingContinuation { reply in
       worker.submit { [weak self] worker in
-        let (png, diagnostic) = worker.snapshot()
+        let (png, diagnostic) = worker.snapshot(testTime: testTime)
         DispatchQueue.main.async {
           guard let self, !self.closed, let png else {
             reply.resume(throwing: DawnViewError.snapshotFailed)

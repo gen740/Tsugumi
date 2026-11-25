@@ -19,9 +19,9 @@ SYSTEMS = {
 }
 NATIVE_TESTS = {"agent-rpc", "rpc"}
 CORE = NATIVE_TESTS | {"host", "remote-execution", "adapters", "swift", "vm", "kit", "view-abi"}
-GUEST = {"vm", "pack-guest"}
+PACK = {"pack-native"}
 WEB = {"docs", "web-typecheck", "web-contracts", "adapters"}
-ALL = CORE | GUEST | WEB | {"demos", "prompt"}
+ALL = CORE | PACK | WEB | {"demos", "prompt"}
 ADAPTER_TESTS = {
     "tests/python/test_claude_code_plugin.py",
     "tests/python/test_web_server.py",
@@ -85,12 +85,11 @@ def consumers(path):
     if path.startswith("vm/guest/"):
         if path.startswith("vm/guest/tools/"):
             return {"vm"}
-        # Both guest images share the kernel and native runtime.
-        return {"host", "vm", "pack-guest"}
+        return {"host", "vm"}
     if path.startswith("pack/"):
-        return {"pack-guest"}
+        return PACK
     if path.startswith(("ui/macos/", "vm/macos/", "client/swift/", "cli/vmctl/")):
-        return {"swift"}
+        return {"swift"} | (PACK if path.startswith("ui/macos/View") else set())
     if path.startswith(("ui/web/tests/", "ui/web/scripts/test.mjs")):
         return {"web-contracts"}
     if path == "ui/web/scripts/check-boundaries.mjs":
@@ -102,14 +101,14 @@ def consumers(path):
         return {"docs", "web-contracts", "adapters", "demos", "agent-rpc", "rpc"}
     if path.startswith("ui/shared/dawn/"):
         # The dawn view generator: its own check, the Mac host and the Web shim.
-        return {"view-abi", "swift"} | WEB
+        return {"view-abi", "swift"} | PACK | WEB
     if path.startswith("ui/shared/"):
-        return CORE | GUEST | WEB | {"demos"}
+        return CORE | PACK | WEB | {"demos"}
     if path.startswith("client/"):
         # Shared native client, Swift C interface and the browser Wasm build.
-        return CORE | GUEST | WEB | {"demos"}
+        return CORE | PACK | WEB | {"demos"}
     if path.startswith(("util/", "rpc/", "tsugumid/document/")):
-        return CORE | GUEST | WEB | {"demos"}
+        return CORE | PACK | WEB | {"demos"}
     if path.startswith("hostd/agent/"):
         jobs = {"agent-rpc", "adapters", "swift"}
         if path.startswith("hostd/agent/Shared/"):
@@ -129,7 +128,7 @@ def consumers(path):
         # driver. Guest entry points and Card evaluation run through tsugumid.
         return {"agent-rpc", "rpc", "host", "remote-execution", "adapters", "swift", "web-contracts"}
     if path.startswith(("tsugumid/", "workerd/")):
-        return CORE | GUEST
+        return CORE | PACK
     if path.startswith("cli/"):
         return {"adapters", "swift"}
     if path.startswith("plugins/") or path in ADAPTER_TESTS:
@@ -155,7 +154,7 @@ def consumers(path):
     return ALL
 
 
-STANDALONE = {"docs", "prompt", "web-typecheck"} | GUEST
+STANDALONE = {"docs", "prompt", "web-typecheck", "vm"} | PACK
 
 
 def select(paths=None):

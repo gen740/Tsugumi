@@ -26,6 +26,7 @@
 #endif
 
 #include "display_channel.hh"
+#include "packed_memory.hh"
 #include "tsugumi/protocol/trace_codec.hh"
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/rpc/frame.hh"
@@ -47,10 +48,89 @@
 
 namespace tsugumi {
 
+namespace workerd {
+class SharedBuffer {
+ public:
+  explicit SharedBuffer(PackedDescriptor reader)
+      : reader_(std::move(reader)), mapping_(reader_.get(), PROT_READ) {}
+
+  auto bytes() const -> std::string_view {
+    return {reinterpret_cast<const char*>(mapping_.data()),
+            TSUGUMI_MESSAGE_MAX};
+  }
+  auto descriptor() const -> int { return reader_.get(); }
+
+ private:
+  PackedDescriptor reader_;
+  PackedMapping mapping_;
+};
+}  // namespace workerd
+
 namespace W = Tsugumi::Worker;
 namespace C = Tsugumi::Card;
 
 namespace {
+
+using PackedDeadline = std::optional<std::chrono::steady_clock::time_point>;
+
+auto allocate_shared_result()
+    -> std::pair<workerd::PackedDescriptor,
+                 std::shared_ptr<const workerd::SharedBuffer>> {
+  // Darwin limits POSIX shared-memory names to 31 characters. No name survives
+  // descriptor creation, so workers can use only the capabilities we send.
+  const auto name = "/tsg-" + crypto::uuid4().substr(0, 24);
+  workerd::PackedDescriptor writer(
+      ::shm_open(name.c_str(), O_RDWR | O_CREAT | O_EXCL, 0600));
+  if (writer.get() < 0)
+    throw Failed(FailureKind::worker_failed,
+                 std::string("create packed result: ") + std::strerror(errno));
+  workerd::PackedDescriptor reader(::shm_open(name.c_str(), O_RDONLY, 0));
+  const auto unlinked = ::shm_unlink(name.c_str());
+  if (reader.get() < 0 || unlinked != 0 ||
+      ::ftruncate(writer.get(), TSUGUMI_MESSAGE_MAX) != 0)
+    throw Failed(FailureKind::worker_failed,
+                 std::string("allocate packed result: ") + std::strerror(errno));
+  return {std::move(writer),
+          std::make_shared<workerd::SharedBuffer>(std::move(reader))};
+}
+
+auto send_packed_descriptor(int socket, int descriptor,
+                            const std::atomic<bool>* cancel,
+                            PackedDeadline deadline) -> void {
+  char marker = 1;
+  iovec bytes{&marker, 1};
+  alignas(cmsghdr) char control[CMSG_SPACE(sizeof(int))]{};
+  msghdr message{};
+  message.msg_iov = &bytes;
+  message.msg_iovlen = 1;
+  message.msg_control = control;
+  message.msg_controllen = sizeof(control);
+  auto* header = CMSG_FIRSTHDR(&message);
+  header->cmsg_level = SOL_SOCKET;
+  header->cmsg_type = SCM_RIGHTS;
+  header->cmsg_len = CMSG_LEN(sizeof(descriptor));
+  std::memcpy(CMSG_DATA(header), &descriptor, sizeof(descriptor));
+#ifdef MSG_NOSIGNAL
+  constexpr int flags = MSG_NOSIGNAL | MSG_DONTWAIT;
+#else
+  constexpr int flags = MSG_DONTWAIT;  // SO_NOSIGPIPE on macOS
+#endif
+  for (;;) {
+    if (cancel && cancel->load())
+      throw Failed(FailureKind::cancelled, "the invocation was cancelled");
+    if (deadline && std::chrono::steady_clock::now() >= *deadline)
+      throw Failed(FailureKind::timeout, "the Card exceeded timeoutSeconds");
+    const auto sent = ::sendmsg(socket, &message, flags);
+    if (sent == 1) return;
+    if (sent < 0 && errno == EINTR) continue;
+    if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      pollfd ready{socket, POLLOUT, 0};
+      if (::poll(&ready, 1, 20) >= 0 || errno == EINTR) continue;
+    }
+    throw Failed(FailureKind::worker_failed,
+                 "cannot send packed Card descriptor");
+  }
+}
 
 void close_fd(int& fd) {
   if (fd >= 0) ::close(fd);
@@ -177,7 +257,7 @@ auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
   // What it may run are store paths (the tools it declared), the worker, and
   // files in its own folders and grants.
   std::string read =
-      "(literal \"/\") (subpath \"/nix/store\") (subpath \"/usr/lib\") "
+      "(literal \"/\") (subpath \"/usr/lib\") "
       "(subpath \"/usr/share\") (subpath \"/System/Library\")"
       " (subpath \"/private/var/db/timezone\")";
   std::string devices;
@@ -189,9 +269,18 @@ auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
        {"/etc/hosts", "/etc/resolv.conf", "/etc/protocols", "/etc/services",
         "/etc/group", "/etc/passwd", "/etc/localtime"})
     read += " (literal " + quote(p) + ")";
-  std::string exec = "(subpath \"/nix/store\") (literal " +
-                     quote(sp.worker_binary) + ") (subpath " + quote(scratch) +
-                     ")";
+  std::string exec = "(literal " + quote(sp.worker_binary) + ") (subpath " +
+                     quote(scratch) + ")";
+  if (sp.packed) {
+    for (const auto& path : sp.closure) {
+      const auto rule = " (subpath " + quote(path) + ")";
+      read += rule;
+      exec += rule;
+    }
+  } else {
+    read += " (subpath \"/nix/store\")";
+    exec += " (subpath \"/nix/store\")";
+  }
   if (std::string_view(TSUGUMI_CACERT).size())
     read += " (literal " + quote(TSUGUMI_CACERT) + ")";
   read += " (literal " + quote(sp.worker_binary) + ") (subpath " +
@@ -353,7 +442,8 @@ auto remove_card_cgroup(const std::filesystem::path& path) -> void {
 
 bool worker_uid_on_host() { return !worker_has_bwrap(); }
 
-WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
+WorkerProc::WorkerProc(const WorkerSpawn& sp)
+    : packed_(sp.packed), scratch_(sp.scratch) {
   if (!sp.artifact_staging.empty())
     artifact_scratch_ = sp.artifact_staging / crypto::uuid4();
   // Construction failures clean up private artifact staging before the
@@ -604,6 +694,8 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   }
 #endif
   spec.argv.insert(spec.argv.end(), {"--package", sp.package});
+  if (sp.packed)
+    spec.argv.emplace_back(sp.packed_debug ? "--packed-debug" : "--packed");
   spec.env = {"LANG=C.UTF-8",
               "HOME=" + work_dir(),
               "XDG_CONFIG_HOME=" + work_dir() + "/.config",
@@ -726,6 +818,7 @@ WorkerProc::WorkerProc(Borrowed borrowed)
       out_fd_(borrowed.descriptors[2]),
       err_fd_(borrowed.descriptors[3]),
       alive_(true),
+      packed_(borrowed.packed),
       scratch_(std::move(borrowed.scratch)),
       artifact_scratch_(std::move(borrowed.artifact_scratch)),
       call_id_(borrowed.call_id),
@@ -1307,11 +1400,36 @@ auto WorkerProc::read_data() -> void {
       }
       WorkerOutcome outcome;
       if (const auto* result = message->value_as_WorkerResult()) {
+        if (packed_)
+          throw Failed(FailureKind::worker_failed,
+                       "unexpected inline packed result");
         for (const auto* output : *result->outputs()) {
           const auto* bytes = output->bytes();
           outcome.outputs.push_back(
               {output->name()->str(),
                bytes ? std::string(bytes->begin(), bytes->end()) : ""});
+        }
+      } else if (const auto* result = message->value_as_WorkerSharedResult()) {
+        if (!packed_result_ || result->size() < sizeof(flatbuffers::uoffset_t) ||
+            result->size() > TSUGUMI_MESSAGE_MAX)
+          throw Failed(FailureKind::output_invalid,
+                       "invalid packed result length");
+        const auto buffer = packed_result_->bytes().substr(0, result->size());
+        const auto* root = flatbuffers::GetRoot<C::CardResult>(buffer.data());
+        if (const auto* outputs = root->outputs()) {
+          for (const auto* output : *outputs) {
+            PayloadBytes bytes;
+            if (const auto* wire = output->bytes()) {
+              const auto* data = reinterpret_cast<const char*>(wire->Data());
+              const auto offset = reinterpret_cast<uintptr_t>(data) -
+                                  reinterpret_cast<uintptr_t>(buffer.data());
+              if (offset > buffer.size() || wire->size() > buffer.size() - offset)
+                throw Failed(FailureKind::output_invalid,
+                             "packed output exceeds its result mapping");
+              bytes = PayloadBytes::shared({data, wire->size()}, packed_result_);
+            }
+            outcome.outputs.push_back({output->name()->str(), std::move(bytes)});
+          }
         }
       } else if (const auto* failure = message->value_as_WorkerFailure()) {
         outcome.failure = wire::failure(failure->failure());
@@ -1350,6 +1468,16 @@ WorkerOutcome WorkerProc::call(
     std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
     std::optional<std::chrono::steady_clock::time_point> deadline,
     ArtifactOpen open_artifact, bool create_artifacts) {
+  return call_frame(std::move(frame), call_id, cancel, deadline,
+                    std::move(open_artifact), create_artifacts, {}, {});
+}
+
+auto WorkerProc::call_frame(
+    std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
+    std::optional<std::chrono::steady_clock::time_point> deadline,
+    ArtifactOpen open_artifact, bool create_artifacts,
+    std::span<const int> descriptors,
+    std::shared_ptr<const workerd::SharedBuffer> result) -> WorkerOutcome {
   {
     std::lock_guard lock(data_mutex_);
     if (data_closed_)
@@ -1357,12 +1485,15 @@ WorkerOutcome WorkerProc::call(
               FailureData::make(FailureKind::worker_failed,
                                 "worker data channel closed")};
     awaiting_ = call_id;
+    packed_result_ = std::move(result);
     open_artifact_ = std::move(open_artifact);
     create_artifacts_ = create_artifacts;
     created_artifacts_.clear();
   }
   try {
     send_frame(trace_link_, data_fd_, frame, cancel, deadline);
+    for (const auto descriptor : descriptors)
+      send_packed_descriptor(data_fd_, descriptor, cancel, deadline);
   } catch (const Failed& error) {
     workerd::clear_secret(frame);
     // A partially sent call cannot be resumed or reused.
@@ -1389,6 +1520,7 @@ WorkerOutcome WorkerProc::call(
         pending_.reset();
         awaiting_ = 0;
         open_artifact_ = {};
+        packed_result_.reset();
         lock.unlock();
         if (disconnected) terminate();
         read_logs(false);
@@ -1432,37 +1564,51 @@ WorkerOutcome WorkerProc::call(
   }
 }
 
-std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
-                              const std::vector<types::PortType>& outputs,
-                              std::optional<uint64_t> deadline_ms,
-                              const std::filesystem::path& artifact_directory,
-                              bool drain_display) {
+namespace {
+
+auto build_worker_call(
+    uint64_t call_id, const WorkerProc::CallInputs& invocation,
+    const std::vector<W::WorkerSharedInput>* shared_inputs = nullptr)
+    -> std::string {
   flatbuffers::FlatBufferBuilder b(64 * 1024);
   // The Card reads each nested message in place.
-  auto message = [&](const std::string& s) {
+  auto message = [&](std::string_view s) {
     b.ForceVectorAlignment(s.size(), sizeof(uint8_t),
                            FLATBUFFERS_MAX_ALIGNMENT);
     return b.CreateVector(reinterpret_cast<const uint8_t*>(s.data()),
                           s.size());
   };
   std::vector<flatbuffers::Offset<C::CardPort>> ins;
-  for (const auto& v : inputs)
+  size_t shared_index = 0;
+  for (size_t port = 0; port < invocation.values.size(); ++port) {
+    const auto& v = invocation.values[port];
+    flatbuffers::Offset<flatbuffers::Vector<uint8_t>> bytes;
+    if (shared_inputs && shared_index < shared_inputs->size() &&
+        (*shared_inputs)[shared_index].port() == port)
+      ++shared_index;
+    else
+      bytes = message(v.bytes);
     ins.push_back(C::CreateCardPort(
-        b, b.CreateString(v.name), b.CreateString(v.schema), message(v.bytes)));
+        b, b.CreateString(v.name), b.CreateString(v.schema), bytes));
+  }
   auto insv = b.CreateVector(ins);
   std::vector<flatbuffers::Offset<W::WorkerPort>> outs;
-  for (const auto& p : outputs)
+  for (const auto& p : invocation.outputs)
     outs.push_back(W::CreateWorkerPort(b, b.CreateString(p.name), p.required));
-  const auto artifact_root = artifact_directory.empty()
-                                 ? flatbuffers::Offset<flatbuffers::String>{}
-                                 : b.CreateString(artifact_directory.string());
+  const auto artifact_root =
+      invocation.artifact_directory.empty()
+          ? flatbuffers::Offset<flatbuffers::String>{}
+          : b.CreateString(invocation.artifact_directory.string());
   auto outsv = b.CreateVector(outs);
+  flatbuffers::Offset<flatbuffers::Vector<const W::WorkerSharedInput*>> shared;
+  if (shared_inputs) shared = b.CreateVectorOfStructs(*shared_inputs);
   W::WorkerCallBuilder cb(b);
   cb.add_inputs(insv);
   cb.add_artifact_directory(artifact_root);
-  cb.add_drain_display(drain_display);
+  cb.add_drain_display(invocation.drain_display);
   cb.add_outputs(outsv);
-  if (deadline_ms) cb.add_deadline_ms(*deadline_ms);
+  if (invocation.timeout_ms) cb.add_deadline_ms(*invocation.timeout_ms);
+  cb.add_shared_inputs(shared);
   auto call = cb.Finish();
   W::WorkerMessageBuilder mb(b);
   mb.add_call_id(call_id);
@@ -1473,6 +1619,55 @@ std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
     throw Failed(FailureKind::resource_limit, "the worker call exceeds the frame limit");
   return std::string(reinterpret_cast<const char*>(b.GetBufferPointer()),
                      b.GetSize());
+}
+
+}  // namespace
+
+std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
+                              const std::vector<types::PortType>& outputs,
+                              std::optional<uint64_t> deadline_ms,
+                              const std::filesystem::path& artifact_directory,
+                              bool drain_display) {
+  return build_worker_call(call_id, {inputs, outputs, deadline_ms,
+                                     artifact_directory, drain_display});
+}
+
+auto WorkerProc::call_inputs(CallInputs inputs, uint64_t call_id,
+                             const std::atomic<bool>* cancel,
+                             PackedDeadline deadline, ArtifactOpen open_artifact)
+    -> WorkerOutcome {
+  const bool create_artifacts = !inputs.artifact_directory.empty();
+  if (!packed_)
+    return call(build_worker_call(call_id, inputs), call_id, cancel, deadline,
+                std::move(open_artifact), create_artifacts);
+
+  auto [writer, result] = allocate_shared_result();
+  std::vector<int> descriptors{writer.get()};
+  std::vector<W::WorkerSharedInput> shared_inputs;
+  std::map<const workerd::SharedBuffer*, uint32_t> sources;
+  size_t total = 0;
+  for (uint32_t port = 0; port < inputs.values.size(); ++port) {
+    const auto& bytes = inputs.values[port].bytes;
+    if (bytes.size() > TSUGUMI_MESSAGE_MAX - total)
+      throw Failed(FailureKind::input_invalid, "inputs exceed 16 MiB");
+    total += bytes.size();
+    const auto source = bytes.shared_buffer();
+    if (!source) continue;
+    // A descriptor's producer is retained by inputs until the call returns.
+    const auto [entry, inserted] =
+        sources.try_emplace(source.get(), sources.size());
+    if (inserted) descriptors.push_back(source->descriptor());
+    const auto mapping = source->bytes();
+    const auto offset = reinterpret_cast<uintptr_t>(bytes.data()) -
+                        reinterpret_cast<uintptr_t>(mapping.data());
+    if (offset > mapping.size() || bytes.size() > mapping.size() - offset)
+      throw Failed(FailureKind::input_invalid,
+                   "packed input exceeds its mapping");
+    shared_inputs.emplace_back(port, entry->second, offset, bytes.size());
+  }
+  return call_frame(build_worker_call(call_id, inputs, &shared_inputs), call_id,
+                    cancel, deadline, std::move(open_artifact),
+                    create_artifacts, descriptors, std::move(result));
 }
 
 }  // namespace tsugumi

@@ -6,7 +6,6 @@ table CardPort {
   schema:string (id: 1);          // §2.1; the core stamps it, the SDK may leave it empty in results
   bytes:[ubyte] (id: 2);
 }
-table CardInput { inputs:[CardPort] (id: 0); }   // arrived connected inputs only; no params
 table CardFailure { kind:Tsugumi.Data.FailureKind (id: 0); message:string (id: 1); source:string (id: 2); line:uint32 (id: 3); cell:string (id: 4); }
 table CardResult { outputs:[CardPort] (id: 0); failure:CardFailure (id: 1); }
 

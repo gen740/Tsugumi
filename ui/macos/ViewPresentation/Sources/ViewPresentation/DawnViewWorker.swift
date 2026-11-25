@@ -120,12 +120,13 @@ final class DawnViewWorker: @unchecked Sendable {
     DispatchQueue.main.async { worker.onWaiting(waiting != 0) }
   }
 
-  func create(wasm: Data, layer: CAMetalLayer, width: UInt32, height: UInt32, scale: Float)
+  func create(wasm: Data, layer: CAMetalLayer, width: UInt32, height: UInt32, scale: Float,
+              timeOrigin: Double)
     -> (UInt32?, String) {
     let (created, diagnostic) = dawnDiagnostic { error in
       wasm.withUnsafeBytes { bytes in
         tsugumi_view_host_create(bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count,
-          Unmanaged.passUnretained(layer).toOpaque(), width, height, scale, stop,
+          Unmanaged.passUnretained(layer).toOpaque(), width, height, scale, timeOrigin, stop,
           Self.send, Self.waiting, Unmanaged.passUnretained(self).toOpaque(), error.baseAddress, error.count)
       }
     }
@@ -145,10 +146,10 @@ final class DawnViewWorker: @unchecked Sendable {
                   width: CGFloat(area.width), height: CGFloat(area.height))
   }
 
-  func snapshot() -> (Data?, String?) {
+  func snapshot(testTime: Double?) -> (Data?, String?) {
     guard let native else { return (nil, nil) }
     let image = DawnSnapshot()
-    let result = tsugumi_view_host_snapshot(native, CACurrentMediaTime(), DawnSnapshot.copy,
+    let result = tsugumi_view_host_snapshot(native, testTime ?? CACurrentMediaTime(), DawnSnapshot.copy,
       Unmanaged.passUnretained(image).toOpaque())
     return (image.png, result == -1 ? diagnostic : nil)
   }

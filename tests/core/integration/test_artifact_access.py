@@ -39,8 +39,9 @@ def test_invocation_can_open_a_sealed_artifact_by_uuid(core_factory, project):
     sandboxed_grant = sys.platform == "linux"
     sink = native_card(r"""
         tsugumi_artifact_id ungranted;
-        const auto* port = in.inputs()->Get(0);
-        const auto* artifact = fb::GetRoot<tsugumi::Artifact>(port->bytes()->data());
+        if (in.size() != 1 || !in.front().bytes.data) return 2;
+        const auto& port = in.front();
+        const auto* artifact = fb::GetRoot<tsugumi::Artifact>(port.bytes.data);
         std::copy_n(artifact->id()->bytes()->data(), 16, ungranted.bytes);
         ungranted.bytes[15] ^= 1;
         tsugumi_bytes unused;

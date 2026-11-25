@@ -1417,19 +1417,10 @@ std::optional<FailureData> History::latest_failure(sql::Db& db,
 
 namespace {
 
-// Inspect only recorded values for presentation. Scheduling and opening an
-// artifact do not depend on whether its id can be found by reflection.
-auto value_artifact_ids(const std::string& bfbs, const std::string& bytes)
+auto value_artifact_ids(const reflection::Schema& schema,
+                         const reflection::Object& root, const uint8_t* data)
     -> std::set<ArtifactKey> {
-  const auto* schema_data = reinterpret_cast<const uint8_t*>(bfbs.data());
-  flatbuffers::Verifier verifier(schema_data, bfbs.size());
-  if (!reflection::VerifySchemaBuffer(verifier)) return {};
-  const auto& schema = *reflection::GetSchema(schema_data);
-  const auto* root = schema.root_table();
-  const auto* data = reinterpret_cast<const uint8_t*>(bytes.data());
-  if (!root || !flatbuffers::Verify(schema, *root, data, bytes.size()))
-    return {};
-
+  if (!schema.objects()->LookupByKey("tsugumi.ArtifactId")) return {};
   std::set<ArtifactKey> ids;
   std::set<std::pair<const uint8_t*, const reflection::Object*>> visited;
   const auto visit = [&](const auto& self, const reflection::Object& object,
@@ -1487,13 +1478,38 @@ auto value_artifact_ids(const std::string& bfbs, const std::string& bytes)
       }
     }
   };
-  visit(visit, *root,
+  visit(visit, root,
         reinterpret_cast<const uint8_t*>(
             flatbuffers::GetRoot<flatbuffers::Table>(data)));
   return ids;
 }
 
+auto recorded_artifact_ids(const std::string& bfbs, const std::string& bytes)
+    -> std::set<ArtifactKey> {
+  const auto* schema_data = reinterpret_cast<const uint8_t*>(bfbs.data());
+  flatbuffers::Verifier verifier(schema_data, bfbs.size());
+  if (!reflection::VerifySchemaBuffer(verifier)) return {};
+  const auto& schema = *reflection::GetSchema(schema_data);
+  const auto* root = schema.root_table();
+  const auto* data = reinterpret_cast<const uint8_t*>(bytes.data());
+  if (!root || !flatbuffers::Verify(schema, *root, data, bytes.size()))
+    return {};
+  return value_artifact_ids(schema, *root, data);
+}
+
 }  // namespace
+
+auto History::output_artifact_ids(const types::Type& type,
+                                  std::string_view bytes)
+    -> std::set<ArtifactKey> {
+  const auto& schema = *type.schema();
+  if (bytes.size() < sizeof(flatbuffers::uoffset_t) &&
+      schema.objects()->LookupByKey("tsugumi.ArtifactId"))
+    throw Failed(FailureKind::output_invalid,
+                 "cannot read artifact UUIDs from a truncated output");
+  return value_artifact_ids(schema, *type.root(),
+                            reinterpret_cast<const uint8_t*>(bytes.data()));
+}
 
 std::vector<StoredValueMeta> History::value_metas(sql::Db& db,
                                                   const std::string& run_id,
@@ -1514,7 +1530,7 @@ std::vector<StoredValueMeta> History::value_metas(sql::Db& db,
     m.root_type = st.text(2);
     m.size_bytes = st.u64(3);
     if (!st.is_null(4) && m.bfbs.find("tsugumi.ArtifactId") != std::string::npos) {
-      for (const auto& id : value_artifact_ids(m.bfbs, st.blob(4))) {
+      for (const auto& id : recorded_artifact_ids(m.bfbs, st.blob(4))) {
         const auto record = artifact(db, id);
         const bool available = record && record->sealed_ms;
         m.artifacts.push_back(

@@ -613,6 +613,14 @@ table RunRequest {
   max_concurrency:uint32 = null (id: 5);
   nix_jobs:uint32 = null (id: 6);
   nix_cores:uint32 = null (id: 7);
+  /// Typed starting values for a packed debug run.
+  inputs:[PackedRunInput] (id: 8);
+}
+
+table PackedRunInput {
+  name:string (id: 0, required);
+  schema:string (id: 1, required);
+  bytes:[ubyte] (id: 2, required);
 }
 
 /// -> RunStatus. Cancel run_id.

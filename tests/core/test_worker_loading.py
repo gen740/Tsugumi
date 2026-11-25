@@ -1,6 +1,8 @@
 """The native ABI using real Card libraries and framed socketpairs."""
 
+import array
 import contextlib
+import mmap
 import os
 from pathlib import Path
 import select
@@ -32,6 +34,7 @@ from Tsugumi.Worker.WorkerViewEvent import WorkerViewEventT
 from Tsugumi.Worker.WorkerViewReply import WorkerViewReplyT
 from Tsugumi.Worker.WorkerMessage import WorkerMessage, WorkerMessageT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
+from Tsugumi.Worker.WorkerSharedInput import WorkerSharedInputT
 from Tsugumi.Worker.WorkerStart import WorkerStartT
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -148,33 +151,14 @@ def test_worker_passes_inputs_and_schema_unopened(tmp_path):
         __attribute__((constructor)) static void loaded(void) {{ puts("loaded"); }}
         int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {{
           static const uint8_t wire[] = {{RESULT_BYTES}};
-          if (call->abi_version != 0 || call->input.size < sizeof(wire)) return 4;
-          const uint8_t* b = call->input.data;
-          uint32_t offset, size;
-          uint16_t field;
-          memcpy(&offset, b, 4);
-          b += offset;
-          memcpy(&offset, b, 4);
-          memcpy(&field, b - offset + 4, 2);
-          b += field;
-          memcpy(&offset, b, 4);
-          b += offset + 4;
-          memcpy(&offset, b, 4);
-          b += offset;
-          memcpy(&offset, b, 4);
-          memcpy(&field, b - offset + 6, 2);
-          const uint8_t* schema = b + field;
-          memcpy(&offset, schema, 4);
-          if (strcmp((const char*)schema + offset + 4, "producer-schema")) return 6;
-          memcpy(&offset, b, 4);
-          memcpy(&field, b - offset + 8, 2);
-          b += field;
-          memcpy(&offset, b, 4);
-          b += offset;
-          memcpy(&size, b, 4);
+          if (call->abi_version != TSUGUMI_ABI_VERSION || call->input_count != 1) return 4;
+          const tsugumi_input* input = &call->inputs[0];
+          if (strcmp(input->name, "reading") || !input->schema ||
+              strcmp(input->schema, "producer-schema")) return 6;
           static const uint8_t wanted[] = {{{c_bytes(PARAMS)}}};
-          if (size != sizeof(wanted) || memcmp(b + 4, wanted, size)) return 5;
-          return write_result(result, wire, sizeof(wire));
+          if (input->bytes.size != sizeof(wanted) ||
+              memcmp(input->bytes.data, wanted, sizeof(wanted))) return 5;
+          return write_result(call, result, wire, sizeof(wire));
         }}
     ''')
     with worker(tmp_path) as (p, data, _):
@@ -182,6 +166,68 @@ def test_worker_passes_inputs_and_schema_unopened(tmp_path):
         assert receive(data).valueType == WorkerPayload.WorkerResult
         data.shutdown(socket.SHUT_WR)
         assert p.stdout.read() == b"loaded\n"
+
+def test_packed_worker_lends_shared_results_and_borrows_upstream_ranges(tmp_path):
+    result = packed(CardResultT(outputs=[CardPortT(name="out", bytes=list(PARAMS))]))
+    library(tmp_path, f"""
+        int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {{
+          static const uint8_t wire[] = {{RESULT_BYTES}};
+          static const uint8_t wanted[] = {{{c_bytes(PARAMS)}}};
+          static unsigned calls;
+          if (call->input_count != (calls++ ? 2 : 0)) return 2;
+          if (call->input_count) {{
+            const tsugumi_input* first = &call->inputs[0];
+            const tsugumi_input* second = &call->inputs[1];
+            if (strcmp(first->name, "first") || strcmp(second->name, "second") ||
+                strcmp(first->schema, "schema") || first->bytes.size != sizeof(wanted) ||
+                memcmp(first->bytes.data, wanted, sizeof(wanted)) ||
+                first->bytes.data != second->bytes.data) return 3;
+          }}
+          return write_result(call, result, wire, sizeof(wire));
+        }}
+    """, result=result)
+    size = 16 << 20
+
+    def lend(data, file):
+        assert data.sendmsg([b"\x01"], [(socket.SOL_SOCKET, socket.SCM_RIGHTS,
+                                         array.array("i", [file.fileno()]))]) == 1
+
+    producer_path = tmp_path / "producer"
+    with (worker(tmp_path, arguments=(str(WORKER), "--package", str(tmp_path),
+                                     "--packed-debug")) as (_, data, _),
+          producer_path.open("w+b") as producer,
+          (tmp_path / "consumer").open("w+b") as consumer):
+        for file in (producer, consumer):
+            file.truncate(size)
+        send_message(data, WorkerMessageT(
+            callId=1, valueType=WorkerPayload.WorkerCall,
+            value=WorkerCallT(inputs=[], outputs=[], sharedInputs=[]),
+        ))
+        lend(data, producer)
+        first = receive(data)
+        assert first.valueType == WorkerPayload.WorkerSharedResult
+        assert first.value.size == len(result)
+        with mmap.mmap(producer.fileno(), size, access=mmap.ACCESS_READ) as mapped:
+            assert mapped[:first.value.size] == result
+            offset = mapped.find(PARAMS, 0, first.value.size)
+        assert offset >= 0
+
+        send_message(data, WorkerMessageT(
+            callId=2, valueType=WorkerPayload.WorkerCall,
+            value=WorkerCallT(
+                inputs=[CardPortT(name=name, schema="schema")
+                        for name in ("first", "second")],
+                outputs=[],
+                sharedInputs=[WorkerSharedInputT(port, 0, offset, len(PARAMS))
+                              for port in range(2)],
+            ),
+        ))
+        lend(data, consumer)
+        with producer_path.open("rb") as readonly:
+            lend(data, readonly)
+        second = receive(data)
+        assert second.valueType == WorkerPayload.WorkerSharedResult
+        assert consumer.read(second.value.size) == result
 
 
 def test_worker_loads_once_with_launch_secrets_and_no_legacy_environment(tmp_path):
@@ -206,7 +252,7 @@ def test_worker_loads_once_with_launch_secrets_and_no_legacy_environment(tmp_pat
               getenv("TSUGUMI_OUTPUT_DIR") || getenv("TSUGUMI_TMP_DIR") ||
               getenv("TSUGUMI_WORK_DIR")) return 2;
           if (call->abi_version != TSUGUMI_ABI_VERSION) return 1;
-          return write_result(result, wire, sizeof(wire));
+          return write_result(call, result, wire, sizeof(wire));
         }
     ''')
     with worker(tmp_path, startup={"startup_key": "test-value"}) as (p, data, _):
@@ -241,7 +287,7 @@ def test_encoded_failure_preserves_source(tmp_path, kind):
         #include <tsugumi/card_abi.h>
         int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
           static const uint8_t wire[] = {RESULT_BYTES};
-          return write_result(result, wire, sizeof(wire));
+          return write_result(call, result, wire, sizeof(wire));
         }
     ''', result=packed(CardResultT(failure=CardFailureT(
         kind=kind, message="bad row", source="src/card.cc", line=31, cell="sample",
@@ -265,7 +311,7 @@ def test_an_undecodable_result_fails_cleanly(tmp_path):
         #include <tsugumi/card_abi.h>
         int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
           static const uint8_t wire[] = {RESULT_BYTES};
-          return write_result(result, wire, sizeof(wire));
+          return write_result(call, result, wire, sizeof(wire));
         }
     ''', result=b"invalid")
     with worker(tmp_path) as (_, data, _):
@@ -294,7 +340,7 @@ def test_resident_worker_releases_results(tmp_path):
           // Commit one byte on each page. Without free the process grows
           // by 4 MiB on every invocation.
           const size_t allocation_size = 4 * 1024 * 1024;
-          uint8_t* data = malloc(allocation_size);
+          uint8_t* data = call->effects->result_alloc(call->host, allocation_size);
           if (!data) return 4;
           volatile uint8_t* pages = data;
           for (size_t i = 0; i < allocation_size; i += 4096) pages[i] = 0;
@@ -386,7 +432,7 @@ def test_post_return_open_and_send_keep_opaque_bytes_and_session(tmp_path):
             pthread_join(thread, &status);
             if (status) return 2;
           }
-          return write_result(result, wire, sizeof(wire));
+          return write_result(call, result, wire, sizeof(wire));
         }
     ''')
     with worker(tmp_path) as (_, data, control):
@@ -449,7 +495,7 @@ def test_idle_routes_recv_close_and_reverse_credit(tmp_path):
             pthread_join(thread, &status);
             if (status) return 2;
           }
-          return write_result(result, wire, sizeof(wire));
+          return write_result(call, result, wire, sizeof(wire));
         }
     """)
     with worker(tmp_path) as (_, data, control):
@@ -506,7 +552,7 @@ def test_one_shot_result_waits_for_queued_view_data(tmp_path):
             if (call->effects->send(call->host, &session, payload, sizeof(payload)))
               return 2;
           }
-          return write_result(result, wire, sizeof(wire));
+          return write_result(call, result, wire, sizeof(wire));
         }
     """)
     with worker(tmp_path) as (_, data, control):
@@ -557,7 +603,7 @@ def card_package(body, *, declarations=""):
         "artifact.fbs": (ROOT / "protocol/artifact.fbs").read_text(),
         "card_enums.fbs": (ROOT / "protocol/card_enums.fbs").read_text(),
         "card.cc": _CARD_PREAMBLE + "\n" + declarations +
-        "\nint run(const tsugumi_call& call, const C::CardInput& in, Result& out) {\n" +
+        "\nint run(const tsugumi_call& call, std::span<const tsugumi_input> in, Result& out) {\n" +
         body + "\nreturn 0;\n}\n" + _CARD_ENTRY,
     }
     bindings = "\n".join(
@@ -612,6 +658,7 @@ _CARD_PREAMBLE = r"""
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <span>
 #include <string>
 #include <thread>
 
@@ -659,13 +706,13 @@ std::string create_artifact(const tsugumi_call& call, tsugumi_artifact_id& id,
   return {reinterpret_cast<const char*>(path.data), path.size};
 }
 
-std::string open_artifact(const tsugumi_call& call, const C::CardInput& in,
+std::string open_artifact(const tsugumi_call& call, std::span<const tsugumi_input> in,
                           std::string_view name = "doc") {
-  for (const auto* port : *in.inputs()) {
-    if (port->name()->string_view() != name || !port->bytes()) continue;
-    fb::Verifier verify(port->bytes()->data(), port->bytes()->size());
+  for (const auto& port : in) {
+    if (port.name != name || !port.bytes.data) continue;
+    fb::Verifier verify(port.bytes.data, port.bytes.size);
     if (!verify.VerifyBuffer<tsugumi::Artifact>()) continue;
-    const auto* artifact = fb::GetRoot<tsugumi::Artifact>(port->bytes()->data());
+    const auto* artifact = fb::GetRoot<tsugumi::Artifact>(port.bytes.data);
     tsugumi_artifact_id id;
     std::copy_n(artifact->id()->bytes()->data(), 16, id.bytes);
     tsugumi_bytes path;
@@ -682,11 +729,10 @@ extern "C" int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
   if (call->abi_version != TSUGUMI_ABI_VERSION) return 1;
   fb::FlatBufferBuilder builder;
   Result output{builder, {}, {}};
-  const auto& input = *fb::GetRoot<C::CardInput>(call->input.data);
-  const int code = run(*call, input, output);
+  const int code = run(*call, {call->inputs, call->input_count}, output);
   if (code != 0) return code;
   builder.Finish(C::CreateCardResult(builder, builder.CreateVector(output.ports), output.failure));
-  auto* owned = static_cast<uint8_t*>(std::malloc(builder.GetSize()));
+  auto* owned = call->effects->result_alloc(call->host, builder.GetSize());
   if (!owned) return 1;
   std::memcpy(owned, builder.GetBufferPointer(), builder.GetSize());
   *result = {owned, builder.GetSize()};

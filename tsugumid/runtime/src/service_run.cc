@@ -1,6 +1,8 @@
 // Run, Nix evaluation, history, value, artifact, declared view file and log handlers.
 #include <sys/stat.h>
 
+#include <flatbuffers/reflection.h>
+
 #include <algorithm>
 #include <charconv>
 #include <mutex>
@@ -10,6 +12,7 @@
 #include "nix.hh"
 #include "scheduler.hh"
 #include "service.hh"
+#include "tsugumi/document/schema_id.hh"
 #include "tsugumi/protocol/log_range.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
@@ -17,6 +20,7 @@
 #include "tsugumi/util/system.hh"
 #include "tsugumi/util/text.hh"
 #include "tsugumi/workerd/artifact_id.hh"
+#include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/staging.hh"
 #include "tsugumi/workerd/store.hh"
 #include "version_record.hh"
@@ -58,6 +62,73 @@ auto require_run_id(const flatbuffers::String& s, const char* what) -> void {
   if (!crypto::is_run_id(s.string_view()))
     throw Failed(FailureKind::invalid_request,
                  std::string(what) + " must be a positive project run number");
+}
+
+auto packed_inputs(
+    const Resolution& graph, const CardPath& path,
+    const flatbuffers::Vector<flatbuffers::Offset<R::PackedRunInput>>& inputs)
+    -> std::vector<RunParams::InjectedInput> {
+  const auto* card = graph.find(path);
+  if (!card || card->kind == CardType::Draft)
+    throw Failed(FailureKind::invalid_request,
+                 "typed inputs require an implemented Card");
+  std::map<std::string, std::pair<size_t, std::string>> connected;
+  for (const auto& port : card->inputs) {
+    auto end = graph.endpoint(path, port.name, false);
+    if (end && graph.incoming.at(end->first).contains(end->second))
+      connected.emplace(port.name, std::move(*end));
+  }
+  std::vector<RunParams::InjectedInput> values;
+  size_t remaining = TSUGUMI_MESSAGE_MAX;
+  for (const auto* input : inputs) {
+    const auto name = input->name()->str();
+    const auto target = connected.extract(name);
+    if (!target)
+      throw Failed(FailureKind::input_invalid,
+                   "unknown or duplicate starting input " + name);
+    const auto& [to, port] = target.mapped();
+    const auto schema = input->schema()->str();
+    types::TypeRef type;
+    for (const auto& edge : graph.edges) {
+      if (edge.to != to || edge.to_port != port) continue;
+      const auto& producer = graph.nodes[edge.from];
+      if (producer.kind == CardType::Merge) {
+        const auto candidates = graph.merge_candidates(edge.from, edge.from_port);
+        if (auto found = candidates.find(schema); found != candidates.end())
+          type = found->second;
+      } else if (const auto* output = producer.output(edge.from_port);
+                 output && output->type && schema_id(*output->type) == schema) {
+        type = output->type;
+      }
+    }
+    if (!type)
+      throw Failed(FailureKind::input_invalid,
+                   "starting input has a different schema: " + name);
+    const auto* bytes = input->bytes();
+    if (bytes->size() > remaining)
+      throw Failed(FailureKind::resource_limit,
+                   "starting input payloads exceed 16 MiB");
+    remaining -= bytes->size();
+    if (!flatbuffers::Verify(*type->schema(), *type->root(), bytes->data(),
+                             bytes->size()))
+      throw Failed(FailureKind::input_invalid,
+                   "starting input is not a valid FlatBuffer: " + name);
+    values.push_back({
+        graph.nodes[to].path,
+        {port, std::move(type),
+         std::string(reinterpret_cast<const char*>(bytes->data()), bytes->size()),
+         schema},
+    });
+  }
+  if (card->kind == CardType::Merge) {
+    if (values.size() != 1)
+      throw Failed(FailureKind::input_invalid,
+                   "Merge requires exactly one starting input");
+  } else if (!connected.empty()) {
+    throw Failed(FailureKind::input_missing,
+                 "missing starting input " + connected.begin()->first);
+  }
+  return values;
 }
 
 }  // namespace
@@ -103,8 +174,15 @@ void Service::run(RequestIn& req) {
     if (store_->halted())
       throw Failed(FailureKind::persistence_failed,
                    "changes are halted after a persistence failure");
-    p.commit = versions_->commit_all(
-        version_record::commit("run", path_key(p.card)), doc.get());
+    if (const auto* inputs = r->inputs(); inputs && inputs->size() != 0) {
+      if (!packed_debug())
+        throw Failed(FailureKind::unsupported,
+                     "typed starting values require a packed debug app");
+      p.injected_inputs = packed_inputs(*doc->resolution, p.card, *inputs);
+    }
+    if (!packed_builds())
+      p.commit = versions_->commit_all(
+          version_record::commit("run", path_key(p.card)), doc.get());
     std::string receipt = scheduler_->accept(doc, p);
     reply(req, receipt_reply(req.request_id, receipt, false));
     finish_op(op_id, receipt);
@@ -885,13 +963,14 @@ auto artifact_invocation_path(const std::string& run, const CardPath& card,
   return relative / ("@" + std::to_string(invocation));
 }
 
-auto artifact_location(const stdfs::path& project, const ArtifactData& artifact)
+auto artifact_location(const stdfs::path& state, const ArtifactData& artifact)
     -> stdfs::path {
-  const auto root = project / ".tsugumi/artifacts";
-  if (artifact.location.starts_with(".tsugumi/artifacts/") &&
+  const auto root = state / "artifacts";
+  constexpr std::string_view prefix = ".tsugumi/artifacts/";
+  if (artifact.location.starts_with(prefix) &&
       fs::valid_relative_path(artifact.location) &&
       !stdfs::is_symlink(stdfs::symlink_status(root))) {
-    const auto path = project / artifact.location;
+    const auto path = root / artifact.location.substr(prefix.size());
     if (fs::resolves_inside(root, path)) return path;
   }
   throw Failed(FailureKind::integrity_error, "invalid artifact location");
@@ -919,7 +998,7 @@ auto Service::resolve_artifact(const ArtifactKey& id) -> stdfs::path {
   return history_->read([&](sql::Db& db) -> stdfs::path {
     const auto record = History::artifact(db, id);
     if (!record || !record->sealed_ms) return {};
-    const auto path = artifact_location(opts_.root, *record);
+    const auto path = artifact_location(store_->state_dir(), *record);
     return stdfs::is_directory(stdfs::symlink_status(path)) ? path
                                                             : stdfs::path{};
   });
@@ -927,7 +1006,7 @@ auto Service::resolve_artifact(const ArtifactKey& id) -> stdfs::path {
 
 auto Service::expire_artifacts(sql::Db& db, const std::string& run_id) -> void {
   for (const auto& artifact : History::transient_artifacts(db, run_id)) {
-    remove_artifact_tree(artifact_location(opts_.root, artifact));
+    remove_artifact_tree(artifact_location(store_->state_dir(), artifact));
     db.prepare("DELETE FROM artifacts WHERE id=?")
         .bind_blob(1, artifact.id)
         .run();
@@ -994,7 +1073,8 @@ auto Service::record_artifacts(const InvocationSummaryData& invocation,
     records.push_back(
         {artifact.id, invocation.run_id, invocation.card, invocation.invocation,
          invocation.artifact_sequence, counter, artifact.keep,
-         target.lexically_relative(opts_.root).generic_string(),
+         target.lexically_relative(store_->state_dir().parent_path())
+             .generic_string(),
          invocation.started_at.value_or(sealed), sealed,
          fs::directory_size(target), "tree:" + fs::sha256_tree(target)});
   }
@@ -1002,7 +1082,7 @@ auto Service::record_artifacts(const InvocationSummaryData& invocation,
     const auto run = History::run(db, invocation.run_id);
     for (const auto& artifact : records) {
       if (!artifact.keep && (!run || run->status.terminal())) {
-        remove_artifact_tree(artifact_location(opts_.root, artifact));
+        remove_artifact_tree(artifact_location(store_->state_dir(), artifact));
         continue;
       }
       if (artifact.id.size() != 16 || History::artifact(db, artifact.id))
@@ -1062,7 +1142,7 @@ void Service::artifact_list(RequestIn& req) {
   std::vector<flatbuffers::Offset<R::ArtifactInfo>> out;
   for (const auto& a : rows) {
     std::vector<flatbuffers::Offset<R::ArtifactMember>> members;
-    const auto path = artifact_location(opts_.root, a);
+    const auto path = artifact_location(store_->state_dir(), a);
     for (const auto& name : fs::list_beneath(path, "").files) {
       const auto size = stdfs::file_size(path / name);
       members.push_back(R::CreateArtifactMember(
@@ -1102,7 +1182,7 @@ void Service::artifact_read(RequestIn& req) {
     throw Failed(FailureKind::not_found, "unknown artifact");
   if (!r->member() || !fs::valid_relative_path(r->member()->string_view()))
     throw Failed(FailureKind::invalid_path, "invalid artifact member");
-  const auto root = artifact_location(opts_.root, *a);
+  const auto root = artifact_location(store_->state_dir(), *a);
   const auto member = r->member()->str();
   const auto file = root / member;
   if (!fs::resolves_inside(root, file))

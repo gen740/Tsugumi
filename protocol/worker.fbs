@@ -22,6 +22,14 @@ table WorkerPort {
   required:bool (id: 1);
 }
 
+// A borrowed range in a packed call's read-only shared input descriptor.
+struct WorkerSharedInput {
+  port:uint32;
+  descriptor:uint32;
+  offset:uint32;
+  size:uint32;
+}
+
 // The worker never opens input or output bytes.
 table WorkerCall {
   inputs:[Tsugumi.Card.CardPort] (id: 0, required);
@@ -31,6 +39,9 @@ table WorkerCall {
   artifact_directory:string (id: 3);
   // Before replying, forward displays queued before a one-shot call returned.
   drain_display:bool (id: 4);
+  // Packed calls send a writable result descriptor, then the read-only input
+  // descriptors in ascending index order, immediately after this frame.
+  shared_inputs:[WorkerSharedInput] (id: 5);
 }
 
 table WorkerOutput {
@@ -50,6 +61,9 @@ table WorkerResult {
   outputs:[WorkerOutput] (id: 0, required);
   created:[CreatedArtifact] (id: 1);
 }
+
+// The packed worker filled the result mapping already held by the core.
+table WorkerSharedResult { size:uint32; }
 
 table WorkerFailure {
   failure:Tsugumi.Data.Failure (id: 0, required);
@@ -126,6 +140,7 @@ union WorkerPayload {
   WorkerViewReply = 12,
   WorkerArtifactCreate = 13,
   WorkerArtifactCreated = 14,
+  WorkerSharedResult = 15,
 }
 
 table WorkerMessage {

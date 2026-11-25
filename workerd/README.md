@@ -28,10 +28,19 @@ the service executable. By default it lives beside the fallback
 
 ## Invocation boundary
 
-The worker calls `tsugumi_main` with the fixed Card input envelope. The
-language SDK decodes each arrived value with the generated schema. Launch
-secrets arrive in `WorkerStart`. The work directory and `TMPDIR` are fixed
-at launch.
+The worker calls `tsugumi_main` with an array of names, schema IDs and borrowed
+input byte spans. The language SDK decodes each arrived value with the
+generated schema and requests result storage through `result_alloc`. Launch
+secrets arrive in `WorkerStart`. The work directory and `TMPDIR` are fixed at
+launch.
+
+A packed resident worker receives a writable result mapping and read-only
+input mappings over the inherited data connection. Shared input spans name
+byte ranges in those mappings. The result reply reports its initialized size
+and the core keeps the mapping alive while readers hold any of its outputs.
+All Cards in an exported app come from its author and honor the handoff when
+they return. Development workflows still verify the full result envelope and
+seal artifact snapshots.
 
 Artifact grants come from input envelopes. The worker exposes writable
 directories through `artifact_create`, seals their snapshots at call

@@ -36,6 +36,7 @@ struct BuildRequest;
 class LocalExecutionService;
 class RemoteExecutionService;
 class CacheUsage;
+struct PackedBuilds;
 namespace schema {
 struct CardView;
 }  // namespace schema
@@ -78,6 +79,8 @@ struct ServiceOptions {
   // evaluated: each uses its prepared build, and a Card without one, or
   // whose definition changed since, fails.
   std::filesystem::path prepared_cards;
+  std::filesystem::path packed_builds;
+  std::filesystem::path application_support;
   TransportLimits limits;
 };
 
@@ -105,13 +108,21 @@ class Service : public RequestSink {
   History& history() { return *history_; }
   Store& store() { return *store_; }
   const ServiceOptions& options() const { return opts_; }
+  auto packed_builds() const -> const PackedBuilds* {
+    return packed_builds_.get();
+  }
+  auto packed_debug() const -> bool;
+  auto packed_fast() const -> bool;
   // The binary caches configured for this project's builds (URLs without
   // credentials or query strings), fixed when the project opens.
   const std::vector<std::string>& substituters() const { return substituters_; }
   NixRunner& nix() { return *nix_; }
   // Builds every Code Card the way a run would, without running any
-  // (tsugumid --prepare-cards): one JSON line per Card. False when one failed.
+  // (tsugumid --prepare-cards): a FlatBuffer consumed by --prepared-cards.
   auto prepare_cards(std::ostream& out) -> bool;
+  // Validates the graph and builds its Code Cards for aarch64-darwin.
+  // Returns a JSON manifest on success.
+  auto prepare_native_cards() -> std::optional<std::string>;
   auto run_scratch() const -> const std::filesystem::path& {
     return run_scratch_;
   }
@@ -262,6 +273,7 @@ class Service : public RequestSink {
   std::unique_ptr<History> history_;
   std::unique_ptr<Versions> versions_;
   std::unique_ptr<NixRunner> nix_;
+  std::unique_ptr<PackedBuilds> packed_builds_;
   std::filesystem::path run_scratch_;
   std::unique_ptr<CacheUsage> cache_usage_;
   std::mutex worker_selection_mutex_;
@@ -306,7 +318,7 @@ class Service : public RequestSink {
     ~ViewBlob();
     ViewBlob(const ViewBlob&) = delete;
     auto read(uint64_t offset, uint64_t limit) const -> std::string;
-    static auto open(const std::string& path)
+    static auto open(const std::string& path, const std::filesystem::path& root)
         -> std::shared_ptr<const ViewBlob>;
   };
   struct ViewSession {

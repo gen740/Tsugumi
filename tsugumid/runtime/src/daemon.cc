@@ -52,7 +52,10 @@ struct Options {
   bool project_shell = false;
   stdfs::path substituters_file;
   stdfs::path prepare_cards;
+  stdfs::path prepare_native_cards;
   stdfs::path prepared_cards;
+  stdfs::path packed_builds;
+  stdfs::path application_support;
   std::string fault;
 };
 
@@ -71,8 +74,13 @@ void usage() {
       "                [--host-folders DIR] [--substituters-file FILE]\n"
       "       tsugumid --project DIR --prepare-cards FILE [options]\n"
       "                builds every Code Card without running any, writes one\n"
-      "                JSON line per Card to FILE and exits\n"
-      "       --prepared-cards FILE  runs those builds; evaluates no Card\n");
+      "                FlatBuffer manifest to FILE and exits\n"
+      "       tsugumid --project DIR --prepare-native-cards FILE [options]\n"
+      "                validates and builds for aarch64-darwin, writing one\n"
+      "                JSON manifest to FILE\n"
+      "       --prepared-cards FILE  runs those builds; evaluates no Card\n"
+      "       --packed-builds FILE --application-support DIR\n"
+      "                runs a native exported app's bundled builds\n");
 }
 
 std::optional<Options> parse(int argc, char** argv) {
@@ -130,14 +138,40 @@ std::optional<Options> parse(int argc, char** argv) {
       o.substituters_file = next();
     else if (a == "--prepare-cards")
       o.prepare_cards = next();
+    else if (a == "--prepare-native-cards")
+      o.prepare_native_cards = next();
     else if (a == "--prepared-cards")
       o.prepared_cards = next();
+    else if (a == "--packed-builds")
+      o.packed_builds = next();
+    else if (a == "--application-support")
+      o.application_support = next();
     else if (a == "--help")
       return std::nullopt;
     else
       throw std::runtime_error("unknown option " + a);
   }
   if (o.project.empty()) throw std::runtime_error("--project is required");
+  if (!o.prepare_native_cards.empty() &&
+      (!o.prepare_cards.empty() || !o.prepared_cards.empty()))
+    throw std::runtime_error(
+        "--prepare-native-cards cannot be combined with --prepare-cards or "
+        "--prepared-cards");
+  if (!o.packed_builds.empty()) {
+#ifdef __APPLE__
+    if (!o.packed_builds.is_absolute() || !o.application_support.is_absolute() ||
+        o.unix_socket.empty() || !o.ws_unix_socket.empty() || o.listen_port >= 0 ||
+        !o.prepare_native_cards.empty() || !o.prepare_cards.empty() ||
+        !o.prepared_cards.empty() || o.project_shell)
+      throw std::runtime_error(
+          "packed builds require an absolute manifest, an absolute Application "
+          "Support directory and a private Unix socket");
+#else
+    throw std::runtime_error("packed builds require macOS");
+#endif
+  } else if (!o.application_support.empty()) {
+    throw std::runtime_error("--application-support requires --packed-builds");
+  }
   // Fault injection exists for the persistence tests only and needs an explicit
   // opt-in.
   if (const char* f = std::getenv("TSUGUMI_FAULT");
@@ -192,7 +226,10 @@ int run_daemon(int argc, char** argv) {
     opt.nix_dir = bin.parent_path() / "share" / "tsugumi" / "nix";
 
   // Ownership: a fixed lock file, exclusive and non-blocking, held for life.
-  auto state = root / ".tsugumi";
+  const auto support = opt.packed_builds.empty()
+                           ? stdfs::path{}
+                           : stdfs::weakly_canonical(opt.application_support);
+  auto state = (support.empty() ? root : support) / ".tsugumi";
   stdfs::create_directories(state);
   ::chmod(state.c_str(), 0700);
   auto lock_path = state / "tsugumid.lock";
@@ -242,6 +279,8 @@ int run_daemon(int argc, char** argv) {
   so.project_shell = opt.project_shell;
   so.substituters_file = opt.substituters_file;
   so.prepared_cards = opt.prepared_cards;
+  so.packed_builds = opt.packed_builds;
+  so.application_support = support;
   if (!so.scratch_dir.empty()) {
     // Evaluator downloads and subprocess temporaries belong to the selected
     // work area too, rather than a second implicit global temporary root.
@@ -294,6 +333,20 @@ int run_daemon(int argc, char** argv) {
       error.kind = "invalid_document";
     return report_startup_failure(std::move(error), e);
   }
+  if (!opt.prepare_native_cards.empty()) {
+    const auto manifest = service.prepare_native_cards();
+    service.shutdown();
+    if (!manifest) return 1;
+    try {
+      fs::write_atomic(stdfs::absolute(opt.prepare_native_cards), *manifest,
+                       0600);
+    } catch (const std::exception& error) {
+      log::error("cannot write " + opt.prepare_native_cards.string() + ": " +
+                 error.what());
+      return 2;
+    }
+    return 0;
+  }
   if (!opt.prepare_cards.empty()) {
     std::ofstream out(opt.prepare_cards, std::ios::trunc);
     if (!out) {
@@ -327,7 +380,7 @@ int run_daemon(int argc, char** argv) {
   service.attach(&server);
   try {
     server.start();
-    service.start_remote_cleanup();
+    if (opt.packed_builds.empty()) service.start_remote_cleanup();
   } catch (const std::exception& e) {
     log::error(std::string("cannot start the RPC server: ") + e.what());
     return 7;

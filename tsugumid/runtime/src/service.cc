@@ -16,6 +16,7 @@
 #include "execution_service.hh"
 #include "nix.hh"
 #include "nix_params.hh"
+#include "packed_builds.hh"
 #include "permissions.hh"
 #include "remote_execution_service.hh"
 #include "run_scratch.hh"
@@ -260,9 +261,38 @@ Service::Service(ServiceOptions opts) : opts_(std::move(opts)) {
 
 Service::~Service() { shutdown(); }
 
+auto Service::packed_debug() const -> bool {
+  return packed_builds_ && packed_builds_->debug;
+}
+
+auto Service::packed_fast() const -> bool {
+  return packed_builds_ && packed_builds_->fast;
+}
+
 void Service::open() {
-  store_ = std::make_unique<Store>(StoreOptions{opts_.root, opts_.fault});
+  const auto state = opts_.application_support.empty()
+                         ? stdfs::path{}
+                         : opts_.application_support / ".tsugumi";
+  // The Card products in a bundle already contain the export-time parameters.
+  store_ = std::make_unique<Store>(StoreOptions{
+      opts_.root, opts_.fault, state, opts_.packed_builds.empty()});
   store_->open();
+  if (!opts_.packed_builds.empty()) {
+    packed_builds_ = std::make_unique<PackedBuilds>(
+        PackedBuilds::read(opts_.packed_builds,
+                           *store_->current()->resolution));
+    for (const auto& name : packed_builds_->host_paths) {
+      const auto folder = opts_.application_support / name;
+      stdfs::create_directories(folder);
+      if (stdfs::canonical(folder) != folder)
+        throw std::runtime_error("packed host path points outside its folder: " +
+                                 folder.string());
+      // Fast Cards share an address space and the process environment.
+      if (packed_builds_->fast &&
+          ::setenv(grant_environment(name).c_str(), folder.c_str(), 1) != 0)
+        throw std::runtime_error("cannot set the packed host path " + name);
+    }
+  }
   const auto scratch =
       opts_.scratch_dir.empty()
           ? stdfs::temp_directory_path() / ("tsugumi-" + store_->project_id())
@@ -270,7 +300,8 @@ void Service::open() {
   nix_ = std::make_unique<NixRunner>(*this, scratch / "nix");
   versions_ = std::make_unique<Versions>(opts_.root);
 
-  substituters_ = configured_substituters(opts_.substituters_file);
+  if (!packed_builds_)
+    substituters_ = configured_substituters(opts_.substituters_file);
   run_scratch_ = disk_scratch_path(opts_.run_scratch_dir.empty()
                                        ? default_run_scratch(opts_.root)
                                        : opts_.run_scratch_dir);
@@ -283,6 +314,15 @@ void Service::open() {
   scheduler_ = std::make_unique<Scheduler>(*this);
   recover_artifact_deletions();
   scheduler_->recover_interrupted();
+  if (packed_builds_) {
+#ifdef __APPLE__
+    if (packed_builds_->fast) {
+      const auto libraries = packed_builds_->libraries();
+      load_fast_pack_images(*this, libraries);
+    }
+#endif
+    return;
+  }
   const auto roots = opts_.gcroots_dir.empty()
                          ? store_->state_dir() / "cache" / "gcroots"
                          : opts_.gcroots_dir;
@@ -411,6 +451,15 @@ auto supports_remote_options(const Settings& settings) -> bool {
 auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
                                 BuildRequest& build)
     -> std::unique_ptr<PreparedExecution> {
+  if (packed_builds_) {
+#ifdef __APPLE__
+    if (packed_builds_->fast) {
+      build.target = {WorkerKind::native, native_system()};
+      return prepare_fast_pack_execution(*this, node);
+    }
+#endif
+    return execution_service_->prepare(node, directory, build);
+  }
   auto targets = remote_targets(build.cancel);
   std::stop_callback wake(build.cancel, [&] {
     std::lock_guard lock(worker_selection_mutex_);
@@ -507,6 +556,23 @@ auto Service::remote_execution() -> RemoteExecutionService& {
 auto Service::host_path_binds(const Node& node) const
     -> std::vector<WorkerSpawn::Bind> {
   if (node.settings.grants.host_paths.empty()) return {};
+  if (packed_builds_) {
+    std::vector<WorkerSpawn::Bind> result;
+    for (const auto& grant : node.settings.grants.host_paths) {
+      if (!packed_builds_->host_paths.contains(grant.name))
+        throw Failed(FailureKind::not_found,
+                     "host path is missing from the packed app: " + grant.name);
+      const auto source = opts_.application_support / grant.name;
+      std::error_code ec;
+      if (stdfs::canonical(source, ec) != source ||
+          !stdfs::is_directory(source))
+        throw Failed(FailureKind::not_found,
+                     "packed host path is unavailable: " + source.string());
+      result.push_back(
+          {source.string(), "/host/" + grant.name, grant.write, grant.name});
+    }
+    return result;
+  }
   json::Members bindings;
   if (!opts_.control_dir.empty())
     if (const auto text =
@@ -566,6 +632,9 @@ auto Service::card_secrets(const Node& node, std::stop_token stop) const
     -> std::vector<std::pair<std::string, std::string>> {
   const auto& names = node.settings.secrets;
   if (names.empty()) return {};
+  if (packed_builds_)
+    throw Failed(FailureKind::unsupported,
+                 "packed apps cannot resolve Card secrets");
   WorkerSecrets supplied;
   auto& values = supplied.values;
   try {
@@ -606,6 +675,12 @@ auto Service::remote_targets(std::stop_token stop) const
     local.namespace_isolation = worker_has_bwrap();
     local.gui = opts_.gcroots_dir.empty() && worker_gui_available();
   };
+  if (packed_builds_) {
+    RemoteTarget local;
+    local.id = kLocalExecutionService;
+    fill_local(local);
+    return {std::move(local)};
+  }
   try {
     auto targets = remote_jobs_.catalog(stop);
     auto local =
@@ -697,6 +772,9 @@ void Service::shutdown() {
   if (shell_lane_) shell_lane_->stop();
   if (cancel_lane_) cancel_lane_->stop();
   if (scheduler_) scheduler_->shutdown();
+#ifdef __APPLE__
+  if (packed_fast()) stop_fast_pack_images(*this);
+#endif
   execution_service_.reset();  // the project's resident and standby workers end
   // Queued history writes announce themselves through the server, which
   // outlives the service only until it is closed.
@@ -864,6 +942,33 @@ void Service::dispatch(RequestIn req) {
   Lane& m = *mutation_lane_;
   Lane& r = *read_pool_;
   const auto* request = project_request(req);
+  if (packed_builds_) {
+    switch (request->value_type()) {
+      case P::ProjectOpenRequest:
+      case P::ProjectInspectRequest:
+      case P::RunRequest:
+      case P::RunCancelRequest:
+      case P::RunStatusRequest:
+      case P::CardViewReadRequest:
+      case P::ViewSendRequest:
+      case P::ViewCreditRequest:
+      case P::ViewCloseRequest:
+        break;
+      case P::RunHistoryRequest:
+      case P::RunInvocationsRequest:
+      case P::RunLatestInvocationsRequest:
+      case P::RunRecordRequest:
+      case P::RunValueReadRequest:
+      case P::ArtifactListRequest:
+      case P::ArtifactReadRequest:
+        if (packed_debug()) break;
+        [[fallthrough]];
+      default:
+        return fail(req, FailureData::make(
+                             FailureKind::unsupported,
+                             "request unavailable in an exported app"));
+    }
+  }
   switch (request->value_type()) {
     case P::CoreTraceRequest: {
       namespace T = Tsugumi::Trace;
@@ -2827,7 +2932,7 @@ Service::ViewBlob::ViewBlob(int fd, uint64_t size, std::string path)
 
 Service::ViewBlob::~ViewBlob() { ::close(fd); }
 
-auto Service::ViewBlob::open(const std::string& path)
+auto Service::ViewBlob::open(const std::string& path, const stdfs::path& root)
     -> std::shared_ptr<const ViewBlob> {
   if (!stdfs::path(path).is_absolute()) return {};
   const int fd =
@@ -2850,8 +2955,7 @@ auto Service::ViewBlob::open(const std::string& path)
   if (ec) return {};
 #endif
   std::error_code store_error;
-  const auto store =
-      stdfs::canonical(NixStore::store_dir(), store_error).string();
+  const auto store = stdfs::canonical(root, store_error).string();
   if (store_error || !std::string_view(stdfs::path(resolved).native())
                           .starts_with(store + "/"))
     return {};
@@ -2911,7 +3015,9 @@ auto Service::view_control(
               views.end() ||
           (*found->type != "html" && *found->type != "dawn"))
         return reply;
-      auto blob = ViewBlob::open(*found->blob);
+      auto blob = ViewBlob::open(
+          *found->blob, packed_builds_ ? packed_builds_->resources
+                                       : stdfs::path(NixStore::store_dir()));
       if (!blob) return reply;
 
       std::lock_guard lock(subs_mu_);

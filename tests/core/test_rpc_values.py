@@ -61,7 +61,7 @@ def test_structured_values_survive_a_native_call_and_history(project, tmp_path, 
     package = native_card(tmp_path / "structured-card", """
 int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     if (call->abi_version != TSUGUMI_ABI_VERSION) return 1;
-    return write_result(result, result_bytes, sizeof(result_bytes));
+    return write_result(call, result, result_bytes, sizeof(result_bytes));
 }
 """, [("out", payload)])
     client = core_factory(mocked_builds=True).connect()

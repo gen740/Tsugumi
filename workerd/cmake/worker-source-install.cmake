@@ -1,5 +1,6 @@
 tsugumi_card_nix_files(worker "${PROJECT_SOURCE_DIR}/nix/worker.nix")
-tsugumi_card_nix_files(worker/src src/native_main.cc src/display_channel.hh)
+tsugumi_card_nix_files(worker/src
+  src/native_main.cc src/display_channel.hh src/packed_memory.hh)
 tsugumi_card_nix_files(worker/protocol
   "${TSUGUMI_PROTOCOL_DIR}/artifact.fbs"
   "${TSUGUMI_PROTOCOL_DIR}/card.fbs"

@@ -12,6 +12,11 @@ extern "C" {
 
 #define TSUGUMI_MESSAGE_MAX (1u << 24)
 typedef struct tsugumi_bytes { const uint8_t* data; size_t size; } tsugumi_bytes;
+typedef struct tsugumi_input {
+  const char* name;    /* NUL-terminated */
+  const char* schema;  /* NUL-terminated, or NULL if absent */
+  tsugumi_bytes bytes;
+} tsugumi_input;
 typedef struct { uint8_t bytes[16]; } tsugumi_artifact_id;
 #define TSUGUMI_ARTIFACT_KEEP 1u
 typedef struct { uint8_t bytes[16]; } tsugumi_view_session;
@@ -65,11 +70,21 @@ typedef struct tsugumi_effects {
       /* new writable directory for this call under a new random id, sealed read-only when the call returns; path is NUL-terminated, valid during the call. flags: TSUGUMI_ARTIFACT_KEEP keeps the artifact after its run; without it the artifact exists only while its run runs (later Cards of the same run can open it) and is removed, with its record, when the run ends. Unknown flag bits are an error. 0 ok, <0 error. */
   int (*artifact_open)(void* host, const tsugumi_artifact_id* id, tsugumi_bytes* path);
       /* read-only directory of a sealed artifact of this project; knowing the id is enough. 0 ok, <0 error: unknown id, not sealed yet, not kept after its run, or deleted. */
+  /* Lend a writable result buffer, aligned for FlatBuffers. Returns NULL on
+   * failure. At most one successful allocation is allowed per call. */
+  uint8_t* (*result_alloc)(void* host, size_t size);
 } tsugumi_effects;
-typedef struct tsugumi_call { uint32_t abi_version; tsugumi_bytes input; void* host; const tsugumi_effects* effects; } tsugumi_call;
-/* Input bytes are borrowed for the call. The host takes ownership of any
- * non-null result.data on return, regardless of status. It must be the base
- * pointer of a libc malloc allocation. The host frees it after its last read. */
+typedef struct tsugumi_call {
+  uint32_t abi_version;
+  const tsugumi_input* inputs;
+  size_t input_count;
+  void* host;
+  const tsugumi_effects* effects;
+} tsugumi_call;
+/* Inputs and their fields are borrowed for the call. Return the base pointer
+ * from result_alloc and the number of initialized bytes. After return the
+ * allocation belongs to the host, regardless of status. The Card must never
+ * free the buffer, or access it after return. */
 typedef int (*tsugumi_main_fn)(const tsugumi_call* call, tsugumi_bytes* result);
 int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 
