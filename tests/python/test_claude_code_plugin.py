@@ -58,14 +58,14 @@ def isolated_environment(root: Path, **values) -> dict:
     return env
 
 
-def _stop_matching_processes(argument: str, *, socket_directory: str | None = None):
+def _stop_matching_processes(*arguments: str, socket_directory: str | None = None):
     listing = subprocess.check_output(["ps", "-axww", "-o", "pid=,stat=,command="], text=True)
     for line in listing.splitlines():
         fields = line.split(maxsplit=2)
         if len(fields) != 3:
             continue
         pid, state, command = fields
-        if state.startswith("Z") or argument not in command:
+        if state.startswith("Z") or not all(argument in command for argument in arguments):
             continue
         if socket_directory is not None:
             # MCP's detached Web server has no per-test path in its arguments.
@@ -81,7 +81,8 @@ def stop_resident_services(root: Path, *, vm_helper: Path | None = None):
     directory = _socket_directories[root]
     # hostd creates sockets before it publishes host.ready. Its shutdown
     # stops and waits for the native project daemons it launched.
-    _stop_matching_processes(f" --state-dir {root / 'host-core'} --unix {directory.name}/")
+    _stop_matching_processes(f" --state-dir {root / 'host-core'} ",
+                             f" --unix {directory.name}/")
     if vm_helper is not None:
         _stop_matching_processes(f" {vm_helper} --support {root / 'support'} --image ")
     directory.cleanup()
