@@ -384,7 +384,8 @@ auto install_link_race(const stdfs::path& root) -> void {
     for (int i = 0; i < 100; ++i) {
       const auto destination = root / ("race-copy-" + std::to_string(i));
       try {
-        install(fd, "report", destination);
+        // A live worker can still change its staging during cloning.
+        install_clone(fd, "report", destination);
       } catch (const std::runtime_error& error) {
         expect(
             std::string(error.what()).find("report/link") != std::string::npos,

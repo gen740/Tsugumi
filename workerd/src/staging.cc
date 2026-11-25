@@ -409,12 +409,10 @@ auto move_staging_artifact(int staging, const std::filesystem::path& name,
   fs::create_directories(destination.parent_path());
   if (fs::exists(fs::symlink_status(destination)))
     reject(name, "artifact directory", "destination already exists");
-#ifdef __APPLE__
   // Copying a sealed input can preserve its read-only directory mode.
-  // Darwin needs write permission on the directory when changing its parent.
+  // Cross-parent renames can require write permission on the moved directory.
   if (!(root_mode & S_IWUSR) && ::fchmod(root.get(), S_IRWXU) != 0)
     failed("prepare artifact directory for move", name);
-#endif
   if (::renameat(staging, name.c_str(), AT_FDCWD, destination.c_str()) != 0)
     failed("move artifact into store", destination);
   try {
