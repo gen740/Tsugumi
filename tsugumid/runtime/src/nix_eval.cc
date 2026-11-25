@@ -359,7 +359,6 @@ auto NixEvaluator::build_client(int argc, char** argv) -> std::optional<int> {
     if (sandboxed) {
       nix::settings.set("sandbox", "true");
       nix::settings.set("sandbox-fallback", "false");
-      // Only the receiving daemon is bound by these settings.
       nix::settings.set("builders", "");
     }
     nix::logger = std::make_unique<NixLogSink>(
@@ -377,8 +376,12 @@ auto NixEvaluator::build_client(int argc, char** argv) -> std::optional<int> {
           write_build_log(line, truncated);
         });
     auto store = nix::openStore();
+    // Only guest vmd sets TSUGUMI_GUEST_NIX_SANDBOX=1. It selects the shared
+    // daemon whose nix.conf enforces the settings above for untrusted clients.
     if (sandboxed && dynamic_cast<nix::RemoteStore*>(&*store) &&
-        store->isTrustedClient() != nix::Trusted)
+        !sandboxed_daemon_build_allowed(
+            store->isTrustedClient() == nix::Trusted,
+            nix::getEnv("TSUGUMI_GUEST_NIX_SANDBOX").value_or("")))
       throw std::runtime_error(
           "the Nix daemon cannot enforce sandbox settings for this client");
     store->buildPaths({nix::DerivedPath::Built{

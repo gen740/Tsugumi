@@ -633,6 +633,8 @@ auto start_project(const G::StartT& request) -> G::ReplyT {
   for (const auto& origin : request.origins)
     args.argv.insert(args.argv.end(), {"--allow-origin", origin});
   args.env = project_env(id);
+  // The shared daemon enforces the build settings in vm-boot.nix.
+  args.env.emplace_back("TSUGUMI_GUEST_NIX_SANDBOX=1");
   args.env.push_back("TSUGUMI_CARD_CGROUP_ROOT=" + cg);
   if (request.rpc_trace) args.env.emplace_back("TSUGUMI_RPC_TRACE=1");
   args.env.emplace_back("TSUGUMI_EXECUTION_BROKER=vsock:1027");

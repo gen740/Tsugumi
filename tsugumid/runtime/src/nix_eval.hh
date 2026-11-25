@@ -99,6 +99,12 @@ struct ExpressionResult {
   std::optional<std::string> build_error;
 };
 
+inline auto sandboxed_daemon_build_allowed(bool trusted_client,
+                                           std::string_view guest_sandbox)
+    -> bool {
+  return trusted_client || guest_sandbox == "1";
+}
+
 class NixEvaluator {
  public:
   // Must run on the main thread before other threads start (Boehm GC).

@@ -47,7 +47,10 @@ let
   nixbld = map toString (lib.range 1 16);
   nixConf = writeTextDir "etc/nix/nix.conf" ''
     build-users-group = nixbld
+    # vmd tells project tsugumid processes that this daemon enforces these settings.
     sandbox = true
+    sandbox-fallback = false
+    builders =
     # Registered paths must survive power loss, not just their database rows.
     experimental-features = nix-command flakes
     substituters = https://cache.nixos.org

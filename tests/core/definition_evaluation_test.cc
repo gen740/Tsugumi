@@ -15,6 +15,13 @@
 namespace tsugumi {
 namespace {
 
+TEST(SandboxedDaemonBuild, RequiresClientTrustOrGuestSandbox) {
+  EXPECT_TRUE(sandboxed_daemon_build_allowed(false, "1"));
+  EXPECT_FALSE(sandboxed_daemon_build_allowed(false, ""));
+  EXPECT_FALSE(sandboxed_daemon_build_allowed(false, "0"));
+  EXPECT_TRUE(sandboxed_daemon_build_allowed(true, ""));
+}
+
 TEST(DefinitionEvaluationKey, SeparatesDefinitionContentAndTargetSystem) {
   NixCall original;
   original.definition_key = "resolved-lock-wiring-params-and-sources";
