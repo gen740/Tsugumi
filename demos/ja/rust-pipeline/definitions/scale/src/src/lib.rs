@@ -1,9 +1,9 @@
-use tsugumi::{Report, Inputs, Output, Result};
+use tsugumi::{Inputs, Markdown, Output, PARAMS, Result, send_value};
 
-fn run(inputs: Inputs<'_>, report: &Report<'_>) -> Result<Output> {
+fn run(inputs: Inputs) -> Result<Output> {
     let mut out = tsugumi::outputs::Out::default();
-    out.value = inputs.number.value() * inputs.params.factor().unwrap_or(1);
-    report.scalar(out.value as f64, "product")?;
+    out.value = inputs.number.value() * PARAMS.factor as u64;
+    send_value(Markdown(&format!("**Product**: {}", out.value)))?;
     Ok(Output { out: Some(out) })
 }
 

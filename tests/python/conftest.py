@@ -224,10 +224,10 @@ class VMEnv:
         self.ready = read_ready(self.control / "server.ready")
         return self
 
-    def client(self):
+    def client(self, *, client=0):
         from tsugumi_client import Client
         c = Client(ws=f"ws://127.0.0.1:{self.port}/rpc")
-        c.hello(token=self.ready["token"])
+        c.hello(token=self.ready["token"], client=client)
         return c
 
     def exec(self, script: str) -> str:
@@ -269,6 +269,10 @@ def demo_environment(tmp_path: Path, demo: str, edit=None, language: str = "ja")
     for development. `edit(copy)` changes the copy before it is served."""
     dst = tmp_path / demo
     shutil.copytree(ROOT / "demos" / language / demo, dst)
+    for manifest in dst.rglob("tsugumi.json"):
+        doc = json.loads(manifest.read_text())
+        doc["recordIO"] = True
+        manifest.write_text(json.dumps(doc))
     if edit:
         edit(dst)
     if os.environ.get("TSUGUMI_TEST_SHARED_VM") == "1":
@@ -278,7 +282,7 @@ def demo_environment(tmp_path: Path, demo: str, edit=None, language: str = "ja")
     for f in dst.rglob("definitions/*/_card.json"):
         card = json.loads(f.read_text())
         if card.get("type") == "code":
-            card["sandbox"] = {"filesystem": False}
+            card["sandbox"].update(filesystem=False, pid=False, ipc=False, identity=False)
             f.write_text(json.dumps(card))
     daemon = Daemon(dst).start()
     daemon.client_hello = True

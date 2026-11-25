@@ -11,4 +11,5 @@ in
 {
   run = sdk.pythonCard (common // { src = ./src; });
   api = sdk.pythonApi common;
+  views = builtins.filter (view: view.name == "markdown") sdk.views;
 }

@@ -2,6 +2,7 @@
 import csv
 from collections import defaultdict
 
+from tsugumi import Table, send
 from card import Input, Output, params
 from report.RegionTotal import RegionTotalT
 from report.Summary import SummaryT
@@ -26,5 +27,5 @@ def run(inputs: Input) -> Output:
         RegionTotalT(region=region, revenue=revenue[region], units=units[region])
         for region in sorted(revenue)
     ]
-    # TODO(open): Port the demo display.
+    send(Table(["Region", "Units", "Revenue"], [[r.region, r.units, r.revenue] for r in regions]))
     return Output(summary=SummaryT(rows=rows, revenue=sum(revenue.values()), regions=regions))

@@ -4,7 +4,6 @@ nodes, then t. s reaches all of the first layer and all of the last reaches t.""
 from card import Input, Output, params
 from flow.Network import NetworkT
 
-import json
 import string
 
 import numpy as np
@@ -44,7 +43,6 @@ def run(_input: Input) -> Output:
         f"- 容量 {capacity.min()} から {capacity.max()}\n"
         f"- $s$ から出る総容量 {out_of_s}、$t$ に入る総容量 {into_t}"
     ))
-    print("result: " + json.dumps({"nodes": nodes, "edges": [[u, v, int(c)] for (u, v), c in zip(pairs, capacity)]}))
     names = ' '.join(nodes)
     tail = np.array([index[u] for (u, _) in pairs], dtype=np.uint64)
     head = np.array([index[v] for (_, v) in pairs], dtype=np.uint64)

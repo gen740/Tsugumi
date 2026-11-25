@@ -17,5 +17,5 @@ in
     hash = "sha256-wU+UzEeC0HVXwrqFmgW6FE9Li6S0XxQFzuizoaVoVGY=";
   });
   api = sdk.csharpApi common;
-  # TODO(open): Port the demo display.
+  views = builtins.filter (view: view.name == "line-chart") sdk.views;
 }

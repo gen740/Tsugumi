@@ -1,12 +1,14 @@
 """The maximum flow by networkx, checked against the capacities and conservation,
 drawn on the network: each edge shows flow / capacity, thicker for more flow."""
-import json
+from card import Artifact, Input, Output
+from flow.Flow import FlowT
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 
-from tsugumi import Failure
+from tsugumi import Failure, Image, send
 
 
 def positions(nodes):
@@ -20,8 +22,8 @@ def positions(nodes):
     return pos
 
 
-def main(inputs, report):
-    net = inputs.network
+def run(inputs: Input) -> Output:
+    net = inputs.require("network")
     nodes = net.nodes.decode().split()
     edges = [(nodes[u], nodes[v], int(c)) for u, v, c in zip(net.tail, net.head, net.capacity)]
     graph = nx.DiGraph()
@@ -56,18 +58,21 @@ def main(inputs, report):
     ax.set_title(f"Maximum flow = {value} (each edge is flow/capacity; orange at full capacity, grey with no flow. A made-up network)", fontsize=11)
     ax.set_axis_off()
     fig.tight_layout()
-    report.figure()
-    report.log("result: " + json.dumps({"value": value, "flow": [[u, v, f] for (u, v, _), f in zip(edges, amounts)]}))
+    artifact, directory = Artifact.dir()
+    png = Path(directory) / "flow.png"
+    fig.savefig(png)
+    plt.close(fig)
+    send(Image(png.read_bytes()))
     names = net.nodes
     tail = net.tail
     head = net.head
     caps = net.capacity
     vec = np.array(amounts, dtype=np.uint64)
-    return {'flow': {
-        'nodes': names,
-        'tail': tail,
-        'head': head,
-        'capacity': caps,
-        'flow': vec,
-        'value': value,
-    }}
+    return Output(flow=FlowT(
+        nodes=names,
+        tail=tail,
+        head=head,
+        capacity=caps,
+        flow=vec,
+        value=value,
+    ), figure=artifact)

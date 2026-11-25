@@ -2,9 +2,9 @@
 
 static auto arrival_value(const Card::Inputs& inputs) -> uint64_t {
   return std::visit([](const auto& value) -> uint64_t {
-    if constexpr (requires { value.seed; }) return value.seed;
-    else return value.value;
-  }, *inputs.arrival);
+    if constexpr (requires { value->seed(); }) return value->seed();
+    else return value->value();
+  }, inputs.arrival);
 }
 
 // Emits nothing at 1 (the loop ends); otherwise the value and its parity.

@@ -3,7 +3,8 @@
 Same events and sky grid as bands; its three bands are shaded in
 their colours and the emission lines of the ejecta are marked.
 The histogram and band overlays use Matplotlib."""
-from card import Input, Output, params
+from tsugumi import Image, send
+from card import Artifact, Input, Output, params
 import json
 
 import matplotlib.pyplot as plt
@@ -38,6 +39,8 @@ def run(input: Input) -> Output:
     edges = np.arange(lo, hi + width, width)
     counts, _ = np.histogram(energy[inside], bins=edges)
 
+    artifact, directory = Artifact.dir()
+    png = directory / "casa-spectrum.png"
     # Larger type: the figure is shrunk to fit the display.
     with plt.rc_context({"font.size": 13}):
         fig, ax = plt.subplots(figsize=(7, 3.4))
@@ -62,7 +65,8 @@ def run(input: Input) -> Output:
         ax.legend(loc="lower left", title="photons", frameon=False,
                   fontsize=11, title_fontsize=11)
         fig.tight_layout()
+        fig.savefig(png)
         plt.close(fig)
-        # TODO(open): Port the demo display.
+        send(Image(png.read_bytes(), alt="Cassiopeia A energy spectrum"))
     print(json.dumps({"photons": int(counts.sum()), "bin_ev": width}))
-    return Output()
+    return Output(spectrum=artifact)

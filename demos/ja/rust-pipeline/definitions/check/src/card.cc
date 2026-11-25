@@ -1,6 +1,6 @@
 #include <card.hh>
 
-auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output {
-  report.text(std::to_string(inputs.number.value));
+auto run(const Card::Inputs& inputs) -> Card::Output {
+  card::display::send(card::display::Markdown{std::to_string(inputs.number->value())});
   return {};
 }

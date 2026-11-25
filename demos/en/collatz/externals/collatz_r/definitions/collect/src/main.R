@@ -21,7 +21,7 @@ whole <- function(x) sprintf("%.0f", x)
 main <- function(inputs) {
   outputs <- list()
   a <- arrival(inputs)
-  # TODO(open): Port the demo display.
+  send(markdown(paste("Sequence:", paste(whole(a$path), collapse = " "))))
   if (a$n == 1) outputs[["sequence"]] <- list(values = I(whole(a$path)))
 
   outputs

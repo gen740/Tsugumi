@@ -4,3 +4,5 @@ description: 重力波データを取る
 ---
 
 GWOSC が公開している GW150914 の H1 と L1 のひずみデータ（4 kHz、32 秒の HDF5）を取得し、フォルダとして次の Card に渡す。取得したファイルの大きさと SHA-256 を表示する。
+
+macOS のネイティブ sandbox で mDNSResponder による DNS 解決を許可するため、IPC の隔離を無効にしています。

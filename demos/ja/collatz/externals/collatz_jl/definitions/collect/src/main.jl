@@ -11,7 +11,7 @@ end
 function main(inputs)
     outputs = Dict{String,Any}()
     n, path = arrival(inputs)
-    # TODO(open): Port the demo display.
+    send(Markdown("Sequence: " * join(path, " ")))
     n == 1 && (outputs["sequence"] = Dict("values" => path))
 
     return outputs

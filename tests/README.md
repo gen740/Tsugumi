@@ -84,10 +84,14 @@ Web gesture, source editing, template and undo fixtures call the production host
 
 CI runs deterministic core RPC and Agent tests on Linux and macOS. SDK and Web checks run on Linux; Swift and Seatbelt checks run on macOS. Real remote execution using `tsugumi-workerd` runs on x86_64 Linux through `tests/ci-remote-worker.sh`. The socket-free thought scheduler test is part of `tsugumi_host_settings_tests` in the Agent RPC job.
 
-The large demo runs are opt-in; CI collects them but leaves `TSUGUMI_TEST_DEMO_RUNS` unset. Run them explicitly in the development environment:
+The core demo suite runs in CI. Enable `TSUGUMI_TEST_DEMO_RUNS=1` for the
+four-language Collatz and maximum-flow runs, which build larger Nix closures.
+Enable `TSUGUMI_TEST_NETWORK_DEMOS=1` to fetch Cas A and GW150914 observations
+from HEASARC and GWOSC.
 
 ```sh
-TSUGUMI_TEST_DEMO_RUNS=1 nix develop -c python3 tests/run-isolated.py python3 -m pytest -q tests/python/test_demo_*.py
+TSUGUMI_TEST_DEMO_RUNS=1 TSUGUMI_TEST_NETWORK_DEMOS=1 \
+  nix develop -c python3 tests/run-isolated.py python3 -m pytest -q tests/python/test_demo*.py
 ```
 
 The shared-VM suites also require an explicit opt-in on an Apple silicon Mac with the VM image installed. Build the signed controller first, then run:

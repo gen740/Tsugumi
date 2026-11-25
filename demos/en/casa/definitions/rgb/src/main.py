@@ -1,5 +1,6 @@
 """Assigns the three band images to R, G and B with an asinh stretch per
 channel and shows the PNG. Not exposure corrected: a picture, not a flux map."""
+from tsugumi import Image as ViewImage, send
 from card import Artifact, Input, Output, params
 import hashlib
 import json
@@ -36,5 +37,5 @@ def run(input: Input) -> Output:
     manifest["display"] = {"stretch": "asinh", "q": q, "percentile": percentile, "scales": scales, "png_sha256": digest}
     (dest / "provenance.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
     print(f"casa-rgb.png sha256 {digest}")
-    # TODO(open): Port the demo display.
+    send(ViewImage(png.read_bytes(), alt="Cassiopeia A in three X-ray energy bands"))
     return Output(rgb=artifact)
