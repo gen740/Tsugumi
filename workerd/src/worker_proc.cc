@@ -133,11 +133,11 @@ auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
   }
   if (restrict_files || sp.sandbox.ipc) {
     profile += "(deny network-outbound (remote unix-socket))\n";
-    // The worker's data and control sockets are inherited socketpairs. The
-    // resolver needs a host socket only when IPC isolation is disabled.
+    // The worker's data and control sockets are inherited socketpairs.
     if (sp.sandbox.ipc)
       profile += "(deny network-bind (local unix-socket))\n";
-    else if (sp.network)
+    // System DNS uses this socket even when IPC isolation is enabled.
+    if (sp.network)
       profile +=
           "(allow network-outbound (remote unix-socket "
           "(path-literal \"/private/var/run/mDNSResponder\")))\n";

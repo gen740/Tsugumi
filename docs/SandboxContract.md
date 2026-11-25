@@ -150,15 +150,15 @@ Native macOS uses Seatbelt rules for these effects. For `pid`, the profile
 allows process inspection and signals only for the Card and its children.
 It blocks system-wide process listing and process-related sysctl queries.
 For `ipc`, it blocks POSIX shared memory and named semaphores, System V
-shared memory, semaphores and message queues, and Unix socket connections.
+shared memory, semaphores and message queues, and blocks Unix socket binds.
 The worker communicates over two inherited Unix socket pairs. Mach service
 lookup is restricted to `com.apple.trustd.agent` for TLS certificate
-validation when the network grant is on. The system DNS resolver needs the
-mDNSResponder Unix socket, which is available with network granted and
-`ipc` off. For `identity`, the worker starts with its own environment and
-home, applies the file allowlist even with `filesystem` off, and blocks the
-user's Mach services and local credential sockets. The worker retains its
-launch uid on macOS.
+validation when the network grant is on. The only allowed outbound Unix socket
+connection is to `/private/var/run/mDNSResponder` for system DNS resolution
+when the network grant is on. For `identity`, the worker starts with its own
+environment and home, applies the file allowlist even with `filesystem` off,
+and blocks the user's Mach services and local credential sockets. The worker
+retains its launch uid on macOS.
 
 Seatbelt filesystem isolation is reported as partial. The Card can see
 host file metadata and read the full Nix store and selected system paths.
