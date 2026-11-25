@@ -333,6 +333,20 @@ auto install_outputs(const stdfs::path& root) -> void {
     expect(::lstat(path.c_str(), &status) == 0 && !(status.st_mode & 0222),
            "installed tree is writable");
   }
+
+  // A packed Card can preserve a sealed input's permissions while copying it.
+  const auto archive = staging / "archive";
+  stdfs::create_directory(archive);
+  std::ofstream(archive / "data") << "copied artifact";
+  expect(::chmod(archive.c_str(), 0500) == 0, "seal staged archive");
+  tsugumi::fs::OutputBudget budget;
+  const auto archived = root / "saved-archive";
+  tsugumi::fs::move_staging_artifact(fd, "archive", archived, budget);
+  expect(read_file(archived / "data") == "copied artifact", "archived contents");
+  struct stat status{};
+  expect(::lstat(archived.c_str(), &status) == 0 &&
+             (status.st_mode & 0777) == 0500,
+         "moved archive was not sealed");
   ::close(fd);
 }
 

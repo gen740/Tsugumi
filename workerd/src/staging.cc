@@ -354,7 +354,8 @@ auto move_staging_artifact(int staging, const std::filesystem::path& name,
   if (name.empty() || name.has_parent_path() || name == "." || name == "..")
     reject(name, "artifact name", "expected one directory component");
   const auto root = open_entry(staging, name.string(), name);
-  if (!S_ISDIR(status_of(root.get(), name).st_mode))
+  const auto root_mode = status_of(root.get(), name).st_mode;
+  if (!S_ISDIR(root_mode))
     reject(name, "artifact", "artifact must be a directory");
   const auto visit = [&](auto&& self, int fd, const fs::path& path,
                          bool seal) -> void {
@@ -408,6 +409,12 @@ auto move_staging_artifact(int staging, const std::filesystem::path& name,
   fs::create_directories(destination.parent_path());
   if (fs::exists(fs::symlink_status(destination)))
     reject(name, "artifact directory", "destination already exists");
+#ifdef __APPLE__
+  // Copying a sealed input can preserve its read-only directory mode.
+  // Darwin needs write permission on the directory when changing its parent.
+  if (!(root_mode & S_IWUSR) && ::fchmod(root.get(), S_IRWXU) != 0)
+    failed("prepare artifact directory for move", name);
+#endif
   if (::renameat(staging, name.c_str(), AT_FDCWD, destination.c_str()) != 0)
     failed("move artifact into store", destination);
   try {
