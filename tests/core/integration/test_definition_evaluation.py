@@ -65,7 +65,7 @@ def test_local_probe_failure_and_ineligible_scores_are_recorded(
                           outputs=EMPTY_OUTPUTS, sources={
         "default.nix": ARGUMENTS + """{
           run = throw "the rejected worker must never evaluate run";
-          probe = pkgs.writeShellScriptBin "probe" """ + "''" + probe_body + "''; }",
+          probe = pkgs.writeShellScriptBin "probe" """ + "''\n" + probe_body + "\n''; }",
     }).save(client)
     run_id = run(client, "work", propagate=False)
     status = wait_run(client, run_id)
@@ -75,8 +75,10 @@ def test_local_probe_failure_and_ineligible_scores_are_recorded(
     record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
     assert not record.recordIo
     measurement, = record.workerProbes
-    assert measurement.score == score
-    assert text(measurement.stdoutText).startswith("reading complete\n")
+    assert measurement.score == score, (text(measurement.failure), text(measurement.stderrText))
+    assert (text(measurement.stdoutText) or "").startswith("reading complete\n"), (
+        text(measurement.failure), text(measurement.stderrText)
+    )
     if diagnostic is None:
         assert measurement.failure is None
     else:
