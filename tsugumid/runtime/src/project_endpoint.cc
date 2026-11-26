@@ -36,7 +36,8 @@ auto ProjectEndpoint(ServerOptions& options) -> void {
         *m->request_id(), hello != nullptr,
         hello ? trace::ClientName(hello->client()) : nullptr,
         !display && type != R::RequestPayload::CoreTraceRequest &&
-            (!hello || hello->client() != Tsugumi::Trace::Client::Trace)};
+            (!hello || hello->client() != Tsugumi::Trace::Client::Trace),
+        type == R::RequestPayload::RunCancelRequest};
   };
   options.codec.completed = [](std::string_view bytes) {
     return R::GetMessage(bytes.data())->request_id().value_or(0);

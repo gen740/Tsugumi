@@ -31,6 +31,10 @@ namespace tsugumi {
 
 namespace {
 
+constexpr size_t kMaxPendingBytes = 64u << 20;
+constexpr size_t kMaxRequests = 256;
+constexpr size_t kControlReserve = 8;
+
 void set_nonblock(int fd) {
   int fl = ::fcntl(fd, F_GETFL, 0);
   ::fcntl(fd, F_SETFL, fl | O_NONBLOCK);
@@ -83,6 +87,10 @@ struct TransportServer::Conn {
   size_t out_bytes = 0;
   std::string wbuf;
   size_t wpos = 0;
+  auto can_queue(size_t bytes) const -> bool {
+    const auto pending = out_bytes + (wbuf.size() - wpos);
+    return pending <= kMaxPendingBytes && bytes <= kMaxPendingBytes - pending;
+  }
   std::map<uint64_t, bool> inflight;
   const char* peer;
   trace::Link trace_link;
@@ -247,6 +255,8 @@ void TransportServer::enqueue_raw(Conn& c, std::string bytes, bool is_reply,
     auto request = c.inflight.extract(opts_.codec.completed(bytes));
     if (!request.empty()) trace = request.mapped();
   }
+  if (!c.can_queue(bytes.size()))
+    return drop(c, "send queue limit exceeded");
   c.out_bytes += bytes.size();
   Conn::Out o;
   o.raw = std::move(bytes);
@@ -261,12 +271,16 @@ void TransportServer::enqueue_note(Conn& c, const PendingMessage& n) {
       if (o.note && o.note->group == n.group &&
           o.note->coalesce_key == n.coalesce_key) {
         c.out_bytes -= o.note->approx_bytes;
+        if (!c.can_queue(n.approx_bytes))
+          return drop(c, "send queue limit exceeded");
         o.note = n;
         c.out_bytes += n.approx_bytes;
         return;
       }
     }
   }
+  if (!c.can_queue(n.approx_bytes))
+    return drop(c, "send queue limit exceeded");
   Conn::Out o;
   o.note = n;
   c.out_bytes += n.approx_bytes;
@@ -288,6 +302,10 @@ bool TransportServer::fill_write(Conn& c) {
   } else {
     c.out_bytes -= o.raw.size();
     body = std::move(o.raw);
+  }
+  if (!c.can_queue(body.size() + 10)) {
+    drop(c, "send queue limit exceeded");
+    return false;
   }
   trace::Observe(c.trace_link, opts_.trace_endpoint, c.peer, true, body,
                  opts_.trace_codec, o.note ? o.note->trace : o.trace);
@@ -333,6 +351,7 @@ void TransportServer::drop(Conn& c, const char* why) {
   log::info("connection " + std::to_string(c.id) + " closed: " + why);
   c.closing = true;
   c.outq.clear();
+  c.out_bytes = 0;
   c.wbuf.clear();
   c.wpos = 0;
 }
@@ -545,6 +564,7 @@ void TransportServer::on_readable(Conn& c) {
       return drop(c, "read error");
     }
     c.rbuf.append(buf, static_cast<size_t>(r));
+    break;
   }
   // Requests that arrived before the peer closed are still accepted.
   if (c.websocket) {
@@ -591,6 +611,8 @@ void TransportServer::handle_frame(Conn& c, std::string frame) {
   trace::Observe(c.trace_link, c.peer, opts_.trace_endpoint, false, *in.frame,
                  opts_.trace_codec, info->trace);
   if (!c.authenticated) return fail(AdmissionFailure::Unauthenticated);
+  const auto limit = kMaxRequests + (info->control ? kControlReserve : 0);
+  if (c.inflight.size() >= limit) return fail(AdmissionFailure::Busy);
   c.inflight.emplace(rid, info->trace);
   sink_->dispatch(std::move(in));
 }
