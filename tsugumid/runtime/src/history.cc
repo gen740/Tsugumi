@@ -98,6 +98,13 @@ std::string detail_bytes(const InvocationSummaryData& s) {
   d.implementation_index = s.implementation_index.value_or(0);
   d.implementation_label = s.implementation_label;
   d.secrets = s.secrets;
+  for (const auto& artifact : s.artifact_outputs) {
+    auto output = std::make_unique<S::InvocationArtifactOutputT>();
+    output->artifact_id.assign(artifact.id.begin(), artifact.id.end());
+    output->port = artifact.port;
+    output->value_path = artifact.value_path;
+    d.artifact_outputs.push_back(std::move(output));
+  }
   return flat::encode<S::InvocationDetail>(d);
 }
 
@@ -117,6 +124,11 @@ void detail_into(const std::string& bytes, InvocationSummaryData& s) {
   if (d.worker_reused) s.worker_reused = *d.worker_reused;
   s.outputs_sent = d.outputs_sent;
   s.secrets = d.secrets;
+  for (const auto& artifact : d.artifact_outputs) {
+    s.artifact_outputs.push_back({ArtifactKey(artifact->artifact_id.begin(),
+                                              artifact->artifact_id.end()),
+                                  artifact->port, artifact->value_path});
+  }
   if (d.ready_at) s.ready_at = *d.ready_at;
   s.emulator = d.emulator;
   s.environment_id = d.environment_id;
@@ -1417,38 +1429,49 @@ std::optional<FailureData> History::latest_failure(sql::Db& db,
 
 namespace {
 
-auto value_artifact_ids(const reflection::Schema& schema,
-                         const reflection::Object& root, const uint8_t* data)
-    -> std::set<ArtifactKey> {
+using ArtifactValuePaths = std::set<std::pair<ArtifactKey, std::string>>;
+
+auto value_artifact_paths(const reflection::Schema& schema,
+                          const reflection::Object& root, const uint8_t* data)
+    -> ArtifactValuePaths {
   if (!schema.objects()->LookupByKey("tsugumi.ArtifactId")) return {};
-  std::set<ArtifactKey> ids;
+  ArtifactValuePaths paths;
   std::set<std::pair<const uint8_t*, const reflection::Object*>> visited;
   const auto visit = [&](const auto& self, const reflection::Object& object,
-                         const uint8_t* address) -> void {
+                         const uint8_t* address,
+                         const std::string& path) -> void {
     if (!address || !visited.emplace(address, &object).second) return;
     const auto* table = reinterpret_cast<const flatbuffers::Table*>(address);
     if (object.is_struct() && object.bytesize() == 16 &&
         object.name()->string_view() == "tsugumi.ArtifactId") {
-      ids.emplace(reinterpret_cast<const char*>(address), 16);
+      paths.emplace(ArtifactKey(reinterpret_cast<const char*>(address), 16),
+                    path);
       return;
     }
     for (const auto* field : *object.fields()) {
       if (field->deprecated()) continue;
+      const auto field_path =
+          field->name()->string_view() == "id" &&
+                  object.name()->string_view() == "tsugumi.Artifact"
+              ? path
+              : path + "." + field->name()->str();
       const auto& type = *field->type();
       if (type.base_type() == reflection::Obj) {
         const auto& child = *schema.objects()->Get(type.index());
         if (object.is_struct()) {
-          self(self, child, address + field->offset());
+          self(self, child, address + field->offset(), field_path);
         } else if (child.is_struct()) {
-          self(self, child, table->GetAddressOf(field->offset()));
+          self(self, child, table->GetAddressOf(field->offset()), field_path);
         } else {
-          self(self, child, table->GetPointer<const uint8_t*>(field->offset()));
+          self(self, child, table->GetPointer<const uint8_t*>(field->offset()),
+               field_path);
         }
       } else if (type.base_type() == reflection::Array &&
                  type.element() == reflection::Obj) {
         const auto& child = *schema.objects()->Get(type.index());
         for (size_t i = 0; i < type.fixed_length(); ++i)
-          self(self, child, address + field->offset() + i * child.bytesize());
+          self(self, child, address + field->offset() + i * child.bytesize(),
+               field_path + "[" + std::to_string(i) + "]");
       } else if (type.base_type() == reflection::Vector &&
                  type.element() == reflection::Obj) {
         const auto* vector = flatbuffers::GetFieldAnyV(*table, *field);
@@ -1460,7 +1483,8 @@ auto value_artifact_ids(const reflection::Schema& schema,
                    ? flatbuffers::GetAnyVectorElemAddressOf<const uint8_t>(
                          vector, i, child.bytesize())
                    : flatbuffers::GetAnyVectorElemPointer<const uint8_t>(vector,
-                                                                         i));
+                                                                         i),
+               field_path + "[" + std::to_string(i) + "]");
       } else if (type.base_type() == reflection::Union) {
         const auto* tag = object.fields()->LookupByKey(
             (field->name()->str() + "_type").c_str());
@@ -1474,18 +1498,19 @@ auto value_artifact_ids(const reflection::Schema& schema,
             member->union_type()->base_type() != reflection::Obj)
           continue;
         self(self, *schema.objects()->Get(member->union_type()->index()),
-             table->GetPointer<const uint8_t*>(field->offset()));
+             table->GetPointer<const uint8_t*>(field->offset()), field_path);
       }
     }
   };
   visit(visit, root,
         reinterpret_cast<const uint8_t*>(
-            flatbuffers::GetRoot<flatbuffers::Table>(data)));
-  return ids;
+            flatbuffers::GetRoot<flatbuffers::Table>(data)),
+        "");
+  return paths;
 }
 
-auto recorded_artifact_ids(const std::string& bfbs, const std::string& bytes)
-    -> std::set<ArtifactKey> {
+auto recorded_artifact_paths(const std::string& bfbs, const std::string& bytes)
+    -> ArtifactValuePaths {
   const auto* schema_data = reinterpret_cast<const uint8_t*>(bfbs.data());
   flatbuffers::Verifier verifier(schema_data, bfbs.size());
   if (!reflection::VerifySchemaBuffer(verifier)) return {};
@@ -1494,7 +1519,7 @@ auto recorded_artifact_ids(const std::string& bfbs, const std::string& bytes)
   const auto* data = reinterpret_cast<const uint8_t*>(bytes.data());
   if (!root || !flatbuffers::Verify(schema, *root, data, bytes.size()))
     return {};
-  return value_artifact_ids(schema, *root, data);
+  return value_artifact_paths(schema, *root, data);
 }
 
 }  // namespace
@@ -1507,8 +1532,52 @@ auto History::output_artifact_ids(const types::Type& type,
       schema.objects()->LookupByKey("tsugumi.ArtifactId"))
     throw Failed(FailureKind::output_invalid,
                  "cannot read artifact UUIDs from a truncated output");
-  return value_artifact_ids(schema, *type.root(),
-                            reinterpret_cast<const uint8_t*>(bytes.data()));
+  std::set<ArtifactKey> ids;
+  for (const auto& [id, _] :
+       value_artifact_paths(schema, *type.root(),
+                            reinterpret_cast<const uint8_t*>(bytes.data())))
+    ids.insert(id);
+  return ids;
+}
+
+auto History::output_artifacts(std::span<const Value> values)
+    -> std::vector<OutputArtifactData> {
+  std::vector<OutputArtifactData> outputs;
+  for (const auto& value : values) {
+    if (!value.type) continue;
+    const auto& schema = *value.type->schema();
+    if (!schema.objects()->LookupByKey("tsugumi.ArtifactId")) continue;
+    const std::string_view bytes = value.bytes;
+    const auto* data = reinterpret_cast<const uint8_t*>(bytes.data());
+    if (!flatbuffers::Verify(schema, *value.type->root(), data, bytes.size()))
+      continue;
+    for (const auto& [id, path] :
+         value_artifact_paths(schema, *value.type->root(), data))
+      outputs.push_back({id, value.name, path});
+  }
+  return outputs;
+}
+
+auto History::artifact_outputs(sql::Db& db, const ArtifactData& a)
+    -> std::vector<std::pair<std::string, std::string>> {
+  std::vector<std::pair<std::string, std::string>> outputs;
+  const auto inv = invocation(db, a.run_id, a.card, a.invocation);
+  if (!inv) return outputs;
+  for (const auto& artifact : inv->summary.artifact_outputs)
+    if (artifact.id == a.id)
+      outputs.emplace_back(artifact.port, artifact.value_path);
+  if (!inv->summary.artifact_outputs.empty() || !inv->record_io) return outputs;
+
+  auto st = db.prepare(
+      "SELECT v.port, s.bfbs, v.bytes FROM ivalues v JOIN schemas s ON "
+      "s.hash=v.schema_hash WHERE v.run_id=? AND v.card=? AND "
+      "v.invocation=? AND v.side=1 AND v.bytes IS NOT NULL ORDER BY v.port");
+  st.bind(1, a.run_id).bind(2, key(a.card)).bind(3, a.invocation);
+  while (st.step())
+    for (const auto& [id, path] :
+         recorded_artifact_paths(st.blob(1), st.blob(2)))
+      if (id == a.id) outputs.emplace_back(st.text(0), path);
+  return outputs;
 }
 
 std::vector<StoredValueMeta> History::value_metas(sql::Db& db,
@@ -1530,7 +1599,10 @@ std::vector<StoredValueMeta> History::value_metas(sql::Db& db,
     m.root_type = st.text(2);
     m.size_bytes = st.u64(3);
     if (!st.is_null(4) && m.bfbs.find("tsugumi.ArtifactId") != std::string::npos) {
-      for (const auto& id : recorded_artifact_ids(m.bfbs, st.blob(4))) {
+      std::set<ArtifactKey> ids;
+      for (const auto& [id, _] : recorded_artifact_paths(m.bfbs, st.blob(4)))
+        ids.insert(id);
+      for (const auto& id : ids) {
         const auto record = artifact(db, id);
         const bool available = record && record->sealed_ms;
         m.artifacts.push_back(

@@ -1140,9 +1140,31 @@ void Service::artifact_list(RequestIn& req) {
   });
   bool more = !by_id && rows.size() > limit;
   if (more) rows.resize(limit);
+  const auto details = history_->read([&](sql::Db& db) {
+    std::map<std::pair<std::string, CardPath>, uint64_t> call_counts;
+    std::vector<
+        std::pair<uint64_t, std::vector<std::pair<std::string, std::string>>>>
+        result;
+    for (const auto& artifact : rows) {
+      auto [count, inserted] =
+          call_counts.try_emplace({artifact.run_id, artifact.card}, 0);
+      if (inserted)
+        count->second =
+            History::aggregate(db, artifact.run_id, artifact.card).calls;
+      result.emplace_back(count->second,
+                          History::artifact_outputs(db, artifact));
+    }
+    return result;
+  });
   FBB b;
   std::vector<flatbuffers::Offset<R::ArtifactInfo>> out;
-  for (const auto& a : rows) {
+  for (size_t i = 0; i < rows.size(); ++i) {
+    const auto& a = rows[i];
+    const auto& [calls, output_paths] = details[i];
+    std::vector<flatbuffers::Offset<R::ArtifactOutput>> outputs;
+    for (const auto& [port, path] : output_paths)
+      outputs.push_back(R::CreateArtifactOutput(b, b.CreateString(port),
+                                                b.CreateString(path)));
     std::vector<flatbuffers::Offset<R::ArtifactMember>> members;
     const auto path = artifact_location(store_->state_dir(), a);
     for (const auto& name : fs::list_beneath(path, "").files) {
@@ -1154,7 +1176,8 @@ void Service::artifact_list(RequestIn& req) {
         b, b.CreateString(artifact_id_text(a.id)), b.CreateString(a.run_id),
         wire::path(b, a.card), a.invocation, a.size_bytes,
         a.tree_hash ? b.CreateString(*a.tree_hash) : 0, b.CreateVector(members),
-        b.CreateString(artifact_label(a)), a.keep));
+        b.CreateString(artifact_label(a)), a.keep, b.CreateVector(outputs),
+        calls, b.CreateString(a.location)));
   }
   auto v = b.CreateVector(out);
   flatbuffers::Offset<flatbuffers::String> cur;

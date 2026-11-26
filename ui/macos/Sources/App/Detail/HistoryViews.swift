@@ -623,51 +623,47 @@ struct CardArtifactsView: View {
   }
 }
 
-/// The host supplies sealed artifact directories and their members. A relative
-/// storage path identifies each file while export uses the artifact capability.
+/// A browser of the host's sealed artifacts, with each file relative to its artifact.
 private struct ArtifactFilesView: View {
   let session: ProjectSession
   let cardKey: CardKey
   let runId: String
 
-  private struct File: Identifiable {
-    let artifact: String
-    let member: String
-    let path: String
-    let size: UInt64
-    var id: String { path }
-  }
-
-  @State private var files: [File] = []
+  @State private var artifacts: [Tsugumi_RPC_ArtifactInfoT] = []
   @State private var loaded = false
   @State private var error: String?
   @State private var exporting = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      Text(verbatim: ".tsugumi/artifacts/\(runId)/\(cardKey)/")
-        .font(.caption.monospaced())
-        .foregroundStyle(.secondary)
-        .textSelection(.enabled)
-        .padding(8)
-      Divider()
-      List(files) { file in
-        HStack {
-          Image(systemName: "doc").foregroundStyle(.secondary)
-          Text(verbatim: file.path).lineLimit(1).truncationMode(.middle).help(file.path)
-          Spacer()
-          Text(ByteCountFormatter.string(fromByteCount: Int64(clamping: file.size), countStyle: .file))
-            .font(.caption).foregroundStyle(.secondary)
-          Button { Task { await download(file) } } label: { Image(systemName: "arrow.down.to.line") }
-            .buttonStyle(.borderless)
-            .disabled(exporting)
-            .help("コピーを保存…")
-            .accessibilityLabel("コピーを保存…")
+    let byCall = Dictionary(grouping: artifacts) { $0.invocation ?? 0 }
+    let multipleCalls = artifacts.contains { ($0.invocationCount ?? 0) > 1 }
+    VStack(spacing: 0) {
+      List {
+        ForEach(byCall.keys.sorted(), id: \.self) { invocation in
+          if multipleCalls && invocation > 0 {
+            Text("\(invocation) 回目")
+              .font(.headline)
+              .listRowSeparator(.hidden)
+              .accessibilityAddTraits(.isHeader)
+          }
+          ForEach(byCall[invocation] ?? [], id: \.artifactId) { artifact in
+            Section {
+              let members = artifact.members.compactMap { $0 }
+              if members.isEmpty {
+                Text("ファイルはありません").foregroundStyle(.secondary)
+              }
+              ForEach(members, id: \.path) { member in
+                fileRow(member, artifactID: artifact.artifactId)
+              }
+            } header: {
+              artifactHeading(artifact)
+            }
+          }
         }
       }
       .overlay {
         if !loaded { ProgressView() }
-        else if files.isEmpty && error == nil {
+        else if artifacts.isEmpty && error == nil {
           ContentUnavailableView("この実行の Artifacts にファイルはありません", systemImage: "shippingbox")
         }
       }
@@ -678,40 +674,63 @@ private struct ArtifactFilesView: View {
     .task(id: ExecutionHistoryRefresh(session: session, card: cardKey)) { await loadFiles() }
   }
 
-  private func loadFiles() async {
-    guard let rpc = session.rpc else { return }
-    do {
-      let artifacts = try await rpc.artifacts(runId: runId, card: path(cardKey))
-      guard !Task.isCancelled else { return }
-      files = artifacts.flatMap { artifact -> [File] in
-        guard let invocation = artifact.invocation,
-              let counter = artifact.label?.split(separator: ".").last else { return [] }
-        // The label starts with the global invocation sequence. The storage
-        // directory uses the invocation index within this Card and run.
-        let directory = "@\(invocation)/\(counter)"
-        return artifact.members.compactMap { member in
-          member.map {
-            File(artifact: artifact.artifactId, member: $0.path, path: "\(directory)/\($0.path)", size: $0.sizeBytes ?? 0)
-          }
-        }
+  private func artifactHeading(_ artifact: Tsugumi_RPC_ArtifactInfoT) -> some View {
+    let outputs = artifact.outputs.compactMap { output in output.map { $0.port + $0.valuePath } }
+    return HStack(spacing: 8) {
+      if outputs.isEmpty {
+        Text("対応する出力の記録なし")
+      } else {
+        Text(verbatim: outputs.joined(separator: ", ")).font(.body.monospaced())
       }
+      if let label = artifact.label {
+        Text(verbatim: label).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+      }
+    }
+    .help(artifact.relativeLocation ?? "")
+  }
+
+  private func fileRow(_ member: Tsugumi_RPC_ArtifactMemberT, artifactID: String) -> some View {
+    HStack {
+      Image(systemName: "doc").foregroundStyle(.secondary)
+      Text(verbatim: member.path).lineLimit(1).truncationMode(.middle).help(member.path)
+      Spacer()
+      Text(ByteCountFormatter.string(fromByteCount: Int64(clamping: member.sizeBytes ?? 0), countStyle: .file))
+        .font(.caption).foregroundStyle(.secondary)
+      Button { Task { await download(artifactID, member: member.path) } } label: { Image(systemName: "arrow.down.to.line") }
+        .buttonStyle(.borderless)
+        .disabled(exporting)
+        .help("コピーを保存…")
+        .accessibilityLabel("コピーを保存…")
+    }
+  }
+
+  private func loadFiles() async {
+    guard let rpc = session.rpc else {
+      error = String(localized: "実行環境に接続していません")
+      loaded = true
+      return
+    }
+    do {
+      let result = try await rpc.artifacts(runId: runId, card: path(cardKey))
+      guard !Task.isCancelled else { return }
+      artifacts = result
       error = nil
     } catch {
       guard !Task.isCancelled else { return }
-      self.error = String(describing: error)
+      self.error = error.localizedDescription
     }
     loaded = true
   }
 
-  private func download(_ file: File) async {
+  private func download(_ artifact: String, member: String) async {
     guard let rpc = session.rpc, !exporting else { return }
     exporting = true
     defer { exporting = false }
     let panel = NSSavePanel()
-    panel.nameFieldStringValue = (file.member as NSString).lastPathComponent
+    panel.nameFieldStringValue = (member as NSString).lastPathComponent
     guard await panel.begin() == .OK, let destination = panel.url else { return }
     do {
-      try await rpc.readArtifact(id: file.artifact, member: file.member).write(to: destination, options: .atomic)
-    } catch { self.error = String(describing: error) }
+      try await rpc.readArtifact(id: artifact, member: member).write(to: destination, options: .atomic)
+    } catch { self.error = error.localizedDescription }
   }
 }

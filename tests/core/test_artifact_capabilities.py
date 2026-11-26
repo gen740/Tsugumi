@@ -63,6 +63,9 @@ def test_transient_artifact_opens_without_a_port_id_then_expires(
     artifact_id = key_file.read_text()
     [artifact] = client.call("ArtifactListRequest", artifactIds=[artifact_id]).artifacts
     assert text(artifact.artifactId) == artifact_id
+    [output] = artifact.outputs
+    assert (text(output.port), text(output.valuePath)) == ("doc", "")
+    assert artifact.invocationCount == 1
     assert not artifact.keep
     directory = project / ".tsugumi/artifacts" / run_id / "source/@1/0"
     assert (directory / "scratch.txt").read_text() == "scratch"
