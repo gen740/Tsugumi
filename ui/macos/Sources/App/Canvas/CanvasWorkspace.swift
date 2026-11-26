@@ -3,7 +3,7 @@ import SwiftUI
 import TsugumiRPC
 import TsugumiViewPresentation
 
-/// The canvas with its project navigation, run control and actions.
+/// The canvas with its actions, notices and status bar.
 struct CanvasWorkspace: View {
   @Bindable var workspace: Workspace
   let session: ProjectSession
@@ -11,20 +11,17 @@ struct CanvasWorkspace: View {
   let showsCardViews: Bool
   var body: some View {
     GraphCanvas(workspace: workspace, session: session, tab: tab, showsCardViews: showsCardViews)
-      .overlay(alignment: .top) {
+      .overlay(alignment: .topTrailing) {
         VStack(alignment: .trailing, spacing: 8) {
-          HStack(alignment: .top, spacing: 8) {
-            breadcrumbs.layoutPriority(3)
-            Spacer(minLength: 0)
-            CanvasDraftControls(workspace: workspace, session: session, tab: tab).fixedSize().layoutPriority(1)
-            CanvasCommentControls(workspace: workspace, session: session, tab: tab).fixedSize().layoutPriority(1)
-            CanvasRunControl(session: session, tab: tab).fixedSize().layoutPriority(2)
-          }
           if let notice = session.notice {
             noticeBanner(notice) { session.notice = nil }
           }
           if let error = session.stopError {
             noticeBanner(.error(error))
+          }
+          HStack(spacing: 8) {
+            CanvasDraftControls(workspace: workspace, session: session, tab: tab).fixedSize()
+            CanvasCommentControls(workspace: workspace, session: session, tab: tab).fixedSize()
           }
         }
         .padding(10)
@@ -59,8 +56,26 @@ struct CanvasWorkspace: View {
     .frame(maxWidth: 420, alignment: .trailing)
   }
 
-  /// The project's title and where the canvas is (Card in Card), in one place.
-  private var breadcrumbs: some View {
+  private var viewControls: some View {
+    let zoom = session.cameras[key(tab.scope)]?.zoom ?? 1
+    return HStack(spacing: 2) {
+      Text("\(Int((zoom * 100).rounded()))%").monospacedDigit().frame(minWidth: 42)
+      Button { Task { await session.arrange(tab.scope) } } label: { Image(systemName: "rectangle.grid.2x2") }
+        .help("整列（配置だけを変更）")
+    }
+    .buttonStyle(.borderless)
+    .padding(.horizontal, 10).padding(.vertical, 5)
+    .background(.regularMaterial, in: Capsule())
+    .guideTarget("view", radius: 14)
+  }
+}
+
+/// The project's title and where the canvas is (Card in Card), in one place.
+struct CanvasBreadcrumbs: View {
+  let session: ProjectSession
+  @Bindable var tab: WorkflowTab
+
+  var body: some View {
     HStack(spacing: 4) {
       if !(tab.scope.isEmpty && tab.back.isEmpty) {
         Button { goUp() } label: { Image(systemName: "chevron.backward") }
@@ -88,29 +103,21 @@ struct CanvasWorkspace: View {
       }
     }
     .frame(maxWidth: 360, alignment: .leading)
-    .fixedSize(horizontal: false, vertical: true)
+    .fixedSize(horizontal: true, vertical: false)
     .font(.callout)
-    .padding(.horizontal, 12).padding(.vertical, 7)
-    .background(.regularMaterial, in: Capsule())
+    .workbenchToolbarCapsule()
   }
 
   private func goUp() {
     if !tab.back.isEmpty { tab.goBack() } else if !tab.scope.isEmpty { tab.enter(Array(tab.scope.dropLast())) }
   }
+}
 
-  private var viewControls: some View {
-    let zoom = session.cameras[key(tab.scope)]?.zoom ?? 1
-    return HStack(spacing: 2) {
-      Text("\(Int((zoom * 100).rounded()))%").monospacedDigit().frame(minWidth: 42)
-      Button { Task { await session.arrange(tab.scope) } } label: { Image(systemName: "rectangle.grid.2x2") }
-        .help("整列（配置だけを変更）")
-    }
-    .buttonStyle(.borderless)
-    .padding(.horizontal, 10).padding(.vertical, 5)
-    .background(.regularMaterial, in: Capsule())
-    .guideTarget("view", radius: 14)
+extension View {
+  func workbenchToolbarCapsule() -> some View {
+    padding(.horizontal, 10).frame(height: 34)
+      .background(.regularMaterial, in: Capsule())
   }
-
 }
 
 /// A Card view's contents are laid out in world units. The enclosing canvas
@@ -266,8 +273,7 @@ struct CanvasRunControl: View {
       .accessibilityValue(elapsed)
     }
     .font(.callout)
-    .padding(.horizontal, 8).padding(.vertical, 5)
-    .background(.regularMaterial, in: Capsule())
+    .workbenchToolbarCapsule()
     .onChange(of: session.runActive, initial: true) { _, active in
       if active {
         shownActive = true

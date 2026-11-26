@@ -13,7 +13,6 @@ struct WorkflowTabs: View {
   @State private var trustAnswered = false
   @State private var showChatList = false
   @State private var displayedChatWidth = 0.0
-  private static let chatToolbarItem = "workbench.chat"
   let onSwitchProject: (() -> Void)?
   @Environment(\.guideWindow) private var guideWindow
   @Environment(\.controlActiveState) private var activeState
@@ -66,6 +65,7 @@ struct WorkflowTabs: View {
       }
     } detail: {
       projectContent.frame(minWidth: 360)
+        .toolbar { workbenchToolbar }
     }
     .tsugumiLoading(EnvironmentOverlay.loading(session), onCancel: EnvironmentOverlay.canCancel(session)
       ? { session.stopEnvironment() } : nil)
@@ -109,42 +109,43 @@ struct WorkflowTabs: View {
     // Keep the window title for Mission Control and the Window menu.
     .navigationTitle(session.scopeName([]))
     .toolbar(removing: .title)
-    .toolbar(id: "workbench") {
-      if session.staleHostState == nil, !EnvironmentOverlay.hasProblem(session) {
-        ToolbarItem(id: Self.chatToolbarItem, placement: .automatic) { chatToolbarContent }
-          .customizationBehavior(.disabled)
-      }
-    }
     .background(WindowReader { window in
       // Apply this after the split view installs the window's title-bar sections.
       DispatchQueue.main.async {
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
-        if let toolbar = window.toolbar { alignChatToolbarItem(toolbar) }
       }
     })
-    .onReceive(NotificationCenter.default.publisher(for: NSToolbar.willAddItemNotification)) { event in
-      guard let toolbar = event.object as? NSToolbar, toolbar === workspace.window?.toolbar else { return }
-      DispatchQueue.main.async { alignChatToolbarItem(toolbar) }
-    }
     .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+  }
+
+  @ToolbarContentBuilder private var workbenchToolbar: some ToolbarContent {
+    if let tab = workspace.active, session.staleHostState == nil, !EnvironmentOverlay.hasProblem(session) {
+      ToolbarItem {
+        CanvasBreadcrumbs(session: session, tab: tab)
+      }
+      .sharedBackgroundVisibility(.hidden)
+      ToolbarSpacer(.flexible)
+      ToolbarItem {
+        HStack(spacing: workspace.showChat ? 20 : 8) {
+          CanvasRunControl(session: session, tab: tab).fixedSize()
+          chatToolbarContent
+        }
+      }
+      .sharedBackgroundVisibility(.hidden)
+    }
   }
 
   @ViewBuilder private var chatToolbarContent: some View {
     if workspace.showChat {
       ChatHeader(chat: model.chat(for: session), showList: $showChatList, detached: false,
                  onClose: { workspace.showChat = false })
-        .frame(width: max(160, displayedChatWidth - 28))
+        .frame(width: max(104, displayedChatWidth - 44))
+        .workbenchToolbarCapsule()
     } else {
       ChatToggle(open: false) { workspace.showChat = true }
+        .workbenchToolbarCapsule()
     }
-  }
-
-  /// Put the flexible space in the detail section, after the split separator.
-  private func alignChatToolbarItem(_ toolbar: NSToolbar) {
-    guard let index = toolbar.items.firstIndex(where: { $0.itemIdentifier.rawValue == Self.chatToolbarItem }),
-          index > 0, toolbar.items[index - 1].itemIdentifier != .flexibleSpace else { return }
-    toolbar.insertItem(withItemIdentifier: .flexibleSpace, at: index)
   }
 
   private var tabBar: some View {
