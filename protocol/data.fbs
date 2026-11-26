@@ -69,3 +69,15 @@ table Display {
   bytes:[ubyte] (id: 1, required);
   credit_id:uint64 = null (id: 2);
 }
+
+/// The bounded output and result used to rank one worker for a Card.
+table WorkerProbeResult {
+  worker:string (required);
+  probe:string;
+  score:double = null;
+  failure:string;
+  unavailable_reason:string;
+  stdout_text:string;
+  stderr_text:string;
+  measured_at:long;
+}

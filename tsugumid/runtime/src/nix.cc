@@ -372,6 +372,7 @@ auto NixRunner::configure_call(NixCall& call, const Document& doc,
       nix_quote(json::Encode(json::Members{{"cards", json::Encode(cards)},
                                            {"self", json::Encode(self)}})) +
       (call.views_only ? "; viewsOnly = true" : "") +
+      (call.probe_only ? "; probeOnly = true" : "") +
       (expression_only ? "; expressionOnly = true" : "") + "; }";
   call.nix_dir = nix_dir_;
   call.core_nixpkgs = {"github:NixOS/nixpkgs", TSUGUMI_CARD_NIXPKGS_REV,
@@ -379,7 +380,7 @@ auto NixRunner::configure_call(NixCall& call, const Document& doc,
   key.update(json::Quote(call.core_nixpkgs.rev));
   key.update(json::Quote(call.core_nixpkgs.nar_hash));
   key.update(call.needs_worker ? "worker" : "no-worker");
-  key.update(call.views_only ? "views" : "plan");
+  key.update(call.views_only ? "views" : (call.probe_only ? "probe" : "plan"));
   call.definition_key = key.finish_hex();
 }
 
@@ -411,7 +412,7 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
   // Another system's binaries run through the kernel's binfmt_misc: without
   // an entry for it, Nix would refuse the build with a less helpful message.
   std::string emulator;
-  if (!views_only && req.target.kind == WorkerKind::native &&
+  if (!views_only && !req.probe_only && req.target.kind == WorkerKind::native &&
       req.target.system != native_system()) {
     emulator = binfmt_interpreter(req.target.system);
     if (emulator.empty())
@@ -430,6 +431,7 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
   call.cores = req.cores;
   call.max_implementations = req.max_implementations;
   call.views_only = views_only;
+  call.probe_only = req.probe_only;
   const bool needs_worker = req.target.kind == WorkerKind::remote ||
                             req.target.system != native_system();
   call.needs_worker = needs_worker && !views_only;
@@ -444,7 +446,8 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
     if (req.on_phase) req.on_phase(building ? Phase::build : Phase::evaluate);
   };
   const std::string prefix =
-      (views_only ? "views-" : "") + root_prefix(node.path);
+      (views_only ? "views-" : (req.probe_only ? "probe-" : "")) +
+      root_prefix(node.path);
   NixResult res;
   try {
     configure_call(call, *req.doc, node);
@@ -468,12 +471,12 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
       // and its guaranteed upstream Cards.
       // The evaluator validates its settings epoch and observed filesystem
       // reads.
-      const auto card = std::pair{call.card, call.system};
+      const auto card = std::tuple{call.card, call.system, call.probe_only};
       std::optional<NixResult> earlier;
       {
         std::lock_guard l(evaluations_mu_);
         std::erase_if(evaluations_, [&](const auto& item) {
-          return !req.doc->resolution->index.contains(item.first.first);
+          return !req.doc->resolution->index.contains(std::get<0>(item.first));
         });
         auto found = evaluations_.find(card);
         if (!views_only && found != evaluations_.end() &&
@@ -497,6 +500,18 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
         res = evaluator().evaluate(call);
       }
       if (req.on_plan) req.on_plan(res.implementation_count);
+      if (req.probe_only) {
+        if (res.evaluation_epoch) {
+          std::lock_guard lock(evaluations_mu_);
+          if (evaluations_.size() >= 256 && !evaluations_.contains(card))
+            evaluations_.erase(evaluations_.begin());
+          evaluations_[card] = {key, res};
+        }
+        if (res.implementation_count == 0 ||
+            (req.needs_probe_build &&
+             !req.needs_probe_build(res.derivation.output)))
+          return {};
+      }
       if (!req.transport)
         throw std::runtime_error(
             "execution target has no derivation transport");
@@ -535,6 +550,7 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
   plan.execution_list = res.execution_list;
   plan.implementation_labels = res.implementation_labels;
   auto& build = plan.common;
+  build.card_probe = req.probe_only;
   build.preparation_ms =
       std::chrono::duration_cast<std::chrono::milliseconds>(
           std::chrono::steady_clock::now() - budget_start - transfer_time)

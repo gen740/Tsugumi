@@ -21,6 +21,7 @@ table Evaluate {
   core_nixpkgs:Tsugumi.Document.LockEntry (required);
   nix_dir:string;
   needs_worker:bool;
+  probe_only:bool;
   args:string (required);
   max_implementations:uint;
 }
@@ -30,6 +31,7 @@ table Reuse {
   epoch:ulong;
   drv:string (required);
   out:string (required);
+  allow_unbuilt:bool;
 }
 
 table Expression {

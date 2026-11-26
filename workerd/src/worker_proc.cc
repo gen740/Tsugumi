@@ -694,6 +694,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp)
   }
 #endif
   spec.argv.insert(spec.argv.end(), {"--package", sp.package});
+  if (sp.card_probe) spec.argv.emplace_back("--probe");
   if (sp.packed)
     spec.argv.emplace_back(sp.packed_debug ? "--packed-debug" : "--packed");
   spec.env = {"LANG=C.UTF-8",
@@ -701,6 +702,9 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp)
               "XDG_CONFIG_HOME=" + work_dir() + "/.config",
               "XDG_CACHE_HOME=" + work_dir() + "/.cache",
               "TMPDIR=" + temporary};
+  if (sp.card_probe)
+    spec.env.push_back(sp.remote ? "TSUGUMI_WORKER_KIND=remote"
+                                 : "TSUGUMI_WORKER_KIND=local");
   // No implicit PATH: only the tools the Card declared to its SDK builder,
   // which the builder installs in the package's bin directory.
   {
@@ -1034,9 +1038,14 @@ void WorkerProc::read_logs(bool drain) {
                             std::pair{err_fd_, LogStream::standard_error}}) {
     if (fd < 0) continue;
     auto& dec = stream == LogStream::standard_output ? out_dec_ : err_dec_;
-    while (true) {
+    // Give timeout and cancellation processing a turn even if a worker
+    // keeps a pipe continuously readable.
+    constexpr size_t kReadBudget = 256 * 1024;
+    size_t read = 0;
+    while (drain || read < kReadBudget) {
       ssize_t r = ::read(fd, buf, sizeof buf);
       if (r <= 0) break;
+      read += static_cast<size_t>(r);
       std::string text =
           dec.feed(std::string_view(buf, static_cast<size_t>(r)));
       if (!text.empty() && logs_) logs_(stream, text);

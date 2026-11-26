@@ -9,7 +9,12 @@
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
+#include <charconv>
+#include <cmath>
 #include <fstream>
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
 #include <iterator>
 #include <set>
 
@@ -446,10 +451,290 @@ auto supports_remote_options(const Settings& settings) -> bool {
          !settings.reuse_worker && !settings.grants.gui &&
          settings.grants.host_paths.empty();
 }
+auto score_from_output(std::string_view output) -> std::optional<double> {
+  if (output.ends_with('\n')) output.remove_suffix(1);
+  if (const auto newline = output.rfind('\n'); newline != output.npos)
+    output.remove_prefix(newline + 1);
+  const auto first = output.find_first_not_of(" \t\r");
+  if (first == output.npos) return std::nullopt;
+  output = output.substr(first, output.find_last_not_of(" \t\r") - first + 1);
+  if (output.starts_with('+')) {
+    output.remove_prefix(1);
+    if (output.starts_with('-')) return std::nullopt;
+  }
+  double score = 0;
+  const auto [end, error] =
+      std::from_chars(output.data(), output.data() + output.size(), score);
+  if (error != std::errc{} || end != output.data() + output.size() ||
+      !std::isfinite(score))
+    return std::nullopt;
+  return score;
+}
+
+auto local_probe_life() -> std::string {
+#ifdef __linux__
+  if (auto boot = fs::read_file("/proc/sys/kernel/random/boot_id"); boot)
+    return crypto::sha256_hex(*boot);
+#elif defined(__APPLE__)
+  timeval boot{};
+  size_t size = sizeof boot;
+  if (::sysctlbyname("kern.boottime", &boot, &size, nullptr, 0) == 0)
+    return crypto::sha256_hex(std::to_string(boot.tv_sec) + ":" +
+                              std::to_string(boot.tv_usec));
+#endif
+  static const auto life = crypto::random_token(32);
+  return life;
+}
+
+auto supports_target(const Settings& settings, const RemoteTarget& target)
+    -> bool {
+  if (target.id == kLocalExecutionService)
+    return unsupported_local_option(settings, target).empty();
+  return supports_remote_options(settings) &&
+         (!settings.sandbox.limits.limited() || target.resource_limits);
+}
 }  // namespace
 
+auto Service::measure_card_probe(const RemoteTarget& target, const Node& node,
+                                 const stdfs::path& directory,
+                                 const BuildRequest& build,
+                                 std::string& observed_life,
+                                 std::string_view expected_key)
+    -> D::WorkerProbeResultT {
+  D::WorkerProbeResultT result;
+  result.worker = target.id;
+  if (!target.available || !supports_target(node.settings, target)) {
+    result.unavailable_reason =
+        target.unavailable_reason.empty()
+            ? (!target.available
+                   ? "The worker is unavailable"
+                   : "The worker cannot use the Card's sandbox or grants")
+            : target.unavailable_reason;
+    return result;
+  }
+
+  const bool local = target.id == kLocalExecutionService;
+  std::unique_ptr<PreparedExecution> prepared;
+  auto request = build;
+  request.probe_only = true;
+  request.max_implementations = 1;
+  request.timeout_seconds =
+      std::min(request.timeout_seconds.value_or(kProbeBuildTimeoutSeconds),
+               kProbeBuildTimeoutSeconds);
+  request.target = {local ? WorkerKind::native : WorkerKind::remote,
+                    target.native_system};
+  Node probe = node;
+  probe.outputs.clear();
+  probe.settings.reuse_worker = false;
+  probe.settings.timeout_seconds =
+      std::min(node.settings.timeout_seconds.value_or(kProbeTimeoutSeconds),
+               kProbeTimeoutSeconds);
+  probe.settings.build_timeout_seconds = request.timeout_seconds;
+  probe.settings.secrets.clear();
+  const auto scratch = directory.parent_path() / (".probe-" + crypto::uuid4());
+  struct Scratch {
+    stdfs::path path;
+    ~Scratch() {
+      std::error_code error;
+      stdfs::remove_all(path, error);
+    }
+  } cleanup{scratch};
+  std::string key, life, revision, retry_system;
+  request.needs_probe_build = [&](std::string_view output) {
+    result.probe = output;
+    if (!local) {
+      auto live = remote_jobs_.probe(target.id, target.server_id, build.cancel);
+      observed_life = live.probe_life;
+      if (live.native_system != request.target.system) {
+        retry_system = std::move(live.native_system);
+        return false;
+      }
+    }
+    const auto& settings = probe.settings;
+    const auto& sandbox = settings.sandbox;
+    crypto::Sha256 hash;
+    hash.update(output);
+    hash.update(json::Encode(std::vector<std::string>{
+        sandbox.filesystem ? "true" : "false", sandbox.pid ? "true" : "false",
+        sandbox.ipc ? "true" : "false", sandbox.identity ? "true" : "false",
+        settings.grants.network ? "true" : "false",
+        settings.grants.gui ? "true" : "false",
+        std::to_string(sandbox.limits.cpu_millis),
+        std::to_string(sandbox.limits.memory_bytes),
+        std::to_string(*settings.timeout_seconds),
+        std::to_string(*settings.build_timeout_seconds)}));
+    for (const auto& bind : host_path_binds(probe))
+      hash.update(json::Encode(std::vector<std::string>{
+          json::Quote(bind.name), json::Quote(bind.source),
+          json::Quote(bind.target), bind.write ? "true" : "false"}));
+    key = hash.finish_hex();
+    if (!expected_key.empty() && expected_key != key)
+      throw Failed(FailureKind::invalid_request,
+                   "The Card probe or its execution settings changed");
+    life = local ? local_probe_life() : observed_life;
+    if (remote_jobs_.enabled() && !life.empty()) {
+      try {
+        auto cached =
+            remote_jobs_.probe_lookup(target.id, key, life, build.cancel);
+        revision = std::move(cached.revision);
+        if (cached.result) {
+          result = std::move(*cached.result);
+          return false;
+        }
+      } catch (const std::exception&) {
+        if (!local || build.cancel.stop_requested()) throw;
+        // A local Card can run even when hostd cannot serve its cache.
+      }
+    }
+    prepared =
+        local ? execution_service_->prepare(probe, scratch, request)
+              : remote_execution_->prepare(target, probe, scratch, request);
+    return true;
+  };
+  try {
+    auto plan = nix().build(request);
+    if (!retry_system.empty()) {
+      request.target.system = std::exchange(retry_system, std::string{});
+      result.probe.clear();
+      plan = nix().build(request);
+      if (!retry_system.empty())
+        throw Failed(FailureKind::unsupported,
+                     "Worker system changed while evaluating the probe");
+    }
+    if (!prepared) return result;
+    std::stop_source stop;
+    std::atomic<bool> cancelled{false};
+    std::stop_callback cancel(build.cancel, [&] {
+      cancelled = true;
+      stop.request_stop();
+    });
+    // Remote admission and exchange have a separate bound from the process.
+    std::mutex timer_mutex;
+    std::condition_variable_any timer_ready;
+    std::jthread timer([&](std::stop_token done) {
+      std::unique_lock lock(timer_mutex);
+      timer_ready.wait_for(lock, done,
+                           std::chrono::seconds(kProbeBuildTimeoutSeconds +
+                                                kProbeTimeoutSeconds),
+                           [] { return false; });
+      if (!done.stop_requested()) {
+        cancelled = true;
+        stop.request_stop();
+      }
+    });
+    const auto executable = plan.implementation(0);
+    InvocationSummaryData invocation;
+    std::mutex output_mutex;
+    bool truncated = false;
+    auto outcome = prepared->execute(
+        {probe,
+         executable,
+         {},
+         {},
+         invocation,
+         scratch,
+         cancelled,
+         [&] { return cancelled.load(); },
+         stop.get_token(),
+         [&](LogStream stream, const std::string& bytes) {
+           if (stream != LogStream::standard_output &&
+               stream != LogStream::standard_error)
+             return;
+           std::lock_guard guard(output_mutex);
+           auto& destination = stream == LogStream::standard_output
+                                   ? result.stdout_text
+                                   : result.stderr_text;
+           const auto remaining = kProbeOutputBytes -
+                                  result.stdout_text.size() -
+                                  result.stderr_text.size();
+           const auto accepted = std::min<size_t>(remaining, bytes.size());
+           destination.append(bytes, 0, accepted);
+           truncated |= accepted < bytes.size();
+         },
+         {},
+         [](int64_t, int64_t) {},
+         [](const auto&) {},
+         [] {},
+         {},
+         kProbeTransportBytes,
+         {},
+         {},
+         stop.get_token()});
+    if (outcome.failure)
+      result.failure = outcome.failure->diagnostic.value_or(
+          failure_kind_name(outcome.failure->kind));
+    else if (truncated)
+      result.failure = "Probe output exceeded 8192 bytes";
+    else if (const auto score = score_from_output(result.stdout_text))
+      result.score = *score;
+    else
+      result.failure = "The last line of probe stdout must be a finite number";
+  } catch (const ExecutionDetached&) {
+    result.failure = "Probe did not finish within the measurement time limit";
+  } catch (const std::exception& error) {
+    result.failure = error.what();
+  }
+  if (build.cancel.stop_requested())
+    throw Failed(FailureKind::cancelled, "worker selection cancelled");
+  result.measured_at = now_ms();
+  result.failure.resize(
+      std::min<uint64_t>(result.failure.size(), kProbeOutputBytes));
+  if (!revision.empty()) {
+    try {
+      remote_jobs_.probe_publish(target.id, key, life, revision, result,
+                                 node.path, build.cancel);
+    } catch (const std::exception& error) {
+      log::warn("cannot cache Card probe: " + std::string(error.what()));
+    }
+  }
+  return result;
+}
+
+void Service::worker_probe_measure(RequestIn& req) {
+  const auto* request =
+      project_request(req)->value_as_WorkerProbeMeasureRequest();
+  const auto key = request->key()->string_view();
+  if (!crypto::is_sha256_hex(key))
+    throw Failed(FailureKind::invalid_request, "Invalid Card probe identity");
+  BuildRequest build;
+  build.doc = store_->current();
+  build.node = build.doc->resolution->find(wire::card_arg(request->card()));
+  if (!build.node || build.node->kind != CardType::Code ||
+      build.node->is_virtual)
+    throw Failed(FailureKind::not_found,
+                 "The Card with this probe is unavailable");
+  build.timeout_seconds = build.node->settings.build_timeout_seconds;
+  std::stop_source stop;
+  std::stop_callback disconnect(req.connection_stop,
+                                [&] { stop.request_stop(); });
+  std::stop_callback shutdown(shutdown_stop_.get_token(),
+                              [&] { stop.request_stop(); });
+  build.cancel = stop.get_token();
+  const auto targets = remote_targets(build.cancel);
+  const auto target = std::ranges::find(
+      targets, request->worker()->string_view(), &RemoteTarget::id);
+  if (target == targets.end())
+    throw Failed(FailureKind::not_found,
+                 "The worker is unavailable to this project");
+  std::string life;
+  auto result = measure_card_probe(*target, *build.node,
+                                   run_scratch() / "probe", build, life, key);
+  if (!result.unavailable_reason.empty())
+    throw Failed(FailureKind::unsupported, result.unavailable_reason);
+  if (!result.score && result.failure.empty())
+    throw Failed(FailureKind::not_found,
+                 "The Card no longer declares this probe");
+  FBB b;
+  const auto value = R::CreateWorkerProbeMeasurement(
+      b, D::WorkerProbeResult::Pack(b, &result));
+  reply(req,
+        wire::reply(b, req.request_id, R::ReplyPayload::WorkerProbeMeasurement,
+                    value.Union()));
+}
+
 auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
-                                BuildRequest& build)
+                                BuildRequest& build,
+                                InvocationSummaryData& summary)
     -> std::unique_ptr<PreparedExecution> {
   if (packed_builds_) {
 #ifdef __APPLE__
@@ -461,6 +746,36 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
     return execution_service_->prepare(node, directory, build);
   }
   auto targets = remote_targets(build.cancel);
+  auto& measurements = summary.worker_probes;
+  std::map<std::string, std::string> remote_lives;
+  const auto measure_targets = [&] {
+    measurements.clear();
+    remote_lives.clear();
+    bool measured = false;
+    for (const auto& target : targets) {
+      auto result = measure_card_probe(target, node, directory, build,
+                                       remote_lives[target.id]);
+      measured |= !result.probe.empty() ||
+                  result.failure.find("probe must be a derivation") !=
+                      std::string::npos;
+      measurements.push_back(std::move(result));
+    }
+    if (measured) {
+      for (auto& result : measurements)
+        if (!result.score && result.failure.empty() &&
+            result.unavailable_reason.empty())
+          result.failure = "No probe is defined for this worker's system";
+    } else {
+      for (auto& result : measurements) {
+        if (!result.unavailable_reason.empty()) continue;
+        result.failure.clear();
+        result.measured_at = 0;
+        result.score = 1.0;
+      }
+    }
+    return measured;
+  };
+  bool measured = measure_targets();
   std::stop_callback wake(build.cancel, [&] {
     std::lock_guard lock(worker_selection_mutex_);
     worker_selection_cv_.notify_all();
@@ -477,38 +792,47 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
       const auto capacity = target.id == kLocalExecutionService
                                 ? opts_.env_cpus
                                 : target.max_jobs;
+      const auto result = std::ranges::find(measurements, target.id,
+                                            &D::WorkerProbeResultT::worker);
       candidates.push_back(
-          {target.id, target.worker_capabilities,
-           target.available &&
-               (!capacity || worker_slots_[target.id] < capacity),
-           target.id == kLocalExecutionService
-               ? unsupported_local_option(node.settings, target).empty()
-               : (supports_remote_options(node.settings) &&
-                  (!node.settings.sandbox.limits.limited() ||
-                   target.resource_limits))});
+          {target.id, !capacity || worker_slots_[target.id] < capacity,
+           target.available && supports_target(node.settings, target),
+           result != measurements.end() && result->score
+               ? std::optional<double>(*result->score)
+               : std::nullopt});
     }
     const auto resident = resident_targets_.find(card);
     const auto resident_id =
         resident == resident_targets_.end() ? std::string{} : resident->second;
+    bool worker_restarted = false;
     for (;;) {
-      const auto choice = select_worker(
-          candidates, node.settings.worker_capabilities, resident_id);
-      if (!choice.matches)
-        throw Failed(FailureKind::unsupported,
-                     "no registered worker supports the Card's settings and "
-                     "workerCapabilities");
+      const auto choice = select_worker(candidates, measured, resident_id);
+      if (!choice.matches) {
+        std::string message =
+            measured ? "No worker received a positive probe score"
+                     : "No registered worker supports the Card's settings";
+        for (const auto& probe : measurements) {
+          message += "\n" + probe.worker + ": ";
+          if (!probe.unavailable_reason.empty())
+            message += probe.unavailable_reason;
+          else if (probe.score)
+            message += std::to_string(*probe.score);
+          else
+            message += "probe failed: " + probe.failure;
+        }
+        throw Failed(FailureKind::unsupported, std::move(message));
+      }
       if (!choice.index) break;
-      const auto target = targets[*choice.index];
+      const auto& target = targets[*choice.index];
       if (target.id != kLocalExecutionService) {
         lock.unlock();
-        RemoteProbe live;
-        try {
-          live = remote_jobs_.probe(target.id, target.server_id, build.cancel);
-        } catch (...) {
-          lock.lock();
-          throw;
-        }
+        const auto live =
+            remote_jobs_.probe(target.id, target.server_id, build.cancel);
         lock.lock();
+        if (measured && remote_lives[target.id] != live.probe_life) {
+          worker_restarted = true;
+          break;
+        }
         if (live.active_jobs >= live.max_jobs ||
             worker_slots_[target.id] >= live.max_jobs) {
           candidates[*choice.index].free = false;
@@ -519,11 +843,23 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
       break;
     }
     if (!selected.id.empty()) break;
-    if (build.cancel.stop_requested())
-      throw Failed(FailureKind::cancelled, "worker selection cancelled");
-    worker_selection_cv_.wait_for(lock, std::chrono::milliseconds(100));
+    if (!worker_restarted)
+      worker_selection_cv_.wait_for(lock, std::chrono::milliseconds(100));
     lock.unlock();
-    targets = remote_targets(build.cancel);
+    const auto current = remote_targets(build.cancel);
+    const auto unchanged = [measured](const RemoteTarget& a,
+                                      const RemoteTarget& b) {
+      return a.id == b.id && a.server_id == b.server_id &&
+             a.available == b.available && a.native_system == b.native_system &&
+             a.resource_limits == b.resource_limits &&
+             (!measured || a.probe_revision == b.probe_revision);
+    };
+    if (worker_restarted || !std::ranges::equal(targets, current, unchanged)) {
+      targets = current;
+      measured = measure_targets();
+    } else {
+      targets = current;
+    }
     lock.lock();
   }
   ++worker_slots_[selected.id];
@@ -688,10 +1024,13 @@ auto Service::remote_targets(std::stop_token stop) const
     if (local == targets.end()) {
       RemoteTarget target;
       target.id = kLocalExecutionService;
+      target.available = true;
       targets.insert(targets.begin(), std::move(target));
       local = targets.begin();
     }
+    const bool local_available = local->available;
     fill_local(*local);
+    local->available = local_available;
     std::rotate(targets.begin(), local, local + 1);
     return targets;
   } catch (const std::exception&) {
@@ -736,9 +1075,6 @@ auto Service::execution_diagnostic(const Node& node,
   const RemoteTarget* blocked = nullptr;
   const RemoteTarget* local = nullptr;
   for (const auto& target : targets) {
-    if (!matches_capabilities(settings.worker_capabilities,
-                              target.worker_capabilities))
-      continue;
     if (target.id == kLocalExecutionService) {
       local = &target;
       continue;
@@ -754,8 +1090,7 @@ auto Service::execution_diagnostic(const Node& node,
     if (!diagnostic || !diagnostic->error || !blocked) return diagnostic;
   }
   if (blocked) return unavailable(*blocked);
-  return error(
-      "no registered worker supports the Card settings and workerCapabilities");
+  return error("no registered worker supports the Card settings");
 }
 
 void Service::shutdown() {
@@ -1035,6 +1370,8 @@ void Service::dispatch(RequestIn req) {
                              R::ReplyPayload::ProjectActivity, value.Union()));
       return;
     }
+    case P::WorkerProbeMeasureRequest:
+      return on_lane(r, std::move(req), &Service::worker_probe_measure);
     case P::ProjectHostRequirementsRequest:
       return on_lane(r, std::move(req), &Service::project_host_requirements);
     case P::ProjectOpenRequest:
@@ -1427,10 +1764,6 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
     const auto sandbox = R::CreateSandboxCapabilities(
         b, filesystem, isolation, isolation, isolation, network, target.gui,
         host_paths, remote, remote);
-    std::vector<uint8_t> bits;
-    for (uint8_t bit = 0; bit < 64; ++bit)
-      if ((target.worker_capabilities & (uint64_t{1} << bit)) != 0)
-        bits.push_back(bit);
     services.push_back(R::CreateExecutionService(
         b, b.CreateString(target.id), b.CreateString(target.native_system),
         b.CreateVectorOfStrings(target.systems),
@@ -1439,7 +1772,7 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
         target.available, target.resource_limits,
         target.max_jobs ? flatbuffers::Optional(target.max_jobs)
                         : flatbuffers::nullopt,
-        b.CreateVector(bits), sandbox));
+        sandbox));
   }
   auto execution_services = b.CreateVector(services);
   flatbuffers::Offset<flatbuffers::Vector<uint8_t>> view;

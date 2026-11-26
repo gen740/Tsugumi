@@ -14,6 +14,7 @@
 #include "store.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/log.hh"
 #include "tsugumi/workerd/artifact_id.hh"
 #include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/invocation.hh"
@@ -297,10 +298,13 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
     auto check = service_.card_secrets(node, request.stop);
     for (auto& secret : check) workerd::clear_secret(secret.second);
   }
+  const bool probe = request.build.card_probe;
   s.execution_service = target_;
-  s.execution_job_id = crypto::sha256_hex(
-      service_.project_id() + "\n" + s.run_id + "\n" + path_key(node.path) +
-      "\n" + std::to_string(s.invocation));
+  s.execution_job_id =
+      probe ? crypto::sha256_hex(crypto::uuid4())
+            : crypto::sha256_hex(service_.project_id() + "\n" + s.run_id +
+                                 "\n" + path_key(node.path) + "\n" +
+                                 std::to_string(s.invocation));
   const auto archive_digest = stage_remote_archive(
       client_, target_, instance_, s.execution_job_id, archive_, request.stop,
       [&](uint64_t done, uint64_t total) {
@@ -317,14 +321,37 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
     s.execution_resources = settings.sandbox.limits;
   s.execution_state = RemoteExecutionState::queued;
   s.worker_reused = false;
-  RemoteJobRecord job{{}, instance_, std::move(spec)};
+  RemoteJobRecord job{s, instance_, std::move(spec)};
   // Cancellation identity is durable before submission; results are never
   // recovered after restart.
-  request.start([&](sql::Db& db) {
-    job.invocation = s;
-    job.cancel_requested = request.cancel_requested();
-    History::put_remote_job(db, job);
-  });
+  if (!probe) {
+    request.start([&](sql::Db& db) {
+      job.invocation = s;
+      job.cancel_requested = request.cancel_requested();
+      History::put_remote_job(db, job);
+    });
+  }
+  struct ReleaseProbe {
+    const RemoteJobClient& client;
+    const RemoteJobRecord& job;
+    bool enabled;
+    bool terminal = false;
+    ~ReleaseProbe() {
+      if (!enabled) return;
+      const auto& invocation = job.invocation;
+      const auto fingerprint = crypto::sha256_hex(job.spec);
+      try {
+        if (!terminal)
+          client.cancel(invocation.execution_service, job.instance,
+                        invocation.execution_job_id, fingerprint);
+        client.release(invocation.execution_service, job.instance,
+                       invocation.execution_job_id, fingerprint);
+      } catch (const std::exception& error) {
+        log::warn("cannot release remote Card probe: " +
+                  std::string(error.what()));
+      }
+    }
+  } release_probe{client_, job, probe};
 
   RemoteViewInput input(
       [&client = client_, target = target_, instance = instance_,
@@ -352,7 +379,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
   std::optional<std::vector<schema::CardView>> views;
   auto& history = service_.history();
   ExecutionResult output;
-  LiveRemoteLog live_log(kRemoteLogTransportBytes, request.log);
+  LiveRemoteLog live_log(
+      probe ? kProbeTransportBytes : kRemoteLogTransportBytes, request.log);
   bool secrets_sent = false;
   std::mutex wait_mutex;
   std::condition_variable_any next_status;
@@ -469,6 +497,13 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       // A stopped job keeps its workspace until release: collect the rest
       // of its log first. Each poll is a bounded exchange that advances the
       // cursor and stays interruptible as before.
+      release_probe.terminal = true;
+      if (probe && reply->log_truncated) {
+        if (more_log) continue;
+        output.failure = FailureData::make(FailureKind::worker_failed,
+                                           "Probe output exceeded the limit");
+        return output;
+      }
       if (reply->display_pending) {
         if (reply->displays.empty()) {
           std::unique_lock lock(wait_mutex);
@@ -487,22 +522,23 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
         auto result = import_remote_result(
             client_, target_, instance_, s.execution_job_id,
             reply->result_sha256, job.spec,
-            service_.store().state_dir() / "artifact-invocations",
-            service_.artifact_destination(s), node.outputs, live_log.recorded(),
-            request.log, request.stop,
+            probe ? request.directory
+                  : service_.store().state_dir() / "artifact-invocations",
+            probe ? stdfs::path{} : service_.artifact_destination(s),
+            node.outputs, live_log.recorded(), request.log, request.stop,
             [&](std::string_view name, uint64_t done, uint64_t total) {
               if (request.transfer)
                 request.transfer("download", name, done, total);
             },
             request.on_remote_validation);
-        if (!result.environment.paths.empty()) {
+        if (!probe && !result.environment.paths.empty()) {
           s.build_cached = !result.built;
           history.write_sync([&](sql::Db& db) {
             s.environment_id =
                 History::put_environment(db, s.run_id, result.environment);
           });
         }
-        service_.record_artifacts(s, result.created);
+        if (!probe) service_.record_artifacts(s, result.created);
         output.outputs = std::move(result.outputs);
         output.auxiliary_logs = std::move(result.auxiliary_logs);
         output.auxiliary_logs_truncated = result.auxiliary_logs_truncated;
@@ -518,6 +554,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
                (reply->state == "failed" || reply->state == "cancelled" ||
                 reply->state == "interrupted")) {
       if (more_log) continue;
+      release_probe.terminal = true;
       output.failure = remote_failure(*reply);
       return output;
     }
@@ -556,7 +593,9 @@ auto RemoteExecutionService::prepare(const RemoteTarget& target,
   if (build.cancel.stop_requested())
     throw Failed(FailureKind::cancelled, "worker selection cancelled");
   auto probe = client_.probe(target.id, target.server_id, build.cancel);
-  const auto system = run_system(settings, probe.native_system);
+  const auto system = build.probe_only
+                          ? probe.native_system
+                          : run_system(settings, probe.native_system);
   if (settings.sandbox.limits.limited() && !probe.resource_limits)
     throw Failed(FailureKind::unsupported,
                  "the remote execution daemon cannot enforce resource limits");

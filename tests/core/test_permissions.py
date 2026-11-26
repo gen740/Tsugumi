@@ -79,7 +79,7 @@ def test_reload_checks_every_permission_widening(tmp_path, core_factory):
     before = client.call("ProjectInspectRequest")
     path = root / rel
     body = json.loads(path.read_text())
-    wide = dict(body, workerCapabilities=[63],
+    wide = dict(body,
                 sandbox={"filesystem": False, "pid": False, "limits": {"cpu": 1, "memoryMiB": 1024}},
                 grants={"network": True, "gui": True,
                         "hostPaths": [{"name": "data", "write": True}]})

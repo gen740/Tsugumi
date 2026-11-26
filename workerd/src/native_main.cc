@@ -4,7 +4,9 @@
 #include <fcntl.h>
 #include <flatbuffers/flatbuffers.h>
 #include <signal.h>
+#include <spawn.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -34,6 +36,8 @@
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/rpc/frame.hh"
 #include "tsugumi/workerd/frame.hh"
+
+extern char** environ;
 
 namespace C = Tsugumi::Card;
 namespace D = Tsugumi::Data;
@@ -789,7 +793,41 @@ auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
   return std::nullopt;
 }
 
-auto serve(const std::string& package, bool packed, bool debug) -> int {
+auto execute_probe(const std::string& package, uint64_t id,
+                   flatbuffers::FlatBufferBuilder& reply)
+    -> std::optional<Failure> {
+  std::string executable = package + "/bin/probe";
+  char* argv[]{executable.data(), nullptr};
+  pid_t pid = -1;
+  // Keep the executable in the worker's process group so cancellation and
+  // sandbox teardown also stop its subprocesses.
+  const int error =
+      ::posix_spawn(&pid, argv[0], nullptr, nullptr, argv, environ);
+  if (error)
+    return Failure{
+        D::FailureKind::worker_failed,
+        "cannot start bin/probe: " + std::string(std::strerror(error))};
+  int status = 0;
+  pid_t waited;
+  do {
+    waited = ::waitpid(pid, &status, 0);
+  } while (waited == -1 && errno == EINTR);
+  if (waited < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+    return Failure{D::FailureKind::worker_failed,
+                   WIFEXITED(status) && waited > 0
+                       ? "bin/probe exited with status " +
+                             std::to_string(WEXITSTATUS(status))
+                       : "bin/probe did not exit normally"};
+  const std::vector<flatbuffers::Offset<W::WorkerOutput>> outputs;
+  const auto result = W::CreateWorkerResult(reply, reply.CreateVector(outputs));
+  W::FinishWorkerMessageBuffer(
+      reply, W::CreateWorkerMessage(reply, id, W::WorkerPayload::WorkerResult,
+                                    result.Union()));
+  return std::nullopt;
+}
+
+auto serve(const std::string& package, bool packed, bool debug, bool probe)
+    -> int {
   // This context lives as long as the process, including when Card threads
   // enter send or recv after a call returns.
   Host host;
@@ -843,9 +881,11 @@ auto serve(const std::string& package, bool packed, bool debug) -> int {
                         : Clock::duration::max().count();
     host.call_id = last_call;
     flatbuffers::FlatBufferBuilder reply;
-    if (const auto failure = execute(*call, host, last_call, package, entry,
-                                     load_error, reply,
-                                     memory ? &*memory : nullptr, debug)) {
+    const auto failure =
+        probe ? execute_probe(package, last_call, reply)
+              : execute(*call, host, last_call, package, entry, load_error,
+                        reply, memory ? &*memory : nullptr, debug);
+    if (failure) {
       reply.Clear();
       failure_frame(reply, last_call, *failure);
     }
@@ -870,10 +910,13 @@ int main(int argc, char** argv) {
   if ((argc != 3 && argc != 4) || std::string_view(argv[1]) != "--package")
     return 2;
   const std::string_view mode = argc == 4 ? argv[3] : "";
-  if (argc == 4 && mode != "--packed" && mode != "--packed-debug") return 2;
+  if (argc == 4 && mode != "--packed" && mode != "--packed-debug" &&
+      mode != "--probe")
+    return 2;
   ::signal(SIGPIPE, SIG_IGN);
   // Card subprocesses use stdout/stderr but do not inherit the ABI sockets.
   ::fcntl(kData, F_SETFD, FD_CLOEXEC);
   ::fcntl(kControl, F_SETFD, FD_CLOEXEC);
-  return serve(argv[2], argc == 4, mode == "--packed-debug");
+  return serve(argv[2], mode == "--packed" || mode == "--packed-debug",
+               mode == "--packed-debug", mode == "--probe");
 }

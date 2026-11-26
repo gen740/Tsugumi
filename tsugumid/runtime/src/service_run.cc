@@ -884,7 +884,15 @@ void Service::run_record(RequestIn& req) {
                                                    b.CreateString(value)));
       params = D::CreateInvocationParams(b, b.CreateVector(entries));
     }
+    std::vector<flatbuffers::Offset<D::WorkerProbeResult>> probe_offsets;
+    for (const auto& measurement : summary.worker_probes)
+      probe_offsets.push_back(D::WorkerProbeResult::Pack(b, &measurement));
+    flatbuffers::Offset<
+        flatbuffers::Vector<flatbuffers::Offset<D::WorkerProbeResult>>>
+        probes;
+    if (!probe_offsets.empty()) probes = b.CreateVector(probe_offsets);
     R::InvocationRecordBuilder rb(b);
+    if (!probes.IsNull()) rb.add_worker_probes(probes);
     rb.add_summary(sum);
     rb.add_inputs(ins);
     rb.add_outputs(outs);

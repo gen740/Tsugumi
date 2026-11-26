@@ -74,7 +74,6 @@ struct Settings {
   SandboxOptions sandbox;
   CardGrants grants;
   bool reuse_worker = false;
-  uint64_t worker_capabilities = 0;
   // The Nix systems the Card works on, in the document's order. Empty only for
   // Cards that never run on a worker.
   std::vector<std::string> systems;

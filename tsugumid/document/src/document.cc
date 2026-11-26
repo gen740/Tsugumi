@@ -419,8 +419,7 @@ auto parse_card_json(const std::string& id, const std::string& text,
   }
   if (executable)
     required.insert({"reuseWorker", "timeoutSeconds", "buildTimeoutSeconds",
-                     "recordLogs", "sandbox", "grants", "systems",
-                     "workerCapabilities"});
+                     "recordLogs", "sandbox", "grants", "systems"});
   for (const auto field : required)
     require_field(json::Get(fields, field) != "null", rel, field);
   for (const auto& [field, _] : fields)
@@ -511,14 +510,6 @@ auto parse_card_json(const std::string& id, const std::string& text,
       if (!systems.insert(system).second)
         invalid(rel + ": duplicate systems entry " + std::string(system),
                 {{"path", rel}});
-    }
-    std::set<uint8_t> bits;
-    for (auto bit : *card.workerCapabilities()) {
-      if (bit >= 64)
-        invalid(rel + ": workerCapabilities bits must be in [0, 63]");
-      if (!bits.insert(bit).second)
-        invalid(rel + ": duplicate workerCapabilities bit " +
-                std::to_string(bit));
     }
     if (const auto* secrets = card.secrets()) {
       std::set<std::string_view> names;

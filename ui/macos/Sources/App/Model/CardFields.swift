@@ -28,7 +28,6 @@ func implementedCard(_ kind: CardKind, symbol: String, systems: [String]) -> JSO
     ])
     definition["grants"] = .object([("network", .bool(false)), ("gui", .bool(false))])
     definition["systems"] = .array(systems.map(JSONValue.string))
-    definition["workerCapabilities"] = .array([])
   }
   return definition
 }

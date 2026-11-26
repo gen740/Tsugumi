@@ -6,10 +6,10 @@ import TsugumiTestSupport
 
 @testable import TsugumiApp
 
-@Test func explicitCardFieldsAndWorkerBits() throws {
+@Test func explicitCardFields() throws {
   let code = implementedCard(.code, symbol: CardKind.code.symbol, systems: ["aarch64-linux"])
   let executableFields = Set(["type", "symbol", "inputs", "maxRuns", "reuseWorker", "timeoutSeconds",
-    "buildTimeoutSeconds", "recordLogs", "recordIO", "sandbox", "grants", "systems", "workerCapabilities"])
+    "buildTimeoutSeconds", "recordLogs", "recordIO", "sandbox", "grants", "systems"])
   #expect(Set(code.object?.map(\.0) ?? []) == executableFields)
   #expect(code["timeoutSeconds"]?.uint64 == 0)
   #expect(code["buildTimeoutSeconds"]?.uint64 == 0)
@@ -17,7 +17,6 @@ import TsugumiTestSupport
   #expect(code["sandbox"]?["limits"]?["memoryMiB"]?.uint64 == 0)
   #expect(code["recordLogs"]?.string == "project")
   #expect(code["recordIO"]?.string == "project")
-  #expect(code["workerCapabilities"]?.array?.isEmpty == true)
   #expect(RecordSetting.allCases.map(\.rawValue) == ["project", "on", "off"])
   #expect(Set(implementedCard(.merge, symbol: "star", systems: []).object?.map(\.0) ?? []) ==
     Set(["type", "symbol", "inputs", "maxRuns", "recordIO"]))
@@ -27,12 +26,6 @@ import TsugumiTestSupport
     #expect(Set(implementedCard(kind, symbol: "star", systems: []).object?.map(\.0) ?? []) == Set(["type", "symbol"]))
   }
 
-  let selected = WorkerBits.toggling(0, in: WorkerBits.toggling(63, in: []))
-  #expect(WorkerBits.valid(selected))
-  #expect(selected == [0, 63])
-  #expect(WorkerBits.toggling(63, in: WorkerBits.toggling(0, in: selected)).isEmpty)
-  #expect(!WorkerBits.valid([1, 1]))
-  #expect(!WorkerBits.valid([64]))
 }
 
 @MainActor @Test func readmeTitleIsTheCardDisplayName() throws {

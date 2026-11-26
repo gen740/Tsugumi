@@ -79,7 +79,9 @@ auto LocalExecutionService::prepare(const Node& node,
                  "GUI socket");
   static const SharedStoreDerivationTransport transport;
   build.target = {WorkerKind::native,
-                  run_system(node.settings, native_system())};
+                  build.probe_only
+                      ? native_system()
+                      : run_system(node.settings, native_system())};
   build.transport = &transport;
   return std::make_unique<PreparedLocalExecution>(*this);
 }
@@ -93,7 +95,8 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
 
   // Only a salted digest participates in residency. The values are sent
   // through the local launch channel when the process is first started.
-  const auto card_key = path_key(node.path);
+  const auto card_key =
+      path_key(node.path) + (build.card_probe ? "|probe" : "");
   auto secrets = std::make_shared<WorkerSecrets>();
   try {
     secrets->values = service_.card_secrets(node, request.stop);
@@ -166,6 +169,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
                          : build.worker;
   if (!secrets->values.empty()) sp.secrets = std::move(secrets);
   sp.package = build.package;
+  sp.card_probe = build.card_probe;
   sp.packed = service_.packed_builds() != nullptr;
   sp.packed_debug = service_.packed_debug();
   sp.sandbox = node.settings.sandbox;
@@ -203,10 +207,13 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   sp.gui = node.settings.grants.gui;
   sp.binds = service_.host_path_binds(node);
 
-  const auto destination = service_.artifact_destination(s);
-  sp.artifact_store = (state_dir / "artifacts").string();
-  sp.artifact_staging = state_dir / "artifact-invocations";
-  std::filesystem::create_directories(sp.artifact_store);
+  std::filesystem::path destination;
+  if (!build.card_probe) {
+    destination = service_.artifact_destination(s);
+    sp.artifact_store = (state_dir / "artifacts").string();
+    sp.artifact_staging = state_dir / "artifact-invocations";
+    std::filesystem::create_directories(sp.artifact_store);
+  }
 
   // The resident worker of this Card, if it runs the same build under the same
   // conditions.
@@ -264,7 +271,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
         workers_.release(std::move(worker), keep, reason);
       },
       lease, reuse, invocation);
-  service_.record_artifacts(s, completed.created);
+  if (!build.card_probe) service_.record_artifacts(s, completed.created);
   return {std::move(completed.outputs), std::move(completed.failure)};
 }
 

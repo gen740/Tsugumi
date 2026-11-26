@@ -95,18 +95,14 @@ async function browserRequest(type: H.RequestPayload, value: H.RequestT['value']
   return request
 }
 
-const bits = [0, 1, 63]
 const service = (await browserRequest(H.RequestPayload.ExecutionServicePutRequest,
-  new H.ExecutionServicePutRequestT('compute', 'Compute', 'tls://worker:8765', 'ed25519:test', true, bits))).value as H.ExecutionServicePutRequestT
-assert.deepEqual(service.workerCapabilities, bits)
+  new H.ExecutionServicePutRequestT('compute', 'Compute', 'tls://worker:8765', 'ed25519:test', true))).value as H.ExecutionServicePutRequestT
 assert.equal(service.verify, true)
-const fields = { id: 'local', name: 'Local', endpoint: '', workerPublicKey: '', worker_capabilities: [] }
-const local = H.Message.getRootAsMessage(new fb.ByteBuffer(encodeRequest('ExecutionServicePutRequest', fields, 1n, true))).unpack()
-assert.deepEqual(((local.payload as H.RequestT).value as H.ExecutionServicePutRequestT).workerCapabilities, [])
-for (const worker_capabilities of [[0, 0], [64], [-1], [0.5]]) {
-  assert.throws(() => encodeRequest('ExecutionServicePutRequest', { ...fields, worker_capabilities }, 1n, true))
+for (const id of ['local', undefined]) {
+  const message = H.Message.getRootAsMessage(new fb.ByteBuffer(
+    encodeRequest('ExecutionProbeRemeasureRequest', { id }, 1n, true))).unpack()
+  assert.equal(((message.payload as H.RequestT).value as H.ExecutionProbeRemeasureRequestT).id, id ?? null)
 }
-
 
 // C++ object packing omits optional empty vectors. Every Host list reader
 // must return an empty list even when the vector offset is absent on the wire.

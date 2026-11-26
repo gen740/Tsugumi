@@ -67,7 +67,6 @@ def write_card(definition: Path, kind: str = "code", **settings) -> dict:
                      "limits": {"cpu": 0, "memoryMiB": 0}},
             grants={"network": False, "gui": False},
             systems=["aarch64-linux" if os.uname().machine in {"arm64", "aarch64"} else "x86_64-linux"],
-            workerCapabilities=[],
         )
     card.update(settings)
     definition.mkdir(parents=True, exist_ok=True)

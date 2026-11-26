@@ -352,16 +352,9 @@ auto RemoteJobClient::catalog(std::stop_token stop) const -> std::vector<RemoteT
   std::vector<RemoteTarget> targets;
   for (const auto& t : catalog->services) {
     const auto& c = *t->capabilities;
-    uint64_t bits = 0;
-    for (auto bit : t->worker_capabilities) {
-      if (bit >= 64 || (bits & (uint64_t{1} << bit)))
-        throw BrokerDisconnected(
-            "invalid worker_capabilities in execution broker catalog");
-      bits |= uint64_t{1} << bit;
-    }
     targets.push_back({t->id, c.native_system, c.systems, c.server_id,
-                       t->available, c.resource_limits, c.max_jobs, bits,
-                       t->unavailable_reason});
+                       t->available, c.resource_limits, c.max_jobs,
+                       t->unavailable_reason, false, false, t->probe_revision});
   }
   return targets;
 }
@@ -379,15 +372,43 @@ auto RemoteJobClient::probe(std::string_view service,
       throw Failed(FailureKind::cancelled, "worker selection cancelled");
     throw;
   }
-  const auto& c = *reply.body.AsCapabilities();
+  const auto* caps = reply.body.AsCapabilities();
+  if (!caps) throw BrokerDisconnected("expected worker capabilities");
+  const auto& c = *caps;
   // The catalog may have been replaced before the broker received this probe.
   if (c.server_id != registered_server)
     throw Failed(FailureKind::unsupported,
                  "The remote worker's server ID changed. Verify the registered "
                  "endpoint.");
-  return {c.native_system,   c.instance_id, c.systems,
-          c.resource_limits, c.max_jobs,    c.active_jobs};
+  return {c.native_system, c.instance_id, c.systems,   c.resource_limits,
+          c.max_jobs,      c.active_jobs, c.probe_life};
 }
+auto RemoteJobClient::probe_lookup(std::string_view service,
+                                   std::string_view key, std::string_view life,
+                                   std::stop_token stop) const
+    -> R::CardProbeCachedT {
+  R::CardProbeLookupT query;
+  query.key = key;
+  query.life = life;
+  auto reply = request(command(std::move(query), service), stop);
+  auto* cached = reply.body.AsCardProbeCached();
+  if (!cached) throw BrokerDisconnected("expected worker probe cache reply");
+  return std::move(*cached);
+}
+
+auto RemoteJobClient::probe_publish(
+    std::string_view service, std::string_view key, std::string_view life,
+    std::string_view revision, const Tsugumi::Data::WorkerProbeResultT& result,
+    const std::vector<std::string>& card, std::stop_token stop) const -> void {
+  R::CardProbePublishT query;
+  query.key = key;
+  query.life = life;
+  query.revision = revision;
+  query.card = card;
+  query.result = std::make_unique<Tsugumi::Data::WorkerProbeResultT>(result);
+  request(command(std::move(query), service), stop);
+}
+
 auto RemoteJobClient::put_blob(std::string_view service,
                                std::string_view instance, std::string_view job,
                                std::string_view digest, uint64_t size,

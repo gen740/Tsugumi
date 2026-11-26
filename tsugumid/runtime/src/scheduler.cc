@@ -1012,7 +1012,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     request.max_implementations = max_implementations;
     request.cancel = work.cancellation->stop_event.get_token();
     prepared = svc_.prepare_execution(
-        node, invocation_dir(node, work.invocation), request);
+        node, invocation_dir(node, work.invocation), request, s);
     const bool reuses_builds = request.target.kind == WorkerKind::native;
     if (rt.build && reuses_builds && rt.build_target &&
         rt.build_target->kind == request.target.kind &&
@@ -1286,6 +1286,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::atomic<uint32_t> started{0};
     std::mutex outcome_mu;
     size_t bytes = 0;
+    const auto worker_probes =
+        work.prepared ? work.prepared->worker_probes
+                      : std::vector<Tsugumi::Data::WorkerProbeResultT>{};
     auto execute = [&](uint32_t index, uint32_t worker_lane) {
       // The first member carries the batch's preparation stages.
       if (index != 0 && work.cancellation->stop.load()) return;
@@ -1300,7 +1303,12 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       member.batch_size = count;
       member.execution = prepared.get();
       member.execution_list = batch.execution_list;
-      if (index == 0) member.prepared = std::move(work.prepared);
+      if (index == 0) {
+        member.prepared = std::move(work.prepared);
+      } else if (code) {
+        member.prepared = new_invocation(member);
+        member.prepared->worker_probes = worker_probes;
+      }
       if (code)
         member.implementation =
             &implementations.at(index % implementations.size());
@@ -1449,8 +1457,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   auto invoke(Work& w, uint32_t lane) -> Produced {
     NodeRt& rt = nodes_[w.node];
     const Node& node = *rt.node;
-    const bool prepared = w.prepared.has_value();
-    auto s = prepared ? std::move(*w.prepared) : new_invocation(w);
+    const bool prepared = w.prepared && !w.prepared->stages.empty();
+    auto s = w.prepared ? std::move(*w.prepared) : new_invocation(w);
     s.batch_index = w.batch_index;
     s.batch_size = w.batch_size;
     if (w.implementation) {

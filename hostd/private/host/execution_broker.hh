@@ -15,7 +15,7 @@ namespace tsugumi::host {
 // capability through their private control share, never worker credentials.
 class ExecutionBroker {
  public:
-  static constexpr int kExecutionFormatVersion = 1;
+  static constexpr int kExecutionFormatVersion = 2;
   // Reads the values of the named Card secrets that are set for a hostd
   // project id, from hostd's secret store. An authorized project core asks for
   // the secrets one invocation declares, just before the call; the broker
@@ -23,8 +23,12 @@ class ExecutionBroker {
   using CardSecrets =
       std::function<std::vector<std::pair<std::string, std::string>>(
           const std::string& project, const std::vector<std::string>& names)>;
+  using MeasureProbe = std::function<Tsugumi::Data::WorkerProbeResultT(
+      const std::string& project, const std::vector<std::string>& card,
+      const std::string& worker, const std::string& key)>;
   ExecutionBroker(std::filesystem::path state, std::string socket,
-                  CardSecrets card_secrets = {});
+                  CardSecrets card_secrets = {},
+                  MeasureProbe measure_probe = {});
   ~ExecutionBroker();
   ExecutionBroker(const ExecutionBroker&) = delete;
   auto operator=(const ExecutionBroker&) -> ExecutionBroker& = delete;

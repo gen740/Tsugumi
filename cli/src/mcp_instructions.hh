@@ -34,7 +34,7 @@ the person's decision.
   reuseWorker (false), timeoutSeconds (0), buildTimeoutSeconds (0), recordLogs and recordIO ("project"),
   sandbox (filesystem, pid, ipc and identity true, limits with cpu and memoryMiB both 0),
   grants (network and gui both false), systems (the Nix systems the Card works on, at least one; initially the
-  host's native Linux system), and workerCapabilities ([]). A worker whose native system is listed builds and runs
+  host's native Linux system). A worker whose native system is listed builds and runs
   the Card natively; any other worker runs the first entry emulated.
   grants.hostPaths and secrets are optional. Each host path grant supplies name and write. Declare each
   name with its description in the containing tsugumi.json's optional hostPaths array. Hostd stores
@@ -43,7 +43,9 @@ the person's decision.
   Merge also requires inputs (at least one, typically a and b), maxRuns (1) and recordIO ("project").
   Collect also requires maxRuns (1) and recordIO ("project"). Draft, Trigger and Subgraph contain only type and symbol.
   Zero timeouts or sandbox limits mean unlimited. Record settings inherit the project with "project" and
-  override with "on" or "off". A worker must have every listed capability bit (distinct numbers from 0 through 63).
+  override with "on" or "off". A Code Card may declare a probe derivation from default.nix.
+  The worker runs bin/probe in the Card sandbox. Its last stdout line ranks eligible workers.
+  The highest positive score wins. Invocation history includes the scores and output.
 - A new tsugumi.json carries formatVersion (1, the project file format), name, nixPath ([] or declared sources),
   trackedPaths ([]), agentExclude (the host's defaults), recordLogs (true), recordIO (false), logLimitBytes
   (134217728), outputLimitBytes (68719476736), outputLimitEntries (1000) and canvas (cards and connections).
@@ -64,7 +66,7 @@ the person's decision.
 - template_list returns the visible Project and Host templates. To copy an existing template, use tools family
   templates action copy with the exact store and name. Each copy creates fresh Card IDs and preserves its internal
   wiring. Adding a folder or importing from Git into either store requires the person's approval.
-- The person decides a Card's sandbox, grants, and workerCapabilities. A save that widens access waits for their approval, with your reason. A declined
+- The person decides a Card's sandbox and grants. A save that widens access waits for their approval, with your reason. A declined
   widening stays declined: do not reach the same capability another way.
 - A Card in Card has type "subgraph" and its own project at externals/<id>/. Its tsugumi.json
   may include a boundary with inputs and outputs, both lists of {name, card, port}. Use project_edit on files

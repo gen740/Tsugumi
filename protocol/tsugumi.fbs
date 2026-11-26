@@ -133,9 +133,7 @@ table ExecutionService {
   resource_limits:bool (id: 5);
   /// The daemon's concurrent job capacity across its projects, when known.
   max_jobs:uint32 = null (id: 6);
-  /// Capability bits (0-63) the host settings give this worker.
-  worker_capabilities:[ubyte] (id: 7);
-  sandbox:SandboxCapabilities (id: 8);
+  sandbox:SandboxCapabilities (id: 7);
 }
 
 table ProjectSnapshot {
@@ -933,7 +931,16 @@ union RequestPayload {
   CardViewReadRequest = 62,
   ViewSendRequest = 63,
   ViewCreditRequest = 64,
+  WorkerProbeMeasureRequest = 65,
 }
+
+/// -> WorkerProbeMeasurement. Replay the identified probe with the Card's current permissions.
+table WorkerProbeMeasureRequest {
+  card:Tsugumi.Data.CardPath (required);
+  worker:string (required);
+  key:string (required);
+}
+table WorkerProbeMeasurement { result:Tsugumi.Data.WorkerProbeResult (required); }
 
 // ---- Replies -----------------------------------------------------------------
 
@@ -1227,6 +1234,8 @@ table InvocationRecord {
   record_io:bool = null (id: 4);
   /// Parameters captured from the run's immutable document; absent if unavailable.
   params:Tsugumi.Data.InvocationParams (id: 5);
+  /// Worker selection measurements retained independently of recording settings.
+  worker_probes:[Tsugumi.Data.WorkerProbeResult] (id: 6);
 }
 
 table HistoryState {
@@ -1361,6 +1370,7 @@ union ReplyPayload {
   VersionDiff = 46,
   VersionComments = 47,
   RunCategoryDeleteResult = 48,
+  WorkerProbeMeasurement = 49,
 }
 
 // ---- Notifications -----------------------------------------------------------

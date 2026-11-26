@@ -71,8 +71,8 @@ def registered_remote(monkeypatch, resource_limits):
                                    resourceLimits=resource_limits, maxJobs=8, workerContract=R.WORKER_CONTRACT)
             self.wfile.write(R.frame(R.reply(R.ReplyBody.Catalog, R.CatalogT(
                 services=[
-                    R.TargetT(id="cluster", available=True, capabilities=caps, workerCapabilities=[63]),
-                    R.TargetT(id="local", available=True, capabilities=caps, workerCapabilities=[1]),
+                    R.TargetT(id="cluster", available=True, capabilities=caps),
+                    R.TargetT(id="local", available=False, capabilities=caps),
                 ]))))
 
     with tempfile.TemporaryDirectory(prefix="tsugumi-broker-") as directory:
@@ -92,22 +92,20 @@ def registered_remote(monkeypatch, resource_limits):
 
 
 @pytest.mark.parametrize("resource_limits,settings,valid", [
-    (False, {"workerCapabilities": [63]}, True),
-    (False, {"workerCapabilities": [63], "grants": {"gui": True}}, False),
-    (False, {"workerCapabilities": [63], "sandbox": {"filesystem": False}}, False),
-    (False, {"workerCapabilities": [63], "sandbox": {"pid": False}}, False),
-    (False, {"workerCapabilities": [63], "sandbox": {"ipc": False, "identity": False}}, True),
-    (False, {"workerCapabilities": [63], "grants": {"hostPaths": []}}, True),
-    (False, {"workerCapabilities": [63], "grants": {"hostPaths": [{"name": "data", "write": False}]}},
+    (False, {}, True),
+    (False, {"grants": {"gui": True}}, False),
+    (False, {"sandbox": {"filesystem": False}}, False),
+    (False, {"sandbox": {"pid": False}}, False),
+    (False, {"sandbox": {"ipc": False, "identity": False}}, True),
+    (False, {"grants": {"hostPaths": []}}, True),
+    (False, {"grants": {"hostPaths": [{"name": "data", "write": False}]}},
      False),
-    (True, {"workerCapabilities": [1], "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}},
-     False),
-    (True, {"workerCapabilities": [63], "systems": [NATIVE.split("-")[0] + "-linux"],
+    (True, {"systems": [NATIVE.split("-")[0] + "-linux"],
       "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, True),
-    (True, {"workerCapabilities": [63], "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, True),
-    (False, {"workerCapabilities": [63], "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, False),
-], ids=["unlimited", "gui", "no-filesystem", "no-pid", "isolation-switches", "empty-host-folders", "nonempty-host-folders", "local-resources", "wrong-system", "remote-native", "unsupported-limits"])
-def test_worker_validation_checks_capabilities_and_resources(
+    (True, {"sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, True),
+    (False, {"sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, False),
+], ids=["unlimited", "gui", "no-filesystem", "no-pid", "isolation-switches", "empty-host-folders", "nonempty-host-folders", "wrong-system", "remote-native", "unsupported-limits"])
+def test_worker_validation_checks_sandbox_options_and_resources(
         project, core_factory, registered_remote, resource_limits, settings, valid):
     """Placement filters the broker catalog before a run starts."""
     definition = {"type": "code", "_outputs": MSG_FBS,
@@ -116,13 +114,11 @@ def test_worker_validation_checks_capabilities_and_resources(
     client = core_factory().connect()
     services = {text(service.id): service for service in client.call("ProjectInspectRequest").executionServices}
     assert list(services) == ["local", "cluster"]
-    assert list(services["local"].workerCapabilities) == [1]
     cluster = services["cluster"]
     assert cluster.kind == ExecutionServiceKind.remote_daemon
     assert text(cluster.nativeSystem) == FOREIGN
     assert cluster.resourceLimits == resource_limits
     assert cluster.maxJobs == 8
-    assert list(cluster.workerCapabilities) == [63]
     validation = client.call("ProjectValidateRequest")
     if valid:
         assert validation.valid, [text(diagnostic.message) for diagnostic in validation.diagnostics]
@@ -151,18 +147,6 @@ def test_snapshot_lists_the_systems_the_local_service_can_run(client):
     if sys.platform == "linux" and emulator_registered(FOREIGN):
         expected.add(FOREIGN)
     assert {text(system) for system in service.systems} == expected
-
-
-def test_no_registered_worker_has_requested_capabilities(project, core_factory):
-    definition = {"type": "code", "workerCapabilities": [63], "_outputs": MSG_FBS,
-                  "_nix": '{ pkgs, inputs, params, ... }: { run = "true"; }'}
-    write(project, {"work": definition}, [card("work", "work")], [])
-    client = core_factory().connect()
-    assert "invalid_setting" in diagnostics(client, "work")
-    with pytest.raises(RpcFailure) as error:
-        run(client)
-    assert error.value.kind == "validation_failed"
-    assert not client.call("RunHistoryRequest").runs
 
 
 def test_which_systems_and_cards(tmp_path):

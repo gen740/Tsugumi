@@ -225,7 +225,8 @@ final class ServiceWireTests: XCTestCase {
   func testExecutionSettingsUseTheHostContract() throws {
     for (method, fields) in [
       ("ExecutionServicesRequest", [:]),
-      ("ExecutionServicePutRequest", ["id": "compute", "name": "Compute", "endpoint": "unix:/tmp/worker", "workerPublicKey": "ed25519:test", "worker_capabilities": [0, 63] as [UInt8]]),
+      ("ExecutionServicePutRequest", ["id": "compute", "name": "Compute", "endpoint": "unix:/tmp/worker", "workerPublicKey": "ed25519:test"]),
+      ("ExecutionProbeRemeasureRequest", ["id": "compute"]),
       ("ExecutionServiceRemoveRequest", ["id": "compute"]),
       ("ExecutionProjectAuthorizeRequest", ["project_id": "project", "path": "/project", "control_dir": "/control"]),
       ("ExecutionProjectRevokeRequest", ["project_id": "project"]),
@@ -239,7 +240,7 @@ final class ServiceWireTests: XCTestCase {
         let envelope = Tsugumi_Host_MessageT(request)
         let body = (envelope.payload?.value as? Tsugumi_Host_RequestT)?.value?.value
         let service = try XCTUnwrap(body as? Tsugumi_Host_ExecutionServicePutRequestT)
-        XCTAssertEqual(service.workerCapabilities, [0, 63])
+        XCTAssertEqual(service.id, "compute")
       }
       XCTAssertThrowsError(try ServiceWire.encode(method, fields: fields, id: 2, host: false))
     }

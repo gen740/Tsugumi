@@ -1,23 +1,6 @@
 import Foundation
 import TsugumiRPC
 
-public enum WorkerBits {
-  public static let range: ClosedRange<UInt8> = 0...63
-
-  public static func valid(_ bits: [UInt8]) -> Bool {
-    Set(bits).count == bits.count && bits.allSatisfy(range.contains)
-  }
-
-  public static func toggling(_ bit: UInt8, in bits: [UInt8]) -> [UInt8] {
-    bits.contains(bit) ? bits.filter { $0 != bit } : (bits + [bit]).sorted()
-  }
-}
-
-enum InvalidWorkerBits: LocalizedError {
-  case invalid
-  var errorDescription: String? { String(localized: "ワーカーのビットは 0〜63 の範囲で重複なしに指定してください。") }
-}
-
 public struct ExecutionServiceCapabilities: Codable, Equatable, Sendable {
   public let serverId: String
   public let nativeSystem: String
@@ -28,12 +11,19 @@ public struct ExecutionServiceCapabilities: Codable, Equatable, Sendable {
   public let workerContract: Int
 }
 
+public struct ExecutionProbeMeasurement: Codable, Equatable, Sendable {
+  public let probe: String
+  public let score: Double?
+  public let failure: String?
+  public let measuredAt: Int64
+}
+
 public struct ExecutionServiceConnection: Codable, Identifiable, Equatable, Sendable {
   public let id: String
   public let name: String
   public let endpoint: String
   public let workerPublicKey: String
-  public let workerCapabilities: [UInt8]
+  public let probes: [ExecutionProbeMeasurement]
   public let capabilities: ExecutionServiceCapabilities
 }
 
@@ -42,7 +32,6 @@ public struct ExecutionServiceRegistration: Sendable {
   public var name = ""
   public var endpoint = ""
   public var workerPublicKey = ""
-  public var workerCapabilities: [UInt8] = []
   public var verify = false
   public init() {}
 }
@@ -62,9 +51,13 @@ public enum ExecutionServices {
     let request = Tsugumi_Host_ExecutionServicePutRequestT()
     request.id = value.id; request.name = value.name; request.endpoint = value.endpoint
     request.workerPublicKey = value.workerPublicKey; request.verify = value.verify
-    guard WorkerBits.valid(value.workerCapabilities) else { throw InvalidWorkerBits.invalid }
-    request.workerCapabilities = value.workerCapabilities
     let reply: Tsugumi_Host_ExecutionServicesT = try await CoreHostClient.shared.hostCall(.executionserviceputrequest, request)
+    return state(reply)
+  }
+  public static func remeasure(_ id: String?) async throws -> ExecutionServicesState {
+    let request = Tsugumi_Host_ExecutionProbeRemeasureRequestT()
+    request.id = id
+    let reply: Tsugumi_Host_ExecutionServicesT = try await CoreHostClient.shared.hostCall(.executionproberemeasurerequest, request)
     return state(reply)
   }
   public static func remove(_ id: String) async throws -> ExecutionServicesState {
@@ -77,7 +70,9 @@ public enum ExecutionServices {
       guard let service else { return nil }
       let c = service.capabilities
       return ExecutionServiceConnection(id: service.id, name: service.name, endpoint: service.endpoint,
-        workerPublicKey: service.workerPublicKey, workerCapabilities: service.workerCapabilities,
+        workerPublicKey: service.workerPublicKey, probes: service.probes.compactMap { probe in
+          probe.map { ExecutionProbeMeasurement(probe: $0.probe ?? "", score: $0.score, failure: $0.failure, measuredAt: $0.measuredAt) }
+        },
         capabilities: ExecutionServiceCapabilities(serverId: c.serverId, nativeSystem: c.nativeSystem,
           systems: c.systems.compactMap { $0 }, isolation: c.isolation ?? "", resourceLimits: c.resourceLimits,
           maxConcurrentJobs: Int(c.maxConcurrentJobs), workerContract: Int(c.workerContract)))

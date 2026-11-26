@@ -1,8 +1,6 @@
 #pragma once
 
 #include <algorithm>
-#include <bit>
-#include <cstdint>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -10,42 +8,40 @@
 namespace tsugumi {
 struct WorkerCandidate {
   std::string_view id;
-  uint64_t capabilities;
   bool free;
-  bool supported = true;
+  bool supported;
+  std::optional<double> score;
 };
 struct WorkerSelection {
   bool matches = false;
   std::optional<size_t> index;
 };
 
-constexpr auto matches_capabilities(uint64_t card, uint64_t worker) -> bool {
-  return (card & ~worker) == 0;
-}
-
-// Input order breaks ties. Busy workers still count as registered matches.
+// A measured Card waits for the highest-ranked worker, including ties resolved
+// in registration order. With no probe, preserve the established free-worker
+// order and a resident Card's affinity.
 inline auto select_worker(std::span<const WorkerCandidate> workers,
-                          uint64_t capabilities, std::string_view resident = {})
+                          bool measured, std::string_view resident = {})
     -> WorkerSelection {
-  const auto matches = [&](const WorkerCandidate& worker) {
+  const auto eligible = [&](const WorkerCandidate& worker) {
     return worker.supported &&
-           matches_capabilities(capabilities, worker.capabilities);
+           (!measured || (worker.score && *worker.score > 0));
   };
   const bool keep_resident =
-      !resident.empty() &&
+      !measured && !resident.empty() &&
       std::ranges::any_of(workers, [&](const auto& worker) {
-        return worker.id == resident && matches(worker);
+        return worker.id == resident && eligible(worker);
       });
   WorkerSelection result;
+  std::optional<size_t> best;
   for (size_t i = 0; i < workers.size(); ++i) {
     const auto& worker = workers[i];
-    if (!matches(worker) || (keep_resident && resident != worker.id)) continue;
+    if (!eligible(worker) || (keep_resident && resident != worker.id)) continue;
     result.matches = true;
-    if (!worker.free) continue;
-    if (!result.index || std::popcount(worker.capabilities) <
-                             std::popcount(workers[*result.index].capabilities))
-      result.index = i;
+    if (!measured && !worker.free) continue;
+    if (!best || (measured && *worker.score > *workers[*best].score)) best = i;
   }
+  if (best && workers[*best].free) result.index = best;
   return result;
 }
 }  // namespace tsugumi

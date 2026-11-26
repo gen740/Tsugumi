@@ -1,4 +1,3 @@
-import { validWorkerBits } from '../../shared/workerBits'
 import { L } from '../i18n'
 import * as H from '../../shared/gen/tsugumi/host'
 import { ModelSelectionRequestT } from '../../shared/gen/tsugumi/host/model-selection-request'
@@ -121,10 +120,8 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'SignInActionRequest': return new HSignInActionRequest(v.profile, v.attempt_id, v.action, v.client_id)
     case 'SignInStatusRequest': return new HSignInStatusRequest(v.profile, v.attempt_id)
     case 'ExecutionServicesRequest': return new H.ExecutionServicesRequestT()
-    case 'ExecutionServicePutRequest':
-      if (!Array.isArray(v.worker_capabilities) || !validWorkerBits(v.worker_capabilities))
-        throw new Error('Expected distinct worker capability bits (0–63)')
-      return new H.ExecutionServicePutRequestT(v.id, v.name, v.endpoint, v.workerPublicKey, v.verify, v.worker_capabilities)
+    case 'ExecutionServicePutRequest': return new H.ExecutionServicePutRequestT(v.id, v.name, v.endpoint, v.workerPublicKey, v.verify)
+    case 'ExecutionProbeRemeasureRequest': return new H.ExecutionProbeRemeasureRequestT(v.id ?? null)
     case 'ExecutionServiceRemoveRequest': return new H.ExecutionServiceRemoveRequestT(v.id)
     case 'ExecutionProjectAuthorizeRequest': return new ExecutionProjectAuthorizeRequestT(v.project_id, v.path, v.control_dir, v.guest)
     case 'ExecutionProjectRevokeRequest': return new ExecutionProjectRevokeRequestT(v.project_id)
@@ -203,7 +200,7 @@ function view(value: any): any {
   const names: Record<string, string> = { projectId: 'project_id', resourceId: 'resource_id', conversationId: 'conversation_id', projectPath: 'project_path',
     trustedFolder: 'trusted_folder', sourceFolder: 'source_folder', attachmentFolder: 'attachment_folder', eventSeq: 'event_seq', nextSeq: 'next_seq', callId: 'call_id', contextSummary: 'contextSummary',
     inputJson: 'input', argumentsJson: 'arguments', resultJson: 'result', inputSchemaJson: 'inputSchema',
-    contentJson: 'content', providerContentJson: 'providerContent', providerApi: 'providerApi', mediaType: 'media_type', clientId: 'client_id', attemptId: 'attempt_id', valueJson: 'value_json', capabilityFile: 'capability_file', workerCapabilities: 'worker_capabilities' }
+    contentJson: 'content', providerContentJson: 'providerContent', providerApi: 'providerApi', mediaType: 'media_type', clientId: 'client_id', attemptId: 'attempt_id', valueJson: 'value_json', capabilityFile: 'capability_file' }
   for (const [key, v] of Object.entries(value)) {
     const name = key === 'clientId' && 'signedIn' in value ? 'clientId' : names[key] ?? key
     if (v === null || v === undefined) {

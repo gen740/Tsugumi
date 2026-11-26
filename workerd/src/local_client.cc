@@ -103,6 +103,7 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
   target->shared_vm = spawn.shared_vm;
   target->packed = spawn.packed;
   target->packed_debug = spawn.packed_debug;
+  target->card_probe = spawn.card_probe;
   if (spawn.secrets) {
     for (const auto& [name, value] : spawn.secrets->values) {
       auto entry = std::make_unique<Tsugumi::Worker::EnvVarT>();

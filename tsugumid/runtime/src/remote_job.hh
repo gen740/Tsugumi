@@ -28,10 +28,10 @@ struct RemoteTarget {
   bool available = false;
   bool resource_limits = false;
   uint32_t max_jobs = 0;
-  uint64_t worker_capabilities = 0;
   std::string unavailable_reason;
   bool namespace_isolation = false;
   bool gui = false;
+  std::string probe_revision;
 };
 
 struct RemoteJobState {
@@ -63,6 +63,7 @@ struct RemoteProbe {
   std::vector<std::string> systems;
   bool resource_limits;
   uint32_t max_jobs = 0, active_jobs = 0;
+  std::string probe_life;
 };
 
 // An incomplete exchange is different from a response from the gateway.
@@ -91,6 +92,14 @@ class RemoteJobClient {
   auto catalog(std::stop_token stop = {}) const -> std::vector<RemoteTarget>;
   auto probe(std::string_view service, std::string_view registered_server,
              std::stop_token stop = {}) const -> RemoteProbe;
+  auto probe_lookup(std::string_view service, std::string_view key,
+                    std::string_view life, std::stop_token stop) const
+      -> Tsugumi::RemoteWorker::CardProbeCachedT;
+  auto probe_publish(std::string_view service, std::string_view key,
+                     std::string_view life, std::string_view revision,
+                     const Tsugumi::Data::WorkerProbeResultT& result,
+                     const std::vector<std::string>& card,
+                     std::stop_token stop) const -> void;
   auto put_blob(std::string_view service, std::string_view instance,
                 std::string_view job_id, std::string_view digest, uint64_t size,
                 std::istream& contents, std::stop_token cancel = {},

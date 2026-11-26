@@ -218,7 +218,7 @@ TEST(NixPathOperation, ParamRewriteUsesTheConfirmedSourceAndRevision) {
       {"project_json",
        R"("{\"canvas\":{\"cards\":[{\"id\":\"a\"}],\"connections\":[]}}")"},
       {"definitions",
-       R"([{"id":"a","card_json":"{\"type\":\"code\",\"symbol\":\"chevron.left.forwardslash.chevron.right\",\"inputs\":[],\"maxRuns\":1,\"reuseWorker\":false,\"timeoutSeconds\":0,\"buildTimeoutSeconds\":0,\"recordLogs\":\"project\",\"recordIO\":\"project\",\"sandbox\":{\"filesystem\":true,\"pid\":true,\"ipc\":true,\"identity\":true,\"limits\":{\"cpu\":0,\"memoryMiB\":0}},\"grants\":{\"network\":false,\"gui\":false},\"systems\":[\"aarch64-linux\"],\"workerCapabilities\":[]}"}])"},
+       R"([{"id":"a","card_json":"{\"type\":\"code\",\"symbol\":\"chevron.left.forwardslash.chevron.right\",\"inputs\":[],\"maxRuns\":1,\"reuseWorker\":false,\"timeoutSeconds\":0,\"buildTimeoutSeconds\":0,\"recordLogs\":\"project\",\"recordIO\":\"project\",\"sandbox\":{\"filesystem\":true,\"pid\":true,\"ipc\":true,\"identity\":true,\"limits\":{\"cpu\":0,\"memoryMiB\":0}},\"grants\":{\"network\":false,\"gui\":false},\"systems\":[\"aarch64-linux\"]}"}])"},
       {"sources",
        json::Encode(std::vector<std::string>{json::Encode(json::Members{
            {"path", json::Quote("definitions/a/params.nix")},
@@ -369,7 +369,7 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
             "\"project\",\"recordIO\":\"project\",\"sandbox\":{\"filesystem\":"
             "true,\"pid\":true,\"ipc\":true,\"identity\":true,\"limits\":{"
             "\"cpu\":0,\"memoryMiB\":0}},\"grants\":{\"network\":false,\"gui\":"
-            "false},\"systems\":[\"aarch64-linux\"],\"workerCapabilities\":[]}"},
+            "false},\"systems\":[\"aarch64-linux\"]}"},
         {"compare",
          "{\"type\":\"draft\",\"symbol\":\"pencil.and.outline\"}"}}) {
     DefinitionDoc definition;
@@ -800,7 +800,7 @@ TEST(ProjectEdit, HostConflictsUseTheTypedOperationOutcome) {
             R"({"reply":"OperationResult","value":{"state":"unknown"}})", {}};
       EXPECT_EQ(method, "project_inspect");
       return OperationReply{
-          R"({"reply":"ProjectSnapshot","value":{"rev":0,"project_json":"{}","layout":[],"definitions":[{"id":"a","card_json":"{\"type\":\"code\",\"symbol\":\"chevron.left.forwardslash.chevron.right\",\"inputs\":[],\"maxRuns\":1,\"reuseWorker\":false,\"timeoutSeconds\":0,\"buildTimeoutSeconds\":0,\"recordLogs\":\"project\",\"recordIO\":\"project\",\"sandbox\":{\"filesystem\":true,\"pid\":true,\"ipc\":true,\"identity\":true,\"limits\":{\"cpu\":0,\"memoryMiB\":0}},\"grants\":{\"network\":false,\"gui\":false},\"systems\":[\"aarch64-linux\"],\"workerCapabilities\":[]}","comments_json":"{\"comments\":[{\"id\":\"current\",\"text\":\"current\"}]}"}]}})",
+          R"({"reply":"ProjectSnapshot","value":{"rev":0,"project_json":"{}","layout":[],"definitions":[{"id":"a","card_json":"{\"type\":\"code\",\"symbol\":\"chevron.left.forwardslash.chevron.right\",\"inputs\":[],\"maxRuns\":1,\"reuseWorker\":false,\"timeoutSeconds\":0,\"buildTimeoutSeconds\":0,\"recordLogs\":\"project\",\"recordIO\":\"project\",\"sandbox\":{\"filesystem\":true,\"pid\":true,\"ipc\":true,\"identity\":true,\"limits\":{\"cpu\":0,\"memoryMiB\":0}},\"grants\":{\"network\":false,\"gui\":false},\"systems\":[\"aarch64-linux\"]}","comments_json":"{\"comments\":[{\"id\":\"current\",\"text\":\"current\"}]}"}]}})",
           {}};
     };
     const auto conflict =

@@ -211,6 +211,33 @@ struct Service::State {
           [this](const std::string& project,
                  const std::vector<std::string>& names) {
             return host_settings->CardSecretValues(project, names);
+          },
+          [this](const std::string& project,
+                 const std::vector<std::string>& card,
+                 const std::string& worker, const std::string& key) {
+            std::vector<std::string> segments;
+            for (const auto& segment : card)
+              segments.push_back(json::Quote(segment));
+            const auto args = json::Encode(json::Members{
+                {"card", json::Encode(json::Members{
+                             {"segments", json::Encode(segments)}})},
+                {"worker", json::Quote(worker)},
+                {"key", json::Quote(key)}});
+            std::string bytes;
+            tools->RawProjectCall(project, "worker_probe_measure", args,
+                                  shutdown.get_token(), &bytes);
+            const auto* reply = R::GetMessage(bytes.data())->payload_as_Reply();
+            if (reply) {
+              if (const auto* measured =
+                      reply->value_as_WorkerProbeMeasurement())
+                return std::move(
+                    *std::unique_ptr<Tsugumi::Data::WorkerProbeResultT>(
+                        measured->result()->UnPack()));
+              if (const auto* failure = reply->value_as_Failure();
+                  failure && failure->diagnostic())
+                throw Failure("unavailable", failure->diagnostic()->str());
+            }
+            throw Failure("unavailable", "Unexpected project probe reply");
           });
     if (!options.vm.binary.empty()) {
       options.vm.broker_socket = execution_broker->socket_path();
@@ -824,6 +851,7 @@ struct Service::State {
       return wire::HostReply(request.request_id, std::move(result));
     }
     if (host::ExecutionBroker::Handles(r->value_type())) {
+      Human(human);
       auto* broker = execution_broker.get();
       lock.unlock();
       if (!broker)

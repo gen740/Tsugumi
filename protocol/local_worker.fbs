@@ -17,6 +17,7 @@ table Spawn {
   artifact_staging:string;
   packed:bool;
   packed_debug:bool;
+  card_probe:bool;
 }
 table Message {
   action:Action; card:string; key:string (trace_secret); spawn:Spawn; reuse:bool;

@@ -158,9 +158,15 @@ class Service : public RequestSink {
   auto remove_run_artifacts(const std::string& run_id) -> uint64_t;
   // The backend that runs the Cards naming execution service `id`.
   auto invalidate_resident(const std::string& card) -> void;
+  void worker_probe_measure(RequestIn& req);
+  auto measure_card_probe(const RemoteTarget& target, const Node& node,
+                          const std::filesystem::path& directory,
+                          const BuildRequest& build, std::string& observed_life,
+                          std::string_view expected_key = {})
+      -> Tsugumi::Data::WorkerProbeResultT;
   auto prepare_execution(const Node& node,
                          const std::filesystem::path& directory,
-                         BuildRequest& build)
+                         BuildRequest& build, InvocationSummaryData& summary)
       -> std::unique_ptr<PreparedExecution>;
   // The remote backend uses the same core lifetime as local execution.
   auto remote_execution() -> RemoteExecutionService&;

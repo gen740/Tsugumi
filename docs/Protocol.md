@@ -13,7 +13,7 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Regular status and log exchanges detect a lost connection; reconnection in the same core life resumes existing work. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 54 requests.
+There are 55 requests.
 
 ## Connection
 
@@ -250,6 +250,7 @@ No fields.
 | [`Run`](#run) | RunAccepted | Start a run at base_rev. If a required host path is unbound, ask the user to choose a folder in Project Settings > Host Paths. propagate defaults to true, max_concurrency to 4 (1..64). Omitted nix_jobs and nix_cores use the environment defaults for local builds. |
 | [`RunCancel`](#runcancel) | RunStatus | Cancel run_id. |
 | [`RunStatus`](#runstatus) | RunStatus | Read run_id; omitted selects the active run, then the latest locally started run, then idle. An active run lists its Cards in progress with their stage and derivations being built. |
+| [`WorkerProbeMeasure`](#workerprobemeasure) | WorkerProbeMeasurement | Replay the identified probe with the Card's current permissions. |
 
 ### RunPlan
 
@@ -271,6 +272,7 @@ No fields.
 | `max_concurrency` | `uint32` |  |  |
 | `nix_jobs` | `uint32` |  |  |
 | `nix_cores` | `uint32` |  |  |
+| `inputs` | `[PackedRunInput]` |  | Typed starting values for a packed debug run. |
 
 ### RunCancel
 
@@ -283,6 +285,14 @@ No fields.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `run_id` | `string` |  |  |
+
+### WorkerProbeMeasure
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `card` | `CardPath` | yes |  |
+| `worker` | `string` | yes |  |
+| `key` | `string` | yes |  |
 
 ## History and artifacts
 
@@ -639,7 +649,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `GuideGetRequest` | `session_id: string` (required), `language: string` |
 | `GuideAdvanceRequest` | `session_id: string` (required), `language: string`, `event: GuideInput` (required) |
 | `HelloRequest` | `token: string` (required), `client: Tsugumi.Trace.Client` |
-| `EnvironmentRequest` | `project: string` (required), `action: EnvironmentAction`, `origins: [string]`, `folders: [string]` |
+| `EnvironmentRequest` | `project: string` (required), `action: EnvironmentAction`, `origins: [string]`, `folders: [string]`, `stale_store: string` |
 | `HostRuntimeRequest` | `action: RuntimeAction`, `project_id: string`, `project: string`, `command: string` |
 | `HostTerminalRequest` | `project: string`, `action: TerminalAction`, `session: ulong`, `rows: uint`, `cols: uint`, `data: [ubyte]` |
 | `SettingsGetRequest` | `profile: string` (required) |
@@ -650,7 +660,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `SignInActionRequest` | `profile: string` (required), `attempt_id: string`, `action: string` (required), `client_id: string` |
 | `SignInStatusRequest` | `profile: string` (required), `attempt_id: string` |
 | `ExecutionServicesRequest` | None |
-| `ExecutionServicePutRequest` | `id: string` (required), `name: string` (required), `endpoint: string` (required), `worker_public_key: string` (required), `verify: bool`, `worker_capabilities: [ubyte]` (required) |
+| `ExecutionServicePutRequest` | `id: string` (required), `name: string` (required), `endpoint: string` (required), `worker_public_key: string` (required), `verify: bool` |
 | `ExecutionServiceRemoveRequest` | `id: string` (required) |
 | `ExecutionProjectAuthorizeRequest` | `project_id: string` (required), `path: string` (required), `control_dir: string` (required), `guest: bool` |
 | `ExecutionProjectRevokeRequest` | `project_id: string` (required) |
@@ -702,5 +712,6 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `ViewActionRequest` | `project_id: string` (required), `session: string` (required), `action: ViewAction` (required) |
 | `ViewPresentationRequest` | `project_id: string` (required), `window: ViewWindow` (required), `closed: bool` |
 | `ViewActionCompleteRequest` | `request: string` (required), `session: string` (required), `png: [ubyte]`, `error: string` |
+| `ExecutionProbeRemeasureRequest` | `id: string` |
 
 Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`, `HostHome`, `FolderListing`, `CardSecretList`, `HostPathBindings`, `RunCategoryDeleteResult`, `TemplateList`, `ViewWindows`, `ViewActionResult`.

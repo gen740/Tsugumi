@@ -2,6 +2,7 @@
 {
   scope,
   viewsOnly ? false,
+  probeOnly ? false,
   expressionOnly ? false,
 }:
 let
@@ -60,6 +61,7 @@ let
     key:
     !(builtins.elem key [
       "run"
+      "probe"
       "views"
       "exports"
       "api"
@@ -83,8 +85,18 @@ let
       entry
     else
       throw "each run list entry must have a string label and a derivation";
+  probe = self.probe or null;
+  probeRuns =
+    if !(self ? probe) then
+      [ ]
+    else if isDerivation probe then
+      [ { label = ""; run = probe; } ]
+    else
+      throw "probe must be a derivation with an executable at bin/probe";
   runs =
-    if viewsOnly then
+    if probeOnly then
+      probeRuns
+    else if viewsOnly then
       [ ]
     else if executionList then
       map checkEntry run
@@ -139,12 +151,12 @@ in
 if expressionOnly then
   arguments
 else if unknown != [ ] then
-  throw "unknown Card attributes: ${toString unknown} (known: run views exports api)"
-else if !builtins.isList declarations then
+  throw "unknown Card attributes: ${toString unknown} (known: run probe views exports api)"
+else if !probeOnly && !builtins.isList declarations then
   throw "Card views must be a list"
 else
   {
-    inherit executionList;
+    executionList = !probeOnly && executionList;
     implementationCount = builtins.length runs;
     implementationLabels = builtins.unsafeDiscardStringContext (
       builtins.toJSON (map (r: r.label) runs)
@@ -153,6 +165,6 @@ else
     # the trusted plan builder. It never passes a Card value through as code.
     plan = builtins.toJSON {
       runs = map (r: "${r.run}") runs;
-      views = map viewOf declarations;
+      views = if probeOnly then [ ] else map viewOf declarations;
     };
   }

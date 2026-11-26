@@ -21,7 +21,6 @@ export function implementedCard(kind: string, symbol: string, systems: string[])
       ['limits', obj([['cpu', num(0)], ['memoryMiB', num(0)]])]]))
     definition.set('grants', obj([['network', false], ['gui', false]]))
     definition.set('systems', systems)
-    definition.set('workerCapabilities', [])
   }
   return definition
 }

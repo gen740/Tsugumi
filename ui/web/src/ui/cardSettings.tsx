@@ -1,7 +1,5 @@
-import { validWorkerBits } from '../../shared/workerBits'
 import { CARD_SYSTEMS, implementedCard, recordSettings } from '../model/cardFields'
 import { nextInputName, validName } from '../model/names'
-import { WorkerBitsEditor } from './workerBits'
 // Card settings: a local working copy of one Card's settings (its
 // `_card.json`), metadata and sources. Nothing reaches the project until
 // "Apply". Every Card has its own definition folder, so what is edited here is
@@ -389,14 +387,12 @@ export class CardEditorModel extends Observable {
     const invalidNumber = hasMaxRuns && !uint(get(definition, 'maxRuns'), 1n)
       || executable && (!uint(get(definition, 'timeoutSeconds')) || !uint(get(definition, 'buildTimeoutSeconds'))
         || !(cpu >= 0 && cpu <= 256) || !uint(get(limits, 'memoryMiB'), 0n, 1048576n))
-    const bits = (arr(get(definition, 'workerCapabilities')) ?? []).map(bit => Number(numText(bit)))
     const systems = this.systems
     const error = title !== undefined && !title.trim() ? L('Card 名を入力してください。')
       : inputNames.some(name => !validName(name)) || new Set(inputNames).size !== inputNames.length || this.kind === 'merge' && !inputNames.length ? L('有効な入力ポート名を指定してください。')
       : secrets.some(name => !validName(str(name) ?? '')) ? L('有効なシークレット名を指定してください。')
       : executable && (!systems.length || new Set(systems).size !== systems.length ||
         systems.some(system => !CARD_SYSTEMS.includes(system))) ? L('対応システムを重複なしで 1 つ以上選択してください。')
-      : executable && !validWorkerBits(bits) ? L('ワーカーのビットは 0〜63 の範囲で重複なしに指定してください。')
       : invalidNumber ? L('設定の数値を有効な範囲で入力してください。')
       : undefined
     if (error) {
@@ -724,10 +720,6 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
               <Select value={systems[0]} onChange={value => model.setEmulationFallback(value)}
                 options={systems.map(value => ({ value, label: value }))} />
             </Row>}
-            <Row label={L('ワーカーの必須ビット')} help={L('指定したすべてのビットを持つワーカーで実行します。')}>
-              <WorkerBitsEditor bits={(arr(get(def, 'workerCapabilities')) ?? []).map(bit => Number(numText(bit)))}
-                onChange={bits => model.setSetting('workerCapabilities', bits.map(num))} />
-            </Row>
             {session.environment.state === 'ready' && session.environment.executionScopeUnavailable && (
               <Row><span className="caption">{L('このプロジェクトのフォルダで作成時刻を取得できないため、外部の実行サービスを使用できません。')}</span></Row>
             )}

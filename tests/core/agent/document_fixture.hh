@@ -23,8 +23,7 @@ inline auto FixtureCodeCard(const std::string& overrides = "{}")
     "buildTimeoutSeconds":0,"recordLogs":"project","recordIO":"project",
     "sandbox":{"filesystem":true,"pid":true,"ipc":true,"identity":true,
                "limits":{"cpu":0,"memoryMiB":0}},
-    "grants":{"network":false,"gui":false},
-    "workerCapabilities":[]
+    "grants":{"network":false,"gui":false}
   })");
 #if defined(__aarch64__) || defined(__arm64__)
   fields["systems"] = R"(["aarch64-linux"])";

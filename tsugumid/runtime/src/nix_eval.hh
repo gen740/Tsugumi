@@ -62,6 +62,7 @@ struct NixCall {
   std::optional<uint32_t> jobs;
   std::optional<uint32_t> cores;
   bool views_only = false;
+  bool probe_only = false;
   uint32_t max_implementations = kMaxExecutionBatchSize;
   std::stop_token cancel;
   std::optional<std::chrono::steady_clock::time_point> deadline;

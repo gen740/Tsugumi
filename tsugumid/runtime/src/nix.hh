@@ -38,6 +38,7 @@ struct CardBuild {
   std::string key;  // the build plan's store path
   uint64_t preparation_ms =
       0;                // evaluation/build time, excluding closure transport
+  bool card_probe = false;
   bool cached = false;  // the store already had the result: nothing was built
   uint32_t implementation_index = 1;
   std::string implementation_label;  // "" when its run list entry has none
@@ -63,6 +64,9 @@ struct BuildRequest {
   std::optional<uint64_t> timeout_seconds;
   ExecutionTarget target;
   const DerivationClosureTransport* transport = nullptr;
+  bool probe_only = false;
+  // Called after evaluation so a cache hit can skip transferring and building.
+  std::function<bool(std::string_view output)> needs_probe_build;
   std::stop_token cancel;
   NixOutput log;  // build output
   std::function<void(Phase)>
@@ -125,7 +129,7 @@ class NixRunner {
   std::unique_ptr<NixEvaluator> evaluator_;
   // Entries are per Card and system, capped at 256.
   std::mutex evaluations_mu_;
-  std::map<std::pair<std::string, std::string>,
+  std::map<std::tuple<std::string, std::string, bool>,
            std::pair<EvaluationKey, NixResult>>
       evaluations_;
   std::optional<std::map<std::string, Tsugumi::State::PreparedCardT>> prepared_;

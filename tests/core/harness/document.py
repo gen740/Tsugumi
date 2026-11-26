@@ -45,7 +45,7 @@ def card_document(fields):
         body["inputs"] = [{"name": "a"}, {"name": "b"}]
     if kind == "code":
         body.update(inputs=[], reuseWorker=False, timeoutSeconds=0, buildTimeoutSeconds=0,
-                    recordLogs="project", systems=[NATIVE_SYSTEM], workerCapabilities=[])
+                    recordLogs="project", systems=[NATIVE_SYSTEM])
     body.update(fields)
     if kind == "code":
         sandbox = body.get("sandbox", {})

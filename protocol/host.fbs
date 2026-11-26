@@ -418,16 +418,15 @@ table GuideState {
 
 // Execution services contain public pins only. Private TLS keys never cross RPC.
 table ExecutionServicesRequest {}
-// worker_capabilities: the capability bits (0-63) this worker has; a Card runs
-// only on a worker whose bits include all of its workerCapabilities.
-table ExecutionServicePutRequest { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); verify:bool; worker_capabilities:[ubyte] (required); }
+table ExecutionServicePutRequest { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); verify:bool; }
+table ExecutionProbeRemeasureRequest { id:string; }
 table ExecutionServiceRemoveRequest { id:string (required); }
 // hostd derives identity from the host filesystem, never the document UUID.
 // hostd writes the scoped capability into this project's control share.
 table ExecutionProjectAuthorizeRequest { project_id:string (required); path:string (required); control_dir:string (required); guest:bool; }
 table ExecutionProjectRevokeRequest { project_id:string (required); }
 table ExecutionCapabilities { server_id:string (required); native_system:string (required); systems:[string]; isolation:string; resource_limits:bool; max_concurrent_jobs:uint; worker_contract:uint; }
-table ExecutionService { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); capabilities:ExecutionCapabilities (required); worker_capabilities:[ubyte] (required); }
+table ExecutionService { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); capabilities:ExecutionCapabilities (required); probes:[Tsugumi.Data.WorkerProbeResult]; }
 table ExecutionServices { services:[ExecutionService]; host_public_key:string (required); }
 table ExecutionAuthorization { endpoint:string (required); capability_file:string (required); available:bool; }
 
@@ -631,6 +630,7 @@ union RequestPayload {
   RunCategoryDeleteRequest,
   TemplateListRequest, HostTemplateAddRequest,
   ViewWindowsRequest, ViewActionRequest, ViewPresentationRequest, ViewActionCompleteRequest,
+  ExecutionProbeRemeasureRequest,
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {

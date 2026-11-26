@@ -89,10 +89,6 @@ TEST(ProjectDocument, RejectsInvalidValuesAndNames) {
           CardCase{
               R"({"type":"code","systems":["x86_64-linux","x86_64-linux"]})",
               "duplicate systems"},
-          CardCase{R"({"type":"code","workerCapabilities":[64]})",
-                   "workerCapabilities"},
-          CardCase{R"({"type":"code","workerCapabilities":[0,0]})",
-                   "workerCapabilities"},
           CardCase{R"({"type":"code","secrets":["Secret"]})", "secrets"},
           CardCase{R"({"type":"code","secrets":["secret","secret"]})",
                    "duplicate"},
@@ -216,7 +212,7 @@ TEST_F(ProjectStructure, ResolvesRecordSettingsAgainstTheCardProject) {
   Put("tsugumi.json",
       test::project_json(
           R"({"recordLogs":false,"recordIO":true,"canvas":{"cards":[{"id":"inherit"},{"id":"override"}],"connections":[]}})"));
-  Define("", "inherit", R"({"type":"code","workerCapabilities":[0,63]})");
+  Define("", "inherit", R"({"type":"code"})");
   Define(
       "", "override",
       R"({"type":"code","recordLogs":"on","recordIO":"off","timeoutSeconds":13,"buildTimeoutSeconds":17})");
@@ -229,7 +225,6 @@ TEST_F(ProjectStructure, ResolvesRecordSettingsAgainstTheCardProject) {
   EXPECT_FALSE(a.timeout_seconds);
   EXPECT_FALSE(a.build_timeout_seconds);
   EXPECT_FALSE(a.sandbox.limits.limited());
-  EXPECT_EQ(a.worker_capabilities, (uint64_t{1} << 63) | 1);
   const auto& b = graph->find({"override"})->settings;
   EXPECT_TRUE(b.record_logs);
   EXPECT_FALSE(b.record_io);
@@ -324,19 +319,30 @@ TEST(RunSystem, NativeWhenListedOtherwiseTheFirstEntry) {
   EXPECT_EQ(run_system(settings, "aarch64-darwin"), "aarch64-linux");
 }
 
-TEST(WorkerSelection, MatchesEveryRequiredBitAndPrefersTheFewestBits) {
-  constexpr uint64_t needed = uint64_t{1} << 63;
-  constexpr WorkerCandidate workers[] = {{"busy", needed, false},
-                                         {"local", 1, true},
-                                         {"broad", needed | 7, true},
-                                         {"first", needed | 8, true},
-                                         {"second", needed | 16, true}};
-  EXPECT_EQ(select_worker(workers, needed).index, 3);
-  EXPECT_EQ(select_worker(workers, needed, "broad").index, 2);
-  const auto resident = select_worker(workers, needed, "busy");
-  EXPECT_TRUE(resident.matches);
-  EXPECT_FALSE(resident.index);
-  EXPECT_FALSE(select_worker(workers, needed | 32).matches);
+TEST(WorkerSelection, WaitsForTheHighestScoreAndBreaksTiesInOrder) {
+  WorkerCandidate workers[] = {
+      {"local", true, true, -2.0}, {"failed", true, true, std::nullopt},
+      {"zero", true, true, 0.0},   {"first", false, true, 5.5},
+      {"second", true, true, 5.5}, {"ineligible", true, false, 10.0}};
+  auto waiting = select_worker(workers, true);
+  EXPECT_TRUE(waiting.matches);
+  EXPECT_FALSE(waiting.index);
+  workers[3].free = true;
+  EXPECT_EQ(select_worker(workers, true).index, 3);
+  workers[4].score = 8;
+  EXPECT_EQ(select_worker(workers, true).index, 4);
+  EXPECT_FALSE(select_worker(std::span(workers).first(3), true).matches);
+}
+
+TEST(WorkerSelection, KeepsFreeWorkerOrderAndResidentAffinityWithoutAProbe) {
+  WorkerCandidate workers[] = {{"local", true, true, {}},
+                               {"first", true, true, {}},
+                               {"second", true, true, {}}};
+  EXPECT_EQ(select_worker(workers, false).index, 0);
+  workers[0].free = false;
+  EXPECT_EQ(select_worker(workers, false).index, 1);
+  EXPECT_EQ(select_worker(workers, false, "second").index, 2);
+  EXPECT_FALSE(select_worker(workers, false, "local").index);
 }
 
 }  // namespace

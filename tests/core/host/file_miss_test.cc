@@ -57,7 +57,7 @@ TEST(FileMiss, CodeSchemaMissDoesNotClaimCodeHasNoSchemas) {
       DescribeFileMiss(
           "definitions/share/missing",
           {{"definitions",
-            R"([{"id":"share","card_json":"{\"type\":\"code\",\"symbol\":\"chevron.left.forwardslash.chevron.right\",\"inputs\":[],\"maxRuns\":1,\"reuseWorker\":false,\"timeoutSeconds\":0,\"buildTimeoutSeconds\":0,\"recordLogs\":\"project\",\"recordIO\":\"project\",\"sandbox\":{\"filesystem\":true,\"pid\":true,\"ipc\":true,\"identity\":true,\"limits\":{\"cpu\":0,\"memoryMiB\":0}},\"grants\":{\"network\":false,\"gui\":false},\"systems\":[\"aarch64-linux\"],\"workerCapabilities\":[]}"}])"}},
+            R"([{"id":"share","card_json":"{\"type\":\"code\",\"symbol\":\"chevron.left.forwardslash.chevron.right\",\"inputs\":[],\"maxRuns\":1,\"reuseWorker\":false,\"timeoutSeconds\":0,\"buildTimeoutSeconds\":0,\"recordLogs\":\"project\",\"recordIO\":\"project\",\"sandbox\":{\"filesystem\":true,\"pid\":true,\"ipc\":true,\"identity\":true,\"limits\":{\"cpu\":0,\"memoryMiB\":0}},\"grants\":{\"network\":false,\"gui\":false},\"systems\":[\"aarch64-linux\"]}"}])"}},
           {})
           .empty());
   // Without a type the Card is not described as any kind.

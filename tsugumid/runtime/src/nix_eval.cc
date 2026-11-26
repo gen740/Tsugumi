@@ -898,11 +898,13 @@ struct EvaluationState {
     for (const auto& label : labels)
       r.implementation_labels.push_back(label.get<std::string>());
     check_implementation_labels(r.implementation_labels, count);
-    r.derivation = plan(c, attr("plan"), fetch);
-    if (store->readDerivation(store->parseStorePath(r.derivation.path))
-            .platform != c.system)
-      throw std::runtime_error("Card derivation does not target system " +
-                               c.system);
+    if (!c.probe_only || count != 0) {
+      r.derivation = plan(c, attr("plan"), fetch);
+      if (store->readDerivation(store->parseStorePath(r.derivation.path))
+              .platform != c.system)
+        throw std::runtime_error("Card derivation does not target system " +
+                                 c.system);
+    }
     if (reads->reusable) {
       for (const auto& path : reads->store_roots) {
         const auto source = store->parseStorePath(path);
@@ -1068,18 +1070,20 @@ struct EvaluationState {
         ir->addIndirectRoot(link);
     }
   }
-  auto reuse(const NixResult& result) -> bool {
+  auto reuse(const NixResult& result, bool allow_unbuilt) -> bool {
     if (!state || !result.evaluation_epoch || result.evaluation_epoch != epoch)
       return false;
     if (!unchanged()) {
       reset();
       return false;
     }
+    if (result.derivation.path.empty()) return true;
     auto drv = store->parseStorePath(result.derivation.path);
     auto out = store->parseStorePath(result.derivation.output);
     store->addTempRoot(drv);
     store->addTempRoot(out);
-    if (store->isValidPath(drv) && store->isValidPath(out)) return true;
+    if (store->isValidPath(drv) && (allow_unbuilt || store->isValidPath(out)))
+      return true;
     // Nix remembers derivations it may not write a second time after GC.
     reset();
     return false;
@@ -1222,6 +1226,7 @@ auto evaluator_main() -> void {
       call.core_nixpkgs = unpack_source(*op->core_nixpkgs);
       call.nix_dir = op->nix_dir;
       call.needs_worker = op->needs_worker;
+      call.probe_only = op->probe_only;
       call.args = op->args;
       call.max_implementations = op->max_implementations;
       const auto result = evaluator(call).evaluate(call, fetch);
@@ -1254,7 +1259,7 @@ auto evaluator_main() -> void {
       result.derivation.output = op->out;
       E::ReusableT reply;
       unpack_scope(*op->scope, call);
-      reply.value = evaluator(call).reuse(result);
+      reply.value = evaluator(call).reuse(result, op->allow_unbuilt);
       send<E::Reply>(sink, std::move(reply));
     } else {
       throw std::runtime_error("unknown Nix evaluator operation");
@@ -1459,6 +1464,7 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
           pack_source("nixpkgs", call.core_nixpkgs));
   request.nix_dir = call.nix_dir.string();
   request.needs_worker = call.needs_worker;
+  request.probe_only = call.probe_only;
   request.args = call.args;
   request.max_implementations = call.max_implementations;
   return impl_->exchange(call, std::move(request), [&](auto& reply) {
@@ -1471,7 +1477,7 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
     result.implementation_labels = data->implementation_labels;
     result.evaluation_epoch = data->epoch;
     impl_->last_epoch = std::max(impl_->last_epoch, result.evaluation_epoch);
-    impl_->hold(result.derivation.path);
+    if (!result.derivation.path.empty()) impl_->hold(result.derivation.path);
     return result;
   });
 }
@@ -1482,12 +1488,14 @@ auto NixEvaluator::reuse(const NixCall& call, const NixResult& result) -> bool {
   request.epoch = result.evaluation_epoch;
   request.drv = result.derivation.path;
   request.out = result.derivation.output;
+  request.allow_unbuilt = call.probe_only;
   return impl_->exchange(call, std::move(request), [&](auto& reply) {
     const auto* data = reply.AsReusable();
     if (!data) throw std::runtime_error("missing Nix reuse reply");
     if (data->value) {
-      impl_->hold(result.derivation.path);
-      impl_->hold(result.derivation.output);
+      if (!result.derivation.path.empty()) impl_->hold(result.derivation.path);
+      if (!result.derivation.output.empty())
+        impl_->hold(result.derivation.output);
     }
     return data->value;
   });

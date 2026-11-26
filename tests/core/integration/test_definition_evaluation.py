@@ -14,6 +14,7 @@ import flatbuffers
 from harness.definition_evaluation import (
     EMPTY_OUTPUTS, completed_definition, edit_json, reload_project, synthetic_run, synthetic_sources,
 )
+from harness.host import Host
 from harness.nix_path import test_lock_entries as fixture_locks, write_lock
 from harness.real_cards import nix_string
 from harness.scenario import Project, run, wait_run
@@ -50,6 +51,80 @@ def first_table(value):
 
 def definition(**extra):
     return {"type": "code", "sandbox": {"filesystem": False}, "reuseWorker": True, **extra}
+
+
+@pytest.mark.parametrize("probe_body,score,diagnostic", [
+    ("printf 'reading complete\\n0\\n'", 0, None),
+    ("printf 'reading complete\\n-4.25\\n'", -4.25, None),
+    ("printf 'reading complete\\n5\\n'; exit 2", None, "exited with status 2"),
+    ("printf 'reading complete\\n5 MHz\\n'", None, "must be a finite number"),
+])
+def test_local_probe_failure_and_ineligible_scores_are_recorded(
+        core_factory, project, probe_body, score, diagnostic):
+    client = core_factory().connect()
+    Project(project).card("work", definition(recordLogs="off", recordIO="off"),
+                          outputs=EMPTY_OUTPUTS, sources={
+        "default.nix": ARGUMENTS + """{
+          run = throw "the rejected worker must never evaluate run";
+          probe = pkgs.writeShellScriptBin "probe" """ + "''\n" + probe_body + "\n''; }",
+    }).save(client)
+    run_id = run(client, "work", propagate=False)
+    status = wait_run(client, run_id)
+    assert status.state == RunState.failed
+    assert "No worker received a positive probe score" in text(status.failure.diagnostic)
+    assert "local:" in text(status.failure.diagnostic)
+    record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
+    assert not record.recordIo
+    measurement, = record.workerProbes
+    assert measurement.score == score, (text(measurement.failure), text(measurement.stderrText))
+    assert (text(measurement.stdoutText) or "").startswith("reading complete\n"), (
+        text(measurement.failure), text(measurement.stderrText)
+    )
+    if diagnostic is None:
+        assert measurement.failure is None
+    else:
+        assert diagnostic in text(measurement.failure)
+
+
+def test_settings_remeasure_local_probes_without_starting_a_card_run(
+        core_factory, project, tmp_path):
+    identity = "b2c3d4"
+    state = project / ".tsugumi"
+    state.mkdir(exist_ok=True)
+    (state / "project-id").write_text(identity)
+    control = tmp_path / "probe-control"
+    control.mkdir()
+    host = Host(tmp_path / "host")
+    try:
+        authorization = host.call("ExecutionProjectAuthorizeRequest", projectId=identity,
+                                  path=str(project), controlDir=str(control))
+        daemon = core_factory(env={
+            "TSUGUMI_EXECUTION_BROKER": text(authorization.endpoint),
+            "TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE": text(authorization.capabilityFile),
+        })
+        client = daemon.connect()
+        host.call("RegisterProjectRequest", projectId=identity,
+                  endpoint=f"unix:{daemon.unix}",
+                  path=str(project))
+        graph = Project(project)
+        for card_id, body in [("zero", "echo 0"), ("broken", "echo 7; exit 3")]:
+            graph.card(card_id, definition(recordLogs="off", recordIO="off"),
+                       outputs=EMPTY_OUTPUTS, sources={"default.nix": ARGUMENTS + """{
+                run = throw "settings must never call run";
+                probe = pkgs.writeShellScriptBin "probe" ''\n""" + body + "\n''; }"})
+        graph.save(client)
+        for card_id in ("zero", "broken"):
+            assert wait_run(client, run(client, card_id, propagate=False)).state == RunState.failed
+        initial = host.call("ExecutionServicesRequest").services[0].probes
+        refreshed = host.call("ExecutionProbeRemeasureRequest", id="local").services[0].probes
+        assert len(initial) == len(refreshed) == 2
+        assert min(row.measuredAt for row in refreshed) > max(row.measuredAt for row in initial)
+        assert sorted(row.score for row in refreshed if row.score is not None) == [0]
+        failure, = [row for row in refreshed if row.score is None]
+        assert "exited with status 3" in text(failure.failure)
+        assert len(client.call("RunHistoryRequest").runs) == 2
+    finally:
+        host.close()
 
 
 def test_missing_params_file_evaluates_to_empty_set(core_factory, project):
