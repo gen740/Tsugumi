@@ -490,13 +490,16 @@ auto Turns::Start(bool human, const std::string& id, const std::string& turn,
     q.bind(1, Excerpt(dependencies.scrub(text), 0, 160)).bind(2, id).run();
   }
   tx.commit();
-  // Finished jobs never need the mutex again. Join before replacing one.
-  if (auto found = jobs.find(id); found != jobs.end()) jobs.erase(found);
+  // Once a job clears running, it never needs the mutex again. Reap it
+  // from a different thread before launching more work.
+  std::erase_if(jobs, [&](const auto& job) {
+    return !running.contains(job.first);
+  });
   auto& context = context_usage[id];
   if (!context) context = std::make_shared<ContextUsage>();
   running.insert(id);
   ThoughtsFor(id)->TurnStarted();
-  jobs[id] = std::make_shared<std::jthread>([this, id, turn = active_turn,
+  jobs[id] = {c.project, std::make_shared<std::jthread>([this, id, turn = active_turn,
                                              config, context, role = c.role,
                                              project = c.project,
                                              task = std::move(task),
@@ -603,7 +606,7 @@ auto Turns::Start(bool human, const std::string& id, const std::string& turn,
     if (final_state == "cancelled") access_service.CancelTurnApproval(id, turn);
     dependencies.event(id, R"({"kind":"finished"})");
     running.erase(id);
-  });
+  })};
 }
 
 auto Turns::SummaryReply(uint64_t id, std::string_view raw) -> std::string {
@@ -687,7 +690,7 @@ auto Turns::Handle(const RequestIn& request, bool human,
       for (const auto& turn : cancelled_turns)
         access_service.CancelTurnApproval(id, turn);
       if (auto found = jobs.find(id); found != jobs.end())
-        found->second->request_stop();
+        found->second.worker->request_stop();
       dependencies.cancel_file_tools(id);
       return wire::AgentReply(request.request_id, S::AcknowledgementT{});
     }

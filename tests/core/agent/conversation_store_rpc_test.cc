@@ -74,6 +74,42 @@ class ConversationStoreFixture : public AgentProjectFixture {
   }
 };
 
+TEST_F(ConversationStoreFixture, RevocationCancelsTurnsAfterConversationDeletion) {
+  ModelServer model;
+  Configure(model);
+  StartProject();
+  const auto finished = Conversation("delete-finished");
+  Grant(finished);
+  model.Queue(AnthropicText("Finished."));
+  ASSERT_TRUE(Send(finished, "Finish this turn.").Code().empty());
+  ASSERT_TRUE(model.WaitForRequests(1));
+  WaitUntilIdle(finished);
+
+  const auto active = Conversation("revoke-active");
+  model.Queue(AnthropicText("Held model response."), true);
+  ASSERT_TRUE(Send(active, "Wait for revocation.").Code().empty());
+  const bool started = model.WaitForRequests(2);
+  if (!started) model.Release();
+  ASSERT_TRUE(started);
+
+  const auto deleted = Delete(finished);
+  const auto revoked = Call(*host, H::RequestPayload::ProjectPermissionSetRequest,
+                            [&](Builder& b) {
+    return H::CreateProjectPermissionSetRequest(
+               b, b.CreateString(project_id), b.CreateString(project_id),
+               Tsugumi::Service::Access::Read, false)
+        .Union();
+  });
+  model.Release();
+  ASSERT_TRUE(deleted.Code().empty());
+  ASSERT_TRUE(revoked.Code().empty()) << revoked.View();
+  WaitUntilIdle(active);
+  EXPECT_EQ(Scalar(directory.path / "project/.tsugumi/agent.sqlite",
+                   "SELECT count(*) FROM conversation_turns "
+                   "WHERE state='cancelled'"),
+            1);
+}
+
 TEST_F(ConversationStoreFixture,
        ProjectRecordsAndDeletionUseTheProjectDatabase) {
   ModelServer model;
