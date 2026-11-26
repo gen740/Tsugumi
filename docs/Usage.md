@@ -55,8 +55,6 @@ Use **Arrange** to place Cards and reduce wire crossings. Use **Untangle Wires**
 
 Select several Cards and choose **Group Selection** to keep them together on the Canvas. To reuse another Workflow, use the import button by **Add Card** in the sidebar. It copies the selected project into `externals` as a Card in Card. Its boundary maps the outer ports to steps inside, which you can open by double-clicking the Card.
 
-Use **Nix references** in the Canvas controls to see the upstream Card exports available to each Card through its connections. Hover a Card to highlight its links or open **List** to jump to either end or open the consumer's `default.nix`. An upstream Card `a` that is guaranteed to run first is available as `inputs.a`. [Nix reference rules](features.md#sharing-nix-exports-through-connections)
-
 ## Run from a Card
 
 Run the Workflow once to save its inputs. For example, open a copy of **Visualization → report**, run it, and change the aggregate Card's `offset`. Choose **Run from Here Downstream** on that Card to update the figures and report without running unrelated steps. Choose **Run Only This Card (Last Inputs)** to test just one figure using its saved input. A Card that needs an input without a saved value reports it as missing.

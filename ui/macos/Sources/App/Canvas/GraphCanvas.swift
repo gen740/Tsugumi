@@ -357,7 +357,6 @@ struct GraphCanvas: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .coordinateSpace(name: "canvas")
         .padding(m)
-      if tab.showNixReferences { nixLayer(transform: toLayer) }
       if debug.showHitAreas { hitAreaLayer(routed, transform: toLayer) }
     }
   }
@@ -582,33 +581,6 @@ struct GraphCanvas: View {
 
   /// The selection's move in progress (screen translation), from whichever of its items is dragged.
   private var selectionMove: CGSize? { selectionDrag ?? drag?.offset }
-
-  private var nixLinks: [NixLink] {
-    guard tab.showNixReferences else { return [] }
-    return visibleNixLinks(nixReferences(session), scope: tab.scope, visible: Set(cardKeys))
-  }
-
-  private func nixLayer(transform: CGAffineTransform) -> some View {
-    let links = nixLinks
-    let active = activeNixLinks(links, hovered: tab.hoveredNixCard, selected: tab.selectedNixReference)
-    let highlighted = Set(active.flatMap { [$0.source, $0.target] })
-    return Canvas { context, _ in
-      let highlightedIDs = Set(active.map(\.reference.id))
-      for link in links.filter({ !highlightedIDs.contains($0.reference.id) }) + active {
-        guard let segment = NixReferenceSegment(cardRect(link.source), cardRect(link.target)) else { continue }
-        let selected = highlightedIDs.contains(link.reference.id)
-        let color: Color = tab.hoveredNixCard != nil && !selected ? .gray.opacity(0.23) : .purple.opacity(0.9)
-        context.stroke(segment.path.applying(transform), with: .color(color),
-                       style: StrokeStyle(lineWidth: selected ? 3 : 1.5, dash: [7, 4]))
-        context.fill(segment.arrow(applying: transform), with: .color(color))
-      }
-      for card in highlighted {
-        let rect = cardRect(card).applying(transform).insetBy(dx: -3, dy: -3)
-        context.stroke(Path(roundedRect: rect, cornerRadius: 10), with: .color(.purple), lineWidth: 3)
-      }
-    }
-    .allowsHitTesting(false)
-  }
 
   // MARK: - Wires
 
@@ -1132,7 +1104,6 @@ struct GraphCanvas: View {
     guard !interacting else { clearHover(); return }
     let w = world(p)
     let over = cardAt(w)
-    if tab.showNixReferences { tab.hoveredNixCard = over }
     var target: HoverTarget?
     if let k = over {
       // A Draft being written has its details in front of it.
@@ -1153,7 +1124,6 @@ struct GraphCanvas: View {
   }
 
   private func clearHover() {
-    tab.hoveredNixCard = nil
     hoverTask?.cancel()
     hoverTask = nil
     if hover != nil { hover = nil }
@@ -1315,15 +1285,6 @@ struct GraphCanvas: View {
     let w = world(loc)
     // On a Card the click is the Card's, whatever runs under it.
     if let k = cardAt(w) { return select(k) }
-    let tolerance = wireTolerance
-    if tab.showNixReferences, let ref = nixLinks.first(where: {
-      NixReferenceSegment(cardRect($0.source), cardRect($0.target))?.path
-        .strokedPath(StrokeStyle(lineWidth: tolerance * 2)).contains(w) == true
-    }) {
-      tab.selectedNixReference = ref.reference.id
-      return
-    }
-    tab.selectedNixReference = nil
     if let i = wireAt(w, routed: routedWires()) {
       tab.selectedConnection = i
       tab.selection = []

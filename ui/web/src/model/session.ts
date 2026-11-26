@@ -86,7 +86,6 @@ export interface ResolvedCard {
   inputs: PortInfo[]
   outputs: PortInfo[]
   diagnostics: Diagnostic[]
-  nixReferences: { target: string[]; name: string }[]
   parameters?: CardParameter[]
 }
 
@@ -905,7 +904,6 @@ export class ProjectSession extends Observable {
       const p = segs(rc.card)
       const d = rc.diagnostics.map(diag)
       r.set(key(p), { path: p, inputs: rc.inputs.map(port), outputs: rc.outputs.map(port), diagnostics: d,
-        nixReferences: rc.nixReferences.map(r => ({ target: segs(r.target), name: s(r.name) })),
         parameters: (rc.parameters ?? []).flatMap(p => {
           const value = tryParse(s(p.valueJson))
           if (value === undefined) return []

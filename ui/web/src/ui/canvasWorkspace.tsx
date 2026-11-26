@@ -1,4 +1,3 @@
-import { NixReferenceControls } from './nixReferences'
 // The canvas with its floating controls: the project's title (with where the
 // canvas is), the run control, Drafts and the project's actions at the top;
 // zoom and layout controls at the bottom.
@@ -262,9 +261,6 @@ function ViewControls({ session, tab }: { session: ProjectSession; tab: Workflow
       <Button kind="borderless" small iconOnly icon="arrow.triangle.swap" help={L('配線の交差を減らす（Card の位置は保持）')} onClick={() => session.untangle(tab.scope)} />
       <Divider vertical />
       <Button kind="borderless" small iconOnly icon="grid" pressed={prefs.showGrid} help={L('グリッド')} onClick={() => prefs.set('showGrid', !prefs.showGrid)} />
-      <Divider vertical />
-      {/* The Nix references belong to the same bar as the other view controls. */}
-      <NixReferenceControls session={session} tab={tab} />
     </div>
   )
 }

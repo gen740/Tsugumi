@@ -111,19 +111,6 @@ struct DependenciesCategory: View {
           }
         }
 
-        Text("参照している Card").font(.headline)
-        let refs = nixReferences(session).filter { $0.source == model.cardKey }
-        if refs.isEmpty {
-          Text("default.nix はほかの Card を参照していません。").foregroundStyle(.secondary)
-        } else {
-          ForEach(refs) { ref in
-            VStack(alignment: .leading, spacing: 2) {
-              Text(session.displayPath(path(ref.target)))
-              Text(ref.expression).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-            }
-          }
-        }
-
         Text("最後に記録された環境").font(.headline)
         if !loaded {
           ProgressView()

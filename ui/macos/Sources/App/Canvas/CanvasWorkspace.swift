@@ -104,8 +104,6 @@ struct CanvasWorkspace: View {
       Text("\(Int((zoom * 100).rounded()))%").monospacedDigit().frame(minWidth: 42)
       Button { Task { await session.arrange(tab.scope) } } label: { Image(systemName: "rectangle.grid.2x2") }
         .help("整列（配置だけを変更）")
-      Divider().frame(height: 16)
-      NixReferenceControls(tab: tab)
     }
     .buttonStyle(.borderless)
     .padding(.horizontal, 10).padding(.vertical, 5)

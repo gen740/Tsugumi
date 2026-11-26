@@ -82,9 +82,6 @@ final class WorkflowTab: Identifiable {
   var selectedNotes: Set<String> = []
   var back: [[String]] = []
   var selectedConnection: Int?
-  var showNixReferences = false
-  var selectedNixReference: String?
-  var hoveredNixCard: CardKey?
 
   init(scope: [String], selection: Set<CardKey> = []) {
     self.scope = scope

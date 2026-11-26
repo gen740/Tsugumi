@@ -82,8 +82,6 @@ await import('./environments')
 
 await import('./runComparison')
 
-await import('./nixReferences')
-await import('./nixReferenceOverlay')
 
 
 

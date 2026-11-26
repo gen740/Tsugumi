@@ -45,7 +45,6 @@ struct ResolvedCard {
   let inputs: [PortInfo]
   let outputs: [PortInfo]
   let diagnostics: [Diagnostic]
-  var nixReferences: [CardNixReference] = []
   var parameters: [CardParameter] = []
 }
 
@@ -831,9 +830,7 @@ final class ProjectSession {
       let d = rc.diagnostics.compactMap { $0 }.map(Diagnostic.init)
       r[key(p)] = ResolvedCard(path: p, inputs: rc.inputs.compactMap { $0 }.map(port),
                                outputs: rc.outputs.compactMap { $0 }.map(port), diagnostics: d,
-                               nixReferences: rc.nixReferences.compactMap { $0 }.map {
-                                 CardNixReference(source: key(p), target: key($0.target.path), name: $0.name)
-                               }, parameters: rc.parameters.compactMap { $0 }.compactMap(CardParameter.init))
+                               parameters: rc.parameters.compactMap { $0 }.compactMap(CardParameter.init))
       all += d
     }
     resolution = r
