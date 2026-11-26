@@ -11,7 +11,8 @@ target_include_directories(tsugumi_execution_service_tests PRIVATE ${_core_heade
 target_compile_options(tsugumi_execution_service_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
 target_link_libraries(tsugumi_execution_service_tests PRIVATE tsugumi_core GTest::gtest_main)
 target_compile_definitions(tsugumi_execution_service_tests PRIVATE
-  TSUGUMI_WORKER_BINARY="$<TARGET_FILE:tsugumi-worker>")
+  TSUGUMI_WORKER_BINARY="$<TARGET_FILE:tsugumi-worker>"
+  TSUGUMI_WORKERD_BINARY="$<TARGET_FILE:tsugumi-workerd>")
 add_dependencies(tsugumi_execution_service_tests tsugumi-worker tsugumi-workerd)
 gtest_discover_tests(tsugumi_execution_service_tests TEST_PREFIX "native_execution." DISCOVERY_MODE PRE_TEST)
 

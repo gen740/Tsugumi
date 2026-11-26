@@ -245,6 +245,23 @@ TEST(LocalWorker, CoreConnectionCloseEndsAnUnusedPool) {
   EXPECT_FALSE(std::filesystem::exists(scratch));
 }
 
+TEST(LocalWorker, OversizedAcquirePreservesTheConnection) {
+  const auto scratch = std::filesystem::temp_directory_path() /
+                       ("tsugumi-local-" + crypto::uuid4());
+  LocalWorkers workers(TSUGUMI_WORKERD_BINARY, scratch);
+  WorkerSpawn spawn;
+  spawn.worker_binary = TSUGUMI_WORKER_BINARY;
+  spawn.sandbox.filesystem = false;
+  auto resident = workers.acquire("card", "version", spawn, true);
+  workers.release(std::move(resident.worker), true, {});
+  spawn.closure.emplace_back(1 << 20, 'x');
+  EXPECT_THROW(workers.acquire("card", "version", spawn, true), Failed);
+  spawn.closure.clear();
+  auto next = workers.acquire("card", "version", spawn, true);
+  EXPECT_TRUE(next.reused);
+  workers.release(std::move(next.worker), false, {});
+}
+
 TEST(LocalWorker, RejectsOversizedAndUnverifiedControlFrames) {
   for (const auto& bytes :
        {std::string("\xff\xff\xff\x7f", 4), std::string("\x01\0\0\0x", 5)}) {
