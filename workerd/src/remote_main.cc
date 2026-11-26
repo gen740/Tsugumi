@@ -32,8 +32,10 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <span>
 #include <sstream>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -453,10 +455,11 @@ auto system() -> std::string {
 
 class Daemon {
  public:
-  explicit Daemon(Config config)
+  explicit Daemon(Config config, int shutdown_fd)
       : config_(std::move(config)),
         server_(identity(config_.root, "server_id")),
-        system_(system()) {
+        system_(system()),
+        shutdown_fd_(shutdown_fd) {
     private_directory(config_.root / "projects");
     private_directory(config_.root / "store");
     check_cgroups(config_.cgroup);
@@ -655,17 +658,21 @@ class Daemon {
       std::lock_guard guard(project_mutex_);
       for (const auto& [_, p] : projects_) projects.push_back(p);
     }
+    std::set<stdfs::path> journal_errors;
     for (const auto& p : projects)
       for (const auto& job : p->jobs()) {
         try {
           Fd lock(supervisor_lock(*p, job));
           if (lock.value < 0)
             throw std::runtime_error("cannot open supervisor lock");
-          auto state = p->status(job);
           if (::flock(lock.value, LOCK_EX | LOCK_NB) != 0) {
+            if (errno != EWOULDBLOCK)
+              throw std::system_error(errno, std::generic_category(),
+                                      "cannot acquire supervisor lock");
             ++active;
             continue;
           }
+          auto state = p->status(job);
           // No supervisor runs the job, so no invocation reads its channel.
           close_channel(*p, job);
           if (state.state == R::JobState::Running ||
@@ -681,10 +688,13 @@ class Daemon {
           if (p->status(job).state == R::JobState::Queued)
             pending.emplace_back(p, job);
         } catch (const std::exception& e) {
-          ++active;
-          log(e.what());
+          const auto path = p->job_path(job);
+          journal_errors.insert(path);
+          if (!journal_errors_.contains(path))
+            log("cannot scan job " + path.string() + ": " + e.what());
         }
       }
+    journal_errors_ = std::move(journal_errors);
     // Read each submission time once: `tsugumi-workerd jobs remove` can erase
     // a queued job's spec meanwhile, and its claim then finds the tombstone.
     std::vector<std::pair<stdfs::file_time_type, size_t>> order;
@@ -707,7 +717,14 @@ class Daemon {
         continue;
       // Commit running before spawn: a crash in this gap becomes interrupted,
       // never an automatic second execution of the same invocation.
-      if (!p->claim(job, 0, 0, {})) continue;
+      try {
+        if (!p->claim(job, 0, 0, {})) continue;
+      } catch (const std::exception& e) {
+        const auto path = p->job_path(job);
+        if (journal_errors_.insert(path).second)
+          log("cannot claim job " + path.string() + ": " + e.what());
+        continue;
+      }
       if (spawn(*p, job, lock.value))
         ++active;
       else {
@@ -774,12 +791,21 @@ class Daemon {
     auto frame = length_prefix(static_cast<uint32_t>(bytes.size())) + bytes;
     clear_secret(bytes);
     size_t written = 0;
+    using Clock = std::chrono::steady_clock;
+    const auto deadline = Clock::now() + std::chrono::seconds(10);
     while (written < frame.size()) {
-      pollfd ready{channel->value, POLLOUT, 0};
-      if (::poll(&ready, 1, 10000) <= 0) break;
+      const auto remaining = deadline - Clock::now();
+      if (remaining <= Clock::duration::zero()) break;
+      pollfd ready[]{{channel->value, POLLOUT, 0}, {shutdown_fd_, POLLIN, 0}};
+      const auto timeout =
+          std::chrono::ceil<std::chrono::milliseconds>(remaining);
+      const int polled = ::poll(ready, 2, static_cast<int>(timeout.count()));
+      if (polled < 0 && errno == EINTR) continue;
+      if (polled <= 0 || ready[1].revents || !(ready[0].revents & POLLOUT))
+        break;
       const auto n = ::write(channel->value, frame.data() + written,
                              frame.size() - written);
-      if (n < 0 && errno == EINTR) continue;
+      if (n < 0 && (errno == EINTR || errno == EAGAIN)) continue;
       if (n <= 0) break;
       written += static_cast<size_t>(n);
     }
@@ -799,10 +825,12 @@ class Daemon {
       if (!parse_spec(p.spec(job))->secrets.empty()) {
         int ends[2];
         if (::pipe2(ends, O_CLOEXEC) != 0) return false;
-        channel = std::make_shared<Fd>(ends[1]);
+        Fd writer(ends[1]);
+        Fd reader(ends[0]);
+        if (::fcntl(writer.value, F_SETFL, O_NONBLOCK) != 0) return false;
+        channel = std::make_shared<Fd>(std::move(writer));
         // Above the descriptors the supervisor's file actions assign.
-        channel_reader.value = ::fcntl(ends[0], F_DUPFD_CLOEXEC, 10);
-        ::close(ends[0]);
+        channel_reader.value = ::fcntl(reader.value, F_DUPFD_CLOEXEC, 10);
         if (channel_reader.value < 0) return false;
       }
     } catch (const std::exception&) {
@@ -861,6 +889,8 @@ class Daemon {
   }
   Config config_;
   std::string server_, system_;
+  int shutdown_fd_;
+  std::set<stdfs::path> journal_errors_;
   const std::string probe_life_ = crypto::random_token(32);
   std::atomic<uint32_t> active_jobs_{0};
   std::mutex project_mutex_;
@@ -1047,7 +1077,11 @@ auto run(Config config) -> int {
   peer_tls::Context tls(identity, true, [&](std::string_view key) {
     return peer_tls::Authorized(config.authorized_keys, key);
   });
-  Daemon daemon(config);
+  int shutdown_pipe[2];
+  if (::pipe2(shutdown_pipe, O_CLOEXEC) != 0)
+    throw std::runtime_error("cannot create shutdown pipe");
+  Fd shutdown_reader(shutdown_pipe[0]), shutdown_writer(shutdown_pipe[1]);
+  Daemon daemon(config, shutdown_reader.value);
   Fd unixfd(unix_listener(config.unix_socket));
   Fd tcpfd(tcp_listener(config));
   Tsugumi::RemoteWorker::WorkerReadyT ready;
@@ -1103,6 +1137,8 @@ auto run(Config config) -> int {
                            done});
       }
   }
+  // Closing the writer wakes every in-flight secret delivery.
+  ::close(std::exchange(shutdown_writer.value, -1));
   for (auto& client : clients) client.thread.join();
   ::unlink(config.unix_socket.c_str());
   // Detached supervisors and their namespaces continue through listener

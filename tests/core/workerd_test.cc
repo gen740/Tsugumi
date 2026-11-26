@@ -274,7 +274,11 @@ auto journal_test(const stdfs::path& root) -> void {
   stdfs::create_symlink("logs", output / "link");
   rejected([&] { j.import_results(result_job); });
   stdfs::remove(output / "link");
+  fs::write_atomic(output.parent_path() / "artifact-wanted", "stale request",
+                   0600);
+  j.put(result_job, p, core);
   const auto result = j.import_results(result_job);
+  rejected([&] { j.put(result_job, p, core); });
   R::GetBlobRequestT manifest_request;
   manifest_request.digest = result;
   auto manifest_data = j.get(result_job, manifest_request, core);

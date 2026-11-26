@@ -195,6 +195,31 @@ def test_chunks_scopes_hashes_and_limits(worker):
     assert limit.bodyType == R.ReplyBody.Failure
 
 
+def test_upload_retry_checks_only_overlap_and_charges_only_new_bytes(worker):
+    job = "9" * 64
+    data = b"staged blob"
+    digest = hashlib.sha256(data).hexdigest()
+
+    def put(chunk):
+        return worker.call(R.RequestBody.PutBlobRequest,
+                           R.PutBlobRequestT(digest=digest, total=len(data),
+                                             offset=0, bytes=chunk), job=job)
+
+    assert put(data[:3]).bodyType == R.ReplyBody.Ack
+    # A sparse file models an existing upload that uses the remaining budget.
+    # Restart to rebuild usage from the journal.
+    other = worker.journal(job).parent / "parts" / ("b" * 64)
+    with other.open("wb") as file:
+        file.truncate((64 << 30) - len(data))
+    worker.restart()
+    assert put(b"bad").bodyType == R.ReplyBody.Failure
+    assert put(data).bodyType == R.ReplyBody.Ack
+    assert put(data).bodyType == R.ReplyBody.Ack
+    response = worker.call(R.RequestBody.GetBlobRequest,
+                           R.GetBlobRequestT(digest=digest, limit=len(data)), job=job)
+    assert bytes(response.body.bytes) == data
+
+
 def test_cancel_before_submit_and_release_tombstone(worker):
     job = "2" * 64
     digest = worker.upload(job, b"input")
@@ -344,6 +369,9 @@ read -r line < "$TEST_GATE"
         assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
 
     try:
+        corrupt = peer.journal("f" * 64)
+        corrupt.parent.mkdir()
+        corrupt.write_bytes(b"corrupt journal record")
         submit(blocker, peer.spec(peer.upload(blocker, b"staged input")))
         peer.wait_state(blocker, R.JobState.Running)
         submit(next_job, peer.spec(peer.upload(next_job, b"next input")))
@@ -853,6 +881,76 @@ def test_card_secret_names_and_delivery_admission(worker):
     leaks = [str(f) for f in worker.root.rglob("*")
              if f.is_file() and not f.is_symlink() and sentinel.encode() in f.read_bytes()]
     assert not leaks
+
+
+def test_listener_shutdown_unblocks_secret_delivery_to_a_stalled_reader(tmp_path):
+    binary = os.environ.get("TSUGUMI_REMOTE_TEST_RAW_WORKER")
+    if not binary:
+        pytest.skip("needs the raw C++ executable for a controlled namespace launcher")
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    launcher = tools / "unshare"
+    reading = tmp_path / "pipe-readable"
+    launcher.write_text(f"""#!{sys.executable}
+import fcntl, select, sys
+from pathlib import Path
+
+if "--check-namespace" in sys.argv:
+    sys.exit(0)
+work = Path(sys.argv[sys.argv.index("--invoke") + 1])
+# Make the fixture independent of the system's default pipe capacity.
+fcntl.fcntl(6, fcntl.F_SETPIPE_SZ, 4096)
+(work / "secrets-wanted").touch()
+if select.select([6], [], [], 20)[0]:
+    Path({str(reading)!r}).touch()
+# Retain the read end without consuming the frame until cancelled.
+select.select([], [], [], 30)
+""")
+    launcher.chmod(0o755)
+    peer = Worker(tmp_path, binary, env={**os.environ,
+        "PATH": str(tools) + os.pathsep + os.environ["PATH"]})
+    job = "a" * 64
+    fingerprint = None
+
+    def wait_for_marker(path):
+        deadline = time.monotonic() + 10
+        while not path.exists() and time.monotonic() < deadline:
+            assert peer.process.poll() is None
+            time.sleep(0.02)
+        assert path.exists(), (peer.root / "worker.log").read_text()
+
+    try:
+        spec = R.JobSpecT.InitFromPackedBuf(peer.spec(peer.upload(job, b"input")))
+        spec.secrets = ["token"]
+        packed = R.pack(spec)
+        accepted = peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=packed), job=job)
+        assert accepted.bodyType == R.ReplyBody.JobStatus, vars(accepted.body)
+        fingerprint = hashlib.sha256(packed).hexdigest()
+        marker = peer.journal(job).parent / "work" / "secrets-wanted"
+        wait_for_marker(marker)
+        body = R.JobSecretsRequestT(fingerprint=fingerprint, secrets=[
+            R.CardSecretT(name="token", value="x" * (1 << 17))])
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            delivery = executor.submit(peer.call, R.RequestBody.JobSecretsRequest, body, job=job)
+            try:
+                wait_for_marker(reading)
+                peer.process.terminate()
+                assert peer.process.wait(timeout=5) == 0
+                assert delivery.result(timeout=5).bodyType == R.ReplyBody.Failure
+            finally:
+                if peer.process.poll() is None:
+                    peer.process.kill()
+                    peer.process.wait()
+    finally:
+        try:
+            if fingerprint:
+                if peer.process.poll() is not None:
+                    peer.log.close()
+                    peer.start()
+                peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprint), job=job)
+                peer.wait_state(job, R.JobState.Cancelled)
+        finally:
+            peer.close()
 
 
 def test_jobs_command_lists_and_removes_only_chosen_jobs(worker):

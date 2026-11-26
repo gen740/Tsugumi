@@ -176,55 +176,55 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
       write(dir, state);
     }
     const auto final = dir / "blobs" / c.digest;
+    const auto part = dir / "parts" / c.digest;
+    const auto verify_prefix = [&](const stdfs::path& file, size_t length) {
+      if (length == 0) return;
+      const auto previous = fs::read_range(file, c.offset, length);
+      if (!previous ||
+          *previous !=
+              std::string_view(reinterpret_cast<const char*>(c.bytes.data()),
+                               length))
+        throw Error(R::ErrorCode::Rejected, "repeated blob chunk differs");
+    };
     if (stdfs::exists(final)) {
       if (stdfs::file_size(final) != c.total)
         throw Error(R::ErrorCode::Rejected, "blob size conflict");
+      verify_prefix(final, c.bytes.size());
       durable_directory(dir / "blobs");
       durable_directory(dir / "parts");
       return;
     }
-    uint64_t total = 0;
-    size_t count = 0;
-    for (const auto& folder : {dir / "blobs", dir / "parts"})
-      for (const auto& file : stdfs::directory_iterator(folder)) {
-        total += file.file_size();
-        ++count;
-      }
-    if ((count >= 1024 && !stdfs::exists(dir / "parts" / c.digest)) ||
-        c.bytes.size() > kMaxBlob - std::min(total, kMaxBlob))
-      throw Error(R::ErrorCode::Rejected, "job upload budget exceeded");
-    const auto part = dir / "parts" / c.digest;
-    const auto offset = stdfs::exists(part) ? stdfs::file_size(part) : 0;
-    const auto persist = [&](int fd, bool complete) {
-      if (complete && file_digest(part) != c.digest) {
-        stdfs::remove(part);
-        throw Error(R::ErrorCode::Rejected, "blob SHA-256 mismatch");
-      }
-      // An acknowledged prefix is resumable at its recorded file length.
-      if (::fsync(fd) != 0) throw std::runtime_error("cannot sync blob chunk");
-      if (complete) {
-        stdfs::rename(part, final);
-        durable_directory(dir / "blobs");
-      }
-      if (complete || c.offset == 0) durable_directory(dir / "parts");
-    };
-    if (c.offset < offset) {
-      const auto previous = fs::read_range(part, c.offset, c.bytes.size());
-      if (!previous || *previous != std::string(reinterpret_cast<const char*>(
-                                                    c.bytes.data()),
-                                                c.bytes.size()))
-        throw Error(R::ErrorCode::Rejected, "repeated blob chunk differs");
-      Fd fd{::open(part.c_str(), O_WRONLY | O_CLOEXEC | O_NOFOLLOW)};
-      if (fd.value < 0) throw std::runtime_error("cannot reopen staged blob");
-      persist(fd.value, offset == c.total);
-      return;
-    }
-    if (c.offset != offset)
+    const bool staged = stdfs::exists(part);
+    const auto offset = staged ? stdfs::file_size(part) : 0;
+    if (c.offset > offset || offset > c.total)
       throw Error(R::ErrorCode::Rejected, "blob chunks must be contiguous");
+    const auto overlap = std::min<uint64_t>(offset - c.offset, c.bytes.size());
+    verify_prefix(part, overlap);
+    const auto appended = c.bytes.size() - overlap;
+
+    // The listener is the only writer while uploads are admitted. Rebuild on
+    // a restart, cache miss or failed mutation.
+    std::optional<UploadUsage> usage;
+    {
+      std::lock_guard guard(upload_usage_mutex_);
+      if (auto entry = upload_usage_.extract(dir); !entry.empty())
+        usage = entry.mapped();
+    }
+    if (!usage) {
+      usage.emplace();
+      for (const auto& folder : {dir / "blobs", dir / "parts"})
+        for (const auto& file : stdfs::directory_iterator(folder)) {
+          usage->bytes +=
+              std::min<uint64_t>(file.file_size(), kMaxBlob - usage->bytes);
+          ++usage->files;
+        }
+    }
+    if ((!staged && usage->files >= 1024) || appended > kMaxBlob - usage->bytes)
+      throw Error(R::ErrorCode::Rejected, "job upload budget exceeded");
     Fd fd{::open(part.c_str(),
                  O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600)};
     if (fd.value < 0) throw std::runtime_error("cannot stage blob");
-    size_t done = 0;
+    size_t done = overlap;
     while (done < c.bytes.size()) {
       const auto n =
           ::write(fd.value, c.bytes.data() + done, c.bytes.size() - done);
@@ -232,7 +232,26 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
       if (n <= 0) throw std::runtime_error("cannot write blob chunk");
       done += static_cast<size_t>(n);
     }
-    persist(fd.value, offset + c.bytes.size() == c.total);
+    const bool complete = offset + appended == c.total;
+    if (complete && file_digest(part) != c.digest) {
+      stdfs::remove(part);
+      throw Error(R::ErrorCode::Rejected, "blob SHA-256 mismatch");
+    }
+    // An acknowledged prefix is resumable at its recorded file length.
+    if (::fsync(fd.value) != 0)
+      throw std::runtime_error("cannot sync blob chunk");
+    if (complete) {
+      stdfs::rename(part, final);
+      durable_directory(dir / "blobs");
+    }
+    if (complete || c.offset == 0) durable_directory(dir / "parts");
+    usage->bytes += appended;
+    usage->files += !staged;
+    std::lock_guard guard(upload_usage_mutex_);
+    constexpr size_t kCachedJobs = 64;
+    if (upload_usage_.size() == kCachedJobs)
+      upload_usage_.erase(upload_usage_.begin());
+    upload_usage_.emplace(dir, *usage);
   });
 }
 auto Journal::deliver_artifact(std::string_view job,
@@ -482,6 +501,12 @@ auto Journal::discard(std::string_view job, bool active) -> Record {
 }
 auto Journal::import_results(std::string_view job) -> std::string {
   const auto dir = job_path(job);
+  // After the invocation has exited, close any outstanding artifact upload
+  // before this supervisor changes the blob directory. A live import and a
+  // listener upload must never update the same job's disk usage concurrently.
+  locked(job, [&](const auto& directory) {
+    stdfs::remove(directory / "work/artifact-wanted");
+  });
   const auto results = dir / "work/result";
   const auto listing = fs::list_beneath(results, {}, 65536 + 64);
   if (!listing.links.empty() || !listing.special.empty() ||

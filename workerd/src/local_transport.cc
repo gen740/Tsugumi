@@ -54,7 +54,7 @@ auto send_local(int fd, const Tsugumi::LocalWorker::MessageT& message,
     ~Wipe() { wipe_secret(bytes); }
   } wipe{{reinterpret_cast<char*>(builder.GetBufferPointer()), size}};
   if (!size || size > kMaxLocalFrame)
-    throw std::runtime_error("local workerd message too large");
+    throw Failed(FailureKind::worker_failed, "local workerd message too large");
   const std::array<unsigned char, 4> prefix{
       static_cast<unsigned char>(size), static_cast<unsigned char>(size >> 8),
       static_cast<unsigned char>(size >> 16),

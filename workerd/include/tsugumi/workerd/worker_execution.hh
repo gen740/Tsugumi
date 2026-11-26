@@ -50,7 +50,6 @@ struct WorkerDisposition {
   std::string reason;
 };
 auto worker_disposition(bool reuse, bool alive, bool between_calls,
-                        bool validation_rejected,
                         const std::optional<FailureData>& failure)
     -> WorkerDisposition;
 

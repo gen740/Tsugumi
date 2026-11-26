@@ -57,22 +57,33 @@ TEST(WorkerPoolOwnership, ClearsProjectScratch) {
   EXPECT_FALSE(stdfs::exists(project));
 }
 
+TEST(WorkerPoolOwnership, FailedConstructionRemovesScratch) {
+  const auto project =
+      stdfs::temp_directory_path() / ("tsugumi-pool-" + crypto::uuid4());
+  WorkerPool pool(project);
+  WorkerSpawn spawn;
+  spawn.artifact_staging = project / "blocked";
+  fs::write_atomic(spawn.artifact_staging, "not a directory");
+  EXPECT_THROW(pool.acquire("card", "version", spawn, false),
+               stdfs::filesystem_error);
+  EXPECT_FALSE(stdfs::exists(project / "w1"));
+}
+
 TEST(WorkerDisposition, CardFailuresAndMissingRequiredOutputsDiscardResidents) {
   for (const auto kind :
        {FailureKind::worker_failed, FailureKind::output_invalid,
         FailureKind::cancelled, FailureKind::timeout}) {
     const auto result =
-        worker_disposition(true, true, true, false, FailureData::make(kind));
+        worker_disposition(true, true, true, FailureData::make(kind));
     EXPECT_FALSE(result.keep);
   }
-  EXPECT_FALSE(worker_disposition(true, true, true, true, {}).keep);
 }
 
 TEST(WorkerDisposition, UnknownProtocolStateAndDeadWorkersCannotBeReused) {
-  EXPECT_FALSE(worker_disposition(true, true, false, false, {}).keep);
-  EXPECT_FALSE(worker_disposition(true, false, true, false, {}).keep);
-  EXPECT_FALSE(worker_disposition(false, true, true, false, {}).keep);
-  EXPECT_TRUE(worker_disposition(true, true, true, false, {}).keep);
+  EXPECT_FALSE(worker_disposition(true, true, false, {}).keep);
+  EXPECT_FALSE(worker_disposition(true, false, true, {}).keep);
+  EXPECT_FALSE(worker_disposition(false, true, true, {}).keep);
+  EXPECT_TRUE(worker_disposition(true, true, true, {}).keep);
 }
 
 }  // namespace
