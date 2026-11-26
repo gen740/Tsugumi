@@ -379,7 +379,7 @@ def test_remote_probe_records_scores_even_without_run_recording(
     client = daemon.connect()
     host = remote_broker["host"]
     host.call("RegisterProjectRequest", projectId=secret_project,
-              endpoint=daemon.ready["endpoint"], token=daemon.ready["token"], path=str(project))
+              endpoint=f"unix:{daemon.unix}", path=str(project))
     run_id, status = run_and_wait(client, "work")
     assert status.state == RunState.succeeded, text(status.failure.diagnostic) if status.failure else ""
     result = client.call("RunRecordRequest", runId=run_id, card=path("work")).record

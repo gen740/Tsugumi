@@ -104,7 +104,7 @@ def test_settings_remeasure_local_probes_without_starting_a_card_run(
         })
         client = daemon.connect()
         host.call("RegisterProjectRequest", projectId=identity,
-                  endpoint=daemon.ready["endpoint"], token=daemon.ready["token"],
+                  endpoint=f"unix:{daemon.unix}",
                   path=str(project))
         graph = Project(project)
         for card_id, body in [("zero", "echo 0"), ("broken", "echo 7; exit 3")]:
