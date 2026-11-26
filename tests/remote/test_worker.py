@@ -344,6 +344,9 @@ read -r line < "$TEST_GATE"
         assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
 
     try:
+        corrupt = peer.journal("f" * 64)
+        corrupt.parent.mkdir()
+        corrupt.write_bytes(b"corrupt journal record")
         submit(blocker, peer.spec(peer.upload(blocker, b"staged input")))
         peer.wait_state(blocker, R.JobState.Running)
         submit(next_job, peer.spec(peer.upload(next_job, b"next input")))
