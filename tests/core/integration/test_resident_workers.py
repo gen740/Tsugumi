@@ -76,7 +76,7 @@ def test_failed_resident_is_discarded(core_factory, tmp_path, crashes):
             assert f"state started fresh: {reason}" in log(c, run_id, "resident", 2)
 
 
-def test_output_transfer_failure_keeps_living_resident_state(core_factory, tmp_path):
+def test_output_transfer_failure_retires_resident(core_factory, tmp_path):
     definition = native_card(r"""
         static unsigned calls;
         tsugumi_artifact_id id;
@@ -95,9 +95,10 @@ def test_output_transfer_failure_keeps_living_resident_state(core_factory, tmp_p
     inv, = c.call("RunInvocationsRequest", runId=first, card=path("resident")).records
     assert inv.failure.kind == FailureKind.output_invalid
     second, state = run_and_wait(c, "resident")
-    assert state.state == RunState.succeeded, log(c, second, "resident", 2)
+    assert state.state == RunState.failed
     inv, = c.call("RunInvocationsRequest", runId=second, card=path("resident")).records
-    assert inv.workerReused
+    assert inv.failure.kind == FailureKind.output_invalid
+    assert not inv.workerReused
 
 
 # Each call reads its own input artifact, checks that the previous call's

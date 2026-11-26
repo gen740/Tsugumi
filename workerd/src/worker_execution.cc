@@ -90,9 +90,8 @@ auto run_invocation(const ReleaseWorker& release_worker,
   InvocationResult result;
   bool between_calls = true;
   const auto release = [&] {
-    const auto disposition =
-        worker_disposition(reuse, worker.alive(), between_calls,
-                           result.failure);
+    const auto disposition = worker_disposition(reuse, worker.alive(),
+                                                between_calls, result.failure);
     // Retiring a worker stops its process group before clearing scratch.
     // A resident keeps its sandbox: clearing its staging removes this call's
     // input and output paths from its view.
@@ -217,15 +216,16 @@ auto run_invocation(const ReleaseWorker& release_worker,
     } catch (const fs::Error& error) {
       result.failure = FailureData::make(FailureKind::output_invalid, error.what());
     }
+    if (transfer_failure && !result.failure)
+      result.failure = std::move(transfer_failure);
     if (result.failure) result.outputs.clear();
     try {
       release();
     } catch (...) {
-      if (!result.failure && !transfer_failure) throw;
+      if (!result.failure) throw;
     }
-    if (transfer_failure && !result.failure)
-      result.failure = std::move(transfer_failure);
   } catch (...) {
+    between_calls = false;
     try {
       if (lease.worker) release();
     } catch (...) {
