@@ -115,11 +115,14 @@ class FastCard {
   }
 
   auto run(const ExecutionRequest& request, bool verify) -> ExecutionResult {
-    if (card_.empty()) {
-      card_ = request.node.path;
-      views_ = request.build.views;
-      deadline_message_ =
-          "Packed Card exceeded its hard deadline: " + path_key(card_) + "\n";
+    if (deadline_message_.empty()) {
+      deadline_message_ = "Packed Card exceeded its hard deadline: " +
+                          path_key(request.node.path) + "\n";
+    }
+    {
+      std::lock_guard lock(view_mutex_);
+      view_context_ = std::make_shared<const ViewContext>(
+          Service::ViewOrigin(request.summary), request.build.views);
     }
     request.summary.execution_service = kLocalExecutionService;
     request.start({});
@@ -188,6 +191,11 @@ class FastCard {
   }
 
  private:
+  struct ViewContext {
+    Service::ViewOrigin origin;
+    std::vector<schema::CardView> views;
+  };
+
   class CallbackScope {
    public:
     CallbackScope(FastCard& card, ActiveCall& active,
@@ -236,9 +244,16 @@ class FastCard {
   }
 
   auto control(WorkerViewRequest request) -> WorkerViewReply {
-    if (closed_) return {0};
+    std::shared_ptr<const ViewContext> context;
+    {
+      std::lock_guard lock(view_mutex_);
+      if (closed_) return {0};
+      context = view_context_;
+    }
+    if (!context) return {0};
     request.request_id = 1;
-    return service_.view_control(card_, views_, receiver_, request);
+    return service_.view_control(context->origin, context->views, receiver_,
+                                 request);
   }
 
   auto send(const tsugumi_view_session* session, const uint8_t* bytes,
@@ -385,15 +400,15 @@ class FastCard {
   Service& service_;
   pack::CardImage image_;
   const std::shared_ptr<WorkerProc::ViewReceiver> receiver_;
-  CardPath card_;
   std::string deadline_message_;
-  std::vector<schema::CardView> views_;
   std::atomic<ActiveCall*> active_{nullptr};
   std::atomic<Tick> deadline_{kNoDeadline};
   std::atomic<Tick> hard_deadline_{kNoDeadline};
   std::atomic<bool> cancelled_{false};
   std::atomic<bool> closed_{false};
   std::mutex view_mutex_;
+  // As with a resident worker, effects between calls use the last invocation.
+  std::shared_ptr<const ViewContext> view_context_;
   std::condition_variable view_ready_;
   std::deque<std::pair<WorkerViewEvent, WorkerProc::DisplayCredit>> incoming_;
   size_t incoming_bytes_ = 0;

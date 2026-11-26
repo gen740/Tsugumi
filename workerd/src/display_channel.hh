@@ -83,12 +83,13 @@ inline auto display_bytes(flatbuffers::FlatBufferBuilder& b,
 }
 
 inline auto build_display(flatbuffers::FlatBufferBuilder& b,
-                          const ViewUuid& session, std::string_view bytes)
-    -> void {
+                          const ViewUuid& session, std::string_view bytes,
+                          uint64_t view_request_id) -> void {
   const auto id = view_uuid(session);
   finish_display_frame(
       b, W::WorkerPayload::WorkerDisplay,
-      W::CreateWorkerDisplay(b, &id, display_bytes(b, bytes)).Union());
+      W::CreateWorkerDisplay(b, &id, display_bytes(b, bytes), view_request_id)
+          .Union());
 }
 
 inline auto build_display_credit(flatbuffers::FlatBufferBuilder& b,

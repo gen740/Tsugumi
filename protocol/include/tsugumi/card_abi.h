@@ -43,8 +43,15 @@ enum {
 
 typedef struct tsugumi_effects {
   /* View effects are valid from any thread for the life of the process. */
-  /* Open a declared view. 0 ok, <0 error. Both dimensions may be nonzero
-   * only in WINDOW mode and are in logical pixels. 0,0 lets the UI choose. */
+  /* Open a declared view and return its session and a new route. A live
+   * session is reused for the same run, Card path, view name and run-list
+   * entry (by label if present, by index otherwise). Mode, flags and size
+   * apply only when opening a new session. After a close, the next open
+   * creates a new session. A headless session is presented on its next
+   * open after a UI subscribes. Sends before presentation are dropped.
+   * Between calls, use the last invocation's run and run-list entry.
+   * 0 ok, <0 error. Initial dimensions may be nonzero only in WINDOW mode
+   * and are in logical pixels. 0,0 lets the UI choose. */
   int (*view_open)(void* host, const char* view, uint32_t mode, uint32_t flags,
                    uint32_t width, uint32_t height, tsugumi_route* route,
                    tsugumi_view_session* session);

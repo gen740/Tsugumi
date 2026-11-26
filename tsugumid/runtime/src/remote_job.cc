@@ -216,7 +216,8 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
     if (session == ViewUuid{} || display->bytes.size() > TSUGUMI_MESSAGE_MAX)
       throw BrokerDisconnected("invalid remote view message");
     displays.push_back(
-        {session, std::string(display->bytes.begin(), display->bytes.end())});
+        {session, std::string(display->bytes.begin(), display->bytes.end()),
+         display->view_request_id});
   }
   std::map<ViewUuid, uint64_t> credits;
   for (const auto& entry : j->view_input_credits)

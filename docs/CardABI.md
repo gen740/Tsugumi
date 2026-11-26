@@ -69,7 +69,7 @@ came from. APIs and evidence links use the UUID. See
 
 | Effect | Contract |
 | --- | --- |
-| `view_open` | Open a declared view, register the calling process, and return the session and route. |
+| `view_open` | Open or reuse a declared view, register the calling process, and return the session and a new route. |
 | `view_close` | Close the window by session UUID. Returns 0 when closed or already gone, and a negative value on error. |
 | `route_register` | Register the calling process on the session and return a route. Returns 0 on success, `TSUGUMI_VIEW_WINDOW_CLOSED` (−2) when the session is no longer live, and −1 on other errors. |
 | `route_unregister` | Drop a route held by the calling process. |
@@ -98,21 +98,32 @@ addresses one window and can be passed to other Cards as data. A route addresses
 one process mailbox for that window. The route lasts until it is unregistered or
 the process ends. The user or any Card holding the session UUID can close the window.
 
+Within a run, a Card path, view name, and run-list entry identify one live
+session. An entry is identified by its label when present or by its index
+in the run list otherwise. Each successful
+`view_open` returns a fresh route even when it reuses the session.
+The first open sets the mode, flags, and size. Later opens ignore those
+arguments while the session is live. Opening after a close gives the Card a
+new session. Between calls in a resident process, `view_open` uses the last
+invocation's run and variant.
+
 Open with `TSUGUMI_VIEW_PANEL`, `TSUGUMI_VIEW_WINDOW` or
 `TSUGUMI_VIEW_FULLSCREEN`. Pass zero for ordinary cursor behavior or combine
 `TSUGUMI_VIEW_HIDE_CURSOR` and `TSUGUMI_VIEW_LOCK_POINTER` in the flags argument
 after the mode. A locked pointer reports relative movement, and the user
 can release it. The optional initial content size is in logical
 pixels and applies to `TSUGUMI_VIEW_WINDOW`. Use two positive dimensions or
-`0, 0` to let the UI choose. An unknown view, mode or flag, a partial size, or a
-nonzero size in either of the other modes is an error.
+`0, 0` to let the UI choose. When creating a session, an unknown view, mode
+or flag, a partial size, or a nonzero size in either of the other modes is an error.
 
 `recv` returns the route, the session, and the event kind. Kind 0 carries
 message bytes. Closing a window sends one kind 1 event with empty data to
 each live route. Later sends to the closed session are dropped.
 Without a presenting UI, opening a view still returns a session and a route.
-Sends succeed and drop their messages. A Card can still close the session and
-receive the close event.
+Once a UI subscribes, the next `view_open` for that live session presents it
+with the original view and window settings. Sends before presentation succeed
+and drop their messages. A Card can close a headless session and receive the
+close event.
 
 Messages can carry up to `TSUGUMI_MESSAGE_MAX` (16 MiB). A larger send fails
 immediately. The relay applies backpressure at each hop. A Card send waits
