@@ -98,8 +98,9 @@ addresses one window and can be passed to other Cards as data. A route addresses
 one process mailbox for that window. The route lasts until it is unregistered or
 the process ends. The user or any Card holding the session UUID can close the window.
 
-Within a run, a Card path, view name, and run-list variant label identify one
-live session. Unlabeled calls use the empty label. Each successful
+Within a run, a Card path, view name, and run-list entry identify one live
+session. An entry is identified by its label when present or by its index
+in the run list otherwise. Each successful
 `view_open` returns a fresh route even when it reuses the session.
 The first open sets the mode, flags, and size. Later opens ignore those
 arguments while the session is live. Opening after a close gives the Card a
@@ -119,8 +120,10 @@ or flag, a partial size, or a nonzero size in either of the other modes is an er
 message bytes. Closing a window sends one kind 1 event with empty data to
 each live route. Later sends to the closed session are dropped.
 Without a presenting UI, opening a view still returns a session and a route.
-Sends succeed and drop their messages. A Card can still close the session and
-receive the close event.
+Once a UI subscribes, the next `view_open` for that live session presents it
+with the original view and window settings. Sends before presentation succeed
+and drop their messages. A Card can close a headless session and receive the
+close event.
 
 Messages can carry up to `TSUGUMI_MESSAGE_MAX` (16 MiB). A larger send fails
 immediately. The relay applies backpressure at each hop. A Card send waits

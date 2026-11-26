@@ -1301,7 +1301,8 @@ auto WorkerProc::read_data() -> void {
           credit();
         else
           (*sink)({workerd::view_uuid(update->session()),
-                   workerd::view_bytes(update->bytes())},
+                   workerd::view_bytes(update->bytes()),
+                   update->view_request_id(), view_receiver_},
                   std::move(credit));
         continue;
       }

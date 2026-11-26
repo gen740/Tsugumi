@@ -3004,9 +3004,11 @@ auto Service::view_control(
       if (const auto existing = open_views_.find(key);
           existing != open_views_.end()) {
         reply.session = existing->second;
+        auto& view = view_sessions_.at(reply.session);
+        if (present_view(reply.session, view))
+          view.presentation_boundary = {endpoint, request.request_id};
         reply.route =
-            add_view_route(reply.session, view_sessions_.at(reply.session),
-                           origin.card, endpoint);
+            add_view_route(reply.session, view, origin.card, endpoint);
         reply.status = 0;
         return reply;
       }
@@ -3031,20 +3033,19 @@ auto Service::view_control(
                                        : stdfs::path(NixStore::store_dir()));
       if (!blob) return reply;
 
-      const auto subscriber =
-          ui_owner_ ? subscriptions_.find(*ui_owner_) : subscriptions_.end();
-      const auto conn =
-          subscriber == subscriptions_.end() ? std::nullopt : ui_owner_;
-      const auto subscription = conn ? subscriber->second : std::string{};
       do {
         reply.session = parse_view_uuid(crypto::uuid4());
       } while (view_sessions_.contains(reply.session));
-      const auto session = view_text(reply.session);
-      ViewSession opening{conn,
-                          subscription,
-                          open_views_.end(),
-                          conn ? std::move(blob) : nullptr,
-                          {}};
+      ViewSession opening{
+          std::nullopt,
+          {},
+          open_views_.end(),
+          std::move(blob),
+          view_opened_note(view_text(reply.session), origin.card, request.view,
+                           *found->type, request.mode, request.width,
+                           request.height, request.flags),
+          std::nullopt,
+          {}};
       const auto session_entry =
           view_sessions_.emplace(reply.session, std::move(opening)).first;
       auto& view = session_entry->second;
@@ -3054,12 +3055,7 @@ auto Service::view_control(
         view_sessions_.erase(session_entry);
         throw;
       }
-      if (conn)
-        server_->open_view(
-            *conn, subscription, session,
-            view_opened_note(session, origin.card, request.view, *found->type,
-                             request.mode, request.width, request.height,
-                             request.flags));
+      present_view(reply.session, view);
       reply.route = add_view_route(reply.session, view, origin.card, endpoint);
       reply.status = 0;
       return reply;
@@ -3103,6 +3099,25 @@ auto Service::view_control(
     }
   }
   return reply;
+}
+
+auto Service::present_view(const ViewUuid& session, ViewSession& view) -> bool {
+  if (!view.pending_open || !ui_owner_) return false;
+  const auto subscriber = subscriptions_.find(*ui_owner_);
+  if (subscriber == subscriptions_.end()) return false;
+  const auto id = view_text(session);
+  view.subscription = subscriber->second;
+  server_->open_view(subscriber->first, view.subscription, id,
+                     std::move(*view.pending_open));
+  view.conn = subscriber->first;
+  view.pending_open.reset();
+
+  std::set<std::string_view> recipients;
+  for (const auto& [_, route] : view.routes)
+    if (recipients.insert(route.card).second)
+      server_->view_note(*view.conn, view.subscription,
+                         view_recipient_note(id, route.card, true));
+  return true;
 }
 
 auto Service::add_view_route(
@@ -3161,6 +3176,15 @@ auto Service::display(WorkerDisplayData display,
   std::lock_guard lock(subs_mu_);
   const auto found = view_sessions_.find(display.session);
   if (found == view_sessions_.end() || !found->second.conn) {
+    if (credit) credit();
+    return;
+  }
+  // The reopening worker can have display frames queued ahead of
+  // presentation. Its view control request may reach the relay first.
+  if (const auto& boundary = found->second.presentation_boundary;
+      boundary && display.view_request_id < boundary->request_id &&
+      !boundary->endpoint.owner_before(display.source) &&
+      !display.source.owner_before(boundary->endpoint)) {
     if (credit) credit();
     return;
   }

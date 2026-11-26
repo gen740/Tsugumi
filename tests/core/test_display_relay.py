@@ -1,6 +1,7 @@
 """Exercise session and route isolation through the native Card and project RPC."""
 
 import json
+import time
 import uuid
 
 import pytest
@@ -165,6 +166,83 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     assert not any(note.valueType in {NotificationPayload.ViewOpened,
                                       NotificationPayload.DisplayUpdated}
                    for note in client.notifications.copy())
+
+
+def test_headless_view_is_presented_on_reopen(project, tmp_path, core_factory):
+    ready = tmp_path / "headless-ready"
+    release = tmp_path / "present-now"
+    source = (
+        f"#define READY {json.dumps(str(ready))}\n"
+        f"#define RELEASE {json.dumps(str(release))}\n"
+    ) + r"""
+#include <stdio.h>
+#include <unistd.h>
+
+int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
+    const tsugumi_effects *effects = call->effects;
+    void *host = call->host;
+    tsugumi_route first, second, third;
+    tsugumi_view_session session, again;
+    if (effects->view_open(host, "page", TSUGUMI_VIEW_WINDOW,
+                           TSUGUMI_VIEW_HIDE_CURSOR, 800, 600, &first, &session) ||
+        effects->send(host, &session, (const uint8_t *)"headless", 8))
+        return 1;
+    FILE *ready = fopen(READY, "w");
+    if (!ready || fclose(ready)) return 2;
+    while (access(RELEASE, F_OK)) {
+        if (effects->cancelled(host)) return 2;
+        usleep(1000);
+    }
+    if (effects->send(host, &session, (const uint8_t *)"still headless", 14) ||
+        effects->view_open(host, "page", TSUGUMI_VIEW_FULLSCREEN, 0, 0, 0, &second, &again) ||
+        memcmp(&session, &again, sizeof(session)) || !memcmp(&first, &second, sizeof(first)) ||
+        effects->view_open(host, "page", TSUGUMI_VIEW_PANEL, 0, 0, 0, &third, &again) ||
+        memcmp(&session, &again, sizeof(session)) ||
+        effects->send(host, &session, (const uint8_t *)"presented", 9))
+        return 3;
+    tsugumi_view_event event;
+    if (effects->recv(host, &event, 15000) || event.kind != 0 ||
+        memcmp(&event.session, &session, sizeof(session)) ||
+        event.data.size != 1 || event.data.data[0] != '!')
+        return 4;
+    return write_result(call, result, result_bytes, sizeof(result_bytes));
+}
+"""
+    store = tmp_path / "store"
+    store.mkdir()
+    blob = store / "page.html"
+    blob.write_bytes(b"<p>first view</p>")
+    package = native_card(tmp_path / "package", source)
+    daemon = core_factory(mocked_builds=True, env={"TSUGUMI_MOCK_STORE": str(store)})
+    client = daemon.connect()
+    graph = Project(project)
+    graph.card("work", {**NATIVE_VIEW_SETTINGS, "timeoutSeconds": 45}, outputs=EMPTY_OUTPUTS,
+               plan=mock_plan([package], views=[declaration(blob)])).save(client)
+    client.open()
+    run_id = run(client)
+    deadline = time.monotonic() + 15
+    while not ready.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert ready.exists()
+
+    ui = daemon.connect(client=Client.Web)
+    ui.open()
+    blob.unlink()  # Presentation uses the blob pinned by the first open.
+    release.touch()
+    opening = open_view(ui)
+    session = text(opening.session)
+    assert (opening.mode, opening.flags, opening.width, opening.height) == (1, 1, 800, 600)
+    ui.wait_notification(
+        lambda note: note.valueType == NotificationPayload.ViewRecipientChanged
+        and text(note.value.session) == session and text(note.value.path) == "work"
+        and note.value.registered, timeout=15)
+    assert bytes(display(ui, session).bytes) == b"presented"
+    page = ui.call("CardViewReadRequest", session=session)
+    assert bytes(page.bytes) == b"<p>first view</p>"
+    send(ui, session, payload=b"!")
+    assert wait_run(ui, run_id).state == RunState.succeeded
+    assert not any(n.valueType in {NotificationPayload.ViewOpened, NotificationPayload.DisplayUpdated}
+                   for n in ui.notifications.copy())
 
 
 def denied(client, name, **fields):
@@ -560,7 +638,8 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
 NUMBER = "table Number { value:long; } table Outputs { out:Number; } root_type Outputs;"
 
 
-def test_views_reuse_within_each_card_and_label_in_a_batch(project, tmp_path, core_factory):
+@pytest.mark.parametrize("labels", [["a", "b"], ["", ""], ["2", ""]])
+def test_views_reuse_within_each_card_and_variant_in_a_batch(project, tmp_path, core_factory, labels):
     store = tmp_path / "store"
     store.mkdir()
     blob = store / "page.html"
@@ -578,7 +657,7 @@ def test_views_reuse_within_each_card_and_label_in_a_batch(project, tmp_path, co
     for card in ("left", "right"):
         graph.card(card, {**NATIVE_VIEW_SETTINGS, "inputs": [{"name": "in"}]},
                    outputs=EMPTY_OUTPUTS, plan=mock_plan(
-                       variants, views=[declaration(blob)], execution_list=True, labels=["a", "b"]))
+                       variants, views=[declaration(blob)], execution_list=True, labels=labels))
         graph.connect("seed", "out", card, "in")
     graph.save(ui)
     ui.open()

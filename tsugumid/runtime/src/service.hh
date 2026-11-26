@@ -17,6 +17,7 @@
 #include <stop_token>
 #include <string>
 #include <thread>
+#include <variant>
 
 #include "history.hh"
 #include "remote_job.hh"
@@ -130,7 +131,14 @@ class Service : public RequestSink {
   struct ViewOrigin {
     std::string run_id;
     CardPath card;
-    std::string implementation_label;
+    std::variant<uint32_t, std::string> implementation;
+    explicit ViewOrigin(const InvocationSummaryData& invocation)
+        : run_id(invocation.run_id),
+          card(invocation.card),
+          implementation(invocation.implementation_index.value_or(0)) {
+      if (!invocation.implementation_label.empty())
+        implementation = invocation.implementation_label;
+    }
     auto operator<=>(const ViewOrigin&) const = default;
   };
   auto view_control(const ViewOrigin& origin,
@@ -339,6 +347,12 @@ class Service : public RequestSink {
     std::string subscription;
     ViewIndex::iterator key;
     std::shared_ptr<const ViewBlob> blob;
+    std::optional<Note> pending_open;
+    struct PresentationBoundary {
+      std::weak_ptr<WorkerProc::ViewReceiver> endpoint;
+      uint64_t request_id;
+    };
+    std::optional<PresentationBoundary> presentation_boundary;
     struct Route {
       std::string card;
       std::weak_ptr<WorkerProc::ViewReceiver> endpoint;
@@ -348,6 +362,7 @@ class Service : public RequestSink {
   // Subscription selection and session lifecycle share subs_mu_.
   ViewIndex open_views_;
   std::map<ViewUuid, ViewSession> view_sessions_;
+  auto present_view(const ViewUuid& session, ViewSession& view) -> bool;
   auto owned_view(const RequestIn& req, const ViewUuid& session)
       -> ViewSession*;
   auto add_view_route(const ViewUuid& session, ViewSession& view,

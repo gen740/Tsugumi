@@ -463,6 +463,7 @@ def test_post_return_open_and_send_keep_opaque_bytes_and_session(tmp_path):
         message = receive(data)
         assert message.callId == 0 and message.valueType == WorkerPayload.WorkerDisplay
         assert bytes(message.value.session.bytes) == bytes(session.bytes)
+        assert message.value.viewRequestId == 2
         assert bytes(message.value.bytes) == b"\x00\xff\x80z"
         send_call(data, tmp_path, 2)
         assert receive(data).valueType == WorkerPayload.WorkerResult

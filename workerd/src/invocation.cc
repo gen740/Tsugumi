@@ -248,7 +248,8 @@ class InvocationDisplay {
             workerd::message_cost(display.bytes.size()), std::move(complete));
         lock.unlock();
         flatbuffers::FlatBufferBuilder b;
-        workerd::build_display(b, display.session, display.bytes);
+        workerd::build_display(b, display.session, display.bytes,
+                               display.view_request_id);
         workerd::write_display_frame(workerd::kDisplayChannelFd, b);
       }
     } catch (const std::exception&) {

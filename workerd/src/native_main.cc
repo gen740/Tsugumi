@@ -83,7 +83,11 @@ class WorkerFrame {
 };
 
 struct ViewQueue {
-  std::deque<std::string> outgoing;
+  struct Update {
+    std::string bytes;
+    uint64_t view_request_id;
+  };
+  std::deque<Update> outgoing;
   size_t outgoing_bytes = 0;
   size_t credit = kViewBudget;
   uint64_t queued_messages = 0;
@@ -106,6 +110,7 @@ struct Host {
   std::deque<WorkerViewEvent> incoming;
   std::mutex request_mutex;
   uint64_t request_id = 0;
+  uint64_t completed_view_request = 0;
   std::optional<ViewUuid> unregistering;
   std::optional<WorkerViewReply> reply;
   bool stopping = false;
@@ -190,6 +195,7 @@ auto request_view(Host& host, WorkerViewRequest request)
     }
     std::unique_lock lock(host.view_mutex);
     host.view_ready.wait(lock, [&] { return host.stopping || host.reply; });
+    if (host.reply) host.completed_view_request = host.reply->request_id;
     return std::exchange(host.reply, std::nullopt);
   } catch (const std::exception&) {
     return {};
@@ -271,8 +277,10 @@ auto send_display(void* context, const tsugumi_view_session* session,
              queue.outgoing_bytes <= kViewBudget - TSUGUMI_MESSAGE_MAX;
     });
     if (interrupted(host, call)) return -1;
-    queue.outgoing.emplace_back(bytes ? reinterpret_cast<const char*>(bytes)
-                                      : "", size);
+    queue.outgoing.emplace_back(
+        size ? std::string(reinterpret_cast<const char*>(bytes), size)
+             : std::string{},
+        host.completed_view_request);
     queue.outgoing_bytes += message_cost(size);
     ++queue.queued_messages;
     host.view_ready.notify_all();
@@ -355,10 +363,10 @@ auto display_loop(Host& host) -> void {
         if (next == end) next = std::find_if(host.views.begin(), end, ready);
         auto& [session, queue] = *next;
         previous = session;
-        const auto& bytes = queue.outgoing.front();
-        relay::build_display(b, session, bytes);
-        queue.credit -= message_cost(bytes.size());
-        queue.outgoing_bytes -= message_cost(bytes.size());
+        const auto& update = queue.outgoing.front();
+        relay::build_display(b, session, update.bytes, update.view_request_id);
+        queue.credit -= message_cost(update.bytes.size());
+        queue.outgoing_bytes -= message_cost(update.bytes.size());
         queue.outgoing.pop_front();
         forwarded = &queue;
       }

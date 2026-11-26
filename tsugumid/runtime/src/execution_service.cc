@@ -250,9 +250,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   invocation.log = request.log;
   invocation.display = request.display;
   invocation.view_control =
-      [service = &service_,
-       origin =
-           Service::ViewOrigin{s.run_id, node.path, s.implementation_label},
+      [service = &service_, origin = Service::ViewOrigin(s),
        views = build.views, endpoint = lease.worker->view_receiver()](
           const WorkerViewRequest& control) {
         return service->view_control(origin, views, endpoint, control);

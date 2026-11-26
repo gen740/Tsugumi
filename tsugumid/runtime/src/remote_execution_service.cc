@@ -394,15 +394,16 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
             }
           }
           static const std::vector<schema::CardView> empty;
-          last_view_reply = service_.view_control(
-              {s.run_id, node.path, s.implementation_label},
-              views ? *views : empty, receiver, *control);
+          last_view_reply =
+              service_.view_control(Service::ViewOrigin(s),
+                                    views ? *views : empty, receiver, *control);
         }
         view_reply_pending = last_view_reply->request_id == control->request_id;
       }
       if (reply->display_sequence > display_after) {
         display_after = reply->display_sequence;
         for (auto& message : reply->displays) {
+          message.source = receiver;
           const auto release =
               [display, session = message.session,
                cost = workerd::message_cost(message.bytes.size())] {

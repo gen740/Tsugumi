@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 
 namespace tsugumi {
@@ -14,6 +15,9 @@ enum class ViewControlKind { open, register_route, unregister_route, close };
 struct WorkerDisplayData {
   ViewUuid session;
   std::string bytes;
+  uint64_t view_request_id = 0;
+  // Relay-local worker identity. This is never carried on the wire.
+  std::weak_ptr<const void> source = {};
 };
 
 struct WorkerViewEvent {

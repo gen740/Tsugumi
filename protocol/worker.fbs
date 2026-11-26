@@ -90,6 +90,8 @@ enum ViewControlKind:ubyte { Open, Register, Unregister, Close }
 table WorkerDisplay {
   session:ViewUuid (required);
   bytes:[ubyte] (required);
+  // Last view control reply received by the sending process.
+  view_request_id:ulong;
 }
 
 table WorkerViewEvent {

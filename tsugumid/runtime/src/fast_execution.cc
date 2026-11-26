@@ -122,9 +122,7 @@ class FastCard {
     {
       std::lock_guard lock(view_mutex_);
       view_context_ = std::make_shared<const ViewContext>(
-          Service::ViewOrigin{request.summary.run_id, request.node.path,
-                              request.summary.implementation_label},
-          request.build.views);
+          Service::ViewOrigin(request.summary), request.build.views);
     }
     request.summary.execution_service = kLocalExecutionService;
     request.start({});
