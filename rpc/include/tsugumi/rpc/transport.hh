@@ -41,6 +41,7 @@ struct FrameInfo {
   bool hello;
   const char* peer = nullptr;
   bool trace = true;
+  bool control = false;
 };
 enum class AdmissionFailure { AlreadyHello, Unauthenticated, Busy };
 struct FrameCodec {

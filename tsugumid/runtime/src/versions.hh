@@ -11,6 +11,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "tsugumi/document/comments.hh"
@@ -98,9 +99,12 @@ class Versions {
   // The folder becomes `commit` (what is saved now is committed first). On a
   // branch's tip HEAD follows that branch, else it is detached and the next
   // commit starts a branch.
+  static auto checkout_pending(const std::filesystem::path& root) -> bool;
+  static auto recover_checkout(const std::filesystem::path& root) -> void;
   void checkout(
       const std::string& commit,
-      const std::function<void(const std::filesystem::path&)>& validate);
+      const std::function<void(const std::filesystem::path&)>& validate,
+      std::string_view fault = {});
   VersionGraphData graph(size_t limit, bool include_comments = false);
   // Raw layout and definition data of `commit`, without presentation logic.
   VersionCanvasData canvas(const std::string& commit);

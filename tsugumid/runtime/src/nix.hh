@@ -94,7 +94,7 @@ struct CacheClearOutcome {
 
 class NixRunner {
  public:
-  NixRunner(Service& svc, std::filesystem::path eval_dir);
+  explicit NixRunner(Service& svc);
   ~NixRunner();
 
   auto build(const BuildRequest& req) -> CardBuildPlan;
@@ -117,13 +117,8 @@ class NixRunner {
   // evaluation the core would run now.
   auto prepared(const std::string& card, const std::string& key,
                 uint32_t max_implementations) const -> NixResult;
-  std::filesystem::path content_dir(
-      const char* kind, const std::string& digest,
-      const std::function<std::map<std::string, std::string>()>& files);
 
   Service& svc_;
-  std::filesystem::path
-      eval_dir_;  // local folder: definitions and generated files by content
   std::filesystem::path nix_dir_;
   std::mutex eval_mu_;
   std::unique_ptr<NixEvaluator> evaluator_;
@@ -134,8 +129,6 @@ class NixRunner {
       evaluations_;
   std::optional<std::map<std::string, Tsugumi::State::PreparedCardT>> prepared_;
   uint64_t full_evaluations_ = 0;
-  std::mutex dirs_mu_;
-  std::set<std::string> written_;
 };
 
 }  // namespace tsugumi

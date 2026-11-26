@@ -2052,54 +2052,63 @@ void Scheduler::recover_interrupted() {
     return result;
   });
   for (const auto& run_id : runs) {
-    svc_.history().write_sync([&](sql::Db& db) {
-      auto r = History::run(db, run_id);
-      if (!r) return;
-      svc_.expire_artifacts(db, run_id);
-      r->status.state = RunState::failed;
-      r->status.failure =
-          FailureData::make(FailureKind::interrupted,
-                            "tsugumid restarted while the run was active");
-      r->status.ended_at = now_ms();
-      History::update_run(db, r->status);
-      History::interrupt_batches(db, run_id);
-      // In-progress invocations become interrupted failures; nothing is re-run.
-      auto st = db.prepare(
-          "SELECT s.card, s.invocation, e.environment_id FROM statuses AS s "
-          "LEFT JOIN active_environments AS e ON e.run_id=s.run_id AND "
-          "e.card=s.card "
-          "AND e.invocation=s.invocation WHERE s.run_id=?");
-      st.bind(1, run_id);
-      std::vector<InvocationRecordData> recs;
-      while (st.step()) {
-        auto summary =
-            History::status(db, run_id, path_from_key(st.text(0)), st.u64(1));
-        if (!summary) continue;
-        InvocationRecordData rec;
-        rec.summary = std::move(*summary);
-        if (rec.summary.environment_id.empty())
-          rec.summary.environment_id = st.text(2);
-        rec.summary.state = CardState::failed;
-        rec.summary.ended_at = r->status.ended_at;
-        if (rec.summary.started_at)
-          rec.summary.duration_ms = static_cast<uint64_t>(std::max<int64_t>(
-              0, *rec.summary.ended_at - *rec.summary.started_at));
-        stage_close(rec.summary, StageOutcome::failed);
-        auto remote = db.prepare(
-            "SELECT job_id FROM remote_jobs WHERE run_id=? AND card=? AND "
-            "invocation=?");
-        remote.bind(1, run_id)
-            .bind(2, path_key(rec.summary.card))
-            .bind(3, rec.summary.invocation);
-        if (remote.step()) {
-          rec.summary.execution_job_id = remote.text(0);
-          rec.summary.execution_state = RemoteExecutionState::interrupted;
+    Service::DetachedArtifacts detached;
+    try {
+      svc_.history().write_sync([&](sql::Db& db) {
+        auto r = History::run(db, run_id);
+        if (!r) return;
+        svc_.expire_artifacts(db, run_id, detached);
+        r->status.state = RunState::failed;
+        r->status.failure =
+            FailureData::make(FailureKind::interrupted,
+                              "tsugumid restarted while the run was active");
+        r->status.ended_at = now_ms();
+        History::update_run(db, r->status);
+        History::interrupt_batches(db, run_id);
+        // In-progress invocations become interrupted failures; nothing is
+        // re-run.
+        auto st = db.prepare(
+            "SELECT s.card, s.invocation, e.environment_id FROM statuses AS s "
+            "LEFT JOIN active_environments AS e ON e.run_id=s.run_id AND "
+            "e.card=s.card "
+            "AND e.invocation=s.invocation WHERE s.run_id=?");
+        st.bind(1, run_id);
+        std::vector<InvocationRecordData> recs;
+        while (st.step()) {
+          auto summary =
+              History::status(db, run_id, path_from_key(st.text(0)), st.u64(1));
+          if (!summary) continue;
+          InvocationRecordData rec;
+          rec.summary = std::move(*summary);
+          if (rec.summary.environment_id.empty())
+            rec.summary.environment_id = st.text(2);
+          rec.summary.state = CardState::failed;
+          rec.summary.ended_at = r->status.ended_at;
+          if (rec.summary.started_at)
+            rec.summary.duration_ms = static_cast<uint64_t>(std::max<int64_t>(
+                0, *rec.summary.ended_at - *rec.summary.started_at));
+          stage_close(rec.summary, StageOutcome::failed);
+          auto remote = db.prepare(
+              "SELECT job_id FROM remote_jobs WHERE run_id=? AND card=? AND "
+              "invocation=?");
+          remote.bind(1, run_id)
+              .bind(2, path_key(rec.summary.card))
+              .bind(3, rec.summary.invocation);
+          if (remote.step()) {
+            rec.summary.execution_job_id = remote.text(0);
+            rec.summary.execution_state = RemoteExecutionState::interrupted;
+          }
+          rec.summary.failure = r->status.failure;
+          recs.push_back(std::move(rec));
         }
-        rec.summary.failure = r->status.failure;
-        recs.push_back(std::move(rec));
-      }
-      for (const auto& rec : recs) svc_.history().complete_invocation(db, rec);
-    });
+        for (const auto& rec : recs)
+          svc_.history().complete_invocation(db, rec);
+      });
+    } catch (...) {
+      svc_.finish_artifact_expiry(detached, false);
+      throw;
+    }
+    svc_.finish_artifact_expiry(detached, true);
     log::warn("run " + run_id + " was interrupted by a restart");
   }
 }
@@ -2442,13 +2451,15 @@ void Scheduler::document_changed(const Document& before,
 }
 
 auto Scheduler::finished(RunSummaryData sum, std::string record) -> void {
-  std::lock_guard lock(mu_);
+  std::unique_lock lock(mu_);
+  Service::DetachedArtifacts detached;
+  bool committed = false;
   // Release the slot before the terminal status can appear in history. Keep
   // admission locked until the result commits and both events are queued.
   auto done = std::move(active_);
   try {
     svc_.history().write_sync([&](sql::Db& db) {
-      svc_.expire_artifacts(db, *sum.status.run_id);
+      svc_.expire_artifacts(db, *sum.status.run_id, detached);
       History::update_run(db, sum.status);
       History::interrupt_batches(db, *sum.status.run_id);
       // Detached external invocations are still pending after the local
@@ -2461,6 +2472,7 @@ auto Scheduler::finished(RunSummaryData sum, std::string record) -> void {
           .bind(1, *sum.status.run_id)
           .run();
     });
+    committed = true;
   } catch (const Failed&) {
     if (sum.status.state == RunState::succeeded) {
       sum.status.state = RunState::failed;
@@ -2473,6 +2485,8 @@ auto Scheduler::finished(RunSummaryData sum, std::string record) -> void {
   completions_.push_back(
       {std::move(done), std::move(sum.status), std::move(record)});
   finished_.notify_all();
+  lock.unlock();
+  svc_.finish_artifact_expiry(detached, committed);
 }
 
 auto Scheduler::reap_completed() -> void {

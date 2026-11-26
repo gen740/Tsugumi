@@ -21,6 +21,7 @@
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/util/text.hh"
 #include "version_record.hh"
@@ -169,6 +170,57 @@ struct VersionFiles {
   }
 };
 
+template <class Visitor>
+auto visit_version_files(const stdfs::path& root, const VersionFiles& files,
+                         Visitor visit) -> bool {
+  for (auto it = stdfs::recursive_directory_iterator(root);
+       it != stdfs::recursive_directory_iterator(); ++it) {
+    const auto path = it->path().lexically_relative(root).generic_string();
+    const auto status = it->symlink_status();
+    if (stdfs::is_symlink(status)) continue;
+    if (stdfs::is_directory(status)) {
+      if (!files.descends(path)) it.disable_recursion_pending();
+    } else if (stdfs::is_regular_file(status) && files.includes(path)) {
+      const auto mode = (status.permissions() & stdfs::perms::owner_exec) !=
+                                stdfs::perms::none
+                            ? GIT_FILEMODE_BLOB_EXECUTABLE
+                            : GIT_FILEMODE_BLOB;
+      if (!visit(path, mode)) return false;
+    }
+  }
+  return true;
+}
+
+auto project_dirty(git_repository* repo, const stdfs::path& root,
+                   const std::optional<git_oid>& head) -> bool {
+  Index committed;
+  check(git_index_new(committed.out()), "create in-memory index");
+  if (head) {
+    Commit commit;
+    Tree tree;
+    check(git_commit_lookup(commit.out(), repo, &*head), "head");
+    check(git_commit_tree(tree.out(), commit.get()), "head tree");
+    check(git_index_read_tree(committed.get(), tree.get()), "read head tree");
+  }
+
+  size_t matched = 0;
+  const bool unchanged = visit_version_files(
+      root, VersionFiles(root, nullptr),
+      [&](const std::string& path, git_filemode_t mode) {
+        const auto* entry =
+            git_index_get_bypath(committed.get(), path.c_str(), 0);
+        if (!entry || entry->mode != mode) return false;
+        const auto bytes = fs::read_beneath(root, path);
+        git_oid oid;
+        check(git_odb_hash(&oid, bytes.data(), bytes.size(), GIT_OBJECT_BLOB),
+              "hash " + path);
+        if (!git_oid_equal(&entry->id, &oid)) return false;
+        ++matched;
+        return true;
+      });
+  return !unchanged || matched != git_index_entrycount(committed.get());
+}
+
 // Rebuild the index, including deletions, without touching working files or
 // inheriting unrelated files someone staged with Git. Ignore rules do not
 // override definitions or an explicit opt-in. Never follow symlinks.
@@ -191,35 +243,27 @@ auto stage_project(git_repository* r, const stdfs::path& root,
   Index idx;
   check(git_repository_index(idx.out(), r), "index");
   check(git_index_clear(idx.get()), "clear index");
-  for (auto it = stdfs::recursive_directory_iterator(root);
-       it != stdfs::recursive_directory_iterator(); ++it) {
-    const auto path = it->path().lexically_relative(root).generic_string();
-    const auto status = it->symlink_status();
-    if (stdfs::is_symlink(status)) continue;
-    if (stdfs::is_directory(status)) {
-      if (!files.descends(path)) it.disable_recursion_pending();
-    } else if (stdfs::is_regular_file(status) && files.includes(path)) {
-      const auto bytes = fs::read_beneath(root, path);
-      if (accepted &&
-          (Document::is_document_file(path) || Document::is_source_area(path) ||
-           Document::is_lock_file(path))) {
-        auto hash = expected.find(path);
-        if (hash == expected.end() || hash->second != crypto::sha256_hex(bytes))
-          changed(path);
-        expected.erase(hash);
-      }
-      git_index_entry entry{};
-      entry.path = path.c_str();
-      entry.mode = (status.permissions() & stdfs::perms::owner_exec) !=
-                           stdfs::perms::none
-                       ? GIT_FILEMODE_BLOB_EXECUTABLE
-                       : GIT_FILEMODE_BLOB;
-      check(
-          git_blob_create_from_buffer(&entry.id, r, bytes.data(), bytes.size()),
-          "blob " + path);
-      check(git_index_add(idx.get(), &entry), "add " + path);
-    }
-  }
+  visit_version_files(
+      root, files, [&](const std::string& path, git_filemode_t mode) {
+        const auto bytes = fs::read_beneath(root, path);
+        if (accepted &&
+            (Document::is_document_file(path) ||
+             Document::is_source_area(path) || Document::is_lock_file(path))) {
+          auto hash = expected.find(path);
+          if (hash == expected.end() ||
+              hash->second != crypto::sha256_hex(bytes))
+            changed(path);
+          expected.erase(hash);
+        }
+        git_index_entry entry{};
+        entry.path = path.c_str();
+        entry.mode = mode;
+        check(git_blob_create_from_buffer(&entry.id, r, bytes.data(),
+                                          bytes.size()),
+              "blob " + path);
+        check(git_index_add(idx.get(), &entry), "add " + path);
+        return true;
+      });
   if (!expected.empty()) changed(expected.begin()->first);
   if (write_index) check(git_index_write(idx.get()), "write index");
   git_oid tree;
@@ -715,9 +759,132 @@ std::string Versions::mark(const std::string& name,
   return id;
 }
 
+namespace {
+
+constexpr const char* kCheckoutJournal = "checkout.json";
+
+auto entry_exists(const stdfs::path& path) -> bool {
+  return stdfs::exists(stdfs::symlink_status(path));
+}
+
+auto durable_rename(const stdfs::path& from, const stdfs::path& to) -> void {
+  stdfs::rename(from, to);
+  fs::fsync_dir(from.parent_path());
+  fs::fsync_dir(to.parent_path());
+}
+
+auto restore_checkout(const stdfs::path& root, git_repository* repo,
+                      const stdfs::path& journal) -> stdfs::path {
+  const auto data = json::Object(fs::read_file_or_throw(journal));
+  const auto name = json::Text(data, "scratch");
+  if (name.size() != sizeof("checkout-XXXXXX") - 1 ||
+      !name.starts_with("checkout-") ||
+      name.find_first_not_of(
+          "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-") !=
+          name.npos)
+    throw std::runtime_error("invalid checkout journal directory");
+  const auto scratch = journal.parent_path() / name;
+  const auto backup = scratch / "original";
+  const auto preview = scratch / "target";
+  for (const auto& dir : {scratch, backup, preview})
+    if (!stdfs::is_directory(stdfs::symlink_status(dir)))
+      throw std::runtime_error("missing checkout recovery directory");
+  const auto moves = json::Array(data.at("moves"));
+  for (auto it = moves.rbegin(); it != moves.rend(); ++it) {
+    const auto move = json::Object(*it);
+    const auto path = json::Text(move, "path");
+    if (stdfs::path(path).has_parent_path() ||
+        !Document::valid_version_path(path) ||
+        path.find(char{0}) != path.npos)
+      throw std::runtime_error("invalid checkout journal path");
+    const auto original = backup / path;
+    const auto target = preview / path;
+    const auto working = root / path;
+    // A rename can reach disk just before its progress update. The original
+    // and preview entries also make rollback repeatable if recovery stops.
+    if (entry_exists(original)) {
+      if (!entry_exists(target) && entry_exists(working))
+        durable_rename(working, target);
+      durable_rename(original, working);
+    } else if (!json::Bool(move.at("original")) &&
+               json::Bool(move.at("target")) && !entry_exists(target) &&
+               entry_exists(working)) {
+      durable_rename(working, target);
+    }
+  }
+
+  const auto branch = json::Text(data, "branch");
+  if (!branch.empty()) {
+    int valid = 0;
+    check(git_reference_name_is_valid(&valid, branch.c_str()), "branch name");
+    if (!valid || !branch.starts_with("refs/heads/") ||
+        branch.find(char{0}) != branch.npos)
+      throw std::runtime_error("invalid checkout journal branch");
+    git_oid published;
+    check(git_oid_fromstr(&published, json::Text(data, "saved").c_str()),
+          "checkout saved version");
+    Ref current;
+    const int found = git_reference_lookup(current.out(), repo, branch.c_str());
+    if (found != GIT_ENOTFOUND) check(found, "read checkout branch");
+    if (current && git_reference_target(current.get()) &&
+        git_oid_equal(git_reference_target(current.get()), &published)) {
+      const auto previous = json::Text(data, "branch_before");
+      if (previous.empty()) {
+        check(git_reference_delete(current.get()), "remove checkout branch");
+      } else {
+        git_oid old;
+        check(git_oid_fromstr(&old, previous.c_str()), "original branch");
+        Ref restored;
+        check(git_reference_set_target(restored.out(), current.get(), &old,
+                                       "recover interrupted checkout"),
+              "restore checkout branch");
+      }
+    }
+  }
+  Index index;
+  check(git_repository_index(index.out(), repo), "checkout recovery index");
+  const auto restore_file = [&](const stdfs::path& path,
+                                const std::optional<std::string>& before) {
+    if (fs::read_file(path) == before) return;
+    if (before)
+      fs::write_atomic(path, *before);
+    else
+      fs::remove_file_durable(path);
+  };
+  restore_file(git_index_path(index.get()), fs::read_file(scratch / "index"));
+  restore_file(stdfs::path(git_repository_path(repo)) / "HEAD",
+               fs::read_file_or_throw(scratch / "HEAD"));
+  fs::remove_file_durable(journal);
+  return scratch;
+}
+
+}  // namespace
+
+auto Versions::checkout_pending(const stdfs::path& root) -> bool {
+  const auto state = root / ".tsugumi";
+  return stdfs::is_directory(stdfs::symlink_status(state)) &&
+         entry_exists(state / kCheckoutJournal);
+}
+
+auto Versions::recover_checkout(const stdfs::path& root) -> void {
+  const auto journal = root / ".tsugumi" / kCheckoutJournal;
+  if (!checkout_pending(root)) return;
+  if (!stdfs::is_regular_file(stdfs::symlink_status(journal)))
+    throw std::runtime_error("invalid checkout journal");
+  init_once();
+  Repo repo;
+  if (!open(repo, root))
+    throw std::runtime_error("checkout recovery requires the project repository");
+  const auto scratch = restore_checkout(root, repo.get(), journal);
+  std::error_code error;
+  stdfs::remove_all(scratch, error);
+  if (error) log::warn("remove checkout directory: " + error.message());
+}
+
 void Versions::checkout(
     const std::string& commit,
-    const std::function<void(const stdfs::path&)>& validate) {
+    const std::function<void(const stdfs::path&)>& validate,
+    std::string_view fault) {
   std::lock_guard<std::mutex> l(mu_);
   Repo r;
   if (!open(r, root_))
@@ -842,32 +1009,77 @@ void Versions::checkout(
 
   struct Move {
     std::string name;
+    bool original;
+    bool target;
     bool backed_up = false;
     bool installed = false;
   };
   std::vector<Move> moves;
-  moves.reserve(roots.size());
-  bool index_written = false, head_written = false;
+  for (const auto& name : roots)
+    moves.push_back({name, entry_exists(root_ / name),
+                     entry_exists(preview / name)});
+  const auto journal = root_ / ".tsugumi" / kCheckoutJournal;
+  if (entry_exists(journal))
+    throw Failed(FailureKind::persistence_failed,
+                 "reopen the project to recover its interrupted checkout");
+  if (index_before) fs::write_atomic(scratch.path / "index", *index_before);
+  fs::write_atomic(scratch.path / "HEAD", head_before);
+  fs::fsync_dir(preview);
+  fs::fsync_dir(backup);
+  const auto persist = [&] {
+    std::vector<std::string> entries;
+    for (const auto& move : moves) {
+      entries.push_back(json::Encode(json::Members{
+          {"path", json::Quote(move.name)},
+          {"original", move.original ? "true" : "false"},
+          {"target", move.target ? "true" : "false"},
+          {"backed_up", move.backed_up ? "true" : "false"},
+          {"installed", move.installed ? "true" : "false"},
+      }));
+    }
+    fs::write_atomic(journal, json::Encode(json::Members{
+        {"scratch", json::Quote(scratch.path.filename().string())},
+        {"from", json::Quote(before ? hex(&*before) : "")},
+        {"to", json::Quote(hex(&oid))},
+        {"branch", json::Quote(source_branch)},
+        {"branch_before", json::Quote(
+            before && git_reference_symbolic_target(head.get()) && saved
+                ? hex(&*before) : "")},
+        {"saved", json::Quote(saved ? hex(&*saved) : "")},
+        {"moves", json::Encode(entries)},
+    }), 0600);
+  };
+  size_t step = 0;
+  const auto checkpoint = [&] {
+    ++step;
+    if (fault.starts_with("checkout:") &&
+        fault.substr(sizeof("checkout:") - 1) == std::to_string(step))
+      ::_exit(97);
+  };
   try {
-    for (const auto& name : roots) {
-      auto& move = moves.emplace_back(Move{name});
-      if (stdfs::exists(stdfs::symlink_status(root_ / name))) {
-        stdfs::rename(root_ / name, backup / name);
+    persist();
+    for (auto& move : moves) {
+      if (move.original) {
+        durable_rename(root_ / move.name, backup / move.name);
+        checkpoint();
         move.backed_up = true;
+        persist();
       }
-      if (stdfs::exists(stdfs::symlink_status(preview / name))) {
-        stdfs::rename(preview / name, root_ / name);
+      if (move.target) {
+        durable_rename(preview / move.name, root_ / move.name);
+        checkpoint();
         move.installed = true;
+        persist();
       }
     }
     check(git_index_read_tree(index.get(), target_tree.get()),
           "set checkout index");
     check(git_index_write(index.get()), "write checkout index");
-    index_written = true;
+    checkpoint();
     check(branch.empty() ? git_repository_set_head_detached(r.get(), &oid)
                          : git_repository_set_head(r.get(), branch.c_str()),
           "set checkout HEAD");
-    head_written = true;
+    checkpoint();
     if (saved) {
       Ref ref;
       const auto* expected = git_reference_symbolic_target(head.get()) && before
@@ -877,43 +1089,21 @@ void Versions::checkout(
                 ref.out(), r.get(), source_branch.c_str(), &*saved,
                 expected != nullptr, expected, "save project before checkout"),
             "save checkout branch");
+      checkpoint();
     }
+    fs::remove_file_durable(journal);
   } catch (const std::exception& error) {
-    // Keep original files available if a second I/O error prevents rollback.
-    std::string failures;
-    auto restore = [&](const auto& action) {
-      try {
-        action();
-      } catch (const std::exception& failure) {
-        failures += "; " + std::string(failure.what());
-      }
-    };
-    if (head_written)
-      restore([&] { fs::write_atomic(head_path, head_before); });
-    if (index_written)
-      restore([&] {
-        if (index_before)
-          fs::write_atomic(index_path, *index_before);
-        else
-          fs::remove_file_durable(index_path);
-      });
-    for (auto move = moves.rbegin(); move != moves.rend(); ++move) {
-      if (move->installed)
-        restore(
-            [&] { stdfs::rename(root_ / move->name, preview / move->name); });
-      if (move->backed_up)
-        restore(
-            [&] { stdfs::rename(backup / move->name, root_ / move->name); });
-    }
-    if (!failures.empty()) {
+    try {
+      if (entry_exists(journal)) restore_checkout(root_, r.get(), journal);
+    } catch (const std::exception& failure) {
       scratch.keep = true;
       throw Failed(FailureKind::persistence_failed,
-                   std::string(error.what()) +
-                       "; checkout rollback failed (originals in " +
-                       backup.string() + ")" + failures);
+                   std::string(error.what()) + "; checkout rollback failed: " +
+                       failure.what());
     }
     throw Failed(FailureKind::persistence_failed, error.what());
   }
+
 }
 
 VersionGraphData Versions::graph(size_t limit, bool include_comments) {
@@ -929,16 +1119,7 @@ VersionGraphData Versions::graph(size_t limit, bool include_comments) {
     if (git_repository_head(h.out(), r.get()) == 0)
       g.branch = git_reference_shorthand(h.get());
   }
-  const auto saved = stage_project(r.get(), root_, false);
-  if (head) {
-    Commit c;
-    check(git_commit_lookup(c.out(), r.get(), &*head), "head");
-    g.dirty = !git_oid_equal(git_commit_tree_id(c.get()), &saved);
-  } else {
-    Tree tree;
-    check(git_tree_lookup(tree.out(), r.get(), &saved), "tree");
-    g.dirty = git_tree_entrycount(tree.get()) > 0;
-  }
+  g.dirty = project_dirty(r.get(), root_, head);
   if (!head) return g;
   // Branch and tag names by the commit they point at.
   std::map<std::string, std::vector<std::string>> branches;

@@ -278,6 +278,7 @@ void Service::open() {
   const auto state = opts_.application_support.empty()
                          ? stdfs::path{}
                          : opts_.application_support / ".tsugumi";
+  Versions::recover_checkout(opts_.root);
   // The Card products in a bundle already contain the export-time parameters.
   store_ = std::make_unique<Store>(StoreOptions{
       opts_.root, opts_.fault, state, opts_.packed_builds.empty()});
@@ -302,7 +303,7 @@ void Service::open() {
       opts_.scratch_dir.empty()
           ? stdfs::temp_directory_path() / ("tsugumi-" + store_->project_id())
           : opts_.scratch_dir;
-  nix_ = std::make_unique<NixRunner>(*this, scratch / "nix");
+  nix_ = std::make_unique<NixRunner>(*this);
   versions_ = std::make_unique<Versions>(opts_.root);
 
   if (!packed_builds_)
@@ -317,8 +318,8 @@ void Service::open() {
   remote_execution_ =
       std::make_unique<RemoteExecutionService>(*this, remote_jobs_);
   scheduler_ = std::make_unique<Scheduler>(*this);
-  recover_artifact_deletions();
   scheduler_->recover_interrupted();
+  collect_unrecorded_run_files();
   if (packed_builds_) {
 #ifdef __APPLE__
     if (packed_builds_->fast) {
@@ -2360,7 +2361,7 @@ void Service::version_checkout(RequestIn& req) {
     versions_->checkout(r->commit()->str(), [&](const stdfs::path& target) {
       staged = store_->stage_reload(op_id, r->origin()->str(), target);
       response = prepare_save_reply(staged, *base);
-    });
+    }, opts_.fault);
     complete_save(req, op_id, "reload", digest, *base, staged, response);
   } catch (const Failed& f) {
     store_failure_receipt(op_id, "reload", digest, f.failure);
@@ -2651,8 +2652,6 @@ void Service::history_category_delete(RequestIn& req) {
     const auto receipt = finish_receipt(
         b, op_id, R::ReceiptValue::RunCategoryDeleteResult, result.Union());
     history_->write_sync([&](sql::Db& db) {
-      if (category == R::RunRecordCategory::Artifacts)
-        detach_run_artifacts(run_id);
       History::delete_category(db, run_id, category);
       History::put_receipt(db, op_id, kind, digest, receipt);
     });
@@ -2706,17 +2705,18 @@ void Service::history_delete(RequestIn& req) {
       return n;
     };
     uint64_t before = sizes();
-    const auto scratch_before = fs::directory_size(run_scratch_ / "runs");
     uint64_t files = 0;
     auto ids = history_->delete_runs(r->ended_before(), run_ids);
-    for (const auto& id : ids)
-      if (crypto::is_run_id(id)) remove_run_scratch(run_scratch_ / "runs" / id);
-    const auto scratch_after = fs::directory_size(run_scratch_ / "runs");
-    files +=
-        scratch_before > scratch_after ? scratch_before - scratch_after : 0;
     for (const auto& id : ids) {
       if (!crypto::is_run_id(id))
         continue;  // a run id from a copy names no folder of ours
+      const auto runs = run_scratch_ / "runs";
+      const auto scratch = runs / id;
+      if (stdfs::is_directory(stdfs::symlink_status(runs)) &&
+          stdfs::is_directory(stdfs::symlink_status(scratch))) {
+        const auto scratch_size = fs::directory_size(scratch);
+        if (remove_run_scratch(scratch)) files += scratch_size;
+      }
       files += remove_run_artifacts(id);
     }
     uint64_t after = sizes();

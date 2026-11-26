@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "service.hh"
+#include "versions.hh"
 #include "tsugumi/protocol/runtime_state_generated.h"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/flat_file.hh"
@@ -209,7 +210,8 @@ int run_daemon(int argc, char** argv) {
   ::signal(SIGPIPE, SIG_IGN);
   std::error_code ec;
   auto root = stdfs::canonical(opt.project, ec);
-  if (ec || !stdfs::is_regular_file(root / "tsugumi.json")) {
+  if (ec || (!stdfs::is_regular_file(root / "tsugumi.json") &&
+             !Versions::checkout_pending(root))) {
     log::error("project " + opt.project.string() +
                " is not an initialized Tsugumi project");
     return 2;

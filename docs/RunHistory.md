@@ -77,7 +77,11 @@ logs, recorded values or artifacts. Deleting a category preserves the run summar
 Deleting the Artifacts category removes the run's artifact directories and their
 database rows. Values that contain their UUIDs show them as unavailable. Project Run History can delete complete runs, including
 their owned artifact directories. Build cache removal and scratch cleanup
-are separate actions. Scratch and runs remain until a person deletes them.
+are separate actions. Recorded runs and their scratch remain until a person
+deletes them. At startup, before accepting runs, Tsugumi removes artifact
+directories in its managed layout with no artifact row, run scratch with no run
+row, and leftover directories already marked for deletion. Tsugumi logs the
+number of directories and bytes removed.
 See [build and scratch space](Usage.md#manage-build-and-scratch-space).
 
 ## History storage

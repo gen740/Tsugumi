@@ -124,14 +124,8 @@ auto project_pins(const Document& doc, const Store& store, const Node& node)
 
 }  // namespace
 
-NixRunner::NixRunner(Service& svc, stdfs::path eval_dir)
-    : svc_(svc), eval_dir_(std::move(eval_dir)) {
+NixRunner::NixRunner(Service& svc) : svc_(svc) {
   std::error_code ec;
-  stdfs::remove_all(eval_dir_, ec);
-  stdfs::create_directories(eval_dir_);
-  // Restricted evaluation compares resolved paths (/tmp is /private/tmp on
-  // macOS).
-  eval_dir_ = stdfs::canonical(eval_dir_);
   nix_dir_ = stdfs::canonical(svc_.options().nix_dir, ec);
   if (const auto& file = svc_.options().prepared_cards; !file.empty()) {
     auto bytes = fs::read_file(file);
@@ -223,34 +217,6 @@ stdfs::path NixRunner::gcroots_dir() const {
   return d.empty() ? cache_dir() / "gcroots" : d;
 }
 
-// A folder of the evaluation area named after its contents: written once,
-// then reused by every later Card and run with the same contents.
-stdfs::path NixRunner::content_dir(
-    const char* kind, const std::string& digest,
-    const std::function<std::map<std::string, std::string>()>& files) {
-  auto dir = eval_dir_ / kind / digest;
-  std::lock_guard<std::mutex> l(dirs_mu_);
-  if (written_.count(dir.string())) return dir;
-  std::error_code ec;
-  if (!stdfs::is_directory(dir, ec)) {
-    auto tmp = dir;
-    tmp += ".tmp";
-    stdfs::remove_all(tmp, ec);
-    for (const auto& [name, content] : files()) {
-      auto p = tmp / name;
-      stdfs::create_directories(p.parent_path());
-      std::ofstream output(p, std::ios::binary | std::ios::trunc);
-      output.exceptions(std::ios::badbit | std::ios::failbit);
-      output.write(content.data(), content.size());
-      output.close();
-    }
-    stdfs::create_directories(tmp);
-    stdfs::rename(tmp, dir);
-  }
-  written_.insert(dir.string());
-  return dir;
-}
-
 auto NixRunner::execution_systems() -> std::vector<std::string> {
   std::string native = native_system();
   std::vector<std::string> systems{native};
@@ -302,8 +268,8 @@ auto NixRunner::configure_call(NixCall& call, const Document& doc,
     crypto::Sha256 source_hash;
     source_hash.update(json::Quote(card));
     source_hash.update(json::Quote(owner.project_dir));
+    source_hash.update(json::Quote(owner.def_dir));
     source_hash.update(project_key);
-    std::vector<std::string> paths;
     for (auto it = doc.sources.lower_bound(owner.def_dir);
          it != doc.sources.end() && it->first.starts_with(owner.def_dir);
          ++it) {
@@ -311,7 +277,6 @@ auto NixRunner::configure_call(NixCall& call, const Document& doc,
       if (rel == "_card.json" || rel == "README.md" ||
           rel == "_comments.json" || rel == "_inputs.fbs")
         continue;
-      paths.push_back(it->first);
       source_hash.update(json::Quote(rel));
       source_hash.update(it->second.hash);
     }
@@ -323,15 +288,12 @@ auto NixRunner::configure_call(NixCall& call, const Document& doc,
         throw std::runtime_error(diagnostic.message);
     if (owner.generated_inputs) source_hash.update(*owner.generated_inputs);
     const auto digest = source_hash.finish_hex();
-    const auto definition = content_dir("defs", digest, [&] {
-      std::map<std::string, std::string> files;
-      for (const auto& path : paths)
-        files.emplace(path.substr(owner.def_dir.size()),
-                      store.read_source(doc, path));
-      if (owner.generated_inputs)
-        files.emplace("_inputs.fbs", *owner.generated_inputs);
-      return files;
-    });
+    const auto project = stdfs::canonical(store.root());
+    const auto relative = stdfs::path(owner.def_dir).parent_path();
+    const auto definition = stdfs::canonical(project / relative);
+    if (definition != project / relative || !stdfs::is_directory(definition))
+      throw std::runtime_error("invalid Card definition directory: " +
+                               owner.def_dir);
 
     // inputs.<name>: the exports of one or more Cards, merged.
     std::map<std::string, std::vector<std::string>> merged;

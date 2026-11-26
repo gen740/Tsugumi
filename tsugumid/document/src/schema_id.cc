@@ -158,8 +158,15 @@ class CanonicalSchema {
 
 }  // namespace
 
+auto types::Type::canonical_id() const -> const std::string& {
+  std::call_once(canonical_id_once_, [this] {
+    canonical_id_ = CanonicalSchema(*schema()).build();
+  });
+  return canonical_id_;
+}
+
 auto schema_id(const types::Type& type) -> std::string {
-  return CanonicalSchema(*type.schema()).build();
+  return type.canonical_id();
 }
 
 }  // namespace tsugumi

@@ -27,20 +27,31 @@ auto Endpoint(ServerOptions& options, const char* subprotocol, Read read,
     if constexpr (requires { Tag::HostTraceRequest; })
       include = r->value_type() != Tag::HostTraceRequest &&
                 (!hello || hello->client() != Tsugumi::Trace::Client::Trace);
+    bool control = false;
+    if constexpr (requires { Tag::ToolCallCancelRequest; })
+      control = r->value_type() == Tag::ToolCallCancelRequest ||
+                r->value_type() == Tag::ConversationCancelRequest;
+    if constexpr (requires { Tag::HostRuntimeRequest; }) {
+      const auto* runtime = r->value_as_HostRuntimeRequest();
+      control = runtime &&
+                runtime->action() == Tsugumi::Host::RuntimeAction::Shutdown;
+    }
     return FrameInfo{m->request_id(), hello != nullptr,
                      hello ? trace::ClientName(hello->client()) : nullptr,
-                     include};
+                     include, control};
   };
   options.codec.completed = [read](std::string_view bytes) {
     return read(bytes.data())->request_id();
   };
   options.codec.failure = [wrap](uint64_t id, AdmissionFailure reason) {
-    const auto* kind = reason == AdmissionFailure::AlreadyHello
-                           ? "invalid_request"
-                           : "unauthenticated";
-    const auto* message = reason == AdmissionFailure::AlreadyHello
-                              ? "Hello was already sent"
-                              : "Hello must succeed first";
+    const auto* kind =
+        reason == AdmissionFailure::AlreadyHello      ? "invalid_request"
+        : reason == AdmissionFailure::Unauthenticated ? "unauthenticated"
+                                                      : "busy";
+    const auto* message =
+        reason == AdmissionFailure::AlreadyHello      ? "Hello was already sent"
+        : reason == AdmissionFailure::Unauthenticated ? "Hello must succeed first"
+            : "too many requests in flight on this connection";
     flatbuffers::FlatBufferBuilder b;
     auto f = Tsugumi::Service::CreateFailure(b, b.CreateString(kind),
                                              b.CreateString(message));
