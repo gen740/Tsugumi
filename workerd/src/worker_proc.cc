@@ -863,9 +863,14 @@ auto WorkerProc::resume_logs() -> void {
   stop_logs_ = false;
   log_thread_ = std::thread([this] {
     while (!stop_logs_) {
-      pollfd fds[3] = {{out_fd_, POLLIN, 0},
-                       {err_fd_, POLLIN, 0},
+      pollfd fds[3] = {{-1, POLLIN, 0},
+                       {-1, POLLIN, 0},
                        {log_wake_[0], POLLIN, 0}};
+      {
+        std::lock_guard lock(log_mu_);
+        if (!out_eof_) fds[0].fd = out_fd_;
+        if (!err_eof_) fds[1].fd = err_fd_;
+      }
       ::poll(fds, 3, -1);
       read_logs(false);
     }
@@ -1037,13 +1042,17 @@ void WorkerProc::read_logs(bool drain) {
   for (auto [fd, stream] : {std::pair{out_fd_, LogStream::standard_output},
                             std::pair{err_fd_, LogStream::standard_error}}) {
     if (fd < 0) continue;
-    auto& dec = stream == LogStream::standard_output ? out_dec_ : err_dec_;
+    const bool stdout_stream = stream == LogStream::standard_output;
+    auto& dec = stdout_stream ? out_dec_ : err_dec_;
+    auto& eof = stdout_stream ? out_eof_ : err_eof_;
     // Give timeout and cancellation processing a turn even if a worker
     // keeps a pipe continuously readable.
     constexpr size_t kReadBudget = 256 * 1024;
     size_t read = 0;
-    while (drain || read < kReadBudget) {
+    while (!eof && (drain || read < kReadBudget)) {
       ssize_t r = ::read(fd, buf, sizeof buf);
+      if (r < 0 && errno == EINTR) continue;
+      if (r == 0) eof = true;
       if (r <= 0) break;
       read += static_cast<size_t>(r);
       std::string text =

@@ -256,6 +256,8 @@ class WorkerProc {
   std::shared_ptr<ViewControl> view_control_;
   LogSink logs_;
   std::mutex log_mu_;
+  bool out_eof_ = false;
+  bool err_eof_ = false;
   text::Utf8Decoder out_dec_;
   text::Utf8Decoder err_dec_;
   std::thread log_thread_;
