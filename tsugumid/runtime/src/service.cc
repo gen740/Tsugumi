@@ -816,7 +816,6 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
     }
     lock.lock();
   }
-  summary.execution_service = selected.id;
   ++worker_slots_[selected.id];
   lock.unlock();
   auto release = [this, id = selected.id] {

@@ -326,6 +326,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
   // recovered after restart.
   if (!probe) {
     request.start([&](sql::Db& db) {
+      job.invocation = s;
       job.cancel_requested = request.cancel_requested();
       History::put_remote_job(db, job);
     });
