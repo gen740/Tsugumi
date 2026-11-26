@@ -2027,7 +2027,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
 // ---------------------------------------------------------------------------
 
-Scheduler::Scheduler(Service& svc) : svc_(svc) {}
+Scheduler::Scheduler(Service& svc)
+    : svc_(svc), reaper_([this] { reap_completed(); }) {}
 
 Scheduler::~Scheduler() { shutdown(); }
 
@@ -2469,26 +2470,38 @@ auto Scheduler::finished(RunSummaryData sum, std::string record) -> void {
   }
   svc_.server()->broadcast(status_note(sum.status, false));
   svc_.server()->broadcast(finished_note(sum));
-  reapers_.emplace_back([this, done = std::move(done), status = sum.status,
-                         record = std::move(record)] {
-    done->join();
-    svc_.note_run_end(status, record);
-  });
+  completions_.push_back(
+      {std::move(done), std::move(sum.status), std::move(record)});
   finished_.notify_all();
 }
 
+auto Scheduler::reap_completed() -> void {
+  std::unique_lock lock(mu_);
+  while (true) {
+    finished_.wait(lock, [this] {
+      return !completions_.empty() || (stopping_.load() && !active_);
+    });
+    if (completions_.empty()) return;
+    auto completion = std::move(completions_.front());
+    completions_.pop_front();
+    lock.unlock();
+    completion.run->join();
+    svc_.note_run_end(completion.status, completion.record);
+    completion.run.reset();
+    lock.lock();
+  }
+}
+
 void Scheduler::shutdown() {
-  std::vector<std::thread> reapers;
   {
     std::unique_lock lock(mu_);
     stopping_.store(true);
     if (active_) active_->request_cancel(true);
     finished_.wait(lock, [this] { return !active_; });
-    reapers.swap(reapers_);
+    finished_.notify_all();
   }
   if (remote_cleanup_.joinable()) remote_cleanup_.join();
-  for (auto& t : reapers)
-    if (t.joinable()) t.join();
+  if (reaper_.joinable()) reaper_.join();
 }
 
 }  // namespace tsugumi

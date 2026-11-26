@@ -126,23 +126,37 @@ std::optional<std::string> read_file(const stdfs::path& p) {
 std::string read_file_or_throw(const stdfs::path& p) {
   auto r = read_file(p);
   if (!r) throw Error("missing file " + p.string());
-  return *r;
+  return *std::move(r);
 }
 
 void fsync_dir(const stdfs::path& dir) {
-  int fd = ::open(dir.c_str(), O_RDONLY | O_CLOEXEC);
+  int fd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
   if (fd < 0)
     throw Error("open dir " + dir.string() + ": " + std::strerror(errno));
-  ::fsync(fd);
+  int result;
+  do {
+    result = ::fsync(fd);
+  } while (result < 0 && errno == EINTR);
+  const int error = errno;
   ::close(fd);
+  if (result < 0)
+    throw Error("fsync dir " + dir.string() + ": " + std::strerror(error));
 }
 
 namespace {
 
+auto create_directories_durable(const stdfs::path& dir) -> void {
+  if (dir.empty() || stdfs::is_directory(dir)) return;
+  const auto parent = dir.parent_path();
+  create_directories_durable(parent);
+  stdfs::create_directory(dir);
+  fsync_dir(parent.empty() ? stdfs::path(".") : parent);
+}
+
 template <class Write>
 auto write_atomic_using(const stdfs::path& p, unsigned mode, Write write)
     -> void {
-  stdfs::create_directories(p.parent_path());
+  create_directories_durable(p.parent_path());
   stdfs::path tmp = p;
   tmp += ".tsugumi-tmp-" + crypto::random_token(6);
   int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode);
@@ -175,9 +189,14 @@ void write_atomic(const stdfs::path& p, std::string_view data, unsigned mode) {
 }
 
 void remove_file_durable(const stdfs::path& p) {
-  if (::unlink(p.c_str()) != 0 && errno != ENOENT)
-    throw Error("unlink " + p.string() + ": " + std::strerror(errno));
-  fsync_dir(p.parent_path());
+  auto dir = p.parent_path();
+  if (::unlink(p.c_str()) != 0) {
+    if (errno != ENOENT)
+      throw Error("unlink " + p.string() + ": " + std::strerror(errno));
+    // Replaying a deletion may find that its empty parent was removed too.
+    while (!dir.empty() && !stdfs::exists(dir)) dir = dir.parent_path();
+  }
+  fsync_dir(dir.empty() ? stdfs::path(".") : dir);
 }
 
 namespace {

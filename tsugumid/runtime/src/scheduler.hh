@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -91,9 +92,16 @@ class Scheduler {
   std::mutex mu_;
   std::condition_variable finished_;
   std::shared_ptr<RunExec> active_;
-  std::vector<std::thread> reapers_;
+  struct Completion {
+    std::shared_ptr<RunExec> run;
+    RunStatusData status;
+    std::string record;
+  };
+  auto reap_completed() -> void;
+  std::deque<Completion> completions_;
   std::atomic<bool> stopping_{false};
   std::thread remote_cleanup_;
+  std::thread reaper_;
 };
 
 }  // namespace tsugumi

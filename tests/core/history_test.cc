@@ -259,6 +259,36 @@ TEST(RunHistory, DeletionCannotExpandBeyondTheApprovedRuns) {
   });
 }
 
+TEST(RunHistory, RetriedDeletionReturnsEachRunOnce) {
+  const auto directory = std::filesystem::temp_directory_path() /
+                         ("tsugumi-history-" + crypto::uuid4());
+  std::filesystem::create_directories(directory);
+  struct Cleanup {
+    std::filesystem::path path;
+    ~Cleanup() { std::filesystem::remove_all(path); }
+  } cleanup{directory};
+  int commits = 0;
+  History history(directory / "history.sqlite");
+  history.write_sync([&](sql::Db& db) {
+    RunSummaryData run;
+    run.status.run_id = "1";
+    run.status.state = RunState::succeeded;
+    History::insert_run(db, run, crypto::uuid4());
+    sqlite3_commit_hook(
+        db.get(),
+        [](void* data) -> int {
+          // Commit this setup, roll back the deletion batch, then allow retry.
+          return ++*static_cast<int*>(data) == 2;
+        },
+        &commits);
+  });
+
+  EXPECT_EQ(history.delete_runs(std::nullopt, std::nullopt),
+            (std::vector<std::string>{"1"}));
+  EXPECT_EQ(commits, 3);
+  history.read([](sql::Db& db) { EXPECT_FALSE(History::run(db, "1")); });
+}
+
 TEST(RunHistory, SelectedDeletionStillRequiresFinishedRunsBeforeTheCutoff) {
   const auto directory = std::filesystem::temp_directory_path() /
                          ("tsugumi-history-" + crypto::uuid4());

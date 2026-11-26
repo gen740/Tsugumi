@@ -589,12 +589,15 @@ CacheClearOutcome NixRunner::clear_cache() {
   auto remove = [&](const stdfs::path& p, const std::string& label) {
     std::error_code ec;
     if (!stdfs::exists(p, ec)) return;
-    out.freed_bytes += fs::directory_size(p);
+    const auto bytes = fs::directory_size(p);
     stdfs::remove_all(p, ec);
-    if (ec)
+    if (ec) {
+      out.freed_bytes.reset();
       out.retained.push_back(label);
-    else
+    } else {
+      out.freed_bytes = bytes;
       out.deleted.push_back(label);
+    }
   };
   // This project's GC roots: its builds become garbage for the shared store's
   // own cleanup (an app setting), which is never run from here.

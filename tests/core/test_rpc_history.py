@@ -1,5 +1,6 @@
 """Recorded values, artifacts and logs observed through public RPC."""
 
+import os
 from uuid import UUID
 
 import pytest
@@ -15,6 +16,24 @@ from Tsugumi.Data.RunState import RunState
 
 
 CONTENTS = "".join(f"line {i:05d} 日本語テキスト\n" for i in range(20000))
+
+
+def test_failed_cache_clear_omits_reclaimed_size(core_factory, project, tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip("root can remove files from a read-only directory")
+    client = core_factory(args=["--gcroots-dir", str(tmp_path / "gcroots")]).connect()
+    retained = project / ".tsugumi" / "cache" / "retained"
+    retained.mkdir(parents=True, exist_ok=True)
+    payload = retained / "entry"
+    payload.write_bytes(b"retained")
+    retained.chmod(0o500)
+    try:
+        result = client.call("ProjectCacheClearRequest", opId=new_id())
+        assert "build-cache" in [text(label) for label in result.retained]
+        assert payload.is_file()
+        assert result.freedBytes is None
+    finally:
+        retained.chmod(0o700)
 
 
 @pytest.mark.parametrize("record_io", [False, True], ids=["artifact-only", "recorded-value"])
