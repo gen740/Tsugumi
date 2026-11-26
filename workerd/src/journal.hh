@@ -3,6 +3,8 @@
 #include <chrono>
 #include <filesystem>
 #include <functional>
+#include <map>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -85,6 +87,12 @@ class Journal {
   auto read(const stdfs::path& directory) const -> Record;
   auto write(const stdfs::path& directory, const Record& record) const -> void;
   auto erase_scratch(const stdfs::path& directory) const -> void;
+  struct UploadUsage {
+    uint64_t bytes = 0;
+    size_t files = 0;
+  };
+  std::mutex upload_usage_mutex_;
+  std::map<stdfs::path, UploadUsage> upload_usage_;
   stdfs::path root_;
   std::string instance_;
 };

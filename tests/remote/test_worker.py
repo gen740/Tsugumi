@@ -195,6 +195,31 @@ def test_chunks_scopes_hashes_and_limits(worker):
     assert limit.bodyType == R.ReplyBody.Failure
 
 
+def test_upload_retry_checks_only_overlap_and_charges_only_new_bytes(worker):
+    job = "9" * 64
+    data = b"staged blob"
+    digest = hashlib.sha256(data).hexdigest()
+
+    def put(chunk):
+        return worker.call(R.RequestBody.PutBlobRequest,
+                           R.PutBlobRequestT(digest=digest, total=len(data),
+                                             offset=0, bytes=chunk), job=job)
+
+    assert put(data[:3]).bodyType == R.ReplyBody.Ack
+    # A sparse file models an existing upload that uses the remaining budget.
+    # Restart to rebuild usage from the journal.
+    other = worker.journal(job).parent / "parts" / ("b" * 64)
+    with other.open("wb") as file:
+        file.truncate((64 << 30) - len(data))
+    worker.restart()
+    assert put(b"bad").bodyType == R.ReplyBody.Failure
+    assert put(data).bodyType == R.ReplyBody.Ack
+    assert put(data).bodyType == R.ReplyBody.Ack
+    response = worker.call(R.RequestBody.GetBlobRequest,
+                           R.GetBlobRequestT(digest=digest, limit=len(data)), job=job)
+    assert bytes(response.body.bytes) == data
+
+
 def test_cancel_before_submit_and_release_tombstone(worker):
     job = "2" * 64
     digest = worker.upload(job, b"input")
