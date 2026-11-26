@@ -36,6 +36,7 @@
 #include <nix/util/environment-variables.hh>
 #include <nix/util/file-descriptor.hh>
 #include <nix/util/finally.hh>
+#include <nix/util/hash.hh>
 #include <nix/util/logging.hh>
 #include <nix/util/serialise.hh>
 #include <nix/util/signals.hh>
@@ -99,10 +100,18 @@ class EvaluationReads : public nix::SourceAccessor {
 
   auto readFile(const nix::CanonPath& p, nix::Sink& sink,
                 nix::fun<void(uint64_t)> size) -> void override {
-    auto bytes = next_->readFile(p);
-    remember('f', p, digest(bytes));
-    size(bytes.size());
-    sink(bytes);
+    if (!should_record(p)) {
+      next_->readFile(p, sink, std::move(size));
+      return;
+    }
+    nix::HashSink hash(nix::HashAlgorithm::SHA256);
+    nix::LambdaSink forward([&](std::string_view bytes) {
+      hash.writeUnbuffered(bytes);
+      sink(bytes);
+    });
+    next_->readFile(p, forward, std::move(size));
+    record('f', p, hash.finish().hash.to_string(nix::HashFormat::Base16,
+                                                 false));
   }
   auto maybeLstat(const nix::CanonPath& p) -> std::optional<Stat> override {
     auto result = next_->maybeLstat(p);
@@ -208,9 +217,8 @@ class EvaluationReads : public nix::SourceAccessor {
     }
     return "unknown";
   }
-  auto remember(char op, const nix::CanonPath& p, const std::string& value,
-                bool filtered = false) -> void {
-    if (!reusable) return;
+  auto should_record(const nix::CanonPath& p, bool filtered = false) -> bool {
+    if (!reusable) return false;
     if (store_path(p)) {
       const auto end = p.abs().find('/', std::string("/nix/store/").size());
       const auto root = p.abs().substr(0, end);
@@ -221,7 +229,7 @@ class EvaluationReads : public nix::SourceAccessor {
         else
           store_roots.insert(root);
       }
-      if (store_roots.contains(root) && !filtered) return;
+      if (store_roots.contains(root) && !filtered) return false;
     }
     // Bounded auxiliary memory even for a definition enumerating a huge tree.
     // Such evaluations still work, but are not reused.
@@ -229,8 +237,15 @@ class EvaluationReads : public nix::SourceAccessor {
       reusable = false;
       reads_.clear();
       hashes_.clear();
-      return;
     }
+    return reusable;
+  }
+  auto remember(char op, const nix::CanonPath& p, const std::string& value,
+                bool filtered = false) -> void {
+    if (should_record(p, filtered)) record(op, p, value);
+  }
+  auto record(char op, const nix::CanonPath& p, const std::string& value)
+      -> void {
     auto [it, inserted] = reads_.emplace(Key{op, p.abs()}, value);
     if (!inserted && it->second != value) reusable = false;
   }
