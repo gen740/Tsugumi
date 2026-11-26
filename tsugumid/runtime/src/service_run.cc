@@ -990,13 +990,14 @@ auto artifact_key(std::string_view text) -> ArtifactKey {
   throw Failed(FailureKind::invalid_request, "invalid artifact UUID");
 }
 
-auto remove_artifact_tree(const stdfs::path& tree) -> uint64_t {
+auto remove_artifact_tree(const stdfs::path& tree, bool measure = true)
+    -> uint64_t {
   const auto status = stdfs::symlink_status(tree);
   if (!stdfs::exists(status)) return 0;
   if (!stdfs::is_directory(status))
     throw Failed(FailureKind::invalid_path,
                  "artifact storage is not a directory");
-  const auto size = fs::directory_size(tree);
+  const auto size = measure ? fs::directory_size(tree) : 0;
   fs::clear_staging(tree);
   stdfs::remove(tree);
   return size;
@@ -1013,12 +1014,36 @@ auto Service::resolve_artifact(const ArtifactKey& id) -> stdfs::path {
   });
 }
 
-auto Service::expire_artifacts(sql::Db& db, const std::string& run_id) -> void {
+auto Service::expire_artifacts(sql::Db& db, const std::string& run_id,
+                               DetachedArtifacts& detached) -> void {
+  const auto state = store_->state_dir();
   for (const auto& artifact : History::transient_artifacts(db, run_id)) {
-    remove_artifact_tree(artifact_location(store_->state_dir(), artifact));
     db.prepare("DELETE FROM artifacts WHERE id=?")
         .bind_blob(1, artifact.id)
         .run();
+    const auto original = artifact_location(state, artifact);
+    const auto status = stdfs::symlink_status(original);
+    if (!stdfs::exists(status)) continue;
+    if (!stdfs::is_directory(status))
+      throw Failed(FailureKind::invalid_path,
+                   "artifact storage is not a directory");
+    auto target = original.parent_path() / (".delete-" + crypto::uuid4());
+    detached.emplace_back(original, std::move(target));
+    stdfs::rename(original, detached.back().second);
+  }
+}
+
+auto Service::finish_artifact_expiry(const DetachedArtifacts& detached,
+                                     bool committed) -> void {
+  for (const auto& [original, target] : detached) {
+    try {
+      if (committed)
+        remove_artifact_tree(target, false);
+      else if (stdfs::exists(stdfs::symlink_status(target)))
+        stdfs::rename(target, original);
+    } catch (const std::exception& error) {
+      log::warn("artifact expiry: " + std::string(error.what()));
+    }
   }
 }
 
@@ -1066,6 +1091,7 @@ auto Service::collect_unrecorded_run_files() -> void {
     bytes += remove_artifact_tree(path);
     ++count;
   };
+  constexpr std::string_view prefix = ".delete-";
   const auto visit_card = [&](const auto& visit, const stdfs::path& card,
                               bool has_card) -> void {
     for (const auto& entry : stdfs::directory_iterator(card)) {
@@ -1074,9 +1100,14 @@ auto Service::collect_unrecorded_run_files() -> void {
       if (has_card && name.starts_with('@') &&
           is_counter(std::string_view(name).substr(1))) {
         for (const auto& leaf : stdfs::directory_iterator(entry.path())) {
-          if (!is_counter(leaf.path().filename().string()) ||
-              !is_directory(leaf.path()))
+          if (!is_directory(leaf.path())) continue;
+          const auto leaf_name = leaf.path().filename().string();
+          if (leaf_name.starts_with(prefix) &&
+              crypto::is_uuid(leaf_name.substr(prefix.size()))) {
+            remove_artifact(leaf.path());
             continue;
+          }
+          if (!is_counter(leaf_name)) continue;
           const auto location = ".tsugumi/" +
               leaf.path().lexically_relative(state).generic_string();
           if (!locations.contains(location)) remove_artifact(leaf.path());
@@ -1087,7 +1118,6 @@ auto Service::collect_unrecorded_run_files() -> void {
     }
   };
   if (is_directory(state) && is_directory(artifacts)) {
-    constexpr std::string_view prefix = ".delete-";
     for (const auto& entry : stdfs::directory_iterator(artifacts)) {
       if (!is_directory(entry.path())) continue;
       const auto name = entry.path().filename().string();
@@ -1095,7 +1125,7 @@ auto Service::collect_unrecorded_run_files() -> void {
         visit_card(visit_card, entry.path(), false);
       } else if (name.starts_with(prefix)) {
         const auto suffix = name.substr(prefix.size());
-        if (crypto::is_run_id(suffix) || crypto::is_uuid(suffix))
+        if (crypto::is_run_id(suffix))
           remove_artifact(entry.path());
       }
     }
