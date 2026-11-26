@@ -9,6 +9,9 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <climits>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -25,6 +28,53 @@ namespace {
 // number of deliveries bounded by elapsed time and volume, not by reads.
 constexpr auto kStderrFlushInterval = std::chrono::milliseconds(50);
 constexpr size_t kStderrFlushBytes = 256 << 10;
+
+#ifdef __linux__
+// Use the kernel directory records directly: libc directory streams may
+// allocate or lock after fork. Enumerating the open descriptors also covers
+// descriptors above a subsequently lowered RLIMIT_NOFILE.
+template <class Keep>
+auto close_open_fds(Keep keep) -> bool {
+  struct DirEntry {
+    uint64_t inode;
+    int64_t offset;
+    uint16_t length;
+    uint8_t type;
+    char name;
+  };
+  const int dir = ::open("/proc/self/fd", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (dir < 0) return false;
+  alignas(DirEntry) char buffer[4096];
+  while (true) {
+    const long count = ::syscall(SYS_getdents64, dir, buffer, sizeof buffer);
+    if (count < 0 && errno == EINTR) continue;
+    if (count <= 0) {
+      const int error = errno;
+      ::close(dir);
+      errno = error;
+      return count == 0;
+    }
+    for (long pos = 0; pos < count;) {
+      uint16_t length;
+      std::memcpy(&length, buffer + pos + offsetof(DirEntry, length),
+                  sizeof length);
+      const char* name = buffer + pos + offsetof(DirEntry, name);
+      pos += length;
+      if (*name < '0' || *name > '9') continue;
+      int fd = 0;
+      for (; *name; ++name) fd = fd * 10 + (*name - '0');
+      // Linux releases the descriptor even when close reports EINTR.
+      if (fd >= 3 && fd != dir && !keep(fd) &&
+          ::close(fd) != 0 && errno != EBADF && errno != EINTR) {
+        const int error = errno;
+        ::close(dir);
+        errno = error;
+        return false;
+      }
+    }
+  }
+}
+#endif
 
 }  // namespace
 
@@ -43,7 +93,15 @@ pid_t spawn(const Spec& spec) {
     throw std::invalid_argument("too many fds for a child");
   std::pair<int, int> mapped[kMaxFds];
   size_t nmapped = 0;
-  for (auto [child, parent] : spec.fds) mapped[nmapped++] = {child, parent};
+  for (auto [child, parent] : spec.fds) {
+    if (child < 0 || child == INT_MAX)
+      throw std::invalid_argument("invalid child fd");
+    mapped[nmapped++] = {child, parent};
+  }
+#ifndef __linux__
+  const long max_fd = ::sysconf(_SC_OPEN_MAX);
+  if (max_fd < 0) throw std::runtime_error("cannot determine descriptor limit");
+#endif
   int err_pipe[2];
   if (::pipe(err_pipe) != 0) throw std::runtime_error("pipe failed");
   ::fcntl(err_pipe[1], F_SETFD, FD_CLOEXEC);
@@ -103,6 +161,10 @@ pid_t spawn(const Spec& spec) {
       ::close(err_pipe[1]);
       err_pipe[1] = moved;
     }
+    if (err_pipe[1] == INT_MAX) {
+      errno = EMFILE;
+      fail(kOpSetup);
+    }
     if (err_pipe[1] >= min_temp) min_temp = err_pipe[1] + 1;
     // Move mapped fds to high numbers first to avoid clobbering.
     for (size_t i = 0; i < nmapped; ++i) {
@@ -120,18 +182,32 @@ pid_t spawn(const Spec& spec) {
         if (fd == mapped[i].first) return true;
       return false;
     };
+#ifdef __linux__
+    bool all_closed = false;
 #ifdef SYS_close_range
-    int from = 3;
-    for (int fd = 3; fd <= 1024 + 64; ++fd)
-      if (keep(fd)) {
-        if (fd > from) ::syscall(SYS_close_range, from, fd - 1, 0);
-        from = fd + 1;
-      }
-    ::syscall(SYS_close_range, from, ~0u, 0);
+    unsigned preserved[kMaxFds + 1];
+    size_t count = 0;
+    preserved[count++] = static_cast<unsigned>(err_pipe[1]);
+    for (size_t i = 0; i < nmapped; ++i)
+      if (mapped[i].first >= 3)
+        preserved[count++] = static_cast<unsigned>(mapped[i].first);
+    std::sort(preserved, preserved + count);
+    unsigned from = 3;
+    all_closed = true;
+    for (size_t i = 0; i < count && all_closed; ++i) {
+      const auto fd = preserved[i];
+      if (fd < from) continue;
+      if (fd > from)
+        all_closed = ::syscall(SYS_close_range, from, fd - 1, 0) == 0;
+      from = fd + 1;
+    }
+    if (all_closed)
+      all_closed = ::syscall(SYS_close_range, from, UINT_MAX, 0) == 0;
+#endif
+    if (!all_closed && !close_open_fds(keep)) fail(kOpSetup);
 #else
-    long max = ::sysconf(_SC_OPEN_MAX);
-    for (int fd = 3; fd < (max > 0 ? max : 65536); ++fd)
-      if (!keep(fd)) ::close(fd);
+    for (int fd = 3; fd < max_fd; ++fd)
+      if (!keep(fd) && ::close(fd) != 0 && errno != EBADF) fail(kOpSetup);
 #endif
     if (!spec.cgroup_procs.empty()) {
       const int fd = ::open(spec.cgroup_procs.c_str(), O_WRONLY | O_CLOEXEC);
