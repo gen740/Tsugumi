@@ -57,6 +57,18 @@ TEST(WorkerPoolOwnership, ClearsProjectScratch) {
   EXPECT_FALSE(stdfs::exists(project));
 }
 
+TEST(WorkerPoolOwnership, FailedConstructionRemovesScratch) {
+  const auto project =
+      stdfs::temp_directory_path() / ("tsugumi-pool-" + crypto::uuid4());
+  WorkerPool pool(project);
+  WorkerSpawn spawn;
+  spawn.artifact_staging = project / "blocked";
+  fs::write_atomic(spawn.artifact_staging, "not a directory");
+  EXPECT_THROW(pool.acquire("card", "version", spawn, false),
+               stdfs::filesystem_error);
+  EXPECT_FALSE(stdfs::exists(project / "w1"));
+}
+
 TEST(WorkerDisposition, CardFailuresAndMissingRequiredOutputsDiscardResidents) {
   for (const auto kind :
        {FailureKind::worker_failed, FailureKind::output_invalid,

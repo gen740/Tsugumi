@@ -446,8 +446,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp)
     : packed_(sp.packed), scratch_(sp.scratch) {
   if (!sp.artifact_staging.empty())
     artifact_scratch_ = sp.artifact_staging / crypto::uuid4();
-  // Construction failures clean up private artifact staging before the
-  // partially constructed worker can be handed to the pool.
+  // Neither scratch tree has an owner until construction succeeds.
   struct StagingGuard {
     std::filesystem::path path;
     ~StagingGuard() {
@@ -455,7 +454,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp)
       std::error_code ec;
       std::filesystem::remove_all(path, ec);
     }
-  } artifact_guard{artifact_scratch_};
+  } artifact_guard{artifact_scratch_}, scratch_guard{scratch_};
 #ifdef __APPLE__
   // O_EVTONLY still needs read permission on Darwin. Repair an unreadable
   // directory with exactly the Card's identity and sandbox, then open it with
@@ -810,6 +809,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp)
     if (!sp.channels_borrowed) start_data_reader();
     resume_logs();
     artifact_guard.path.clear();
+    scratch_guard.path.clear();
   } catch (...) {
     terminate(true);
     throw;
