@@ -135,8 +135,7 @@ auto WebPages::OpenBrowser(const std::string& project) -> bool {
                                      "url.dll,FileProtocolHandler", url}
           : std::vector<std::string>{"xdg-open", url};
 #endif
-  Spawn(std::move(argv));
-  return true;
+  return Spawn(std::move(argv));
 }
 
 auto WebPages::Tell(const PageId& page, const std::string& project,

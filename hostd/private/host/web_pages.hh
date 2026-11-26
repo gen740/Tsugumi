@@ -43,7 +43,7 @@ class WebPages {
              const std::string& key) -> void;
   /** The origin, without the key; empty while not serving. */
   auto Url() -> std::string;
-  /** Opens the page in the default browser. False: not serving. */
+  /** Opens the page in the default browser. False if not serving or the launcher cannot start. */
   auto OpenBrowser(const std::string& project = {}) -> bool;
 
   struct Shown {
