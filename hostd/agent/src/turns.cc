@@ -16,6 +16,7 @@
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json_object.hh"
+#include "tsugumi/util/log.hh"
 
 extern const unsigned char tsugumi_agent_system_prompt[];
 extern const unsigned long tsugumi_agent_system_prompt_size;
@@ -122,7 +123,8 @@ auto Turns::ConversationResult(uint64_t request_id, const Conversation& c)
   latest.bind(1, c.id);
   const auto state = latest.step() ? latest.text(0) : "";
   const bool busy = running.contains(c.id);
-  const bool resumable = !busy && state == "interrupted";
+  // A finalization failure can leave the durable row in its running state.
+  const bool resumable = !busy && (state == "interrupted" || state == "running");
   const bool continuable =
       resumable || (!busy && (state == "cancelled" || state == "failed") &&
                     latest.is_null(2));
@@ -392,7 +394,8 @@ auto Turns::Start(bool human, const std::string& id, const std::string& turn,
         "LIMIT 1");
     previous.bind(1, id);
     if (previous.step()) {
-      const auto state = previous.text(1);
+      auto state = previous.text(1);
+      if (state == "running") state = "interrupted";
       const bool has_frame = !previous.is_null(3);
       const bool scoped = !previous.is_null(5);
       const bool resume = turn.empty() && action == A::Action::Resume;
@@ -485,128 +488,151 @@ auto Turns::Start(bool human, const std::string& id, const std::string& turn,
                       : action == A::Action::Compact ? "compact"
                                                      : "model");
   if (c.title.empty() && !text.empty()) {
-    auto q = store.prepare(
-        "UPDATE conversations SET title=? WHERE id=?");
+    auto q = store.prepare("UPDATE conversations SET title=? WHERE id=?");
     q.bind(1, Excerpt(dependencies.scrub(text), 0, 160)).bind(2, id).run();
   }
   tx.commit();
   // Once a job clears running, it never needs the mutex again. Reap it
   // from a different thread before launching more work.
-  std::erase_if(jobs, [&](const auto& job) {
-    return !running.contains(job.first);
-  });
+  std::erase_if(jobs,
+                [&](const auto& job) { return !running.contains(job.first); });
   auto& context = context_usage[id];
   if (!context) context = std::make_shared<ContextUsage>();
   running.insert(id);
   ThoughtsFor(id)->TurnStarted();
-  jobs[id] = {c.project, std::make_shared<std::jthread>([this, id, turn = active_turn,
-                                             config, context, role = c.role,
-                                             project = c.project,
-                                             task = std::move(task),
-                                             approval_digest =
-                                                 std::move(approval_digest),
-                                             messages = std::move(messages),
-                                             pending_frame =
-                                                 std::move(pending_frame),
-                                             pending_index, action](
-                                                std::stop_token stop) mutable {
-    std::string final_state = "finished";
-    try {
-      if (approval_digest) {
-        const auto authorization = access_service.AuthorizeTurn(
-            project, id, turn, *approval_digest, task, stop);
-        RecordOperation(id, "model");
-        const auto result = json::Object(
-            dependencies.run_helper(id, turn, 0, task, stop, authorization));
-        if (stop.stop_requested()) throw Cancelled();
-        if (const auto error = json::Text(result, "error"); !error.empty())
-          throw Failure("helper_failed", error);
-        auto answer = Helpers::LastAnswer(
-            ParseMessages(json::Get(result, "messages", "[]")));
-        if (!answer.content.empty()) {
-          for (auto& block : answer.content) block.resource_ids = {project};
-          messages.push_back(std::move(answer));
-        }
-      } else {
-        if (!pending_frame.empty()) {
-          const auto* send = A::GetMessage(pending_frame.data())
-                                 ->payload_as_Request()
-                                 ->value_as_ConversationSendRequest();
-          auto block = PrepareSend(send, stop);
-          std::lock_guard lock(mutex);
-          if (stop.stop_requested()) throw Cancelled();
-          messages[pending_index].content = {std::move(block)};
-          auto& store = conversations->ConversationDatabase(id);
-          sql::Transaction tx(store);
-          conversations->SaveMessages(id, messages,
-                                      ConversationStore::SaveMode::PrepareSend);
-          auto pending = store.prepare(
-              "UPDATE conversation_turns SET frame=NULL,message_index=NULL "
-              "WHERE conversation=? AND id=?");
-          pending.bind(1, id).bind(2, turn).run();
-          tx.commit();
-        }
-        RecordOperation(id, action == A::Action::Compact ? "compact" : "model");
-        auto hooks = dependencies.hooks(id);
-        const auto system = System(role == "guide") + AutomaticSkills(id, stop, hooks);
-        if (action == A::Action::Compact) {
-          Runtime().Compact(config, system, messages,
-                            dependencies.specs(role == "guide"), stop, hooks,
-                            context.get());
-          *context = {};
-        } else {
-          const auto result = Runtime().Run(config, system, messages,
-                                            dependencies.specs(role == "guide"),
-                                            stop, hooks, context.get());
-          if (result.outcome == RunOutcome::Cancelled)
-            final_state = "cancelled";
-          else if (result.outcome == RunOutcome::Failed)
-            final_state = "failed";
-          AddUsage(id, result.usage);
-        }
-      }
-    } catch (const Cancelled&) {
-      final_state = "cancelled";
-    } catch (const std::exception& error) {
-      final_state = "failed";
-      dependencies.event(id, json::Encode(json::Members{
-                                 {"kind", json::Quote("error")},
-                                 {"code", json::Quote(RuntimeErrorCode(error))},
-                                 {"message", json::Quote(error.what())}}));
-    }
-    std::lock_guard lock(mutex);
-    if (stop.stop_requested()) {
-      auto previous = conversations->ConversationDatabase(id).prepare(
-          "SELECT state FROM conversation_turns WHERE conversation=? AND id=?");
-      previous.bind(1, id).bind(2, turn);
-      const bool explicitly_cancelled =
-          previous.step() && previous.text(0) == "cancelled";
-      final_state =
-          stopping && !explicitly_cancelled ? "interrupted" : "cancelled";
-    }
-    auto& store = conversations->ConversationDatabase(id);
-    sql::Transaction tx(store);
-    if (approval_digest && final_state == "finished")
-      conversations->SaveMessages(id, messages);
-    // A preparation failure leaves the original send available for retry.
-    // Preparation clears the frame in the same transaction as saving input.
-    const bool retain_frame = final_state == "interrupted" ||
-                              (final_state == "failed" && !approval_digest);
-    auto q = store.prepare(
-        "UPDATE conversation_turns SET state=?1,"
-        "frame=CASE WHEN ?2 THEN frame END,"
-        "message_index=CASE WHEN ?2 THEN message_index END "
-        "WHERE conversation=?3 AND id=?4");
-    q.bind(1, final_state)
-        .bind(2, retain_frame)
-        .bind(3, id)
-        .bind(4, turn)
-        .run();
-    tx.commit();
-    if (final_state == "cancelled") access_service.CancelTurnApproval(id, turn);
-    dependencies.event(id, R"({"kind":"finished"})");
-    running.erase(id);
-  })};
+  jobs[id] = {
+      c.project,
+      std::make_shared<std::jthread>(
+          [this, id, turn = active_turn, config, context, role = c.role,
+           project = c.project, task = std::move(task),
+           approval_digest = std::move(approval_digest),
+           messages = std::move(messages),
+           pending_frame = std::move(pending_frame), pending_index,
+           action](std::stop_token stop) mutable {
+            try {
+              std::string final_state = "finished";
+              try {
+                if (approval_digest) {
+                  const auto authorization = access_service.AuthorizeTurn(
+                      project, id, turn, *approval_digest, task, stop);
+                  RecordOperation(id, "model");
+                  const auto result = json::Object(dependencies.run_helper(
+                      id, turn, 0, task, stop, authorization));
+                  if (stop.stop_requested()) throw Cancelled();
+                  if (const auto error = json::Text(result, "error");
+                      !error.empty())
+                    throw Failure("helper_failed", error);
+                  auto answer = Helpers::LastAnswer(
+                      ParseMessages(json::Get(result, "messages", "[]")));
+                  if (!answer.content.empty()) {
+                    for (auto& block : answer.content)
+                      block.resource_ids = {project};
+                    messages.push_back(std::move(answer));
+                  }
+                } else {
+                  if (!pending_frame.empty()) {
+                    const auto* send = A::GetMessage(pending_frame.data())
+                                           ->payload_as_Request()
+                                           ->value_as_ConversationSendRequest();
+                    auto block = PrepareSend(send, stop);
+                    std::lock_guard lock(mutex);
+                    if (stop.stop_requested()) throw Cancelled();
+                    messages[pending_index].content = {std::move(block)};
+                    auto& store = conversations->ConversationDatabase(id);
+                    sql::Transaction tx(store);
+                    conversations->SaveMessages(
+                        id, messages, ConversationStore::SaveMode::PrepareSend);
+                    auto pending = store.prepare(
+                        "UPDATE conversation_turns SET "
+                        "frame=NULL,message_index=NULL "
+                        "WHERE conversation=? AND id=?");
+                    pending.bind(1, id).bind(2, turn).run();
+                    tx.commit();
+                  }
+                  RecordOperation(
+                      id, action == A::Action::Compact ? "compact" : "model");
+                  auto hooks = dependencies.hooks(id);
+                  const auto system = System(role == "guide") +
+                                      AutomaticSkills(id, stop, hooks);
+                  if (action == A::Action::Compact) {
+                    Runtime().Compact(config, system, messages,
+                                      dependencies.specs(role == "guide"), stop,
+                                      hooks, context.get());
+                    *context = {};
+                  } else {
+                    const auto result =
+                        Runtime().Run(config, system, messages,
+                                      dependencies.specs(role == "guide"), stop,
+                                      hooks, context.get());
+                    if (result.outcome == RunOutcome::Cancelled)
+                      final_state = "cancelled";
+                    else if (result.outcome == RunOutcome::Failed)
+                      final_state = "failed";
+                    AddUsage(id, result.usage);
+                  }
+                }
+              } catch (const Cancelled&) {
+                final_state = "cancelled";
+              } catch (const std::exception& error) {
+                final_state = "failed";
+                try {
+                  dependencies.event(
+                      id, json::Encode(json::Members{
+                              {"kind", json::Quote("error")},
+                              {"code", json::Quote(RuntimeErrorCode(error))},
+                              {"message", json::Quote(error.what())}}));
+                } catch (...) {
+                  // Event storage can fail for the same reason as the turn.
+                }
+              }
+              std::lock_guard lock(mutex);
+              if (stop.stop_requested()) {
+                auto previous = conversations->ConversationDatabase(id).prepare(
+                    "SELECT state FROM conversation_turns WHERE conversation=? "
+                    "AND id=?");
+                previous.bind(1, id).bind(2, turn);
+                const bool explicitly_cancelled =
+                    previous.step() && previous.text(0) == "cancelled";
+                final_state = stopping && !explicitly_cancelled ? "interrupted"
+                                                                : "cancelled";
+              }
+              auto& store = conversations->ConversationDatabase(id);
+              sql::Transaction tx(store);
+              if (approval_digest && final_state == "finished")
+                conversations->SaveMessages(id, messages);
+              // A preparation failure leaves the original send available for
+              // retry. Preparation clears the frame in the same transaction as
+              // saving input.
+              const bool retain_frame =
+                  final_state == "interrupted" ||
+                  (final_state == "failed" && !approval_digest);
+              auto q = store.prepare(
+                  "UPDATE conversation_turns SET state=?1,"
+                  "frame=CASE WHEN ?2 THEN frame END,"
+                  "message_index=CASE WHEN ?2 THEN message_index END "
+                  "WHERE conversation=?3 AND id=?4");
+              q.bind(1, final_state)
+                  .bind(2, retain_frame)
+                  .bind(3, id)
+                  .bind(4, turn)
+                  .run();
+              tx.commit();
+              if (final_state == "cancelled")
+                access_service.CancelTurnApproval(id, turn);
+              dependencies.event(id, R"({"kind":"finished"})");
+              running.erase(id);
+            } catch (...) {
+              std::lock_guard lock(mutex);
+              running.erase(id);
+              try {
+                log::error("Agent turn failed during finalization");
+                dependencies.event(id, R"({"kind":"finished"})");
+              } catch (...) {
+                // The durable turn is still recoverable if the database is
+                // unavailable.
+              }
+            }
+          })};
 }
 
 auto Turns::SummaryReply(uint64_t id, std::string_view raw) -> std::string {
