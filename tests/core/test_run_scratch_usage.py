@@ -92,18 +92,31 @@ def test_past_run_scratch_stays_until_explicit_deletion(core_factory, project, t
     usage_when(daemon.connect(), lambda u: current(u).scratchBytes == 0)
 
 
-def test_startup_keeps_scratch_without_history(core_factory, tmp_path):
-    """Orphan scratch is reported and removed only by an explicit selection."""
+def test_startup_collects_unrecorded_run_files(core_factory, project, tmp_path):
     scratch = tmp_path / "scratch"
-    orphan = scratch / "runs" / "97"
-    orphan.mkdir(parents=True)
-    (orphan / "unfinished-output").write_bytes(b"orphaned scratch")
-    daemon = core_factory(mocked_builds=True, args=["--run-scratch-dir", str(scratch)])
-    client = daemon.connect()
-    usage_when(client, lambda u: current(u).scratchBytes == len(b"orphaned scratch"))
-    assert (orphan / "unfinished-output").read_bytes() == b"orphaned scratch"
-    client.call("RunScratchDeleteRequest", opId=new_id(), paths=[f"runs/{orphan.name}"])
-    assert not orphan.exists()
+    artifacts = project / ".tsugumi" / "artifacts"
+    orphan = [
+        scratch / "runs" / "97",
+        artifacts / "97" / "outer" / "inner" / "@1" / "0",
+        artifacts / ".delete-97",
+    ]
+    unrelated = [
+        scratch / "runs" / "manual",
+        artifacts / "97" / "card" / "@01" / "0",
+        artifacts / "97" / "@1" / "0",
+        artifacts / ".delete-manual",
+        project / ".tsugumi" / "other" / "97",
+    ]
+    for directory in orphan + unrelated:
+        directory.mkdir(parents=True)
+        (directory / "file").write_bytes(b"example")
+    link = artifacts / "97" / "card" / "@1" / "1"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(unrelated[-1], target_is_directory=True)
+    core_factory(mocked_builds=True, args=["--run-scratch-dir", str(scratch)]).connect()
+    assert all(not path.exists() for path in orphan)
+    assert all((path / "file").read_bytes() == b"example" for path in unrelated)
+    assert link.is_symlink()
 
 
 def test_failed_acceptance_preserves_previous_scratch(core_factory, project, tmp_path):
@@ -176,11 +189,11 @@ def test_more_than_two_builds_remain_registered(core_factory, project, tmp_path)
 def test_scratch_deletion_refuses_active_run(core_factory, project, tmp_path):
     scratch = tmp_path / "scratch"
     orphan = scratch / "runs" / "97"
-    orphan.mkdir(parents=True)
-    (orphan / "evidence").write_text("keep while running")
     daemon = core_factory(mocked_builds=True, mocked_worker=True,
                           args=["--run-scratch-dir", str(scratch)])
     client = daemon.connect()
+    orphan.mkdir(parents=True)
+    (orphan / "evidence").write_text("keep while running")
     gate = Gate(tmp_path, "running")
     worker_project(client, project, tmp_path, [gate.action(),
         {"op": "output", "port": "out", "type": "string", "value": "done"},
@@ -204,16 +217,15 @@ def test_unreadable_scratch_is_listed_and_explicitly_deletable(core_factory, tmp
     scratch = tmp_path / "scratch"
     locked = scratch / "runs" / "97"
     other = scratch / "runs" / "98"
+    client = core_factory(mocked_builds=True, args=["--run-scratch-dir", str(scratch)]).connect()
     (locked / "private").mkdir(parents=True)
     other.mkdir(parents=True)
     (locked / "private" / "value").write_bytes(b"unknown")
     (other / "value").write_bytes(b"known")
     (locked / "private").chmod(0)
     try:
-        client = core_factory(mocked_builds=True, args=["--run-scratch-dir", str(scratch)]).connect()
-        # Startup creates nothing in run scratch, so only these are listed.
         expected = {f"runs/{locked.name}", f"runs/{other.name}"}
-        usage = usage_when(client, lambda u: {text(p.path) for p in current(u).runScratch} == expected)
+        usage = usage_when(client, lambda u: {text(p.path) for p in (current(u).runScratch or [])} == expected)
         folders = {text(p.path): p for p in current(usage).runScratch}
         assert folders[f"runs/{locked.name}"].sizeUnknown
         assert not folders[f"runs/{other.name}"].sizeUnknown

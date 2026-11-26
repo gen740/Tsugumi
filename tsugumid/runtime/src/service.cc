@@ -317,8 +317,8 @@ void Service::open() {
   remote_execution_ =
       std::make_unique<RemoteExecutionService>(*this, remote_jobs_);
   scheduler_ = std::make_unique<Scheduler>(*this);
-  recover_artifact_deletions();
   scheduler_->recover_interrupted();
+  collect_unrecorded_run_files();
   if (packed_builds_) {
 #ifdef __APPLE__
     if (packed_builds_->fast) {
@@ -2651,8 +2651,6 @@ void Service::history_category_delete(RequestIn& req) {
     const auto receipt = finish_receipt(
         b, op_id, R::ReceiptValue::RunCategoryDeleteResult, result.Union());
     history_->write_sync([&](sql::Db& db) {
-      if (category == R::RunRecordCategory::Artifacts)
-        detach_run_artifacts(run_id);
       History::delete_category(db, run_id, category);
       History::put_receipt(db, op_id, kind, digest, receipt);
     });

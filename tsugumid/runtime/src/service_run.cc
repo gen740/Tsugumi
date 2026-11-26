@@ -10,6 +10,7 @@
 #include <stop_token>
 
 #include "nix.hh"
+#include "run_scratch.hh"
 #include "scheduler.hh"
 #include "service.hh"
 #include "tsugumi/document/schema_id.hh"
@@ -1037,23 +1038,83 @@ auto Service::remove_run_artifacts(const std::string& run_id) -> uint64_t {
   return remove_artifact_tree(detach_run_artifacts(run_id));
 }
 
-auto Service::recover_artifact_deletions() -> void {
-  const auto root = store_->state_dir() / "artifacts";
-  if (!stdfs::is_directory(stdfs::symlink_status(root))) return;
-  constexpr std::string_view prefix = ".delete-";
-  for (const auto& entry : stdfs::directory_iterator(root)) {
-    const auto name = entry.path().filename().string();
-    if (!name.starts_with(prefix) ||
-        !stdfs::is_directory(entry.symlink_status()))
-      continue;
-    const auto run = name.substr(prefix.size());
-    if (!crypto::is_run_id(run)) continue;
-    // A user deletion was interrupted after moving the directory aside.
-    history_->write_sync([&](sql::Db& db) {
-      History::delete_category(db, run, R::RunRecordCategory::Artifacts);
-    });
-    remove_artifact_tree(entry.path());
+auto Service::collect_unrecorded_run_files() -> void {
+  const auto state = store_->state_dir();
+  const auto artifacts = state / "artifacts";
+  const auto scratch = run_scratch_ / "runs";
+  const auto [locations, runs] = history_->read([](sql::Db& db) {
+    std::pair<std::set<std::string>, std::set<std::string>> recorded;
+    auto artifacts = db.prepare("SELECT location FROM artifacts");
+    while (artifacts.step()) recorded.first.insert(artifacts.text(0));
+    auto runs = db.prepare("SELECT run_id FROM runs");
+    while (runs.step()) recorded.second.insert(runs.text(0));
+    return recorded;
+  });
+  const auto is_directory = [](const stdfs::path& path) {
+    return stdfs::is_directory(stdfs::symlink_status(path));
+  };
+  const auto is_counter = [](std::string_view name) {
+    uint64_t number = 0;
+    const auto end = name.data() + name.size();
+    const auto [parsed, error] = std::from_chars(name.data(), end, number);
+    return error == std::errc{} && parsed == end &&
+           (name.size() == 1 || name.front() != '0');
+  };
+  size_t count = 0;
+  uint64_t bytes = 0;
+  const auto remove_artifact = [&](const stdfs::path& path) {
+    bytes += remove_artifact_tree(path);
+    ++count;
+  };
+  const auto visit_card = [&](const auto& visit, const stdfs::path& card,
+                              bool has_card) -> void {
+    for (const auto& entry : stdfs::directory_iterator(card)) {
+      if (!is_directory(entry.path())) continue;
+      const auto name = entry.path().filename().string();
+      if (has_card && name.starts_with('@') &&
+          is_counter(std::string_view(name).substr(1))) {
+        for (const auto& leaf : stdfs::directory_iterator(entry.path())) {
+          if (!is_counter(leaf.path().filename().string()) ||
+              !is_directory(leaf.path()))
+            continue;
+          const auto location = ".tsugumi/" +
+              leaf.path().lexically_relative(state).generic_string();
+          if (!locations.contains(location)) remove_artifact(leaf.path());
+        }
+      } else if (valid_id(name)) {
+        visit(visit, entry.path(), true);
+      }
+    }
+  };
+  if (is_directory(state) && is_directory(artifacts)) {
+    constexpr std::string_view prefix = ".delete-";
+    for (const auto& entry : stdfs::directory_iterator(artifacts)) {
+      if (!is_directory(entry.path())) continue;
+      const auto name = entry.path().filename().string();
+      if (crypto::is_run_id(name)) {
+        visit_card(visit_card, entry.path(), false);
+      } else if (name.starts_with(prefix)) {
+        const auto suffix = name.substr(prefix.size());
+        if (crypto::is_run_id(suffix) || crypto::is_uuid(suffix))
+          remove_artifact(entry.path());
+      }
+    }
   }
+  if (is_directory(scratch)) {
+    for (const auto& entry : stdfs::directory_iterator(scratch)) {
+      const auto name = entry.path().filename().string();
+      if (!crypto::is_run_id(name) || runs.contains(name) ||
+          !is_directory(entry.path()))
+        continue;
+      const auto size = fs::directory_size(entry.path());
+      if (remove_run_scratch(entry.path())) {
+        bytes += size;
+        ++count;
+      }
+    }
+  }
+  log::info("history: removed " + std::to_string(count) +
+            " unrecorded directories (" + std::to_string(bytes) + " bytes)");
 }
 
 auto Service::artifact_destination(const InvocationSummaryData& invocation)

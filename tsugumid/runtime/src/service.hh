@@ -154,7 +154,7 @@ class Service : public RequestSink {
                         std::span<const CreatedArtifact> created) -> void;
   auto expire_artifacts(sql::Db& db, const std::string& run_id) -> void;
   auto detach_run_artifacts(const std::string& run_id) -> std::filesystem::path;
-  auto recover_artifact_deletions() -> void;
+  auto collect_unrecorded_run_files() -> void;
   auto remove_run_artifacts(const std::string& run_id) -> uint64_t;
   // The backend that runs the Cards naming execution service `id`.
   auto invalidate_resident(const std::string& card) -> void;
