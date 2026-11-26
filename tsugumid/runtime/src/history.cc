@@ -2040,6 +2040,7 @@ std::vector<std::string> History::delete_runs(
     const std::optional<std::vector<std::string>>& run_ids) {
   std::vector<std::string> ids;
   write_sync([&](sql::Db& db) {
+    std::vector<std::string> selected_ids;
     db.exec(
         "CREATE TEMP TABLE IF NOT EXISTS deleting_runs(run_id TEXT PRIMARY "
         "KEY); DELETE FROM temp.deleting_runs");
@@ -2058,7 +2059,7 @@ std::vector<std::string> History::delete_runs(
     while (selected.step()) {
       const auto id = selected.text(0);
       if (!run_ids || std::ranges::find(*run_ids, id) != run_ids->end())
-        ids.push_back(id);
+        selected_ids.push_back(id);
     }
     // Saved inputs intentionally outlive deleted runs; schema objects may still
     // be needed by them.
@@ -2070,11 +2071,12 @@ std::vector<std::string> History::delete_runs(
           "active_environments", "run_definition_paths"}) {
       auto remove =
           db.prepare(std::string("DELETE FROM ") + table + " WHERE run_id=?");
-      for (const auto& id : ids) {
+      for (const auto& id : selected_ids) {
         remove.reset();
         remove.bind(1, id).run();
       }
     }
+    ids = std::move(selected_ids);
   });
   return ids;
 }
