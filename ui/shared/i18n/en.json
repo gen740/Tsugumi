@@ -3,7 +3,7 @@
   "すべて測り直す": "Measure all again",
   "計測が完了しました。": "Measurement complete.",
   "計測中…": "Measuring…",
-  "{0} の計測結果": "Measurements for {0}",
+  "{0} の計測結果": {"text": "Measurements for {0}", "mac": ["@"]},
   "計測に失敗しました": "Measurement failed",
   "計測なし（同順位）": "No probe (tied)",
   "スコア": "Score",
