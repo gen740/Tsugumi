@@ -114,7 +114,7 @@ class EvaluationReads : public nix::SourceAccessor {
                                                  false));
   }
   auto maybeLstat(const nix::CanonPath& p) -> std::optional<Stat> override {
-    auto result = next_->maybeLstat(p);
+    auto result = fresh_lstat(p);
     remember('s', p, stat_text(result));
     return result;
   }
@@ -161,6 +161,12 @@ class EvaluationReads : public nix::SourceAccessor {
     // directory listing or a negative lookup of a not-yet-existing object.
     return p.abs().starts_with("/nix/store/");
   }
+  auto fresh_lstat(const nix::CanonPath& p) -> std::optional<Stat> {
+    // Nix shares its POSIX stat cache across EvalStates. Project sources
+    // retain their paths when edited or removed, unlike immutable store paths.
+    if (!store_path(p)) next_->invalidateCache(p);
+    return next_->maybeLstat(p);
+  }
   static auto stat_text(const std::optional<Stat>& s) -> std::string {
     if (!s) return "missing";
     return std::to_string(s->type) + ":" +
@@ -206,7 +212,7 @@ class EvaluationReads : public nix::SourceAccessor {
         case 'f':
           return file_digest(p);
         case 's':
-          return stat_text(next_->maybeLstat(p));
+          return stat_text(fresh_lstat(p));
         case 'd':
           return directory_digest(p, next_->readDirectory(p));
         case 'l':

@@ -302,7 +302,7 @@ void Service::open() {
       opts_.scratch_dir.empty()
           ? stdfs::temp_directory_path() / ("tsugumi-" + store_->project_id())
           : opts_.scratch_dir;
-  nix_ = std::make_unique<NixRunner>(*this, scratch / "nix");
+  nix_ = std::make_unique<NixRunner>(*this);
   versions_ = std::make_unique<Versions>(opts_.root);
 
   if (!packed_builds_)
