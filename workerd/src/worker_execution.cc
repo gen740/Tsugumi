@@ -43,11 +43,8 @@ class StagingHandle {
 }  // namespace
 
 auto worker_disposition(bool reuse, bool alive, bool between_calls,
-                        bool validation_rejected,
                         const std::optional<FailureData>& failure)
     -> WorkerDisposition {
-  if (validation_rejected)
-    return {false, "the previous call failed validation"};
   if (!between_calls) return {false, "the previous call failed"};
   if (failure) {
     const auto kind = failure->kind;
@@ -92,11 +89,10 @@ auto run_invocation(const ReleaseWorker& release_worker,
   WorkerProc& worker = *lease.worker;
   InvocationResult result;
   bool between_calls = true;
-  bool validation_rejected = false;
   const auto release = [&] {
     const auto disposition =
         worker_disposition(reuse, worker.alive(), between_calls,
-                           validation_rejected, result.failure);
+                           result.failure);
     // Retiring a worker stops its process group before clearing scratch.
     // A resident keeps its sandbox: clearing its staging removes this call's
     // input and output paths from its view.

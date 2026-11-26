@@ -62,17 +62,16 @@ TEST(WorkerDisposition, CardFailuresAndMissingRequiredOutputsDiscardResidents) {
        {FailureKind::worker_failed, FailureKind::output_invalid,
         FailureKind::cancelled, FailureKind::timeout}) {
     const auto result =
-        worker_disposition(true, true, true, false, FailureData::make(kind));
+        worker_disposition(true, true, true, FailureData::make(kind));
     EXPECT_FALSE(result.keep);
   }
-  EXPECT_FALSE(worker_disposition(true, true, true, true, {}).keep);
 }
 
 TEST(WorkerDisposition, UnknownProtocolStateAndDeadWorkersCannotBeReused) {
-  EXPECT_FALSE(worker_disposition(true, true, false, false, {}).keep);
-  EXPECT_FALSE(worker_disposition(true, false, true, false, {}).keep);
-  EXPECT_FALSE(worker_disposition(false, true, true, false, {}).keep);
-  EXPECT_TRUE(worker_disposition(true, true, true, false, {}).keep);
+  EXPECT_FALSE(worker_disposition(true, true, false, {}).keep);
+  EXPECT_FALSE(worker_disposition(true, false, true, {}).keep);
+  EXPECT_FALSE(worker_disposition(false, true, true, {}).keep);
+  EXPECT_TRUE(worker_disposition(true, true, true, {}).keep);
 }
 
 }  // namespace
