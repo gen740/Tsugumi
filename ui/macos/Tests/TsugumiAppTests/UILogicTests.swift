@@ -517,6 +517,18 @@ import TsugumiTestSupport
   #expect(tl.y >= 50 && br.y <= 550 && abs((tl.x + br.x) / 2 - 400) < 0.5)
 }
 
+@Test func aSavedCameraCanLeaveEveryCardOutsideTheViewport() {
+  let cards = [CGRect(x: 320, y: 300, width: 200, height: 82),
+               CGRect(x: 640, y: 460, width: 200, height: 82)]
+  let viewport = CGSize(width: 610, height: 778)
+  var camera = CanvasCamera(x: -266, y: -5211, zoom: 1.2)
+  #expect(!camera.showsCard(cards, in: viewport))
+  camera.fit(cards[0].union(cards[1]), in: viewport, maxZoom: 1.2)
+  #expect(cards.allSatisfy { camera.showsCard([$0], in: viewport) })
+  // Preserving a restored frame only requires one Card to be visible.
+  #expect(camera.showsCard([cards[0].offsetBy(dx: 10_000, dy: 0), cards[1]], in: viewport))
+}
+
 @Test func droppedNoteLandsUnderThePointerAtAnyZoom() {
   // The note's grabbed point moves by the pointer's translation: screen points / zoom = world units.
   for zoom in [0.2, 0.5, 1, 2.5, 3] {

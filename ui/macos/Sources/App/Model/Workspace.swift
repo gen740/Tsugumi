@@ -82,6 +82,7 @@ final class WorkflowTab: Identifiable {
   var selectedNotes: Set<String> = []
   var back: [[String]] = []
   var selectedConnection: Int?
+  @ObservationIgnored var framedScopes: Set<CardKey> = []
 
   init(scope: [String], selection: Set<CardKey> = []) {
     self.scope = scope

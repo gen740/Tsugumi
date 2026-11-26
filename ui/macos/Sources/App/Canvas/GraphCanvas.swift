@@ -170,9 +170,17 @@ struct GraphCanvas: View {
     return layout
   }
 
+  private struct ScopeOpening: Equatable {
+    let scope: CardKey
+    let cards: [CardKey]
+    let ready: Bool
+  }
+
   var body: some View {
     GeometryReader { geo in
       let _ = redrawn
+      let opening = ScopeOpening(scope: scopeKey, cards: cardKeys,
+                                 ready: session.connected && geo.size.width > 0 && geo.size.height > 0)
       let settled = settledLayout
       let routed = settled.routedWires()
       let layer = settled.canvasLayer(routed)
@@ -282,16 +290,11 @@ struct GraphCanvas: View {
         if !placed.isEmpty { tab.selection = Set(placed) }
         return !placed.isEmpty || accepted
       }
-      .onAppear {
-        size = geo.size
-        fitIfNew()
-      }
-      // A scope shown for the first time (no saved camera) shows its whole flow
-      // as soon as its Cards are there.
-      .onChange(of: cardKeys.count) { fitIfNew() }
-      .onChange(of: geo.size) {
-        size = geo.size
-        placeNewCardViews(in: geo.size)
+      .task(id: opening) { await frameOpening(opening, in: geo.size) }
+      .onChange(of: geo.size, initial: true) { old, new in
+        size = new
+        frameAfterResize(from: old, to: new)
+        placeNewCardViews(in: new)
       }
       .onChange(of: cardViewOpenings.map(\.id), initial: true) {
         placeNewCardViews(in: geo.size)
@@ -1451,15 +1454,35 @@ struct GraphCanvas: View {
     saveView()
   }
 
-  private func fitIfNew() {
-    guard session.cameras[scopeKey] == nil, !cardKeys.isEmpty, size.width > 0 else { return }
-    DispatchQueue.main.async { fitAll() }
+  private func frameOpening(_ opening: ScopeOpening, in viewport: CGSize) async {
+    guard opening.ready, !opening.cards.isEmpty, !tab.framedScopes.contains(opening.scope) else { return }
+    // A newly opened snapshot can still be computing default Card positions.
+    for card in opening.cards {
+      _ = await session.waitForPlacement(card)
+      if Task.isCancelled { return }
+    }
+    guard opening.scope == scopeKey, tab.framedScopes.insert(opening.scope).inserted else { return }
+    let measured = size == .zero ? viewport : size
+    let saved = session.cameraUnobserved(opening.scope)
+    let camera = saved.map { CanvasCamera(x: $0.x, y: $0.y, zoom: $0.zoom) }
+    if camera?.showsCard(opening.cards.map(cardRect), in: measured) != true {
+      fitAll(in: measured)
+    }
+  }
+
+  /// A resize can hide Cards that were visible before the chat or sidebar moved.
+  private func frameAfterResize(from old: CGSize, to new: CGSize) {
+    guard old != new, new.width > 0, new.height > 0, tab.framedScopes.contains(scopeKey) else { return }
+    let cards = cardKeys.map(cardRect)
+    let c = currentCamera
+    let camera = CanvasCamera(x: c.x, y: c.y, zoom: c.zoom)
+    if camera.showsCard(cards, in: old), !camera.showsCard(cards, in: new) { fitAll(in: new) }
   }
 
   /// Frames everything shown in the scope: Cards, notes,
   /// groups, the Card in Card bars and the wires (feedback lanes run outside
   /// the Cards), in the part of the canvas its floating controls leave free.
-  func fitAll() {
+  func fitAll(in viewport: CGSize? = nil) {
     var rect = cardKeys.reduce(CGRect.null) { $0.union(cardRect($1)) }
     for n in session.notes(in: tab.scope) { rect = rect.union(noteRect(n)) }
     for (_, view) in canvasCardViewRects { rect = rect.union(view) }
@@ -1469,9 +1492,10 @@ struct GraphCanvas: View {
     }
     if let b = boundary { rect = rect.union(b.top).union(b.bottom) }
     for w in routedWires() { rect = rect.union(w.path.boundingRect) }
-    guard !rect.isNull, size.width > 0 else { return }
+    let viewport = viewport ?? size
+    guard !rect.isNull, viewport.width > 0, viewport.height > 0 else { return }
     var c = CanvasCamera()
-    c.fit(rect, in: size, insets: EdgeInsets(top: 52, leading: 8, bottom: 48, trailing: 8), maxZoom: 1.2, margin: 24)
+    c.fit(rect, in: viewport, insets: EdgeInsets(top: 8, leading: 8, bottom: 48, trailing: 8), maxZoom: 1.2, margin: 24)
     session.cameras[scopeKey] = (c.x, c.y, c.zoom)
     saveView()
   }

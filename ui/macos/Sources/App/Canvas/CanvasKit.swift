@@ -676,6 +676,11 @@ struct CanvasCamera: Equatable {
   func world(_ s: CGPoint) -> CGPoint { CGPoint(x: (s.x - x) / zoom, y: (s.y - y) / zoom) }
   var transform: CGAffineTransform { CGAffineTransform(a: zoom, b: 0, c: 0, d: zoom, tx: x, ty: y) }
 
+  func showsCard(_ cards: [CGRect], in viewport: CGSize) -> Bool {
+    let bounds = CGRect(origin: .zero, size: viewport)
+    return cards.contains { !$0.applying(transform).intersection(bounds).isEmpty }
+  }
+
   /// Zooms keeping `anchor` (a screen point) fixed.
   mutating func zoom(to z: Double, around anchor: CGPoint) {
     let nz = max(0.2, min(3, z))
