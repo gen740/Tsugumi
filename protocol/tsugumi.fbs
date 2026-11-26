@@ -46,6 +46,18 @@ table CardNixReference {
   name:string (id: 1, required);
 }
 
+table CardNixExportUse {
+  /// The producer, including its inner Card path for subgraph exports.
+  target:Tsugumi.Data.CardPath (id: 0, required);
+  attributes:[string] (id: 1, required);
+}
+
+table CardNixBuildUsage {
+  system:string (id: 0, required);
+  /// May be empty after an evaluation that forced no export attributes.
+  references:[CardNixExportUse] (id: 1, required);
+}
+
 table CardParameter {
   name:string (id: 0, required);
   type:string (id: 1, required);
@@ -59,6 +71,9 @@ table ResolvedCard {
   diagnostics:[Tsugumi.Data.Diagnostic] (id: 3, required);
   nix_references:[CardNixReference] (id: 4, required);
   parameters:[CardParameter] (id: 5);
+  /// Observations from cached run evaluation for the snapshot's execution
+  /// revision. Absent when unavailable. Document deltas carry wiring only.
+  nix_build_usage:[CardNixBuildUsage] (id: 6);
 }
 
 /// state: idle -> queued -> preparing -> running -> succeeded|failed|cancelled,

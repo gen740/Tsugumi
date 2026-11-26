@@ -256,10 +256,12 @@ class Service : public RequestSink {
   std::string snapshot_reply(uint64_t request_id, const Document& doc,
                              const std::optional<std::string>& view_id,
                              bool open, const std::string& sub_id,
-                             const ViewRecord* view = nullptr);
+                             const ViewRecord* view = nullptr,
+                             bool include_nix_usage = true);
   flatbuffers::Offset<Tsugumi::RPC::ProjectSnapshot> snapshot(
       flatbuffers::FlatBufferBuilder& b, const Document& doc,
-      const std::optional<std::string>& view_id, const ViewRecord* view);
+      const std::optional<std::string>& view_id, const ViewRecord* view,
+      bool include_nix_usage);
   void check_snapshot(const Document& doc);
   void publish_delta(const Delta& delta, size_t notification_bytes);
   void check_at_rev(std::optional<uint64_t> at_rev, const Document& doc) const;

@@ -1390,13 +1390,15 @@ RunStatusData Service::current_run_status() {
 
 flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
     FBB& b, const Document& doc, const std::optional<std::string>& view_id,
-    const ViewRecord* record) {
+    const ViewRecord* record, bool include_nix_usage) {
   std::vector<flatbuffers::Offset<R::Definition>> defs;
   for (const auto& [id, d] : doc.definitions)
     defs.push_back(wire::definition(b, id, d));
   auto defs_v = b.CreateVector(defs);
   auto src = manifest(b, doc, nullptr);
-  auto res = wire::resolution(b, *doc.resolution);
+  auto res = wire::resolution(
+      b, *doc.resolution,
+      include_nix_usage ? nix_->build_usage(doc) : NixBuildUsage{});
   const auto targets = remote_targets();
   auto diagnostics = doc.resolution->diags;
   for (const auto& node : doc.resolution->nodes)
@@ -1478,9 +1480,10 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
 std::string Service::snapshot_reply(uint64_t request_id, const Document& doc,
                                     const std::optional<std::string>& view_id,
                                     bool open, const std::string& sub_id,
-                                    const ViewRecord* view) {
+                                    const ViewRecord* view,
+                                    bool include_nix_usage) {
   FBB b(1 << 16);
-  auto snap = snapshot(b, doc, view_id, view);
+  auto snap = snapshot(b, doc, view_id, view, include_nix_usage);
   std::string out;
   if (open) {
     auto r = R::CreateOpenResult(b, snap, b.CreateString(sub_id), uint64_t(1));
@@ -1489,6 +1492,8 @@ std::string Service::snapshot_reply(uint64_t request_id, const Document& doc,
     out = wire::reply(b, request_id, R::ReplyPayload::ProjectSnapshot,
                       snap.Union());
   }
+  if (out.size() > kMaxFrameBytes && include_nix_usage)
+    return snapshot_reply(request_id, doc, view_id, open, sub_id, view, false);
   check_frame(out.size(), "the snapshot");
   return out;
 }
@@ -1497,7 +1502,7 @@ void Service::check_snapshot(const Document& doc) {
   // The open envelope is larger than inspect and a view can grow independently
   // of the document. Reserve the full view payload allowed by ViewSave.
   static const ViewRecord largest_view{1, std::string(kMaxViewBytes, ' ')};
-  snapshot_reply(1, doc, kExampleId, true, kExampleId, &largest_view);
+  snapshot_reply(1, doc, kExampleId, true, kExampleId, &largest_view, false);
 }
 
 namespace {

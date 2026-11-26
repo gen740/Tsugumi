@@ -6,6 +6,7 @@
 #include <string>
 
 #include "model.hh"
+#include "nix_eval.hh"
 #include "tsugumi/document/graph.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
 #include "tsugumi/workerd/value_wire.hh"
@@ -20,9 +21,8 @@ Off<D::Diagnostic> diagnostic(FBB& b, const Diag& d);
 Off<flatbuffers::Vector<Off<D::Diagnostic>>> diagnostics(
     FBB& b, const std::vector<Diag>& d);
 auto resolved_port(FBB& b, const types::PortType& port) -> Off<D::Port>;
-Off<R::ResolvedCard> resolved(FBB& b, const Node& n);
-Off<flatbuffers::Vector<Off<R::ResolvedCard>>> resolution(FBB& b,
-                                                          const Resolution& r);
+Off<flatbuffers::Vector<Off<R::ResolvedCard>>> resolution(
+    FBB& b, const Resolution& r, const NixBuildUsage& usage = {});
 Off<R::SourceInfo> source_info(FBB& b, const std::string& path,
                                D::SourceKind kind, bool exists,
                                const std::optional<std::string>& hash,

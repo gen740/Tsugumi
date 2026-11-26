@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <map>
 #include <stdexcept>
 
 #include "host/comments.hh"
@@ -820,15 +821,42 @@ auto HelperScope::Inspect(const std::string& result, const Reader& read) const
     } catch (const std::exception&) {
     }
   }
-  for (const auto& raw : json::Array(json::Get(snapshot, "resolution", "[]"))) {
+  const auto resolved = json::Array(json::Get(snapshot, "resolution", "[]"));
+  // A usage observation can depend on producers nested inside a subgraph,
+  // even when the Card at its boundary is readable.
+  std::map<std::string, std::vector<std::string>> producers;
+  for (const auto& raw : resolved) {
+    const auto value = json::Object(raw);
+    auto& targets = producers[Card(json::Get(value, "card", "{}"))];
+    for (const auto& ref :
+         json::Array(json::Get(value, "nix_references", "[]")))
+      targets.push_back(Card(json::Get(json::Object(ref), "target", "{}")));
+  }
+  const auto can_read_usage = [&](const std::string& card) {
+    std::set seen{card};
+    std::vector pending{card};
+    while (!pending.empty()) {
+      auto next = std::move(pending.back());
+      pending.pop_back();
+      for (const auto& target : producers[next]) {
+        if (!reads_.contains(target)) return false;
+        if (seen.insert(target).second) pending.push_back(target);
+      }
+    }
+    return true;
+  };
+  for (const auto& raw : resolved) {
     auto value = json::Object(raw);
-    if (!reads_.contains(Card(json::Get(value, "card", "{}")))) continue;
+    const auto card = Card(json::Get(value, "card", "{}"));
+    if (!reads_.contains(card)) continue;
     value["diagnostics"] = "[]";
     std::vector<std::string> references;
     for (const auto& ref :
          json::Array(json::Get(value, "nix_references", "[]")))
       if (reads_.contains(Card(json::Get(json::Object(ref), "target", "{}"))))
         references.push_back(ref);
+    if (value.contains("nix_build_usage") && !can_read_usage(card))
+      value.erase("nix_build_usage");
     value["nix_references"] = json::Encode(references);
     resolution.push_back(json::Encode(value));
   }

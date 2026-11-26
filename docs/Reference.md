@@ -81,3 +81,14 @@ Each Card definition requires a `README.md` beginning with front matter containi
 - **Collect** exposes the exports of the Card it collects from.
 - A **feedback wire** exposes nothing, so a Card never depends on its own exports.
 - A **Draft** exposes nothing.
+
+Project snapshots report two kinds of Nix references for each Card.
+
+- `nix_references` lists the producers available through the wiring and the names they have under `inputs`.
+- `nix_build_usage` reports the top-level export attributes forced while evaluating the cached `run` derivations, grouped by evaluation system and producer Card path. When several Cards supply a subgraph's exports, each attribute is attributed to its inner producer. The report covers every derivation in a `run` list. Evaluation of view declarations, implementation labels, `api` and `exports` by themselves adds no references.
+
+The build report is an over-approximation. Forcing a value can leave a derivation's path unchanged. Changing an unforced attribute value cannot change that derivation if the export attribute names and shape stay the same. For example, `inputs.a ? x` can depend on the presence of `x` without forcing its value.
+
+The evaluator wraps export attributes in lazy calls to an internal recording function. It records while the existing run paths are forced, then evaluates the rest of the plan. The recorder is passed only to the trusted evaluator entry point, so Nix traces cannot add records and the recording stays out of the logs.
+
+A system with an empty reference list has an evaluation that forced no named export attributes. An absent report means no observation is available for the current execution revision. An execution edit invalidates the report until a matching evaluation is available. Read a fresh project snapshot after a run to get its observations.

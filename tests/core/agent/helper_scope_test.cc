@@ -391,6 +391,29 @@ TEST(HelperScope, InspectionDoesNotLeakOtherCardsOrProjectWideState) {
   EXPECT_EQ(filtered.find("SECRET"), std::string::npos);
   EXPECT_NE(filtered.find("VISIBLE"), std::string::npos);
 }
+
+TEST(HelperScope, BuildUsageRequiresTheEvaluatedScopeToBeReadable) {
+  constexpr auto snapshot = R"({"reply":"ProjectSnapshot","value":{
+    "resolution":[
+      {"card":{"segments":["consumer"]},
+       "nix_references":[{"target":{"segments":["sub","producer"]},"name":"sub"}],
+       "nix_build_usage":[{"system":"aarch64-darwin","references":[
+         {"target":{"segments":["sub","producer"]},"attributes":["observed-export"]}
+       ]}]},
+      {"card":{"segments":["sub","producer"]},
+       "nix_references":[{"target":{"segments":["sub","private"]},"name":"private"}]}
+    ]
+  }})";
+  HelperScope limited(json::Object(
+      R"({"read_cards":["consumer","sub/producer"],"write_cards":[],"run_cards":[]})"));
+  HelperScope complete(json::Object(
+      R"({"read_cards":["consumer","sub/producer","sub/private"],"write_cards":[],"run_cards":[]})"));
+  EXPECT_EQ(limited.Inspect(snapshot, kRead).find("nix_build_usage"),
+            std::string::npos);
+  EXPECT_NE(complete.Inspect(snapshot, kRead).find("observed-export"),
+            std::string::npos);
+}
+
 TEST(HelperScope,
      UnscopedWorkRequiresTheUsersSettingAndCompleteSetsAreValidated) {
   EXPECT_THROW(HelperScope::Validate({}, false), std::runtime_error);

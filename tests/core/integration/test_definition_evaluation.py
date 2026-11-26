@@ -52,6 +52,20 @@ def definition(**extra):
     return {"type": "code", "sandbox": {"filesystem": False}, "reuseWorker": True, **extra}
 
 
+def build_usage(client, name):
+    node = next(node for node in client.call("ProjectInspectRequest").resolution
+                if "/".join(map(text, node.card.segments)) == name)
+    observations = {
+        text(usage.system): {
+            "/".join(map(text, ref.target.segments)): list(map(text, ref.attributes))
+            for ref in usage.references or []
+        }
+        for usage in node.nixBuildUsage or []
+    }
+    available = {"/".join(map(text, ref.target.segments)) for ref in node.nixReferences}
+    return observations, available
+
+
 def test_missing_params_file_evaluates_to_empty_set(core_factory, project):
     client = core_factory().connect()
     Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
@@ -222,8 +236,10 @@ def test_connected_input_change_replaces_downstream_definition(core_factory, pro
     """A producer's export or type is an input even with unchanged consumer files."""
     outputs = 'table First { value:string; } table Outputs { out:First; } root_type Outputs;'
     producer = (ARGUMENTS + '{ exports.message = "first";'
+                ' exports.first = "first"; exports.second = "second";'
                 ' exports.unused = throw "exports must be lazy"; run = ' + synthetic_run('"producer"') + '; }')
-    value = "inputs.producer.message" if dependency_input == "export" else (
+    value = ('if inputs.producer.message == "first" then inputs.producer.first '
+             'else inputs.producer.second') if dependency_input == "export" else (
         schema_says("./_inputs.fbs", "Second", "inputs.data.Second", "inputs.data.First"))
     files = {f"definitions/{name}/{file}": content for name, outputs_ in
              (("producer", [("out", first_table("token"))]), ("work", []))
@@ -235,17 +251,98 @@ def test_connected_input_change_replaces_downstream_definition(core_factory, pro
     }, [card("producer", "producer"), card("work", "work")], [conn("producer", "out", "work", "data")], files)
     client = core_factory().connect()
     before = completed_definition(client, start="producer")
+    system = before[1][2]
+    first = {"producer": ["first", "message"]} if dependency_input == "export" else {}
+    assert build_usage(client, "work") == ({system: first}, {"producer"})
     target = project / "definitions/producer" / ("default.nix" if dependency_input == "export" else "_outputs.fbs")
     original = target.read_text()
-    target.write_text(original.replace('"first"', '"second"') if dependency_input == "export"
+    target.write_text(original.replace('message = "first"', 'message = "second"') if dependency_input == "export"
                       else original.replace("First", "Second"))
     reload_project(client)
+    assert build_usage(client, "work") == ({}, {"producer"})
     after = completed_definition(client, start="producer")
+    second = {"producer": ["message", "second"]} if dependency_input == "export" else {}
+    assert build_usage(client, "work") == ({system: second}, {"producer"})
     expected = ("first\n", "second\n") if dependency_input == "export" else (
         "inputs.data.First\n", "inputs.data.Second\n")
     assert (before[0], after[0]) == expected
     assert after[1] != before[1]
     assert after[2].workerReused is False
+
+
+@pytest.mark.parametrize("mode", ["single", "list", "unused"])
+def test_build_usage_excludes_view_and_label_exports(core_factory, project, mode):
+    outputs = 'table Value { value:string; } table Outputs { out:Value; } root_type Outputs;'
+    client = core_factory().connect()
+    graph = Project(project)
+    graph.card("a", {"type": "trigger"}, sources={
+        "default.nix": '{ params, inputs }: { exports = { x = "x"; z = "z"; }; }',
+    })
+    graph.card("b", definition(inputs=[{"name": "in"}]), outputs=outputs, sources={
+        **synthetic_sources([("out", first_table("token"))]),
+        "default.nix": (ARGUMENTS + '{ exports = { y = "view"; label = "first"; }; run = '
+                        + synthetic_run('"producer"') + '; }'),
+    })
+    run_expression = {
+        "single": synthetic_run("inputs.a.x"),
+        "list": ('[{ label = inputs.b.label; run = ' + synthetic_run("inputs.a.x") +
+                 '; } { label = "second"; run = ' + synthetic_run("inputs.a.z") + '; }]'),
+        "unused": synthetic_run('"constant"'),
+    }[mode]
+    entry = (ARGUMENTS + "{ run = " + run_expression +
+             '; views = [{ name = inputs.b.y; type = "html"; blob = ./view.html; }];'
+             ' api = throw "api must stay lazy"; exports.extra = throw "exports must stay lazy"; }')
+    graph.card("work", definition(inputs=[{"name": "in"}]), outputs=EMPTY_OUTPUTS,
+               sources=sources(entry, **{"view.html": "<p>View</p>"}))
+    graph.connect("a", "out", "b", "in").connect("b", "out", "work", "in").save(client)
+    assert build_usage(client, "work") == ({}, {"a", "b"})
+    run_id = run(client, "a")
+    status = wait_run(client, run_id)
+    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+    records = client.call("RunInvocationsRequest", runId=run_id, card=path("work")).records
+    environments = client.call("RunEnvironmentsRequest", runId=run_id).environments
+    environment = next(env for env in environments if env.id == records[0].environmentId)
+    expected = {"single": {"a": ["x"]}, "list": {"a": ["x", "z"]}, "unused": {}}[mode]
+    observed = ({text(environment.system): expected}, {"a", "b"})
+    assert build_usage(client, "work") == observed
+
+    if mode == "single":
+        # Reuse preserves the observation. A definition edit clears it
+        # immediately and the next run reports the new attribute.
+        completed_definition(client, start="a")
+        assert build_usage(client, "work") == observed
+        (project / "definitions/work/default.nix").write_text(entry.replace("inputs.a.x", "inputs.a.z"))
+        reload_project(client)
+        assert build_usage(client, "work") == ({}, {"a", "b"})
+        _, (_, _, system), _ = completed_definition(client, start="a")
+        assert build_usage(client, "work") == ({system: {"a": ["z"]}}, {"a", "b"})
+
+
+def test_build_usage_attributes_merged_subgraph_exports_to_inner_cards(core_factory, project):
+    outputs = 'table Value { value:string; } table Outputs { out:Value; } root_type Outputs;'
+    defs = {
+        "start": {"type": "trigger", "_nix": '{ params, inputs }: { exports.x = "from start"; }'},
+        "inner": {**definition(inputs=[{"name": "in"}]), "_outputs": outputs,
+                  "_nix": ARGUMENTS + '{ exports.y = "from inner"; run = '
+                  + synthetic_run('"inner"') + '; }'},
+        "work": {**definition(inputs=[{"name": "left"}, {"name": "right"}]), "_outputs": EMPTY_OUTPUTS,
+                 "_nix": expression('inputs.child.x + " and " + inputs.child.y')},
+    }
+    child = card_in_card(
+        "child", [card("start", "start"), card("inner", "inner")], [conn("start", "out", "inner", "in")],
+        {"outputs": {"left": {"card": "start", "port": "out"}, "right": {"card": "inner", "port": "out"}}},
+    )
+    files = {f"definitions/{name}/{file}": value for name, ports in
+             (("inner", [("out", first_table("token"))]), ("work", []))
+             for file, value in synthetic_sources(ports).items()}
+    write(project, defs, [child, card("work", "work")],
+          [conn("child", "left", "work", "left"), conn("child", "right", "work", "right")], files)
+    client = core_factory().connect()
+    output, (_, _, system), _ = completed_definition(client, start="child/start")
+    assert output == "from start and from inner\n"
+    assert build_usage(client, "work") == (
+        {system: {"child/inner": ["y"], "child/start": ["x"]}}, {"child/inner", "child/start"},
+    )
 
 
 @pytest.mark.parametrize("list_run", [False, True])

@@ -402,6 +402,17 @@ auto NixRunner::evaluate_expression(const ExpressionRequest& req)
   return evaluator().expression(call, req.expression, req.build);
 }
 
+auto NixRunner::build_usage(const Document& doc) -> NixBuildUsage {
+  NixBuildUsage usage;
+  std::lock_guard lock(evaluations_mu_);
+  for (const auto& [address, entry] : evaluations_) {
+    const auto& [card, system] = address;
+    if (entry.execution_rev == doc.execution_rev)
+      usage[card].emplace(system, entry.result.used_exports);
+  }
+  return usage;
+}
+
 auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
     -> CardBuildPlan {
   const Node& node = *req.node;
@@ -477,8 +488,8 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
         });
         auto found = evaluations_.find(card);
         if (!views_only && found != evaluations_.end() &&
-            found->second.first == key)
-          earlier = found->second.second;
+            found->second.key == key)
+          earlier = found->second.result;
       }
       if (call.on_phase) call.on_phase(false);
       if (earlier && evaluator().reuse(call, *earlier)) {
@@ -496,6 +507,13 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
         log::info("Card full evaluation " + std::to_string(count));
         res = evaluator().evaluate(call);
       }
+      if (!views_only && res.evaluation_epoch) {
+        std::lock_guard l(evaluations_mu_);
+        if (evaluations_.size() >= 256 && !evaluations_.contains(card))
+          evaluations_.erase(evaluations_.begin());
+        evaluations_.insert_or_assign(
+            card, CachedEvaluation{key, res, req.doc->execution_rev});
+      }
       if (req.on_plan) req.on_plan(res.implementation_count);
       if (!req.transport)
         throw std::runtime_error(
@@ -508,12 +526,6 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
       if (build_deadline) call.deadline = *build_deadline + transfer_time;
       if (req.target.kind == WorkerKind::native)
         res = evaluator().realise_native(call, std::move(res));
-      std::lock_guard l(evaluations_mu_);
-      if (!views_only && res.evaluation_epoch) {
-        if (evaluations_.size() >= 256 && !evaluations_.contains(card))
-          evaluations_.erase(evaluations_.begin());
-        evaluations_[card] = {key, res};
-      }
     } catch (const NixInterrupted& e) {
       if (e.timed_out)
         throw Failed(FailureKind::timeout, e.what(),

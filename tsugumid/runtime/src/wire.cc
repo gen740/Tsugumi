@@ -66,7 +66,8 @@ auto resolved_port(FBB& b, const types::PortType& port) -> Off<D::Port> {
   return D::CreatePort(b, name, bfbs, root, members);
 }
 
-Off<R::ResolvedCard> resolved(FBB& b, const Node& n) {
+static auto resolved(FBB& b, const Resolution& graph, const Node& n,
+                     const NixBuildUsage& usage) -> Off<R::ResolvedCard> {
   std::vector<Off<D::Port>> ins;
   std::vector<Off<D::Port>> outs;
   for (const auto& p : n.inputs) ins.push_back(resolved_port(b, p));
@@ -84,16 +85,35 @@ Off<R::ResolvedCard> resolved(FBB& b, const Node& n) {
     parameters.push_back(R::CreateCardParameterDirect(
         b, param.name.c_str(), param_type_name(param.type),
         param.data.c_str()));
-  return R::CreateResolvedCard(
-      b, path(b, n.path), b.CreateVector(ins), b.CreateVector(outs),
-      diagnostics(b, diags), b.CreateVector(refs), b.CreateVector(parameters));
+  Off<flatbuffers::Vector<Off<R::CardNixBuildUsage>>> build_usage;
+  if (!usage.empty()) {
+    if (const auto found = usage.find(path_key(n.path)); found != usage.end()) {
+      std::vector<Off<R::CardNixBuildUsage>> systems;
+      for (const auto& [system, uses] : found->second) {
+        std::vector<Off<R::CardNixExportUse>> references;
+        for (const auto& [target, names] : uses) {
+          const auto& producer = graph.nodes.at(graph.index.at(target));
+          references.push_back(R::CreateCardNixExportUse(
+              b, path(b, producer.path),
+              b.CreateVectorOfStrings(names.begin(), names.end())));
+        }
+        systems.push_back(R::CreateCardNixBuildUsage(
+            b, b.CreateString(system), b.CreateVector(references)));
+      }
+      build_usage = b.CreateVector(systems);
+    }
+  }
+  return R::CreateResolvedCard(b, path(b, n.path), b.CreateVector(ins),
+                               b.CreateVector(outs), diagnostics(b, diags),
+                               b.CreateVector(refs), b.CreateVector(parameters),
+                               build_usage);
 }
 
-Off<flatbuffers::Vector<Off<R::ResolvedCard>>> resolution(FBB& b,
-                                                          const Resolution& r) {
+auto resolution(FBB& b, const Resolution& r, const NixBuildUsage& usage)
+    -> Off<flatbuffers::Vector<Off<R::ResolvedCard>>> {
   std::vector<Off<R::ResolvedCard>> v;
   v.reserve(r.nodes.size());
-  for (const auto& n : r.nodes) v.push_back(resolved(b, n));
+  for (const auto& n : r.nodes) v.push_back(resolved(b, r, n, usage));
   return b.CreateVector(v);
 }
 

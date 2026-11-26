@@ -50,6 +50,11 @@ table Request {
   body:RequestBody (required);
 }
 
+table ExportUse {
+  card:string (required);
+  attributes:[string] (required);
+}
+
 table Evaluation {
   drv:string (required);
   out:string (required);
@@ -57,6 +62,7 @@ table Evaluation {
   implementation_count:uint;
   implementation_labels:[string];
   epoch:ulong;
+  used_exports:[ExportUse];
 }
 table Reusable { value:bool; }
 table ExpressionValue {

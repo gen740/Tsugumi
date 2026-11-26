@@ -156,6 +156,8 @@ tsugumi evaluate nix --project /path/to/project --card '{"segments":["convert"]}
 
 Publish values through `exports` in an upstream Card's `default.nix`. Refer to them as `inputs.<card_id>.<attr>` in a downstream definition. In `A → B → C`, C sees exports from A and B. A subgraph upstream appears as `inputs.<subgraph Card id>` with the merged exports of its inner Cards wired to its outputs. Merge passes on only the exports all its inputs share, Collect those of the Card it collects from, and feedback wires and Drafts pass on nothing. See [Nix inputs across Cards](Reference.md#nix-inputs-across-cards).
 
+The Nix references overlay shows the producers available through the wiring. Core and Host snapshots also report which export values the cached build evaluation forced for each system. A forced value can leave the derivation unchanged. A value that stayed lazy cannot change that derivation by itself.
+
 ### Keeping build results
 
 Use [Build Cache settings](Usage.md#manage-build-and-scratch-space) to inspect and explicitly clear build registrations and store space. [Binary caches](BinaryCaches.md) explains shared caches.

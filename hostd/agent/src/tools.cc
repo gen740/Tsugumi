@@ -423,9 +423,24 @@ auto Tools::ProjectCall(const std::string& project, const std::string& name,
   policy.CheckRequest(name, args, recorded);
   if (name == "project_inspect") {
     policy.Check("tsugumi.json");
+    auto visible = inspected;
+    auto resolution = json::Array(json::Get(inspected, "resolution", "[]"));
+    for (auto& raw : resolution) {
+      auto card = json::Object(raw);
+      if (!card.contains("nix_build_usage")) continue;
+      try {
+        // Attribute names can come from any evaluated definition, including
+        // an excluded file in an otherwise visible Card.
+        CheckEvaluationSources(policy, base, inspected, card);
+      } catch (const Failure&) {
+        card.erase("nix_build_usage");
+        raw = json::Encode(card);
+      }
+    }
+    visible["resolution"] = json::Encode(resolution);
     return policy.Filter(
         json::Encode(json::Members{{"reply", json::Quote("ProjectSnapshot")},
-                                   {"value", json::Encode(inspected)}}));
+                                   {"value", json::Encode(visible)}}));
   }
   if (name == "run_plan" || name == "evaluate_nix" ||
       name.starts_with("project_file_")) {

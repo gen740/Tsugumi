@@ -72,9 +72,10 @@ class DefinitionEvaluation : public ::testing::Test {
   auto TearDown() -> void override { std::filesystem::remove_all(root); }
   auto evaluator(const std::string& body) -> std::unique_ptr<NixEvaluator> {
     return std::make_unique<NixEvaluator>(
-        "args: { executionList = false; implementationCount "
+        "recordExport: args: { executionList = false; implementationCount "
         "= 1; "
         "implementationLabels = builtins.toJSON [ \"\" ]; "
+        "runPaths = []; "
         "plan = (" +
         body + "); }");
   }
@@ -275,7 +276,7 @@ TEST_F(DefinitionEvaluation, ExpressionUsesTheCardDirectoryAndProject) {
                    "{ params, inputs }: { api = params.value; }");
   fs::write_atomic(dir / "relative", "from the Card");
   call.locked_nix_path.emplace("dep", pins.at("nixpkgs"));
-  NixEvaluator eval("args: { params.value = 42; inputs = {}; }");
+  NixEvaluator eval("recordExport: args: { params.value = 42; inputs = {}; }");
   const auto result = eval.expression(
       call,
       R"({ inherit inputs; x = (import ./. { inherit params inputs; }).api;
@@ -296,7 +297,7 @@ TEST_F(DefinitionEvaluation, ExpressionUsesTheCardDirectoryAndProject) {
 
 TEST_F(DefinitionEvaluation, ExpressionBuildReturnsFilesAndFailureLog) {
   call.locked_nix_path.emplace("dep", pins.at("nixpkgs"));
-  NixEvaluator eval("args: { params = {}; inputs = {}; }");
+  NixEvaluator eval("recordExport: args: { params = {}; inputs = {}; }");
   fs::write_atomic(call.definition_dir / "default.nix", R"(
     { params, inputs }:
     let pkgs = import <dep> {};
@@ -335,7 +336,7 @@ TEST_F(DefinitionEvaluation, ExpressionBuildReturnsFilesAndFailureLog) {
 
 TEST_F(DefinitionEvaluation, ExpressionBuildBoundsDirectoryEntriesAndBytes) {
   call.locked_nix_path.emplace("dep", pins.at("nixpkgs"));
-  NixEvaluator eval("args: { params = {}; inputs = {}; }");
+  NixEvaluator eval("recordExport: args: { params = {}; inputs = {}; }");
   const auto entries = eval.expression(call, R"(
     let pkgs = import <dep> {};
     in pkgs.runCommand "expression-many-files" {} ''

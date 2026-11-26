@@ -40,6 +40,12 @@ struct NixDefinitionScope {
 
 using EvaluationKey = std::tuple<std::string, std::string>;
 
+// Absolute producer Card key -> forced top-level export names.
+using NixExportUses = std::map<std::string, std::set<std::string>>;
+// Consumer Card key -> evaluation system -> observed exports.
+using NixBuildUsage =
+    std::map<std::string, std::map<std::string, NixExportUses>>;
+
 using NixOutput = std::function<void(proc::LineChunk)>;
 
 struct NixCall {
@@ -84,6 +90,7 @@ struct NixResult {
   uint32_t implementation_count = 1;
   // One per implementation, in run list order; "" for an unlabeled one.
   std::vector<std::string> implementation_labels;
+  NixExportUses used_exports;
   uint64_t evaluation_epoch = 0;
 };
 

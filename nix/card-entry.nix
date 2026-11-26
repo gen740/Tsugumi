@@ -1,4 +1,5 @@
 # Evaluated with restricted filesystem access and without IFD.
+recordExport:
 {
   scope,
   viewsOnly ? false,
@@ -6,7 +7,7 @@
 }:
 let
   argumentsFor =
-    entry:
+    track: entry:
     let
       dir = /. + entry.definition;
       file = dir + "/params.nix";
@@ -16,7 +17,7 @@ let
       inputs = builtins.listToAttrs (
         map (dep: {
           inherit (dep) name;
-          value = mergeExports dep;
+          value = mergeExports track dep;
         }) entry.deps
       );
     };
@@ -24,9 +25,15 @@ let
   # wired to its boundary outputs, merged; one attribute from two of them is
   # an error.
   mergeExports =
-    dep:
+    track: dep:
     let
-      exports = map (key: cards.${key}.exports or { }) dep.keys;
+      exports = map (
+        key:
+        let
+          values = cards.${key}.exports or { };
+        in
+        if track && builtins.isAttrs values then builtins.mapAttrs (recordExport key) values else values
+      ) dep.keys;
     in
     if builtins.length exports == 1 then
       builtins.head exports
@@ -51,10 +58,10 @@ let
         let
           dir = /. + entry.definition;
         in
-        if builtins.pathExists (dir + "/default.nix") then import dir (argumentsFor entry) else { };
+        if builtins.pathExists (dir + "/default.nix") then import dir (argumentsFor false entry) else { };
     }) scope.cards
   );
-  arguments = argumentsFor scope.self;
+  arguments = argumentsFor (!viewsOnly && !expressionOnly) scope.self;
   self = import (/. + scope.self.definition) arguments;
   unknown = builtins.filter (
     key:
@@ -77,12 +84,11 @@ let
           "label"
           "run"
         ]
-      && builtins.isString entry.label
       && isDerivation entry.run
     then
       entry
     else
-      throw "each run list entry must have a string label and a derivation";
+      throw runEntryError;
   runs =
     if viewsOnly then
       [ ]
@@ -98,6 +104,9 @@ let
     else
       throw "run must be a derivation or a list of labelled derivations";
   declarations = self.views or [ ];
+  runPaths = map (r: "${r.run}") runs;
+  labelOf = r: if builtins.isString r.label then r.label else throw runEntryError;
+  runEntryError = "each run list entry must have a string label and a derivation";
   viewOf =
     view:
     if
@@ -140,19 +149,16 @@ if expressionOnly then
   arguments
 else if unknown != [ ] then
   throw "unknown Card attributes: ${toString unknown} (known: run views exports api)"
-else if !builtins.isList declarations then
-  throw "Card views must be a list"
 else
   {
-    inherit executionList;
+    inherit executionList runPaths;
     implementationCount = builtins.length runs;
-    implementationLabels = builtins.unsafeDiscardStringContext (
-      builtins.toJSON (map (r: r.label) runs)
-    );
+    implementationLabels = builtins.unsafeDiscardStringContext (builtins.toJSON (map labelOf runs));
     # The C++ evaluator transfers this string and its derivation context to
     # the trusted plan builder. It never passes a Card value through as code.
     plan = builtins.toJSON {
-      runs = map (r: "${r.run}") runs;
-      views = map viewOf declarations;
+      runs = runPaths;
+      views =
+        if builtins.isList declarations then map viewOf declarations else throw "Card views must be a list";
     };
   }

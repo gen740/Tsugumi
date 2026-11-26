@@ -582,6 +582,7 @@ struct EvaluationState {
   const NixDefinitionScope* expression_scope = nullptr;
   bool capture_derivations = false;
   std::set<std::string> instantiated_derivations;
+  NixExportUses* used_exports = nullptr;
 
   EvaluationState(nix::fetchers::Settings& fetch, nix::ref<nix::Store> store,
                   uint64_t& epoch, std::map<std::string, int64_t>& times)
@@ -800,11 +801,33 @@ struct EvaluationState {
 
   auto arguments(const NixCall& call, nix::Value& out) -> void {
     nix::Value entry;
-    auto& args = *state->allocValue();
+    auto* record = state->allocValue();
+    auto* args = state->allocValue();
+    // Only the trusted entry receives this primop. Card code cannot send
+    // records through the public builtins or by writing to the Nix log.
+    install(*record,
+            {.name = "recordExport",
+             .args = {"card", "attribute", "value"},
+             .arity = 3,
+             .doc = std::nullopt,
+             .addTrace = false,
+             .impl =
+                 [this](nix::EvalState& st, nix::PosIdx pos, nix::Value** args,
+                        nix::Value& out) {
+                   if (used_exports) {
+                     const auto card = st.forceStringNoCtx(*args[0], pos, "");
+                     const auto name = st.forceStringNoCtx(*args[1], pos, "");
+                     (*used_exports)[std::string(card)].emplace(name);
+                   }
+                   st.forceValue(*args[2], pos);
+                   out = *args[2];
+                 },
+             .experimentalFeature = std::nullopt});
     const auto root = state->rootPath(nix::CanonPath("/"));
     state->eval(state->parseExprFromString(entry_text, root), entry);
-    state->eval(state->parseExprFromString(call.args, root), args);
-    state->callFunction(entry, args, out, nix::noPos);
+    state->eval(state->parseExprFromString(call.args, root), *args);
+    nix::Value* entry_args[] = {record, args};
+    state->callFunction(entry, entry_args, out, nix::noPos);
   }
 
   auto derivation(nix::EvalState& st, nix::Value& value,
@@ -871,6 +894,9 @@ struct EvaluationState {
 
   auto evaluate(const NixCall& c, SourceFetcher& fetch) -> NixResult {
     begin();
+    NixResult r;
+    used_exports = &r.used_exports;
+    Finally stop_recording([&] { used_exports = nullptr; });
     nix::Value result;
     arguments(c, result);
     auto* vres = &result;
@@ -882,7 +908,6 @@ struct EvaluationState {
                             "while reading the Card execution plan")
                   ->value;
     };
-    NixResult r;
     r.execution_list = state->forceBool(attr("executionList"), nix::noPos,
                                         "while reading the Card run shape");
     const auto count = state
@@ -892,6 +917,12 @@ struct EvaluationState {
     enforce_implementation_limit(static_cast<uint64_t>(count),
                                  c.max_implementations);
     r.implementation_count = static_cast<uint32_t>(count);
+    // These same thunks are consumed by the plan JSON. A derivation's
+    // output path forces its instantiation, including drvPath.
+    auto& runs = attr("runPaths");
+    state->forceList(runs, nix::noPos, "while reading Card run paths");
+    for (auto* run : runs.listView()) state->forceValue(*run, nix::noPos);
+    used_exports = nullptr;
     const auto labels = nlohmann::json::parse(
         state->forceStringNoCtx(attr("implementationLabels"), nix::noPos,
                                 "while reading the run list labels"));
@@ -1232,6 +1263,12 @@ auto evaluator_main() -> void {
       reply.implementation_count = result.implementation_count;
       reply.implementation_labels = result.implementation_labels;
       reply.epoch = result.evaluation_epoch;
+      for (const auto& [card, attributes] : result.used_exports) {
+        auto use = std::make_unique<E::ExportUseT>();
+        use->card = card;
+        use->attributes.assign(attributes.begin(), attributes.end());
+        reply.used_exports.push_back(std::move(use));
+      }
       send<E::Reply>(sink, std::move(reply));
     } else if (const auto* op = request.body.AsLockSource()) {
       const auto source = fetch.lock(op->url);
@@ -1470,6 +1507,9 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
     result.implementation_count = data->implementation_count;
     result.implementation_labels = data->implementation_labels;
     result.evaluation_epoch = data->epoch;
+    for (const auto& use : data->used_exports)
+      result.used_exports[use->card].insert(use->attributes.begin(),
+                                            use->attributes.end());
     impl_->last_epoch = std::max(impl_->last_epoch, result.evaluation_epoch);
     impl_->hold(result.derivation.path);
     return result;

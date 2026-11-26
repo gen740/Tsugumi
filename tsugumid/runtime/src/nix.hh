@@ -99,6 +99,7 @@ class NixRunner {
   static auto execution_systems() -> std::vector<std::string>;
   auto evaluate_expression(const ExpressionRequest& req) -> ExpressionResult;
   auto lock_source(const std::string& url) -> NixSource;
+  auto build_usage(const Document& doc) -> NixBuildUsage;
 
   CacheClearOutcome clear_cache();
 
@@ -124,10 +125,13 @@ class NixRunner {
   std::mutex eval_mu_;
   std::unique_ptr<NixEvaluator> evaluator_;
   // Entries are per Card and system, capped at 256.
+  struct CachedEvaluation {
+    EvaluationKey key;
+    NixResult result;
+    uint64_t execution_rev;
+  };
   std::mutex evaluations_mu_;
-  std::map<std::pair<std::string, std::string>,
-           std::pair<EvaluationKey, NixResult>>
-      evaluations_;
+  std::map<std::pair<std::string, std::string>, CachedEvaluation> evaluations_;
   std::optional<std::map<std::string, Tsugumi::State::PreparedCardT>> prepared_;
   uint64_t full_evaluations_ = 0;
   std::mutex dirs_mu_;
