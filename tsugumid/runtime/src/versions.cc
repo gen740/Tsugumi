@@ -169,6 +169,57 @@ struct VersionFiles {
   }
 };
 
+template <class Visitor>
+auto visit_version_files(const stdfs::path& root, const VersionFiles& files,
+                         Visitor visit) -> bool {
+  for (auto it = stdfs::recursive_directory_iterator(root);
+       it != stdfs::recursive_directory_iterator(); ++it) {
+    const auto path = it->path().lexically_relative(root).generic_string();
+    const auto status = it->symlink_status();
+    if (stdfs::is_symlink(status)) continue;
+    if (stdfs::is_directory(status)) {
+      if (!files.descends(path)) it.disable_recursion_pending();
+    } else if (stdfs::is_regular_file(status) && files.includes(path)) {
+      const auto mode = (status.permissions() & stdfs::perms::owner_exec) !=
+                                stdfs::perms::none
+                            ? GIT_FILEMODE_BLOB_EXECUTABLE
+                            : GIT_FILEMODE_BLOB;
+      if (!visit(path, mode)) return false;
+    }
+  }
+  return true;
+}
+
+auto project_dirty(git_repository* repo, const stdfs::path& root,
+                   const std::optional<git_oid>& head) -> bool {
+  Index committed;
+  check(git_index_new(committed.out()), "create in-memory index");
+  if (head) {
+    Commit commit;
+    Tree tree;
+    check(git_commit_lookup(commit.out(), repo, &*head), "head");
+    check(git_commit_tree(tree.out(), commit.get()), "head tree");
+    check(git_index_read_tree(committed.get(), tree.get()), "read head tree");
+  }
+
+  size_t matched = 0;
+  const bool unchanged = visit_version_files(
+      root, VersionFiles(root, nullptr),
+      [&](const std::string& path, git_filemode_t mode) {
+        const auto* entry =
+            git_index_get_bypath(committed.get(), path.c_str(), 0);
+        if (!entry || entry->mode != mode) return false;
+        const auto bytes = fs::read_beneath(root, path);
+        git_oid oid;
+        check(git_odb_hash(&oid, bytes.data(), bytes.size(), GIT_OBJECT_BLOB),
+              "hash " + path);
+        if (!git_oid_equal(&entry->id, &oid)) return false;
+        ++matched;
+        return true;
+      });
+  return !unchanged || matched != git_index_entrycount(committed.get());
+}
+
 // Rebuild the index, including deletions, without touching working files or
 // inheriting unrelated files someone staged with Git. Ignore rules do not
 // override definitions or an explicit opt-in. Never follow symlinks.
@@ -191,35 +242,27 @@ auto stage_project(git_repository* r, const stdfs::path& root,
   Index idx;
   check(git_repository_index(idx.out(), r), "index");
   check(git_index_clear(idx.get()), "clear index");
-  for (auto it = stdfs::recursive_directory_iterator(root);
-       it != stdfs::recursive_directory_iterator(); ++it) {
-    const auto path = it->path().lexically_relative(root).generic_string();
-    const auto status = it->symlink_status();
-    if (stdfs::is_symlink(status)) continue;
-    if (stdfs::is_directory(status)) {
-      if (!files.descends(path)) it.disable_recursion_pending();
-    } else if (stdfs::is_regular_file(status) && files.includes(path)) {
-      const auto bytes = fs::read_beneath(root, path);
-      if (accepted &&
-          (Document::is_document_file(path) || Document::is_source_area(path) ||
-           Document::is_lock_file(path))) {
-        auto hash = expected.find(path);
-        if (hash == expected.end() || hash->second != crypto::sha256_hex(bytes))
-          changed(path);
-        expected.erase(hash);
-      }
-      git_index_entry entry{};
-      entry.path = path.c_str();
-      entry.mode = (status.permissions() & stdfs::perms::owner_exec) !=
-                           stdfs::perms::none
-                       ? GIT_FILEMODE_BLOB_EXECUTABLE
-                       : GIT_FILEMODE_BLOB;
-      check(
-          git_blob_create_from_buffer(&entry.id, r, bytes.data(), bytes.size()),
-          "blob " + path);
-      check(git_index_add(idx.get(), &entry), "add " + path);
-    }
-  }
+  visit_version_files(
+      root, files, [&](const std::string& path, git_filemode_t mode) {
+        const auto bytes = fs::read_beneath(root, path);
+        if (accepted &&
+            (Document::is_document_file(path) ||
+             Document::is_source_area(path) || Document::is_lock_file(path))) {
+          auto hash = expected.find(path);
+          if (hash == expected.end() ||
+              hash->second != crypto::sha256_hex(bytes))
+            changed(path);
+          expected.erase(hash);
+        }
+        git_index_entry entry{};
+        entry.path = path.c_str();
+        entry.mode = mode;
+        check(git_blob_create_from_buffer(&entry.id, r, bytes.data(),
+                                          bytes.size()),
+              "blob " + path);
+        check(git_index_add(idx.get(), &entry), "add " + path);
+        return true;
+      });
   if (!expected.empty()) changed(expected.begin()->first);
   if (write_index) check(git_index_write(idx.get()), "write index");
   git_oid tree;
@@ -929,16 +972,7 @@ VersionGraphData Versions::graph(size_t limit, bool include_comments) {
     if (git_repository_head(h.out(), r.get()) == 0)
       g.branch = git_reference_shorthand(h.get());
   }
-  const auto saved = stage_project(r.get(), root_, false);
-  if (head) {
-    Commit c;
-    check(git_commit_lookup(c.out(), r.get(), &*head), "head");
-    g.dirty = !git_oid_equal(git_commit_tree_id(c.get()), &saved);
-  } else {
-    Tree tree;
-    check(git_tree_lookup(tree.out(), r.get(), &saved), "tree");
-    g.dirty = git_tree_entrycount(tree.get()) > 0;
-  }
+  g.dirty = project_dirty(r.get(), root_, head);
   if (!head) return g;
   // Branch and tag names by the commit they point at.
   std::map<std::string, std::vector<std::string>> branches;
