@@ -160,7 +160,7 @@ private struct CanvasCardPanel: View {
   let initialCenter: CGPoint
   let bringForward: () -> Void
   @State private var movedCenter: CGPoint?
-  @GestureState private var drag = CGSize.zero
+  @State private var drag = CGSize.zero
 
   var body: some View {
     let center = clamped(movedCenter ?? initialCenter)
@@ -174,14 +174,14 @@ private struct CanvasCardPanel: View {
           .lineLimit(1)
         Spacer(minLength: 0)
       }
-      .contentShape(Rectangle())
-      .onTapGesture(perform: bringForward)
-      .gesture(DragGesture()
-        .updating($drag) { value, state, _ in state = value.translation }
-        .onChanged { _ in bringForward() }
-        .onEnded { value in
-          movedCenter = clamped(CGPoint(x: center.x + value.translation.width, y: center.y + value.translation.height))
-        })
+      .overlay {
+        CardViewDragHandle(onPress: bringForward, onDrag: { drag = $0 }) { movement in
+          drag = .zero
+          guard movement != .zero else { return }
+          movedCenter = clamped(CGPoint(x: center.x + movement.width, y: center.y + movement.height))
+        }
+        .accessibilityHidden(true)
+      }
     }
     .frame(width: size.width, height: size.height)
     .background(.regularMaterial)
@@ -194,6 +194,50 @@ private struct CanvasCardPanel: View {
   private func clamped(_ point: CGPoint) -> CGPoint {
     CGPoint(x: min(area.maxX - size.width / 2, max(area.minX + size.width / 2, point.x)),
             y: min(area.maxY - size.height / 2, max(area.minY + size.height / 2, point.y)))
+  }
+}
+
+/// The title captures the mouse while moving. Window coordinates stay fixed
+/// even though the title itself changes position during the drag.
+private struct CardViewDragHandle: NSViewRepresentable {
+  let onPress: () -> Void
+  let onDrag: (CGSize) -> Void
+  let onRelease: (CGSize) -> Void
+
+  func makeNSView(context: Context) -> Handle { Handle() }
+
+  func updateNSView(_ view: Handle, context: Context) {
+    view.onPress = onPress
+    view.onDrag = onDrag
+    view.onRelease = onRelease
+  }
+
+  final class Handle: NSView {
+    var onPress: (() -> Void)?
+    var onDrag: ((CGSize) -> Void)?
+    var onRelease: ((CGSize) -> Void)?
+    private var origin: CGPoint?
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+      origin = event.locationInWindow
+      onPress?()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+      if let origin { onDrag?(translation(from: origin, to: event.locationInWindow)) }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+      guard let origin else { return }
+      self.origin = nil
+      onRelease?(translation(from: origin, to: event.locationInWindow))
+    }
+
+    private func translation(from start: CGPoint, to end: CGPoint) -> CGSize {
+      CGSize(width: end.x - start.x, height: start.y - end.y)
+    }
   }
 }
 
