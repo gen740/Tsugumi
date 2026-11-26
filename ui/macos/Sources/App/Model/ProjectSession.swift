@@ -241,7 +241,7 @@ final class ProjectSession {
   var saving: Bool { dirty }
   /// Last user-facing problem of an action (run refused, import failed, ...).
   var cacheUsage: Tsugumi_RPC_ProjectCacheUsageResultT?
-  var notice: String?
+  var notice: WorkbenchNotice?
   /// The Draft being written on the canvas (geometry opens its Card up).
   var inlineDraft: InlineDraft?
   @ObservationIgnored var draftFinishTask: Task<CardKey?, Never>?
@@ -1036,7 +1036,7 @@ final class ProjectSession {
     let task = submitOperation(.projectedits, body: { self.mutation(change) })
     Task { @MainActor in
       do { _ = try await task.value }
-      catch { notice = error.localizedDescription }
+      catch { notice = .error(error.localizedDescription) }
     }
   }
 
@@ -1130,7 +1130,10 @@ final class ProjectSession {
       }
     })
     do { _ = try await task.value }
-    catch { saveError = String(describing: error) }
+    catch {
+      saveError = error.localizedDescription
+      notice = .error(error.localizedDescription)
+    }
   }
 
   func discardDraft() { inlineDraft = nil }
@@ -1216,7 +1219,7 @@ final class ProjectSession {
     let task = submitOperation(type, body: { body })
     return Task { @MainActor in
       do { _ = try await task.value }
-      catch { notice = error.localizedDescription }
+      catch { notice = .error(error.localizedDescription) }
     }
   }
 
@@ -1228,7 +1231,7 @@ final class ProjectSession {
     })
     Task { @MainActor in
       do { _ = try await task.value }
-      catch { notice = error.localizedDescription }
+      catch { notice = .error(error.localizedDescription) }
     }
   }
 
@@ -1263,7 +1266,8 @@ final class ProjectSession {
       reloadApproval = ReloadApproval(baseRev: base, permissions: Array(Set(approved + failure.permissions)).sorted())
       saveError = nil
     } catch {
-      saveError = "\(error)"
+      saveError = error.localizedDescription
+      notice = .error(error.localizedDescription)
     }
   }
 
@@ -1331,7 +1335,7 @@ final class ProjectSession {
       guard let projectId, let name = failure.args["host_path_name"] else { throw failure }
       if failure.args["host_path_refresh"] == "true" {
         reconnect()
-        notice = String(localized: "ホストパスを更新するために再接続しています。接続後にもう一度実行してください。")
+        notice = .info(String(localized: "ホストパスを更新するために再接続しています。接続後にもう一度実行してください。"))
         return
       }
       let scope = failure.args["host_path_scope"] ?? ""
@@ -1340,7 +1344,7 @@ final class ProjectSession {
       guard let folder = await HostPathsSettings.chooseFolder(name, description: description) else { throw failure }
       _ = try await HostPathsSettings.setBinding(project: projectId, scope: scope, name: name, folder: folder)
       reconnect()
-      notice = String(localized: "フォルダを割り当てました。もう一度実行してください。")
+      notice = .info(String(localized: "フォルダを割り当てました。もう一度実行してください。"))
     } catch RPCError.disconnected {
       // Never re-send blindly: look the operation up after reconnecting.
       reconnect()
@@ -1366,7 +1370,7 @@ final class ProjectSession {
     } catch {
       guard stopRunId == id else { return }
       stopRunId = nil
-      let reason = (error as? RPCFailure)?.diagnostic ?? String(describing: error)
+      let reason = error.localizedDescription
       stopError = String(localized: "停止を要求できませんでした（\(reason)）")
     }
   }
@@ -1570,7 +1574,7 @@ final class ProjectSession {
       } catch {
         guard !Task.isCancelled else { return }
         derivedLayouts[prefix] = nil
-        notice = String(describing: error)
+        notice = .error(error.localizedDescription)
       }
     }
     layoutTasks[prefix] = task
@@ -1637,7 +1641,7 @@ final class ProjectSession {
     guard changed else { return }
     func json(_ path: String) -> JSONValue? {
       guard let text = carriedText(path) else { return nil }
-      do { return try JSONValue.parse(text) } catch { notice = "\(path): \(error)"; return nil }
+      do { return try JSONValue.parse(text) } catch { notice = .error("\(path): \(error.localizedDescription)"); return nil }
     }
     var found: [String: ExternalProject] = [:]
     for path in sourceDocuments.keys where path.hasSuffix("/tsugumi.json") {

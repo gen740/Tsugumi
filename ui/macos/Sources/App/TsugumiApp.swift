@@ -83,7 +83,7 @@ struct TsugumiApp: App {
       .restorationBehavior(.disabled)
     WindowGroup("チャット", id: "chat", for: ProjectRef.self) { $ref in
       if let ref {
-        DetailHost(path: ref.path) { s in ChatPanel(session: s, chat: AppModel.shared.chat(for: s), detached: true) }
+        DetailHost(path: ref.path) { s in DetachedChatPanel(session: s, chat: AppModel.shared.chat(for: s)) }
       }
     }
     .defaultSize(width: 460, height: 720)

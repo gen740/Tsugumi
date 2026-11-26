@@ -58,9 +58,10 @@ public indirect enum JSONValue: Equatable, Sendable {
 
   // MARK: - Parsing
 
-  public struct ParseError: Error, CustomStringConvertible {
+  public struct ParseError: LocalizedError, CustomStringConvertible {
     public let message: String
     public let offset: Int
+    public var errorDescription: String? { description }
     public var description: String { "\(message) at byte \(offset)" }
   }
 

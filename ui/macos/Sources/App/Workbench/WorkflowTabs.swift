@@ -11,6 +11,9 @@ struct WorkflowTabs: View {
   @AppStorage("chat.width") private var chatWidth = 480.0
   let session: ProjectSession
   @State private var trustAnswered = false
+  @State private var showChatList = false
+  @State private var displayedChatWidth = 0.0
+  private static let chatToolbarItem = "workbench.chat"
   let onSwitchProject: (() -> Void)?
   @Environment(\.guideWindow) private var guideWindow
   @Environment(\.controlActiveState) private var activeState
@@ -45,9 +48,9 @@ struct WorkflowTabs: View {
         if workspace.showChat {
           ChatColumn(width: $chatWidth) {
             ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active,
-                      shown: workspace.showChat, onClose: { workspace.showChat = false })
+                      shown: workspace.showChat, showList: $showChatList)
           }
-          .ignoresSafeArea(.container, edges: .top)
+          .onGeometryChange(for: Double.self) { $0.size.width } action: { displayedChatWidth = $0 }
         }
       }
     }
@@ -103,12 +106,45 @@ struct WorkflowTabs: View {
     }
     .focusedSceneValue(\.projectSession, session)
     .focusedSceneValue(\.workspace, workspace)
-    // The title bar stays quiet: the project's name and where the canvas is
-    // float on the canvas (CanvasWorkspace); the window keeps its title for
-    // the Window menu and Mission Control.
+    // Keep the window title for Mission Control and the Window menu.
     .navigationTitle(session.scopeName([]))
     .toolbar(removing: .title)
+    .toolbar(id: "workbench") {
+      if session.staleHostState == nil, !EnvironmentOverlay.hasProblem(session) {
+        ToolbarItem(id: Self.chatToolbarItem, placement: .automatic) { chatToolbarContent }
+          .customizationBehavior(.disabled)
+      }
+    }
+    .background(WindowReader { window in
+      // Apply this after the split view installs the window's title-bar sections.
+      DispatchQueue.main.async {
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
+        if let toolbar = window.toolbar { alignChatToolbarItem(toolbar) }
+      }
+    })
+    .onReceive(NotificationCenter.default.publisher(for: NSToolbar.willAddItemNotification)) { event in
+      guard let toolbar = event.object as? NSToolbar, toolbar === workspace.window?.toolbar else { return }
+      DispatchQueue.main.async { alignChatToolbarItem(toolbar) }
+    }
     .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+  }
+
+  @ViewBuilder private var chatToolbarContent: some View {
+    if workspace.showChat {
+      ChatHeader(chat: model.chat(for: session), showList: $showChatList, detached: false,
+                 onClose: { workspace.showChat = false })
+        .frame(width: max(160, displayedChatWidth - 28))
+    } else {
+      ChatToggle(open: false) { workspace.showChat = true }
+    }
+  }
+
+  /// Put the flexible space in the detail section, after the split separator.
+  private func alignChatToolbarItem(_ toolbar: NSToolbar) {
+    guard let index = toolbar.items.firstIndex(where: { $0.itemIdentifier.rawValue == Self.chatToolbarItem }),
+          index > 0, toolbar.items[index - 1].itemIdentifier != .flexibleSpace else { return }
+    toolbar.insertItem(withItemIdentifier: .flexibleSpace, at: index)
   }
 
   private var tabBar: some View {
@@ -468,19 +504,19 @@ enum RunActions {
       c["id"]?.string.map { s.kind(key([$0])) } == .trigger
     }
     guard let id = trigger?["id"]?.string else {
-      s.notice = String(localized: "全体を実行するには最上位の Workflow に開始 Card（trigger）を置いてください。Card を選んで個別に実行もできます。")
+      s.notice = .info(String(localized: "全体を実行するには最上位の Workflow に開始 Card（trigger）を置いてください。Card を選んで個別に実行もできます。"))
       return
     }
     Task {
       if s.computationDirty { await s.save() }
-      do { try await s.run(card: [id], propagate: true) } catch { s.notice = "\(error)" }
+      do { try await s.run(card: [id], propagate: true) } catch { s.notice = .error(error.localizedDescription) }
     }
   }
 
   static func run(_ s: ProjectSession, card: CardKey, propagate: Bool) {
     Task {
       if s.computationDirty { await s.save() }
-      do { try await s.run(card: path(card), propagate: propagate) } catch { s.notice = "\(error)" }
+      do { try await s.run(card: path(card), propagate: propagate) } catch { s.notice = .error(error.localizedDescription) }
     }
   }
 }

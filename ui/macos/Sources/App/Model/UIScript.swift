@@ -285,7 +285,7 @@ final class UIScript {
         if let s = session {
           let chat = AppModel.shared.chat(for: s)
           let last = chat.items.last.map { "\($0.role): \($0.text.prefix(60))" } ?? "-"
-          say("chatstate bound=\(chat.session === s) busy=\(chat.busy) items=\(chat.items.count) status=\(chat.status ?? "-") last=\(last.replacingOccurrences(of: "\n", with: " "))")
+          say("chatstate bound=\(chat.session === s) busy=\(chat.busy) items=\(chat.items.count) status=\(chat.status?.message ?? "-") last=\(last.replacingOccurrences(of: "\n", with: " "))")
         }
       case "demos": NotificationCenter.default.post(name: .appShowDemos, object: nil)
       case "generate":
@@ -371,7 +371,7 @@ final class UIScript {
           let deadline = Date().addingTimeInterval((Double(w.count > 1 ? w[1] : "30") ?? 30) * 60)
           try? await Task.sleep(for: .seconds(2))
           while chat.busy && Date() < deadline { try? await Task.sleep(for: .seconds(2)) }
-          say("chat busy=\(chat.busy) continuable=\(chat.canContinue) status=\(chat.status ?? "-")")
+          say("chat busy=\(chat.busy) continuable=\(chat.canContinue) status=\(chat.status?.message ?? "-")")
         }
       case "continue":
         if let s = session { AppModel.shared.chat(for: s).continueWork() }

@@ -2,6 +2,23 @@ import AppKit
 import SwiftUI
 import TsugumiRPC
 
+enum WorkbenchNotice: Equatable {
+  case info(String)
+  case error(String)
+
+  var message: String {
+    switch self { case .info(let text), .error(let text): return text }
+  }
+
+  var symbol: String {
+    switch self { case .info: return "info.circle"; case .error: return "exclamationmark.triangle.fill" }
+  }
+
+  var color: Color {
+    switch self { case .info: return .secondary; case .error: return .red }
+  }
+}
+
 /// Diagnostics, revision and the log, timeline and console toggles.
 struct StatusBar: View {
   @Bindable var workspace: Workspace
@@ -16,21 +33,6 @@ struct StatusBar: View {
     ViewThatFits(in: .horizontal) {
       bar(compact: false)
       bar(compact: true)
-    }
-    .overlay(alignment: .topTrailing) {
-      if let notice = session.notice {
-        HStack(spacing: 6) {
-          Label(notice, systemImage: "info.circle").lineLimit(1).help(notice)
-          Button { session.notice = nil } label: { Image(systemName: "xmark") }
-            .buttonStyle(.borderless)
-        }
-        .font(.caption)
-        .padding(6)
-        .background(.regularMaterial, in: Capsule())
-        .frame(maxWidth: 260, alignment: .trailing)
-        .fixedSize(horizontal: true, vertical: true)
-        .alignmentGuide(.top) { $0[.bottom] + 6 }
-      }
     }
     .sheet(item: Binding(get: { session.reloadApproval }, set: { session.reloadApproval = $0 })) { request in
       PermissionPromptView(prompt: ChatController.PermissionPrompt(raw: request.permissions, answer: { _ in }),

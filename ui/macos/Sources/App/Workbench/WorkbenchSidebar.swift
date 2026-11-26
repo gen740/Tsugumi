@@ -18,21 +18,10 @@ struct WorkbenchSidebar: View {
 
   var body: some View {
     VStack(spacing: 0) {
+      if let onSwitchProject {
+        homeButton(onSwitchProject)
+      }
       List(selection: Binding(get: { tab.selection }, set: { tab.selection = $0 })) {
-        if let onSwitchProject {
-          Button(action: onSwitchProject) {
-            HStack(spacing: 6) {
-              Image(nsImage: NSApp.applicationIconImage)
-                .resizable().scaledToFit().frame(width: 22, height: 22)
-              Text(verbatim: "Tsugumi").font(.headline)
-            }
-          }
-          .buttonStyle(.plain)
-          .selectionDisabled()
-          .help(tip(String(localized: "Home へ戻る"), .home))
-          .accessibilityLabel("Home へ戻る")
-          .guideTarget("home")
-        }
         ScopeRow(workspace: workspace, session: session, tab: tab, scope: [], depth: 0)
         Section {
           definitions
@@ -78,6 +67,25 @@ struct WorkbenchSidebar: View {
     .alert("取り込めませんでした", isPresented: Binding(get: { importError != nil }, set: { if !$0 { importError = nil } })) {
       Button("OK", role: .cancel) {}
     } message: { Text(importError ?? "") }
+  }
+
+  /// Keep the Home mark above the scroll view, outside its title-bar edge effect.
+  private func homeButton(_ action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      HStack(spacing: 8) {
+        Image(nsImage: NSApp.applicationIconImage)
+          .resizable().scaledToFit().frame(width: 36, height: 36)
+        Text(verbatim: "Tsugumi").font(.title2.weight(.semibold))
+      }
+      .frame(height: 50)
+      .padding(.horizontal, 25)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .help(tip(String(localized: "Home へ戻る"), .home))
+    .accessibilityLabel("Home へ戻る")
+    .guideTarget("home")
   }
 
   /// Externals of this project: their definitions (copied into the scope as

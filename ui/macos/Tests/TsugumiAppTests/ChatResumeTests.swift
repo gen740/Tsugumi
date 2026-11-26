@@ -282,17 +282,17 @@ import TsugumiTestSupport
       // Seeing streamed text establishes that the model is actually waiting
       // at the fixture's release gate and that this UI has subscribed.
       try await until("the held model is streaming") { observing.failed || (observing.busy && reply(observing, after: 1)) }
-      try #require(observing.busy, "\(observing.status ?? "")")
+      try #require(observing.busy, "\(observing.status?.message ?? "")")
       try await t.restartAgent()
       try await until("the running observer sees the interruption") { observing.interrupted || observing.failed }
-      try #require(observing.interrupted, "\(observing.status ?? "")")
+      try #require(observing.interrupted, "\(observing.status?.message ?? "")")
       let before = try await t.snapshot()
       try #require(before.resumable)
       #expect(before.interruptedOperation?.kind == "model")
 
       let reopened = t.makeChat()
       try await until("reopening shows the interruption") { (reopened.ready && reopened.interrupted) || reopened.failed }
-      try #require(reopened.interrupted, "\(reopened.status ?? "")")
+      try #require(reopened.interrupted, "\(reopened.status?.message ?? "")")
       let agent = Agent(id: t.conversationID, transport: RPCToolTransport(session: t.session), provider: .fixture)
       try await agent.open()
       try await agent.refresh()
@@ -322,7 +322,7 @@ import TsugumiTestSupport
       try await SyncTests.connected(t.session)
       let chat = t.makeChat()
       try await until("the chat is ready") { chat.failed || (chat.ready && chat.currentId == t.conversationID) }
-      try #require(!chat.failed, "\(chat.status ?? "")")
+      try #require(!chat.failed, "\(chat.status?.message ?? "")")
       // Invalid batches do not appear attached, and can be retried.
       await chat.attach(folders: [first, t.directory.appendingPathComponent("missing")])
       #expect(chat.folders.isEmpty && chat.status != nil && !chat.attaching)
@@ -348,7 +348,7 @@ import TsugumiTestSupport
       }
       chat.send("hello from both attached folders")
       try await until("the message with both attachments ended") { chat.failed || (!chat.busy && reply(chat, after: 0)) }
-      try #require(!chat.failed, "\(chat.status ?? "")")
+      try #require(!chat.failed, "\(chat.status?.message ?? "")")
       let snapshot = try await t.snapshot()
       let conversation = snapshot.conversation
       let messages = conversation.messages.compactMap { $0 }
@@ -367,11 +367,11 @@ import TsugumiTestSupport
       try await t.send()
       let chat = t.makeChat()
       try await until("the model is streaming before project connection") { chat.failed || (chat.busy && reply(chat, after: 1)) }
-      try #require(!chat.failed, "\(chat.status ?? "")")
+      try #require(!chat.failed, "\(chat.status?.message ?? "")")
       #expect(!t.session.connected)
       chat.cancel()
       try await until("cancellation allows continuation") { chat.failed || (!chat.busy && chat.canContinue) }
-      try #require(!chat.failed, "\(chat.status ?? "")")
+      try #require(!chat.failed, "\(chat.status?.message ?? "")")
       t.session.start()
       try await SyncTests.connected(t.session)
 
@@ -380,11 +380,11 @@ import TsugumiTestSupport
         chat.failed || chat.busy && chat.items.last?.role == "assistant"
           && chat.items.contains { $0.role == "user" && $0.text == "hello again" }
       }
-      try #require(!chat.failed, "\(chat.status ?? "")")
+      try #require(!chat.failed, "\(chat.status?.message ?? "")")
       await chat.detach().value
       let reopened = t.makeChat()
       try await until("the reopened chat is observing the held turn") { reopened.busy || reopened.failed }
-      try #require(!reopened.failed, "\(reopened.status ?? "")")
+      try #require(!reopened.failed, "\(reopened.status?.message ?? "")")
       try t.releaseStream()
       try await until("the detached turn is complete") {
         reopened.failed || reopened.ready && !reopened.busy && reopened.items.last?.role == "assistant"

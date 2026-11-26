@@ -870,6 +870,7 @@
   "会話の圧縮": "Compacting the conversation",
   "会話はまだありません": "No conversations yet",
   "会話は中断しています。中断時の処理: {0}。再開するか、新しいメッセージを送れます。": {"text": "Conversation interrupted. Operation at interruption: {0}. Resume or send a new message.", "mac": ["@"]},
+  "会話の操作": "Conversation actions",
   "会話を圧縮": "Compact Conversation",
   "会話を圧縮しています…": "Compacting the conversation…",
   "会話を表示中": "Conversation open",

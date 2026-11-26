@@ -13,9 +13,19 @@ import Testing
   let source = CGRect(x: 0, y: 0, width: 100, height: 80)
   let target = source.offsetBy(dx: 300, dy: 0)
   let camera = CGAffineTransform(a: 2, b: 0, c: 0, d: 2, tx: 20, ty: 30)
-  let end = try #require(nixCurve(source, target).applying(camera).currentPoint)
+  let line = try #require(NixReferenceSegment(source, target))
+  let end = try #require(line.path.applying(camera).currentPoint)
   let expected = CGPoint(x: target.minX, y: target.midY).applying(camera)
   #expect(hypot(end.x - expected.x, end.y - expected.y) < 0.01)
+}
+
+@Test func nixReferenceSegmentsMeetTheTargetFromAnyDirection() throws {
+  let source = CGRect(x: 0, y: 0, width: 100, height: 80)
+  let target = source.offsetBy(dx: -60, dy: -240)
+  let line = try #require(NixReferenceSegment(source, target))
+  #expect(line.start == CGPoint(x: 40, y: source.minY))
+  #expect(line.end == CGPoint(x: 0, y: target.maxY))
+  #expect(line.arrow(applying: .identity).boundingRect.minY == line.end.y)
 }
 
 @Test func nixReferenceLinksHighlightTheHoveredCardOrThePickedLink() throws {

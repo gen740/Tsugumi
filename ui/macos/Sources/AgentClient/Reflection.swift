@@ -112,10 +112,11 @@ public struct BFBS {
   }
 }
 
-public enum AgentError: Error, CustomStringConvertible {
+public enum AgentError: LocalizedError, CustomStringConvertible {
   case schema(String)
   case provider(String)
 
+  public var errorDescription: String? { description }
   public var description: String {
     switch self {
     case .schema(let s): return "schema: \(s)"

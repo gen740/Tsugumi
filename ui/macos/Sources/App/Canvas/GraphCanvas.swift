@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import TsugumiRPC
+import TsugumiViewPresentation
 
 /// The canvas of one scope: grid, groups, connections, Cards, sticky notes
 /// with pan/zoom, selection, wiring and drag & drop.
@@ -12,6 +13,15 @@ struct GraphCanvas: View {
   @Bindable var workspace: Workspace
   let session: ProjectSession
   @Bindable var tab: WorkflowTab
+  let showsCardViews: Bool
+  private struct PendingPosition {
+    let operation: UUID
+    let point: CGPoint
+  }
+
+  @State private var pendingCards: [CardKey: PendingPosition] = [:]
+  @State private var pendingNotes: [String: PendingPosition] = [:]
+  @State private var frontCardView: UUID?
   @State private var drag: (key: CardKey, offset: CGSize)?
   @State private var boundaryDrag: (input: Bool, offset: CGSize)?
   /// A wire being drawn from a port: from an output (to an input), or from
@@ -146,10 +156,11 @@ struct GraphCanvas: View {
   }
   @State private var layoutPass = LayoutPass()
 
-  init(workspace: Workspace, session: ProjectSession, tab: WorkflowTab) {
+  init(workspace: Workspace, session: ProjectSession, tab: WorkflowTab, showsCardViews: Bool = false) {
     self.workspace = workspace
     self.session = session
     self.tab = tab
+    self.showsCardViews = showsCardViews
   }
   private var cam: CanvasCamera { CanvasCamera(x: camera.x, y: camera.y, zoom: camera.zoom) }
 
@@ -278,7 +289,13 @@ struct GraphCanvas: View {
       // A scope shown for the first time (no saved camera) shows its whole flow
       // as soon as its Cards are there.
       .onChange(of: cardKeys.count) { fitIfNew() }
-      .onChange(of: geo.size) { size = geo.size }
+      .onChange(of: geo.size) {
+        size = geo.size
+        placeNewCardViews(in: geo.size)
+      }
+      .onChange(of: cardViewOpenings.map(\.id), initial: true) {
+        placeNewCardViews(in: geo.size)
+      }
       .onReceive(NotificationCenter.default.publisher(for: .canvasFitAll)) { n in
         if (n.object as? UUID) == tab.id || n.object == nil { fitAll() }
       }
@@ -336,11 +353,11 @@ struct GraphCanvas: View {
                         countLabel: count, countAt: count == nil ? nil : path.midPoint, thread: $0.thread)
       },
                 animate: prefs.animateLines && session.runActive, zoom: camera.zoom, presences: session.presences)
-      if tab.showNixReferences { nixLayer(transform: toLayer) }
       ZStack(alignment: .topLeading) { panned(routed) }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .coordinateSpace(name: "canvas")
         .padding(m)
+      if tab.showNixReferences { nixLayer(transform: toLayer) }
       if debug.showHitAreas { hitAreaLayer(routed, transform: toLayer) }
     }
   }
@@ -350,6 +367,7 @@ struct GraphCanvas: View {
     if let b = boundary { boundaryBars(b) }
     ForEach(cardKeys, id: \.self) { k in cardView(k) }
     ForEach(noteIds, id: \.self) { id in noteView(id) }
+    canvasCardViews
     // The Agent at work: threads being drawn and the tsugumi.
     // (one bird per helper while the Agent has work delegated)
     ForEach(Array(session.presences.enumerated()), id: \.offset) { _, p in
@@ -366,6 +384,68 @@ struct GraphCanvas: View {
       .disabled(!session.isEditable)
       .position(mid)
     }
+  }
+
+  private var cardViewOpenings: [CardViewOpening] {
+    showsCardViews ? session.cardViews.panelOpenings : []
+  }
+
+  private var canvasCardViewRects: [(CardViewOpening, CGRect)] {
+    cardViewOpenings.compactMap { opening in
+      guard let placement = workspace.cardViewPlacements[opening.id], placement.scope == scopeKey else { return nil }
+      return (opening, placement.rect)
+    }
+  }
+
+  /// Make room for new views in the visible canvas. Their bounds are kept in
+  /// the workflow's world coordinates from then on, even when the window resizes.
+  private func placeNewCardViews(in viewport: CGSize) {
+    guard showsCardViews, viewport.width > 0, viewport.height > 0 else { return }
+    let openings = cardViewOpenings
+    let ids = Set(openings.map(\.id))
+    var placements = workspace.cardViewPlacements.filter { ids.contains($0.key) }
+    let columns = viewport.width >= 640 ? 2 : 1
+    let w = min(640, (viewport.width - 36) / CGFloat(columns))
+    let h = min(440, max(160, viewport.height - 138))
+    let zoom = currentCamera.zoom
+    for opening in openings where placements[opening.id] == nil {
+      let visible = placements.values.filter { $0.scope == scopeKey }
+      let slots = (0..<columns).map { column in
+        CGRect(origin: world(CGPoint(x: (viewport.width - (w + 12) * CGFloat(columns) + 12) / 2
+                                      + CGFloat(column) * (w + 12),
+                                    y: max(68, (viewport.height - h) / 2))),
+               size: CGSize(width: w / zoom, height: h / zoom))
+      }
+      let stagger = CGFloat(visible.count) * 22 / zoom
+      let rect = slots.first { slot in !visible.contains { $0.rect.intersects(slot) } }
+        ?? slots[visible.count % columns].offsetBy(dx: stagger, dy: stagger)
+      placements[opening.id] = CanvasCardViewPlacement(scope: scopeKey, rect: rect)
+    }
+    workspace.cardViewPlacements = placements
+  }
+
+  @ViewBuilder private var canvasCardViews: some View {
+    ForEach(canvasCardViewRects, id: \.0.id) { opening, rect in
+      CanvasCardPanel(presentation: session.cardViews, opening: opening, onPress: {
+        frontCardView = opening.id
+        clearHover()
+      }, onDrag: { by in
+        moveCardView(opening.id, from: rect.origin, by: by)
+      }, onRelease: { by in
+        moveCardView(opening.id, from: rect.origin, by: by)
+      })
+      .frame(width: rect.width, height: rect.height)
+      .scaleEffect(camera.zoom)
+      .position(screen(rect.center))
+      .zIndex(frontCardView == opening.id ? 2 : 1)
+    }
+  }
+
+  private func moveCardView(_ id: UUID, from origin: CGPoint, by delta: CGSize) {
+    guard var placement = workspace.cardViewPlacements[id] else { return }
+    let zoom = currentCamera.zoom
+    placement.rect.origin = CGPoint(x: origin.x + delta.width / zoom, y: origin.y + delta.height / zoom)
+    workspace.cardViewPlacements[id] = placement
   }
 
   /// A point the content reports (in the terms of the pass that laid it out) as the canvas shows it now.
@@ -427,6 +507,7 @@ struct GraphCanvas: View {
   private func solid(_ routed: [RoutedWire]) -> [CGRect] {
     var rects = cardKeys.map { cardRect($0).insetBy(dx: -14, dy: -14) }
     rects += session.notes(in: tab.scope).map { noteRect($0).insetBy(dx: -12, dy: -12) }
+    rects += canvasCardViewRects.map(\.1)
     for g in session.groups(in: tab.scope) {
       let members = (g["cards"]?.array ?? []).compactMap { $0.string }.map { key(tab.scope + [$0]) }.filter { session.instance($0) != nil }
       var rect = members.reduce(CGRect.null) { $0.union(cardRect($1)) }
@@ -454,7 +535,7 @@ struct GraphCanvas: View {
   }
 
   func origin(_ k: CardKey) -> CGPoint {
-    var p = session.placedPosition(k)
+    var p = pendingCards[k]?.point ?? session.placedPosition(k)
     if let d = drag, d.key == k || (tab.selection.contains(k) && tab.selection.contains(d.key)) {
       p.x += d.offset.width / camera.zoom
       p.y += d.offset.height / camera.zoom
@@ -487,7 +568,17 @@ struct GraphCanvas: View {
 
 
 
-  private func noteRect(_ n: JSONValue) -> CGRect { session.noteRect(n) }
+  private func noteRect(_ n: JSONValue) -> CGRect {
+    var rect = session.noteRect(n)
+    guard let id = n["id"]?.string else { return rect }
+    rect.origin = pendingNotes[id]?.point ?? rect.origin
+    let dragOffset = noteDrag?.id == id ? noteDrag?.by : tab.selectedNotes.contains(id) ? selectionMove : nil
+    if let dragOffset {
+      rect.origin.x += dragOffset.width / camera.zoom
+      rect.origin.y += dragOffset.height / camera.zoom
+    }
+    return rect
+  }
 
   /// The selection's move in progress (screen translation), from whichever of its items is dragged.
   private var selectionMove: CGSize? { selectionDrag ?? drag?.offset }
@@ -502,20 +593,14 @@ struct GraphCanvas: View {
     let active = activeNixLinks(links, hovered: tab.hoveredNixCard, selected: tab.selectedNixReference)
     let highlighted = Set(active.flatMap { [$0.source, $0.target] })
     return Canvas { context, _ in
-      for link in links {
-        let a = cardRect(link.source), b = cardRect(link.target)
-        let selected = active.contains { $0.reference.id == link.reference.id }
-        let color: Color = tab.hoveredNixCard != nil && !selected ? .gray.opacity(0.15) : .purple.opacity(0.9)
-        context.stroke(nixCurve(a, b).applying(transform), with: .color(color),
+      let highlightedIDs = Set(active.map(\.reference.id))
+      for link in links.filter({ !highlightedIDs.contains($0.reference.id) }) + active {
+        guard let segment = NixReferenceSegment(cardRect(link.source), cardRect(link.target)) else { continue }
+        let selected = highlightedIDs.contains(link.reference.id)
+        let color: Color = tab.hoveredNixCard != nil && !selected ? .gray.opacity(0.23) : .purple.opacity(0.9)
+        context.stroke(segment.path.applying(transform), with: .color(color),
                        style: StrokeStyle(lineWidth: selected ? 3 : 1.5, dash: [7, 4]))
-        let right = b.midX >= a.midX
-        let tip = CGPoint(x: right ? b.minX : b.maxX, y: b.midY).applying(transform)
-        let dx: CGFloat = right ? -9 : 9
-        let arrow = Path { p in
-          p.move(to: tip); p.addLine(to: CGPoint(x: tip.x + dx, y: tip.y - 4))
-          p.addLine(to: CGPoint(x: tip.x + dx, y: tip.y + 4)); p.closeSubpath()
-        }
-        context.fill(arrow, with: .color(color))
+        context.fill(segment.arrow(applying: transform), with: .color(color))
       }
       for card in highlighted {
         let rect = cardRect(card).applying(transform).insetBy(dx: -3, dy: -3)
@@ -870,15 +955,13 @@ struct GraphCanvas: View {
   private func noteView(_ id: String) -> some View {
     let n = session.note(id) ?? .object([])
     let r = noteRect(n)
-    // Follows the pointer while dragged (screen units, so any zoom); the layout changes once, on release.
-    let by = noteDrag?.id == id ? noteDrag!.by : tab.selectedNotes.contains(id) ? selectionMove ?? .zero : .zero
     return StickyNoteView(note: n, selected: tab.selectedNotes.contains(id), onResize: { d in
       session.updateNote(id) { v in
         v["width"] = .real(max(120, r.width + d.width / camera.zoom).rounded())
         v["height"] = .real(max(60, r.height + d.height / camera.zoom).rounded())
       }
     })
-    .place(at: CGPoint(x: screen(r.origin).x + by.width, y: screen(r.origin).y + by.height), size: r.size, zoom: camera.zoom)
+    .place(at: screen(r.origin), size: r.size, zoom: camera.zoom)
     // In the canvas space: the note moves under the pointer, so its own space would shrink the translation.
     .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .named("canvas")).onChanged { v in
       clearHover()
@@ -889,12 +972,10 @@ struct GraphCanvas: View {
       if noteDrag == nil { tab.selection = [] }
       noteDrag = (id, v.translation)
     }.onEnded { v in
-      if selectionDrag != nil { return moveSelection(by: v.translation) }
-      noteDrag = nil
-      let to = Self.droppedNoteOrigin(from: r.origin, by: v.translation, zoom: camera.zoom)
-      session.updateNote(id) { n in
-        n["x"] = .real(to.x)
-        n["y"] = .real(to.y)
+      if selectionDrag != nil {
+        moveSelection(by: v.translation)
+      } else {
+        commitMove(cards: [], notes: [id], translation: v.translation)
       }
     })
     .onTapGesture(count: 2) { editingNote = id }
@@ -1180,12 +1261,46 @@ struct GraphCanvas: View {
   }
 
   /// The end of a drag of the selection (screen translation), from any of its items.
-  private func moveSelection(by t: CGSize) {
+  private func moveSelection(by translation: CGSize) {
+    commitMove(cards: tab.selection, notes: tab.selectedNotes, translation: translation)
+  }
+
+  private func commitMove(cards: Set<CardKey>, notes: Set<String>, translation: CGSize) {
+    let zoom = currentCamera.zoom
+    let moved = CGSize(width: translation.width / zoom, height: translation.height / zoom)
+    let snap = prefs.showGrid ? prefs.gridSize : nil
+    let displacement = cards.isEmpty ? moved : CGSize(width: snapped(moved.width, to: snap),
+                                                       height: snapped(moved.height, to: snap))
+    let operation = UUID()
+    // Keep the drop visible while the host saves and its ordered delta is
+    // applied. The drag offset and the pending positions change in this pass.
+    for card in cards {
+      let start = pendingCards[card]?.point ?? session.placedPosition(card)
+      let point = CGPoint(x: snapped(start.x, to: snap) + displacement.width,
+                          y: snapped(start.y, to: snap) + displacement.height)
+      pendingCards[card] = PendingPosition(operation: operation, point: point)
+    }
+    for note in notes {
+      guard let value = session.note(note) else { continue }
+      let start = pendingNotes[note]?.point ?? session.noteRect(value).origin
+      let point = Self.droppedNoteOrigin(from: start, by: displacement, zoom: 1)
+      pendingNotes[note] = PendingPosition(operation: operation, point: point)
+    }
     drag = nil
     selectionDrag = nil
-    session.moveSelection(cards: tab.selection, notes: tab.selectedNotes,
-                          by: CGSize(width: t.width / camera.zoom, height: t.height / camera.zoom),
-                          snap: prefs.showGrid ? prefs.gridSize : nil)
+    noteDrag = nil
+    let save = session.moveSelection(cards: cards, notes: notes, by: moved, snap: snap)
+    Task {
+      await save.value
+      for card in cards where pendingCards[card]?.operation == operation { pendingCards[card] = nil }
+      for note in notes where pendingNotes[note]?.operation == operation { pendingNotes[note] = nil }
+    }
+  }
+
+  private func snapped(_ value: Double, to grid: Double?) -> Double {
+    guard let grid, grid > 0 else { return value }
+    // Use the host's rounding rule, including half steps at negative positions.
+    return snapToGrid(value, grid)
   }
 
   /// A double click on the canvas: on a Card (its view having let the click
@@ -1202,7 +1317,8 @@ struct GraphCanvas: View {
     if let k = cardAt(w) { return select(k) }
     let tolerance = wireTolerance
     if tab.showNixReferences, let ref = nixLinks.first(where: {
-      nixCurve(cardRect($0.source), cardRect($0.target)).strokedPath(StrokeStyle(lineWidth: tolerance * 2)).contains(w)
+      NixReferenceSegment(cardRect($0.source), cardRect($0.target))?.path
+        .strokedPath(StrokeStyle(lineWidth: tolerance * 2)).contains(w) == true
     }) {
       tab.selectedNixReference = ref.reference.id
       return
@@ -1310,7 +1426,7 @@ struct GraphCanvas: View {
   private func deleteSelection() {
     // Notes are layout: they can go during a run, as from their own menus.
     guard session.isEditable || (tab.selection.isEmpty && tab.selectedConnection == nil) else {
-      session.notice = String(localized: "実行中は Card を削除できません。")
+      session.notice = .info(String(localized: "実行中は Card を削除できません。"))
       return
     }
     if let i = tab.selectedConnection {
@@ -1385,6 +1501,7 @@ struct GraphCanvas: View {
   func fitAll() {
     var rect = cardKeys.reduce(CGRect.null) { $0.union(cardRect($1)) }
     for n in session.notes(in: tab.scope) { rect = rect.union(noteRect(n)) }
+    for (_, view) in canvasCardViewRects { rect = rect.union(view) }
     for g in session.groups(in: tab.scope) {
       let members = (g["cards"]?.array ?? []).compactMap { $0.string }.map { key(tab.scope + [$0]) }.filter { session.instance($0) != nil }
       for m in members { rect = rect.union(cardRect(m).insetBy(dx: -18, dy: -40)) }

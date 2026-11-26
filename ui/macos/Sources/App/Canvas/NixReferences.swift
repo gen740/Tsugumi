@@ -49,14 +49,50 @@ func activeNixLinks(_ links: [NixLink], hovered: CardKey?, selected: String?) ->
   }
 }
 
-func nixCurve(_ a: CGRect, _ b: CGRect) -> Path {
-  let right = b.midX >= a.midX
-  let start = CGPoint(x: right ? a.maxX : a.minX, y: a.midY)
-  let end = CGPoint(x: right ? b.minX : b.maxX, y: b.midY)
-  let bend = max(45, abs(end.x - start.x) / 2) * (right ? 1.0 : -1.0)
-  return Path { p in
-    p.move(to: start)
-    p.addCurve(to: end, control1: CGPoint(x: start.x + bend, y: start.y), control2: CGPoint(x: end.x - bend, y: end.y))
+/// A direct reference, clipped at the edges of its source and target Cards.
+struct NixReferenceSegment {
+  let start: CGPoint
+  let end: CGPoint
+
+  init?(_ source: CGRect, _ target: CGRect) {
+    let a = source.center, b = target.center
+    let dx = b.x - a.x, dy = b.y - a.y
+    guard dx != 0 || dy != 0 else { return nil }
+
+    func edge(_ rect: CGRect) -> CGFloat {
+      min(dx == 0 ? .infinity : rect.width / (2 * abs(dx)),
+          dy == 0 ? .infinity : rect.height / (2 * abs(dy)))
+    }
+
+    let targetEdge = 1 - edge(target)
+    let endAt = targetEdge > 0 ? targetEdge : 1
+    let sourceEdge = edge(source)
+    let startAt = sourceEdge < endAt ? sourceEdge : 0
+    start = CGPoint(x: a.x + dx * startAt, y: a.y + dy * startAt)
+    end = CGPoint(x: a.x + dx * endAt, y: a.y + dy * endAt)
+  }
+
+  var path: Path {
+    Path { line in
+      line.move(to: start)
+      line.addLine(to: end)
+    }
+  }
+
+  func arrow(applying transform: CGAffineTransform) -> Path {
+    let tail = start.applying(transform), tip = end.applying(transform)
+    let dx = tip.x - tail.x, dy = tip.y - tail.y
+    let length = hypot(dx, dy)
+    guard length > 0 else { return Path() }
+    let x = dx / length, y = dy / length
+    let back = min(10, length)
+    let base = CGPoint(x: tip.x - x * back, y: tip.y - y * back)
+    return Path { arrow in
+      arrow.move(to: tip)
+      arrow.addLine(to: CGPoint(x: base.x - y * 4, y: base.y + x * 4))
+      arrow.addLine(to: CGPoint(x: base.x + y * 4, y: base.y - x * 4))
+      arrow.closeSubpath()
+    }
   }
 }
 

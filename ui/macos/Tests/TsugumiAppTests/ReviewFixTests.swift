@@ -102,17 +102,18 @@ import TsugumiRPC
         .frame(width: 320)).fittingSize.height
     }
     let before = toolbarHeight()
-    struct Rejected: LocalizedError, CustomStringConvertible {
-      let description = "The execution service refused this Stop request."
+    struct Rejected: LocalizedError {
+      let message = "The execution service refused this Stop request."
+      var errorDescription: String? { message }
     }
     await session.cancelRun { id in
       #expect(id == "failed-stop")
       #expect(session.stopRequested && !session.canStopRun)
       throw Rejected()
     }
-    #expect(session.stopError?.contains(Rejected().description) == true && session.canStopRun)
-    // The error occupies a second line in the narrow toolbar itself.
-    #expect(toolbarHeight() > before)
+    #expect(session.stopError?.contains(Rejected().message) == true && session.canStopRun)
+    // The canvas displays the error below the controls without resizing them.
+    #expect(toolbarHeight() == before)
     await session.cancelRun { id in status(id, .cancelling) }
     #expect(session.runStatus?.state == .cancelling && !session.stopRequested && !session.canStopRun)
     #expect(session.stopError == nil)

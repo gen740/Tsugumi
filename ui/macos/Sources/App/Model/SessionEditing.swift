@@ -165,7 +165,7 @@ extension ProjectSession {
 
   /// Runs an asynchronous canvas edit and presents any failure in the workbench.
   func performCardEdit(_ operation: @escaping @MainActor () async throws -> Void) {
-    Task { do { try await operation() } catch { notice = "\(error)" } }
+    Task { do { try await operation() } catch { notice = .error(error.localizedDescription) } }
   }
 
   /// All new identifiers come from the core, including unsaved nested projects.
@@ -236,7 +236,7 @@ extension ProjectSession {
       item.from = from; item.id = id; item.x = point.x; item.y = point.y
       try await copyCards([item], in: scope)
       return key(scope + [id])
-    } catch { notice = error.localizedDescription; return nil }
+    } catch { notice = .error(error.localizedDescription); return nil }
   }
 
   @discardableResult
@@ -247,7 +247,7 @@ extension ProjectSession {
       item.from = prefix + "definitions/\(id)/"; item.id = newId; item.x = point.x; item.y = point.y
       try await copyCards([item], in: scope)
       return key(scope + [newId])
-    } catch { notice = error.localizedDescription; return nil }
+    } catch { notice = .error(error.localizedDescription); return nil }
   }
 
   @discardableResult
@@ -281,7 +281,7 @@ extension ProjectSession {
       }
       try await copyCards(items, in: scope, connections: true)
       return Set(items.map { key(scope + [$0.id]) })
-    } catch { notice = error.localizedDescription; return [] }
+    } catch { notice = .error(error.localizedDescription); return [] }
   }
 
   // MARK: - A Draft written on the canvas
@@ -411,7 +411,7 @@ extension ProjectSession {
       body.cards = keys.compactMap { path($0).last }.sorted(); body.id = id
       try await operate(.projectmakesubgraph, body: body)
       return key(scope + [id])
-    } catch { notice = error.localizedDescription; return nil }
+    } catch { notice = .error(error.localizedDescription); return nil }
   }
 
   // MARK: - Layout: notes and groups
@@ -566,7 +566,7 @@ extension ProjectSession {
     body.action = .arrange
     body.scene = layoutScene(scope)
     do { try await operate(.projectlayout, body: body) }
-    catch { notice = String(describing: error) }
+    catch { notice = .error(error.localizedDescription) }
   }
 
   /// Measurements only. Geometry and saved port order belong to presentation;
@@ -633,7 +633,7 @@ extension ProjectSession {
     body.action = .untangle
     body.scene = layoutScene(scope)
     do { try await operate(.projectlayout, body: body) }
-    catch { notice = String(describing: error) }
+    catch { notice = .error(error.localizedDescription) }
   }
 
   /// Whether the canvas shows this Card's ports in an order of its own.
@@ -660,7 +660,7 @@ extension ProjectSession {
     }
     return Task { @MainActor in
       do { try await operateFields(edits) }
-      catch { notice = String(describing: error) }
+      catch { notice = .error(error.localizedDescription) }
     }
   }
 

@@ -129,6 +129,12 @@ enum BottomPanel: String, CaseIterable, Identifiable {
   }
 }
 
+/// A live Card view's bounds in its workflow's canvas coordinates.
+struct CanvasCardViewPlacement {
+  let scope: CardKey
+  var rect: CGRect
+}
+
 /// State of one main window: which project is open, its tabs and panels.
 @MainActor
 @Observable
@@ -137,6 +143,7 @@ final class Workspace {
   /// The window showing it (a main window: to bring it forward, to tell when it closes).
   @ObservationIgnored weak var window: NSWindow?
   var session: ProjectSession?
+  var cardViewPlacements: [UUID: CanvasCardViewPlacement] = [:]
   /// "New project" asked for this window: its Home opens the sheet.
   var requestNewProject = false
   /// What this window could not do, shown as an alert.
