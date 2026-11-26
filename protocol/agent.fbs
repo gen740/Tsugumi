@@ -105,7 +105,10 @@ table Event {
   asked:[string]; groups:[AccessGroup]; event:Event; code:string; call_id:string;
 }
 table SequencedEvent { seq:ulong; event:Event (required); }
-table EventsPage { events:[SequencedEvent]; next_seq:ulong; busy:bool; rows:[ChatRow]; has_rows:bool; }
+// Apply indexed replacements, then use row_count as the resulting length.
+table ChatRowUpdate { index:uint; row:ChatRow (required); }
+table PresentationUpdate { row_count:uint; reset:bool; rows:[ChatRowUpdate]; seq:ulong; }
+table EventsPage { events:[SequencedEvent]; next_seq:ulong; busy:bool; presentation:PresentationUpdate; }
 // A tool's input schema is an open-ended JSON Schema document.
 table Tool { name:string; description:string; input_schema_json:string; }
 table ToolCatalog { tools:[Tool]; }

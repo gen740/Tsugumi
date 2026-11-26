@@ -152,7 +152,8 @@ console.log('chat model refresh: presentation, settings stream, local writes and
     assert.equal(c.ready, true)
 
     const reconnect = c.reread('old')
-    c.handle({ kind: 'presentation', rows: [textRow('live progress')] })
+    c.handle({ kind: 'presentation', count: 1, reset: false, seq: 2n, rows: [{ index: 0, row: textRow('live progress') }] })
+    c.handle({ kind: 'presentation', count: 0, reset: false, seq: 1n, rows: [] })
     pending[3].resolve(snapshot('old', ''))
     await reconnect
     assert.equal(c.items[0]?.text, 'live progress', 'a reconnect snapshot cannot overwrite newer stream content with an empty list')

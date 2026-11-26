@@ -73,6 +73,14 @@ function eventFields(e: A.EventT) {
   }
 }
 
+export interface PresentationUpdate {
+  kind: 'presentation'
+  count: number
+  reset: boolean
+  seq: bigint
+  rows: { index: number; row: ChatRow }[]
+}
+
 type AgentEvent = ReturnType<typeof eventFields> & { event?: AgentEvent }
 function agentEvent(e: A.EventT): AgentEvent {
   return { ...eventFields(e), event: e.event ? agentEvent(e.event) : undefined }
@@ -92,7 +100,7 @@ function observe(id: string, wake: () => void) {
 export class ConversationEvents {
   private observation?: { id: string; stop: () => void }
 
-  constructor(private receive: (event: AgentEvent | { kind: 'presentation'; rows: ChatRow[] }) => void,
+  constructor(private receive: (event: AgentEvent | PresentationUpdate) => void,
     private failed: (error: unknown) => void,
     private read = readEvents, private connect: () => Promise<unknown> = sharedHost, private watch = observe) {}
 
@@ -122,7 +130,9 @@ export class ConversationEvents {
             if (!active) return
             this.receive(agentEvent(entry.event!))
           }
-          if (active && result.hasRows) this.receive({ kind: 'presentation', rows: result.rows.map(chatRow) })
+          const update = result.presentation
+          if (active && update) this.receive({ kind: 'presentation', count: update.rowCount, reset: update.reset,
+            seq: update.seq, rows: update.rows.map(entry => ({ index: entry.index, row: chatRow(entry.row!) })) })
           dirty ||= result.events.length === limit
         }
       } catch (error) {

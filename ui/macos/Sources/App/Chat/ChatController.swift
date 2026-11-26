@@ -770,6 +770,16 @@ final class ChatController {
       displayedId = currentId
       loading = false
       items = rows.map(Self.presentedItem)
+    case .presentationPatch(let count, let rows):
+      contentRevision += 1
+      displayedId = currentId
+      loading = false
+      if items.count > count { items.removeLast(items.count - count) }
+      for (index, row) in rows {
+        let item = Self.presentedItem(row)
+        if index == items.count { items.append(item) }
+        else if index < items.count { items[index] = item }
+      }
     case .modelAccepted:
       turnAccepted = true
       guard let agent else { return }

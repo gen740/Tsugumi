@@ -634,6 +634,8 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 
 Reply variants: `HelloResult`, `Acknowledgement`, `ConversationResult`, `ConversationList`, `EventsPage`, `ToolCatalog`, `ToolResult`, `AccessResult`, `AccessList`, `TextResult`, `Failure`, `CallId`, `Shown`.
 
+`ConversationGetRequest` returns a full presentation and its event cursor. An event page can include a presentation update with the current row count and the indexed rows changed since `after_seq`. The presentation sequence can be ahead of `next_seq` while older events are paginated. Apply the replacements and trim to the stated row count. If `reset` is set, start with an empty presentation and apply all rows in the update.
+
 ### Host service
 
 Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticated principals: user only.

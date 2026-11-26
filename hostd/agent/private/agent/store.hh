@@ -5,6 +5,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -76,9 +77,26 @@ struct ConversationStore {
 
   struct PresentationState {
     std::vector<std::unique_ptr<Tsugumi::Agent::ChatRowT>> rows;
-    std::string streaming_row;
-    size_t next_message = 0;
+    std::optional<size_t> streaming_row;
+    std::vector<uint64_t> row_sequences;
+    std::set<std::pair<uint64_t, size_t>> changes;
+    uint64_t baseline = 0;
+    uint64_t seq = 0;
+    uint64_t resized_at = 0;
+    bool dirty = false;
+    // Full snapshots can observe a persisted write before its event arrives.
+    std::set<size_t> snapshot_changes;
+    bool snapshot_resize = false;
+
+    auto MarkChanged(size_t index) -> void;
   };
+  auto BuildConversation(const Conversation& conversation,
+                         std::string& streaming_id)
+      -> Tsugumi::Agent::ConversationT;
+  auto RebuildPresentation(Tsugumi::Agent::ConversationT& snapshot,
+                           const std::string& streaming_id,
+                           PresentationState& state, bool full_snapshot)
+      -> void;
   std::map<std::string, PresentationState> presentation;
   struct ProjectStore;
   host::StateGate& gate;

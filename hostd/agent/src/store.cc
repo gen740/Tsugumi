@@ -314,7 +314,8 @@ auto ConversationStore::SaveMessages(const std::string& id,
   std::optional<sql::Transaction> transaction;
   if (sqlite3_get_autocommit(database.get())) transaction.emplace(database);
   const auto previous = ParseMessages(GetConversation(id).messages);
-  presentation.erase(id);
+  if (auto found = presentation.find(id); found != presentation.end())
+    found->second.dirty = true;
   const auto serialized = scrub(SerializeMessages(messages));
   // Compare the same persisted representation on both sides. Scrubbing also
   // orders JSON objects in providerContent; that is not a history replacement.
@@ -336,7 +337,8 @@ auto ConversationStore::SaveMessages(const std::string& id,
   if (transaction) transaction->commit();
 }
 
-auto ConversationStore::ConversationData(const Conversation& c)
+auto ConversationStore::BuildConversation(const Conversation& c,
+                                          std::string& streaming_id)
     -> A::ConversationT {
   std::vector<Message> messages;
   std::string summary;
@@ -446,7 +448,10 @@ auto ConversationStore::ConversationData(const Conversation& c)
         {"state", json::Quote(approvals.text(2) == "pending" ? "pending"
                                                              : "completed")}}));
   }
-  auto out = wire::Conversation(json::Members{
+  if (!streaming.empty())
+    streaming_id =
+        ":" + std::to_string(archive.size() + messages.size()) + ":0";
+  return wire::Conversation(json::Members{
       {"id", json::Quote(c.id)},
       {"title", json::Quote(c.title)},
       {"updatedAt", std::to_string(c.updated)},
@@ -457,15 +462,58 @@ auto ConversationStore::ConversationData(const Conversation& c)
       {"helpers", json::Encode(helpers)},
       {"streaming", json::Quote(streaming)},
       {"usage", usage_json}});
-  auto& cached = presentation[c.id];
-  cached.rows.clear();
-  for (const auto& row : out.rows)
-    cached.rows.push_back(std::make_unique<A::ChatRowT>(*row));
-  cached.next_message = out.archive.size() + out.messages.size();
-  cached.streaming_row =
-      streaming.empty() ? ""
-                        : ":" + std::to_string(cached.next_message - 1) + ":0";
-  return out;
+}
+
+auto ConversationStore::PresentationState::MarkChanged(size_t index) -> void {
+  changes.erase({row_sequences[index], index});
+  changes.emplace(seq, index);
+  row_sequences[index] = seq;
+}
+
+auto ConversationStore::RebuildPresentation(A::ConversationT& snapshot,
+                                            const std::string& streaming_id,
+                                            PresentationState& state,
+                                            bool full_snapshot) -> void {
+  state.streaming_row.reset();
+  const auto old_count = state.rows.size();
+  const auto count = snapshot.rows.size();
+  if (old_count != count) {
+    state.resized_at = state.seq;
+    if (full_snapshot) state.snapshot_resize = true;
+  }
+  for (size_t i = count; i < old_count; ++i) {
+    state.changes.erase({state.row_sequences[i], i});
+    state.snapshot_changes.erase(i);
+  }
+  state.row_sequences.resize(count);
+  for (size_t i = 0; i < count; ++i) {
+    if (snapshot.rows[i]->id == streaming_id) state.streaming_row = i;
+    if (i >= old_count || *state.rows[i] != *snapshot.rows[i]) {
+      if (state.seq > state.baseline) state.MarkChanged(i);
+      if (full_snapshot) state.snapshot_changes.insert(i);
+    }
+  }
+  state.rows = std::move(snapshot.rows);
+  state.dirty = false;
+}
+
+auto ConversationStore::ConversationData(const Conversation& c)
+    -> A::ConversationT {
+  std::string streaming_id;
+  auto snapshot = BuildConversation(c, streaming_id);
+  auto [it, inserted] = presentation.try_emplace(c.id);
+  auto& state = it->second;
+  if (inserted) {
+    auto latest = ConversationDatabase(c.id).prepare(
+        "SELECT coalesce(max(seq),0) FROM events WHERE conversation=?");
+    latest.bind(1, c.id).step();
+    state.seq = state.baseline = latest.u64(0);
+  }
+  RebuildPresentation(snapshot, streaming_id, state, !inserted);
+  snapshot.rows.reserve(state.rows.size());
+  for (const auto& row : state.rows)
+    snapshot.rows.push_back(std::make_unique<A::ChatRowT>(*row));
+  return snapshot;
 }
 
 auto ConversationStore::Create(const A::ConversationCreateRequest& request,
@@ -580,7 +628,6 @@ auto ConversationStore::Events(const A::EventsRequest& request, bool human)
     -> A::EventsPageT {
   const auto* p = &request;
   const auto id = p->conversation_id()->str();
-  auto c = GetConversation(id);
   OwnConversation(id, human);
   if (!human) AuthorizeHistory(id);
   auto q = ConversationDatabase(id).prepare(
@@ -599,39 +646,74 @@ auto ConversationStore::Events(const A::EventsRequest& request, bool human)
     event->event = std::make_unique<A::EventT>(wire::Event(q.text(1)));
     result.events.push_back(std::move(event));
   }
-  if (!result.events.empty()) {
-    result.has_rows = true;
-    if (!presentation.contains(id)) ConversationData(c);
-    for (const auto& row : presentation.at(id).rows)
-      result.rows.push_back(std::make_unique<A::ChatRowT>(*row));
+  if (result.events.empty()) return result;
+
+  auto [it, inserted] = presentation.try_emplace(id);
+  auto& state = it->second;
+  if (inserted || state.dirty) {
+    if (inserted) {
+      auto latest = ConversationDatabase(id).prepare(
+          "SELECT coalesce(max(seq),0) FROM events WHERE conversation=?");
+      latest.bind(1, id).step();
+      state.seq = state.baseline = latest.u64(0);
+    }
+    std::string streaming_id;
+    auto snapshot = BuildConversation(GetConversation(id), streaming_id);
+    RebuildPresentation(snapshot, streaming_id, state, false);
   }
+
+  const auto after = p->after_seq();
+  const bool reset = after < state.baseline;
+  auto change = state.changes.upper_bound({after, SIZE_MAX});
+  if (!reset && change == state.changes.end() && state.resized_at <= after)
+    return result;
+  auto update = std::make_unique<A::PresentationUpdateT>();
+  update->row_count = static_cast<uint32_t>(state.rows.size());
+  update->reset = reset;
+  update->seq = state.seq;
+  const auto append = [&](size_t index) {
+    auto row = std::make_unique<A::ChatRowUpdateT>();
+    row->index = static_cast<uint32_t>(index);
+    row->row = std::make_unique<A::ChatRowT>(*state.rows[index]);
+    update->rows.push_back(std::move(row));
+  };
+  if (reset) {
+    for (size_t i = 0; i < state.rows.size(); ++i) append(i);
+  } else {
+    for (; change != state.changes.end(); ++change) append(change->second);
+    std::ranges::sort(update->rows, {}, &A::ChatRowUpdateT::index);
+  }
+  result.presentation = std::move(update);
   return result;
 }
 
 auto ConversationStore::RecordEvent(const std::string& id,
                                     const std::string& raw) -> void {
-  auto q = (id.empty() ? db : ConversationDatabase(id))
-               .prepare("INSERT INTO events(conversation,json) VALUES(?,?)");
+  auto& database = id.empty() ? db : ConversationDatabase(id);
+  auto q =
+      database.prepare("INSERT INTO events(conversation,json) VALUES(?,?)");
   q.bind(1, id).bind(2, raw).run();
+  const auto found = presentation.find(id);
+  if (found == presentation.end()) return;
+  auto& state = found->second;
+  state.seq = static_cast<uint64_t>(sqlite3_last_insert_rowid(database.get()));
+  for (const auto index : state.snapshot_changes) state.MarkChanged(index);
+  state.snapshot_changes.clear();
+  if (std::exchange(state.snapshot_resize, false)) state.resized_at = state.seq;
+  if (state.dirty) return;
   const auto event = json::Object(raw);
   const auto kind = json::Text(event, "kind");
-  if (auto found = presentation.find(id); found != presentation.end()) {
-    auto& cached = found->second;
-    if (kind == "text") {
-      const auto text = json::Text(event, "text");
-      if (cached.streaming_row.empty() && !text.empty()) {
-        auto row = std::make_unique<A::ChatRowT>();
-        cached.streaming_row = ":" + std::to_string(cached.next_message) + ":0";
-        row->id = cached.streaming_row;
-        row->kind = "text";
-        row->role = "assistant";
-        cached.rows.push_back(std::move(row));
-      }
-      for (auto& row : cached.rows)
-        if (row->id == cached.streaming_row) row->text += text;
-    } else if (kind != "toolInput") {
-      presentation.erase(found);
+  if (kind == "text") {
+    const auto text = json::Text(event, "text");
+    if (text.empty()) return;
+    if (state.streaming_row) {
+      state.rows[*state.streaming_row]->text += text;
+      state.MarkChanged(*state.streaming_row);
+    } else {
+      state.dirty = true;
     }
+  } else if (kind != "toolInput") {
+    state.dirty = true;
   }
 }
 }  // namespace tsugumi::agent
