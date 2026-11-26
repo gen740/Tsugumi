@@ -37,4 +37,5 @@ TSUGUMI_REMOTE_TEST_DAEMON="$scratch/package/bin/tsugumi-workerd" \
   "$CORE_TEST_ENV" python3 -m pytest -vv -o faulthandler_timeout=180 --durations=0 -m environment tests/core/integration/test_remote_execution.py
 
 TSUGUMI_REMOTE_TEST_DAEMON="$scratch/package/bin/tsugumi-workerd" \
-  "$CORE_TEST_ENV" python3 -m pytest -vv -o faulthandler_timeout=180 --durations=0 tests/remote
+  nix shell --inputs-from . nixpkgs#strace -c \
+    "$CORE_TEST_ENV" python3 -m pytest -vv -o faulthandler_timeout=180 --durations=0 tests/remote
