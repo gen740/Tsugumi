@@ -81,7 +81,8 @@ class Journal {
   auto import_results(std::string_view job) -> std::string;
 
  private:
-  auto locked(std::string_view job,
+  enum class Access { Quiet, NotifyScheduler };
+  auto locked(std::string_view job, Access access,
               const std::function<void(const stdfs::path&)>& action) const
       -> void;
   auto read(const stdfs::path& directory) const -> Record;

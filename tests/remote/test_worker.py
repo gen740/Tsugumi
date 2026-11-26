@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import ssl
 import socket
 import struct
@@ -761,6 +762,28 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
         # The running job's log arrives in slices bounded by the worker.
         assert log_slice(first, 0, 5) == (0, len(entry), entry[:5])
         assert log_slice(first, 5) == (5, len(entry), entry[5:])
+        # A removal by the external jobs command changes the in-memory
+        # queue while the sole execution slot is still held by the first job.
+        queued = "6" * 64
+        queued_spec = peer.spec(peer.upload(queued, b"queued input"))
+        accepted = peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=queued_spec), job=queued)
+        assert accepted.body.state == R.JobState.Queued
+
+        def wait_for_count(expected):
+            deadline = time.monotonic() + 5
+            while True:
+                caps = peer.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False).body
+                if caps.activeJobs == expected:
+                    return
+                assert time.monotonic() < deadline, vars(caps)
+                time.sleep(0.05)
+
+        wait_for_count(2)
+        subprocess.run([binary, "jobs", "remove", "--active",
+                        f"{peer.scope}/{queued}", "--state-dir", str(peer.state)],
+                       check=True, capture_output=True)
+        wait_for_count(1)
+        assert peer.wait_state(queued, R.JobState.Released).state == R.JobState.Released
         peer.restart()
         # A cursor survives the listener restart and returns only new bytes.
         cursor = len(entry)
@@ -951,6 +974,74 @@ select.select([], [], [], 30)
                 peer.wait_state(job, R.JobState.Cancelled)
         finally:
             peer.close()
+
+
+@pytest.fixture
+def strace():
+    path = shutil.which("strace")
+    if not path:
+        pytest.skip("needs strace (provided by tests/ci-remote-worker.sh)")
+    return path
+
+
+def test_idle_listener_does_no_io_on_released_jobs(worker, strace):
+    worker.close()
+    jobs = worker.journal("0" * 64).parent.parent
+    tombstone = R.pack(R.JournalStateT(state=R.JobState.Released, fingerprint="a" * 64))
+    for i in range(128):
+        job = jobs / f"{i:064x}"
+        job.mkdir(mode=0o700)
+        (job / "state").write_bytes(tombstone)
+
+    trace = worker.root / "idle.trace"
+    # Trace the listener from launch while keeping its PID as the test's child.
+    # Include fd paths so a directory sync would show even without a new open.
+    worker.command[:0] = [
+        strace, "-D", "-y", "-s", "4096", "-o", str(trace),
+        "-e", "trace=%file,getdents64,fsync,fdatasync,?poll,ppoll",
+    ]
+    worker.start()
+    offset = trace.stat().st_size
+
+    deadline = time.monotonic() + 10
+    while True:
+        with trace.open() as output:
+            output.seek(offset)
+            idle = output.readlines()[1:]  # The offset can land mid-syscall.
+        if sum("(Timeout)" in line for line in idle) >= 4:
+            break
+        assert worker.process.poll() is None and time.monotonic() < deadline, "".join(idle)
+        time.sleep(0.05)
+    assert not [line for line in idle if "/projects" in line], "".join(idle)
+    assert all((job / "state").read_bytes() == tombstone for job in jobs.iterdir())
+
+
+def test_startup_recovers_crash_during_cleanup(worker, strace):
+    job = "9" * 64
+    blob = worker.upload(job, b"remove after committing the tombstone")
+    state_file = worker.journal(job)
+    directory = state_file.parent
+    worker.close()
+    # jobs remove and Release use the same scratch erasure. Kill the remover
+    # at the first scratch chmod, after its durable Released write.
+    result = subprocess.run(
+        [strace, "-o", str(worker.root / "cleanup.trace"),
+         "-e", "trace=fchmodat",
+         "-e", "inject=fchmodat:signal=SIGKILL",
+         worker.command[0], "jobs", "remove", f"{worker.scope}/{job}",
+         "--state-dir", str(worker.state)],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == -signal.SIGKILL, result.stderr
+    assert (directory / "blobs" / blob).is_file()
+    persisted = state_file.read_bytes()
+    assert R.JournalStateT.InitFromPackedBuf(persisted).state == R.JobState.Released
+
+    worker.start()
+    assert set(directory.iterdir()) == {state_file}
+    assert state_file.read_bytes() == persisted
+    late = worker.call(R.RequestBody.PutBlobRequest, R.put_blob_chunk(blob, 0, 0, b""), job=job)
+    assert late.bodyType == R.ReplyBody.Failure and late.body.code == R.ErrorCode.Rejected
 
 
 def test_jobs_command_lists_and_removes_only_chosen_jobs(worker):

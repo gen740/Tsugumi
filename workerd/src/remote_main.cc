@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <spawn.h>
 #include <sys/file.h>
+#include <sys/inotify.h>
 #include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -342,19 +343,28 @@ auto process_start(pid_t pid) -> uint64_t {
       throw std::runtime_error("invalid process identity");
   return std::stoull(field);
 }
-auto notify_cancel(const Record& state) -> void {
-  if (state.pid <= 1 || state.boot != boot()) return;
-  Fd pidfd(static_cast<int>(::syscall(SYS_pidfd_open, state.pid, 0)));
-  if (pidfd.value < 0) return;
-  try {
-    if (process_start(static_cast<pid_t>(state.pid)) == state.start)
-      if (::syscall(SYS_pidfd_send_signal, pidfd.value, SIGUSR1, nullptr, 0) !=
-              0 &&
-          errno != ESRCH)
-        log("cannot notify execution supervisor: " +
-            std::string(std::strerror(errno)));
-  } catch (const std::exception&) { /* The recorded process already exited. */
+auto process_fd(pid_t pid) -> Fd {
+  return Fd(static_cast<int>(::syscall(SYS_pidfd_open, pid, 0)));
+}
+auto supervisor_process(const Record& state) -> Fd {
+  if (state.pid <= 1 || state.boot != boot()) return {};
+  const auto pid = static_cast<pid_t>(state.pid);
+  auto fd = process_fd(pid);
+  if (fd.value >= 0) {
+    try {
+      if (process_start(pid) == state.start) return fd;
+    } catch (const std::exception&) { /* The recorded process already exited. */
+    }
   }
+  return {};
+}
+auto notify_cancel(const Record& state) -> void {
+  const auto pidfd = supervisor_process(state);
+  if (pidfd.value >= 0 &&
+      ::syscall(SYS_pidfd_send_signal, pidfd.value, SIGUSR1, nullptr, 0) != 0 &&
+      errno != ESRCH)
+    log("cannot notify execution supervisor: " +
+        std::string(std::strerror(errno)));
 }
 auto cgroup_write(const stdfs::path& path, const std::string& value) -> void {
   std::ofstream file(path);
@@ -385,9 +395,22 @@ auto cgroup_path(const stdfs::path& root, const Journal& journal,
          ("tsugumi-" +
           crypto::sha256_hex(journal.root().string() + job).substr(0, 32));
 }
-auto supervisor_lock(const Journal& journal, const std::string& job) -> int {
-  return ::open(journal.supervisor_lock_path(job).c_str(),
-                O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+auto supervisor_lock(const Journal& journal, const std::string& job,
+                     bool notify_on_exit = false) -> Fd {
+  const int mode = notify_on_exit ? O_RDWR : O_RDONLY;
+  return Fd(::open(journal.supervisor_lock_path(job).c_str(),
+                   mode | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600));
+}
+auto try_supervisor_lock(const Fd& lock) -> bool {
+  if (lock.value < 0) throw std::runtime_error("cannot open supervisor lock");
+  int rc;
+  do {
+    rc = ::flock(lock.value, LOCK_EX | LOCK_NB);
+  } while (rc != 0 && errno == EINTR);
+  if (rc == 0) return true;
+  if (errno == EWOULDBLOCK) return false;
+  throw std::system_error(errno, std::generic_category(),
+                          "cannot acquire supervisor lock");
 }
 
 struct Config {
@@ -459,7 +482,10 @@ class Daemon {
       : config_(std::move(config)),
         server_(identity(config_.root, "server_id")),
         system_(system()),
-        shutdown_fd_(shutdown_fd) {
+        shutdown_fd_(shutdown_fd),
+        journal_events_(::inotify_init1(IN_NONBLOCK | IN_CLOEXEC)) {
+    if (journal_events_.value < 0)
+      throw std::runtime_error("cannot create journal event descriptor");
     private_directory(config_.root / "projects");
     private_directory(config_.root / "store");
     check_cgroups(config_.cgroup);
@@ -481,10 +507,18 @@ class Daemon {
   }
   auto project(const std::string& scope) -> std::shared_ptr<Journal> {
     std::lock_guard guard(project_mutex_);
-    auto& entry = projects_[scope];
-    if (!entry)
-      entry = std::make_shared<Journal>(config_.root / "projects" / scope);
-    return entry;
+    if (auto existing = projects_.find(scope); existing != projects_.end())
+      return existing->second;
+    auto journal = std::make_shared<Journal>(config_.root / "projects" / scope);
+    const int watch = ::inotify_add_watch(journal_events_.value,
+                                          (journal->root() / "locks").c_str(),
+                                          IN_CLOSE_WRITE | IN_ONLYDIR);
+    if (watch < 0)
+      throw std::system_error(errno, std::generic_category(),
+                              "cannot watch journal locks");
+    journal_watches_.emplace(watch, journal);
+    projects_.emplace(scope, journal);
+    return journal;
   }
   auto handle(R::RequestT& q) -> R::MessageT {
     if (q.body.type == R::RequestBody::NONE ||
@@ -639,7 +673,22 @@ class Daemon {
       stream.Write(length_prefix(static_cast<uint32_t>(bytes.size())) + bytes);
     }
   }
-  auto tick() -> void {
+  auto recover() -> void {
+    for (const auto& entry :
+         stdfs::directory_iterator(config_.root / "projects")) {
+      const auto scope = entry.path().filename().string();
+      if (!crypto::is_sha256_hex(scope)) continue;
+      const auto journal = project(scope);
+      for (const auto& job : journal->jobs()) refresh({journal, job});
+    }
+    dispatch();
+  }
+  auto watch_events(std::vector<pollfd>& fds) const -> void {
+    fds.push_back({journal_events_.value, POLLIN, 0});
+    for (const auto& [_, process] : running_)
+      fds.push_back({process.value, POLLIN, 0});
+  }
+  auto tick(std::span<const pollfd> events) -> void {
     {
       std::lock_guard guard(channel_mutex_);
       std::erase_if(displays_,
@@ -647,94 +696,138 @@ class Daemon {
     }
     while (::waitpid(-1, nullptr, WNOHANG) > 0) {
     }
-    for (const auto& entry :
-         stdfs::directory_iterator(config_.root / "projects"))
-      if (crypto::is_sha256_hex(entry.path().filename().string()))
-        project(entry.path().filename().string());
-    std::vector<std::pair<std::shared_ptr<Journal>, std::string>> pending;
-    size_t active = 0;
-    std::vector<std::shared_ptr<Journal>> projects;
-    {
-      std::lock_guard guard(project_mutex_);
-      for (const auto& [_, p] : projects_) projects.push_back(p);
-    }
-    std::set<stdfs::path> journal_errors;
-    for (const auto& p : projects)
-      for (const auto& job : p->jobs()) {
-        try {
-          Fd lock(supervisor_lock(*p, job));
-          if (lock.value < 0)
-            throw std::runtime_error("cannot open supervisor lock");
-          if (::flock(lock.value, LOCK_EX | LOCK_NB) != 0) {
-            if (errno != EWOULDBLOCK)
-              throw std::system_error(errno, std::generic_category(),
-                                      "cannot acquire supervisor lock");
-            ++active;
-            continue;
-          }
-          auto state = p->status(job);
-          // No supervisor runs the job, so no invocation reads its channel.
-          close_channel(*p, job);
-          if (state.state == R::JobState::Running ||
-              state.state == R::JobState::Cancelling) {
-            remove_card_cgroup(cgroup_path(config_.cgroup, *p, job));
-            p->finish(job, R::JobState::Interrupted, {},
-                      "execution supervisor ended without recording a result");
-          }
-          if (terminal(state.state)) {
-            remove_card_cgroup(cgroup_path(config_.cgroup, *p, job));
-          }
-          p->clean_released(job);
-          if (p->status(job).state == R::JobState::Queued)
-            pending.emplace_back(p, job);
-        } catch (const std::exception& e) {
-          const auto path = p->job_path(job);
-          journal_errors.insert(path);
-          if (!journal_errors_.contains(path))
-            log("cannot scan job " + path.string() + ": " + e.what());
-        }
-      }
-    journal_errors_ = std::move(journal_errors);
-    // Read each submission time once: `tsugumi-workerd jobs remove` can erase
-    // a queued job's spec meanwhile, and its claim then finds the tombstone.
-    std::vector<std::pair<stdfs::file_time_type, size_t>> order;
-    for (size_t i = 0; i < pending.size(); ++i) {
-      std::error_code ec;
-      order.emplace_back(
-          stdfs::last_write_time(
-              pending[i].first->job_path(pending[i].second) / "spec.fb", ec),
-          i);
-    }
-    std::ranges::sort(order);
-    decltype(pending) sorted;
-    for (const auto& [_, i] : order) sorted.push_back(std::move(pending[i]));
-    pending = std::move(sorted);
-    active_jobs_.store(static_cast<uint32_t>(active + pending.size()));
-    for (const auto& [p, job] : pending) {
-      if (active >= config_.max_jobs || stopping) break;
-      Fd lock(supervisor_lock(*p, job));
-      if (lock.value < 0 || ::flock(lock.value, LOCK_EX | LOCK_NB) != 0)
-        continue;
-      // Commit running before spawn: a crash in this gap becomes interrupted,
-      // never an automatic second execution of the same invocation.
-      try {
-        if (!p->claim(job, 0, 0, {})) continue;
-      } catch (const std::exception& e) {
-        const auto path = p->job_path(job);
-        if (journal_errors_.insert(path).second)
-          log("cannot claim job " + path.string() + ": " + e.what());
-        continue;
-      }
-      if (spawn(*p, job, lock.value))
-        ++active;
-      else {
-        close_channel(*p, job);
-        p->finish(job, R::JobState::Failed, {}, "supervisor launch failed");
+    // The timeout also covers a lock-close notification arriving just
+    // before the kernel releases its flock. Only unresolved handoffs retry.
+    // Stable supervisors have pidfds, including across listener restarts.
+    std::set<Job> dirty;
+    dirty.swap(handoffs_);
+    size_t index = 1;
+    for (auto it = running_.begin(); it != running_.end();) {
+      if (events[index++].revents) {
+        dirty.insert(it->first);
+        it = running_.erase(it);
+      } else {
+        ++it;
       }
     }
+    if (events.front().revents && journal_changes(dirty)) {
+      // If the kernel dropped notifications, rebuild from disk before using
+      // the queue. Watches are already in place for subsequent changes.
+      recover();
+      dirty.clear();
+    }
+    for (const auto& job : dirty) refresh(job);
+    dispatch();
   }
 
  private:
+  using Job = std::pair<std::shared_ptr<Journal>, std::string>;
+  auto journal_changes(std::set<Job>& dirty) -> bool {
+    alignas(inotify_event) char bytes[4096];
+    bool overflow = false;
+    for (;;) {
+      const auto size = ::read(journal_events_.value, bytes, sizeof(bytes));
+      if (size < 0 && errno == EINTR) continue;
+      if (size < 0 && errno == EAGAIN) return overflow;
+      if (size <= 0) throw std::runtime_error("cannot read journal events");
+      for (size_t offset = 0; offset < static_cast<size_t>(size);) {
+        const auto& event =
+            *reinterpret_cast<const inotify_event*>(bytes + offset);
+        offset += sizeof(event) + event.len;
+        if (event.mask & IN_Q_OVERFLOW) overflow = true;
+        // Supervisor lock closures wake the poll for handoffs that are
+        // already dirty. Only journal lock names add a new job to the set.
+        if (!(event.mask & IN_CLOSE_WRITE) || !event.len ||
+            !crypto::is_sha256_hex(event.name))
+          continue;
+        std::lock_guard guard(project_mutex_);
+        if (const auto found = journal_watches_.find(event.wd);
+            found != journal_watches_.end())
+          dirty.emplace(found->second, event.name);
+      }
+    }
+  }
+  auto refresh(const Job& key) -> void {
+    if (running_.contains(key)) return;
+    const auto& [p, job] = key;
+    try {
+      const auto lock = supervisor_lock(*p, job);
+      const bool acquired = try_supervisor_lock(lock);
+      const auto state = p->status(job);
+      if (!acquired) {
+        // A terminal record can still have a supervisor doing its last
+        // writes. Its slot is occupied until the process exits.
+        auto process = supervisor_process(state);
+        if (process.value >= 0)
+          running_.emplace(key, std::move(process));
+        else
+          handoffs_.insert(key);
+        queued_.erase(key);
+        return;
+      }
+      handoffs_.erase(key);
+      close_channel(*p, job);
+      if (state.state == R::JobState::Queued) {
+        if (!queued_.contains(key)) {
+          const auto submitted =
+              stdfs::last_write_time(p->job_path(job) / "spec.fb");
+          queued_.emplace(key, submitted);
+        }
+        return;
+      }
+      queued_.erase(key);
+      if (state.state == R::JobState::Running ||
+          state.state == R::JobState::Cancelling) {
+        remove_card_cgroup(cgroup_path(config_.cgroup, *p, job));
+        p->finish(job, R::JobState::Interrupted, {},
+                  "execution supervisor ended without recording a result");
+      } else if (terminal(state.state)) {
+        remove_card_cgroup(cgroup_path(config_.cgroup, *p, job));
+        if (state.state == R::JobState::Released) p->clean_released(job);
+      }
+    } catch (const std::exception& e) {
+      queued_.erase(key);
+      log("cannot recover job " + p->job_path(job).string() + ": " + e.what());
+    }
+  }
+  auto dispatch() -> void {
+    const auto occupied = [&] { return running_.size() + handoffs_.size(); };
+    while (!queued_.empty() && occupied() < config_.max_jobs && !stopping) {
+      const auto next =
+          std::ranges::min_element(queued_, [](const auto& a, const auto& b) {
+            if (a.second != b.second) return a.second < b.second;
+            return a.first < b.first;
+          });
+      auto pending = queued_.extract(next);
+      const auto& [p, job] = pending.key();
+      try {
+        // Keep the writable lock description in the supervisor so its
+        // closure also wakes the listener during the identity handoff.
+        const auto lock = supervisor_lock(*p, job, true);
+        if (!try_supervisor_lock(lock)) {
+          refresh(pending.key());
+          continue;
+        }
+        // A crash after claiming but before spawning leaves an interrupted
+        // job, so the same invocation cannot run twice.
+        if (!p->claim(job, 0, 0, {})) continue;
+        const auto pid = spawn(*p, job, lock.value);
+        if (pid < 0) {
+          close_channel(*p, job);
+          p->finish(job, R::JobState::Failed, {}, "supervisor launch failed");
+        } else {
+          auto process = process_fd(pid);
+          if (process.value >= 0)
+            running_.emplace(pending.key(), std::move(process));
+          else
+            handoffs_.insert(pending.key());
+        }
+      } catch (const std::exception& e) {
+        log("cannot claim job " + p->job_path(job).string() + ": " + e.what());
+      }
+    }
+    active_jobs_.store(static_cast<uint32_t>(occupied() + queued_.size()));
+  }
   static auto channel_key(const Journal& journal, const std::string& job)
       -> std::string {
     return journal.root().string() + '\n' + job;
@@ -815,7 +908,7 @@ class Daemon {
       throw Error(R::ErrorCode::Rejected,
                   "the job's invocation no longer reads its Card secrets");
   }
-  auto spawn(Journal& p, const std::string& job, int lock) -> bool {
+  auto spawn(Journal& p, const std::string& job, int lock) -> pid_t {
     // A job with Card secrets gets a pipe whose write end only this listener
     // holds; its invocation reads the values from it just before the Card's
     // process starts.
@@ -824,29 +917,29 @@ class Daemon {
     try {
       if (!parse_spec(p.spec(job))->secrets.empty()) {
         int ends[2];
-        if (::pipe2(ends, O_CLOEXEC) != 0) return false;
+        if (::pipe2(ends, O_CLOEXEC) != 0) return -1;
         Fd writer(ends[1]);
         Fd reader(ends[0]);
-        if (::fcntl(writer.value, F_SETFL, O_NONBLOCK) != 0) return false;
+        if (::fcntl(writer.value, F_SETFL, O_NONBLOCK) != 0) return -1;
         channel = std::make_shared<Fd>(std::move(writer));
         // Above the descriptors the supervisor's file actions assign.
         channel_reader.value = ::fcntl(reader.value, F_DUPFD_CLOEXEC, 10);
-        if (channel_reader.value < 0) return false;
+        if (channel_reader.value < 0) return -1;
       }
     } catch (const std::exception&) {
-      return false;
+      return -1;
     }
     int pair[2];
     if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) != 0)
-      return false;
+      return -1;
     Fd listener_display(pair[0]), job_display(pair[1]);
     Fd adapter_display(::fcntl(job_display.value, F_DUPFD_CLOEXEC, 10));
-    if (adapter_display.value < 0) return false;
+    if (adapter_display.value < 0) return -1;
     std::shared_ptr<DisplayChannel> display;
     try {
       display = std::make_shared<DisplayChannel>(std::move(listener_display));
     } catch (const std::exception&) {
-      return false;
+      return -1;
     }
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
@@ -885,16 +978,20 @@ class Daemon {
       if (channel) channels_[key] = std::move(channel);
       displays_[key] = std::move(display);
     }
-    return rc == 0;
+    return rc == 0 ? pid : -1;
   }
   Config config_;
   std::string server_, system_;
   int shutdown_fd_;
-  std::set<stdfs::path> journal_errors_;
+  Fd journal_events_;
+  std::map<Job, Fd> running_;
+  std::set<Job> handoffs_;
+  std::map<Job, stdfs::file_time_type> queued_;
   const std::string probe_life_ = crypto::random_token(32);
   std::atomic<uint32_t> active_jobs_{0};
   std::mutex project_mutex_;
   std::map<std::string, std::shared_ptr<Journal>> projects_;
+  std::map<int, std::shared_ptr<Journal>> journal_watches_;
   std::mutex channel_mutex_;
   // Write ends of the Card secret pipes of running jobs, by journal and job.
   std::map<std::string, std::shared_ptr<Fd>> channels_;
@@ -1084,15 +1181,16 @@ auto run(Config config) -> int {
   Daemon daemon(config, shutdown_reader.value);
   Fd unixfd(unix_listener(config.unix_socket));
   Fd tcpfd(tcp_listener(config));
+  ::signal(SIGTERM, stop);
+  ::signal(SIGINT, stop);
+  ::signal(SIGPIPE, SIG_IGN);
+  daemon.recover();
   Tsugumi::RemoteWorker::WorkerReadyT ready;
   ready.port = config.port;
   ready.pid = static_cast<uint64_t>(::getpid());
   fs::write_atomic(config.root / "worker.ready",
                    flat::encode<Tsugumi::RemoteWorker::WorkerReady>(ready),
                    0600);
-  ::signal(SIGTERM, stop);
-  ::signal(SIGINT, stop);
-  ::signal(SIGPIPE, SIG_IGN);
   std::atomic<size_t> active{0};
   struct Client {
     std::thread thread;
@@ -1103,7 +1201,6 @@ auto run(Config config) -> int {
   log("listening with TLS 1.3 on unix:" + config.unix_socket.string() +
       " and tls://" + config.host + ":" + std::to_string(config.port));
   while (!stopping) {
-    daemon.tick();
     for (auto i = clients.begin(); i != clients.end();) {
       if (i->done->load()) {
         i->thread.join();
@@ -1111,9 +1208,13 @@ auto run(Config config) -> int {
       } else
         ++i;
     }
-    pollfd listeners[2]{{unixfd.value, POLLIN, 0}, {tcpfd.value, POLLIN, 0}};
-    if (::poll(listeners, 2, 100) <= 0) continue;
-    for (auto& listener : listeners)
+    std::vector<pollfd> fds{{unixfd.value, POLLIN, 0},
+                            {tcpfd.value, POLLIN, 0}};
+    daemon.watch_events(fds);
+    if (::poll(fds.data(), fds.size(), 100) < 0) continue;
+    const auto descriptors = std::span(fds);
+    daemon.tick(descriptors.subspan(2));
+    for (const auto& listener : descriptors.first(2))
       if (listener.revents & POLLIN) {
         const int fd = ::accept4(listener.fd, nullptr, nullptr, SOCK_CLOEXEC);
         if (fd < 0) continue;

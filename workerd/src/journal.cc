@@ -100,10 +100,14 @@ auto Journal::supervisor_lock_path(std::string_view job) const -> stdfs::path {
   return root_ / "locks" / (std::string(job) + ".supervisor");
 }
 auto Journal::locked(
-    std::string_view job,
+    std::string_view job, Access access,
     const std::function<void(const stdfs::path&)>& action) const -> void {
+  // The listener watches these locks for IN_CLOSE_WRITE. A writable lock
+  // tells it to reread a possible scheduling change, even if the writer died
+  // partway through the operation. A reader then waits out the journal flock.
+  const int mode = access == Access::NotifyScheduler ? O_RDWR : O_RDONLY;
   Fd fd{::open((root_ / "locks" / job).c_str(),
-               O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600)};
+               mode | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600)};
   if (fd.value < 0 || ::flock(fd.value, LOCK_EX) != 0)
     throw std::runtime_error("cannot lock journal");
   action(job_path(job));
@@ -143,7 +147,7 @@ auto Journal::write(const stdfs::path& directory, const Record& r) const
 auto Journal::status(std::string_view job,
                      std::optional<std::string_view> core) const -> Record {
   Record result;
-  locked(job, [&](const auto& directory) {
+  locked(job, Access::Quiet, [&](const auto& directory) {
     result = read(directory);
     if (core) require_owner(result, *core);
   });
@@ -159,7 +163,7 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
       c.offset > c.total || c.bytes.size() > c.total - c.offset ||
       (c.bytes.empty() && c.total != 0))
     throw Error(R::ErrorCode::Invalid, "invalid blob chunk bounds");
-  locked(job, [&](const auto& dir) {
+  locked(job, Access::Quiet, [&](const auto& dir) {
     auto state = read(dir);
     require_owner(state, core);
     if (state.state != R::JobState::Missing &&
@@ -257,7 +261,7 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
 auto Journal::deliver_artifact(std::string_view job,
                                const R::JobArtifactRequestT& artifact,
                                std::string_view core) -> void {
-  locked(job, [&](const auto& dir) {
+  locked(job, Access::Quiet, [&](const auto& dir) {
     const auto state = read(dir);
     require_owner(state, core);
     if (state.fingerprint != artifact.fingerprint)
@@ -297,7 +301,7 @@ auto Journal::get(std::string_view job, const R::GetBlobRequestT& r,
   if (!r.limit || r.limit > kChunkBytes)
     throw Error(R::ErrorCode::Invalid, "invalid chunk limit");
   R::BlobChunkT result;
-  locked(job, [&](const auto& dir) {
+  locked(job, Access::Quiet, [&](const auto& dir) {
     require_owner(read(dir), core);
     const auto file = dir / "blobs" / r.digest;
     if (!stdfs::is_regular_file(stdfs::symlink_status(file)))
@@ -320,7 +324,7 @@ auto Journal::log(std::string_view job, uint64_t offset, uint32_t limit,
   if (limit > kLogChunkBytes)
     throw Error(R::ErrorCode::Invalid, "invalid log chunk limit");
   std::pair<uint64_t, std::string> result;
-  locked(job, [&](const auto& dir) {
+  locked(job, Access::Quiet, [&](const auto& dir) {
     require_owner(read(dir), core);
     // The supervised invocation appends whole entries and flushes each one.
     Fd file{::open((dir / "work/result/logs").c_str(),
@@ -355,7 +359,7 @@ auto Journal::submit(std::string_view job, std::string_view bytes,
                      const R::JobSpecT& spec, std::string_view core) -> Record {
   const auto fingerprint = crypto::sha256_hex(bytes);
   Record result;
-  locked(job, [&](const auto& dir) {
+  locked(job, Access::NotifyScheduler, [&](const auto& dir) {
     result = read(dir);
     require_owner(result, core);
     if (result.state != R::JobState::Missing &&
@@ -382,7 +386,7 @@ auto Journal::submit(std::string_view job, std::string_view bytes,
 auto Journal::cancel(std::string_view job, const std::string& fingerprint)
     -> Record {
   Record result;
-  locked(job, [&](const auto& dir) {
+  locked(job, Access::NotifyScheduler, [&](const auto& dir) {
     result = read(dir);
     if (result.state != R::JobState::Missing &&
         result.state != R::JobState::Uploading &&
@@ -405,7 +409,7 @@ auto Journal::erase_scratch(const stdfs::path& dir) const -> void {
 }
 auto Journal::release(std::string_view job, const std::string& fingerprint)
     -> void {
-  locked(job, [&](const auto& dir) {
+  locked(job, Access::NotifyScheduler, [&](const auto& dir) {
     auto state = read(dir);
     if (state.state == R::JobState::Missing) return;
     if (!terminal(state.state) || state.fingerprint != fingerprint)
@@ -422,7 +426,7 @@ auto Journal::release(std::string_view job, const std::string& fingerprint)
 auto Journal::claim(std::string_view job, uint64_t pid, uint64_t start,
                     const std::string& boot) -> bool {
   bool claimed = false;
-  locked(job, [&](const auto& dir) {
+  locked(job, Access::Quiet, [&](const auto& dir) {
     auto state = read(dir);
     if (state.state != R::JobState::Queued) return;
     state.state = R::JobState::Running;
@@ -437,7 +441,7 @@ auto Journal::claim(std::string_view job, uint64_t pid, uint64_t start,
 auto Journal::supervisor_identity(std::string_view job, uint64_t pid,
                                   uint64_t start, const std::string& boot)
     -> void {
-  locked(job, [&](const auto& dir) {
+  locked(job, Access::NotifyScheduler, [&](const auto& dir) {
     auto state = read(dir);
     if (state.state != R::JobState::Running &&
         state.state != R::JobState::Cancelling)
@@ -454,7 +458,7 @@ auto Journal::finish(std::string_view job, R::JobState outcome,
   if (outcome != R::JobState::Succeeded && outcome != R::JobState::Failed &&
       outcome != R::JobState::Interrupted)
     throw std::runtime_error("invalid terminal outcome");
-  locked(job, [&](const auto& dir) {
+  locked(job, Access::Quiet, [&](const auto& dir) {
     auto state = read(dir);
     if (terminal(state.state)) return;
     if (state.state != R::JobState::Running &&
@@ -470,14 +474,14 @@ auto Journal::finish(std::string_view job, R::JobState outcome,
   });
 }
 auto Journal::clean_released(std::string_view job) -> void {
-  locked(job, [&](const auto& dir) {
+  locked(job, Access::Quiet, [&](const auto& dir) {
     auto state = read(dir);
     if (state.state == R::JobState::Released) erase_scratch(dir);
   });
 }
 auto Journal::discard(std::string_view job, bool active) -> Record {
   Record previous;
-  locked(job, [&](const auto& dir) {
+  locked(job, Access::NotifyScheduler, [&](const auto& dir) {
     if (!stdfs::exists(stdfs::symlink_status(dir)))
       throw Error(R::ErrorCode::NotFound, "job not found");
     // An unreadable record has no state to protect; its fingerprint is lost.
@@ -504,7 +508,7 @@ auto Journal::import_results(std::string_view job) -> std::string {
   // After the invocation has exited, close any outstanding artifact upload
   // before this supervisor changes the blob directory. A live import and a
   // listener upload must never update the same job's disk usage concurrently.
-  locked(job, [&](const auto& directory) {
+  locked(job, Access::Quiet, [&](const auto& directory) {
     stdfs::remove(directory / "work/artifact-wanted");
   });
   const auto results = dir / "work/result";
