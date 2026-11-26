@@ -2048,19 +2048,29 @@ std::vector<std::string> History::delete_runs(
         std::to_string(static_cast<int>(RunState::succeeded)) + "," +
         std::to_string(static_cast<int>(RunState::failed)) + "," +
         std::to_string(static_cast<int>(RunState::cancelled));
-    auto select = db.prepare(
-        "INSERT INTO temp.deleting_runs SELECT run_id "
-        "FROM runs WHERE state IN (" +
-        states +
-        ") AND (?1 IS NULL OR ended_at < ?1) AND run_id "
-        "NOT IN (SELECT run_id FROM remote_jobs)");
-    select.bind(1, ended_before).run();
-    auto selected = db.prepare("SELECT run_id FROM temp.deleting_runs");
-    while (selected.step()) {
-      const auto id = selected.text(0);
-      if (!run_ids || std::ranges::find(*run_ids, id) != run_ids->end())
-        selected_ids.push_back(id);
+    std::string candidates = "runs";
+    if (run_ids) {
+      db.exec(
+          "CREATE TEMP TABLE IF NOT EXISTS requested_runs(run_id TEXT PRIMARY "
+          "KEY); DELETE FROM temp.requested_runs");
+      auto insert = db.prepare(
+          "INSERT OR IGNORE INTO temp.requested_runs VALUES (?)");
+      for (const auto& id : *run_ids) {
+        insert.reset();
+        insert.bind(1, id).run();
+      }
+      candidates =
+          "temp.requested_runs CROSS JOIN runs USING (run_id)";
     }
+    auto select = db.prepare(
+        "INSERT INTO temp.deleting_runs SELECT runs.run_id FROM " +
+        candidates + " WHERE state IN (" + states + ")" +
+        (ended_before ? " AND ended_at < ?1" : "") +
+        " AND runs.run_id NOT IN (SELECT run_id FROM remote_jobs)");
+    if (ended_before) select.bind(1, *ended_before);
+    select.run();
+    auto selected = db.prepare("SELECT run_id FROM temp.deleting_runs");
+    while (selected.step()) selected_ids.push_back(selected.text(0));
     // Saved inputs intentionally outlive deleted runs; schema objects may still
     // be needed by them.
     for (const auto* table :
@@ -2068,14 +2078,9 @@ std::vector<std::string> History::delete_runs(
           "environment_paths", "run_substituters", "run_commits", "invocations",
           "ivalues", "logs", "log_terminal_ends", "log_terminal_tiles",
           "log_truncations", "artifacts", "statuses", "invocation_sequences",
-          "active_environments", "run_definition_paths"}) {
-      auto remove =
-          db.prepare(std::string("DELETE FROM ") + table + " WHERE run_id=?");
-      for (const auto& id : selected_ids) {
-        remove.reset();
-        remove.bind(1, id).run();
-      }
-    }
+          "active_environments", "run_definition_paths"})
+      db.exec(std::string("DELETE FROM ") + table +
+              " WHERE run_id IN (SELECT run_id FROM temp.deleting_runs)");
     ids = std::move(selected_ids);
   });
   return ids;

@@ -2706,17 +2706,18 @@ void Service::history_delete(RequestIn& req) {
       return n;
     };
     uint64_t before = sizes();
-    const auto scratch_before = fs::directory_size(run_scratch_ / "runs");
     uint64_t files = 0;
     auto ids = history_->delete_runs(r->ended_before(), run_ids);
-    for (const auto& id : ids)
-      if (crypto::is_run_id(id)) remove_run_scratch(run_scratch_ / "runs" / id);
-    const auto scratch_after = fs::directory_size(run_scratch_ / "runs");
-    files +=
-        scratch_before > scratch_after ? scratch_before - scratch_after : 0;
     for (const auto& id : ids) {
       if (!crypto::is_run_id(id))
         continue;  // a run id from a copy names no folder of ours
+      const auto runs = run_scratch_ / "runs";
+      const auto scratch = runs / id;
+      if (stdfs::is_directory(stdfs::symlink_status(runs)) &&
+          stdfs::is_directory(stdfs::symlink_status(scratch))) {
+        const auto scratch_size = fs::directory_size(scratch);
+        if (remove_run_scratch(scratch)) files += scratch_size;
+      }
       files += remove_run_artifacts(id);
     }
     uint64_t after = sizes();
