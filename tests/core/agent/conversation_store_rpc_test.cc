@@ -1,6 +1,7 @@
 #include <sqlite3.h>
 
 #include "project_fixture.hh"
+#include "tsugumi/util/sqlite.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -73,6 +74,80 @@ class ConversationStoreFixture : public AgentProjectFixture {
         });
   }
 };
+
+TEST_F(ConversationStoreFixture, FinalizationFailureLeavesTurnResumable) {
+  ModelServer model;
+  Configure(model);
+  StartProject();
+  const auto conversation = Conversation("failed-finalization");
+  Grant(conversation);
+  sql::Db db((directory.path / "project/.tsugumi/agent.sqlite").string());
+  db.exec(R"(CREATE TRIGGER reject_turn_finish
+             BEFORE UPDATE OF state ON conversation_turns
+             WHEN NEW.state = 'finished'
+             BEGIN SELECT RAISE(ABORT, 'injected finalization failure'); END)");
+  model.Queue(AnthropicText("First result."));
+  ASSERT_TRUE(Send(conversation, "Finish and recover.").Code().empty());
+  ASSERT_TRUE(model.WaitForRequests(1));
+  WaitUntilIdle(conversation);
+  const auto after_failure = Get(conversation, true);
+  ASSERT_TRUE(after_failure.Code().empty()) << after_failure.View();
+  ASSERT_TRUE(
+      after_failure.Value()->value_as_ConversationResult()->resumable());
+  db.exec("DROP TRIGGER reject_turn_finish");
+
+  model.Queue(AnthropicText("Recovered result."));
+  const auto resumed = Call(
+      *human, A::RequestPayload::ConversationActionRequest, [&](Builder& b) {
+        return A::CreateConversationActionRequest(
+                   b, b.CreateString(conversation), A::Action::Resume)
+            .Union();
+      });
+  ASSERT_TRUE(resumed.Code().empty()) << resumed.View();
+  ASSERT_TRUE(model.WaitForRequests(2));
+  WaitUntilIdle(conversation);
+  EXPECT_EQ(Scalar(directory.path / "project/.tsugumi/agent.sqlite",
+                   "SELECT count(*) FROM conversation_turns "
+                   "WHERE state='finished'"),
+            1);
+}
+
+TEST_F(ConversationStoreFixture,
+       RevocationCancelsTurnsAfterConversationDeletion) {
+  ModelServer model;
+  Configure(model);
+  StartProject();
+  const auto finished = Conversation("delete-finished");
+  Grant(finished);
+  model.Queue(AnthropicText("Finished."));
+  ASSERT_TRUE(Send(finished, "Finish this turn.").Code().empty());
+  ASSERT_TRUE(model.WaitForRequests(1));
+  WaitUntilIdle(finished);
+
+  const auto active = Conversation("revoke-active");
+  model.Queue(AnthropicText("Held model response."), true);
+  ASSERT_TRUE(Send(active, "Wait for revocation.").Code().empty());
+  const bool started = model.WaitForRequests(2);
+  if (!started) model.Release();
+  ASSERT_TRUE(started);
+
+  const auto deleted = Delete(finished);
+  const auto revoked = Call(
+      *host, H::RequestPayload::ProjectPermissionSetRequest, [&](Builder& b) {
+        return H::CreateProjectPermissionSetRequest(
+                   b, b.CreateString(project_id), b.CreateString(project_id),
+                   Tsugumi::Service::Access::Read, false)
+            .Union();
+      });
+  model.Release();
+  ASSERT_TRUE(deleted.Code().empty());
+  ASSERT_TRUE(revoked.Code().empty()) << revoked.View();
+  WaitUntilIdle(active);
+  EXPECT_EQ(Scalar(directory.path / "project/.tsugumi/agent.sqlite",
+                   "SELECT count(*) FROM conversation_turns "
+                   "WHERE state='cancelled'"),
+            1);
+}
 
 TEST_F(ConversationStoreFixture,
        ProjectRecordsAndDeletionUseTheProjectDatabase) {

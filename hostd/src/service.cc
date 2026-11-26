@@ -134,8 +134,8 @@ struct Service::State {
               for (const auto& [_, call] : tools->file_calls)
                 if (call.project == project) call.stop->request_stop();
               for (const auto& [id, job] : turns->jobs)
-                if (conversations->GetConversation(id).project == project)
-                  job->request_stop();
+                if (job.project == project && turns->running.contains(id))
+                  job.worker->request_stop();
             }});
     turns = std::make_unique<Turns>(
         state_gate, db, *conversations, *providers, *host_settings, shutdown,
@@ -640,6 +640,8 @@ struct Service::State {
           call->second.stop->request_stop();
           call = tools->file_calls.erase(call);
         }
+        turns->jobs.erase(id);
+        turns->context_usage.erase(id);
         turns->thoughts.erase(id);
         return wire::AgentReply(request.request_id, S::AcknowledgementT{});
       }
@@ -1069,8 +1071,8 @@ auto Service::Shutdown() -> void {
     state_->stopping = true;
     state_->shutdown.request_stop();
     for (const auto& [_, job] : state_->turns->jobs) {
-      job->request_stop();
-      jobs.push_back(job);
+      job.worker->request_stop();
+      jobs.push_back(job.worker);
     }
   }
   state_->access->changed.notify_all();

@@ -11,6 +11,7 @@
 #include <util.h>
 #else
 #include <pty.h>
+#include <sys/syscall.h>
 #endif
 
 #include <array>
@@ -22,6 +23,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#include "host/descriptor.hh"
 
 namespace tsugumi::host {
 namespace H = Tsugumi::Host;
@@ -120,6 +123,7 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
     size.ws_col = static_cast<unsigned short>(request.cols);
     if (::openpty(&session->fd, &slave, nullptr, nullptr, &size))
       throw std::runtime_error("Cannot create host terminal");
+    Descriptor slave_owner(slave);
     ::fcntl(session->fd, F_SETFD, FD_CLOEXEC);
     ::fcntl(session->fd, F_SETFL, O_NONBLOCK);
     ::fcntl(slave, F_SETFD, FD_CLOEXEC);
@@ -146,6 +150,7 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
     const char* shell = user.shell.c_str();
     char* const args[] = {const_cast<char*>(shell), const_cast<char*>("-l"),
                           nullptr};
+    const int descriptor_limit = ::getdtablesize();
     const auto pid = ::fork();
     if (pid == 0) {
       ::setsid();
@@ -153,8 +158,10 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
       ::dup2(slave, 0);
       ::dup2(slave, 1);
       ::dup2(slave, 2);
-      ::close(slave);
-      ::close(session->fd);
+#ifdef SYS_close_range
+      if (::syscall(SYS_close_range, 3u, ~0u, 0) != 0)
+#endif
+        for (int fd = 3; fd < descriptor_limit; ++fd) ::close(fd);
       sigset_t empty;
       sigemptyset(&empty);
       ::sigprocmask(SIG_SETMASK, &empty, nullptr);
@@ -164,7 +171,7 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
       ::execve(shell, args, environment.data());
       ::_exit(127);
     }
-    ::close(slave);
+    slave_owner.reset();
     if (pid < 0) throw std::runtime_error("Cannot start host terminal shell");
     session->pid = pid;
     result.session = ++s.next;

@@ -48,6 +48,34 @@ class MemorySecrets final : public host::SecretStore {
     return keys;
   }
 };
+TEST(HostSettingsStore, SignInSetupFailureClosesListener) {
+  TemporaryDirectory directory;
+  host::StateGate gate;
+  host::HostStore store{directory.path};
+  host::Credentials credentials{gate, store.db, {}};
+  host::Settings settings(directory.path, credentials,
+                          std::make_unique<MemorySecrets>());
+  store.db.exec(R"(CREATE TRIGGER reject_oauth_host
+                   BEFORE INSERT ON oauth_hosts
+                   BEGIN SELECT RAISE(ABORT, 'injected setup failure'); END)");
+  flatbuffers::FlatBufferBuilder b;
+  H::SignInBeginRequestT begin;
+  begin.profile = "desktop";
+  H::RequestT request;
+  request.value.Set(std::move(begin));
+  b.Finish(H::Request::Pack(b, &request));
+  const auto descriptor_count = [] {
+    return std::distance(std::filesystem::directory_iterator("/dev/fd"),
+                         std::filesystem::directory_iterator{});
+  };
+  const auto before = descriptor_count();
+  const auto response = settings.Handle(
+      *flatbuffers::GetRoot<H::Request>(b.GetBufferPointer()), 1);
+  EXPECT_NE(
+      H::GetMessage(response.data())->payload_as_Reply()->value_as_Failure(),
+      nullptr);
+  EXPECT_EQ(descriptor_count(), before);
+}
 TEST(HostSettingsStore,
      ProviderAvailabilityChangesNotifyWithoutProvisioningLoops) {
   TemporaryDirectory directory;

@@ -87,7 +87,11 @@ struct Turns {
   bool& stopping;
   host::Access& access_service;
   Dependencies dependencies;
-  std::map<std::string, std::shared_ptr<std::jthread>> jobs;
+  struct Job {
+    std::string project;
+    std::shared_ptr<std::jthread> worker;
+  };
+  std::map<std::string, Job> jobs;
   std::set<std::string> running;
   std::map<std::string, std::shared_ptr<ContextUsage>> context_usage;
   std::map<std::string, std::shared_ptr<ThoughtSchedule>> thoughts;

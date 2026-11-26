@@ -1,5 +1,6 @@
 #include "host/web_pages.hh"
 
+#include <fcntl.h>
 #include <spawn.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -26,9 +27,31 @@ auto Spawn(std::vector<std::string> argv) -> bool {
   for (auto& a : argv) args.push_back(a.data());
   args.push_back(nullptr);
   pid_t pid = 0;
-  if (::posix_spawnp(&pid, args[0], nullptr, nullptr, args.data(), environ) !=
-      0)
+  posix_spawn_file_actions_t actions;
+  if (::posix_spawn_file_actions_init(&actions) != 0) return false;
+#ifdef __APPLE__
+  posix_spawnattr_t attributes;
+  if (::posix_spawnattr_init(&attributes) != 0) {
+    ::posix_spawn_file_actions_destroy(&actions);
     return false;
+  }
+  auto error =
+      ::posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT);
+  for (int fd = 0; !error && fd < 3; ++fd)
+    if (::fcntl(fd, F_GETFD) >= 0)
+      error = ::posix_spawn_file_actions_addinherit_np(&actions, fd);
+  if (!error)
+    error = ::posix_spawnp(&pid, args[0], &actions, &attributes, args.data(),
+                           environ);
+  ::posix_spawnattr_destroy(&attributes);
+#else
+  auto error = ::posix_spawn_file_actions_addclosefrom_np(&actions, 3);
+  if (!error)
+    error =
+        ::posix_spawnp(&pid, args[0], &actions, nullptr, args.data(), environ);
+#endif
+  ::posix_spawn_file_actions_destroy(&actions);
+  if (error) return false;
   std::thread([pid] {
     int status = 0;
     ::waitpid(pid, &status, 0);
@@ -135,8 +158,7 @@ auto WebPages::OpenBrowser(const std::string& project) -> bool {
                                      "url.dll,FileProtocolHandler", url}
           : std::vector<std::string>{"xdg-open", url};
 #endif
-  Spawn(std::move(argv));
-  return true;
+  return Spawn(std::move(argv));
 }
 
 auto WebPages::Tell(const PageId& page, const std::string& project,
