@@ -38,12 +38,6 @@ export interface SessionInfo {
   messages: number
 }
 
-export interface SearchHit {
-  session: string
-  title: string
-  snippet: string
-}
-
 export type Reference = { kind: 'card' | 'display'; card: CardKey }
 export const refLabel = (r: Reference, display = (k: CardKey) => k) => (r.kind === 'card' ? `Card ${display(r.card)}` : L('可視化 {0}', display(r.card)))
 const refEq = (a: Reference, b: Reference) => a.kind === b.kind && a.card === b.card
@@ -358,11 +352,6 @@ export class ChatController extends Observable {
     await api('/api/chat/delete', { path: this.session.dir, session: id }).catch(() => {})
     await this.refreshSessions()
     if (id === this.currentId) this.select(this.sessions[0]?.id ?? await this.createSession())
-  }
-
-  /** Full-text search over every session, compacted parts included. */
-  search(text: string) {
-    return api<SearchHit[]>('/api/chat/search', { path: this.session.dir, text })
   }
 
   /** Re-reads the connection (after Settings > API changed it). */

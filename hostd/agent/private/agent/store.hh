@@ -70,8 +70,6 @@ struct ConversationStore {
   auto List(const Tsugumi::Agent::ConversationListRequest& request, bool human)
       -> Tsugumi::Agent::ConversationListT;
   auto Delete(const std::string& id) -> void;
-  auto Search(const Tsugumi::Agent::ConversationSearchRequest& request,
-              bool human) -> Tsugumi::Agent::SearchResultT;
   auto Events(const Tsugumi::Agent::EventsRequest& request, bool human)
       -> Tsugumi::Agent::EventsPageT;
   auto RecordEvent(const std::string& id, const std::string& raw) -> void;

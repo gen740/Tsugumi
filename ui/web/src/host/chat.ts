@@ -328,7 +328,6 @@ class ChatHost {
     return core.user.call('ConversationListRequest', { project_id: await core.project(this.project) })
   }
 
-  async search(text: string) { return core.user.call('ConversationSearchRequest', { text, project_id: await core.project(this.project) }) }
 
 }
 
@@ -518,7 +517,6 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     await chatFor(project).detachFolder(String(b.folder))
     return { ok: true }
   },
-  'POST /api/chat/search': (b) => chatFor(projectDir(b.path)).search(String(b.text)),
   'POST /api/guide': async () => {
     const state = await guideState()
     const a = state.available ? await core.conversation('guide', guideProject, 'guide') : undefined

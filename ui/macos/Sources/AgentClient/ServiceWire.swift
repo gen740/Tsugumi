@@ -254,11 +254,6 @@ enum ServiceWire {
         let v = Tsugumi_Agent_ConversationDeleteRequestT()
         v.conversationId = fields["conversation_id"] as? String ?? ""
         return (Tsugumi_Agent_RequestPayload.conversationdeleterequest.rawValue, v)
-      case "ConversationSearchRequest":
-        let v = Tsugumi_Agent_ConversationSearchRequestT()
-        v.projectId = fields["project_id"] as? String
-        v.text = fields["text"] as? String ?? ""
-        return (Tsugumi_Agent_RequestPayload.conversationsearchrequest.rawValue, v)
       case "ConversationSendRequest":
         let v = Tsugumi_Agent_ConversationSendRequestT()
         v.conversationId = fields["conversation_id"] as? String ?? ""
@@ -517,15 +512,6 @@ enum ServiceWire {
       return out
     case let v as Tsugumi_Agent_ConversationListT:
       return try v.conversations.compactMap { item in try item.map { try view($0) } }
-    case let v as Tsugumi_Agent_SearchMatchT:
-      var out: [String: Any] = [:]
-      out["session"] = v.session
-      out["title"] = v.title ?? ""
-      out["snippet"] = v.snippet
-      out["updatedAt"] = Double(v.updatedAt)
-      return out
-    case let v as Tsugumi_Agent_SearchResultT:
-      return try v.matches.compactMap { item in try item.map { try view($0) } }
     case let v as Tsugumi_Agent_EventT:
       var out: [String: Any] = [:]
       out["code"] = v.code

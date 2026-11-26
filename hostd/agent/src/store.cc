@@ -3,12 +3,10 @@
 #include <sys/stat.h>
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <utility>
 
 #include "agent/context.hh"
-#include "agent/text.hh"
 #include "agent/wire.hh"
 #include "host/failure.hh"
 #include "host/identifiers.hh"
@@ -28,13 +26,6 @@ auto Now() -> int64_t {
              std::chrono::system_clock::now().time_since_epoch())
       .count();
 }
-auto FoldAscii(std::string text) -> std::string {
-  std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  return text;
-}
-
 }  // namespace
 
 // Conversation records contain no provisioning, host capabilities or settings.
@@ -583,61 +574,6 @@ auto ConversationStore::Delete(const std::string& id) -> void {
   auto location =
       db.prepare("DELETE FROM conversation_locations WHERE conversation=?");
   location.bind(1, id).run();
-}
-
-auto ConversationStore::Search(const A::ConversationSearchRequest& request,
-                               bool human) -> A::SearchResultT {
-  const auto* p = &request;
-  A::SearchResultT result;
-  for (auto* store : Databases(Text(p->project_id()))) {
-    auto q = store->prepare(
-        "SELECT id,project,messages,title,updated FROM "
-        "conversations c WHERE "
-        "(instr(lower(messages),lower(?))>0 OR EXISTS(SELECT "
-        "1 FROM archives a WHERE a.conversation=c.id AND "
-        "instr(lower(a.messages),lower(?))>0)) ORDER BY "
-        "updated DESC LIMIT 100");
-    q.bind(1, p->text()->str()).bind(2, p->text()->str());
-    while (q.step()) {
-      RememberConversation(q.text(0), q.text(1));
-      if (!human) {
-        try {
-          OwnConversation(q.text(0), false);
-          AuthorizeHistory(q.text(0));
-        } catch (const Failure&) {
-          continue;
-        }
-      }
-      std::string history;
-      auto append = [&](const std::string& raw) {
-        for (const auto& message : ParseMessages(raw)) {
-          if (message.context_summary) continue;
-          for (const auto& block : message.content)
-            if (!block.text.empty()) history += block.text + '\n';
-        }
-      };
-      auto archive = store->prepare(
-          "SELECT messages FROM archives WHERE "
-          "conversation=? ORDER BY rowid");
-      archive.bind(1, q.text(0));
-      while (archive.step()) append(archive.text(0));
-      append(q.text(2));
-      const auto found = FoldAscii(history).find(FoldAscii(p->text()->str()));
-      if (found == std::string::npos) continue;
-      auto row = std::make_unique<A::SearchMatchT>();
-      row->session = q.text(0);
-      row->title = q.text(3);
-      row->snippet = Excerpt(history, found);
-      row->updated_at = q.i64(4);
-      result.matches.push_back(std::move(row));
-    }
-  }
-  std::stable_sort(result.matches.begin(), result.matches.end(),
-                   [](const auto& a, const auto& b) {
-                     return a->updated_at > b->updated_at;
-                   });
-  if (result.matches.size() > 100) result.matches.resize(100);
-  return result;
 }
 
 auto ConversationStore::Events(const A::EventsRequest& request, bool human)

@@ -234,7 +234,7 @@ TEST_F(ConversationStoreTest,
   }
 }
 TEST_F(ConversationStoreTest,
-       ArchivesSearchResourcesAndEventsKeepHistoryAuthorization) {
+       ArchivesResourcesAndEventsKeepHistoryAuthorization) {
   std::lock_guard lock(gate.mutex);
   Register("project");
   Create("external", "project", false);
@@ -247,13 +247,6 @@ TEST_F(ConversationStoreTest,
       {{"user", {content}, {}, {}, agent::ProviderAPI::AnthropicMessages}});
   store->SaveMessages("external", {});
   EXPECT_EQ(store->Resources("external"), std::vector<std::string>{"project"});
-  A::ConversationSearchRequestT search;
-  search.text = "needle";
-  EXPECT_EQ(WithRequest(
-                search,
-                [&](const auto& value) { return store->Search(value, false); })
-                .matches.size(),
-            1);
   store->RecordEvent("external", R"({"kind":"finished"})");
   store->RecordEvent("external", R"({"kind":"finished"})");
   A::EventsRequestT events;
@@ -273,9 +266,6 @@ TEST_F(ConversationStoreTest,
       1);
   allowed = false;
   EXPECT_THROW(store->AuthorizeHistory("external"), host::Failure);
-  EXPECT_TRUE(WithRequest(search, [&](const auto& value) {
-                return store->Search(value, false);
-              }).matches.empty());
   EXPECT_TRUE(WithRequest(list, [&](const auto& value) {
                 return store->List(value, false);
               }).conversations.empty());

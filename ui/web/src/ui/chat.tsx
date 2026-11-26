@@ -5,7 +5,7 @@ import { api } from '../api'
 import { app } from '../model/app'
 import { canvasFor } from '../model/canvas'
 import { ModelListRefresher } from '../model/modelLists'
-import { ChatController, ChatItem, refLabel, SearchHit, Skill, USAGE_URL } from '../model/chat'
+import { ChatController, ChatItem, refLabel, Skill, USAGE_URL } from '../model/chat'
 import { chatFollowsAfterScroll } from '../model/chatFollow'
 import { useObserve } from '../model/observable'
 import { permissionCatalog, defaultPermissionSelection, parsePermission, permissionInfo } from '../model/permissions'
@@ -13,7 +13,7 @@ import { isMac, prefs } from '../model/prefs'
 import { CardKey, commentChange, errorText, key, path, ProjectSession } from '../model/session'
 import { AGENT, modelOptions, savedComments, helperScopeLabel, projectAccessNeededNow } from '../../shared/agentShared'
 import { WorkflowTab } from '../model/workspace'
-import { Button, copyText, Empty, MenuButton, Sheet, showMenu, Spinner, TextField } from './controls'
+import { Button, copyText, Empty, MenuButton, Sheet, showMenu, Spinner } from './controls'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
 import { findings } from '../model/evidence'
@@ -32,7 +32,7 @@ export function ChatPanel({ session, chat, detached, tab }: { session: ProjectSe
     <EvidenceContext.Provider value={{ session, tab }}><div className="chat-panel">
       <div className="chat-header">
         {!detached && <GuideNest busy={chat.busy} />}
-        <Button kind="borderless" iconOnly icon={showList ? 'bubble.left.and.bubble.right.fill' : 'list.bullet'} help={showList ? L('会話に戻る') : L('会話の一覧と検索')} onClick={() => setShowList(!showList)} />
+        <Button kind="borderless" iconOnly icon={showList ? 'bubble.left.and.bubble.right.fill' : 'list.bullet'} help={showList ? L('会話に戻る') : L('会話の一覧')} onClick={() => setShowList(!showList)} />
         <b className="ellipsis flex1">{showList ? L('会話') : chat.sessions.find((x) => x.id === chat.currentId)?.title ?? L('新しい会話')}</b>
         <Button kind="borderless" iconOnly icon="square.and.pencil" help={L('新しい会話')} onClick={() => { chat.newSession(); setShowList(false) }} />
         <MenuButton icon="ellipsis.circle" help={L('その他')} items={() => [
@@ -141,36 +141,21 @@ export function PermissionRequests({ asked, groups = [], selected, onSelect }: {
 // ---- Session list ------------------------------------------------------------------
 
 function SessionList({ chat, onPick }: { chat: ChatController; onPick: () => void }) {
-  const [query, setQuery] = useState('')
-  const [hits, setHits] = useState<SearchHit[]>([])
-  useEffect(() => {
-    if (!query) return setHits([])
-    const t = setTimeout(() => void chat.search(query).then(setHits).catch(() => setHits([])), 200)
-    return () => clearTimeout(t)
-  }, [query, chat])
   const open = (id: string) => {
     chat.select(id)
     onPick()
   }
   return (
     <div className="chat-list">
-      <div className="sidebar-pad"><TextField value={query} onChange={setQuery} placeholder={L('履歴を検索')} /></div>
       <div className="list flex1">
-        {!query && chat.sessions.map((x) => (
+        {chat.sessions.map((x) => (
           <div key={x.id} className="list-row clickable col-start" onClick={() => open(x.id)}
             onContextMenu={(e) => showMenu(e, [{ label: L('削除'), destructive: true, action: () => void chat.delete(x.id) }])}>
             <div className="ellipsis" style={{ fontWeight: x.id === chat.currentId ? 600 : 400 }}>{x.title}</div>
             <div className="caption secondary">{new Date(x.updatedAt).toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' })} · {x.messages} 件</div>
           </div>
         ))}
-        {!query && !chat.sessions.length && <Empty title={L('会話はまだありません')} icon="bubble.left" />}
-        {query && hits.map((h, i) => (
-          <div key={i} className="list-row clickable col-start" onClick={() => open(h.session)}>
-            <div className="caption" style={{ fontWeight: 600 }}>{h.title}</div>
-            <div className="caption secondary clamp3">{h.snippet}</div>
-          </div>
-        ))}
-        {query && !hits.length && <Empty title={L('“{0}” の結果はありません', query)} icon="magnifyingglass" description={L('スペルを確認するか、新しく検索してください。')} />}
+        {!chat.sessions.length && <Empty title={L('会話はまだありません')} icon="bubble.left" />}
       </div>
     </div>
   )

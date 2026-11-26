@@ -1063,18 +1063,6 @@ TEST_F(AgentFixture,
   EXPECT_NE(requests[4].find("Earlier decisions were retained"),
             std::string::npos);
   EXPECT_NE(Events(conversation).View().find("compacted"), std::string::npos);
-  const auto found =
-      Call(*external, A::RequestPayload::ConversationSearchRequest,
-           [](Builder& b) {
-             return A::CreateConversationSearchRequest(
-                        b, 0, b.CreateString("first_long_answer"))
-                 .Union();
-           })
-          .View();
-  EXPECT_EQ(JsonString(found, "/0/session"), conversation);
-  const auto snippet = JsonString(found, "/0/snippet");
-  EXPECT_NE(snippet.find("FIRST_LONG_ANSWER"), std::string::npos);
-  EXPECT_LT(snippet.size(), earlier.size());
   EXPECT_EQ(model.Requests().size(), 5u);
 }
 

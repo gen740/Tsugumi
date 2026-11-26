@@ -92,13 +92,6 @@ final class ChatController {
     }
   }
 
-  struct SearchHit: Identifiable {
-    let id = UUID()
-    let session: String
-    let title: String
-    let snippet: String
-  }
-
   let session: ProjectSession
   /// "Draw thoughts": the Agent's thinking in one line for the canvas.
   let thoughts: ThoughtSummarizer
@@ -407,16 +400,6 @@ final class ChatController {
         if id == currentId { currentId = "" }
         refreshSessions()
       } catch { status = .error(error.localizedDescription) }
-    }
-  }
-
-  func search(_ text: String) async -> [SearchHit] {
-    guard !text.isEmpty else { return [] }
-    guard let project = try? await RPCToolTransport(session: session).project(),
-      let result = try? await CoreHostClient.shared.call("ConversationSearchRequest", ["text": text, "project_id": project.id]) else { return [] }
-    return (result["value"] as? [[String: Any]] ?? []).compactMap { item in
-      guard let session = item["session"] as? String else { return nil }
-      return SearchHit(session: session, title: item["title"] as? String ?? "", snippet: item["snippet"] as? String ?? "")
     }
   }
 

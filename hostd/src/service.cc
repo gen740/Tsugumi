@@ -645,12 +645,6 @@ struct Service::State {
         turns->thoughts.erase(id);
         return wire::AgentReply(request.request_id, S::AcknowledgementT{});
       }
-      case A::RequestPayload::ConversationSearchRequest: {
-        return wire::AgentReply(
-            request.request_id,
-            conversations->Search(*r->value_as_ConversationSearchRequest(),
-                                  human));
-      }
       case A::RequestPayload::ConversationSendRequest:
       case A::RequestPayload::ConversationActionRequest:
       case A::RequestPayload::ConversationCancelRequest:

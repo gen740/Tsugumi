@@ -93,8 +93,6 @@ struct Reply {
         return test::View(r->value_as_ConversationResult());
       case A::ReplyPayload::ConversationList:
         return test::View(r->value_as_ConversationList()->conversations());
-      case A::ReplyPayload::SearchResult:
-        return test::View(r->value_as_SearchResult()->matches());
       case A::ReplyPayload::EventsPage:
         return test::View(r->value_as_EventsPage());
       case A::ReplyPayload::ToolCatalog:
