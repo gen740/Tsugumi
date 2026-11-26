@@ -863,9 +863,8 @@ auto WorkerProc::resume_logs() -> void {
   stop_logs_ = false;
   log_thread_ = std::thread([this] {
     while (!stop_logs_) {
-      pollfd fds[3] = {{-1, POLLIN, 0},
-                       {-1, POLLIN, 0},
-                       {log_wake_[0], POLLIN, 0}};
+      pollfd fds[3] = {
+          {-1, POLLIN, 0}, {-1, POLLIN, 0}, {log_wake_[0], POLLIN, 0}};
       {
         std::lock_guard lock(log_mu_);
         if (!out_eof_) fds[0].fd = out_fd_;
@@ -911,7 +910,11 @@ WorkerProc::~WorkerProc() {
     }
     return;
   }
-  terminate();
+  try {
+    terminate();
+  } catch (const std::system_error& error) {
+    log::warn(error.what());
+  }
   std::error_code ec;
   for (const auto& directory :
        {std::filesystem::path(scratch_), artifact_scratch_}) {
@@ -930,6 +933,25 @@ WorkerProc::~WorkerProc() {
   }
 }
 
+namespace {
+auto observe_child_exit(pid_t pid, std::error_code& error) -> bool {
+  siginfo_t si{};
+  int rc;
+  do {
+    rc = ::waitid(P_PID, static_cast<id_t>(pid), &si,
+                  WEXITED | WNOHANG | WNOWAIT);
+  } while (rc < 0 && errno == EINTR);
+  if (rc < 0) {
+    error = {errno, std::generic_category()};
+    return false;
+  }
+  // Darwin can return CLD_STOPPED despite WEXITED.
+  return si.si_pid == pid &&
+         (si.si_code == CLD_EXITED || si.si_code == CLD_KILLED ||
+          si.si_code == CLD_DUMPED);
+}
+}  // namespace
+
 bool WorkerProc::alive() const {
   if (borrowed_) {
     if (!alive_ || data_fd_ < 0) return false;
@@ -938,16 +960,8 @@ bool WorkerProc::alive() const {
            !(state.revents & (POLLHUP | POLLERR | POLLNVAL));
   }
   if (!alive_ || pid_ <= 0) return false;
-  // Darwin can return CLD_STOPPED from this waitid query despite WEXITED.
-  // A stopped resident still owns its connection and can be cancelled.
-  siginfo_t si{};
-  if (::waitid(P_PID, static_cast<id_t>(pid_), &si,
-               WEXITED | WNOHANG | WNOWAIT) == 0 &&
-      si.si_pid == pid_ &&
-      (si.si_code == CLD_EXITED || si.si_code == CLD_KILLED ||
-       si.si_code == CLD_DUMPED))
-    return false;
-  return true;
+  std::error_code error;
+  return !observe_child_exit(pid_, error);
 }
 
 void WorkerProc::set_logs(LogSink logs) {
@@ -1016,15 +1030,26 @@ void WorkerProc::terminate(bool force) {
     }
     return;
   }
+  std::error_code wait_error;
   if (pid_ > 0) {
-    if (force) proc::kill_group(pid_, SIGTERM);
+    auto exited = observe_child_exit(pid_, wait_error);
+    if (!wait_error && force) proc::kill_group(pid_, SIGTERM);
     ::shutdown(data_fd_, SHUT_RDWR);
     close_fd(data_fd_);
     close_fd(control_fd_);
-    // Give a cooperative worker a moment to exit after its data socket closed.
-    for (int i = 0; i < 50 && !proc::try_wait(pid_); ++i) ::usleep(10000);
-    proc::kill_group(pid_, SIGKILL);
-    proc::wait(pid_);
+    // Keep the leader waitable until group cleanup has finished.
+    for (int i = 0; i < 50 && !exited && !wait_error; ++i) {
+      ::usleep(10000);
+      exited = observe_child_exit(pid_, wait_error);
+    }
+    if (!wait_error) {
+      proc::kill_group(pid_, SIGKILL);
+      pid_t waited;
+      do {
+        waited = ::waitpid(pid_, nullptr, 0);
+      } while (waited < 0 && errno == EINTR);
+      if (waited < 0) wait_error = {errno, std::generic_category()};
+    }
     pid_ = -1;
   }
   remove_card_cgroup(cgroup_);
@@ -1034,6 +1059,7 @@ void WorkerProc::terminate(bool force) {
   close_fd(out_fd_);
   close_fd(err_fd_);
   alive_ = false;
+  if (wait_error) throw std::system_error(wait_error, "cannot wait for worker");
 }
 
 void WorkerProc::read_logs(bool drain) {
