@@ -50,8 +50,6 @@ inline auto View(const A::InterruptedOperation* value) -> std::string;
 inline auto View(const A::ConversationResult* value) -> std::string;
 inline auto View(const A::ConversationEntry* value) -> std::string;
 inline auto View(const A::ConversationList* value) -> std::string;
-inline auto View(const A::SearchMatch* value) -> std::string;
-inline auto View(const A::SearchResult* value) -> std::string;
 inline auto View(const A::Event* value) -> std::string;
 inline auto View(const A::SequencedEvent* value) -> std::string;
 inline auto View(const A::EventsPage* value) -> std::string;
@@ -180,17 +178,6 @@ inline auto View(const A::ConversationEntry* value) -> std::string {
 inline auto View(const A::ConversationList* value) -> std::string {
   if (!value) return "null";
   return Object({{"conversations", View(value->conversations())}});
-}
-inline auto View(const A::SearchMatch* value) -> std::string {
-  if (!value) return "null";
-  return Object({{"session", View(value->session())},
-                 {"title", View(value->title())},
-                 {"snippet", View(value->snippet())},
-                 {"updatedAt", View(value->updated_at())}});
-}
-inline auto View(const A::SearchResult* value) -> std::string {
-  if (!value) return "null";
-  return Object({{"matches", View(value->matches())}});
 }
 inline auto View(const A::Event* value) -> std::string {
   if (!value) return "null";

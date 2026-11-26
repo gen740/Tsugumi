@@ -45,7 +45,6 @@ import { ConversationCreateRequestT as AConversationCreateRequest } from '../../
 import { ConversationListRequestT as AConversationListRequest } from '../../shared/gen/tsugumi/agent/conversation-list-request'
 import { ConversationGetRequestT as AConversationGetRequest } from '../../shared/gen/tsugumi/agent/conversation-get-request'
 import { ConversationDeleteRequestT as AConversationDeleteRequest } from '../../shared/gen/tsugumi/agent/conversation-delete-request'
-import { ConversationSearchRequestT as AConversationSearchRequest } from '../../shared/gen/tsugumi/agent/conversation-search-request'
 import { ConversationSendRequestT as AConversationSendRequest } from '../../shared/gen/tsugumi/agent/conversation-send-request'
 import { ConversationActionRequestT as AConversationActionRequest } from '../../shared/gen/tsugumi/agent/conversation-action-request'
 import { ConversationCancelRequestT as AConversationCancelRequest } from '../../shared/gen/tsugumi/agent/conversation-cancel-request'
@@ -156,7 +155,6 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'ConversationListRequest': return new AConversationListRequest(v.project_id)
     case 'ConversationGetRequest': return new AConversationGetRequest(v.conversation_id)
     case 'ConversationDeleteRequest': return new AConversationDeleteRequest(v.conversation_id)
-    case 'ConversationSearchRequest': return new AConversationSearchRequest(v.project_id, v.text)
     case 'ConversationSendRequest': return new AConversationSendRequest(v.conversation_id, v.turn_id, v.text, v.selected_cards, v.selected_displays, v.skill_names, v.intent, v.attached_resources, v.display, v.scoped_skill)
     case 'ConversationActionRequest': return new AConversationActionRequest(v.conversation_id, enumValue(Action, v.action))
     case 'ConversationCancelRequest': return new AConversationCancelRequest(v.conversation_id)
@@ -245,7 +243,6 @@ export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; val
   } else {
     switch (reply.valueType) {
       case AgentReplyPayload.ConversationList: value = value.conversations; break
-      case AgentReplyPayload.SearchResult: value = value.matches; break
       case AgentReplyPayload.ToolCatalog: value = value.tools; break
     }
   }

@@ -42,7 +42,7 @@ foreach(schema ${TSUGUMI_SCHEMAS})
   endif()
   add_custom_command(
     OUTPUT ${TSUGUMI_GEN_DIR}/cpp/tsugumi/protocol/${schema}_generated.h
-    COMMAND ${TSUGUMI_FLATC} ${_quiet} --cpp --scoped-enums --gen-mutable --gen-object-api
+    COMMAND ${TSUGUMI_FLATC} ${_quiet} --cpp --scoped-enums --gen-mutable --gen-object-api --gen-compare
             --keep-prefix --include-prefix tsugumi/protocol
             -I ${TSUGUMI_PROTOCOL_DIR} -o ${TSUGUMI_GEN_DIR}/cpp/tsugumi/protocol ${_src}
     COMMAND ${TSUGUMI_FLATC} ${_quiet} --python --gen-object-api --python-typing -I ${TSUGUMI_PROTOCOL_DIR}

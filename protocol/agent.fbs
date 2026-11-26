@@ -15,7 +15,6 @@ table ConversationListRequest { project_id:string; }
 // Reading or observing a conversation never starts or resumes a turn.
 table ConversationGetRequest { conversation_id:string (required); }
 table ConversationDeleteRequest { conversation_id:string (required); }
-table ConversationSearchRequest { project_id:string; text:string (required); }
 // text is an explicit user message. Project context is read inside core,
 // after authorization, never silently appended by a UI.
 table ConversationSendRequest {
@@ -65,7 +64,7 @@ table ConversationSummarizeRequest { conversation_id:string (required); provider
 
 union RequestPayload {
   HelloRequest:Tsugumi.Service.HelloRequest,
-  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSearchRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest, AccessRevokeRequest, AccessListRequest, ConversationSummarizeRequest, ToolCallCancelRequest, CallIdRequest, ShowRequest
+  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest, AccessRevokeRequest, AccessListRequest, ConversationSummarizeRequest, ToolCallCancelRequest, CallIdRequest, ShowRequest
 }
 table Request { value:RequestPayload; }
 
@@ -98,8 +97,6 @@ table ModelBinding { provider_id:string; model:string; effort:string; fast:bool;
 table ConversationResult { conversation:Conversation (required); busy:bool; resumable:bool; continuable:bool; project_id:string; event_seq:ulong; interrupted_operation:InterruptedOperation; model_binding:ModelBinding; }
 table ConversationEntry { id:string; project_id:string; title:string; updated_at:long; busy:bool; }
 table ConversationList { conversations:[ConversationEntry]; }
-table SearchMatch { session:string; title:string; snippet:string; updated_at:long; }
-table SearchResult { matches:[SearchMatch]; }
 // Event kinds and metadata are closed protocol data. Only tool input/result
 // text may itself contain JSON. Helpers carry the same typed event recursively.
 table Event {
@@ -108,7 +105,10 @@ table Event {
   asked:[string]; groups:[AccessGroup]; event:Event; code:string; call_id:string;
 }
 table SequencedEvent { seq:ulong; event:Event (required); }
-table EventsPage { events:[SequencedEvent]; next_seq:ulong; busy:bool; rows:[ChatRow]; has_rows:bool; }
+// Apply indexed replacements, then use row_count as the resulting length.
+table ChatRowUpdate { index:uint; row:ChatRow (required); }
+table PresentationUpdate { row_count:uint; reset:bool; rows:[ChatRowUpdate]; seq:ulong; }
+table EventsPage { events:[SequencedEvent]; next_seq:ulong; busy:bool; presentation:PresentationUpdate; }
 // A tool's input schema is an open-ended JSON Schema document.
 table Tool { name:string; description:string; input_schema_json:string; }
 table ToolCatalog { tools:[Tool]; }
@@ -120,7 +120,7 @@ table Grant { id:string; project_id:string; access:Tsugumi.Service.Access; activ
 table AccessList { requests:[AccessEntry]; grants:[Grant]; next_cursor:long; }
 union ReplyPayload {
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
-  ConversationResult, ConversationList, SearchResult, EventsPage, ToolCatalog,
+  ConversationResult, ConversationList, EventsPage, ToolCatalog,
   ToolResult, AccessResult, AccessList, TextResult:Tsugumi.Service.TextResult,
   Failure:Tsugumi.Service.Failure, CallId, Shown
 }

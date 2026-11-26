@@ -1,4 +1,4 @@
-import { ConversationEvents } from '../wire/agentEvents'
+import { ConversationEvents, type PresentationUpdate } from '../wire/agentEvents'
 import { onHostEvent } from '../wire/host'
 import * as H from '../../shared/gen/tsugumi/host'
 import type { Access } from '../../shared/gen/tsugumi/service/access'
@@ -36,12 +36,6 @@ export interface SessionInfo {
   title: string
   updatedAt: number
   messages: number
-}
-
-export interface SearchHit {
-  session: string
-  title: string
-  snippet: string
 }
 
 export type Reference = { kind: 'card' | 'display'; card: CardKey }
@@ -166,6 +160,7 @@ export class ChatController extends Observable {
 
   private readonly offEvents: () => void
   private readonly offHost: () => void
+  private presentationSeq = 0n
   private readonly events = new ConversationEvents((event) => this.handle(event), (error) => this.fail(error))
   private permissionRevision = 0
   private readonly offSession: () => void
@@ -271,21 +266,23 @@ export class ChatController extends Observable {
   private async reread(id: string) {
     const request = ++this.reload, turn = this.turn, revision = this.contentRevision, permissions = this.permissionRevision
     try {
-      const r = await api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; provider: ProviderInfo; eventSeq: string; permissions: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string; call_id?: string }[] }>(
+      const r = await api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; provider: ProviderInfo; eventSeq?: string; permissions: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string; call_id?: string }[] }>(
         '/api/chat/conversation', { path: this.session.dir, session: id, folders: this.folders })
       if (this.currentId !== id || request !== this.reload || turn !== this.turn) return
+      const eventSeq = r.eventSeq === undefined ? undefined : BigInt(r.eventSeq)
       // An observation received after the read began is newer than this snapshot.
       if (revision === this.contentRevision) {
         if (r.conversation.id !== id) throw new Error('The host returned a different conversation')
         const items = r.conversation.rows.map(presentedItem)
         this.items = items
+        this.presentationSeq = eventSeq ?? 0n
         this.busy = r.busy
         this.adoptInterruption(r)
         this.usage = r.conversation.usage
         this.provider = r.provider
       }
       if (permissions === this.permissionRevision) this.permissions = r.permissions ?? []
-      if (r.eventSeq !== undefined) this.events?.start(id, BigInt(r.eventSeq))
+      if (eventSeq !== undefined) this.events?.start(id, eventSeq)
       if (this.status === this.loadError) this.status = undefined
       this.loadError = undefined
       this.displayedId = id
@@ -358,11 +355,6 @@ export class ChatController extends Observable {
     await api('/api/chat/delete', { path: this.session.dir, session: id }).catch(() => {})
     await this.refreshSessions()
     if (id === this.currentId) this.select(this.sessions[0]?.id ?? await this.createSession())
-  }
-
-  /** Full-text search over every session, compacted parts included. */
-  search(text: string) {
-    return api<SearchHit[]>('/api/chat/search', { path: this.session.dir, text })
   }
 
   /** Re-reads the connection (after Settings > API changed it). */
@@ -659,10 +651,16 @@ export class ChatController extends Observable {
     if (this.noteWriting('', e)) return
     if (e.kind === 'helper' && this.noteWriting(e.name, e.event)) return
     switch (e.kind) {
-      case 'presentation':
+      case 'presentation': {
+        const update: PresentationUpdate = e
+        if (update.seq <= this.presentationSeq) break
+        this.presentationSeq = update.seq
         this.contentRevision++
-        this.items = e.rows.map(presentedItem)
+        const items = update.reset ? [] : this.items.slice(0, update.count)
+        for (const { index, row } of update.rows) items[index] = presentedItem(row)
+        this.items = items
         break
+      }
       case 'permission':
         // A turn approval's event names only the request; its description is
         // read with the conversation's pending requests.

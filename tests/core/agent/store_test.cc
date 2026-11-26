@@ -80,9 +80,7 @@ TEST_F(ConversationStoreTest,
   Create("nested");
   ModelServer model;
   host::Credentials credentials{gate, home.db, {}};
-  host::Settings settings(
-      directory.path, credentials,
-      nullptr);
+  host::Settings settings(directory.path, credentials, nullptr);
   H::ProviderSetRequestT provider;
   provider.profile = "desktop";
   provider.id = "fixture";
@@ -98,9 +96,8 @@ TEST_F(ConversationStoreTest,
       R"({"profile":"desktop","provider_id":"fixture","model":"fixture"})");
   bool stopping = false;
   std::stop_source shutdown;
-  host::Access access(
-      gate, home.db, registry, *store, stopping,
-      {[](const auto&, const auto&) {}, [](const auto&) {}});
+  host::Access access(gate, home.db, registry, *store, stopping,
+                      {[](const auto&, const auto&) {}, [](const auto&) {}});
   agent::Turns::Dependencies turn_dependencies;
   turn_dependencies.scrub = [](std::string text) { return text; };
   turn_dependencies.event = [](const auto&, const auto&) {};
@@ -233,8 +230,68 @@ TEST_F(ConversationStoreTest,
     EXPECT_EQ(turn.text(0), "interrupted");
   }
 }
+TEST_F(ConversationStoreTest, IncrementalEventsCopyOnlyChangedRows) {
+  std::lock_guard lock(gate.mutex);
+  const auto id = Create("long-chat").id;
+  constexpr size_t kHistoryRows = 1500;
+  agent::ContentBlock text;
+  text.text = "Saved message";
+  const std::vector<agent::Message> messages(
+      kHistoryRows,
+      {"user", {text}, {}, {}, agent::ProviderAPI::AnthropicMessages});
+  store->SaveMessages(id, messages);
+  auto snapshot = [&] {
+    return store->ConversationData(store->GetConversation(id));
+  };
+  ASSERT_EQ(snapshot().rows.size(), kHistoryRows);
+  A::EventsRequestT request;
+  request.conversation_id = id;
+  request.limit = 1;
+  auto read = [&] {
+    return WithRequest(
+        request, [&](const auto& event) { return store->Events(event, true); });
+  };
+  store->RecordEvent(id, R"({"kind":"text","text":"one"})");
+  auto page = read();
+  ASSERT_TRUE(page.presentation);
+  EXPECT_FALSE(page.presentation->reset);
+  EXPECT_EQ(page.presentation->row_count, kHistoryRows + 1);
+  ASSERT_EQ(page.presentation->rows.size(), 1u);
+  EXPECT_EQ(page.presentation->rows[0]->index, kHistoryRows);
+  EXPECT_EQ(page.presentation->rows[0]->row->text, "one");
+
+  request.after_seq = page.next_seq;
+  store->RecordEvent(id, R"({"kind":"text","text":" two"})");
+  store->RecordEvent(id, R"({"kind":"text","text":" three"})");
+  page = read();
+  ASSERT_TRUE(page.presentation);
+  ASSERT_EQ(page.presentation->rows.size(), 1u);
+  EXPECT_EQ(page.presentation->rows[0]->row->text, "one two three");
+  EXPECT_GT(page.presentation->seq, page.next_seq);
+  request.after_seq = page.next_seq;
+  page = read();
+  ASSERT_TRUE(page.presentation);
+  EXPECT_EQ(page.presentation->rows.size(), 1u);
+
+  request.after_seq = page.next_seq;
+  store->RecordEvent(id, R"({"kind":"discardText"})");
+  page = read();
+  ASSERT_TRUE(page.presentation);
+  EXPECT_EQ(page.presentation->row_count, kHistoryRows);
+  EXPECT_TRUE(page.presentation->rows.empty());
+  request.after_seq = page.next_seq;
+  EXPECT_FALSE(read().presentation);
+
+  Open();
+  request.after_seq = 0;
+  auto recovery = read();
+  ASSERT_TRUE(recovery.presentation);
+  EXPECT_TRUE(recovery.presentation->reset);
+  EXPECT_EQ(recovery.presentation->rows.size(), kHistoryRows);
+}
+
 TEST_F(ConversationStoreTest,
-       ArchivesSearchResourcesAndEventsKeepHistoryAuthorization) {
+       ArchivesResourcesAndEventsKeepHistoryAuthorization) {
   std::lock_guard lock(gate.mutex);
   Register("project");
   Create("external", "project", false);
@@ -247,13 +304,6 @@ TEST_F(ConversationStoreTest,
       {{"user", {content}, {}, {}, agent::ProviderAPI::AnthropicMessages}});
   store->SaveMessages("external", {});
   EXPECT_EQ(store->Resources("external"), std::vector<std::string>{"project"});
-  A::ConversationSearchRequestT search;
-  search.text = "needle";
-  EXPECT_EQ(WithRequest(
-                search,
-                [&](const auto& value) { return store->Search(value, false); })
-                .matches.size(),
-            1);
   store->RecordEvent("external", R"({"kind":"finished"})");
   store->RecordEvent("external", R"({"kind":"finished"})");
   A::EventsRequestT events;
@@ -273,9 +323,6 @@ TEST_F(ConversationStoreTest,
       1);
   allowed = false;
   EXPECT_THROW(store->AuthorizeHistory("external"), host::Failure);
-  EXPECT_TRUE(WithRequest(search, [&](const auto& value) {
-                return store->Search(value, false);
-              }).matches.empty());
   EXPECT_TRUE(WithRequest(list, [&](const auto& value) {
                 return store->List(value, false);
               }).conversations.empty());

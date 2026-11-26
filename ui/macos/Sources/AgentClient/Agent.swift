@@ -40,8 +40,9 @@ public struct Conversation: Equatable {
 }
 
 public enum AgentEvent: Sendable {
-  /// The core snapshot now contains the model accepted for this turn.
   case presentation([ChatRow])
+  case presentationPatch(count: Int, rows: [(Int, ChatRow)])
+  /// The core snapshot now contains the model accepted for this turn.
   case modelAccepted
   case text(String)
   /// A piece of a tool call's arguments as the model writes them; the call
@@ -234,6 +235,7 @@ public actor Agent {
         try Task.checkCancellation()
         try await AgentObservation.read { try await self.refresh() }
         try Task.checkCancellation()
+        events(.presentation(conversation.rows))
         events(.modelAccepted)
         var cursor: Int64 = 0
         repeat {
@@ -262,7 +264,14 @@ public actor Agent {
               else { events(event) }
             }
           }
-          if result.hasRows { events(.presentation(result.rows.compactMap { $0.map(ServiceWire.chatRow) })) }
+          if let update = result.presentation {
+            let rows = update.rows.compactMap { entry -> (Int, ChatRow)? in
+              guard let entry else { return nil }
+              return (Int(entry.index), ServiceWire.chatRow(entry.row))
+            }
+            events(update.reset ? .presentation(rows.map { $0.1 })
+                                : .presentationPatch(count: Int(update.rowCount), rows: rows))
+          }
           sequence = result.nextSeq
           busy = result.busy
           if !busy {

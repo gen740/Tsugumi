@@ -2,6 +2,7 @@
 
 #include <fcntl.h>
 #include <gtest/gtest.h>
+#include <signal.h>
 
 #include <chrono>
 #include <condition_variable>
@@ -10,12 +11,20 @@
 #include <map>
 #include <mutex>
 #include <sstream>
+#include <thread>
 
 #include "../agent_fixture_server.hh"
 #include "host/descriptor.hh"
 
 namespace tsugumi::test {
 namespace H = Tsugumi::Host;
+namespace {
+auto DescriptorCount() -> size_t {
+  return static_cast<size_t>(
+      std::distance(std::filesystem::directory_iterator("/dev/fd"),
+                    std::filesystem::directory_iterator{}));
+}
+}  // namespace
 TEST(NativeTerminalTest, HostOwnsPtyInputCloseAndStripsSecrets) {
   TemporaryDirectory directory;
   const auto home = directory.path / "empty home";
@@ -107,6 +116,7 @@ TEST(NativeTerminalTest, HostOwnsPtyInputCloseAndStripsSecrets) {
   std::filesystem::create_directory(project);
   H::HostTerminalRequestT request;
   request.project = project.string();
+  const auto descriptors_before = DescriptorCount();
   const auto opened = service.Handle(request);
   request.session = opened.session;
   ASSERT_GT(request.session, 0u);
@@ -122,10 +132,12 @@ TEST(NativeTerminalTest, HostOwnsPtyInputCloseAndStripsSecrets) {
       "unset HISTFILE; printf '\\0BEGIN\\0'; "
       "for name in $(compgen -e); do "
       "printf '%s=%s\\0' \"$name\" \"${!name}\"; done; "
+      "printf 'pid=%s\\0' \"$$\"; "
       "shopt -q login_shell; printf 'login=%s\\0' \"$?\"; "
       "printf '\\0END\\0'; exit\n";
   request.data.assign(command.begin(), command.end());
   service.Handle(request);
+  pid_t pid = -1;
   {
     std::unique_lock lock(mutex);
     changed.wait(lock, [&] { return closed; });
@@ -209,7 +221,17 @@ TEST(NativeTerminalTest, HostOwnsPtyInputCloseAndStripsSecrets) {
     }
     ASSERT_TRUE(actual.contains("login"));
     EXPECT_EQ(actual.at("login"), "0");
+    ASSERT_TRUE(actual.contains("pid"));
+    pid = std::stoi(actual.at("pid"));
   }
+  ASSERT_GT(pid, 0);
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (::kill(pid, 0) == 0 && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  EXPECT_EQ(::kill(pid, 0), -1);
+  EXPECT_EQ(errno, ESRCH);
+  EXPECT_EQ(DescriptorCount(), descriptors_before);
   request.action = H::TerminalAction::Close;
   EXPECT_NO_THROW(service.Handle(request));
   EXPECT_NO_THROW(service.Handle(request));
@@ -222,13 +244,9 @@ TEST(NativeTerminalTest, AccountLookupFailureClosesPty) {
   });
   H::HostTerminalRequestT request;
   request.project = directory.path.string();
-  const auto descriptor_count = [] {
-    return std::distance(std::filesystem::directory_iterator("/dev/fd"),
-                         std::filesystem::directory_iterator{});
-  };
-  const auto before = descriptor_count();
+  const auto before = DescriptorCount();
   EXPECT_THROW(service.Handle(request), std::runtime_error);
-  EXPECT_EQ(descriptor_count(), before);
+  EXPECT_EQ(DescriptorCount(), before);
 }
 TEST(NativeTerminalTest, InvalidSessionAndSizeDoNotLaunchShells) {
   host::NativeTerminals service({});

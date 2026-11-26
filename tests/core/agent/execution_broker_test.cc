@@ -16,6 +16,7 @@
 #include "fixture.hh"
 #include "tsugumi/rpc/peer_tls.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/sqlite.hh"
 #include "tsugumi/workerd/protocol.hh"
 
 namespace tsugumi::test {
@@ -490,6 +491,26 @@ TEST_F(BrokerFixture, RelayOverwritesScopeAndPreservesChunkBytes) {
   Broker(put, Authorize("alias"));
   EXPECT_EQ(worker->Requests().back().project_scope, scope);
   EXPECT_THROW(Broker(R::StatusRequestT{}, a), std::runtime_error);
+}
+TEST_F(BrokerFixture, RelayAndProbeDoNotDecodeUnrelatedRegistrations) {
+  ASSERT_TRUE(Put().Code().empty());
+  const auto capability = Authorize("project");
+  {
+    sql::Db db((directory.path / "state/execution.sqlite").string());
+    db.exec(
+        "INSERT INTO services VALUES "
+        "('unrelated','Unrelated','','',X'00','')");
+  }
+
+  auto probe = Broker(R::ProbeRequestT{}, capability);
+  ASSERT_NE(probe->payload.AsReply()->body.AsCapabilities(), nullptr);
+  R::CardProbeLookupT lookup;
+  lookup.key = std::string(64, 'a');
+  lookup.life = worker->probe_life;
+  auto cached = Broker(std::move(lookup), capability);
+  EXPECT_NE(cached->payload.AsReply()->body.AsCardProbeCached(), nullptr);
+  auto catalog = Broker(R::CatalogRequestT{}, capability);
+  EXPECT_NE(catalog->payload.AsReply()->body.AsFailure(), nullptr);
 }
 TEST_F(BrokerFixture, AuthorizationSurvivesRestartAndRevocationIsDurable) {
   ASSERT_TRUE(Put().Code().empty());

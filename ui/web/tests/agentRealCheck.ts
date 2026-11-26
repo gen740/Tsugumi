@@ -56,7 +56,6 @@ try {
       if (method === 'ModelSelectionRequest') return { provider: { providerId: 'chatgpt', model: 'gpt-6.1-luna' } } as T
       if (method === 'ModelsListRequest') return [] as T
       if (method === 'ConversationListRequest') return (fields.project_id === 'project-a' ? [{ id: 'a', title: 'Only A' }] : []) as T
-      if (method === 'ConversationSearchRequest') return [] as T
       if (method === 'ConversationCreateRequest') {
         const project = conversations.get(fields.conversation_id)
         if (project && project !== fields.project_id) throw new Error('conflict')
@@ -99,8 +98,6 @@ try {
   assert.equal(cancelled.signingIn, false)
   assert.equal(cancelled.outcome?.ok, false)
   assert.deepEqual(await call('sessions', { path: folders[1] }), [])
-  await call('search', { path: folders[1], text: 'Only A' })
-  assert.equal(calls.find(c => c.method === 'ConversationSearchRequest')?.fields.project_id, 'project-b')
   const a = await call('conversation', { path: folders[0], session: 'a' })
   assert.deepEqual(a.permissions[0].asked, [asked, write, run])
   assert.deepEqual(a.permissions[0].asked.filter(projectAccessNeededNow), [asked])

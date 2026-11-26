@@ -617,7 +617,6 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 | `ConversationListRequest` | `project_id: string` |
 | `ConversationGetRequest` | `conversation_id: string` (required) |
 | `ConversationDeleteRequest` | `conversation_id: string` (required) |
-| `ConversationSearchRequest` | `project_id: string`, `text: string` (required) |
 | `ConversationSendRequest` | `conversation_id: string` (required), `turn_id: string` (required), `text: string` (required), `selected_cards: [string]`, `selected_displays: [string]`, `skill_names: [string]`, `intent: string`, `attached_resources: [string]`, `display: string`, `scoped_skill: string` |
 | `ConversationActionRequest` | `conversation_id: string` (required), `action: Action` |
 | `ConversationCancelRequest` | `conversation_id: string` (required) |
@@ -633,7 +632,9 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 | `CallIdRequest` | `conversation_id: string` (required), `name: string`, `arguments_json: string` |
 | `ShowRequest` | `path: string`, `card: string`, `create: bool`, `browser: bool` |
 
-Reply variants: `HelloResult`, `Acknowledgement`, `ConversationResult`, `ConversationList`, `SearchResult`, `EventsPage`, `ToolCatalog`, `ToolResult`, `AccessResult`, `AccessList`, `TextResult`, `Failure`, `CallId`, `Shown`.
+Reply variants: `HelloResult`, `Acknowledgement`, `ConversationResult`, `ConversationList`, `EventsPage`, `ToolCatalog`, `ToolResult`, `AccessResult`, `AccessList`, `TextResult`, `Failure`, `CallId`, `Shown`.
+
+`ConversationGetRequest` returns a full presentation and its event cursor. An event page can include a presentation update with the current row count and the indexed rows changed since `after_seq`. The presentation sequence can be ahead of `next_seq` while older events are paginated. Apply the replacements and trim to the stated row count. If `reset` is set, start with an empty presentation and apply all rows in the update.
 
 ### Host service
 

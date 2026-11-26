@@ -371,32 +371,49 @@ struct ExecutionBroker::State {
     return {*this, fd};
   }
 
+  auto DecodeEntry(sql::Stmt& q) -> Entry {
+    const auto bytes = q.blob(4);
+    Require(bytes.size() <= W::kMaxFrame, "Invalid stored worker capabilities");
+    auto message = W::decode(bytes);
+    const auto* reply = message->payload.AsReply();
+    Require(reply && reply->body.AsCapabilities(),
+            "Invalid stored worker capabilities");
+    return {q.text(0),
+            q.text(1),
+            q.text(2),
+            q.text(3),
+            *reply->body.AsCapabilities(),
+            q.text(5)};
+  }
+
+  auto LocalEntry() -> Entry {
+    Entry local;
+    local.id = "local";
+    local.name = "local";
+    local.capabilities.native_system = "local";
+    local.capabilities.systems = {"local"};
+    return local;
+  }
+
+  auto FindEntry(const std::string& id) -> std::optional<Entry> {
+    auto q = db.prepare(
+        "SELECT id,name,endpoint,worker_public_key,capabilities,"
+        "generation FROM services WHERE id=?");
+    q.bind(1, id);
+    if (q.step()) return DecodeEntry(q);
+    if (id == "local") return LocalEntry();
+    return std::nullopt;
+  }
+
   auto Entries() -> std::vector<Entry> {
     auto q = db.prepare(
         "SELECT id,name,endpoint,worker_public_key,capabilities,"
         "generation FROM services "
         "ORDER BY (id != 'local'),rowid");
     std::vector<Entry> entries;
-    while (q.step()) {
-      const auto bytes = q.blob(4);
-      Require(bytes.size() <= W::kMaxFrame,
-              "Invalid stored worker capabilities");
-      auto message = W::decode(bytes);
-      const auto* reply = message->payload.AsReply();
-      Require(reply && reply->body.AsCapabilities(),
-              "Invalid stored worker capabilities");
-      entries.push_back({q.text(0), q.text(1), q.text(2), q.text(3),
-                         *reply->body.AsCapabilities(), q.text(5)});
-    }
-    if (std::ranges::find(entries, "local", &Entry::id) == entries.end()) {
-      Entry local;
-      local.id = "local";
-      local.name = "local";
-      local.capabilities.server_id = "";
-      local.capabilities.native_system = "local";
-      local.capabilities.systems = {"local"};
-      entries.insert(entries.begin(), std::move(local));
-    }
+    while (q.step()) entries.push_back(DecodeEntry(q));
+    if (entries.empty() || entries.front().id != "local")
+      entries.insert(entries.begin(), LocalEntry());
     return entries;
   }
   auto List() -> H::ExecutionServicesT {
@@ -432,11 +449,8 @@ struct ExecutionBroker::State {
     std::vector<Work> work;
     {
       std::lock_guard lock(mutex);
-      if (!worker.empty()) {
-        const auto entries = Entries();
-        Require(std::ranges::find(entries, worker, &Entry::id) != entries.end(),
-                "Unknown execution service");
-      }
+      if (!worker.empty())
+        Require(FindEntry(worker).has_value(), "Unknown execution service");
       for (auto& [id, cache] : probes) {
         if (!worker.empty() && id != worker) continue;
         cache.revision = crypto::random_token(32);
@@ -559,7 +573,6 @@ struct ExecutionBroker::State {
           throw W::Error(R::ErrorCode::Unauthorized,
                          "Project is not authorized to use this broker");
         request->project_scope = q.text(0);
-        auto entries = Entries();
         if (auto* asked = request->body.AsCardSecretsRequest()) {
           Require(card_secrets != nullptr, "Card secrets are unavailable");
           Require(asked->names.size() <= 256, "Too many Card secret names");
@@ -574,7 +587,7 @@ struct ExecutionBroker::State {
           secret_names = std::move(asked->names);
         } else if (request->body.AsCatalogRequest()) {
           R::CatalogT catalog;
-          for (const auto& e : entries) {
+          for (const auto& e : Entries()) {
             auto target = std::make_unique<R::TargetT>();
             target->id = e.id;
             auto grant = db.prepare(
@@ -601,9 +614,8 @@ struct ExecutionBroker::State {
         } else {
           const auto* lookup = request->body.AsCardProbeLookup();
           const auto* publish = request->body.AsCardProbePublish();
-          const auto found =
-              std::ranges::find(entries, request->service, &Entry::id);
-          if (found == entries.end() ||
+          auto found = FindEntry(request->service);
+          if (!found ||
               (found->id == "local" ? !lookup && !publish
                                     : found->capabilities.server_id.empty()))
             throw W::Error(
@@ -618,7 +630,7 @@ struct ExecutionBroker::State {
             throw W::Error(R::ErrorCode::RegistrationChanged,
                            "Execution service registration changed; "
                            "reauthorize this project");
-          entry = *found;
+          entry = std::move(*found);
           if (lookup || publish) {
             const auto& key = lookup ? lookup->key : publish->key;
             const auto& life = lookup ? lookup->life : publish->life;
@@ -820,11 +832,11 @@ auto ExecutionBroker::Authorize(const std::string& project,
   state_->db.prepare("DELETE FROM project_services WHERE project=?")
       .bind(1, project)
       .run();
-  for (const auto& entry : state_->Entries()) {
-    auto grant =
-        state_->db.prepare("INSERT INTO project_services VALUES(?,?,?)");
-    grant.bind(1, project).bind(2, entry.id).bind(3, entry.generation).run();
-  }
+  state_->db
+      .prepare(
+          "INSERT INTO project_services SELECT ?,id,generation FROM services")
+      .bind(1, project)
+      .run();
   state_->db.prepare("INSERT OR REPLACE INTO project_registry VALUES(?,?)")
       .bind(1, project)
       .bind(2, RegisteredProject(path))
@@ -870,13 +882,12 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
       return agent::wire::HostReply(id, Tsugumi::Service::AcknowledgementT{});
     }
     if (const auto* p = request.value_as_ExecutionServicePutRequest()) {
-      Entry entry{
-          p->id()->str(),
-          p->name()->str(),
-          p->endpoint()->str(),
-          p->worker_public_key()->str(),
-          {},
-          crypto::random_token(32)};
+      Entry entry{p->id()->str(),
+                  p->name()->str(),
+                  p->endpoint()->str(),
+                  p->worker_public_key()->str(),
+                  {},
+                  crypto::random_token(32)};
       Require(entry.id == "local" || ValidId(entry.id),
               "Invalid execution service ID (local is reserved)");
       Require(
@@ -896,14 +907,14 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
       std::string previous;
       {
         std::lock_guard lock(state_->mutex);
-        for (const auto& e : state_->Entries())
-          if (e.id == entry.id) {
-            previous = e.generation + e.endpoint + e.worker_public_key + e.name;
-            if (entry.endpoint == e.endpoint &&
-                entry.worker_public_key == e.worker_public_key)
-              entry.capabilities = e.capabilities;
-            entry.generation = e.generation;
-          }
+        if (const auto e = state_->FindEntry(entry.id)) {
+          previous =
+              e->generation + e->endpoint + e->worker_public_key + e->name;
+          if (entry.endpoint == e->endpoint &&
+              entry.worker_public_key == e->worker_public_key)
+            entry.capabilities = e->capabilities;
+          entry.generation = e->generation;
+        }
       }
       if (entry.id != "local") peer_tls::ValidateKey(entry.worker_public_key);
       if (entry.id != "local" && p->verify()) {
@@ -919,16 +930,15 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
       }
       std::lock_guard lock(state_->mutex);
       std::string current;
-      for (const auto& e : state_->Entries())
-        if (e.id == entry.id) {
-          current = e.generation + e.endpoint + e.worker_public_key + e.name;
-          if (e.endpoint != entry.endpoint ||
-              e.worker_public_key != entry.worker_public_key ||
-              e.capabilities.server_id != entry.capabilities.server_id)
-            entry.generation = crypto::random_token(32);
-          else if (!p->verify())
-            entry.capabilities = e.capabilities;
-        }
+      if (const auto e = state_->FindEntry(entry.id)) {
+        current = e->generation + e->endpoint + e->worker_public_key + e->name;
+        if (e->endpoint != entry.endpoint ||
+            e->worker_public_key != entry.worker_public_key ||
+            e->capabilities.server_id != entry.capabilities.server_id)
+          entry.generation = crypto::random_token(32);
+        else if (!p->verify())
+          entry.capabilities = e->capabilities;
+      }
       const auto caps = W::encode(W::reply(entry.capabilities));
       Require(current == previous,
               "Registration changed while verifying; reopen settings");

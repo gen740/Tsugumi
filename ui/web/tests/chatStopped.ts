@@ -151,7 +151,7 @@ const row = (id: string, role: string, text: string) => ({ id, kind: 'text', rol
 const tool = (id: string, args: string, result: string, state: string) => ({ id, kind: 'tool', name: 'project_save', arguments: args, result, state })
 {
   const c = chat()
-  c.handle({ kind: 'presentation', rows: [tool('a', 'A', 'A rejected', 'failed'), tool('b', 'B', 'B saved', 'completed')] })
+  c.handle({ kind: 'presentation', count: 2, reset: true, seq: 1n, rows: [tool('a', 'A', 'A rejected', 'failed'), tool('b', 'B', 'B saved', 'completed')].map((row, index) => ({ row, index })) })
   assert.deepEqual(c.items.map((i: any) => i.tool.ok), [false, true])
   assert.ok(c.items[0].text.includes('A rejected'))
   assert.ok(c.items[1].text.includes('B saved'))

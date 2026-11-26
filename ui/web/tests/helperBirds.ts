@@ -127,7 +127,7 @@ const noWriter = () => undefined
   ] }) })
   assert.deepEqual(c.team.birds.map((b: any) => b.name), ['knn', 'mlp'])
   const task = (name: string, state = 'running', children: any[] = []) => ({ id: name, kind: 'helper', name, state, children })
-  c.handle({ kind: 'presentation', rows: [task('knn'), task('mlp')] })
+  c.handle({ kind: 'presentation', count: 2, reset: true, seq: 1n, rows: [task('knn'), task('mlp')].map((row, index) => ({ row, index })) })
   assert.deepEqual(c.items.filter((i: any) => i.role === 'helper').map((i: any) => i.helper), ['knn', 'mlp'])
   // What a helper writes is its own: its panel, and its bird at that Card.
   const delta = JSON.stringify({ changes: [{ value: { path: 'definitions/knn2/m.py', bytes: 'import os' } }] })
@@ -138,7 +138,7 @@ const noWriter = () => undefined
   assert.equal(c.team.bird('mlp').card(now), 'mlp')
   c.handle({ kind: 'helper', name: 'mlp', event: { kind: 'toolStarted', name: 'project_inspect', arguments: '{}' } })
   assert.ok(c.team.bird('mlp').line(Date.now() / 1000)?.text)
-  c.handle({ kind: 'presentation', rows: [task('knn'), task('mlp', 'running', [{ id: 'inspect', kind: 'step', children: [{ id: 'call', kind: 'tool', name: 'project_inspect', state: 'running' }] }])] })
+  c.handle({ kind: 'presentation', count: 2, reset: false, seq: 2n, rows: [{ index: 1, row: task('mlp', 'running', [{ id: 'inspect', kind: 'step', children: [{ id: 'call', kind: 'tool', name: 'project_inspect', state: 'running' }] }]) }] })
   assert.equal(c.items.find((i: any) => i.helper === 'mlp').presentation.children[0].children[0].name, 'project_inspect')
   c.handle({ kind: 'helper', name: 'mlp', event: { kind: 'finished' } })
   assert.ok(!c.team.bird('mlp').working)

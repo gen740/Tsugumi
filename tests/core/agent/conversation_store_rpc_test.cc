@@ -57,15 +57,6 @@ class ConversationStoreFixture : public AgentProjectFixture {
               .Union();
         });
   }
-  auto Search(const std::string& text, const std::string& project = {})
-      -> Reply {
-    return Call(*human, A::RequestPayload::ConversationSearchRequest,
-                [&](Builder& b) {
-                  return A::CreateConversationSearchRequest(
-                             b, b.CreateString(project), b.CreateString(text))
-                      .Union();
-                });
-  }
   auto Delete(const std::string& id) -> Reply {
     return Call(
         *human, A::RequestPayload::ConversationDeleteRequest, [&](Builder& b) {
@@ -198,13 +189,9 @@ TEST_F(ConversationStoreFixture,
                    "SELECT count(*) FROM conversations WHERE id='home-record'"),
             0);
   EXPECT_EQ(Read(local).find("FIXTURE_API_KEY"), std::string::npos);
-  EXPECT_EQ(JsonString(Search("PROJECT_RECORD").View(), "/0/session"),
-            conversation);
-  EXPECT_EQ(Search("HOME_RECORD", project_id).View(), "[]");
   EXPECT_NE(List(project_id).View().find(conversation), std::string::npos);
   ASSERT_TRUE(Delete(conversation).Code().empty());
   EXPECT_EQ(Get(conversation, true).Code(), "not_found");
-  EXPECT_EQ(Search("PROJECT_RECORD").View(), "[]");
   EXPECT_EQ(List(project_id).View(), "[]");
   for (const auto* table : {"conversations", "conversation_turns", "receipts",
                             "events", "model_bindings", "usage", "archives",
@@ -277,8 +264,6 @@ TEST_F(ConversationStoreFixture,
             .Union();
       });
   EXPECT_EQ(reopen.Code(), "permission_denied");
-  EXPECT_EQ(JsonString(Search("PORTABLE_EVIDENCE").View(), "/0/session"),
-            conversation);
   const auto access =
       Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
         return A::CreateAccessListRequest(b, b.CreateString(conversation))

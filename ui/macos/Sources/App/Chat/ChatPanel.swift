@@ -15,7 +15,7 @@ struct ChatHeader: View {
     HStack(spacing: 8) {
       Button { showList.toggle() } label: { Image(systemName: showList ? "bubble.left.and.bubble.right.fill" : "chevron.backward") }
         .buttonStyle(.borderless)
-        .help(showList ? "会話に戻る" : "会話の一覧と検索")
+        .help(showList ? "会話に戻る" : "会話の一覧")
       Text(showList ? String(localized: "会話") : (conversationTitle))
         .font(.headline).lineLimit(1)
       Spacer(minLength: 8)
@@ -68,7 +68,6 @@ struct ChatPanel: View {
   /// Whether the panel is open: opening it again shows the newest message.
   var shown = true
   @Binding var showList: Bool
-  @State private var query = ""
   @State private var input = ""
   private var model: String { chat.displayedProvider.model }
   private var displayedProviderID: String {
@@ -124,45 +123,23 @@ struct ChatPanel: View {
 
   // MARK: - Session list
 
-  @State private var hits: [ChatController.SearchHit] = []
-
   private var sessionList: some View {
-    VStack(spacing: 0) {
-      TextField("履歴を検索", text: $query).textFieldStyle(.roundedBorder).padding(8)
-        .task(id: query) { hits = await chat.search(query) }
-      if query.isEmpty {
-        List(chat.sessions) { s in
-          Button {
-            chat.select(s.id)
-            showList = false
-          } label: {
-            VStack(alignment: .leading, spacing: 2) {
-              Text(s.title).lineLimit(1).fontWeight(s.id == chat.currentId ? .semibold : .regular)
-              Text("\(s.updatedAt.formatted(date: .abbreviated, time: .shortened)) · \(s.messages) 件").font(.caption).foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-          .contextMenu { Button("削除", role: .destructive) { chat.delete(s.id) } }
+    List(chat.sessions) { s in
+      Button {
+        chat.select(s.id)
+        showList = false
+      } label: {
+        VStack(alignment: .leading, spacing: 2) {
+          Text(s.title).lineLimit(1).fontWeight(s.id == chat.currentId ? .semibold : .regular)
+          Text("\(s.updatedAt.formatted(date: .abbreviated, time: .shortened)) · \(s.messages) 件").font(.caption).foregroundStyle(.secondary)
         }
-        .overlay { if chat.sessions.isEmpty { ContentUnavailableView("会話はまだありません", systemImage: "bubble.left") } }
-      } else {
-        List(hits) { h in
-          Button {
-            chat.select(h.session)
-            showList = false
-          } label: {
-            VStack(alignment: .leading, spacing: 2) {
-              Text(h.title).font(.caption.bold())
-              Text(h.snippet).font(.caption).foregroundStyle(.secondary).lineLimit(3)
-            }
-          }
-          .buttonStyle(.plain)
-        }
-        .overlay { if hits.isEmpty { ContentUnavailableView.search(text: query) } }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
       }
+      .buttonStyle(.plain)
+      .contextMenu { Button("削除", role: .destructive) { chat.delete(s.id) } }
     }
+    .overlay { if chat.sessions.isEmpty { ContentUnavailableView("会話はまだありません", systemImage: "bubble.left") } }
   }
 
   // MARK: - Conversation
