@@ -89,7 +89,7 @@ struct ExpressionRequest {
 struct CacheClearOutcome {
   std::vector<std::string> deleted;
   std::vector<std::string> retained;
-  uint64_t freed_bytes = 0;
+  std::optional<uint64_t> freed_bytes = 0;
 };
 
 class NixRunner {
