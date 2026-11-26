@@ -487,8 +487,17 @@ void Store::apply_ops(const std::vector<FileOp>& ops, bool inject) {
       auto dir = target.parent_path();
       std::error_code ec;
       while (dir != opts_.root && stdfs::is_empty(dir, ec) && !ec) {
-        stdfs::remove(dir, ec);
+        if (!stdfs::remove(dir, ec)) break;
         dir = dir.parent_path();
+        fs::fsync_dir(dir);
+      }
+    }
+    if (!inject) {
+      // A prior attempt may have created or removed directories before its
+      // parent sync failed. Sync the surviving ancestor entries on replay.
+      for (auto dir = target.parent_path(); dir != opts_.root;) {
+        dir = dir.parent_path();
+        if (stdfs::is_directory(dir)) fs::fsync_dir(dir);
       }
     }
     if (inject && first) fault("partial_apply");
