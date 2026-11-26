@@ -1,6 +1,7 @@
 import AppKit
 import SwiftTerm
 import SwiftUI
+import TsugumiLauncher
 
 /// A terminal in the open project's environment (inside the shared VM): bash
 /// as the project's user in /project, with Nix and the Card tools. Kept apart
