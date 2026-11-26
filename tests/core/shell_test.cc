@@ -2,6 +2,7 @@
 
 #include <fcntl.h>
 #include <gtest/gtest.h>
+#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -66,6 +67,19 @@ TEST_F(ShellTest, ChildSetupFailuresReportTheOperationPathAndErrno) {
     EXPECT_NE(text.find(std::strerror(ENOENT)), std::string::npos);
   }
 }
+TEST(Process, EnforcesDeadlineAfterOutputCloses) {
+  using namespace std::chrono_literals;
+  proc::Spec spec;
+  spec.argv = {"/bin/sh", "-c",
+               "trap '' TERM; exec 1>&- 2>&-; exec /bin/sleep 3"};
+  const auto result = proc::run(spec, nullptr,
+                                std::chrono::steady_clock::now() + 500ms,
+                                {}, std::nullopt, 50ms);
+  EXPECT_TRUE(result.timed_out);
+  ASSERT_TRUE(WIFSIGNALED(result.status));
+  EXPECT_EQ(WTERMSIG(result.status), SIGKILL);
+}
+
 TEST_F(ShellTest, ReadOnlyIsIndependentOfCredentialHiding) {
   const auto output = Run("cat control/token; cat '" + shared_note.string() +
                               "'; printf changed > note",

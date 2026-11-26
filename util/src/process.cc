@@ -307,7 +307,19 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
   bool err_open = true;
   std::optional<std::chrono::steady_clock::time_point> kill_at;
   bool term_sent = false;
-  while (out_open || err_open) {
+  while (true) {
+    if (!out_open && !err_open) {
+      if (!cancel && !deadline) break;
+      // Observe exit without releasing the PID while the process group may
+      // still need to be signalled.
+      siginfo_t info{};
+      if (::waitid(P_PID, static_cast<id_t>(pid), &info,
+                   WEXITED | WNOHANG | WNOWAIT) == 0) {
+        if (info.si_pid == pid) break;
+      } else if (errno != EINTR) {
+        break;
+      }
+    }
     pollfd fds[2] = {{out_open ? out_pipe[0] : -1, POLLIN, 0},
                      {err_open ? err_pipe[0] : -1, POLLIN, 0}};
     int timeout_ms = 100;
@@ -397,9 +409,9 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
   if ((!lines.empty() || (framed && !pending.empty())) && !log_error) flush();
   ::close(out_pipe[0]);
   ::close(err_pipe[0]);
-  res.status = wait(pid);
   // Make sure no orphaned grandchildren survive a cancelled build.
   if (term_sent) kill_group(pid, SIGKILL);
+  res.status = wait(pid);
   if (log_error) std::rethrow_exception(log_error);
   return res;
 }
