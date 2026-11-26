@@ -121,39 +121,79 @@ struct CanvasWorkspace: View {
 
 }
 
-/// A live Card's view floats over the canvas. It stays at a readable scale
-/// when the graph is panned or zoomed, and the canvas keeps its full bounds.
+/// Live Card views float at a readable scale while the graph pans and zooms.
 private struct CanvasCardViews: View {
   let presentation: CardViewPresentation
-  @State private var offset = CGSize.zero
-  @GestureState private var drag = CGSize.zero
+  @State private var front: UUID?
 
   var body: some View {
     GeometryReader { geo in
-      let width = min(680, max(0, geo.size.width - 32))
-      let height = min(500, max(0, geo.size.height - 74))
-      let maxX = max(0, (geo.size.width - width) / 2 - 8)
-      let maxY = max(0, (geo.size.height - height - 58) / 2)
-      CardViewPanels(presentation: presentation, showsLatest: true) {
+      let panels = presentation.panelOpenings
+      let area = CGRect(x: 16, y: 48, width: max(0, geo.size.width - 32), height: max(0, geo.size.height - 92))
+      let gap: CGFloat = 12
+      let columns = panels.count > 1 && area.width >= 620 ? 2 : 1
+      let rows = panels.count > columns && area.height >= 440 ? 2 : 1
+      let width = min(680, max(0, (area.width - gap * CGFloat(columns - 1)) / CGFloat(columns)))
+      let height = min(500, max(0, (area.height - gap * CGFloat(rows - 1)) / CGFloat(rows)))
+      let stepX = width + gap, stepY = height + gap
+
+      ForEach(Array(panels.enumerated()), id: \.element.id) { index, opening in
+        let slot = index % (columns * rows)
+        let stagger = CGFloat(min(4, index / (columns * rows))) * 18
+        let center = CGPoint(x: area.midX + (CGFloat(slot % columns) - CGFloat(columns - 1) / 2) * stepX + stagger,
+                             y: area.midY + (CGFloat(slot / columns) - CGFloat(rows - 1) / 2) * stepY + stagger)
+        CanvasCardPanel(presentation: presentation, opening: opening, area: area,
+                        size: CGSize(width: width, height: height), initialCenter: center) {
+          front = opening.id
+        }
+        .zIndex(front == opening.id ? 1 : 0)
+      }
+    }
+  }
+}
+
+private struct CanvasCardPanel: View {
+  let presentation: CardViewPresentation
+  let opening: CardViewOpening
+  let area: CGRect
+  let size: CGSize
+  let initialCenter: CGPoint
+  let bringForward: () -> Void
+  @State private var movedCenter: CGPoint?
+  @GestureState private var drag = CGSize.zero
+
+  var body: some View {
+    let center = clamped(movedCenter ?? initialCenter)
+    CardViewPanel(presentation: presentation, id: opening.id) {
+      HStack(spacing: 6) {
         Image(systemName: "line.3.horizontal")
           .foregroundStyle(.secondary)
           .frame(width: 24, height: 24)
-          .contentShape(Rectangle())
-          .gesture(DragGesture()
-            .updating($drag) { value, state, _ in state = value.translation }
-            .onEnded { value in
-              offset = CGSize(width: min(maxX, max(-maxX, offset.width + value.translation.width)),
-                              height: min(maxY, max(-maxY, offset.height + value.translation.height)))
-            })
+        Text(verbatim: "\(opening.card.joined(separator: "/")) / \(opening.name)")
+          .font(.callout)
+          .lineLimit(1)
+        Spacer(minLength: 0)
       }
-      .frame(width: width, height: height)
-      .background(.regularMaterial)
-      .clipShape(RoundedRectangle(cornerRadius: 9))
-      .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(.secondary.opacity(0.25)).allowsHitTesting(false) }
-      .shadow(color: .black.opacity(0.22), radius: 12, y: 4)
-      .position(x: geo.size.width / 2 + min(maxX, max(-maxX, offset.width + drag.width)),
-                y: (geo.size.height + 20) / 2 + min(maxY, max(-maxY, offset.height + drag.height)))
+      .contentShape(Rectangle())
+      .onTapGesture(perform: bringForward)
+      .gesture(DragGesture()
+        .updating($drag) { value, state, _ in state = value.translation }
+        .onChanged { _ in bringForward() }
+        .onEnded { value in
+          movedCenter = clamped(CGPoint(x: center.x + value.translation.width, y: center.y + value.translation.height))
+        })
     }
+    .frame(width: size.width, height: size.height)
+    .background(.regularMaterial)
+    .clipShape(RoundedRectangle(cornerRadius: 9))
+    .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(.secondary.opacity(0.25)).allowsHitTesting(false) }
+    .shadow(color: .black.opacity(0.22), radius: 12, y: 4)
+    .position(clamped(CGPoint(x: center.x + drag.width, y: center.y + drag.height)))
+  }
+
+  private func clamped(_ point: CGPoint) -> CGPoint {
+    CGPoint(x: min(area.maxX - size.width / 2, max(area.minX + size.width / 2, point.x)),
+            y: min(area.maxY - size.height / 2, max(area.minY + size.height / 2, point.y)))
   }
 }
 
