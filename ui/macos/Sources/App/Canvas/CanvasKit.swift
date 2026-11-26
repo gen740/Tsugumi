@@ -1116,7 +1116,10 @@ struct CardNodeView: View {
 
   /// State icon and invocation number.
   @ViewBuilder private var stateBadge: some View {
-    if let st = data.state, st != .notStarted {
+    if !data.errors.isEmpty, data.state != .failed {
+      Image(systemName: Tsugumi_Data_CardState.failed.symbol)
+        .font(font(10)).foregroundStyle(Tsugumi_Data_CardState.failed.color)
+    } else if let st = data.state, st != .notStarted {
       HStack(spacing: s(2)) {
         Image(systemName: st.symbol).foregroundStyle(st.color)
         if data.invocation > 0 { Text("#\(data.invocation)").monospacedDigit().foregroundStyle(.secondary) }

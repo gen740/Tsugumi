@@ -39,6 +39,7 @@ struct GraphCanvas: View {
   /// Where the pointer last was over the canvas (a menu adds there).
   @State private var pointer: CGPoint = .zero
   @State private var bubbleSize = CGSize(width: 300, height: 120)
+  @State private var bubbleScrolls = false
   @State private var hoverTask: Task<Void, Never>?
   @State private var findText: String?
   @FocusState private var findFocused: Bool
@@ -156,11 +157,15 @@ struct GraphCanvas: View {
   }
   @State private var layoutPass = LayoutPass()
 
-  init(workspace: Workspace, session: ProjectSession, tab: WorkflowTab, showsCardViews: Bool = false) {
+  private let bottomControlsHeight: CGFloat
+
+  init(workspace: Workspace, session: ProjectSession, tab: WorkflowTab, showsCardViews: Bool = false,
+       bottomControlsHeight: CGFloat = 0) {
     self.workspace = workspace
     self.session = session
     self.tab = tab
     self.showsCardViews = showsCardViews
+    self.bottomControlsHeight = bottomControlsHeight
   }
   private var cam: CanvasCamera { CanvasCamera(x: camera.x, y: camera.y, zoom: camera.zoom) }
 
@@ -179,6 +184,7 @@ struct GraphCanvas: View {
   var body: some View {
     GeometryReader { geo in
       let _ = redrawn
+      let hoverViewport = CGSize(width: geo.size.width, height: max(1, geo.size.height - bottomControlsHeight))
       let opening = ScopeOpening(scope: scopeKey, cards: cardKeys,
                                  ready: session.connected && geo.size.width > 0 && geo.size.height > 0)
       let settled = settledLayout
@@ -207,11 +213,12 @@ struct GraphCanvas: View {
             .allowsHitTesting(false)
         }
         if let hover, !interacting {
-          HoverBubble(content: hoverContent(hover))
+          HoverBubble(content: hoverContent(hover), viewport: hoverViewport) { bubbleScrolls = $0 }
+            .id(hover)
             .fixedSize()
             .onGeometryChange(for: CGSize.self) { $0.size } action: { bubbleSize = $0 }
-            .position(bubblePosition(in: geo.size))
-            .allowsHitTesting(false)
+            .position(bubbleFrame(in: hoverViewport).center)
+            .allowsHitTesting(bubbleScrolls)
             .transition(.opacity)
         }
         if findText != nil { findBox.padding(.top, 52).frame(maxWidth: .infinity, alignment: .top) }
@@ -232,11 +239,13 @@ struct GraphCanvas: View {
         switch phase {
         case .active(let p):
           pointer = p
+          if hover != nil, bubbleScrolls,
+             bubbleFrame(in: hoverViewport).insetBy(dx: -Self.bubbleGap, dy: -Self.bubbleGap).contains(p) { return }
           trackHover(p, routed: routed)
         case .ended: clearHover()
         }
       }
-      .overlay(ScrollCatcher { dx, dy, zoomDelta, at in
+      .overlay(ScrollCatcher(scrollIn: hover != nil && bubbleScrolls ? bubbleFrame(in: hoverViewport) : nil) { dx, dy, zoomDelta, at in
         clearHover()
         if zoomDelta != 0 { zoom(by: 1 + zoomDelta, around: at) } else {
           var c = camera
@@ -857,13 +866,6 @@ struct GraphCanvas: View {
             .offset(x: -4, y: -8)
         }
       }
-      .overlay(alignment: .top) {
-        if let problem = data.failure ?? data.errors.first ?? data.warnings.first {
-          DiagnosticCallout(text: problem, isError: data.failure != nil || !data.errors.isEmpty, zoom: zoom)
-            .alignmentGuide(.top) { $0[.bottom] + 3 * zoom }
-            .allowsHitTesting(false)
-        }
-      }
       .contentShape(CardNodeView.hitShape(data, flow: flow, zoom: zoom, newPorts: session.isEditable))
       .placeScaled(at: screen(origin(k)), size: g.size, zoom: zoom)
       .zIndex(data.draftEditing ? 1 : 0)
@@ -1097,7 +1099,7 @@ struct GraphCanvas: View {
 
   // MARK: - Hover details
 
-  enum HoverTarget: Equatable {
+  enum HoverTarget: Hashable {
     case card(CardKey)
     case wire(Int)
   }
@@ -1116,7 +1118,10 @@ struct GraphCanvas: View {
     }
     if target == hover { return }
     hoverTask?.cancel()
-    if hover != nil { hover = nil }
+    if hover != nil {
+      hover = nil
+      bubbleScrolls = false
+    }
     guard let target else { return }
     // A short wait, so moving across the canvas does not flash details.
     hoverTask = Task { @MainActor in
@@ -1129,28 +1134,31 @@ struct GraphCanvas: View {
   private func clearHover() {
     hoverTask?.cancel()
     hoverTask = nil
-    if hover != nil { hover = nil }
+    hover = nil
+    bubbleScrolls = false
   }
 
   private func showDetailsForSelection() {
     guard tab.selection.count == 1, let k = tab.selection.first else { return }
     let r = cardRect(k)
     hoverAt = screen(CGPoint(x: r.maxX, y: r.minY))
+    if hover != .card(k) { bubbleScrolls = false }
     hover = .card(k)
   }
 
-  /// Right below the pointer (its top-left corner just past it), flipped to
-  /// the other side where the canvas ends, and kept inside the canvas.
-  private func bubblePosition(in size: CGSize) -> CGPoint {
+  private static let bubbleGap: CGFloat = 14
+
+  /// Beside the pointer, flipped to the other side where the canvas ends.
+  private func bubbleFrame(in size: CGSize) -> CGRect {
     let (w, h) = (bubbleSize.width, bubbleSize.height)
-    let gap: CGFloat = 14
+    let gap = Self.bubbleGap
     var left = hoverAt.x + gap
     if left + w > size.width - 6 { left = hoverAt.x - gap - w }
     var top = hoverAt.y + gap
     if top + h > size.height - 6 { top = hoverAt.y - gap - h }
     left = min(max(6, left), max(6, size.width - w - 6))
     top = min(max(6, top), max(6, size.height - h - 6))
-    return CGPoint(x: left + w / 2, y: top + h / 2)
+    return CGRect(x: left, y: top, width: w, height: h)
   }
 
   private func hoverContent(_ t: HoverTarget) -> HoverBubble.Content {
@@ -1575,37 +1583,6 @@ struct BoundaryBarView: View {
   }
 }
 
-private struct DiagnosticCallout: View {
-  let text: String
-  let isError: Bool
-  let zoom: CGFloat
-
-  var body: some View {
-    let color: Color = isError ? .red : .orange
-    let bubble = RoundedRectangle(cornerRadius: 7 * zoom)
-    VStack(spacing: 0) {
-      Label(text, systemImage: isError ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
-        .font(.system(size: max(6, 10 * zoom)))
-        .foregroundStyle(color)
-        .lineLimit(2)
-        .frame(maxWidth: 235 * zoom)
-        .padding(.horizontal, 7 * zoom)
-        .padding(.vertical, 5 * zoom)
-        .background(.regularMaterial, in: bubble)
-        .overlay(bubble.strokeBorder(color.opacity(0.35)))
-      Path { path in
-        path.move(to: .zero)
-        path.addLine(to: CGPoint(x: 10 * zoom, y: 0))
-        path.addLine(to: CGPoint(x: 5 * zoom, y: 5 * zoom))
-        path.closeSubpath()
-      }
-      .fill(color.opacity(0.55))
-      .frame(width: 10 * zoom, height: 5 * zoom)
-    }
-    .fixedSize()
-  }
-}
-
 /// Details shown near the pointer over a Card or a wire.
 struct HoverBubble: View {
   struct Content {
@@ -1619,12 +1596,41 @@ struct HoverBubble: View {
   }
 
   let content: Content
+  let viewport: CGSize
+  let onScrollabilityChange: (Bool) -> Void
+  @State private var detailHeight: CGFloat = 0
 
   private var wraps: Bool {
     (content.lines + content.problems + content.warnings + [content.status ?? ""]).contains { $0.count > 28 }
   }
 
   var body: some View {
+    let width = max(1, min(340, viewport.width - 32))
+    let height = max(1, viewport.height - 32)
+    let hasDiagnostics = !content.problems.isEmpty || !content.warnings.isEmpty
+    let scrolls = hasDiagnostics && detailHeight > height
+    Group {
+      if hasDiagnostics {
+        ScrollView {
+          details.frame(width: width, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { detailHeight = $0 }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .scrollIndicators(scrolls ? .automatic : .hidden)
+        .frame(width: width, height: min(height, max(1, detailHeight)))
+      } else {
+        details.frame(width: wraps ? width : nil, alignment: .leading)
+      }
+    }
+    .onChange(of: scrolls, initial: true) { _, scrolls in onScrollabilityChange(scrolls) }
+    .padding(10)
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
+    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(.secondary.opacity(0.25)))
+    .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+  }
+
+  private var details: some View {
     VStack(alignment: .leading, spacing: 5) {
       HStack(spacing: 6) {
         Image(systemName: content.symbol).foregroundStyle(.secondary)
@@ -1636,21 +1642,14 @@ struct HoverBubble: View {
       }
       if let s = content.status { Text(s).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
       ForEach(Array(content.problems.enumerated()), id: \.offset) { _, p in
-        Label(p, systemImage: "xmark.octagon").font(.caption).foregroundStyle(.red).lineLimit(4)
+        Label(p, systemImage: "xmark.octagon").font(.caption).foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
       }
       ForEach(Array(content.warnings.enumerated()), id: \.offset) { _, p in
-        Label(p, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange).lineLimit(3)
+        Label(p, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
           .fixedSize(horizontal: false, vertical: true)
       }
     }
-    // A fixed width for text that wraps: the bubble takes its ideal size, and
-    // a text's ideal is one line, however long.
-    .frame(width: wraps ? 340 : nil, alignment: .leading)
-    .padding(10)
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
-    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(.secondary.opacity(0.25)))
-    .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
   }
 }
 
@@ -1661,13 +1660,18 @@ struct HoverBubble: View {
 /// Clicks, and everything while a text field or editor has focus, go on
 /// to SwiftUI and AppKit as usual.
 struct ScrollCatcher: NSViewRepresentable {
+  let scrollIn: CGRect?
   let onScroll: (Double, Double, Double, CGPoint?) -> Void
 
-  func makeNSView(context: Context) -> NSView { CatcherView(onScroll: onScroll) }
-  func updateNSView(_ nsView: NSView, context: Context) { (nsView as? CatcherView)?.onScroll = onScroll }
+  func makeNSView(context: Context) -> CatcherView { CatcherView(onScroll: onScroll) }
+  func updateNSView(_ nsView: CatcherView, context: Context) {
+    nsView.scrollIn = scrollIn
+    nsView.onScroll = onScroll
+  }
 
   final class CatcherView: NSView {
     var onScroll: (Double, Double, Double, CGPoint?) -> Void
+    var scrollIn: CGRect?
     private var monitor: Any?
     private var spaceHeld = false
     private var panning = false
@@ -1695,7 +1699,9 @@ struct ScrollCatcher: NSViewRepresentable {
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? {
       switch NSApp.currentEvent?.type {
-      case .scrollWheel?, .otherMouseDown?, .otherMouseDragged?, .otherMouseUp?: return self
+      case .scrollWheel?:
+        return scrollIn?.contains(convert(point, from: superview)) == true ? nil : self
+      case .otherMouseDown?, .otherMouseDragged?, .otherMouseUp?: return self
       case .leftMouseDown?, .leftMouseDragged?, .leftMouseUp?: return spaceHeld || panning ? self : nil
       default: return nil
       }

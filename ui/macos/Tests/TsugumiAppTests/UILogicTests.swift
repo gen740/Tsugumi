@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import CoreGraphics
+import Observation
 import SwiftUI
 import Testing
 import TsugumiTestSupport
@@ -200,17 +201,35 @@ import TsugumiTestSupport
 }
 
 
+@MainActor @Observable private final class HoverLayoutMeasurement {
+  var size = CGSize.zero
+}
+
 /// The bubble takes its ideal size: long text must wrap inside it, not run out of it.
-@MainActor @Test func theHoverBubbleHoldsItsWrappedText() {
-  func size(_ lines: [String]) -> CGSize {
-    NSHostingView(rootView: HoverBubble(content: .init(title: "rgb", subtitle: "Draft", symbol: "circle", lines: lines, status: "未実装（Draft）",
-                                                       problems: ["draft cards are not implemented and cannot run"]))
-      .fixedSize()).fittingSize
+@MainActor @Test func theHoverBubbleHoldsItsWrappedText() async throws {
+  func size(_ lines: [String], height: CGFloat = 600) async throws -> CGSize {
+    let viewport = CGSize(width: 800, height: height)
+    let content = HoverBubble.Content(title: "rgb", subtitle: "Draft", symbol: "circle", lines: lines,
+                                       status: "未実装（Draft）", problems: ["draft cards are not implemented and cannot run"])
+    let measurement = HoverLayoutMeasurement()
+    let view = NSHostingView(rootView: HoverBubble(content: content, viewport: viewport) { _ in }
+      .fixedSize()
+      .onGeometryChange(for: CGSize.self) { $0.size } action: { measurement.size = $0 })
+    let window = NSWindow(contentRect: CGRect(origin: .zero, size: viewport),
+                          styleMask: [.borderless], backing: .buffered, defer: true)
+    window.contentView = view
+    defer { window.contentView = nil }
+    view.layoutSubtreeIfNeeded()
+    try await waitForModel("diagnostic hover layout") { measurement.size.height > 30 }
+    return measurement.size
   }
-  let short = size(["短い説明"])
-  let long = size([String(repeating: "3つの帯域画像を同じ座標と大きさのまま割り当てる。", count: 6)])
+  let description = String(repeating: "3つの帯域画像を同じ座標と大きさのまま割り当てる。", count: 6)
+  let short = try await size(["短い説明"])
+  let long = try await size([description])
+  let constrained = try await size([description], height: 110)
   #expect(long.width <= 361)
   #expect(long.height >= short.height + 40, "\(short) \(long)")
+  #expect(constrained.height <= 98)
 }
 
 /// A wire to or from a Draft is dotted until the Draft has code. The web checks

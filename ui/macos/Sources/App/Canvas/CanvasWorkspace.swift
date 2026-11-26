@@ -9,8 +9,11 @@ struct CanvasWorkspace: View {
   let session: ProjectSession
   @Bindable var tab: WorkflowTab
   let showsCardViews: Bool
+  @State private var bottomControlsHeight: CGFloat = 0
+
   var body: some View {
-    GraphCanvas(workspace: workspace, session: session, tab: tab, showsCardViews: showsCardViews)
+    GraphCanvas(workspace: workspace, session: session, tab: tab, showsCardViews: showsCardViews,
+                bottomControlsHeight: bottomControlsHeight)
       .overlay(alignment: .topTrailing) {
         VStack(alignment: .trailing, spacing: 8) {
           if let notice = session.notice {
@@ -34,6 +37,7 @@ struct CanvasWorkspace: View {
         StatusBar(workspace: workspace, session: session, tab: tab)
       }
       .padding(10)
+      .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { bottomControlsHeight = $0 }
     }
   }
 

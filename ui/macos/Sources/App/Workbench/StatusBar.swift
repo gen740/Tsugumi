@@ -216,8 +216,10 @@ struct IssueList: View {
           Image(systemName: i.error ? "xmark.circle.fill" : "exclamationmark.triangle.fill")
             .foregroundStyle(i.error ? .red : .yellow)
           VStack(alignment: .leading) {
-            Text(i.title)
-            if !i.detail.isEmpty { Text(i.detail).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
+            Text(i.title).fixedSize(horizontal: false, vertical: true)
+            if !i.detail.isEmpty {
+              Text(i.detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
           }
           Spacer()
           if let c = i.card {
@@ -225,6 +227,7 @@ struct IssueList: View {
             if i.isRunFailure { Button("ログ") { workspace.showLog(for: key(c)) }.buttonStyle(.borderless) }
           }
         }
+        .textSelection(.enabled)
       }
     }
   }
