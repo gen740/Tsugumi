@@ -1238,7 +1238,7 @@ void Service::card_view_read(RequestIn& req) {
     const auto* view = owned_view(req, session);
     if (!view) throw Failed(FailureKind::not_found, "unknown view session");
     blob = view->blob;
-    name = view->name;
+    name = view->key->first.name;
   }
   const auto offset = r->offset().value_or(0);
   const auto bytes = blob->read(offset, content_limit(r->limit_bytes()));

@@ -395,7 +395,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
           }
           static const std::vector<schema::CardView> empty;
           last_view_reply = service_.view_control(
-              node.path, views ? *views : empty, receiver, *control);
+              {s.run_id, node.path, s.implementation_label},
+              views ? *views : empty, receiver, *control);
         }
         view_reply_pending = last_view_reply->request_id == control->request_id;
       }

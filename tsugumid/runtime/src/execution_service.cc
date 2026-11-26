@@ -249,12 +249,14 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   invocation.deadline_grace = std::chrono::milliseconds(500);
   invocation.log = request.log;
   invocation.display = request.display;
-  invocation.view_control = [service = &service_, card = node.path,
-                             views = build.views,
-                             endpoint = lease.worker->view_receiver()](
-                                const WorkerViewRequest& control) {
-    return service->view_control(card, views, endpoint, control);
-  };
+  invocation.view_control =
+      [service = &service_,
+       origin =
+           Service::ViewOrigin{s.run_id, node.path, s.implementation_label},
+       views = build.views, endpoint = lease.worker->view_receiver()](
+          const WorkerViewRequest& control) {
+        return service->view_control(origin, views, endpoint, control);
+      };
   invocation.on_timing = [&](int64_t begin, int64_t end) {
     request.on_timing(begin, end);
   };

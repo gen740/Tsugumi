@@ -7,11 +7,12 @@ import pytest
 
 from harness.daemon import write_project
 from harness.fixtures import mock_plan
-from harness.native_card import native_card
+from harness.native_card import STATIC_RESULT_ENTRY, native_card
 from harness.scenario import Project, run
 from harness.views import (EMPTY_OUTPUTS, MESSAGE_MAX, NATIVE_VIEW_SETTINGS,
                            declaration, display, open_view, return_credit)
 from projects import wait_run, wait_run_notification
+from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC import ViewSendRequest
@@ -72,7 +73,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
         effects->view_open(host, "page", 1,
                            TSUGUMI_VIEW_HIDE_CURSOR | TSUGUMI_VIEW_LOCK_POINTER,
                            800, 600, &opener, &left) ||
-        effects->view_open(host, "page", 2, 0, 0, 0, &right_route, &right) ||
+        effects->view_open(host, "other", 2, 0, 0, 0, &right_route, &right) ||
         effects->route_register(host, &left, &dead))
         return 1;
     static const uint8_t oversized[TSUGUMI_MESSAGE_MAX + 1];
@@ -88,7 +89,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
 """
 
 
-def setup(core_factory, project, tmp_path, source, *, reuse=False):
+def setup(core_factory, project, tmp_path, source, *, reuse=False, view_names=("page",)):
     store = tmp_path / "store"
     store.mkdir()
     blob = store / "page.html"
@@ -100,7 +101,8 @@ def setup(core_factory, project, tmp_path, source, *, reuse=False):
     other.open()
     graph = Project(project).card(
         "work", {**NATIVE_VIEW_SETTINGS, "reuseWorker": reuse},
-        outputs=EMPTY_OUTPUTS, plan=mock_plan([package], views=[declaration(blob)]))
+        outputs=EMPTY_OUTPUTS,
+        plan=mock_plan([package], views=[declaration(blob, name) for name in view_names]))
     graph.save(ui)
     subscription = text(ui.open().subscriptionId)
     return daemon, ui, other, subscription
@@ -171,8 +173,58 @@ def denied(client, name, **fields):
     assert exc.value.kind == "permission_denied"
 
 
+def test_repeated_open_reuses_first_options_and_reopens_after_ui_close(
+        project, tmp_path, core_factory):
+    source = r"""
+int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
+    const tsugumi_effects *effects = call->effects;
+    void *host = call->host;
+    tsugumi_view_session first, again, reopened;
+    tsugumi_route routes[2], new_route;
+    if (effects->view_open(host, "page", TSUGUMI_VIEW_WINDOW, TSUGUMI_VIEW_HIDE_CURSOR,
+                           800, 600, &routes[0], &first) ||
+        effects->view_open(host, "page", TSUGUMI_VIEW_FULLSCREEN, UINT32_MAX,
+                           1, 0, &routes[1], &again) ||
+        memcmp(&first, &again, sizeof(first)) ||
+        !memcmp(&routes[0], &routes[1], sizeof(routes[0])) ||
+        effects->send(host, &again, (const uint8_t *)"ready", 5))
+        return 1;
+    unsigned closed = 0;
+    for (int i = 0; i < 2; ++i) {
+        tsugumi_view_event event;
+        if (effects->recv(host, &event, 15000) || event.kind != 1 ||
+            memcmp(&event.session, &first, sizeof(first)))
+            return 2;
+        if (memcmp(&event.route, &routes[0], sizeof(event.route)) == 0) closed |= 1;
+        if (memcmp(&event.route, &routes[1], sizeof(event.route)) == 0) closed |= 2;
+    }
+    if (closed != 3 ||
+        effects->view_open(host, "page", TSUGUMI_VIEW_FULLSCREEN, 0,
+                           0, 0, &new_route, &reopened) ||
+        !memcmp(&first, &reopened, sizeof(first)) ||
+        effects->send(host, &reopened, (const uint8_t *)"reopened", 8))
+        return 3;
+    return write_result(call, result, result_bytes, sizeof(result_bytes));
+}
+"""
+    _, ui, _, _ = setup(core_factory, project, tmp_path, source)
+    run_id = run(ui)
+    first = open_view(ui)
+    session = text(first.session)
+    assert (first.mode, first.flags, first.width, first.height) == (1, 1, 800, 600)
+    assert bytes(display(ui, session).bytes) == b"ready"
+    ui.call("ViewCloseRequest", session=session)
+    reopened = open_view(ui)
+    assert text(reopened.session) != session
+    assert (reopened.mode, reopened.flags, reopened.width, reopened.height) == (2, 0, 0, 0)
+    assert bytes(display(ui, text(reopened.session)).bytes) == b"reopened"
+    assert wait_run(ui, run_id).state == RunState.succeeded
+    assert not any(n.valueType == NotificationPayload.ViewOpened for n in ui.notifications.copy())
+
+
 def test_routes_are_private_to_the_window_and_close_once_after_return(project, tmp_path, core_factory):
-    _, ui, other, subscription = setup(core_factory, project, tmp_path, RESIDENT, reuse=True)
+    _, ui, other, subscription = setup(core_factory, project, tmp_path, RESIDENT,
+                                       reuse=True, view_names=("page", "other"))
     run_id = run(ui)
     first_view_event = ui.wait_notification(
         lambda note: note.valueType in {NotificationPayload.ViewOpened, NotificationPayload.DisplayUpdated},
@@ -257,7 +309,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     host = call->host;
     tsugumi_route route;
     if (effects->view_open(host, "page", 0, 0, 0, 0, &route, &slow) ||
-        effects->view_open(host, "page", 0, 0, 0, 0, &route, &fast))
+        effects->view_open(host, "other", 0, 0, 0, 0, &route, &fast))
         return 1;
     pthread_t thread;
     if (pthread_create(&thread, NULL, blast, NULL)) return 2;
@@ -267,7 +319,8 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     return write_result(call, result, result_bytes, sizeof(result_bytes));
 }
 """
-    _, ui, _, subscription = setup(core_factory, project, tmp_path, source)
+    _, ui, _, subscription = setup(core_factory, project, tmp_path, source,
+                                   view_names=("page", "other"))
     run_id = run(ui)
     slow, fast = (text(open_view(ui).session) for _ in range(2))
     first, second = display(ui, slow), display(ui, slow)
@@ -489,3 +542,98 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     send(ui, session, "*", b"*")
     assert {bytes(display(ui, session).bytes) for _ in range(3)} == {b"o*", b"a*", b"b*"}
     assert wait_run(ui, batch).state == RunState.succeeded
+
+
+REPORT_OPEN = r"""
+int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
+    tsugumi_view_session session;
+    tsugumi_route route;
+    if (call->effects->view_open(call->host, "page", 0, 0, 0, 0, &route, &session))
+        return 1;
+    uint8_t report[17] = {MARKER};
+    memcpy(report + 1, route.bytes, sizeof(route.bytes));
+    if (call->effects->send(call->host, &session, report, sizeof(report)))
+        return 2;
+    return write_result(call, result, result_bytes, sizeof(result_bytes));
+}
+"""
+NUMBER = "table Number { value:long; } table Outputs { out:Number; } root_type Outputs;"
+
+
+def test_views_reuse_within_each_card_and_label_in_a_batch(project, tmp_path, core_factory):
+    store = tmp_path / "store"
+    store.mkdir()
+    blob = store / "page.html"
+    blob.write_text("<p>batch</p>")
+    seed = native_card(tmp_path / "seed", STATIC_RESULT_ENTRY, [("out", b"seed")])
+    variants = [
+        native_card(tmp_path / label, f"#define MARKER '{label}'\n" + REPORT_OPEN)
+        for label in ("a", "b")
+    ]
+    daemon = core_factory(mocked_builds=True, env={"TSUGUMI_MOCK_STORE": str(store)})
+    ui = daemon.connect(client=Client.Web)
+    graph = Project(project)
+    graph.card("seed", NATIVE_VIEW_SETTINGS, outputs=NUMBER,
+               plan=mock_plan([seed, seed], execution_list=True))
+    for card in ("left", "right"):
+        graph.card(card, {**NATIVE_VIEW_SETTINGS, "inputs": [{"name": "in"}]},
+                   outputs=EMPTY_OUTPUTS, plan=mock_plan(
+                       variants, views=[declaration(blob)], execution_list=True, labels=["a", "b"]))
+        graph.connect("seed", "out", card, "in")
+    graph.save(ui)
+    ui.open()
+
+    run_id = run(ui, "seed", propagate=True, maxConcurrency=8)
+    status = wait_run(ui, run_id)
+    assert status.state == RunState.succeeded, status.failure
+    sessions = {}
+    routes = set()
+    for _ in range(4):
+        opening = open_view(ui)
+        session = text(opening.session)
+        first, second = (bytes(display(ui, session).bytes) for _ in range(2))
+        assert first[:1] == second[:1]
+        key = (tuple(opening.card.segments), first[:1])
+        assert key not in sessions
+        sessions[key] = session
+        routes.update((route_from(first[1:]), route_from(second[1:])))
+    assert set(sessions) == {((card,), label) for card in (b"left", b"right") for label in (b"a", b"b")}
+    assert len(set(sessions.values())) == 4
+    assert len(routes) == 8
+    assert not any(n.valueType == NotificationPayload.ViewOpened for n in ui.notifications.copy())
+
+
+def test_feedback_loop_reuses_view_until_a_new_run(project, tmp_path, core_factory):
+    store = tmp_path / "store"
+    store.mkdir()
+    blob = store / "page.html"
+    blob.write_text("<p>feedback</p>")
+    seed = native_card(tmp_path / "seed", STATIC_RESULT_ENTRY, [("out", b"seed")])
+    work = native_card(tmp_path / "work", "#define MARKER 'w'\n" + REPORT_OPEN, [("out", b"next")])
+    daemon = core_factory(mocked_builds=True, env={"TSUGUMI_MOCK_STORE": str(store)})
+    ui = daemon.connect(client=Client.Web)
+    graph = Project(project)
+    graph.card("seed", NATIVE_VIEW_SETTINGS, outputs=NUMBER, plan=mock_plan([seed]))
+    graph.card("merge", {"type": "merge", "maxRuns": 2,
+                         "inputs": [{"name": "seed"}, {"name": "feedback"}]})
+    graph.card("work", {**NATIVE_VIEW_SETTINGS, "maxRuns": 2, "inputs": [{"name": "in"}]},
+               outputs=NUMBER, plan=mock_plan([work], views=[declaration(blob)]))
+    graph.connect("seed", "out", "merge", "seed").connect("merge", "out", "work", "in")
+    graph.connect("work", "out", "merge", "feedback").save(ui)
+    ui.open()
+
+    sessions = set()
+    routes = set()
+    for _ in range(2):
+        run_id = run(ui, "seed", propagate=True)
+        status = wait_run(ui, run_id)
+        assert status.state == RunState.failed and status.failure.kind == FailureKind.execution_limit
+        session = text(open_view(ui).session)
+        sessions.add(session)
+        for _ in range(2):
+            report = bytes(display(ui, session).bytes)
+            assert report[:1] == b"w"
+            routes.add(route_from(report[1:]))
+        assert not any(n.valueType == NotificationPayload.ViewOpened for n in ui.notifications.copy())
+    assert len(sessions) == 2
+    assert len(routes) == 4

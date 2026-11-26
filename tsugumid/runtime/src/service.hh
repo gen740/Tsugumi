@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <compare>
 #include <condition_variable>
 #include <filesystem>
 #include <iosfwd>
@@ -126,7 +127,13 @@ class Service : public RequestSink {
   auto run_scratch() const -> const std::filesystem::path& {
     return run_scratch_;
   }
-  auto view_control(const CardPath& card,
+  struct ViewOrigin {
+    std::string run_id;
+    CardPath card;
+    std::string implementation_label;
+    auto operator<=>(const ViewOrigin&) const = default;
+  };
+  auto view_control(const ViewOrigin& origin,
                     const std::vector<schema::CardView>& views,
                     const std::weak_ptr<WorkerProc::ViewReceiver>& endpoint,
                     const WorkerViewRequest& request) -> WorkerViewReply;
@@ -321,10 +328,16 @@ class Service : public RequestSink {
     static auto open(const std::string& path, const std::filesystem::path& root)
         -> std::shared_ptr<const ViewBlob>;
   };
+  struct ViewKey {
+    ViewOrigin origin;
+    std::string name;
+    auto operator<=>(const ViewKey&) const = default;
+  };
+  using ViewIndex = std::map<ViewKey, ViewUuid>;
   struct ViewSession {
     std::optional<ConnId> conn;
     std::string subscription;
-    std::string name;
+    ViewIndex::iterator key;
     std::shared_ptr<const ViewBlob> blob;
     struct Route {
       std::string card;
@@ -333,13 +346,14 @@ class Service : public RequestSink {
     std::map<ViewUuid, Route> routes;
   };
   // Subscription selection and session lifecycle share subs_mu_.
+  ViewIndex open_views_;
   std::map<ViewUuid, ViewSession> view_sessions_;
   auto owned_view(const RequestIn& req, const ViewUuid& session)
       -> ViewSession*;
   auto add_view_route(const ViewUuid& session, ViewSession& view,
-                      const ViewUuid& route, const CardPath& card,
+                      const CardPath& card,
                       const std::weak_ptr<WorkerProc::ViewReceiver>& endpoint)
-      -> void;
+      -> ViewUuid;
   auto remove_view_routes(
       const std::weak_ptr<WorkerProc::ViewReceiver>& endpoint) -> void;
   auto remove_view_route(const ViewUuid& session, ViewSession& view,

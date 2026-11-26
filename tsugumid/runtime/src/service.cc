@@ -2991,7 +2991,7 @@ auto Service::view_uuid(const flatbuffers::String& value) -> ViewUuid {
 }
 
 auto Service::view_control(
-    const CardPath& card, const std::vector<schema::CardView>& views,
+    const ViewOrigin& origin, const std::vector<schema::CardView>& views,
     const std::weak_ptr<WorkerProc::ViewReceiver>& endpoint,
     const WorkerViewRequest& request) -> WorkerViewReply {
   WorkerViewReply reply{.request_id = request.request_id};
@@ -2999,7 +2999,18 @@ auto Service::view_control(
   if (!request.request_id || !receiver) return reply;
   switch (request.kind) {
     case ViewControlKind::open: {
-      if (request.mode > TSUGUMI_VIEW_FULLSCREEN ||
+      std::lock_guard lock(subs_mu_);
+      ViewKey key{origin, request.view};
+      if (const auto existing = open_views_.find(key);
+          existing != open_views_.end()) {
+        reply.session = existing->second;
+        reply.route =
+            add_view_route(reply.session, view_sessions_.at(reply.session),
+                           origin.card, endpoint);
+        reply.status = 0;
+        return reply;
+      }
+      if (request.view.empty() || request.mode > TSUGUMI_VIEW_FULLSCREEN ||
           (request.flags &
            ~(TSUGUMI_VIEW_HIDE_CURSOR | TSUGUMI_VIEW_LOCK_POINTER)) ||
           (request.width == 0) != (request.height == 0) ||
@@ -3009,7 +3020,7 @@ auto Service::view_control(
         return *view.name == request.view;
       };
       const auto found = std::ranges::find_if(views, matches);
-      if (request.view.empty() || found == views.end() ||
+      if (found == views.end() ||
           std::ranges::find_if(
               std::ranges::subrange(std::next(found), views.end()), matches) !=
               views.end() ||
@@ -3020,7 +3031,6 @@ auto Service::view_control(
                                        : stdfs::path(NixStore::store_dir()));
       if (!blob) return reply;
 
-      std::lock_guard lock(subs_mu_);
       const auto subscriber =
           ui_owner_ ? subscriptions_.find(*ui_owner_) : subscriptions_.end();
       const auto conn =
@@ -3029,23 +3039,28 @@ auto Service::view_control(
       do {
         reply.session = parse_view_uuid(crypto::uuid4());
       } while (view_sessions_.contains(reply.session));
-      reply.route = parse_view_uuid(crypto::uuid4());
       const auto session = view_text(reply.session);
-      auto& view = view_sessions_
-                       .emplace(reply.session,
-                                ViewSession{conn,
-                                            subscription,
-                                            request.view,
-                                            conn ? std::move(blob) : nullptr,
-                                            {}})
-                       .first->second;
+      ViewSession opening{conn,
+                          subscription,
+                          open_views_.end(),
+                          conn ? std::move(blob) : nullptr,
+                          {}};
+      const auto session_entry =
+          view_sessions_.emplace(reply.session, std::move(opening)).first;
+      auto& view = session_entry->second;
+      try {
+        view.key = open_views_.emplace(std::move(key), reply.session).first;
+      } catch (...) {
+        view_sessions_.erase(session_entry);
+        throw;
+      }
       if (conn)
         server_->open_view(
             *conn, subscription, session,
-            view_opened_note(session, card, request.view, *found->type,
+            view_opened_note(session, origin.card, request.view, *found->type,
                              request.mode, request.width, request.height,
                              request.flags));
-      add_view_route(reply.session, view, reply.route, card, endpoint);
+      reply.route = add_view_route(reply.session, view, origin.card, endpoint);
       reply.status = 0;
       return reply;
     }
@@ -3068,12 +3083,8 @@ auto Service::view_control(
         reply.status = TSUGUMI_VIEW_WINDOW_CLOSED;
         return reply;
       }
-      auto& routes = found->second.routes;
-      do {
-        reply.route = parse_view_uuid(crypto::uuid4());
-      } while (routes.contains(reply.route));
-      add_view_route(request.session, found->second, reply.route, card,
-                     endpoint);
+      reply.route =
+          add_view_route(request.session, found->second, origin.card, endpoint);
       reply.status = 0;
       return reply;
     }
@@ -3095,14 +3106,17 @@ auto Service::view_control(
 }
 
 auto Service::add_view_route(
-    const ViewUuid& session, ViewSession& view, const ViewUuid& route,
-    const CardPath& card,
-    const std::weak_ptr<WorkerProc::ViewReceiver>& endpoint) -> void {
+    const ViewUuid& session, ViewSession& view, const CardPath& card,
+    const std::weak_ptr<WorkerProc::ViewReceiver>& endpoint) -> ViewUuid {
+  ViewUuid route;
+  do {
+    route = parse_view_uuid(crypto::uuid4());
+  } while (view.routes.contains(route));
   const auto receiver = endpoint.lock();
-  if (!receiver) return;
+  if (!receiver) return route;
   {
     std::lock_guard lock(receiver->mutex);
-    if (!receiver->worker && !receiver->remote) return;
+    if (!receiver->worker && !receiver->remote) return route;
     if (!receiver->on_close)
       receiver->on_close = [this, endpoint] { remove_view_routes(endpoint); };
   }
@@ -3114,6 +3128,7 @@ auto Service::add_view_route(
   if (first && view.conn)
     server_->view_note(*view.conn, view.subscription,
                        view_recipient_note(view_text(session), address, true));
+  return route;
 }
 
 auto Service::remove_view_route(
@@ -3183,6 +3198,7 @@ auto Service::end_view(const ViewUuid& session, const ViewSession& view)
   for (const auto& [route, target] : view.routes)
     if (auto receiver = target.endpoint.lock())
       receiver->send({ViewEventKind::close, route, session, {}});
+  open_views_.erase(view.key);
 }
 
 auto Service::end_views(ConnId conn) -> void {

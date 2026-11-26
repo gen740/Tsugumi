@@ -199,11 +199,7 @@ auto request_view(Host& host, WorkerViewRequest request)
 auto open_view(void* context, const char* view, uint32_t mode, uint32_t flags,
                uint32_t width, uint32_t height, tsugumi_route* route,
                tsugumi_view_session* session) -> int {
-  if (!view || !route || !session || mode > TSUGUMI_VIEW_FULLSCREEN ||
-      (flags & ~(TSUGUMI_VIEW_HIDE_CURSOR | TSUGUMI_VIEW_LOCK_POINTER)) ||
-      ((width == 0) != (height == 0)) ||
-      (width != 0 && mode != TSUGUMI_VIEW_WINDOW))
-    return -1;
+  if (!view || !route || !session) return -1;
   const auto size = ::strnlen(view, kMaxViewName);
   if (size == 0 || size == kMaxViewName) return -1;
   try {
