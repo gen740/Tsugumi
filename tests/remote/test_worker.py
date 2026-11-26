@@ -855,6 +855,76 @@ def test_card_secret_names_and_delivery_admission(worker):
     assert not leaks
 
 
+def test_listener_shutdown_unblocks_secret_delivery_to_a_stalled_reader(tmp_path):
+    binary = os.environ.get("TSUGUMI_REMOTE_TEST_RAW_WORKER")
+    if not binary:
+        pytest.skip("needs the raw C++ executable for a controlled namespace launcher")
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    launcher = tools / "unshare"
+    reading = tmp_path / "pipe-readable"
+    launcher.write_text(f"""#!{sys.executable}
+import fcntl, select, sys
+from pathlib import Path
+
+if "--check-namespace" in sys.argv:
+    sys.exit(0)
+work = Path(sys.argv[sys.argv.index("--invoke") + 1])
+# Make the fixture independent of the system's default pipe capacity.
+fcntl.fcntl(6, fcntl.F_SETPIPE_SZ, 4096)
+(work / "secrets-wanted").touch()
+if select.select([6], [], [], 20)[0]:
+    Path({str(reading)!r}).touch()
+# Retain the read end without consuming the frame until cancelled.
+select.select([], [], [], 30)
+""")
+    launcher.chmod(0o755)
+    peer = Worker(tmp_path, binary, env={**os.environ,
+        "PATH": str(tools) + os.pathsep + os.environ["PATH"]})
+    job = "a" * 64
+    fingerprint = None
+
+    def wait_for_marker(path):
+        deadline = time.monotonic() + 10
+        while not path.exists() and time.monotonic() < deadline:
+            assert peer.process.poll() is None
+            time.sleep(0.02)
+        assert path.exists(), (peer.root / "worker.log").read_text()
+
+    try:
+        spec = R.JobSpecT.InitFromPackedBuf(peer.spec(peer.upload(job, b"input")))
+        spec.secrets = ["token"]
+        packed = R.pack(spec)
+        accepted = peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=packed), job=job)
+        assert accepted.bodyType == R.ReplyBody.JobStatus, vars(accepted.body)
+        fingerprint = hashlib.sha256(packed).hexdigest()
+        marker = peer.journal(job).parent / "work" / "secrets-wanted"
+        wait_for_marker(marker)
+        body = R.JobSecretsRequestT(fingerprint=fingerprint, secrets=[
+            R.CardSecretT(name="token", value="x" * (1 << 17))])
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            delivery = executor.submit(peer.call, R.RequestBody.JobSecretsRequest, body, job=job)
+            try:
+                wait_for_marker(reading)
+                peer.process.terminate()
+                assert peer.process.wait(timeout=5) == 0
+                assert delivery.result(timeout=5).bodyType == R.ReplyBody.Failure
+            finally:
+                if peer.process.poll() is None:
+                    peer.process.kill()
+                    peer.process.wait()
+    finally:
+        try:
+            if fingerprint:
+                if peer.process.poll() is not None:
+                    peer.log.close()
+                    peer.start()
+                peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprint), job=job)
+                peer.wait_state(job, R.JobState.Cancelled)
+        finally:
+            peer.close()
+
+
 def test_jobs_command_lists_and_removes_only_chosen_jobs(worker):
     binary = worker.command[0]
 
