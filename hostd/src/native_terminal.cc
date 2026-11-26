@@ -14,8 +14,10 @@
 #include <sys/syscall.h>
 #endif
 
+#include <algorithm>
 #include <array>
 #include <atomic>
+#include <condition_variable>
 #include <cstdlib>
 #include <map>
 #include <mutex>
@@ -74,9 +76,33 @@ struct NativeTerminals::Impl {
   std::map<uint64_t, std::shared_ptr<Session>> sessions;
   uint64_t next = 0;
   bool stopping = false;
+  std::condition_variable completed;
+  std::jthread reaper;
+
+  auto Reap() -> void {
+    std::unique_lock lock(mutex);
+    while (true) {
+      const auto found = std::ranges::find_if(sessions, [](const auto& item) {
+        return item.second->finished.load();
+      });
+      if (found != sessions.end()) {
+        auto session = std::move(found->second);
+        sessions.erase(found);
+        lock.unlock();
+        session.reset();
+        lock.lock();
+      } else if (stopping) {
+        return;
+      } else {
+        completed.wait(lock);
+      }
+    }
+  }
+
   Impl(Output value, AccountLookup lookup)
       : output(std::move(value)),
-        account(lookup ? std::move(lookup) : TerminalAccount) {}
+        account(lookup ? std::move(lookup) : TerminalAccount),
+        reaper([this] { Reap(); }) {}
 };
 NativeTerminals::NativeTerminals(Output output, AccountLookup account)
     : impl_(std::make_unique<Impl>(std::move(output), std::move(account))) {}
@@ -90,6 +116,8 @@ auto NativeTerminals::Shutdown() -> void {
   }
   for (const auto& [_, session] : sessions) session->Close();
   sessions.clear();
+  impl_->completed.notify_one();
+  if (impl_->reaper.joinable()) impl_->reaper.join();
 }
 auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
     -> H::HostTerminalT {
@@ -99,15 +127,6 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
   H::HostTerminalT result;
   result.session = request.session;
   if (request.action == H::TerminalAction::Open) {
-    // Reap completed sessions without holding a lock needed by their readers.
-    std::vector<std::shared_ptr<Impl::Session>> completed;
-    for (auto i = s.sessions.begin(); i != s.sessions.end();) {
-      if (i->second->finished) {
-        completed.push_back(i->second);
-        i = s.sessions.erase(i);
-      } else
-        ++i;
-    }
     if (s.sessions.size() >= 8)
       throw std::runtime_error("At most 8 host terminals may be open");
     if (!request.rows || !request.cols || request.rows >= 1000 ||
@@ -177,29 +196,38 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
     result.session = ++s.next;
     s.sessions[result.session] = session;
     auto* raw = session.get();
-    session->reader =
-        std::jthread([raw, id = result.session, output = s.output]() {
-          std::array<uint8_t, 8192> bytes{};
-          while (!raw->closing) {
-            pollfd fds[] = {{raw->fd, POLLIN, 0}, {raw->wake[0], POLLIN, 0}};
-            const auto ready = ::poll(fds, 2, -1);
-            if (ready < 0 && errno == EINTR) continue;
-            if (ready < 0 || fds[1].revents) break;
-            const auto count = ::read(raw->fd, bytes.data(), bytes.size());
-            if (count < 0 && (errno == EINTR || errno == EAGAIN)) continue;
-            if (count <= 0) break;
+    try {
+      session->reader =
+          std::jthread([&s, raw, id = result.session, output = s.output]() {
+            std::array<uint8_t, 8192> bytes{};
+            while (!raw->closing) {
+              pollfd fds[] = {{raw->fd, POLLIN, 0}, {raw->wake[0], POLLIN, 0}};
+              const auto ready = ::poll(fds, 2, -1);
+              if (ready < 0 && errno == EINTR) continue;
+              if (ready < 0 || fds[1].revents) break;
+              const auto count = ::read(raw->fd, bytes.data(), bytes.size());
+              if (count < 0 && (errno == EINTR || errno == EAGAIN)) continue;
+              if (count <= 0) break;
+              H::HostTerminalDataT event;
+              event.session = id;
+              event.data.assign(bytes.begin(), bytes.begin() + count);
+              if (output) output(event);
+            }
             H::HostTerminalDataT event;
             event.session = id;
-            event.data.assign(bytes.begin(), bytes.begin() + count);
+            event.closed = true;
+            raw->Close();
             if (output) output(event);
-          }
-          H::HostTerminalDataT event;
-          event.session = id;
-          event.closed = true;
-          raw->Close();
-          if (output) output(event);
-          raw->finished = true;
-        });
+            {
+              std::lock_guard lock(s.mutex);
+              raw->finished = true;
+            }
+            s.completed.notify_one();
+          });
+    } catch (...) {
+      s.sessions.erase(result.session);
+      throw;
+    }
     lock.unlock();
     return result;
   }
