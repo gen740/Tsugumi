@@ -239,7 +239,17 @@ auto WebEdge::start() -> void {
   ::getsockname(listen_fd_, reinterpret_cast<sockaddr*>(&bound), &len);
   port_ = ntohs(bound.sin_port);
   int p[2];
+#ifdef __linux__
+  if (::pipe2(p, O_CLOEXEC) != 0) throw std::runtime_error("pipe failed");
+#else
   if (::pipe(p) != 0) throw std::runtime_error("pipe failed");
+  if (::fcntl(p[0], F_SETFD, FD_CLOEXEC) < 0 ||
+      ::fcntl(p[1], F_SETFD, FD_CLOEXEC) < 0) {
+    ::close(p[0]);
+    ::close(p[1]);
+    throw std::runtime_error("Cannot protect web wake pipe across exec");
+  }
+#endif
   wake_r_ = p[0];
   wake_w_ = p[1];
   thread_ = std::thread([this] { loop(); });

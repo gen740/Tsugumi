@@ -9,8 +9,7 @@ namespace tsugumi::host {
 class Descriptor {
  public:
   explicit Descriptor(int fd = -1) : fd_(fd) {}
-  Descriptor(Descriptor&& other) noexcept
-      : fd_(std::exchange(other.fd_, -1)) {}
+  Descriptor(Descriptor&& other) noexcept : fd_(std::exchange(other.fd_, -1)) {}
   Descriptor(const Descriptor&) = delete;
   auto operator=(const Descriptor&) -> Descriptor& = delete;
   ~Descriptor() { reset(); }

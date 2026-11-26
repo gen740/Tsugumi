@@ -1,5 +1,6 @@
 #include "host/native_terminal.hh"
 
+#include <fcntl.h>
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -11,6 +12,7 @@
 #include <sstream>
 
 #include "../agent_fixture_server.hh"
+#include "host/descriptor.hh"
 
 namespace tsugumi::test {
 namespace H = Tsugumi::Host;
@@ -31,11 +33,17 @@ TEST(NativeTerminalTest, HostOwnsPtyInputCloseAndStripsSecrets) {
         break;
       }
   }
+  const host::Descriptor marker(
+      ::open((home / ".bash_profile").c_str(), O_RDONLY | O_CLOEXEC));
+  ASSERT_GE(marker.get(), 0);
+  const host::Descriptor inherited(::fcntl(marker.get(), F_DUPFD, 100));
+  ASSERT_GE(inherited.get(), 100);
   const auto shell = directory.path / "login-shell";
   // Capture the environment at the exec boundary, before system profiles can
   // rewrite it. This account shell then starts a normal Bash login session.
-  Write(shell, "#!" + bash +
-                   "\n"
+  Write(shell, "#!" + bash + "\nif [ -e /dev/fd/" +
+                   std::to_string(inherited.get()) +
+                   " ]; then printf '\\0FD_INHERITED\\0'; fi\n"
                    "printf '\\0PASSED\\0'\n"
                    "for name in $(compgen -e); do "
                    "printf '%s=%s\\0' \"$name\" \"${!name}\"; done\n"
@@ -122,6 +130,7 @@ TEST(NativeTerminalTest, HostOwnsPtyInputCloseAndStripsSecrets) {
     std::unique_lock lock(mutex);
     changed.wait(lock, [&] { return closed; });
     EXPECT_EQ(output.find("MUST_NOT_CROSS"), output.npos);
+    EXPECT_EQ(output.find("FD_INHERITED"), output.npos);
     // Actual NUL bytes distinguish command output from echoed/readline-wrapped
     // input and prompts, even in a narrow PTY. Split only at the first '='.
     const auto read_environment = [&](const std::string& marker) {

@@ -1,4 +1,3 @@
-#include "host/descriptor.hh"
 #include "host/settings.hh"
 
 #include <arpa/inet.h>
@@ -22,6 +21,7 @@
 
 #include "agent/wire.hh"
 #include "host/credentials.hh"
+#include "host/descriptor.hh"
 #include "host/models.hh"
 #include "host/skills.hh"
 #include "tsugumi/util/crypto.hh"
@@ -533,8 +533,17 @@ struct Settings::State {
         throw std::runtime_error("Account issuer mismatch");
       a->subject = j::Text(previous, "subject");
     }
+#ifdef __linux__
+    Descriptor listener(::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0));
+#else
     Descriptor listener(::socket(AF_INET, SOCK_STREAM, 0));
-    if (listener.get() < 0) throw std::runtime_error("Cannot open sign-in callback");
+#endif
+    if (listener.get() < 0)
+      throw std::runtime_error("Cannot open sign-in callback");
+#ifndef __linux__
+    if (::fcntl(listener.get(), F_SETFD, FD_CLOEXEC) < 0)
+      throw std::runtime_error("Cannot protect sign-in callback across exec");
+#endif
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);

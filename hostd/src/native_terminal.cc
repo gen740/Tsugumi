@@ -11,6 +11,7 @@
 #include <util.h>
 #else
 #include <pty.h>
+#include <sys/syscall.h>
 #endif
 
 #include <array>
@@ -149,6 +150,7 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
     const char* shell = user.shell.c_str();
     char* const args[] = {const_cast<char*>(shell), const_cast<char*>("-l"),
                           nullptr};
+    const int descriptor_limit = ::getdtablesize();
     const auto pid = ::fork();
     if (pid == 0) {
       ::setsid();
@@ -156,8 +158,10 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
       ::dup2(slave, 0);
       ::dup2(slave, 1);
       ::dup2(slave, 2);
-      ::close(slave);
-      ::close(session->fd);
+#ifdef SYS_close_range
+      if (::syscall(SYS_close_range, 3u, ~0u, 0) != 0)
+#endif
+        for (int fd = 3; fd < descriptor_limit; ++fd) ::close(fd);
       sigset_t empty;
       sigemptyset(&empty);
       ::sigprocmask(SIG_SETMASK, &empty, nullptr);
