@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -26,6 +27,11 @@ struct Type {
       hash;  // sha256 of bfbs, set where the type is made (computed once)
   const reflection::Schema* schema() const;
   const reflection::Object* root() const;
+  auto canonical_id() const -> const std::string&;
+
+ private:
+  mutable std::once_flag canonical_id_once_;
+  mutable std::string canonical_id_;
 };
 using TypeRef = std::shared_ptr<const Type>;
 
