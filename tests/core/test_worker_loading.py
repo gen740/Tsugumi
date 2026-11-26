@@ -444,11 +444,21 @@ def test_post_return_open_and_send_keep_opaque_bytes_and_session(tmp_path):
         assert request.valueType == WorkerPayload.WorkerViewRequest
         assert request.value.requestId == 1
         assert request.value.kind == ViewControlKind.Open and request.value.view == b"notes"
+        # The relay decides whether opening options need validation.
+        assert (request.value.mode, request.value.width, request.value.height) == (0, 1, 2)
+        send_message(control, WorkerMessageT(
+            callId=0, valueType=WorkerPayload.WorkerViewReply,
+            value=WorkerViewReplyT(requestId=1, status=-1),
+        ))
+        request = receive(data)
+        assert request.callId == 0 and request.valueType == WorkerPayload.WorkerViewRequest
+        assert request.value.requestId == 2
+        assert request.value.kind == ViewControlKind.Open and request.value.view == b"notes"
         assert (request.value.mode, request.value.width, request.value.height) == (1, 480, 320)
         session, route = ViewUuidT(bytes=[1] * 16), ViewUuidT(bytes=[2] * 16)
         send_message(control, WorkerMessageT(
             callId=0, valueType=WorkerPayload.WorkerViewReply,
-            value=WorkerViewReplyT(requestId=1, status=0, route=route, session=session),
+            value=WorkerViewReplyT(requestId=2, status=0, route=route, session=session),
         ))
         message = receive(data)
         assert message.callId == 0 and message.valueType == WorkerPayload.WorkerDisplay
