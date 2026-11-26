@@ -126,7 +126,7 @@ std::optional<std::string> read_file(const stdfs::path& p) {
 std::string read_file_or_throw(const stdfs::path& p) {
   auto r = read_file(p);
   if (!r) throw Error("missing file " + p.string());
-  return *r;
+  return *std::move(r);
 }
 
 void fsync_dir(const stdfs::path& dir) {
