@@ -66,11 +66,11 @@
     "tsugumi-demos": {
       "flake": false,
       "locked": {
-        "lastModified": 1795620004,
-        "narHash": "sha256-pRzDuk/6pCqu3T3lAxVrCAJnKZTbzuhaV7HtKxMPJbc=",
+        "lastModified": 1795673077,
+        "narHash": "sha256-hWhp1ZiS2m8jT9ZWJSqe+qlZsmZbVktCNnqOQPHXNA8=",
         "owner": "gen740",
         "repo": "tsugumi-demos",
-        "rev": "e9641613ee6b8e3f789d04ca049de14cf87ce39d",
+        "rev": "549a1a69186b01333a0c48a3240d51160c0cdfa5",
         "type": "github"
       },
       "original": {
@@ -89,16 +89,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1795602970,
-        "narHash": "sha256-l3gIRcQRyImkw4jdFwn2DGmpcLv459EO3YIIO6UYbro=",
+        "lastModified": 1795672942,
+        "narHash": "sha256-SjDadK9ipfTgio88vOrcz3/af2Jx9w7CepOWIZwA65A=",
         "owner": "gen740",
         "repo": "tsugumi-kit",
-        "rev": "103215079d514885da2cc39c69c3addcb578757d",
+        "rev": "00e32339bfa8254310b114cc6d2248d1718e2593",
         "type": "github"
       },
       "original": {
         "owner": "gen740",
-        "ref": "feat/native-pack-view-path",
+        "ref": "main",
         "repo": "tsugumi-kit",
         "type": "github"
       }
