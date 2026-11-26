@@ -46,7 +46,6 @@ Each `definitions/<card id>/_card.json` uses the fields for its type. **R** mean
 | `grants.network` and `grants.gui` | R | — | — | — | — | — |
 | `grants.hostPaths` | O | — | — | — | — | — |
 | `systems` | R | — | — | — | — | — |
-| `workerCapabilities` | R | — | — | — | — | — |
 | `secrets` | O | — | — | — | — | — |
 
 - `type` is the lowercase kind name. `symbol` is the icon's symbol name, or `"none"` for the UI's own icon for the kind. Tsugumi writes `"none"` when it creates a Card. `inputs` is an array of objects with a `name` field. `maxRuns` bounds activations per run. `reuseWorker` lets the worker keep state across invocations and runs.
@@ -55,7 +54,6 @@ Each `definitions/<card id>/_card.json` uses the fields for its type. **R** mean
 - `sandbox` contains the four booleans `filesystem`, `pid`, `ipc` and `identity`. Its `limits` object declares `cpu` in cores (0 through 256, fractional values allowed) and `memoryMiB` in MiB (0 through 1048576). Zero means no limit for either resource.
 - `grants` contains the booleans `network` and `gui`. An optional `hostPaths` array lists grants. Each entry requires a `name` declared in the containing project and a boolean `write`. Use `false` for read-only access. The optional project `hostPaths` array contains `name` and `description`; host settings store the folder binding.
 - `systems` lists the Nix systems the Card works on, at least one and without duplicates: `"aarch64-linux"`, `"x86_64-linux"`, `"aarch64-darwin"` or `"x86_64-darwin"`. A worker whose native system is in the list builds and runs the Card natively. Any other worker builds and runs the first entry, which needs a matching emulator. Which worker runs the Card does not depend on this list.
-- `workerCapabilities` lists distinct integer bit numbers from 0 through 63. An empty list requests no bits. Every bit must be present among the worker's bits declared in host settings. See [Worker selection](RemoteExecution.md#worker-selection).
 - `secrets` lists the names of credentials provided to the process by hostd as environment variables. The project stores the names only.
 
 ## Child projects

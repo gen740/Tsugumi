@@ -8,16 +8,13 @@
 
 namespace tsugumi {
 namespace {
-TEST(RemoteExecutionCapabilities, FiltersLimitsAndCapabilitiesFromCatalog) {
+TEST(RemoteExecutionCapabilities, FiltersUnsupportedLimits) {
   Node node;
   node.path = {"work"};
-  node.settings.worker_capabilities = 1;
   node.settings.sandbox.limits = ExecutionResources{500, 256u << 20};
   RemoteTarget target;
   target.id = "remote";
   target.available = true;
-  EXPECT_TRUE(Service::execution_diagnostic(node, {target}));
-  target.worker_capabilities = 1;
   EXPECT_TRUE(Service::execution_diagnostic(node, {target}));
   target.resource_limits = true;
   EXPECT_FALSE(Service::execution_diagnostic(node, {target}));
@@ -26,14 +23,12 @@ TEST(RemoteExecutionCapabilities,
      ReportsUnavailableMatchingWorkerWithHostReason) {
   Node node;
   node.path = {"work"};
-  node.settings.worker_capabilities = 1;
   RemoteTarget local;
   local.id = "local";
-  local.available = true;
+  local.available = false;
   local.namespace_isolation = true;
   RemoteTarget remote;
   remote.id = "remote";
-  remote.worker_capabilities = 1;
   remote.unavailable_reason = "host refusal for remote";
   auto diagnostic = Service::execution_diagnostic(node, {local, remote});
   ASSERT_TRUE(diagnostic);
@@ -43,7 +38,7 @@ TEST(RemoteExecutionCapabilities,
   remote.available = true;
   EXPECT_FALSE(Service::execution_diagnostic(node, {local, remote}));
   remote.available = false;
-  local.worker_capabilities = 1;
+  local.available = true;
   const auto local_diagnostic =
       Service::execution_diagnostic(node, {local, remote});
   EXPECT_FALSE(local_diagnostic && local_diagnostic->error);

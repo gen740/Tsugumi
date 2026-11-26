@@ -29,7 +29,10 @@ STORES = {
 FORMATS = {
     "host.sqlite": {1: "a62f2f02b16d73e06865a238a815cf2a4d124288bd24d807a3b0b07a0c118330"},
     "agent.sqlite": {1: "b1e75f930be0b85116bdf504523e61000d8d6ab397ba61979c7b39328044320f"},
-    "execution.sqlite": {1: "c96812aecbd05d3aab28c807d6c97d9dd35b6ff91ae128f456e54101e0ba50bf"},
+    "execution.sqlite": {
+        1: "c96812aecbd05d3aab28c807d6c97d9dd35b6ff91ae128f456e54101e0ba50bf",
+        2: "8b1f18bf86da9012eb7a3b741b89e07e0052f70eaea5b10b0dd13af81299cae3",
+    },
     "document.sqlite": {1: "30a8e2ec2db7a1145734129946c14e39d3dc2e65be98eaf8d9a803ad13ba0b8e"},
     "runs.sqlite": {23: "8705917e06af6a0450316e8c8655f3d1ffbfac1c1a2f6e252b6138e11c8b98d1"},
 }

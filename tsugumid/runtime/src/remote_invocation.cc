@@ -194,6 +194,7 @@ auto stage_remote_invocation(const RemoteJobClient& client,
       remote::encode<remote::RW::Invocation>(invocation), request.stop);
   blobs.insert(invocation_digest);
   R::JobSpecT job;
+  job.card_probe = request.build.card_probe;
   job.input_blobs.assign(blobs.begin(), blobs.end());
   job.invocation_sha256 = invocation_digest;
   job.system = request.build.derivation.system;
@@ -320,9 +321,11 @@ auto import_remote_result(
     }
     if (!crypto::is_sha256_hex(digest) || !written.insert(rel).second)
       throw std::runtime_error("invalid remote result member");
-    const auto max_size = output_file            ? kMaxBlobBytes
-                          : name == "logs" ? kRemoteLogTransportBytes
-                                                 : kMaxWorkerBytes;
+    const auto max_size = output_file ? kMaxBlobBytes
+                          : name == "logs"
+                              ? (job->card_probe ? kProbeTransportBytes
+                                                 : kRemoteLogTransportBytes)
+                              : kMaxWorkerBytes;
     if (size > max_size)
       throw std::runtime_error("remote result member exceeds its size limit");
     const auto path = temp / rel;

@@ -9,7 +9,7 @@ enum ServiceWire {
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"IdentifierReserveRequest", "DemoListRequest", "DemoReadRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ProjectTrustRequest", "ProjectPermissionsRequest", "ProjectPermissionSetRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+"IdentifierReserveRequest", "DemoListRequest", "DemoReadRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionProbeRemeasureRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ProjectTrustRequest", "ProjectPermissionsRequest", "ProjectPermissionSetRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
 
   static func request(_ method: String, _ fields: [String: Any], host: Bool) throws -> (UInt8, NativeObject) {
     if host {
@@ -119,9 +119,11 @@ enum ServiceWire {
         v.endpoint = fields["endpoint"] as? String ?? ""
         v.workerPublicKey = fields["workerPublicKey"] as? String ?? ""
         v.verify = fields["verify"] as? Bool ?? false
-        guard let bits = fields["worker_capabilities"] as? [UInt8], WorkerBits.valid(bits) else { throw InvalidWorkerBits.invalid }
-        v.workerCapabilities = bits
         return (Tsugumi_Host_RequestPayload.executionserviceputrequest.rawValue, v)
+      case "ExecutionProbeRemeasureRequest":
+        let v = Tsugumi_Host_ExecutionProbeRemeasureRequestT()
+        v.id = fields["id"] as? String
+        return (Tsugumi_Host_RequestPayload.executionproberemeasurerequest.rawValue, v)
       case "ExecutionServiceRemoveRequest":
         let v = Tsugumi_Host_ExecutionServiceRemoveRequestT()
         v.id = fields["id"] as? String ?? ""
@@ -474,7 +476,7 @@ enum ServiceWire {
     case let v as Tsugumi_Host_ExecutionServicesT:
       return ["services": try v.services.compactMap { try $0.map(view) }, "hostPublicKey": v.hostPublicKey] as [String: Any]
     case let v as Tsugumi_Host_ExecutionServiceT:
-      return ["id": v.id, "name": v.name, "endpoint": v.endpoint, "workerPublicKey": v.workerPublicKey, "worker_capabilities": v.workerCapabilities, "capabilities": try view(v.capabilities)] as [String: Any]
+      return ["id": v.id, "name": v.name, "endpoint": v.endpoint, "workerPublicKey": v.workerPublicKey, "capabilities": try view(v.capabilities)] as [String: Any]
     case let v as Tsugumi_Host_ExecutionCapabilitiesT:
       return ["serverId": v.serverId, "nativeSystem": v.nativeSystem, "systems": v.systems.compactMap { $0 },
               "isolation": v.isolation ?? "pid_namespace", "resourceLimits": v.resourceLimits,

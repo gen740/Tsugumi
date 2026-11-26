@@ -29,7 +29,7 @@ TEST_F(AgentProjectFixture, TemplateStoresCopyWholeGraphsWithFreshIds) {
   const auto folder = directory.path / "sample-template";
   Write(
       folder / "start/_card.json",
-      R"({"type":"code","symbol":"slider.horizontal.3","inputs":[],"maxRuns":1,"reuseWorker":false,"timeoutSeconds":0,"buildTimeoutSeconds":0,"recordLogs":"project","recordIO":"project","sandbox":{"filesystem":true,"pid":true,"ipc":true,"identity":true,"limits":{"cpu":0,"memoryMiB":0}},"grants":{"network":false,"gui":false},"systems":["aarch64-linux"],"workerCapabilities":[]})");
+      R"({"type":"code","symbol":"slider.horizontal.3","inputs":[],"maxRuns":1,"reuseWorker":false,"timeoutSeconds":0,"buildTimeoutSeconds":0,"recordLogs":"project","recordIO":"project","sandbox":{"filesystem":true,"pid":true,"ipc":true,"identity":true,"limits":{"cpu":0,"memoryMiB":0}},"grants":{"network":false,"gui":false},"systems":["aarch64-linux"]})");
   Write(folder / "start/README.md", host::CardReadme("start"));
   Write(folder / "start/params.nix", "{ value = 1.0; }");
   Write(folder / "start/_outputs.fbs",

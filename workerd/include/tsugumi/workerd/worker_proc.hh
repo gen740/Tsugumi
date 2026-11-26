@@ -41,6 +41,8 @@ struct WorkerSpawn {
   bool shared_vm = false;
   bool packed = false;
   bool packed_debug = false;
+  bool card_probe = false;
+  bool remote = false;
   std::shared_ptr<WorkerSecrets> secrets;
   // The worker's work/ and tmp/ live with the process.
   // Local workerd retains process ownership while the core reads the channel.

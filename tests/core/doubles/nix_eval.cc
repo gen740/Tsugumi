@@ -139,6 +139,11 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
     throw std::runtime_error("execution target system is unknown");
   std::lock_guard turn(impl_->evaluation);
   check_interrupted(call);
+  if (call.probe_only) {
+    NixResult result;
+    result.implementation_count = 0;
+    return result;
+  }
   if (call.definition_dir.empty() || !call.definition_dir.is_absolute() ||
       std::ranges::none_of(call.definitions, [&](const auto& scope) {
         return scope.directory == call.definition_dir;

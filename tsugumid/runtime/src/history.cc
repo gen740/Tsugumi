@@ -98,6 +98,9 @@ std::string detail_bytes(const InvocationSummaryData& s) {
   d.implementation_index = s.implementation_index.value_or(0);
   d.implementation_label = s.implementation_label;
   d.secrets = s.secrets;
+  for (const auto& probe : s.worker_probes)
+    d.worker_probes.push_back(
+        std::make_unique<Tsugumi::Data::WorkerProbeResultT>(probe));
   for (const auto& artifact : s.artifact_outputs) {
     auto output = std::make_unique<S::InvocationArtifactOutputT>();
     output->artifact_id.assign(artifact.id.begin(), artifact.id.end());
@@ -124,6 +127,8 @@ void detail_into(const std::string& bytes, InvocationSummaryData& s) {
   if (d.worker_reused) s.worker_reused = *d.worker_reused;
   s.outputs_sent = d.outputs_sent;
   s.secrets = d.secrets;
+  s.worker_probes.clear();
+  for (const auto& probe : d.worker_probes) s.worker_probes.push_back(*probe);
   for (const auto& artifact : d.artifact_outputs) {
     s.artifact_outputs.push_back({ArtifactKey(artifact->artifact_id.begin(),
                                               artifact->artifact_id.end()),

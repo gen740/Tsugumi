@@ -311,7 +311,7 @@ os._exit(0)
             fresh = sqlite3.connect(store)
             try:
                 assert fresh.execute("PRAGMA user_version").fetchone()[0] > 0
-                assert "worker_capabilities" in {row[1] for row in fresh.execute("PRAGMA table_info(services)")}
+                assert "generation" in {row[1] for row in fresh.execute("PRAGMA table_info(services)")}
             finally:
                 fresh.close()
             backup, = [entry for entry in state.glob("execution.sqlite.stale-*")

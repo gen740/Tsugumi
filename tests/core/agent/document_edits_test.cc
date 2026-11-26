@@ -57,7 +57,7 @@ TEST(DocumentConnect, OneOutputCanFeedSeveralInputs) {
 }
 TEST(DocumentConnect, InputReplacementKeepsDraftDefinitionsUnchanged) {
   const std::string state =
-      R"({"project":{"canvas":{"cards":[{"id":"old"},{"id":"new"},{"id":"dest"}],"connections":[{"from":{"card":"old"},"to":{"card":"dest","port":"in"}}]}},"definitions":{"old":{"card":{"type":"draft","symbol":"pencil.and.outline"},"meta":{"content":"planned"}},"new":{"card":{"type":"trigger","symbol":"play.circle"}},"dest":{"card":{"type":"code","symbol":"chevron.left.forwardslash.chevron.right","inputs":[],"maxRuns":1,"reuseWorker":false,"timeoutSeconds":0,"buildTimeoutSeconds":0,"recordLogs":"project","recordIO":"project","sandbox":{"filesystem":true,"pid":true,"ipc":true,"identity":true,"limits":{"cpu":0,"memoryMiB":0}},"grants":{"network":false,"gui":false},"systems":["aarch64-linux"],"workerCapabilities":[]}}}})";
+      R"({"project":{"canvas":{"cards":[{"id":"old"},{"id":"new"},{"id":"dest"}],"connections":[{"from":{"card":"old"},"to":{"card":"dest","port":"in"}}]}},"definitions":{"old":{"card":{"type":"draft","symbol":"pencil.and.outline"},"meta":{"content":"planned"}},"new":{"card":{"type":"trigger","symbol":"play.circle"}},"dest":{"card":{"type":"code","symbol":"chevron.left.forwardslash.chevron.right","inputs":[],"maxRuns":1,"reuseWorker":false,"timeoutSeconds":0,"buildTimeoutSeconds":0,"recordLogs":"project","recordIO":"project","sandbox":{"filesystem":true,"pid":true,"ipc":true,"identity":true,"limits":{"cpu":0,"memoryMiB":0}},"grants":{"network":false,"gui":false},"systems":["aarch64-linux"]}}}})";
   const auto replaced = ConnectDocuments(state, "new", "out", "dest", "in");
   EXPECT_EQ(ConnectionWires(replaced),
             (std::set<std::string>{"new.out>dest.in"}));
@@ -124,7 +124,7 @@ TEST(DocumentEdits, RejectsInvalidCardIdsAndWirePorts) {
 
 TEST(DocumentCopy, DefinitionKeepsSettingsAndGivesCommentsTheirOwnIdentity) {
   const std::string state =
-      R"({"definitions":{"a":{"card":{"type":"code","symbol":"chevron.left.forwardslash.chevron.right","inputs":[],"maxRuns":1,"reuseWorker":false,"timeoutSeconds":0,"buildTimeoutSeconds":0,"recordLogs":"project","recordIO":"project","sandbox":{"filesystem":false,"pid":true,"ipc":true,"identity":true,"limits":{"cpu":0,"memoryMiB":0}},"grants":{"network":true,"gui":false},"systems":["aarch64-linux"],"workerCapabilities":[]},"readme":"Plots","comments":{"comments":[{"id":"old","text":"one","author":"user","resolved":true,"cards":["a"]}]}}}})";
+      R"({"definitions":{"a":{"card":{"type":"code","symbol":"chevron.left.forwardslash.chevron.right","inputs":[],"maxRuns":1,"reuseWorker":false,"timeoutSeconds":0,"buildTimeoutSeconds":0,"recordLogs":"project","recordIO":"project","sandbox":{"filesystem":false,"pid":true,"ipc":true,"identity":true,"limits":{"cpu":0,"memoryMiB":0}},"grants":{"network":true,"gui":false},"systems":["aarch64-linux"]},"readme":"Plots","comments":{"comments":[{"id":"old","text":"one","author":"user","resolved":true,"cards":["a"]}]}}}})";
   const auto edit =
       CopyDocuments(state,
                     {"definitions/a/src/asset.bin", "definitions/a/params.nix",

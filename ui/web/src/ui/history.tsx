@@ -1,5 +1,5 @@
 // Run history and artifacts.
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { artifactHTML } from '../model/artifactHTML'
 import { useObserve } from '../model/observable'
 import { CardKey, cardState, errorText, formatBytes, formatDuration, formatMillis, path, ProjectSession, remoteExecutionLabel, runState } from '../model/session'
@@ -230,6 +230,13 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
                             <Value label={L('終了')} value={formatMillis(summary.endedAt)} />
                             {summary.durationMs !== null && <Value label={L('所要時間')} value={formatDuration(Number(summary.durationMs) / 1000)} />}
                             {summary.executionService && <Value label={L('実行サービス')} value={s(summary.executionService) === 'local' ? L('プロジェクトの実行環境') : s(summary.executionService)} />}
+                            {record.record?.workerProbes.map((probe) => <Fragment key={s(probe.worker)}>
+                              <Value label={s(probe.worker) === 'local' ? L('プロジェクトの実行環境') : s(probe.worker)}
+                                value={probe.score === null ? s(probe.unavailableReason) || s(probe.failure) || L('計測に失敗しました')
+                                  : !probe.probe ? L('計測なし（同順位）') : L('スコア {0}', String(probe.score))} />
+                              {probe.stdoutText && <Row label={L('計測の標準出力')}><code className="selectable wrap-pre">{s(probe.stdoutText)}</code></Row>}
+                              {probe.stderrText && <Row label={L('計測の標準エラー')}><code className="selectable wrap-pre">{s(probe.stderrText)}</code></Row>}
+                            </Fragment>)}
                             {executionState && <Value label={L('実行サービスの状態')} value={executionState} />}
                             {summary.executionSystem && <Value label={L('CPU アーキテクチャ')} value={s(summary.executionSystem)} />}
                             {summary.executionJobId && <Value label={L('ジョブ ID')} value={s(summary.executionJobId)} />}

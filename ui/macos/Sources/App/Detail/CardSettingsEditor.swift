@@ -733,12 +733,6 @@ private struct GeneralCategory: View {
         ForEach(model.systems, id: \.self) { Text(verbatim: $0).tag($0) }
       }
     }
-    LabeledContent("ワーカーの必須ビット") {
-      WorkerBitsEditor(bits: Binding(
-        get: { (model.definition?["workerCapabilities"]?.array ?? []).compactMap { $0.numberText.flatMap(UInt8.init) } },
-        set: { model.definition?["workerCapabilities"] = .array($0.map { .number(String($0)) }) }))
-    }
-    .help("指定したすべてのビットを持つワーカーで実行します。")
     if !model.session.identity.supportsExternalExecution {
       Label("このプロジェクトのフォルダで作成時刻を取得できないため、外部の実行サービスを使用できません。", systemImage: "exclamationmark.triangle")
         .font(.caption)

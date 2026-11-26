@@ -243,8 +243,6 @@ class Builder {
       for (const auto* name : *secrets) s.secrets.push_back(name->str());
     if (const auto* systems = d.systems())
       for (const auto* system : *systems) s.systems.push_back(system->str());
-    if (const auto* bits = d.workerCapabilities())
-      for (auto bit : *bits) s.worker_capabilities |= uint64_t{1} << bit;
     if (n.kind != CardType::Subgraph) read_params(n);
   }
 

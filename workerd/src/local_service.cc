@@ -33,6 +33,7 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
           spawn.shared_vm = source.shared_vm;
           spawn.packed = source.packed;
           spawn.packed_debug = source.packed_debug;
+          spawn.card_probe = source.card_probe;
           if (!source.secrets.empty()) {
             spawn.secrets = std::make_shared<WorkerSecrets>();
             spawn.secrets->values.reserve(source.secrets.size());

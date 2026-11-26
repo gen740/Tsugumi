@@ -79,7 +79,7 @@ def test_card_settings_round_trip(client):
         "sandbox": {"pid": False, "ipc": True, "identity": False, "filesystem": True,
                     "limits": {"cpu": 0.5}},
         "grants": {"network": False, "gui": False, "hostPaths": []},
-        "reuseWorker": False, "workerCapabilities": [0, 63],
+        "reuseWorker": False,
     }
     settings = card_document(settings)
     before = client.call("ProjectInspectRequest")

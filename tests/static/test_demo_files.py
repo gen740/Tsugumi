@@ -22,7 +22,7 @@ PROJECT_FIELDS = [
 BASE_FIELDS = {"type", "symbol"}
 EXECUTABLE_FIELDS = BASE_FIELDS | {
     "inputs", "maxRuns", "reuseWorker", "timeoutSeconds", "buildTimeoutSeconds",
-    "recordLogs", "recordIO", "sandbox", "grants", "systems", "workerCapabilities",
+    "recordLogs", "recordIO", "sandbox", "grants", "systems",
 }
 CARD_FIELDS = {
     "code": EXECUTABLE_FIELDS,
@@ -121,9 +121,6 @@ def check_card(definition, host_paths):
         for folder in grants.get("hostPaths", []):
             assert folder.keys() == {"name", "write"} and type(folder["write"]) is bool, path
             assert folder["name"] in host_paths, path
-        bits = card["workerCapabilities"]
-        assert all(type(bit) is int and 0 <= bit < 64 for bit in bits), path
-        assert len(set(bits)) == len(bits), path
         systems = card["systems"]
         assert systems and len(set(systems)) == len(systems), path
         assert set(systems) <= {"aarch64-linux", "x86_64-linux", "aarch64-darwin", "x86_64-darwin"}, path

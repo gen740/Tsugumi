@@ -37,7 +37,6 @@ inline auto card_json(std::string_view fields) -> std::string {
         R"({"filesystem":true,"pid":true,"ipc":true,"identity":true,"limits":{"cpu":0,"memoryMiB":0}})");
     card.try_emplace("grants", R"({"network":false,"gui":false})");
     card.try_emplace("systems", "[" + json::Quote(native_system()) + "]");
-    card.try_emplace("workerCapabilities", "[]");
   }
   return json::Encode(card);
 }

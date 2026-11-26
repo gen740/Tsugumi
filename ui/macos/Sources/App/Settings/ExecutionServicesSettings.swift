@@ -27,22 +27,17 @@ struct ExecutionServicesSettings: View {
         ForEach(entries) { entry in
           LabeledContent {
             Text(entry.capabilities.nativeSystem)
+            Button("測り直す") { remeasure(entry.id) }
           } label: {
             Button("\(entry.name) (\(entry.id))") { choose(entry) }
           }
         }
+        Button("すべて測り直す") { remeasure(nil) }
         Button { choose(nil) } label: { Label("実行サービスを追加", systemImage: "plus") }
       }
       if let entry = draft {
         Section {
           TextField("名前", text: field(\.name))
-          LabeledContent("ワーカーの対応ビット") {
-            WorkerBitsEditor(bits: Binding(get: { draft?.workerCapabilities ?? [] }, set: { value in
-              draft?.workerCapabilities = value
-              message = nil
-            }))
-          }
-          .help("このワーカーが持つビットを 0〜63 から選びます。")
           TextField("サービス ID", text: field(\.id)).disabled(original != nil).monospaced()
           TextField("実行デーモンの接続先", text: field(\.endpoint), prompt: Text(verbatim: "tls://worker.example:8765"))
             .disabled(entry.id == "local").monospaced().help("TLS 接続先を入力してください（例: tls://worker.example:8765）。")
@@ -89,6 +84,18 @@ struct ExecutionServicesSettings: View {
           }
         }
       }
+      if let saved, !saved.probes.isEmpty {
+        Section("最近の計測結果") {
+          ForEach(Array(saved.probes.prefix(10).enumerated()), id: \.offset) { _, probe in
+            LabeledContent(probe.score.map { "\(String(localized: "スコア")) \($0.formatted())" }
+                           ?? String(localized: "計測に失敗しました")) {
+              Text(probe.failure ?? String(probe.probe.split(separator: "/").last ?? ""))
+                .font(.caption).textSelection(.enabled)
+                .help(Date(timeIntervalSince1970: Double(probe.measuredAt) / 1000).formatted())
+            }
+          }
+        }
+      }
       if let message {
         Text(message).foregroundStyle(failed ? .red : .secondary).textSelection(.enabled)
       }
@@ -112,7 +119,6 @@ struct ExecutionServicesSettings: View {
       next.name = entry.name
       next.endpoint = entry.endpoint
       next.workerPublicKey = entry.workerPublicKey
-      next.workerCapabilities = entry.workerCapabilities
     }
     draft = next
     original = entry?.id
@@ -128,8 +134,18 @@ struct ExecutionServicesSettings: View {
 
   private func valid(_ entry: ExecutionServiceRegistration) -> Bool {
     guard [entry.id, entry.name].allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { return false }
-    guard WorkerBits.valid(entry.workerCapabilities) else { return false }
     return (entry.id == "local" || (!entry.endpoint.isEmpty && !entry.workerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+  }
+
+  private func remeasure(_ id: String?) {
+    busy = true
+    Task {
+      defer { busy = false }
+      do {
+        adopt(try await ExecutionServices.remeasure(id))
+        report(String(localized: "次に Card を実行するときに測り直します。"))
+      } catch { report(error.localizedDescription, failed: true) }
+    }
   }
 
   private func adopt(_ result: ExecutionServicesState) {

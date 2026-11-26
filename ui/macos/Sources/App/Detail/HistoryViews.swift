@@ -283,6 +283,20 @@ struct CardExecutionView: View {
         if let service = s.executionService, !service.isEmpty {
           LabeledContent("実行サービス", value: service == "local" ? String(localized: "プロジェクトの実行環境") : service)
         }
+        ForEach(Array((r.record?.workerProbes ?? []).compactMap { $0 }.enumerated()), id: \.offset) { _, probe in
+          let name = probe.worker == "local" ? String(localized: "プロジェクトの実行環境") : probe.worker
+          let score = probe.score.map { $0.formatted() }
+          LabeledContent(name, value: probe.probe == nil && score != nil
+                         ? String(localized: "計測なし（同順位）")
+                         : score.map { "\(String(localized: "スコア")) \($0)" }
+                           ?? probe.unavailableReason ?? probe.failure ?? String(localized: "計測に失敗しました"))
+          if let output = probe.stdoutText, !output.isEmpty {
+            LabeledContent("計測の標準出力") { Text(output).textSelection(.enabled) }
+          }
+          if let output = probe.stderrText, !output.isEmpty {
+            LabeledContent("計測の標準エラー") { Text(output).textSelection(.enabled) }
+          }
+        }
         if s.executionState != .unspecified { LabeledContent("実行サービスの状態", value: s.executionState.label) }
         if let system = s.executionSystem, !system.isEmpty { LabeledContent("CPU アーキテクチャ", value: system) }
         if let job = s.executionJobId, !job.isEmpty {

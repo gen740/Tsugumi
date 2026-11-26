@@ -123,6 +123,7 @@ table InvocationDetail {
   secrets:[string];
   /// Artifact references are retained independently of recording value bytes.
   artifact_outputs:[InvocationArtifactOutput];
+  worker_probes:[Tsugumi.Data.WorkerProbeResult];
 }
 
 table InputSource {

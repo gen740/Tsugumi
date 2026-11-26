@@ -10,6 +10,7 @@
 
 #include "tsugumi/document/document.hh"
 #include "tsugumi/document/types.hh"
+#include "tsugumi/protocol/data_generated.h"
 #include "tsugumi/protocol/tsugumi_enums_generated.h"
 #include "tsugumi/workerd/values.hh"
 
@@ -101,6 +102,7 @@ struct InvocationSummaryData {
   // The invocation's parameters, captured from its immutable document.
   std::optional<std::vector<std::pair<std::string, std::string>>> params;
   std::string execution_service;
+  std::vector<Tsugumi::Data::WorkerProbeResultT> worker_probes;
   std::string transfer_name, transfer_direction;
   uint64_t transfer_done = 0, transfer_total = 0;
   std::string execution_job_id;

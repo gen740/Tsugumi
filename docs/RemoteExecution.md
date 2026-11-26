@@ -47,9 +47,24 @@ The local capability travels in a separate `BrokerRequest` envelope. [Security](
 
 ## Worker selection
 
-In **Settings → Execution service** (Mac and Web), declare which capability bits each worker has, including the local worker. Use distinct integers from 0 through 63. In `_card.json`, list the required bits in `workerCapabilities`. Every bit listed by the Card must be present on the worker. An empty Card list matches any worker's bits. To send a Card to a remote worker, assign that worker a capability bit the local worker lacks and require it on the Card. Project-level authorization still governs remote access.
+The core considers workers registered for the project whose sandbox and resource limits support the Card. With equal priority, local comes first and external workers follow in registration order. A resident Card keeps its local worker when its settings allow reuse. The selected worker runs the Card natively when its own system appears in `systems`; otherwise it runs the first entry under an emulator.
 
-The core considers registered workers that support the Card's settings, including its sandbox options and resource limits, and have all its required bits. The Card's `systems` do not steer the choice: the chosen worker builds and runs the Card natively when its own system is listed, and otherwise the first entry under an emulator. With `reuseWorker`, a resident remains on its assigned worker. Otherwise the core picks the free worker with the fewest capability bits and breaks ties in registration order, with the local worker first. When matching workers are busy, the Card waits. When none match, the core reports an `unsupported` failure or an `invalid_setting` diagnostic in terms of `workerCapabilities`. Each invocation's persisted `execution_service` identifies the selected worker. Remote listeners report active jobs across projects and arbitrate races at admission.
+A Code Card can return a `probe` derivation from `default.nix`. For example, with `pkgs` imported from the Card's locked package set:
+
+```nix
+{
+  inherit run;
+  probe = pkgs.writeShellScriptBin "probe" ''
+    printf '%s\n' 1
+  '';
+}
+```
+
+Tsugumi builds the probe for each eligible worker's native system and calls its executable at `bin/probe`. It evaluates `default.nix` with the usual `params` and Nix `inputs`. The executable receives the Card's sandbox, limits and grants, fresh scratch, and `TSUGUMI_WORKER_KIND` set to `local` or `remote`. It has no invocation inputs, artifacts, resident state or Card secrets. The executable has up to five seconds, or the Card's timeout if shorter. Probe evaluations and builds use up to 60 seconds for the build budget, also capped by the Card's build timeout. Combined standard output and error are limited to 8 KiB.
+
+The last standard-output line must contain a finite decimal number. Zero and negative values rule the worker out. A failed build, nonzero exit, timeout, invalid number or excessive output is recorded as a failed probe. The core selects the highest positive score and waits for that worker if it is busy. When all scores tie, registration order decides. Cards without a probe use the usual free-worker order.
+
+Hostd reuses measurements for the same probe output and execution settings across authorized projects. A registration change or worker restart invalidates that worker's measurements. In **Settings → Execution service**, use **Measure again** beside a worker or **Measure all again** to invalidate the scores and measure on the next run. The invocation's history shows the scores and bounded probe output used in its selection even with log and value recording turned off.
 
 Card canvases display the current filename and transferred/total byte counts while input or output files move, including local copies and the remote worker's staging. These are transport observations, carried by the core and rendered by the UIs. Large-file progress notifications are emitted at most every 100 ms, plus the beginning and completion of a file.
 

@@ -246,9 +246,8 @@ auto Output(const reflection::Object& object, std::string_view raw)
                      it->second);
     } else if (type.base_type() == reflection::Vector) {
       auto elements = json::Array(it->second);
-      if (field->name()->string_view() != "worker_capabilities" &&
-          (type.element() == reflection::UByte ||
-           type.element() == reflection::Byte)) {
+      if (type.element() == reflection::UByte ||
+          type.element() == reflection::Byte) {
         std::string bytes;
         for (const auto& element : elements)
           bytes += static_cast<char>(std::stoi(element));

@@ -52,6 +52,37 @@ def definition(**extra):
     return {"type": "code", "sandbox": {"filesystem": False}, "reuseWorker": True, **extra}
 
 
+@pytest.mark.parametrize("probe_body,score,diagnostic", [
+    ("printf 'reading complete\\n0\\n'", 0, None),
+    ("printf 'reading complete\\n-4.25\\n'", -4.25, None),
+    ("printf 'reading complete\\n5\\n'; exit 2", None, "exited with status 2"),
+    ("printf 'reading complete\\n5 MHz\\n'", None, "must be a finite number"),
+])
+def test_local_probe_failure_and_ineligible_scores_are_recorded(
+        core_factory, project, probe_body, score, diagnostic):
+    client = core_factory().connect()
+    Project(project).card("work", definition(recordLogs="off", recordIO="off"),
+                          outputs=EMPTY_OUTPUTS, sources={
+        "default.nix": ARGUMENTS + """{
+          run = throw "the rejected worker must never evaluate run";
+          probe = pkgs.writeShellScriptBin "probe" """ + "''" + probe_body + "''; }",
+    }).save(client)
+    run_id = run(client, "work", propagate=False)
+    status = wait_run(client, run_id)
+    assert status.state == RunState.failed
+    assert "No worker received a positive probe score" in text(status.failure.diagnostic)
+    assert "local:" in text(status.failure.diagnostic)
+    record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
+    assert not record.recordIo
+    measurement, = record.workerProbes
+    assert measurement.score == score
+    assert text(measurement.stdoutText).startswith("reading complete\n")
+    if diagnostic is None:
+        assert measurement.failure is None
+    else:
+        assert diagnostic in text(measurement.failure)
+
+
 def test_missing_params_file_evaluates_to_empty_set(core_factory, project):
     client = core_factory().connect()
     Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={

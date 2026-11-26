@@ -18,7 +18,9 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <cmath>
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <regex>
@@ -34,6 +36,7 @@
 #include "tsugumi/util/log.hh"
 #include "tsugumi/util/sqlite.hh"
 #include "tsugumi/util/text.hh"
+#include "tsugumi/workerd/log_limits.hh"
 #include "tsugumi/workerd/protocol.hh"
 
 namespace tsugumi::host {
@@ -193,7 +196,6 @@ auto RegisteredProject(const std::filesystem::path& root) -> std::string {
 struct Entry {
   std::string id, name, endpoint, worker_public_key;
   R::CapabilitiesT capabilities;
-  std::vector<uint8_t> worker_capabilities;
   // Only transport identity changes invalidate a project's grant. Capabilities
   // are observations of the worker and the name is presentation.
   std::string generation;
@@ -204,7 +206,6 @@ auto Public(const Entry& entry) -> std::unique_ptr<H::ExecutionServiceT> {
   value->name = entry.name;
   value->endpoint = entry.endpoint;
   value->worker_public_key = entry.worker_public_key;
-  value->worker_capabilities = entry.worker_capabilities;
   auto& c = value->capabilities = std::make_unique<H::ExecutionCapabilitiesT>();
   c->isolation = "pid_namespace";
   c->server_id = entry.capabilities.server_id;
@@ -233,6 +234,13 @@ struct ExecutionBroker::State {
   sql::Db db;
   peer_tls::Identity identity;
   std::mutex mutex;
+  struct ProbeCache {
+    std::string life;
+    std::string revision = crypto::random_token(32);
+    std::map<std::string, Tsugumi::Data::WorkerProbeResultT> results;
+  };
+  std::map<std::string, ProbeCache> probes;
+  std::map<std::string, std::string> local_probe_owners;
   std::set<int> active;
   bool stopping = false;
   Socket listener, cancel_listener, wake_reader, wake_writer;
@@ -256,7 +264,7 @@ struct ExecutionBroker::State {
           "NULL,"
           "endpoint TEXT NOT NULL,worker_public_key TEXT NOT NULL,capabilities "
           "BLOB NOT "
-          "NULL,worker_capabilities BLOB NOT NULL,generation TEXT NOT NULL);"
+          "NULL,generation TEXT NOT NULL);"
           "CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,identity "
           "TEXT "
           "NOT NULL,"
@@ -356,7 +364,7 @@ struct ExecutionBroker::State {
   auto Entries() -> std::vector<Entry> {
     auto q = db.prepare(
         "SELECT id,name,endpoint,worker_public_key,capabilities,"
-        "worker_capabilities,generation FROM services "
+        "generation FROM services "
         "ORDER BY (id != 'local'),rowid");
     std::vector<Entry> entries;
     while (q.step()) {
@@ -367,14 +375,8 @@ struct ExecutionBroker::State {
       const auto* reply = message->payload.AsReply();
       Require(reply && reply->body.AsCapabilities(),
               "Invalid stored worker capabilities");
-      const auto bits = q.blob(5);
-      entries.push_back({q.text(0),
-                         q.text(1),
-                         q.text(2),
-                         q.text(3),
-                         *reply->body.AsCapabilities(),
-                         {bits.begin(), bits.end()},
-                         q.text(6)});
+      entries.push_back({q.text(0), q.text(1), q.text(2), q.text(3),
+                         *reply->body.AsCapabilities(), q.text(5)});
     }
     if (std::ranges::find(entries, "local", &Entry::id) == entries.end()) {
       Entry local;
@@ -390,8 +392,24 @@ struct ExecutionBroker::State {
   auto List() -> H::ExecutionServicesT {
     H::ExecutionServicesT result;
     result.host_public_key = identity.public_key();
-    for (const auto& entry : Entries())
-      result.services.push_back(Public(entry));
+    for (const auto& entry : Entries()) {
+      auto service = Public(entry);
+      if (auto cache = probes.find(entry.id); cache != probes.end()) {
+        for (const auto& [_, measurement] : cache->second.results) {
+          // Settings summarize the results; bounded process output lives in
+          // the invocation record that used it.
+          auto summary =
+              std::make_unique<Tsugumi::Data::WorkerProbeResultT>(measurement);
+          summary->stdout_text.clear();
+          summary->stderr_text.clear();
+          service->probes.push_back(std::move(summary));
+        }
+        std::ranges::sort(
+            service->probes, std::greater{},
+            [](const auto& result) { return result->measured_at; });
+      }
+      result.services.push_back(std::move(service));
+    }
     return result;
   }
   auto Remote(const Entry& entry, R::RequestT request, int client = -1)
@@ -467,6 +485,7 @@ struct ExecutionBroker::State {
               "Wrong execution broker endpoint for this request");
       Entry entry;
       std::optional<R::CatalogT> catalog_reply;
+      std::optional<R::MessageT> probe_reply;
       std::optional<std::vector<std::string>> secret_names;
       std::string secret_project;
       {
@@ -495,7 +514,6 @@ struct ExecutionBroker::State {
           for (const auto& e : entries) {
             auto target = std::make_unique<R::TargetT>();
             target->id = e.id;
-            target->worker_capabilities = e.worker_capabilities;
             auto grant = db.prepare(
                 "SELECT generation FROM project_services "
                 "WHERE project=? AND service=?");
@@ -512,14 +530,19 @@ struct ExecutionBroker::State {
                             : " needs a person's approval for this project");
             target->capabilities =
                 std::make_unique<R::CapabilitiesT>(e.capabilities);
+            if (const auto cache = probes.find(e.id); cache != probes.end())
+              target->probe_revision = cache->second.revision;
             catalog.services.push_back(std::move(target));
           }
           catalog_reply = std::move(catalog);
         } else {
+          const auto* lookup = request->body.AsCardProbeLookup();
+          const auto* publish = request->body.AsCardProbePublish();
           const auto found =
               std::ranges::find(entries, request->service, &Entry::id);
-          if (found == entries.end() || found->id == "local" ||
-              found->capabilities.server_id.empty())
+          if (found == entries.end() ||
+              (found->id == "local" ? !lookup && !publish
+                                    : found->capabilities.server_id.empty()))
             throw W::Error(
                 R::ErrorCode::RegistrationChanged,
                 "Verify the execution service registration in settings");
@@ -527,12 +550,75 @@ struct ExecutionBroker::State {
               "SELECT generation FROM project_services "
               "WHERE project=? AND service=?");
           grant.bind(1, q.text(1)).bind(2, found->id);
-          if (!grant.step() || grant.text(0) != found->generation)
+          if (found->id != "local" &&
+              (!grant.step() || grant.text(0) != found->generation))
             throw W::Error(R::ErrorCode::RegistrationChanged,
                            "Execution service registration changed; "
                            "reauthorize this project");
           entry = *found;
+          if (lookup || publish) {
+            const auto& key = lookup ? lookup->key : publish->key;
+            const auto& life = lookup ? lookup->life : publish->life;
+            Require(crypto::is_sha256_hex(key) && crypto::is_sha256_hex(life),
+                    "Invalid worker probe cache identity");
+            if (entry.id != "local")
+              Require(life == entry.capabilities.probe_life,
+                      "Worker restarted before probe cache access");
+            if (lookup && entry.id == "local") {
+              Require(crypto::is_sha256_hex(request->core_life_id),
+                      "Missing local worker owner identity");
+              const auto [owner, added] = local_probe_owners.try_emplace(
+                  q.text(1), request->core_life_id);
+              if (!added && owner->second != request->core_life_id) {
+                probes.erase(entry.id);
+                owner->second = request->core_life_id;
+              }
+            }
+            auto& cache = probes[entry.id];
+            if (cache.life != life) {
+              cache = ProbeCache{};
+              cache.life = life;
+            }
+            if (lookup) {
+              R::CardProbeCachedT answer;
+              answer.revision = cache.revision;
+              if (auto item = cache.results.find(key);
+                  item != cache.results.end())
+                answer.result =
+                    std::make_unique<Tsugumi::Data::WorkerProbeResultT>(
+                        item->second);
+              probe_reply = W::reply(std::move(answer));
+            } else {
+              const auto& measured = *publish->result;
+              Require(measured.worker == entry.id &&
+                          measured.probe.size() <= 512 &&
+                          measured.failure.size() <= kProbeOutputBytes &&
+                          measured.stdout_text.size() +
+                                  measured.stderr_text.size() <=
+                              kProbeOutputBytes &&
+                          (measured.score.has_value() !=
+                           !measured.failure.empty()) &&
+                          (!measured.score || std::isfinite(*measured.score)),
+                      "Invalid worker probe result");
+              if (cache.revision == publish->revision) {
+                constexpr size_t kResultsPerWorker = 128;
+                if (cache.results.size() >= kResultsPerWorker &&
+                    !cache.results.contains(key)) {
+                  const auto oldest = std::ranges::min_element(
+                      cache.results, {},
+                      [](const auto& item) { return item.second.measured_at; });
+                  cache.results.erase(oldest);
+                }
+                cache.results.try_emplace(key, measured);
+              }
+              probe_reply = W::reply(R::AckT{});
+            }
+          }
         }
+      }
+      if (probe_reply) {
+        Write(fd, std::move(*probe_reply));
+        return;
       }
       if (catalog_reply) {
         Write(fd, W::reply(std::move(*catalog_reply)));
@@ -568,6 +654,9 @@ struct ExecutionBroker::State {
                 "The remote worker did not identify its project journal");
           cached.instance_id.clear();
           std::lock_guard lock(mutex);
+          if (const auto cache = probes.find(entry.id);
+              cache != probes.end() && cache->second.life != cached.probe_life)
+            probes.erase(cache);
           auto update = db.prepare(
               "UPDATE services SET capabilities=? WHERE id=? AND generation=?");
           update.bind_blob(1, W::encode(W::reply(std::move(cached))))
@@ -668,6 +757,7 @@ auto ExecutionBroker::Authorize(const std::string& project,
 }
 auto ExecutionBroker::Revoke(const std::string& project) -> void {
   std::lock_guard lock(state_->mutex);
+  if (state_->local_probe_owners.erase(project)) state_->probes.erase("local");
   auto q = state_->db.prepare("DELETE FROM projects WHERE id=?");
   q.bind(1, project).run();
   state_->db.prepare("DELETE FROM project_registry WHERE project=?")
@@ -680,6 +770,7 @@ auto ExecutionBroker::Revoke(const std::string& project) -> void {
 auto ExecutionBroker::Handles(H::RequestPayload type) -> bool {
   return type == H::RequestPayload::ExecutionServicesRequest ||
          type == H::RequestPayload::ExecutionServicePutRequest ||
+         type == H::RequestPayload::ExecutionProbeRemeasureRequest ||
          type == H::RequestPayload::ExecutionServiceRemoveRequest ||
          type == H::RequestPayload::ExecutionProjectAuthorizeRequest ||
          type == H::RequestPayload::ExecutionProjectRevokeRequest;
@@ -702,12 +793,7 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
           p->endpoint()->str(),
           p->worker_public_key()->str(),
           {},
-          {p->worker_capabilities()->begin(), p->worker_capabilities()->end()},
           crypto::random_token(32)};
-      std::set<uint8_t> seen;
-      for (const auto bit : entry.worker_capabilities)
-        Require(bit < 64 && seen.insert(bit).second,
-                "Worker capabilities must be distinct bits from 0 through 63");
       Require(entry.id == "local" || ValidId(entry.id),
               "Invalid execution service ID (local is reserved)");
       Require(
@@ -729,10 +815,7 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
         std::lock_guard lock(state_->mutex);
         for (const auto& e : state_->Entries())
           if (e.id == entry.id) {
-            previous = e.generation + e.endpoint + e.worker_public_key +
-                       e.name + "\n" +
-                       std::string(e.worker_capabilities.begin(),
-                                   e.worker_capabilities.end());
+            previous = e.generation + e.endpoint + e.worker_public_key + e.name;
             if (entry.endpoint == e.endpoint &&
                 entry.worker_public_key == e.worker_public_key)
               entry.capabilities = e.capabilities;
@@ -755,10 +838,7 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
       std::string current;
       for (const auto& e : state_->Entries())
         if (e.id == entry.id) {
-          current = e.generation + e.endpoint + e.worker_public_key + e.name +
-                    "\n" +
-                    std::string(e.worker_capabilities.begin(),
-                                e.worker_capabilities.end());
+          current = e.generation + e.endpoint + e.worker_public_key + e.name;
           if (e.endpoint != entry.endpoint ||
               e.worker_public_key != entry.worker_public_key ||
               e.capabilities.server_id != entry.capabilities.server_id)
@@ -771,31 +851,39 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
               "Registration changed while verifying; reopen settings");
       sql::Transaction transaction(state_->db);
       auto q = state_->db.prepare(
-          "INSERT INTO services VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO "
+          "INSERT INTO services VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO "
           "UPDATE SET "
           "name=excluded.name,endpoint=excluded.endpoint,worker_public_key="
           "excluded.worker_public_key,capabilities=excluded.capabilities,"
-          "worker_capabilities="
-          "excluded.worker_capabilities,generation=excluded.generation");
+          "generation=excluded.generation");
       q.bind(1, entry.id)
           .bind(2, entry.name)
           .bind(3, entry.endpoint)
           .bind(4, entry.worker_public_key)
           .bind_blob(5, caps)
-          .bind_blob(6, std::string(entry.worker_capabilities.begin(),
-                                    entry.worker_capabilities.end()))
-          .bind(7, entry.generation)
+          .bind(6, entry.generation)
           .run();
       transaction.commit();
+      state_->probes.erase(entry.id);
       return agent::wire::HostReply(id, state_->List());
     }
     std::lock_guard lock(state_->mutex);
+    if (const auto* p = request.value_as_ExecutionProbeRemeasureRequest()) {
+      if (p->id()) {
+        Require(p->id()->string_view() == "local" || ValidId(p->id()->str()),
+                "Invalid execution service ID");
+        state_->probes.erase(p->id()->str());
+      } else {
+        state_->probes.clear();
+      }
+    }
     if (const auto* p = request.value_as_ExecutionServiceRemoveRequest()) {
       Require(ValidId(p->id()->str()), "Invalid execution service ID");
       sql::Transaction transaction(state_->db);
       auto q = state_->db.prepare("DELETE FROM services WHERE id=?");
       q.bind(1, p->id()->str()).run();
       transaction.commit();
+      state_->probes.erase(p->id()->str());
     }
     return agent::wire::HostReply(id, state_->List());
   } catch (const std::exception& e) {

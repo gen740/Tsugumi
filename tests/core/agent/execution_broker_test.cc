@@ -15,6 +15,7 @@
 
 #include "fixture.hh"
 #include "tsugumi/rpc/peer_tls.hh"
+#include "tsugumi/util/crypto.hh"
 #include "tsugumi/workerd/protocol.hh"
 
 namespace tsugumi::test {
@@ -116,6 +117,7 @@ class WorkerPeer {
             c.max_jobs = 4;
             c.resource_limits = resource_limits;
             c.worker_contract = contract;
+            c.probe_life = probe_life;
             respond(W::reply(std::move(c)));
           } else if (auto* put = q->body.AsPutBlobRequest()) {
             R::BlobChunkT chunk;
@@ -176,6 +178,11 @@ class WorkerPeer {
     std::lock_guard lock(mutex_);
     resource_limits = value;
   }
+  auto RestartProbeLife() -> void {
+    std::lock_guard lock(mutex_);
+    probe_life = crypto::random_token(32);
+  }
+  std::string probe_life = std::string(64, 'd');
   bool resource_limits = true;
   std::string server = std::string(64, 'b');
   uint32_t contract = W::kContract;
@@ -209,8 +216,7 @@ class BrokerFixture : public AgentFixture {
   }
   auto Put(std::string key = {}, std::string id = "worker",
            std::string endpoint = {}, bool verify = true,
-           std::string name = "Test worker", std::vector<uint8_t> bits = {})
-      -> Reply {
+           std::string name = "Test worker") -> Reply {
     return Call(
         *host, H::RequestPayload::ExecutionServicePutRequest, [&](Builder& b) {
           return H::CreateExecutionServicePutRequest(
@@ -223,7 +229,7 @@ class BrokerFixture : public AgentFixture {
                      b.CreateString(id != "local" && key.empty()
                                         ? worker->identity.public_key()
                                         : key),
-                     verify, b.CreateVector(bits))
+                     verify)
               .Union();
         });
   }
@@ -364,41 +370,79 @@ auto CatalogService(const R::CatalogT& catalog, std::string_view id)
   return **found;
 }
 
-TEST_F(BrokerFixture, CapabilityBitsAreValidatedAndStoredForEveryWorker) {
-  const auto check_bits = [&](std::string_view id,
-                              const std::vector<uint8_t>& bits) {
-    const auto listed = List();
-    const auto* services =
-        listed.HostValue()->value_as_ExecutionServices()->services();
-    ASSERT_NE(services, nullptr);
-    const auto found =
-        std::ranges::find_if(*services, [&](const auto* service) {
-          return service->id()->string_view() == id;
-        });
-    ASSERT_NE(found, services->end());
-    const auto* stored = (*found)->worker_capabilities();
-    ASSERT_NE(stored, nullptr);
-    EXPECT_EQ(std::vector<uint8_t>(stored->begin(), stored->end()), bits);
+TEST_F(BrokerFixture, SharesProbeResultsAndInvalidatesMeasurements) {
+  ASSERT_TRUE(Put().Code().empty());
+  const auto project = Authorize("probe-a");
+  const auto other = Authorize("probe-b", "different-project");
+  const auto key = crypto::sha256_hex("one probe definition");
+  auto life = std::string(64, 'd');
+  const auto refresh_life = [&] {
+    const auto live = Broker(R::ProbeRequestT{}, project);
+    const auto* capabilities = live->payload.AsReply()->body.AsCapabilities();
+    ASSERT_NE(capabilities, nullptr);
+    life = capabilities->probe_life;
   };
-  check_bits("local", {});
-  for (const auto* worker_id : {"local", "worker"}) {
-    EXPECT_EQ(Put({}, worker_id, {}, false, worker_id, {64}).Code(),
-              "invalid_request");
-    EXPECT_EQ(Put({}, worker_id, {}, false, worker_id, {2, 2}).Code(),
-              "invalid_request");
+  const auto lookup = [&](const std::string& scope) {
+    R::CardProbeLookupT request;
+    request.key = key;
+    request.life = life;
+    auto reply = Broker(std::move(request), scope);
+    const auto* cached = reply->payload.AsReply()->body.AsCardProbeCached();
+    if (!cached) throw std::runtime_error("Expected a Card probe cache reply");
+    return *cached;
+  };
+  const auto publish = [&](const std::string& revision, double score) {
+    R::CardProbePublishT request;
+    request.key = key;
+    request.life = life;
+    request.revision = revision;
+    request.result = std::make_unique<Tsugumi::Data::WorkerProbeResultT>();
+    request.result->worker = "worker";
+    request.result->probe = "/nix/store/probe";
+    request.result->score = score;
+    request.result->stdout_text = "benchmark output\n";
+    request.result->measured_at = 42;
+    auto reply = Broker(std::move(request), project);
+    EXPECT_NE(reply->payload.AsReply()->body.AsAck(), nullptr);
+  };
+  refresh_life();
+  const auto first = lookup(project);
+  EXPECT_FALSE(first.result);
+  publish(first.revision, 0);
+  auto shared = lookup(other);
+  ASSERT_TRUE(shared.result);
+  EXPECT_EQ(shared.result->score.value(), 0);
+  EXPECT_EQ(shared.result->stdout_text, "benchmark output\n");
+  EXPECT_EQ(shared.result->measured_at, 42);
+
+  worker->RestartProbeLife();
+  refresh_life();
+  ASSERT_FALSE(lookup(other).result);
+  publish(lookup(project).revision, 2.5);
+  ASSERT_TRUE(lookup(other).result);
+
+  ASSERT_TRUE(Put({}, "worker", {}, false, "Renamed worker").Code().empty());
+  EXPECT_FALSE(lookup(other).result);
+  const auto revision = lookup(project).revision;
+  publish(revision, 2.5);
+  for (bool one : {true, false}) {
+    const auto remeasure =
+        Call(*host, H::RequestPayload::ExecutionProbeRemeasureRequest,
+             [&](Builder& b) {
+               return H::CreateExecutionProbeRemeasureRequest(
+                          b, one ? b.CreateString("worker")
+                                 : flatbuffers::Offset<flatbuffers::String>{})
+                   .Union();
+             });
+    ASSERT_TRUE(remeasure.Code().empty());
+    EXPECT_FALSE(lookup(other).result);
+    publish(revision, 2.5);  // A response from before remeasurement is stale.
+    EXPECT_FALSE(lookup(other).result);
+    publish(lookup(project).revision, 2.5);
+    EXPECT_TRUE(lookup(other).result);
   }
-  ASSERT_TRUE(Put({}, "local", {}, false, "local", {0, 63}).Code().empty());
-  ASSERT_TRUE(Put({}, "worker", {}, true, "worker", {63, 4}).Code().empty());
-  Restart();
-  check_bits("local", {0, 63});
-  check_bits("worker", {63, 4});
-  auto reply = Broker(R::CatalogRequestT{}, Authorize("bits"));
-  const auto& catalog = *reply->payload.AsReply()->body.AsCatalog();
-  EXPECT_EQ(CatalogService(catalog, "local").worker_capabilities,
-            (std::vector<uint8_t>{0, 63}));
-  EXPECT_EQ(CatalogService(catalog, "worker").worker_capabilities,
-            (std::vector<uint8_t>{63, 4}));
 }
+
 TEST_F(BrokerFixture, CatalogExplainsProjectApprovalUntilGranted) {
   const auto capability = Authorize("project");
   ASSERT_TRUE(Put().Code().empty());

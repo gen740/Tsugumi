@@ -76,9 +76,8 @@ TEST_F(HostRequirements, CardsWithoutHostPathsNeedNoHostShare) {
   test::write_card(root / "definitions/a/_card.json",
                    test::card_json(R"({"type":"trigger"})"));
   EXPECT_TRUE(load_host_requirements(root).folders.empty());
-  test::write_card(
-      root / "definitions/a/_card.json",
-      test::card_json(R"({"type":"code","workerCapabilities":[1]})"));
+  test::write_card(root / "definitions/a/_card.json",
+                   test::card_json(R"({"type":"code"})"));
   EXPECT_TRUE(load_host_requirements(root).folders.empty());
 }
 }  // namespace

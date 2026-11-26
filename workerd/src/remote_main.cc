@@ -472,6 +472,7 @@ class Daemon {
     c.resource_limits = !config_.cgroup.empty();
     c.max_jobs = config_.max_jobs;
     c.active_jobs = active_jobs_.load();
+    c.probe_life = probe_life_;
     c.worker_contract = kContract;
     return c;
   }
@@ -860,6 +861,7 @@ class Daemon {
   }
   Config config_;
   std::string server_, system_;
+  const std::string probe_life_ = crypto::random_token(32);
   std::atomic<uint32_t> active_jobs_{0};
   std::mutex project_mutex_;
   std::map<std::string, std::shared_ptr<Journal>> projects_;

@@ -127,18 +127,28 @@ def python_card(*, remote_system=None, resident=False, run_list=False):
               "_outputs": VALUE,
               "_nix": "{ params, inputs }: let " + PYTHON_BINDINGS + " in { run = " + expression + "; }\n"}
     if remote_system:
-        result.update(system=remote_system, workerCapabilities=[63])
+        result["systems"] = [remote_system]
+        result["_nix"] = prefer_remote(result["_nix"])
     return result
 
 
 def artifact_card(operation, remote_system=None):
     reads_input = operation == "file-input-1gib"
     settings = {"recordIO": "on"}
-    if remote_system:
-        settings.update(system=remote_system, workerCapabilities=[63])
-    return native_card(ARTIFACT_BODY.replace("__OP__", json.dumps(operation)),
+    result = native_card(ARTIFACT_BODY.replace("__OP__", json.dumps(operation)),
                        inputs=["doc"] if reads_input else [],
                        outputs=VALUE if reads_input else ARTIFACT, **settings)
+    if remote_system:
+        result["systems"] = [remote_system]
+        result["_nix"] = prefer_remote(result["_nix"])
+    return result
+
+
+def prefer_remote(expression):
+    body, _, end = expression.rpartition("}")
+    return body + """ probe = pkgs.writeShellScriptBin "probe" ''
+      if [ "$TSUGUMI_WORKER_KIND" = remote ]; then echo 1; else echo 0; fi
+    ''; }""" + end
 
 
 def make_project(root, scenario, remote_system=None):
@@ -205,7 +215,7 @@ class Remote:
             self.stream = self.socket.makefile("rwb", buffering=0)
             self.call("HelloRequest", token=ready["user_token"])
             self.call("ExecutionServicePutRequest", id=self.service, name="Execution baseline",
-                      endpoint=endpoint, workerPublicKey=public_key, verify=True, workerCapabilities=[63])
+                      endpoint=endpoint, workerPublicKey=public_key, verify=True)
             self.registered = True
             services = self.call("ExecutionServicesRequest").services
             self.capabilities = next(s.capabilities for s in services if text(s.id) == self.service)

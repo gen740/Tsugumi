@@ -415,6 +415,8 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   WorkerSpawn spawn;
   spawn.worker_binary = *worker_binary;
   spawn.package = runs.at(index - 1);
+  spawn.card_probe = job.card_probe;
+  spawn.remote = true;
   spawn.secrets = std::move(secrets);
   spawn.closure = env.closure;
   spawn.cgroup = group;
@@ -436,10 +438,13 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   std::vector<types::PortType> outputs;
   for (const auto* port : *call.outputs())
     outputs.push_back({port->name()->str(), port->required(), nullptr});
-  const auto outputs_root = directory / "result/files/artifacts";
-  spawn.artifact_store = outputs_root.string();
-  spawn.artifact_staging = directory / "artifact-invocations";
-  stdfs::create_directories(outputs_root);
+  stdfs::path outputs_root;
+  if (!job.card_probe) {
+    outputs_root = directory / "result/files/artifacts";
+    spawn.artifact_store = outputs_root.string();
+    spawn.artifact_staging = directory / "artifact-invocations";
+    stdfs::create_directories(outputs_root);
+  }
   auto worker = std::make_unique<WorkerProc>(spawn);
   InvocationDisplay display(worker->view_receiver());
   // Retire the worker and its pending display callbacks before the relay.
@@ -507,7 +512,8 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   const auto result_dir = directory / "result";
   stdfs::create_directories(result_dir);
   std::ofstream logs(result_dir / "logs", std::ios::binary);
-  InvocationLog invocation_log(kRemoteLogTransportBytes);
+  InvocationLog invocation_log(job->card_probe ? kProbeTransportBytes
+                                               : kRemoteLogTransportBytes);
   const auto truncation_marker = directory / "log-truncated";
   auto log = [&](LogStream stream, const std::string& text) {
     if (invocation_log.truncated()) return;
@@ -528,7 +534,9 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
     environment = RemoteWorkerStore::realise(
         ArchiveDerivationTransport(blob(invocation.archive_sha256)), store,
         WorkerDerivation{derivation, output, job->system},
-        [&](const std::string& line) { log(LogStream::build, line); },
+        [&](const std::string& line) {
+          if (!job->card_probe) log(LogStream::build, line);
+        },
         job->build_timeout_ms);
     auto secrets =
         job->secrets.empty() ? Secrets{} : receive_secrets(directory, *job);

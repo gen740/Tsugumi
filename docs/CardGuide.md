@@ -151,8 +151,7 @@ description: Start a run.
     "aarch64-linux",
     "x86_64-linux",
     "aarch64-darwin"
-  ],
-  "workerCapabilities": []
+  ]
 }
 ```
 
@@ -324,7 +323,7 @@ A Code Card has `"type": "code"`. Declare input port names in `inputs`. The conn
 
 Set `grants.network` to true to allow network access. TLS uses the Nix `cacert` bundle through `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
 
-List the Nix systems the Card works on in `systems` and any required worker capability bits in `workerCapabilities`. A worker whose native system is listed builds and runs the Card natively; any other worker runs the first entry under an emulator. See [Worker selection](RemoteExecution.md#worker-selection). Write all four isolation flags and both resource limits in `sandbox`. Use zero for an unlimited CPU or memory budget. A Linux worker with delegated cgroup v2 applies nonzero limits to the Card's process.
+List the Nix systems the Card works on in `systems`. Declare an optional `probe` in `default.nix` to rank workers. A worker whose native system is listed builds and runs the Card natively; any other worker runs the first entry under an emulator. See [Worker selection](RemoteExecution.md#worker-selection). Write all four isolation flags and both resource limits in `sandbox`. Use zero for an unlimited CPU or memory budget. A Linux worker with delegated cgroup v2 applies nonzero limits to the Card's process.
 
 Set `grants.network` or `grants.gui` to enable that access on a supported worker. Declare the folder's purpose in **Project Settings → Host Paths** or in the containing `tsugumi.json`:
 

@@ -1,5 +1,3 @@
-import { validWorkerBits } from '../../shared/workerBits'
-import { WorkerBitsEditor } from './workerBits'
 import { useEffect, useState } from 'react'
 import { L } from '../i18n'
 import * as H from '../../shared/gen/tsugumi/host'
@@ -11,11 +9,11 @@ import { Button, Form, Row, Section, Spinner, TextField, Value } from './control
 const executionServices = (type: H.RequestPayload, value: H.RequestT['value']) =>
   hostCall<H.ExecutionServicesT>(type, value, H.ReplyPayload.ExecutionServices)
 
-interface Registration { id: string; name: string; endpoint: string; workerPublicKey: string; workerCapabilities: number[] }
+interface Registration { id: string; name: string; endpoint: string; workerPublicKey: string }
 
 const registration = (entry: H.ExecutionServiceT): Registration => ({
   id: s(entry.id), name: s(entry.name), endpoint: s(entry.endpoint),
-  workerPublicKey: s(entry.workerPublicKey), workerCapabilities: entry.workerCapabilities,
+  workerPublicKey: s(entry.workerPublicKey),
 })
 
 export function ExecutionServicesSettings({ changed }: { changed: () => void }) {
@@ -30,13 +28,13 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
   useEffect(() => { void executionServices(H.RequestPayload.ExecutionServicesRequest, new H.ExecutionServicesRequestT()).then(adopt, (e) => setProblem(errorText(e))) }, [])
 
   function choose(entry: Registration, id?: string) {
-    const { name, endpoint, workerPublicKey, workerCapabilities, id: serviceId } = entry
-    setEdit({ id: serviceId, name, endpoint, workerPublicKey, workerCapabilities })
+    const { name, endpoint, workerPublicKey, id: serviceId } = entry
+    setEdit({ id: serviceId, name, endpoint, workerPublicKey })
     setOriginal(id)
     setProblem(undefined)
     setMessage(undefined)
   }
-  function update(field: keyof Registration, value: string | number[]) {
+  function update(field: keyof Registration, value: string) {
     setEdit((previous) => previous && {
       ...previous,
       [field]: value,
@@ -51,11 +49,14 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
     catch (e) { setProblem(errorText(e)) }
     finally { setBusy(false) }
   }
+  const remeasure = (id: string | null) => void perform(async () => {
+    adopt(await executionServices(H.RequestPayload.ExecutionProbeRemeasureRequest, new H.ExecutionProbeRemeasureRequestT(id)))
+    setMessage(L('次に Card を実行するときに測り直します。'))
+  })
   const saved = entries.find((entry) => s(entry.id) === original)
   const sameEndpoint = !!saved && s(saved.endpoint) === edit?.endpoint.trim()
   const caps = sameEndpoint && saved.capabilities?.serverId ? saved.capabilities : undefined
   const valid = !!edit && [edit.id, edit.name, ...(edit.id === 'local' ? [] : [edit.endpoint, edit.workerPublicKey])].every((value) => value.trim())
-    && validWorkerBits(edit.workerCapabilities)
 
   return <Form>
     <Section title={L('このホストの公開鍵')} info={L('ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。')}>
@@ -66,15 +67,14 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
       {entries.map((entry) => <Row key={s(entry.id)}>
         <Button kind="borderless" disabled={busy} onClick={() => choose(registration(entry), s(entry.id))}>{s(entry.name)} ({s(entry.id)})</Button>
         <span className="secondary">{s(entry.capabilities!.nativeSystem)}</span>
+        <Button small disabled={busy} onClick={() => remeasure(s(entry.id))}>{L('測り直す')}</Button>
       </Row>)}
-      <Row><Button icon="plus" disabled={busy} onClick={() => choose({ id: '', name: '', endpoint: '', workerPublicKey: '', workerCapabilities: [] })}>{L('実行サービスを追加')}</Button></Row>
+      <Row><Button disabled={busy} onClick={() => remeasure(null)}>{L('すべて測り直す')}</Button></Row>
+      <Row><Button icon="plus" disabled={busy} onClick={() => choose({ id: '', name: '', endpoint: '', workerPublicKey: '' })}>{L('実行サービスを追加')}</Button></Row>
     </Section>
     {edit && <Section>
       <Row label={L('名前')}><TextField value={edit.name} disabled={busy} onChange={(value) => update('name', value)} /></Row>
       <Row label={L('サービス ID')}><TextField value={edit.id} mono disabled={busy || !!original} onChange={(value) => update('id', value)} /></Row>
-      <Row label={L('ワーカーの対応ビット')} help={L('このワーカーが持つビットを 0〜63 から選びます。')}>
-        <WorkerBitsEditor bits={edit.workerCapabilities} disabled={busy} onChange={bits => update('workerCapabilities', bits)} />
-      </Row>
       <Row label={L('実行デーモンの接続先')} help={L('TLS 接続先を入力してください（例: tls://worker.example:8765）。')}>
         <TextField value={edit.endpoint} placeholder="tls://worker.example:8765" mono disabled={busy || edit.id === 'local'} onChange={(value) => update('endpoint', value)} />
       </Row>
@@ -90,7 +90,7 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
       <Row>
         <Button kind="prominent" disabled={!valid || busy} onClick={() => void perform(async () => {
           const next = await executionServices(H.RequestPayload.ExecutionServicePutRequest,
-            new H.ExecutionServicePutRequestT(edit.id, edit.name, edit.endpoint, edit.workerPublicKey, !!original && edit.id !== 'local', edit.workerCapabilities))
+            new H.ExecutionServicePutRequestT(edit.id, edit.name, edit.endpoint, edit.workerPublicKey, !!original && edit.id !== 'local'))
           const registered = next.services.find((entry) => s(entry.id) === edit.id)
           if (!registered) throw Error(L('実行サービスを登録できませんでした。'))
           adopt(next)
@@ -106,6 +106,14 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
         })}>{L('削除')}</Button>}
         {busy && <Spinner small />}
       </Row>
+    </Section>}
+    {!!saved?.probes.length && <Section title={L('最近の計測結果')}>
+      {saved.probes.slice(0, 10).map((probe, index) => <Row key={index}
+        label={probe.score === null ? L('計測に失敗しました') : L('スコア {0}', String(probe.score))}>
+        <span className="caption selectable" title={new Date(Number(probe.measuredAt)).toLocaleString()}>
+          {s(probe.failure) || s(probe.probe).split('/').pop()}
+        </span>
+      </Row>)}
     </Section>}
     {(problem || message) && <Row><span className="caption selectable" style={{ color: problem ? 'var(--red)' : undefined }}>{problem ?? message}</span></Row>}
   </Form>

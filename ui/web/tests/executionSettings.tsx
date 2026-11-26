@@ -3,7 +3,7 @@ import { projectFixture } from './documentFixture'
 import { addCodeCard, cardIds } from './cardIds'
 import assert from 'node:assert/strict'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
-import { get, num, numText, parse, str } from '../shared/json'
+import { get, numText, parse, str } from '../shared/json'
 import { D, R } from '../src/wire/rpc'
 
 const page = globalThis as Record<string, unknown>
@@ -27,8 +27,6 @@ for (const value of recordSettings) {
   assert.equal(str(get(session.cardDefinition(card), 'recordIO')), value)
   assert.equal(str(get(session.cardDefinition(card), 'recordLogs')), value)
 }
-const bits = [0, 63]
-editor.setSetting('workerCapabilities', bits.map(num))
 editor.setSystemEnabled('aarch64-linux', false)
 assert.deepEqual(editor.systems, ['aarch64-linux'], 'the last system cannot be disabled')
 editor.setSystemEnabled('x86_64-linux', true)
@@ -46,7 +44,6 @@ assert.equal(numText(get(def, 'sandbox', 'limits', 'memoryMiB')), '0')
 const markup = renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
 assert.match(markup, /<option value="x86_64-linux" selected="">/)
 assert.match(markup, /0 = 上限なし|0 = no limit/i)
-assert.match(markup, /0, 63/)
 assert.doesNotMatch(markup, /<option value="">この実行環境の既定/)
 assert.match(markup, /<input(?=[^>]*name="cpu")(?=[^>]*value="0(?:\.0)?")[^>]*>/)
 assert.match(markup, /<input(?=[^>]*name="memoryMiB")(?=[^>]*value="0")[^>]*>/)

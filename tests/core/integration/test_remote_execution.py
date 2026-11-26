@@ -53,18 +53,30 @@ pytestmark = pytest.mark.environment
 RUN_LIST_OUTPUT = 'table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;'
 # Each remote job realizes its dependencies in a private store, even during a batch.
 RUN_LIST_TIMEOUT_SECONDS = 1200
+REMOTE_PROBE = """
+  probe = pkgs.writeShellScriptBin "probe" ''
+    printf 'measuring %s\\n' "$TSUGUMI_WORKER_KIND"
+    if [ "$TSUGUMI_WORKER_KIND" = remote ]; then
+      printf '2.5\\n'
+    else
+      printf '0\\n'
+    fi
+  '';
+"""
 RUN_LIST_REMOTE = {
-    "type": "code", "recordIO": "on", "workerCapabilities": [63],
+    "type": "code", "recordIO": "on", "_prefer_remote": True,
     "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS, "_outputs": RUN_LIST_OUTPUT,
 }
 
 
 def write(project, definitions, cards, connections, *, files=None):
     remote_system = os.environ["TSUGUMI_TEST_REMOTE_SYSTEM"]
-    definitions = {
-        key: {"systems": [remote_system], **body} if body.get("workerCapabilities") else body
-        for key, body in definitions.items()
-    }
+    definitions = {key: dict(body) for key, body in definitions.items()}
+    for body in definitions.values():
+        if body.pop("_prefer_remote", False):
+            body.setdefault("systems", [remote_system])
+            source, _, end = body["_nix"].rpartition("}")
+            body["_nix"] = source + REMOTE_PROBE + "}" + end
     write_nix_project(project, definitions, cards, connections, files=files)
 
 
@@ -170,8 +182,7 @@ def remote_broker(project, tmp_path, monkeypatch, remote_daemon):
             added_key = public
             external_authorized.write_text(previous.rstrip("\n") + "\n" + public + "\n")
         host.call("ExecutionServicePutRequest", id="remote-test", name="Remote test",
-                  endpoint=endpoint, workerPublicKey=Path(key_file).read_text().strip(), verify=True,
-                  workerCapabilities=[63])
+                  endpoint=endpoint, workerPublicKey=Path(key_file).read_text().strip(), verify=True)
         service = next(value for value in host.call("ExecutionServicesRequest").services
                        if text(value.id) == "remote-test")
         monkeypatch.setenv("TSUGUMI_TEST_REMOTE_SYSTEM", text(service.capabilities.nativeSystem))
@@ -327,7 +338,7 @@ def run(input):
 """))}
     settings = {
         "type": "code", "inputs": [{"name": "in"}], "_outputs": schema,
-        "workerCapabilities": [63], "recordIO": "on", "timeoutSeconds": 600,
+        "_prefer_remote": True, "recordIO": "on", "timeoutSeconds": 600,
     }
     definitions = {
         "input": source,
@@ -352,6 +363,28 @@ def check_success(client, run_id, name, system):
     environments = client.call("RunEnvironmentsRequest", runId=run_id).environments
     assert environments and text(environments[0].system) == system
     return summary
+
+
+def test_remote_probe_records_scores_even_without_run_recording(
+        project, core_factory, remote_broker):
+    definition = {
+        **RUN_LIST_REMOTE,
+        "recordLogs": "off",
+        "recordIO": "off",
+        "_outputs": "table Outputs {} root_type Outputs;",
+        "_nix": entry(python_run("from card import Output\ndef run(input): return Output()\n")),
+    }
+    write(project, {"work": definition}, [card("work", "work")], [])
+    client = core_factory().connect()
+    run_id, status = run_and_wait(client, "work")
+    assert status.state == RunState.succeeded, text(status.failure.diagnostic) if status.failure else ""
+    result = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
+    assert not result.recordIo
+    assert text(result.summary.executionService) == "remote-test"
+    scores = {text(row.worker): row for row in result.workerProbes}
+    assert scores["local"].score == 0
+    assert scores["remote-test"].score == 2.5
+    assert text(scores["remote-test"].stdoutText) == "measuring remote\n2.5\n"
 
 
 def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broker, remote_daemon, remote_gates):
@@ -401,7 +434,7 @@ def run(input):
     return Output()
 """
     views = 'views = [{ name = "notes"; type = "html"; blob = ./notes.html; }];'
-    definition = {"type": "code", "workerCapabilities": [63],
+    definition = {"type": "code", "_prefer_remote": True,
                   "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS,
                   "_outputs": "table Outputs {} root_type Outputs;",
                   "_nix": entry(python_run(source), views)}
@@ -523,7 +556,7 @@ def run(input):
 
 
 def test_call_timeout_is_separate_from_build_and_transfers(project, core_factory, remote_broker):
-    definition = {"type": "code", "workerCapabilities": [63], "timeoutSeconds": 1,
+    definition = {"type": "code", "_prefer_remote": True, "timeoutSeconds": 1,
                   "buildTimeoutSeconds": 600, "_outputs": "table Outputs {} root_type Outputs;",
                   "_nix": entry(python_run(GATE_HELPER + "\ndef run(input): wait_for_release()\n"))}
     write(project, {"deadline": definition}, [card("deadline", "deadline")], [])
