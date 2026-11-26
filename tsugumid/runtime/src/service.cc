@@ -278,6 +278,7 @@ void Service::open() {
   const auto state = opts_.application_support.empty()
                          ? stdfs::path{}
                          : opts_.application_support / ".tsugumi";
+  Versions::recover_checkout(opts_.root);
   // The Card products in a bundle already contain the export-time parameters.
   store_ = std::make_unique<Store>(StoreOptions{
       opts_.root, opts_.fault, state, opts_.packed_builds.empty()});
@@ -2360,7 +2361,7 @@ void Service::version_checkout(RequestIn& req) {
     versions_->checkout(r->commit()->str(), [&](const stdfs::path& target) {
       staged = store_->stage_reload(op_id, r->origin()->str(), target);
       response = prepare_save_reply(staged, *base);
-    });
+    }, opts_.fault);
     complete_save(req, op_id, "reload", digest, *base, staged, response);
   } catch (const Failed& f) {
     store_failure_receipt(op_id, "reload", digest, f.failure);

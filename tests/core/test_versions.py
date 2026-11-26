@@ -174,6 +174,62 @@ def test_checkout_failure_preserves_the_project(tmp_path, core_factory, blocker)
     assert staged.read_text() == "stage only"
 
 
+def test_checkout_crash_restores_worktree_index_head_and_branch(tmp_path, core_factory):
+    root = tmp_path / "p"
+    builtin_project(root, text="target")
+    daemon = core_factory(project_root=root)
+    c = daemon.connect()
+    target = text(c.call("VersionInitRequest", opId=new_id(), origin="test").commit)
+    git(root, "switch", "-c", "original")
+    set_text(c, "current")
+    git(root, "add", "definitions")
+    git(root, "-c", "user.name=Test", "-c", "user.email=test@example.test",
+        "commit", "-m", "original version")
+    set_text(c, "unsaved version")
+    staged = root / "staged.txt"
+    staged.write_text("stage only")
+    git(root, "add", "staged.txt")
+
+    def snapshot():
+        return (
+            {str(path.relative_to(root)): (path.read_bytes(), path.stat().st_mode)
+             for path in root.rglob("*") if path.is_file() and
+             path.relative_to(root).parts[0] not in {".git", ".tsugumi"}},
+            (root / ".git/index").read_bytes(),
+            (root / ".git/HEAD").read_bytes(),
+            git(root, "for-each-ref", "refs/heads"),
+        )
+
+    original = snapshot()
+    # These roots are present in both versions. Each contributes two renames.
+    roots = ("tsugumi.json", "tsugumi.lock", "layout.bin", "definitions",
+             "notes", "externals", "skills", "templates")
+    step_count = 2 * sum((root / name).exists() for name in roots) + 3
+    for step in range(1, step_count + 1):
+        daemon.stop()
+        daemon.env.update(TSUGUMI_ENABLE_FAULTS="1", TSUGUMI_FAULT=f"checkout:{step}")
+        daemon.start()
+        c = daemon.connect()
+        with pytest.raises((ConnectionError, TimeoutError)):
+            c.call("VersionCheckoutRequest",
+                   baseRev=c.call("ProjectInspectRequest").rev,
+                   opId=new_id(), origin="test", commit=target)
+        assert daemon.proc.wait(timeout=5) == 97, step
+        assert (root / ".tsugumi/checkout.json").is_file(), step
+        daemon.env.pop("TSUGUMI_ENABLE_FAULTS")
+        daemon.env.pop("TSUGUMI_FAULT")
+        daemon.restart()
+        assert src_text(daemon.connect()) == "unsaved version", step
+        assert snapshot() == original, step
+        assert not (root / ".tsugumi/checkout.json").exists(), step
+
+    reopened = daemon.connect()
+    reopened.call("VersionCheckoutRequest",
+                  baseRev=reopened.call("ProjectInspectRequest").rev,
+                  opId=new_id(), origin="test", commit=target)
+    assert src_text(reopened) == "target"
+
+
 def test_runs_version_definitions_and_explicit_paths_only(tmp_path, core_factory):
     """Run commits and named versions exclude stray files and internal state."""
     root = tmp_path / "p"
