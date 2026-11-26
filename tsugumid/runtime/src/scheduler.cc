@@ -1533,6 +1533,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       card_log(node.path, w.invocation, LogStream::standard_error,
                "tsugumi: " + std::string(failure_kind_name(out.failure->kind)) +
                    ": " + *out.failure->diagnostic + "\n");
+    s.artifact_outputs = History::output_artifacts(out.outputs);
     InvocationRecordData rec;
     rec.summary = s;
     rec.record_io =

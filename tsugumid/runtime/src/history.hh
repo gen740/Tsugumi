@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -124,6 +125,10 @@ class History {
   static void put_artifact(sql::Db& db, const ArtifactData& a);
   // Inspect a packed output using its export-validated reflection schema.
   // Debug calls verify the entire value separately before reading it.
+  static auto output_artifacts(std::span<const Value> values)
+      -> std::vector<OutputArtifactData>;
+  static auto artifact_outputs(sql::Db& db, const ArtifactData& artifact)
+      -> std::vector<std::pair<std::string, std::string>>;
   static auto output_artifact_ids(const types::Type& type, std::string_view bytes)
       -> std::set<ArtifactKey>;
   static void put_receipt(sql::Db& db, const std::string& op_id,

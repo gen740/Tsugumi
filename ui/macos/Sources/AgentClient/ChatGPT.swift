@@ -24,8 +24,9 @@ public struct ChatGPTAccountInfo: Equatable, Sendable, Identifiable {
   public var active: Bool
 }
 
-public enum ChatGPTError: Error, CustomStringConvertible, Equatable {
+public enum ChatGPTError: LocalizedError, CustomStringConvertible, Equatable {
   case failed(String)
+  public var errorDescription: String? { description }
   public var description: String {
     switch self { case .failed(let message): return "ChatGPT: \(message)" }
   }

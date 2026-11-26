@@ -265,8 +265,9 @@ final class AppModel {
 }
 
 /// Presentation only: the core chooses the failure code.
-struct HostProjectError: Error, CustomStringConvertible {
+struct HostProjectError: LocalizedError, CustomStringConvertible {
   let code: String
+  var errorDescription: String? { description }
   var description: String {
     switch code {
     case "invalid_project_name": return String(localized: "フォルダ名に使えない文字が含まれているか、名前が空です。")

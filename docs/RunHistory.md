@@ -48,8 +48,10 @@ The list uses the original history record. Configured cache endpoints, where rec
 
 ## Keep and open artifacts
 
-Open **Artifacts** for a Card and select a run. Preview or export the files in
-an artifact directory. Created artifacts are sealed at call completion.
+Open **Artifacts** for a Card and select a run. On Mac, the browser lists files
+under that run's artifact directory and lets you save a copy of each file.
+On Web, you can preview or export the files. Created artifacts are sealed at
+call completion.
 The UUID gives access to a sealed artifact within the project, including artifacts
 created in earlier runs. The label next to it shows the invocation sequence and
 artifact counter. The Artifacts view lists runs with at least one available artifact for the selected Card.

@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// What the debug panel turns on: presentation only, kept in UserDefaults and
-/// off by default. None of it changes a project or what a run does.
+/// Presentation options from the debug panel. They do not change a project or a run.
 @MainActor @Observable
 final class DebugOptions {
   static let shared = DebugOptions()
@@ -18,13 +17,12 @@ final class DebugOptions {
   var showKeys: Bool { didSet { d.set(showKeys, forKey: "debug.showKeys") } }
   /// A corner of the canvas shows the camera, what is on it and how long the
   /// last wire routing took.
-  var showCanvasStats: Bool { didSet { d.set(showCanvasStats, forKey: "debug.showCanvasStats") } }
+  var showCanvasStats = false
 
   private init() {
     showHitAreas = d.bool(forKey: "debug.showHitAreas")
     fullErrorDetail = d.bool(forKey: "debug.fullErrorDetail")
     showKeys = d.bool(forKey: "debug.showKeys")
-    showCanvasStats = d.bool(forKey: "debug.showCanvasStats")
   }
 
   var anyOn: Bool { showHitAreas || fullErrorDetail || showKeys || showCanvasStats }

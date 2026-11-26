@@ -44,6 +44,10 @@ final class CorePreferences {
     await pending?.value
     await loadSnapshot()
   }
+  func finishEditing() async {
+    await pending?.value
+  }
+
   private func loadSnapshot() async {
     let generation = editGeneration
     do {

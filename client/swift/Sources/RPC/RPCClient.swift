@@ -11,7 +11,7 @@ extension Tsugumi_Data_FailureKind: @unchecked Sendable {}
 extension Tsugumi_Trace_Mode: @unchecked Sendable {}
 
 /// A structured failure returned by tsugumid (never matched by its text).
-public struct RPCFailure: Error, CustomStringConvertible, Sendable {
+public struct RPCFailure: LocalizedError, CustomStringConvertible, Sendable {
   public let kind: FailureKind
   public let permissions: [String]
   public let args: [String: String]
@@ -34,15 +34,17 @@ public struct RPCFailure: Error, CustomStringConvertible, Sendable {
     currentRev = nil
   }
 
+  public var errorDescription: String? { diagnostic.flatMap { $0.isEmpty ? nil : $0 } ?? description }
   public var description: String { "\(kind): \(diagnostic ?? "")" }
 }
 
-public enum RPCError: Error, CustomStringConvertible, Sendable {
+public enum RPCError: LocalizedError, CustomStringConvertible, Sendable {
   case disconnected
   case protocolViolation(String)
   case timeout
   case unexpectedReply(String)
 
+  public var errorDescription: String? { description }
   public var description: String {
     switch self {
     case .disconnected: return "the connection to tsugumid was lost"

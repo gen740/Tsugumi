@@ -69,6 +69,12 @@ struct BuildEnvironmentData {
   std::vector<std::string> paths;
 };
 
+struct OutputArtifactData {
+  ArtifactKey id;
+  std::string port;
+  std::string value_path;
+};
+
 struct InvocationSummaryData {
   uint64_t artifact_sequence = 0;
   std::string run_id;
@@ -107,6 +113,7 @@ struct InvocationSummaryData {
   std::string implementation_label;
   // Card secret names handed to the Card's process; never their values.
   std::vector<std::string> secrets;
+  std::vector<OutputArtifactData> artifact_outputs;
 };
 
 struct RunBatchOutputData {

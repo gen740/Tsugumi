@@ -93,6 +93,12 @@ table Stage {
   start:long;
   end:long = null;
 }
+table InvocationArtifactOutput {
+  artifact_id:[ubyte] (required);
+  port:string (required);
+  value_path:string (required);
+}
+
 /// invocations.detail and statuses.detail: stage times, reuse and delivered
 /// outputs of an invocation.
 table InvocationDetail {
@@ -115,6 +121,8 @@ table InvocationDetail {
   implementation_index:ulong;
   implementation_label:string;
   secrets:[string];
+  /// Artifact references are retained independently of recording value bytes.
+  artifact_outputs:[InvocationArtifactOutput];
 }
 
 table InputSource {

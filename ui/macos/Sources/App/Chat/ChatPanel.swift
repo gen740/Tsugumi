@@ -3,10 +3,63 @@ import SwiftUI
 import TsugumiAgentClient
 import TsugumiRPC
 
+/// Shared conversation navigation. The docked header is installed in the window toolbar.
+struct ChatHeader: View {
+  @Environment(\.openWindow) private var openWindow
+  let chat: ChatController
+  @Binding var showList: Bool
+  let detached: Bool
+  var onClose: (() -> Void)?
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Button { showList.toggle() } label: { Image(systemName: showList ? "bubble.left.and.bubble.right.fill" : "chevron.backward") }
+        .buttonStyle(.borderless)
+        .help(showList ? "会話に戻る" : "会話の一覧と検索")
+      Text(showList ? String(localized: "会話") : (conversationTitle))
+        .font(.headline).lineLimit(1)
+      Spacer(minLength: 8)
+      Button { chat.newSession(); showList = false } label: { Image(systemName: "square.and.pencil") }
+        .buttonStyle(.borderless).help("新しい会話")
+      Menu {
+        // Only for the conversation that is open, never from the list.
+        if !showList {
+          Button("会話を圧縮") { chat.compact() }.disabled(chat.busy || chat.items.count < 6)
+          Divider()
+        }
+        Button("Skill を再読込") { chat.reloadSkills() }
+        if !detached {
+          Button("別ウインドウで開く") { openWindow(id: "chat", value: ProjectRef(path: chat.session.identity.url.path)) }
+        }
+        Divider()
+        SettingsLink { Text("接続設定…") }
+      } label: { Image(systemName: "ellipsis.circle") }
+        .accessibilityLabel("会話の操作")
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+      if let onClose { ChatToggle(open: true, action: onClose) }
+    }
+  }
+
+  private var conversationTitle: String {
+    let title = chat.sessions.first { $0.id == chat.currentId }?.title.trimmingCharacters(in: .whitespacesAndNewlines)
+    return title.flatMap { $0.isEmpty ? nil : $0 } ?? String(localized: "新しい会話")
+  }
+
+}
+
+struct DetachedChatPanel: View {
+  let session: ProjectSession
+  let chat: ChatController
+  @State private var showList = false
+
+  var body: some View {
+    ChatPanel(session: session, chat: chat, detached: true, showList: $showList)
+  }
+}
+
 /// Chat: session list or the conversation (answers, progress, input, model
 /// and send/stop). Usable docked beside the canvas or in its own window.
 struct ChatPanel: View {
-  @Environment(\.openWindow) private var openWindow
   @Environment(AppPreferences.self) private var prefs
   let session: ProjectSession
   @Bindable var chat: ChatController
@@ -14,7 +67,7 @@ struct ChatPanel: View {
   var tab: WorkflowTab?
   /// Whether the panel is open: opening it again shows the newest message.
   var shown = true
-  @State private var showList = false
+  @Binding var showList: Bool
   @State private var query = ""
   @State private var input = ""
   private var model: String { chat.displayedProvider.model }
@@ -56,45 +109,17 @@ struct ChatPanel: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      header
-      Divider()
+      if detached {
+        ChatHeader(chat: chat, showList: $showList, detached: true)
+          .padding(.horizontal, 10).padding(.vertical, 7)
+        Divider()
+      }
       if showList { sessionList } else { conversation }
     }
     .background(Color(nsColor: .windowBackgroundColor))
     .sheet(item: Binding(get: { detached ? chat.permissionPrompt : nil }, set: { _ in })) { p in
       PermissionPromptView(prompt: p) { allow, selected in chat.answerPermissions(id: p.id, allow: allow, selected: selected) }
     }
-  }
-
-  // MARK: - Header
-
-  private var header: some View {
-    HStack(spacing: 8) {
-      if !detached && GuideController.shared.available { GuideNest(busy: chat.busy) }
-      Button { showList.toggle() } label: { Image(systemName: showList ? "bubble.left.and.bubble.right.fill" : "list.bullet") }
-        .buttonStyle(.borderless)
-        .help(showList ? "会話に戻る" : "会話の一覧と検索")
-      Text(showList ? String(localized: "会話") : (chat.sessions.first { $0.id == chat.currentId }?.title ?? String(localized: "新しい会話")))
-        .font(.headline).lineLimit(1)
-      Spacer()
-      Button { chat.newSession(); showList = false } label: { Image(systemName: "square.and.pencil") }
-        .buttonStyle(.borderless).help("新しい会話")
-      Menu {
-        // Only for the conversation that is open, never from the list.
-        if !showList {
-          Button("会話を圧縮") { chat.compact() }.disabled(chat.busy || chat.items.count < 6)
-          Divider()
-        }
-        Button("Skill を再読込") { chat.reloadSkills() }
-        if !detached {
-          Button("別ウインドウで開く") { openWindow(id: "chat", value: ProjectRef(path: session.identity.url.path)) }
-        }
-        Divider()
-        SettingsLink { Text("接続設定…") }
-      } label: { Image(systemName: "ellipsis.circle") }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-    }
-    .padding(.horizontal, 10).padding(.vertical, 7)
   }
 
   // MARK: - Session list
@@ -208,9 +233,8 @@ struct ChatPanel: View {
       }
       if let s = chat.status {
         HStack(spacing: 6) {
-          Image(systemName: chat.failed ? "exclamationmark.triangle.fill" : "info.circle")
-            .foregroundStyle(chat.failed ? .red : .secondary)
-          Text(s).font(.caption).foregroundStyle(chat.failed ? .red : .secondary).lineLimit(3).textSelection(.enabled)
+          Label(s.message, systemImage: s.symbol)
+            .font(.caption).foregroundStyle(s.color).lineLimit(3).textSelection(.enabled)
           Spacer()
           if chat.usageLimited {
             Button("Manage usage") { NSWorkspace.shared.open(ChatGPTAuth.usageURL) }.controlSize(.small).buttonStyle(.borderedProminent)

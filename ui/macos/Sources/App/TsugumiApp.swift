@@ -5,8 +5,8 @@ import TsugumiLauncher
 @main
 struct TsugumiApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-  private let model = AppModel.shared
   private let prefs = AppPreferences.shared
+  private let model = AppModel.shared
 
   init() {
     // A project folder given on the command line is opened by the app itself
@@ -71,24 +71,19 @@ struct TsugumiApp: App {
     .defaultSize(width: 900, height: 560)
     .restorationBehavior(.disabled)
 
-    WindowGroup("成果物", id: "artifacts", for: CardRef.self) { $ref in
+    WindowGroup("Artifacts", id: "artifacts", for: CardRef.self) { $ref in
       if let ref { DetailHost(path: ref.path) { CardArtifactsView(session: $0, cardKey: ref.card) } }
     }
     .defaultSize(width: 900, height: 560)
     .restorationBehavior(.disabled)
 
-    Window("実行環境のコンソール", id: "console") {
-      VMConsoleView().environment(model).environment(prefs)
-    }
-    .defaultSize(width: 760, height: 460)
-    .restorationBehavior(.disabled)
     Window("デバッグ", id: "debug") { DebugPanel() }
       .defaultSize(width: 460, height: 420)
       .windowResizability(.contentSize)
       .restorationBehavior(.disabled)
     WindowGroup("チャット", id: "chat", for: ProjectRef.self) { $ref in
       if let ref {
-        DetailHost(path: ref.path) { s in ChatPanel(session: s, chat: AppModel.shared.chat(for: s), detached: true) }
+        DetailHost(path: ref.path) { s in DetachedChatPanel(session: s, chat: AppModel.shared.chat(for: s)) }
       }
     }
     .defaultSize(width: 460, height: 720)
@@ -99,8 +94,11 @@ struct TsugumiApp: App {
       ApplicationSettings()
         .environment(model)
         .environment(prefs)
-        .frame(width: 760, height: 520)
+        .frame(width: 760)
+        .frame(minHeight: 420, idealHeight: 520, maxHeight: .infinity)
     }
+    .windowResizability(.contentSize)
+    .defaultSize(width: 760, height: 520)
     .restorationBehavior(.disabled)
   }
 }
@@ -125,15 +123,6 @@ struct UpdateMenuItem: View {
 struct OpenExplainerButton: View {
   var body: some View {
     Button("Tsugumi を知る") { Explainer.open() }
-  }
-}
-
-/// Window menu: the shared VM's console.
-struct OpenConsoleButton: View {
-  @Environment(\.openWindow) private var openWindow
-  var body: some View {
-    Button("実行環境のコンソール") { openWindow(id: "console") }
-      .keyboardShortcut("k", modifiers: [.command, .option])
   }
 }
 
@@ -414,7 +403,6 @@ struct WorkbenchCommands: Commands {
         .shortcut(.toggleTerminal)
     }
     CommandGroup(after: .windowList) {
-      OpenConsoleButton()
       OpenDebugPanelButton()
     }
     CommandGroup(after: .appInfo) {

@@ -63,6 +63,8 @@ class EnvironmentProcess {
   }
   virtual auto GuardStart(const std::string&) -> void {}
   virtual auto Busy(const Tsugumi::Host::EnvironmentStateT& ready) -> bool;
+  auto ClearBuildCache(const Tsugumi::Host::EnvironmentStateT& ready)
+      -> Tsugumi::RPC::ProjectCacheClearResultT;
   virtual auto Requirements(const Tsugumi::Host::EnvironmentStateT& ready)
       -> Tsugumi::RPC::ProjectHostRequirementsT;
   virtual auto Runtime(const Tsugumi::Host::HostRuntimeRequestT&)

@@ -224,6 +224,14 @@ struct Driver {
       result.message = try await vm.maintenance(.verifystore)
     case .cleanupstore:
       try await vm.maintenance(.collectstore)
+    case .clearprojectbuildcache:
+      let clear = Tsugumi_VMGuest_ClearBuildRootsT()
+      clear.key = request.projectId ?? ""
+      let reply = try await vm.request(clear, type: .clearbuildroots)
+      let cache = Tsugumi_RPC_ProjectCacheClearResultT()
+      if reply.buildRootsRemoved { cache.deleted = ["build-roots"] }
+      cache.retained = ["history", "document"]
+      result.buildCache = cache
     case .forgetproject:
       let forget = Tsugumi_VMGuest_ForgetT()
       forget.key = request.projectId ?? ""

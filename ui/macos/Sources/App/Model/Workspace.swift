@@ -32,7 +32,7 @@ enum CardEditorCategory: String, Codable, CaseIterable, Identifiable {
     case .log: return String(localized: "ログ")
     case .dependencies: return String(localized: "依存")
     case .executions: return String(localized: "実行履歴")
-    case .artifacts: return String(localized: "成果物")
+    case .artifacts: return "Artifacts"
     case .notes: return String(localized: "コメント")
     }
   }
@@ -82,11 +82,7 @@ final class WorkflowTab: Identifiable {
   var selectedNotes: Set<String> = []
   var back: [[String]] = []
   var selectedConnection: Int?
-  var showNixReferences = false
-  var showNixList = false
-  var selectedNixReference: String?
-  var hoveredNixCard: CardKey?
-  var revealNixCard: CardKey?
+  @ObservationIgnored var framedScopes: Set<CardKey> = []
 
   init(scope: [String], selection: Set<CardKey> = []) {
     self.scope = scope
@@ -131,6 +127,12 @@ enum BottomPanel: String, CaseIterable, Identifiable {
   }
 }
 
+/// A live Card view's bounds in its workflow's canvas coordinates.
+struct CanvasCardViewPlacement {
+  let scope: CardKey
+  var rect: CGRect
+}
+
 /// State of one main window: which project is open, its tabs and panels.
 @MainActor
 @Observable
@@ -139,6 +141,7 @@ final class Workspace {
   /// The window showing it (a main window: to bring it forward, to tell when it closes).
   @ObservationIgnored weak var window: NSWindow?
   var session: ProjectSession?
+  var cardViewPlacements: [UUID: CanvasCardViewPlacement] = [:]
   /// "New project" asked for this window: its Home opens the sheet.
   var requestNewProject = false
   /// What this window could not do, shown as an alert.

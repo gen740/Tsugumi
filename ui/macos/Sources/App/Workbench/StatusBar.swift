@@ -2,8 +2,24 @@ import AppKit
 import SwiftUI
 import TsugumiRPC
 
-/// Floating bar at the canvas's bottom right: run state and save/sync state
-/// shown separately, the problems, and the toggles of the log/timeline panels.
+enum WorkbenchNotice: Equatable {
+  case info(String)
+  case error(String)
+
+  var message: String {
+    switch self { case .info(let text), .error(let text): return text }
+  }
+
+  var symbol: String {
+    switch self { case .info: return "info.circle"; case .error: return "exclamationmark.triangle.fill" }
+  }
+
+  var color: Color {
+    switch self { case .info: return .secondary; case .error: return .red }
+  }
+}
+
+/// Diagnostics, revision and the log, timeline and console toggles.
 struct StatusBar: View {
   @Bindable var workspace: Workspace
   let session: ProjectSession
@@ -14,24 +30,9 @@ struct StatusBar: View {
   @Environment(\.openWindow) private var openWindow
 
   var body: some View {
-    // All four layouts keep a single line; the last keeps its intrinsic width
-    // even when the canvas offers less room than the icons need.
     ViewThatFits(in: .horizontal) {
       bar(compact: false)
       bar(compact: true)
-      HStack(spacing: 8) {
-        runState(short: true).fixedSize()
-        syncState(short: true).fixedSize()
-        Spacer(minLength: 4)
-        panelPicker.fixedSize()
-      }
-      .fixedSize()
-      HStack(spacing: 8) {
-        runState(short: true, icons: true)
-        syncState(short: true, icons: true)
-        panelPicker
-      }
-      .fixedSize()
     }
     .sheet(item: Binding(get: { session.reloadApproval }, set: { session.reloadApproval = $0 })) { request in
       PermissionPromptView(prompt: ChatController.PermissionPrompt(raw: request.permissions, answer: { _ in }),
@@ -48,22 +49,12 @@ struct StatusBar: View {
   }
 
   private func bar(compact: Bool) -> some View {
-    HStack(spacing: compact ? 8 : 14) {
-      runState(short: compact).fixedSize()
+    HStack(spacing: 6) {
+      counts(compact: compact)
       Divider().frame(height: 14)
-      syncState(short: compact).fixedSize()
-      if !compact {
-        revision.fixedSize()
-        Divider().frame(height: 14)
-        counts.fixedSize()
-      }
-      Spacer(minLength: 8)
-      if !compact, let n = session.notice {
-        Label(n, systemImage: "info.circle").lineLimit(1).truncationMode(.tail).foregroundStyle(.secondary).help(n)
-          .frame(maxWidth: 260)
-        Button { session.notice = nil } label: { Image(systemName: "xmark") }.buttonStyle(.borderless)
-      }
-      panelPicker.fixedSize()
+      revision(compact: compact)
+      Divider().frame(height: 14)
+      panelPicker
     }
     .fixedSize(horizontal: true, vertical: false)
   }
@@ -92,48 +83,6 @@ struct StatusBar: View {
     .guideTarget(p == .log ? "logs" : p.rawValue)
   }
 
-  private func runState(short: Bool, icons: Bool = false) -> some View {
-    let s = session.runStatus?.state ?? .idle
-    return HStack(spacing: 4) {
-      Image(systemName: s.symbol).foregroundStyle(s.color)
-      if !icons { Text(short ? s.label : String(localized: "実行: \(s.label)")) }
-      if !short, let f = session.runStatus?.failure, s == .failed {
-        Text("· \(f.diagnostic ?? String(describing: f.kind))").lineLimit(1).foregroundStyle(.secondary).frame(maxWidth: 260)
-      }
-    }
-    .lineLimit(1)
-    .help(s.label)
-    .accessibilityElement(children: .ignore)
-    .accessibilityLabel(s.label)
-  }
-
-  private func syncState(short: Bool, icons: Bool = false) -> some View {
-    Button { showSync.toggle() } label: {
-      HStack(spacing: 4) {
-        switch session.syncState {
-        case .saved:
-          Image(systemName: "checkmark.icloud").foregroundStyle(.green)
-          if !icons { Text("保存済み") }
-        case .saving:
-          ProgressView().controlSize(.mini)
-          if !icons { Text("保存中…") }
-        case .failed:
-          Image(systemName: "exclamationmark.icloud.fill").foregroundStyle(.red)
-          if !icons { Text("同期できません") }
-        case .offline:
-          Image(systemName: "icloud.slash").foregroundStyle(.secondary)
-          if !icons { Text("未接続") }
-        }
-      }
-    }
-    .lineLimit(1)
-    .buttonStyle(StatusButtonStyle())
-    .help(syncLabel + " · " + String(localized: "保存・同期の詳細"))
-    .accessibilityLabel(syncLabel)
-    .guideTarget("save")
-    .popover(isPresented: $showSync, arrowEdge: .top) { syncDetail }
-  }
-
   private var syncLabel: String {
     switch session.syncState {
     case .saved: return String(localized: "保存済み")
@@ -143,17 +92,28 @@ struct StatusBar: View {
     }
   }
 
-  /// The saved revision; the project's versions (git) open from it.
-  private var revision: some View {
-    Button(action: openVersions) {
+  private func revision(compact: Bool) -> some View {
+    Button { showSync.toggle() } label: {
       HStack(spacing: 4) {
-        Image(systemName: "point.3.connected.trianglepath.dotted").foregroundStyle(.secondary)
+        switch session.syncState {
+        case .saved:
+          Image(systemName: "point.3.connected.trianglepath.dotted").foregroundStyle(.secondary)
+        case .saving:
+          ProgressView().controlSize(.mini)
+        case .failed:
+          Image(systemName: "exclamationmark.icloud.fill").foregroundStyle(.red)
+        case .offline:
+          Image(systemName: "icloud.slash").foregroundStyle(.secondary)
+        }
         Text(verbatim: "rev \(session.rev)").monospacedDigit()
+        if !compact { Text(syncLabel).foregroundStyle(.secondary) }
       }
     }
     .buttonStyle(StatusButtonStyle())
-    .help(String(localized: "版の履歴を開く（確定 revision \(session.rev)、⌥⌘Y）"))
-    .accessibilityLabel(String(localized: "版の履歴"))
+    .help(syncLabel + " · " + String(localized: "保存・同期の詳細"))
+    .accessibilityLabel(String(localized: "確定 revision") + " \(session.rev) · " + syncLabel)
+    .guideTarget("save")
+    .popover(isPresented: $showSync, arrowEdge: .top) { syncDetail }
   }
 
   private func openVersions() {
@@ -185,24 +145,29 @@ struct StatusBar: View {
     .frame(width: 440)
   }
 
-  private var counts: some View {
-    let errors = session.diagnostics.filter(\.error).count
-    let warnings = session.diagnostics.count - errors
-    return HStack(spacing: 10) {
-      Button { showIssues.toggle() } label: {
-        HStack(spacing: 6) {
-          HStack(spacing: 2) { Image(systemName: "xmark.octagon"); Text("\(errors)") }
+  private func counts(compact: Bool) -> some View {
+    let list = IssueList(workspace: workspace, session: session, tab: tab)
+    let issues = list.issues
+    let errors = issues.filter(\.error).count
+    let warnings = issues.count - errors
+    return Button { showIssues.toggle() } label: {
+      HStack(spacing: 4) {
+        if compact || issues.isEmpty {
+          Image(systemName: issues.isEmpty ? "checkmark.seal" : "exclamationmark.triangle.fill")
+            .foregroundStyle(errors > 0 ? .red : warnings > 0 ? .orange : .secondary)
+          if !issues.isEmpty { Text("\(issues.count)").monospacedDigit() }
+        } else {
+          Label("\(errors)", systemImage: "xmark.octagon")
             .foregroundStyle(errors > 0 ? .red : .secondary)
-          HStack(spacing: 2) { Image(systemName: "exclamationmark.triangle"); Text("\(warnings)") }
-            .foregroundStyle(warnings > 0 ? .yellow : .secondary)
+          Label("\(warnings)", systemImage: "exclamationmark.triangle")
+            .foregroundStyle(warnings > 0 ? .orange : .secondary)
         }
       }
-      .buttonStyle(StatusButtonStyle())
-      .help("問題一覧")
-      .popover(isPresented: $showIssues, arrowEdge: .top) {
-        IssueList(workspace: workspace, session: session, tab: tab).frame(width: 460, height: 320)
-      }
     }
+    .buttonStyle(StatusButtonStyle())
+    .help(String(localized: "問題 \(issues.count) 件（一覧から対象の Card やログへ移動できます）"))
+    .accessibilityLabel("問題一覧")
+    .popover(isPresented: $showIssues, arrowEdge: .top) { list.frame(width: 460, height: 320) }
   }
 }
 
@@ -227,6 +192,12 @@ struct IssueList: View {
       out.append(Issue(error: s.state == .failed, title: "\(session.displayName(k)): \(s.state.label)",
                        detail: s.failure ?? "", card: path(k), isRunFailure: true))
     }
+    if let status = session.runStatus, status.state == .failed, let failure = status.failure {
+      let detail = failure.diagnostic ?? String(describing: failure.kind)
+      if !out.contains(where: { $0.detail == detail }) {
+        out.insert(Issue(error: true, title: status.state.label, detail: detail, card: nil, isRunFailure: true), at: 0)
+      }
+    }
     for d in session.diagnostics {
       out.append(Issue(error: d.error, title: d.message,
                        detail: [d.card.map { session.displayPath($0) }, d.path, d.code].compactMap { $0 }.joined(separator: " · "),
@@ -245,8 +216,10 @@ struct IssueList: View {
           Image(systemName: i.error ? "xmark.circle.fill" : "exclamationmark.triangle.fill")
             .foregroundStyle(i.error ? .red : .yellow)
           VStack(alignment: .leading) {
-            Text(i.title)
-            if !i.detail.isEmpty { Text(i.detail).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
+            Text(i.title).fixedSize(horizontal: false, vertical: true)
+            if !i.detail.isEmpty {
+              Text(i.detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
           }
           Spacer()
           if let c = i.card {
@@ -254,6 +227,7 @@ struct IssueList: View {
             if i.isRunFailure { Button("ログ") { workspace.showLog(for: key(c)) }.buttonStyle(.borderless) }
           }
         }
+        .textSelection(.enabled)
       }
     }
   }

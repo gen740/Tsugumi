@@ -32,7 +32,7 @@ extension ProjectSession {
         let value = Tsugumi_Host_VersionCanvasWireT(); value.from = w.from; value.to = w.to; return value
       } }
       versionCanvases[commit] = try await CoreHostClient.shared.hostCall(.versioncanvasrequest, request)
-    } catch { notice = String(describing: error) }
+    } catch { notice = .error(error.localizedDescription) }
   }
 
   func loadVersionComments(_ commit: String) async throws {

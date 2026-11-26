@@ -157,7 +157,9 @@ import TsugumiTestSupport
     chat.retryLoad()
     await chat.opening?.value
     #expect(!chat.ready)
-    #expect(chat.status?.contains("Tsugumi Dev") == true && chat.status?.contains("2345") == true)
+    let status = try #require(chat.status)
+    guard case .error(let message) = status else { Issue.record("Expected a conversation lock error"); return }
+    #expect(message.contains("Tsugumi Dev") && message.contains("2345"))
     #expect(chat.items.map(\.text) == ["Selected transcript"])
 
     await holder.setRunning(false)

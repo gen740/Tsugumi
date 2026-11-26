@@ -10,7 +10,6 @@ enum HomeTips {
     String(localized: "途中の Card を直したら、保存された入力でそこから試し直せるよ"),
     String(localized: "Card の実行履歴から、前の入力と出力をいつでも見返せるよ"),
     String(localized: "実行環境は Nix で固定。同じ計算をもう一度確かめられるよ"),
-    String(localized: "⌥⌘K で、実行環境のコンソールを開けるよ"),
     String(localized: "「デモを見る」から、Collatz などの例をすぐに開けるよ"),
     String(localized: "名前は「継ぐ・積む・組む」から。処理を継ぎ、試行を積み、実験を組むよ"),
     String(localized: "つぐみ → つむぐ。試行錯誤をつないで、研究を「紡ぐ」道具でありたいんだ"),

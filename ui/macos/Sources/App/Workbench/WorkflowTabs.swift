@@ -1,4 +1,3 @@
-import TsugumiViewPresentation
 import AppKit
 import SwiftUI
 import TsugumiLauncher
@@ -12,6 +11,8 @@ struct WorkflowTabs: View {
   @AppStorage("chat.width") private var chatWidth = 480.0
   let session: ProjectSession
   @State private var trustAnswered = false
+  @State private var showChatList = false
+  @State private var displayedChatWidth = 0.0
   let onSwitchProject: (() -> Void)?
   @Environment(\.guideWindow) private var guideWindow
   @Environment(\.controlActiveState) private var activeState
@@ -36,7 +37,7 @@ struct WorkflowTabs: View {
         VStack(spacing: 0) {
           if workspace.tabs.count > 1 { tabBar }
           if let tab = workspace.active {
-            Workbench(workspace: workspace, session: session, tab: tab, onSwitchProject: onSwitchProject)
+            Workbench(workspace: workspace, session: session, tab: tab, showsCardViews: onSwitchProject != nil)
               .id(tab.id)
               .focusedSceneValue(\.workflowTab, tab)
               .onChange(of: tab.scope) { session.saveViewSoon(scope: tab.scope, selection: tab.selection) }
@@ -44,11 +45,11 @@ struct WorkflowTabs: View {
           }
         }
         if workspace.showChat {
-          // Wider by default; the width the user gives it is kept (per Mac).
-          // The chat is Tsugumi: the bird waits at its top left (GuideNest).
           ChatColumn(width: $chatWidth) {
-            ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active, shown: workspace.showChat)
+            ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active,
+                      shown: workspace.showChat, showList: $showChatList)
           }
+          .onGeometryChange(for: Double.self) { $0.size.width } action: { displayedChatWidth = $0 }
         }
       }
     }
@@ -59,17 +60,12 @@ struct WorkflowTabs: View {
     // whatever the window size, sidebar width or project name.
     NavigationSplitView(columnVisibility: $workspace.columns) {
       if let tab = workspace.active {
-        WorkbenchSidebar(workspace: workspace, session: session, tab: tab)
+        WorkbenchSidebar(workspace: workspace, session: session, tab: tab, onSwitchProject: onSwitchProject)
           .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 380)
       }
     } detail: {
-      HSplitView {
-        projectContent.frame(minWidth: 360)
-        if onSwitchProject != nil, session.cardViews.hasPanels {
-          CardViewPanels(presentation: session.cardViews)
-            .frame(minWidth: 250, idealWidth: 400)
-        }
-      }
+      projectContent.frame(minWidth: 360)
+        .toolbar { workbenchToolbar }
     }
     .tsugumiLoading(EnvironmentOverlay.loading(session), onCancel: EnvironmentOverlay.canCancel(session)
       ? { session.stopEnvironment() } : nil)
@@ -110,12 +106,46 @@ struct WorkflowTabs: View {
     }
     .focusedSceneValue(\.projectSession, session)
     .focusedSceneValue(\.workspace, workspace)
-    // The title bar stays quiet: the project's name and where the canvas is
-    // float on the canvas (CanvasWorkspace); the window keeps its title for
-    // the Window menu and Mission Control.
+    // Keep the window title for Mission Control and the Window menu.
     .navigationTitle(session.scopeName([]))
     .toolbar(removing: .title)
+    .background(WindowReader { window in
+      // Apply this after the split view installs the window's title-bar sections.
+      DispatchQueue.main.async {
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
+      }
+    })
     .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+  }
+
+  @ToolbarContentBuilder private var workbenchToolbar: some ToolbarContent {
+    if let tab = workspace.active, session.staleHostState == nil, !EnvironmentOverlay.hasProblem(session) {
+      ToolbarItem {
+        CanvasBreadcrumbs(session: session, tab: tab)
+      }
+      .sharedBackgroundVisibility(.hidden)
+      ToolbarSpacer(.flexible)
+      ToolbarItem {
+        HStack(spacing: workspace.showChat ? 20 : 8) {
+          CanvasRunControl(session: session, tab: tab).fixedSize()
+          chatToolbarContent
+        }
+      }
+      .sharedBackgroundVisibility(.hidden)
+    }
+  }
+
+  @ViewBuilder private var chatToolbarContent: some View {
+    if workspace.showChat {
+      ChatHeader(chat: model.chat(for: session), showList: $showChatList, detached: false,
+                 onClose: { workspace.showChat = false })
+        .frame(width: max(104, displayedChatWidth - 44))
+        .workbenchToolbarCapsule()
+    } else {
+      ChatToggle(open: false) { workspace.showChat = true }
+        .workbenchToolbarCapsule()
+    }
   }
 
   private var tabBar: some View {
@@ -153,23 +183,26 @@ struct Workbench: View {
   @Bindable var workspace: Workspace
   let session: ProjectSession
   @Bindable var tab: WorkflowTab
-  var onSwitchProject: (() -> Void)? = nil
+  let showsCardViews: Bool
 
   var body: some View {
     VStack(spacing: 0) {
       if workspace.showBottom {
         VSplitView {
-          CanvasWorkspace(workspace: workspace, session: session, tab: tab, onSwitchProject: onSwitchProject)
-            .frame(minHeight: 240)
+          canvas
           LogTimelinePanel(workspace: workspace, session: session, tab: tab)
             .frame(minHeight: 140, idealHeight: 220)
         }
       } else {
-        CanvasWorkspace(workspace: workspace, session: session, tab: tab, onSwitchProject: onSwitchProject)
-          .frame(minHeight: 240, maxHeight: .infinity)
+        canvas
       }
     }
     .frame(minWidth: 360)
+  }
+
+  private var canvas: some View {
+    CanvasWorkspace(workspace: workspace, session: session, tab: tab, showsCardViews: showsCardViews)
+      .frame(minHeight: 240, maxHeight: .infinity)
   }
 }
 
@@ -414,7 +447,7 @@ struct EnvironmentProblemView: View {
           if p.canStop {
             Button("環境を停止") { session.stopEnvironment() }
           }
-          OpenConsoleButton()
+          OpenVMStartupLogButton()
           Spacer()
           if let onSwitchProject { Button("別のプロジェクトを開く…", action: onSwitchProject) }
         }
@@ -472,19 +505,19 @@ enum RunActions {
       c["id"]?.string.map { s.kind(key([$0])) } == .trigger
     }
     guard let id = trigger?["id"]?.string else {
-      s.notice = String(localized: "全体を実行するには最上位の Workflow に開始 Card（trigger）を置いてください。Card を選んで個別に実行もできます。")
+      s.notice = .info(String(localized: "全体を実行するには最上位の Workflow に開始 Card（trigger）を置いてください。Card を選んで個別に実行もできます。"))
       return
     }
     Task {
       if s.computationDirty { await s.save() }
-      do { try await s.run(card: [id], propagate: true) } catch { s.notice = "\(error)" }
+      do { try await s.run(card: [id], propagate: true) } catch { s.notice = .error(error.localizedDescription) }
     }
   }
 
   static func run(_ s: ProjectSession, card: CardKey, propagate: Bool) {
     Task {
       if s.computationDirty { await s.save() }
-      do { try await s.run(card: path(card), propagate: propagate) } catch { s.notice = "\(error)" }
+      do { try await s.run(card: path(card), propagate: propagate) } catch { s.notice = .error(error.localizedDescription) }
     }
   }
 }

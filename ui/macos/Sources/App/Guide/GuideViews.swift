@@ -134,8 +134,8 @@ extension View {
 
 // MARK: - The corner
 
-/// Tsugumi on Home, in the bottom-right corner (in a project it is the chat's,
-/// GuideNest). It speaks in a bubble beside it (the demo offer, short answers,
+/// Tsugumi on Home, in the bottom-right corner. It speaks in a bubble
+/// beside it (the demo offer, short answers,
 /// choices to tap), flies out to what it talks about (GuideFlyer), and a click
 /// opens its conversation above it. Shown only with a model connection.
 struct GuideCorner: View {
@@ -449,37 +449,6 @@ struct GuideReplyField: View {
     guard !t.isEmpty else { return }
     text = ""
     send(t)
-  }
-}
-
-// MARK: - Tsugumi of the chat
-
-/// Where Tsugumi waits in a project: at the top left of the chat (or on the
-/// chat button while the chat is closed). It flies out from here (GuideFlyer)
-/// and comes back; it thinks while the chat answers.
-struct GuideNest: View {
-  var busy = false
-  var size: CGFloat = 30
-  @Environment(GuideStage.self) private var stage: GuideStage?
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-  var body: some View {
-    TimelineView(.animation(minimumInterval: 1 / 30, paused: AppPreferences.shared.tsugumiStill(reduceMotion: reduceMotion))) { ctx in
-      let t = AppPreferences.shared.tsugumiStill(reduceMotion: reduceMotion) ? 0 : ctx.date.timeIntervalSinceReferenceDate
-      Canvas { g, s in
-        var pose = BirdPose()
-        pose.blink = t.truncatingRemainder(dividingBy: 4.2) < 0.12 ? 1 : 0
-        if busy { pose.tilt = 0.12 * sin(t * 3.2) } else { pose.squash = CGFloat(sin(t * 1.6) * 0.02) }
-        TsugumiBird.draw(g, at: CGPoint(x: s.width / 2, y: s.height - 2), scale: size / 640, pose: pose)
-      }
-    }
-    .frame(width: size * 1.05, height: size * 0.75)
-    .opacity(GuideController.shared.birdAway(stage?.project) ? 0 : 1)
-    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { stage?.corner = $0 }
-    .onDisappear { stage?.corner = .zero }
-    .help("ツグミ")
-    .accessibilityLabel("ツグミ")
-    .accessibilityValue(busy ? String(localized: "考えています") : "")
   }
 }
 

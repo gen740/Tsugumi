@@ -135,7 +135,7 @@ final class ChatController {
   var ready: Bool { !loading && !currentId.isEmpty && displayedId == currentId }
   private(set) var loading = false
   private(set) var busy = false
-  private(set) var status: String?
+  private(set) var status: WorkbenchNotice?
   private(set) var failed = false
   /// The last turn stopped at the ChatGPT plan's usage limit ("Manage usage").
   private(set) var usageLimited = false
@@ -173,7 +173,7 @@ final class ChatController {
       }
       status = nil
       return true
-    } catch { status = String(format: String(localized: "フォルダを添付できませんでした: %@"), String(describing: error)); return false }
+    } catch { status = .error(String(format: String(localized: "フォルダを添付できませんでした: %@"), error.localizedDescription)); return false }
   }
 
   /// No longer offered to the Agent, which refuses it from now on (the share
@@ -195,7 +195,7 @@ final class ChatController {
           } while cursor != 0
         }
         try await session.environments.removeFolders(session.identity, [path])
-      } catch { status = String(describing: error) }
+      } catch { status = .error(error.localizedDescription) }
     }
   }
   private(set) var interrupted = false
@@ -281,8 +281,8 @@ final class ChatController {
         }
       } catch let failure as CoreHostFailure where failure.code == "busy" {
         displayedId = ""
-        status = failure.description
-      } catch { status = String(describing: error) }
+        status = .error(failure.localizedDescription)
+      } catch { status = .error(error.localizedDescription) }
     }
   }
 
@@ -322,7 +322,7 @@ final class ChatController {
         guard !Task.isCancelled, self.agent === agent, selection == answer else { return }
         loading = false
         displayedId = ""
-        self.status = String(describing: error)
+        self.status = .error(error.localizedDescription)
         return
       }
       let conv = await agent.conversation
@@ -362,7 +362,7 @@ final class ChatController {
       case "preparing": doing = String(localized: "メッセージの準備")
       default: doing = String(localized: "モデルの応答")
       }
-      status = String(format: String(localized: "会話は中断しています。中断時の処理: %@。再開するか、新しいメッセージを送れます。"), doing)
+      status = .info(String(format: String(localized: "会話は中断しています。中断時の処理: %@。再開するか、新しいメッセージを送れます。"), doing))
     } else if wasInterrupted { status = nil }
   }
 
@@ -396,7 +396,7 @@ final class ChatController {
         guard let project = try await RPCToolTransport(session: session).project() else { return }
         select(try await CoreHostClient.shared.createConversation(projectID: project.id))
         refreshSessions()
-      } catch { status = String(describing: error) }
+      } catch { status = .error(error.localizedDescription) }
     }
   }
 
@@ -406,7 +406,7 @@ final class ChatController {
         _ = try await CoreHostClient.shared.call("ConversationDeleteRequest", ["conversation_id": id])
         if id == currentId { currentId = "" }
         refreshSessions()
-      } catch { status = String(describing: error) }
+      } catch { status = .error(error.localizedDescription) }
     }
   }
 
@@ -429,7 +429,7 @@ final class ChatController {
   func reloadSkills() {
     Task {
       do { skills = try await loadSkillMetadata() }
-      catch { status = String(describing: error) }
+      catch { status = .error(error.localizedDescription) }
     }
   }
 
@@ -476,7 +476,7 @@ final class ChatController {
       do {
         skills = try await loadSkillMetadata(conversationID: agent.id)
         guard await attachSkillFolders(skills.filter { $0.always || Set(used.map(\.name)).contains($0.name) }) else {
-          events(.error(status ?? String(describing: RPCError.disconnected)))
+          events(.error(status?.message ?? RPCError.disconnected.localizedDescription))
           return
         }
         await CorePreferences.shared.reload()
@@ -648,7 +648,7 @@ final class ChatController {
     busy = false
     canContinue = true
     session.presence.turnEnded(.stopped)
-    status = String(localized: "回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。")
+    status = .info(String(localized: "回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。"))
   }
 
   /// Continues work only when the person asks.
@@ -680,7 +680,7 @@ final class ChatController {
   func compact() {
     guard ready, let agent else { return }
     let events = begin()
-    status = String(localized: "会話を圧縮しています…")
+    status = .info(String(localized: "会話を圧縮しています…"))
     let stopping = self.stopping
     Task {
       await stopping?.value
@@ -822,7 +822,7 @@ final class ChatController {
       if PresenceEvents.writesSources(tool: name) { session.presence.toolInputEnded(ok: ok) }
     case .compacting:
       // The next reply waits for it (over a minute with a long conversation).
-      status = String(localized: "会話を圧縮しています…")
+      status = .info(String(localized: "会話を圧縮しています…"))
     case .compacted:
       // Earlier messages were summarized for the model; the whole text stays
       // in the conversation, so nothing is announced.
@@ -830,7 +830,7 @@ final class ChatController {
     case .retrying(let s):
       // The reply is asked again from its beginning.
       session.presence.toolInputEnded(ok: false)
-      status = String(localized: "再試行中: \(s)")
+      status = .info(String(localized: "再試行中: \(s)"))
     case .discardText:
       // The reply is asked again: what it had streamed goes.
       session.presence.toolInputEnded(ok: false)
@@ -840,15 +840,15 @@ final class ChatController {
       failed = false
       usageLimited = false
       contextFull = false
-      status = String(localized: "回答を停止しました（Workflow の実行は止めていません）。")
+      status = .info(String(localized: "回答を停止しました（Workflow の実行は止めていません）。"))
       endFailedOrCancelledTurn(.stopped)
     case .error(let message, let code):
       failed = true
       usageLimited = code == "subscription_sharing_usage_limit_exceeded"
       contextFull = code == "context_full"
-      status = usageLimited ? String(localized: "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。")
+      status = .error(usageLimited ? String(localized: "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。")
         : contextFull ? String(localized: "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。")
-        : String(localized: "エラー: \(ChatGPTError.localizedMessage(message, code: code))")
+        : ChatGPTError.localizedMessage(message, code: code))
       endFailedOrCancelledTurn(.failed)
     case .interrupted:
       busy = false
@@ -888,7 +888,7 @@ final class ChatController {
         refreshSessions()
       } catch {
         guard number == answer, self.agent === agent else { return }
-        status = String(describing: error)
+        status = .error(error.localizedDescription)
       }
     }
   }

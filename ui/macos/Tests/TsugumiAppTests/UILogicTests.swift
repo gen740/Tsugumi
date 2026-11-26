@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import CoreGraphics
+import Observation
 import SwiftUI
 import Testing
 import TsugumiTestSupport
@@ -200,17 +201,35 @@ import TsugumiTestSupport
 }
 
 
+@MainActor @Observable private final class HoverLayoutMeasurement {
+  var size = CGSize.zero
+}
+
 /// The bubble takes its ideal size: long text must wrap inside it, not run out of it.
-@MainActor @Test func theHoverBubbleHoldsItsWrappedText() {
-  func size(_ lines: [String]) -> CGSize {
-    NSHostingView(rootView: HoverBubble(content: .init(title: "rgb", subtitle: "Draft", symbol: "circle", lines: lines, status: "未実装（Draft）",
-                                                       problems: ["draft cards are not implemented and cannot run"]))
-      .fixedSize()).fittingSize
+@MainActor @Test func theHoverBubbleHoldsItsWrappedText() async throws {
+  func size(_ lines: [String], height: CGFloat = 600) async throws -> CGSize {
+    let viewport = CGSize(width: 800, height: height)
+    let content = HoverBubble.Content(title: "rgb", subtitle: "Draft", symbol: "circle", lines: lines,
+                                       status: "未実装（Draft）", problems: ["draft cards are not implemented and cannot run"])
+    let measurement = HoverLayoutMeasurement()
+    let view = NSHostingView(rootView: HoverBubble(content: content, viewport: viewport) { _ in }
+      .fixedSize()
+      .onGeometryChange(for: CGSize.self) { $0.size } action: { measurement.size = $0 })
+    let window = NSWindow(contentRect: CGRect(origin: .zero, size: viewport),
+                          styleMask: [.borderless], backing: .buffered, defer: true)
+    window.contentView = view
+    defer { window.contentView = nil }
+    view.layoutSubtreeIfNeeded()
+    try await waitForModel("diagnostic hover layout") { measurement.size.height > 30 }
+    return measurement.size
   }
-  let short = size(["短い説明"])
-  let long = size([String(repeating: "3つの帯域画像を同じ座標と大きさのまま割り当てる。", count: 6)])
+  let description = String(repeating: "3つの帯域画像を同じ座標と大きさのまま割り当てる。", count: 6)
+  let short = try await size(["短い説明"])
+  let long = try await size([description])
+  let constrained = try await size([description], height: 110)
   #expect(long.width <= 361)
   #expect(long.height >= short.height + 40, "\(short) \(long)")
+  #expect(constrained.height <= 98)
 }
 
 /// A wire to or from a Draft is dotted until the Draft has code. The web checks
@@ -267,7 +286,7 @@ import TsugumiTestSupport
   #expect(definitionKind(try JSONValue.parse(fixtureCardJSON(.subgraph))) == .subgraph)
   #expect(definitionKind(try JSONValue.parse(#"{"type":"invalid"}"#)) == .invalid, "not a type name")
 
-  // The core's diagnostic (file and message) is what the Card says.
+  // The diagnostic belongs to the callout outside the Card body.
   let missing = #"definitions/old/_card.json: "type" is required (one of code, draft, trigger, merge, collect, subgraph)"#
   let delta = Tsugumi_RPC_DocumentDeltaT()
   delta.baseRev = 0; delta.rev = 1; delta.origin = "agent"
@@ -291,9 +310,9 @@ import TsugumiTestSupport
     #expect(d.idleText == String(localized: "定義エラー"))
   }
   let old = s.nodeData("old")
-  #expect(old.summary == missing && old.errors == [missing])
-  #expect(CardGeometry(old, flow: .topToBottom).summary, "the diagnostic has its row")
-  #expect(s.nodeData("future").summary == String(localized: "Card の定義を読めません"), "without a diagnostic yet")
+  #expect(old.summary == nil && old.errors == [missing])
+  #expect(!CardGeometry(old, flow: .topToBottom).summary)
+  #expect(s.nodeData("future").errors == [String(localized: "Card の定義を読めません")], "without a diagnostic yet")
 
   // A version from before `type` (or one this build cannot read) has no kind.
   #expect(CardKind.named("") == .invalid && CardKind.named("something new") == .invalid && CardKind.named("merge") == .merge)
@@ -515,6 +534,18 @@ import TsugumiTestSupport
         insets: SwiftUI.EdgeInsets(top: 50, leading: 0, bottom: 50, trailing: 0), maxZoom: 1, margin: 0)
   let tl = c.screen(CGPoint(x: 0, y: 0)), br = c.screen(CGPoint(x: 400, y: 300))
   #expect(tl.y >= 50 && br.y <= 550 && abs((tl.x + br.x) / 2 - 400) < 0.5)
+}
+
+@Test func aSavedCameraCanLeaveEveryCardOutsideTheViewport() {
+  let cards = [CGRect(x: 320, y: 300, width: 200, height: 82),
+               CGRect(x: 640, y: 460, width: 200, height: 82)]
+  let viewport = CGSize(width: 610, height: 778)
+  var camera = CanvasCamera(x: -266, y: -5211, zoom: 1.2)
+  #expect(!camera.showsCard(cards, in: viewport))
+  camera.fit(cards[0].union(cards[1]), in: viewport, maxZoom: 1.2)
+  #expect(cards.allSatisfy { camera.showsCard([$0], in: viewport) })
+  // Preserving a restored frame only requires one Card to be visible.
+  #expect(camera.showsCard([cards[0].offsetBy(dx: 10_000, dy: 0), cards[1]], in: viewport))
 }
 
 @Test func droppedNoteLandsUnderThePointerAtAnyZoom() {

@@ -9,7 +9,6 @@ Tsugumi connects small, typed steps called Cards into a Workflow. Run the whole 
 - **Sketch before writing code.** Add a Draft with `e` while the Canvas has focus, describe a step, and draw its wires. Add a Start, Merge or Collect Card when you already know how data should flow. [Canvas tools](Usage.md#canvas-tools) · [Kinds of Card](#kinds-of-card)
 - **Organise a larger graph.** Right-click the Canvas and choose **Arrange** to place Cards or **Untangle Wires** to reduce crossings while keeping their positions. Group related Cards with **Group Selection**, or open a Card in Card to see its child Workflow and boundary ports. The import button by **Add Card** copies another project into `externals/` and places its Workflow as a Card in Card. [Canvas tools](Usage.md#canvas-tools) · [Cards and Workflows](#2-cards-and-workflows)
 - **Run variants and batches.** Give a Card a list of implementations in `run`, or send it a batch, and it runs every combination. Connect the batch to a Collect Card to pass one typed list of envelopes on. [Run lists and Collect](#run-lists-and-collect)
-- **See references between Card definitions.** Turn on **Nix references**, then hover a Card or open the list. Follow `inputs.<card_id>` to the upstream Card whose exports it names. [Nix references](Usage.md#canvas-tools)
 
 ### Run, inspect and compare
 

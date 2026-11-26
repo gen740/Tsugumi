@@ -270,6 +270,7 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
   }
 
   public var hasPanels: Bool { !panelIDs.isEmpty }
+  public var panelOpenings: [CardViewOpening] { panels.map(\.opening) }
   public var isEmpty: Bool { views.isEmpty }
   public var isIdle: Bool { isEmpty && pendingCloses == 0 }
   public var openings: [CardViewOpening] { views.values.map(\.opening) }
@@ -374,7 +375,8 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
     view.windowDelegate = delegate
     view.window = window
     window.center()
-    window.makeKeyAndOrderFront(nil)
+    if NSApp.isActive { window.makeKeyAndOrderFront(nil) }
+    else { window.orderBack(nil) }
     if fullscreen { window.toggleFullScreen(nil) }
   }
 
@@ -385,7 +387,7 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
                           backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false
     window.title = title
-    window.contentView = NSHostingView(rootView: CardViewPanels(presentation: self))
+    window.contentView = NSHostingView(rootView: PackedCardViewPanels(presentation: self))
     let delegate = CardViewWindowDelegate { [weak self] in
       guard let self else { return }
       packedMainWindow = nil
@@ -410,20 +412,65 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
 
   fileprivate var panels: [OpenCardView] { panelIDs.compactMap { views[$0] } }
 
-  fileprivate func detach(_ view: OpenCardView) {
-    panelIDs.removeAll { $0 == view.opening.id }
+  fileprivate func panel(_ id: UUID) -> OpenCardView? {
+    guard panelIDs.contains(id) else { return nil }
+    return views[id]
+  }
+
+  public func detachPanel(_ id: UUID) {
+    guard let view = panel(id) else { return }
+    panelIDs.removeAll { $0 == id }
     showWindow(view)
     closeEmptyPackedWindow()
   }
 }
 
-public struct CardViewPanels: View {
+/// One live renderer and its controls. The caller supplies the title or drag handle.
+public struct CardViewPanel<Title: View>: View {
+  let presentation: CardViewPresentation
+  let id: UUID
+  @ViewBuilder let title: () -> Title
+
+  public init(presentation: CardViewPresentation, id: UUID, @ViewBuilder title: @escaping () -> Title) {
+    self.presentation = presentation
+    self.id = id
+    self.title = title
+  }
+
+  public var body: some View {
+    if let view = presentation.panel(id) {
+      VStack(spacing: 0) {
+        HStack {
+          title()
+          PanelButtons(presentation: presentation, id: id)
+        }
+        .padding(8)
+        PanelContent(view: view)
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+  }
+}
+
+private struct PanelButtons: View {
+  let presentation: CardViewPresentation
+  let id: UUID
+
+  var body: some View {
+    Button { presentation.detachPanel(id) } label: { Label("別ウインドウで開く", systemImage: "macwindow") }
+      .labelStyle(.iconOnly)
+      .help("別ウインドウで開く")
+    Button { presentation.close(id) } label: { Label("閉じる", systemImage: "xmark") }
+      .labelStyle(.iconOnly)
+      .help("閉じる")
+  }
+}
+
+private struct PackedCardViewPanels: View {
   let presentation: CardViewPresentation
   @State private var selected: UUID?
 
-  public init(presentation: CardViewPresentation) { self.presentation = presentation }
-
-  public var body: some View {
+  var body: some View {
     let panels = presentation.panels
     let shown = panels.first { $0.opening.id == selected } ?? panels.first
     VStack(spacing: 0) {
@@ -437,10 +484,7 @@ public struct CardViewPanels: View {
           }
           .labelsHidden()
           Spacer()
-          Button { presentation.detach(shown) } label: { Image(systemName: "macwindow") }
-            .help("別ウインドウで開く")
-          Button { presentation.close(shown.opening.id) } label: { Image(systemName: "xmark") }
-            .help("閉じる")
+          PanelButtons(presentation: presentation, id: shown.opening.id)
         }
         .padding(8)
         ZStack {

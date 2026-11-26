@@ -11,7 +11,7 @@ from harness.observations import decode_scalar, read_output
 from harness.real_cards import log
 from projects import card, conn, run_and_wait, write_nix_project
 from test_worker_loading import DIRECTORY, native_card
-from tsugumi_client import new_id, text
+from tsugumi_client import new_id, path as card_path, text
 from Tsugumi.Data.RunState import RunState
 
 
@@ -35,7 +35,7 @@ def test_invocation_can_open_a_sealed_artifact_by_uuid(core_factory, project):
         std::ofstream(directory / "nested/report.txt") << "artifact";
         std::ofstream(private_output / "hidden.txt") << "ungranted";
         out.artifact(id);
-    """, declarations=declarations, outputs=DIRECTORY)
+    """, declarations=declarations, outputs=DIRECTORY, recordIO="off")
     sandboxed_grant = sys.platform == "linux"
     sink = native_card(r"""
         tsugumi_artifact_id ungranted;
@@ -99,6 +99,13 @@ def test_invocation_can_open_a_sealed_artifact_by_uuid(core_factory, project):
         )
         assert decode_scalar(read_output(client, run_id, card="sink"), "uint64") == len("artifact")
         first, second = client.call("ArtifactListRequest", runId=run_id).artifacts
+        [output] = first.outputs
+        assert (text(output.port), text(output.valuePath)) == ("doc", "")
+        assert first.invocationCount == 1
+        assert not second.outputs
+        assert text(first.relativeLocation) == f".tsugumi/artifacts/{run_id}/source/@1/0"
+        record = client.call("RunRecordRequest", runId=run_id, card=card_path("source"))
+        assert record.recordingDisabled and not record.record.outputs
         sequence, counter = map(int, text(first.label).split("."))
         assert sequence > previous and counter == 0
         assert text(second.label) == f"{sequence}.1"

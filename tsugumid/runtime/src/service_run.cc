@@ -1096,15 +1096,17 @@ auto Service::record_artifacts(const InvocationSummaryData& invocation,
 void Service::artifact_list(RequestIn& req) {
   const auto* r = project_request(req)->value_as_ArtifactListRequest();
   const auto* ids = r->artifact_ids();
-  if (ids && (r->run_id() || r->card() || r->invocation() || r->cursor() ||
-              r->limit()))
+  const bool by_run = r->run_id() || r->card() || r->invocation() ||
+                      r->cursor() || r->limit();
+  if (by_run && ids && ids->size() != 0)
     throw Failed(FailureKind::invalid_request,
                  "artifact_ids cannot be combined with run filters");
-  if (ids && ids->size() > 500)
+  const bool by_id = ids && !by_run;
+  if (by_id && ids->size() > 500)
     throw Failed(FailureKind::invalid_request,
                  "at most 500 artifact ids may be requested");
   std::string run_id;
-  if (!ids) {
+  if (!by_id) {
     if (!r->run_id())
       throw Failed(FailureKind::invalid_request, "run_id is required");
     require_run_id(*r->run_id(), "run_id");
@@ -1120,7 +1122,7 @@ void Service::artifact_list(RequestIn& req) {
   std::string after;
   if (r->cursor()) after = history_->open_cursor(r->cursor()->str()).second;
   auto rows = history_->read([&](sql::Db& db) {
-    if (ids) {
+    if (by_id) {
       std::vector<ArtifactData> found;
       std::set<ArtifactKey> seen;
       for (const auto* text : *ids) {
@@ -1136,11 +1138,33 @@ void Service::artifact_list(RequestIn& req) {
       throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
     return History::artifacts(db, run_id, card, inv, after, limit + 1);
   });
-  bool more = !ids && rows.size() > limit;
+  bool more = !by_id && rows.size() > limit;
   if (more) rows.resize(limit);
+  const auto details = history_->read([&](sql::Db& db) {
+    std::map<std::pair<std::string, CardPath>, uint64_t> call_counts;
+    std::vector<
+        std::pair<uint64_t, std::vector<std::pair<std::string, std::string>>>>
+        result;
+    for (const auto& artifact : rows) {
+      auto [count, inserted] =
+          call_counts.try_emplace({artifact.run_id, artifact.card}, 0);
+      if (inserted)
+        count->second =
+            History::aggregate(db, artifact.run_id, artifact.card).calls;
+      result.emplace_back(count->second,
+                          History::artifact_outputs(db, artifact));
+    }
+    return result;
+  });
   FBB b;
   std::vector<flatbuffers::Offset<R::ArtifactInfo>> out;
-  for (const auto& a : rows) {
+  for (size_t i = 0; i < rows.size(); ++i) {
+    const auto& a = rows[i];
+    const auto& [calls, output_paths] = details[i];
+    std::vector<flatbuffers::Offset<R::ArtifactOutput>> outputs;
+    for (const auto& [port, path] : output_paths)
+      outputs.push_back(R::CreateArtifactOutput(b, b.CreateString(port),
+                                                b.CreateString(path)));
     std::vector<flatbuffers::Offset<R::ArtifactMember>> members;
     const auto path = artifact_location(store_->state_dir(), a);
     for (const auto& name : fs::list_beneath(path, "").files) {
@@ -1152,7 +1176,8 @@ void Service::artifact_list(RequestIn& req) {
         b, b.CreateString(artifact_id_text(a.id)), b.CreateString(a.run_id),
         wire::path(b, a.card), a.invocation, a.size_bytes,
         a.tree_hash ? b.CreateString(*a.tree_hash) : 0, b.CreateVector(members),
-        b.CreateString(artifact_label(a)), a.keep));
+        b.CreateString(artifact_label(a)), a.keep, b.CreateVector(outputs),
+        calls, b.CreateString(a.location)));
   }
   auto v = b.CreateVector(out);
   flatbuffers::Offset<flatbuffers::String> cur;

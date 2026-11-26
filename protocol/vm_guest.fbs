@@ -5,6 +5,7 @@ namespace Tsugumi.VMGuest;
 table Start { key:string (required); host_name:string (required); slot:ubyte; rpc_trace:bool; origins:[string]; }
 table Stop { key:string (required); }
 table Forget { key:string (required); }
+table ClearBuildRoots { key:string (required); }
 table Clock { unix_ms:long; }
 table Resize { session:ulong; rows:ushort; cols:ushort; }
 enum MaintenanceAction:ubyte { SnapshotCacheUsage, CollectStore, VerifyStore, Shutdown }
@@ -13,10 +14,10 @@ table ReadMemory {}
 
 // Terminal vsock 1026 starts with one framed request and reply, then raw PTY bytes.
 table OpenTerminal { key:string (required); rows:ushort; cols:ushort; }
-union Command { Start, Stop, Forget, Clock, Resize, Maintenance, OpenTerminal, ReadMemory }
+union Command { Start, Stop, Forget, Clock, Resize, Maintenance, OpenTerminal, ReadMemory, ClearBuildRoots }
 table Request { command:Command (required); }
 table Memory { total_kib:ulong; available_kib:ulong; cached_kib:ulong; }
-table Reply { error:string; message:string; pid:long; session:ulong; memory:Memory; }
+table Reply { error:string; message:string; pid:long; session:ulong; memory:Memory; build_roots_removed:bool; }
 
 table Ready {}
 enum ProjectPhase:ubyte { Starting, Ready, Exited }

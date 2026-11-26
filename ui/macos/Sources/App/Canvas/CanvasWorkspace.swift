@@ -1,50 +1,34 @@
 import AppKit
 import SwiftUI
 import TsugumiRPC
+import TsugumiViewPresentation
 
-/// The canvas with its floating controls. The canvas reaches the top of the
-/// window; the project's title (with where the canvas is), the run control
-/// and the project's actions float on it with the same look.
+/// The canvas with its actions, notices and status bar.
 struct CanvasWorkspace: View {
-  @Environment(AppModel.self) private var model
-  @Environment(AppPreferences.self) private var prefs
   @Bindable var workspace: Workspace
   let session: ProjectSession
   @Bindable var tab: WorkflowTab
-  var onSwitchProject: (() -> Void)? = nil
-  /// Where the window buttons and the sidebar button end (title bar).
-  static let besideSidebarButton: CGFloat = 142
+  let showsCardViews: Bool
+  @State private var bottomControlsHeight: CGFloat = 0
 
   var body: some View {
-    ZStack(alignment: .top) {
-      GraphCanvas(workspace: workspace, session: session, tab: tab)
-        .ignoresSafeArea(.container, edges: .top)
-      // The band along the top of the window moves the window (as a title
-      // bar does; a double click zooms it). The canvas starts below it, so
-      // the two never compete for a drag.
-      WindowDragBand()
-        .frame(height: 34)
-        .ignoresSafeArea(.container, edges: .top)
-    }
-    .overlay(alignment: .top) {
-      // One row so the controls never overlap; the run control stays centered when there is room.
-      HStack(alignment: .top, spacing: 8) {
-        // The title keeps its room; only very long names are cut.
-        breadcrumbs.layoutPriority(3)
-        Spacer(minLength: 0)
-        CanvasRunControl(workspace: workspace, session: session, tab: tab).fixedSize().layoutPriority(2)
-        Spacer(minLength: 0)
-        CanvasDraftControls(workspace: workspace, session: session, tab: tab).fixedSize().layoutPriority(1)
-        CanvasCommentControls(workspace: workspace, session: session, tab: tab).fixedSize().layoutPriority(1)
-        projectActions.fixedSize().layoutPriority(2)
+    GraphCanvas(workspace: workspace, session: session, tab: tab, showsCardViews: showsCardViews,
+                bottomControlsHeight: bottomControlsHeight)
+      .overlay(alignment: .topTrailing) {
+        VStack(alignment: .trailing, spacing: 8) {
+          if let notice = session.notice {
+            noticeBanner(notice) { session.notice = nil }
+          }
+          if let error = session.stopError {
+            noticeBanner(.error(error))
+          }
+          HStack(spacing: 8) {
+            CanvasDraftControls(workspace: workspace, session: session, tab: tab).fixedSize()
+            CanvasCommentControls(workspace: workspace, session: session, tab: tab).fixedSize()
+          }
+        }
+        .padding(10)
       }
-      // In the title bar's row, beside the window buttons: right of the
-      // sidebar button while the sidebar is closed.
-      .padding(.leading, workspace.columns == .detailOnly ? Self.besideSidebarButton : 10)
-      .padding(.trailing, 10)
-      .padding(.top, 11)
-      .ignoresSafeArea(.container, edges: .top)
-    }
     // At narrow widths the status moves above the left controls.
     .overlay(alignment: .bottom) {
       CanvasBottomControls {
@@ -53,40 +37,49 @@ struct CanvasWorkspace: View {
         StatusBar(workspace: workspace, session: session, tab: tab)
       }
       .padding(10)
+      .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { bottomControlsHeight = $0 }
     }
   }
 
-  /// Back to Home (as the menu does, with its refusal while a run is on), chat:
-  /// beside the run control, the same look.
-  private var projectActions: some View {
-    HStack(spacing: 10) {
-      if let onSwitchProject {
-        Button(action: onSwitchProject) { Image(systemName: "house") }
-          .help(tip(String(localized: "Home へ戻る"), .home))
-          .accessibilityLabel("Home へ戻る")
-          .guideTarget("home")
+  private func noticeBanner(_ notice: WorkbenchNotice, dismiss: (() -> Void)? = nil) -> some View {
+    HStack(alignment: .top, spacing: 8) {
+      Label(notice.message, systemImage: notice.symbol)
+        .foregroundStyle(notice.color)
+        .lineLimit(3)
+        .help(notice.message)
+        .textSelection(.enabled)
+      if let dismiss {
+        Button(action: dismiss) { Image(systemName: "xmark") }
+          .buttonStyle(.borderless)
+          .accessibilityLabel("閉じる")
       }
-      Button { workspace.showChat.toggle() } label: {
-        // While the chat is closed, Tsugumi waits on its button.
-        if !workspace.showChat && onSwitchProject != nil && GuideController.shared.available {
-          GuideNest(busy: AppModel.shared.chat(for: session).busy, size: 22)
-        } else {
-          Image(systemName: workspace.showChat ? "bubble.left.and.text.bubble.right.fill" : "bubble.left.and.text.bubble.right")
-        }
-      }
-      .help(workspace.showChat ? "チャットを閉じる（\(AppPreferences.shared.shortcut(.toggleChat).label)）"
-                               : "チャットを開く（\(AppPreferences.shared.shortcut(.toggleChat).label)）")
-      .accessibilityLabel("チャット")
-      .guideTarget("chat")
+    }
+    .font(.caption)
+    .padding(8)
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
+    .frame(maxWidth: 420, alignment: .trailing)
+  }
+
+  private var viewControls: some View {
+    let zoom = session.cameras[key(tab.scope)]?.zoom ?? 1
+    return HStack(spacing: 2) {
+      Text("\(Int((zoom * 100).rounded()))%").monospacedDigit().frame(minWidth: 42)
+      Button { Task { await session.arrange(tab.scope) } } label: { Image(systemName: "rectangle.grid.2x2") }
+        .help("整列（配置だけを変更）")
     }
     .buttonStyle(.borderless)
-    .font(.callout)
-    .padding(.horizontal, 12).padding(.vertical, 7)
+    .padding(.horizontal, 10).padding(.vertical, 5)
     .background(.regularMaterial, in: Capsule())
+    .guideTarget("view", radius: 14)
   }
+}
 
-  /// The project's title and where the canvas is (Card in Card), in one place.
-  private var breadcrumbs: some View {
+/// The project's title and where the canvas is (Card in Card), in one place.
+struct CanvasBreadcrumbs: View {
+  let session: ProjectSession
+  @Bindable var tab: WorkflowTab
+
+  var body: some View {
     HStack(spacing: 4) {
       if !(tab.scope.isEmpty && tab.back.isEmpty) {
         Button { goUp() } label: { Image(systemName: "chevron.backward") }
@@ -114,65 +107,131 @@ struct CanvasWorkspace: View {
       }
     }
     .frame(maxWidth: 360, alignment: .leading)
-    .fixedSize(horizontal: false, vertical: true)
+    .fixedSize(horizontal: true, vertical: false)
     .font(.callout)
-    .padding(.horizontal, 12).padding(.vertical, 7)
-    .background(.regularMaterial, in: Capsule())
+    .workbenchToolbarCapsule()
   }
 
   private func goUp() {
     if !tab.back.isEmpty { tab.goBack() } else if !tab.scope.isEmpty { tab.enter(Array(tab.scope.dropLast())) }
   }
+}
 
-  private var viewControls: some View {
-    let zoom = session.cameras[key(tab.scope)]?.zoom ?? 1
-    return HStack(spacing: 2) {
-      Button { setZoom(zoom / 1.2) } label: { Image(systemName: "minus.magnifyingglass") }.help(tip(String(localized: "縮小"), .zoomOut))
-      Button { setZoom(1) } label: { Text("\(Int((zoom * 100).rounded()))%").monospacedDigit().frame(minWidth: 42) }.help(tip("100% に戻す", .actualSize))
-      Button { setZoom(zoom * 1.2) } label: { Image(systemName: "plus.magnifyingglass") }.help(tip(String(localized: "拡大"), .zoomIn))
-      Divider().frame(height: 16)
-      Button { NotificationCenter.default.post(name: .canvasFitAll, object: tab.id) } label: { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }
-        .help(tip(String(localized: "全体表示"), .fitAll))
-      // Notes, groups and folding are in the canvas's context menu and the
-      // menu bar, where they are named; small icons for them read as nothing.
-      Button { Task { await session.arrange(tab.scope) } } label: { Image(systemName: "rectangle.grid.2x2") }
-        .help("整列（配置だけを変更）")
-      Button { Task { await session.untangle(tab.scope) } } label: { Image(systemName: "arrow.triangle.swap") }
-        .help("配線の交差を減らす（Card の位置は保持）")
-      Divider().frame(height: 16)
-      Toggle(isOn: Binding(get: { prefs.showGrid }, set: { prefs.showGrid = $0 })) { Image(systemName: "grid") }
-        .toggleStyle(.button)
-        .help("グリッド")
-      Divider().frame(height: 16)
-      // The Nix references belong to the same bar as the other view controls.
-      NixReferenceControls(session: session, tab: tab)
-    }
-    .buttonStyle(.borderless)
-    .padding(.horizontal, 10).padding(.vertical, 5)
-    .background(.regularMaterial, in: Capsule())
-    .guideTarget("view", radius: 14)
-  }
-
-  private func setZoom(_ z: Double) {
-    var c = session.cameras[key(tab.scope)] ?? (40, 40, 1)
-    let nz = max(0.2, min(3, z))
-    c.x = c.x * nz / c.zoom
-    c.y = c.y * nz / c.zoom
-    c.zoom = nz
-    session.cameras[key(tab.scope)] = c
-    session.saveViewSoon(scope: tab.scope, selection: tab.selection)
+extension View {
+  func workbenchToolbarCapsule() -> some View {
+    padding(.horizontal, 10).frame(height: 34)
+      .background(.regularMaterial, in: Capsule())
   }
 }
 
-/// Run / stop, the run's state and what it is doing now, elapsed time and
-/// the issue list. Per-Card counts and details are on the Cards, in the
+/// A Card view's contents are laid out in world units. The enclosing canvas
+/// supplies its position and scale, including during a live camera gesture.
+struct CanvasCardPanel: View {
+  let presentation: CardViewPresentation
+  let opening: CardViewOpening
+  let onPress: () -> Void
+  let onDrag: (CGSize) -> Void
+  let onRelease: (CGSize) -> Void
+
+  var body: some View {
+    CardViewPanel(presentation: presentation, id: opening.id) {
+      HStack(spacing: 6) {
+        Image(systemName: "line.3.horizontal")
+          .foregroundStyle(.secondary)
+          .frame(width: 24, height: 24)
+        Text(verbatim: "\(opening.card.joined(separator: "/")) / \(opening.name)")
+          .font(.callout)
+          .lineLimit(1)
+        Spacer(minLength: 0)
+      }
+      .overlay {
+        CardViewDragHandle(onPress: onPress, onDrag: onDrag, onRelease: onRelease)
+          .accessibilityHidden(true)
+      }
+    }
+    .background(.regularMaterial)
+    .clipShape(RoundedRectangle(cornerRadius: 9))
+    .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(.secondary.opacity(0.25)).allowsHitTesting(false) }
+    .shadow(color: .black.opacity(0.22), radius: 12, y: 4)
+  }
+}
+
+/// The title captures the mouse while moving. Window coordinates stay fixed
+/// even though the title itself changes position during the drag.
+private struct CardViewDragHandle: NSViewRepresentable {
+  let onPress: () -> Void
+  let onDrag: (CGSize) -> Void
+  let onRelease: (CGSize) -> Void
+
+  func makeNSView(context: Context) -> Handle { Handle() }
+
+  func updateNSView(_ view: Handle, context: Context) {
+    view.onPress = onPress
+    view.onDrag = onDrag
+    view.onRelease = onRelease
+  }
+
+  final class Handle: NSView {
+    var onPress: (() -> Void)?
+    var onDrag: ((CGSize) -> Void)?
+    var onRelease: ((CGSize) -> Void)?
+    private var origin: CGPoint?
+    private var dragInProgress: ((CGSize) -> Void)?
+    private var finishDrag: ((CGSize) -> Void)?
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+      origin = event.locationInWindow
+      dragInProgress = onDrag
+      finishDrag = onRelease
+      onPress?()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+      if let origin { dragInProgress?(translation(from: origin, to: event.locationInWindow)) }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+      guard let origin else { return }
+      self.origin = nil
+      finishDrag?(translation(from: origin, to: event.locationInWindow))
+      dragInProgress = nil
+      finishDrag = nil
+    }
+
+    private func translation(from start: CGPoint, to end: CGPoint) -> CGSize {
+      CGSize(width: end.x - start.x, height: start.y - end.y)
+    }
+  }
+}
+
+struct ChatToggle: View {
+  let open: Bool
+  let action: () -> Void
+  @Environment(GuideStage.self) private var stage: GuideStage?
+  @State private var guideFrame = CGRect.zero
+
+  var body: some View {
+    Button(action: action) { Image(systemName: "bubble.left.and.text.bubble.right") }
+      .help(open ? "チャットを閉じる（\(AppPreferences.shared.shortcut(.toggleChat).label)）"
+                 : "チャットを開く（\(AppPreferences.shared.shortcut(.toggleChat).label)）")
+      .accessibilityLabel(open ? "チャットを閉じる" : "チャットを開く")
+      .guideTarget("chat")
+      .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+        guideFrame = frame
+        stage?.corner = frame
+      }
+      .onDisappear { if stage?.corner == guideFrame { stage?.corner = .zero } }
+  }
+}
+
+/// Run / stop, the run's state and its elapsed time. Per-Card counts and details are on the Cards, in the
 /// history and on the timeline (a share of finished Cards says nothing about
 /// a run with loops, so there is no progress bar).
 struct CanvasRunControl: View {
-  @Bindable var workspace: Workspace
   let session: ProjectSession
   let tab: WorkflowTab
-  @State private var showIssues = false
   /// Shown as running: from the start, and for a moment after a quick run,
   /// so a short run reads as one step instead of a flicker.
   @State private var shownActive = false
@@ -182,72 +241,43 @@ struct CanvasRunControl: View {
     let state = session.runStatus?.state ?? .idle
     let label = session.stopRequested ? String(localized: "停止を要求中")
       : (shownActive && !session.runActive ? Tsugumi_Data_RunState.running.label : state.label)
-    let problems = session.diagnostics.filter(\.error).count + session.cardStates.values.filter { $0.state == .failed }.count
     HStack(spacing: 8) {
-      // One button of a fixed size: its title and color change, nothing moves.
       Button {
         if session.runActive { Task { await session.cancelRun() } } else { RunActions.runAll(session, scope: tab.scope) }
       } label: {
-        Label(shownActive ? "停止" : "実行", systemImage: shownActive ? "stop.fill" : "play.fill")
-          .frame(minWidth: 52)
-      }
-      .buttonStyle(.borderedProminent)
-      .tint(shownActive ? .red : .accentColor)
-      .guideTarget("run")
-      .disabled(shownActive ? !session.canStopRun : !session.connected)
-      .help(shownActive ? tip(String(localized: "Workflow の実行を停止（チャットの回答停止とは別の操作です）"), .stop)
-                        : tip(String(localized: "文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）"), .run))
-      if let error = session.stopError {
-        Label(error, systemImage: "exclamationmark.circle.fill")
-          .foregroundStyle(.red)
-          .lineLimit(2)
-          .frame(width: 172, alignment: .leading)
-          .help(error)
-          .accessibilityElement(children: .combine)
-      } else {
-        // State and time on one line in a fixed width (what runs now is in the
-        // tooltip); the clock ticks in hundredths while the run is active.
-        HStack(spacing: 4) {
-          Image(systemName: shownActive ? Tsugumi_Data_RunState.running.symbol : state.symbol)
-            .foregroundStyle(shownActive ? Tsugumi_Data_RunState.running.color : state.color)
-          Text(label).lineLimit(1)
-          SwiftUI.TimelineView(.periodic(from: .now, by: session.runActive ? 0.03 : 1)) { _ in
-            Text(elapsed).monospacedDigit().foregroundStyle(.secondary).fixedSize()
-          }
-        }
-        .frame(width: 172, alignment: .leading)
-        .help(shownActive ? (session.stopRequested ? label : (activity ?? state.label)) + String(localized: "（経過時間は Run の受付から、実行環境の時計で計ります）")
-                          : String(localized: "Run の状態と経過時間"))
-        .accessibilityElement(children: .combine)
-      }
-      Button { showIssues.toggle() } label: {
-        HStack(spacing: 2) {
-          Image(systemName: problems > 0 ? "exclamationmark.triangle.fill" : "checkmark.seal")
-          Text("\(problems)").monospacedDigit()
-        }
-        .foregroundStyle(problems > 0 ? .orange : .secondary)
+        Image(systemName: shownActive ? "stop.fill" : "play.fill")
+          .frame(width: 24, height: 24)
+          .background(Circle().strokeBorder(lineWidth: 1))
       }
       .buttonStyle(.borderless)
-      .help(String(localized: "問題 \(problems) 件（一覧から対象の Card やログへ移動できます）"))
-      .popover(isPresented: $showIssues) {
-        IssueList(workspace: workspace, session: session, tab: tab).frame(width: 460, height: 320)
+      .foregroundStyle(shownActive ? Color.red : Color.accentColor)
+      .guideTarget("run")
+      .disabled(shownActive ? !session.canStopRun : !session.connected)
+      .accessibilityLabel(shownActive ? "停止" : "実行")
+      .help(shownActive ? tip(String(localized: "Workflow の実行を停止（チャットの回答停止とは別の操作です）"), .stop)
+                        : tip(String(localized: "文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）"), .run))
+      Divider().frame(height: 16)
+      HStack(spacing: 6) {
+        Group {
+          if shownActive {
+            ProgressView().controlSize(.mini)
+          } else {
+            Image(systemName: state.symbol).foregroundStyle(state.color)
+          }
+        }
+        .frame(width: 15, height: 15)
+        .accessibilityHidden(true)
+        SwiftUI.TimelineView(.periodic(from: .now, by: session.runActive ? 0.03 : 1)) { _ in
+          Text(elapsed).monospacedDigit().foregroundStyle(.secondary).fixedSize()
+        }
       }
-      Divider().frame(height: 14)
-      Menu {
-        NewCardItems(add: { kind in
-          NotificationCenter.default.post(name: .canvasAddBuiltin, object: tab.id, userInfo: ["template": kind.rawValue])
-        }, pickTemplate: {
-          NotificationCenter.default.post(name: .canvasAddBuiltin, object: tab.id)
-        })
-      } label: { Image(systemName: "plus") }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-        .disabled(!session.isEditable)
-        .help("Card を追加")
-        .accessibilityLabel("Card を追加")
+      .help(label + (shownActive && !session.stopRequested ? activity.map { " · " + $0 } ?? "" : ""))
+      .accessibilityElement(children: .combine)
+      .accessibilityLabel(label)
+      .accessibilityValue(elapsed)
     }
     .font(.callout)
-    .padding(.horizontal, 8).padding(.vertical, 5)
-    .background(.regularMaterial, in: Capsule())
+    .workbenchToolbarCapsule()
     .onChange(of: session.runActive, initial: true) { _, active in
       if active {
         shownActive = true
@@ -276,7 +306,7 @@ struct CanvasRunControl: View {
   /// Run time on the core's clock from acceptance: the same measure while
   /// it runs and once it ended (the timeline uses the same origin).
   private var elapsed: String {
-    guard let s = session.runStatus, let start = s.acceptedAt ?? s.startedAt else { return "" }
+    guard let s = session.runStatus, let start = s.acceptedAt ?? s.startedAt else { return formatDuration(0) }
     let end = s.endedAt ?? (session.runActive ? session.coreNow() : start)
     return formatDuration(Double(max(0, end - start)) / 1000)
   }
@@ -341,26 +371,6 @@ struct CanvasDraftControls: View {
 /// A tooltip that names the shortcut of its action.
 @MainActor func tip(_ text: String, _ action: ShortcutAction) -> String {
   "\(text)（\(AppPreferences.shared.shortcut(action).label)）"
-}
-
-/// Moves the window when dragged and zooms it on a double click, like a
-/// title bar (the canvas reaches the top of the window under it).
-struct WindowDragBand: View {
-  var body: some View {
-    Color.clear
-      .contentShape(Rectangle())
-      .gesture(WindowDragGesture())
-      .onTapGesture(count: 2) {
-        guard let w = NSApp.keyWindow else { return }
-        // The system setting for a title bar double click.
-        switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
-        case "Minimize": w.miniaturize(nil)
-        case "None": break
-        default: w.zoom(nil)
-        }
-      }
-      .accessibilityHidden(true)
-  }
 }
 
 /// Give the status the whole row when it no longer fits beside the view controls.

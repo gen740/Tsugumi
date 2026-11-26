@@ -18,8 +18,8 @@ session.confirmedDefinitions.set('source', parse(cardFixture('code')))
 session.confirmedDefinitions.set('collect', parse(cardFixture('collect')))
 session.confirmedDefinitions.set('sink', parse(cardFixture('code')))
 const ordinaryList = { name: 'out', rootType: 'Example.List' }
-session.resolution.set('source', { path: ['source'], inputs: [], outputs: [ordinaryList], diagnostics: [], nixReferences: [] })
-session.resolution.set('collect', { path: ['collect'], inputs: [], outputs: [ordinaryList], diagnostics: [], nixReferences: [] })
+session.resolution.set('source', { path: ['source'], inputs: [], outputs: [ordinaryList], diagnostics: [] })
+session.resolution.set('collect', { path: ['collect'], inputs: [], outputs: [ordinaryList], diagnostics: [] })
 
 assert.deepEqual(session.ports('collect'), { inputs: ['in'], outputs: ['out'] })
 assert.equal(session.kind('collect'), 'collect')

@@ -709,6 +709,22 @@ auto stop_project(const std::string& id) -> void {
   exited.wait(l, [&] { return !it->second.running; });
 }
 
+auto clear_build_roots(const std::string& id) -> G::ReplyT {
+  std::lock_guard lock(mu);
+  if (auto it = projects.find(id); it != projects.end() && it->second.running)
+    return failure("the project is running; retry when it is stopped");
+  const auto folder = fs::path(kRoots) / id;
+  const auto status = fs::symlink_status(folder);
+  if (status.type() == fs::file_type::not_found) return {};
+  if (!fs::is_directory(status)) return failure("invalid build root directory");
+  G::ReplyT reply;
+  for (const auto& entry : fs::directory_iterator(folder)) {
+    if (fs::is_symlink(entry.symlink_status()) && fs::remove(entry.path()))
+      reply.build_roots_removed = true;
+  }
+  return reply;
+}
+
 auto forget_project(const std::string& id) -> G::ReplyT {
   std::lock_guard lock(mu);
   if (auto it = projects.find(id); it != projects.end() && it->second.running)
@@ -1054,6 +1070,10 @@ auto command(const G::CommandUnion& request) -> G::ReplyT {
     if (!valid_id(stop->key)) return failure("invalid project key");
     stop_project(stop->key);
     return {};
+  }
+  if (const auto* clear = request.AsClearBuildRoots()) {
+    if (!valid_id(clear->key)) return failure("invalid project key");
+    return clear_build_roots(clear->key);
   }
   if (const auto* forget = request.AsForget()) {
     if (!valid_id(forget->key)) return failure("invalid project key");

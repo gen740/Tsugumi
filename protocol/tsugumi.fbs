@@ -1261,6 +1261,13 @@ table ArtifactMember {
   hash:string (id: 2, required);
 }
 
+/// Where a sealed artifact was sent in its creating invocation.
+table ArtifactOutput {
+  port:string (id: 0, required);
+  /// Relative to the port value, for example ".files[0]".
+  value_path:string (id: 1, required);
+}
+
 table ArtifactInfo {
   artifact_id:string (id: 0, required);
   run_id:string (id: 1, required);
@@ -1273,6 +1280,9 @@ table ArtifactInfo {
   label:string (id: 7);
   /// Created without keep: removed with its record when its run ends.
   keep:bool (id: 8);
+  outputs:[ArtifactOutput] (id: 9);
+  invocation_count:ulong = null (id: 10);
+  relative_location:string (id: 11);
 }
 
 table ArtifactPage {

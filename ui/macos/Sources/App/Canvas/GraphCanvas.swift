@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import TsugumiRPC
+import TsugumiViewPresentation
 
 /// The canvas of one scope: grid, groups, connections, Cards, sticky notes
 /// with pan/zoom, selection, wiring and drag & drop.
@@ -8,11 +9,19 @@ import TsugumiRPC
 /// bars above and below the inner graph.
 struct GraphCanvas: View {
   @Environment(\.openWindow) private var openWindow
-  @Environment(\.displayScale) private var displayScale
   @Environment(AppPreferences.self) private var prefs
   @Bindable var workspace: Workspace
   let session: ProjectSession
   @Bindable var tab: WorkflowTab
+  let showsCardViews: Bool
+  private struct PendingPosition {
+    let operation: UUID
+    let point: CGPoint
+  }
+
+  @State private var pendingCards: [CardKey: PendingPosition] = [:]
+  @State private var pendingNotes: [String: PendingPosition] = [:]
+  @State private var frontCardView: UUID?
   @State private var drag: (key: CardKey, offset: CGSize)?
   @State private var boundaryDrag: (input: Bool, offset: CGSize)?
   /// A wire being drawn from a port: from an output (to an input), or from
@@ -30,6 +39,7 @@ struct GraphCanvas: View {
   /// Where the pointer last was over the canvas (a menu adds there).
   @State private var pointer: CGPoint = .zero
   @State private var bubbleSize = CGSize(width: 300, height: 120)
+  @State private var bubbleScrolls = false
   @State private var hoverTask: Task<Void, Never>?
   @State private var findText: String?
   @FocusState private var findFocused: Bool
@@ -43,17 +53,7 @@ struct GraphCanvas: View {
   @State private var selectionDrag: CGSize?
   /// Laid out again when this changes (the zoom has stopped, or a pan went far: CanvasPanHost).
   @State private var redrawn = 0
-  /// Counts the passes of the body (CanvasPanHost takes the content of a new pass only,
-  /// and the camera of the latest one, for what its views report in its terms: `live`).
-  private final class Passes {
-    var count = 0
-    var base = CanvasCamera()
-    func next(_ base: CanvasCamera) -> Int {
-      self.base = base
-      count += 1
-      return count
-    }
-  }
+
   /// The wires' paths as last routed. Routing is by far the costliest part of
   /// a pass (seconds, with a couple of hundred wires), and most passes change
   /// nothing it depends on (the Cards' and ports' places). When it is
@@ -138,46 +138,64 @@ struct GraphCanvas: View {
   @State private var routes = Routes()
   /// How far beyond the canvas, on every side, the content is laid out (CanvasPanHost).
   private static let overscan: CGFloat = 300
-  @State private var passes = Passes()
+  /// Child view builders may be evaluated later by the hosting view. Capture
+  /// the camera for their layout so the host applies the live transform once.
+  private var layoutCamera: (x: Double, y: Double, zoom: Double)?
   /// The camera as it is now, read without observing it: the content is laid
   /// out for the camera of when the body last ran, and CanvasPanHost shows it
   /// through the camera of the moment.
-  var camera: (x: Double, y: Double, zoom: Double) { session.cameraUnobserved(scopeKey) ?? (40, 40, 1) }
+  var camera: (x: Double, y: Double, zoom: Double) { layoutCamera ?? currentCamera }
+  private var currentCamera: (x: Double, y: Double, zoom: Double) { session.cameraUnobserved(scopeKey) ?? (40, 40, 1) }
+
+  private final class LayoutPass {
+    private(set) var count = 0
+
+    func next() -> Int {
+      count += 1
+      return count
+    }
+  }
+  @State private var layoutPass = LayoutPass()
+
+  private let bottomControlsHeight: CGFloat
+
+  init(workspace: Workspace, session: ProjectSession, tab: WorkflowTab, showsCardViews: Bool = false,
+       bottomControlsHeight: CGFloat = 0) {
+    self.workspace = workspace
+    self.session = session
+    self.tab = tab
+    self.showsCardViews = showsCardViews
+    self.bottomControlsHeight = bottomControlsHeight
+  }
   private var cam: CanvasCamera { CanvasCamera(x: camera.x, y: camera.y, zoom: camera.zoom) }
 
+  private var settledLayout: GraphCanvas {
+    var layout = self
+    layout.layoutCamera = currentCamera
+    return layout
+  }
+
+  private struct ScopeOpening: Equatable {
+    let scope: CardKey
+    let cards: [CardKey]
+    let ready: Bool
+  }
+
   var body: some View {
-    let routed = routedWires()
-    let _ = redrawn
     GeometryReader { geo in
+      let _ = redrawn
+      let hoverViewport = CGSize(width: geo.size.width, height: max(1, geo.size.height - bottomControlsHeight))
+      let opening = ScopeOpening(scope: scopeKey, cards: cardKeys,
+                                 ready: session.connected && geo.size.width > 0 && geo.size.height > 0)
+      let settled = settledLayout
+      let routed = settled.routedWires()
+      let layer = settled.canvasLayer(routed)
+      let pass = layoutPass.next()
       ZStack(alignment: .topLeading) {
         background
-        CanvasPanHost(session: session, scope: scopeKey, base: cam, pass: passes.next(cam), margin: Self.overscan,
-                      solid: solid(routed), onSettled: { redrawn += 1 }) {
-          // The wires are drawn over the whole of it; the rest is placed in the canvas's own part.
-          let m = Self.overscan
-          let toLayer = cam.transform.concatenating(CGAffineTransform(translationX: m, y: m))
-          ZStack(alignment: .topLeading) {
-            ZStack(alignment: .topLeading) {
-              ForEach(session.groups(in: tab.scope).compactMap { $0["id"]?.string }, id: \.self) { id in
-                groupFrame(id)
-              }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(m)
-            WireLayer(wires: routed.map {
-              let path = $0.path.applying(toLayer)
-              let count = $0.count.map { "×\($0)" } ?? ($0.executionList && session.runActive ? "×?" : nil)
-              return WireDraw(path: path, style: $0.style, dotted: $0.dotted, executionList: $0.executionList,
-                              countLabel: count, countAt: count == nil ? nil : path.midPoint, thread: $0.thread)
-            },
-                      animate: prefs.animateLines && session.runActive, zoom: camera.zoom, presences: session.presences)
-            if tab.showNixReferences { nixLayer(transform: toLayer) }
-            ZStack(alignment: .topLeading) { panned(routed) }
-              .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-              .coordinateSpace(name: "canvas")
-              .padding(m)
-            if debug.showHitAreas { hitAreaLayer(routed, transform: toLayer) }
-          }
+        CanvasPanHost(session: session, scope: scopeKey, base: settled.cam, pass: pass, margin: Self.overscan,
+                      solid: settled.solid(routed), onSettled: { redrawn += 1 }) {
+          layer
         }
         // In the view's own space (where the pointer is), not the canvas's.
         if let p = pending {
@@ -195,11 +213,12 @@ struct GraphCanvas: View {
             .allowsHitTesting(false)
         }
         if let hover, !interacting {
-          HoverBubble(content: hoverContent(hover))
+          HoverBubble(content: hoverContent(hover), viewport: hoverViewport) { bubbleScrolls = $0 }
+            .id(hover)
             .fixedSize()
             .onGeometryChange(for: CGSize.self) { $0.size } action: { bubbleSize = $0 }
-            .position(bubblePosition(in: geo.size))
-            .allowsHitTesting(false)
+            .position(bubbleFrame(in: hoverViewport).center)
+            .allowsHitTesting(bubbleScrolls)
             .transition(.opacity)
         }
         if findText != nil { findBox.padding(.top, 52).frame(maxWidth: .infinity, alignment: .top) }
@@ -220,11 +239,13 @@ struct GraphCanvas: View {
         switch phase {
         case .active(let p):
           pointer = p
+          if hover != nil, bubbleScrolls,
+             bubbleFrame(in: hoverViewport).insetBy(dx: -Self.bubbleGap, dy: -Self.bubbleGap).contains(p) { return }
           trackHover(p, routed: routed)
         case .ended: clearHover()
         }
       }
-      .overlay(ScrollCatcher { dx, dy, zoomDelta, at in
+      .overlay(ScrollCatcher(scrollIn: hover != nil && bubbleScrolls ? bubbleFrame(in: hoverViewport) : nil) { dx, dy, zoomDelta, at in
         clearHover()
         if zoomDelta != 0 { zoom(by: 1 + zoomDelta, around: at) } else {
           var c = camera
@@ -278,32 +299,22 @@ struct GraphCanvas: View {
         if !placed.isEmpty { tab.selection = Set(placed) }
         return !placed.isEmpty || accepted
       }
-      .onAppear {
-        size = geo.size
-        fitIfNew()
+      .task(id: opening) { await frameOpening(opening, in: geo.size) }
+      .onChange(of: geo.size, initial: true) { old, new in
+        size = new
+        frameAfterResize(from: old, to: new)
+        placeNewCardViews(in: new)
       }
-      // A scope shown for the first time (no saved camera) shows its whole flow
-      // as soon as its Cards are there.
-      .onChange(of: cardKeys.count) { fitIfNew() }
-      .onChange(of: tab.revealNixCard) { _, card in
-        if let card { reveal(card, in: size); tab.revealNixCard = nil }
+      .onChange(of: cardViewOpenings.map(\.id), initial: true) {
+        placeNewCardViews(in: geo.size)
       }
-      .onChange(of: geo.size) { size = geo.size }
       .onReceive(NotificationCenter.default.publisher(for: .canvasFitAll)) { n in
         if (n.object as? UUID) == tab.id || n.object == nil { fitAll() }
       }
       .onReceive(NotificationCenter.default.publisher(for: .canvasAddNote)) { n in
         if (n.object as? UUID) == tab.id { addNote() }
       }
-      .onReceive(NotificationCenter.default.publisher(for: .canvasAddBuiltin)) { n in
-        guard (n.object as? UUID) == tab.id else { return }
-        let at = world(CGPoint(x: size.width / 2 - 120, y: size.height / 2 - 60))
-        if let raw = n.userInfo?["template"] as? String, let kind = DefinitionTemplate(rawValue: raw) {
-          addBuiltin(kind, at: at)
-        } else {
-          templatePlacement = TemplatePlacement(scope: tab.scope, point: at)
-        }
-      }
+      .onReceive(NotificationCenter.default.publisher(for: .canvasAddBuiltin), perform: addBuiltinFromToolbar)
       .sheet(item: $templatePlacement) { placement in
         TemplatePicker(session: session, placement: placement)
       }
@@ -325,11 +336,49 @@ struct GraphCanvas: View {
     }
   }
 
+  private func addBuiltinFromToolbar(_ n: Notification) {
+    guard (n.object as? UUID) == tab.id else { return }
+    let at = world(CGPoint(x: size.width / 2 - 120, y: size.height / 2 - 60))
+    if let raw = n.userInfo?["template"] as? String, let kind = DefinitionTemplate(rawValue: raw) {
+      addBuiltin(kind, at: at)
+    } else {
+      templatePlacement = TemplatePlacement(scope: tab.scope, point: at)
+    }
+  }
+
+  private func canvasLayer(_ routed: [RoutedWire]) -> some View {
+    // The wires are drawn over the whole of it; the rest is placed in the canvas's own part.
+    let m = Self.overscan
+    let toLayer = cam.transform.concatenating(CGAffineTransform(translationX: m, y: m))
+    return ZStack(alignment: .topLeading) {
+      ZStack(alignment: .topLeading) {
+        ForEach(session.groups(in: tab.scope).compactMap { $0["id"]?.string }, id: \.self) { id in
+          groupFrame(id)
+        }
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      .padding(m)
+      WireLayer(wires: routed.map {
+        let path = $0.path.applying(toLayer)
+        let count = $0.count.map { "×\($0)" } ?? ($0.executionList && session.runActive ? "×?" : nil)
+        return WireDraw(path: path, style: $0.style, dotted: $0.dotted, executionList: $0.executionList,
+                        countLabel: count, countAt: count == nil ? nil : path.midPoint, thread: $0.thread)
+      },
+                animate: prefs.animateLines && session.runActive, zoom: camera.zoom, presences: session.presences)
+      ZStack(alignment: .topLeading) { panned(routed) }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .coordinateSpace(name: "canvas")
+        .padding(m)
+      if debug.showHitAreas { hitAreaLayer(routed, transform: toLayer) }
+    }
+  }
+
   /// What moves with the canvas, above the wires: laid out for the camera of this pass (CanvasPanHost).
   @ViewBuilder private func panned(_ routed: [RoutedWire]) -> some View {
     if let b = boundary { boundaryBars(b) }
     ForEach(cardKeys, id: \.self) { k in cardView(k) }
     ForEach(noteIds, id: \.self) { id in noteView(id) }
+    canvasCardViews
     // The Agent at work: threads being drawn and the tsugumi.
     // (one bird per helper while the Agent has work delegated)
     ForEach(Array(session.presences.enumerated()), id: \.offset) { _, p in
@@ -348,9 +397,71 @@ struct GraphCanvas: View {
     }
   }
 
+  private var cardViewOpenings: [CardViewOpening] {
+    showsCardViews ? session.cardViews.panelOpenings : []
+  }
+
+  private var canvasCardViewRects: [(CardViewOpening, CGRect)] {
+    cardViewOpenings.compactMap { opening in
+      guard let placement = workspace.cardViewPlacements[opening.id], placement.scope == scopeKey else { return nil }
+      return (opening, placement.rect)
+    }
+  }
+
+  /// Make room for new views in the visible canvas. Their bounds are kept in
+  /// the workflow's world coordinates from then on, even when the window resizes.
+  private func placeNewCardViews(in viewport: CGSize) {
+    guard showsCardViews, viewport.width > 0, viewport.height > 0 else { return }
+    let openings = cardViewOpenings
+    let ids = Set(openings.map(\.id))
+    var placements = workspace.cardViewPlacements.filter { ids.contains($0.key) }
+    let columns = viewport.width >= 640 ? 2 : 1
+    let w = min(640, (viewport.width - 36) / CGFloat(columns))
+    let h = min(440, max(160, viewport.height - 138))
+    let zoom = currentCamera.zoom
+    for opening in openings where placements[opening.id] == nil {
+      let visible = placements.values.filter { $0.scope == scopeKey }
+      let slots = (0..<columns).map { column in
+        CGRect(origin: world(CGPoint(x: (viewport.width - (w + 12) * CGFloat(columns) + 12) / 2
+                                      + CGFloat(column) * (w + 12),
+                                    y: max(68, (viewport.height - h) / 2))),
+               size: CGSize(width: w / zoom, height: h / zoom))
+      }
+      let stagger = CGFloat(visible.count) * 22 / zoom
+      let rect = slots.first { slot in !visible.contains { $0.rect.intersects(slot) } }
+        ?? slots[visible.count % columns].offsetBy(dx: stagger, dy: stagger)
+      placements[opening.id] = CanvasCardViewPlacement(scope: scopeKey, rect: rect)
+    }
+    workspace.cardViewPlacements = placements
+  }
+
+  @ViewBuilder private var canvasCardViews: some View {
+    ForEach(canvasCardViewRects, id: \.0.id) { opening, rect in
+      CanvasCardPanel(presentation: session.cardViews, opening: opening, onPress: {
+        frontCardView = opening.id
+        clearHover()
+      }, onDrag: { by in
+        moveCardView(opening.id, from: rect.origin, by: by)
+      }, onRelease: { by in
+        moveCardView(opening.id, from: rect.origin, by: by)
+      })
+      .frame(width: rect.width, height: rect.height)
+      .scaleEffect(camera.zoom)
+      .position(screen(rect.center))
+      .zIndex(frontCardView == opening.id ? 2 : 1)
+    }
+  }
+
+  private func moveCardView(_ id: UUID, from origin: CGPoint, by delta: CGSize) {
+    guard var placement = workspace.cardViewPlacements[id] else { return }
+    let zoom = currentCamera.zoom
+    placement.rect.origin = CGPoint(x: origin.x + delta.width / zoom, y: origin.y + delta.height / zoom)
+    workspace.cardViewPlacements[id] = placement
+  }
+
   /// A point the content reports (in the terms of the pass that laid it out) as the canvas shows it now.
   private func live(_ p: CGPoint) -> CGPoint {
-    let base = passes.base, now = camera
+    let base = camera, now = currentCamera
     let scale = now.zoom / base.zoom
     return CGPoint(x: p.x * scale + now.x - base.x * scale, y: p.y * scale + now.y - base.y * scale)
   }
@@ -392,7 +503,7 @@ struct GraphCanvas: View {
     let lines = [
       String(format: "zoom %.3f · camera %.0f, %.0f · view %.0f×%.0f", c.zoom, c.x, c.y, size.width, size.height),
       "cards \(cardKeys.count) · wires \(wires) (+\(routed.count - wires) boundary) · notes \(noteIds.count)",
-      String(format: "routing %.1f ms%@ · pass %d", routes.lastSeconds * 1000, routes.busy ? " (routing…)" : "", passes.count),
+      String(format: "routing %.1f ms%@ · pass %d", routes.lastSeconds * 1000, routes.busy ? " (routing…)" : "", layoutPass.count),
       "scope /\(tab.scope.joined(separator: "/")) · selection \(tab.selection.count) · wire \(tab.selectedConnection.map(String.init) ?? "-")",
     ]
     return VStack(alignment: .leading, spacing: 1) {
@@ -407,6 +518,7 @@ struct GraphCanvas: View {
   private func solid(_ routed: [RoutedWire]) -> [CGRect] {
     var rects = cardKeys.map { cardRect($0).insetBy(dx: -14, dy: -14) }
     rects += session.notes(in: tab.scope).map { noteRect($0).insetBy(dx: -12, dy: -12) }
+    rects += canvasCardViewRects.map(\.1)
     for g in session.groups(in: tab.scope) {
       let members = (g["cards"]?.array ?? []).compactMap { $0.string }.map { key(tab.scope + [$0]) }.filter { session.instance($0) != nil }
       var rect = members.reduce(CGRect.null) { $0.union(cardRect($1)) }
@@ -434,7 +546,7 @@ struct GraphCanvas: View {
   }
 
   func origin(_ k: CardKey) -> CGPoint {
-    var p = session.placedPosition(k)
+    var p = pendingCards[k]?.point ?? session.placedPosition(k)
     if let d = drag, d.key == k || (tab.selection.contains(k) && tab.selection.contains(d.key)) {
       p.x += d.offset.width / camera.zoom
       p.y += d.offset.height / camera.zoom
@@ -447,7 +559,10 @@ struct GraphCanvas: View {
   }
 
   func screen(_ w: CGPoint) -> CGPoint { cam.screen(w) }
-  func world(_ s: CGPoint) -> CGPoint { cam.world(s) }
+  func world(_ s: CGPoint) -> CGPoint {
+    let c = currentCamera
+    return CanvasCamera(x: c.x, y: c.y, zoom: c.zoom).world(s)
+  }
 
   private func cardRect(_ k: CardKey) -> CGRect { CGRect(origin: origin(k), size: session.geometry(k).size) }
 
@@ -464,44 +579,20 @@ struct GraphCanvas: View {
 
 
 
-  private func noteRect(_ n: JSONValue) -> CGRect { session.noteRect(n) }
+  private func noteRect(_ n: JSONValue) -> CGRect {
+    var rect = session.noteRect(n)
+    guard let id = n["id"]?.string else { return rect }
+    rect.origin = pendingNotes[id]?.point ?? rect.origin
+    let dragOffset = noteDrag?.id == id ? noteDrag?.by : tab.selectedNotes.contains(id) ? selectionMove : nil
+    if let dragOffset {
+      rect.origin.x += dragOffset.width / camera.zoom
+      rect.origin.y += dragOffset.height / camera.zoom
+    }
+    return rect
+  }
 
   /// The selection's move in progress (screen translation), from whichever of its items is dragged.
   private var selectionMove: CGSize? { selectionDrag ?? drag?.offset }
-
-  private var nixLinks: [NixLink] {
-    guard tab.showNixReferences else { return [] }
-    return visibleNixLinks(nixReferences(session), scope: tab.scope, visible: Set(cardKeys))
-  }
-
-  private func nixLayer(transform: CGAffineTransform) -> some View {
-    let links = nixLinks
-    let active = activeNixLinks(links, hovered: tab.hoveredNixCard, selected: tab.selectedNixReference)
-    let highlighted = Set(active.flatMap { [$0.source, $0.target] })
-    return Canvas { context, _ in
-      for link in links {
-        let a = cardRect(link.source), b = cardRect(link.target)
-        let selected = active.contains { $0.reference.id == link.reference.id }
-        let color = Color.purple
-          .opacity(tab.hoveredNixCard != nil && !selected ? 0.2 : 0.9)
-        context.stroke(nixCurve(a, b).applying(transform), with: .color(color),
-                       style: StrokeStyle(lineWidth: selected ? 3 : 1.5, dash: [7, 4]))
-        let right = b.midX >= a.midX
-        let tip = CGPoint(x: right ? b.minX : b.maxX, y: b.midY).applying(transform)
-        let dx: CGFloat = right ? -9 : 9
-        let arrow = Path { p in
-          p.move(to: tip); p.addLine(to: CGPoint(x: tip.x + dx, y: tip.y - 4))
-          p.addLine(to: CGPoint(x: tip.x + dx, y: tip.y + 4)); p.closeSubpath()
-        }
-        context.fill(arrow, with: .color(color))
-      }
-      for card in highlighted {
-        let rect = cardRect(card).applying(transform).insetBy(dx: -3, dy: -3)
-        context.stroke(Path(roundedRect: rect, cornerRadius: 10), with: .color(.purple), lineWidth: 3)
-      }
-    }
-    .allowsHitTesting(false)
-  }
 
   // MARK: - Wires
 
@@ -648,14 +739,23 @@ struct GraphCanvas: View {
     let z = CGFloat(camera.zoom)
     return ZStack(alignment: .topLeading) {
       BoundaryBarView(title: String(localized: "この Card の入力"), ports: b.inputs, input: true, zoom: z, rect: b.top, cardTitle: session.displayName)
-        .placeScaled(at: screen(b.top.origin), size: b.top.size, zoom: camera.zoom, pixel: displayScale)
+        .contentShape(Rectangle())
+        .placeScaled(at: screen(b.top.origin), size: b.top.size, zoom: camera.zoom)
         .gesture(boundaryMove(input: true, from: undragged(b.top.origin, input: true)))
-        .help("ドラッグで移動できます")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { returnToParent() }
+        .help("親 Workflow に戻ります。ドラッグで移動できます。")
       BoundaryBarView(title: String(localized: "この Card の出力"), ports: b.outputs, input: false, zoom: z, rect: b.bottom, cardTitle: session.displayName)
-        .placeScaled(at: screen(b.bottom.origin), size: b.bottom.size, zoom: camera.zoom, pixel: displayScale)
+        .placeScaled(at: screen(b.bottom.origin), size: b.bottom.size, zoom: camera.zoom)
         .gesture(boundaryMove(input: false, from: undragged(b.bottom.origin, input: false)))
         .help("ドラッグで移動できます")
     }
+  }
+
+  private func returnToParent() {
+    let child = key(tab.scope)
+    tab.enter(Array(tab.scope.dropLast()))
+    tab.selection = [child]
   }
 
   /// A bar's position without the drag in progress.
@@ -664,15 +764,23 @@ struct GraphCanvas: View {
     return CGPoint(x: p.x - d.offset.width / camera.zoom, y: p.y - d.offset.height / camera.zoom)
   }
 
-  /// Moves a boundary bar; the wires to its ports follow while dragging.
+  /// The input bar returns to the parent on a click. Past the drag threshold,
+  /// move the bar and its wires instead.
   private func boundaryMove(input: Bool, from origin: CGPoint) -> some Gesture {
-    DragGesture(minimumDistance: 3, coordinateSpace: .named("canvas"))
+    let threshold: CGFloat = 3
+    return DragGesture(minimumDistance: input ? 0 : threshold, coordinateSpace: .named("canvas"))
       .onChanged { v in
+        guard boundaryDrag != nil || hypot(v.translation.width, v.translation.height) >= threshold else { return }
         clearHover()
         boundaryDrag = (input, v.translation)
       }
       .onEnded { v in
+        let moved = boundaryDrag?.input == input
         boundaryDrag = nil
+        guard moved else {
+          if input { returnToParent() }
+          return
+        }
         var x = origin.x + v.translation.width / camera.zoom, y = origin.y + v.translation.height / camera.zoom
         if prefs.showGrid {
           x = snapToGrid(x, prefs.gridSize)
@@ -715,7 +823,7 @@ struct GraphCanvas: View {
     let card: CardKey
     let data: CardNodeData
     let flow: FlowDirection
-    let zoom: Double
+    let camera: CanvasCamera
     let selected: Bool
     let editable: Bool
     let canRun: Bool
@@ -730,7 +838,7 @@ struct GraphCanvas: View {
     let canRun = data.kind == .trigger && session.connected && !session.runActive
     // A Draft being written is drawn every time: what is typed is read from the session as it changes.
     let key = data.draftEditing ? nil : CardSlot(
-      session: ObjectIdentifier(session), tab: ObjectIdentifier(tab), card: k, data: data, flow: flow, zoom: zoom,
+      session: ObjectIdentifier(session), tab: ObjectIdentifier(tab), card: k, data: data, flow: flow, camera: cam,
       selected: selected, editable: session.isEditable, canRun: canRun, presence: ObjectIdentifier(presence))
     return Settled(key: key) {
       CardNodeView(data: data, flow: flow, zoom: zoom, selected: selected,
@@ -758,11 +866,15 @@ struct GraphCanvas: View {
             .offset(x: -4, y: -8)
         }
       }
-      .placeScaled(at: screen(origin(k)), size: g.size, zoom: camera.zoom, pixel: displayScale)
+      .contentShape(CardNodeView.hitShape(data, flow: flow, zoom: zoom, newPorts: session.isEditable))
+      .placeScaled(at: screen(origin(k)), size: g.size, zoom: zoom)
       .zIndex(data.draftEditing ? 1 : 0)
       .gesture(cardDrag(k))
       .onTapGesture(count: 2) { open(k) }
       .onTapGesture { select(k) }
+      .accessibilityAction(named: Text("Card の設定を開く")) {
+        openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: k))
+      }
       .contextMenu { CardMenu(workspace: workspace, session: session, tab: tab, cardKey: k, onGroup: groupSelection) }
   }
 
@@ -820,15 +932,13 @@ struct GraphCanvas: View {
   private func noteView(_ id: String) -> some View {
     let n = session.note(id) ?? .object([])
     let r = noteRect(n)
-    // Follows the pointer while dragged (screen units, so any zoom); the layout changes once, on release.
-    let by = noteDrag?.id == id ? noteDrag!.by : tab.selectedNotes.contains(id) ? selectionMove ?? .zero : .zero
     return StickyNoteView(note: n, selected: tab.selectedNotes.contains(id), onResize: { d in
       session.updateNote(id) { v in
         v["width"] = .real(max(120, r.width + d.width / camera.zoom).rounded())
         v["height"] = .real(max(60, r.height + d.height / camera.zoom).rounded())
       }
     })
-    .place(at: CGPoint(x: screen(r.origin).x + by.width, y: screen(r.origin).y + by.height), size: r.size, zoom: camera.zoom)
+    .place(at: screen(r.origin), size: r.size, zoom: camera.zoom)
     // In the canvas space: the note moves under the pointer, so its own space would shrink the translation.
     .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .named("canvas")).onChanged { v in
       clearHover()
@@ -839,12 +949,10 @@ struct GraphCanvas: View {
       if noteDrag == nil { tab.selection = [] }
       noteDrag = (id, v.translation)
     }.onEnded { v in
-      if selectionDrag != nil { return moveSelection(by: v.translation) }
-      noteDrag = nil
-      let to = Self.droppedNoteOrigin(from: r.origin, by: v.translation, zoom: camera.zoom)
-      session.updateNote(id) { n in
-        n["x"] = .real(to.x)
-        n["y"] = .real(to.y)
+      if selectionDrag != nil {
+        moveSelection(by: v.translation)
+      } else {
+        commitMove(cards: [], notes: [id], translation: v.translation)
       }
     })
     .onTapGesture(count: 2) { editingNote = id }
@@ -991,7 +1099,7 @@ struct GraphCanvas: View {
 
   // MARK: - Hover details
 
-  enum HoverTarget: Equatable {
+  enum HoverTarget: Hashable {
     case card(CardKey)
     case wire(Int)
   }
@@ -1001,7 +1109,6 @@ struct GraphCanvas: View {
     guard !interacting else { clearHover(); return }
     let w = world(p)
     let over = cardAt(w)
-    if tab.showNixReferences { tab.hoveredNixCard = over }
     var target: HoverTarget?
     if let k = over {
       // A Draft being written has its details in front of it.
@@ -1011,7 +1118,10 @@ struct GraphCanvas: View {
     }
     if target == hover { return }
     hoverTask?.cancel()
-    if hover != nil { hover = nil }
+    if hover != nil {
+      hover = nil
+      bubbleScrolls = false
+    }
     guard let target else { return }
     // A short wait, so moving across the canvas does not flash details.
     hoverTask = Task { @MainActor in
@@ -1022,31 +1132,33 @@ struct GraphCanvas: View {
   }
 
   private func clearHover() {
-    tab.hoveredNixCard = nil
     hoverTask?.cancel()
     hoverTask = nil
-    if hover != nil { hover = nil }
+    hover = nil
+    bubbleScrolls = false
   }
 
   private func showDetailsForSelection() {
     guard tab.selection.count == 1, let k = tab.selection.first else { return }
     let r = cardRect(k)
     hoverAt = screen(CGPoint(x: r.maxX, y: r.minY))
+    if hover != .card(k) { bubbleScrolls = false }
     hover = .card(k)
   }
 
-  /// Right below the pointer (its top-left corner just past it), flipped to
-  /// the other side where the canvas ends, and kept inside the canvas.
-  private func bubblePosition(in size: CGSize) -> CGPoint {
+  private static let bubbleGap: CGFloat = 14
+
+  /// Beside the pointer, flipped to the other side where the canvas ends.
+  private func bubbleFrame(in size: CGSize) -> CGRect {
     let (w, h) = (bubbleSize.width, bubbleSize.height)
-    let gap: CGFloat = 14
+    let gap = Self.bubbleGap
     var left = hoverAt.x + gap
     if left + w > size.width - 6 { left = hoverAt.x - gap - w }
     var top = hoverAt.y + gap
     if top + h > size.height - 6 { top = hoverAt.y - gap - h }
     left = min(max(6, left), max(6, size.width - w - 6))
     top = min(max(6, top), max(6, size.height - h - 6))
-    return CGPoint(x: left + w / 2, y: top + h / 2)
+    return CGRect(x: left, y: top, width: w, height: h)
   }
 
   private func hoverContent(_ t: HoverTarget) -> HoverBubble.Content {
@@ -1130,12 +1242,46 @@ struct GraphCanvas: View {
   }
 
   /// The end of a drag of the selection (screen translation), from any of its items.
-  private func moveSelection(by t: CGSize) {
+  private func moveSelection(by translation: CGSize) {
+    commitMove(cards: tab.selection, notes: tab.selectedNotes, translation: translation)
+  }
+
+  private func commitMove(cards: Set<CardKey>, notes: Set<String>, translation: CGSize) {
+    let zoom = currentCamera.zoom
+    let moved = CGSize(width: translation.width / zoom, height: translation.height / zoom)
+    let snap = prefs.showGrid ? prefs.gridSize : nil
+    let displacement = cards.isEmpty ? moved : CGSize(width: snapped(moved.width, to: snap),
+                                                       height: snapped(moved.height, to: snap))
+    let operation = UUID()
+    // Keep the drop visible while the host saves and its ordered delta is
+    // applied. The drag offset and the pending positions change in this pass.
+    for card in cards {
+      let start = pendingCards[card]?.point ?? session.placedPosition(card)
+      let point = CGPoint(x: snapped(start.x, to: snap) + displacement.width,
+                          y: snapped(start.y, to: snap) + displacement.height)
+      pendingCards[card] = PendingPosition(operation: operation, point: point)
+    }
+    for note in notes {
+      guard let value = session.note(note) else { continue }
+      let start = pendingNotes[note]?.point ?? session.noteRect(value).origin
+      let point = Self.droppedNoteOrigin(from: start, by: displacement, zoom: 1)
+      pendingNotes[note] = PendingPosition(operation: operation, point: point)
+    }
     drag = nil
     selectionDrag = nil
-    session.moveSelection(cards: tab.selection, notes: tab.selectedNotes,
-                          by: CGSize(width: t.width / camera.zoom, height: t.height / camera.zoom),
-                          snap: prefs.showGrid ? prefs.gridSize : nil)
+    noteDrag = nil
+    let save = session.moveSelection(cards: cards, notes: notes, by: moved, snap: snap)
+    Task {
+      await save.value
+      for card in cards where pendingCards[card]?.operation == operation { pendingCards[card] = nil }
+      for note in notes where pendingNotes[note]?.operation == operation { pendingNotes[note] = nil }
+    }
+  }
+
+  private func snapped(_ value: Double, to grid: Double?) -> Double {
+    guard let grid, grid > 0 else { return value }
+    // Use the host's rounding rule, including half steps at negative positions.
+    return snapToGrid(value, grid)
   }
 
   /// A double click on the canvas: on a Card (its view having let the click
@@ -1150,15 +1296,6 @@ struct GraphCanvas: View {
     let w = world(loc)
     // On a Card the click is the Card's, whatever runs under it.
     if let k = cardAt(w) { return select(k) }
-    let tolerance = wireTolerance
-    if tab.showNixReferences, let ref = nixLinks.first(where: {
-      nixCurve(cardRect($0.source), cardRect($0.target)).strokedPath(StrokeStyle(lineWidth: tolerance * 2)).contains(w)
-    }) {
-      tab.selectedNixReference = ref.reference.id
-      tab.showNixList = true
-      return
-    }
-    tab.selectedNixReference = nil
     if let i = wireAt(w, routed: routedWires()) {
       tab.selectedConnection = i
       tab.selection = []
@@ -1261,7 +1398,7 @@ struct GraphCanvas: View {
   private func deleteSelection() {
     // Notes are layout: they can go during a run, as from their own menus.
     guard session.isEditable || (tab.selection.isEmpty && tab.selectedConnection == nil) else {
-      session.notice = String(localized: "実行中は Card を削除できません。")
+      session.notice = .info(String(localized: "実行中は Card を削除できません。"))
       return
     }
     if let i = tab.selectedConnection {
@@ -1325,26 +1462,48 @@ struct GraphCanvas: View {
     saveView()
   }
 
-  private func fitIfNew() {
-    guard session.cameras[scopeKey] == nil, !cardKeys.isEmpty, size.width > 0 else { return }
-    DispatchQueue.main.async { fitAll() }
+  private func frameOpening(_ opening: ScopeOpening, in viewport: CGSize) async {
+    guard opening.ready, !opening.cards.isEmpty, !tab.framedScopes.contains(opening.scope) else { return }
+    // A newly opened snapshot can still be computing default Card positions.
+    for card in opening.cards {
+      _ = await session.waitForPlacement(card)
+      if Task.isCancelled { return }
+    }
+    guard opening.scope == scopeKey, tab.framedScopes.insert(opening.scope).inserted else { return }
+    let measured = size == .zero ? viewport : size
+    let saved = session.cameraUnobserved(opening.scope)
+    let camera = saved.map { CanvasCamera(x: $0.x, y: $0.y, zoom: $0.zoom) }
+    if camera?.showsCard(opening.cards.map(cardRect), in: measured) != true {
+      fitAll(in: measured)
+    }
+  }
+
+  /// A resize can hide Cards that were visible before the chat or sidebar moved.
+  private func frameAfterResize(from old: CGSize, to new: CGSize) {
+    guard old != new, new.width > 0, new.height > 0, tab.framedScopes.contains(scopeKey) else { return }
+    let cards = cardKeys.map(cardRect)
+    let c = currentCamera
+    let camera = CanvasCamera(x: c.x, y: c.y, zoom: c.zoom)
+    if camera.showsCard(cards, in: old), !camera.showsCard(cards, in: new) { fitAll(in: new) }
   }
 
   /// Frames everything shown in the scope: Cards, notes,
   /// groups, the Card in Card bars and the wires (feedback lanes run outside
   /// the Cards), in the part of the canvas its floating controls leave free.
-  func fitAll() {
+  func fitAll(in viewport: CGSize? = nil) {
     var rect = cardKeys.reduce(CGRect.null) { $0.union(cardRect($1)) }
     for n in session.notes(in: tab.scope) { rect = rect.union(noteRect(n)) }
+    for (_, view) in canvasCardViewRects { rect = rect.union(view) }
     for g in session.groups(in: tab.scope) {
       let members = (g["cards"]?.array ?? []).compactMap { $0.string }.map { key(tab.scope + [$0]) }.filter { session.instance($0) != nil }
       for m in members { rect = rect.union(cardRect(m).insetBy(dx: -18, dy: -40)) }
     }
     if let b = boundary { rect = rect.union(b.top).union(b.bottom) }
     for w in routedWires() { rect = rect.union(w.path.boundingRect) }
-    guard !rect.isNull, size.width > 0 else { return }
+    let viewport = viewport ?? size
+    guard !rect.isNull, viewport.width > 0, viewport.height > 0 else { return }
     var c = CanvasCamera()
-    c.fit(rect, in: size, insets: EdgeInsets(top: 52, leading: 8, bottom: 48, trailing: 8), maxZoom: 1.2, margin: 24)
+    c.fit(rect, in: viewport, insets: EdgeInsets(top: 8, leading: 8, bottom: 48, trailing: 8), maxZoom: 1.2, margin: 24)
     session.cameras[scopeKey] = (c.x, c.y, c.zoom)
     saveView()
   }
@@ -1437,12 +1596,41 @@ struct HoverBubble: View {
   }
 
   let content: Content
+  let viewport: CGSize
+  let onScrollabilityChange: (Bool) -> Void
+  @State private var detailHeight: CGFloat = 0
 
   private var wraps: Bool {
     (content.lines + content.problems + content.warnings + [content.status ?? ""]).contains { $0.count > 28 }
   }
 
   var body: some View {
+    let width = max(1, min(340, viewport.width - 32))
+    let height = max(1, viewport.height - 32)
+    let hasDiagnostics = !content.problems.isEmpty || !content.warnings.isEmpty
+    let scrolls = hasDiagnostics && detailHeight > height
+    Group {
+      if hasDiagnostics {
+        ScrollView {
+          details.frame(width: width, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { detailHeight = $0 }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .scrollIndicators(scrolls ? .automatic : .hidden)
+        .frame(width: width, height: min(height, max(1, detailHeight)))
+      } else {
+        details.frame(width: wraps ? width : nil, alignment: .leading)
+      }
+    }
+    .onChange(of: scrolls, initial: true) { _, scrolls in onScrollabilityChange(scrolls) }
+    .padding(10)
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
+    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(.secondary.opacity(0.25)))
+    .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+  }
+
+  private var details: some View {
     VStack(alignment: .leading, spacing: 5) {
       HStack(spacing: 6) {
         Image(systemName: content.symbol).foregroundStyle(.secondary)
@@ -1454,21 +1642,14 @@ struct HoverBubble: View {
       }
       if let s = content.status { Text(s).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
       ForEach(Array(content.problems.enumerated()), id: \.offset) { _, p in
-        Label(p, systemImage: "xmark.octagon").font(.caption).foregroundStyle(.red).lineLimit(4)
+        Label(p, systemImage: "xmark.octagon").font(.caption).foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
       }
       ForEach(Array(content.warnings.enumerated()), id: \.offset) { _, p in
-        Label(p, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange).lineLimit(3)
+        Label(p, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
           .fixedSize(horizontal: false, vertical: true)
       }
     }
-    // A fixed width for text that wraps: the bubble takes its ideal size, and
-    // a text's ideal is one line, however long.
-    .frame(width: wraps ? 340 : nil, alignment: .leading)
-    .padding(10)
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
-    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(.secondary.opacity(0.25)))
-    .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
   }
 }
 
@@ -1479,13 +1660,18 @@ struct HoverBubble: View {
 /// Clicks, and everything while a text field or editor has focus, go on
 /// to SwiftUI and AppKit as usual.
 struct ScrollCatcher: NSViewRepresentable {
+  let scrollIn: CGRect?
   let onScroll: (Double, Double, Double, CGPoint?) -> Void
 
-  func makeNSView(context: Context) -> NSView { CatcherView(onScroll: onScroll) }
-  func updateNSView(_ nsView: NSView, context: Context) { (nsView as? CatcherView)?.onScroll = onScroll }
+  func makeNSView(context: Context) -> CatcherView { CatcherView(onScroll: onScroll) }
+  func updateNSView(_ nsView: CatcherView, context: Context) {
+    nsView.scrollIn = scrollIn
+    nsView.onScroll = onScroll
+  }
 
   final class CatcherView: NSView {
     var onScroll: (Double, Double, Double, CGPoint?) -> Void
+    var scrollIn: CGRect?
     private var monitor: Any?
     private var spaceHeld = false
     private var panning = false
@@ -1513,7 +1699,9 @@ struct ScrollCatcher: NSViewRepresentable {
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? {
       switch NSApp.currentEvent?.type {
-      case .scrollWheel?, .otherMouseDown?, .otherMouseDragged?, .otherMouseUp?: return self
+      case .scrollWheel?:
+        return scrollIn?.contains(convert(point, from: superview)) == true ? nil : self
+      case .otherMouseDown?, .otherMouseDragged?, .otherMouseUp?: return self
       case .leftMouseDown?, .leftMouseDragged?, .leftMouseUp?: return spaceHeld || panning ? self : nil
       default: return nil
       }

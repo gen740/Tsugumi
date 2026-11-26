@@ -515,8 +515,7 @@ struct CardSettingsEditor: View {
       Spacer()
       if m.applying { ProgressView().controlSize(.small) }
       Button("再読込") { if m.unapplied { confirmReload = true } else { m.reload() } }
-      Button("適用") { Task { _ = await m.apply() } }
-        .disabled(!m.unapplied || m.applying || !session.isEditable)
+      applyButton(m)
         .keyboardShortcut("s", modifiers: .command)
         .guideTarget("apply")
       Button("閉じる") {
@@ -531,6 +530,15 @@ struct CardSettingsEditor: View {
       .help("未適用の変更は適用してから閉じます")
     }
     .padding(.horizontal, 10).padding(.vertical, 7)
+  }
+
+  @ViewBuilder private func applyButton(_ model: CardEditorModel) -> some View {
+    let apply = Button("適用") { Task { _ = await model.apply() } }
+    if model.unapplied {
+      apply.buttonStyle(.borderedProminent).disabled(model.applying || !session.isEditable)
+    } else {
+      apply.buttonStyle(.bordered).disabled(true)
+    }
   }
 }
 
@@ -652,8 +660,8 @@ private struct GeneralCategory: View {
           numberField("maxRuns", label: "最大発火回数")
             .help("実行リスト内の呼び出しはまとめて 1 回の発火として数えます。")
           if executable {
-            numberField("timeoutSeconds", label: "実行の期限（秒）").help("0 = 上限なし")
-            numberField("buildTimeoutSeconds", label: "ビルドの期限（秒）").help("0 = 上限なし")
+            limitField("timeoutSeconds", label: "実行の期限（秒）").help("0 = 上限なし")
+            limitField("buildTimeoutSeconds", label: "ビルドの期限（秒）").help("0 = 上限なし")
             executionSettings
             Toggle("worker の状態を残す", isOn: Binding(
               get: { model.definition?["reuseWorker"]?.bool == true },
@@ -752,16 +760,23 @@ private struct GeneralCategory: View {
   }
 
   private func executionResource(_ name: String, label: LocalizedStringKey) -> some View {
-    TextField(label, text: Binding(
-      get: {
-        let value = model.definition?["sandbox"]?["limits"]?[name]
-        return value?.numberText ?? value?.string ?? ""
-      },
+    CardLimitField(label: label, text: Binding(
+      get: { numberText(model.definition?["sandbox"]?["limits"]?[name]) },
       set: { value in
         var limits = JSONValue.object(model.definition?["sandbox"]?["limits"]?.object ?? [])
         limits[name] = cardNumber(value, fractional: name == "cpu")
         setNested("sandbox", "limits", limits)
       }))
+  }
+
+  private func limitField(_ name: String, label: LocalizedStringKey) -> some View {
+    CardLimitField(label: label, text: Binding(
+      get: { numberText(model.definition?[name]) },
+      set: { model.definition?[name] = cardNumber($0) }))
+  }
+
+  private func numberText(_ value: JSONValue?) -> String {
+    value?.numberText ?? value?.string ?? ""
   }
 
   private func metaString(_ name: String) -> Binding<String> {
@@ -788,6 +803,33 @@ private struct GeneralCategory: View {
     }
     if text.wholeMatch(of: #/[0-9]+/#) != nil, let number = UInt64(text) { return .number(String(number)) }
     return .string(value)
+  }
+}
+
+private struct CardLimitField: View {
+  let label: LocalizedStringKey
+  @Binding var text: String
+  @FocusState private var focused: Bool
+  @State private var editing: String?
+
+  var body: some View {
+    TextField(label, text: Binding(
+      get: {
+        if focused { return editing ?? number }
+        return Double(text) == 0 ? String(localized: "制限なし") : number
+      },
+      set: { value in
+        editing = value
+        text = value
+      }))
+      .focused($focused)
+      .onChange(of: focused) { if !focused { editing = nil } }
+  }
+
+  private var number: String {
+    guard text.wholeMatch(of: #/[0-9]+\.[0-9]+/#) != nil else { return text }
+    return text.replacingOccurrences(of: #"0+$"#, with: "", options: .regularExpression)
+      .replacingOccurrences(of: #"\.$"#, with: "", options: .regularExpression)
   }
 }
 

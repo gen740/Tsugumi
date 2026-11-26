@@ -190,12 +190,16 @@ struct Environments::Impl {
     const auto key = crypto::sha256_hex(std::to_string(st.st_dev) + ":" +
                                         std::to_string(st.st_ino))
                          .substr(0, 16);
+    return {EntryForKey(key, path.string()), path.string()};
+  }
+  auto EntryForKey(const std::string& key, const std::string& project = "")
+      -> std::shared_ptr<Entry> {
     std::lock_guard lock(mutex);
     auto& entry = entries[key];
     if (!entry) {
       entry = std::make_shared<Entry>();
       entry->state.key = key;
-      entry->state.project = path.string();
+      entry->state.project = project;
       entry->state.control_dir = (options.directory / key / "control").string();
       entry->state.ready_file =
           (std::filesystem::path(entry->state.control_dir) / "server.ready")
@@ -214,7 +218,7 @@ struct Environments::Impl {
       entry->state.folders = entry->folders;
       // A State query may rediscover a resident daemon after hostd restarts.
     }
-    return {entry, path.string()};
+    return entry;
   }
   auto Notify(Entry& entry) -> void {
     entry.state.attached_roots.clear();
@@ -821,6 +825,27 @@ auto EnvironmentProcess::Terminal(const H::HostTerminalRequestT&)
 auto Environments::Runtime(const H::HostRuntimeRequestT& request)
     -> H::HostRuntimeT {
   auto input = request;
+  if (input.action == H::RuntimeAction::ClearProjectBuildCache) {
+    const auto& key = input.project_id;
+    if (key.size() != 16 || key.find_first_not_of("0123456789abcdef") != key.npos)
+      throw std::runtime_error("Invalid project key");
+    const auto entry = impl_->EntryForKey(key);
+    std::lock_guard lock(entry->mutex);
+    impl_->CheckDeath(*entry);
+    if (entry->state.phase == H::EnvironmentPhase::Ready ||
+        impl_->ReadReady(*entry)) {
+      // Use the core even after all UI windows are closed. It owns the run
+      // and worker checks and advances the cache clear operation atomically.
+      auto result = impl_->options.process->Runtime(H::HostRuntimeRequestT{});
+      result.build_cache =
+          std::make_unique<Tsugumi::RPC::ProjectCacheClearResultT>(
+              impl_->options.process->ClearBuildCache(entry->state));
+      return result;
+    }
+    // The guest supervisor refuses this if the project is still running
+    // (including a core that cannot be authenticated or is still starting).
+    return impl_->options.process->Runtime(input);
+  }
   if (input.action == H::RuntimeAction::DeleteEnvironment) {
     H::EnvironmentRequestT stop;
     stop.project = input.project;

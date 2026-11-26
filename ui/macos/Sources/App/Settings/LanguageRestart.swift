@@ -37,6 +37,15 @@ struct LanguageRestartText {
 @MainActor enum LanguageRestartNotice {
   private static var shown: NSAlert?
 
+  static func restart() {
+    Task {
+      // The host owns the setting. Quitting while its asynchronous write
+      // is in flight can bring the old value back at the next launch.
+      await CorePreferences.shared.finishEditing()
+      if AppPreferences.shared.languageRestart.pending { Updater.shared.restart() }
+    }
+  }
+
   static func update(_ state: LanguageRestart) {
     if let shown, let window = shown.window.sheetParent {
       window.endSheet(shown.window, returnCode: .alertSecondButtonReturn)
@@ -52,7 +61,7 @@ struct LanguageRestartText {
     shown = alert
     alert.beginSheetModal(for: window) { response in
       if shown === alert { shown = nil }
-      if response == .alertFirstButtonReturn { Updater.shared.restart() }
+      if response == .alertFirstButtonReturn { restart() }
     }
   }
 }

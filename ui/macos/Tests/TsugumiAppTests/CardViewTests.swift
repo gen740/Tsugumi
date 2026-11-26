@@ -168,6 +168,31 @@ private func viewDocument(_ out: Outside) -> String {
   #expect(presentation.hasPanels)
 }
 
+@MainActor @Test func detachingOnePanelKeepsItsSessionAndTheOtherPanel() throws {
+  NSApplication.shared.setActivationPolicy(.prohibited)
+  let presentation = CardViewPresentation()
+  let markdown = CardViewOpening(id: UUID(), card: ["report"], name: UUID().uuidString,
+                                 type: "html", mode: .panel, width: 400, height: 300)
+  let dawn = opening(type: "dawn")
+  for panel in [markdown, dawn] {
+    presentation.open(panel, files: .unavailable, send: { _, _ in }, close: {})
+  }
+  defer { presentation.closeAll() }
+  #expect(presentation.panelOpenings.map(\.id) == [markdown.id, dawn.id])
+
+  presentation.detachPanel(markdown.id)
+  #expect(presentation.panelOpenings.map(\.id) == [dawn.id])
+  #expect(Set(presentation.openings.map(\.id)) == [markdown.id, dawn.id])
+  let window = try #require(NSApp.windows.first { $0.title == markdown.name })
+  #expect(window.contentView != nil)
+
+  presentation.detachPanel(markdown.id)
+  #expect(NSApp.windows.filter { $0.title == markdown.name }.count == 1)
+  #expect(presentation.sessionClosed(markdown.id)?.id == markdown.id)
+  #expect(window.contentView == nil)
+  #expect(presentation.panelOpenings.map(\.id) == [dawn.id])
+}
+
 // A small Wasm module with one page of memory and the required view exports.
 @MainActor @Test func dawnModuleChecksAllowedImportsWithoutAGPU() throws {
   func section(_ id: UInt8, _ data: [UInt8]) -> [UInt8] {

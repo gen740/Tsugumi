@@ -1,7 +1,6 @@
 // The Card window's Log and Dependencies categories.
 import { useEffect, useState } from 'react'
 import { L } from '../i18n'
-import { nixReferences } from '../model/nixReferences'
 import { useObserve } from '../model/observable'
 import { errorText, formatMillis, path, ProjectSession } from '../model/session'
 import { R, s } from '../wire/rpc'
@@ -89,7 +88,6 @@ export function DependenciesCategory({ model }: { model: CardEditorModel }) {
     return () => { alive = false }
   }, [session.rpc, session.lastFinished, model.cardKey])
   const hasDefinition = model.files.some((f) => f.endsWith('/default.nix'))
-  const refs = nixReferences(session).filter((r) => r.source === model.cardKey)
   return (
     <div className="scroll pad12 col gap12">
       <div className="callout secondary">{L('この Card が使う SDK、nixpkgs の package、上流 Card の Nix exports は、Nix 定義（default.nix）で決まります。変えるときは default.nix を編集します。')}</div>
@@ -97,13 +95,6 @@ export function DependenciesCategory({ model }: { model: CardEditorModel }) {
         {hasDefinition ? <Button onClick={() => model.openDefinition()}>{L('default.nix を開く')}</Button>
           : model.kind === 'code' && <span className="secondary">{L('default.nix がありません')}</span>}
       </div>
-      <h3>{L('参照している Card')}</h3>
-      {!refs.length ? <div className="secondary">{L('default.nix はほかの Card を参照していません。')}</div> : refs.map((ref) => (
-        <div key={ref.id} className="col gap4">
-          <span>{session.displayPath(path(ref.target))}</span>
-          <code className="caption secondary selectable">{ref.expression}</code>
-        </div>
-      ))}
       <h3>{L('最後に記録された環境')}</h3>
       {!loaded ? <Spinner /> : latest ? <>
         <div className="caption secondary">{L('実行 {0} の {1} 回目で使われた環境です。default.nix を変えた後は、次に実行したときに変わります。', formatMillis(latest.acceptedAt), String(latest.invocation))}</div>
