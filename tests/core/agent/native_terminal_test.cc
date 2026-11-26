@@ -206,6 +206,21 @@ TEST(NativeTerminalTest, HostOwnsPtyInputCloseAndStripsSecrets) {
   EXPECT_NO_THROW(service.Handle(request));
   service.Shutdown();
 }
+TEST(NativeTerminalTest, AccountLookupFailureClosesPty) {
+  TemporaryDirectory directory;
+  host::NativeTerminals service({}, []() -> host::NativeTerminals::Account {
+    throw std::runtime_error("account lookup failed");
+  });
+  H::HostTerminalRequestT request;
+  request.project = directory.path.string();
+  const auto descriptor_count = [] {
+    return std::distance(std::filesystem::directory_iterator("/dev/fd"),
+                         std::filesystem::directory_iterator{});
+  };
+  const auto before = descriptor_count();
+  EXPECT_THROW(service.Handle(request), std::runtime_error);
+  EXPECT_EQ(descriptor_count(), before);
+}
 TEST(NativeTerminalTest, InvalidSessionAndSizeDoNotLaunchShells) {
   host::NativeTerminals service({});
   H::HostTerminalRequestT request;

@@ -23,6 +23,8 @@
 #include <thread>
 #include <vector>
 
+#include "host/descriptor.hh"
+
 namespace tsugumi::host {
 namespace H = Tsugumi::Host;
 namespace {
@@ -120,6 +122,7 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
     size.ws_col = static_cast<unsigned short>(request.cols);
     if (::openpty(&session->fd, &slave, nullptr, nullptr, &size))
       throw std::runtime_error("Cannot create host terminal");
+    Descriptor slave_owner(slave);
     ::fcntl(session->fd, F_SETFD, FD_CLOEXEC);
     ::fcntl(session->fd, F_SETFL, O_NONBLOCK);
     ::fcntl(slave, F_SETFD, FD_CLOEXEC);
@@ -164,7 +167,7 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
       ::execve(shell, args, environment.data());
       ::_exit(127);
     }
-    ::close(slave);
+    slave_owner.reset();
     if (pid < 0) throw std::runtime_error("Cannot start host terminal shell");
     session->pid = pid;
     result.session = ++s.next;

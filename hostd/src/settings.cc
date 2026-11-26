@@ -1,3 +1,4 @@
+#include "host/descriptor.hh"
 #include "host/settings.hh"
 
 #include <arpa/inet.h>
@@ -325,7 +326,6 @@ struct Settings::State {
                              resource, client, subject, nonce, verifier,
                              oauth_state, redirect;
     bool plan_enabled = false;
-    int socket = -1;
     std::jthread worker;
   };
   std::map<std::string, std::shared_ptr<Attempt>> attempts;
@@ -533,19 +533,17 @@ struct Settings::State {
         throw std::runtime_error("Account issuer mismatch");
       a->subject = j::Text(previous, "subject");
     }
-    a->socket = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (a->socket < 0) throw std::runtime_error("Cannot open sign-in callback");
+    Descriptor listener(::socket(AF_INET, SOCK_STREAM, 0));
+    if (listener.get() < 0) throw std::runtime_error("Cannot open sign-in callback");
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    if (::bind(a->socket, reinterpret_cast<sockaddr*>(&address),
+    if (::bind(listener.get(), reinterpret_cast<sockaddr*>(&address),
                sizeof address) != 0 ||
-        ::listen(a->socket, 4) != 0) {
-      ::close(a->socket);
+        ::listen(listener.get(), 4) != 0)
       throw std::runtime_error("Cannot bind sign-in callback");
-    }
     socklen_t length = sizeof address;
-    ::getsockname(a->socket, reinterpret_cast<sockaddr*>(&address), &length);
+    ::getsockname(listener.get(), reinterpret_cast<sockaddr*>(&address), &length);
     a->redirect =
         "http://127.0.0.1:" + std::to_string(ntohs(address.sin_port)) +
         "/auth/callback";
@@ -584,7 +582,8 @@ struct Settings::State {
     if (p.consent()) query["prompt"] = "consent";
     attempts[a->id] = a;
     latest[a->profile] = a->id;
-    a->worker = std::jthread([this, a](std::stop_token stop) {
+    a->worker = std::jthread(
+        [this, a, listener = std::move(listener)](std::stop_token stop) mutable {
       try {
         j::Members cb;
         struct CallbackPipe {
@@ -613,7 +612,7 @@ struct Settings::State {
         } peers;
         bool done = false;
         while (!done && !stop.stop_requested()) {
-          std::vector<pollfd> fds{{a->socket, POLLIN, 0},
+          std::vector<pollfd> fds{{listener.get(), POLLIN, 0},
                                   {wake.fds[0], POLLIN, 0}};
           for (const auto& peer : peers) fds.push_back({peer.fd, POLLIN, 0});
           if (::poll(fds.data(), fds.size(), -1) < 0) {
@@ -663,7 +662,7 @@ struct Settings::State {
             if (valid) done = true;
           }
           if (!done && (fds[0].revents & POLLIN)) {
-            const int fd = ::accept(a->socket, nullptr, nullptr);
+            const int fd = ::accept(listener.get(), nullptr, nullptr);
             if (fd >= 0) {
               ::fcntl(fd, F_SETFD, FD_CLOEXEC);
               peers.push_back({fd, {}});
@@ -672,8 +671,7 @@ struct Settings::State {
             }
           }
         }
-        ::close(a->socket);
-        a->socket = -1;
+        listener.reset();
         if (stop.stop_requested())
           throw std::runtime_error("Sign-in cancelled");
         if (cb.empty()) throw std::runtime_error("Sign-in callback closed");
@@ -743,10 +741,7 @@ struct Settings::State {
         a->plan_enabled = plan;
         if (plan && !welcomed) a->welcome = a->client;
       } catch (...) {
-        if (a->socket >= 0) {
-          ::close(a->socket);
-          a->socket = -1;
-        }
+        listener.reset();
         std::lock_guard guard(mutex);
         if (a->state == "cancelled") return;
         a->state = "failed";
