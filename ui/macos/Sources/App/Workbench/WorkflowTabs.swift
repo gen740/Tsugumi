@@ -410,7 +410,7 @@ struct EnvironmentProblemView: View {
           if p.canStop {
             Button("環境を停止") { session.stopEnvironment() }
           }
-          OpenConsoleButton()
+          OpenVMStartupLogButton()
           Spacer()
           if let onSwitchProject { Button("別のプロジェクトを開く…", action: onSwitchProject) }
         }

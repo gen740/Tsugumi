@@ -6,7 +6,7 @@ import TsugumiLauncher
 /// App-wide settings; the category on the left switches the content.
 struct ApplicationSettings: View {
   enum Category: String, CaseIterable, Identifiable {
-    case general, appearance, editor, shortcuts, skills, api, connections, binaryCaches, executionServices
+    case general, appearance, editor, shortcuts, skills, api, connections, binaryCaches, executionEnvironment, executionServices
     var id: String { rawValue }
     var title: String {
       switch self {
@@ -18,6 +18,7 @@ struct ApplicationSettings: View {
       case .api: return "API"
       case .connections: return String(localized: "外部接続")
       case .binaryCaches: return String(localized: "バイナリキャッシュ")
+      case .executionEnvironment: return String(localized: "実行環境")
       case .executionServices: return String(localized: "実行サービス")
       }
     }
@@ -31,12 +32,14 @@ struct ApplicationSettings: View {
       case .api: return "key"
       case .connections: return "network"
       case .binaryCaches: return "shippingbox"
+      case .executionEnvironment: return "apple.terminal"
       case .executionServices: return "network"
       }
     }
     /// Where each pane's values are kept, said on the pane.
-    var storage: String {
+    var storage: String? {
       switch self {
+      case .executionEnvironment: return nil
       case .appearance: return String(localized: "この Mac の外観設定と、このホストの hostd の Agent 表示設定")
       case .api: return String(localized: "このホスト（設定と API キーは hostd）")
       case .connections: return String(localized: "表示のみ（開いているプロジェクトの接続先）")
@@ -107,7 +110,7 @@ struct ApplicationSettings: View {
             .id("\(project.identity.id).\(pane.rawValue)")
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         } else {
-          StorageNote(text: category.storage)
+          if let storage = category.storage { StorageNote(text: storage) }
           Group {
             switch category {
             case .general: GeneralSettings()
@@ -118,6 +121,7 @@ struct ApplicationSettings: View {
             case .api: APISettings()
             case .connections: ConnectionSettings()
             case .binaryCaches: BinaryCacheSettings()
+            case .executionEnvironment: VMStartupLog()
             case .executionServices: ExecutionServicesSettings()
             }
           }

@@ -77,11 +77,6 @@ struct TsugumiApp: App {
     .defaultSize(width: 900, height: 560)
     .restorationBehavior(.disabled)
 
-    Window("実行環境のコンソール", id: "console") {
-      VMConsoleView().environment(model).environment(prefs)
-    }
-    .defaultSize(width: 760, height: 460)
-    .restorationBehavior(.disabled)
     Window("デバッグ", id: "debug") { DebugPanel() }
       .defaultSize(width: 460, height: 420)
       .windowResizability(.contentSize)
@@ -128,15 +123,6 @@ struct UpdateMenuItem: View {
 struct OpenExplainerButton: View {
   var body: some View {
     Button("Tsugumi を知る") { Explainer.open() }
-  }
-}
-
-/// Window menu: the shared VM's console.
-struct OpenConsoleButton: View {
-  @Environment(\.openWindow) private var openWindow
-  var body: some View {
-    Button("実行環境のコンソール") { openWindow(id: "console") }
-      .keyboardShortcut("k", modifiers: [.command, .option])
   }
 }
 
@@ -417,7 +403,6 @@ struct WorkbenchCommands: Commands {
         .shortcut(.toggleTerminal)
     }
     CommandGroup(after: .windowList) {
-      OpenConsoleButton()
       OpenDebugPanelButton()
     }
     CommandGroup(after: .appInfo) {

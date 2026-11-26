@@ -44,7 +44,6 @@ struct TsugumiLoadingCard: View {
     return (CGPoint(x: lo + ((want - lo) / 18).rounded(.down) * 18, y: y), s)
   }
   @Environment(\.colorScheme) private var scheme
-  @Environment(\.openWindow) private var openWindow
   /// Tsugumi's flights in this window: the guide's bird lands on this card's bird.
   @Environment(GuideStage.self) private var stage: GuideStage?
   /// Loading is over and the card fades out: the guide's bird leaves it now, not after the fade.
@@ -103,7 +102,7 @@ struct TsugumiLoadingCard: View {
               .font(.callout).foregroundStyle(TsugumiPalette.rufous)
           }
           if content.showsConsole {
-            Button { openWindow(id: "console") } label: { Label("コンソールで詳細を見る", systemImage: "apple.terminal") }
+            OpenVMStartupLogButton()
               .buttonStyle(.link).font(.callout)
           }
           if let onCancel {
