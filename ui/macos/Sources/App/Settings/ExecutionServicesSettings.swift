@@ -84,9 +84,9 @@ struct ExecutionServicesSettings: View {
           }
         }
       }
-      if let saved, !saved.probes.isEmpty {
-        Section("最近の計測結果") {
-          ForEach(Array(saved.probes.prefix(10).enumerated()), id: \.offset) { _, probe in
+      ForEach(entries.filter { !$0.probes.isEmpty }) { entry in
+        Section("\(entry.name) の計測結果") {
+          ForEach(Array(entry.probes.enumerated()), id: \.offset) { _, probe in
             LabeledContent(probe.score.map { "\(String(localized: "スコア")) \($0.formatted())" }
                            ?? String(localized: "計測に失敗しました")) {
               Text(probe.failure ?? String(probe.probe.split(separator: "/").last ?? ""))
@@ -139,11 +139,12 @@ struct ExecutionServicesSettings: View {
 
   private func remeasure(_ id: String?) {
     busy = true
+    report(String(localized: "計測中…"))
     Task {
       defer { busy = false }
       do {
         adopt(try await ExecutionServices.remeasure(id))
-        report(String(localized: "次に Card を実行するときに測り直します。"))
+        report(String(localized: "計測が完了しました。"))
       } catch { report(error.localizedDescription, failed: true) }
     }
   }

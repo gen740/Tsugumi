@@ -931,7 +931,16 @@ union RequestPayload {
   CardViewReadRequest = 62,
   ViewSendRequest = 63,
   ViewCreditRequest = 64,
+  WorkerProbeMeasureRequest = 65,
 }
+
+/// -> WorkerProbeMeasurement. Replay the identified probe with the Card's current permissions.
+table WorkerProbeMeasureRequest {
+  card:Tsugumi.Data.CardPath (required);
+  worker:string (required);
+  key:string (required);
+}
+table WorkerProbeMeasurement { result:Tsugumi.Data.WorkerProbeResult (required); }
 
 // ---- Replies -----------------------------------------------------------------
 
@@ -1361,6 +1370,7 @@ union ReplyPayload {
   VersionDiff = 46,
   VersionComments = 47,
   RunCategoryDeleteResult = 48,
+  WorkerProbeMeasurement = 49,
 }
 
 // ---- Notifications -----------------------------------------------------------

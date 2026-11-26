@@ -398,11 +398,12 @@ auto RemoteJobClient::probe_lookup(std::string_view service,
 auto RemoteJobClient::probe_publish(
     std::string_view service, std::string_view key, std::string_view life,
     std::string_view revision, const Tsugumi::Data::WorkerProbeResultT& result,
-    std::stop_token stop) const -> void {
+    const std::vector<std::string>& card, std::stop_token stop) const -> void {
   R::CardProbePublishT query;
   query.key = key;
   query.life = life;
   query.revision = revision;
+  query.card = card;
   query.result = std::make_unique<Tsugumi::Data::WorkerProbeResultT>(result);
   request(command(std::move(query), service), stop);
 }

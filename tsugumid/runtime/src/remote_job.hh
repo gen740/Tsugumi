@@ -98,6 +98,7 @@ class RemoteJobClient {
   auto probe_publish(std::string_view service, std::string_view key,
                      std::string_view life, std::string_view revision,
                      const Tsugumi::Data::WorkerProbeResultT& result,
+                     const std::vector<std::string>& card,
                      std::stop_token stop) const -> void;
   auto put_blob(std::string_view service, std::string_view instance,
                 std::string_view job_id, std::string_view digest, uint64_t size,

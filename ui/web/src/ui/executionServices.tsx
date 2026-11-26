@@ -50,8 +50,9 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
     finally { setBusy(false) }
   }
   const remeasure = (id: string | null) => void perform(async () => {
+    setMessage(L('計測中…'))
     adopt(await executionServices(H.RequestPayload.ExecutionProbeRemeasureRequest, new H.ExecutionProbeRemeasureRequestT(id)))
-    setMessage(L('次に Card を実行するときに測り直します。'))
+    setMessage(L('計測が完了しました。'))
   })
   const saved = entries.find((entry) => s(entry.id) === original)
   const sameEndpoint = !!saved && s(saved.endpoint) === edit?.endpoint.trim()
@@ -107,14 +108,15 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
         {busy && <Spinner small />}
       </Row>
     </Section>}
-    {!!saved?.probes.length && <Section title={L('最近の計測結果')}>
-      {saved.probes.slice(0, 10).map((probe, index) => <Row key={index}
+    {entries.filter(entry => entry.probes.length > 0).map(entry =>
+      <Section key={s(entry.id)} title={L('{0} の計測結果', s(entry.name))}>
+      {entry.probes.map((probe, index) => <Row key={index}
         label={probe.score === null ? L('計測に失敗しました') : L('スコア {0}', String(probe.score))}>
         <span className="caption selectable" title={new Date(Number(probe.measuredAt)).toLocaleString()}>
           {s(probe.failure) || s(probe.probe).split('/').pop()}
         </span>
       </Row>)}
-    </Section>}
+      </Section>)}
     {(problem || message) && <Row><span className="caption selectable" style={{ color: problem ? 'var(--red)' : undefined }}>{problem ?? message}</span></Row>}
   </Form>
 }

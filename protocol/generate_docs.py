@@ -17,7 +17,7 @@ GROUPS = [
                        "ProjectValidate", "ProjectShell", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "OperationGet"]),
     ("Files", ["ProjectFileList", "ProjectFileStat", "ProjectFileRead"]),
     ("Nix evaluation and Card types", ["EvaluateNix", "NixPathLockSource", "RewriteParamLiteral", "InputTypes", "OutputTypes"]),
-    ("Running", ["RunPlan", "Run", "RunCancel", "RunStatus"]),
+    ("Running", ["RunPlan", "Run", "RunCancel", "RunStatus", "WorkerProbeMeasure"]),
     ("History and artifacts", ["RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "RunCategoryDelete", "RunHistoryDelete",
                  "RunDefinitionPaths", "ArtifactList", "ArtifactRead", "LogRange", "RunEnvironments", "RunEnvironmentPaths", "RunEnvironmentUses"]),
     ("Views", ["ViewSave", "CardViewRead", "ViewSend", "ViewCredit", "ViewClose"]),

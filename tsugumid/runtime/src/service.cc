@@ -498,7 +498,8 @@ auto supports_target(const Settings& settings, const RemoteTarget& target)
 auto Service::measure_card_probe(const RemoteTarget& target, const Node& node,
                                  const stdfs::path& directory,
                                  const BuildRequest& build,
-                                 std::string& observed_life)
+                                 std::string& observed_life,
+                                 std::string_view expected_key)
     -> D::WorkerProbeResultT {
   D::WorkerProbeResultT result;
   result.worker = target.id;
@@ -567,6 +568,9 @@ auto Service::measure_card_probe(const RemoteTarget& target, const Node& node,
           json::Quote(bind.name), json::Quote(bind.source),
           json::Quote(bind.target), bind.write ? "true" : "false"}));
     key = hash.finish_hex();
+    if (!expected_key.empty() && expected_key != key)
+      throw Failed(FailureKind::invalid_request,
+                   "The Card probe or its execution settings changed");
     life = local ? local_probe_life() : observed_life;
     if (remote_jobs_.enabled() && !life.empty()) {
       try {
@@ -678,12 +682,54 @@ auto Service::measure_card_probe(const RemoteTarget& target, const Node& node,
   if (!revision.empty()) {
     try {
       remote_jobs_.probe_publish(target.id, key, life, revision, result,
-                                 build.cancel);
+                                 node.path, build.cancel);
     } catch (const std::exception& error) {
       log::warn("cannot cache Card probe: " + std::string(error.what()));
     }
   }
   return result;
+}
+
+void Service::worker_probe_measure(RequestIn& req) {
+  const auto* request =
+      project_request(req)->value_as_WorkerProbeMeasureRequest();
+  const auto key = request->key()->string_view();
+  if (!crypto::is_sha256_hex(key))
+    throw Failed(FailureKind::invalid_request, "Invalid Card probe identity");
+  BuildRequest build;
+  build.doc = store_->current();
+  build.node = build.doc->resolution->find(wire::card_arg(request->card()));
+  if (!build.node || build.node->kind != CardType::Code ||
+      build.node->is_virtual)
+    throw Failed(FailureKind::not_found,
+                 "The Card with this probe is unavailable");
+  build.timeout_seconds = build.node->settings.build_timeout_seconds;
+  std::stop_source stop;
+  std::stop_callback disconnect(req.connection_stop,
+                                [&] { stop.request_stop(); });
+  std::stop_callback shutdown(shutdown_stop_.get_token(),
+                              [&] { stop.request_stop(); });
+  build.cancel = stop.get_token();
+  const auto targets = remote_targets(build.cancel);
+  const auto target = std::ranges::find(
+      targets, request->worker()->string_view(), &RemoteTarget::id);
+  if (target == targets.end())
+    throw Failed(FailureKind::not_found,
+                 "The worker is unavailable to this project");
+  std::string life;
+  auto result = measure_card_probe(*target, *build.node,
+                                   run_scratch() / "probe", build, life, key);
+  if (!result.unavailable_reason.empty())
+    throw Failed(FailureKind::unsupported, result.unavailable_reason);
+  if (!result.score && result.failure.empty())
+    throw Failed(FailureKind::not_found,
+                 "The Card no longer declares this probe");
+  FBB b;
+  const auto value = R::CreateWorkerProbeMeasurement(
+      b, D::WorkerProbeResult::Pack(b, &result));
+  reply(req,
+        wire::reply(b, req.request_id, R::ReplyPayload::WorkerProbeMeasurement,
+                    value.Union()));
 }
 
 auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
@@ -1324,6 +1370,8 @@ void Service::dispatch(RequestIn req) {
                              R::ReplyPayload::ProjectActivity, value.Union()));
       return;
     }
+    case P::WorkerProbeMeasureRequest:
+      return on_lane(r, std::move(req), &Service::worker_probe_measure);
     case P::ProjectHostRequirementsRequest:
       return on_lane(r, std::move(req), &Service::project_host_requirements);
     case P::ProjectOpenRequest:

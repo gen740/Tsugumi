@@ -234,10 +234,16 @@ struct ExecutionBroker::State {
   sql::Db db;
   peer_tls::Identity identity;
   std::mutex mutex;
+  struct ProbeEntry {
+    std::string project;
+    std::vector<std::string> card;
+    std::optional<Tsugumi::Data::WorkerProbeResultT> measurement;
+    bool reusable = false;
+  };
   struct ProbeCache {
     std::string life;
     std::string revision = crypto::random_token(32);
-    std::map<std::string, Tsugumi::Data::WorkerProbeResultT> results;
+    std::map<std::string, ProbeEntry> results;
   };
   std::map<std::string, ProbeCache> probes;
   std::map<std::string, std::string> local_probe_owners;
@@ -247,14 +253,18 @@ struct ExecutionBroker::State {
   unix_socket::Binding binding, cancel_binding;
   std::vector<std::jthread> receivers;
   CardSecrets card_secrets;
+  MeasureProbe measure_probe;
+  std::mutex remeasure_mutex;
 
-  State(std::filesystem::path dir, std::string path, CardSecrets secrets)
+  State(std::filesystem::path dir, std::string path, CardSecrets secrets,
+        MeasureProbe measure)
       : state(std::move(dir)),
         socket(std::move(path)),
         db((state / "execution.sqlite").string(),
            sql::FormatVersion{kExecutionFormatVersion}),
         identity(state / "execution-identity.pem"),
-        card_secrets(std::move(secrets)) {
+        card_secrets(std::move(secrets)),
+        measure_probe(std::move(measure)) {
     ::chmod((state / "execution.sqlite").c_str(), 0600);
     db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
     db.initialize_format(kExecutionFormatVersion, [&] {
@@ -395,11 +405,12 @@ struct ExecutionBroker::State {
     for (const auto& entry : Entries()) {
       auto service = Public(entry);
       if (auto cache = probes.find(entry.id); cache != probes.end()) {
-        for (const auto& [_, measurement] : cache->second.results) {
+        for (const auto& [_, probe] : cache->second.results) {
+          if (!probe.measurement) continue;
           // Settings summarize the results; bounded process output lives in
           // the invocation record that used it.
-          auto summary =
-              std::make_unique<Tsugumi::Data::WorkerProbeResultT>(measurement);
+          auto summary = std::make_unique<Tsugumi::Data::WorkerProbeResultT>(
+              *probe.measurement);
           summary->stdout_text.clear();
           summary->stderr_text.clear();
           service->probes.push_back(std::move(summary));
@@ -412,6 +423,58 @@ struct ExecutionBroker::State {
     }
     return result;
   }
+  auto Remeasure(const std::string& worker) -> H::ExecutionServicesT {
+    std::lock_guard remeasure(remeasure_mutex);
+    struct Work {
+      std::string worker, key, revision;
+      ProbeEntry probe;
+    };
+    std::vector<Work> work;
+    {
+      std::lock_guard lock(mutex);
+      if (!worker.empty()) {
+        const auto entries = Entries();
+        Require(std::ranges::find(entries, worker, &Entry::id) != entries.end(),
+                "Unknown execution service");
+      }
+      for (auto& [id, cache] : probes) {
+        if (!worker.empty() && id != worker) continue;
+        cache.revision = crypto::random_token(32);
+        for (auto& [key, probe] : cache.results) {
+          if (!probe.card.empty() && measure_probe)
+            work.push_back({id, key, cache.revision, probe});
+          probe.measurement.reset();
+          probe.reusable = false;
+        }
+      }
+    }
+    for (const auto& item : work) {
+      Tsugumi::Data::WorkerProbeResultT result;
+      try {
+        result = measure_probe(item.probe.project, item.probe.card, item.worker,
+                               item.key);
+      } catch (const std::exception& error) {
+        result.worker = item.worker;
+        if (item.probe.measurement)
+          result.probe = item.probe.measurement->probe;
+        result.failure = std::string(error.what()).substr(0, kProbeOutputBytes);
+        result.measured_at =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                .count();
+      }
+      std::lock_guard lock(mutex);
+      const auto cache = probes.find(item.worker);
+      if (cache == probes.end() || cache->second.revision != item.revision)
+        continue;
+      const auto entry = cache->second.results.find(item.key);
+      if (entry != cache->second.results.end() && !entry->second.reusable)
+        entry->second.measurement = std::move(result);
+    }
+    std::lock_guard lock(mutex);
+    return List();
+  }
+
   auto Remote(const Entry& entry, R::RequestT request, int client = -1)
       -> R::MessageT {
     const auto address = ParseEndpoint(entry.endpoint);
@@ -583,10 +646,10 @@ struct ExecutionBroker::State {
               R::CardProbeCachedT answer;
               answer.revision = cache.revision;
               if (auto item = cache.results.find(key);
-                  item != cache.results.end())
+                  item != cache.results.end() && item->second.reusable)
                 answer.result =
                     std::make_unique<Tsugumi::Data::WorkerProbeResultT>(
-                        item->second);
+                        *item->second.measurement);
               probe_reply = W::reply(std::move(answer));
             } else {
               const auto& measured = *publish->result;
@@ -605,11 +668,29 @@ struct ExecutionBroker::State {
                 if (cache.results.size() >= kResultsPerWorker &&
                     !cache.results.contains(key)) {
                   const auto oldest = std::ranges::min_element(
-                      cache.results, {},
-                      [](const auto& item) { return item.second.measured_at; });
+                      cache.results, {}, [](const auto& item) {
+                        return item.second.measurement
+                                   ? item.second.measurement->measured_at
+                                   : 0;
+                      });
                   cache.results.erase(oldest);
                 }
-                cache.results.try_emplace(key, measured);
+                Require(publish->card.size() <= 64 &&
+                            std::ranges::all_of(publish->card,
+                                                [](const auto& part) {
+                                                  return !part.empty() &&
+                                                         part.size() <= 64;
+                                                }),
+                        "Invalid probe Card path");
+                auto registry = db.prepare(
+                    "SELECT registry FROM project_registry WHERE project=?");
+                registry.bind(1, q.text(1));
+                auto project =
+                    registry.step() ? registry.text(0) : std::string{};
+                if (project.empty()) project = q.text(1);
+                auto& probe = cache.results[key];
+                if (!probe.reusable)
+                  probe = {std::move(project), publish->card, measured, true};
               }
               probe_reply = W::reply(R::AckT{});
             }
@@ -691,9 +772,11 @@ struct ExecutionBroker::State {
 };
 
 ExecutionBroker::ExecutionBroker(std::filesystem::path state,
-                                 std::string socket, CardSecrets card_secrets)
+                                 std::string socket, CardSecrets card_secrets,
+                                 MeasureProbe measure_probe)
     : state_(std::make_unique<State>(std::move(state), std::move(socket),
-                                     std::move(card_secrets))) {}
+                                     std::move(card_secrets),
+                                     std::move(measure_probe))) {}
 ExecutionBroker::~ExecutionBroker() { Stop(); }
 auto ExecutionBroker::Stop() -> void { state_->Stop(); }
 auto ExecutionBroker::socket_path() const -> const std::string& {
@@ -867,16 +950,12 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
       state_->probes.erase(entry.id);
       return agent::wire::HostReply(id, state_->List());
     }
-    std::lock_guard lock(state_->mutex);
     if (const auto* p = request.value_as_ExecutionProbeRemeasureRequest()) {
-      if (p->id()) {
-        Require(p->id()->string_view() == "local" || ValidId(p->id()->str()),
-                "Invalid execution service ID");
-        state_->probes.erase(p->id()->str());
-      } else {
-        state_->probes.clear();
-      }
+      Require(!p->id() || p->id()->size() > 0, "Invalid execution service ID");
+      return agent::wire::HostReply(
+          id, state_->Remeasure(p->id() ? p->id()->str() : ""));
     }
+    std::lock_guard lock(state_->mutex);
     if (const auto* p = request.value_as_ExecutionServiceRemoveRequest()) {
       Require(ValidId(p->id()->str()), "Invalid execution service ID");
       sql::Transaction transaction(state_->db);

@@ -1,8 +1,9 @@
 {
   "測り直す": "Measure again",
   "すべて測り直す": "Measure all again",
-  "次に Card を実行するときに測り直します。": "Workers will be measured again the next time a Card runs.",
-  "最近の計測結果": "Recent measurements",
+  "計測が完了しました。": "Measurement complete.",
+  "計測中…": "Measuring…",
+  "{0} の計測結果": "Measurements for {0}",
   "計測に失敗しました": "Measurement failed",
   "計測なし（同順位）": "No probe (tied)",
   "スコア": "Score",

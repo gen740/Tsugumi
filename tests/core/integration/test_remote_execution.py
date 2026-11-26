@@ -366,7 +366,7 @@ def check_success(client, run_id, name, system):
 
 
 def test_remote_probe_records_scores_even_without_run_recording(
-        project, core_factory, remote_broker):
+        secret_project, project, core_factory, remote_broker):
     definition = {
         **RUN_LIST_REMOTE,
         "recordLogs": "off",
@@ -375,7 +375,11 @@ def test_remote_probe_records_scores_even_without_run_recording(
         "_nix": entry(python_run("from card import Output\ndef run(input): return Output()\n")),
     }
     write(project, {"work": definition}, [card("work", "work")], [])
-    client = core_factory().connect()
+    daemon = core_factory()
+    client = daemon.connect()
+    host = remote_broker["host"]
+    host.call("RegisterProjectRequest", projectId=secret_project,
+              endpoint=daemon.ready["endpoint"], token=daemon.ready["token"], path=str(project))
     run_id, status = run_and_wait(client, "work")
     assert status.state == RunState.succeeded, text(status.failure.diagnostic) if status.failure else ""
     result = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
@@ -385,6 +389,20 @@ def test_remote_probe_records_scores_even_without_run_recording(
     assert scores["local"].score == 0
     assert scores["remote-test"].score == 2.5
     assert text(scores["remote-test"].stdoutText) == "measuring remote\n2.5\n"
+
+    def measurements(response):
+        return {text(service.id): service.probes[0] for service in response.services}
+
+    previous = measurements(host.call("ExecutionServicesRequest"))
+    remote_only = measurements(host.call("ExecutionProbeRemeasureRequest", id="remote-test"))
+    assert remote_only["remote-test"].score == 2.5
+    assert remote_only["remote-test"].measuredAt > previous["remote-test"].measuredAt
+    assert remote_only["local"].measuredAt == previous["local"].measuredAt
+    all_workers = measurements(host.call("ExecutionProbeRemeasureRequest"))
+    for worker, result in all_workers.items():
+        assert result.score == remote_only[worker].score
+        assert result.measuredAt > remote_only[worker].measuredAt
+    assert len(client.call("RunHistoryRequest").runs) == 1
 
 
 def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broker, remote_daemon, remote_gates):

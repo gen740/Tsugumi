@@ -13,7 +13,7 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Regular status and log exchanges detect a lost connection; reconnection in the same core life resumes existing work. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 54 requests.
+There are 55 requests.
 
 ## Connection
 
@@ -250,6 +250,7 @@ No fields.
 | [`Run`](#run) | RunAccepted | Start a run at base_rev. If a required host path is unbound, ask the user to choose a folder in Project Settings > Host Paths. propagate defaults to true, max_concurrency to 4 (1..64). Omitted nix_jobs and nix_cores use the environment defaults for local builds. |
 | [`RunCancel`](#runcancel) | RunStatus | Cancel run_id. |
 | [`RunStatus`](#runstatus) | RunStatus | Read run_id; omitted selects the active run, then the latest locally started run, then idle. An active run lists its Cards in progress with their stage and derivations being built. |
+| [`WorkerProbeMeasure`](#workerprobemeasure) | WorkerProbeMeasurement | Replay the identified probe with the Card's current permissions. |
 
 ### RunPlan
 
@@ -284,6 +285,14 @@ No fields.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `run_id` | `string` |  |  |
+
+### WorkerProbeMeasure
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `card` | `CardPath` | yes |  |
+| `worker` | `string` | yes |  |
+| `key` | `string` | yes |  |
 
 ## History and artifacts
 

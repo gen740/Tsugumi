@@ -62,6 +62,7 @@ table CardProbeLookup { key:string (required); life:string (required); }
 table CardProbePublish {
   key:string (required); life:string (required); revision:string (required);
   result:Tsugumi.Data.WorkerProbeResult (required);
+  card:[string];
 }
 table CardProbeCached { revision:string (required); result:Tsugumi.Data.WorkerProbeResult; }
 table CardSecret { name:string (required); value:string (required, trace_secret); }

@@ -23,8 +23,12 @@ class ExecutionBroker {
   using CardSecrets =
       std::function<std::vector<std::pair<std::string, std::string>>(
           const std::string& project, const std::vector<std::string>& names)>;
+  using MeasureProbe = std::function<Tsugumi::Data::WorkerProbeResultT(
+      const std::string& project, const std::vector<std::string>& card,
+      const std::string& worker, const std::string& key)>;
   ExecutionBroker(std::filesystem::path state, std::string socket,
-                  CardSecrets card_secrets = {});
+                  CardSecrets card_secrets = {},
+                  MeasureProbe measure_probe = {});
   ~ExecutionBroker();
   ExecutionBroker(const ExecutionBroker&) = delete;
   auto operator=(const ExecutionBroker&) -> ExecutionBroker& = delete;
