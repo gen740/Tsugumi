@@ -93,5 +93,19 @@ const long = card('a long name of a Card '.repeat(6))
   assert.equal(hover.failure, failed.failure)
   assert.ok(hover.openLog)
   assert.deepEqual(hover.problems, [])
+
+  // A remote execution waiting for its worker: a dashed ring, the short form
+  // on the face, the full one in the hover with where it runs and whether it works.
+  const waits: Data = {
+    ...card(), state: D.CardState.running, invocation: 1n, stage: stages('done', 'running', 'pending'),
+    activity: 'waiting (worker slot)', activityWaits: true, activityDetail: 'waiting for a free slot on the worker', worker: 'ttl', liveness: 'CPU 00:00:01.00',
+  }
+  assert.equal(statusLine(waits).text, 'waiting (worker slot)')
+  assert.deepEqual(new CardGeometry(waits, 'topToBottom').size, new CardGeometry(card(), 'topToBottom').size)
+  assert.ok(renderToStaticMarkup(<CardNodeView data={waits} flow="topToBottom" />).includes('cv-dot-waiting'))
+  const live = cardHoverContent(waits, [])
+  assert.ok(live.stagesWait)
+  assert.ok(live.facts?.includes('waiting for a free slot on the worker') && live.facts.includes('CPU 00:00:01.00'))
+  assert.ok(live.facts?.some((f) => f.endsWith(': ttl')))
 }
 console.log('card face: passed')

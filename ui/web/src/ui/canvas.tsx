@@ -26,6 +26,7 @@ import { BoundaryBarView, CardNodeView, drive, gridStyle, idleText, runText, Sta
 import { BatchInvocations } from './batchInvocations'
 import { Button, MenuItem, Segmented, Sheet, showMenu, Stepper, TextField, Toggle } from './controls'
 import { Icon } from './icons'
+import { SECTION_STATUS_LABEL } from './statusSymbol'
 import { Markdown } from './markdown'
 import { L } from '../i18n'
 import { D } from '../wire/rpc'
@@ -960,6 +961,8 @@ export interface BubbleContent {
   lines?: string[]
   /** A Card's stages with their state and time. */
   stages?: StageItem[]
+  /** The running execution waits for its worker. */
+  stagesWait?: boolean
   facts?: string[]
   status?: string
   problems?: string[]
@@ -975,14 +978,16 @@ export interface BubbleContent {
 export function cardHoverContent(d: CardNodeData, lines: string[], runId?: string, openLog?: () => void): BubbleContent {
   let status = runText(d) ?? idleText(d)
   if (runId && d.invocation > 0n) status += L('（Run {0} の中でこの Card の {1} 回目の実行）', runId.slice(0, 8), d.invocation)
+  // Where it runs, what it waits for, and whether it is working.
   const facts: string[] = []
+  if (d.worker) facts.push(L('{0}: {1}', L('実行サービス'), d.worker))
+  if (d.activityDetail) facts.push(d.activityDetail)
+  if (d.liveness) facts.push(d.liveness)
   if (d.stage?.workerReused) facts.push(L('前回の worker を再利用して実行しました'))
-  // The worker, what the invocation waits for, CPU time and the time since
-  // its last output go here once the core reports them in RunStatus.
   const failed = d.state === D.CardState.failed || d.state === D.CardState.blocked
   return {
     title: d.title, subtitle: KIND_LABEL[d.kind], symbol: d.symbol ?? 'xmark.octagon', lines, status,
-    stages: d.invocation > 0n ? d.stage?.items : undefined, facts,
+    stages: d.invocation > 0n ? d.stage?.items : undefined, stagesWait: d.activityWaits, facts,
     problems: d.errors, warnings: d.warnings, failure: failed ? d.failure : undefined,
     openLog: failed ? openLog : undefined,
   }
@@ -1031,9 +1036,10 @@ export function HoverBubble({ content }: { content: BubbleContent }) {
         <div className="cv-bubble-stages">
           {content.stages.map((item) => (
             <div key={item.stage} className="caption cv-bubble-stage">
-              <StageDot status={item.status} size={9} />
+              <StageDot status={item.status} size={9} waiting={content.stagesWait && item.stage === Stage.execute} />
               <span>{STAGE_INFO[item.stage].label}</span>
-              <span className="secondary cv-ellipsis">{STAGE_STATUS_LABEL[item.status]}</span>
+              <span className="secondary cv-ellipsis">{content.stagesWait && item.stage === Stage.execute && item.status === 'running'
+                ? SECTION_STATUS_LABEL.waiting : STAGE_STATUS_LABEL[item.status]}</span>
               <span className="secondary mono-digits" style={{ marginLeft: 'auto' }}>{item.seconds !== undefined ? formatDuration(item.seconds) : '—'}</span>
             </div>
           ))}

@@ -318,6 +318,9 @@ struct CardNodeData: Equatable {
   /// Card's size never changes with its state.
   func statusLine(now: Date = Date()) -> CardStatusLine {
     let mark = runMark.map { " · " + $0 } ?? ""
+    // When no worker could be chosen (core failure stage=worker_selection),
+    // this line will say 「worker を選べず未開始」 in red and the hover each
+    // worker's reason, once that lands (proposal 18).
     if let state, state == .failed || state == .blocked {
       var text = failure.map(firstMeaningfulLine) ?? state.label
       if text.isEmpty { text = state.label }

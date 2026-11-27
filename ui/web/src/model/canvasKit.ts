@@ -152,6 +152,11 @@ export interface CardNodeData {
   activityWaits?: boolean
   /** Whether a running invocation is working (CPU time, last output), on hover. */
   liveness?: string
+  /** What a remote execution waits for or does, in full (on hover; the
+   *  status line has the short form in `activity`). */
+  activityDetail?: string
+  /** Where the invocation runs (its execution service), on hover. */
+  worker?: string
 }
 
 export const isRouting = (d: CardNodeData) => d.kind === 'merge' || d.kind === 'collect'

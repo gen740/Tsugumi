@@ -94,6 +94,7 @@
 .cv-dot { display: block; box-sizing: border-box; border-radius: 50%; border-style: solid; background: var(--control-bg); position: relative; }
 .cv-dot.filled { border: 0; }
 .cv-dot-running { animation: cv-spin 1s linear infinite; }
+.cv-dot-waiting { border-style: dashed; }
 @keyframes cv-spin { to { transform: rotate(360deg); } }
 .cv-stage { position: relative; border: 0; padding: 0; background: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex: none; cursor: pointer; }
 .cv-stage:disabled { cursor: default; opacity: 1; }

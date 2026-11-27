@@ -2534,6 +2534,8 @@ export class ProjectSession extends Observable {
       draftEditing: editing, openComments: cardComments(m).filter((c) => !c.resolved).length,
       activityWaits: executionActivityText(state)?.waiting === true,
       liveness: state ? this.livenessText(state) : undefined,
+      activityDetail: executionActivityText(state)?.text,
+      worker: state?.executionService ? (state.executionService === 'local' ? L('プロジェクトの実行環境') : state.executionService) : undefined,
       portGrid: prefs.showGrid ? prefs.gridSize : undefined,
     }
   }

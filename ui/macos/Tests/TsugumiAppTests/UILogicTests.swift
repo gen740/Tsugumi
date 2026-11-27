@@ -486,6 +486,25 @@ import TsugumiTestSupport
   #expect(failed.stages.map(\.stage) == [.build, .execute, .validate])
   #expect(failed.failure == d.failure && failed.openLog != nil)
   #expect(failed.problems.isEmpty)
+  // A remote execution waiting for its worker: the face says it short, the
+  // hover in full, with where it runs and whether it is working.
+  var waits = CardNodeData(title: "x", kind: .code, summary: nil, inputs: [], outputs: [])
+  waits.state = .running
+  waits.invocation = 1
+  waits.stage = StageProgress(items: [.init(stage: .build, status: .done), .init(stage: .execute, status: .running),
+                                      .init(stage: .validate, status: .pending)])
+  waits.activity = "waiting (worker slot)"
+  waits.activityWaits = true
+  waits.activityDetail = "waiting for a free slot on the worker"
+  waits.worker = "ttl"
+  waits.liveness = "CPU 00:00:01.00"
+  #expect(waits.statusLine().text == "waiting (worker slot)")
+  #expect(CardGeometry(waits, flow: .topToBottom).size
+    == CardGeometry(CardNodeData(title: "x", kind: .code, summary: nil, inputs: [], outputs: []), flow: .topToBottom).size)
+  let hover = HoverBubble.Content.card(waits, details: [], runId: nil) {}
+  #expect(hover.stagesWait)
+  #expect(hover.facts.contains("waiting for a free slot on the worker") && hover.facts.contains("CPU 00:00:01.00"))
+  #expect(hover.facts.contains { $0.hasSuffix(": ttl") })
 }
 
 @Test func collapsedCardsKeepTheirPortsOnTheEdges() {

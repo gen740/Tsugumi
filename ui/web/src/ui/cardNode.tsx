@@ -5,13 +5,14 @@
 import { CSSProperties, useEffect, useRef, useState } from 'react'
 import {
   Camera, CardGeometry, CardNodeData, currentStage, failedStage, isRouting, notRunStages, PortData, Pt, Rect, Stage, STAGE_INFO,
-  NEW_PORT, STAGE_STATUS_LABEL, StageItem, StageProgress, StageStatus,
+  NEW_PORT, StageItem, StageProgress, StageStatus,
 } from '../model/canvasKit'
 import { BoundaryPort, WireStyle } from '../model/canvas'
 import type { FlowDirection } from '../model/prefs'
 import { CardKey, cardState, formatDuration, formatShortDuration, InlineDraft, KIND_LABEL, relativeAge } from '../model/session'
 import { D } from '../wire/rpc'
 import { Icon } from './icons'
+import { SECTION_STATUS_LABEL, sectionStatus } from './statusSymbol'
 import { permissionInfo } from '../model/permissions'
 import { L } from '../i18n'
 
@@ -62,6 +63,9 @@ export function statusLine(d: CardNodeData, now = Date.now()): StatusLine {
   const mark = d.runMark ? ` · ${d.runMark}` : ''
   const failedColor = cardState(D.CardState.failed).color
   const st = d.state
+  // When no worker could be chosen (core failure stage=worker_selection), this
+  // line will say 「worker を選べず未開始」 in red and the hover each worker's
+  // reason, once that lands (proposal 18).
   if (st === D.CardState.failed || st === D.CardState.blocked) {
     let text = (d.failure !== undefined ? firstMeaningfulLine(d.failure) : '') || cardState(st).label
     const stage = failedStage(d.stage)?.stage
@@ -323,7 +327,7 @@ function CardFace({ p, g, marks }: { p: CardNodeProps; g: CardGeometry; marks: J
         </div>
         <span className="cv-ellipsis cv-status-line" style={{ fontSize: font(10), lineHeight: `${s(13)}px`, color: colorVar(line.color) }}>{line.text}</span>
       </div>
-      {g.stages ? <StageDots progress={data.stage && data.invocation > 0n ? data.stage : notRunStages(true)} zoom={z} onTap={p.onStageTap} />
+      {g.stages ? <StageDots progress={data.stage && data.invocation > 0n ? data.stage : notRunStages(true)} zoom={z} onTap={p.onStageTap} waiting={data.activityWaits} />
         : data.kind === 'subgraph' ? <span className="secondary cv-center"><Icon name={data.symbol ?? 'link'} size={font(10)} /></span> : null}
     </div>
   )
@@ -420,8 +424,8 @@ export const STAGE_COLOR: Record<StageStatus, string> = {
   cached: 'blue', reused: 'teal', failed: 'red', cancelled: 'brown',
 }
 
-export function stageHelp(item: StageItem, tappable: boolean): string {
-  let t = STAGE_INFO[item.stage].label + L('：') + STAGE_STATUS_LABEL[item.status]
+export function stageHelp(item: StageItem, tappable: boolean, waiting = false): string {
+  let t = STAGE_INFO[item.stage].label + L('：') + SECTION_STATUS_LABEL[sectionStatus(item.status, waiting)]
   if (item.seconds !== undefined) t += ' · ' + formatDuration(item.seconds)
   if (item.status === 'failed' || item.status === 'cancelled') t += L('（クリックでこの段階のログ）')
   else if (tappable && item.status !== 'pending') t += L('（クリックでログ）')
@@ -429,13 +433,12 @@ export function stageHelp(item: StageItem, tappable: boolean): string {
 }
 
 /** One stage circle: an empty ring before it is reached, a spinning arc while
- *  it runs, filled once it ended. */
-export function StageDot({ status, size }: { status: StageStatus; size: number }) {
-  // A stage waiting for something (another build, a worker) will be a dashed
-  // orange ring once the core reports that state.
+ *  it runs, a dashed ring while it waits (for the worker), filled once it ended. */
+export function StageDot({ status, size, waiting = false }: { status: StageStatus; size: number; waiting?: boolean }) {
   const c = `var(--${STAGE_COLOR[status]}${status === 'reused' ? ', #30b0c7' : ''})`
   const line = Math.max(0.8, size * 0.15)
   const style: CSSProperties = { width: size, height: size }
+  if (status === 'running' && waiting) return <span className="cv-dot cv-dot-waiting" style={{ ...style, borderWidth: line * 1.1, borderColor: c }} />
   if (status === 'pending' || status === 'notRun') return <span className="cv-dot" style={{ ...style, borderWidth: line, borderColor: fade('secondary', 0.6) }} />
   if (status === 'running') {
     return <span className="cv-dot cv-dot-running" style={{ ...style, borderWidth: line * 1.2, borderColor: fade('orange', 0.25), borderTopColor: c, borderRightColor: c }} />
@@ -446,20 +449,27 @@ export function StageDot({ status, size }: { status: StageStatus; size: number }
 /** Stages of the latest invocation as small circles stacked top to bottom
  *  (build, run, validate) on a thin line: a timeline. Colour and fill say how
  *  each went; a click opens that stage in the log. */
-export function StageDots({ progress, zoom = 1, onTap }: { progress: StageProgress; zoom?: number; onTap?: (s: Stage) => void }) {
+export function StageDots({ progress, zoom = 1, onTap, waiting = false }: {
+  progress: StageProgress; zoom?: number; onTap?: (s: Stage) => void
+  /** The running execution waits for its worker. */
+  waiting?: boolean
+}) {
   const s = (v: number) => v * zoom
   const n = progress.items.length
   return (
     <div className="cv-dots" style={{ gap: s(4) }}>
       <span className="cv-dots-line" style={{ width: Math.max(0.5, s(1)), height: s((n - 1) * 13) }} aria-hidden />
-      {progress.items.map((item) => (
-        <button key={item.stage} type="button" className="cv-stage" disabled={!onTap} title={stageHelp(item, !!onTap)}
-          aria-label={STAGE_INFO[item.stage].label + L('：') + STAGE_STATUS_LABEL[item.status]}
-          onPointerDown={(e) => onTap && e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); onTap?.(item.stage) }}>
-          <StageDot status={item.status} size={s(9)} />
-        </button>
-      ))}
+      {progress.items.map((item) => {
+        const waits = waiting && item.stage === Stage.execute
+        return (
+          <button key={item.stage} type="button" className="cv-stage" disabled={!onTap} title={stageHelp(item, !!onTap, waits)}
+            aria-label={STAGE_INFO[item.stage].label + L('：') + SECTION_STATUS_LABEL[sectionStatus(item.status, waits)]}
+            onPointerDown={(e) => onTap && e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onTap?.(item.stage) }}>
+            <StageDot status={item.status} size={s(9)} waiting={waits} />
+          </button>
+        )
+      })}
     </div>
   )
 }
