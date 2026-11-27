@@ -193,6 +193,18 @@ export class Scene {
     return this._junctions
   }
 
+  /** How a junction is drawn: as its most lit wire (a value on its way, or carried). */
+  junctionStyle(j: JunctionPlace): WireStyle {
+    const rank: WireStyle[] = ['normal', 'carried', 'active']
+    let best = 0
+    for (const c of this.session.connections(this.scope)) {
+      const fc = str(get(c, 'from', 'card')), tc = str(get(c, 'to', 'card'))
+      if (!fc || !tc || key([...this.scope, fc]) !== j.card || (str(get(c, 'from', 'port')) ?? NEW_PORT) !== j.port) continue
+      best = Math.max(best, rank.indexOf(this.style(j.card, j.port, key([...this.scope, tc]))))
+    }
+    return rank[best]
+  }
+
   /** Every wire of the scope, routed once and used for drawing, hover and clicks alike. */
   get wires(): RoutedWire[] {
     if (this._wires) return this._wires

@@ -270,23 +270,71 @@ auto junctions(const Scene& scene, const Proposal& arranged,
     const double along = down ? source->y : source->x;
     const double across = down ? source->x : source->y;
     double nearest = std::numeric_limits<double>::infinity();
-    double low = nearest, high = -nearest;
+    double low = across, high = across;
+    std::vector<double> sides;
     for (const auto& p : inputs) {
       nearest = std::min(nearest, down ? p.y : p.x);
       low = std::min(low, down ? p.x : p.y);
       high = std::max(high, down ? p.x : p.y);
+      sides.push_back(down ? p.x : p.y);
     }
+    // A Card's extent along and across the flow.
+    struct Extent {
+      double top, bottom, left, right;
+    };
+    std::vector<Extent> extents;
+    for (const auto& c : cards)
+      extents.push_back(down ? Extent{c.y, c.y + c.height, c.x, c.x + c.width}
+                             : Extent{c.x, c.x + c.width, c.y, c.y + c.height});
+    // Along the flow: in the middle of the free lane between the output and
+    // its nearest input, past the Cards between them that reach into it.
     // An input level with or before the output: two grids past it.
-    double j_along =
-        nearest > along ? along + (nearest - along) / 2 : along + 2 * grid;
-    // On the grid along the flow only (across it the trunk stays straight),
-    // when that keeps it between the output and its nearest input.
+    double lane_low = along, lane_high = nearest;
+    if (nearest > along) {
+      for (bool moved = true; moved;) {
+        moved = false;
+        for (const auto& e : extents) {
+          if (e.left >= high || e.right <= low) continue;
+          if (e.top <= lane_low && e.bottom > lane_low && e.bottom < lane_high) {
+            lane_low = e.bottom;
+            moved = true;
+          }
+          if (e.top < lane_high && e.bottom >= lane_high && e.top > lane_low) {
+            lane_high = e.top;
+            moved = true;
+          }
+        }
+      }
+    }
+    double j_along = nearest > along ? lane_low + (lane_high - lane_low) / 2
+                                     : along + 2 * grid;
+    // On the grid along the flow only (across it the trunk follows the
+    // inputs), when that keeps it inside the lane.
     if (scene.snap) {
       const double snapped = std::floor(j_along / grid + 0.5) * grid;
-      if (snapped > along && (nearest <= along || snapped < nearest))
+      if (snapped > lane_low && (nearest <= along || snapped < lane_high))
         j_along = snapped;
     }
-    const double j_across = std::min(std::max(across, low), high);
+    // Across the flow: at the median of the inputs, so the trunk carries the
+    // wire to them and the branches are short; then clear of the Cards.
+    std::sort(sides.begin(), sides.end());
+    const size_t middle = sides.size() / 2;
+    double j_across = sides.size() % 2 ? sides[middle]
+                                       : (sides[middle - 1] + sides[middle]) / 2;
+    const double margin = grid / 2;
+    for (size_t pass = 0; pass <= extents.size(); ++pass) {
+      bool moved = false;
+      for (const auto& e : extents) {
+        if (j_along <= e.top || j_along >= e.bottom ||
+            j_across <= e.left - margin || j_across >= e.right + margin)
+          continue;
+        j_across = j_across - (e.left - margin) <= (e.right + margin) - j_across
+                       ? e.left - margin
+                       : e.right + margin;
+        moved = true;
+      }
+      if (!moved) break;
+    }
     out.push_back({first.from, first.from_port, down ? j_across : j_along,
                    down ? j_along : j_across});
   }

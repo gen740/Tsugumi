@@ -404,7 +404,7 @@ struct GraphCanvas: View {
   /// What moves with the canvas, above the wires: laid out for the camera of this pass (CanvasPanHost).
   @ViewBuilder private func panned(_ routed: [RoutedWire]) -> some View {
     if let b = boundary { boundaryBars(b) }
-    ForEach(junctionPoints()) { j in junctionView(j) }
+    ForEach(junctionPoints()) { j in junctionView(j, style: junctionStyle(j, routed)) }
     ForEach(cardKeys, id: \.self) { k in cardView(k) }
     ForEach(noteIds, id: \.self) { id in noteView(id) }
     canvasCardViews
@@ -825,18 +825,26 @@ struct GraphCanvas: View {
     }
   }
 
-  /// The diameter of a junction's dot (screen units).
-  private var junctionDot: CGFloat { max(7, 9 * CGFloat(camera.zoom)) }
+  /// The diameter of a junction's mark (screen units): an output port's mark
+  /// and a ring that parts it from the wires running through.
+  private var junctionDot: CGFloat { max(6, 8 * CGFloat(camera.zoom)) + 4 }
+
+  /// How a junction is drawn: as its most lit wire (a value on its way, or carried).
+  private func junctionStyle(_ j: ProjectSession.JunctionPlace, _ routed: [RoutedWire]) -> WireDraw.Style {
+    let styles = routed.filter { $0.thread?.from == j.card && $0.thread?.fromPort == j.port }.map(\.style)
+    return styles.contains(.active) ? .active : styles.contains(.carried) ? .carried : .normal
+  }
 
   /// Where one output's wires split. Presentation only: it is no Card, has
-  /// no ports and is never selected; dragging it moves the branches.
-  private func junctionView(_ j: ProjectSession.JunctionPlace) -> some View {
-    let d = junctionDot
+  /// no ports and is never selected; dragging it moves the branches. A round
+  /// mark in its wires' colour, with an output port's hit area.
+  private func junctionView(_ j: ProjectSession.JunctionPlace, style: WireDraw.Style) -> some View {
+    let d = junctionDot, hit = max(16, 18 * CGFloat(camera.zoom))
     return Circle()
-      .fill(Color.secondary)
-      .overlay(Circle().strokeBorder(Color(nsColor: .textBackgroundColor), lineWidth: 1.5))
+      .fill(style == .normal ? Color.secondary : Color.orange)
+      .overlay(Circle().strokeBorder(Color(nsColor: .textBackgroundColor), lineWidth: 2))
       .frame(width: d, height: d)
-      .padding(4)
+      .frame(width: max(d, hit), height: max(d, hit))
       .contentShape(Circle())
       .position(screen(j.at))
       .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .named("canvas"))

@@ -39,6 +39,50 @@ export const path = (k: CardKey): string[] => (k ? k.split('/') : [])
 /** An output needs this many connected inputs for its wires to branch at a junction (hostd's layout::junction_inputs):
  *  a person may place one from the Card menu. Arrange places one by itself only from three (layout::junction_fan). */
 export const JUNCTION_INPUTS = 2
+/** Where an output's junction goes (hostd's layout::junctions, the rule Arrange uses). Along the flow:
+ *  in the middle of the free lane between the output and its nearest input, past the Cards spanning
+ *  the inputs' width that reach into it (two grids past the output when no input is further along),
+ *  on the grid when snapping. Across it: at the median of the inputs, moved to the nearer side of a
+ *  Card it would fall on. */
+export function junctionPlace(source: { x: number; y: number }, inputs: { x: number; y: number }[],
+  cards: { x: number; y: number; width: number; height: number }[], down: boolean, grid: number, snap: boolean): { x: number; y: number } {
+  const along = down ? source.y : source.x, across = down ? source.x : source.y
+  const sides = inputs.map(p => down ? p.x : p.y).sort((a, b) => a - b)
+  const nearest = inputs.length ? Math.min(...inputs.map(p => down ? p.y : p.x)) : along
+  const low = Math.min(across, sides[0] ?? across), high = Math.max(across, sides.at(-1) ?? across)
+  const extents = cards.map(r => down
+    ? { top: r.y, bottom: r.y + r.height, left: r.x, right: r.x + r.width }
+    : { top: r.x, bottom: r.x + r.width, left: r.y, right: r.y + r.height })
+  let laneLow = along, laneHigh = nearest
+  if (nearest > along) {
+    for (let moved = true; moved;) {
+      moved = false
+      for (const e of extents) {
+        if (e.left >= high || e.right <= low) continue
+        if (e.top <= laneLow && e.bottom > laneLow && e.bottom < laneHigh) { laneLow = e.bottom; moved = true }
+        if (e.top < laneHigh && e.bottom >= laneHigh && e.top > laneLow) { laneHigh = e.top; moved = true }
+      }
+    }
+  }
+  let at = nearest > along ? laneLow + (laneHigh - laneLow) / 2 : along + 2 * grid
+  if (snap) {
+    const snapped = Math.floor(at / grid + 0.5) * grid
+    if (snapped > laneLow && (nearest <= along || snapped < laneHigh)) at = snapped
+  }
+  const middle = Math.floor(sides.length / 2)
+  let side = !sides.length ? across : sides.length % 2 ? sides[middle] : (sides[middle - 1] + sides[middle]) / 2
+  const margin = grid / 2
+  for (let pass = 0; pass <= extents.length; pass++) {
+    let moved = false
+    for (const e of extents) {
+      if (at <= e.top || at >= e.bottom || side <= e.left - margin || side >= e.right + margin) continue
+      side = side - (e.left - margin) <= (e.right + margin) - side ? e.left - margin : e.right + margin
+      moved = true
+    }
+    if (!moved) break
+  }
+  return down ? { x: side, y: at } : { x: at, y: side }
+}
 /** Where the wires of one output split (world units): layout only, never a Card or a connection. */
 export interface JunctionPlace {
   card: CardKey
@@ -2598,9 +2642,7 @@ export class ProjectSession extends Observable {
     return this.geometry(k).outputs.filter(p => this.fanout(k, p) >= JUNCTION_INPUTS)
   }
 
-  /** Puts an output's junction where Arrange would (hostd's layout::junctions): along the flow
-   *  halfway to its nearest input, two grids past the output when no input is further along; across it in line with
-   *  the output unless every input is to one side, then in line with the closest. */
+  /** Puts an output's junction where Arrange would (hostd's layout::junctions, `junctionPlace`). */
   addJunction(k: CardKey, port: string) {
     const scope = path(k).slice(0, -1), id = path(k).at(-1)
     const world = (c: CardKey, name: string, output: boolean) => {
@@ -2615,18 +2657,14 @@ export class ProjectSession extends Observable {
       return this.instance(tk) ? [world(tk, tp, false)] : []
     })
     if (!inputs.length) return
-    const down = this.flow === 'topToBottom'
-    const grid = prefs.gridSize > 0 ? prefs.gridSize : 20
-    const along = down ? source.y : source.x, across = down ? source.x : source.y
-    const nearest = Math.min(...inputs.map(p => down ? p.y : p.x))
-    const sides = inputs.map(p => down ? p.x : p.y)
-    let at = nearest > along ? along + (nearest - along) / 2 : along + 2 * grid
-    if (prefs.showGrid) {
-      const snapped = Math.floor(at / grid + 0.5) * grid
-      if (snapped > along && (nearest <= along || snapped < nearest)) at = snapped
-    }
-    const side = Math.min(Math.max(across, Math.min(...sides)), Math.max(...sides))
-    this.setJunction(k, port, down ? { x: side, y: at } : { x: at, y: side })
+    const cards = this.cards(scope).flatMap(c => {
+      const cid = str(get(c, 'id'))
+      if (cid === undefined) return []
+      const ck = key([...scope, cid])
+      return [{ ...this.placedPosition(ck), ...this.geometry(ck).size }]
+    })
+    this.setJunction(k, port, junctionPlace(source, inputs, cards, this.flow === 'topToBottom',
+      prefs.gridSize > 0 ? prefs.gridSize : 20, prefs.showGrid))
   }
 
   /** Moves an output's junction, or removes it (undefined), in one undo step. */

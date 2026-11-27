@@ -78,6 +78,24 @@ import TsugumiTestSupport
     #expect(Documents.layoutView(fixtureLayout(layout.serialized()), notes: [:])["cards"]?["p"]?["junctions"] == layout["cards"]?["p"]?["junctions"])
   }
 
+  /// The rule Arrange uses (hostd's layout::junctions; tests/core/host/layout_test.cc
+  /// has the same scene): the free lane below the output and a Card beside it, the
+  /// median of the inputs, clear of Cards.
+  @Test func junctionGoesToTheLaneAtTheMedianOfItsInputs() {
+    func card(_ x: CGFloat, _ y: CGFloat, _ height: CGFloat = 120) -> CGRect { CGRect(x: x, y: y, width: 160, height: height) }
+    let cards = [card(0, 0), card(200, 0, 200), card(0, 400), card(200, 400), card(400, 400)]
+    let inputs = [CGPoint(x: 80, y: 400), CGPoint(x: 280, y: 400), CGPoint(x: 480, y: 400)]
+    let source = CGPoint(x: 80, y: 120)
+    #expect(ProjectSession.junctionPlace(source: source, inputs: inputs, cards: cards, down: true, grid: 20, snap: false)
+            == CGPoint(x: 280, y: 300))
+    #expect(ProjectSession.junctionPlace(source: source, inputs: inputs, cards: cards + [card(220, 250, 100)],
+                                         down: true, grid: 20, snap: false) == CGPoint(x: 210, y: 300))
+    let swap = { (p: CGPoint) in CGPoint(x: p.y, y: p.x) }
+    let sideways = cards.map { CGRect(x: $0.minY, y: $0.minX, width: $0.height, height: $0.width) }
+    #expect(ProjectSession.junctionPlace(source: swap(source), inputs: inputs.map(swap), cards: sideways,
+                                         down: false, grid: 20, snap: false) == CGPoint(x: 300, y: 280))
+  }
+
   @Test func addingMovingAndRemovingAreLayoutEditsOnly() async throws {
     let (s, dir) = try session()
     defer { try? FileManager.default.removeItem(at: dir) }

@@ -379,18 +379,19 @@ TEST(ProjectOperationLayout, ArrangePlacesJunctionsOnOutputsWithThreeInputs) {
   EXPECT_EQ(json::Text(junction, "port"), "out");
   for (const auto* id : {"t1", "t2", "t3"})
     EXPECT_FALSE(json::Object(cards.at(id)).contains("junctions"));
-  // Below the output, halfway to its nearest input.
+  // Below the output, in the middle of the lane to its nearest input; across
+  // the flow at the median of its inputs.
   const double sy = at("s", "y") + 120;
-  double nearest = 1e9, low = 1e9, high = -1e9;
+  double nearest = 1e9;
+  std::vector<double> xs;
   for (const auto* id : {"t1", "t2", "t3"}) {
     nearest = std::min(nearest, at(id, "y"));
-    low = std::min(low, at(id, "x") + 40);
-    high = std::max(high, at(id, "x") + 40);
+    xs.push_back(at(id, "x") + 40);
   }
+  std::sort(xs.begin(), xs.end());
   EXPECT_DOUBLE_EQ(std::stod(junction.at("y")),
                    sy + (nearest - sy) / 2);
-  EXPECT_DOUBLE_EQ(std::stod(junction.at("x")),
-                   std::clamp(at("s", "x") + 40, low, high));
+  EXPECT_DOUBLE_EQ(std::stod(junction.at("x")), xs[1]);
 
   // A junction goes with its Card when the Card is moved.
   H::ProjectMoveT move;
@@ -423,15 +424,13 @@ TEST(ProjectOperationLayout, ArrangePlacesJunctionsOnOutputsWithThreeInputs) {
     return std::stod(json::Object(rearranged.at(id)).at(axis));
   };
   const double few_y = now("s", "y") + 120;
-  double few_nearest = 1e9, few_low = 1e9, few_high = -1e9;
-  for (const auto* id : {"t1", "t2"}) {
+  double few_nearest = 1e9;
+  for (const auto* id : {"t1", "t2"})
     few_nearest = std::min(few_nearest, now(id, "y"));
-    few_low = std::min(few_low, now(id, "x") + 120);
-    few_high = std::max(few_high, now(id, "x") + 120);
-  }
   EXPECT_DOUBLE_EQ(std::stod(few.at("y")), few_y + (few_nearest - few_y) / 2);
+  // The median of two inputs: halfway between them.
   EXPECT_DOUBLE_EQ(std::stod(few.at("x")),
-                   std::clamp(now("s", "x") + 120, few_low, few_high));
+                   (now("t1", "x") + now("t2", "x")) / 2 + 120);
 }
 }  // namespace
 }  // namespace tsugumi::host

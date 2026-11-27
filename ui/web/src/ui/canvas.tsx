@@ -590,9 +590,12 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       {b && <BoundaryBars b={b} zoom={z} screen={screen} drag={boundaryDrag} cardTitle={k => session.displayName(k)} onDown={onBoundaryDown} />}
 
       {scene.junctions.map((j) => {
-        const p = screen(j.at), d = Math.max(7, 9 * z)
-        return <div key={`${j.card}\0${j.port}`} className="cv-junction" role="img" aria-label={L('分岐点')} title={L('分岐点（見た目だけ。ドラッグで動かせます）')}
-          data-junction={`${j.card}.${j.port}`} style={{ left: p.x, top: p.y, width: d, height: d }}
+        // An output port's mark and a ring that parts it from the wires running through,
+        // in its wires' colour, with an output port's hit area.
+        const p = screen(j.at), d = Math.max(6, 8 * z) + 4, hit = Math.max(16, 18 * z)
+        const lit = scene.junctionStyle(j) !== 'normal'
+        return <div key={`${j.card}\0${j.port}`} className={`cv-junction${lit ? ' lit' : ''}`} role="img" aria-label={L('分岐点')} title={L('分岐点（見た目だけ。ドラッグで動かせます）')}
+          data-junction={`${j.card}.${j.port}`} style={{ left: p.x, top: p.y, width: d, height: d, ['--hit' as string]: `${Math.min(0, (d - hit) / 2)}px` }}
           onPointerDown={(e) => onJunctionDown(j, e)}
           onContextMenu={(e) => showMenu(e, [{ label: L('分岐点を外す'), disabled: !session.isEditable, action: () => session.setJunction(j.card, j.port, undefined) }])} />
       })}

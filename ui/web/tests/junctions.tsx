@@ -15,7 +15,7 @@ page.window ??= globalThis
 page.matchMedia ??= () => ({ matches: false, addEventListener() {} })
 page.EventSource ??= class { addEventListener() {} close() {} }
 const { CanvasController } = await import('../src/model/canvas')
-const { ProjectSession } = await import('../src/model/session')
+const { ProjectSession, junctionPlace } = await import('../src/model/session')
 const { WorkflowTab } = await import('../src/model/workspace')
 const { prefs } = await import('../src/model/prefs')
 const { cardMenu, GraphCanvas } = await import('../src/ui/canvas')
@@ -61,6 +61,8 @@ assert.deepEqual(s.junctionOutputs(pair), ['out'], 'two inputs can branch at one
   assert.ok(j.y > port.y, 'below the output, along the flow')
   const near = Math.min(...targets.map((t) => scene.portWorld(t, 'in', false).y))
   assert.ok(j.y < near, 'before its nearest input')
+  const xs = targets.map((t) => scene.portWorld(t, 'in', false).x).sort((a, b) => a - b)
+  assert.equal(j.x, xs[1], 'across the flow at the median of its inputs')
   // One trunk from the output to the junction; the branches start at the junction.
   const trunks = scene.wires.filter((w) => w.trunk)
   assert.equal(trunks.length, 1)
@@ -141,6 +143,20 @@ assert.deepEqual(s.junctionOutputs(pair), ['out'], 'two inputs can branch at one
   assert.equal(serialize(back), serialize(view))
   assert.equal((arr(get(back, 'cards', source, 'junctions')) ?? []).length, 1)
   assert.equal((arr(get(back, 'cards', pair, 'junctions')) ?? []).length, 1)
+}
+
+{
+  // The rule itself (hostd's layout::junctions; tests/core/host/layout_test.cc has the same scene):
+  // the free lane below the output and a Card beside it, the median of the inputs, clear of Cards.
+  const card = (x: number, y: number, height = 120) => ({ x, y, width: 160, height })
+  const cards = [card(0, 0), card(200, 0, 200), card(0, 400), card(200, 400), card(400, 400)]
+  const inputs = [{ x: 80, y: 400 }, { x: 280, y: 400 }, { x: 480, y: 400 }]
+  assert.deepEqual(junctionPlace({ x: 80, y: 120 }, inputs, cards, true, 20, false), { x: 280, y: 300 })
+  assert.deepEqual(junctionPlace({ x: 80, y: 120 }, inputs, [...cards, card(220, 250, 100)], true, 20, false), { x: 210, y: 300 })
+  // Left to right swaps the axes.
+  const swap = (p: { x: number; y: number }) => ({ x: p.y, y: p.x })
+  const sideways = cards.map((r) => ({ x: r.y, y: r.x, width: r.height, height: r.width }))
+  assert.deepEqual(junctionPlace(swap({ x: 80, y: 120 }), inputs.map(swap), sideways, false, 20, false), { x: 300, y: 280 })
 }
 
 prefs.set('showGrid', originalGrid)

@@ -727,10 +727,8 @@ extension ProjectSession {
     geometry(k).outputs.filter { fanout(k, $0) >= Self.junctionInputs }
   }
 
-  /// Puts an output's junction where Arrange would (hostd's
-  /// layout::junctions): along the flow halfway to its nearest input, at
-  /// two grids past the output when no input is further along; across it in line with the output
-  /// unless every input is to one side, then in line with the closest.
+  /// Puts an output's junction where Arrange would (hostd's layout::junctions,
+  /// `junctionPlace`).
   func addJunction(_ k: CardKey, _ port: String) {
     let scope = Array(path(k).dropLast()), id = path(k).last
     func world(_ c: CardKey, _ name: String, output: Bool) -> CGPoint {
@@ -745,18 +743,61 @@ extension ProjectSession {
       return instance(tk) == nil ? nil : world(tk, tp, output: false)
     }
     guard !inputs.isEmpty else { return }
-    let down = flow == .topToBottom
-    let grid = CGFloat(AppPreferences.shared.gridSize > 0 ? AppPreferences.shared.gridSize : 20)
-    let along = down ? source.y : source.x, across = down ? source.x : source.y
-    let nearest = inputs.map { down ? $0.y : $0.x }.min() ?? along
-    let acrossInputs = inputs.map { down ? $0.x : $0.y }
-    var at = nearest > along ? along + (nearest - along) / 2 : along + 2 * grid
-    if AppPreferences.shared.showGrid {
-      let snapped = (at / grid + 0.5).rounded(.down) * grid
-      if snapped > along && (nearest <= along || snapped < nearest) { at = snapped }
+    let rects = cards(in: scope).compactMap { $0["id"]?.string }.map { id -> CGRect in
+      let c = key(scope + [id])
+      return CGRect(origin: placedPosition(c), size: geometry(c).size)
     }
-    let side = min(max(across, acrossInputs.min() ?? across), acrossInputs.max() ?? across)
-    setJunction(k, port, at: down ? CGPoint(x: side, y: at) : CGPoint(x: at, y: side))
+    let grid = CGFloat(AppPreferences.shared.gridSize > 0 ? AppPreferences.shared.gridSize : 20)
+    setJunction(k, port, at: Self.junctionPlace(source: source, inputs: inputs, cards: rects,
+                                                down: flow == .topToBottom, grid: grid,
+                                                snap: AppPreferences.shared.showGrid))
+  }
+
+  /// Where an output's junction goes (hostd's layout::junctions, the rule
+  /// Arrange uses). Along the flow: in the middle of the free lane between the
+  /// output and its nearest input, past the Cards spanning the inputs' width
+  /// that reach into it (two grids past the output when no input is further
+  /// along), on the grid when snapping. Across it: at the median of the
+  /// inputs, moved to the nearer side of a Card it would fall on.
+  nonisolated static func junctionPlace(source: CGPoint, inputs: [CGPoint], cards: [CGRect],
+                                        down: Bool, grid: CGFloat, snap: Bool) -> CGPoint {
+    let along = down ? source.y : source.x, across = down ? source.x : source.y
+    let sides = inputs.map { down ? $0.x : $0.y }.sorted()
+    let nearest = inputs.map { down ? $0.y : $0.x }.min() ?? along
+    let low = min(across, sides.first ?? across), high = max(across, sides.last ?? across)
+    let extents = cards.map { r in
+      down ? (top: r.minY, bottom: r.maxY, left: r.minX, right: r.maxX)
+           : (top: r.minX, bottom: r.maxX, left: r.minY, right: r.maxY)
+    }
+    var laneLow = along, laneHigh = nearest
+    if nearest > along {
+      var moved = true
+      while moved {
+        moved = false
+        for e in extents where e.left < high && e.right > low {
+          if e.top <= laneLow && e.bottom > laneLow && e.bottom < laneHigh { laneLow = e.bottom; moved = true }
+          if e.top < laneHigh && e.bottom >= laneHigh && e.top > laneLow { laneHigh = e.top; moved = true }
+        }
+      }
+    }
+    var at = nearest > along ? laneLow + (laneHigh - laneLow) / 2 : along + 2 * grid
+    if snap {
+      let snapped = (at / grid + 0.5).rounded(.down) * grid
+      if snapped > laneLow && (nearest <= along || snapped < laneHigh) { at = snapped }
+    }
+    let middle = sides.count / 2
+    var side = sides.isEmpty ? across : sides.count % 2 == 1 ? sides[middle] : (sides[middle - 1] + sides[middle]) / 2
+    let margin = grid / 2
+    for _ in 0...extents.count {
+      var moved = false
+      for e in extents {
+        if at <= e.top || at >= e.bottom || side <= e.left - margin || side >= e.right + margin { continue }
+        side = side - (e.left - margin) <= (e.right + margin) - side ? e.left - margin : e.right + margin
+        moved = true
+      }
+      if !moved { break }
+    }
+    return down ? CGPoint(x: side, y: at) : CGPoint(x: at, y: side)
   }
 
   /// Moves an output's junction, or removes it (nil), in one undo step.

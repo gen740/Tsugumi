@@ -89,5 +89,44 @@ TEST(Layout, RouterMatchesPresentationPaths) {
     }
   }
 }
+
+// A junction sits in the free lane below the output, across the flow at the
+// median of its inputs, and clear of the Cards.
+TEST(Layout, JunctionGoesToTheLaneAtTheMedianOfItsInputs) {
+  Scene scene;
+  auto card = [&](const std::string& id, double x, double y, double height) {
+    Card c;
+    c.id = id;
+    c.x = x;
+    c.y = y;
+    c.width = 160;
+    c.height = height;
+    c.inputs.push_back({"in", 80, 0});
+    c.outputs.push_back({"out", 80, height});
+    scene.cards.push_back(c);
+  };
+  card("s", 0, 0, 120);
+  // Beside the source and taller: the lane starts below it.
+  card("tall", 200, 0, 200);
+  for (const auto* id : {"a", "b", "c"}) {
+    card(id, (id[0] - 'a') * 200.0, 400, 120);
+    scene.wires.push_back({"s", "out", id, "in"});
+  }
+  auto only = [&] {
+    const auto list = junctions(scene, {});
+    EXPECT_EQ(list.size(), 1U);
+    return list.empty() ? Junction{} : list.front();
+  };
+  const auto j = only();
+  EXPECT_DOUBLE_EQ(j.y, 300);  // the middle of 200..400
+  EXPECT_DOUBLE_EQ(j.x, 280);  // the median of 80, 280, 480
+
+  // A Card in the lane where the median falls: to its nearer side, half a
+  // grid clear of it.
+  card("m", 220, 250, 100);
+  const auto clear = only();
+  EXPECT_DOUBLE_EQ(clear.y, 300);
+  EXPECT_DOUBLE_EQ(clear.x, 210);
+}
 }  // namespace
 }  // namespace tsugumi::layout

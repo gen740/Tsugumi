@@ -141,10 +141,13 @@ using OutputKey = std::pair<std::string, std::string>;
 // Where Arrange puts the junctions of the scene's outputs once the Cards and
 // port orders of `arranged` apply: of the outputs with junction_fan inputs,
 // and of those in `kept` (outputs that had a junction) with junction_inputs.
-// Along the flow halfway from the output to its nearest input (two grids past
-// it when no input is further along), across it in line with the output unless
-// every input is to one side, then in line with the closest of them. The UIs
-// place one added by hand by the same rule.
+// Along the flow in the middle of the free lane between the output and its
+// nearest input (past the Cards spanning the inputs' width that reach into
+// it; two grids past the output when no input is further along), on the grid
+// when snapping. Across it at the median of the inputs, moved to the nearer
+// side of a Card it would fall on (half a grid clear). The trunk then carries
+// the wire to where the inputs are and the branches are short. The UIs place
+// one added by hand by the same rule.
 auto junctions(const Scene& scene, const Proposal& arranged,
                const std::set<OutputKey>& kept = {})
     -> std::vector<Junction>;
