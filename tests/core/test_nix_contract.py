@@ -27,6 +27,7 @@ def test_evaluation_reads_only_confirmed_definition_sources(client, project):
     definition = project / "definitions/work"
     (definition / "_comments.json").write_text('{"comments":[]}')
     reload_project(client)
+    assert evaluated(client, "work", "toString ./.") == str(definition.resolve())
     names = evaluated(client, "work", "builtins.attrNames (builtins.readDir ./.)")
     assert {"default.nix", "message.txt", "_inputs.fbs"} <= set(names)
     metadata = {"README.md", "_card.json", "_comments.json"}
