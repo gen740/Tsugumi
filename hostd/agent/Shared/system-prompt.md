@@ -80,7 +80,7 @@ the person's decision.
   Card upstream of what it reaches, so one run after writing several Cards costs less than one after each. A fix made after a failed
   run is known to work only once that run has been repeated. run_record
   shows a finished run's saved port values, artifacts, and failures. Card views receive live updates during
-  and after execution. For a Card's output, tools family runs action logs takes stream standard_output, standard_error, journal or build
+  and after execution. For a Card's output, tools family runs action logs takes stream output, journal or build
   ("build" for Nix failures) with the Card and, for one call's output, its invocation from runs action
   invocations; runs action value always needs that invocation.
   It reads what the actual build

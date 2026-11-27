@@ -43,19 +43,18 @@ TEST(AgentCatalog, EnumArgumentsNameTheAcceptedValues) {
   } catch (const host::Failure& error) {
     EXPECT_EQ(error.code, "invalid_request");
     EXPECT_NE(std::string(error.what()).find(
-                  "stream must be one of standard_output, standard_error, "
-                  "journal, build"),
+                  "stream must be one of output, journal, build"),
               std::string::npos)
         << error.what();
   }
   EXPECT_NO_THROW(EncodeProjectRequest(
       "log_range",
-      R"({"run_id":"r","card":{"segments":["a"]},"stream":"standard_output"})",
+      R"({"run_id":"r","card":{"segments":["a"]},"stream":"output"})",
       1));
   // The tool description names the streams and how to find an invocation.
   const Catalog catalog;
-  EXPECT_NE(catalog.Find("log_range")->spec.input_schema.find("standard_output (a "
-                                                         "Card's stdout)"),
+  EXPECT_NE(catalog.Find("log_range")->spec.input_schema.find("output (a Card's "
+                                                         "stdout and stderr"),
             std::string::npos);
   EXPECT_NE(catalog.Find("run_value_read")->spec.input_schema.find("invocations"),
             std::string::npos);

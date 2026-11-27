@@ -354,7 +354,7 @@ No fields.
 | --- | --- | --- | --- |
 | `run_id` | `string` | yes |  |
 | `card` | `CardPath` | yes |  |
-| `invocation` | `uint64` |  |  |
+| `invocation` | `uint64` |  | Required: the invocation number; runs action invocations (or latest) lists a Card's invocations in a run. |
 | `side` | `ValueSide` |  |  |
 | `port` | `string` | yes |  |
 | `offset` | `uint64` |  |  |
@@ -411,7 +411,7 @@ No fields.
 | `run_id` | `string` | yes |  |
 | `card` | `CardPath` |  |  |
 | `invocation` | `uint64` |  |  |
-| `stream` | `LogStream` |  |  |
+| `stream` | `LogStream` |  | output (a Card's stdout and stderr, in the order written), journal or build. |
 | `offset` | `uint64` |  |  |
 | `tail` | `bool` |  |  |
 | `limit_bytes` | `uint32` |  | Maximum number of bytes to read. |

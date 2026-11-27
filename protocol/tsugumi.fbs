@@ -811,8 +811,8 @@ table LogRangeRequest {
   run_id:string (id: 0, required);
   card:Tsugumi.Data.CardPath (id: 1);
   invocation:uint64 = null (id: 2);
-  /// standard_output (a Card's stdout), standard_error (its stderr),
-  /// journal or build.
+  /// output (a Card's stdout and stderr, in the order written), journal or
+  /// build.
   stream:Tsugumi.Data.LogStream (id: 3);
   offset:uint64 = null (id: 4);
   tail:bool = null (id: 5);
