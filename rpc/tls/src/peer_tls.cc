@@ -10,7 +10,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
+#include <climits>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -268,34 +270,50 @@ Context::~Context() = default;
 struct Stream::State {
   Owned<SSL, SSL_free> ssl{nullptr, SSL_free};
   int fd = -1, downstream = -1;
+  std::optional<std::chrono::steady_clock::time_point> deadline;
+
+  auto Remaining() const -> int {
+    if (!deadline) return -1;
+    const auto left = std::chrono::ceil<std::chrono::milliseconds>(
+        *deadline - std::chrono::steady_clock::now());
+    Check(left.count() > 0, "TLS stream timed out");
+    return static_cast<int>(
+        std::min<decltype(left.count())>(left.count(), INT_MAX));
+  }
 
   auto Ready(int rc, const char* failure) -> bool {
     if (rc == 1) return true;
     const int error = SSL_get_error(ssl.get(), rc);
-    Check(downstream >= 0 &&
+    Check((downstream >= 0 || deadline) &&
               (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE),
           failure);
     const short interest = error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT;
     pollfd sockets[]{{fd, interest, 0}, {downstream, POLLIN, 0}};
     int ready;
     do {
-      ready = ::poll(sockets, 2, -1);
+      ready = ::poll(sockets, 2, Remaining());
     } while (ready < 0 && errno == EINTR);
     // Broker clients send one framed request and keep the write side open
     // until the reply. Any further data or EOF ends the exchange.
+    Check(ready != 0, "TLS stream timed out");
     Check(ready > 0 && !sockets[1].revents, "TLS downstream disconnected");
     return false;
   }
 };
-Stream::Stream(const Context& context, int fd, bool server, int downstream)
+Stream::Stream(const Context& context, int fd, bool server, int downstream,
+               std::optional<std::chrono::steady_clock::time_point> deadline)
     : state_(std::make_unique<State>()) {
   state_->fd = fd;
   state_->downstream = downstream;
+  state_->deadline = deadline;
   state_->ssl.reset(SSL_new(context.state_->context.get()));
   auto* ssl = state_->ssl.get();
   Check(ssl && SSL_set_fd(ssl, fd), "Cannot open TLS stream");
   constexpr auto failure = "TLS public-key authentication failed";
-  while (!state_->Ready(server ? SSL_accept(ssl) : SSL_connect(ssl), failure)) {
+  for (;;) {
+    (void)state_->Remaining();
+    if (state_->Ready(server ? SSL_accept(ssl) : SSL_connect(ssl), failure))
+      break;
   }
   Check(SSL_get_verify_result(ssl) == X509_V_OK, failure);
 }
@@ -304,6 +322,7 @@ auto Stream::Read(size_t count) -> std::string {
   std::string result(count, '\0');
   size_t offset = 0;
   while (offset < count) {
+    (void)state_->Remaining();
     size_t n = 0;
     const int rc = SSL_read_ex(state_->ssl.get(), result.data() + offset,
                                count - offset, &n);
@@ -315,6 +334,7 @@ auto Stream::Read(size_t count) -> std::string {
 auto Stream::ReadSome(size_t limit) -> std::string {
   std::string result(limit, '\0');
   while (true) {
+    (void)state_->Remaining();
     size_t n = 0;
     const int rc =
         SSL_read_ex(state_->ssl.get(), result.data(), result.size(), &n);
@@ -333,6 +353,7 @@ auto Stream::peer_key() const -> std::string {
 }
 auto Stream::Write(std::string_view bytes) -> void {
   while (!bytes.empty()) {
+    (void)state_->Remaining();
     size_t n = 0;
     const int rc =
         SSL_write_ex(state_->ssl.get(), bytes.data(), bytes.size(), &n);

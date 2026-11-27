@@ -60,6 +60,28 @@ auto Exchange(const peer_tls::Context& server, const peer_tls::Context& client)
   peer.join();
   return result;
 }
+TEST(PeerTLS, HandshakeTimesOutWhenThePeerSendsNothing) {
+  TemporaryDirectory directory;
+  peer_tls::Identity host(directory.path / "host.pem");
+  peer_tls::Context client(host, false, [](std::string_view) { return true; });
+  struct SocketPair {
+    int fd[2] = {-1, -1};
+    ~SocketPair() {
+      for (int socket : fd)
+        if (socket >= 0) ::close(socket);
+    }
+  } pair;
+  ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, pair.fd), 0);
+  ASSERT_EQ(::fcntl(pair.fd[0], F_SETFL, O_NONBLOCK), 0);
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+  try {
+    peer_tls::Stream stream(client, pair.fd[0], false, -1, deadline);
+    FAIL() << "An idle peer completed the handshake";
+  } catch (const std::runtime_error& error) {
+    EXPECT_STREQ(error.what(), "TLS stream timed out");
+  }
+}
 TEST(PeerTLS, MutualPinsAcceptAndAChangedWorkerKeyGetsNoRequestBytes) {
   TemporaryDirectory directory;
   peer_tls::Identity worker(directory.path / "worker.pem"),

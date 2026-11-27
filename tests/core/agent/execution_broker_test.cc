@@ -686,7 +686,7 @@ TEST_F(BrokerFixture, PublicPinCanBeRegisteredBeforeAuthorizingTheHost) {
 
 namespace tsugumi::test {
 namespace {
-TEST_F(BrokerFixture, CancelReachesWorkerWhileOtherRepliesAreBlocked) {
+TEST_F(BrokerFixture, CatalogAndCancelProceedWhileWorkerRepliesAreBlocked) {
   ASSERT_TRUE(Put().Code().empty());
   const auto capability = Authorize("project");
   worker->HoldStatus();
@@ -696,6 +696,9 @@ TEST_F(BrokerFixture, CancelReachesWorkerWhileOtherRepliesAreBlocked) {
     socket.fd = SendBroker(R::StatusRequestT{}, capability);
   ASSERT_TRUE(worker->WaitForHeldStatus(pending.size()));
   Socket queued{SendBroker(R::StatusRequestT{}, capability)};
+
+  const auto catalog = Broker(R::CatalogRequestT{}, capability);
+  ASSERT_NE(catalog->payload.AsReply()->body.AsCatalog(), nullptr);
 
   R::CancelRequestT cancel;
   cancel.fingerprint = std::string(64, 'd');
@@ -707,7 +710,7 @@ TEST_F(BrokerFixture, CancelReachesWorkerWhileOtherRepliesAreBlocked) {
   EXPECT_EQ(requests.back().body.AsCancelRequest()->fingerprint,
             std::string(64, 'd'));
   // Only the original eight Status requests passed through. Closing one
-  // core client releases its worker connection and admits the one in backlog.
+  // core client releases its worker connection and admits the queued request.
   EXPECT_EQ(std::ranges::count_if(requests,
                                   [](const auto& req) {
                                     return req.body.AsStatusRequest() !=
