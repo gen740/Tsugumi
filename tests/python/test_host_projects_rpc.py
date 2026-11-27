@@ -373,7 +373,7 @@ def test_project_state_recovery_requires_an_explicit_request(host, tmp_path, nam
     with sqlite3.connect(store) as db:
         db.executescript("CREATE TABLE evidence(value); INSERT INTO evidence VALUES('keep')")
     if name == "runs.sqlite":
-        artifact = folder / "artifacts/8"
+        artifact = folder / "artifacts/8/card/@1/0"
         artifact.mkdir(parents=True)
         (artifact / "saved").write_text("keep")
     if name == "document.sqlite":
@@ -387,6 +387,10 @@ def test_project_state_recovery_requires_an_explicit_request(host, tmp_path, nam
     assert issue["path"] == str(store.resolve())
     assert store.is_file()
     assert not list(folder.glob("*.stale-*"))
+    if name == "runs.sqlite":
+        scratch = tmp_path / "scratch" / result["key"] / "runs/8"
+        scratch.mkdir(parents=True, exist_ok=True)
+        (scratch / "saved").write_text("keep scratch")
     recover = {**fields, "action": EnvironmentAction.MoveStateAside, "stale_store": issue["path"]}
     assert "code" in call("EnvironmentRequest", recover, external=True)
     assert store.is_file()
@@ -401,9 +405,13 @@ def test_project_state_recovery_requires_an_explicit_request(host, tmp_path, nam
     if name != "agent.sqlite":
         with sqlite3.connect(store) as db:
             assert db.execute("PRAGMA user_version").fetchone()[0] > 0
-            if name == "runs.sqlite":
-                assert db.execute("SELECT value FROM run_counter").fetchone() == (8,)
-                assert (artifact / "saved").read_text() == "keep"
+    if name == "runs.sqlite":
+        backup = folder / moved.name.replace("runs.sqlite", "artifacts", 1)
+        assert (backup / "8/card/@1/0/saved").read_text() == "keep"
+        assert not artifact.exists()
+        assert (scratch / "saved").read_text() == "keep scratch"
+        with sqlite3.connect(store) as db:
+            assert db.execute("SELECT value FROM run_counter").fetchone() == (8,)
     if name == "document.sqlite":
         backup, = folder.glob("document-files.stale-*")
         assert (backup / "saved").read_text() == "keep"

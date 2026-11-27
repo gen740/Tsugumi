@@ -1122,6 +1122,47 @@ void History::put_receipt(sql::Db& db, const std::string& op_id,
       .bind(3, digest)
       .bind_blob(4, bytes)
       .run();
+
+  // Bound replay payloads the same way as document receipts. Shell
+  // uncertainty markers must remain durable because replaying the operation
+  // could repeat an external side effect.
+  constexpr int kReceiptCount = 2000;
+  constexpr int kReceiptBytes = 2 << 20;
+  std::vector<int64_t> expired;
+  {
+    auto rows = db.prepare(R"sql(
+      SELECT rowid, kind, CASE WHEN kind = 'shell' THEN result END FROM receipts
+      WHERE rowid IN (
+        SELECT rowid FROM (
+          SELECT rowid, row_number() OVER recent AS count,
+            sum(length(result) + length(CAST(op_id AS BLOB)) +
+                length(kind) + length(digest)) OVER recent AS size
+          FROM receipts WHERE length(result) > 0
+          WINDOW recent AS (ORDER BY rowid DESC)
+        ) WHERE count > 1 AND (count > ? OR size > ?)
+      )
+    )sql");
+    rows.bind(1, kReceiptCount).bind(2, kReceiptBytes);
+    while (rows.step()) {
+      if (rows.text(1) == "shell") {
+        const auto result = rows.blob(2);
+        flatbuffers::Verifier verifier(
+            reinterpret_cast<const uint8_t*>(result.data()), result.size());
+        if (!verifier.VerifyBuffer<R::OperationReceipt>(nullptr)) continue;
+        const auto* receipt =
+            flatbuffers::GetRoot<R::OperationReceipt>(result.data());
+        const auto* failure = receipt->result_as_Failure();
+        if (failure && failure->kind() == FailureKind::interrupted) continue;
+      }
+      expired.push_back(rows.i64(0));
+    }
+  }
+  // Keep the idempotency key even after discarding the reply payload.
+  auto remove = db.prepare("UPDATE receipts SET result=X'' WHERE rowid=?");
+  for (const auto row : expired) {
+    remove.reset();
+    remove.bind(1, row).run();
+  }
 }
 
 std::vector<LogEnd> History::append_log(sql::Db& db, const std::string& run_id,
@@ -1238,7 +1279,20 @@ std::optional<History::ReceiptRow> History::receipt(sql::Db& db,
       db.prepare("SELECT kind, digest, result FROM receipts WHERE op_id=?");
   st.bind(1, op_id);
   if (!st.step()) return std::nullopt;
-  return ReceiptRow{st.text(0), st.text(1), st.blob(2)};
+  auto bytes = st.blob(2);
+  if (bytes.empty()) {
+    flatbuffers::FlatBufferBuilder builder;
+    const auto failure = wire::failure(
+        builder,
+        FailureData::make(FailureKind::operation_conflict,
+                          "the operation was applied and its reply expired"));
+    builder.Finish(
+        R::CreateOperationReceipt(builder, builder.CreateString(op_id),
+                                  R::ReceiptValue::Failure, failure.Union()));
+    bytes.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()),
+                 builder.GetSize());
+  }
+  return ReceiptRow{st.text(0), st.text(1), std::move(bytes)};
 }
 
 std::vector<InvocationSummaryData> History::latest_invocations(

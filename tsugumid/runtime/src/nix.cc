@@ -255,28 +255,101 @@ auto NixRunner::declared_views(const BuildRequest& req)
   return build_plan(view_request, !prepared_).common.views;
 }
 
+namespace {
+auto definition_metadata(std::string_view name) -> bool {
+  return name == "_card.json" || name == "README.md" ||
+         name == "_comments.json";
+}
+
+auto verify_definitions(const stdfs::path& project, const Document& doc,
+                        const NixCall& call) -> void {
+  const auto changed = [](const std::string& path) {
+    throw Failed(FailureKind::external_change,
+                 path + " differs from the confirmed document",
+                 {{"path", path}});
+  };
+  const auto root = stdfs::canonical(project);
+  for (const auto& definition : call.definitions) {
+    const auto directory = stdfs::path(definition.directory);
+    const auto relative = directory.lexically_relative(root);
+    std::set<std::string> expected(definition.files.begin(),
+                                   definition.files.end());
+    // Metadata is tracked by the document and checked for drift, but it
+    // remains outside the evaluator and the evaluation key.
+    for (const std::string name :
+         {"_card.json", "README.md", "_comments.json"}) {
+      const auto path = (relative / name).generic_string();
+      if (doc.disk_hashes.contains(path) || doc.sources.contains(path))
+        expected.insert(name);
+    }
+    try {
+      const auto listing = fs::list_beneath(root, relative);
+      for (const auto& name : listing.links)
+        changed((relative / name).generic_string());
+      for (const auto& name : listing.special)
+        changed((relative / name).generic_string());
+      for (const auto& name : listing.files) {
+        // The evaluator supplies the confirmed generated schema itself.
+        if (name == "_inputs.fbs") continue;
+        const auto path = (relative / name).generic_string();
+        if (!expected.erase(name)) changed(path);
+        crypto::Sha256 hash;
+        fs::stream_beneath(root, path, UINT64_MAX,
+                           [&](std::string_view bytes) { hash.update(bytes); });
+        const auto source = doc.sources.find(path);
+        const auto disk = doc.disk_hashes.find(path);
+        if (hash.finish_hex() != (disk != doc.disk_hashes.end()
+                                      ? disk->second
+                                      : source->second.hash))
+          changed(path);
+      }
+    } catch (const fs::Error&) {
+      changed(relative.generic_string());
+    }
+    if (!expected.empty())
+      changed((relative / *expected.begin()).generic_string());
+  }
+}
+
+template <class Evaluate>
+auto checked_evaluation(const stdfs::path& project, const Document& doc,
+                        const NixCall& call, Evaluate evaluate) {
+  verify_definitions(project, doc, call);
+  auto result = [&] {
+    try {
+      return evaluate();
+    } catch (...) {
+      verify_definitions(project, doc, call);
+      throw;
+    }
+  }();
+  verify_definitions(project, doc, call);
+  return result;
+}
+}  // namespace
+
 auto NixRunner::configure_call(NixCall& call, const Document& doc,
                                const Node& node, bool expression_only) -> void {
   const auto& graph = *doc.resolution;
   auto [entries, project_key] = project_pins(doc, svc_.store(), node);
   call.locked_nix_path = std::move(entries);
 
+  const auto root = stdfs::canonical(svc_.store().root());
   crypto::Sha256 key;
   const auto prepare = [&](const Node& owner) -> json::Members {
     const auto card = path_key(owner.path);
-    auto& store = svc_.store();
     crypto::Sha256 source_hash;
     source_hash.update(json::Quote(card));
     source_hash.update(json::Quote(owner.project_dir));
     source_hash.update(json::Quote(owner.def_dir));
     source_hash.update(project_key);
+    std::vector<std::string> sources;
     for (auto it = doc.sources.lower_bound(owner.def_dir);
          it != doc.sources.end() && it->first.starts_with(owner.def_dir);
          ++it) {
       const auto rel = it->first.substr(owner.def_dir.size());
-      if (rel == "_card.json" || rel == "README.md" ||
-          rel == "_comments.json" || rel == "_inputs.fbs")
-        continue;
+      if (definition_metadata(rel) || rel == "_inputs.fbs") continue;
+      sources.push_back(rel);
       source_hash.update(json::Quote(rel));
       source_hash.update(it->second.hash);
     }
@@ -288,12 +361,7 @@ auto NixRunner::configure_call(NixCall& call, const Document& doc,
         throw std::runtime_error(diagnostic.message);
     if (owner.generated_inputs) source_hash.update(*owner.generated_inputs);
     const auto digest = source_hash.finish_hex();
-    const auto project = stdfs::canonical(store.root());
-    const auto relative = stdfs::path(owner.def_dir).parent_path();
-    const auto definition = stdfs::canonical(project / relative);
-    if (definition != project / relative || !stdfs::is_directory(definition))
-      throw std::runtime_error("invalid Card definition directory: " +
-                               owner.def_dir);
+    const auto definition = root / stdfs::path(owner.def_dir).parent_path();
 
     // inputs.<name>: the exports of one or more Cards, merged.
     std::map<std::string, std::vector<std::string>> merged;
@@ -303,7 +371,8 @@ auto NixRunner::configure_call(NixCall& call, const Document& doc,
     for (const auto& [name, keys] : merged)
       deps.push_back(json::Encode(json::Members{
           {"name", json::Quote(name)}, {"keys", json::Encode(keys)}}));
-    call.definitions.push_back({definition.string(), card});
+    call.definitions.push_back({definition.string(), card, std::move(sources),
+                                owner.generated_inputs.value_or(""), digest});
     key.update(digest);
     key.update(json::Encode(deps));
     return {{"key", json::Quote(card)},
@@ -362,7 +431,9 @@ auto NixRunner::evaluate_expression(const ExpressionRequest& req)
   call.deadline = req.deadline;
   call.log = req.log;
   configure_call(call, *req.doc, *node, true);
-  return evaluator().expression(call, req.expression, req.build);
+  return checked_evaluation(svc_.store().root(), *req.doc, call, [&] {
+    return evaluator().expression(call, req.expression, req.build);
+  });
 }
 
 auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
@@ -423,16 +494,14 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
   const auto key_text = std::get<0>(key) + "\n" + std::get<1>(key);
   if (prepared_) {
     if (req.on_phase) req.on_phase(Phase::evaluate);
-    res = prepared(path_key(node.path), key_text, call.max_implementations);
+    res = checked_evaluation(svc_.store().root(), *req.doc, call, [&] {
+      return prepared(path_key(node.path), key_text, call.max_implementations);
+    });
     if (req.on_plan) req.on_plan(res.implementation_count);
   } else {
     try {
       call.root_dir = gcroots_dir();
       call.root_prefix = prefix;
-      // Paths in args name content-addressed sources of the selected Card
-      // and its guaranteed upstream Cards.
-      // The evaluator validates its settings epoch and observed filesystem
-      // reads.
       const auto card = std::tuple{call.card, call.system, call.probe_only};
       std::optional<NixResult> earlier;
       {
@@ -446,21 +515,23 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
           earlier = found->second.second;
       }
       if (call.on_phase) call.on_phase(false);
-      if (earlier && evaluator().reuse(call, *earlier)) {
-        res = std::move(*earlier);
-        enforce_implementation_limit(res.implementation_count,
-                                     call.max_implementations);
-        res.built = false;
-      } else {
-        uint64_t count = 0;
-        {
-          std::lock_guard l(evaluations_mu_);
-          if (!views_only) evaluations_.erase(card);
-          count = ++full_evaluations_;
+      res = checked_evaluation(svc_.store().root(), *req.doc, call, [&] {
+        if (earlier && evaluator().reuse(call, *earlier)) {
+          enforce_implementation_limit(earlier->implementation_count,
+                                       call.max_implementations);
+          earlier->built = false;
+          return std::move(*earlier);
+        } else {
+          uint64_t count = 0;
+          {
+            std::lock_guard l(evaluations_mu_);
+            if (!views_only) evaluations_.erase(card);
+            count = ++full_evaluations_;
+          }
+          log::info("Card full evaluation " + std::to_string(count));
+          return evaluator().evaluate(call);
         }
-        log::info("Card full evaluation " + std::to_string(count));
-        res = evaluator().evaluate(call);
-      }
+      });
       if (req.on_plan) req.on_plan(res.implementation_count);
       if (req.probe_only) {
         if (res.evaluation_epoch) {
@@ -491,6 +562,8 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
           evaluations_.erase(evaluations_.begin());
         evaluations_[card] = {key, res};
       }
+    } catch (const Failed&) {
+      throw;
     } catch (const NixInterrupted& e) {
       if (e.timed_out)
         throw Failed(FailureKind::timeout, e.what(),

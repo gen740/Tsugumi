@@ -92,29 +92,41 @@ def test_past_run_scratch_stays_until_explicit_deletion(core_factory, project, t
     usage_when(daemon.connect(), lambda u: current(u).scratchBytes == 0)
 
 
-def test_startup_collects_unrecorded_run_files(core_factory, project, tmp_path):
+def test_startup_collects_only_interrupted_artifacts_and_delete_markers(
+    core_factory, project, tmp_path
+):
     scratch = tmp_path / "scratch"
     artifacts = project / ".tsugumi" / "artifacts"
+    daemon = core_factory(mocked_builds=True, mocked_worker=True,
+                          args=["--run-scratch-dir", str(scratch)])
+    client = daemon.connect()
+    gate = Gate(tmp_path, "running")
+    worker_project(client, project, tmp_path, [gate.action()])
+    interrupted = run(client)
+    gate.wait()
+    owner = artifacts / interrupted
     orphan = [
-        scratch / "runs" / "97",
-        artifacts / "97" / "outer" / "inner" / "@1" / "0",
+        owner / "outer" / "inner" / "@1" / "0",
         artifacts / ".delete-97",
-        artifacts / "97" / "card" / "@1" / ".delete-68bbf780-8307-4fcd-870d-8559ced179c6",
+        owner / "card" / "@1" / ".delete-68bbf780-8307-4fcd-870d-8559ced179c6",
     ]
     unrelated = [
+        scratch / "runs" / "97",
         scratch / "runs" / "manual",
-        artifacts / "97" / "card" / "@01" / "0",
-        artifacts / "97" / "@1" / "0",
+        artifacts / "97" / "card" / "@1" / "0",
+        owner / "card" / "@01" / "0",
+        owner / "@1" / "0",
         artifacts / ".delete-manual",
         project / ".tsugumi" / "other" / "97",
     ]
     for directory in orphan + unrelated:
         directory.mkdir(parents=True)
         (directory / "file").write_bytes(b"example")
-    link = artifacts / "97" / "card" / "@1" / "1"
+    link = owner / "card" / "@1" / "1"
     link.parent.mkdir(parents=True, exist_ok=True)
     link.symlink_to(unrelated[-1], target_is_directory=True)
-    core_factory(mocked_builds=True, args=["--run-scratch-dir", str(scratch)]).connect()
+    daemon.restart(crash=True)
+    daemon.connect()
     assert all(not path.exists() for path in orphan)
     assert all((path / "file").read_bytes() == b"example" for path in unrelated)
     assert link.is_symlink()

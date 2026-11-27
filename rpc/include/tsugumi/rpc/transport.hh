@@ -42,6 +42,7 @@ struct FrameInfo {
   const char* peer = nullptr;
   bool trace = true;
   bool control = false;
+  size_t reply_budget = 0;  // Estimated bytes for bulk requests.
 };
 enum class AdmissionFailure { AlreadyHello, Unauthenticated, Busy };
 struct FrameCodec {
@@ -123,6 +124,7 @@ class TransportServer {
   void on_writable(Conn& c);
   void handle_frame(Conn& c, std::string frame);
   bool handle_ws_handshake(Conn& c);
+  void parse_input(Conn& c);
   void parse_ws(Conn& c);
   void enqueue_raw(Conn& c, std::string bytes, bool is_reply,
                    bool trace = true);

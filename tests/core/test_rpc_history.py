@@ -1,6 +1,7 @@
 """Recorded values, artifacts and logs observed through public RPC."""
 
 import os
+import time
 from uuid import UUID
 
 import pytest
@@ -8,10 +9,11 @@ import pytest
 from harness.artifact_faults import corrupt_retained_file
 from harness.fixtures import worker_project
 from harness.observations import read_pages
-from harness.scenario import FILE_OUTPUT, run, wait_run
+from harness.scenario import FILE_OUTPUT, Gate, run, wait_run
 from projects import builtin_project, run_and_wait
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.CardState import CardState
+from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
 
 
@@ -106,7 +108,8 @@ def test_a_corrupted_retained_artifact_is_rejected(core_factory, project, tmp_pa
     artifact = client.call("ArtifactListRequest", runId=run_id).artifacts[0]
     artifact_id = text(artifact.artifactId)
     client.call("ProjectCacheClearRequest", opId=new_id())
-    assert read_pages(client, "ArtifactReadRequest", artifactId=artifact_id, member="report.txt") == original
+    assert read_pages(client, "ArtifactReadRequest", artifactId=artifact_id, member="report.txt",
+                      verify_integrity=True) == original
 
     corrupt_retained_file(project / ".tsugumi/artifacts" / run_id / "work/@1" / text(artifact.label).split(".")[1],
                           original)
@@ -141,6 +144,35 @@ def test_log_paging_keeps_utf8_boundaries(core_factory, project, tmp_path):
         offset = page.nextOffset
     assert "".join(pages) == expected
 
+
+
+def test_live_log_is_bounded_when_recording_is_disabled(core_factory, project, tmp_path):
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
+    gate = Gate(tmp_path, "worker-gate")
+    limit = 8 << 20
+    worker_project(
+        client, project, tmp_path,
+        [{"op": "log", "text": "a" * 4095}] * ((9 << 20) // 4096)
+        + [gate.action(), {"op": "output", "port": "out", "type": "string", "value": "done"}],
+        recordLogs="off",
+    )
+    run_id = run(client)
+    try:
+        deadline = time.monotonic() + 40
+        location = dict(runId=run_id, card=path("work"), invocation=1,
+                        stream=LogStream.standard_output, limitBytes=1024)
+        while True:
+            live = client.call("LogRangeRequest", live=True, **location)
+            assert (live.sizeBytes or 0) <= limit
+            if live.logTruncatedAtBytes:
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
+        assert live.sizeBytes == live.logTruncatedAtBytes == limit
+        assert not client.call("LogRangeRequest", **location).sizeBytes
+    finally:
+        gate.release()
+    assert wait_run(client, run_id).state == RunState.succeeded
 
 
 def test_a_client_opening_later_gets_each_cards_latest_invocation(core_factory, project):

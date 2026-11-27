@@ -10,7 +10,6 @@
 #include <stop_token>
 
 #include "nix.hh"
-#include "run_scratch.hh"
 #include "scheduler.hh"
 #include "service.hh"
 #include "tsugumi/document/schema_id.hh"
@@ -41,6 +40,18 @@ auto artifact_label(const ArtifactData& artifact) -> std::string {
 
 constexpr uint32_t kInlineLimit = 256u << 10;
 constexpr size_t kPagePayload = (1u << 20) - 8192;
+
+template <class Integer>
+auto cursor_position(std::string_view text) -> Integer {
+  if (text.empty())
+    throw Failed(FailureKind::invalid_cursor, "missing cursor position");
+  Integer value{};
+  const auto end = text.data() + text.size();
+  const auto [next, error] = std::from_chars(text.data(), end, value);
+  if (error != std::errc{} || next != end || value <= 0)
+    throw Failed(FailureKind::invalid_cursor, "invalid cursor position");
+  return value;
+}
 
 uint32_t page_limit(std::optional<uint32_t> v) {
   uint32_t x = v.value_or(100);
@@ -385,10 +396,12 @@ void Service::run_history(RequestIn& req) {
   uint32_t limit = page_limit(r->limit());
   auto [hi, after] = r->cursor() ? history_->open_cursor(r->cursor()->str())
                                  : std::pair<int64_t, std::string>{-1, ""};
+  const auto below = r->cursor() ? cursor_position<int64_t>(after) : INT64_MAX;
+  if (r->cursor() && (hi < 0 || below > hi))
+    throw Failed(FailureKind::invalid_cursor, "invalid run history cursor");
   std::vector<int64_t> seqs;
-  auto runs = history_->read([&, hi_ = hi, after_ = after](sql::Db& db) {
-    int64_t top = hi_ >= 0 ? hi_ : History::max_run_seq(db);
-    int64_t below = after_.empty() ? INT64_MAX : std::stoll(after_);
+  auto runs = history_->read([&](sql::Db& db) {
+    int64_t top = hi >= 0 ? hi : History::max_run_seq(db);
     auto out = History::runs_page(db, card, artifacts_only, below, top,
                                   limit + 1, &seqs);
     seqs.push_back(top);  // remember the bound for the cursor
@@ -492,7 +505,8 @@ void Service::run_invocations(RequestIn& req) {
   uint32_t limit = page_limit(r->limit());
   uint64_t after = 0;
   if (r->cursor())
-    after = std::stoull(history_->open_cursor(r->cursor()->str()).second);
+    after = cursor_position<uint64_t>(
+        history_->open_cursor(r->cursor()->str()).second);
   auto [rows, batches] = history_->read([&](sql::Db& db) {
     if (!History::run(db, run_id))
       throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
@@ -746,8 +760,8 @@ void Service::run_record(RequestIn& req) {
     std::optional<InvocationSummaryData> status;
     std::vector<StoredValueMeta> in_meta;
     std::vector<StoredValueMeta> out_meta;
-    std::vector<std::string> in_bytes;
-    std::vector<std::string> out_bytes;
+    std::vector<std::optional<std::string>> in_bytes;
+    std::vector<std::optional<std::string>> out_bytes;
     History::Aggregate agg;
     std::optional<FailureData> past_failure;
   };
@@ -774,14 +788,21 @@ void Service::run_record(RequestIn& req) {
       if (o.record) {
         o.in_meta = History::value_metas(db, run_id, card, *o.selected, true);
         o.out_meta = History::value_metas(db, run_id, card, *o.selected, false);
-        for (const auto& m : o.in_meta)
-          o.in_bytes.push_back(
-              History::value_bytes(db, run_id, card, *o.selected, true, m.name)
-                  .value_or(""));
-        for (const auto& m : o.out_meta)
-          o.out_bytes.push_back(
-              History::value_bytes(db, run_id, card, *o.selected, false, m.name)
-                  .value_or(""));
+        auto budget = kInlineLimit;
+        const auto load = [&](const auto& metas, auto& values, bool input) {
+          values.resize(metas.size());
+          for (size_t i = 0; i < metas.size(); ++i) {
+            const auto& meta = metas[i];
+            if (meta.size_bytes > budget) continue;
+            auto value = History::value_bytes(db, run_id, card, *o.selected,
+                                              input, meta.name);
+            if (!value || value->size() > budget) continue;
+            budget -= value->size();
+            values[i] = std::move(value);
+          }
+        };
+        load(o.in_meta, o.in_bytes, true);
+        load(o.out_meta, o.out_bytes, false);
       }
     }
     o.agg = History::aggregate(db, run_id, card);
@@ -830,9 +851,8 @@ void Service::run_record(RequestIn& req) {
   flatbuffers::Offset<R::InvocationRecord> rec;
   if (exists) {
     InvocationSummaryData summary = o.record ? o.record->summary : *o.status;
-    uint64_t budget = kInlineLimit;
     auto values = [&](const std::vector<StoredValueMeta>& metas,
-                      const std::vector<std::string>& data) {
+                      const std::vector<std::optional<std::string>>& data) {
       std::vector<flatbuffers::Offset<D::NamedValue>> v;
       for (size_t i = 0; i < metas.size(); ++i) {
         const auto& m = metas[i];
@@ -841,11 +861,11 @@ void Service::run_record(RequestIn& req) {
             reinterpret_cast<const uint8_t*>(m.bfbs.data()), m.bfbs.size());
         auto root = b.CreateString(m.root_type);
         flatbuffers::Offset<flatbuffers::Vector<uint8_t>> inl;
-        bool include = data[i].size() <= budget;
+        const bool include = data[i].has_value();
         if (include) {
-          inl = b.CreateVector(reinterpret_cast<const uint8_t*>(data[i].data()),
-                               data[i].size());
-          budget -= data[i].size();
+          inl =
+              b.CreateVector(reinterpret_cast<const uint8_t*>(data[i]->data()),
+                             data[i]->size());
         } else {
           truncated = true;
         }
@@ -985,6 +1005,37 @@ auto artifact_location(const stdfs::path& state, const ArtifactData& artifact)
   throw Failed(FailureKind::integrity_error, "invalid artifact location");
 }
 
+auto artifact_stamp(const stdfs::path& root) -> std::string {
+  crypto::Sha256 stamp;
+  const auto add = [&](const std::string& member) {
+    struct stat st{};
+    const auto path = member.empty() ? root : root / member;
+    if (::lstat(path.c_str(), &st) != 0)
+      throw Failed(FailureKind::integrity_error,
+                   "artifact changed during read");
+#ifdef __APPLE__
+    const auto modified = st.st_mtimespec;
+    const auto changed = st.st_ctimespec;
+#else
+    const auto modified = st.st_mtim;
+    const auto changed = st.st_ctim;
+#endif
+    stamp.update(std::string_view(member.c_str(), member.size() + 1));
+    for (const auto value :
+         {int64_t(st.st_dev), int64_t(st.st_ino), int64_t(st.st_mode),
+          int64_t(st.st_size), int64_t(modified.tv_sec),
+          int64_t(modified.tv_nsec), int64_t(changed.tv_sec),
+          int64_t(changed.tv_nsec)})
+      stamp.update(std::to_string(value) + ":");
+  };
+  add("");
+  const auto listing = fs::list_beneath(root, "");
+  for (const auto* paths :
+       {&listing.directories, &listing.files, &listing.links, &listing.special})
+    for (const auto& path : *paths) add(path);
+  return stamp.finish_hex();
+}
+
 auto artifact_key(std::string_view text) -> ArtifactKey {
   if (auto id = parse_artifact_id(text)) return std::move(*id);
   throw Failed(FailureKind::invalid_request, "invalid artifact UUID");
@@ -1063,21 +1114,14 @@ auto Service::remove_run_artifacts(const std::string& run_id) -> uint64_t {
   return remove_artifact_tree(detach_run_artifacts(run_id));
 }
 
-auto Service::collect_unrecorded_run_files() -> void {
+auto Service::collect_interrupted_artifacts(
+    const std::vector<std::string>& runs) -> void {
   const auto state = store_->state_dir();
   const auto artifacts = state / "artifacts";
-  const auto scratch = run_scratch_ / "runs";
-  const auto [locations, runs] = history_->read([](sql::Db& db) {
-    std::pair<std::set<std::string>, std::set<std::string>> recorded;
-    auto artifacts = db.prepare("SELECT location FROM artifacts");
-    while (artifacts.step()) recorded.first.insert(artifacts.text(0));
-    auto runs = db.prepare("SELECT run_id FROM runs");
-    while (runs.step()) recorded.second.insert(runs.text(0));
-    return recorded;
-  });
   const auto is_directory = [](const stdfs::path& path) {
     return stdfs::is_directory(stdfs::symlink_status(path));
   };
+  if (!is_directory(state) || !is_directory(artifacts)) return;
   const auto is_counter = [](std::string_view name) {
     uint64_t number = 0;
     const auto end = name.data() + name.size();
@@ -1086,14 +1130,14 @@ auto Service::collect_unrecorded_run_files() -> void {
            (name.size() == 1 || name.front() != '0');
   };
   size_t count = 0;
-  uint64_t bytes = 0;
   const auto remove_artifact = [&](const stdfs::path& path) {
-    bytes += remove_artifact_tree(path);
+    remove_artifact_tree(path, false);
     ++count;
   };
   constexpr std::string_view prefix = ".delete-";
   const auto visit_card = [&](const auto& visit, const stdfs::path& card,
-                              bool has_card) -> void {
+                              bool has_card,
+                              const std::set<std::string>& locations) -> void {
     for (const auto& entry : stdfs::directory_iterator(card)) {
       if (!is_directory(entry.path())) continue;
       const auto name = entry.path().filename().string();
@@ -1113,38 +1157,34 @@ auto Service::collect_unrecorded_run_files() -> void {
           if (!locations.contains(location)) remove_artifact(leaf.path());
         }
       } else if (valid_id(name)) {
-        visit(visit, entry.path(), true);
+        visit(visit, entry.path(), true, locations);
       }
     }
   };
-  if (is_directory(state) && is_directory(artifacts)) {
-    for (const auto& entry : stdfs::directory_iterator(artifacts)) {
-      if (!is_directory(entry.path())) continue;
-      const auto name = entry.path().filename().string();
-      if (crypto::is_run_id(name)) {
-        visit_card(visit_card, entry.path(), false);
-      } else if (name.starts_with(prefix)) {
-        const auto suffix = name.substr(prefix.size());
-        if (crypto::is_run_id(suffix))
-          remove_artifact(entry.path());
-      }
-    }
+  for (const auto& entry : stdfs::directory_iterator(artifacts)) {
+    const auto name = entry.path().filename().string();
+    if (name.starts_with(prefix) &&
+        crypto::is_run_id(std::string_view(name).substr(prefix.size())) &&
+        is_directory(entry.path()))
+      remove_artifact(entry.path());
   }
-  if (is_directory(scratch)) {
-    for (const auto& entry : stdfs::directory_iterator(scratch)) {
-      const auto name = entry.path().filename().string();
-      if (!crypto::is_run_id(name) || runs.contains(name) ||
-          !is_directory(entry.path()))
-        continue;
-      const auto size = fs::directory_size(entry.path());
-      if (remove_run_scratch(entry.path())) {
-        bytes += size;
-        ++count;
-      }
-    }
+  // A directory absent from this database may still belong to a history
+  // moved aside by an older Host. Only inspect directories we own.
+  for (const auto& run : runs) {
+    const auto dir = artifacts / run;
+    if (!crypto::is_run_id(run) || !is_directory(dir)) continue;
+    const auto locations = history_->read([&](sql::Db& db) {
+      std::set<std::string> recorded;
+      auto rows = db.prepare("SELECT location FROM artifacts WHERE run_id=?");
+      rows.bind(1, run);
+      while (rows.step()) recorded.insert(rows.text(0));
+      return recorded;
+    });
+    visit_card(visit_card, dir, false, locations);
   }
-  log::info("history: removed " + std::to_string(count) +
-            " unrecorded directories (" + std::to_string(bytes) + " bytes)");
+  if (count)
+    log::info("history: removed " + std::to_string(count) +
+              " unfinished artifact directories");
 }
 
 auto Service::artifact_destination(const InvocationSummaryData& invocation)
@@ -1177,11 +1217,12 @@ auto Service::record_artifacts(const InvocationSummaryData& invocation,
          invocation.started_at.value_or(sealed), sealed,
          fs::directory_size(target), "tree:" + fs::sha256_tree(target)});
   }
+  std::vector<stdfs::path> expired;
   history_->write_sync([&](sql::Db& db) {
     const auto run = History::run(db, invocation.run_id);
     for (const auto& artifact : records) {
       if (!artifact.keep && (!run || run->status.terminal())) {
-        remove_artifact_tree(artifact_location(store_->state_dir(), artifact));
+        expired.push_back(artifact_location(store_->state_dir(), artifact));
         continue;
       }
       if (artifact.id.size() != 16 || History::artifact(db, artifact.id))
@@ -1190,6 +1231,7 @@ auto Service::record_artifacts(const InvocationSummaryData& invocation,
       History::put_artifact(db, artifact);
     }
   });
+  for (const auto& path : expired) remove_artifact_tree(path, false);
 }
 
 void Service::artifact_list(RequestIn& req) {
@@ -1312,19 +1354,48 @@ void Service::artifact_read(RequestIn& req) {
   if (!fs::resolves_inside(root, file))
     throw Failed(FailureKind::invalid_path, "invalid artifact member");
 
-  uint64_t offset = r->offset().value_or(0);
-  uint64_t limit = content_limit(r->limit_bytes());
-  const auto page = fs::read_range_inside(root, file, offset, limit);
-  if (!page)
+  const auto offset = r->offset().value_or(0);
+  const auto limit = content_limit(r->limit_bytes());
+  const auto missing = [] {
     throw Failed(FailureKind::not_found, "the artifact content is missing");
+  };
+  if (!stdfs::is_regular_file(stdfs::symlink_status(file))) missing();
+  if (!a->tree_hash)
+    throw Failed(FailureKind::integrity_error,
+                 "the artifact content is corrupt");
+  const auto stamp = artifact_stamp(root);
+  std::shared_ptr<const VerifiedArtifact> verified;
+  {
+    std::lock_guard lock(artifact_verification_mu_);
+    const auto found = verified_artifacts_.find(id);
+    if (found != verified_artifacts_.end() && found->second->stamp == stamp &&
+        found->second->tree_hash == *a->tree_hash)
+      verified = found->second;
+  }
+  if (!verified) {
+    auto check = std::make_shared<VerifiedArtifact>();
+    check->stamp = stamp;
+    check->tree_hash = "tree:" + fs::sha256_tree(root, &check->members);
+    if (check->tree_hash != *a->tree_hash || artifact_stamp(root) != stamp)
+      throw Failed(FailureKind::integrity_error,
+                   "the artifact content is corrupt");
+    verified = std::move(check);
+    std::lock_guard lock(artifact_verification_mu_);
+    if (verified_artifacts_.size() >= 64 && !verified_artifacts_.contains(id))
+      verified_artifacts_.erase(verified_artifacts_.begin());
+    verified_artifacts_[id] = verified;
+  }
+  const auto hash = verified->members.find(member);
+  if (hash == verified->members.end()) missing();
+  const auto page = fs::read_range_inside(root, file, offset, limit);
+  if (!page) missing();
   if (offset > page->size)
     throw Failed(FailureKind::invalid_range, "offset is past the end");
-  if (!a->tree_hash || *a->tree_hash != "tree:" + fs::sha256_tree(root))
-    throw Failed(FailureKind::integrity_error, "the artifact content is corrupt");
-  reply(req, wire::file_page(req.request_id,
-                             stdfs::path(member).filename().string(),
-                             page->bytes, offset, page->size,
-                             fs::sha256_file(file)));
+  if (artifact_stamp(root) != stamp)
+    throw Failed(FailureKind::integrity_error, "artifact changed during read");
+  reply(req,
+        wire::file_page(req.request_id, stdfs::path(member).filename().string(),
+                        page->bytes, offset, page->size, hash->second));
 }
 
 void Service::card_view_read(RequestIn& req) {

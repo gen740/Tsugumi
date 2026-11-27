@@ -164,7 +164,11 @@ auto write_atomic_using(const stdfs::path& p, unsigned mode, Write write)
     throw Error("create " + tmp.string() + ": " + std::strerror(errno));
   try {
     write(fd, tmp);
-    if (::fsync(fd) != 0)
+    int synced;
+    do {
+      synced = ::fsync(fd);
+    } while (synced < 0 && errno == EINTR);
+    if (synced != 0)
       throw Error("fsync " + tmp.string() + ": " + std::strerror(errno));
   } catch (...) {
     ::close(fd);
@@ -177,7 +181,7 @@ auto write_atomic_using(const stdfs::path& p, unsigned mode, Write write)
     ::unlink(tmp.c_str());
     throw Error("rename " + p.string() + ": " + std::strerror(e));
   }
-  fsync_dir(p.parent_path());
+  fsync_dir(p.has_parent_path() ? p.parent_path() : stdfs::path("."));
 }
 
 }  // namespace
@@ -481,10 +485,12 @@ Listing list_beneath(const stdfs::path& root, const stdfs::path& rel,
   std::sort(out.files.begin(), out.files.end());
   std::sort(out.links.begin(), out.links.end());
   std::sort(out.directories.begin(), out.directories.end());
+  std::sort(out.special.begin(), out.special.end());
   return out;
 }
 
-std::string sha256_tree(const stdfs::path& p) {
+std::string sha256_tree(const stdfs::path& p,
+                        std::map<std::string, std::string>* member_hashes) {
   const auto listing = list_beneath(p, "");
   crypto::Sha256 hash;
   const auto entry = [&](std::string_view kind, const std::string& name,
@@ -499,22 +505,13 @@ std::string sha256_tree(const stdfs::path& p) {
     crypto::Sha256 file;
     stream_beneath(p, name, UINT64_MAX,
                    [&](std::string_view chunk) { file.update(chunk); });
-    entry("f", name, file.finish_hex());
+    auto digest = file.finish_hex();
+    entry("f", name, digest);
+    if (member_hashes) member_hashes->emplace(name, std::move(digest));
   }
   for (const auto& name : listing.links) entry("l", name);
   for (const auto& name : listing.special) entry("s", name);
   return hash.finish_hex();
-}
-
-bool directory_beneath(const stdfs::path& root, const stdfs::path& rel) {
-  const int fd = open_beneath(root, rel, O_RDONLY | O_NONBLOCK);
-  struct stat st{};
-  const int status = ::fstat(fd, &st);
-  ::close(fd);
-  if (status != 0 || !(S_ISDIR(st.st_mode) || S_ISREG(st.st_mode)))
-    throw Error((root / rel).string() +
-                " is neither a regular file nor a directory");
-  return S_ISDIR(st.st_mode);
 }
 
 FileLock::~FileLock() {

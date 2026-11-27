@@ -113,6 +113,23 @@ TEST(Process, EnforcesDeadlineAfterOutputCloses) {
   EXPECT_EQ(WTERMSIG(result.status), SIGKILL);
 }
 
+TEST(Process, AStoppedChildWithClosedOutputStillHasADeadline) {
+  using namespace std::chrono_literals;
+  proc::Spec spec;
+  // The helper resumes the child eventually so a regression fails the
+  // assertions without leaving a stopped process behind.
+  spec.argv = {"/bin/sh", "-c",
+               "trap '' TERM; "
+               "(/bin/sleep 2; kill -CONT \"$$\") >/dev/null 2>&1 & "
+               "exec 1>&- 2>&-; kill -STOP \"$$\"; exit 42"};
+  const auto result =
+      proc::run(spec, nullptr, std::chrono::steady_clock::now() + 500ms, {},
+                std::nullopt, 50ms);
+  EXPECT_TRUE(result.timed_out);
+  ASSERT_TRUE(WIFSIGNALED(result.status));
+  EXPECT_EQ(WTERMSIG(result.status), SIGKILL);
+}
+
 TEST_F(ShellTest, ReadOnlyIsIndependentOfCredentialHiding) {
   const auto output = Run("cat control/token; cat '" + shared_note.string() +
                               "'; printf changed > note",

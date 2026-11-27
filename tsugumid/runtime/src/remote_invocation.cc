@@ -13,6 +13,7 @@
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/log.hh"
 #include "tsugumi/workerd/artifact_id.hh"
 #include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/log.hh"
@@ -279,6 +280,10 @@ auto import_remote_result(
   std::set<stdfs::path> declared;
   std::set<ArtifactKey> ids;
   const auto* artifacts = failure ? failure->created() : worker->created();
+  if (artifacts && artifacts->size() != 0 &&
+      (job->card_probe || artifact_destination.empty()))
+    throw Failed(FailureKind::output_invalid,
+                 "a remote probe cannot publish artifacts");
   if (artifacts) {
     for (const auto* artifact : *artifacts) {
       auto id = wire::artifact_id(*artifact->id());
@@ -369,9 +374,12 @@ auto import_remote_result(
   for (const auto& id : declared)
     if (!stdfs::is_directory(staged / id))
       throw Failed(FailureKind::output_invalid, "remote artifact directory is missing");
+  import_logs(temp / "logs", recorded, log, result);
   if (stop.stop_requested())
     throw BrokerDisconnected("remote result import stopped");
-  if (!declared.empty()) {
+  if (declared.empty()) {
+    if (on_validation) on_validation(started, now_ms());
+  } else {
     const int fd =
         ::open(staged.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0) throw std::runtime_error("cannot open downloaded artifacts");
@@ -380,11 +388,27 @@ auto import_remote_result(
       ~Close() { ::close(fd); }
     } close{fd};
     fs::OutputBudget budget{job->output_limit_bytes, job->output_limit_entries};
-    for (const auto& name : declared)
-      fs::move_staging_artifact(fd, name, artifact_destination / name, budget);
+    auto moved = declared.begin();
+    try {
+      for (; moved != declared.end(); ++moved)
+        fs::move_staging_artifact(fd, *moved, artifact_destination / *moved,
+                                  budget);
+      if (on_validation) on_validation(started, now_ms());
+    } catch (...) {
+      // Only this import's unpublished moves belong to the rollback.
+      for (auto it = declared.begin(); it != moved; ++it) {
+        const auto path = artifact_destination / *it;
+        try {
+          fs::clear_staging(path);
+          stdfs::remove(path);
+        } catch (const std::exception& error) {
+          tsugumi::log::warn("rollback remote artifact: " +
+                             std::string(error.what()));
+        }
+      }
+      throw;
+    }
   }
-  if (on_validation) on_validation(started, now_ms());
-  import_logs(temp / "logs", recorded, log, result);
   return result;
 }
 

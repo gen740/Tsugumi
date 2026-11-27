@@ -25,6 +25,8 @@ add_executable(tsugumi_rpc_frame_tests rpc_frame_test.cc)
 target_link_libraries(tsugumi_rpc_frame_tests PRIVATE tsugumi_client_transport GTest::gtest_main)
 if(TSUGUMI_INSTALLED_CORE)
   target_include_directories(tsugumi_rpc_frame_tests PRIVATE ${TSUGUMI_CORE_ROOT}/include)
+else()
+  target_include_directories(tsugumi_rpc_frame_tests PRIVATE ${PROJECT_SOURCE_DIR}/util/include)
 endif()
 gtest_discover_tests(tsugumi_rpc_frame_tests TEST_PREFIX "core_rpc_frame."
   DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 30)

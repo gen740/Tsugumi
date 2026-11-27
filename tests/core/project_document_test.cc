@@ -1,9 +1,11 @@
 #include <gtest/gtest.h>
+#include <sys/stat.h>
 
 #include <set>
 
 #include "test_document.hh"
 #include "tsugumi/document/graph.hh"
+#include "tsugumi/document/text.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "worker_selection.hh"
@@ -24,6 +26,46 @@ auto Invalid(const std::function<void()>& load, std::string_view message,
     EXPECT_NE(std::string_view(error.what()).find(file), std::string_view::npos)
         << error.what();
   }
+}
+
+TEST(ProjectDocument, EmbeddedNulReportsItsOwnError) {
+  using document_text::Schema;
+  const auto parse = [](std::string_view bytes) {
+    return document_text::parse(Schema::Project, "tsugumi.json", bytes);
+  };
+  EXPECT_THROW(parse("{"), DocumentError);
+  Invalid([&] { parse(std::string_view("{}\x00{}", 5)); }, "contains a NUL");
+}
+
+TEST(ProjectDocument, AtomicWriteWithBareFilename) {
+  const auto original = std::filesystem::current_path();
+  const auto directory = std::filesystem::temp_directory_path() /
+                         ("atomic-write-" + crypto::uuid4());
+  std::filesystem::create_directory(directory);
+  struct Restore {
+    std::filesystem::path original, directory;
+    ~Restore() {
+      std::filesystem::current_path(original);
+      std::filesystem::remove_all(directory);
+    }
+  } restore{original, directory};
+  std::filesystem::current_path(directory);
+  ASSERT_NO_THROW(fs::write_atomic("bare-name", "confirmed"));
+  EXPECT_EQ(fs::read_file("bare-name"), "confirmed");
+}
+
+TEST(ProjectDocument, SpecialFileNamesAreSorted) {
+  const auto directory = std::filesystem::temp_directory_path() /
+                         ("special-entries-" + crypto::uuid4());
+  std::filesystem::create_directory(directory);
+  struct Cleanup {
+    std::filesystem::path path;
+    ~Cleanup() { std::filesystem::remove_all(path); }
+  } cleanup{directory};
+  ASSERT_EQ(::mkfifo((directory / "z").c_str(), 0600), 0);
+  ASSERT_EQ(::mkfifo((directory / "a").c_str(), 0600), 0);
+  EXPECT_EQ(fs::list_beneath(directory, "").special,
+            (std::vector<std::string>{"a", "z"}));
 }
 
 TEST(ProjectDocument, DirectorySyncRejectsInvalidTarget) {

@@ -307,6 +307,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     bool in_targets = false;
     bool start = false;
     bool start_fired = false;
+    std::optional<History::LastInput> start_input;
     std::map<std::string, std::deque<TokenGroup>>
         queues;  // connected inputs only
     uint64_t invocations = 0;
@@ -476,28 +477,61 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         stream == LogStream::standard_error) {
       const auto& settings = doc_->resolution->find(card)->settings;
       const auto limit = settings.record_logs ? settings.log_limit_bytes : 0;
-      auto& captured = captured_log_bytes_[{path_key(card), inv}];
-      for (const auto& text : received.lines) {
-        // This temporary log is available only while the run is active.
-        try {
-          if (!live_logs_) live_logs_ = History::open_live_logs();
-          sql::Transaction transaction(*live_logs_);
-          auto ends = History::append_log(*live_logs_, run_id_, card, inv, stream, text);
-          transaction.commit();
-          for (auto& end : ends) {
-            end.live = true;
-            svc_.server()->broadcast(log_note(end));
-          }
-        } catch (const std::exception& error) {
-          log::warn(std::string("live log: ") + error.what());
+      const auto key = std::pair{path_key(card), inv};
+      auto& live = live_log_budgets_[key];
+      auto& recorded = captured_log_bytes_[key];
+      constexpr uint64_t kLiveInvocationBytes = 8u << 20;
+      constexpr uint64_t kLiveRunBytes = 128u << 20;
+      const auto append = [&](std::string& chunk, uint64_t remaining) {
+        for (const auto& line : received.lines) {
+          const auto count = std::min<uint64_t>(line.size(), remaining);
+          chunk.append(line.data(), count);
+          remaining -= count;
+          if (count < line.size()) return true;
         }
-        if (limit == 0 || captured > limit) continue;
-        // Keep the exact byte prefix, including when a read spans the limit.
-        const auto accepted = std::min<uint64_t>(text.size(), limit - captured);
-        if (accepted)
-          record_card_log(card, inv, stream, text.substr(0, accepted));
-        captured += text.size();
-        if (captured > limit) mark_card_log_truncated(card, inv, limit);
+        return false;
+      };
+
+      if (!live.truncated) {
+        std::string chunk;
+        const auto remaining = std::min(kLiveInvocationBytes - live.bytes,
+                                        kLiveRunBytes - live_log_bytes_);
+        const bool truncated = append(chunk, remaining) || received.truncated;
+        if (!chunk.empty() || truncated) {
+          try {
+            if (!live_logs_) live_logs_ = History::open_live_logs();
+            sql::Transaction transaction(*live_logs_);
+            auto ends = History::append_log(*live_logs_, run_id_, card, inv,
+                                            stream, chunk);
+            if (truncated)
+              History::mark_log_truncated(*live_logs_, run_id_, card, inv,
+                                          live.bytes + chunk.size());
+            transaction.commit();
+            live.bytes += chunk.size();
+            live_log_bytes_ += chunk.size();
+            live.truncated = truncated;
+            for (auto& end : ends) {
+              end.live = true;
+              svc_.server()->broadcast(log_note(end));
+            }
+            if (truncated)
+              svc_.server()->broadcast(
+                  log_note({run_id_, card, inv, stream, std::nullopt, true}));
+          } catch (const std::exception& error) {
+            log::warn(std::string("live log: ") + error.what());
+          }
+        }
+      }
+      if (limit && !recorded.truncated) {
+        std::string chunk;
+        const bool truncated = append(chunk, limit - recorded.bytes);
+        recorded.bytes += chunk.size();
+        if (!chunk.empty())
+          record_card_log(card, inv, stream, std::move(chunk));
+        if (truncated) {
+          recorded.truncated = true;
+          mark_card_log_truncated(card, inv, limit);
+        }
       }
       return;
     }
@@ -553,6 +587,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }
     for (const auto& j : plan_.joins)
       seed_saved(nodes_[res.index.at(path_key(j.card))], j.saved_ports);
+    for (auto& node : nodes_) {
+      if (!node.start || node.queues.empty() ||
+          (p_.injected_inputs && node.node->path == p_.card))
+        continue;
+      node.start_input = svc_.history().read([&](sql::Db& db) {
+        return History::last_input(db, node.node->path);
+      });
+    }
   }
 
   auto saved_group(const NodeRt& node, const SavedInputGroup& saved,
@@ -722,9 +764,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       }
       if (!n.queues.empty()) {
         try {
-          const auto last = svc_.history().read([&](sql::Db& db) {
-            return History::last_input(db, n.node->path);
-          });
+          const auto last = std::exchange(n.start_input, std::nullopt);
           if (!last) throw missing_saved_inputs(*n.node);
           if (n.node->kind != CardType::Merge)
             for (const auto& [port, _] : n.queues)
@@ -770,10 +810,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   }
 
   void main() {
-    {
-      std::lock_guard lock(mu_);
-      prepare_graph();
-    }
+    // Graph state is private to this thread until the worker pools start.
+    prepare_graph();
     set_state(RunState::preparing);
     journal("run", "started", std::nullopt, std::nullopt, "run started");
     for (const auto& note : seed_notes_)
@@ -836,9 +874,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   }
 
   void schedule_fast() {
+    for (uint32_t lane = p_.max_concurrency; lane > 0; --lane)
+      fast_lanes_.push_back(lane - 1);
     std::vector<std::future<void>> fan_out;
     for (;;) {
-      std::vector<Work> ready;
+      std::vector<std::pair<Work, uint32_t>> ready;
       bool parallel = false;
       {
         std::unique_lock lock(mu_);
@@ -853,7 +893,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
             work->cancellation =
                 std::make_shared<BatchCancellation>(work_stop_.get_token());
             ++running_;
-            ready.push_back(std::move(*work));
+            ready.emplace_back(std::move(*work), fast_lanes_.back());
+            fast_lanes_.pop_back();
           }
         }
         if (ready.empty()) {
@@ -874,14 +915,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         return true;
       });
       if (parallel) {
-        for (uint32_t lane = 0; lane < ready.size(); ++lane)
-          fan_out.push_back(std::async(
-              std::launch::async,
-              [this, work = std::move(ready[lane]), lane]() mutable {
-                execute_work(work, lane);
-              }));
+        for (auto& [work, lane] : ready)
+          fan_out.push_back(
+              std::async(std::launch::async,
+                         [this, work = std::move(work), lane]() mutable {
+                           execute_work(work, lane);
+                         }));
       } else {
-        execute_work(ready.front(), 0);
+        auto& [work, lane] = ready.front();
+        execute_work(work, lane);
       }
     }
     for (auto& worker : fan_out) worker.get();
@@ -947,6 +989,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       std::lock_guard lock(mu_);
       nodes_[work.node].running = false;
       --running_;
+      if (svc_.packed_fast()) fast_lanes_.push_back(lane);
     }
     cv_.notify_all();
   }
@@ -1405,9 +1448,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       std::lock_guard lock(mu_);
       worker_budget_ -= count - started.load();
     }
-    // Cancellation and publication are ordered by the same mutex. A
-    // committed batch is complete and routes all its output groups.
-    std::lock_guard lock(mu_);
+    // Decide the batch's outcome under the cancellation lock. Serialize its
+    // write and routing with other batches while allowing status and cancel
+    // to run during the write.
+    std::lock_guard publish(publication_mu_);
+    std::unique_lock lock(mu_);
     if (cancel_.load())
       failure = FailureData::make(FailureKind::cancelled, "run cancelled");
 
@@ -1423,12 +1468,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         batch.outputs.push_back({port.name, sent, batch.execution_list});
       }
     }
+    lock.unlock();
     try {
       publish_batch(batch, members);
     } catch (const Failed&) {
       persistence_lost("batch of " + path_key(node.path));
       failure = persist_failure();
     }
+    lock.lock();
     if (failure) {
       const bool cancelled = failure->kind == FailureKind::cancelled;
       rt.last = cancelled ? CardState::cancelled : CardState::failed;
@@ -2005,6 +2052,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   std::condition_variable worker_cv_;
   std::deque<std::function<void(uint32_t)>> worker_tasks_;
   std::vector<std::thread> workers_;
+  std::vector<uint32_t> fast_lanes_;  // guarded by mu_ once scheduling starts
   uint32_t worker_budget_ = 0;
   bool pool_stop_ = false;
   uint32_t running_ = 0;
@@ -2022,9 +2070,16 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   std::optional<FailureData> stall_failure_;
   std::mutex log_policy_mu_;
   std::unique_ptr<sql::Db> live_logs_;
-  std::map<std::pair<std::string, uint64_t>, uint64_t> captured_log_bytes_;
+  struct Capture {
+    uint64_t bytes = 0;
+    bool truncated = false;
+  };
+  uint64_t live_log_bytes_ = 0;
+  std::map<std::pair<std::string, uint64_t>, Capture> live_log_budgets_;
+  std::map<std::pair<std::string, uint64_t>, Capture> captured_log_bytes_;
   std::map<std::pair<std::string, uint64_t>, workerd::InvocationLog>
       log_budgets_;
+  std::mutex publication_mu_;
   std::mutex persist_mu_;
   std::optional<FailureData> persist_failure_;
 };
@@ -2049,12 +2104,17 @@ auto Scheduler::live_log(const std::string& run_id,
 void Scheduler::recover_interrupted() {
   auto runs = svc_.history().read([](sql::Db& db) {
     auto result = History::unfinished_runs(db);
-    auto pending = db.prepare("SELECT DISTINCT run_id FROM remote_jobs");
-    while (pending.step())
-      if (std::ranges::find(result, pending.text(0)) == result.end())
-        result.push_back(pending.text(0));
+    std::set<std::string> known(result.begin(), result.end());
+    auto pending = db.prepare(
+        "SELECT DISTINCT j.run_id FROM remote_jobs AS j "
+        "JOIN runs AS r ON r.run_id=j.run_id");
+    while (pending.step()) {
+      auto id = pending.text(0);
+      if (known.insert(id).second) result.push_back(std::move(id));
+    }
     return result;
   });
+  svc_.collect_interrupted_artifacts(runs);
   for (const auto& run_id : runs) {
     Service::DetachedArtifacts detached;
     try {
@@ -2118,14 +2178,17 @@ void Scheduler::recover_interrupted() {
 }
 
 auto Scheduler::start_remote_cleanup() -> void {
-  remote_cleanup_ = std::thread([this] {
-    while (!stopping_.load()) {
+  remote_cleanup_ = std::jthread([this](std::stop_token stop) {
+    std::mutex timer_mu;
+    std::condition_variable_any timer;
+    while (!stop.stop_requested() && !stopping_.load()) {
       try {
         svc_.remote_execution().release_completed();
       } catch (const std::exception& error) {
         log::warn(std::string("external job cleanup: ") + error.what());
       }
-      std::this_thread::sleep_for(std::chrono::seconds(1));
+      std::unique_lock lock(timer_mu);
+      timer.wait_for(lock, stop, std::chrono::seconds(1), [] { return false; });
     }
   });
 }
@@ -2305,12 +2368,17 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
 }
 
 std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
-  std::lock_guard<std::mutex> l(mu_);
-  if (stopping_.load())
-    throw Failed(FailureKind::interrupted, "the project is shutting down");
-  if (active_)
-    throw Failed(FailureKind::busy, "another run is active",
-                 {{"run_id", *active_->status().run_id}});
+  const auto check_available = [&] {
+    if (stopping_.load())
+      throw Failed(FailureKind::interrupted, "the project is shutting down");
+    if (active_)
+      throw Failed(FailureKind::busy, "another run is active",
+                   {{"run_id", *active_->status().run_id}});
+  };
+  {
+    std::lock_guard lock(mu_);
+    check_available();
+  }
   auto plan = Scheduler::plan(*doc->resolution, p.card, p.propagate);
   if (p.injected_inputs)
     for (const auto& input : *p.injected_inputs)
@@ -2350,6 +2418,8 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
   s.target = p.card;
   s.propagate = p.propagate;
   std::string receipt;
+  std::lock_guard lock(mu_);
+  check_available();
   // The accepted sequence and receipt commit together, before any processing.
   svc_.history().write_sync([&](sql::Db& db) {
     s.status.run_id = History::next_run_id(db);
@@ -2518,6 +2588,7 @@ void Scheduler::shutdown() {
     finished_.wait(lock, [this] { return !active_; });
     finished_.notify_all();
   }
+  remote_cleanup_.request_stop();
   if (remote_cleanup_.joinable()) remote_cleanup_.join();
   if (reaper_.joinable()) reaper_.join();
 }

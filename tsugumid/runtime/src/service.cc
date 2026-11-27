@@ -319,7 +319,6 @@ void Service::open() {
       std::make_unique<RemoteExecutionService>(*this, remote_jobs_);
   scheduler_ = std::make_unique<Scheduler>(*this);
   scheduler_->recover_interrupted();
-  collect_unrecorded_run_files();
   if (packed_builds_) {
 #ifdef __APPLE__
     if (packed_builds_->fast) {
@@ -785,6 +784,9 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
   std::unique_lock lock(worker_selection_mutex_);
   if (!node.settings.reuse_worker) resident_targets_.erase(card);
   RemoteTarget selected;
+  using Clock = std::chrono::steady_clock;
+  constexpr auto kCatalogInterval = std::chrono::milliseconds(100);
+  auto catalog_at = Clock::now() + kCatalogInterval;
   for (;;) {
     if (build.cancel.stop_requested())
       throw Failed(FailureKind::cancelled, "worker selection cancelled");
@@ -844,10 +846,39 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
       break;
     }
     if (!selected.id.empty()) break;
-    if (!worker_restarted)
-      worker_selection_cv_.wait_for(lock, std::chrono::milliseconds(100));
+    const auto now = Clock::now();
+    if (!worker_restarted && now < catalog_at) {
+      worker_selection_cv_.wait_until(lock, catalog_at);
+      continue;
+    }
+    std::vector<RemoteTarget> current;
+    if (!worker_restarted && now - worker_catalog_checked_ < kCatalogInterval) {
+      current = worker_catalog_;
+    } else {
+      if (worker_catalog_refreshing_) {
+        worker_selection_cv_.wait_for(lock, kCatalogInterval);
+        continue;
+      }
+      worker_catalog_refreshing_ = true;
+      lock.unlock();
+      try {
+        current = remote_targets(build.cancel);
+      } catch (...) {
+        lock.lock();
+        worker_catalog_refreshing_ = false;
+        worker_selection_cv_.notify_all();
+        throw;
+      }
+      lock.lock();
+      worker_catalog_refreshing_ = false;
+      worker_selection_cv_.notify_all();
+      if (build.cancel.stop_requested())
+        throw Failed(FailureKind::cancelled, "worker selection cancelled");
+      worker_catalog_ = current;
+      worker_catalog_checked_ = Clock::now();
+    }
+    catalog_at = Clock::now() + kCatalogInterval;
     lock.unlock();
-    const auto current = remote_targets(build.cancel);
     const auto unchanged = [measured](const RemoteTarget& a,
                                       const RemoteTarget& b) {
       return a.id == b.id && a.server_id == b.server_id &&
@@ -1123,6 +1154,7 @@ void Service::shutdown() {
 std::vector<std::string> Service::capabilities() {
   std::vector<std::string> caps = {"SessionHello",
                                    "ProjectActivity",
+                                   "CardId",
                                    "ProjectHostRequirements",
                                    "ProjectOpen",
                                    "ProjectInspect",
@@ -1152,6 +1184,8 @@ std::vector<std::string> Service::capabilities() {
                                    "RunHistory",
                                    "RunInvocations",
                                    "RunLatestInvocations",
+                                   "RunDefinitionPaths",
+                                   "WorkerProbeMeasure",
                                    "RunRecord",
                                    "RunValueRead",
                                    "ArtifactList",
@@ -1559,18 +1593,22 @@ bool Service::replay_or_join(RequestIn& req, const std::string& op_id,
                              const std::string& digest) {
   if (!crypto::is_operation_id(op_id))
     throw Failed(FailureKind::invalid_request, "invalid op_id");
+  const auto pending_digest = kind + ":" + digest;
+  const auto join_pending = [&] {
+    auto it = pending_ops_.find(op_id);
+    if (it == pending_ops_.end()) return false;
+    if (it->second.digest != pending_digest)
+      throw Failed(FailureKind::operation_conflict,
+                   "op_id is pending for a different request");
+    it->second.waiters.emplace_back(req.conn, req.request_id);
+    return true;
+  };
+  // The pending entry publishes before the durable shell uncertainty marker
+  // and disappears after the final receipt. Read them in the same order.
+  std::unique_lock lock(ops_mu_, std::defer_lock);
   if (kind == "shell") {
-    // A running shell has a durable uncertainty receipt. In this process,
-    // duplicate callers wait for its final result instead of reading that
-    // marker.
-    std::lock_guard lock(ops_mu_);
-    if (auto it = pending_ops_.find(op_id); it != pending_ops_.end()) {
-      if (it->second.digest != kind + ":" + digest)
-        throw Failed(FailureKind::operation_conflict,
-                     "op_id is pending for a different request");
-      it->second.waiters.emplace_back(req.conn, req.request_id);
-      return true;
-    }
+    lock.lock();
+    if (join_pending()) return true;
   }
   std::optional<Receipt> rc = store_->receipt(op_id);
   if (!rc) {
@@ -1586,17 +1624,9 @@ bool Service::replay_or_join(RequestIn& req, const std::string& op_id,
     reply(req, receipt_reply(req.request_id, rc->bytes, true));
     return true;
   }
-  std::lock_guard<std::mutex> l(ops_mu_);
-  auto it = pending_ops_.find(op_id);
-  if (it != pending_ops_.end()) {
-    if (it->second.digest != kind + ":" + digest)
-      throw Failed(FailureKind::operation_conflict,
-                   "op_id is pending for a different request",
-                   {{"op_id", op_id}});
-    it->second.waiters.emplace_back(req.conn, req.request_id);
-    return true;
-  }
-  pending_ops_[op_id] = Pending{kind + ":" + digest, {}};
+  if (!lock.owns_lock()) lock.lock();
+  if (join_pending()) return true;
+  pending_ops_[op_id] = Pending{pending_digest, {}};
   return false;
 }
 
@@ -2350,6 +2380,9 @@ void Service::version_checkout(RequestIn& req) {
       f.current_rev = base->rev;
       throw Failed(f);
     }
+    if (store_->halted())
+      throw Failed(FailureKind::persistence_failed,
+                   "reopen the project to recover persistence");
     if (auto active = scheduler_->active_status())
       throw Failed(FailureKind::busy, "a run is in progress",
                    {{"run_id", *active->run_id}});
@@ -3332,19 +3365,24 @@ auto Service::view_control(
   if (!request.request_id || !receiver) return reply;
   switch (request.kind) {
     case ViewControlKind::open: {
-      std::lock_guard lock(subs_mu_);
+      std::unique_lock lock(subs_mu_);
       ViewKey key{origin, request.view};
-      if (const auto existing = open_views_.find(key);
-          existing != open_views_.end()) {
-        reply.session = existing->second;
-        auto& view = view_sessions_.at(reply.session);
-        if (present_view(reply.session, view))
-          view.presentation_boundary = {endpoint, request.request_id};
-        reply.route =
-            add_view_route(reply.session, view, origin.card, endpoint);
-        reply.status = 0;
-        return reply;
-      }
+      const auto reuse = [&] {
+        if (const auto existing = open_views_.find(key);
+            existing != open_views_.end()) {
+          reply.session = existing->second;
+          auto& view = view_sessions_.at(reply.session);
+          if (present_view(reply.session, view))
+            view.presentation_boundary = {endpoint, request.request_id};
+          reply.route =
+              add_view_route(reply.session, view, origin.card, endpoint);
+          reply.status = 0;
+          return true;
+        }
+        return false;
+      };
+      if (reuse()) return reply;
+      lock.unlock();
       if (request.view.empty() || request.mode > TSUGUMI_VIEW_FULLSCREEN ||
           (request.flags &
            ~(TSUGUMI_VIEW_HIDE_CURSOR | TSUGUMI_VIEW_LOCK_POINTER)) ||
@@ -3364,7 +3402,8 @@ auto Service::view_control(
       auto blob = ViewBlob::open(
           *found->blob, packed_builds_ ? packed_builds_->resources
                                        : stdfs::path(NixStore::store_dir()));
-      if (!blob) return reply;
+      lock.lock();
+      if (reuse() || !blob) return reply;
 
       do {
         reply.session = parse_view_uuid(crypto::uuid4());

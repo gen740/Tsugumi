@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -55,7 +56,9 @@ std::optional<ContainedRange> read_range_inside(const stdfs::path& root,
 std::string sha256_file(const stdfs::path& p);
 // SHA-256 (hex) of a directory tree: every directory name and every regular
 // file's name and content hash, in sorted order. Links are hashed by name.
-std::string sha256_tree(const stdfs::path& p);
+std::string sha256_tree(
+    const stdfs::path& p,
+    std::map<std::string, std::string>* member_hashes = nullptr);
 void write_atomic(const stdfs::path& p, std::string_view data,
                   unsigned mode = 0644);
 void fsync_dir(const stdfs::path& dir);
@@ -98,7 +101,6 @@ Listing list_beneath(const stdfs::path& root, const stdfs::path& rel,
                      size_t max_entries = SIZE_MAX);
 // Whether `rel` below root is a directory (true) or a regular file (false),
 // opened without following links. Anything else throws Error.
-bool directory_beneath(const stdfs::path& root, const stdfs::path& rel);
 
 // Exclusive advisory lock held for the lifetime of the object.
 class FileLock {

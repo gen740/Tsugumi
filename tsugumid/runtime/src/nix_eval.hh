@@ -35,6 +35,9 @@ using LockedNixPath = std::map<std::string, NixSource>;
 struct NixDefinitionScope {
   std::string directory;
   std::string card;
+  std::vector<std::string> files = {};
+  std::string generated_inputs = {};
+  std::string digest = {};
   auto operator<=>(const NixDefinitionScope&) const = default;
 };
 

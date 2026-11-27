@@ -159,7 +159,8 @@ class Service : public RequestSink {
   static auto finish_artifact_expiry(const DetachedArtifacts& detached,
                                      bool committed) -> void;
   auto detach_run_artifacts(const std::string& run_id) -> std::filesystem::path;
-  auto collect_unrecorded_run_files() -> void;
+  auto collect_interrupted_artifacts(const std::vector<std::string>& runs)
+      -> void;
   auto remove_run_artifacts(const std::string& run_id) -> uint64_t;
   // The backend that runs the Cards naming execution service `id`.
   auto invalidate_resident(const std::string& card) -> void;
@@ -300,10 +301,21 @@ class Service : public RequestSink {
   std::unique_ptr<Versions> versions_;
   std::unique_ptr<NixRunner> nix_;
   std::unique_ptr<PackedBuilds> packed_builds_;
+  struct VerifiedArtifact {
+    std::string tree_hash;
+    std::string stamp;
+    std::map<std::string, std::string> members;
+  };
+  std::mutex artifact_verification_mu_;
+  std::map<ArtifactKey, std::shared_ptr<const VerifiedArtifact>>
+      verified_artifacts_;
   std::filesystem::path run_scratch_;
   std::unique_ptr<CacheUsage> cache_usage_;
   std::mutex worker_selection_mutex_;
   std::condition_variable worker_selection_cv_;
+  std::chrono::steady_clock::time_point worker_catalog_checked_{};
+  std::vector<RemoteTarget> worker_catalog_;
+  bool worker_catalog_refreshing_ = false;
   std::map<std::string, uint32_t> worker_slots_;
   std::map<std::string, std::string> resident_targets_;
   std::unique_ptr<LocalExecutionService> execution_service_;

@@ -582,7 +582,7 @@ def test_remote_result_cannot_exceed_the_project_output_budget(project, remote_g
 
 
 @pytest.mark.parametrize("fault", ["artifact", "escape", "size", "oversize", "log", "display"])
-def test_invalid_remote_results_do_not_publish_outputs(running_job, fault):
+def test_invalid_remote_results_do_not_publish_outputs(running_job, project, fault):
     """The core validates output bytes and result members before publishing an artifact."""
     gateway, _, client, run_id, job_id = running_job
     gateway.finish(job_id, result_fault=fault)
@@ -591,6 +591,7 @@ def test_invalid_remote_results_do_not_publish_outputs(running_job, fault):
     assert record.summary.state == CardState.failed and record.summary.failure
     assert not record.outputs
     assert not client.call("ArtifactListRequest", runId=run_id, card=path("work")).artifacts
+    assert not list((project / ".tsugumi/artifacts" / run_id).rglob("result.txt"))
 
 
 def test_rolled_back_remote_journal_leaves_no_gap(running_job, project):

@@ -62,7 +62,8 @@ class DefinitionEvaluation : public ::testing::Test {
     call.system = native_system();
     call.card = "work";
     call.definition_dir = root / "source";
-    call.definitions = {{call.definition_dir.string(), call.card}};
+    call.definitions = {{call.definition_dir.string(), call.card, {"value"},
+                         {}, {}}};
     call.args =
         "{ root = /. + " + json::Quote(call.definition_dir.string()) + "; }";
     call.root_dir = root / "roots";
@@ -70,6 +71,11 @@ class DefinitionEvaluation : public ::testing::Test {
         std::chrono::steady_clock::now() + std::chrono::seconds(120);
   }
   auto TearDown() -> void override { std::filesystem::remove_all(root); }
+  auto put_source(const std::string& name, std::string_view bytes) -> void {
+    fs::write_atomic(call.definition_dir / name, bytes);
+    auto& files = call.definitions.front().files;
+    if (std::ranges::find(files, name) == files.end()) files.push_back(name);
+  }
   auto evaluator(const std::string& body) -> std::unique_ptr<NixEvaluator> {
     return std::make_unique<NixEvaluator>(
         "args: { executionList = false; implementationCount "
@@ -122,8 +128,7 @@ TEST_F(DefinitionEvaluation, CancellationRemovesAnEvaluationBehindABusyOne) {
 
 TEST_F(DefinitionEvaluation,
        UnchangedReadsHitAndSourceContentsInvalidateCachedImports) {
-  fs::write_atomic(root / "source" / "default.nix",
-                   "builtins.readFile ./value");
+  put_source("default.nix", "builtins.readFile ./value");
   auto eval = evaluator("import (args.root + \"/default.nix\")");
   auto first = eval->realise_native(call, eval->evaluate(call));
   ASSERT_NE(first.evaluation_epoch, 0u);
@@ -142,17 +147,20 @@ TEST_F(DefinitionEvaluation, DirectoryMembershipAndNegativeLookupsAreInputs) {
   auto first = eval->realise_native(call, eval->evaluate(call));
   ASSERT_NE(first.evaluation_epoch, 0u);
   EXPECT_TRUE(eval->reuse(call, first));
-  fs::write_atomic(root / "source" / "optional", "added");
+  fs::write_atomic(call.definition_dir / "optional", "added");
+  EXPECT_TRUE(eval->reuse(call, first));  // still outside the manifest
+  put_source("optional", "added");
   EXPECT_FALSE(eval->reuse(call, first));
   auto added = eval->realise_native(call, eval->evaluate(call));
   EXPECT_NE(first.derivation.path, added.derivation.path);
   std::filesystem::remove(root / "source" / "optional");
+  std::erase(call.definitions.front().files, "optional");
   EXPECT_FALSE(eval->reuse(call, added));
   EXPECT_EQ(first.derivation.path, eval->evaluate(call).derivation.path);
 }
 
 TEST_F(DefinitionEvaluation, CopiedSourceTreeInvalidatesSourceToStoreCache) {
-  fs::write_atomic(root / "source" / "nested" / "page.txt", "first");
+  put_source("nested/page.txt", "first");
   // Interpolation copies the tree into the store, as a builder's derivation
   // inputs do. builtins.toString alone would only pass a local path string.
   auto eval = evaluator(R"("${args.root}")");
@@ -218,7 +226,7 @@ TEST_F(DefinitionEvaluation,
 }
 
 TEST_F(DefinitionEvaluation, SearchPathIsCatchableAndHostPathIsEmpty) {
-  fs::write_atomic(root / "source" / "default.nix", R"(
+  put_source("default.nix", R"(
     if builtins.nixPath == [] && !(builtins.tryEval <missing>).success
     then builtins.baseNameOf <local/flake.nix>
     else throw "external search path was visible"
@@ -270,10 +278,8 @@ TEST_F(DefinitionEvaluation, FetchPrimopsAndImportFromDerivationAreDenied) {
 }
 
 TEST_F(DefinitionEvaluation, ExpressionUsesTheCardDirectoryAndProject) {
-  const auto dir = call.definition_dir;
-  fs::write_atomic(dir / "default.nix",
-                   "{ params, inputs }: { api = params.value; }");
-  fs::write_atomic(dir / "relative", "from the Card");
+  put_source("default.nix", "{ params, inputs }: { api = params.value; }");
+  put_source("relative", "from the Card");
   call.locked_nix_path.emplace("dep", pins.at("nixpkgs"));
   NixEvaluator eval("args: { params.value = 42; inputs = {}; }");
   const auto result = eval.expression(
@@ -297,7 +303,7 @@ TEST_F(DefinitionEvaluation, ExpressionUsesTheCardDirectoryAndProject) {
 TEST_F(DefinitionEvaluation, ExpressionBuildReturnsFilesAndFailureLog) {
   call.locked_nix_path.emplace("dep", pins.at("nixpkgs"));
   NixEvaluator eval("args: { params = {}; inputs = {}; }");
-  fs::write_atomic(call.definition_dir / "default.nix", R"(
+  put_source("default.nix", R"(
     { params, inputs }:
     let pkgs = import <dep> {};
     in {

@@ -32,12 +32,24 @@ auto ProjectEndpoint(ServerOptions& options) -> void {
                          type == R::RequestPayload::CardViewReadRequest ||
                          type == R::RequestPayload::ViewSendRequest ||
                          type == R::RequestPayload::ViewCreditRequest;
+    // Allow for the page content and envelope while the transport counts
+    // requests that have been dispatched but not answered.
+    const bool bulk = type == R::RequestPayload::RunValueReadRequest ||
+                      type == R::RequestPayload::ArtifactReadRequest ||
+                      type == R::RequestPayload::CardViewReadRequest ||
+                      type == R::RequestPayload::RunHistoryRequest ||
+                      type == R::RequestPayload::RunEnvironmentsRequest ||
+                      type == R::RequestPayload::RunEnvironmentPathsRequest ||
+                      type == R::RequestPayload::RunEnvironmentUsesRequest ||
+                      type == R::RequestPayload::LogRangeRequest;
     return FrameInfo{
-        *m->request_id(), hello != nullptr,
+        *m->request_id(),
+        hello != nullptr,
         hello ? trace::ClientName(hello->client()) : nullptr,
         !display && type != R::RequestPayload::CoreTraceRequest &&
             (!hello || hello->client() != Tsugumi::Trace::Client::Trace),
-        type == R::RequestPayload::RunCancelRequest};
+        type == R::RequestPayload::RunCancelRequest,
+        bulk ? 2u << 20 : 0u};
   };
   options.codec.completed = [](std::string_view bytes) {
     return R::GetMessage(bytes.data())->request_id().value_or(0);

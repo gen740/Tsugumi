@@ -7,6 +7,7 @@ in the note says what ran, from what the run did."""
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 
 import pytest
@@ -126,6 +127,37 @@ def test_checkout_rejects_removed_definition_format_before_committing(tmp_path, 
     assert c.call("ProjectInspectRequest").rev == snapshot.rev
 
 
+def test_checkout_preserves_git_when_persistence_is_halted(core_factory, project):
+    builtin_project(project, text="target")
+    client = core_factory().connect()
+    target = text(client.call("VersionInitRequest", opId=new_id(), origin="test").commit)
+    set_text(client, "current")
+    _, finished = run_and_wait(client, "start")
+    assert finished.state == RunState.succeeded
+    head = text(finished.commit)
+    assert head != target
+    revision = client.call("ProjectInspectRequest").rev
+    parameter = project / "definitions/src/params.nix"
+    current = parameter.read_bytes()
+    index = (project / ".git/index").read_bytes()
+    with sqlite3.connect(project / ".tsugumi/document.sqlite") as db:
+        db.execute("""
+            CREATE TRIGGER reject_new_intent BEFORE INSERT ON pending_file
+            BEGIN SELECT RAISE(ABORT, 'test journal write failed'); END
+        """)
+    with pytest.raises(RpcFailure) as persistence:
+        set_text(client, "fails to save")
+    assert persistence.value.kind == "persistence_failed"
+    with pytest.raises(RpcFailure) as checkout:
+        client.call("VersionCheckoutRequest", baseRev=revision, opId=new_id(),
+                    origin="test", commit=target)
+    assert checkout.value.kind == "persistence_failed"
+    assert git(project, "rev-parse", "HEAD").strip() == head
+    assert (project / ".git/index").read_bytes() == index
+    assert parameter.read_bytes() == current
+    assert client.call("ProjectInspectRequest").rev == revision
+
+
 @pytest.mark.parametrize("blocker", ["untracked-link", "index.lock", "HEAD.lock"])
 def test_checkout_failure_preserves_the_project(tmp_path, core_factory, blocker):
     root = tmp_path / "p"
@@ -228,6 +260,24 @@ def test_checkout_crash_restores_worktree_index_head_and_branch(tmp_path, core_f
                   baseRev=reopened.call("ProjectInspectRequest").rev,
                   opId=new_id(), origin="test", commit=target)
     assert src_text(reopened) == "target"
+
+
+def test_startup_cleans_checkout_previews_and_preserves_saved_originals(
+    tmp_path, core_factory
+):
+    root = tmp_path / "project"
+    builtin_project(root)
+    state = root / ".tsugumi"
+    preview = state / "checkout-Abc123"
+    (preview / "target").mkdir(parents=True)
+    (preview / "original").mkdir()
+    (preview / "target/unused").write_text("incomplete preview")
+    backup = state / "checkout-Def456" / "original"
+    backup.mkdir(parents=True)
+    (backup / "saved").write_text("recoverable")
+    core_factory(project_root=root).connect()
+    assert not preview.exists()
+    assert (backup / "saved").read_text() == "recoverable"
 
 
 def test_runs_version_definitions_and_explicit_paths_only(tmp_path, core_factory):

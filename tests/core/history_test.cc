@@ -9,6 +9,48 @@
 namespace tsugumi {
 namespace {
 
+TEST(RunHistory, CompactsRepliesWithoutLosingOperationIdentity) {
+  namespace R = Tsugumi::RPC;
+  const auto directory = std::filesystem::temp_directory_path() /
+                         ("tsugumi-receipts-" + crypto::uuid4());
+  std::filesystem::create_directory(directory);
+  struct Cleanup {
+    std::filesystem::path path;
+    ~Cleanup() { std::filesystem::remove_all(path); }
+  } cleanup{directory};
+  History history(directory / "runs.sqlite");
+  flatbuffers::FlatBufferBuilder builder;
+  const auto marker = wire::failure(
+      builder, FailureData::make(FailureKind::interrupted, "unknown outcome"));
+  builder.Finish(
+      R::CreateOperationReceipt(builder, builder.CreateString("uncertain"),
+                                R::ReceiptValue::Failure, marker.Union()));
+  const std::string uncertain(
+      reinterpret_cast<const char*>(builder.GetBufferPointer()),
+      builder.GetSize());
+  const std::string large(1200 * 1024, 'x');
+  history.write_sync([&](sql::Db& db) {
+    History::put_receipt(db, "uncertain", "shell", "request-1", uncertain);
+    History::put_receipt(db, "old", "run", "request-2", large);
+    History::put_receipt(db, "new", "version", "request-3", large);
+  });
+  history.read([&](sql::Db& db) {
+    const auto expired = History::receipt(db, "old");
+    ASSERT_TRUE(expired);
+    EXPECT_EQ(expired->digest, "request-2");
+    const auto* receipt =
+        flatbuffers::GetRoot<R::OperationReceipt>(expired->bytes.data());
+    ASSERT_NE(receipt->result_as_Failure(), nullptr);
+    EXPECT_EQ(receipt->result_as_Failure()->kind(),
+              FailureKind::operation_conflict);
+    const auto recent = History::receipt(db, "new");
+    const auto pending = History::receipt(db, "uncertain");
+    ASSERT_TRUE(recent && pending);
+    EXPECT_EQ(recent->bytes, large);
+    EXPECT_EQ(pending->bytes, uncertain);
+  });
+}
+
 TEST(RunHistory, NotebookFailurePositionRoundtrip) {
   auto failure = FailureData::make(FailureKind::worker_failed,
                                    "calculation: ZeroDivisionError\nTraceback");
