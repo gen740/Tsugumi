@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <future>
 #include <thread>
 
 #include "../agent_fixture_server.hh"
@@ -13,6 +14,7 @@
 #include "host/settings.hh"
 #include "host/skills.hh"
 #include "host/store.hh"
+#include "oauth_provider.hh"
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::test {
@@ -75,6 +77,74 @@ TEST(HostSettingsStore, SignInSetupFailureClosesListener) {
       H::GetMessage(response.data())->payload_as_Reply()->value_as_Failure(),
       nullptr);
   EXPECT_EQ(descriptor_count(), before);
+}
+TEST(HostSettingsStore, SignInCompletionNotifiesAfterWorkerExit) {
+  TemporaryDirectory directory;
+  host::StateGate gate;
+  host::HostStore store{directory.path};
+  host::Credentials credentials{gate, store.db, {}};
+  OAuthProvider oauth;
+  const auto caller = std::this_thread::get_id();
+  bool exited = false;
+  bool notified = false;
+  std::promise<bool> completed;
+  auto completion = completed.get_future();
+  host::Settings settings(directory.path, credentials,
+                          std::make_unique<MemorySecrets>(), {},
+                          [&](const std::string& bytes) {
+    if (std::this_thread::get_id() == caller) return;
+    const auto* event = H::GetMessage(bytes.data())->payload_as_Event();
+    if (event->value_as_ProviderChanged()) {
+      // The worker publishes account changes. Its thread-local object also
+      // exercises taking the settings mutex while the reaper joins it.
+      thread_local const std::shared_ptr<void> on_exit(nullptr, [&](void*) {
+        std::lock_guard lock(gate.mutex);
+        exited = true;
+      });
+    } else if (event->value_as_SignInChanged()) {
+      std::lock_guard lock(gate.mutex);
+      if (!std::exchange(notified, true)) completed.set_value(exited);
+    }
+  });
+  const auto call = [&](auto value) {
+    H::RequestT request;
+    request.value.Set(std::move(value));
+    flatbuffers::FlatBufferBuilder b;
+    b.Finish(H::Request::Pack(b, &request));
+    return settings.Handle(
+        *flatbuffers::GetRoot<H::Request>(b.GetBufferPointer()), 1);
+  };
+  const auto begin = [&] {
+    H::SignInBeginRequestT value;
+    value.profile = "desktop";
+    value.issuer = oauth.server.URL();
+    value.resource = value.issuer;
+    return call(std::move(value));
+  };
+  const auto first = begin();
+  const auto* attempt = H::GetMessage(first.data())->payload_as_Reply()
+                            ->value_as_SignInBegin();
+  ASSERT_NE(attempt, nullptr);
+  oauth.Authorize(attempt->url()->str(), "fixture-client");
+  ASSERT_EQ(completion.wait_for(std::chrono::seconds(5)),
+            std::future_status::ready);
+  EXPECT_TRUE(completion.get());
+
+  const auto second = begin();
+  ASSERT_NE(
+      H::GetMessage(second.data())->payload_as_Reply()->value_as_SignInBegin(),
+      nullptr);
+  H::SignInStatusRequestT status;
+  status.profile = "desktop";
+  status.attempt_id = attempt->attempt_id()->str();
+  const auto reply = call(std::move(status));
+  const auto* result = H::GetMessage(reply.data())->payload_as_Reply()
+                           ->value_as_SignInStatus();
+  ASSERT_NE(result, nullptr);
+  EXPECT_EQ(result->state()->str(), "complete");
+  EXPECT_EQ(result->client_id()->str(), "fixture-client");
+  EXPECT_EQ(result->welcome()->str(), "fixture-client");
+  EXPECT_TRUE(result->plan_enabled());
 }
 TEST(HostSettingsStore,
      ProviderAvailabilityChangesNotifyWithoutProvisioningLoops) {

@@ -327,6 +327,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     // Groups of the latest activation, saved at the end of the run.
     std::optional<std::pair<uint64_t, std::vector<SavedInputGroup>>>
         last_inputs;
+    // Merge can replay the latest arrival on each port independently.
     std::map<std::string, std::pair<uint64_t, SavedInputGroup>>
         last_port_inputs;
   };
@@ -1176,8 +1177,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         values.values.push_back(*member.value);
         values.values.back().name = group.port;
       }
-      rt.last_port_inputs[group.port] =
-          std::make_pair(batch.activation, values);
+      if (rt.node->kind == CardType::Merge)
+        rt.last_port_inputs[group.port] =
+            std::make_pair(batch.activation, values);
       saved.push_back(std::move(values));
     }
     rt.last_inputs = std::make_pair(batch.activation, std::move(saved));
@@ -1634,14 +1636,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   // Merge reuse the last arrival on each outside port independently.
   auto save_last_inputs(
       const Node& node, uint64_t inv,
-      const std::vector<SavedInputGroup>& inputs,
-      const std::map<std::string, std::pair<uint64_t, SavedInputGroup>>& ports)
+      std::vector<SavedInputGroup> inputs,
+      std::map<std::string, std::pair<uint64_t, SavedInputGroup>> ports)
       -> void {
     if (cancel_.load()) return;
     const auto card = node.path;
     const auto run = run_id_;
     svc_.history().submit(
-        [card, run, inv, inputs, ports](sql::Db& db) {
+        [card, run, inv, inputs = std::move(inputs),
+         ports = std::move(ports)](sql::Db& db) {
           History::put_last_input(db, card, run, inv, inputs);
           for (const auto& [_, entry] : ports)
             History::put_last_port_input(db, card, run, entry.first, entry.second);
@@ -1936,8 +1939,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }
     for (auto& n : nodes_)
       if (n.last_inputs)
-        save_last_inputs(*n.node, n.last_inputs->first, n.last_inputs->second,
-                         n.last_port_inputs);
+        save_last_inputs(*n.node, n.last_inputs->first,
+                         std::move(n.last_inputs->second),
+                         std::move(n.last_port_inputs));
     // Include any failures writing the final invocation records or inputs.
     svc_.history().flush();
     RunSummaryData sum;
