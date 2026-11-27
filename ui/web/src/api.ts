@@ -152,3 +152,24 @@ export interface FolderListing {
   project: boolean
   entries: { name: string; project: boolean }[]
 }
+
+/** The folder a new project's picker starts in: the projects folder (Status.documents),
+ * made with its missing parents; home when it cannot be made. */
+export async function projectsFolder(status: Pick<Status, 'documents' | 'home'>): Promise<string> {
+  const exists = (path: string) => api<FolderListing>(`/api/fs?path=${encodeURIComponent(path)}`).then(() => true, () => false)
+  const missing: string[] = []
+  let parent = status.documents.replace(/\/+$/, '')
+  while (parent.lastIndexOf('/') > 0 && !await exists(parent)) {
+    missing.unshift(parent.slice(parent.lastIndexOf('/') + 1))
+    parent = parent.slice(0, parent.lastIndexOf('/'))
+  }
+  try {
+    for (const name of missing) {
+      await api<FolderListing>('/api/fs/mkdir', { parent, name })
+      parent = `${parent}/${name}`
+    }
+    return status.documents
+  } catch {
+    return status.home
+  }
+}

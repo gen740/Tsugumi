@@ -257,6 +257,7 @@ struct ProjectChooser: View {
 
   private func createProject() {
     let p = NSSavePanel()
+    p.directoryURL = AppModel.preparedProjectsFolder()
     p.nameFieldStringValue = newName
     p.message = String(localized: "プロジェクトのフォルダを作成する場所を選んでください")
     guard p.runModal() == .OK, let url = p.url else { return }

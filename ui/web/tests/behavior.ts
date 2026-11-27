@@ -45,6 +45,7 @@ await import("./chatFollow")
 await import("./logWindow")
 
 await import("./projectActions")
+await import("./projectsFolder")
 
 await import("./thumbnails")
 

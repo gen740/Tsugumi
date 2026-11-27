@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import Testing
 @testable import TsugumiApp
+import TsugumiTestSupport
 
 /// Where a project goes among the main windows, each with its own project.
 @Test func aProjectOpensWhereItIsThenOnTheAskingHomeThenInANewWindow() {
@@ -78,4 +79,20 @@ import Testing
   model.windowClosed(one)
   #expect(!model.mainWindows.contains { $0 === one } && model.mainWindows.contains { $0 === other })
   model.windowClosed(other)
+}
+
+/// New projects start where demo copies go, made when it is missing.
+@Test func theNewProjectPanelStartsInTheProjectsFolder() throws {
+  let root = testTemporaryDirectory.appendingPathComponent("projects-\(UUID())")
+  defer { try? FileManager.default.removeItem(at: root) }
+  let folder = root.appendingPathComponent("Documents/Tsugumi")
+  #expect(AppModel.projectsFolder(["TSUGUMI_PROJECTS_DIR": folder.path]) == folder)
+  #expect(AppModel.preparedProjectsFolder(["TSUGUMI_PROJECTS_DIR": folder.path]) == folder)
+  var directory: ObjCBool = false
+  #expect(FileManager.default.fileExists(atPath: folder.path, isDirectory: &directory) && directory.boolValue)
+  // A place that cannot be a folder leaves the panel where it would start.
+  let file = root.appendingPathComponent("file")
+  try Data().write(to: file)
+  #expect(AppModel.preparedProjectsFolder(["TSUGUMI_PROJECTS_DIR": file.appendingPathComponent("Tsugumi").path]) == nil)
+  #expect(AppModel.projectsFolder([:]).path.hasSuffix("/Documents/Tsugumi"))
 }

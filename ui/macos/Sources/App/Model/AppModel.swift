@@ -253,10 +253,23 @@ final class AppModel {
   /// first connect (a demo's history file becomes its versions).
   private var fresh: Set<String> = []
 
+  /// Where new projects and demo copies go: ~/Documents/Tsugumi (TSUGUMI_PROJECTS_DIR for checks).
+  nonisolated static func projectsFolder(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
+    environment["TSUGUMI_PROJECTS_DIR"].map { URL(fileURLWithPath: $0) }
+      ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Tsugumi")
+  }
+
+  /// The projects folder for a panel to start in, made when it is missing;
+  /// nil when it cannot be made (the panel then starts where it would).
+  nonisolated static func preparedProjectsFolder(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> URL? {
+    let folder = projectsFolder(environment)
+    do { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) } catch { return nil }
+    return folder
+  }
+
   /// The destination preference is UI state; the core chooses and copies the folder.
   func copyDemo(_ demo: DemoEntry) async throws -> URL {
-    let docs = ProcessInfo.processInfo.environment["TSUGUMI_PROJECTS_DIR"].map { URL(fileURLWithPath: $0) }
-      ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Tsugumi")
+    let docs = Self.projectsFolder()
     let result = try await hostRequest("HostDemoCopyRequest", ["id": demo.id, "parent": docs.path,
                                                                "language": AppPreferences.Language.running.rawValue])
     return try createdProject(result)

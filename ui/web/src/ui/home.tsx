@@ -2,7 +2,7 @@
 // projects) and Demos (opened as editable copies), and the Tsugumi art the
 // home and the loading card share: the bird on its branch on low-poly teal.
 import { useEffect, useRef, useState } from 'react'
-import { api, Demo } from '../api'
+import { api, Demo, projectsFolder } from '../api'
 import { app } from '../model/app'
 import { useObserve } from '../model/observable'
 import { prefs } from '../model/prefs'
@@ -459,10 +459,14 @@ function DemoCard({ demo, onOpen }: { demo: Demo; onOpen: () => void }) {
 
 function NewProjectSheet({ onClose, onCreated }: { onClose: () => void; onCreated: (path: string) => void }) {
   const [name, setName] = useState('')
-  const [choosing, setChoosing] = useState(false)
+  const [start, setStart] = useState<string>()
   return (
     <Sheet onClose={onClose} width={380}>
-      <form className="sheet-body" onSubmit={(e) => { e.preventDefault(); setChoosing(true) }}>
+      <form className="sheet-body" onSubmit={(e) => {
+        e.preventDefault()
+        const status = app.status
+        void (status ? projectsFolder(status) : Promise.resolve('')).then(setStart)
+      }}>
         <div className="title2">{L('新規プロジェクト')}</div>
         <TextField value={name} onChange={setName} placeholder={L('名前')} autoFocus />
         <div className="row end gap8">
@@ -470,9 +474,9 @@ function NewProjectSheet({ onClose, onCreated }: { onClose: () => void; onCreate
           <Button kind="prominent" type="submit">{L('作成場所を選ぶ…')}</Button>
         </div>
       </form>
-      {choosing && <FolderPicker message={L('プロジェクトのフォルダを作成する場所を選んでください')} allowCreate initial={app.status?.home} onClose={() => setChoosing(false)}
+      {start !== undefined && <FolderPicker message={L('プロジェクトのフォルダを作成する場所を選んでください')} allowCreate initial={start || undefined} onClose={() => setStart(undefined)}
         onPick={async (parent) => {
-          setChoosing(false)
+          setStart(undefined)
           try {
             const p = await app.createProject(parent, name, prefs.flowDirection)
             onClose()
