@@ -8,8 +8,10 @@ the worker, and consumes its result.
 
 ## Local connections
 
-One `tsugumi-workerd --local` belongs to one core lifetime. The core starts the
-service with an inherited Unix socket. The private
+One `tsugumi-workerd --local` belongs to one core lifetime. The core starts it
+with inherited Unix sockets. One socket handles resident workers and pool
+commands, and four let fresh invocations start and retire concurrently in the
+same pool. The private
 [management contract](../protocol/local_worker.fbs) passes data, cancellation,
 stdout and stderr descriptors to the core via `SCM_RIGHTS`. Calls remain
 serial per process, with the counter preserved across leases.
@@ -21,7 +23,7 @@ Card's display sink and wakes the caller only for its terminal reply.
 Workerd keeps process and scratch ownership, including evictions and
 termination after the one-second cancellation grace.
 
-Closing the management socket ends the pool and its active leases. A
+Closing the resident management socket ends the pool and its active leases. A
 workerd failure fails the core's worker requests. `--workerd PATH` selects
 the service executable. By default it lives beside the fallback
 `tsugumi-worker`.

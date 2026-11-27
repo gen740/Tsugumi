@@ -1,6 +1,7 @@
 #include <fcntl.h>
 #include <gtest/gtest.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <future>
@@ -9,6 +10,7 @@
 
 #include "tsugumi/rpc/frame.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/fs.hh"
 #include "tsugumi/workerd/local.hh"
 
 namespace tsugumi::workerd {
@@ -317,7 +319,7 @@ TEST(LocalWorker, CoreConnectionCloseEndsAnUnusedPool) {
   SocketPair broker;
   const auto scratch = std::filesystem::temp_directory_path() /
                        ("tsugumi-local-" + crypto::uuid4());
-  std::thread daemon([&] { serve_local(broker.fd[1], scratch); });
+  std::thread daemon([&] { serve_local(std::array{broker.fd[1]}, scratch); });
   Tsugumi::LocalWorker::MessageT request;
   request.action = Tsugumi::LocalWorker::Action::Clear;
   send_local(broker.fd[0], request);
@@ -344,6 +346,66 @@ TEST(LocalWorker, OversizedAcquirePreservesTheConnection) {
   auto next = workers.acquire("card", "version", spawn, true);
   EXPECT_TRUE(next.reused);
   workers.release(std::move(next.worker), false, {});
+}
+
+TEST(LocalWorker, ABlockedFreshStartDoesNotDelayAnotherAcquire) {
+  using namespace std::chrono_literals;
+  const auto root = std::filesystem::temp_directory_path() /
+                    ("tsugumi-parallel-local-" + crypto::uuid4());
+  struct Cleanup {
+    const std::filesystem::path& root;
+    ~Cleanup() {
+      std::error_code error;
+      std::filesystem::remove_all(root, error);
+    }
+  } cleanup{root};
+  const auto entered = root / "entered";
+  const auto gate = root / "gate";
+  const auto launcher = root / "slow-worker";
+  const auto script = "#!/bin/sh\n: > '" + entered.string() +
+                      "'\nread -r unused < '" + gate.string() +
+                      "'\nexec '" TSUGUMI_WORKER_BINARY "' \"$@\"\n";
+  fs::write_atomic(launcher, script, 0700);
+  ASSERT_EQ(::mkfifo(gate.c_str(), 0600), 0);
+  struct Gate {
+    int fd;
+    ~Gate() {
+      if (fd >= 0) ::close(fd);
+    }
+  } gate_writer{::open(gate.c_str(), O_RDWR | O_CLOEXEC)};
+  ASSERT_GE(gate_writer.fd, 0);
+
+  LocalWorkers workers(TSUGUMI_WORKERD_BINARY, root / "scratch");
+  WorkerSpawn fast;
+  fast.worker_binary = TSUGUMI_WORKER_BINARY;
+  fast.sandbox = {false, false, false, false, {}};
+  fast.network = true;
+  auto slow = fast;
+  slow.worker_binary = launcher;
+  slow.secrets = std::make_shared<WorkerSecrets>();
+  // The launcher's gate holds back reads of the synthetic startup frame.
+  slow.secrets->values.emplace_back("fixture", std::string(900 << 10, 'x'));
+  auto first = std::async(std::launch::async, [&] {
+    return workers.acquire("slow", "slow", slow, false);
+  });
+  const auto deadline = std::chrono::steady_clock::now() + 3s;
+  while (!std::filesystem::exists(entered) &&
+         std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(10ms);
+  const bool entered_gate = std::filesystem::exists(entered);
+  auto second = std::async(std::launch::async, [&] {
+    return workers.acquire("fast", "fast", fast, false);
+  });
+  const auto fast_status = second.wait_for(3s);
+  const auto slow_status = first.wait_for(0ms);
+  EXPECT_EQ(::write(gate_writer.fd, "\n", 1), 1);
+  EXPECT_TRUE(entered_gate);
+  EXPECT_EQ(fast_status, std::future_status::ready);
+  EXPECT_EQ(slow_status, std::future_status::timeout);
+  auto fast_lease = second.get();
+  auto slow_lease = first.get();
+  workers.release(std::move(fast_lease.worker), false, {});
+  workers.release(std::move(slow_lease.worker), false, {});
 }
 
 TEST(LocalWorker, RejectsOversizedAndUnverifiedControlFrames) {
