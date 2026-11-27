@@ -9,4 +9,5 @@ export function installViewer(source, destination) {
   fs.rmSync(destination, { recursive: true, force: true })
   fs.mkdirSync(destination, { recursive: true })
   fs.writeFileSync(path.join(destination, 'viewer.html'), page)
+  fs.copyFileSync(path.join(source, 'worker-dashboard.html'), path.join(destination, 'worker-dashboard.html'))
 }

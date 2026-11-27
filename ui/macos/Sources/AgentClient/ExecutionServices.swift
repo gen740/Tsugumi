@@ -65,6 +65,18 @@ public enum ExecutionServices {
     let reply: Tsugumi_Host_ExecutionServicesT = try await CoreHostClient.shared.hostCall(.executionserviceremoverequest, request)
     return state(reply)
   }
+  public static func dashboard(_ id: String, operation: Tsugumi_Host_WorkerDashboardOperation,
+                               language: String? = nil, generation: String? = nil, body: String? = nil)
+    async throws -> Tsugumi_Host_WorkerDashboardReplyT {
+    let request = Tsugumi_Host_WorkerDashboardRequestT()
+    request.id = id
+    request.operation = operation
+    request.language = language
+    request.generation = generation
+    request.body = body
+    return try await CoreHostClient.shared.hostCall(.workerdashboardrequest, request, timeout: .seconds(35))
+  }
+
   private static func state(_ value: Tsugumi_Host_ExecutionServicesT) -> ExecutionServicesState {
     ExecutionServicesState(services: value.services.compactMap { service in
       guard let service else { return nil }

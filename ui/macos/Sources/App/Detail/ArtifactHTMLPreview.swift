@@ -13,7 +13,7 @@ struct ArtifactHTMLPreview: NSViewRepresentable {
 
   // WebKit's speculative connections can bypass a document's policy. Install
   // an independent WebKit resource blocker before loading untrusted markup.
-  private static let resourceRules = """
+  static let resourceRules = """
   [
     {"trigger":{"url-filter":".*"},"action":{"type":"block"}},
     {"trigger":{"url-filter":"^data:"},"action":{"type":"ignore-previous-rules"}},

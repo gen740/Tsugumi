@@ -1823,5 +1823,6 @@
     ]
   },
   "ダッシュボードを読み込み中…": "Loading dashboard…",
-  "実行待機中": "Queued"
+  "実行待機中": "Queued",
+  "このホストの鍵を削除しました。再接続するにはワーカー側で許可してください。": "This host’s key was removed. Authorize it again on the worker to reconnect."
 }

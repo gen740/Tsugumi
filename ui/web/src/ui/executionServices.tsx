@@ -5,6 +5,7 @@ import { hostCall } from '../wire/host'
 import { s } from '../wire/rpc'
 import { errorText } from '../model/session'
 import { Button, Form, Row, Section, Spinner, TextField, Value } from './controls'
+import { WorkerDashboard } from './workerDashboard'
 
 const executionServices = (type: H.RequestPayload, value: H.RequestT['value']) =>
   hostCall<H.ExecutionServicesT>(type, value, H.ReplyPayload.ExecutionServices)
@@ -19,6 +20,7 @@ const registration = (entry: H.ExecutionServiceT): Registration => ({
 export function ExecutionServicesSettings({ changed }: { changed: () => void }) {
   const [hostPublicKey, setHostPublicKey] = useState('')
   function adopt(state: H.ExecutionServicesT) { setEntries(state.services); setHostPublicKey(s(state.hostPublicKey)) }
+  const [dashboard, setDashboard] = useState<Registration>()
   const [entries, setEntries] = useState<H.ExecutionServiceT[]>([])
   const [edit, setEdit] = useState<Registration>()
   const [original, setOriginal] = useState<string>()
@@ -59,6 +61,8 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
   const caps = sameEndpoint && saved.capabilities?.serverId ? saved.capabilities : undefined
   const valid = !!edit && [edit.id, edit.name, ...(edit.id === 'local' ? [] : [edit.endpoint, edit.workerPublicKey])].every((value) => value.trim())
 
+  if (dashboard) return <WorkerDashboard key={dashboard.id} id={dashboard.id} name={dashboard.name} close={() => setDashboard(undefined)} />
+
   return <Form>
     <Section title={L('このホストの公開鍵')} info={L('ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。')}>
       <Row><code className="selectable">{hostPublicKey}</code>
@@ -69,6 +73,8 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
         <Button kind="borderless" disabled={busy} onClick={() => choose(registration(entry), s(entry.id))}>{s(entry.name)} ({s(entry.id)})</Button>
         <span className="secondary">{s(entry.capabilities!.nativeSystem)}</span>
         <Button small disabled={busy} onClick={() => remeasure(s(entry.id))}>{L('測り直す')}</Button>
+        {s(entry.id) !== 'local' && entry.capabilities?.serverId &&
+          <Button small disabled={busy} onClick={() => setDashboard(registration(entry))}>{L('ダッシュボードを開く')}</Button>}
       </Row>)}
       <Row><Button disabled={busy} onClick={() => remeasure(null)}>{L('すべて測り直す')}</Button></Row>
       <Row><Button icon="plus" disabled={busy} onClick={() => choose({ id: '', name: '', endpoint: '', workerPublicKey: '' })}>{L('実行サービスを追加')}</Button></Row>

@@ -6,6 +6,7 @@ struct ExecutionServicesSettings: View {
   @Environment(AppModel.self) private var model
   @State private var hostPublicKey = ""
   @State private var entries: [ExecutionServiceConnection] = []
+  @State private var dashboard: ExecutionServiceConnection?
   @State private var draft: ExecutionServiceRegistration?
   @State private var original: String?
   @State private var busy = false
@@ -13,6 +14,14 @@ struct ExecutionServicesSettings: View {
   @State private var failed = false
 
   var body: some View {
+    if let dashboard {
+      WorkerDashboard(service: dashboard) { self.dashboard = nil }
+    } else {
+      settings
+    }
+  }
+
+  private var settings: some View {
     Form {
       Section {
         Text(hostPublicKey).monospaced().textSelection(.enabled)
@@ -28,6 +37,9 @@ struct ExecutionServicesSettings: View {
           LabeledContent {
             Text(entry.capabilities.nativeSystem)
             Button("測り直す") { remeasure(entry.id) }
+            if entry.id != "local", !entry.capabilities.serverId.isEmpty {
+              Button("ダッシュボードを開く") { dashboard = entry }
+            }
           } label: {
             Button("\(entry.name) (\(entry.id))") { choose(entry) }
           }

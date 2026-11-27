@@ -1,5 +1,3 @@
-'use strict'
-
 const locale = document.documentElement.lang
 const L = (ja, value) => (locale === 'ja' ? ja : english[ja] ?? ja)
   .replace('{0}', () => String(value))
@@ -35,7 +33,7 @@ function jobReason(job) {
 
 const selected = new Set()
 const maxJobs = 256
-let send, jobsSnapshot, keysSnapshot, review, busy = false, refreshing = false
+let send, refreshTimer, currentKey, jobsSnapshot, keysSnapshot, review, busy = false, refreshing = false
 const formatBytes = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 })
 function size(bytes) {
   const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
@@ -53,11 +51,11 @@ function report(text, error = false) {
   $('feedback').toggleAttribute('data-error', error)
 }
 function controls() {
-  $('review-jobs').disabled = busy || !!review || !selected.size
-  $('submit-key').disabled = busy || !!review || !keysSnapshot
+  $('review-jobs').disabled = !send || busy || !!review || !selected.size
+  $('submit-key').disabled = !send || busy || !!review || !keysSnapshot
   for (const input of $('jobs').querySelectorAll('input'))
-    input.disabled = busy || !!review || (!input.checked && selected.size >= maxJobs)
-  for (const button of $('keys').querySelectorAll('button')) button.disabled = busy || !!review
+    input.disabled = !send || busy || !!review || (!input.checked && selected.size >= maxJobs)
+  for (const button of $('keys').querySelectorAll('button')) button.disabled = !send || busy || !!review
 }
 function renderJobs(data) {
   const names = new Set(data.jobs.map(job => job.project_scope + '/' + job.job_id))
@@ -99,6 +97,7 @@ function renderJobs(data) {
   controls()
 }
 function renderKeys(data) {
+  currentKey = data.current
   const entries = data.keys.map(key => {
     const line = element('li')
     const label = element('span')
@@ -125,11 +124,11 @@ async function request(operation, body) {
   return { raw, data }
 }
 async function refresh() {
-  if (busy || refreshing) return
+  if (!send || busy || refreshing) return
   refreshing = true
   const results = await Promise.allSettled([request('Jobs'), request('Keys')])
   refreshing = false
-  if (busy) return
+  if (!send || busy) return
   const [jobs, keys] = results
   if (jobs.status === 'fulfilled' && jobs.value.raw !== jobsSnapshot) {
     jobsSnapshot = jobs.value.raw
@@ -185,6 +184,12 @@ async function change(operation, body) {
     } else if (operation === 'AddKey') {
       $('public-key').value = ''
       report(L("ホスト鍵を追加しました。"))
+    } else if (body.key === currentKey) {
+      send = undefined
+      clearInterval(refreshTimer)
+      const { keys } = JSON.parse(keysSnapshot)
+      renderKeys({ keys: keys.filter(key => key !== currentKey) })
+      report(L("このホストの鍵を削除しました。再接続するにはワーカー側で許可してください。"))
     } else {
       report(L("ホスト鍵を削除しました。"))
     }
@@ -216,7 +221,7 @@ $('add-key').addEventListener('submit', event => {
 function start(exchange) {
   send = exchange
   void refresh()
-  setInterval(refresh, 5000)
+  refreshTimer = setInterval(refresh, 5000)
 }
 const native = window.webkit?.messageHandlers?.workerDashboard
 if (native) {
