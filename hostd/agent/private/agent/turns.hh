@@ -15,9 +15,11 @@
 #include "agent/runtime.hh"
 #include "agent/store.hh"
 #include "agent/thought_schedule.hh"
+#include "host/agent_exclude.hh"
 #include "host/authorization.hh"
 #include "host/state_gate.hh"
 #include "tsugumi/rpc/transport.hh"
+#include "tsugumi/util/locked.hh"
 
 namespace tsugumi::host {
 class Settings;
@@ -37,8 +39,8 @@ struct Turns {
                               const std::optional<host::TurnAuthorization>&)>
         run_helper;
     std::function<void(const std::string&)> cancel_file_tools;
-    std::function<bool(const std::string&, const std::string&, std::stop_token)>
-        excluded = {};
+    std::function<host::AgentExclude(const std::string&, std::stop_token)>
+        exclusions = {};
   };
   Turns(host::StateGate& gate, sql::Db& db, ConversationStore& conversations,
         Providers& providers, host::Settings& settings,
@@ -95,5 +97,12 @@ struct Turns {
   std::set<std::string> running;
   std::map<std::string, std::shared_ptr<ContextUsage>> context_usage;
   std::map<std::string, std::shared_ptr<ThoughtSchedule>> thoughts;
+
+ private:
+  struct PreparationState {
+    sql::Db& db;
+    ConversationStore& conversations;
+  };
+  Locked<PreparationState> preparation;
 };
 }  // namespace tsugumi::agent

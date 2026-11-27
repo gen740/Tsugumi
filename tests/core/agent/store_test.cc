@@ -290,6 +290,47 @@ TEST_F(ConversationStoreTest, IncrementalEventsCopyOnlyChangedRows) {
   EXPECT_EQ(recovery.presentation->rows.size(), kHistoryRows);
 }
 
+TEST_F(ConversationStoreTest, TurnPreparationLoadsExclusionsWithoutTheGate) {
+  const auto project = Register("project");
+  Create("conversation", "project");
+  home.db.exec(
+      "INSERT INTO folders VALUES('a','project','/folder-a','a'),"
+      "('b','project','/folder-b','b');"
+      "INSERT INTO workspace_grants VALUES('allow-a','a',0,1),"
+      "('allow-b','b',0,1)");
+  host::Credentials credentials{gate, home.db, {}};
+  host::Settings settings(directory.path, credentials);
+  agent::Providers providers(gate, home.db, settings);
+  std::stop_source stop;
+  bool stopping = false;
+  host::Access access(gate, home.db, registry, *store, stopping,
+                      {[](const auto&, const auto&) {}, [](const auto&) {}});
+  int inspections = 0;
+  agent::Turns::Dependencies dependencies;
+  dependencies.exclusions = [&](const auto&, auto) {
+    ++inspections;
+    std::jthread other([&] {
+      std::unique_lock lock(gate.mutex, std::try_to_lock);
+      EXPECT_TRUE(lock.owns_lock());
+    });
+    return host::AgentExclude(project, R"({"agentExclude":[]})");
+  };
+  agent::Turns turns(gate, home.db, *store, providers, settings, stop, stopping,
+                     access, std::move(dependencies));
+  A::ConversationSendRequestT request;
+  request.conversation_id = "conversation";
+  request.turn_id = "prepare-fixture";
+  request.text = "Read folders";
+  request.attached_resources = {"a", "b"};
+  const auto block = WithRequest(request, [&](const auto& value) {
+    return turns.PrepareSend(&value, stop.get_token());
+  });
+  EXPECT_EQ(inspections, 1);
+  EXPECT_EQ(block.resource_ids, request.attached_resources);
+  EXPECT_NE(block.text.find("/folder-a"), std::string::npos);
+  EXPECT_NE(block.text.find("/folder-b"), std::string::npos);
+}
+
 TEST_F(ConversationStoreTest,
        ArchivesResourcesAndEventsKeepHistoryAuthorization) {
   std::lock_guard lock(gate.mutex);

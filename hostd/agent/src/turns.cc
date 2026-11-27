@@ -57,8 +57,7 @@ auto Turns::System(bool guide) -> std::string {
 
 Turns::Turns(host::StateGate& gate, sql::Db& database, ConversationStore& store,
              Providers& selections, host::Settings& settings,
-             std::stop_source& stop, bool& stopping,
-             host::Access& access,
+             std::stop_source& stop, bool& stopping, host::Access& access,
              Dependencies dependencies)
     : mutex(gate.mutex),
       db(database),
@@ -68,7 +67,8 @@ Turns::Turns(host::StateGate& gate, sql::Db& database, ConversationStore& store,
       shutdown(stop),
       stopping(stopping),
       access_service(access),
-      dependencies(std::move(dependencies)) {}
+      dependencies(std::move(dependencies)),
+      preparation(gate.mutex, {database, store}) {}
 
 auto Turns::ThoughtsFor(const std::string& id)
     -> std::shared_ptr<ThoughtSchedule> {
@@ -179,36 +179,50 @@ auto Turns::Summarize(const ProviderConfig& config,
 
 auto Turns::SkillCatalog(const Conversation& c)
     -> std::pair<std::string, Tsugumi::Host::SkillsListT> {
-  auto root = db.prepare("SELECT path FROM project_paths WHERE id=?");
-  root.bind(1, c.project);
-  const auto path = root.step() ? root.text(0) : "";
-  auto sources = db.prepare(
-      "SELECT folders FROM skill_catalogs WHERE conversation=? AND path=?");
-  sources.bind(1, c.id).bind(2, path);
-  std::vector<std::string> folders;
-  if (sources.step())
-    for (const auto& item : json::Array(sources.text(0)))
-      folders.push_back(json::String(item));
-  return {path, host::ListSkills(path, folders, host::ProjectTrusted(db, path))};
+  struct Sources {
+    std::string path;
+    std::vector<std::string> folders;
+    bool trusted;
+  };
+  const auto sources = preparation.with([&](auto& state) {
+    auto root = state.db.prepare("SELECT path FROM project_paths WHERE id=?");
+    root.bind(1, c.project);
+    auto path = root.step() ? root.text(0) : "";
+    auto catalog = state.db.prepare(
+        "SELECT folders FROM skill_catalogs WHERE conversation=? AND path=?");
+    catalog.bind(1, c.id).bind(2, path);
+    std::vector<std::string> folders;
+    if (catalog.step())
+      for (const auto& item : json::Array(catalog.text(0)))
+        folders.push_back(json::String(item));
+    const bool trusted = host::ProjectTrusted(state.db, path);
+    return Sources{std::move(path), std::move(folders), trusted};
+  });
+  return {sources.path,
+          host::ListSkills(sources.path, sources.folders, sources.trusted)};
 }
 
 auto Turns::SkillContent(const std::string& id,
                          const std::vector<std::string>& requested,
                          bool automatic, std::stop_token stop,
                          std::string* trusted_project) -> ContentBlock {
-  std::unique_lock lock(mutex);
-  const auto c = conversations->GetConversation(id);
+  const auto c = preparation.with(
+      [&](auto& state) { return state.conversations.GetConversation(id); });
   const auto [path, catalog] = SkillCatalog(c);
+  std::optional<host::AgentExclude> exclusions;
   std::set<std::string> names;
   for (const auto& name : requested) names.insert(host::SkillNameKey(name));
   const auto selected = names;
   ContentBlock result;
   for (const auto& skill : catalog.skills) {
     if (automatic ? !skill->always : !selected.contains(skill->name)) continue;
-    if (!skill->path.starts_with("builtin:") && dependencies.excluded &&
-        dependencies.excluded(c.project, skill->path, stop)) {
-      if (!automatic) throw Failure("not_found", "Skill not found");
-      continue;
+    if (!skill->path.starts_with("builtin:") && !c.project.empty() &&
+        dependencies.exclusions) {
+      if (!exclusions) exclusions = dependencies.exclusions(c.project, stop);
+      if (exclusions->Contains(skill->path)) {
+        if (!automatic) throw Failure("not_found", "Skill not found");
+        continue;
+      }
     }
     names.erase(skill->name);
     if (automatic && trusted_project &&
@@ -230,21 +244,20 @@ auto Turns::SkillContent(const std::string& id,
                                       .lexically_relative(path)
                                       .string());
       std::string resource = c.project;
-      if (!in_project) {
-        auto folder =
-            db.prepare("SELECT id FROM folders WHERE project=? AND path=?");
-        folder.bind(1, c.project).bind(2, skill->source_folder);
-        if (!folder.step())
-          throw Failure("permission_denied",
-                        "The user has not attached this Skill folder");
-        resource = folder.text(0);
-      }
-      lock.unlock();
+      if (!in_project)
+        resource = preparation.with([&](auto& state) {
+          auto folder = state.db.prepare(
+              "SELECT id FROM folders WHERE project=? AND path=?");
+          folder.bind(1, c.project).bind(2, skill->source_folder);
+          if (!folder.step())
+            throw Failure("permission_denied",
+                          "The user has not attached this Skill folder");
+          return folder.text(0);
+        });
       access_service.Require(resource, id, S::Access::Read, true, stop,
                              "Read the Skill " + skill->name);
       bytes = host::ReadSkill(in_project ? path : skill->source_folder,
                               skill->path);
-      lock.lock();
       result.resource_ids.push_back(resource);
     }
     result.text += "\n[Skill " + skill->name + "]\n" + bytes;
@@ -294,12 +307,11 @@ auto Turns::ScopedSkillTask(const A::ConversationSendRequest* p,
 
 auto Turns::PrepareSend(const A::ConversationSendRequest* p,
                         std::stop_token stop) -> ContentBlock {
-  std::unique_lock lock(mutex);
-  const auto c = conversations->GetConversation(p->conversation_id()->str());
+  const auto c = preparation.with([&](auto& state) {
+    return state.conversations.GetConversation(p->conversation_id()->str());
+  });
   auto require = [&](const std::string& resource, const std::string& reason) {
-    lock.unlock();
     access_service.Require(resource, c.id, S::Access::Read, true, stop, reason);
-    lock.lock();
   };
   std::vector<std::string> resources;
   if ((p->selected_cards() && p->selected_cards()->size()) ||
@@ -322,27 +334,31 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
   if (p->skill_names() && p->skill_names()->size()) {
     std::vector<std::string> names;
     for (const auto* name : *p->skill_names()) names.push_back(name->str());
-    lock.unlock();
     const auto selected = SkillContent(c.id, names, false, stop);
-    lock.lock();
     text += selected.text;
     resources.insert(resources.end(), selected.resource_ids.begin(),
                      selected.resource_ids.end());
   }
   if (p->intent()) text += "\n[User action] " + p->intent()->str();
   if (p->attached_resources()) {
+    std::optional<host::AgentExclude> exclusions;
     for (const auto* resource : *p->attached_resources()) {
-      auto folder = db.prepare("SELECT project,path FROM folders WHERE id=?");
-      folder.bind(1, resource->str());
-      if (!folder.step() || folder.text(0) != c.project)
-        throw Failure("permission_denied",
-                      "Attached resource is not registered for this project");
-      if (dependencies.excluded &&
-          dependencies.excluded(c.project, folder.text(1), stop))
+      const auto path = preparation.with([&](auto& state) {
+        auto folder = state.db.prepare(
+            "SELECT path FROM folders WHERE id=? AND project=?");
+        folder.bind(1, resource->str()).bind(2, c.project);
+        if (!folder.step())
+          throw Failure("permission_denied",
+                        "Attached resource is not registered for this project");
+        return folder.text(0);
+      });
+      if (!exclusions && !c.project.empty() && dependencies.exclusions)
+        exclusions = dependencies.exclusions(c.project, stop);
+      if (exclusions && exclusions->Contains(path))
         throw Failure("not_found", "Folder not found");
       require(resource->str(), "Read the attached folder");
       resources.push_back(resource->str());
-      text += "\n[User-authorized attached folder] " + folder.text(1);
+      text += "\n[User-authorized attached folder] " + path;
     }
   }
   ContentBlock block;

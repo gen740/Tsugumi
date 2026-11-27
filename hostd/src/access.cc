@@ -13,6 +13,7 @@
 #include "tsugumi/rpc/transport.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/json_object.hh"
+#include "tsugumi/util/locked.hh"
 
 namespace tsugumi::host {
 namespace A = Tsugumi::Agent;
@@ -283,6 +284,7 @@ auto Access::Require(const std::string& project,
                      std::stop_token stop, const std::string& reason,
                      const std::optional<TurnAuthorization>& authorization)
     -> void {
+  lock_scope::AssertUnlocked();
   std::unique_lock lock(mutex);
   if (authorization) {
     if (stop.stop_requested() || stopping) throw Cancelled();

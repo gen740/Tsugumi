@@ -36,6 +36,7 @@
 #include "tsugumi/document/document.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/locked.hh"
 
 namespace tsugumi::agent {
 namespace A = Tsugumi::Agent;
@@ -312,6 +313,7 @@ auto Tools::InputTypesQuery(const std::string& project, json::Members args,
 
 auto Tools::InspectProject(const std::string& project, std::stop_token stop)
     -> json::Members {
+  lock_scope::AssertUnlocked();
   const auto reply =
       json::Object(RawProjectCall(project, "project_inspect", "{}", stop));
   auto value = json::Object(json::Get(reply, "value", "{}"));
