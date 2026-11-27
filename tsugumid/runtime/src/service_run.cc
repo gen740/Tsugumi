@@ -41,6 +41,18 @@ auto artifact_label(const ArtifactData& artifact) -> std::string {
 constexpr uint32_t kInlineLimit = 256u << 10;
 constexpr size_t kPagePayload = (1u << 20) - 8192;
 
+template <class Integer>
+auto cursor_position(std::string_view text) -> Integer {
+  if (text.empty())
+    throw Failed(FailureKind::invalid_cursor, "missing cursor position");
+  Integer value{};
+  const auto end = text.data() + text.size();
+  const auto [next, error] = std::from_chars(text.data(), end, value);
+  if (error != std::errc{} || next != end || value <= 0)
+    throw Failed(FailureKind::invalid_cursor, "invalid cursor position");
+  return value;
+}
+
 uint32_t page_limit(std::optional<uint32_t> v) {
   uint32_t x = v.value_or(100);
   if (x < 1 || x > 500)
@@ -384,10 +396,12 @@ void Service::run_history(RequestIn& req) {
   uint32_t limit = page_limit(r->limit());
   auto [hi, after] = r->cursor() ? history_->open_cursor(r->cursor()->str())
                                  : std::pair<int64_t, std::string>{-1, ""};
+  const auto below = r->cursor() ? cursor_position<int64_t>(after) : INT64_MAX;
+  if (r->cursor() && (hi < 0 || below > hi))
+    throw Failed(FailureKind::invalid_cursor, "invalid run history cursor");
   std::vector<int64_t> seqs;
-  auto runs = history_->read([&, hi_ = hi, after_ = after](sql::Db& db) {
-    int64_t top = hi_ >= 0 ? hi_ : History::max_run_seq(db);
-    int64_t below = after_.empty() ? INT64_MAX : std::stoll(after_);
+  auto runs = history_->read([&](sql::Db& db) {
+    int64_t top = hi >= 0 ? hi : History::max_run_seq(db);
     auto out = History::runs_page(db, card, artifacts_only, below, top,
                                   limit + 1, &seqs);
     seqs.push_back(top);  // remember the bound for the cursor
@@ -491,7 +505,8 @@ void Service::run_invocations(RequestIn& req) {
   uint32_t limit = page_limit(r->limit());
   uint64_t after = 0;
   if (r->cursor())
-    after = std::stoull(history_->open_cursor(r->cursor()->str()).second);
+    after = cursor_position<uint64_t>(
+        history_->open_cursor(r->cursor()->str()).second);
   auto [rows, batches] = history_->read([&](sql::Db& db) {
     if (!History::run(db, run_id))
       throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});

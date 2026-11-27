@@ -1154,6 +1154,7 @@ void Service::shutdown() {
 std::vector<std::string> Service::capabilities() {
   std::vector<std::string> caps = {"SessionHello",
                                    "ProjectActivity",
+                                   "CardId",
                                    "ProjectHostRequirements",
                                    "ProjectOpen",
                                    "ProjectInspect",
@@ -1183,6 +1184,8 @@ std::vector<std::string> Service::capabilities() {
                                    "RunHistory",
                                    "RunInvocations",
                                    "RunLatestInvocations",
+                                   "RunDefinitionPaths",
+                                   "WorkerProbeMeasure",
                                    "RunRecord",
                                    "RunValueRead",
                                    "ArtifactList",

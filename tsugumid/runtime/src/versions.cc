@@ -595,6 +595,8 @@ std::string Versions::init() {
   if (!history) {
     commit_tree(r.get(), tip, {}, version_record::commit("create"), "HEAD");
     auto h = head_oid(r.get());
+    if (!h)
+      throw Failed(FailureKind::persistence_failed, "missing version HEAD");
     return hex(&*h);
   }
   // A demo's history: each commit is the files on disk with its differences,
@@ -605,8 +607,6 @@ std::string Versions::init() {
   if (!hf)
     throw Failed(FailureKind::invalid_document,
                  std::string(kHistoryFile) + " is not a version history");
-  Index base;
-  check(git_repository_index(base.out(), r.get()), "index");
   std::map<std::string, git_oid> ids;
   for (const auto& c : hf->commits) {
     const std::string& cid = c->id;
@@ -679,6 +679,8 @@ std::string Versions::init() {
         "head");
   // The index follows the head (the files on disk already are its tip).
   auto h = head_oid(r.get());
+  if (!h)
+    throw Failed(FailureKind::persistence_failed, "missing version HEAD");
   Object head;
   check(git_object_lookup(head.out(), r.get(), &*h, GIT_OBJECT_COMMIT), "head");
   check(git_reset(r.get(), head.get(), GIT_RESET_MIXED, nullptr), "reset");
