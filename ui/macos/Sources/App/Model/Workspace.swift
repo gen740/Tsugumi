@@ -147,6 +147,10 @@ final class Workspace {
   var foldedCardViews: Set<UUID> = []
   /// "New project" asked for this window: its Home opens the sheet.
   var requestNewProject = false
+  /// Where that new project's save panel starts (nil: the projects folder).
+  var newProjectFolder: URL?
+  /// A folder opened from Finder or `open` that is not a Tsugumi project, shown as an alert.
+  var notAProject: URL?
   /// What this window could not do, shown as an alert.
   var alert: String?
   /// Why the changes cannot be saved, when leaving was asked for: the way out is to give them up.

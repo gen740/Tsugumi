@@ -36,6 +36,7 @@ import TsugumiAgentClient
 ///   menu <item title>               (presses the menu bar's item)
 ///   newproject                      (the new project sheet, as ⌘N in the window steps act on)
 ///   openproject <folder>            (as the open panel of the window in front answers)
+///   openexternal <path>             (as Finder's "Open With" hands it to the window in front)
 ///   window <n>                      (later steps act on the n-th main window)
 ///   mainwindows                     (a line per main window: its project, connection, run, unsaved edits)
 ///   closewindow                     (as the window's close button)
@@ -59,7 +60,7 @@ final class UIScript {
 
   enum Request: Equatable {
     case card(CardRef), definitions(ProjectRef), versions(ProjectRef), workflowSettings(ProjectRef), settings, explainer, debug
-    case project(URL), newProject
+    case project(URL), newProject, openExternal(URL)
   }
 
   /// The keys `key` can press, by name: virtual key codes of the ANSI layout.
@@ -219,6 +220,7 @@ final class UIScript {
       case "home": if let w = workspace { AppModel.shared.leaveProject(in: w) }
       case "newproject": request = .newProject
       case "openproject": request = .project(URL(fileURLWithPath: w.dropFirst().joined(separator: " ")))
+      case "openexternal": request = .openExternal(URL(fileURLWithPath: w.dropFirst().joined(separator: " ")))
       case "window":
         let list = AppModel.shared.mainWindows
         if let n = Int(w[1]), list.indices.contains(n) {

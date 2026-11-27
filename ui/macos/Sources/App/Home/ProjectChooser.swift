@@ -14,6 +14,8 @@ struct ProjectChooser: View {
   @State private var showDemos = false
   @State private var newName = ""
   @State private var showNew = false
+  /// Where the new project's save panel starts (nil: the projects folder).
+  @State private var newFolder: URL?
   @State private var tag: String?
   @State private var search = ""
   /// Choosing recent projects to take off the list (nil: not choosing).
@@ -21,7 +23,7 @@ struct ProjectChooser: View {
 
   var body: some View {
     HStack(spacing: 0) {
-      HomeSidebar(showDemos: $showDemos, onNew: { showNew = true }, onOpen: openPanel)
+      HomeSidebar(showDemos: $showDemos, onNew: { newFolder = nil; showNew = true }, onOpen: openPanel)
         .frame(width: 250)
       VStack(spacing: 0) {
         if let issue = model.staleHostState {
@@ -79,6 +81,8 @@ struct ProjectChooser: View {
     .sheet(isPresented: $showNew) { newProjectSheet }
     .onChange(of: workspace.requestNewProject, initial: true) { _, asked in
       if asked {
+        newFolder = workspace.newProjectFolder
+        workspace.newProjectFolder = nil
         showNew = true
         workspace.requestNewProject = false
       }
@@ -257,7 +261,7 @@ struct ProjectChooser: View {
 
   private func createProject() {
     let p = NSSavePanel()
-    p.directoryURL = AppModel.preparedProjectsFolder()
+    p.directoryURL = newFolder ?? AppModel.preparedProjectsFolder()
     p.nameFieldStringValue = newName
     p.message = String(localized: "プロジェクトのフォルダを作成する場所を選んでください")
     guard p.runModal() == .OK, let url = p.url else { return }

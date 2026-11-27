@@ -53,9 +53,9 @@ import TsugumiTestSupport
 @MainActor @Test(.hostService) func aNewWindowTakesItsIntentOnce() {
   let model = AppModel.shared
   let url = URL(fileURLWithPath: "/tmp/x")
-  model.pendingWindowIntents = [.open(url), .newProject]
+  model.pendingWindowIntents = [.open(url), .newProject(nil)]
   #expect(model.takeWindowIntent() == .open(url))
-  #expect(model.takeWindowIntent() == .newProject)
+  #expect(model.takeWindowIntent() == .newProject(nil))
   #expect(model.takeWindowIntent() == nil)
 }
 
@@ -65,7 +65,50 @@ import TsugumiTestSupport
   let one = Workspace(), other = Workspace()
   model.newProject(from: one, openWindow: EnvironmentValues().openWindow)
   #expect(one.requestNewProject && !other.requestNewProject)
+  #expect(one.newProjectFolder == nil)
   #expect(model.pendingWindowIntents.isEmpty)
+  // Offered for a folder that is not a project: the save panel starts there.
+  let folder = URL(fileURLWithPath: "/tmp/data")
+  model.newProject(from: other, in: folder, openWindow: EnvironmentValues().openWindow)
+  #expect(other.requestNewProject && other.newProjectFolder == folder)
+  #expect(model.pendingWindowIntents.isEmpty)
+}
+
+/// What Finder's "Open With" (or `open -a`) hands over: a project folder or its
+/// tsugumi.json stands for the project; anything else is not one.
+@Test func anOpenedItemIsAProjectOnlyWithItsTsugumiJSON() throws {
+  let root = testTemporaryDirectory.appendingPathComponent("open-external-\(UUID())")
+  let project = root.appendingPathComponent("project"), plain = root.appendingPathComponent("plain")
+  defer { try? FileManager.default.removeItem(at: root) }
+  for folder in [project, plain] { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+  let document = project.appendingPathComponent("tsugumi.json"), note = plain.appendingPathComponent("notes.txt")
+  try Data("{}".utf8).write(to: document)
+  try Data().write(to: note)
+  let path = { (url: URL?) in url?.standardizedFileURL.path }
+  #expect(path(AppModel.projectFolder(project)) == path(project))
+  #expect(path(AppModel.projectFolder(document)) == path(project))
+  #expect(AppModel.projectFolder(plain) == nil)
+  #expect(AppModel.projectFolder(note) == nil)
+  #expect(AppModel.projectFolder(root.appendingPathComponent("missing")) == nil)
+  // A new project is offered in the folder itself, or in a file's folder.
+  #expect(path(AppModel.folderForNewProject(plain)) == path(plain))
+  #expect(path(AppModel.folderForNewProject(note)) == path(plain))
+}
+
+/// A folder that is not a project is said so in the window that received it:
+/// no project, no second window.
+@MainActor @Test(.hostService) func aFolderThatIsNotAProjectOpensNoWindow() throws {
+  let model = AppModel.shared
+  let plain = testTemporaryDirectory.appendingPathComponent("not-a-project-\(UUID())")
+  try FileManager.default.createDirectory(at: plain, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: plain) }
+  let home = Workspace()
+  model.pendingWindowIntents = []
+  model.openExternal(plain, from: home, openWindow: EnvironmentValues().openWindow)
+  #expect(home.notAProject == plain && home.session == nil)
+  #expect(model.pendingWindowIntents.isEmpty)
+  #expect(model.mainWindows.contains { $0 === home })
+  model.windowClosed(home)
 }
 
 /// A closed window leaves the list; the others stay.

@@ -30,7 +30,8 @@ enum MainWindowRouting {
 /// What a new main window does first (it cannot be told before it exists).
 enum MainWindowIntent: Equatable {
   case open(URL)
-  case newProject
+  /// The new project sheet, its save panel starting in the folder (nil: the projects folder).
+  case newProject(URL?)
 }
 
 extension AppModel {
@@ -77,13 +78,43 @@ extension AppModel {
   }
 
   /// The new project sheet: on the asking window's Home, else on a new window's.
-  func newProject(from w: Workspace?, openWindow: OpenWindowAction) {
+  /// `folder`: where its save panel starts (nil: the projects folder).
+  func newProject(from w: Workspace?, in folder: URL? = nil, openWindow: OpenWindowAction) {
     if let w, w.session == nil {
+      w.newProjectFolder = folder
       w.requestNewProject = true
     } else {
-      pendingWindowIntents.append(.newProject)
+      pendingWindowIntents.append(.newProject(folder))
       openWindow(id: "main")
     }
+  }
+
+  /// A folder opened from Finder ("Open With") or `open -a`, received by the
+  /// window `w`: its project opens as from Home; anything else is not a project,
+  /// and the window says so (offering a new project there) instead of a new window.
+  func openExternal(_ url: URL, from w: Workspace, openWindow: OpenWindowAction) {
+    register(w)
+    guard url.isFileURL else { return }
+    if let project = Self.projectFolder(url) {
+      openProject(project, from: w, openWindow: openWindow)
+    } else {
+      w.notAProject = url
+    }
+  }
+
+  /// The project an opened item stands for: a folder with a tsugumi.json, or that file itself.
+  nonisolated static func projectFolder(_ url: URL) -> URL? {
+    var directory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: url.path, isDirectory: &directory) else { return nil }
+    let folder = directory.boolValue ? url : url.deletingLastPathComponent()
+    guard directory.boolValue || url.lastPathComponent == "tsugumi.json",
+          FileManager.default.fileExists(atPath: folder.appendingPathComponent("tsugumi.json").path) else { return nil }
+    return folder
+  }
+
+  /// Where a new project for an item that is not one is offered: the folder itself, or a file's folder.
+  nonisolated static func folderForNewProject(_ url: URL) -> URL {
+    (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true ? url : url.deletingLastPathComponent()
   }
 
   func chooseProject(from w: Workspace?, openWindow: OpenWindowAction) {

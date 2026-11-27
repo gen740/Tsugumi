@@ -38,6 +38,7 @@ struct MainWindow: View {
       case .debug: openWindow(id: "debug")
       case .project(let url): model.openProject(url, from: workspace, openWindow: openWindow)
       case .newProject: model.newProject(from: workspace, openWindow: openWindow)
+      case .openExternal(let url): model.openExternal(url, from: workspace, openWindow: openWindow)
       }
       UIScript.shared.request = nil
     }
@@ -64,13 +65,19 @@ struct MainWindow: View {
       guard workspace.session == nil else { return }
       switch model.takeWindowIntent() {
       case .open(let url)?: model.show(url, in: workspace)
-      case .newProject?: workspace.requestNewProject = true
+      case .newProject(let folder)?:
+        workspace.newProjectFolder = folder
+        workspace.requestNewProject = true
       case nil:
         // `Tsugumi <project folder>` opens that project in the first window.
         if let url = model.takeLaunchProject() { model.show(url, in: workspace) }
       }
     }
     .task { if model.setup == nil { await model.refreshSetup() } }
+    // A folder opened from Finder or `open -a` comes to a main window that is
+    // there (SwiftUI makes one only when none is): never a second Home.
+    .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
+    .onOpenURL { model.openExternal($0, from: workspace, openWindow: openWindow) }
     .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
       Task { await CorePreferences.shared.reload() }
     }
@@ -85,6 +92,17 @@ struct MainWindow: View {
         GuideController.shared.demoInvite = nil
         GuideController.shared.answerDemoOffer()
       })
+    }
+    .alert("Tsugumi のプロジェクトではありません", isPresented: Binding(get: { workspace.notAProject != nil },
+                                                             set: { if !$0 { workspace.notAProject = nil } })) {
+      Button("ここに新規プロジェクトを作成…") {
+        guard let url = workspace.notAProject else { return }
+        workspace.notAProject = nil
+        model.newProject(from: workspace, in: AppModel.folderForNewProject(url), openWindow: openWindow)
+      }
+      Button("キャンセル", role: .cancel) { workspace.notAProject = nil }
+    } message: {
+      Text("「\(workspace.notAProject?.lastPathComponent ?? "")」には tsugumi.json がないため、プロジェクトとして開けません。")
     }
     .alert("この操作はできません", isPresented: Binding(get: { workspace.alert != nil }, set: { if !$0 { workspace.alert = nil } })) {
       Button("OK") { workspace.alert = nil }
