@@ -83,33 +83,22 @@ auto RemoteWorkerStore::realise(
     ~ClearInterrupt() { nix::unix::interruptCheck = {}; }
   } clear_interrupt;
   std::mutex timer_mutex;
-  std::condition_variable timer_cv;
+  std::condition_variable_any timer_cv;
   std::jthread timer;
   if (timeout_ms)
     timer = std::jthread([&](std::stop_token stop) {
-      std::stop_callback wake(stop, [&] { timer_cv.notify_all(); });
       std::unique_lock lock(timer_mutex);
-      if (timer_cv.wait_until(lock,
-                              began + std::chrono::milliseconds(timeout_ms),
-                              [&] { return stop.stop_requested(); }))
-        return;
+      const auto no_condition = [] { return false; };
+      timer_cv.wait_until(lock, stop,
+                          began + std::chrono::milliseconds(timeout_ms),
+                          no_condition);
       while (!stop.stop_requested()) {
         timed_out.store(true);
         ::pthread_kill(thread, SIGUSR1);
-        timer_cv.wait_for(lock, std::chrono::milliseconds(50));
+        timer_cv.wait_for(lock, stop, std::chrono::milliseconds(50),
+                          no_condition);
       }
     });
-  struct StopTimer {
-    std::jthread& timer;
-    std::condition_variable& cv;
-    ~StopTimer() {
-      if (timer.joinable()) {
-        timer.request_stop();
-        cv.notify_all();
-        timer.join();
-      }
-    }
-  } stop_timer{timer, timer_cv};
   if (store->readDerivation(drv).platform != derivation.system)
     throw std::runtime_error("remote derivation has a different system");
   const auto declared = store->queryDerivationOutputMap(drv);
