@@ -16,6 +16,7 @@
 #include <cstring>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
@@ -38,6 +39,13 @@ constexpr size_t kReadBudget = 512u << 10;
 constexpr size_t kFrameOverhead = 10;
 constexpr size_t kMaxRequests = 256;
 constexpr size_t kControlReserve = 8;
+
+struct PendingSocket {
+  int fd = -1;
+  ~PendingSocket() {
+    if (fd >= 0) ::close(fd);
+  }
+};
 
 auto configure_fd(int fd) -> bool {
   if (::fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) return false;
@@ -204,6 +212,13 @@ void TransportServer::stop() {
   if (stopping_.exchange(true)) return;
   wake();
   if (thread_.joinable()) thread_.join();
+  {
+    std::vector<Command> discarded;
+    {
+      std::lock_guard lock(inbox_mu_);
+      discarded.swap(inbox_);
+    }
+  }
   for (auto& [_, c] : conns_) ::close(c->fd);
   conns_.clear();
   unix_binding_.Remove();
@@ -227,10 +242,9 @@ void TransportServer::wake() {
 }
 
 void TransportServer::post(Command c) {
-  {
-    std::lock_guard<std::mutex> l(inbox_mu_);
-    inbox_.push_back(std::move(c));
-  }
+  std::lock_guard lock(inbox_mu_);
+  if (stopping_) return;
+  inbox_.push_back(std::move(c));
   wake();
 }
 
@@ -434,12 +448,13 @@ void TransportServer::accept_on(int lfd, bool websocket) {
 }
 
 void TransportServer::adopt(int fd, std::string head) {
-  if (!configure_fd(fd)) {
-    ::close(fd);
-    return;
-  }
+  PendingSocket owned{fd};
+  if (!configure_fd(fd)) return;
+  auto socket = std::make_shared<PendingSocket>();
+  socket->fd = std::exchange(owned.fd, -1);
   Command c(Command::Kind::Action);
-  c.action = [this, fd, head = std::move(head)]() mutable {
+  c.action = [this, socket, head = std::move(head)]() mutable {
+    const int fd = socket->fd;
 #ifdef SO_NOSIGPIPE
     int one = 1;
     ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
@@ -454,6 +469,7 @@ void TransportServer::adopt(int fd, std::string head) {
     conn->rbuf = std::move(head);
     auto& c = *conn;
     conns_[c.id] = std::move(conn);
+    socket->fd = -1;
     parse_input(c);
   };
   post(std::move(c));
