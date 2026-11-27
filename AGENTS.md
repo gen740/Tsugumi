@@ -56,6 +56,10 @@ Someone is doing other work on the same Mac. Do not take the foreground, and do 
 - Commands for working on the repository are flake apps: `nix run .#guest-image` (the guest image from its CI artifact; `--build` builds it here), `nix run .#release`, and the documentation's `.#dev-doc` / `.#build-doc` / `.#test-doc`. CI steps call the same commands, so `tests/ci-local.sh` can run them too.
 - Shell scripts remain only where the host is needed: Apple's toolchain, `codesign`, `xcrun` (`ui/macos/build-app.sh`, `hostd/tools/build-macos.sh`, `vm/macos/tools/build-vmctl.sh`, `cli/package-*.sh`, `ui/macos/tools/run-ui.sh`).
 
+### Branches
+
+Development happens on `dev`: branch from `dev` and open pull requests to `dev`. `main` holds what was released and changes only when a release is cut from `dev` ([RELEASING.md](RELEASING.md)). CI runs on pull requests to either branch and on pushes to both.
+
 ### Checks before merging
 
 CI runs on GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml) calls [.github/workflows/ci-platform.yml](.github/workflows/ci-platform.yml)). To run the same checks locally, use [tests/ci-local.sh](tests/ci-local.sh). On a Mac it runs the macOS job as it is, and the Linux job in a Docker (OrbStack) container.
