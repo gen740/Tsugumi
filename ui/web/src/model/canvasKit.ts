@@ -18,7 +18,7 @@ export const STAGE_INFO: Record<Stage, { label: string; active: string; icon: st
   [Stage.prepare]: { label: L('スキーマ生成'), active: L('スキーマ生成中'), icon: 'shippingbox', activeIcon: 'shippingbox', stream: D.LogStream.build },
   [Stage.evaluate]: { label: L('Nix 評価'), active: L('Nix 評価中'), icon: 'snowflake', activeIcon: 'snowflake', stream: D.LogStream.build },
   [Stage.build]: { label: 'build', active: L('build 中'), icon: 'hammer', activeIcon: 'hammer', stream: D.LogStream.build },
-  [Stage.execute]: { label: 'run', active: L('実行中'), icon: 'play', activeIcon: 'play.fill', stream: D.LogStream.standard_output },
+  [Stage.execute]: { label: 'run', active: L('実行中'), icon: 'play', activeIcon: 'play.fill', stream: D.LogStream.output },
   [Stage.validate]: { label: 'validate', active: L('出力を検証中'), icon: 'checkmark.shield', activeIcon: 'checkmark.shield', stream: D.LogStream.journal },
   [Stage.save]: { label: L('保存'), active: L('保存中'), icon: 'externaldrive', activeIcon: 'externaldrive', stream: D.LogStream.journal },
   [Stage.done]: { label: L('完了'), active: L('完了'), icon: 'flag.checkered', activeIcon: 'flag.checkered', stream: D.LogStream.journal },
@@ -138,6 +138,10 @@ export interface CardNodeData {
   portGrid?: number
   /** Comments on the Card not resolved yet. */
   openComments?: number
+  /** Whether a remote execution waits (for the worker) rather than runs. */
+  activityWaits?: boolean
+  /** Whether a running invocation is working (CPU time, last output), on hover. */
+  liveness?: string
 }
 
 export const isRouting = (d: CardNodeData) => d.kind === 'merge' || d.kind === 'collect'

@@ -159,6 +159,15 @@ export interface CardRunState {
   phase: D.Phase
   failure?: string
   executionState?: D.RemoteExecutionState | null
+  /** The execution service ("local" or a remote worker), and what a remote
+   *  job waits for or does now on the worker. */
+  executionService?: string
+  executionActivity?: D.ExecutionActivity
+  executionActivityDetail?: string
+  /** CPU time of its process tree on a remote worker, and when it last wrote
+   *  output or build log (core clock). */
+  cpuMs?: number
+  lastOutputAt?: number
   transfer?: string
   /** Stages of the latest invocation, in the order the core ran them. */
   stages: StageRecord[]
@@ -170,6 +179,24 @@ export interface CardRunState {
   startedAt?: number
   endedAt?: number
   readyAt?: number
+}
+
+/** What a remote job waits for or does now on its worker, in words:
+ *  `text` for the log view, `short` for the Card's status row. */
+export function executionActivityText(state: CardRunState | undefined): { waiting: boolean; text: string; short: string } | undefined {
+  if (!state || (state.state !== D.CardState.running && state.state !== D.CardState.preparing)) return
+  if (state.executionState === D.RemoteExecutionState.queued) {
+    return { waiting: true, text: L('ワーカーの空きを待っています'), short: L('待機中（ワーカーの空き）') }
+  }
+  const detail = state.executionActivityDetail ?? ''
+  switch (state.executionActivity) {
+    case D.ExecutionActivity.waiting_store:
+      return { waiting: true, text: L('ワーカーの Nix ストアを待っています（別の実行が使用中）'), short: L('待機中（Nix ストア）') }
+    case D.ExecutionActivity.preparing: return { waiting: false, text: L('ワーカーで準備中'), short: L('ワーカーで準備中') }
+    case D.ExecutionActivity.building: return { waiting: false, text: L('ワーカーで Nix ビルド中: {0}', detail), short: L('ビルド中: {0}', detail) }
+    case D.ExecutionActivity.substituting: return { waiting: false, text: L('ワーカーで取得中: {0}', detail), short: L('取得中: {0}', detail) }
+    default: return
+  }
 }
 
 export function remoteExecutionLabel(state: D.RemoteExecutionState | null | undefined): string | undefined {
@@ -481,6 +508,16 @@ export class ProjectSession extends Observable {
   }
 
   /** The core clock now (ms since 1970), for elapsed times of a running run. */
+  /** Whether a running invocation is working: "CPU 12m · 最後の出力 4 分前". */
+  livenessText(state: CardRunState): string | undefined {
+    if (state.state !== D.CardState.running && state.state !== D.CardState.preparing) return
+    const parts: string[] = []
+    if (state.cpuMs !== undefined) parts.push(L('CPU {0}', formatDuration(state.cpuMs / 1000)))
+    if (state.lastOutputAt !== undefined) parts.push(L('最後の出力 {0} 前', formatDuration(Math.max(0, this.coreNow() - state.lastOutputAt) / 1000)))
+    else if (state.stages.some((r) => r.stage === Stage.execute)) parts.push(L('出力はまだありません'))
+    return parts.length ? parts.join(' · ') : undefined
+  }
+
   coreNow(): number {
     return Date.now() - (this.coreClockOffset ?? 0)
   }
@@ -770,6 +807,9 @@ export class ProjectSession extends Observable {
       this.cardStates.set(k, {
         state: inv.state, invocation: n, phase: inv.phase, failure: sOpt(inv.failure?.diagnostic),
         executionState: inv.executionState,
+        executionService: sOpt(inv.executionService), executionActivity: inv.executionActivity,
+        executionActivityDetail: sOpt(inv.executionActivityDetail),
+        cpuMs: inv.cpuMs !== null ? Number(inv.cpuMs) : undefined, lastOutputAt: inv.lastOutputAt !== null ? Number(inv.lastOutputAt) : undefined,
         transfer: (inv.state === D.CardState.running || inv.state === D.CardState.preparing) && inv.transferDirection && inv.transferDone < inv.transferTotal
           ? L('ファイル転送: {0} ({1}/{2} bytes)', s(inv.transferName), String(inv.transferDone), String(inv.transferTotal)) : undefined,
         // Each notification carries the invocation's stages so far.
@@ -2437,13 +2477,15 @@ export class ProjectSession extends Observable {
       title: title?.trim() ? title : this.displayName(k), kind, runMark: state || batch ? runMark(this.runStatus) : undefined, symbol: cardIcon(kind, str(get(def, 'symbol'))), summary: summary || undefined,
       inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true),
       result: !state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined,
-      activity: state?.transfer ?? pending,
+      activity: state?.transfer ?? executionActivityText(state)?.short ?? pending,
       state: kind === 'subgraph' ? this.compositeState(k) : this.canvasCardState(k), stage: empty ? undefined : this.stageProgress(k), executionList,
       invocation: empty ? 0n : state?.invocation ?? 0n, runContinues: this.runActive,
       failure: state && (state.state === D.CardState.failed || state.state === D.CardState.blocked) ? state.failure ?? cardState(state.state).label : undefined,
       errors: diags.filter((x) => x.error).map((x) => x.message), warnings: diags.filter((x) => !x.error).map((x) => x.message),
       collapsed: !editing && (opts.collapsed ?? this.collapsed(k)), permissions: cardPermissions(def),
       draftEditing: editing, openComments: cardComments(m).filter((c) => !c.resolved).length,
+      activityWaits: executionActivityText(state)?.waiting === true,
+      liveness: state ? this.livenessText(state) : undefined,
       portGrid: prefs.showGrid ? prefs.gridSize : undefined,
     }
   }

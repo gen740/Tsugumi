@@ -234,8 +234,7 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
                               <Value label={s(probe.worker) === 'local' ? L('プロジェクトの実行環境') : s(probe.worker)}
                                 value={probe.score === null ? s(probe.unavailableReason) || s(probe.failure) || L('計測に失敗しました')
                                   : !probe.probe ? L('計測なし（同順位）') : L('スコア {0}', String(probe.score))} />
-                              {probe.stdoutText && <Row label={L('計測の標準出力')}><code className="selectable wrap-pre">{s(probe.stdoutText)}</code></Row>}
-                              {probe.stderrText && <Row label={L('計測の標準エラー')}><code className="selectable wrap-pre">{s(probe.stderrText)}</code></Row>}
+                              {probe.outputText && <Row label={L('計測の出力')}><code className="selectable wrap-pre">{s(probe.outputText)}</code></Row>}
                             </Fragment>)}
                             {executionState && <Value label={L('実行サービスの状態')} value={executionState} />}
                             {summary.executionSystem && <Value label={L('CPU アーキテクチャ')} value={s(summary.executionSystem)} />}

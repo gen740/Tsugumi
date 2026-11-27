@@ -21,7 +21,7 @@ const source: EvidenceSource = {
   cardExists: card => card.join('/') === 'spectrum',
   runExists: async id => { calls.push(`run:${id}`); return id === run },
   recordExists: async (_, card, invocation) => card.join('/') === 'spectrum' && (invocation === undefined || invocation === 2n),
-  logExists: async target => target.offset === 128n && target.stream === 'stderr',
+  logExists: async target => target.offset === 128n && target.stream === 'output',
   artifactExists: async target => target.artifact === artifactId && target.member === 'plot.png',
 }
 assert.equal(await evidenceExists(parseEvidence('card:spectrum')!, source), true)
@@ -29,7 +29,7 @@ assert.equal(await evidenceExists(parseEvidence('card:missing')!, source), false
 assert.equal(await evidenceExists(parseEvidence(`run:${run}/spectrum#2`)!, source), true)
 assert.equal(await evidenceExists(parseEvidence(`run:${run}/spectrum#3`)!, source), false)
 assert.equal(await evidenceExists(parseEvidence(`run:${run}/deleted#2`)!, source), false)
-assert.equal(await evidenceExists(parseEvidence(`log:${run}/spectrum?invocation=2&stream=stderr&offset=128`)!, source), true)
+assert.equal(await evidenceExists(parseEvidence(`log:${run}/spectrum?invocation=2&stream=output&offset=128`)!, source), true)
 assert.equal(await evidenceExists(parseEvidence(`log:${run}/spectrum?offset=129`)!, source), false)
 assert.equal(await evidenceExists(parseEvidence(`artifact:${artifactId}?path=plot.png`)!, source), true)
 assert.equal(await evidenceExists(parseEvidence(`artifact:11111111-2222-4333-8444-555555555555`)!, source), false)

@@ -1,6 +1,6 @@
 import { validName } from './names'
 /** Project-local evidence addresses. Never accept hosts, project paths or arbitrary query fields. */
-export type Evidence = { kind: 'card' | 'run' | 'log' | 'artifact'; card?: string[]; run?: string; invocation?: bigint; stream?: 'stdout' | 'stderr' | 'build' | 'journal'; offset?: bigint; artifact?: string; member?: string; file?: string; lineStart?: number; lineEnd?: number }
+export type Evidence = { kind: 'card' | 'run' | 'log' | 'artifact'; card?: string[]; run?: string; invocation?: bigint; stream?: 'output' | 'build' | 'journal'; offset?: bigint; artifact?: string; member?: string; file?: string; lineStart?: number; lineEnd?: number }
 const runNumber = /^[1-9][0-9]{0,18}$/
 const uint = (v: string | null): bigint | undefined => v !== null && /^(0|[1-9][0-9]*)$/.test(v) && BigInt(v) <= 18446744073709551615n ? BigInt(v) : undefined
 export const isEvidence = (href: string) => /^(card|run|log|artifact):/i.test(href)
@@ -40,8 +40,8 @@ export function parseEvidence(href: string): Evidence | undefined {
   if ([...q.keys()].some(k => !['invocation', 'stream', 'offset'].includes(k))) return
   const invocation = uint(q.get('invocation')), offset = uint(q.get('offset')) ?? 0n
   if (q.has('invocation') && (!parts.length || !invocation) || q.has('offset') && uint(q.get('offset')) === undefined) return
-  const stream = q.get('stream') ?? 'stdout'
-  if (!['stdout', 'stderr', 'build', 'journal'].includes(stream)) return
+  const stream = q.get('stream') ?? 'output'
+  if (!['output', 'build', 'journal'].includes(stream)) return
   return { kind: 'log', run, card: parts.length ? parts : undefined, invocation, offset, stream: stream as Evidence['stream'] }
 }
 

@@ -76,7 +76,6 @@ export class Workspace extends Observable {
   logCard?: CardKey
   logRunId?: string
   logInvocation?: bigint
-  logStream: D.LogStream = D.LogStream.journal
   /** Stage whose log section to open (a click on a stage icon). */
   logStage?: Stage
   /** Leaves the project for Home (set by the main window; undefined in a
@@ -132,7 +131,7 @@ export class Workspace extends Observable {
     this.changed()
   }
 
-  set<K extends 'showChat' | 'showSidebar' | 'showBottom' | 'bottomPanel' | 'logCard' | 'logRunId' | 'logInvocation' | 'logStream' | 'logStage'>(k: K, v: Workspace[K]) {
+  set<K extends 'showChat' | 'showSidebar' | 'showBottom' | 'bottomPanel' | 'logCard' | 'logRunId' | 'logInvocation' | 'logStage'>(k: K, v: Workspace[K]) {
     ;(this as Workspace)[k] = v
     this.changed()
   }
@@ -154,7 +153,6 @@ export class Workspace extends Observable {
     this.logCard = card
     this.logInvocation = invocation
     this.logStage = stage
-    if (card === undefined) this.logStream = D.LogStream.journal
     this.bottomPanel = 'log'
     this.showBottom = true
     this.changed()

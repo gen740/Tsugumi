@@ -1,16 +1,17 @@
 // Bottom panel: the whole run log, the run's Cards on a time axis, or a
 // terminal in the project's folder. A Card's log is shown by stage.
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { LOG_READ_BYTES, readLogFile } from '../model/logWindow'
 import { STAGE_INFO, Stage } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
-import { CardKey, cardState, errorText, formatDuration, formatMillis, key, path, ProjectSession, runState, StageRecord, stageRecords, TimelineEntry } from '../model/session'
+import { CardKey, cardState, errorText, executionActivityText, formatDuration, formatMillis, key, path, ProjectSession, runState, StageRecord, stageRecords, TimelineEntry } from '../model/session'
 import { BOTTOM_ICONS, BOTTOM_TITLES, Workspace, WorkflowTab } from '../model/workspace'
 import { D, R, RPCFailure, s } from '../wire/rpc'
 import { Button, download, Empty, Segmented, Select, Sheet, Spinner } from './controls'
 import { RunComparisonView } from './runComparison'
 import { LogSource, LogText, useLogStream } from './logWindowView'
 import { Icon } from './icons'
+import { SECTION_STATUS_LABEL, SectionStatus, StatusSymbol } from './statusSymbol'
 import { ProjectTerminalPanel } from './terminal'
 import { L } from '../i18n'
 
@@ -106,7 +107,7 @@ function RunPanel({ workspace, session, tab }: { workspace: Workspace; session: 
           <StageLogView session={session} runId={runId} card={path(workspace.logCard)} invocation={workspace.logInvocation} focus={workspace.logStage} />
         ) : runId ? (
           // The whole run: its own journal (Card logs are shown by stage).
-          <RunLogView session={session} runId={runId} raw stream={workspace.logStream} onStream={(v) => workspace.set('logStream', v)} />
+          <RunLogView session={session} runId={runId} />
         ) : (
           <Empty title={L('実行履歴はありません')} icon="text.alignleft" description={L('実行するとここにログが表示されます。')} />
         )
@@ -122,78 +123,49 @@ function RunPanel({ workspace, session, tab }: { workspace: Workspace; session: 
   )
 }
 
-function isLiveStream(session: ProjectSession, runId: string, stream: D.LogStream) {
-  return session.runActive && runId === session.currentRunId &&
-    (stream === D.LogStream.standard_output || stream === D.LogStream.standard_error)
-}
-
 function truncationNotice(limit: bigint) {
   return L('ログはここで切り詰めました（上限 {0} バイト）', limit)
 }
 
-/** Writes a whole stream to a file, in pieces. */
-async function exportLog(session: ProjectSession, source: LogSource, size: number) {
+/** Writes whole streams to one file, in pieces: each under its title when
+ *  there are several. Each stream is read up to its size when the export
+ *  starts. */
+async function exportLog(session: ProjectSession, parts: { title: string; source: LogSource }[], name: string) {
   const rpc = session.rpc
   if (!rpc) throw new Error(L('実行環境に接続していません'))
-  const file = await readLogFile(size, (offset) =>
-    rpc.logRange(source.runId, source.card, source.invocation, source.stream, offset, false, LOG_READ_BYTES, null, false, null, source.live))
-  download(`${source.runId}-${D.LogStream[source.stream]}.log`, file)
-}
-
-/** Log text of a run (or one Card / invocation of it), read incrementally
- *  with LogRange from where it stopped when LogAvailable arrives. A Card's
- *  log is shown by stage (StageLogView) unless `raw` asks for the streams. */
-export function RunLogView({ session, runId, card, invocation, stage, raw, stream, onStream }: {
-  session: ProjectSession; runId: string; card?: string[]; invocation?: bigint; stage?: Stage; raw?: boolean
-  stream?: D.LogStream; onStream?: (s: D.LogStream) => void
-}) {
-  if (card && !raw) return <StageLogView session={session} runId={runId} card={card} invocation={invocation} focus={stage} />
-  return <StreamLogView session={session} runId={runId} card={card} invocation={invocation} stream={stream} onStream={onStream} />
-}
-
-function StreamLogView({ session, runId, card, invocation, stream: shownStream, onStream }: {
-  session: ProjectSession; runId: string; card?: string[]; invocation?: bigint; stream?: D.LogStream; onStream?: (s: D.LogStream) => void
-}) {
-  useObserve(session)
-  const [ownStream, setOwnStream] = useState<D.LogStream>(card ? D.LogStream.standard_output : D.LogStream.journal)
-  const stream = shownStream ?? ownStream
-  const setStream = (v: D.LogStream) => (onStream ? onStream(v) : setOwnStream(v))
-  const [resolved, setResolved] = useState<bigint>()
-  const [exportError, setExportError] = useState<string>()
-  // A Card's latest invocation, when none was named.
-  useEffect(() => {
-    setResolved(undefined)
-    if (!card || invocation !== undefined) return
-    const live = runId === session.currentRunId ? session.cardStates.get(key(card))?.invocation : undefined
-    if (live !== undefined) return setResolved(live)
-    let alive = true
-    void session.rpc?.record(runId, card).then((r) => alive && setResolved(r.selectedInvocation ?? undefined)).catch(() => undefined)
-    return () => { alive = false }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runId, card?.join('/'), invocation])
-  const source: LogSource = { runId, card: card ?? null, invocation: card ? (invocation ?? resolved ?? null) : null, stream, live: isLiveStream(session, runId, stream), revision: session.recordingRevision }
-  const log = useLogStream(session, source, 'terminal')
-
-  /** Why nothing is shown, so an empty pane is never ambiguous. */
-  const emptyReason = (() => {
-    if (log.error) return L('ログを読み込めませんでした: ') + log.error
-    if (!log.loaded) return L('読み込んでいます…')
-    if (card && runId === session.currentRunId && !session.cardStates.has(key(card))) return L('この実行では、この Card はまだ動いていません。')
-    switch (stream) {
-      case D.LogStream.standard_error: return L('stderr への出力はありません（Nix 評価・build のログもここに出ます）。')
-      case D.LogStream.journal: return L('記録された段階の出来事はありません。')
-      default: return L('stdout への出力はありません。')
+  const files: BlobPart[] = []
+  for (const { title, source } of parts) {
+    const read = (offset: bigint) =>
+      rpc.logRange(source.runId, source.card, source.invocation, source.stream, offset, false, LOG_READ_BYTES, null, false, null, source.live)
+    let size: number
+    try {
+      size = Number((await read(0n)).sizeBytes ?? 0n)
+    } catch (e) {
+      if (e instanceof RPCFailure && e.kind === D.FailureKind.not_found) continue
+      throw e
     }
-  })()
+    if (parts.length > 1) files.push(`==== ${title} ====\n`)
+    files.push(await readLogFile(size, read))
+  }
+  download(name, new Blob(files, { type: 'text/plain' }))
+}
 
+/** The run's own journal (what happened at each step of the run), read
+ *  incrementally with LogRange from where it stopped when LogAvailable
+ *  arrives. A Card's log is shown by stage (StageLogView). */
+export function RunLogView({ session, runId }: { session: ProjectSession; runId: string }) {
+  useObserve(session)
+  const [exportError, setExportError] = useState<string>()
+  const source: LogSource = { runId, card: null, invocation: null, stream: D.LogStream.journal, live: false, revision: session.recordingRevision }
+  const log = useLogStream(session, source, 'journal')
+  const emptyReason = log.error ? L('ログを読み込めませんでした: ') + log.error
+    : !log.loaded ? L('読み込んでいます…') : L('記録された段階の出来事はありません。')
   return (
     <div className="log-view">
       <div className="panel-bar">
-        <Segmented<D.LogStream> small value={stream} onChange={setStream} width={240}
-          options={[{ value: D.LogStream.standard_output, label: 'stdout' }, { value: D.LogStream.standard_error, label: 'stderr' }, { value: D.LogStream.journal, label: 'journal' }]} />
-        <span className="caption secondary">{card ? `Card ${session.displayPath(card)}${invocation !== undefined ? ` #${invocation}` : ''}` : L('実行全体')}</span>
+        <span className="caption secondary">{L('実行全体')}</span>
         <span className="spacer" />
-        <Button small disabled={!log.size} onClick={() => void exportLog(session, source, log.rawSize).catch((e) => setExportError(errorText(e)))}>{L('書き出す…')}</Button>
+        <Button small disabled={!log.size} onClick={() => void exportLog(session, [{ title: L('実行全体'), source }], `${runId}-journal.log`).catch((e) => setExportError(errorText(e)))}>{L('書き出す…')}</Button>
       </div>
       <LogText log={log} placeholder={emptyReason} />
       {log.truncatedAt !== undefined && <div className="caption headline" style={{ padding: '0 6px' }}>{truncationNotice(log.truncatedAt)}</div>}
@@ -204,19 +176,49 @@ function StreamLogView({ session, runId, card, invocation, stream: shownStream, 
 
 // ---- Log by stage ---------------------------------------------------------------------
 
+type GroupId = 'build' | 'execute' | 'save'
+
 interface StageGroup {
-  id: 'build' | 'execute' | 'save'
+  id: GroupId
   title: string
   stages: Stage[]
+  stream: D.LogStream
 }
 
-type GroupStatus = { icon: string; color: string; label: string }
+const STAGE_LABEL: Partial<Record<Stage, string>> = {
+  [Stage.prepare]: L('準備'), [Stage.evaluate]: L('Nix 評価'), [Stage.build]: L('ビルド'),
+  [Stage.execute]: L('実行'), [Stage.validate]: L('出力検証'), [Stage.save]: L('保存'),
+}
 
-/** The log of one invocation of a Card by stage, like a CI job: SDK
- *  preparation, Nix evaluation and build / execution / validation and save,
- *  each with its state and duration; the chosen one's output fills the rest.
- *  The raw streams stay available under "By stream". Only the shown stream
- *  is read, from its end and then as it grows. */
+function stageStatus(outcome: D.StageOutcome | undefined, waiting = false): SectionStatus {
+  switch (outcome) {
+    case D.StageOutcome.running: return waiting ? 'waiting' : 'running'
+    case D.StageOutcome.failed: return 'failed'
+    case D.StageOutcome.cancelled: return 'cancelled'
+    case D.StageOutcome.cached: return 'cached'
+    case D.StageOutcome.reused: return 'reused'
+    case undefined: case D.StageOutcome.unspecified: return 'pending'
+    default: return 'done'
+  }
+}
+
+/** Re-renders every second while `on`, for the running stage's time. */
+function useTick(on: boolean) {
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    if (!on) return
+    const timer = setInterval(() => setTick((t) => t + 1), 1000)
+    return () => clearInterval(timer)
+  }, [on])
+}
+
+/** The log of one invocation of a Card, like a CI step log: a pipeline line
+ *  with each stage's state and time, then one foldable log with a section per
+ *  group of stages (preparation, Nix evaluation and build / execution /
+ *  validation and save). Execution shows the Card's output: what it wrote to
+ *  stdout and stderr, as one stream in the order it wrote. Only open sections
+ *  are read, each from its end and then as it grows; a closed section is its
+ *  header only. */
 export function StageLogView({ session, runId, card, invocation, focus }: {
   session: ProjectSession; runId: string; card: string[]; invocation?: bigint; focus?: Stage
 }) {
@@ -224,18 +226,17 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   const k = key(card)
   const [info, setInfo] = useState<R.RecordResultT>()
   const [infoError, setInfoError] = useState<string>()
-  const [selected, setSelected] = useState<string>()
-  const [rawStream, setRawStream] = useState<D.LogStream>(D.LogStream.standard_output)
-  const [executeStream, setExecuteStream] = useState<D.LogStream>(D.LogStream.standard_output)
+  /** The reader's own fold choices (true: closed), kept while the view is open. */
+  const [folded, setFolded] = useState<Partial<Record<GroupId, boolean>>>({})
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string>()
   const [attempt, setAttempt] = useState(0)
 
   const code = session.kind(k) === 'code'
   const groups: StageGroup[] = [
-    ...(code ? [{ id: 'build' as const, title: L('スキーマ生成・Nix 評価・ビルド'), stages: [Stage.prepare, Stage.evaluate, Stage.build] }] : []),
-    { id: 'execute', title: L('実行'), stages: [Stage.execute] },
-    { id: 'save', title: L('出力検証・保存'), stages: [Stage.validate, Stage.save] },
+    ...(code ? [{ id: 'build' as const, title: L('準備・Nix 評価・ビルド'), stages: [Stage.prepare, Stage.evaluate, Stage.build], stream: D.LogStream.build }] : []),
+    { id: 'execute', title: L('実行'), stages: [Stage.execute], stream: D.LogStream.output },
+    { id: 'save', title: L('出力検証・保存'), stages: [Stage.validate, Stage.save], stream: D.LogStream.journal },
   ]
   const liveState = runId === session.currentRunId ? session.cardStates.get(k) : undefined
   const live = liveState && (invocation === undefined || liveState.invocation === invocation) ? liveState : undefined
@@ -243,29 +244,45 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   const stages: StageRecord[] = live ? live.stages : info?.record?.summary ? stageRecords(info.record.summary.stages) : []
   const state = live?.state ?? info?.record?.summary?.state
   const failure = live?.failure ?? (info?.record?.summary?.failure?.diagnostic ? s(info.record.summary.failure.diagnostic) : undefined)
+  const service = live?.executionService ?? (info?.record?.summary?.executionService ? s(info.record.summary.executionService) : undefined)
+  const activity = executionActivityText(live)
+  const ongoing = state === D.CardState.waiting || state === D.CardState.ready || state === D.CardState.preparing || state === D.CardState.running
+  useTick(ongoing)
 
   const records = (g: StageGroup) => stages.filter((r) => g.stages.includes(r.stage))
-  const status = (g: StageGroup): GroupStatus => {
+  const status = (g: StageGroup): SectionStatus => {
     const rs = records(g)
-    if (rs.some((r) => r.outcome === D.StageOutcome.failed)) return { icon: 'xmark.circle.fill', color: 'red', label: L('失敗') }
-    if (rs.some((r) => r.outcome === D.StageOutcome.cancelled)) return { icon: 'stop.circle.fill', color: 'brown', label: L('停止') }
-    if (rs.some((r) => r.outcome === D.StageOutcome.running)) return { icon: 'circle.dotted.circle', color: 'orange', label: L('進行中') }
-    if (!rs.length) return { icon: 'circle.dashed', color: 'secondary', label: L('実行されていません') }
-    if (rs.every((r) => r.outcome === D.StageOutcome.cached)) return { icon: 'bolt.circle.fill', color: 'blue', label: L('キャッシュを利用') }
-    if (rs.every((r) => r.outcome === D.StageOutcome.reused)) return { icon: 'arrow.triangle.2.circlepath.circle.fill', color: 'teal', label: L('再利用') }
-    return { icon: 'checkmark.circle.fill', color: 'green', label: L('完了') }
+    if (rs.some((r) => r.outcome === D.StageOutcome.failed)) return 'failed'
+    if (rs.some((r) => r.outcome === D.StageOutcome.cancelled)) return 'cancelled'
+    if (rs.some((r) => r.outcome === D.StageOutcome.running)) return g.stages.includes(Stage.execute) && activity?.waiting ? 'waiting' : 'running'
+    if (!rs.length) return 'pending'
+    if (rs.every((r) => r.outcome === D.StageOutcome.cached)) return 'cached'
+    if (rs.every((r) => r.outcome === D.StageOutcome.reused)) return 'reused'
+    return 'done'
   }
-  const seconds = (g: StageGroup): number | undefined => {
-    const rs = records(g).flatMap((r) => (r.start !== undefined && r.end !== undefined ? [(r.end - r.start) / 1000] : []))
-    return rs.length ? rs.reduce((a, b) => a + b, 0) : undefined
+  const isOpen = (g: StageGroup) => {
+    const closed = folded[g.id]
+    if (closed !== undefined) return !closed
+    const st = status(g)
+    return st === 'running' || st === 'waiting' || st === 'failed'
   }
-  // Running, else failed, else the one asked for, else the execution.
-  const defaultGroup = groups.find((g) => status(g).label === L('進行中'))?.id ?? groups.find((g) => status(g).label === L('失敗'))?.id
-    ?? (focus !== undefined ? groups.find((g) => g.stages.includes(focus))?.id : undefined) ?? 'execute'
-  const current = selected ?? defaultGroup
-  const stream = current === 'build' ? D.LogStream.build : current === 'execute' ? executeStream : current === 'save' ? D.LogStream.journal : rawStream
-  const source: LogSource | undefined = shownInvocation === undefined ? undefined : { runId, card, invocation: shownInvocation, stream, live: isLiveStream(session, runId, stream), revision: session.recordingRevision }
-  const log = useLogStream(session, source, current === 'save' ? 'journal' : 'terminal')
+  const open = (stage: Stage | undefined) => {
+    if (stage === undefined) return
+    const parts = stage === Stage.build ? [Stage.prepare, Stage.evaluate, Stage.build] : stage === Stage.validate ? [Stage.validate, Stage.save] : [stage]
+    const g = groups.find((g) => parts.some((p) => g.stages.includes(p)))
+    if (g) setFolded((f) => ({ ...f, [g.id]: false }))
+  }
+  const sourceOf = (g: StageGroup | undefined): LogSource | undefined => g && shownInvocation !== undefined
+    ? { runId, card, invocation: shownInvocation, stream: g.stream, live: session.runActive && runId === session.currentRunId && g.stream === D.LogStream.output, revision: session.recordingRevision }
+    : undefined
+  const group = (id: GroupId) => groups.find((g) => g.id === id)
+  const shown = (id: GroupId) => { const g = group(id); return g && isOpen(g) ? sourceOf(g) : undefined }
+  // One reader per section; a closed section reads nothing.
+  const logs: Record<GroupId, ReturnType<typeof useLogStream>> = {
+    build: useLogStream(session, shown('build'), 'terminal'),
+    execute: useLogStream(session, shown('execute'), 'terminal'),
+    save: useLogStream(session, shown('save'), 'journal'),
+  }
 
   // State changes (a stage starts or ends) read the record again; new output
   // is read as LogAvailable announces it.
@@ -288,32 +305,102 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   useEffect(() => {
     setInfo(undefined)
     setInfoError(undefined)
-    setSelected(undefined)
+    setFolded({})
     setExportError(undefined)
+    open(focus)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId, k, invocation])
   useEffect(() => {
-    const g = focus !== undefined ? groups.find((g) => g.stages.includes(focus)) : undefined
-    if (g) setSelected(g.id)
+    open(focus)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus])
 
-  const placeholder = (() => {
+  const elapsed = (start: number) => formatDuration(Math.max(0, session.coreNow() - start) / 1000)
+  const duration = (r: StageRecord | undefined) => {
+    if (r?.start === undefined) return undefined
+    if (r.end !== undefined) return formatDuration((r.end - r.start) / 1000)
+    return r.outcome === D.StageOutcome.running ? elapsed(r.start) : undefined
+  }
+  const summary = (g: StageGroup, st: SectionStatus) => {
+    const rs = records(g)
+    switch (st) {
+      case 'waiting': return activity?.text ?? SECTION_STATUS_LABEL[st]
+      case 'running': {
+        const starts = rs.flatMap((r) => (r.start !== undefined ? [r.start] : []))
+        return [starts.length ? elapsed(Math.min(...starts)) : undefined, SECTION_STATUS_LABEL[st]].filter(Boolean).join(' · ')
+      }
+      case 'pending': return ongoing ? L('まだ') : L('実行されていません')
+      default: {
+        const total = rs.flatMap((r) => (r.start !== undefined && r.end !== undefined ? [(r.end - r.start) / 1000] : []))
+        return total.length ? formatDuration(total.reduce((a, b) => a + b, 0)) : SECTION_STATUS_LABEL[st]
+      }
+    }
+  }
+  const placeholder = (g: StageGroup, log: ReturnType<typeof useLogStream>) => {
     if (shownInvocation === undefined || (!log.loaded && !log.error)) {
       return !info && !live ? L('読み込んでいます…') : L('この実行では、この Card はまだ動いていません')
     }
-    switch (current) {
+    switch (g.id) {
       case 'build': return L('準備・評価・build の出力はありません（キャッシュや再利用のときは空です）')
       case 'save': return L('記録された出来事はありません')
-      case 'execute': return executeStream === D.LogStream.standard_error ? L('stderr への出力はありません') : L('stdout への出力はありません')
-      default: return L('この stream への出力はありません')
+      default: return activity?.waiting ? activity.text : L('出力はありません')
     }
-  })()
+  }
 
-  const chip = (id: string, help: string, content: JSX.Element) => (
-    <button key={id} type="button" className={`stage-chip${current === id ? ' selected' : ''}`} title={help} aria-pressed={current === id} onClick={() => setSelected(id)}>{content}</button>
+  const pipeline = (
+    <div className="stage-pipeline">
+      {groups.flatMap((g) => g.stages).flatMap((st, i) => {
+        const r = [...stages].reverse().find((x) => x.stage === st)
+        const shownStatus = stageStatus(r?.outcome, st === Stage.execute && activity?.waiting)
+        const current = shownStatus === 'running' || shownStatus === 'waiting'
+        const time = duration(r)
+        return [
+          ...(i > 0 ? [<span key={'a' + i} className="stage-arrow" aria-hidden>→</span>] : []),
+          <button key={st} type="button" className={`stage-step${current ? ' current' : r ? '' : ' todo'}`}
+            title={`${STAGE_LABEL[st]} · ${SECTION_STATUS_LABEL[shownStatus]}`} onClick={() => open(st)}>
+            <StatusSymbol status={shownStatus} size={12} />
+            <span>{shownStatus === 'waiting' ? L('待機中') : STAGE_LABEL[st]}</span>
+            {st === Stage.execute && service && <span className={current ? '' : 'secondary'}>· {service}</span>}
+            {st === Stage.execute && current && activity && <span className="secondary">· {activity.text}</span>}
+            {st === Stage.execute && current && live && session.livenessText(live) && <span className="secondary">· {session.livenessText(live)}</span>}
+            {time && <span className="secondary mono-digits">{time}</span>}
+            {r?.outcome === D.StageOutcome.cached && <span className="secondary">· cache</span>}
+            {r?.outcome === D.StageOutcome.reused && <span className="secondary">· {L('再利用')}</span>}
+          </button>,
+        ]
+      })}
+    </div>
   )
-  const shownGroup = groups.find((g) => g.id === current)
-  const limit = log.truncatedAt
+
+  const section = (g: StageGroup) => {
+    const opened = isOpen(g)
+    const st = status(g)
+    const log = logs[g.id]
+    const rs = records(g)
+    return (
+      <Fragment key={g.id}>
+        <button type="button" className={`stage-section-head${opened ? ' open' : ''}`} aria-expanded={opened}
+          aria-label={`${g.title} · ${SECTION_STATUS_LABEL[st]}`} onClick={() => setFolded((f) => ({ ...f, [g.id]: opened }))}>
+          <Icon name="chevron.right" size={10} className="chevron" />
+          <StatusSymbol status={st} size={13} />
+          <span>{g.title}</span>
+          {g.id === 'execute' && service && <span className="secondary">({service})</span>}
+          {rs.some((r) => r.outcome === D.StageOutcome.cached) && <span className="caption" style={{ color: 'var(--blue)' }}>cache</span>}
+          {rs.some((r) => r.outcome === D.StageOutcome.reused) && <span className="caption" style={{ color: 'var(--teal)' }}>{L('再利用')}</span>}
+          <span className="spacer" />
+          <span className="caption secondary mono-digits">{summary(g, st)}</span>
+        </button>
+        {opened && (
+          <div className="stage-section-body">
+            {log.error && <div className="caption stage-notice" style={{ color: 'var(--red)' }}>{log.error}</div>}
+            <LogText log={log} placeholder={placeholder(g, log)} />
+            {log.truncatedAt != null && <div className="caption headline stage-notice">{truncationNotice(log.truncatedAt)}</div>}
+          </div>
+        )}
+        {st === 'failed' && failure && <div className="caption selectable stage-notice stage-failure" style={{ color: 'var(--red)' }}>{failure}</div>}
+      </Fragment>
+    )
+  }
 
   let body: JSX.Element
   if (infoError && !info && !live) {
@@ -326,32 +413,13 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
     body = <Empty title={L('この実行では、この Card は呼び出されていません')} icon="circle.dotted" />
   } else {
     body = (
-      <>
-        <div className="row gap12 wrap stage-streams">
-          {current === 'execute' && <Segmented<D.LogStream> small value={executeStream} onChange={setExecuteStream}
-            options={[{ value: D.LogStream.standard_output, label: 'stdout' }, { value: D.LogStream.standard_error, label: 'stderr' }]} />}
-          {current === 'raw' && <Segmented<D.LogStream> small value={rawStream} onChange={setRawStream} width={300}
-            options={[{ value: D.LogStream.standard_output, label: 'stdout' }, { value: D.LogStream.standard_error, label: 'stderr' }, { value: D.LogStream.build, label: 'build' }, { value: D.LogStream.journal, label: 'journal' }]} />}
-          {shownGroup?.stages.map((sg) => {
-            const r = [...stages].reverse().find((x) => x.stage === sg)
-            return (
-              <span key={sg} className={`label caption${r ? '' : ' tertiary'}`}>
-                <Icon name={STAGE_INFO[sg].icon} size={11} />
-                {STAGE_INFO[sg].label}
-                {r && r.start !== undefined && r.end !== undefined && <span className="secondary">{formatDuration((r.end - r.start) / 1000)}</span>}
-                {r?.outcome === D.StageOutcome.cached && <span style={{ color: 'var(--blue)' }}>cache</span>}
-                {r?.outcome === D.StageOutcome.reused && <span style={{ color: 'var(--teal)' }}>{L('再利用')}</span>}
-              </span>
-            )
-          })}
-        </div>
-        {(log.error ?? exportError) && <div className="caption stage-notice" style={{ color: 'var(--red)' }}>{log.error ?? exportError}</div>}
-        <LogText log={log} placeholder={placeholder} />
-        {limit != null && <div className="caption headline stage-notice">{truncationNotice(limit)}</div>}
-        {failure && shownGroup && status(shownGroup).label === L('失敗') && <div className="caption selectable stage-notice" style={{ color: 'var(--red)' }}>{failure}</div>}
-      </>
+      <div className="stage-sections">
+        {exportError && <div className="caption stage-notice" style={{ color: 'var(--red)' }}>{exportError}</div>}
+        {groups.map(section)}
+      </div>
     )
   }
+  const allOpen = groups.every(isOpen)
   return (
     <div className="stage-log">
       <div className="panel-bar">
@@ -359,23 +427,16 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
           {session.displayName(k)} · {L('{0} 回目', String(shownInvocation ?? 0n))}{state !== undefined ? ` · ${cardState(state).label}` : ''}
         </span>
         <span className="spacer" />
-        {source && !!log.rawSize && <Button small disabled={exporting} onClick={() => {
+        <Button small onClick={() => setFolded(Object.fromEntries(groups.map((g) => [g.id, allOpen])))}>{allOpen ? L('すべて閉じる') : L('すべて開く')}</Button>
+        {shownInvocation !== undefined && <Button small disabled={exporting} onClick={() => {
+          const parts = groups.flatMap((g) => { const source = sourceOf(g); return source ? [{ title: g.title, source }] : [] })
           setExporting(true)
           setExportError(undefined)
-          void exportLog(session, source, log.rawSize).catch((e) => setExportError(errorText(e))).finally(() => setExporting(false))
+          void exportLog(session, parts, `${runId}-${session.displayName(k)}-${shownInvocation}.log`)
+            .catch((e) => setExportError(errorText(e))).finally(() => setExporting(false))
         }}>{L('ログを書き出す…')}</Button>}
       </div>
-      <div className="row gap6 stage-chips">
-        {groups.map((g) => {
-          const st = status(g), sec = seconds(g)
-          return chip(g.id, `${g.title} · ${st.label}`, <>
-            <Icon name={st.icon} style={{ color: `var(--${st.color})` }} />
-            <span>{g.title}</span>
-            {sec !== undefined && <span className="secondary mono-digits">{formatDuration(sec)}</span>}
-          </>)
-        })}
-        {chip('raw', L('stream 別（元の出力）'), <><Icon name="list.bullet.rectangle" /><span>{L('stream 別')}</span></>)}
-      </div>
+      {pipeline}
       {body}
     </div>
   )

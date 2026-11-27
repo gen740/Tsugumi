@@ -4,14 +4,15 @@
 // zoom and the hit areas are the geometry's. Also the wire layer.
 import { CSSProperties, useEffect, useRef } from 'react'
 import {
-  Camera, CardGeometry, CardNodeData, currentStage, isRouting, PortData, Pt, Rect, Stage, STAGE_INFO,
-  NEW_PORT, STAGE_STATUS_LABEL, StageItem, StageProgress, StageStatus,
+  applicableStages, Camera, CardGeometry, CardNodeData, currentStage, isRouting, PortData, Pt, Rect, Stage, STAGE_INFO,
+  NEW_PORT, StageItem, StageProgress,
 } from '../model/canvasKit'
 import { BoundaryPort, WireStyle } from '../model/canvas'
 import type { FlowDirection } from '../model/prefs'
 import { CardKey, cardState, formatDuration, InlineDraft, KIND_LABEL } from '../model/session'
 import { D } from '../wire/rpc'
 import { Icon } from './icons'
+import { SECTION_STATUS_LABEL, sectionStatus, StatusSymbol } from './statusSymbol'
 import { permissionInfo } from '../model/permissions'
 import { L } from '../i18n'
 
@@ -247,7 +248,9 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
           {g.stages && (
             <div className="cv-stage-row" style={{ height: s(CardGeometry.stageRow), padding: `0 ${s(8)}px` }}>
               {data.stage && data.invocation > 0n
-                ? <StageStrip progress={data.stage} zoom={z} onTap={p.onStageTap} caption={data.executionList ? L('実行 #{0}', data.invocation) : rt ?? ''} />
+                ? <StageStrip progress={data.stage} zoom={z} onTap={p.onStageTap} caption={data.executionList ? L('実行 #{0}', data.invocation) : rt ?? ''} waiting={data.activityWaits} liveness={data.liveness} />
+                : notReached(data)
+                ? <StageStrip progress={{ items: applicableStages(data.kind === 'code').map((stage) => ({ stage, status: 'pending' })), workerReused: false }} zoom={z} caption={data.runMark ?? ''} />
                 : <span className="secondary cv-ellipsis" style={{ fontSize: font(10) }}>{idleText(data)}</span>}
             </div>
           )}
@@ -343,22 +346,25 @@ function portHelp(p: PortData, output: boolean): string {
 
 // ---- Stage strip -----------------------------------------------------------------------
 
-const STAGE_COLOR: Record<StageStatus, string> = {
-  pending: fade('secondary', 0.45), notRun: fade('secondary', 0.45), running: 'var(--orange)', done: 'var(--green)',
-  cached: 'var(--blue)', reused: 'var(--teal, #30b0c7)', failed: 'var(--red)', cancelled: 'var(--brown)',
-}
-const STAGE_BADGE: Partial<Record<StageStatus, string>> = {
-  done: 'checkmark', cached: 'bolt.fill', reused: 'arrow.triangle.2.circlepath', failed: 'xmark', cancelled: 'stop.fill',
-}
+/** A Card that has not run yet shows its stages, none reached; a Draft or a
+ *  Card whose definition cannot be read keeps its words. */
+const notReached = (d: CardNodeData) =>
+  d.kind !== 'draft' && d.kind !== 'invalid' && (d.state === undefined || d.state === D.CardState.not_started)
 
-/** Stages of the latest invocation in their order. Every stage keeps its own
- *  icon; color and a small badge say whether it is pending, running, done,
- *  cached, reused or failed. The running stage is also named in words. */
-export function StageStrip({ progress, zoom = 1, onTap, caption = '' }: { progress: StageProgress; zoom?: number; onTap?: (s: Stage) => void; caption?: string }) {
+/** Stages of the latest invocation in their order, with the same symbols as
+ *  the log view's pipeline line: a thin empty circle not yet reached, a
+ *  spinner running, an hourglass waiting for the worker, a check done
+ *  (blue cached, teal reused), a cross failed. The running stage is also
+ *  named in words. */
+export function StageStrip({ progress, zoom = 1, onTap, caption = '', waiting = false, liveness }: {
+  progress: StageProgress; zoom?: number; onTap?: (s: Stage) => void; caption?: string; waiting?: boolean; liveness?: string
+}) {
   const s = (v: number) => v * zoom
+  const status = (item: StageItem) => sectionStatus(item.status, waiting && item.stage === Stage.execute)
   const help = (item: StageItem) => {
-    let t = STAGE_INFO[item.stage].label + L('：') + STAGE_STATUS_LABEL[item.status]
+    let t = STAGE_INFO[item.stage].label + L('：') + SECTION_STATUS_LABEL[status(item)]
     if (item.seconds !== undefined) t += ' · ' + formatDuration(item.seconds)
+    if (item.status === 'running' && liveness) t += ' · ' + liveness
     if (item.status === 'failed' || item.status === 'cancelled') t += L('（クリックでこの段階のログ）')
     else if (onTap && item.status !== 'pending') t += L('（クリックでログ）')
     return t
@@ -366,22 +372,15 @@ export function StageStrip({ progress, zoom = 1, onTap, caption = '' }: { progre
   return (
     <div className="cv-stages" style={{ gap: s(2) }}>
       {progress.items.flatMap((item, i) => {
-        const c = STAGE_COLOR[item.status]
-        const badge = STAGE_BADGE[item.status]
         const info = STAGE_INFO[item.stage]
         return [
           ...(i > 0 ? [<span key={'a' + i} className="cv-stage-arrow" aria-hidden><Icon name="arrow.right" size={Math.max(4, s(6))} /></span>] : []),
           <button key={item.stage} type="button" className="cv-stage" disabled={!onTap} title={help(item)}
-            aria-label={info.label + L('：') + STAGE_STATUS_LABEL[item.status]}
-            style={{ width: s(15), height: s(15), color: c, background: item.status === 'running' ? fade('orange', 0.15) : undefined }}
+            aria-label={info.label + L('：') + SECTION_STATUS_LABEL[status(item)]}
+            style={{ width: s(15), height: s(15) }}
             onPointerDown={(e) => onTap && e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onTap?.(item.stage) }}>
-            <Icon name={item.status === 'running' ? info.activeIcon : info.icon} size={Math.max(6, s(10))} />
-            {badge && (
-              <span className="cv-stage-badge" style={{ background: c, right: -s(2), bottom: -s(2), padding: Math.max(0.5, s(1)) }}>
-                <Icon name={badge} size={Math.max(4, s(5))} />
-              </span>
-            )}
+            <StatusSymbol status={status(item)} size={Math.max(8, s(13))} />
           </button>,
         ]
       })}
@@ -390,7 +389,7 @@ export function StageStrip({ progress, zoom = 1, onTap, caption = '' }: { progre
           <Icon name="arrow.triangle.2.circlepath" size={Math.max(6, s(8))} />
         </span>
       )}
-      <span className="secondary cv-ellipsis" style={{ fontSize: Math.max(6, s(9.5)), flex: 1, minWidth: 0 }}>{caption}</span>
+      <span className="secondary cv-ellipsis" title={liveness ? `${caption}\n${liveness}` : caption || undefined} style={{ fontSize: Math.max(6, s(9.5)), flex: 1, minWidth: 0 }}>{caption}</span>
     </div>
   )
 }

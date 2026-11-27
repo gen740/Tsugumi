@@ -15,7 +15,7 @@ import { artifactName, describeNamedValue } from '../wire/flatjson'
 import { Button, download } from './controls'
 
 export const EvidenceContext = createContext<{ session: ProjectSession; tab?: WorkflowTab } | undefined>(undefined)
-const streamOf = (t: Evidence) => ({ stdout: D.LogStream.standard_output, stderr: D.LogStream.standard_error, build: D.LogStream.build, journal: D.LogStream.journal })[t.stream ?? 'stdout']
+const streamOf = (t: Evidence) => ({ output: D.LogStream.output, build: D.LogStream.build, journal: D.LogStream.journal })[t.stream ?? 'output']
 export async function resolveEvidence(session: ProjectSession, target: Evidence) {
   if (target.kind === 'card') return session.resolution.has(key(target.card!))
   const rpc = session.rpc
