@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <sys/stat.h>
 
 #include <set>
 
@@ -34,6 +35,20 @@ TEST(ProjectDocument, EmbeddedNulReportsItsOwnError) {
   };
   EXPECT_THROW(parse("{"), DocumentError);
   Invalid([&] { parse(std::string_view("{}\x00{}", 5)); }, "contains a NUL");
+}
+
+TEST(ProjectDocument, SpecialFileNamesAreSorted) {
+  const auto directory = std::filesystem::temp_directory_path() /
+                         ("special-entries-" + crypto::uuid4());
+  std::filesystem::create_directory(directory);
+  struct Cleanup {
+    std::filesystem::path path;
+    ~Cleanup() { std::filesystem::remove_all(path); }
+  } cleanup{directory};
+  ASSERT_EQ(::mkfifo((directory / "z").c_str(), 0600), 0);
+  ASSERT_EQ(::mkfifo((directory / "a").c_str(), 0600), 0);
+  EXPECT_EQ(fs::list_beneath(directory, "").special,
+            (std::vector<std::string>{"a", "z"}));
 }
 
 TEST(ProjectDocument, DirectorySyncRejectsInvalidTarget) {

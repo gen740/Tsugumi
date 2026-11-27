@@ -481,6 +481,7 @@ Listing list_beneath(const stdfs::path& root, const stdfs::path& rel,
   std::sort(out.files.begin(), out.files.end());
   std::sort(out.links.begin(), out.links.end());
   std::sort(out.directories.begin(), out.directories.end());
+  std::sort(out.special.begin(), out.special.end());
   return out;
 }
 
