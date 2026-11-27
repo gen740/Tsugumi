@@ -13,6 +13,7 @@
 #include <cstring>
 #include <deque>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <random>
 #include <span>
@@ -138,7 +139,8 @@ class NativeTransport final : public Transport {
     std::deque<Bytes> outgoing;
     int fd = -1;
     int wake[2];
-    CURL* curl = nullptr;
+    std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl{nullptr,
+                                                             curl_easy_cleanup};
     bool websocket = false;
     Bytes incoming;
     std::optional<Bytes> fragments;
@@ -149,10 +151,7 @@ class NativeTransport final : public Transport {
     ~State() {
       ::close(wake[0]);
       ::close(wake[1]);
-      if (curl)
-        curl_easy_cleanup(curl);
-      else if (fd >= 0)
-        ::close(fd);
+      if (!curl && fd >= 0) ::close(fd);
     }
 
     auto Wake() -> void {
@@ -185,7 +184,7 @@ class NativeTransport final : public Transport {
     auto Read(uint8_t* bytes, size_t size) -> ptrdiff_t {
       if (curl) {
         size_t received = 0;
-        const auto code = curl_easy_recv(curl, bytes, size, &received);
+        const auto code = curl_easy_recv(curl.get(), bytes, size, &received);
         if (code == CURLE_AGAIN) return -1;
         if (code != CURLE_OK)
           throw std::runtime_error("WebSocket receive failed");
@@ -202,7 +201,7 @@ class NativeTransport final : public Transport {
     auto Write(const uint8_t* bytes, size_t size) -> size_t {
       if (curl) {
         size_t sent = 0;
-        const auto code = curl_easy_send(curl, bytes, size, &sent);
+        const auto code = curl_easy_send(curl.get(), bytes, size, &sent);
         if (code == CURLE_AGAIN) return 0;
         if (code != CURLE_OK) throw std::runtime_error("WebSocket send failed");
         return sent;
@@ -271,9 +270,9 @@ class NativeTransport final : public Transport {
         char* value = nullptr;
         if (curl_url_get(parsed.get(), field, &value, 0) != CURLUE_OK)
           return std::string{};
-        std::string result(value);
-        curl_free(value);
-        return result;
+        const std::unique_ptr<char, decltype(&curl_free)> owned(value,
+                                                                curl_free);
+        return std::string(owned.get());
       };
       if (!part(CURLUPART_USER).empty() || !part(CURLUPART_PASSWORD).empty() ||
           !part(CURLUPART_FRAGMENT).empty())
@@ -289,25 +288,25 @@ class NativeTransport final : public Transport {
       const auto& protocol = options.subprotocol;
       if (protocol.find_first_of("\r\n ,") != std::string::npos)
         throw std::runtime_error("invalid WebSocket subprotocol");
-      curl = curl_easy_init();
+      curl.reset(curl_easy_init());
       if (!curl) throw std::runtime_error("cannot create HTTP transport");
-      curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-      curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 1L);
-      curl_easy_setopt(curl, CURLOPT_HTTPPROXYTUNNEL, 1L);
-      curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-      curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+      curl_easy_setopt(curl.get(), CURLOPT_URL, url.c_str());
+      curl_easy_setopt(curl.get(), CURLOPT_CONNECT_ONLY, 1L);
+      curl_easy_setopt(curl.get(), CURLOPT_HTTPPROXYTUNNEL, 1L);
+      curl_easy_setopt(curl.get(), CURLOPT_NOSIGNAL, 1L);
+      curl_easy_setopt(curl.get(), CURLOPT_NOPROGRESS, 0L);
       curl_easy_setopt(
-          curl, CURLOPT_XFERINFOFUNCTION,
+          curl.get(), CURLOPT_XFERINFOFUNCTION,
           +[](void* context, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
             return static_cast<State*>(context)->stopping.load() ? 1 : 0;
           });
-      curl_easy_setopt(curl, CURLOPT_XFERINFODATA, this);
-      const auto connected = curl_easy_perform(curl);
+      curl_easy_setopt(curl.get(), CURLOPT_XFERINFODATA, this);
+      const auto connected = curl_easy_perform(curl.get());
       if (connected != CURLE_OK)
         throw std::runtime_error(std::string("WebSocket connection failed: ") +
                                  curl_easy_strerror(connected));
       curl_socket_t socket = CURL_SOCKET_BAD;
-      curl_easy_getinfo(curl, CURLINFO_ACTIVESOCKET, &socket);
+      curl_easy_getinfo(curl.get(), CURLINFO_ACTIVESOCKET, &socket);
       if (socket == CURL_SOCKET_BAD)
         throw std::runtime_error("HTTP transport has no socket");
       fd = socket;
@@ -483,8 +482,7 @@ class NativeTransport final : public Transport {
       opened = false;
       stopping = true;
       if (curl) {
-        curl_easy_cleanup(curl);
-        curl = nullptr;
+        curl.reset();
       } else if (fd >= 0)
         ::close(fd);
       fd = -1;
