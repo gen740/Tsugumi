@@ -176,6 +176,7 @@ class VMProcess final : public EnvironmentProcess {
     run.mounts = Mounts(launch);
     auto reply = Call(std::move(run));
     const auto* process = reply->value.AsProcess();
+    if (!process) throw std::runtime_error("Expected a VM project process");
     Remember(process->pid, launch.key);
     return process->pid;
   }
@@ -283,12 +284,14 @@ class VMProcess final : public EnvironmentProcess {
                      ? Call(VMResetPolicy())
                      : Call(request);
     const auto* runtime = reply->value.AsHostRuntime();
+    if (!runtime) throw std::runtime_error("Expected a VM runtime reply");
     return *runtime;
   }
   auto Terminal(const H::HostTerminalRequestT& request)
       -> H::HostTerminalT override {
     auto reply = Call(request);
     const auto* terminal = reply->value.AsHostTerminal();
+    if (!terminal) throw std::runtime_error("Expected a VM terminal reply");
     return *terminal;
   }
 
@@ -482,6 +485,7 @@ class VMProcess final : public EnvironmentProcess {
     Send(link, socket.fd, std::move(value));
     auto message = Read(link, socket.fd);
     auto* reply = message->payload.AsReply();
+    if (!reply) throw std::runtime_error("Expected a VM helper reply");
     if (const auto* failure = reply->value.AsFailure())
       throw EnvironmentFailure(failure->message, failure->recovery,
                                failure->log);
@@ -489,7 +493,9 @@ class VMProcess final : public EnvironmentProcess {
   }
   auto CallProcess(V::ProcessRequestT request) -> V::ProcessT {
     auto reply = Call(std::move(request));
-    return std::move(*reply->value.AsProcess());
+    auto* process = reply->value.AsProcess();
+    if (!process) throw std::runtime_error("Expected a VM project process");
+    return std::move(*process);
   }
 };
 }  // namespace
