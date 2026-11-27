@@ -4,6 +4,7 @@
 
 #include "test_document.hh"
 #include "tsugumi/document/graph.hh"
+#include "tsugumi/document/text.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "worker_selection.hh"
@@ -24,6 +25,15 @@ auto Invalid(const std::function<void()>& load, std::string_view message,
     EXPECT_NE(std::string_view(error.what()).find(file), std::string_view::npos)
         << error.what();
   }
+}
+
+TEST(ProjectDocument, EmbeddedNulReportsItsOwnError) {
+  using document_text::Schema;
+  const auto parse = [](std::string_view bytes) {
+    return document_text::parse(Schema::Project, "tsugumi.json", bytes);
+  };
+  EXPECT_THROW(parse("{"), DocumentError);
+  Invalid([&] { parse(std::string_view("{}\x00{}", 5)); }, "contains a NUL");
 }
 
 TEST(ProjectDocument, DirectorySyncRejectsInvalidTarget) {

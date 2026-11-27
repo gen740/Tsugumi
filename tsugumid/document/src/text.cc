@@ -120,7 +120,11 @@ auto parse(Schema schema, std::string_view path, std::string_view text)
     -> std::string {
   auto& p = parser(schema);
   std::string owned(text);
-  if (owned.find('\0') != std::string::npos || !p.ParseJson(owned.c_str()))
+  if (owned.find('\0') != std::string::npos)
+    throw DocumentError("invalid_document",
+                        std::string(path) + ": JSON contains a NUL byte",
+                        {{"path", std::string(path)}});
+  if (!p.ParseJson(owned.c_str()))
     throw DocumentError("invalid_document",
                         std::string(path) + ": " + describe(p.error_),
                         {{"path", std::string(path)}});
