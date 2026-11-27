@@ -22,6 +22,7 @@
 #include "test_document.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/workerd/path_ids.hh"
 
 namespace tsugumi {
 namespace {
