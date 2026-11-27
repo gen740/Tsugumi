@@ -175,6 +175,13 @@ struct GraphCanvas: View {
     return layout
   }
 
+  /// What new view panels are placed again for: new views, another canvas, its Cards loaded.
+  private struct CardViewPlacing: Equatable {
+    let openings: [UUID]
+    let scope: CardKey
+    let cards: [CardKey]
+  }
+
   private struct ScopeOpening: Equatable {
     let scope: CardKey
     let cards: [CardKey]
@@ -305,7 +312,8 @@ struct GraphCanvas: View {
         frameAfterResize(from: old, to: new)
         placeNewCardViews(in: new)
       }
-      .onChange(of: cardViewOpenings.map(\.id), initial: true) {
+      .onChange(of: CardViewPlacing(openings: cardViewOpenings.map(\.id), scope: scopeKey, cards: cardKeys),
+                initial: true) {
         placeNewCardViews(in: geo.size)
       }
       .onReceive(NotificationCenter.default.publisher(for: .canvasFitAll)) { n in
@@ -418,31 +426,32 @@ struct GraphCanvas: View {
     }
   }
 
-  /// Make room for new views in the visible canvas. Their bounds are kept in
-  /// the workflow's world coordinates from then on, even when the window resizes.
+  /// Place the new view panels whose Cards are on this canvas: each beside
+  /// its Card, clear of the Cards, wires, notes and panels here. A panel is
+  /// placed once; its bounds stay in this canvas's world coordinates from then on.
   private func placeNewCardViews(in viewport: CGSize) {
     guard showsCardViews, viewport.width > 0, viewport.height > 0 else { return }
     let openings = cardViewOpenings
     let ids = Set(openings.map(\.id))
-    var placements = workspace.cardViewPlacements.filter { ids.contains($0.key) }
-    let columns = viewport.width >= 640 ? 2 : 1
-    let w = min(640, (viewport.width - 36) / CGFloat(columns))
-    let h = min(440, max(160, viewport.height - 138))
-    let zoom = currentCamera.zoom
-    for opening in openings where placements[opening.id] == nil {
-      let visible = placements.values.filter { $0.scope == scopeKey }
-      let slots = (0..<columns).map { column in
-        CGRect(origin: world(CGPoint(x: (viewport.width - (w + 12) * CGFloat(columns) + 12) / 2
-                                      + CGFloat(column) * (w + 12),
-                                    y: max(68, (viewport.height - h) / 2))),
-               size: CGSize(width: w / zoom, height: h / zoom))
-      }
-      let stagger = CGFloat(visible.count) * 22 / zoom
-      let rect = slots.first { slot in !visible.contains { $0.rect.intersects(slot) } }
-        ?? slots[visible.count % columns].offsetBy(dx: stagger, dy: stagger)
-      placements[opening.id] = CanvasCardViewPlacement(scope: scopeKey, rect: rect)
+    let kept = workspace.cardViewPlacements.filter { ids.contains($0.key) }
+    let shown = Set(cardKeys)
+    let wanted = openings.contains { kept[$0.id] == nil && CardViewPanelPlacer.scope(of: $0.card) == scopeKey }
+    guard wanted, !shown.isEmpty else {
+      if kept.count != workspace.cardViewPlacements.count { workspace.cardViewPlacements = kept }
+      return
     }
-    workspace.cardViewPlacements = placements
+    let settled = settledLayout
+    let clearance = CardViewPanelPlacer.clearance
+    var rects = cardKeys.map { settled.cardRect($0).insetBy(dx: -14 - clearance, dy: -14 - clearance) }
+    rects += session.notes(in: tab.scope).map { settled.noteRect($0).insetBy(dx: -clearance, dy: -clearance) }
+    if let b = settled.boundary { rects += [b.top, b.bottom] }
+    let obstacles = CardViewPanelPlacer.Obstacles(rects: rects, wires: settled.routedWires().map(\.path))
+    // A view whose Card is no longer here starts in the middle of what the canvas shows.
+    let middle = world(CGPoint(x: viewport.width / 2, y: viewport.height / 2))
+    workspace.cardViewPlacements = CardViewPanelPlacer.placeNew(
+      openings, in: scopeKey, placements: kept,
+      cardRect: { shown.contains($0) ? settled.outlineRect($0) : CGRect(origin: middle, size: .zero) },
+      obstacles: obstacles)
   }
 
   @ViewBuilder private var canvasCardViews: some View {

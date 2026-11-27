@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import TsugumiRPC
+import TsugumiViewPresentation
 
 // The Card canvas building blocks shared by the main canvas, the appearance
 // preview in Settings and the preview in Card settings: Card data, geometry,
@@ -1994,6 +1995,100 @@ struct CardViewLinkLayer: View {
       }
     }
     .allowsHitTesting(false)
+  }
+}
+
+// MARK: - Card view panel placement
+
+/// Where a Card's view panels first appear (world units). A panel belongs to
+/// the canvas that shows its Card and starts next to it, in room that no
+/// Card, wire, note or other panel there takes. A placed panel keeps its
+/// place: only panels without one are placed.
+enum CardViewPanelPlacer {
+  /// The canvas a view's Card is on: the scope that holds the Card.
+  static func scope(of card: [String]) -> CardKey { key(Array(card.dropLast())) }
+
+  /// A modest size: what the Card asked for, within bounds, or a default.
+  static func size(width: UInt32, height: UInt32) -> CGSize {
+    CGSize(width: width == 0 ? 400 : min(480, max(240, CGFloat(width))),
+           height: height == 0 ? 280 : min(360, max(160, CGFloat(height))))
+  }
+
+  /// Room left between the panel and its Card (for the line) and around everything else.
+  static let cardGap: CGFloat = 56
+  static let clearance: CGFloat = 16
+  private static let step: CGFloat = 20
+  private static let reach: CGFloat = 1400
+
+  /// What a panel on this canvas must keep clear of.
+  struct Obstacles {
+    var rects: [CGRect]
+    /// Wire paths, stroked to the clearance they need.
+    var wires: [CGPath]
+
+    init(rects: [CGRect], wires: [Path]) {
+      self.rects = rects
+      self.wires = wires.map {
+        $0.cgPath.copy(strokingWithWidth: 2 * CardViewPanelPlacer.clearance, lineCap: .round, lineJoin: .round, miterLimit: 1)
+      }
+    }
+
+    func blocks(_ r: CGRect) -> Bool {
+      if rects.contains(where: { $0.intersects(r) }) { return true }
+      let box = CGPath(rect: r, transform: nil)
+      return wires.contains { $0.boundingBoxOfPath.intersects(r) && $0.intersects(box) }
+    }
+  }
+
+  /// The free place for a panel of `size` closest to its Card: beside it to
+  /// the right first, then below, to the left and above. Directly to the
+  /// right when no free place is within reach.
+  static func place(_ size: CGSize, beside card: CGRect, avoiding obstacles: Obstacles) -> CGRect {
+    let keepOff = card.insetBy(dx: -cardGap, dy: -cardGap)
+    let preferred = CGRect(origin: CGPoint(x: card.maxX + cardGap, y: card.minY), size: size)
+    var candidates: [(score: CGFloat, rect: CGRect)] = []
+    var y = card.minY - reach - size.height
+    while y <= card.maxY + reach {
+      var x = card.minX - reach - size.width
+      while x <= card.maxX + reach {
+        let r = CGRect(origin: CGPoint(x: x, y: y), size: size)
+        if !r.intersects(keepOff) { candidates.append((score(r, card), r)) }
+        x += step
+      }
+      y += step
+    }
+    candidates.sort { $0.score < $1.score }
+    return candidates.first { !obstacles.blocks($0.rect) }?.rect ?? preferred
+  }
+
+  /// Nearer is better; at a like distance, the right, then below, left and above.
+  private static func score(_ r: CGRect, _ card: CGRect) -> CGFloat {
+    let gx = max(0, r.minX - card.maxX, card.minX - r.maxX)
+    let gy = max(0, r.minY - card.maxY, card.minY - r.maxY)
+    let side: CGFloat = r.minX >= card.maxX ? 0 : r.minY >= card.maxY ? 40 : r.maxX <= card.minX ? 80 : 120
+    // Beside the Card, level with it rather than off to one end.
+    let along = gx >= gy ? abs(r.minY - card.minY) : abs(r.minX - card.minX)
+    return (gx * gx + gy * gy).squareRoot() + side + along * 0.25
+  }
+
+  /// Placements for the panels of this canvas that have none yet; the others
+  /// are returned as they are. `cardRect` gives a Card's outline on this
+  /// canvas (nil when it is not here yet).
+  static func placeNew(_ openings: [CardViewOpening], in scope: CardKey,
+                       placements: [UUID: CanvasCardViewPlacement],
+                       cardRect: (CardKey) -> CGRect?,
+                       obstacles: Obstacles) -> [UUID: CanvasCardViewPlacement] {
+    var placements = placements
+    var obstacles = obstacles
+    obstacles.rects += placements.values.filter { $0.scope == scope }
+      .map { $0.rect.insetBy(dx: -clearance, dy: -clearance) }
+    for opening in openings where placements[opening.id] == nil && self.scope(of: opening.card) == scope {
+      guard let card = cardRect(key(opening.card)) else { continue }
+      let rect = place(size(width: opening.width, height: opening.height), beside: card, avoiding: obstacles)
+      placements[opening.id] = CanvasCardViewPlacement(scope: scope, rect: rect)
+      obstacles.rects.append(rect.insetBy(dx: -clearance, dy: -clearance))
+    }
+    return placements
   }
 }
 

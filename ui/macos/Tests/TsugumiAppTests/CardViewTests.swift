@@ -312,3 +312,67 @@ private func viewDocument(_ out: Outside) -> String {
   presentation.detachPanel(table.id)
   #expect(links().isEmpty)
 }
+
+// A panel belongs to the canvas that shows its Card: a Card inside a Card in
+// Card has its panel on the inner canvas, and on no other.
+@MainActor @Test func cardViewPanelsGoOnTheCanvasOfTheirCard() {
+  let inner = CardViewOpening(id: UUID(), card: ["outer", "inner", "collect"], name: "markdown", type: "html",
+                              mode: .panel, width: 0, height: 0)
+  let top = CardViewOpening(id: UUID(), card: ["report"], name: "markdown", type: "html",
+                            mode: .panel, width: 0, height: 0)
+  #expect(CardViewPanelPlacer.scope(of: inner.card) == "outer/inner")
+  #expect(CardViewPanelPlacer.scope(of: top.card) == "")
+  let card = CGRect(x: 0, y: 0, width: 200, height: 100)
+  let cards: [CardKey: CGRect] = ["outer": card, "report": card.offsetBy(dx: 0, dy: 300),
+                                  "outer/inner": card, "outer/inner/collect": card]
+  let none = CardViewPanelPlacer.Obstacles(rects: [], wires: [])
+  func place(_ scope: CardKey, _ placements: [UUID: CanvasCardViewPlacement] = [:]) -> [UUID: CanvasCardViewPlacement] {
+    CardViewPanelPlacer.placeNew([inner, top], in: scope, placements: placements,
+                                 cardRect: { cards[$0] }, obstacles: none)
+  }
+  let atTop = place("")
+  #expect(Set(atTop.keys) == [top.id])
+  let atOuter = place("outer", atTop)
+  #expect(Set(atOuter.keys) == [top.id], "the outer canvas does not take the inner Card's panel")
+  let atInner = place("outer/inner", atOuter)
+  #expect(atInner[inner.id]?.scope == "outer/inner")
+  #expect(atInner[top.id]?.scope == "")
+}
+
+@MainActor @Test func aNewCardViewPanelCoversNeitherItsCardNorAnotherPanel() throws {
+  let card = CGRect(x: 0, y: 0, width: 200, height: 100)
+  let a = CardViewOpening(id: UUID(), card: ["s", "collect"], name: "markdown", type: "html",
+                          mode: .panel, width: 0, height: 0)
+  let b = CardViewOpening(id: UUID(), card: ["s", "collect"], name: "plot", type: "html",
+                          mode: .panel, width: 900, height: 700)
+  // Another Card to its right, and a wire leaving it downward.
+  let other = CGRect(x: 300, y: -40, width: 200, height: 160)
+  var wire = Path()
+  wire.move(to: CGPoint(x: 100, y: 100))
+  wire.addLine(to: CGPoint(x: 100, y: 700))
+  let obstacles = CardViewPanelPlacer.Obstacles(rects: [card, other], wires: [wire])
+  let placed = CardViewPanelPlacer.placeNew([a, b], in: "s", placements: [:],
+                                            cardRect: { $0 == "s/collect" ? card : nil }, obstacles: obstacles)
+  let ra = try #require(placed[a.id]?.rect), rb = try #require(placed[b.id]?.rect)
+  // A modest size, also when the Card asks for more.
+  #expect(ra.size == CGSize(width: 400, height: 280))
+  #expect(rb.size == CGSize(width: 480, height: 360))
+  for r in [ra, rb] {
+    #expect(!r.intersects(card) && !r.intersects(other) && !obstacles.blocks(r))
+    // Next to its Card, with room for the line.
+    let gap = max(r.minX - card.maxX, card.minX - r.maxX, r.minY - card.maxY, card.minY - r.maxY)
+    #expect(gap >= CardViewPanelPlacer.cardGap && gap < 200)
+  }
+  #expect(!ra.intersects(rb))
+}
+
+@MainActor @Test func aMovedCardViewPanelKeepsItsPlace() {
+  let view = CardViewOpening(id: UUID(), card: ["collect"], name: "markdown", type: "html",
+                             mode: .panel, width: 0, height: 0)
+  let moved = CGRect(x: -900, y: 800, width: 520, height: 300)
+  let placed = CardViewPanelPlacer.placeNew(
+    [view], in: "", placements: [view.id: CanvasCardViewPlacement(scope: "", rect: moved)],
+    cardRect: { _ in CGRect(x: 0, y: 0, width: 200, height: 100) },
+    obstacles: CardViewPanelPlacer.Obstacles(rects: [], wires: []))
+  #expect(placed[view.id]?.rect == moved)
+}
