@@ -1,9 +1,11 @@
 #include "versions.hh"
 
+#include <fcntl.h>
 #include <git2.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -12,6 +14,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 
 #include "model.hh"
 #include "tsugumi/document/graph.hh"
@@ -38,11 +41,6 @@ constexpr const char* kIgnore = ".tsugumi/\n.DS_Store\n";
 
 // ---- libgit2 handles
 // ---------------------------------------------------------
-
-struct Init {
-  Init() { git_libgit2_init(); }
-};
-inline auto init_once() -> void { static Init i; }
 
 template <class T, void (*F)(T*)>
 struct Ptr {
@@ -80,6 +78,16 @@ void check(int rc, const std::string& what) {
       FailureKind::internal_error,
       "git: " + what + ": " +
           (e && e->message ? e->message : "error " + std::to_string(rc)));
+}
+
+auto init_once() -> void {
+  static const auto initialized = [] {
+    check(git_libgit2_init(), "initialize");
+    check(git_libgit2_opts(GIT_OPT_ENABLE_FSYNC_GITDIR, 1),
+          "enable durable repository writes");
+    return true;
+  }();
+  (void)initialized;
 }
 
 std::string hex(const git_oid* id) {
@@ -773,6 +781,39 @@ auto durable_rename(const stdfs::path& from, const stdfs::path& to) -> void {
   fs::fsync_dir(to.parent_path());
 }
 
+auto sync_checkout_tree(const stdfs::path& path) -> void {
+  const auto status = stdfs::symlink_status(path);
+  if (stdfs::is_directory(status)) {
+    for (const auto& entry : stdfs::directory_iterator(path))
+      sync_checkout_tree(entry.path());
+    fs::fsync_dir(path);
+  } else if (stdfs::is_regular_file(status)) {
+    const int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0)
+      throw std::system_error(errno, std::generic_category(),
+                              "open checkout file " + path.string());
+    int result;
+    do {
+      result = ::fsync(fd);
+    } while (result != 0 && errno == EINTR);
+    const int error = errno;
+    ::close(fd);
+    if (result != 0)
+      throw std::system_error(error, std::generic_category(),
+                              "sync checkout file " + path.string());
+  }
+}
+
+auto sync_checkout_ref(git_repository* repo, const std::string& ref) -> void {
+  stdfs::path common = git_repository_commondir(repo);
+  if (!common.has_filename()) common = common.parent_path();
+  for (auto dir = (common / ref).parent_path(); dir != common;
+       dir = dir.parent_path()) {
+    if (stdfs::is_directory(dir)) fs::fsync_dir(dir);
+  }
+  fs::fsync_dir(common);
+}
+
 auto restore_checkout(const stdfs::path& root, git_repository* repo,
                       const stdfs::path& journal) -> stdfs::path {
   const auto data = json::Object(fs::read_file_or_throw(journal));
@@ -800,8 +841,8 @@ auto restore_checkout(const stdfs::path& root, git_repository* repo,
     const auto original = backup / path;
     const auto target = preview / path;
     const auto working = root / path;
-    // A rename can reach disk just before its progress update. The original
-    // and preview entries also make rollback repeatable if recovery stops.
+    // A crash can leave any prefix of the moves on disk. The original and
+    // preview entries make rollback repeatable if recovery stops.
     if (entry_exists(original)) {
       if (!entry_exists(target) && entry_exists(working))
         durable_rename(working, target);
@@ -839,6 +880,7 @@ auto restore_checkout(const stdfs::path& root, git_repository* repo,
                                        "recover interrupted checkout"),
               "restore checkout branch");
       }
+      sync_checkout_ref(repo, branch);
     }
   }
   Index index;
@@ -962,6 +1004,7 @@ void Versions::checkout(
         "checkout object");
   check(git_checkout_tree(r.get(), treeish.get(), &opts), "prepare checkout");
   validate(preview);
+  sync_checkout_tree(preview);
 
   // Build the outgoing version without changing the branch or HEAD. Advance
   // that branch only after the worktree, index and new HEAD are installed.
@@ -987,6 +1030,7 @@ void Versions::checkout(
     git_oid saved_oid;
     check(git_oid_fromstr(&saved_oid, id.c_str()), "checkout saved version");
     saved = saved_oid;
+    fs::fsync_dir(stdfs::path(git_repository_commondir(r.get())) / "objects");
   }
 
   // A branch at the target stays attached, unless it is about to advance.
@@ -1011,8 +1055,6 @@ void Versions::checkout(
     std::string name;
     bool original;
     bool target;
-    bool backed_up = false;
-    bool installed = false;
   };
   std::vector<Move> moves;
   for (const auto& name : roots)
@@ -1024,7 +1066,6 @@ void Versions::checkout(
                  "reopen the project to recover its interrupted checkout");
   if (index_before) fs::write_atomic(scratch.path / "index", *index_before);
   fs::write_atomic(scratch.path / "HEAD", head_before);
-  fs::fsync_dir(preview);
   fs::fsync_dir(backup);
   const auto persist = [&] {
     std::vector<std::string> entries;
@@ -1033,8 +1074,6 @@ void Versions::checkout(
           {"path", json::Quote(move.name)},
           {"original", move.original ? "true" : "false"},
           {"target", move.target ? "true" : "false"},
-          {"backed_up", move.backed_up ? "true" : "false"},
-          {"installed", move.installed ? "true" : "false"},
       }));
     }
     fs::write_atomic(journal, json::Encode(json::Members{
@@ -1062,14 +1101,10 @@ void Versions::checkout(
       if (move.original) {
         durable_rename(root_ / move.name, backup / move.name);
         checkpoint();
-        move.backed_up = true;
-        persist();
       }
       if (move.target) {
         durable_rename(preview / move.name, root_ / move.name);
         checkpoint();
-        move.installed = true;
-        persist();
       }
     }
     check(git_index_read_tree(index.get(), target_tree.get()),
@@ -1079,6 +1114,9 @@ void Versions::checkout(
     check(branch.empty() ? git_repository_set_head_detached(r.get(), &oid)
                          : git_repository_set_head(r.get(), branch.c_str()),
           "set checkout HEAD");
+    fs::fsync_dir(index_path.parent_path());
+    if (head_path.parent_path() != index_path.parent_path())
+      fs::fsync_dir(head_path.parent_path());
     checkpoint();
     if (saved) {
       Ref ref;
@@ -1089,12 +1127,19 @@ void Versions::checkout(
                 ref.out(), r.get(), source_branch.c_str(), &*saved,
                 expected != nullptr, expected, "save project before checkout"),
             "save checkout branch");
+      sync_checkout_ref(r.get(), source_branch);
       checkpoint();
     }
+    // Keep recovery files if journal removal cannot be made durable.
+    scratch.keep = true;
     fs::remove_file_durable(journal);
+    scratch.keep = false;
   } catch (const std::exception& error) {
     try {
-      if (entry_exists(journal)) restore_checkout(root_, r.get(), journal);
+      if (entry_exists(journal)) {
+        restore_checkout(root_, r.get(), journal);
+        scratch.keep = false;
+      }
     } catch (const std::exception& failure) {
       scratch.keep = true;
       throw Failed(FailureKind::persistence_failed,
