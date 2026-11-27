@@ -32,13 +32,30 @@ namespace tsugumi {
 namespace {
 
 constexpr size_t kMaxPendingBytes = 64u << 20;
+constexpr size_t kReadHighWater = 32u << 20;
+constexpr size_t kReadLowWater = 16u << 20;
+constexpr size_t kReadBudget = 512u << 10;
+constexpr size_t kFrameOverhead = 10;
 constexpr size_t kMaxRequests = 256;
 constexpr size_t kControlReserve = 8;
 
-void set_nonblock(int fd) {
-  int fl = ::fcntl(fd, F_GETFL, 0);
-  ::fcntl(fd, F_SETFL, fl | O_NONBLOCK);
-  ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+auto configure_fd(int fd) -> bool {
+  if (::fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) return false;
+  const int flags = ::fcntl(fd, F_GETFL);
+  return flags >= 0 && ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+
+auto listener_socket(int family) -> int {
+#ifdef __linux__
+  return ::socket(family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+#else
+  const int fd = ::socket(family, SOCK_STREAM, 0);
+  if (fd < 0 || configure_fd(fd)) return fd;
+  const int error = errno;
+  ::close(fd);
+  errno = error;
+  return -1;
+#endif
 }
 
 std::string lower(std::string s) {
@@ -87,11 +104,26 @@ struct TransportServer::Conn {
   size_t out_bytes = 0;
   std::string wbuf;
   size_t wpos = 0;
+  auto pending_bytes() const -> size_t {
+    return out_bytes + wbuf.size() - wpos;
+  }
   auto can_queue(size_t bytes) const -> bool {
-    const auto pending = out_bytes + (wbuf.size() - wpos);
+    const auto pending = pending_bytes();
     return pending <= kMaxPendingBytes && bytes <= kMaxPendingBytes - pending;
   }
-  std::map<uint64_t, bool> inflight;
+  auto reads_paused() -> bool {
+    const auto pending = pending_bytes() + reserved_bytes;
+    read_paused =
+        read_paused ? pending > kReadLowWater : pending >= kReadHighWater;
+    return read_paused;
+  }
+  struct InFlight {
+    bool trace;
+    size_t reply_budget;
+  };
+  std::map<uint64_t, InFlight> inflight;
+  size_t reserved_bytes = 0;
+  bool read_paused = false;
   const char* peer;
   trace::Link trace_link;
 };
@@ -103,20 +135,26 @@ TransportServer::~TransportServer() { stop(); }
 
 void TransportServer::start() {
   int p[2];
+#ifdef __linux__
+  if (::pipe2(p, O_NONBLOCK | O_CLOEXEC) != 0)
+    throw std::runtime_error("wake pipe failed");
+#else
   if (::pipe(p) != 0) throw std::runtime_error("pipe failed");
+#endif
   wake_r_ = p[0];
   wake_w_ = p[1];
-  set_nonblock(wake_r_);
-  set_nonblock(wake_w_);
+#ifndef __linux__
+  if (!configure_fd(wake_r_) || !configure_fd(wake_w_))
+    throw std::runtime_error("configure wake pipe failed");
+#endif
   // The caller holds the project lock, so a leftover socket file is ours to
   // replace.
   auto listen_unix = [](const std::string& path,
                         unix_socket::Binding& binding) {
-    int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    const int fd = listener_socket(AF_UNIX);
     if (fd < 0)
       throw std::runtime_error("create unix socket: " +
                                std::string(std::strerror(errno)));
-    ::fcntl(fd, F_SETFD, FD_CLOEXEC);
     try {
       binding.Bind(fd, path);
     } catch (...) {
@@ -129,7 +167,6 @@ void TransportServer::start() {
       throw std::runtime_error("listen unix socket: " +
                                std::string(std::strerror(err)));
     }
-    set_nonblock(fd);
     return fd;
   };
   if (!opts_.unix_path.empty())
@@ -137,7 +174,10 @@ void TransportServer::start() {
   if (!opts_.ws_unix_path.empty())
     ws_unix_fd_ = listen_unix(opts_.ws_unix_path, ws_unix_binding_);
   if (opts_.tcp_port >= 0) {
-    tcp_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+    tcp_fd_ = listener_socket(AF_INET);
+    if (tcp_fd_ < 0)
+      throw std::runtime_error("create tcp socket: " +
+                               std::string(std::strerror(errno)));
     int one = 1;
     ::setsockopt(tcp_fd_, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
     sockaddr_in addr{};
@@ -148,11 +188,14 @@ void TransportServer::start() {
     if (::bind(tcp_fd_, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0)
       throw std::runtime_error("bind tcp: " +
                                std::string(std::strerror(errno)));
-    ::listen(tcp_fd_, 64);
+    if (::listen(tcp_fd_, 64) != 0)
+      throw std::runtime_error("listen tcp: " +
+                               std::string(std::strerror(errno)));
     socklen_t len = sizeof addr;
-    ::getsockname(tcp_fd_, reinterpret_cast<sockaddr*>(&addr), &len);
+    if (::getsockname(tcp_fd_, reinterpret_cast<sockaddr*>(&addr), &len) != 0)
+      throw std::runtime_error("get tcp address: " +
+                               std::string(std::strerror(errno)));
     bound_port_ = ntohs(addr.sin_port);
-    set_nonblock(tcp_fd_);
   }
   thread_ = std::thread([this] { loop(); });
 }
@@ -222,7 +265,7 @@ void TransportServer::clear_notes(ConnId conn) {
   auto& c = *it->second;
   for (auto o = c.outq.begin(); o != c.outq.end();) {
     if (o->note) {
-      c.out_bytes -= o->note->approx_bytes;
+      c.out_bytes -= o->note->approx_bytes + kFrameOverhead;
       o = c.outq.erase(o);
     } else
       ++o;
@@ -253,11 +296,14 @@ void TransportServer::enqueue_raw(Conn& c, std::string bytes, bool is_reply,
   if (c.closing) return;
   if (is_reply) {
     auto request = c.inflight.extract(opts_.codec.completed(bytes));
-    if (!request.empty()) trace = request.mapped();
+    if (!request.empty()) {
+      trace = request.mapped().trace;
+      c.reserved_bytes -= request.mapped().reply_budget;
+    }
   }
-  if (!c.can_queue(bytes.size()))
+  if (!c.can_queue(bytes.size() + kFrameOverhead))
     return drop(c, "send queue limit exceeded");
-  c.out_bytes += bytes.size();
+  c.out_bytes += bytes.size() + kFrameOverhead;
   Conn::Out o;
   o.raw = std::move(bytes);
   o.trace = trace;
@@ -270,20 +316,20 @@ void TransportServer::enqueue_note(Conn& c, const PendingMessage& n) {
     for (auto& o : c.outq) {
       if (o.note && o.note->group == n.group &&
           o.note->coalesce_key == n.coalesce_key) {
-        c.out_bytes -= o.note->approx_bytes;
-        if (!c.can_queue(n.approx_bytes))
+        c.out_bytes -= o.note->approx_bytes + kFrameOverhead;
+        if (!c.can_queue(n.approx_bytes + kFrameOverhead))
           return drop(c, "send queue limit exceeded");
         o.note = n;
-        c.out_bytes += n.approx_bytes;
+        c.out_bytes += n.approx_bytes + kFrameOverhead;
         return;
       }
     }
   }
-  if (!c.can_queue(n.approx_bytes))
+  if (!c.can_queue(n.approx_bytes + kFrameOverhead))
     return drop(c, "send queue limit exceeded");
   Conn::Out o;
   o.note = n;
-  c.out_bytes += n.approx_bytes;
+  c.out_bytes += n.approx_bytes + kFrameOverhead;
   c.outq.push_back(std::move(o));
 }
 
@@ -297,13 +343,13 @@ bool TransportServer::fill_write(Conn& c) {
   c.outq.pop_front();
   std::string body;
   if (o.note) {
-    c.out_bytes -= o.note->approx_bytes;
+    c.out_bytes -= o.note->approx_bytes + kFrameOverhead;
     body = o.note->build();
   } else {
-    c.out_bytes -= o.raw.size();
+    c.out_bytes -= o.raw.size() + kFrameOverhead;
     body = std::move(o.raw);
   }
-  if (!c.can_queue(body.size() + 10)) {
+  if (!c.can_queue(body.size() + kFrameOverhead)) {
     drop(c, "send queue limit exceeded");
     return false;
   }
@@ -358,9 +404,18 @@ void TransportServer::drop(Conn& c, const char* why) {
 
 void TransportServer::accept_on(int lfd, bool websocket) {
   while (true) {
-    int fd = ::accept(lfd, nullptr, nullptr);
+#ifdef __linux__
+    const int fd =
+        ::accept4(lfd, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+#else
+    const int fd = ::accept(lfd, nullptr, nullptr);
+    if (fd >= 0 && !configure_fd(fd)) {
+      ::close(fd);
+      continue;
+    }
+#endif
+    if (fd < 0 && errno == EINTR) continue;
     if (fd < 0) return;
-    set_nonblock(fd);
 #ifdef SO_NOSIGPIPE
     int one = 1;
     ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
@@ -379,9 +434,12 @@ void TransportServer::accept_on(int lfd, bool websocket) {
 }
 
 void TransportServer::adopt(int fd, std::string head) {
+  if (!configure_fd(fd)) {
+    ::close(fd);
+    return;
+  }
   Command c(Command::Kind::Action);
   c.action = [this, fd, head = std::move(head)]() mutable {
-    set_nonblock(fd);
 #ifdef SO_NOSIGPIPE
     int one = 1;
     ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
@@ -396,7 +454,7 @@ void TransportServer::adopt(int fd, std::string head) {
     conn->rbuf = std::move(head);
     auto& c = *conn;
     conns_[c.id] = std::move(conn);
-    if (handle_ws_handshake(c)) parse_ws(c);
+    parse_input(c);
   };
   post(std::move(c));
 }
@@ -476,7 +534,7 @@ bool TransportServer::handle_ws_handshake(Conn& c) {
 
 void TransportServer::parse_ws(Conn& c) {
   size_t consumed = 0;
-  while (!c.closing) {
+  while (!c.closing && !c.reads_paused()) {
     const auto b = std::string_view(c.rbuf).substr(consumed);
     if (b.size() < 2) break;
     auto b0 = static_cast<uint8_t>(b[0]);
@@ -551,27 +609,28 @@ void TransportServer::parse_ws(Conn& c) {
 
 void TransportServer::on_readable(Conn& c) {
   char buf[65536];
-  bool eof = false;
-  while (!c.closing) {
-    ssize_t r = ::recv(c.fd, buf, sizeof buf, 0);
-    if (r == 0) {
-      eof = true;
-      break;
-    }
+  auto budget = kReadBudget;
+  while (budget && !c.closing && !c.reads_paused()) {
+    const auto r = ::recv(c.fd, buf, std::min(budget, sizeof buf), 0);
+    if (r == 0) return drop(c, "peer closed");
     if (r < 0) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+      if (errno == EAGAIN || errno == EWOULDBLOCK) return;
       if (errno == EINTR) continue;
       return drop(c, "read error");
     }
-    c.rbuf.append(buf, static_cast<size_t>(r));
-    break;
+    const auto received = static_cast<size_t>(r);
+    c.rbuf.append(buf, received);
+    budget -= received;
+    parse_input(c);
   }
-  // Requests that arrived before the peer closed are still accepted.
+}
+
+void TransportServer::parse_input(Conn& c) {
   if (c.websocket) {
     if (c.ws_open || handle_ws_handshake(c)) parse_ws(c);
   } else {
     size_t consumed = 0;
-    while (!c.closing && c.rbuf.size() - consumed >= 4) {
+    while (!c.closing && !c.reads_paused() && c.rbuf.size() - consumed >= 4) {
       uint32_t len;
       std::memcpy(&len, c.rbuf.data() + consumed, 4);
       if (len == 0 || len > opts_.limits.max_frame_bytes)
@@ -583,7 +642,6 @@ void TransportServer::on_readable(Conn& c) {
     }
     c.rbuf.erase(0, consumed);
   }
-  if (eof) drop(c, "peer closed");
 }
 
 void TransportServer::handle_frame(Conn& c, std::string frame) {
@@ -613,7 +671,8 @@ void TransportServer::handle_frame(Conn& c, std::string frame) {
   if (!c.authenticated) return fail(AdmissionFailure::Unauthenticated);
   const auto limit = kMaxRequests + (info->control ? kControlReserve : 0);
   if (c.inflight.size() >= limit) return fail(AdmissionFailure::Busy);
-  c.inflight.emplace(rid, info->trace);
+  c.inflight.emplace(rid, Conn::InFlight{info->trace, info->reply_budget});
+  c.reserved_bytes += info->reply_budget;
   sink_->dispatch(std::move(in));
 }
 
@@ -645,6 +704,9 @@ void TransportServer::loop() {
     }
     for (auto it = conns_.begin(); it != conns_.end();) {
       Conn& c = *it->second;
+      // A pause can leave complete frames in memory. Resume those even if
+      // the peer has sent no further bytes to wake poll.
+      if (!c.closing && !c.reads_paused() && !c.rbuf.empty()) parse_input(c);
       if (c.close_after_flush && c.outq.empty() && c.wpos >= c.wbuf.size())
         c.closing = true;
       if (c.closing && c.wpos >= c.wbuf.size()) {
@@ -654,7 +716,7 @@ void TransportServer::loop() {
         sink_->disconnected(id);
         continue;
       }
-      short ev = POLLIN;
+      short ev = c.reads_paused() ? 0 : POLLIN;
       if (c.wpos < c.wbuf.size() || !c.outq.empty()) ev |= POLLOUT;
       fds.push_back({c.fd, ev, 0});
       ids.push_back(c.id);
@@ -689,7 +751,10 @@ void TransportServer::loop() {
         drop(c, "socket error");
         continue;
       }
-      if (fds[i].revents & (POLLIN | POLLHUP)) on_readable(c);
+      if ((fds[i].revents & POLLHUP) && c.reads_paused())
+        drop(c, "peer closed");
+      else if (fds[i].revents & (POLLIN | POLLHUP))
+        on_readable(c);
       if (!c.closing || c.wpos < c.wbuf.size()) on_writable(c);
     }
   }

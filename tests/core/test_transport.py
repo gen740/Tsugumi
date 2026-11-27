@@ -17,9 +17,11 @@ from tsugumi_client import path, decode_message, encode_request, make
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.Data.CardState import CardState
+from Tsugumi.Data.ValueSide import ValueSide
 from Tsugumi.RPC import Message as MessageBuilder, Request
 from Tsugumi.RPC.Message import Message
 from Tsugumi.RPC.Payload import Payload
+from Tsugumi.RPC.Reply import Reply
 from Tsugumi.RPC.ReplyPayload import ReplyPayload
 
 
@@ -91,6 +93,47 @@ def test_unix_frames_split_and_joined(daemon):
         replies = [decode_message(unix_read(connection)) for _ in requests]
         assert sorted(reply.requestId for reply in replies) == [2, 3, 4]
         assert all(reply.payload.valueType == ReplyPayload.ProjectSnapshot for reply in replies)
+
+
+@pytest.mark.parametrize("websocket", [False, True], ids=["unix", "websocket"])
+def test_pipelined_pages_drain_without_dropping_the_connection(
+    project, core_factory, tmp_path, websocket
+):
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
+    writer = daemon.connect()
+    worker_project(writer, project, tmp_path, [
+        {"op": "output", "port": "out", "type": "string", "value": "x" * (1 << 20)},
+    ], recordIO="on")
+    run_id = run(writer)
+    assert wait_run(writer, run_id).state == RunState.succeeded
+
+    if websocket:
+        peer, status = ws_connect(port_of(daemon))
+        assert status.split()[1] == "101"
+        frame, read, token = ws_frame, ws_read, daemon.ready["token"]
+    else:
+        peer = unix_connection(daemon)
+        frame, read, token = unix_frame, unix_read, None
+    with peer as connection:
+        connection.sendall(frame(hello_frame(1, token)))
+        assert reply_kind(read(connection)) == Payload.Reply
+        method = "RunValueReadRequest"
+        page = make(method, runId=run_id, card=path("work"), invocation=1,
+                    side=ValueSide.output, port="out", limitBytes=1 << 20)
+        pending = set(range(2, 82))
+        connection.sendall(b"".join(frame(encode_request(i, method, page))
+                                    for i in sorted(pending)))
+        while pending:
+            payload = read(connection)
+            assert payload is not None, "connection closed with pages pending"
+            message = Message.GetRootAs(payload)
+            pending.remove(message.RequestId())
+            assert message.PayloadType() == Payload.Reply
+            table = message.Payload()
+            reply = Reply()
+            reply.Init(table.Bytes, table.Pos)
+            assert reply.ValueType() == ReplyPayload.FileContent
+            assert len(payload) >= 1 << 20
 
 
 @pytest.mark.parametrize("cancel", [False, True], ids=["finishes-without-starter", "cancelled-by-another-client"])
