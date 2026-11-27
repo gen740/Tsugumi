@@ -1,7 +1,7 @@
 name: CI
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
   workflow_dispatch:
   schedule:
@@ -28,7 +28,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          selection=$(python3 tests/ci/select_jobs.py --event "$EVENT" --base "$BASE" --head "$HEAD" ${{ github.event_name == 'pull_request' && github.base_ref != 'main' && '--stacked' || '' }})
+          selection=$(python3 tests/ci/select_jobs.py --event "$EVENT" --base "$BASE" --head "$HEAD" ${{ github.event_name == 'pull_request' && github.base_ref != 'main' && github.base_ref != 'dev' && '--stacked' || '' }})
           echo "$selection" | jq .
           echo "selection=$selection" >> "$GITHUB_OUTPUT"
 
