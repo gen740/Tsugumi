@@ -97,10 +97,17 @@ auto RemoteWorkerStore::realise(
     const std::filesystem::path& store_root, const WorkerDerivation& derivation,
     bool push_outputs, const std::function<void(const std::string&)>& log,
     uint64_t timeout_ms) -> WorkerStoreResult {
-  // Invocations run in separate processes but share this persistent store.
-  // Serialize its entire connection lifetime, including database creation and
-  // closure import. The lock ends before Card execution, so Cards can still run
-  // concurrently. Never unlink it: surviving supervisors also use this inode.
+  // Invocations run in separate supervisor processes that share this
+  // persistent store, so the Nix settings below are per process. Opening the
+  // store is serialized: LocalStore creates a missing database and its schema,
+  // and runs migrations, under only a shared big-lock, so two first-time
+  // openers could race. Everything after the open is safe without this lock:
+  // SQLite and its retries guard the database, temp roots are per process,
+  // and every addition (closure import, substitution, build) takes the
+  // output's path lock and checks validity again under it, so two invocations
+  // wanting one path produce it once. Nothing collects this store's garbage,
+  // and job removal touches only job scratch. Never unlink the lock: surviving
+  // supervisors also use this inode.
   nix::AutoCloseFD store_lock{::open((store_root / "realise.lock").c_str(),
                                      O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
                                      0600)};
@@ -139,6 +146,7 @@ auto RemoteWorkerStore::realise(
   nix::settings.getLocalSettings().requireDropSupplementaryGroups = false;
   auto store = nix::openStore(
       "local", {{"root", store_root.string()}, {"require-sigs", "true"}});
+  store_lock.close();
   const auto drv = store->parseStorePath(derivation.path);
   const auto out = store->parseStorePath(derivation.output);
   store->addTempRoot(drv);
