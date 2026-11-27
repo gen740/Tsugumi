@@ -86,6 +86,37 @@ def test_local_probe_failure_and_ineligible_scores_are_recorded(
         assert diagnostic in text(measurement.failure)
 
 
+# The evaluation that times out never finishes: about 10^10 additions.
+ENDLESS = ("builtins.foldl' (a: i: builtins.foldl' (b: j: b + 1) a "
+           "(builtins.genList (x: x) 100000)) 0 (builtins.genList (x: x) 100000)")
+
+
+@pytest.mark.parametrize("probe,settings,diagnostic", [
+    ('throw "the probe cannot be evaluated"', {}, "the probe cannot be evaluated"),
+    ("builtins.seq (" + ENDLESS + ") null", {"buildTimeoutSeconds": 1}, "buildTimeoutSeconds"),
+], ids=["evaluation-fails", "evaluation-times-out"])
+def test_probe_evaluation_failure_leaves_no_worker_eligible(
+        core_factory, project, probe, settings, diagnostic):
+    client = core_factory().connect()
+    Project(project).card("work", definition(recordLogs="off", recordIO="off", **settings),
+                          outputs=EMPTY_OUTPUTS, sources={
+        "default.nix": ARGUMENTS + """{
+          run = throw "a Card without an eligible worker must never evaluate run";
+          probe = """ + probe + "; }",
+    }).save(client)
+    run_id = run(client, "work", propagate=False)
+    status = wait_run(client, run_id)
+    assert status.state == RunState.failed
+    message = text(status.failure.diagnostic)
+    assert "No worker received a positive probe score" in message, message
+    assert "local: probe failed: " in message and diagnostic in message, message
+    assert "must never evaluate run" not in message, message
+    record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
+    measurement, = record.workerProbes
+    assert measurement.score is None
+    assert diagnostic in text(measurement.failure)
+
+
 def test_settings_remeasure_local_probes_without_starting_a_card_run(
         core_factory, project, tmp_path):
     identity = "b2c3d4"

@@ -733,9 +733,10 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
     for (const auto& target : targets) {
       auto result = measure_card_probe(target, node, directory, build,
                                        remote_lives[target.id]);
-      measured |= !result.probe.empty() ||
-                  result.failure.find("probe must be a derivation") !=
-                      std::string::npos;
+      // A recorded failure counts as a measurement: a probe whose evaluation
+      // fails or times out never reaches needs_probe_build, and treating it
+      // as "no probe" would make every worker eligible and erase the cause.
+      measured |= !result.probe.empty() || !result.failure.empty();
       measurements.push_back(std::move(result));
     }
     if (measured) {
