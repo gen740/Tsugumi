@@ -619,6 +619,14 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
 }
 }  // namespace
 
+auto SettleStopped(Rows& rows) -> void {
+  for (auto& row : rows) {
+    SettleStopped(row->children);
+    if (row->state == "running" || row->state == "queued")
+      row->state = "interrupted";
+  }
+}
+
 auto Presentation(const A::ConversationT& conversation) -> Rows {
   std::vector<const A::ModelMessageT*> messages;
   for (const auto& message : conversation.archive)

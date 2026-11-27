@@ -631,14 +631,17 @@ function ToolRow({ item, session, tab }: { item: ChatItem; session: ProjectSessi
   const step = toolStep(item.tool?.name ?? '', item.text, k => session.displayPath(path(k)))
   const title = item.presentation && (language() === 'en' ? item.presentation.summaryEn : item.presentation.summaryJa)
   const ok = item.tool?.ok
+  // Stopped before its result came back: neither running nor failed.
+  const interrupted = item.presentation?.state === 'interrupted'
   return (
     <div className="chat-tool">
       <div className="row gap6 center">
         <span className="tool-mark">
-          {ok === undefined ? <Spinner small /> : <Icon name={ok ? 'checkmark.circle' : 'xmark.circle.fill'} style={{ color: ok ? 'var(--secondary)' : 'var(--red)' }} />}
+          {interrupted ? <Icon name="pause.circle" style={{ color: 'var(--secondary)' }} />
+            : ok === undefined ? <Spinner small /> : <Icon name={ok ? 'checkmark.circle' : 'xmark.circle.fill'} style={{ color: ok ? 'var(--secondary)' : 'var(--red)' }} />}
         </span>
-        <span className="caption ellipsis" style={{ color: ok === false ? 'var(--red)' : 'var(--secondary)' }}>
-          {title || (ok === undefined ? step.running : step.done + (ok ? '' : L('：失敗')))}
+        <span className="caption ellipsis" style={{ color: ok === false && !interrupted ? 'var(--red)' : 'var(--secondary)' }}>
+          {title || (interrupted ? step.done + L('：止めました') : ok === undefined ? step.running : step.done + (ok ? '' : L('：失敗')))}
         </span>
         {step.card && tab && session.instance(step.card) && (
           <button type="button" className="link caption" onClick={() => {

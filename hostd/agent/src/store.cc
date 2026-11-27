@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "agent/context.hh"
+#include "agent/presentation.hh"
 #include "agent/wire.hh"
 #include "host/failure.hh"
 #include "host/identifiers.hh"
@@ -451,7 +452,7 @@ auto ConversationStore::BuildConversation(const Conversation& c,
   if (!streaming.empty())
     streaming_id =
         ":" + std::to_string(archive.size() + messages.size()) + ":0";
-  return wire::Conversation(json::Members{
+  auto out = wire::Conversation(json::Members{
       {"id", json::Quote(c.id)},
       {"title", json::Quote(c.title)},
       {"updatedAt", std::to_string(c.updated)},
@@ -462,6 +463,8 @@ auto ConversationStore::BuildConversation(const Conversation& c,
       {"helpers", json::Encode(helpers)},
       {"streaming", json::Quote(streaming)},
       {"usage", usage_json}});
+  if (!is_running(c.id)) SettleStopped(out.rows);
+  return out;
 }
 
 auto ConversationStore::PresentationState::MarkChanged(size_t index) -> void {

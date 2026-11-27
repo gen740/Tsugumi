@@ -1728,6 +1728,7 @@
   "（経過時間は Run の受付から、実行環境の時計で計ります）": "(the elapsed time counts from the Run's acceptance, by the environment's clock)",
   "：": ": ",
   "：失敗": ": failed",
+  "：止めました": ": stopped",
   "実装 {0}": {"text": "implementation {0}", "mac": ["u"]},
   "比較する呼び出し": "Invocation to compare",
   "{0}（片方の実行のみ）": {"text": "{0} (one run only)", "mac": ["@"]},

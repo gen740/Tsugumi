@@ -800,15 +800,19 @@ struct ToolRow: View {
     let title = item.presentation.map { AppPreferences.Language.running == .en ? $0.summaryEn : $0.summaryJa } ?? ""
     VStack(alignment: .leading, spacing: 4) {
       HStack(spacing: 5) {
+        // Stopped before its result came back: neither running nor failed.
+        let interrupted = item.presentation?.state == "interrupted"
         Group {
-          if item.tool?.ok == nil { ProgressView().controlSize(.mini) } else {
+          if interrupted { Image(systemName: "pause.circle").foregroundStyle(.secondary) }
+          else if item.tool?.ok == nil { ProgressView().controlSize(.mini) } else {
             Image(systemName: item.tool!.ok! ? "checkmark.circle" : "xmark.circle.fill")
               .foregroundStyle(item.tool!.ok! ? Color.secondary : Color.red)
           }
         }
         .frame(width: 14)
-        Text(!title.isEmpty ? title : item.tool?.ok == nil ? step.running : step.done + (item.tool!.ok! ? "" : String(localized: "：失敗")))
-          .font(.caption).foregroundStyle(item.tool?.ok == false ? .red : .secondary).lineLimit(1)
+        Text(!title.isEmpty ? title : interrupted ? step.done + String(localized: "：止めました")
+             : item.tool?.ok == nil ? step.running : step.done + (item.tool!.ok! ? "" : String(localized: "：失敗")))
+          .font(.caption).foregroundStyle(item.tool?.ok == false && !interrupted ? .red : .secondary).lineLimit(1)
         if let k = step.card, let tab, session.instance(k) != nil {
           Button("Card を表示") {
             tab.enter(Array(path(k).dropLast()))
