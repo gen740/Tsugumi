@@ -12,7 +12,7 @@ Claude Code ── MCP (stdio) ── tsugumi mcp ── Agent RPC (external) �
 
 - The MCP server (`tsugumi mcp`, `cli/src/mcp.cc`) calls `tsugumi-hostd` on its Agent socket as the external-agent principal. The service validates tool arguments, checks access grants, applies saves with `origin: agent` and follows runs through the project RPC.
 - Agent events and project notifications let the Web UI show the work and run progress. A model key in Tsugumi is not required for Claude Code to use the tools.
-- Read, Write and Run access and permission-widening saves can require a user decision. Keep a Web UI page open to answer pending access requests. A disconnected page does not cancel a core conversation. [Agent permission boundary](security.md#the-agents-permission-boundary)
+- Read, Write and Run access and permission-widening saves can require a user decision. Keep a Web UI page open to answer pending access requests. A disconnected page does not cancel a core conversation. [Agent permission boundary](design/security.md#the-agents-permission-boundary)
 - The MCP server exposes hostd's tool catalog and Agent API operations prefixed with `agent_` (described from the embedded `agent.bfbs`, `cli/src/agent_catalog.cc`). Use the Agent API to request project access before inspecting it. Claude Code can also use its own file tools and subagents; their permissions belong to Claude Code.
 
 ## Setup
@@ -31,7 +31,7 @@ Claude Code ── MCP (stdio) ── tsugumi mcp ── Agent RPC (external) �
 ## Using it
 
 - Use `/tsugumi:open <project folder>`, or ask "in this Tsugumi project, do …". Claude Code opens the project with `tsugumi_open` before working.
-- `tsugumi_open` reaches the same host as `tsugumi web` (`tsugumi-hostd --ensure` on the same state folder and startup lock) and starts one if there is none; it keeps running after Claude Code closes. hostd's `ShowRequest` shows the project on a page that shows it or a Home page (a page showing another project is not switched); otherwise hostd opens it in a browser, so the page key never reaches Claude Code ([Security §7](security.md#the-agents-permission-boundary)).
+- `tsugumi_open` reaches the same host as `tsugumi web` (`tsugumi-hostd --ensure` on the same state folder and startup lock) and starts one if there is none; it keeps running after Claude Code closes. hostd's `ShowRequest` shows the project on a page that shows it or a Home page (a page showing another project is not switched); otherwise hostd opens it in a browser, so the page key never reaches Claude Code ([Security §7](design/security.md#the-agents-permission-boundary)).
 - Concurrent command and plugin starts use one host per state folder. A host that already runs keeps its build until it is stopped.
 - A new project can be made with `create: true` on `tsugumi_open` (only for a folder that does not exist yet).
 - The first `tsugumi_open` returns the MCP instructions (`hostd/agent/Shared/mcp-transport.md` and the shared rules, generated into `cli/src/mcp_instructions.hh`).

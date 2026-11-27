@@ -29,7 +29,7 @@ Through this back-and-forth, the material becomes something alive: not imitation
 **Changing conditions and checking leads to learning the decisions of research.**
 For that, the purpose of each step and the reason it was adopted are kept in Card descriptions and sticky notes, tied to steps that can be run. When learners bring the results they tried themselves, the next discussion can start from concrete processing too.
 
-Related: [Usage](Usage.md), [Cards and Workflows](features.md#2-cards-and-workflows), [Run history and artifacts](features.md#6-run-history-and-artifacts)
+Related: [Usage](Usage.md), [Cards and Workflows](design/Workflow.md), [Run history and artifacts](RunHistory.md)
 
 ## Understanding and growing the tools you made with AI
 
@@ -44,7 +44,7 @@ In Tsugumi, a coherent piece of processing can also be handled as a child Workfl
 **Grow what you made once into the next use, checking as you go.**
 Surveying, in one Workflow, what you change and how far the effect reaches, and recombining the parts you need to keep using them: that is Tsugumi's aim in engineering.
 
-Related: [UI (the workbench)](features.md#8-ui-the-workbench), [Cards and Workflows](features.md#2-cards-and-workflows)
+Related: [UI (the workbench)](Usage.md#the-screen), [Cards and Workflows](design/Workflow.md)
 
 ## Business automation and the data boundary
 
@@ -61,7 +61,7 @@ On the other hand, the source code, logs and input and output values the Agent r
 **There is not yet a mechanism that automatically hides or masks confidential data from the Agent to prevent it from being sent.**
 Building this data boundary into the design as types and permissions is the next important problem before extending to business automation in earnest.
 
-How it works today: [Security and isolation](security.md), [What is sent to the model](security.md#what-is-sent-to-the-model)
+How it works today: [Security and isolation](design/security.md), [What is sent to the model](design/security.md#what-is-sent-to-the-model)
 
 ## Handing work to the next person in a form they can run and check
 
@@ -78,7 +78,7 @@ The next person can discuss changes with AI while looking at that graph, try par
 **Make handing over work the starting point of the next person's trial and error.**
 Being able to read the predecessor's intentions and check by changing conditions yourself is the foundation for understanding and continuing to improve.
 
-Related: [Documents and saving](features.md#5-documents-and-saving), [Run history and artifacts](features.md#6-run-history-and-artifacts)
+Related: [Documents and saving](design/Architecture.md#documents-and-saving), [Run history and artifacts](RunHistory.md)
 
 ## Towards people and AI sharing the structure of the same work
 

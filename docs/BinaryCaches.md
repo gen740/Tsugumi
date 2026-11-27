@@ -1,6 +1,6 @@
 # Binary caches
 
-A binary cache supplies already-built Nix store paths. Tsugumi verifies their signatures using the public keys you register. This is useful for sharing package builds through Attic, Cachix or another Nix binary cache. Tsugumi's own cache server is one more such cache: see [BinaryCacheServer.md](BinaryCacheServer.md).
+A binary cache supplies already-built Nix store paths. Tsugumi verifies their signatures using the public keys you register. This is useful for sharing package builds through Attic, Cachix or another Nix binary cache. Tsugumi's own cache server is one more such cache: see [BinaryCacheServer.md](design/BinaryCacheServer.md).
 
 ## Mac shared execution environment
 
@@ -16,7 +16,7 @@ These settings grant trust to a cache's signing key across the shared VM. When N
 
 ### Storage and application
 
-The application support folder contains `binary-caches.json` with mode `0600`. It is outside projects, versions and run history. The VM launcher validates the settings and creates a separate snapshot for the next boot. The guest mounts that snapshot read-only and reads it before starting `nix-daemon`; root is still the only trusted Nix user. Project mount namespaces hide the snapshot, including its netrc file. Removing a connection and restarting the environment removes its credentials from the next snapshot.
+The application support folder contains `binary-caches.json` with mode `0600`. It is outside projects, versions and run history. Hostd validates the settings and supplies a separate snapshot for the next boot. The guest mounts that snapshot read-only and reads it before starting `nix-daemon`; root is still the only trusted Nix user. Project mount namespaces hide the snapshot, including its netrc file. Removing a connection and restarting the environment removes its credentials from the next snapshot.
 
 Edits take effect when the shared VM restarts. If the saved configuration is malformed, the launcher reports the problem and the VM starts with the default caches. A snapshot write failure stops preparation so an older snapshot cannot be reused.
 

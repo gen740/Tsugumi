@@ -1,7 +1,7 @@
 # Card ABI
 
 The worker calls a Card library at `lib/main.so`. The public contract is
-[card_abi.h](../protocol/include/tsugumi/card_abi.h) and [card.fbs](../protocol/card.fbs).
+[card_abi.h](../../protocol/include/tsugumi/card_abi.h) and [card.fbs](../../protocol/card.fbs).
 SDKs turn the Card's schemas into language-level values and implement the entry point.
 Core checks the fixed envelopes, sizes and filesystem boundaries.
 The SDK interprets the payload bytes.
@@ -63,7 +63,7 @@ project can open its contents. A file is one member of an artifact directory.
 The history label `<invocation sequence>.<counter>` identifies where an artifact
 came from. APIs and evidence links use the UUID. See
 [artifact access](SandboxContract.md#artifact-access) and
-[storage and retention](RunHistory.md#keep-and-open-artifacts).
+[storage and retention](../RunHistory.md#keep-and-open-artifacts).
 
 ## Effects and their lifetimes
 

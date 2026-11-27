@@ -1,12 +1,6 @@
 # Manual execution baseline
 
-These are operator-run measurement tools, restored from the two probes removed
-by `58079032` and updated for the Card ABI, ports and public RPC. They are not pytest tests, are not named `test_*.py`, and are not
-registered with CTest or CI. No product implementation, cache, worker ownership,
-retention policy or execution setting is patched by these tools.
-
-The baseline is for the later move to a single workerd path. It measures today's
-local path and, optionally, today's remote path. It does not implement that move.
+Use these operator-run scenarios to measure local and remote Card execution through public RPC. The runner records preparation, evaluation, build, execution and recording separately.
 
 ## Build and run on macOS or Linux
 
@@ -198,7 +192,7 @@ manually when finished. An interrupted remote job may remain recoverable in the
 worker journal under its ordinary product lifecycle; inspect it before revoking
 or removing abandoned state.
 
-## Restored standalone probes
+## Standalone probes
 
 ```sh
 nix develop -c python3 tests/bench/measure_stages.py collatz --out /tmp/stages.json

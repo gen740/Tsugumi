@@ -49,7 +49,7 @@ A template folder contains one directory per Card, each with the original Card d
 
 ## Canvas tools
 
-Edit a boolean parameter in a Code Card's settings to select which optional outputs it produces. Use Merge to bring alternative outputs back to one downstream input. The timeline distinguishes skipped Cards. [Card types and execution](features.md#2-cards-and-workflows)
+Edit a boolean parameter in a Code Card's settings to select which optional outputs it produces. Use Merge to bring alternative outputs back to one downstream input. The timeline distinguishes skipped Cards. [Card types and execution](design/Workflow.md)
 
 Use **Arrange** to place Cards and reduce wire crossings. Use **Untangle Wires** when the Cards are already where you want them. Both are available from the Canvas context menu and can be undone. Untangling changes the visual order of ports while preserving the connections and the way the Workflow runs.
 
@@ -61,29 +61,27 @@ Run the Workflow once to save its inputs. For example, open a copy of **Visualiz
 
 Use the bottom **Timeline** to see which steps ran. Select a Card there to inspect its log, or open **Card settings → Run History** to choose an earlier invocation. [Run history](RunHistory.md)
 
-A thick wire carries a batch of values. Its count shows how many items are in that batch. Connect it to a Collect Card to pass one `Collected` list to the next step. [Run lists and Collect](features.md#run-lists-and-collect)
+A thick wire carries a batch of values. Its count shows how many items are in that batch. Connect it to a Collect Card to pass one `Collected` list to the next step. [Run lists and Collect](design/Workflow.md#run-lists-and-collect)
 
 ## Live displays
 
-Right-click a Code Card and choose **Open Display**. The window shows the views
-the Card declares in its `default.nix`, so it can be opened before the first run,
-and each view follows what the Card sends to it while it works. A view is live:
-nothing a Card sends is recorded, so it cannot be reopened from Run History,
-compared between runs or cited in chat. Keep a result to check later as an
-output value, a file or an artifact. [Views](CardGuide.md#views)
+Right-click a Code Card and choose **Open Display** to inspect its declared views.
+When a Card opens the same view repeatedly in a run, Tsugumi reuses its live
+window for that run-list entry. Different views get separate windows. Keep
+results for later inspection as output values or artifacts. [Views](CardGuide.md#views)
 
 ## Project terminal
 
 Open the **Terminal** panel below the Canvas. Use **New Terminal** to open another shell and run a command such as `nix --version`. A project can have up to eight terminal tabs. Switching tabs or hiding the panel keeps their commands running. Closing a terminal ends its shell. Leaving a project in the Web UI ends its terminal tabs; stopping the environment ends project shells in the VM.
 
-On Mac, the app and the installed browser command use the project's environment inside the shared Linux VM. The Linux command runs on the host and the Windows command runs under WSL2. The Agent's shell tool has its own permission setting. [Browser and CLI environments](WebUI.md#the-tsugumi-command) · [Agent shell access](security.md#the-agents-permission-boundary)
+On Mac, the app and the installed browser command use the project's environment inside the shared Linux VM. The Linux command runs on the host and the Windows command runs under WSL2. The Agent's shell tool has its own permission setting. [Browser and CLI environments](WebUI.md#the-tsugumi-command) · [Agent shell access](design/security.md#the-agents-permission-boundary)
 
 ## To learn more
 
 - Make your first Card yourself: [Your first Card](CardGuide.md)
 - What each demo does and what you can try: [The bundled demos](Demos.md)
 - How the screen is organised, and the settings: [The screen](#the-screen)
-- Installation, and how API keys are handled: [Installation and development builds](INSTALL.md), [What is sent to the model](security.md#what-is-sent-to-the-model)
+- Installation, and how API keys are handled: [Installation and development builds](INSTALL.md), [What is sent to the model](design/security.md#what-is-sent-to-the-model)
 
 ## Manage build and scratch space
 
@@ -111,11 +109,11 @@ Closing a project window leaves its execution environment resident. Stop it expl
 
 **Project settings → General → Paths excluded from the Agent** edits `agentExclude` in `tsugumi.json`: one project-relative or absolute path per line. Each entry hides a file or its entire tree from Agent tools and helpers; symbolic links are compared on resolved real paths. Lists omit excluded content and direct access returns `not_found`. People retain the complete project view. At creation the host writes its project default, initially `.git` (repository internals) and `.DS_Store` (Finder metadata). Edit the written list to change which paths are hidden. An empty list excludes no paths through this setting. Only a person can change this setting; Agent saves and edits cannot change it.
 
-Use `project_copy` to copy a bundled demo Card with `source: "demo"`, a language-qualified demo path, the source `card` ID and the destination `id`. The copy includes its definition and source files. Add any required dependencies to the destination's [Nix search path](features.md#project-nix-search-path) and update its lock.
+Use `project_copy` to copy a bundled demo Card with `source: "demo"`, a language-qualified demo path, the source `card` ID and the destination `id`. The copy includes its definition and source files. Add any required dependencies to the destination's [Nix search path](design/Nix.md#project-nix-search-path) and update its lock.
 
 Drafts have no ports; any number of wires can attach to the Card itself. To implement one by hand, choose **Implement Draft by hand** in Card settings → General, then specify every real endpoint under **Ports → Rebind wires** and Apply. Even a single candidate must be stated. The definition and all endpoint choices are saved together.
 
-To implement a plan, describe Drafts, connect their wires and choose **Generate Cards**. Review the saved source and each Card's run record. On failure or cancellation, completed saves remain; the save in progress is not applied. Saves widening permissions require [approval](security.md#the-agents-permission-boundary).
+To implement a plan, describe Drafts, connect their wires and choose **Generate Cards**. Review the saved source and each Card's run record. On failure or cancellation, completed saves remain; the save in progress is not applied. Saves widening permissions require [approval](design/security.md#the-agents-permission-boundary).
 
 To request a change, open **Comments…** on a Card (or its badge), write the request and choose **Generate from comments**. Selected Cards with open comments take precedence; otherwise the button uses all open comments at the current level. Resolved comments are folded and can be reopened. The save row and [version history](Versions.md#comments) show who changed them.
 
@@ -129,9 +127,9 @@ Turn on **Draw thoughts** below the chat input for model-written activity summar
 
 ### Skills and conversations
 
-Add Skill folders in settings or keep Skills under the project's `skills/`; call one with **$name**. Use the conversation list to open or compact a conversation. Turn on **Web search** under **API** only when you want the provider to receive search terms. [Search and privacy](security.md#web-search)
+Add Skill folders in settings or keep Skills under the project's `skills/`; call one with **$name**. Use the conversation list to open or compact a conversation. Turn on **Web search** under **API** only when you want the provider to receive search terms. [Search and privacy](design/security.md#web-search)
 
-Project conversations are saved in `.tsugumi/agent.sqlite`, outside git, alongside the project's run records. Copy the whole project folder, including `.tsugumi/`, to keep what the Agent said and did and the records linked in its replies. Stop the Agent service before copying. Home conversations stay on the host. API keys, provider settings and access grants stay on the host too: approve project and attached-folder access again on another machine. The Mac app, Web UI and plugin use the same Agent service. Open a copied project to see its saved chats in the conversation list. Deleting a conversation removes it from its project. Resetting host state keeps project conversations. [Storage and deletion](security.md#8-where-data-is-kept-and-how-to-delete-it)
+Project conversations are saved in `.tsugumi/agent.sqlite`, outside git, alongside the project's run records. Copy the whole project folder, including `.tsugumi/`, to keep what the Agent said and did and the records linked in its replies. Stop the Agent service before copying. Home conversations stay on the host. API keys, provider settings and access grants stay on the host too: approve project and attached-folder access again on another machine. The Mac app, Web UI and plugin use the same Agent service. Open a copied project to see its saved chats in the conversation list. Deleting a conversation removes it from its project. Resetting host state keeps project conversations. [Storage and deletion](design/security.md#8-where-data-is-kept-and-how-to-delete-it)
 
 One host service at a time can open a project's conversations. If another host service has them open, the chat shows its application name and process ID (PID) when it can verify them. Quit the indicated host service and click **Reload** (`再読込`) to open the conversations here. On a Mac, you can find the host process by its PID in Activity Monitor. Host services can keep running after their browser tab or last project window closes.
 

@@ -1,7 +1,5 @@
 # The core and the language SDKs
 
-**Status** — decided by the owner on 2026-11-13 through 2026-11-23.
-
 The Card ABI that connects the two is in [Card ABI](CardABI.md), and what a Card sees when it runs is in [The sandbox contract](SandboxContract.md).
 
 ## Terms
@@ -26,12 +24,12 @@ The Card ABI that connects the two is in [Card ABI](CardABI.md), and what a Card
 
 ## The builder interface
 
-The core calls a Card's `default.nix` with `{ params, inputs }`. The Card imports nixpkgs and its SDK from the [project's locked Nix search path](features.md#project-nix-search-path).
+The core calls a Card's `default.nix` with `{ params, inputs }`. The Card imports nixpkgs and its SDK from the [project's locked Nix search path](Nix.md#project-nix-search-path).
 
-- `params` is the evaluated literal attrset from [params.nix](CardGuide.md#parameters), or `{ }` when the Card has no params.nix. The SDK embeds it at build time.
-- `inputs` contains Nix exports from the guaranteed upstream Cards, by Card ID. In `A → B → C`, C gets both `inputs.A` and `inputs.B`. TODO(open): Exports through graph boundaries.
+- `params` is the evaluated literal attrset from [params.nix](../CardGuide.md#parameters), or `{ }` when the Card has no params.nix. The SDK embeds it at build time.
+- `inputs` contains Nix exports from upstream Cards. See [Nix inputs across Cards](../Reference.md#nix-inputs-across-cards) for propagation through built-in Cards and project boundaries.
 
-Import a language builder from `<tsugumi-kit/sdk/cpp>` or another SDK entry point with `{ inherit pkgs; }`. Pass evaluated `params`, the generated `_inputs.fbs` as the builder's `inputs`, and the authored `_outputs.fbs` as `outputs`. Run and API builders share code generation. See the [temperature example](CardGuide.md#the-files) and the [kit builder contract](https://github.com/gen740/tsugumi-kit/blob/main/docs/sdk-contract.md).
+Import a language builder from `<tsugumi-kit/sdk/cpp>` or another SDK entry point with `{ inherit pkgs; }`. Pass evaluated `params`, the generated `_inputs.fbs` as the builder's `inputs`, and the authored `_outputs.fbs` as `outputs`. Run and API builders share code generation. See the [temperature example](../CardGuide.md#the-files) and the [kit builder contract](https://github.com/gen740/tsugumi-kit/blob/main/docs/sdk-contract.md).
 
 ### The generated API (`share/tsugumi/api/`)
 
@@ -39,7 +37,7 @@ The Card's top-level `api` attribute is a code-generation derivation. Its output
 
 ### Evaluating a Card expression
 
-The [generic evaluation tool](features.md#evaluating-a-card-expression) runs a Nix expression in the saved Card's directory on the local system. It can return a JSON value or build one derivation and return its regular output files. **Build SDK** in the Mac and Web Card editors builds `(import ./. { inherit params inputs; }).api` with that tool and shows `share/tsugumi/api/` read-only.
+The [generic evaluation tool](Nix.md#evaluating-a-card-expression) runs a Nix expression in the saved Card's directory on the local system. It can return a JSON value or build one derivation and return its regular output files. **Build SDK** in the Mac and Web Card editors builds `(import ./. { inherit params inputs; }).api` with that tool and shows `share/tsugumi/api/` read-only.
 
 In the Tsugumi guest, the shared Nix daemon requires the sandbox, disables sandbox fallback and runs builds locally. The guest supervisor tells each project service to rely on those daemon settings. Only root is a trusted Nix client in the guest. On other hosts, explicit builds through a Nix daemon require a trusted client so the daemon accepts the sandbox and local-build settings.
 
@@ -51,6 +49,7 @@ The result of a Card's `default.nix` may define only these attributes:
 - `views`: the Card's [views](#views);
 - `exports`: values that downstream Cards may read.
 - `api`: the optional code-generation derivation.
+- `probe`: an optional derivation that scores eligible workers. See [worker selection](RemoteWorker.md#worker-selection).
 
 A language SDK's Nix builder only returns the derivation. There is no manifest. The build plan holds the run derivations, the ordered view list and, for remote or foreign execution, the core's worker.
 
@@ -64,7 +63,7 @@ There is no language SDK metadata. The interface between the core and a language
 What a language SDK might otherwise have described lives elsewhere:
 
 - Highlighting by file extension is UI presentation.
-- hostd formats JSON and Nix, chosen by file extension. Formatting Card source is the Agent's job, or the Card's `default.nix` can expose a formatter.
+- hostd formats JSON and Nix, chosen by file extension. For other languages, use the source language’s tools.
 - `InputTypes` describes the connected ports. The generated API files (for example `card.hh`) show the SDK's interface. See [Host presentation services](HostPresentation.md).
 
 ### Port schemas
@@ -82,12 +81,11 @@ Merge forwards each envelope unchanged. A Merge-fed port with one distinct schem
 - When names collide, both are listed, each labelled with its store. Neither shadows the other.
 - A template is a folder of Card definition folders. It may hold several Cards or a partial graph, plus an optional `layout.bin` fragment. Card IDs are remapped when it is copied.
 - Users can add templates from a folder, or import them from a public HTTPS Git repository with a ref and a subdirectory.
-- A "make template" skill may create templates at the project level.
-- The core manages the list: it stores, lists and copies templates, and imports them from Git.
+- Hostd manages the catalog and imports templates from Git. It saves a copied template through the project document service.
 - The Agent or the user chooses a template. The core never chooses: there is no automatic selection and there are no per-language defaults.
 - The Agent may list and copy templates. Adding or importing one needs a person's approval.
 - Scaffolding a new Card is the Agent's job.
-- The "New Card" menu offers Draft, Trigger, Merge and Collect, and "From Template…" with Project and Host sections and nothing preselected. [Reuse Cards from a template](Usage.md#reuse-cards-from-a-template)
+- The "New Card" menu offers Draft, Trigger, Merge and Collect, and "From Template…" with Project and Host sections and nothing preselected. [Reuse Cards from a template](../Usage.md#reuse-cards-from-a-template)
 - No templates ship in the core. Example templates live in tsugumi-kit.
 
 ## Views
@@ -116,12 +114,11 @@ in
 
 - Each entry is `{ name; type; blob; }`. `type` is `html` or `dawn`. `blob` is one file in the Nix store: a self-contained HTML file for `html`, a Wasm binary for `dawn`.
 - Include SDK-provided views explicitly with `sdk.views`. LineChart and Points are HTML views in the SDK. Custom HTML can include its own JS and Wasm.
-- The Card calls `view_open` by name. Within a run, the same Card path, view name, and run-list entry reuse one window and get a fresh route on each open. A run-list entry uses its label when present or its index in the run list otherwise. This includes repeated calls in loops and input batches. The first open sets the mode, flags, and size. Later opens ignore those arguments until the window closes. Opening again after a close creates a new session.
-- If the first open has no presenting UI, the session starts headless. After a UI subscribes, the next open of that session presents the original view. Sends before presentation are dropped.
+- Cards open a view by name. Repeated opens within a run reuse its window according to the [session identity and lifetime rules](CardABI.md#display-messages).
 - A Card that receives a session from a port can send to that window and register its own route to receive responses.
 - PANEL opens in the project window on macOS and docked over the canvas on the Web. WINDOW opens a separate window on macOS and a movable, resizable window inside the page on the Web; both accept an optional initial content size. FULLSCREEN opens a native fullscreen window on macOS; on the Web its in-page window fills the browser page, and its **Enter fullscreen** button enters the browser's full screen. Web views never open browser popups: every view window stays in the same page, shares its connection, and can be detached from or docked back to the panel, minimized to the strip at the bottom left and restored. A minimized view keeps receiving messages, sound and input; only drawing pauses. A packed app presents PANEL in its main window and requires macOS 26 or later.
 - Cards send to a window by session. Views send to live Card processes registered on that window by project-root Card path or `"*"`. The relay uses [ABI backpressure](CardABI.md#display-messages). A window retains its last frame after its routes go away. A user or any Card holding the session UUID can close the window. `view_close(session)` works between calls, and repeated closes succeed without another event. Closing gives every live route a close event and drops later sends.
-- View traffic is live. Use output ports and artifacts for results that people will inspect later. [Run history](RunHistory.md)
+- View traffic is live. Use output ports and artifacts for results that people will inspect later. [Run history](../RunHistory.md)
 
 ### Passing a window between Cards
 
@@ -146,7 +143,7 @@ their own chunks.
 ### dawn views
 
 A dawn view is a wasm32 module that draws to one WebGPU surface. Its contract is the
-[view header](../protocol/include/tsugumi/tsugumi_view.h) (dawn view ABI 0):
+[view header](../../protocol/include/tsugumi/tsugumi_view.h) (dawn view ABI 0):
 
 - **Imports:** only the WebGPU functions listed in `TSUGUMI_VIEW_WEBGPU_IMPORTS`
   (49 functions of `webgpu.h` from webgpu-headers at the revision the header pins),
@@ -179,7 +176,7 @@ A dawn view is a wasm32 module that draws to one WebGPU surface. Its contract is
   text and composition use UTF-8. The composition cursor is a byte offset.
 
 Both UIs translate the module's 32-bit descriptors with code generated at build time
-from webgpu-headers' `webgpu.yml` by one generator ([ui/shared/dawn](../ui/shared/dawn/README.md)):
+from webgpu-headers' `webgpu.yml` by one generator ([ui/shared/dawn](../../ui/shared/dawn/README.md)):
 
 - **Mac app:** native Dawn and wasmtime inside the app process, drawing into a
   `CAMetalLayer` view in the SwiftUI canvas. A dedicated view thread produces
@@ -216,14 +213,3 @@ These points belong to the default SDKs, not to the ABI.
   - In R, integers beyond 2^53 become decimal strings.
   - NaN and Inf become fixed tokens.
   - `[ubyte]` becomes base64.
-- Each of these SDKs may later switch to direct C-API glue without touching the ABI.
-
-## Philosophy constraints that still hold
-
-These hold through the whole change ([Philosophy](Philosophy.md#a-laboratory-notebook-and-who-decides-what-is-kept)):
-
-- Run data travel only on `tsugumid`'s channel. This covers Tsugumi's own transport. I/O that a Card starts through its grants is a permitted side effect ([Grants](SandboxContract.md#grants)).
-- Only a person deletes stored run data.
-- Definitions (code and environment) may be shared by the machine.
-
-See [Remote execution](RemoteExecution.md#data-left-on-a-worker) and [Where data is kept](security.md#8-where-data-is-kept-and-how-to-delete-it).

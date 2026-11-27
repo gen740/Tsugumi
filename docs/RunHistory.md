@@ -22,7 +22,7 @@ Project creation writes `recordIO: false`. What a Card sends to its views is nev
 
 For example, open **Visualization → report**, run it, and inspect a figure Card's input and output. A stopped or failed invocation can have a log and status even when there is no output.
 
-When a Card runs a batch, its history keeps each invocation separately, including which implementation and batch position it used and the implementation's label (`InvocationSummary.implementation_label`: a run list entry's `label`). **Compare runs** compares such a Card one member at a time, paired by that label. A failed batch retains the individual results and diagnostics in the history. The next Card receives a batch only after all its invocations succeed. [Run lists and Collect](features.md#run-lists-and-collect)
+When a Card runs a batch, its history keeps each invocation separately, including which implementation and batch position it used and the implementation's label (`InvocationSummary.implementation_label`: a run list entry's `label`). **Compare runs** compares such a Card one member at a time, paired by that label. A failed batch retains the individual results and diagnostics in the history. The next Card receives a batch only after all its invocations succeed. [Run lists and Collect](design/Workflow.md#run-lists-and-collect)
 
 The **Info** tab shows the execution service recorded for a Code Card. For a remote job, it also shows the job ID, architecture, any requested CPU and memory limits, and the last reported state. The **Packages** tab shows the recorded Nix environments shared by the run’s Cards. [Run a Card on a remote worker](RemoteExecution.md)
 
@@ -59,8 +59,7 @@ artifact counter. The Artifacts view lists runs with at least one available arti
 A Card may create an artifact without KEEP for intermediate data. Later Cards
 can open it during the same run. At run end, including recovery of an interrupted
 run, its directory and database row are removed. A recorded value keeps its
-original UUID and shows the artifact as unavailable. A rerun that tries to open
-that UUID fails because its artifact is unavailable.
+original UUID and shows the artifact as unavailable. Opening that UUID in a later run fails.
 
 ## Follow evidence from chat
 
@@ -70,7 +69,7 @@ When the Agent cites a result in a chat reply, open its evidence link to inspect
 
 Run records are written directly to `.tsugumi/runs.sqlite`. Copy the whole project, including its hidden `.tsugumi` directory, to keep its saved run records and files. There is no second history database or import/export pass. The project's git history holds versions of its document and code; outputs and logs live in run history.
 
-If the history format is incompatible, close the project and move `.tsugumi/runs.sqlite` and its SQLite sidecars together to a location you choose before reopening. Tsugumi leaves the database untouched and has no archive/recovery command.
+If project startup reports an incompatible history database, use the offered move-aside action before restarting. It preserves the incompatible database and its sidecars under a different name.
 
 In a Card's **Run History**, use **Delete Records…** to remove a finished run's
 logs, recorded values or artifacts. Deleting a category preserves the run summary.
@@ -78,18 +77,6 @@ Deleting the Artifacts category removes the run's artifact directories and their
 database rows. Values that contain their UUIDs show them as unavailable. Project Run History can delete complete runs, including
 their owned artifact directories. Build cache removal and scratch cleanup
 are separate actions. Recorded runs and their scratch remain until a person
-deletes them. At startup, before accepting runs, Tsugumi removes artifact
-directories in its managed layout with no artifact row, run scratch with no run
-row, and leftover directories already marked for deletion. Tsugumi logs the
-number of directories and bytes removed.
-See [build and scratch space](Usage.md#manage-build-and-scratch-space).
+deletes them.
 
-## History storage
-
-The primary database is `.tsugumi/runs.sqlite`. Created artifacts live under
-`.tsugumi/artifacts/<run>/<card path>/@<invocation index>/<counter>/`. The database
-maps UUIDs to their location, KEEP flag, size and sealed tree hash. Run History
-can show IDs found by schema reflection in recorded values. IDs hidden in
-opaque data, including Collect members and Any values, can still be opened by UUID.
-
-[Storage paths and deletion controls](security.md#8-where-data-is-kept-and-how-to-delete-it).
+See [build and scratch space](Usage.md#manage-build-and-scratch-space) and [history storage](design/RunStorage.md#history-storage).

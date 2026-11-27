@@ -1,4 +1,4 @@
-# tsugumi-cached: the own Nix binary cache server (docs/BinaryCacheServer.md).
+# tsugumi-cached: the own Nix binary cache server (docs/design/BinaryCacheServer.md).
 # Host-wide like hostd's execution broker, but its own process: it links the
 # Nix libraries, which the Mac's native hostd does not have.
 add_library(tsugumi_cache STATIC src/cache.cc src/http.cc)

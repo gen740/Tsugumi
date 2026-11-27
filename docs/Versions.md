@@ -14,36 +14,8 @@ Choosing data here fixes it as part of the computation's definition. Removing a 
 
 ## When a version is made
 
-- **When a run starts**: if the saved definitions or additional selected paths have changed since the last version, they are committed (a language-neutral JSON commit record; the host displays "Run: <Card>" or "実行: <Card>"). The run records the commit at its start, which you can see in the list of runs and in `RunStatus.commit`. Running again without changing them adds a run to the same commit (commits and runs are 1 : N). Unselected files do not mark the version history as changed.
+- **When a run starts**: if the saved definitions or additional selected paths have changed since the last version, the core commits them. The host displays the run message in the requested language. The run records the commit at its start, which you can see in the list of runs and in `RunStatus.commit`. Running again without changing them adds a run to the same commit (commits and runs are 1 : N). Unselected files do not mark the version history as changed.
 - **Keep as Version**: commits the same definitions and additional selected paths and gives the version a name (an annotated tag) and a memo. Starting versioning uses the same selection.
-
-## The results of runs
-
-Each time a run ends, one JSON record is appended to the note of that run's commit (`refs/notes/tsugumi`). It holds `run_id`, the terminal `state`, UTC `ended` time, `seconds`, and `record_json`: neutral facts about where the run started, whether it propagated or used saved inputs, the IDs and invocation counts of Cards that ran, failure kinds, and IDs of Cards never invoked. The schema is in `tsugumid/runtime/src/version_record.hh`. No failure messages, logs, display names or data values are stored in these notes.
-
-Automatic commit messages are JSON records with `tsugumi: "commit"`, `kind` (`create`, `run`, `checkout`) and a Card ID. User-written messages and imported demo messages remain opaque text. Neither writing nor reading a project RPC selects a language; `SessionHello` has no language field.
-
-The host service (`tsugumi-hostd`) turns these records into Japanese or English on each request, so the same saved commit and run can be read in either language later. The Mac app and Web UI use `HostVersionGraphRequest`; the Agent uses the same host presentation logic. For example, a run can read `whole: load, bands ×3, rgb` or `全体: load、bands ×3、rgb`. No model is used for this presentation.
-
-- **Where it started**: `whole` (a run from a trigger or a Workflow), `from <Card>` (that Card and downstream), `only <Card>`. When any Card that ran used saved inputs from an earlier run, `(with saved inputs)` is added.
-- **Cards that ran**: the Cards actually invoked. One invoked several times gets `×count`. The trigger of a whole run is not included.
-- **Failed**: the Cards that failed and the kind of failure (the kind of `Failure`). The failure's text and logs are not put in git; see them in the run's record.
-- **Not run**: Cards not invoked because something upstream failed or stopped.
-- The host displays at most six Cards per list and the remaining count. The stored record retains every Card.
-
-Runs of versions made from a demo's history have no summary (the history file has no such record).
-
-Versions can be chosen by result from git too:
-
-```bash
-git log --notes=tsugumi --grep=failed
-```
-
-```bash
-git tag -l
-```
-
-Outputs and logs are in [run history](RunHistory.md#history-storage), separate from git.
 
 ## The version tree
 
@@ -55,29 +27,9 @@ In the Mac app, open it with "Version History…" (⌥⌘Y) in the Workflow menu
 - Returning to the version at the tip of a branch continues that branch. Changing and running from any other version starts a new branch (`try-<version>`); the earlier line is not lost.
 - You cannot move to another version while there are unsaved changes or a run is going.
 
-## Version notes
+## Run summaries and version notes
 
-A version's note is its change record. The project core compares the full version tree with its first parent, without a model. It lists Cards added or removed and changes to their definitions, source, parameters and wiring, as neutral kinds of change. The host renders these facts in the requesting app's language. Workflow settings are listed separately. The host shows at most six entries and the remaining count; the record keeps all entries. It contains no source text or parameter values. All files under a Card's `src/` count as source inputs, including assets. Changes to `layout.bin` and files under `data/` are excluded.
-
-The project RPC returns typed commit, run and change facts. Its binary Git note format stays private to the project daemon; the host formats the public facts for both clients and tools. The clients request the note when a version is hovered or selected, and display the returned text. No model is called, so several versions can be browsed freely.
-
-The core stores the language-neutral record in `refs/notes/tsugumi-record`: added and removed Card IDs, changed Card IDs with change kinds, and whether Workflow settings changed. It contains no sentence templates.
-
-To learn what a change did in more detail, ask the Agent. It reads the version's diff with `version_diff` (in the `versions` tool family) and answers from it. The diff covers `tsugumi.json` and regular text files anywhere in a Card definition. Files in `data/`, CSV files, symbolic links, files over 1 MiB and files with a NUL byte in the first 8 KiB are excluded. `layout.bin` is also excluded. Long diffs are cut (4,000 bytes per file, 12,000 in all). Parameter values and values written in code are included. `HostVersionDiffRequest` provides the same diff to run comparisons. Read the record from git with:
-
-```bash
-git log --notes=tsugumi-record
-```
-
-### Finding a past trial
-
-A person may remember a trial but not its run: "the run where I changed the background correction and the peak disappeared". The Agent's `version_find` (the `versions` family's `find`) narrows the recorded history to candidates. It reads no new data and stores nothing; it composes the reads the Agent could make one at a time:
-
-1. `version_graph`: the versions (newest first, up to 500) whose changed Cards include the named Card or a Card inside it, and the runs recorded for each.
-2. The change record above: how the Card changed (`source`, `parameters`, `definition`, `wiring`, `added`, `removed`); `kinds` narrows to some of them.
-3. `run_record` (latest invocation) of the observed Card, by default the changed Card, in each run of a candidate and in the newest run of the nearest earlier version that recorded it.
-
-Each output port is reported as `same`, `changed` or `unknown` against that earlier run, by kind, type and recorded content hash (a File's or Directory's own content hash). A missing hash, a deleted run, a Card that did not run, or no earlier run gives `unknown` or an `unverified` note, never `same`. The result carries `card:`, `run:<id>` and `run:<id>/<card>#<invocation>` links for the Agent to cite. A different hash says only that the content differs: whether "the peak disappeared" is read from the values (`run_record`, `run_value_read`). Candidates default to 10 versions (at most 30), and one call reads at most 40 records; the rest are left for `run_record`.
+Version History shows run summaries and a list of changed Cards. For values and logs, open [Run History](RunHistory.md). Ask the Agent to find a past trial by naming the changed Card and the result you remember. [Version records](design/VersionRecords.md) describes what the summaries and trial search use.
 
 ## Comments
 
@@ -91,7 +43,7 @@ A Card's comments ([Generating Cards from comments](Usage.md#working-with-the-ag
 
 ## Nix source pins
 
-A version includes `tsugumi.json` and `tsugumi.lock` for the root project and its externals. Checking out a version restores its declarations and exact source pins. An explicit lock update reconciles one declaration or all declarations in the selected project. [Project Nix search path](features.md#project-nix-search-path)
+A version includes `tsugumi.json` and `tsugumi.lock` for the root project and its externals. Checking out a version restores its declarations and exact source pins. An explicit lock update reconciles one declaration or all declarations in the selected project. [Project Nix search path](design/Nix.md#project-nix-search-path)
 
 ## Demo histories
 

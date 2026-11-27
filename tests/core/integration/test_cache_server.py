@@ -177,7 +177,7 @@ def test_nix_copy_pushes_and_another_store_pulls_with_the_servers_signature(
     assert list((server.state / "binary-cache/nar").glob("*.nar.xz"))
 
     # Another machine: the pusher's own narinfo disk cache remembers the
-    # unsigned narinfo it uploaded (docs/BinaryCacheServer.md).
+    # unsigned narinfo it uploaded (docs/design/BinaryCacheServer.md).
     pull_env = {**env, "NIX_SSL_CERT_FILE": str(server.certificate),
                 "XDG_CACHE_HOME": str(tmp_path / "xdg-puller")}
     destination = f"local?root={tmp_path / 'pulled'}"
