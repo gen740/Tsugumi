@@ -15,6 +15,8 @@ Every Card states its kind in `_card.json` as `"type"`: `code`, `draft`, `trigge
 | subgraph (Card in Card) | Handles a child Workflow as one Card. `boundary` maps the outer ports to Cards inside |
 | Draft (`draft`) | An "unimplemented Card": write its name and content directly on the card, and connect it just by dropping a wire on it (it has no ports; the other end names the real port). A wire end on a Draft names only the Card, with no `port`. Implementing one requires explicitly rebinding its wires to real ports in the same save. The Agent can later generate its implementation |
 
+These six kinds are the set for v1.0.0. A Trigger is the explicit start of a run; a Code Card with no inputs does not start one by itself.
+
 A Card in Card uses full Card paths to distinguish state and history; visual groups in `layout.bin` do not affect execution.
 
 ## Typed ports
@@ -29,6 +31,7 @@ A Card in Card uses full Card paths to distinguish state and history; visual gro
 - A Card runs when every connected input has arrived. An unconnected input is absent from the call. An arrival is a single value or a batch of values. A Merge consumes one arrival at a time.
 - Bounded queues with backpressure, cancellation and a per-invocation deadline when `timeoutSeconds` is greater than zero. Each input port holds up to 16 unconsumed groups, and a run that can no longer progress fails with `execution_limit`. A Run can request concurrency from 1 to 64, with up to eight Code workers active at once. The iteration limit (`maxRuns`) counts how often the Card receives a set of inputs that triggers it.
 - When a connected input cannot arrive because its producer omitted the output or skipped, the downstream Card is recorded as `skipped`. Merge skips once all of its inputs are exhausted without any arrival. A Card downstream of a failed, blocked or cancelled Card is `blocked`, with a reason. A Draft, and the Cards that need only its outputs, do not run and get no state; the canvas marks them as not run because of a Draft. Independent paths keep running.
+- A feedback cycle that has no initial value waits for one from a Card, for example an input view. An empty Collect output does not seed it.
 - The core selects a worker for each Code Card invocation. See [Worker selection](RemoteWorker.md#worker-selection) and [run recovery](RunStorage.md#interrupted-runs).
 - Partial runs supply saved inputs to connected ports whose producers are outside the run. A downstream Merge consumes the values that arrive during that run. [Run history](../RunHistory.md) explains partial-run provenance and recording.
 
