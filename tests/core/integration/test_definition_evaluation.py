@@ -76,9 +76,9 @@ def test_local_probe_failure_and_ineligible_scores_are_recorded(
     record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
     assert not record.recordIo
     measurement, = record.workerProbes
-    assert measurement.score == score, (text(measurement.failure), text(measurement.stderrText))
-    assert (text(measurement.stdoutText) or "").startswith("reading complete\n"), (
-        text(measurement.failure), text(measurement.stderrText)
+    assert measurement.score == score, (text(measurement.failure), text(measurement.outputText))
+    assert (text(measurement.outputText) or "").startswith("reading complete\n"), (
+        text(measurement.failure), text(measurement.outputText)
     )
     if diagnostic is None:
         assert measurement.failure is None

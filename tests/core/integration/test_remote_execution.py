@@ -413,7 +413,7 @@ def test_remote_probe_records_scores_even_without_run_recording(
     scores = {text(row.worker): row for row in result.workerProbes}
     assert scores["local"].score == 0
     assert scores["remote-test"].score == 2.5
-    assert text(scores["remote-test"].stdoutText) == "measuring remote\n2.5\n"
+    assert text(scores["remote-test"].outputText) == "measuring remote\n2.5\n"
 
     def measurements(response):
         return {text(service.id): service.probes[0] for service in response.services}
