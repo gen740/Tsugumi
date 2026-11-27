@@ -63,7 +63,7 @@ struct StageLogView: View {
   }
 
   private var state: Tsugumi_Data_CardState? { live?.state ?? info?.record?.summary.state }
-  private var failure: String? { live?.failure ?? info?.record?.summary.failure?.diagnostic }
+  private var failure: String? { live?.failure ?? info?.record?.summary.failure?.plainText }
   private var service: String? {
     let name = live?.executionService ?? info?.record?.summary.executionService
     return name?.isEmpty == false ? name : nil

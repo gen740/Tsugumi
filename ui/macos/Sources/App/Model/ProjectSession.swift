@@ -914,7 +914,7 @@ final class ProjectSession {
     let prev = cardStates[k]
     let n = inv.invocation ?? 0
     if prev == nil || prev!.invocation <= n {
-      var next = CardRunState(state: inv.state, invocation: n, phase: inv.phase, failure: inv.failure?.diagnostic)
+      var next = CardRunState(state: inv.state, invocation: n, phase: inv.phase, failure: inv.failure?.plainText)
       next.executionState = inv.executionState
       next.executionService = inv.executionService
       next.executionActivity = inv.executionActivity

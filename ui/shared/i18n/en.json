@@ -1894,5 +1894,14 @@
   "Agent が始めた実行が終わったら続ける": "Continue When a Run the Agent Started Ends",
   "この会話で Agent が始めた実行が、回答の後に終わったとき、その結果を見て続けます。あなたが書き込むか回答を停止した後は続けません。": "When a run the Agent started in this conversation ends after its answer, the Agent looks at the outcome and continues. It does not continue after you write or stop the answer.",
   "実行中の版: rev {0}（編集は次の実行に反映）": {"text": "Running rev {0} (edits apply to the next run)", "mac": ["llu"]},
-  "ログの該当箇所を開く": "Open the log where it failed"
+  "ログの該当箇所を開く": "Open the log where it failed",
+  "worker を選べなかったため、この Card は開始していません": "No worker could be chosen, so this Card was not started",
+  "{0} の probe が時間切れ（{1} 秒）": {"text": "the probe on {0} timed out ({1} s)", "mac": ["@", "@"]},
+  "{0} の probe が時間切れ": {"text": "the probe on {0} timed out", "mac": ["@"]},
+  "{0} の probe が失敗": {"text": "the probe on {0} failed", "mac": ["@"]},
+  "{0} の probe のスコアが 0 以下": {"text": "the probe on {0} scored 0 or less", "mac": ["@"]},
+  "{0} は使えません": {"text": "{0} is unavailable", "mac": ["@"]},
+  "時間切れ（{0} 秒）": {"text": "Timed out ({0} s)", "mac": ["@"]},
+  "時間切れ": "Timed out",
+  "worker を選べず未開始": "No worker chosen; not started"
 }

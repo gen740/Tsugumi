@@ -80,4 +80,10 @@ table WorkerProbeResult {
   /// What the probe wrote to stdout and stderr, in write order.
   output_text:string;
   measured_at:long;
+  /// What kind of failure `failure` is, when the measurement says.
+  failure_kind:FailureKind;
+  /// The limit a timed-out probe reached, when it is known: the call's limit
+  /// of a local probe, the build's for a build the core ran, or the whole
+  /// measurement's.
+  time_limit_seconds:ulong = null;
 }

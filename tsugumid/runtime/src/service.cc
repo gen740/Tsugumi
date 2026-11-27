@@ -645,10 +645,15 @@ auto Service::measure_card_probe(const RemoteTarget& target, const Node& node,
          {},
          {},
          stop.get_token()});
-    if (outcome.failure)
+    if (outcome.failure) {
       result.failure = outcome.failure->diagnostic.value_or(
           failure_kind_name(outcome.failure->kind));
-    else if (truncated)
+      result.failure_kind = outcome.failure->kind;
+      // A local probe is built before it runs; a remote worker builds it in
+      // the same job, so which limit it reached is in its message only.
+      if (local && outcome.failure->kind == FailureKind::timeout)
+        result.time_limit_seconds = *probe.settings.timeout_seconds;
+    } else if (truncated)
       result.failure = "Probe output exceeded 8192 bytes";
     else if (const auto score = score_from_output(result.output_text))
       result.score = *score;
@@ -656,6 +661,14 @@ auto Service::measure_card_probe(const RemoteTarget& target, const Node& node,
       result.failure = "The last line of probe output must be a finite number";
   } catch (const ExecutionDetached&) {
     result.failure = "Probe did not finish within the measurement time limit";
+    result.failure_kind = FailureKind::timeout;
+    result.time_limit_seconds =
+        kProbeBuildTimeoutSeconds + kProbeTimeoutSeconds + (local ? 0 : 600);
+  } catch (const Failed& error) {
+    result.failure = error.what();
+    result.failure_kind = error.failure.kind;
+    if (error.failure.kind == FailureKind::timeout)
+      result.time_limit_seconds = *probe.settings.build_timeout_seconds;
   } catch (const std::exception& error) {
     result.failure = error.what();
   }
@@ -800,19 +813,44 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
     for (;;) {
       const auto choice = select_worker(candidates, measured, resident_id);
       if (!choice.matches) {
+        // Said once for the Card, the log and the Agent: no worker was chosen,
+        // so the Card never started, and why for each worker. `worker:<id>`
+        // arguments let a UI say the same in its own words.
         std::string message =
-            measured ? "No worker received a positive probe score"
-                     : "No registered worker supports the Card's settings";
+            measured ? "No worker could be chosen, so the Card was not "
+                       "started: no worker received a positive probe score"
+                     : "No worker could be chosen, so the Card was not "
+                       "started: no registered worker supports the Card's "
+                       "settings";
+        std::vector<std::pair<std::string, std::string>> args{
+            {"stage", "worker_selection"}};
         for (const auto& probe : measurements) {
           message += "\n" + probe.worker + ": ";
-          if (!probe.unavailable_reason.empty())
+          std::string reason;
+          if (!probe.unavailable_reason.empty()) {
+            reason = "unavailable";
             message += probe.unavailable_reason;
-          else if (probe.score)
-            message += std::to_string(*probe.score);
-          else
-            message += "probe failed: " + probe.failure;
+          } else if (probe.score) {
+            reason = "not_positive";
+            message += "probe score " + std::to_string(*probe.score);
+          } else if (probe.failure_kind == FailureKind::timeout) {
+            reason = "timeout";
+            message += "the probe timed out";
+            if (probe.time_limit_seconds)
+              message += " after " + std::to_string(*probe.time_limit_seconds) +
+                         " s";
+            message += " (" + probe.failure + ")";
+            if (probe.time_limit_seconds)
+              args.emplace_back("timeout:" + probe.worker,
+                                std::to_string(*probe.time_limit_seconds));
+          } else {
+            reason = "failed";
+            message += "the probe failed: " + probe.failure;
+          }
+          args.emplace_back("worker:" + probe.worker, std::move(reason));
         }
-        throw Failed(FailureKind::unsupported, std::move(message));
+        throw Failed(FailureKind::unsupported, std::move(message),
+                     std::move(args));
       }
       if (!choice.index) break;
       const auto& target = targets[*choice.index];

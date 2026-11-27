@@ -13,6 +13,7 @@ import { Icon } from './icons'
 import type { CardEditorModel } from './cardSettings'
 import { L } from '../i18n'
 import { runMark } from '../model/runMark'
+import { failureText, probeResult, workerName } from '../model/workerSelection'
 
 export function FailureSourceLink({ failure, onOpenSource }: { failure: D.FailureT; onOpenSource: (source: string, line: number) => void }) {
   const args = new Map(failure.args.map((a) => [s(a.key), s(a.value)]))
@@ -231,9 +232,7 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
                             {summary.durationMs !== null && <Value label={L('所要時間')} value={formatDuration(Number(summary.durationMs) / 1000)} />}
                             {summary.executionService && <Value label={L('実行サービス')} value={s(summary.executionService) === 'local' ? L('プロジェクトの実行環境') : s(summary.executionService)} />}
                             {record.record?.workerProbes.map((probe) => <Fragment key={s(probe.worker)}>
-                              <Value label={s(probe.worker) === 'local' ? L('プロジェクトの実行環境') : s(probe.worker)}
-                                value={probe.score === null ? s(probe.unavailableReason) || s(probe.failure) || L('計測に失敗しました')
-                                  : !probe.probe ? L('計測なし（同順位）') : L('スコア {0}', String(probe.score))} />
+                              <Value label={workerName(s(probe.worker))} value={probeResult(probe)} />
                               {probe.outputText && <Row label={L('計測の出力')}><code className="selectable wrap-pre">{s(probe.outputText)}</code></Row>}
                             </Fragment>)}
                             {executionState && <Value label={L('実行サービスの状態')} value={executionState} />}
@@ -257,7 +256,12 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
                         {record.status!.failure && (
                           <>
                             <Value label={L('失敗の種類')} value={D.FailureKind[record.status!.failure.kind] ?? String(record.status!.failure.kind)} />
-                            <Row><span className="selectable wrap-pre" style={{ color: 'var(--red)' }}>{s(record.status!.failure.diagnostic)}</span></Row>
+                            {failureText(record.status!.failure) !== sOpt(record.status!.failure.diagnostic)
+                              ? <>
+                                <Row><span className="selectable wrap-pre" style={{ color: 'var(--red)' }}>{failureText(record.status!.failure)}</span></Row>
+                                <Row><span className="caption secondary selectable wrap-pre">{s(record.status!.failure.diagnostic)}</span></Row>
+                              </>
+                              : <Row><span className="selectable wrap-pre" style={{ color: 'var(--red)' }}>{s(record.status!.failure.diagnostic)}</span></Row>}
                             <FailureSourceLink failure={record.status!.failure} onOpenSource={onOpenSource} />
                           </>
                         )}

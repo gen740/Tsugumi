@@ -71,8 +71,12 @@ def test_local_probe_failure_and_ineligible_scores_are_recorded(
     run_id = run(client, "work", propagate=False)
     status = wait_run(client, run_id)
     assert status.state == RunState.failed
-    assert "No worker received a positive probe score" in text(status.failure.diagnostic)
+    assert "the Card was not started" in text(status.failure.diagnostic)
+    assert "no worker received a positive probe score" in text(status.failure.diagnostic)
     assert "local:" in text(status.failure.diagnostic)
+    args = {text(a.key): text(a.value) for a in status.failure.args}
+    assert args == {"stage": "worker_selection",
+                    "worker:local": "not_positive" if score is not None else "failed"}
     record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
     assert not record.recordIo
     measurement, = record.workerProbes
@@ -108,8 +112,8 @@ def test_probe_evaluation_failure_leaves_no_worker_eligible(
     status = wait_run(client, run_id)
     assert status.state == RunState.failed
     message = text(status.failure.diagnostic)
-    assert "No worker received a positive probe score" in message, message
-    assert "local: probe failed: " in message and diagnostic in message, message
+    assert "the Card was not started" in message, message
+    assert diagnostic in message, message
     assert status.failure.kind == FailureKind.unsupported
     # Nix's trace quotes the definition's source: the marker is only whole when thrown.
     assert "run-was-evaluated" not in message, message
@@ -117,6 +121,31 @@ def test_probe_evaluation_failure_leaves_no_worker_eligible(
     measurement, = record.workerProbes
     assert measurement.score is None
     assert diagnostic in text(measurement.failure)
+
+
+def test_a_probe_that_times_out_is_named_as_the_reason_the_card_did_not_start(
+        core_factory, project):
+    client = core_factory().connect()
+    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
+        "default.nix": ARGUMENTS + """{
+          run = throw "the timed-out worker must never evaluate run";
+          probe = pkgs.writeShellScriptBin "probe" ''
+            echo measuring
+            ${pkgs.coreutils}/bin/sleep 60
+          ''; }""",
+    }).save(client)
+    run_id = run(client, "work", propagate=False)
+    status = wait_run(client, run_id)
+    assert status.state == RunState.failed
+    diagnostic = text(status.failure.diagnostic)
+    assert "the Card was not started" in diagnostic
+    assert "local: the probe timed out after 5 s" in diagnostic
+    args = {text(a.key): text(a.value) for a in status.failure.args}
+    assert args == {"stage": "worker_selection", "worker:local": "timeout", "timeout:local": "5"}
+    measurement, = client.call("RunRecordRequest", runId=run_id, card=path("work")).record.workerProbes
+    assert measurement.failureKind == FailureKind.timeout
+    assert measurement.timeLimitSeconds == 5
+    assert text(measurement.outputText).startswith("measuring\n")
 
 
 def test_settings_remeasure_local_probes_without_starting_a_card_run(

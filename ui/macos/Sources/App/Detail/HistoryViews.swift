@@ -284,12 +284,7 @@ struct CardExecutionView: View {
           LabeledContent("実行サービス", value: service == "local" ? String(localized: "プロジェクトの実行環境") : service)
         }
         ForEach(Array((r.record?.workerProbes ?? []).compactMap { $0 }.enumerated()), id: \.offset) { _, probe in
-          let name = probe.worker == "local" ? String(localized: "プロジェクトの実行環境") : probe.worker
-          let score = probe.score.map { $0.formatted() }
-          LabeledContent(name, value: probe.probe == nil && score != nil
-                         ? String(localized: "計測なし（同順位）")
-                         : score.map { "\(String(localized: "スコア")) \($0)" }
-                           ?? probe.unavailableReason ?? probe.failure ?? String(localized: "計測に失敗しました"))
+          LabeledContent(WorkerProbeText.workerName(probe.worker), value: WorkerProbeText.result(probe))
           if let output = probe.outputText, !output.isEmpty {
             LabeledContent("計測の出力") { Text(output).textSelection(.enabled) }
           }
@@ -324,7 +319,12 @@ struct CardExecutionView: View {
       }
       if let f = r.status.failure {
         LabeledContent("失敗の種類", value: String(describing: f.kind))
-        Text(f.diagnostic ?? "").textSelection(.enabled).foregroundStyle(.red)
+        if let plain = f.plainText, plain != f.diagnostic {
+          Text(plain).textSelection(.enabled).foregroundStyle(.red)
+          Text(f.diagnostic ?? "").font(.caption).textSelection(.enabled).foregroundStyle(.secondary)
+        } else {
+          Text(f.diagnostic ?? "").textSelection(.enabled).foregroundStyle(.red)
+        }
         let args = f.args.compactMap { $0 }
         if let source = args.first(where: { $0.key == "source" })?.value,
            let rawLine = args.first(where: { $0.key == "line" })?.value,

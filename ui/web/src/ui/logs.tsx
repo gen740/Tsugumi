@@ -7,6 +7,7 @@ import { useObserve } from '../model/observable'
 import { CardKey, cardState, errorText, executionActivityText, formatDuration, formatMillis, key, path, ProjectSession, runState, StageRecord, stageRecords, TimelineEntry } from '../model/session'
 import { BOTTOM_ICONS, BOTTOM_TITLES, Workspace, WorkflowTab } from '../model/workspace'
 import { D, R, RPCFailure, s } from '../wire/rpc'
+import { failureText } from '../model/workerSelection'
 import { Button, download, Empty, Segmented, Select, Sheet, Spinner } from './controls'
 import { RunComparisonView } from './runComparison'
 import { LogSource, LogText, useLogStream } from './logWindowView'
@@ -243,7 +244,7 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   const shownInvocation = invocation ?? live?.invocation ?? info?.selectedInvocation ?? undefined
   const stages: StageRecord[] = live ? live.stages : info?.record?.summary ? stageRecords(info.record.summary.stages) : []
   const state = live?.state ?? info?.record?.summary?.state
-  const failure = live?.failure ?? (info?.record?.summary?.failure?.diagnostic ? s(info.record.summary.failure.diagnostic) : undefined)
+  const failure = live?.failure ?? failureText(info?.record?.summary?.failure)
   const service = live?.executionService ?? (info?.record?.summary?.executionService ? s(info.record.summary.executionService) : undefined)
   const activity = executionActivityText(live)
   const ongoing = state === D.CardState.waiting || state === D.CardState.ready || state === D.CardState.preparing || state === D.CardState.running

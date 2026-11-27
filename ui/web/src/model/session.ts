@@ -29,6 +29,7 @@ import { cardNotes, layoutView, noteId, parseReadme, printReadme, splitCardNotes
 import { Observable } from './observable'
 import { FlowDirection, prefs } from './prefs'
 import { runMark } from './runMark'
+import { failureText } from './workerSelection'
 import { cardPermissions } from './permissions'
 import { L } from '../i18n'
 
@@ -850,7 +851,7 @@ export class ProjectSession extends Observable {
     if (!prev || prev.invocation <= n) {
       const sent = new Set(inv.outputsSent.map((x) => s(x)))
       this.cardStates.set(k, {
-        state: inv.state, invocation: n, phase: inv.phase, failure: sOpt(inv.failure?.diagnostic),
+        state: inv.state, invocation: n, phase: inv.phase, failure: failureText(inv.failure),
         executionState: inv.executionState,
         executionService: sOpt(inv.executionService), executionActivity: inv.executionActivity,
         executionActivityDetail: sOpt(inv.executionActivityDetail),
