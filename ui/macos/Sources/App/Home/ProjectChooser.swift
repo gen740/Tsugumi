@@ -70,8 +70,11 @@ struct ProjectChooser: View {
       }
     }
     // The first start asks for a model key (or a skip) once its state is known.
-    .sheet(isPresented: Binding(get: { GuideController.shared.needsSetup && !model.smokeMode },
-                                set: { if !$0 && GuideController.shared.needsSetup { GuideController.shared.finishSetup() } })) {
+    .sheet(isPresented: Binding(get: { (GuideController.shared.needsSetup || UIScript.shared.guideSetup) && !model.smokeMode },
+                                set: {
+                                  if !$0 { UIScript.shared.guideSetup = false }
+                                  if !$0 && GuideController.shared.needsSetup { GuideController.shared.finishSetup() }
+                                })) {
       GuideSetupView {}
     }
     // The home window shows no title: the key visual and the name are in it.

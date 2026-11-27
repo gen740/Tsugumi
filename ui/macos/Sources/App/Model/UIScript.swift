@@ -50,6 +50,7 @@ import TsugumiAgentClient
 ///   modelpick <item title>          (presses that item of the chat's model menu)
 ///   guideshow <json>                (the bird does what a guide_show with these arguments asks)
 ///   guideclose                      (its bubble is closed; it flies home)
+///   guidesetup [close]              (Home shows the first start's key sheet, which scripts otherwise never see)
 ///   stopenv                         (stops the project's environment: without it, it keeps its place in the shared VM)
 ///   (points from the window's top-left; sent to the window like a real
 ///   mouse event, so AppKit and SwiftUI handle them as they would a click)
@@ -82,6 +83,8 @@ final class UIScript {
   }()
 
   var request: Request?
+  /// Home shows the first start's sheet (`guidesetup`), quiet as scripts are.
+  var guideSetup = false
   /// Whether a canvas has the keyboard focus (reported by `state`).
   @ObservationIgnored var canvasFocused = false
   /// The main window steps act on (`window <n>`; the first one there is until then).
@@ -436,6 +439,7 @@ final class UIScript {
         // guideshow <json>: the chat's Tsugumi calls guide_show with these arguments, as a model would.
         if let s = session { GuideController.shared.chatShow(AppModel.shared.chat(for: s), arguments: w.dropFirst().joined(separator: " ")) }
       case "guideclose": GuideController.shared.dismissBubble()
+      case "guidesetup": guideSetup = w.count < 2 || w[1] != "close"
       case "setting":
         // setting <key> <json>: a host setting (the settings live in the host service, not in
         // UserDefaults, so a launch argument cannot set them), e.g. `setting agent.model.chatgpt "gpt-6.1-terra"`.
