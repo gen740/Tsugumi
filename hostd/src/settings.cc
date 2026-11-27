@@ -288,6 +288,73 @@ auto Defaults() -> j::Members {
           {"app.language", j::Quote("ja")}};
 }
 constexpr std::string_view kCardSecret = "card-secret/";
+constexpr char kCachePushTarget[] = "cache.pushTarget";
+constexpr char kCachePushUser[] = "cache-push/user";
+constexpr char kCachePushSecret[] = "cache-push/secret";
+
+auto ValidateCachePushTarget(const H::CachePushTargetT& target) -> void {
+  using Kind = H::CachePushKind;
+  const auto& endpoint = target.endpoint;
+  const auto& name = target.cache_name;
+  if (target.kind == Kind::Own) {
+    if (endpoint.empty() && name.empty()) return;
+    throw std::runtime_error("The built-in cache needs no endpoint or name");
+  }
+  if (target.kind == Kind::Attic || target.kind == Kind::Cachix) {
+    if (name.empty() || name.size() > 128 || name.front() == '-' ||
+        !std::ranges::all_of(name, [](unsigned char c) {
+          return c < 128 && (std::isalnum(c) || c == '-' || c == '_');
+        }))
+      throw std::runtime_error("Invalid cache name");
+  } else if (target.kind != Kind::NixCopy || !name.empty()) {
+    throw std::runtime_error("Invalid cache push target");
+  }
+  if (target.kind == Kind::Cachix) {
+    if (endpoint.empty()) return;
+    throw std::runtime_error("Cachix needs only the cache name");
+  }
+  if (endpoint.size() > 2048 || endpoint.find_first_of("?#") != endpoint.npos ||
+      !std::ranges::all_of(endpoint, [](unsigned char c) {
+        return c > 32 && c < 127 && c != '\\' && c != '"';
+      }))
+    throw std::runtime_error("Invalid cache endpoint");
+
+  const auto url = std::unique_ptr<CURLU, decltype(&curl_url_cleanup)>(
+      curl_url(), curl_url_cleanup);
+  if (!url || endpoint.find("://") == endpoint.npos ||
+      curl_url_set(url.get(), CURLUPART_URL, endpoint.c_str(),
+                   CURLU_NON_SUPPORT_SCHEME | CURLU_DISALLOW_USER))
+    throw std::runtime_error("Invalid cache endpoint");
+  if (endpoint.starts_with("https://")) return;
+  if (target.kind == Kind::NixCopy &&
+      (endpoint.starts_with("http://") || endpoint.starts_with("s3://") ||
+       endpoint.starts_with("file:///")))
+    return;
+  throw std::runtime_error("Unsupported cache endpoint scheme");
+}
+
+auto ValidateCachePushCredentials(const H::CachePushTargetT& target,
+                                  const std::string& user,
+                                  const std::string& secret) -> void {
+  if (user.empty() && secret.empty()) return;
+  using Kind = H::CachePushKind;
+  const auto printable = [](const auto& value) {
+    return value.size() <= 4096 &&
+           std::ranges::all_of(value, [](unsigned char c) {
+             return c > 32 && c < 127 && c != '"' && c != '\\' && c != '#';
+           });
+  };
+  if (secret.empty() || !printable(user) || !printable(secret))
+    throw std::runtime_error("Invalid cache credentials");
+  if ((target.kind == Kind::Attic || target.kind == Kind::Cachix) &&
+      user.empty())
+    return;
+  if (target.kind == Kind::NixCopy && !user.empty() &&
+      (target.endpoint.starts_with("https://") ||
+       target.endpoint.starts_with("s3://")))
+    return;
+  throw std::runtime_error("Credentials do not match the cache push target");
+}
 // One project's Card secrets: card-secret/<project id>/<name>. A project id
 // is a short identifier, so it never contains '/'.
 auto CardSecretPrefix(const std::string& project) -> std::string {
@@ -400,6 +467,62 @@ struct Settings::State {
         "settings_revision");
     query.step();
     return query.text(0);
+  }
+  auto CachePushTarget() -> H::CachePushTargetT {
+    H::CachePushTargetT target;
+    auto query = db.prepare(
+        "SELECT value FROM setting_values WHERE scope='' AND key=?");
+    query.bind(1, kCachePushTarget);
+    if (query.step()) {
+      const auto config = j::Object(query.text(0));
+      target.kind =
+          static_cast<H::CachePushKind>(j::UInt(j::Get(config, "kind")));
+      target.endpoint = j::Text(config, "endpoint");
+      target.cache_name = j::Text(config, "cacheName");
+    }
+    target.has_credentials = !secrets->Get(kCachePushSecret).empty();
+    return target;
+  }
+  auto SetCachePushTarget(const H::CachePushTargetPutRequest& input)
+      -> H::CachePushTargetT {
+    H::CachePushTargetT target;
+    target.kind = input.kind();
+    target.endpoint = Text(input.endpoint());
+    target.cache_name = Text(input.cache_name());
+    ValidateCachePushTarget(target);
+    auto user = Text(input.credential_user());
+    auto secret = Text(input.credential_secret());
+    ValidateCachePushCredentials(target, user, secret);
+    if (input.clear_credentials() && !secret.empty())
+      throw std::runtime_error("Choose whether to replace or clear credentials");
+    const auto previous = CachePushTarget();
+    const bool same = previous.kind == target.kind &&
+                      previous.endpoint == target.endpoint &&
+                      previous.cache_name == target.cache_name;
+    sql::Transaction transaction(db);
+    if (!secret.empty()) {
+      if (user.empty())
+        secrets->Erase(kCachePushUser);
+      else
+        secrets->Put(kCachePushUser, user);
+      secrets->Put(kCachePushSecret, secret);
+    } else if (!same || input.clear_credentials()) {
+      secrets->Erase(kCachePushUser);
+      secrets->Erase(kCachePushSecret);
+    }
+    db.prepare("INSERT OR REPLACE INTO setting_values VALUES('',?,?)")
+        .bind(1, kCachePushTarget)
+        .bind(2, j::Encode(j::Members{
+                     {"kind",
+                      std::to_string(static_cast<unsigned>(target.kind))},
+                     {"endpoint", j::Quote(target.endpoint)},
+                     {"cacheName", j::Quote(target.cache_name)}}))
+        .run();
+    transaction.commit();
+    target.has_credentials =
+        !secret.empty() || (same && !input.clear_credentials() &&
+                            previous.has_credentials);
+    return target;
   }
   auto Values(const std::string& surface = {}) -> j::Members {
     auto values = Defaults();
@@ -838,6 +961,8 @@ auto Settings::Handles(H::RequestPayload type) -> bool {
     case H::RequestPayload::ModelSelectionRequest:
     case H::RequestPayload::SettingsGetRequest:
     case H::RequestPayload::SettingsUpdateRequest:
+    case H::RequestPayload::CachePushTargetGetRequest:
+    case H::RequestPayload::CachePushTargetPutRequest:
     case H::RequestPayload::ProviderSetRequest:
     case H::RequestPayload::ProviderStatusRequest:
     case H::RequestPayload::SignInBeginRequest:
@@ -868,6 +993,12 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
       case H::RequestPayload::SettingsGetRequest:
         return agent::wire::HostReply(
             id, s.Get(request.value_as_SettingsGetRequest()->profile()->str()));
+      case H::RequestPayload::CachePushTargetGetRequest:
+        return agent::wire::HostReply(id, s.CachePushTarget());
+      case H::RequestPayload::CachePushTargetPutRequest:
+        return agent::wire::HostReply(
+            id,
+            s.SetCachePushTarget(*request.value_as_CachePushTargetPutRequest()));
       case H::RequestPayload::SettingsUpdateRequest: {
         const auto& p = *request.value_as_SettingsUpdateRequest();
         sql::Transaction tx(s.db);

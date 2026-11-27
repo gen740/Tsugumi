@@ -50,6 +50,55 @@ class MemorySecrets final : public host::SecretStore {
     return keys;
   }
 };
+TEST(HostSettingsStore, CachePushTargetKeepsCredentialsWriteOnly) {
+  TemporaryDirectory directory;
+  host::StateGate gate;
+  host::HostStore store{directory.path};
+  host::Credentials credentials{gate, store.db, {}};
+  host::Settings settings(directory.path, credentials);
+  constexpr std::string_view token = "fixture-cache-token";
+  auto call = [&](auto value) {
+    flatbuffers::FlatBufferBuilder b;
+    H::RequestT request;
+    request.value.Set(std::move(value));
+    b.Finish(H::Request::Pack(b, &request));
+    auto reply = settings.Handle(
+        *flatbuffers::GetRoot<H::Request>(b.GetBufferPointer()), 1);
+    EXPECT_EQ(reply.find(token), std::string::npos);
+    return std::unique_ptr<H::ReplyT>(
+        H::GetMessage(reply.data())->payload_as_Reply()->UnPack());
+  };
+  auto reply = call(H::CachePushTargetGetRequestT{});
+  ASSERT_NE(reply->value.AsCachePushTarget(), nullptr);
+  EXPECT_EQ(reply->value.AsCachePushTarget()->kind, H::CachePushKind::Own);
+  EXPECT_FALSE(reply->value.AsCachePushTarget()->has_credentials);
+
+  H::CachePushTargetPutRequestT put;
+  put.kind = H::CachePushKind::Attic;
+  put.endpoint = "https://attic.example";
+  put.cache_name = "team";
+  put.credential_secret = token;
+  reply = call(put);
+  ASSERT_NE(reply->value.AsCachePushTarget(), nullptr);
+  EXPECT_TRUE(reply->value.AsCachePushTarget()->has_credentials);
+  auto rows = store.db.prepare("SELECT value FROM secrets");
+  ASSERT_TRUE(rows.step());
+  EXPECT_EQ(rows.text(0), token);
+  EXPECT_FALSE(rows.step());
+
+  put.credential_secret.clear();
+  reply = call(put);
+  ASSERT_NE(reply->value.AsCachePushTarget(), nullptr);
+  EXPECT_TRUE(reply->value.AsCachePushTarget()->has_credentials);
+  put.endpoint = "https://user:fixture-cache-token@attic.example";
+  EXPECT_NE(call(put)->value.AsFailure(), nullptr);
+
+  put.endpoint = "https://other.example";
+  reply = call(put);
+  ASSERT_NE(reply->value.AsCachePushTarget(), nullptr);
+  EXPECT_FALSE(reply->value.AsCachePushTarget()->has_credentials);
+  EXPECT_FALSE(store.db.prepare("SELECT value FROM secrets").step());
+}
 TEST(HostSettingsStore, SignInSetupFailureClosesListener) {
   TemporaryDirectory directory;
   host::StateGate gate;

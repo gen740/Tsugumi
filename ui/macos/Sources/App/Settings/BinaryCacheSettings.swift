@@ -15,6 +15,7 @@ struct BinaryCacheSettings: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 16) {
+        CachePushSettings(support: model.environments.support)
         InfoHeader("キャッシュ接続", info: Text("Attic・Cachix などのバイナリキャッシュから、署名を検証してビルド済みのパッケージを取得します。登録した鍵は、この Mac の全プロジェクトの実行環境で信頼されます。"), Text("登録したキャッシュには、全プロジェクトのビルドで必要になったパッケージのハッシュが問い合わされます。認証情報は、同じホストから固定ハッシュで取得するビルドにも使われます。"), Text("保存した接続は、次に実行環境を起動したときに反映されます。保存しても実行中の Workflow は停止しません。実行環境は Tsugumi を終了すると停止するので、反映するには、実行が終わってから Tsugumi を終了して開き直してください。"), Text("既定の cache.nixos.org と tsugumi.cachix.org は引き続き使用します。キャッシュへのアップロードは行いません。"))
           .font(.subheadline)
         if caches.isEmpty, stored != nil {
@@ -83,6 +84,108 @@ struct BinaryCacheSettings: View {
       failed = true
       message = String(localized: "この変更はまだ保存していません: ") + error.localizedDescription
     }
+  }
+}
+
+private struct CachePushSettings: View {
+  let support: URL
+  @State private var target = CachePushTarget()
+  @State private var stored: CachePushTarget?
+  @State private var user = ""
+  @State private var secret = ""
+  @State private var problem: String?
+  @State private var saving = false
+
+  private var complete: Bool {
+    switch target.kind {
+    case .own: true
+    case .attic: !target.endpoint.isEmpty && !target.cacheName.isEmpty
+    case .cachix: !target.cacheName.isEmpty
+    case .nixCopy: !target.endpoint.isEmpty
+    }
+  }
+
+  private var usesPair: Bool {
+    target.kind == .nixCopy && (target.endpoint.hasPrefix("https://") || target.endpoint.hasPrefix("s3://"))
+  }
+
+  var body: some View {
+    GroupBox {
+      VStack(alignment: .leading, spacing: 8) {
+        Picker("種類", selection: Binding(get: { target.kind }, set: { kind in
+          if let stored, kind == stored.kind {
+            target = stored
+          } else {
+            var next = CachePushTarget()
+            next.kind = kind
+            target = next
+          }
+          user = ""
+          secret = ""
+          problem = nil
+        })) {
+          Text("Tsugumi のキャッシュ").tag(CachePushTarget.Kind.own)
+          Text("Attic").tag(CachePushTarget.Kind.attic)
+          Text("Cachix").tag(CachePushTarget.Kind.cachix)
+          Text(verbatim: "nix copy").tag(CachePushTarget.Kind.nixCopy)
+        }
+        if target.kind == .attic || target.kind == .nixCopy {
+          LabeledContent("キャッシュ URL") { TextField("https://cache.example.org", text: $target.endpoint) }
+        }
+        if target.kind == .attic || target.kind == .cachix {
+          LabeledContent("キャッシュ名") { TextField("", text: $target.cacheName) }
+        }
+        if target.kind == .attic || target.kind == .cachix || usesPair {
+          DisclosureGroup("認証情報") {
+            if usesPair {
+              LabeledContent(target.endpoint.hasPrefix("s3://")
+                ? String(localized: "アクセスキー ID") : String(localized: "ユーザー名")) {
+                SecureField("", text: $user)
+              }
+            }
+            LabeledContent("パスワード・token") { SecureField("", text: $secret) }
+            HStack {
+              Button("認証情報を設定") { Task { await save(withCredentials: true) } }
+                .disabled(!complete || secret.isEmpty || (usesPair && user.isEmpty))
+              if stored == target && target.hasCredentials {
+                Button("認証情報を削除", role: .destructive) { Task { await save(clear: true) } }
+              }
+            }
+          }
+        }
+        if let problem { Text(problem).foregroundStyle(.red).textSelection(.enabled) }
+      }
+      .disabled(stored == nil || saving)
+    } label: { Text("キャッシュへの送信先") }
+    .task {
+      do {
+        let loaded = try await CachePushTarget.load(support: support)
+        stored = loaded
+        target = loaded
+      } catch { problem = error.localizedDescription }
+    }
+    .task(id: target) {
+      guard stored != nil, target != stored, complete else { return }
+      do { try await Task.sleep(for: .milliseconds(600)) }
+      catch { return }
+      await save()
+    }
+  }
+
+  @MainActor private func save(withCredentials: Bool = false, clear: Bool = false) async {
+    guard !saving else { return }
+    saving = true
+    defer { saving = false }
+    do {
+      let saved = try await target.save(
+        support: support, user: withCredentials && usesPair ? user : "",
+        secret: withCredentials ? secret : "", clearCredentials: clear
+      )
+      stored = saved
+      target = saved
+      if withCredentials { user = ""; secret = "" }
+      problem = nil
+    } catch { problem = error.localizedDescription }
   }
 }
 

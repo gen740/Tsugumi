@@ -1,4 +1,11 @@
 {
+  "キャッシュへの送信先": "Cache push target",
+  "Tsugumi のキャッシュ": "Tsugumi cache",
+  "キャッシュ名": "Cache name",
+  "認証情報": "Credentials",
+  "認証情報を設定": "Set credentials",
+  "認証情報を削除": "Clear credentials",
+  "アクセスキー ID": "Access key ID",
   "測り直す": "Measure again",
   "すべて測り直す": "Measure all again",
   "計測が完了しました。": "Measurement complete.",

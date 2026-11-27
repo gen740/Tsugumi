@@ -17,6 +17,22 @@ table ProviderInput { endpoint:string (trace_secret); api_key:string (trace_secr
 table BinaryCachesGetRequest {}
 table BinaryCachesPutRequest { caches_json:string (required, trace_secret); }
 table BinaryCaches { caches_json:string (required, trace_secret); }
+enum CachePushKind:ubyte { Own, Attic, Cachix, NixCopy }
+table CachePushTargetGetRequest {}
+table CachePushTargetPutRequest {
+  kind:CachePushKind;
+  endpoint:string (trace_secret);
+  cache_name:string (trace_secret);
+  credential_user:string (trace_secret);
+  credential_secret:string (trace_secret);
+  clear_credentials:bool;
+}
+table CachePushTarget {
+  kind:CachePushKind;
+  endpoint:string;
+  cache_name:string;
+  has_credentials:bool;
+}
 
 // Project grants are human-owned and shared by every conversation/helper.
 // The host lists editable permissions, including attached folders, and validates edits.
@@ -643,6 +659,7 @@ union RequestPayload {
   TemplateListRequest, HostTemplateAddRequest,
   ViewWindowsRequest, ViewActionRequest, ViewPresentationRequest, ViewActionCompleteRequest,
   ExecutionProbeRemeasureRequest, WorkerDashboardRequest,
+  CachePushTargetGetRequest, CachePushTargetPutRequest,
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -660,6 +677,7 @@ union ReplyPayload {
   RunCategoryDeleteResult:Tsugumi.RPC.RunCategoryDeleteResult,
   TemplateList,
   ViewWindows, ViewActionResult, WorkerDashboardReply,
+  CachePushTarget,
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

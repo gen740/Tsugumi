@@ -26,8 +26,9 @@ import { adoptLanguage, L, language, type Language } from '../i18n'
 import { ChatGPTSettings, choiceSuffix } from './chatgpt'
 import { TrustedFoldersSettings } from './trustedFolders'
 import { ExecutionServicesSettings } from './executionServices'
+import { BinaryCacheSettings } from './binaryCaches'
 
-type Category = 'general' | 'appearance' | 'editor' | 'shortcuts' | 'skills' | 'api' | 'connections' | 'executionServices'
+type Category = 'general' | 'appearance' | 'editor' | 'shortcuts' | 'skills' | 'api' | 'connections' | 'binaryCaches' | 'executionServices'
 const CATS: { id: Category; title: string; icon: string; storage: string }[] = [
   { id: 'general', title: L('一般'), icon: 'gearshape', storage: L('このブラウザ（localStorage）') },
   { id: 'appearance', title: L('外観'), icon: 'paintpalette', storage: L('このブラウザの外観設定と、このホストの hostd の Agent 表示設定') },
@@ -36,6 +37,7 @@ const CATS: { id: Category; title: string; icon: string; storage: string }[] = [
   { id: 'skills', title: 'Skills', icon: 'wand.and.stars', storage: L('このホスト（Tsugumi web サーバーの設定）') },
   { id: 'api', title: 'API', icon: 'key', storage: L('このホスト（設定と API キーは hostd）') },
   { id: 'connections', title: L('外部接続'), icon: 'network', storage: L('表示のみ（開いているプロジェクトの接続先）') },
+  { id: 'binaryCaches', title: L('バイナリキャッシュ'), icon: 'shippingbox', storage: L('このホスト（Tsugumi web サーバーの設定）') },
   { id: 'executionServices', title: L('実行サービス'), icon: 'server.rack', storage: L('このホスト（Tsugumi web サーバーの設定）') },
 ]
 
@@ -124,6 +126,7 @@ export function ApplicationSettings() {
               {category.id === 'skills' && <SkillSettings />}
               {category.id === 'api' && <APISettings />}
               {category.id === 'connections' && <ConnectionSettings />}
+              {category.id === 'binaryCaches' && <BinaryCacheSettings />}
               {category.id === 'executionServices' && <ExecutionServicesSettings changed={() => {
                 void Promise.allSettled(projects.map((p) => p.refreshExecutionServices()))
               }} />}
