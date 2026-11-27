@@ -232,6 +232,10 @@ struct CardNodeData: Equatable {
   var inputs: [PortData]
   var outputs: [PortData]
   var result: String?
+  /// What the invocation is doing outside its stages (a file transfer, the
+  /// execution service's queue): told in the status row, which every Card that
+  /// runs has, so the Card keeps its size and its wires stay where they are.
+  var activity: String?
   var state: Tsugumi_Data_CardState?
   var executionList = false
   var stage: StageProgress?
@@ -263,7 +267,9 @@ struct CardNodeData: Equatable {
     if executionList { return state.map { $0.label + (runMark.map { " · " + $0 } ?? "") } ?? runMark }
     guard let state, invocation > 0 else { return runMark }
     var s = String(localized: "実行 #\(invocation)")
-    if let cur = stage?.current, state == .running || state == .preparing {
+    if let activity {
+      s += " · " + activity
+    } else if let cur = stage?.current, state == .running || state == .preparing {
       s += " · " + cur.stage.activeLabel
     } else {
       s += " · " + state.label

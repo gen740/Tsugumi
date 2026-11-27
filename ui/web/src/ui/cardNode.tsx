@@ -23,7 +23,9 @@ export function runText(d: CardNodeData): string | undefined {
   if (d.state === undefined || d.invocation <= 0n) return d.runMark
   let s = L('実行 #{0}', d.invocation)
   const cur = currentStage(d.stage)
-  if (cur && (d.state === D.CardState.running || d.state === D.CardState.preparing)) {
+  if (d.activity) {
+    s += ' · ' + d.activity
+  } else if (cur && (d.state === D.CardState.running || d.state === D.CardState.preparing)) {
     s += ' · ' + STAGE_INFO[cur.stage].active
   } else {
     s += ' · ' + cardState(d.state).label

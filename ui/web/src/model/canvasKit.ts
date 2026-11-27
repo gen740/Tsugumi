@@ -113,6 +113,10 @@ export interface CardNodeData {
   inputs: PortData[]
   outputs: PortData[]
   result?: string
+  /** What the invocation is doing outside its stages (a file transfer, the
+   *  execution service's queue): told in the status row, which every Card that
+   *  runs has, so the Card keeps its size and its wires stay where they are. */
+  activity?: string
   state?: D.CardState
   executionList?: boolean
   stage?: StageProgress
