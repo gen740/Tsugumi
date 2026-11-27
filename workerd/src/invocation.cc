@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -15,6 +16,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <thread>
 #include <utility>
 
@@ -55,33 +57,41 @@ using Secrets = std::shared_ptr<WorkerSecrets>;
 auto receive_secrets(const stdfs::path& directory,
                      const workerd::R::JobSpecT& job) -> Secrets {
   const auto marker = directory / workerd::kSecretsWanted;
+  struct ClosePipe {
+    const stdfs::path& marker;
+    ~ClosePipe() {
+      ::close(workerd::kSecretChannelFd);
+      std::error_code ec;
+      stdfs::remove(marker, ec);
+    }
+  } close_pipe{marker};
   fs::write_atomic(marker, "", 0600);
-  std::string frame;
-  frame.reserve(workerd::kMaxFrame + 4);
   bool closed = false;
   const auto deadline = std::chrono::steady_clock::now() + kSecretWait;
-  while (!closed && frame.size() <= workerd::kMaxFrame + 4) {
-    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
-        deadline - std::chrono::steady_clock::now());
-    if (left.count() <= 0) break;
-    pollfd ready{workerd::kSecretChannelFd, POLLIN, 0};
-    const int polled = ::poll(&ready, 1, static_cast<int>(left.count()));
-    if (polled < 0 && errno == EINTR) continue;
-    if (polled <= 0) break;
-    char buffer[4096];
-    const auto n = ::read(workerd::kSecretChannelFd, buffer, sizeof buffer);
-    if (n < 0 && errno == EINTR) continue;
-    if (n <= 0)
-      closed = true;
-    else {
-      frame.append(buffer, static_cast<size_t>(n));
-      workerd::wipe_secret({buffer, static_cast<size_t>(n)});
+  const auto read_exact = [&](std::span<char> buffer) {
+    size_t offset = 0;
+    while (offset < buffer.size()) {
+      const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+          deadline - std::chrono::steady_clock::now());
+      if (left.count() <= 0) break;
+      pollfd ready{workerd::kSecretChannelFd, POLLIN, 0};
+      const int polled = ::poll(&ready, 1, static_cast<int>(left.count()));
+      if (polled < 0 && errno == EINTR) continue;
+      if (polled <= 0) break;
+      const auto n = ::read(workerd::kSecretChannelFd, buffer.data() + offset,
+                            buffer.size() - offset);
+      if (n < 0 && errno == EINTR) continue;
+      if (n <= 0) {
+        closed = n == 0;
+        break;
+      }
+      offset += static_cast<size_t>(n);
     }
-  }
-  ::close(workerd::kSecretChannelFd);
-  std::error_code ec;
-  stdfs::remove(marker, ec);
-  if (frame.empty()) {
+    return offset;
+  };
+  std::array<char, rpc::frame::kPrefixBytes> prefix{};
+  const auto prefix_bytes = read_exact(prefix);
+  if (prefix_bytes == 0) {
     if (closed)
       throw Failed(FailureKind::worker_failed,
                    "the remote worker restarted before the Card started; "
@@ -92,12 +102,20 @@ auto receive_secrets(const stdfs::path& directory,
                  "Card again");
   }
   auto secrets = std::make_shared<WorkerSecrets>();
+  std::string frame;
   try {
-    if (!closed || frame.size() < 4 ||
-        workerd::frame_length(std::string_view(frame).substr(0, 4)) !=
-            frame.size() - 4)
-      throw std::runtime_error("truncated");
-    auto message = workerd::decode(std::string_view(frame).substr(4));
+    if (prefix_bytes != prefix.size())
+      throw std::runtime_error("truncated prefix");
+    frame.resize(workerd::frame_length({prefix.data(), prefix.size()}));
+    if (read_exact(frame) != frame.size())
+      throw std::runtime_error("truncated frame");
+    // The listener sends one frame, then closes the pipe.
+    char trailing = 0;
+    const auto extra = read_exact({&trailing, 1});
+    workerd::wipe_secret({&trailing, 1});
+    if (extra != 0 || !closed)
+      throw std::runtime_error("expected end of secret pipe");
+    auto message = workerd::decode(frame);
     auto* reply = message->payload.AsReply();
     auto* body = reply ? reply->body.AsCardSecrets() : nullptr;
     if (!body) throw std::runtime_error("unexpected message");
