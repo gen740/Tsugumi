@@ -104,7 +104,9 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
           const registered = next.services.find((entry) => s(entry.id) === edit.id)
           if (!registered) throw Error(L('実行サービスを登録できませんでした。'))
           adopt(next)
-          choose(registration(registered), s(registered.id))
+          // A new registration closes the form, so its values cannot be registered twice.
+          if (original) choose(registration(registered), s(registered.id))
+          else { setEdit(undefined); setOriginal(undefined) }
           setMessage(edit.id === 'local' ? L('保存しました。') : original ? L('接続を確認しました。') : L('公開鍵を登録しました。authorized_keys にホストの公開鍵を追加してから接続を確認してください。'))
           changed()
         })}>{edit.id === 'local' ? L('保存') : original ? L('接続を確認して更新') : L('登録')}</Button>

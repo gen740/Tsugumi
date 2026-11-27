@@ -10,6 +10,17 @@ import Testing
   #expect(ExecutionServiceConnection.label(name: "Lab GPU", id: "gpu") == "Lab GPU (gpu)")
 }
 
+/// After 登録 the form closes, so the same worker is not registered twice; a saved edit stays open.
+@MainActor @Test func aNewRegistrationClosesTheForm() {
+  let capabilities = ExecutionServiceCapabilities(serverId: "", nativeSystem: "aarch64-linux", systems: [], isolation: "",
+                                                  resourceLimits: false, maxConcurrentJobs: 1, workerContract: 0)
+  let gpu = ExecutionServiceConnection(id: "gpu", name: "GPU", endpoint: "tls://gpu:8765", workerPublicKey: "ed25519:x",
+                                       probes: [], capabilities: capabilities)
+  #expect(ExecutionServicesSettings.editedAfterSave(registering: true, id: "gpu", in: [gpu]) == nil)
+  #expect(ExecutionServicesSettings.editedAfterSave(registering: false, id: "gpu", in: [gpu]) == gpu)
+  #expect(ExecutionServicesSettings.editedAfterSave(registering: false, id: "gone", in: [gpu]) == nil)
+}
+
 @MainActor @Test func builtInSkillsHaveTheirOwnDescriptions() {
   for path in ["builtin:helpers", "builtin:review", "builtin:rerun-compare"] {
     let description = ChatController.builtinSkillDescription(path)

@@ -69,10 +69,16 @@ struct ExecutionServicesSettings: View {
                 defer { busy = false }
                 do {
                   var input = entry
-                  let verifying = original != nil && entry.id != "local"
+                  let registering = original == nil
+                  let verifying = !registering && entry.id != "local"
                   input.verify = verifying
                   adopt(try await ExecutionServices.put(input))
-                  choose(entries.first { $0.id == entry.id })
+                  if let next = Self.editedAfterSave(registering: registering, id: entry.id, in: entries) {
+                    choose(next)
+                  } else {
+                    draft = nil
+                    original = nil
+                  }
                   refreshServices()
                   report(entry.id == "local" ? String(localized: "保存しました。") : verifying ? String(localized: "接続を確認しました。") : String(localized: "公開鍵を登録しました。authorized_keys にホストの公開鍵を追加してから接続を確認してください。"))
                 } catch { report(error.localizedDescription, failed: true) }
@@ -122,6 +128,13 @@ struct ExecutionServicesSettings: View {
 
   private var saved: ExecutionServiceConnection? {
     entries.first { $0.id == original && $0.endpoint == draft?.endpoint.trimmingCharacters(in: .whitespacesAndNewlines) }
+  }
+
+  /// The service the form edits once a save succeeds. A new registration closes the
+  /// form, so its values cannot be registered a second time; a saved edit stays open.
+  static func editedAfterSave(registering: Bool, id: String,
+                              in entries: [ExecutionServiceConnection]) -> ExecutionServiceConnection? {
+    registering ? nil : entries.first { $0.id == id }
   }
 
   private func choose(_ entry: ExecutionServiceConnection?) {
