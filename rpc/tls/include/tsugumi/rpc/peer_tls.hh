@@ -16,6 +16,17 @@ auto ConfigureSocket(int fd, int timeout_seconds = 0) -> void;
 
 // Canonical Ed25519 SubjectPublicKeyInfo, base64 encoded after "ed25519:".
 auto ValidateKey(std::string_view value) -> void;
+inline constexpr size_t kAuthorizedKeysLimit = 1 << 20;
+struct AuthorizedKeyLine {
+  std::string key;
+  size_t begin, end;  // Offsets of the entire line in the original file.
+};
+struct AuthorizedKeyFile {
+  std::string text;
+  std::vector<AuthorizedKeyLine> lines;
+};
+// Throws on unreadable, unsafe or malformed files.
+auto ReadAuthorizedKeys(const std::filesystem::path& file) -> AuthorizedKeyFile;
 // Whether an authorized_keys file lists `key`: one public key per line, blank
 // lines and `#` comments allowed. The file must be an owned regular file not
 // writable by others; a malformed file authorizes nothing. Callers re-read it

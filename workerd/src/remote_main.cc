@@ -41,7 +41,9 @@
 #include <utility>
 #include <vector>
 
+#include "dashboard.hh"
 #include "display_channel.hh"
+#include "jobs_command.hh"
 #include "journal.hh"
 #include "tsugumi/rpc/frame.hh"
 #include "tsugumi/rpc/peer_tls.hh"
@@ -58,7 +60,6 @@ extern char** environ;
 namespace tsugumi::workerd {
 auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
             const stdfs::path& store, const stdfs::path& group) -> void;
-auto jobs_main(stdfs::path root, std::span<char*> args) -> int;
 namespace {
 using namespace std::chrono_literals;
 constexpr size_t kConnections = 64;
@@ -482,6 +483,7 @@ class Daemon {
   explicit Daemon(Config config, int shutdown_fd)
       : config_(std::move(config)),
         server_(identity(config_.root, "server_id")),
+        dashboard_(config_.root, config_.authorized_keys, server_),
         system_(system()),
         shutdown_fd_(shutdown_fd),
         journal_events_(::inotify_init1(IN_NONBLOCK | IN_CLOEXEC)) {
@@ -660,11 +662,16 @@ class Daemon {
         throw Error(R::ErrorCode::Invalid, "invalid request body");
     }
   }
-  // Any secure carrier can call this framed stream handler. Authentication is
-  // deliberately separate from framing and dispatch.
+  // HTTP request prefixes are larger than any legal binary frame length.
+  // Dispatch only after the mutual TLS handshake has authenticated the peer.
   auto serve_stream(peer_tls::Stream& stream) -> void {
+    auto prefix = stream.Read(4);
+    if (prefix == "GET " || prefix == "POST") {
+      dashboard_.serve(stream, std::move(prefix));
+      return;
+    }
     try {
-      auto n = frame_length(stream.Read(4));
+      auto n = frame_length(prefix);
       auto bytes = stream.Read(n);
       auto m = decode(bytes);
       clear_secret(bytes);
@@ -992,7 +999,9 @@ class Daemon {
     return rc == 0 ? pid : -1;
   }
   Config config_;
-  std::string server_, system_;
+  std::string server_;
+  Dashboard dashboard_;
+  std::string system_;
   int shutdown_fd_;
   Fd journal_events_;
   std::map<Job, Fd> running_;
@@ -1238,7 +1247,7 @@ auto run(Config config) -> int {
         clients.push_back({std::thread([&, fd, done] {
                              Fd connection(fd);
                              try {
-                               peer_tls::ConfigureSocket(fd);
+                               peer_tls::ConfigureSocket(fd, 30);
                                peer_tls::Stream stream(tls, fd, true);
                                daemon.serve_stream(stream);
                              } catch (const std::exception&) {

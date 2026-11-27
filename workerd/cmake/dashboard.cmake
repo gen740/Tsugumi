@@ -1,0 +1,30 @@
+# Embed only the dashboard's translations and static assets in the daemon.
+set(dashboard_dir "${CMAKE_CURRENT_SOURCE_DIR}/dashboard")
+set(ui_dictionary "${PROJECT_SOURCE_DIR}/ui/shared/i18n/en.json")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${dashboard_dir}/index.html"
+  "${dashboard_dir}/dashboard.css"
+  "${dashboard_dir}/dashboard.js"
+  "${ui_dictionary}")
+file(READ "${dashboard_dir}/index.html" dashboard_html)
+file(READ "${dashboard_dir}/dashboard.css" dashboard_css)
+file(READ "${dashboard_dir}/dashboard.js" dashboard_js)
+file(READ "${ui_dictionary}" translations)
+string(REGEX MATCHALL "(data-l=|L\\()[\"][^\"]+[\"]" dashboard_labels "${dashboard_html}\n${dashboard_js}")
+set(dashboard_dictionary "{}")
+foreach(label IN LISTS dashboard_labels)
+  string(REGEX REPLACE "^[^\"]*\"(.*)\"$" "\\1" label "${label}")
+  string(JSON translated_type TYPE "${translations}" "${label}")
+  if(translated_type STREQUAL "OBJECT")
+    string(JSON translated GET "${translations}" "${label}" text)
+  else()
+    string(JSON translated GET "${translations}" "${label}")
+  endif()
+  string(REPLACE "\\" "\\\\" translated "${translated}")
+  string(REPLACE "\"" "\\\"" translated "${translated}")
+  string(JSON dashboard_dictionary SET "${dashboard_dictionary}" "${label}" "\"${translated}\"")
+endforeach()
+string(REPLACE "<" "\\u003c" dashboard_dictionary "${dashboard_dictionary}")
+string(CONFIGURE "${dashboard_html}" dashboard_page @ONLY)
+configure_file("${dashboard_dir}/page.hh.in" "${CMAKE_CURRENT_BINARY_DIR}/dashboard_page.hh" @ONLY)
+target_include_directories(tsugumi-workerd PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")

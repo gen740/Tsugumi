@@ -32,6 +32,7 @@
 #include <utility>
 
 #include "agent/wire.hh"
+#include "tsugumi/rpc/dashboard_http.hh"
 #include "tsugumi/rpc/peer_tls.hh"
 #include "tsugumi/rpc/unix_binding.hh"
 #include "tsugumi/rpc/unix_socket.hh"
@@ -588,8 +589,9 @@ struct ExecutionBroker::State {
     return List();
   }
 
-  auto Remote(const Entry& entry, R::RequestT request, Deadline deadline,
-              int client = -1) -> R::MessageT {
+  template <class Exchange>
+  auto WithWorker(const Entry& entry, Deadline deadline, int client,
+                  Exchange exchange) {
     (void)Remaining(deadline);
     if (client >= 0) {
       pollfd downstream{client, POLLIN, 0};
@@ -621,33 +623,114 @@ struct ExecutionBroker::State {
       return key == entry.worker_public_key;
     });
     peer_tls::Stream tls(context, peer.fd, false, client, deadline);
-    const auto* poll = request.body.AsStatusRequest();
-    const bool view_message =
-        request.body.AsViewSendRequest() ||
-        (poll && (poll->view_reply || poll->display_after ||
-                  !poll->display_credits.empty()));
-    R::MessageT message;
-    message.payload.Set(std::move(request));
-    auto bytes = W::encode(std::move(message));
-    tls.Write(W::length_prefix(static_cast<uint32_t>(bytes.size())) + bytes);
-    trace::Link link;
-    if (!view_message)
-      trace::Observe(link, "hostd execution broker", "remote worker service",
-                     true, bytes, &trace::kFlatBufferCodec);
-    const auto length = W::frame_length(tls.Read(4));
-    const auto frame = tls.Read(length);
-    auto reply = W::decode(frame);
-    // Status can carry transient view traffic even in reply to a plain poll.
-    const auto* answer = reply->payload.AsReply();
-    const auto* status = answer ? answer->body.AsJobStatus() : nullptr;
-    if (!view_message &&
-        (!status ||
-         (!status->view_request && !status->display_pending &&
-          status->displays.empty() && status->view_input_credits.empty())))
-      trace::Observe(link, "remote worker service", "hostd execution broker",
-                     false, frame, &trace::kFlatBufferCodec);
-    Require(reply->payload.AsReply(), "Expected remote worker reply");
-    return std::move(*reply);
+    return exchange(tls);
+  }
+
+  auto Remote(const Entry& entry, R::RequestT request, Deadline deadline,
+              int client = -1) -> R::MessageT {
+    return WithWorker(entry, deadline, client, [&](peer_tls::Stream& tls) {
+      const auto* poll = request.body.AsStatusRequest();
+      const bool view_message =
+          request.body.AsViewSendRequest() ||
+          (poll && (poll->view_reply || poll->display_after ||
+                    !poll->display_credits.empty()));
+      R::MessageT message;
+      message.payload.Set(std::move(request));
+      auto bytes = W::encode(std::move(message));
+      tls.Write(W::length_prefix(static_cast<uint32_t>(bytes.size())) + bytes);
+      trace::Link link;
+      if (!view_message)
+        trace::Observe(link, "hostd execution broker", "remote worker service",
+                       true, bytes, &trace::kFlatBufferCodec);
+      const auto length = W::frame_length(tls.Read(4));
+      const auto frame = tls.Read(length);
+      auto reply = W::decode(frame);
+      // Status can carry transient view traffic even in reply to a plain poll.
+      const auto* answer = reply->payload.AsReply();
+      const auto* status = answer ? answer->body.AsJobStatus() : nullptr;
+      if (!view_message &&
+          (!status ||
+           (!status->view_request && !status->display_pending &&
+            status->displays.empty() && status->view_input_credits.empty())))
+        trace::Observe(link, "remote worker service", "hostd execution broker",
+                       false, frame, &trace::kFlatBufferCodec);
+      Require(reply->payload.AsReply(), "Expected remote worker reply");
+      return std::move(*reply);
+    });
+  }
+
+  auto Dashboard(const H::WorkerDashboardRequest& request)
+      -> H::WorkerDashboardReplyT {
+    using Op = H::WorkerDashboardOperation;
+    const auto id = request.id()->str();
+    Require(ValidId(id), "Invalid remote execution service ID");
+    const auto operation = request.operation();
+    auto entry = [&] {
+      std::lock_guard lock(mutex);
+      const auto saved = FindEntry(id);
+      Require(saved && crypto::is_sha256_hex(saved->capabilities.server_id),
+              "Verify the execution service before opening its dashboard");
+      Require(operation == Op::Page ||
+                  (request.generation() &&
+                   request.generation()->string_view() == saved->generation),
+              "The execution service changed; reopen its dashboard");
+      return *saved;
+    }();
+
+    std::string_view path;
+    bool changes = false;
+    switch (operation) {
+      case Op::Page: {
+        const auto language =
+            request.language() ? request.language()->string_view() : "en";
+        Require(language == "ja" || language == "en",
+                "Invalid dashboard language");
+        path = language == "ja" ? "/dashboard?lang=ja" : "/dashboard?lang=en";
+        break;
+      }
+      case Op::Jobs:
+        path = "/dashboard/jobs";
+        break;
+      case Op::Keys:
+        path = "/dashboard/keys";
+        break;
+      case Op::Challenge:
+        path = "/dashboard/challenge";
+        break;
+      case Op::RemoveJobs:
+        path = "/dashboard/jobs/remove";
+        changes = true;
+        break;
+      case Op::AddKey:
+        path = "/dashboard/keys/add";
+        changes = true;
+        break;
+      case Op::RemoveKey:
+        path = "/dashboard/keys/remove";
+        changes = true;
+        break;
+      default:
+        throw std::runtime_error("Unknown worker dashboard operation");
+    }
+    const auto body = request.body() ? request.body()->string_view() : "";
+    Require(changes == !body.empty(), "Invalid worker dashboard request body");
+    auto response = WithWorker(
+        entry, Clock::now() + kExchangeTimeout, -1, [&](peer_tls::Stream& tls) {
+          dashboard_http::WriteRequest(tls, path, entry.capabilities.server_id,
+                                       body);
+          return dashboard_http::ReadReply(tls);
+        });
+    if (operation == Op::Page && response.status != 200)
+      throw std::runtime_error("Worker refused the dashboard (HTTP " +
+                               std::to_string(response.status) + ")");
+    Require(response.type == (operation == Op::Page ? dashboard_http::kHtml
+                                                    : dashboard_http::kJson) &&
+                text::valid_utf8(response.body),
+            "Unexpected worker dashboard response");
+    H::WorkerDashboardReplyT reply;
+    reply.generation = std::move(entry.generation);
+    reply.body = std::move(response.body);
+    return reply;
   }
   auto Forward(int fd, bool cancel_only, R::MessageT& message,
                Deadline deadline) -> void {
@@ -970,7 +1053,8 @@ auto ExecutionBroker::Revoke(const std::string& project) -> void {
       .run();
 }
 auto ExecutionBroker::Handles(H::RequestPayload type) -> bool {
-  return type == H::RequestPayload::ExecutionServicesRequest ||
+  return type == H::RequestPayload::WorkerDashboardRequest ||
+         type == H::RequestPayload::ExecutionServicesRequest ||
          type == H::RequestPayload::ExecutionServicePutRequest ||
          type == H::RequestPayload::ExecutionProbeRemeasureRequest ||
          type == H::RequestPayload::ExecutionServiceRemoveRequest ||
@@ -980,6 +1064,8 @@ auto ExecutionBroker::Handles(H::RequestPayload type) -> bool {
 auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
     -> std::string {
   try {
+    if (const auto* p = request.value_as_WorkerDashboardRequest())
+      return agent::wire::HostReply(id, state_->Dashboard(*p));
     if (const auto* p = request.value_as_ExecutionProjectAuthorizeRequest())
       return agent::wire::HostReply(
           id, Authorize(p->project_id()->str(), p->path()->str(),

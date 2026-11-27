@@ -1,0 +1,8 @@
+#pragma once
+
+#include <string_view>
+
+namespace tsugumi::workerd {
+inline constexpr std::string_view kDashboardPage = R"dashboard(
+@dashboard_page@)dashboard";
+}

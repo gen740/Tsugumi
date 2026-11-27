@@ -11,6 +11,7 @@ lib.fileset.toSource {
       ../CMakeLists.txt
       ../cmake
       ../workerd
+      ../ui/shared/i18n/en.json
       ../util
       ../rpc
       ../tsugumid

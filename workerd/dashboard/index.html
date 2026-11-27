@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>Worker dashboard</title>
+<style>
+@dashboard_css@
+</style>
+</head>
+<body>
+<main>
+  <h1 data-l="ワーカー管理"></h1>
+  <section aria-labelledby="jobs-title">
+    <div class="section-header">
+      <h2 id="jobs-title" data-l="ジョブ"></h2>
+      <button type="button" id="review-jobs" disabled data-l="選択したジョブを削除"></button>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col"><span class="visually-hidden" data-l="選択"></span></th>
+            <th scope="col" data-l="プロジェクトスコープ"></th>
+            <th scope="col" data-l="ジョブ ID"></th>
+            <th scope="col" data-l="状態"></th>
+            <th scope="col" data-l="ディスク使用量"></th>
+            <th scope="col" data-l="最終書き込み（UTC）"></th>
+            <th scope="col" data-l="保持されている理由"></th>
+          </tr>
+        </thead>
+        <tbody id="jobs"></tbody>
+      </table>
+    </div>
+    <p id="empty-jobs" hidden data-l="保持されているジョブはありません。"></p>
+  </section>
+  <section aria-labelledby="keys-title">
+    <div class="section-header"><h2 id="keys-title" data-l="許可されたホスト鍵"></h2></div>
+    <p data-l="最初の公開鍵は、ワーカーの authorized_keys に手動で追加してください。"></p>
+    <ul id="keys"></ul>
+    <form id="add-key">
+      <label for="public-key" data-l="ホストの公開鍵"></label>
+      <div class="key-entry">
+        <input id="public-key" type="text" placeholder="ed25519:…" maxlength="128" required autocomplete="off" spellcheck="false">
+        <button id="submit-key" disabled data-l="鍵を追加"></button>
+      </div>
+    </form>
+  </section>
+</main>
+<aside id="review" hidden aria-labelledby="review-text">
+  <p id="review-text"></p>
+  <label id="active-label" hidden><input id="active" type="checkbox"> <span data-l="スーパーバイザーが動いていない待機中・実行中・キャンセル中のジョブも削除する"></span></label>
+  <div class="review-actions">
+    <button type="button" id="cancel" data-l="キャンセル"></button>
+    <button type="button" id="confirm" class="danger" data-l="削除する"></button>
+  </div>
+</aside>
+<div id="feedback" role="status" aria-live="polite"></div>
+<script>
+const english = @dashboard_dictionary@
+@dashboard_js@
+</script>
+</body>
+</html>

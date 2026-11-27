@@ -6,6 +6,7 @@ suite runs via tests/ci-remote-worker.sh on Linux, outside the build sandbox.
 import concurrent.futures
 import fcntl
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,8 @@ from uuid import UUID, uuid4
 
 import pytest
 from harness import remote_worker as R
+from harness.host import Host, HostFailure
+from Tsugumi.Host.WorkerDashboardOperation import WorkerDashboardOperation as DashboardOp
 from Tsugumi.RemoteWorker.WorkerReady import WorkerReady
 from Tsugumi.RemoteWorker.DisplayCredit import DisplayCreditT
 from Tsugumi.RemoteWorker.JobStatus import JobStatus
@@ -133,6 +136,31 @@ class Worker:
                 secure.sendall(R.frame(request))
                 with secure.makefile("rb") as stream:
                     return read_reply(stream)
+
+    def dashboard(self, path, *, body=None, identity=None, headers=None):
+        context = TLS.client_context(identity or self.identity, self.state / "identity.pem")
+        with socket.create_connection(("127.0.0.1", self.port), timeout=10) as peer:
+            with context.wrap_socket(peer, server_hostname=None) as secure:
+                data = b"" if body is None else json.dumps(body).encode()
+                method = "GET" if body is None else "POST"
+                head = {"Host": "worker", "Connection": "close", **(headers or {})}
+                if body is not None:
+                    head.update({"Content-Length": len(data), "Content-Type": "application/json",
+                                 "X-Tsugumi-Dashboard": "1"})
+                request = f"{method} {path} HTTP/1.1\r\n"
+                request += "".join(f"{key}: {value}\r\n" for key, value in head.items())
+                secure.sendall(request.encode() + b"\r\n" + data)
+                with http.client.HTTPResponse(secure) as response:
+                    response.begin()
+                    result = response.read().decode()
+                    if response.getheader("Content-Type") == "application/json; charset=utf-8":
+                        result = json.loads(result)
+                    return response.status, result
+
+    def dashboard_change(self, path, **values):
+        status, challenge = self.dashboard("/dashboard/challenge")
+        assert status == 200
+        return self.dashboard(path, body={**challenge, **values})
 
     def upload(self, job, data):
         digest = hashlib.sha256(data).hexdigest()
@@ -377,6 +405,18 @@ read -r line < "$TEST_GATE"
         peer.wait_state(blocker, R.JobState.Running)
         submit(next_job, peer.spec(peer.upload(next_job, b"next input")))
         assert state(next_job) == R.JobState.Queued
+        remove = "/dashboard/jobs/remove"
+        status, refusal = peer.dashboard_change(remove, jobs=[f"{peer.scope}/{blocker}"], active=True)
+        assert status == 200 and refusal["results"][0]["status"] == "supervised"
+        assert state(blocker) == R.JobState.Running
+        status, refusal = peer.dashboard_change(remove, jobs=[f"{peer.scope}/{next_job}"], active=False)
+        assert status == 200 and refusal["results"][0]["status"] == "active"
+        discard = "7" * 64
+        submit(discard, peer.spec(peer.upload(discard, b"queued data to discard")))
+        assert state(discard) == R.JobState.Queued
+        status, removed = peer.dashboard_change(remove, jobs=[f"{peer.scope}/{discard}"], active=True)
+        assert status == 200 and removed["results"][0]["status"] == "removed"
+        assert state(discard) == R.JobState.Released
         peer.restart()
         assert state(blocker) == R.JobState.Running and state(next_job) == R.JobState.Queued
         cancel(blocker)
@@ -1118,3 +1158,116 @@ def test_jobs_command_lists_and_removes_only_chosen_jobs(worker):
     worker.start()
     late = worker.call(R.RequestBody.PutBlobRequest, R.put_blob_chunk(hashlib.sha256(b"x").hexdigest(), 1, 0, b"x"), job=staged)
     assert late.bodyType == R.ReplyBody.Failure and late.body.code == R.ErrorCode.Rejected
+
+def test_dashboard_authentication_challenges_and_key_updates(worker):
+    stranger = TLS.identity(worker.root, "new-host")
+    key = TLS.public_key(stranger)
+    own_key = TLS.public_key(worker.identity)
+    before = worker.authorized.read_bytes()
+    status, html = worker.dashboard("/dashboard?lang=ja")
+    assert status == 200 and '<html lang="ja">' in html
+    status, keys = worker.dashboard("/dashboard/keys")
+    assert status == 200 and keys == {"keys": [own_key], "current": own_key}
+
+    add = "/dashboard/keys/add"
+    drop = "/dashboard/keys/remove"
+    challenges = "/dashboard/challenge"
+    status, challenge = worker.dashboard(challenges)
+    assert status == 200
+    for path, body in (("/dashboard", None), (add, {**challenge, "key": key}),
+                       (drop, {**challenge, "key": own_key})):
+        with pytest.raises((ssl.SSLError, OSError, http.client.RemoteDisconnected)):
+            worker.dashboard(path, body=body, identity=stranger)
+    assert worker.authorized.read_bytes() == before
+
+    assert worker.dashboard(add)[0] == 404
+    assert worker.dashboard(add, body={"key": key})[0] in (400, 403)
+    assert worker.dashboard(challenges, headers={"Origin": "https://example.invalid"})[0] == 403
+    addition = {**challenge, "key": key}
+    assert worker.dashboard(add, body=addition, headers={"Origin": "https://example.invalid"})[0] == 403
+    assert worker.authorized.read_bytes() == before
+    assert worker.dashboard(add, body=addition)[0] == 200
+    assert worker.authorized.read_bytes().startswith(before)
+    # A fresh handshake accepts the added key. Even another authorized host
+    # cannot use a challenge issued to this peer.
+    assert worker.dashboard("/dashboard", identity=stranger)[0] == 200
+    status, challenge = worker.dashboard(challenges)
+    assert status == 200
+    deletion = {**challenge, "key": key}
+    assert worker.dashboard(drop, body=deletion, identity=stranger)[0] == 403
+    assert worker.dashboard(drop, body=deletion)[0] == 200
+    assert worker.authorized.read_bytes() == before
+    assert worker.dashboard(add, body=addition)[0] == 403
+    with pytest.raises((ssl.SSLError, OSError, http.client.RemoteDisconnected)):
+        worker.dashboard("/dashboard/keys", identity=stranger)
+
+
+def test_dashboard_lists_and_releases_the_same_jobs_as_cli(worker):
+    selected, cli, keep = (letter * 64 for letter in "abc")
+    for job in (selected, cli, keep):
+        worker.upload(job, b"staged input")
+    command = [worker.command[0], "jobs"]
+    listing = subprocess.check_output(command + ["list", "--json", "--state-dir", str(worker.state)])
+    assert worker.dashboard("/dashboard/jobs") == (200, json.loads(listing))
+
+    stranger = TLS.identity(worker.root, "stranger")
+    status, challenge = worker.dashboard("/dashboard/challenge")
+    assert status == 200
+    path = "/dashboard/jobs/remove"
+    body = {**challenge, "jobs": [f"{worker.scope}/{selected}"], "active": False}
+    with pytest.raises((ssl.SSLError, OSError, http.client.RemoteDisconnected)):
+        worker.dashboard(path, body=body, identity=stranger)
+    assert worker.dashboard("/dashboard/jobs") == (200, json.loads(listing))
+
+    assert worker.dashboard(path, body=body)[1]["results"][0]["status"] == "removed"
+    subprocess.run(command + ["remove", "--state-dir", str(worker.state), f"{worker.scope}/{cli}"],
+                   check=True, capture_output=True)
+    assert list(worker.journal(selected).parent.iterdir()) == [worker.journal(selected)]
+    assert worker.journal(selected).read_bytes() == worker.journal(cli).read_bytes()
+    record = R.JournalStateT.InitFromPackedBuf(worker.journal(selected).read_bytes())
+    assert record.state == R.JobState.Released
+    status, data = worker.dashboard("/dashboard/jobs")
+    assert status == 200 and [row["job_id"] for row in data["jobs"]] == [keep]
+    late = worker.call(R.RequestBody.PutBlobRequest,
+                       R.put_blob_chunk(hashlib.sha256(b"x").hexdigest(), 1, 0, b"x"), job=selected)
+    assert late.bodyType == R.ReplyBody.Failure and late.body.code == R.ErrorCode.Rejected
+
+
+def test_host_dashboard_requires_current_verified_registration(worker):
+    host = Host(worker.root / "host")
+    try:
+        # Use the scratch host's public key and the worker pin from its probe.
+        host_key = R.string(host.call("ExecutionServicesRequest").hostPublicKey)
+        with worker.authorized.open("a") as keys:
+            keys.write(host_key + "\n")
+        worker_key = next(line.split("public key: ", 1)[1]
+                          for line in (worker.root / "worker.log").read_text().splitlines()
+                          if "public key: " in line)
+        registration = dict(id="scratch-worker", name="Scratch worker",
+                            endpoint=f"tls://127.0.0.1:{worker.port}", workerPublicKey=worker_key)
+
+        def page():
+            return host.call("WorkerDashboardRequest", id=registration["id"],
+                             operation=DashboardOp.Page, language="en")
+
+        host.call("ExecutionServicePutRequest", **registration, verify=False)
+        with pytest.raises(HostFailure, match="Verify the execution service"):
+            page()
+        host.call("ExecutionServicePutRequest", **registration, verify=True)
+        opened = page()
+        assert '<html lang="en">' in R.string(opened.body)
+        job = "a" * 64
+        worker.upload(job, b"input staged on scratch worker")
+        args = dict(id=registration["id"], generation=opened.generation)
+        listed = host.call("WorkerDashboardRequest", **args, operation=DashboardOp.Jobs)
+        assert json.loads(listed.body) == worker.dashboard("/dashboard/jobs")[1]
+        token = json.loads(host.call("WorkerDashboardRequest", **args, operation=DashboardOp.Challenge).body)
+        removed = host.call("WorkerDashboardRequest", **args, operation=DashboardOp.RemoveJobs,
+                            body=json.dumps({**token, "jobs": [f"{worker.scope}/{job}"], "active": False}))
+        assert json.loads(removed.body)["results"][0]["status"] == "removed"
+        host.call("ExecutionServiceRemoveRequest", id=registration["id"])
+        host.call("ExecutionServicePutRequest", **registration, verify=True)
+        with pytest.raises(HostFailure, match="The execution service changed"):
+            host.call("WorkerDashboardRequest", **args, operation=DashboardOp.Jobs)
+    finally:
+        host.close()

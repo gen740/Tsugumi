@@ -430,6 +430,18 @@ table ExecutionService { id:string (required); name:string (required); endpoint:
 table ExecutionServices { services:[ExecutionService]; host_public_key:string (required); }
 table ExecutionAuthorization { endpoint:string (required); capability_file:string (required); available:bool; }
 
+// One allowlisted dashboard resource for a registered worker. The generation
+// returned with the page binds subsequent requests to that registration.
+enum WorkerDashboardOperation : ubyte { Invalid, Page, Jobs, Keys, Challenge, RemoveJobs, AddKey, RemoveKey }
+table WorkerDashboardRequest {
+  id:string (required);
+  operation:WorkerDashboardOperation;
+  language:string;
+  generation:string;
+  body:string (trace_secret);
+}
+table WorkerDashboardReply { generation:string (required); body:string (required, trace_secret); }
+
 table ProjectDefaults { agent_exclude:[string]; }
 table ProjectInfo { path:string (required); name:string (required); }
 table ProjectLocation { path:string (required); }
@@ -630,7 +642,7 @@ union RequestPayload {
   RunCategoryDeleteRequest,
   TemplateListRequest, HostTemplateAddRequest,
   ViewWindowsRequest, ViewActionRequest, ViewPresentationRequest, ViewActionCompleteRequest,
-  ExecutionProbeRemeasureRequest,
+  ExecutionProbeRemeasureRequest, WorkerDashboardRequest,
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -647,7 +659,7 @@ union ReplyPayload {
   CardSecretList, HostPathBindings,
   RunCategoryDeleteResult:Tsugumi.RPC.RunCategoryDeleteResult,
   TemplateList,
-  ViewWindows, ViewActionResult,
+  ViewWindows, ViewActionResult, WorkerDashboardReply,
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

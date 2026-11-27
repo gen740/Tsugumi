@@ -1,5 +1,7 @@
 // `tsugumi-workerd jobs`: what job data is left on this worker, and its
-// removal by the person on this machine. It shows; the person decides.
+// removal by a person, shared by the CLI and the dashboard.
+#include "jobs_command.hh"
+
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -188,7 +190,7 @@ auto reason(const Record& record, bool supervised, bool scratch)
   return {};
 }
 
-auto list_jobs(const stdfs::path& root, bool all, bool json) -> int {
+auto list_jobs(const stdfs::path& root, bool all) -> ListJson {
   ListJson output;
   *output.state_dir = root.string();
   for (const auto& [journal, scope, job] : entries(root)) {
@@ -213,10 +215,10 @@ auto list_jobs(const stdfs::path& root, bool all, bool json) -> int {
     *row.last_written = timestamp(disk.written);
     output.jobs->push_back(std::move(row));
   }
-  if (json) {
-    std::cout << schema::encode(output) << '\n';
-    return 0;
-  }
+  return output;
+}
+
+auto print_jobs(const stdfs::path& root, const ListJson& output) -> int {
   if (output.jobs->empty()) {
     std::cout << "No job data in " << root.string() << '\n';
     return 0;
@@ -268,46 +270,50 @@ auto find_job(const std::vector<Entry>& all, std::string_view name)
   return *found;
 }
 
+auto discard(const Entry& entry, bool active) -> JobRemoval {
+  const auto name =
+      std::string(entry.scope.view()) + "/" + std::string(entry.job.view());
+  try {
+    // Holding the supervisor lock keeps the listener from starting the job.
+    const auto lock = lock_supervisor(*entry.journal, entry.job);
+    if (lock.value < 0)
+      return {name, JobRemovalStatus::Supervised,
+              "a supervisor process is running it; cancel the run first"};
+    const auto disk = usage(entry.journal->job_path(entry.job));
+    Record previous;
+    try {
+      previous = entry.journal->discard(entry.job, active);
+    } catch (const Error& e) {
+      if (e.code != R::ErrorCode::Rejected) throw;
+      return {name, JobRemovalStatus::ActiveConfirmationRequired,
+              std::string(e.what()) +
+                  "; when nothing should run it any more, add --active"};
+    }
+    if (previous.state == R::JobState::Released && !disk.scratch)
+      return {name, JobRemovalStatus::AlreadyReleased, {}};
+    return {
+        name, JobRemovalStatus::Removed,
+        lower(R::EnumNameJobState(previous.state)) + ", " + human(disk.bytes)};
+  } catch (const std::exception& e) {
+    return {name, JobRemovalStatus::Failed, e.what()};
+  }
+}
+}  // namespace
+
+auto jobs_json(const stdfs::path& root, bool all) -> std::string {
+  return schema::encode(list_jobs(root, all));
+}
+
 auto remove_jobs(const stdfs::path& root, bool active,
-                 const std::vector<std::string>& names) -> int {
+                 const std::vector<std::string>& names)
+    -> std::vector<JobRemoval> {
   const auto all = entries(root);
   std::vector<const Entry*> chosen;
   for (const auto& name : names) chosen.push_back(&find_job(all, name));
-  int status = 0;
-  for (const auto* entry : chosen) {
-    const auto name =
-        std::string(entry->scope.view()) + "/" + std::string(entry->job.view());
-    try {
-      // Holding the supervisor lock keeps the listener from starting the job.
-      const auto lock = lock_supervisor(*entry->journal, entry->job);
-      if (lock.value < 0)
-        throw std::runtime_error(
-            "a supervisor process is running it; cancel the run first");
-      const auto disk = usage(entry->journal->job_path(entry->job));
-      Record previous;
-      try {
-        previous = entry->journal->discard(entry->job, active);
-      } catch (const Error& e) {
-        if (e.code != R::ErrorCode::Rejected) throw;
-        throw std::runtime_error(
-            std::string(e.what()) +
-            "; when nothing should run it any more, add --active");
-      }
-      if (previous.state == R::JobState::Released && !disk.scratch)
-        std::cout << "already released: " << name << '\n';
-      else
-        std::cout << "removed " << name << " ("
-                  << lower(R::EnumNameJobState(previous.state)) << ", "
-                  << human(disk.bytes) << ")\n";
-    } catch (const std::exception& e) {
-      std::cerr << "tsugumi-workerd: not removed " << name << ": " << e.what()
-                << '\n';
-      status = 1;
-    }
-  }
-  return status;
+  std::vector<JobRemoval> result;
+  for (const auto* entry : chosen) result.push_back(discard(*entry, active));
+  return result;
 }
-}  // namespace
 
 auto jobs_main(stdfs::path root, std::span<char*> args) -> int {
   if (args.empty()) {
@@ -336,9 +342,27 @@ auto jobs_main(stdfs::path root, std::span<char*> args) -> int {
   }
   if (!stdfs::is_directory(root))
     throw std::runtime_error("no remote worker state in " + root.string());
-  if (command == "list") return list_jobs(root, all, json);
-  if (command == "remove" && !names.empty())
-    return remove_jobs(root, active, names);
+  if (command == "list") {
+    if (!json) return print_jobs(root, list_jobs(root, all));
+    std::cout << jobs_json(root, all) << '\n';
+    return 0;
+  }
+  if (command == "remove" && !names.empty()) {
+    int exit_code = 0;
+    for (const auto& [name, status, detail] :
+         remove_jobs(root, active, names)) {
+      if (status == JobRemovalStatus::Removed)
+        std::cout << "removed " << name << " (" << detail << ")\n";
+      else if (status == JobRemovalStatus::AlreadyReleased)
+        std::cout << "already released: " << name << '\n';
+      else {
+        std::cerr << "tsugumi-workerd: not removed " << name << ": " << detail
+                  << '\n';
+        exit_code = 1;
+      }
+    }
+    return exit_code;
+  }
   std::cerr << kUsage;
   return 2;
 }

@@ -37,7 +37,11 @@ The invocation's **Run History → Info** shows its service, job ID, architectur
 
 ## Data left on a worker
 
-A person who can log into the worker machine sees and removes what is left there with `tsugumi-workerd jobs`. It reads the same state directory as the listener (`--state-dir` or the [default state directory](design/RemoteWorker.md#journal-and-scratch-lifetime)) and works whether or not the listener is running. Nothing is removed automatically, and there is no "remove everything old" mode: the command shows, the person decides.
+In **Settings → Execution service**, choose **Open Dashboard** beside a verified worker. Its page opens inside Tsugumi in the UI language and refreshes every five seconds while open. It shows the worker's retained jobs across project scopes, with each job's state, disk usage, last write and reason for retention. Select the jobs to remove and review the selection before confirming. To include jobs recorded as queued, running or cancelling, explicitly enable that option in the confirmation. A job whose supervisor holds its lock cannot be removed. Tsugumi leaves the decision about each job to the person using the dashboard.
+
+The same page shows the public keys in `authorized_keys` and lets an authorized host add or remove a key. Add the first public key by hand on the worker so a host can connect. Removing a key takes effect on the next handshake. If you remove this host's only means of connecting, authorize it again on the worker or use a different authorized host.
+
+If the listener is down, log into the worker and use `tsugumi-workerd jobs`. The CLI reads the same state directory as the listener (`--state-dir` or the [default state directory](design/RemoteWorker.md#journal-and-scratch-lifetime)).
 
 ```sh
 tsugumi-workerd jobs list            # jobs that still hold data
@@ -50,4 +54,4 @@ tsugumi-workerd jobs remove PROJECT/JOB...
 
 `remove` takes `PROJECT/JOB`, each an unambiguous prefix of at least 8 characters, and removes only the jobs named. For each job it takes the job's supervisor lock and journal lock, as the listener does, then commits a `Released` tombstone and erases the job's scratch, exactly as a release from the core does. The tombstone keeps rejecting a late transfer or submission for that job. A job that a supervisor process is running is never removed: cancel its run first. A job the journal records as queued, running or cancelling without a supervisor is kept unless `--active` is added, once nothing should run it any more; a running listener would otherwise start a queued job, or record a supervisor-less one as interrupted.
 
-`ProjectCacheUsage` and `RunScratchDelete` on the host still cover only local and VM data; the remote protocol has no usage listing or person-facing deletion request, and `ReleaseRequest` stays the core's transfer acknowledgement. Host-side run retention and artifact choices are unchanged.
+The dashboard and the CLI share the worker's listing and removal code. `ProjectCacheUsage` and `RunScratchDelete` cover local and VM data. The core uses `ReleaseRequest` to acknowledge transfers.
