@@ -263,8 +263,10 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   const isOpen = (g: StageGroup) => {
     const closed = folded[g.id]
     if (closed !== undefined) return !closed
-    const st = status(g)
-    return st === 'running' || st === 'waiting' || st === 'failed'
+    const busy = (x: StageGroup) => ['running', 'waiting', 'failed'].includes(status(x))
+    // Running, waiting and failed sections open; with none of them, the
+    // execution's output is what the reader came for.
+    return busy(g) || (g.id === 'execute' && !groups.some(busy))
   }
   const open = (stage: Stage | undefined) => {
     if (stage === undefined) return

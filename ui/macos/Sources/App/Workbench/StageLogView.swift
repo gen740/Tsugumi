@@ -74,8 +74,10 @@ struct StageLogView: View {
 
   private func isOpen(_ g: Group) -> Bool {
     if let closed = folded[g.id] { return !closed }
-    let st = status(g)
-    return st == .running || st == .waiting || st == .failed
+    func busy(_ g: Group) -> Bool { [SectionStatus.running, .waiting, .failed].contains(status(g)) }
+    // Running, waiting and failed sections open; with none of them, the
+    // execution's output is what the reader came for.
+    return busy(g) || (g.id == "execute" && !groups.contains(where: busy))
   }
 
   private func source(_ g: Group) -> LogStreamReader.Source? {
