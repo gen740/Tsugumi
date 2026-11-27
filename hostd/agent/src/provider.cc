@@ -1419,6 +1419,7 @@ auto SerializeMessages(const std::vector<Message>& messages) -> std::string {
     Object value{{"role", Quote(message.role)},
                  {"content", json::Encode(content)}};
     if (!message.display.empty()) value["display"] = Quote(message.display);
+    if (!message.note.empty()) value["note"] = Quote(message.note);
     if (message.context_summary) value["contextSummary"] = "true";
     if (!message.provider_content.empty()) {
       (void)Items(Parse(message.provider_content));
@@ -1441,6 +1442,7 @@ auto ParseMessages(std::string_view json) -> std::vector<Message> {
     if (message.role != "user" && message.role != "assistant")
       throw std::runtime_error("invalid conversation role");
     message.display = String(item, "/display");
+    message.note = String(item, "/note");
     message.context_summary = Boolean(item, "/contextSummary");
     if (item["/providerContent"].exists()) {
       (void)Items(item, "/providerContent");

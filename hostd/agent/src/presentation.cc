@@ -174,6 +174,31 @@ auto FailureSummary(A::ChatRowT& row) -> void {
   row.summary_en =
       subject + " · failed" + (kind.empty() ? "" : " (" + kind + ")") + detail;
 }
+// Why the Agent spoke without a message from the person: a run it started
+// ended after its turn.
+auto NoteRow(std::string_view raw) -> std::unique_ptr<A::ChatRowT> {
+  const auto note = ObjectOrEmpty(raw);
+  if (json::Text(note, "kind") != "run_ended") return nullptr;
+  const auto run = json::Text(note, "run_id");
+  const auto state = json::Text(note, "state");
+  static const std::map<std::string, std::pair<std::string, std::string>>
+      kStates{{"succeeded", {"成功", "succeeded"}},
+              {"failed", {"失敗", "failed"}},
+              {"cancelled", {"停止", "cancelled"}}};
+  const auto found = kStates.find(state);
+  const auto names =
+      found == kStates.end() ? std::pair{state, state} : found->second;
+  auto row = std::make_unique<A::ChatRowT>();
+  row->kind = "note";
+  row->name = "run_ended";
+  row->state = state;
+  row->summary_ja =
+      "実行 #" + run + " が終わりました（" + names.first + "）— 続けています";
+  row->summary_en = "Run #" + run + " ended (" + names.second + ") — continuing";
+  row->text = row->summary_ja;
+  AddLink(*row, "#" + run, "run:" + run);
+  return row;
+}
 auto Number(std::string_view raw) -> uint64_t {
   return json::UInt(raw, json::UInt(json::String(raw)));
 }
@@ -409,6 +434,14 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
   for (size_t i = 0; i < messages.size(); ++i) {
     const auto& message = *messages[i];
     if (message.context_summary) continue;
+    if (!message.note.empty()) {
+      if (auto row = NoteRow(message.note)) {
+        row->id = prefix + ":" + std::to_string(i) + ":note";
+        row->archived = i < archived;
+        rows.push_back(std::move(row));
+      }
+      continue;
+    }
     auto blocks =
         json::Array(message.content_json.empty() ? "[]" : message.content_json);
     if (!message.display.empty())

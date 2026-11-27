@@ -482,7 +482,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
         api: p.providerId === 'chatgpt' || p.providerId === 'openai' ? 'openAIResponses' : 'anthropicMessages' }
     }
     return { conversation: a.conversation, busy: a.busy, resumable: a.resumable, interruptedOperation: a.interruptedOperation, continuable: a.continuable,
-      eventSeq: String(a.event_seq), provider: info, permissions }
+      runWake: a.runWake !== false, eventSeq: String(a.event_seq), provider: info, permissions }
   },
   'POST /api/chat/send': async (b) => {
     const { host, id } = await turnAgent(b)
@@ -510,6 +510,11 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   'POST /api/chat/permission': async (b) => {
     const allow = b.allow === true
     await answerPermission(String(b.id), allow, Array.isArray(b.selected) ? b.selected : undefined)
+    return { ok: true }
+  },
+  'POST /api/chat/runWake': async (b) => {
+    await core.conversation(String(b.session), projectKey(projectDir(b.path)))
+    await core.user.call('ConversationRunWakeRequest', { conversation_id: String(b.session), run_wake: b.runWake === true })
     return { ok: true }
   },
   'POST /api/chat/cancel': async (b) => {

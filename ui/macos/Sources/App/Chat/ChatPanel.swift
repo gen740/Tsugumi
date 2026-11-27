@@ -25,6 +25,8 @@ struct ChatHeader: View {
         // Only for the conversation that is open, never from the list.
         if !showList {
           Button("会話を圧縮") { chat.compact() }.disabled(chat.busy || chat.items.count < 6)
+          Toggle("Agent が始めた実行が終わったら続ける", isOn: Binding(get: { chat.runWake }, set: { chat.setRunWake($0) }))
+            .help("この会話で Agent が始めた実行が、回答の後に終わったとき、その結果を見て続けます。あなたが書き込むか回答を停止した後は続けません。")
           Divider()
         }
         Button("Skill を再読込") { chat.reloadSkills() }
@@ -494,7 +496,8 @@ struct ChatPanel: View {
     case "step", "helper":
       if let row = item.presentation { StructuredChatRow(row: row, tab: tab, session: session) }
     case "note":
-      Label(item.text, systemImage: "rectangle.compress.vertical").font(.caption).foregroundStyle(.secondary)
+      Label(item.text, systemImage: item.presentation?.name == "run_ended" ? "flag.checkered" : "rectangle.compress.vertical")
+        .font(.caption).foregroundStyle(.secondary)
         .frame(maxWidth: .infinity)
     default:
       if chat.busy && item.id == chat.items.last?.id {

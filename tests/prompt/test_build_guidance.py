@@ -36,7 +36,9 @@ class BuildGuidance(unittest.TestCase):
 
     def test_runs_in_progress_and_long_runs(self):
         text = flat(PROMPT)
-        self.assertIn("edits that change computation are refused (busy)", text)
+        self.assertIn("edits saved while it runs reach the next run", text)
+        self.assertIn("a Card's files the run still evaluates are refused (busy) until it ends", text)
+        self.assertIn("ends after your reply brings you back with a note of its outcome", text)
         self.assertIn("a long run is followed by waiting again", text)
 
     def test_log_streams_named_in_the_prompt_are_the_schema_values(self):

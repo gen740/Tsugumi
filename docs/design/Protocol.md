@@ -633,6 +633,7 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 | `ToolCallCancelRequest` | `request_id: ulong` |
 | `CallIdRequest` | `conversation_id: string` (required), `name: string`, `arguments_json: string` |
 | `ShowRequest` | `path: string`, `card: string`, `create: bool`, `browser: bool` |
+| `ConversationRunWakeRequest` | `conversation_id: string` (required), `run_wake: bool` |
 
 Reply variants: `HelloResult`, `Acknowledgement`, `ConversationResult`, `ConversationList`, `EventsPage`, `ToolCatalog`, `ToolResult`, `AccessResult`, `AccessList`, `TextResult`, `Failure`, `CallId`, `Shown`.
 

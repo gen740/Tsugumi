@@ -276,6 +276,11 @@ enum ServiceWire {
         let v = Tsugumi_Agent_ConversationCancelRequestT()
         v.conversationId = fields["conversation_id"] as? String ?? ""
         return (Tsugumi_Agent_RequestPayload.conversationcancelrequest.rawValue, v)
+      case "ConversationRunWakeRequest":
+        let v = Tsugumi_Agent_ConversationRunWakeRequestT()
+        v.conversationId = fields["conversation_id"] as? String ?? ""
+        v.runWake = fields["run_wake"] as? Bool ?? true
+        return (Tsugumi_Agent_RequestPayload.conversationrunwakerequest.rawValue, v)
       case "EventsRequest":
         let v = Tsugumi_Agent_EventsRequestT()
         v.conversationId = fields["conversation_id"] as? String ?? ""
@@ -404,6 +409,7 @@ enum ServiceWire {
     case let changed as Tsugumi_Host_ProviderChangedT: return ["type": "ProviderChanged", "profile": changed.profile]
     case let changed as Tsugumi_Host_SignInChangedT: return ["type": "SignInChanged", "profile": changed.profile]
     case let changed as Tsugumi_Host_SettingsChangedT: return ["type": "SettingsChanged", "revision": changed.revision]
+    case let changed as Tsugumi_Host_ConversationChangedT: return ["type": "ConversationChanged", "conversation": changed.conversationId ?? ""]
     case let show as Tsugumi_Host_PageShowT: return ["type": "PageShow", "project": show.project, "card": show.card ?? "", "page": show.page ?? ""]
     case let dispatch as Tsugumi_Host_ViewActionDispatchT:
       guard let command = HostViewCommand(dispatch) else { throw RPCError.disconnected }

@@ -41,6 +41,8 @@ struct Turns {
     std::function<void(const std::string&)> cancel_file_tools;
     std::function<host::AgentExclude(const std::string&, std::stop_token)>
         exclusions = {};
+    // After a turn's final state is durable and it no longer runs.
+    std::function<void(const std::string&)> turn_ended = {};
   };
   Turns(host::StateGate& gate, sql::Db& db, ConversationStore& conversations,
         Providers& providers, host::Settings& settings,
@@ -73,8 +75,11 @@ struct Turns {
   auto Start(bool human, const std::string& id, const std::string& turn,
              const std::string& text,
              Tsugumi::Agent::Action action = Tsugumi::Agent::Action::Resume,
-             std::string pending_frame = {}, const std::string& display = {})
-      -> void;
+             std::string pending_frame = {}, const std::string& display = {},
+             const std::string& note = {}) -> void;
+  // Whether runs the Agent started bring this conversation back (default on).
+  auto RunWake(const std::string& id) -> bool;
+  auto SetRunWake(const std::string& id, bool on) -> void;
   auto SummaryReply(uint64_t id, std::string_view raw) -> std::string;
   auto AddUsage(const std::string& conversation, const Usage& usage) -> void;
   auto Handle(const RequestIn& request, bool human,

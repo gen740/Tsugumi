@@ -75,6 +75,9 @@ struct Message {
   ProviderAPI provider_api = ProviderAPI::AnthropicMessages;
   // Model context produced by compaction, never a user-authored message.
   bool context_summary = false;
+  // A host note the chat shows as a row, instead of the text the model reads
+  // (JSON: kind "run_ended", run_id, state).
+  std::string note = {};
 };
 
 struct ToolSpec {

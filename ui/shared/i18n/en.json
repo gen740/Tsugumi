@@ -1890,5 +1890,8 @@
   "{0} からテンプレート {1} を取り込む": {"text": "Import the template {1} from {0}", "mac": ["@", "@"]},
   "今の状態を記録してから、版 {0} に切り替える": {"text": "Record the current state, then switch to version {0}", "mac": ["@"]},
   "版の記録を始める": "Start recording versions",
-  "今の状態を版 {0} として残す": {"text": "Keep the current state as the version {0}", "mac": ["@"]}
+  "今の状態を版 {0} として残す": {"text": "Keep the current state as the version {0}", "mac": ["@"]},
+  "Agent が始めた実行が終わったら続ける": "Continue When a Run the Agent Started Ends",
+  "この会話で Agent が始めた実行が、回答の後に終わったとき、その結果を見て続けます。あなたが書き込むか回答を停止した後は続けません。": "When a run the Agent started in this conversation ends after its answer, the Agent looks at the outcome and continues. It does not continue after you write or stop the answer.",
+  "実行中の版: rev {0}（編集は次の実行に反映）": {"text": "Running rev {0} (edits apply to the next run)", "mac": ["llu"]}
 }

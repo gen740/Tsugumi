@@ -98,6 +98,8 @@ final class ChatController {
   private(set) var items: [Item] = []
   /// A stopped turn can be continued explicitly.
   private(set) var canContinue = false
+  /// A run the Agent started in this conversation brings it back when it ends.
+  private(set) var runWake = true
 
   /// Shows a sample exchange without calling a model (UI script `chatsample`).
   func showSample(question: String, answer: String) {
@@ -250,6 +252,25 @@ final class ChatController {
     if loadOnInit {
       refreshSessions()
       reloadSkills()
+      // A turn the host starts (a run the Agent started has ended) is observed
+      // like one this window started.
+      Task { [weak self] in
+        _ = await CoreHostClient.shared.observeHost { [weak self] event in
+          guard event["type"] as? String == "ConversationChanged", let id = event["conversation"] as? String else { return }
+          Task { @MainActor [weak self] in self?.observeHostTurn(id) }
+        }
+      }
+    }
+  }
+
+  private func observeHostTurn(_ id: String) {
+    guard id == currentId, !busy, !loading, let agent else { return }
+    let selection = answer
+    Task {
+      guard (try? await agent.refresh()) != nil, self.agent === agent, selection == answer, !busy,
+            await agent.hasUnfinishedWork else { return }
+      let events = begin()
+      await agent.observe(events: events)
     }
   }
 
@@ -339,11 +360,13 @@ final class ChatController {
     let interrupted = await agent.resumable
     let operation = await agent.interruptedOperation
     let continuable = await agent.canContinue
+    let wakes = await agent.runWake
     guard self.agent === agent else { return }
     let wasInterrupted = self.interrupted
     self.interrupted = interrupted
     interruptedOperation = operation
     canContinue = !interrupted && continuable
+    runWake = wakes
     if interrupted {
       failed = false
       usageLimited = false
@@ -377,7 +400,9 @@ final class ChatController {
   }
 
   static func presentedItem(_ row: ChatRow) -> Item {
-    Item(id: row.id, role: row.kind == "text" ? row.role : row.kind, text: row.kind == "tool" ? row.arguments + (row.result.isEmpty ? "" : "\n→ " + row.result) : row.text,
+    Item(id: row.id, role: row.kind == "text" ? row.role : row.kind,
+      text: row.kind == "tool" ? row.arguments + (row.result.isEmpty ? "" : "\n→ " + row.result)
+        : row.kind == "note" ? (AppPreferences.Language.running == .en ? row.summaryEn : row.summaryJa) : row.text,
       tool: row.kind == "tool" ? (row.name, row.state == "running" ? nil : row.state == "completed") : nil,
       archived: row.archived, helper: row.kind == "helper" ? row.name : nil,
       ended: row.kind == "helper" && row.state != "running" ? row.state : nil, presentation: row)
@@ -657,6 +682,17 @@ final class ChatController {
       await CorePreferences.shared.reload()
       await agent.setProvider(provider)
       await agent.retry(events: events)
+    }
+  }
+
+  func setRunWake(_ on: Bool) {
+    guard let agent else { return }
+    runWake = on
+    Task {
+      do { try await agent.setRunWake(on) } catch {
+        runWake = await agent.runWake
+        status = .error(error.localizedDescription)
+      }
     }
   }
 

@@ -46,6 +46,11 @@ struct Tools {
     std::function<Tsugumi::Host::ViewActionResultT(
         const Tsugumi::Host::ViewActionRequestT&, std::stop_token)>
         view_action;
+    // conversation, project, tool name, result envelope of a model turn's
+    // run or run_status call.
+    std::function<void(const std::string&, const std::string&,
+                       const std::string&, const std::string&)>
+        run_result = {};
   };
   Tools(host::StateGate& gate, sql::Db& db, ConversationStore& conversations,
         Providers& providers, host::Settings& settings,

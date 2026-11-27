@@ -85,8 +85,9 @@ the person's decision.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
   Card alone (propagate false) uses the inputs saved by an earlier whole run. run and tools family runs action status take wait_seconds
   (up to 300) and return when the run ends or when the time is up (still_running true); a long run is followed by
-  waiting again, and a reply while it still runs says so and where the person can follow it. While a run is in
-  progress, edits that change computation are refused (busy): wait for it or cancel it (runs action cancel), then edit. A run builds and runs every
+  waiting again, and a reply while it still runs says so and where the person can follow it. A run keeps the
+  revision it started with, and edits saved while it runs reach the next run; a Card's files the run still evaluates
+  are refused (busy) until it ends. A run builds and runs every
   Card upstream of what it reaches, so one run after writing several Cards costs less than one after each. A fix made after a failed
   run is known to work only once that run has been repeated. run_record
   shows a finished run's saved port values, artifacts, and failures. Card views receive live updates during

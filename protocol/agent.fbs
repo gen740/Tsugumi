@@ -29,6 +29,10 @@ table ConversationSendRequest {
 // Resume is an explicit user request; restart/reconnect never sends it.
 table ConversationActionRequest { conversation_id:string (required); action:Action; }
 table ConversationCancelRequest { conversation_id:string (required); }
+// Whether a run the Agent started in this conversation, ending after the
+// turn that started it, brings the conversation back with a note of its
+// outcome. On unless the person turns it off; human principal only.
+table ConversationRunWakeRequest { conversation_id:string (required); run_wake:bool; }
 // Durable sequence numbers allow another connection to resume observation.
 table EventsRequest { conversation_id:string (required); after_seq:ulong; limit:uint = 200; }
 table ToolCatalogRequest {}
@@ -64,16 +68,19 @@ table ConversationSummarizeRequest { conversation_id:string (required); provider
 
 union RequestPayload {
   HelloRequest:Tsugumi.Service.HelloRequest,
-  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest, AccessRevokeRequest, AccessListRequest, ConversationSummarizeRequest, ToolCallCancelRequest, CallIdRequest, ShowRequest
+  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest, AccessRevokeRequest, AccessListRequest, ConversationSummarizeRequest, ToolCallCancelRequest, CallIdRequest, ShowRequest, ConversationRunWakeRequest
 }
 table Request { value:RequestPayload; }
 
 // Content blocks are the provider/model's open-ended JSON data, not envelopes.
-table ModelMessage { role:string; content_json:string; display:string; context_summary:bool; provider_content_json:string; provider_api:string; }
+// note: a host note shown as a row instead of the message's text (JSON with
+// kind "run_ended", run_id and state).
+table ModelMessage { role:string; content_json:string; display:string; context_summary:bool; provider_content_json:string; provider_api:string; note:string; }
 table ToolRecord { id:string; name:string; arguments_json:string; state:string; result_json:string; is_error:bool; }
 table Helper { call_id:string; task:uint; spec_json:string; anchor:uint; messages:[ModelMessage]; result_json:string; state:string; }
 // Host-built presentation shared by live observation and restored history.
-// A row is text (role), step, tool or helper. Children preserve causal order.
+// A row is text (role), step, tool, helper or note (summary_ja/summary_en).
+// Children preserve causal order.
 table ChatLink { title:string; url:string; }
 table ChatRow {
   id:string; kind:string; role:string; text:string; name:string;
@@ -94,7 +101,7 @@ table Conversation {
 table InterruptedOperation { kind:string (required); id:string; name:string; arguments_json:string; }
 // The resolved model of the latest accepted turn, without credentials.
 table ModelBinding { provider_id:string; model:string; effort:string; fast:bool; }
-table ConversationResult { conversation:Conversation (required); busy:bool; resumable:bool; continuable:bool; project_id:string; event_seq:ulong; interrupted_operation:InterruptedOperation; model_binding:ModelBinding; }
+table ConversationResult { conversation:Conversation (required); busy:bool; resumable:bool; continuable:bool; project_id:string; event_seq:ulong; interrupted_operation:InterruptedOperation; model_binding:ModelBinding; run_wake:bool; }
 table ConversationEntry { id:string; project_id:string; title:string; updated_at:long; busy:bool; }
 table ConversationList { conversations:[ConversationEntry]; }
 // Event kinds and metadata are closed protocol data. Only tool input/result

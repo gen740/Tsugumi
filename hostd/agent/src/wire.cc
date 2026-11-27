@@ -18,6 +18,7 @@ auto Messages(std::string_view stored)
     m->role = json::Text(o, "role");
     m->content_json = json::Get(o, "content", "[]");
     m->display = json::Text(o, "display");
+    m->note = json::Text(o, "note");
     m->context_summary = json::Bool(json::Get(o, "contextSummary"));
     if (o.contains("providerContent"))
       m->provider_content_json = json::Get(o, "providerContent");

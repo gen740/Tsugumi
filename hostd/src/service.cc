@@ -11,6 +11,7 @@
 
 #include "agent/helpers.hh"
 #include "agent/providers.hh"
+#include "agent/run_wakes.hh"
 #include "agent/store.hh"
 #include "agent/tools.hh"
 #include "agent/turns.hh"
@@ -158,6 +159,10 @@ struct Service::State {
             .exclusions =
                 [this](const auto& project, auto stop) {
                   return tools->Exclusions(project, stop);
+                },
+            .turn_ended =
+                [this](const auto& id) {
+                  if (run_wakes) run_wakes->TurnEnded(id);
                 }});
     tools = std::make_unique<Tools>(
         state_gate, db, *conversations, *providers, *host_settings,
@@ -181,7 +186,17 @@ struct Service::State {
             },
             .view_action = [this](const auto& request, auto stop) {
               return ExecuteViewAction(request, stop);
+            },
+            .run_result = [this](const auto& conversation, const auto& project,
+                                 const auto& name, const auto& result) {
+              if (run_wakes)
+                run_wakes->ToolResult(conversation, project, name, result);
             }});
+    run_wakes = std::make_unique<agent::RunWakes>(
+        *turns, [this](const std::string& project, const std::string& name,
+                       const std::string& arguments, std::stop_token stop) {
+          return tools->RawProjectCall(project, name, arguments, stop);
+        });
     helpers = std::make_unique<Helpers>(
         state_gate, *conversations, *providers, *host_settings, *tools, *turns,
         *access,
@@ -394,6 +409,8 @@ struct Service::State {
   std::unique_ptr<host::HostEvents> events;
   std::unique_ptr<host::WebPages> web;
   std::unique_ptr<host::ExecutionBroker> execution_broker;
+  // Declared after turns and tools: its threads use them until it ends.
+  std::unique_ptr<agent::RunWakes> run_wakes;
   std::unique_ptr<host::Environments> environments;
   TransportServer* server = nullptr;
   std::recursive_mutex& mutex = state_gate.mutex;
@@ -665,11 +682,14 @@ struct Service::State {
         turns->jobs.erase(id);
         turns->context_usage.erase(id);
         turns->thoughts.erase(id);
+        turns->SetRunWake(id, true);
+        run_wakes->Forget(id);
         return wire::AgentReply(request.request_id, S::AcknowledgementT{});
       }
       case A::RequestPayload::ConversationSendRequest:
       case A::RequestPayload::ConversationActionRequest:
       case A::RequestPayload::ConversationCancelRequest:
+      case A::RequestPayload::ConversationRunWakeRequest:
         return turns->Handle(request, human, lock);
       case A::RequestPayload::EventsRequest: {
         return wire::AgentReply(
@@ -1115,6 +1135,8 @@ auto Service::Shutdown() -> void {
   state_->view_updates.stop();
   for (const auto& job : jobs)
     if (job->joinable()) job->join();
+  // Its watchers wait on project runs; stop them before the state they use.
+  state_->run_wakes.reset();
   state_->host_settings.reset();
 }
 auto Service::hello(const RequestIn& request) -> std::pair<std::string, bool> {

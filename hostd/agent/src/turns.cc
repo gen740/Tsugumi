@@ -145,6 +145,7 @@ auto Turns::ConversationResult(uint64_t request_id, const Conversation& c)
   }
   result.project_id = c.project;
   result.event_seq = seq.u64(0);
+  result.run_wake = RunWake(c.id);
   auto binding = conversations->ConversationDatabase(c.id).prepare(
       "SELECT provider,model,effort,fast FROM model_bindings WHERE "
       "conversation=?");
@@ -157,6 +158,29 @@ auto Turns::ConversationResult(uint64_t request_id, const Conversation& c)
     result.model_binding->fast = binding.i64(3) != 0;
   }
   return wire::AgentReply(request_id, std::move(result));
+}
+
+// A conversation-scoped host setting; the conversation's own records stay
+// unchanged.
+auto Turns::RunWake(const std::string& id) -> bool {
+  std::lock_guard lock(mutex);
+  auto q = db.prepare(
+      "SELECT value FROM setting_values WHERE scope=? AND key='runWake'");
+  q.bind(1, "conversation:" + id);
+  return !q.step() || q.text(0) != "false";
+}
+
+auto Turns::SetRunWake(const std::string& id, bool on) -> void {
+  std::lock_guard lock(mutex);
+  if (on) {
+    db.prepare("DELETE FROM setting_values WHERE scope=? AND key='runWake'")
+        .bind(1, "conversation:" + id)
+        .run();
+    return;
+  }
+  db.prepare("INSERT OR REPLACE INTO setting_values VALUES(?,'runWake','false')")
+      .bind(1, "conversation:" + id)
+      .run();
 }
 
 auto Turns::Summarize(const ProviderConfig& config,
@@ -369,8 +393,8 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
 
 auto Turns::Start(bool human, const std::string& id, const std::string& turn,
                   const std::string& text, A::Action action,
-                  std::string pending_frame, const std::string& display)
-    -> void {
+                  std::string pending_frame, const std::string& display,
+                  const std::string& note) -> void {
   auto c = conversations->GetConversation(id);
   auto& store = conversations->ConversationDatabase(id);
   auto digest_frame = pending_frame;
@@ -395,8 +419,12 @@ auto Turns::Start(bool human, const std::string& id, const std::string& turn,
   if (!text.empty() || !pending_frame.empty()) {
     ContentBlock block;
     block.text = text;
-    messages.push_back(
-        {"user", {block}, display, {}, ProviderAPI::AnthropicMessages});
+    // A host note describes project records: it needs the project's grant.
+    if (!note.empty()) block.resource_ids = {c.project};
+    Message message{"user", {block}, display, {},
+                    ProviderAPI::AnthropicMessages};
+    message.note = note;
+    messages.push_back(std::move(message));
   }
   if (messages.empty())
     throw Failure("invalid_request", "The conversation has no messages");
@@ -503,7 +531,7 @@ auto Turns::Start(bool human, const std::string& id, const std::string& turn,
   RecordOperation(id, !pending_frame.empty()         ? "preparing"
                       : action == A::Action::Compact ? "compact"
                                                      : "model");
-  if (c.title.empty() && !text.empty()) {
+  if (c.title.empty() && !text.empty() && note.empty()) {
     auto q = store.prepare("UPDATE conversations SET title=? WHERE id=?");
     q.bind(1, Excerpt(dependencies.scrub(text), 0, 160)).bind(2, id).run();
   }
@@ -637,9 +665,11 @@ auto Turns::Start(bool human, const std::string& id, const std::string& turn,
                 access_service.CancelTurnApproval(id, turn);
               dependencies.event(id, R"({"kind":"finished"})");
               running.erase(id);
+              if (dependencies.turn_ended) dependencies.turn_ended(id);
             } catch (...) {
               std::lock_guard lock(mutex);
               running.erase(id);
+              if (dependencies.turn_ended) dependencies.turn_ended(id);
               try {
                 log::error("Agent turn failed during finalization");
                 dependencies.event(id, R"({"kind":"finished"})");
@@ -734,6 +764,14 @@ auto Turns::Handle(const RequestIn& request, bool human,
       if (auto found = jobs.find(id); found != jobs.end())
         found->second.worker->request_stop();
       dependencies.cancel_file_tools(id);
+      return wire::AgentReply(request.request_id, S::AcknowledgementT{});
+    }
+    case A::RequestPayload::ConversationRunWakeRequest: {
+      Human(human);
+      const auto* p = r->value_as_ConversationRunWakeRequest();
+      const auto id = p->conversation_id()->str();
+      conversations->OwnConversation(id, human);
+      SetRunWake(id, p->run_wake());
       return wire::AgentReply(request.request_id, S::AcknowledgementT{});
     }
     case A::RequestPayload::ConversationSummarizeRequest: {

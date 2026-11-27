@@ -158,4 +158,4 @@ export class CoreHost {
 export interface InterruptedOperation { kind: string; id?: string; name?: string; arguments?: string }
 
 export interface ModelBinding { providerId: string; model: string; effort?: string; fast: boolean }
-export interface ConversationSnapshot { modelBinding?: ModelBinding; interruptedOperation?: InterruptedOperation; conversation: Conversation; busy: boolean; resumable?: boolean; continuable?: boolean; project_id?: string; event_seq: bigint }
+export interface ConversationSnapshot { modelBinding?: ModelBinding; interruptedOperation?: InterruptedOperation; conversation: Conversation; busy: boolean; resumable?: boolean; continuable?: boolean; runWake?: boolean; project_id?: string; event_seq: bigint }

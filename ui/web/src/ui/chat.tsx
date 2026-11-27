@@ -38,6 +38,7 @@ export function ChatPanel({ session, chat, detached, tab }: { session: ProjectSe
         <MenuButton icon="ellipsis.circle" help={L('その他')} items={() => [
           // Only for the conversation that is open, never from the list.
           !showList && { label: L('会話を圧縮'), disabled: chat.busy || chat.items.length < 6, action: () => chat.compact() },
+          !showList && { label: L('Agent が始めた実行が終わったら続ける'), checked: chat.runWake, action: () => chat.setRunWake(!chat.runWake) },
           !showList && 'divider',
           { label: L('Skill を再読込'), action: () => void chat.reloadSkills() },
           !detached && { label: L('別ウインドウで開く'), action: () => app.openWindow(session, { kind: 'chat' }) },
@@ -290,7 +291,7 @@ function Row({ item, streaming, session, tab }: { item: ChatItem; streaming: boo
     case 'step': case 'helper':
       return item.presentation ? <StructuredRow row={item.presentation} session={session} tab={tab} /> : null
     case 'note':
-      return <div className="chat-note caption secondary"><Icon name="rectangle.compress.vertical" size={11} />{item.text}</div>
+      return <div className="chat-note caption secondary"><Icon name={item.presentation?.name === 'run_ended' ? 'flag.checkered' : 'rectangle.compress.vertical'} size={11} />{item.text}</div>
     default:
       return streaming ? <StreamingText text={item.text} /> : <div style={{ opacity: op }}><ChatMarkdown text={item.text} />{!item.archived && findings(item.text).map((f, i) => <div key={i} className="row gap8"><span className="caption">{f.target.file}:{f.target.lineStart}-{f.target.lineEnd}</span><Button disabled={!session.isEditable} onClick={() => { void session.addComment(key(f.target.card!), f.text, true).catch(e => session.cardEditFailed(e)) }}>{L('指摘をコメントに残す')}</Button></div>)}</div>
   }

@@ -75,8 +75,9 @@ the person's decision.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
   Card alone (propagate false) uses the inputs saved by an earlier whole run. run and tools family runs action status take wait_seconds
   (up to 300) and return when the run ends or when the time is up (still_running true); a long run is followed by
-  waiting again, and a reply while it still runs says so and where the person can follow it. While a run is in
-  progress, edits that change computation are refused (busy): wait for it or cancel it (runs action cancel), then edit. A run builds and runs every
+  waiting again, and a reply while it still runs says so and where the person can follow it. A run keeps the
+  revision it started with, and edits saved while it runs reach the next run; a Card's files the run still evaluates
+  are refused (busy) until it ends. A run builds and runs every
   Card upstream of what it reaches, so one run after writing several Cards costs less than one after each. A fix made after a failed
   run is known to work only once that run has been repeated. run_record
   shows a finished run's saved port values, artifacts, and failures. Card views receive live updates during
@@ -94,6 +95,8 @@ the person's decision.
 - project_copy copies files into Card sources without their bytes passing through your context; it returns paths,
   sizes and hashes. input_types returns complete FlatBuffers schemas and routing details for a Card.
 <!-- End of shared MCP rules -->
+- A run you started that ends after your reply brings you back with a note of its outcome, unless the person wrote or
+  stopped you since (they can turn this off for the conversation): continue with what the outcome needs.
 - Making a Draft (a step the person describes to write later): definitions/<id>/_card.json {"type": "draft", "symbol": "none"}
   and README.md (front matter with title and description, then Markdown with the person's plan). Add its
   {"id"} and connections in tsugumi.json in the same project_edit. A Draft has no ports: every wire end on

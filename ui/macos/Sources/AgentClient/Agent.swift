@@ -86,6 +86,8 @@ public actor Agent {
   private var busy = false
   public private(set) var canContinue = false
   public private(set) var resumable = false
+  /// A run the Agent started brings the conversation back when it ends.
+  public private(set) var runWake = true
   public private(set) var interruptedOperation: Tsugumi_Agent_InterruptedOperationT?
   public private(set) var modelBinding: Tsugumi_Agent_ModelBindingT?
   private var answeredAccess: [String: Bool] = [:]
@@ -141,6 +143,7 @@ public actor Agent {
     busy = result.busy
     resumable = result.resumable
     canContinue = result.continuable
+    runWake = result.runWake
     interruptedOperation = result.interruptedOperation
     modelBinding = result.modelBinding
   }
@@ -188,6 +191,12 @@ public actor Agent {
   }
 
   public var hasUnfinishedWork: Bool { busy }
+
+  public func setRunWake(_ on: Bool) async throws {
+    try await open()
+    _ = try await request("ConversationRunWakeRequest", ["conversation_id": id, "run_wake": on])
+    runWake = on
+  }
 
   public func send(prompt: String, title: String, display: String? = nil,
                    selectedCards: [String] = [], selectedDisplays: [String] = [], skillNames: [String] = [], scopedSkill: String? = nil, attachedResources: [String] = [],

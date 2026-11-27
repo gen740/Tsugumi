@@ -165,7 +165,8 @@ inline auto View(const A::ConversationResult* value) -> std::string {
        {"continuable", View(value->continuable())},
        {"interrupted_operation", View(value->interrupted_operation())},
        {"project_id", View(value->project_id())},
-       {"event_seq", View(value->event_seq())}});
+       {"event_seq", View(value->event_seq())},
+       {"run_wake", View(value->run_wake())}});
 }
 inline auto View(const A::ConversationEntry* value) -> std::string {
   if (!value) return "null";

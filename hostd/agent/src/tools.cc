@@ -1875,6 +1875,10 @@ auto Tools::ExecuteTool(const std::string& conversation,
         .bind(4, call.id)
         .run();
   }
+  // A model turn's runs: one that outlives the turn may bring it back.
+  if (wait && !error && dependencies.run_result &&
+      (call.name == "run" || call.name == "run_status"))
+    dependencies.run_result(conversation, project, call.name, result);
   if (spec->approval_required && !wait)
     dependencies.event(conversation, json::Encode(json::Members{
                                          {"kind", json::Quote("toolFinished")},

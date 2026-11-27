@@ -430,6 +430,196 @@ TEST_F(AgentRunWaitFixture, HelperCanStartAndWaitWithinItsRunScope) {
   EXPECT_FALSE(JsonBool(result, "/still_running"));
 }
 
+class AgentRunWakeFixture : public AgentRunWaitFixture {
+ protected:
+  // The Agent starts the run without waiting, then ends its turn.
+  auto QueueStart(ModelServer& model, const std::string& conversation,
+                  bool hold_reply = false) -> void {
+    const auto revision = JsonString(
+        JsonString(Inspect(conversation).View(), "/text"), "/value/rev");
+    model.Queue(AnthropicTool(
+        "start-run", "run",
+        "{\"base_rev\":" + Quote(revision) +
+            ",\"card\":{\"segments\":[\"work\"]},\"wait_seconds\":0}"));
+    model.Queue(AnthropicText("Run started."), hold_reply);
+  }
+  auto RunEnded(const std::string& conversation) -> void {
+    const auto deadline = std::chrono::steady_clock::now() + 10s;
+    while (true) {
+      const auto status = JsonString(
+          Tool(conversation, "run_status", R"({"wait_seconds":0})").View(),
+          "/text");
+      const auto state = JsonString(status, "/value/state");
+      if (state == "failed" || state == "succeeded") break;
+      if (std::chrono::steady_clock::now() >= deadline)
+        throw std::runtime_error("Run did not end: " + status);
+      std::this_thread::sleep_for(20ms);
+    }
+  }
+  static auto LastUserText(const std::string& request) -> std::string {
+    const auto messages = ::tsugumi::json::Array(
+        ::tsugumi::json::Get(::tsugumi::json::Object(request), "messages"));
+    return ::tsugumi::json::Get(::tsugumi::json::Object(messages.back()),
+                                "content");
+  }
+};
+
+TEST_F(AgentRunWakeFixture, ARunEndingAfterTheTurnBringsTheAgentBackOnce) {
+  const auto conversation = Prepare();
+  ModelServer model;
+  QueueStart(model, conversation);
+  model.Queue(AnthropicText("The run failed; looking at why."));
+  Configure(model);
+  ASSERT_TRUE(Send(conversation, "Run it.").Code().empty());
+  WaitUntilIdle(conversation);
+  ASSERT_EQ(model.Requests().size(), 2u);
+  Entered();
+  Release();
+  ASSERT_TRUE(model.WaitForRequests(3, 10s));
+  WaitUntilIdle(conversation);
+  const auto note = LastUserText(model.Requests()[2]);
+  EXPECT_NE(note.find("[Tsugumi, not the person] Run "), std::string::npos)
+      << note;
+  EXPECT_NE(note.find("failed"), std::string::npos) << note;
+  EXPECT_NE(note.find("fixture completion"), std::string::npos) << note;
+  // Shown as a note row, not as the person's message.
+  const auto reply = Get(conversation, true);
+  const auto* rows =
+      reply.Value()->value_as_ConversationResult()->conversation()->rows();
+  ASSERT_NE(rows, nullptr);
+  size_t notes = 0;
+  for (const auto* row : *rows) {
+    if (row->kind()->string_view() == "note") {
+      ++notes;
+      EXPECT_NE(row->summary_ja()->string_view().find(
+                    "が終わりました（失敗）— 続けています"),
+                std::string::npos);
+      EXPECT_NE(row->summary_en()->string_view().find("ended (failed)"),
+                std::string::npos);
+    }
+    if (row->text())
+      EXPECT_EQ(row->text()->string_view().find("[Tsugumi, not the person]"),
+                std::string_view::npos);
+  }
+  EXPECT_EQ(notes, 1u);
+  EXPECT_FALSE(model.WaitForRequests(4, 1500ms));
+}
+
+TEST_F(AgentRunWakeFixture, ARunDoesNotBringTheAgentBackAfterThePersonSpoke) {
+  const auto conversation = Prepare();
+  ModelServer model;
+  QueueStart(model, conversation);
+  model.Queue(AnthropicText("Answering the new question."));
+  Configure(model);
+  ASSERT_TRUE(Send(conversation, "Run it.").Code().empty());
+  WaitUntilIdle(conversation);
+  ASSERT_TRUE(Send(conversation, "Something else.", "turn-2").Code().empty());
+  WaitUntilIdle(conversation);
+  ASSERT_EQ(model.Requests().size(), 3u);
+  Entered();
+  Release();
+  RunEnded(conversation);
+  EXPECT_FALSE(model.WaitForRequests(4, 1500ms));
+}
+
+TEST_F(AgentRunWakeFixture, ARunDoesNotBringTheAgentBackAfterTheAnswerStopped) {
+  const auto conversation = Prepare();
+  ModelServer model;
+  QueueStart(model, conversation, true);
+  Configure(model);
+  ASSERT_TRUE(Send(conversation, "Run it.").Code().empty());
+  ASSERT_TRUE(model.WaitForRequests(2, 10s));
+  ASSERT_TRUE(Stop(conversation).Code().empty());
+  WaitUntilIdle(conversation);
+  model.Release();
+  Entered();
+  Release();
+  RunEnded(conversation);
+  EXPECT_FALSE(model.WaitForRequests(3, 1500ms));
+}
+
+TEST_F(AgentRunWakeFixture, ARunEndingDuringATurnWaitsForThatTurnToEnd) {
+  const auto conversation = Prepare();
+  ModelServer model;
+  QueueStart(model, conversation, true);
+  model.Queue(AnthropicText("It ended while I was answering."));
+  Configure(model);
+  ASSERT_TRUE(Send(conversation, "Run it.").Code().empty());
+  ASSERT_TRUE(model.WaitForRequests(2, 10s));
+  Entered();
+  Release();
+  RunEnded(conversation);
+  EXPECT_FALSE(model.WaitForRequests(3, 1000ms));
+  EXPECT_TRUE(JsonBool(Get(conversation, true).View(), "/busy"));
+  model.Release();
+  ASSERT_TRUE(model.WaitForRequests(3, 10s));
+  WaitUntilIdle(conversation);
+  EXPECT_NE(LastUserText(model.Requests()[2]).find("ended after your reply"),
+            std::string::npos);
+}
+
+TEST_F(AgentRunWakeFixture, ThePersonCanTurnRunWakesOffForAConversation) {
+  const auto conversation = Prepare();
+  EXPECT_TRUE(JsonBool(Get(conversation, true).View(), "/run_wake"));
+  ASSERT_TRUE(Call(*human, A::RequestPayload::ConversationRunWakeRequest,
+                   [&](Builder& b) {
+                     return A::CreateConversationRunWakeRequest(
+                                b, b.CreateString(conversation), false)
+                         .Union();
+                   })
+                  .Code()
+                  .empty());
+  EXPECT_FALSE(JsonBool(Get(conversation, true).View(), "/run_wake"));
+  ModelServer model;
+  QueueStart(model, conversation);
+  Configure(model);
+  ASSERT_TRUE(Send(conversation, "Run it.").Code().empty());
+  WaitUntilIdle(conversation);
+  Entered();
+  Release();
+  RunEnded(conversation);
+  EXPECT_FALSE(model.WaitForRequests(3, 1500ms));
+}
+
+TEST_F(AgentRunWaitFixture, AHelperSavesACardOutsideTheActiveRun) {
+  const auto other = directory.path / "project/definitions/other";
+  Write(other / "_card.json", FixtureCodeCard());
+  Write(other / "README.md",
+        "---\ntitle: other\ndescription: Not in the run\n---\n");
+  Write(other / "_outputs.fbs", "table Outputs {} root_type Outputs;");
+  Write(other / "default.nix", "{}");
+  Write(other / "value.txt", "old\n");
+  const auto conversation = Prepare();
+  const auto run = RunId(StartRun(conversation));
+  Entered();
+  ModelServer model;
+  model.Queue(AnthropicTool(
+      "helper-edit", "project_edit",
+      R"({"edits":[{"file_path":"definitions/other/value.txt","old_string":"old","new_string":"new"}]})"));
+  model.Queue(AnthropicTool(
+      "helper-edit-running", "project_edit",
+      R"({"edits":[{"file_path":"definitions/work/default.nix","old_string":"{}","new_string":"{ }"}]})"));
+  model.Queue(AnthropicText("Saved the change for the next run."));
+  Configure(model);
+  const auto delegated = Tool(
+      conversation, "delegate",
+      R"({"tasks":[{"name":"fixer","instruction":"Fix other.","read_cards":["work","other"],"write_cards":["work","other"],"run_cards":[]}]})");
+  ASSERT_TRUE(delegated.Code().empty()) << delegated.View();
+  ASSERT_EQ(model.Requests().size(), 3u);
+  EXPECT_FALSE(JsonBool(model.Requests()[1], "/messages/2/content/0/is_error"))
+      << JsonString(model.Requests()[1], "/messages/2/content/0/content");
+  EXPECT_EQ(Read(other / "value.txt"), "new\n");
+  // The Card the run still evaluates keeps its files until the run ends.
+  const auto refused =
+      JsonString(model.Requests()[2], "/messages/4/content/0/content");
+  EXPECT_TRUE(JsonBool(model.Requests()[2], "/messages/4/content/0/is_error"));
+  EXPECT_NE(refused.find("after the run ends"), std::string::npos) << refused;
+  const auto status = JsonString(
+      Tool(conversation, "run_status", WaitArguments(run, 0)).View(), "/text");
+  EXPECT_EQ(JsonString(status, "/value/state"), "preparing");
+  Release();
+}
+
 TEST_F(AgentRunWaitFixture, HelperCannotWaitOnAnUnownedRun) {
   const auto conversation = Prepare();
   const auto run = RunId(StartRun(conversation));

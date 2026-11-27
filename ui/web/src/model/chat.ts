@@ -15,7 +15,7 @@ import { LiveCodePlayer, writesSources } from './liveCode'
 import { Observable } from './observable'
 import { Thoughts, type ThoughtReply } from './thoughts'
 import { CardKey, ProjectSession, path } from './session'
-import { L, modelErrorMessage } from '../i18n'
+import { L, language, modelErrorMessage } from '../i18n'
 import { cardRequest } from '../../shared/agentShared'
 
 export interface ChatItem {
@@ -145,6 +145,8 @@ export class ChatController extends Observable {
   contextFull = false
   /** A stopped turn can be continued explicitly. */
   canContinue = false
+  /** A run the Agent started in this conversation brings it back when it ends. */
+  runWake = true
   interrupted = false
   interruptedOperation?: InterruptedOperation
   sessions: SessionInfo[] = []
@@ -266,7 +268,7 @@ export class ChatController extends Observable {
   private async reread(id: string) {
     const request = ++this.reload, turn = this.turn, revision = this.contentRevision, permissions = this.permissionRevision
     try {
-      const r = await api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; provider: ProviderInfo; eventSeq?: string; permissions: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string; call_id?: string }[] }>(
+      const r = await api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; runWake?: boolean; provider: ProviderInfo; eventSeq?: string; permissions: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string; call_id?: string }[] }>(
         '/api/chat/conversation', { path: this.session.dir, session: id, folders: this.folders })
       if (this.currentId !== id || request !== this.reload || turn !== this.turn) return
       const eventSeq = r.eventSeq === undefined ? undefined : BigInt(r.eventSeq)
@@ -278,6 +280,7 @@ export class ChatController extends Observable {
         this.presentationSeq = eventSeq ?? 0n
         this.busy = r.busy
         this.adoptInterruption(r)
+        this.runWake = r.runWake !== false
         this.usage = r.conversation.usage
         this.provider = r.provider
       }
@@ -492,6 +495,15 @@ export class ChatController extends Observable {
     void this.request('/api/chat/retry', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
   }
 
+  setRunWake(on: boolean) {
+    this.runWake = on
+    this.changed()
+    void api('/api/chat/runWake', { ...this.base, runWake: on }).catch((e) => {
+      this.runWake = !on
+      this.fail(e)
+    })
+  }
+
   compact() {
     this.begin()
     this.status = COMPACTING
@@ -648,6 +660,9 @@ export class ChatController extends Observable {
   }
 
   private handle(e: any) {
+    // A turn the host started (a run the Agent started has ended) answers
+    // like one this page started, and can be stopped the same way.
+    if (!this.busy && (e.kind === 'text' || e.kind === 'toolStarted' || e.kind === 'toolInput')) this.busy = true
     if (this.noteWriting('', e)) return
     if (e.kind === 'helper' && this.noteWriting(e.name, e.event)) return
     switch (e.kind) {
@@ -781,7 +796,9 @@ export class ChatController extends Observable {
 }
 
 function presentedItem(row: ChatRow): ChatItem {
-  return { id: row.id, role: row.kind === 'text' ? row.role : row.kind, text: row.kind === 'tool' ? row.arguments + (row.result ? '\n→ ' + row.result : '') : row.text,
+  return { id: row.id, role: row.kind === 'text' ? row.role : row.kind,
+    text: row.kind === 'tool' ? row.arguments + (row.result ? '\n→ ' + row.result : '')
+      : row.kind === 'note' ? (language() === 'en' ? row.summaryEn : row.summaryJa) : row.text,
     archived: row.archived, helper: row.kind === 'helper' ? row.name : undefined,
     tool: row.kind === 'tool' ? { name: row.name, ok: row.state === 'running' ? undefined : row.state === 'completed' } : undefined,
     ended: row.kind === 'helper' && row.state !== 'running' ? row.state : undefined, presentation: row }

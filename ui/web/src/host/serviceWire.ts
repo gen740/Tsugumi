@@ -48,6 +48,7 @@ import { ConversationDeleteRequestT as AConversationDeleteRequest } from '../../
 import { ConversationSendRequestT as AConversationSendRequest } from '../../shared/gen/tsugumi/agent/conversation-send-request'
 import { ConversationActionRequestT as AConversationActionRequest } from '../../shared/gen/tsugumi/agent/conversation-action-request'
 import { ConversationCancelRequestT as AConversationCancelRequest } from '../../shared/gen/tsugumi/agent/conversation-cancel-request'
+import { ConversationRunWakeRequestT as AConversationRunWakeRequest } from '../../shared/gen/tsugumi/agent/conversation-run-wake-request'
 import { EventsRequestT as AEventsRequest } from '../../shared/gen/tsugumi/agent/events-request'
 import { ToolCallRequestT as AToolCallRequest } from '../../shared/gen/tsugumi/agent/tool-call-request'
 import { ToolCallCancelRequestT as AToolCallCancelRequest } from '../../shared/gen/tsugumi/agent/tool-call-cancel-request'
@@ -158,6 +159,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'ConversationSendRequest': return new AConversationSendRequest(v.conversation_id, v.turn_id, v.text, v.selected_cards, v.selected_displays, v.skill_names, v.intent, v.attached_resources, v.display, v.scoped_skill)
     case 'ConversationActionRequest': return new AConversationActionRequest(v.conversation_id, enumValue(Action, v.action))
     case 'ConversationCancelRequest': return new AConversationCancelRequest(v.conversation_id)
+    case 'ConversationRunWakeRequest': return new AConversationRunWakeRequest(v.conversation_id, !!v.run_wake)
     case 'EventsRequest': return new AEventsRequest(v.conversation_id, BigInt(v.after_seq ?? 0), v.limit)
     case 'ToolCallRequest': return new AToolCallRequest(v.conversation_id, v.project_id, v.name, v.arguments_json, v.op_id)
     case 'ToolCallCancelRequest': return new AToolCallCancelRequest(BigInt(v.request_id))
