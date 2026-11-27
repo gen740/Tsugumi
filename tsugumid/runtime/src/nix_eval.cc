@@ -1003,6 +1003,10 @@ struct EvaluationState {
                   ->value;
     };
     NixResult r;
+    if (c.probe_only && c.on_probe_declared &&
+        state->forceBool(attr("probeDeclared"), nix::noPos,
+                         "while reading whether the Card declares a probe"))
+      c.on_probe_declared();
     r.execution_list = state->forceBool(attr("executionList"), nix::noPos,
                                         "while reading the Card run shape");
     const auto count = state
@@ -1356,6 +1360,10 @@ auto evaluator_main() -> void {
       call.nix_dir = op->nix_dir;
       call.needs_worker = op->needs_worker;
       call.probe_only = op->probe_only;
+      if (call.probe_only)
+        call.on_probe_declared = [&] {
+          send<E::Reply>(sink, E::ProbeDeclaredT{});
+        };
       call.args = op->args;
       call.max_implementations = op->max_implementations;
       const auto result = evaluator(call).evaluate(call, fetch);
@@ -1518,6 +1526,10 @@ struct NixEvaluator::Impl {
         reply = receive<E::Reply>(source);
         if (const auto* build = reply.body.AsBuild()) {
           if (call.on_build) call.on_build(build->drv, build->active);
+          continue;
+        }
+        if (reply.body.AsProbeDeclared()) {
+          if (call.on_probe_declared) call.on_probe_declared();
           continue;
         }
         const auto* log = reply.body.AsLog();

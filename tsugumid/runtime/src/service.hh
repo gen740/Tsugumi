@@ -169,7 +169,7 @@ class Service : public RequestSink {
                           const std::filesystem::path& directory,
                           const BuildRequest& build, std::string& observed_life,
                           std::string_view expected_key = {},
-                          std::optional<FailureKind>* evaluation = nullptr)
+                          bool* probe_declared = nullptr)
       -> Tsugumi::Data::WorkerProbeResultT;
   auto prepare_execution(const Node& node,
                          const std::filesystem::path& directory,

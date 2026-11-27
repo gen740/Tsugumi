@@ -156,6 +156,8 @@ else if !probeOnly && !builtins.isList declarations then
   throw "Card views must be a list"
 else
   {
+    # Known without evaluating the probe itself.
+    probeDeclared = probeOnly && self ? probe;
     executionList = !probeOnly && executionList;
     implementationCount = builtins.length runs;
     implementationLabels = builtins.unsafeDiscardStringContext (

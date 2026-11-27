@@ -69,6 +69,9 @@ struct BuildRequest {
   bool probe_only = false;
   // Called after evaluation so a cache hit can skip transferring and building.
   std::function<bool(std::string_view output)> needs_probe_build;
+  // Called during a probe evaluation once the Card is known to declare a
+  // probe, before the probe itself is evaluated.
+  std::function<void()> on_probe_declared;
   std::stop_token cancel;
   NixOutput log;  // build output
   std::function<void(Phase)>

@@ -75,6 +75,9 @@ table Log { line:string; }
 table BuildLog { line:string; truncated:bool; built:bool = null; substituter:string; }
 table Build { drv:string (required); active:bool; }
 table Error { message:string; limit:bool; }
+// During a probe evaluation: the Card declares a probe (sent before the probe
+// itself is evaluated, so its failure or time limit is known to be the probe's).
+table ProbeDeclared {}
 
-union ReplyBody { Evaluation, Reusable, ExpressionValue, ResolvedSource, Log = 6, Build, Error }
+union ReplyBody { Evaluation, Reusable, ExpressionValue, ResolvedSource, Log = 6, Build, Error, ProbeDeclared }
 table Reply { body:ReplyBody (required); }

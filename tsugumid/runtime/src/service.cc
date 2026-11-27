@@ -483,7 +483,7 @@ auto Service::measure_card_probe(const RemoteTarget& target, const Node& node,
                                  const BuildRequest& build,
                                  std::string& observed_life,
                                  std::string_view expected_key,
-                                 std::optional<FailureKind>* evaluation)
+                                 bool* probe_declared)
     -> D::WorkerProbeResultT {
   D::WorkerProbeResultT result;
   result.worker = target.id;
@@ -524,6 +524,12 @@ auto Service::measure_card_probe(const RemoteTarget& target, const Node& node,
     }
   } cleanup{scratch};
   std::string key, life, revision, retry_system;
+  // The Card declares a probe: a failure from here on is the probe's, even
+  // when its evaluation fails or times out before needs_probe_build.
+  if (probe_declared) {
+    *probe_declared = false;
+    request.on_probe_declared = [probe_declared] { *probe_declared = true; };
+  }
   request.needs_probe_build = [&](std::string_view output) {
     result.probe = output;
     if (!local) {
@@ -650,14 +656,8 @@ auto Service::measure_card_probe(const RemoteTarget& target, const Node& node,
       result.failure = "The last line of probe output must be a finite number";
   } catch (const ExecutionDetached&) {
     result.failure = "Probe did not finish within the measurement time limit";
-  } catch (const Failed& error) {
-    result.failure = error.what();
-    // No probe yet: the Card's evaluation itself failed.
-    if (evaluation && result.probe.empty()) *evaluation = error.failure.kind;
   } catch (const std::exception& error) {
     result.failure = error.what();
-    if (evaluation && result.probe.empty())
-      *evaluation = FailureKind::nix_failed;
   }
   if (build.cancel.stop_requested())
     throw Failed(FailureKind::cancelled, "worker selection cancelled");
@@ -733,30 +733,22 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
   auto targets = remote_targets(build.cancel);
   auto& measurements = summary.worker_probes;
   std::map<std::string, std::string> remote_lives;
-  // The failure kind when the Card's evaluation failed on every worker that
-  // could take it, before any probe: selection then fails with that kind.
-  std::optional<FailureKind> evaluation_failure;
   const auto measure_targets = [&] {
     measurements.clear();
     remote_lives.clear();
-    evaluation_failure.reset();
-    bool measured = false, every_evaluation_failed = true;
+    bool measured = false;
     for (const auto& target : targets) {
-      std::optional<FailureKind> evaluation;
+      bool declared = false;
       auto result = measure_card_probe(target, node, directory, build,
-                                       remote_lives[target.id], {},
-                                       &evaluation);
-      // A recorded failure counts as a measurement: a probe whose evaluation
-      // fails or times out never reaches needs_probe_build, and treating it
-      // as "no probe" would make every worker eligible and erase the cause.
-      measured |= !result.probe.empty() || !result.failure.empty();
-      if (result.unavailable_reason.empty()) {
-        every_evaluation_failed &= evaluation.has_value();
-        if (!evaluation_failure) evaluation_failure = evaluation;
-      }
+                                       remote_lives[target.id], {}, &declared);
+      // A declared probe whose evaluation fails or times out never reaches
+      // needs_probe_build; it is measured all the same, so its failure stays
+      // and no worker becomes eligible by default. A Card without a probe, or
+      // one whose own evaluation fails before the probe is known, is not
+      // measured: the execution reports its own failure.
+      measured |= !result.probe.empty() || (declared && !result.failure.empty());
       measurements.push_back(std::move(result));
     }
-    if (!every_evaluation_failed) evaluation_failure.reset();
     if (measured) {
       for (auto& result : measurements)
         if (!result.score && result.failure.empty() &&
@@ -817,13 +809,10 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
             message += probe.unavailable_reason;
           else if (probe.score)
             message += std::to_string(*probe.score);
-          else if (probe.probe.empty())
-            message += "evaluation failed: " + probe.failure;
           else
             message += "probe failed: " + probe.failure;
         }
-        throw Failed(evaluation_failure.value_or(FailureKind::unsupported),
-                     std::move(message));
+        throw Failed(FailureKind::unsupported, std::move(message));
       }
       if (!choice.index) break;
       const auto& target = targets[*choice.index];

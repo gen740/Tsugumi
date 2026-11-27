@@ -460,6 +460,7 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
   call.max_implementations = req.max_implementations;
   call.views_only = views_only;
   call.probe_only = req.probe_only;
+  call.on_probe_declared = req.on_probe_declared;
   const bool needs_worker = req.target.kind == WorkerKind::remote ||
                             req.target.system != native_system();
   call.needs_worker = needs_worker && !views_only;
