@@ -24,8 +24,12 @@ if [[ "$system" == x86_64-linux || "${TSUGUMI_FULL_RULES:-0}" == 1 ]]; then full
 native_settings=(
   'NativeEnvironment.*' 'NativeTerminalTest.*' 'AttachedFolderTest.*' 'HostFormat.*'
   'EnvironmentAdapterTest.ShutdownPreservesReplacementControlFiles'
+  'EnvironmentAdapterTest.VerifyStoreCancelsAnInProgressStart'
   'BinaryCaches.NixDownloadsFromAPrivateCacheWithTheHostSnapshot'
   'ConversationStoreTest.ProjectDatabasesKeepTheirLocksAndRecoverySeparateFromHome'
+  'ConversationStoreTest.IncrementalEventsCopyOnlyChangedRows'
+  'ConversationStoreTest.TurnPreparationLoadsExclusionsWithoutTheGate'
+  'AgentPresentation.AFailedHelperMarksItsStepFailed'
   'ConversationStoreTest.KnownConversationsRemainReadableWhileAnotherProjectIsLocked'
   'ConversationStoreTest.ProjectStateLinksAndForeignConversationIdentitiesStayRejected'
   'ConversationStoreTest.RecreatedFolderReplacesEvenAnOpenedIdentity'
@@ -47,7 +51,7 @@ native_agent=(
   'SkillsFixture.StrictSizeBoundaryAndUnreadableFilesAndFolders'
   'BrokerFixture.*Handshake*' 'BrokerFixture.WrongWorkerKeyIsRejectedBeforeAnyApplicationRequest'
   'BrokerFixture.FragmentedFramesWaitForTheCompleteRequest'
-  'BrokerFixture.CancelReachesWorkerWhileOtherRepliesAreBlocked'
+  'BrokerFixture.CatalogAndCancelProceedWhileWorkerRepliesAreBlocked'
 )
 # Python suites that exercise native workers, paths or transports keep their
 # own marker. Shared rules and the rest of each mixed fixture run on x86 Linux.
