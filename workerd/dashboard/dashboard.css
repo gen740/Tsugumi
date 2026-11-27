@@ -33,10 +33,12 @@ section > p { color: var(--muted); }
 .table-scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; text-align: left; font-size: 13px; }
 td, th { padding: 8px 9px; border-bottom: 1px solid var(--line); }
-th { white-space: nowrap; color: var(--muted); font-size: 12px; }
+th { color: var(--muted); font-size: 12px; }
 td:first-child, th:first-child { padding-left: 0; }
-td:last-child { min-width: 12ch; }
-td time, .number { white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* Headers and short values keep whole words; a narrow window scrolls the table instead. */
+th, td:not(:last-child) { white-space: nowrap; }
+td:last-child { min-width: 16em; }
+td time, .number { font-variant-numeric: tabular-nums; }
 td code { color: var(--accent); }
 tr:has(input:checked) { background: light-dark(#e9f6f6, #233c42); }
 #empty-jobs { padding-top: 12px; }
@@ -78,6 +80,4 @@ aside label { display: block; margin-top: 10px; }
   body { padding: 14px; }
   section, aside { padding: 12px; }
   th, td { padding: 6px; }
-  th, td time { white-space: normal; }
-  td code { overflow-wrap: anywhere; }
 }
