@@ -114,8 +114,9 @@ struct InvocationSummaryData {
   // What the remote job does now, and the derivation it builds (live only).
   ExecutionActivity execution_activity = ExecutionActivity::unspecified;
   std::string execution_activity_detail;
-  // CPU time of its process tree on a remote worker, and when it last wrote
-  // output or build log (core clock). Live only.
+  // CPU time of its process tree (the remote job, or the local Card worker's
+  // tree since its call began), and when it last wrote output or build log
+  // (core clock). Live only.
   std::optional<uint64_t> cpu_ms;
   std::optional<int64_t> last_output_at;
   std::optional<uint64_t> batch_activation;

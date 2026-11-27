@@ -4,7 +4,11 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <condition_variable>
 #include <mutex>
+#include <optional>
+#include <stop_token>
+#include <thread>
 
 #include "history.hh"
 #include "run_scratch.hh"
@@ -12,6 +16,7 @@
 #include "store.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/log.hh"
+#include "tsugumi/util/process.hh"
 #include "tsugumi/util/system.hh"
 #include "tsugumi/workerd/protocol.hh"
 #include "tsugumi/workerd/store.hh"
@@ -25,6 +30,51 @@ namespace {
 #ifdef __linux__
 constexpr uid_t kCardUid = 65534;
 #endif
+
+// Every few seconds while the Card's call runs, the CPU time its worker's
+// process tree used since the call began, published with the invocation's
+// summary as a remote worker's job progress is. The sampler owns cpu_ms only
+// while it runs: stop() returns once it no longer touches the summary, and
+// the caller stops it before anything else changes the summary again.
+class CpuSampler {
+ public:
+  CpuSampler(pid_t worker, InvocationSummaryData& summary,
+             std::function<void()> publish) {
+    const auto start = proc::tree_cpu_ms(worker);
+    if (!start) return;
+    thread_ = std::jthread([worker, start = *start, &summary,
+                            publish = std::move(publish)](std::stop_token stop) {
+      std::mutex mutex;
+      std::condition_variable_any tick;
+      for (;;) {
+        {
+          std::unique_lock lock(mutex);
+          tick.wait_for(lock, stop, std::chrono::seconds(2),
+                        [] { return false; });
+        }
+        if (stop.stop_requested()) return;
+        // A process tree only gains CPU time. Less means the worker is gone
+        // (its id may already name another process): keep the last value.
+        const auto now = proc::tree_cpu_ms(worker);
+        if (!now || *now < start) continue;
+        const auto used = *now - start;
+        if (summary.cpu_ms && used <= *summary.cpu_ms) continue;
+        summary.cpu_ms = used;
+        publish();
+      }
+    });
+  }
+  auto stop() -> void {
+    if (!thread_.joinable()) return;
+    thread_.request_stop();
+    thread_.join();
+  }
+  ~CpuSampler() { stop(); }
+  CpuSampler(const CpuSampler&) = delete;
+
+ private:
+  std::jthread thread_;
+};
 
 class PreparedLocalExecution final : public PreparedExecution {
  public:
@@ -267,15 +317,25 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
           const WorkerViewRequest& control) {
         return service->view_control(origin, views, endpoint, control);
       };
+  s.cpu_ms.reset();
+  CpuSampler cpu(lease.worker->process_id(), s, request.publish);
+  // The call has answered when its timing arrives; validation changes the
+  // summary next.
   invocation.on_timing = [&](int64_t begin, int64_t end) {
+    cpu.stop();
     request.on_timing(begin, end);
   };
-  invocation.validate = request.validate;
+  invocation.validate = [&](workerd::InvocationResult& result) {
+    cpu.stop();
+    if (request.validate) request.validate(result);
+  };
   auto completed = workerd::run_invocation(
       [&](auto worker, bool keep, const auto& reason) {
+        cpu.stop();
         workers_.release(std::move(worker), keep, reason);
       },
       lease, reuse, invocation);
+  cpu.stop();
   if (!build.card_probe) service_.record_artifacts(s, completed.created);
   return {std::move(completed.outputs), std::move(completed.failure)};
 }

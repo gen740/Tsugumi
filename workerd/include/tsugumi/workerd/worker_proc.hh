@@ -137,6 +137,8 @@ class WorkerProc {
     std::function<void(bool)> terminate;
     std::function<void()> abandon;
     bool packed = false;
+    // The process workerd runs, for observation only.
+    pid_t pid = -1;
   };
   explicit WorkerProc(Borrowed borrowed);
   ~WorkerProc();
@@ -194,6 +196,8 @@ class WorkerProc {
   void clear_scratch();
   // Resident memory of the worker process, when known.
   std::optional<uint64_t> rss_bytes() const;
+  // The worker process (also of a borrowed connection); -1 when unknown.
+  auto process_id() const -> pid_t { return borrowed_ ? borrowed_pid_ : pid_; }
 
  private:
   // Cleanup after a failure whose diagnostic the caller must preserve.
@@ -266,6 +270,7 @@ class WorkerProc {
   std::array<int, 2> log_wake_{-1, -1};
   std::atomic<bool> stop_logs_{false};
   bool borrowed_ = false;
+  pid_t borrowed_pid_ = -1;
   uint64_t lease_id_ = 0;
   std::function<void()> borrowed_clear_;
   std::function<void(bool)> borrowed_terminate_;

@@ -79,6 +79,7 @@ auto serve_connection(int fd, WorkerPool& pool, size_t channel) -> void {
                               .string();
           reply.call_id = lease.worker->call_id();
           reply.artifact_scratch = lease.worker->artifact_scratch().string();
+          reply.worker_pid = lease.worker->process_id();
           try {
             descriptors = lease.worker->hand_over();
             held.emplace(reply.lease, Held{request.card, lease.generation,

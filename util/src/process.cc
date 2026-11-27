@@ -7,7 +7,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #ifdef __APPLE__
+#include <libproc.h>
+#include <mach/mach_time.h>
 #include <sys/event.h>
+#include <sys/resource.h>
 #endif
 
 #include <algorithm>
@@ -18,10 +21,14 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <filesystem>
+#include <fstream>
+#include <map>
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 namespace tsugumi::proc {
 namespace {
@@ -572,6 +579,135 @@ std::string describe(int status) {
   if (WIFSIGNALED(status))
     return std::string("signal ") + std::to_string(WTERMSIG(status));
   return "unknown status";
+}
+
+namespace {
+
+// One sample of a process tree: CPU time of `root` (when `with_root`) and of
+// every live process below it, each including the children it reaped.
+auto sample_tree(pid_t root, bool with_root) -> std::optional<uint64_t> {
+#ifdef __linux__
+  std::map<pid_t, std::vector<pid_t>> below;
+  std::map<pid_t, uint64_t> ticks;
+  std::error_code ec;
+  for (const auto& entry : std::filesystem::directory_iterator("/proc", ec)) {
+    const auto name = entry.path().filename().string();
+    if (name.empty() || !std::ranges::all_of(name, [](unsigned char c) {
+          return c >= '0' && c <= '9';
+        }))
+      continue;
+    std::ifstream file(entry.path() / "stat");
+    std::string line;
+    if (!std::getline(file, line)) continue;
+    // After "pid (comm)": state ppid ... utime stime cutime cstime are
+    // fields 3, 4 and 14-17 of the line.
+    const auto close = line.rfind(')');
+    if (close == line.npos) continue;
+    std::vector<std::string_view> fields;
+    std::string_view rest(line);
+    rest.remove_prefix(close + 1);
+    while (fields.size() < 15) {
+      const auto start = rest.find_first_not_of(' ');
+      if (start == rest.npos) break;
+      rest.remove_prefix(start);
+      const auto end = rest.find(' ');
+      fields.push_back(rest.substr(0, end));
+      if (end == rest.npos) break;
+      rest.remove_prefix(end);
+    }
+    if (fields.size() < 15) continue;
+    const auto number = [](std::string_view text) {
+      uint64_t value = 0;
+      for (const char c : text) {
+        if (c < '0' || c > '9') return value;
+        value = value * 10 + static_cast<uint64_t>(c - '0');
+      }
+      return value;
+    };
+    const auto pid = static_cast<pid_t>(number(name));
+    below[static_cast<pid_t>(number(fields[1]))].push_back(pid);
+    ticks[pid] = number(fields[11]) + number(fields[12]) + number(fields[13]) +
+                 number(fields[14]);
+  }
+  const auto per_second = static_cast<uint64_t>(::sysconf(_SC_CLK_TCK));
+  if (!per_second) return std::nullopt;
+  const auto own = ticks.find(root);
+  if (with_root && own == ticks.end()) return std::nullopt;
+  uint64_t total = with_root ? own->second : 0;
+  std::vector<pid_t> todo = below[root];
+  while (!todo.empty()) {
+    const auto pid = todo.back();
+    todo.pop_back();
+    total += ticks[pid];
+    const auto& next = below[pid];
+    todo.insert(todo.end(), next.begin(), next.end());
+  }
+  return total * 1000 / per_second;
+#elif defined(__APPLE__)
+  // rusage_info times are Mach absolute time units.
+  static const auto timebase = [] {
+    mach_timebase_info_data_t info{};
+    ::mach_timebase_info(&info);
+    return info;
+  }();
+  const auto own_ms = [&](pid_t pid) -> std::optional<uint64_t> {
+    rusage_info_v2 ri{};
+    if (::proc_pid_rusage(pid, RUSAGE_INFO_V2,
+                          reinterpret_cast<rusage_info_t*>(&ri)) != 0)
+      return std::nullopt;
+    const auto units = ri.ri_user_time + ri.ri_system_time +
+                       ri.ri_child_user_time + ri.ri_child_system_time;
+    if (!timebase.denom) return std::nullopt;
+    return static_cast<uint64_t>(static_cast<__uint128_t>(units) *
+                                 timebase.numer / timebase.denom / 1000000);
+  };
+  const auto children = [](pid_t parent) {
+    std::vector<pid_t> pids(64);
+    for (;;) {
+      const int bytes = ::proc_listpids(
+          PROC_PPID_ONLY, static_cast<uint32_t>(parent), pids.data(),
+          static_cast<int>(pids.size() * sizeof(pid_t)));
+      if (bytes <= 0) return std::vector<pid_t>{};
+      const auto count = static_cast<size_t>(bytes) / sizeof(pid_t);
+      if (count < pids.size()) {
+        pids.resize(count);
+        std::erase(pids, 0);
+        return pids;
+      }
+      pids.resize(pids.size() * 2);
+    }
+  };
+  uint64_t total = 0;
+  if (with_root) {
+    const auto own = own_ms(root);
+    if (!own) return std::nullopt;
+    total = *own;
+  }
+  std::vector<pid_t> todo = children(root);
+  while (!todo.empty()) {
+    const auto pid = todo.back();
+    todo.pop_back();
+    total += own_ms(pid).value_or(0);
+    const auto next = children(pid);
+    todo.insert(todo.end(), next.begin(), next.end());
+  }
+  return total;
+#else
+  (void)root;
+  (void)with_root;
+  return std::nullopt;
+#endif
+}
+
+}  // namespace
+
+uint64_t descendants_cpu_ms(pid_t root) {
+  return sample_tree(root, false).value_or(0);
+}
+
+std::optional<uint64_t> tree_cpu_ms(pid_t root) {
+  if (root <= 0) return std::nullopt;
+  return sample_tree(root, true);
 }
 
 }  // namespace tsugumi::proc

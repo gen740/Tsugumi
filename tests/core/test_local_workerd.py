@@ -2,6 +2,7 @@
 
 import json
 import sys
+import time
 
 import pytest
 
@@ -119,3 +120,66 @@ def test_running_card_rejects_definition_edit_and_retires_after_save(core_factor
     assert wait_run(client, replaced).state == RunState.succeeded
     invocation, = client.call("RunInvocationsRequest", runId=replaced, card=path("work")).records
     assert not invocation.workerReused
+
+
+def active_row(client, run_id, check, timeout=30):
+    deadline = time.monotonic() + timeout
+    rows = []
+    while time.monotonic() < deadline:
+        rows = client.call("RunStatusRequest", runId=run_id).active or []
+        row = next((r for r in rows if list(map(text, r.card.segments)) == ["work"]), None)
+        if row is not None and check(row):
+            return row
+        time.sleep(0.05)
+    raise AssertionError(f"no matching active invocation: {rows}")
+
+
+@pytest.mark.parametrize("child", [False, True])
+def test_silent_cpu_bound_local_card_reports_growing_cpu_time(core_factory, project, tmp_path, child):
+    """A local Card computing in silence, in its worker or in a child process,
+    shows growing CPU time while its time since the last output grows, as a
+    remote job does."""
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
+    client = daemon.connect()
+    Project(project).card(
+        "work", {"type": "code", "sandbox": SCRIPTED_WORKER_SANDBOX},
+        outputs="table Outputs {} root_type Outputs;", plan=mock_plan([str(project / "definitions/work")]),
+        sources={"scenario.json": json.dumps({"actions": [
+            {"op": "log", "text": "computing"}, {"op": "spin", "seconds": 12, "child": child}]})},
+    ).save(client)
+    run_id = run(client)
+    first = active_row(client, run_id, lambda r: r.cpuMs is not None and r.outputIdleMs is not None)
+    time.sleep(5)
+    later = active_row(client, run_id, lambda r: True)
+    assert later.cpuMs is not None and later.outputIdleMs > first.outputIdleMs
+    # Sampled every two seconds: the busy Card added at least two of the five.
+    assert later.cpuMs - first.cpuMs >= 2000, (first.cpuMs, later.cpuMs)
+    assert wait_run(client, run_id).state == RunState.succeeded
+
+
+def test_resident_worker_counts_cpu_time_from_its_call(core_factory, project, tmp_path):
+    """A resident worker's earlier calls are not this call's CPU time."""
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
+    client = daemon.connect()
+    gate = Gate(tmp_path, "second")
+    Project(project).card(
+        "work", {"type": "code", "sandbox": SCRIPTED_WORKER_SANDBOX, "reuseWorker": True},
+        outputs="table Outputs {} root_type Outputs;", plan=mock_plan([str(project / "definitions/work")]),
+        sources={"scenario.json": json.dumps({"actions": [
+            {"op": "spin", "seconds": 4, "call": 1}, {**gate.action(), "call": 2}]})},
+    ).save(client)
+    busy = run(client)
+    assert active_row(client, busy, lambda r: (r.cpuMs or 0) >= 1000).cpuMs >= 1000
+    assert wait_run(client, busy).state == RunState.succeeded
+    idle = run(client)
+    gate.wait()
+    try:
+        row = active_row(client, idle, lambda r: r.cpuMs is not None)
+        time.sleep(2.5)
+        later = active_row(client, idle, lambda r: True)
+        assert row.cpuMs < 1000 and later.cpuMs < 1000, (row.cpuMs, later.cpuMs)
+    finally:
+        gate.release()
+    assert wait_run(client, idle).state == RunState.succeeded
+    record, = client.call("RunInvocationsRequest", runId=idle, card=path("work")).records
+    assert record.workerReused

@@ -822,6 +822,7 @@ WorkerProc::WorkerProc(Borrowed borrowed)
       artifact_scratch_(std::move(borrowed.artifact_scratch)),
       call_id_(borrowed.call_id),
       borrowed_(true),
+      borrowed_pid_(borrowed.pid),
       lease_id_(borrowed.lease),
       borrowed_clear_(std::move(borrowed.clear)),
       borrowed_terminate_(std::move(borrowed.terminate)),
@@ -839,6 +840,7 @@ WorkerProc::WorkerProc(Borrowed borrowed)
 auto WorkerProc::resume(Borrowed borrowed) -> void {
   resume_logs();
   lease_id_ = borrowed.lease;
+  borrowed_pid_ = borrowed.pid;
   call_id_ = borrowed.call_id;
   borrowed_clear_ = std::move(borrowed.clear);
   borrowed_terminate_ = std::move(borrowed.terminate);

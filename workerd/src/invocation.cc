@@ -10,18 +10,15 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <fstream>
 #include <iostream>
-#include <iterator>
 #include <map>
 #include <mutex>
 #include <optional>
 #include <span>
-#include <sstream>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -32,6 +29,7 @@
 #include "tsugumi/rpc/frame.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/process.hh"
 #include "tsugumi/util/system.hh"
 #include "tsugumi/workerd/artifact_id.hh"
 #include "tsugumi/workerd/card_plan.hh"
@@ -151,7 +149,8 @@ auto exchange_cache_file(CacheRelay::Method method, const std::string& path,
 
 // CPU time of this process and every process below it, in milliseconds:
 // the Nix builds and the Card's process included. Reaped children count
-// through RUSAGE_CHILDREN; running ones and what they reaped through /proc.
+// through RUSAGE_CHILDREN; running ones and what they reaped through /proc
+// (libproc on macOS).
 auto tree_cpu_ms() -> uint64_t {
   const auto ms = [](const timeval& t) {
     return static_cast<uint64_t>(t.tv_sec) * 1000 +
@@ -160,47 +159,8 @@ auto tree_cpu_ms() -> uint64_t {
   rusage self{}, children{};
   ::getrusage(RUSAGE_SELF, &self);
   ::getrusage(RUSAGE_CHILDREN, &children);
-  uint64_t total = ms(self.ru_utime) + ms(self.ru_stime) +
-                   ms(children.ru_utime) + ms(children.ru_stime);
-#ifdef __linux__
-  std::map<pid_t, std::vector<pid_t>> below;
-  std::map<pid_t, uint64_t> ticks;
-  std::error_code ec;
-  for (const auto& entry : stdfs::directory_iterator("/proc", ec)) {
-    const auto name = entry.path().filename().string();
-    if (name.empty() || !std::ranges::all_of(name, ::isdigit)) continue;
-    std::ifstream file(entry.path() / "stat");
-    std::string line;
-    if (!std::getline(file, line)) continue;
-    // After "pid (comm)": state ppid ... utime stime cutime cstime are
-    // fields 3, 4 and 14-17 of the line.
-    const auto close = line.rfind(')');
-    if (close == line.npos) continue;
-    std::istringstream rest(line.substr(close + 1));
-    std::vector<std::string> fields{std::istream_iterator<std::string>(rest),
-                                    std::istream_iterator<std::string>()};
-    if (fields.size() < 15) continue;
-    try {
-      const auto pid = static_cast<pid_t>(std::stol(name));
-      below[static_cast<pid_t>(std::stol(fields[1]))].push_back(pid);
-      ticks[pid] = std::stoull(fields[11]) + std::stoull(fields[12]) +
-                   std::stoull(fields[13]) + std::stoull(fields[14]);
-    } catch (const std::exception&) {
-    }
-  }
-  const auto per_second = static_cast<uint64_t>(::sysconf(_SC_CLK_TCK));
-  std::vector<pid_t> todo = below[::getpid()];
-  uint64_t descendants = 0;
-  while (!todo.empty() && per_second) {
-    const auto pid = todo.back();
-    todo.pop_back();
-    descendants += ticks[pid];
-    const auto& next = below[pid];
-    todo.insert(todo.end(), next.begin(), next.end());
-  }
-  if (per_second) total += descendants * 1000 / per_second;
-#endif
-  return total;
+  return ms(self.ru_utime) + ms(self.ru_stime) + ms(children.ru_utime) +
+         ms(children.ru_stime) + proc::descendants_cpu_ms(::getpid());
 }
 
 // Writes what the job is doing to work/activity for its status replies, and

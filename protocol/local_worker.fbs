@@ -26,6 +26,9 @@ table Message {
   reused:bool; replaced:string; scratch:string; call_id:ulong; error:string;
   error_kind:Tsugumi.Data.FailureKind = worker_failed;
   artifact_scratch:string;
+  /// The leased worker's process (the root of the Card's process tree), for
+  /// sampling its CPU time; never signalled through this id.
+  worker_pid:int;
 }
 root_type Message;
 file_identifier "TSL1";

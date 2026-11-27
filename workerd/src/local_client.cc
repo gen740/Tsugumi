@@ -188,7 +188,8 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
       [this, channel, id = message.lease] {
         command(channel, L::Action::Release, id);
       },
-      spawn.packed};
+      spawn.packed,
+      message.worker_pid > 0 ? message.worker_pid : -1};
   std::unique_ptr<WorkerProc> worker;
   try {
     if (reuse) {

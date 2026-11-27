@@ -16,8 +16,10 @@ from pathlib import Path
 import select
 import socket
 import struct
+import subprocess
 import sys
 import threading
+import time
 from uuid import UUID
 
 import flatbuffers
@@ -39,6 +41,9 @@ from Tsugumi.Worker.WorkerResult import WorkerResultT
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from harness.file_events import wait_for_file  # noqa: E402
+
+# A busy child process: python3 -c SPIN SECONDS.
+SPIN = "import sys, time\nuntil = time.monotonic() + float(sys.argv[1])\nwhile time.monotonic() < until: sum(range(10000))\n"
 
 
 MAX_FRAME = (16 << 20) + 65536
@@ -189,8 +194,27 @@ class Worker:
     def actions(self, actions, outputs):
         for action in actions:
             self.check_cancel()
+            if "call" in action and action["call"] != self.calls:
+                continue
             operation = action["op"]
-            if operation == "gate":
+            if operation == "spin":
+                # Busy for a while without output, here or in a child process.
+                seconds = float(action["seconds"])
+                if action.get("child", False):
+                    child = subprocess.Popen([sys.executable, "-c", SPIN, str(seconds)])
+                    try:
+                        while child.poll() is None:
+                            self.check_cancel()
+                            time.sleep(0.05)
+                    finally:
+                        child.kill()
+                        child.wait()
+                else:
+                    until = time.monotonic() + seconds
+                    while time.monotonic() < until:
+                        self.check_cancel()
+                        sum(range(10000))
+            elif operation == "gate":
                 self.wait(action)
             elif operation == "hang":
                 self.wait(action, forever=True)

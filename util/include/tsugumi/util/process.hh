@@ -71,4 +71,13 @@ Result run(const Spec& spec, const std::atomic<bool>* cancel,
 bool exited_ok(int status);
 std::string describe(int status);
 
+// CPU time (user and system, ms) of the processes below `root`: the live ones
+// and the children each of them has reaped. `root` itself is not counted.
+// Linux reads /proc, macOS libproc. A process that left the tree by being
+// reparented (an orphan) is no longer counted.
+uint64_t descendants_cpu_ms(pid_t root);
+// `root`'s own CPU time and that of the children it reaped, plus
+// descendants_cpu_ms(root); nullopt when `root` cannot be read.
+std::optional<uint64_t> tree_cpu_ms(pid_t root);
+
 }  // namespace tsugumi::proc
