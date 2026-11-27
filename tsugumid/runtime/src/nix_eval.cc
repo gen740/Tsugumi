@@ -967,18 +967,19 @@ struct EvaluationState {
     };
     const auto expr =
         "text: let pkgs = import (/. + " + quote(pkgs) +
-        ") { config = {}; overlays = []; }; in " +
+        ") { config = {}; overlays = []; }; in pkgs.writeTextFile { "
+        "name = \"tsugumi-card-plan.json\"; allowSubstitutes = true; text = " +
         (c.needs_worker
              ? "let worker = import (/. + " +
                    quote((c.nix_dir / "worker/worker.nix").string()) +
                    ") { inherit pkgs; }; in "
-                   "pkgs.writeText \"tsugumi-card-plan.json\" "
-                   "(builtins.appendContext (builtins.toJSON "
+                   "builtins.appendContext (builtins.toJSON "
                    "(builtins.fromJSON (builtins.unsafeDiscardStringContext "
                    "text) // "
                    "{ worker = \"${worker}/bin/tsugumi-worker\"; })) "
-                   "(builtins.getContext text))"
-             : "pkgs.writeText \"tsugumi-card-plan.json\" text");
+                   "(builtins.getContext text)"
+             : "text") +
+        "; }";
     nix::Value function, arg, output;
     glue.eval(
         glue.parseExprFromString(expr, glue.rootPath(nix::CanonPath("/"))),

@@ -44,7 +44,12 @@ auto ValidCacheField(std::string_view field) -> bool {
 
 auto ConfigurePulls(const workerd::R::CacheSettingsT& cache)
     -> nix::AutoCloseFD {
-  std::string substituters, public_keys, netrc;
+  // Keep the job's trust policy independent of the worker machine's Nix
+  // configuration, including store URLs that opt out of signature checks.
+  std::string substituters = "https://cache.nixos.org/";
+  std::string public_keys =
+      "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=";
+  std::string netrc;
   for (const auto& entry : cache.pull) {
     const auto& endpoint = entry->endpoint;
     if (!ValidCacheField(endpoint) ||
@@ -63,13 +68,14 @@ auto ConfigurePulls(const workerd::R::CacheSettingsT& cache)
                " password " + entry->secret + '\n';
     }
   }
-  nix::globalConfig.set("extra-substituters", substituters);
+  nix::globalConfig.set("substituters", substituters);
   if (!cache.own_signing_key.empty()) {
     if (!ValidCacheField(cache.own_signing_key))
       throw std::runtime_error("invalid built-in binary cache signing key");
     public_keys += ' ' + cache.own_signing_key;
   }
-  nix::globalConfig.set("extra-trusted-public-keys", public_keys);
+  nix::globalConfig.set("trusted-public-keys", public_keys);
+  nix::settings.requireSigs = true;
   if (netrc.empty()) {
     nix::fileTransferSettings.netrcFile = "/dev/null";
     return {};

@@ -4,7 +4,7 @@ Open **Settings → Binary Caches** in the Mac or Web app. The pull list control
 
 ## Pull list
 
-Enter a name, binary-cache endpoint and public signing key for each connection. The default `cache.nixos.org` and `tsugumi.cachix.org` caches remain enabled.
+Enter a name, HTTP(S) binary-cache endpoint and public signing key for each connection. The default `cache.nixos.org` and `tsugumi.cachix.org` caches remain enabled.
 
 - Attic reports the binary-cache endpoint and public key with `attic cache info <cache>`. The binary-cache endpoint includes the cache name. [Attic user guide](https://docs.attic.rs/user-guide/index.html)
 - Cachix uses `https://<name>.cachix.org`. Get its public key from the cache administrator or the cache's setup instructions. [Cachix getting started](https://docs.cachix.org/getting-started)
@@ -19,7 +19,7 @@ For the Mac's shared VM, the pull settings take effect when the VM next starts. 
 | Tsugumi cache (default) | Hostd starts the cache on demand and supplies the signing key to the worker. Remote transfers share the authenticated worker connection. [Tsugumi cache design](design/BinaryCacheServer.md) |
 | Attic | Set the server's API endpoint, cache name and push token. Add its binary-cache endpoint and signing key to the pull list. |
 | Cachix | Set the cache name and access token. Add the cache's endpoint and public key to the pull list. |
-| Nix copy | Set the store URL, for example `file:///srv/nix-cache`, an HTTPS endpoint or an S3 bucket. Configure its signing key separately on the Nix producer when the store does not sign uploads. Add the corresponding pull endpoint and public key. |
+| Nix copy | Set the store URL, for example `file:///srv/nix-cache`, an HTTPS endpoint or an S3 bucket. Configure signing on the Nix producer when the store does not sign uploads. For remote substitution, expose the cache at an HTTP(S) endpoint and add it and its public key to the pull list. |
 
 Use the credential fields for access tokens and keys. Push credentials are stored by hostd outside the project and delivered to a registered worker over TLS when its job needs them. Attic and Cachix use their respective clients. They are packaged in the Mac VM and with the remote worker. On a native Linux host, install the corresponding client on the execution environment's PATH for local publishing.
 

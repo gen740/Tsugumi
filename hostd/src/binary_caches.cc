@@ -111,10 +111,8 @@ auto Parse(std::string_view json) -> std::vector<Cache> {
     };
     cache.host = part(CURLUPART_HOST);
     cache.scheme = part(CURLUPART_SCHEME);
-    valid = valid &&
-            ((!cache.host.empty() &&
-              (cache.scheme == "https" || cache.scheme == "http")) ||
-             (cache.scheme == "file" && cache.url.starts_with("file:///"))) &&
+    valid = valid && !cache.host.empty() &&
+            (cache.scheme == "https" || cache.scheme == "http") &&
             part(CURLUPART_USER).empty() && part(CURLUPART_PASSWORD).empty() &&
             cache.url.find_first_of("?#") == std::string::npos &&
             std::all_of(cache.url.begin(), cache.url.end(),
@@ -123,8 +121,7 @@ auto Parse(std::string_view json) -> std::vector<Cache> {
     curl_url_cleanup(url);
     if (!valid)
       Invalid(
-          "Use distinct HTTP(S) or file cache endpoints without credentials, "
-          "query "
+          "Use distinct HTTP(S) cache endpoints without credentials, query "
           "strings or whitespace.");
     const auto colon = cache.key.find(':');
     std::string decoded;

@@ -321,11 +321,16 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(),
         pkgs = import (builtins.getFlake (toString ./.)).inputs.nixpkgs { inherit system; };
         worker = import (nixDirectory + "/worker/worker.nix") { inherit pkgs; };
         card = """ + card_package(body) + """;
-      in pkgs.writeText "remote-card-plan" (builtins.toJSON {
-        runs = [ "${card}" ];
-        views = [];
-        worker = "${worker}/bin/tsugumi-worker";
-      })
+      in pkgs.writeTextFile {
+        name = "remote-card-plan";
+        allowSubstitutes = true;
+        derivationArgs.__contentAddressed = false;
+        text = builtins.toJSON {
+          runs = [ "${card}" ];
+          views = [];
+          worker = "${worker}/bin/tsugumi-worker";
+        };
+      }
     """
     derivation = subprocess.check_output(
         ["nix-instantiate", "--extra-experimental-features", "flakes",
@@ -366,7 +371,9 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(),
 
 def test_builds_instead_of_using_an_output_signed_by_an_untrusted_cache_key(worker):
     job = "a" * 64
-    spec = card_spec(worker, job, 'std::ofstream("trusted-build") << "ok";')
+    # A private fixture output also rules out valid substitutes on shared
+    # caches populated by CI.
+    spec = card_spec(worker, job, f'std::ofstream("trusted-build") << "{uuid4()}";')
     plan = R.JobSpecT.InitFromPackedBuf(spec)
     derivation, output = R.string(plan.derivation), R.string(plan.output)
     fake_key, fake_public = worker.root / "foreign-key", worker.root / "foreign-key.pub"
@@ -377,14 +384,19 @@ def test_builds_instead_of_using_an_output_signed_by_an_untrusted_cache_key(work
     subprocess.run(["nix", "copy", "--to", f"{cache.as_uri()}?secret-key={fake_key}", output],
                    check=True)
     narinfo = cache / f"{Path(output).name.split('-')[0]}.narinfo"
-    assert "Sig: foreign-fixture:" in narinfo.read_text()
+    metadata = narinfo.read_text().splitlines()
+    assert not any(line.startswith("CA: ") for line in metadata)
+    foreign, = [line for line in metadata if line.startswith("Sig: foreign-fixture:")]
+    narinfo.write_text("\n".join([line for line in metadata if not line.startswith("Sig: ")] + [foreign]) + "\n")
 
     reply = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
     assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
     worker.wait_state(job, R.JobState.Succeeded)
     work = worker.journal(job).parent / "work/result"
     result = R.ResultEnvironmentT.InitFromPackedBuf((work / "environment").read_bytes())
-    assert result.built and not result.substituter
+    assert result.built and not result.substituter, vars(result)
+    build_log = list(R.read_logs((work / "logs").read_bytes()))
+    assert any(output in line and "not signed" in line for _, line in build_log)
 
 
 def test_global_cap_reconnects_within_one_core_life_and_enforces_call_budget(tmp_path):
