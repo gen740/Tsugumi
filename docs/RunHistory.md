@@ -44,7 +44,7 @@ Search for part of a package name, such as `python`, and expand a matching entry
 
 Both UIs use `RunEnvironments`, `RunEnvironmentUses`, and `RunEnvironmentPaths`. These requests read recorded history only and never evaluate or build Nix. The records remain available after restarting, editing definitions, and copying the whole project from another machine; they do not require the original store paths to exist locally.
 
-The list uses the original history record. Configured cache endpoints, where recorded, describe which caches were available for builds. A path can come from a cache, the local store or a local build. [Binary cache provenance](BinaryCaches.md#storage-and-application)
+The list uses the original history record. Configured cache endpoints describe which caches were available to the build. **Info** records the invocation's build output source and whether its closure was published. [Binary cache provenance](BinaryCaches.md#run-history)
 
 ## Keep and open artifacts
 

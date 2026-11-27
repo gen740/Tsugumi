@@ -27,6 +27,8 @@ Tsugumi publishes the `.drv` closure independently of the output setting. For a 
 
 Project Settings sets the default for **Push build outputs**, which starts on. Each Code Card can inherit the project setting or choose on or off. Off stops future output uploads for that Card. Published paths stay in the cache. The cache holds Nix definitions and their build products. Card call inputs and outputs travel on the execution channel and are recorded according to the project's run-history settings.
 
+## Run history
+
 **Run History → Info** records whether the invocation built its Nix environment or reused it, the substituter when known, and whether output publishing succeeded. Publishing a remote derivation is required for the job. A failed output upload leaves the completed build available to the invocation.
 
 See the [security boundary](design/security.md#binary-cache-boundary) for what a registered worker and signing key can access. Developers changing cache configuration can run the [binary cache checks](../tests/README.md#manual-tools).
