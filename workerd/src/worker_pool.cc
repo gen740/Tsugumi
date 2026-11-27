@@ -9,27 +9,48 @@ namespace tsugumi {
 
 namespace stdfs = std::filesystem;
 
-WorkerPool::WorkerPool(stdfs::path scratch_root, WorkerLimits limits)
+WorkerPool::WorkerPool(stdfs::path scratch_root, WorkerLimits limits,
+                       size_t starters)
     : root_(std::move(scratch_root)), limits_(limits) {
   std::error_code ec;
   stdfs::remove_all(root_, ec);  // left by an earlier tsugumid of this project
-  reaper_ = std::thread([this] { reaper(); });
+  try {
+    starters_.reserve(starters);
+    for (size_t i = 0; i < starters; ++i) {
+      starters_.emplace_back([this] {
+        std::unique_lock lock(mu_);
+        while (!stopping_) {
+          cv_.wait(lock, [&] { return stopping_ || !spawns_.empty(); });
+          start_foreground_workers(lock);
+        }
+      });
+    }
+    reaper_ = std::thread([this] { reaper(); });
+  } catch (...) {
+    stop_threads();
+    throw;
+  }
 }
 
 WorkerPool::~WorkerPool() {
-  {
-    std::lock_guard<std::mutex> l(mu_);
-    stopping_ = true;
-  }
-  cv_.notify_all();
-  if (reaper_.joinable()) reaper_.join();
+  stop_threads();
   spawns_.clear();  // anyone still waiting gets broken_promise
   clear();
   std::error_code ec;
   stdfs::remove_all(root_, ec);
 }
 
-// Workers are started on the pool's own thread: bubblewrap's
+auto WorkerPool::stop_threads() -> void {
+  {
+    std::lock_guard<std::mutex> l(mu_);
+    stopping_ = true;
+  }
+  cv_.notify_all();
+  if (reaper_.joinable()) reaper_.join();
+  for (auto& starter : starters_) starter.join();
+}
+
+// Workers are started on the pool's own threads: bubblewrap's
 // --die-with-parent ends a worker when the *thread* that started it ends, and
 // a run's lanes end with the run while its workers stay resident.
 std::unique_ptr<WorkerProc> WorkerPool::spawn(WorkerSpawn sp) {
@@ -199,21 +220,28 @@ void WorkerPool::clear() {
   refilling_.clear();
 }
 
+auto WorkerPool::start_foreground_workers(std::unique_lock<std::mutex>& lock)
+    -> void {
+  while (!stopping_ && !spawns_.empty()) {
+    auto task = std::move(spawns_.front());
+    spawns_.pop_front();
+    if (spawns_.empty()) cv_.notify_all();  // let the standby reaper resume
+    lock.unlock();
+    task();
+    lock.lock();
+  }
+}
+
 void WorkerPool::reaper() {
   std::unique_lock<std::mutex> l(mu_);
   while (!stopping_) {
     cv_.wait_for(l, std::chrono::seconds(30), [&] {
-      return stopping_ || !pending_.empty() || !spawns_.empty();
+      return stopping_ || (!pending_.empty() && spawns_.empty()) ||
+             (starters_.empty() && !spawns_.empty());
     });
     if (stopping_) break;
     // Workers a call waits for come first.
-    while (!spawns_.empty()) {
-      auto task = std::move(spawns_.front());
-      spawns_.pop_front();
-      l.unlock();
-      task();
-      l.lock();
-    }
+    if (starters_.empty()) start_foreground_workers(l);
     // Standby workers, one at a time (spawned outside the lock).
     while (!pending_.empty() && !stopping_ && spawns_.empty()) {
       auto [key, sp] = std::move(pending_.front());

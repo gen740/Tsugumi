@@ -26,7 +26,8 @@ struct WorkerLimits {
 
 class WorkerPool {
  public:
-  WorkerPool(std::filesystem::path scratch_root, WorkerLimits limits = {});
+  WorkerPool(std::filesystem::path scratch_root, WorkerLimits limits = {},
+             size_t starters = 0);
   ~WorkerPool();  // ends every worker (the project stops)
 
   struct Lease {
@@ -61,6 +62,8 @@ class WorkerPool {
   std::unique_ptr<WorkerProc> spawn(WorkerSpawn spawn);
   void refill(const std::string& key, WorkerSpawn spawn);
   void reaper();
+  auto start_foreground_workers(std::unique_lock<std::mutex>& lock) -> void;
+  auto stop_threads() -> void;
 
   std::filesystem::path root_;
   WorkerLimits limits_;
@@ -81,6 +84,7 @@ class WorkerPool {
       spawns_;  // workers a call waits for
   uint64_t seq_ = 0;
   bool stopping_ = false;
+  std::vector<std::thread> starters_;
   std::thread reaper_;  // starts standby workers, ends dead or oversized ones
 };
 

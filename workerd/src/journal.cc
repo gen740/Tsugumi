@@ -11,8 +11,9 @@
 #include <set>
 
 #include "tsugumi/util/crypto.hh"
-#include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/workerd/invocation.hh"
+#include "tsugumi/workerd/path_ids.hh"
 
 namespace tsugumi::workerd {
 namespace {
@@ -81,11 +82,11 @@ auto discard_tree(const stdfs::path& path) -> void {
     stdfs::remove(path);
   }
 }
-auto file_digest(const stdfs::path& path, uint64_t limit) -> std::string {
+static auto file_digest(const stdfs::path& path) -> Sha256Hex {
   crypto::Sha256 hash;
-  fs::stream_beneath(path.parent_path(), path.filename(), limit,
+  fs::stream_beneath(path.parent_path(), path.filename(), kMaxBlob,
                      [&](std::string_view data) { hash.update(data); });
-  return hash.finish_hex();
+  return Sha256Hex::parse(hash.finish_hex()).value();
 }
 Journal::Journal(stdfs::path root) : root_(std::move(root)) {
   private_directory(root_);
@@ -93,30 +94,30 @@ Journal::Journal(stdfs::path root) : root_(std::move(root)) {
   private_directory(root_ / "locks");
   instance_ = identity(root_, "instance_id");
 }
-auto Journal::job_path(std::string_view job) const -> stdfs::path {
-  return root_ / "jobs" / job;
+auto Journal::job_path(const Sha256Hex& job) const -> stdfs::path {
+  return root_ / "jobs" / job.view();
 }
-auto Journal::supervisor_lock_path(std::string_view job) const -> stdfs::path {
-  return root_ / "locks" / (std::string(job) + ".supervisor");
+auto Journal::supervisor_lock_path(const Sha256Hex& job) const -> stdfs::path {
+  return root_ / "locks" / (std::string(job.view()) + ".supervisor");
 }
 auto Journal::locked(
-    std::string_view job, Access access,
+    const Sha256Hex& job, Access access,
     const std::function<void(const stdfs::path&)>& action) const -> void {
   // The listener watches these locks for IN_CLOSE_WRITE. A writable lock
   // tells it to reread a possible scheduling change, even if the writer died
   // partway through the operation. A reader then waits out the journal flock.
   const int mode = access == Access::NotifyScheduler ? O_RDWR : O_RDONLY;
-  Fd fd{::open((root_ / "locks" / job).c_str(),
+  Fd fd{::open((root_ / "locks" / job.view()).c_str(),
                mode | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600)};
   if (fd.value < 0 || ::flock(fd.value, LOCK_EX) != 0)
     throw std::runtime_error("cannot lock journal");
   action(job_path(job));
 }
-auto Journal::jobs() const -> std::vector<std::string> {
-  std::vector<std::string> result;
+auto Journal::jobs() const -> std::vector<Sha256Hex> {
+  std::vector<Sha256Hex> result;
   for (const auto& entry : stdfs::directory_iterator(root_ / "jobs"))
-    if (crypto::is_sha256_hex(entry.path().filename().string()))
-      result.push_back(entry.path().filename().string());
+    if (const auto job = Sha256Hex::parse(entry.path().filename().string()))
+      result.push_back(*job);
   return result;
 }
 auto Journal::read(const stdfs::path& directory) const -> Record {
@@ -144,7 +145,7 @@ auto Journal::write(const stdfs::path& directory, const Record& r) const
   fs::write_atomic(directory / "state", remote::encode<R::JournalState>(s),
                    0600);
 }
-auto Journal::status(std::string_view job,
+auto Journal::status(const Sha256Hex& job,
                      std::optional<std::string_view> core) const -> Record {
   Record result;
   locked(job, Access::Quiet, [&](const auto& directory) {
@@ -153,15 +154,15 @@ auto Journal::status(std::string_view job,
   });
   return result;
 }
-auto Journal::spec(std::string_view job) const -> std::string {
+auto Journal::spec(const Sha256Hex& job) const -> std::string {
   return bounded_file(job_path(job) / "spec.fb", kMaxSpec);
 }
 
-auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
+auto Journal::put(const Sha256Hex& job, const Sha256Hex& digest, uint64_t total,
+                  uint64_t chunk_offset, std::span<const uint8_t> bytes,
                   std::string_view core) -> void {
-  if (c.total > kMaxBlob || c.bytes.size() > kChunkBytes ||
-      c.offset > c.total || c.bytes.size() > c.total - c.offset ||
-      (c.bytes.empty() && c.total != 0))
+  if (total > kMaxBlob || bytes.size() > kChunkBytes || chunk_offset > total ||
+      bytes.size() > total - chunk_offset || (bytes.empty() && total != 0))
     throw Error(R::ErrorCode::Invalid, "invalid blob chunk bounds");
   locked(job, Access::Quiet, [&](const auto& dir) {
     auto state = read(dir);
@@ -179,32 +180,32 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
       state.core_life_id = core;
       write(dir, state);
     }
-    const auto final = dir / "blobs" / c.digest;
-    const auto part = dir / "parts" / c.digest;
+    const auto final = dir / "blobs" / digest.view();
+    const auto part = dir / "parts" / digest.view();
     const auto verify_prefix = [&](const stdfs::path& file, size_t length) {
       if (length == 0) return;
-      const auto previous = fs::read_range(file, c.offset, length);
+      const auto previous = fs::read_range(file, chunk_offset, length);
       if (!previous ||
-          *previous !=
-              std::string_view(reinterpret_cast<const char*>(c.bytes.data()),
-                               length))
+          *previous != std::string_view(
+                           reinterpret_cast<const char*>(bytes.data()), length))
         throw Error(R::ErrorCode::Rejected, "repeated blob chunk differs");
     };
     if (stdfs::exists(final)) {
-      if (stdfs::file_size(final) != c.total)
+      if (stdfs::file_size(final) != total)
         throw Error(R::ErrorCode::Rejected, "blob size conflict");
-      verify_prefix(final, c.bytes.size());
+      verify_prefix(final, bytes.size());
       durable_directory(dir / "blobs");
       durable_directory(dir / "parts");
       return;
     }
     const bool staged = stdfs::exists(part);
     const auto offset = staged ? stdfs::file_size(part) : 0;
-    if (c.offset > offset || offset > c.total)
+    if (chunk_offset > offset || offset > total)
       throw Error(R::ErrorCode::Rejected, "blob chunks must be contiguous");
-    const auto overlap = std::min<uint64_t>(offset - c.offset, c.bytes.size());
+    const auto overlap =
+        std::min<uint64_t>(offset - chunk_offset, bytes.size());
     verify_prefix(part, overlap);
-    const auto appended = c.bytes.size() - overlap;
+    const auto appended = bytes.size() - overlap;
 
     // The listener is the only writer while uploads are admitted. Rebuild on
     // a restart, cache miss or failed mutation.
@@ -229,15 +230,15 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
                  O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC | O_NOFOLLOW, 0600)};
     if (fd.value < 0) throw std::runtime_error("cannot stage blob");
     size_t done = overlap;
-    while (done < c.bytes.size()) {
+    while (done < bytes.size()) {
       const auto n =
-          ::write(fd.value, c.bytes.data() + done, c.bytes.size() - done);
+          ::write(fd.value, bytes.data() + done, bytes.size() - done);
       if (n < 0 && errno == EINTR) continue;
       if (n <= 0) throw std::runtime_error("cannot write blob chunk");
       done += static_cast<size_t>(n);
     }
-    const bool complete = offset + appended == c.total;
-    if (complete && file_digest(part) != c.digest) {
+    const bool complete = offset + appended == total;
+    if (complete && file_digest(part) != digest) {
       stdfs::remove(part);
       throw Error(R::ErrorCode::Rejected, "blob SHA-256 mismatch");
     }
@@ -248,7 +249,7 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
       stdfs::rename(part, final);
       durable_directory(dir / "blobs");
     }
-    if (complete || c.offset == 0) durable_directory(dir / "parts");
+    if (complete || chunk_offset == 0) durable_directory(dir / "parts");
     usage->bytes += appended;
     usage->files += !staged;
     std::lock_guard guard(upload_usage_mutex_);
@@ -258,7 +259,7 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
     upload_usage_.emplace(dir, *usage);
   });
 }
-auto Journal::deliver_artifact(std::string_view job,
+auto Journal::deliver_artifact(const Sha256Hex& job,
                                const R::JobArtifactRequestT& artifact,
                                std::string_view core) -> void {
   locked(job, Access::Quiet, [&](const auto& dir) {
@@ -283,10 +284,11 @@ auto Journal::deliver_artifact(std::string_view job,
       if (!paths.insert(remote::relative_path(directory)).second)
         throw Error(R::ErrorCode::Invalid, "duplicate remote artifact member");
     for (const auto& file : artifact.files) {
-      if (!paths.insert(remote::relative_path(file->path)).second ||
-          !crypto::is_sha256_hex(file->sha256))
+      const auto digest =
+          require_sha256_hex(file->sha256, "artifact blob digest");
+      if (!paths.insert(remote::relative_path(file->path)).second)
         throw Error(R::ErrorCode::Invalid, "invalid remote artifact member");
-      const auto blob = dir / "blobs" / file->sha256;
+      const auto blob = dir / "blobs" / digest.view();
       if (!stdfs::is_regular_file(stdfs::symlink_status(blob)) ||
           stdfs::file_size(blob) != file->size)
         throw Error(R::ErrorCode::Rejected, "remote artifact blob is missing");
@@ -296,29 +298,30 @@ auto Journal::deliver_artifact(std::string_view job,
   });
 }
 
-auto Journal::get(std::string_view job, const R::GetBlobRequestT& r,
-                  std::string_view core) const -> R::BlobChunkT {
-  if (!r.limit || r.limit > kChunkBytes)
+auto Journal::get(const Sha256Hex& job, const Sha256Hex& digest,
+                  uint64_t offset, uint32_t limit, std::string_view core) const
+    -> R::BlobChunkT {
+  if (!limit || limit > kChunkBytes)
     throw Error(R::ErrorCode::Invalid, "invalid chunk limit");
   R::BlobChunkT result;
   locked(job, Access::Quiet, [&](const auto& dir) {
     require_owner(read(dir), core);
-    const auto file = dir / "blobs" / r.digest;
+    const auto file = dir / "blobs" / digest.view();
     if (!stdfs::is_regular_file(stdfs::symlink_status(file)))
       throw Error(R::ErrorCode::NotFound, "job blob not found");
-    result.digest = r.digest;
+    result.digest = digest.view();
     result.total = stdfs::file_size(file);
-    result.offset = r.offset;
-    if (r.offset > result.total || result.total > kMaxBlob)
+    result.offset = offset;
+    if (offset > result.total || result.total > kMaxBlob)
       throw Error(R::ErrorCode::Invalid, "invalid blob offset");
     const auto data = fs::read_range(
-        file, r.offset, std::min<uint64_t>(r.limit, result.total - r.offset));
+        file, offset, std::min<uint64_t>(limit, result.total - offset));
     if (!data) throw Error(R::ErrorCode::NotFound, "job blob not found");
     result.bytes.assign(data->begin(), data->end());
   });
   return result;
 }
-auto Journal::log(std::string_view job, uint64_t offset, uint32_t limit,
+auto Journal::log(const Sha256Hex& job, uint64_t offset, uint32_t limit,
                   std::string_view core) const
     -> std::pair<uint64_t, std::string> {
   if (limit > kLogChunkBytes)
@@ -355,8 +358,9 @@ auto Journal::log(std::string_view job, uint64_t offset, uint32_t limit,
   });
   return result;
 }
-auto Journal::submit(std::string_view job, std::string_view bytes,
-                     const R::JobSpecT& spec, std::string_view core) -> Record {
+auto Journal::submit(const Sha256Hex& job, std::string_view bytes,
+                     std::span<const Sha256Hex> input_blobs,
+                     std::string_view core) -> Record {
   const auto fingerprint = crypto::sha256_hex(bytes);
   Record result;
   locked(job, Access::NotifyScheduler, [&](const auto& dir) {
@@ -368,8 +372,8 @@ auto Journal::submit(std::string_view job, std::string_view bytes,
         throw Error(R::ErrorCode::Rejected, "job fingerprint conflict");
       return;
     }
-    for (const auto& blob : spec.input_blobs) {
-      const auto file = dir / "blobs" / blob;
+    for (const auto& blob : input_blobs) {
+      const auto file = dir / "blobs" / blob.view();
       if (!stdfs::is_regular_file(stdfs::symlink_status(file)))
         throw Error(R::ErrorCode::Rejected, "verified input blob is missing");
     }
@@ -383,7 +387,7 @@ auto Journal::submit(std::string_view job, std::string_view bytes,
   });
   return result;
 }
-auto Journal::cancel(std::string_view job, const std::string& fingerprint)
+auto Journal::cancel(const Sha256Hex& job, const std::string& fingerprint)
     -> Record {
   Record result;
   locked(job, Access::NotifyScheduler, [&](const auto& dir) {
@@ -407,7 +411,7 @@ auto Journal::erase_scratch(const stdfs::path& dir) const -> void {
     if (entry.path().filename() != "state") discard_tree(entry.path());
   durable_directory(dir);
 }
-auto Journal::release(std::string_view job, const std::string& fingerprint)
+auto Journal::release(const Sha256Hex& job, const std::string& fingerprint)
     -> void {
   locked(job, Access::NotifyScheduler, [&](const auto& dir) {
     auto state = read(dir);
@@ -423,7 +427,7 @@ auto Journal::release(std::string_view job, const std::string& fingerprint)
     erase_scratch(dir);
   });
 }
-auto Journal::claim(std::string_view job, uint64_t pid, uint64_t start,
+auto Journal::claim(const Sha256Hex& job, uint64_t pid, uint64_t start,
                     const std::string& boot) -> bool {
   bool claimed = false;
   locked(job, Access::Quiet, [&](const auto& dir) {
@@ -438,7 +442,7 @@ auto Journal::claim(std::string_view job, uint64_t pid, uint64_t start,
   });
   return claimed;
 }
-auto Journal::supervisor_identity(std::string_view job, uint64_t pid,
+auto Journal::supervisor_identity(const Sha256Hex& job, uint64_t pid,
                                   uint64_t start, const std::string& boot)
     -> void {
   locked(job, Access::NotifyScheduler, [&](const auto& dir) {
@@ -452,7 +456,7 @@ auto Journal::supervisor_identity(std::string_view job, uint64_t pid,
     write(dir, state);
   });
 }
-auto Journal::finish(std::string_view job, R::JobState outcome,
+auto Journal::finish(const Sha256Hex& job, R::JobState outcome,
                      const std::string& result, const std::string& diagnostic)
     -> void {
   if (outcome != R::JobState::Succeeded && outcome != R::JobState::Failed &&
@@ -473,13 +477,13 @@ auto Journal::finish(std::string_view job, R::JobState outcome,
     write(dir, state);
   });
 }
-auto Journal::clean_released(std::string_view job) -> void {
+auto Journal::clean_released(const Sha256Hex& job) -> void {
   locked(job, Access::Quiet, [&](const auto& dir) {
     auto state = read(dir);
     if (state.state == R::JobState::Released) erase_scratch(dir);
   });
 }
-auto Journal::discard(std::string_view job, bool active) -> Record {
+auto Journal::discard(const Sha256Hex& job, bool active) -> Record {
   Record previous;
   locked(job, Access::NotifyScheduler, [&](const auto& dir) {
     if (!stdfs::exists(stdfs::symlink_status(dir)))
@@ -503,7 +507,7 @@ auto Journal::discard(std::string_view job, bool active) -> Record {
   });
   return previous;
 }
-auto Journal::import_results(std::string_view job) -> std::string {
+auto Journal::import_results(const Sha256Hex& job) -> std::string {
   const auto dir = job_path(job);
   // After the invocation has exited, close any outstanding artifact upload
   // before this supervisor changes the blob directory. A live import and a
@@ -536,17 +540,17 @@ auto Journal::import_results(std::string_view job) -> std::string {
     total += size;
     const auto digest = file_digest(file);
     if (name == "worker.fb") {
-      manifest.invocation_result_sha256 = digest;
+      manifest.invocation_result_sha256 = digest.view();
     } else {
       auto entry = std::make_unique<R::ResultFileT>();
       entry->path = name;
-      entry->sha256 = digest;
+      entry->sha256 = digest.view();
       entry->size = size;
       manifest.outputs.push_back(std::move(entry));
     }
     // The namespace has exited and the worker is gone. Run data never enter
     // Nix.
-    const auto destination = dir / "blobs" / digest;
+    const auto destination = dir / "blobs" / digest.view();
     if (!stdfs::exists(destination)) stdfs::copy_file(file, destination);
     Fd persisted{
         ::open(destination.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW)};
@@ -561,9 +565,9 @@ auto Journal::import_results(std::string_view job) -> std::string {
     throw std::runtime_error("result manifest exceeds 8 MiB");
   std::string bytes(reinterpret_cast<const char*>(b.GetBufferPointer()),
                     b.GetSize());
-  const auto digest = crypto::sha256_hex(bytes);
-  fs::write_atomic(dir / "blobs" / digest, bytes, 0600);
+  const auto digest = Sha256Hex::parse(crypto::sha256_hex(bytes)).value();
+  fs::write_atomic(dir / "blobs" / digest.view(), bytes, 0600);
   durable_directory(dir / "blobs");
-  return digest;
+  return std::string(digest.view());
 }
 }  // namespace tsugumi::workerd

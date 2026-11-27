@@ -1,20 +1,26 @@
+#include <sys/socket.h>
+
+#include <cstdio>
 #include <map>
 #include <stdexcept>
+#include <thread>
 
 #include "tsugumi/workerd/local.hh"
 
 namespace tsugumi::workerd {
 namespace L = Tsugumi::LocalWorker;
 
-auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
-  WorkerPool pool(scratch);
+namespace {
+auto serve_connection(int fd, WorkerPool& pool, size_t channel) -> void {
   struct Held {
     std::string card;
     uint64_t generation;
     std::unique_ptr<WorkerProc> worker;
   };
   std::map<uint64_t, Held> held;
-  uint64_t sequence = 0;
+  // The residue of a lease identifies its connection, so later commands
+  // reach the same held lease even when the caller moves between threads.
+  uint64_t next_lease = channel + 1;
   for (;;) {
     LocalPacket packet;
     if (!receive_local(fd, packet)) return;
@@ -64,7 +70,8 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
                 {bind->source, bind->target, bind->write, bind->name});
           auto lease =
               pool.acquire(request.card, request.key, spawn, request.reuse);
-          reply.lease = ++sequence;
+          reply.lease = next_lease;
+          next_lease += kLocalWorkerChannels;
           reply.reused = lease.reused;
           reply.replaced = lease.replaced;
           reply.scratch = std::filesystem::path(lease.worker->work_dir())
@@ -118,5 +125,26 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
     }
     send_local(fd, reply, descriptors ? &*descriptors : nullptr);
   }
+}
+}  // namespace
+
+auto serve_local(std::span<const int> fds, const std::filesystem::path& scratch)
+    -> void {
+  WorkerPool pool(scratch, {}, fds.size() > 1 ? fds.size() : 0);
+  std::vector<std::jthread> receivers;
+  for (size_t channel = 1; channel < fds.size(); ++channel) {
+    const int fd = fds[channel];
+    receivers.emplace_back([&pool, fd, channel](std::stop_token stop) {
+      const auto disconnect = [fd] { ::shutdown(fd, SHUT_RDWR); };
+      std::stop_callback wake(stop, disconnect);
+      try {
+        serve_connection(fd, pool, channel);
+      } catch (const std::exception& error) {
+        std::fprintf(stderr, "tsugumi-workerd: %s\n", error.what());
+      }
+      disconnect();
+    });
+  }
+  serve_connection(fds.front(), pool, 0);
 }
 }  // namespace tsugumi::workerd

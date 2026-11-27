@@ -3,6 +3,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <utility>
+
 #include "tsugumi/rpc/trace.hh"
 #include "tsugumi/util/process.hh"
 #include "tsugumi/workerd/local.hh"
@@ -16,77 +18,96 @@ LocalWorkers::LocalWorkers(std::filesystem::path binary,
 
 LocalWorkers::~LocalWorkers() {
   idle_.clear();
-  if (fd_ >= 0) ::close(fd_);  // EOF is the sole lifetime of the local pool.
+  for (const auto& channel : channels_)
+    if (channel.fd >= 0) ::close(channel.fd);
   if (pid_ > 0) proc::wait(pid_);
 }
 
-auto LocalWorkers::exchange(L::MessageT message, LocalPacket& reply) -> void {
+auto LocalWorkers::connect() -> void {
+  std::lock_guard guard(start_mutex_);
+  if (pid_ > 0) return;
+  struct Sockets {
+    std::array<std::array<int, 2>, kLocalWorkerChannels> pairs;
+    Sockets() { pairs.fill({-1, -1}); }
+    ~Sockets() {
+      for (const auto& pair : pairs)
+        for (const int fd : pair)
+          if (fd >= 0) ::close(fd);
+    }
+  } sockets;
+  proc::Spec spec;
+  spec.argv = {binary_.string(), "--local", scratch_.string()};
+  for (size_t i = 0; i < sockets.pairs.size(); ++i) {
+    auto& pair = sockets.pairs[i];
+    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, pair.data()) != 0)
+      throw std::runtime_error("cannot create local workerd connection");
+    for (const int socket : pair) {
+      ::fcntl(socket, F_SETFD, FD_CLOEXEC);
+#ifdef SO_NOSIGPIPE
+      int one = 1;
+      ::setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+#endif
+    }
+    const auto fd = static_cast<int>(3 + i);
+    spec.argv.push_back(std::to_string(fd));
+    spec.fds.emplace_back(fd, pair[1]);
+  }
+  spec.stderr_fd = STDERR_FILENO;
+  for (const auto* name : {"DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
+                           "TSUGUMI_CARD_CGROUP_ROOT"})
+    if (const auto* value = std::getenv(name))
+      spec.env.push_back(std::string(name) + "=" + value);
+  if (trace::LaunchEnabled())
+    spec.env.push_back(std::string(trace::kLaunchVariable) + "=1");
+  pid_ = proc::spawn(spec);
+  for (size_t i = 0; i < channels_.size(); ++i)
+    channels_[i].fd = std::exchange(sockets.pairs[i][0], -1);
+}
+
+auto LocalWorkers::started() -> bool {
+  std::lock_guard guard(start_mutex_);
+  return pid_ > 0;
+}
+
+auto LocalWorkers::exchange(size_t index, L::MessageT message,
+                            LocalPacket& reply) -> void {
   struct Wipe {
     L::MessageT& message;
     ~Wipe() { clear_spawn_secrets(message); }
   } wipe{message};
-  std::lock_guard guard(mutex_);
   try {
-    if (fd_ < 0) {
-      if (pid_ > 0)
-        throw std::runtime_error(
-            "local workerd ended with this core's workers");
-      int pair[2];
-      if (::socketpair(AF_UNIX, SOCK_STREAM, 0, pair) != 0)
-        throw std::runtime_error("cannot create local workerd connection");
-      for (int socket : pair) {
-        ::fcntl(socket, F_SETFD, FD_CLOEXEC);
-#ifdef SO_NOSIGPIPE
-        int one = 1;
-        ::setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
-#endif
-      }
-      proc::Spec spec;
-      spec.argv = {binary_.string(), "--local", "3", scratch_.string()};
-      spec.fds = {{3, pair[1]}};
-      spec.stderr_fd = STDERR_FILENO;
-      for (const auto* name : {"DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
-                               "TSUGUMI_CARD_CGROUP_ROOT"})
-        if (const auto* value = std::getenv(name))
-          spec.env.push_back(std::string(name) + "=" + value);
-      if (trace::LaunchEnabled())
-        spec.env.push_back(std::string(trace::kLaunchVariable) + "=1");
-      try {
-        pid_ = proc::spawn(spec);
-      } catch (...) {
-        ::close(pair[0]);
-        ::close(pair[1]);
-        throw;
-      }
-      ::close(pair[1]);
-      fd_ = pair[0];
-    }
+    connect();
+  } catch (const std::exception& error) {
+    throw Failed(FailureKind::worker_failed, error.what());
+  }
+  auto& channel = channels_[index];
+  std::lock_guard guard(channel.mutex);
+  if (channel.fd < 0)
+    throw Failed(FailureKind::worker_failed, "local workerd connection ended");
+  try {
     trace::Link link;
-    send_local(fd_, message, nullptr, &link);
+    send_local(channel.fd, message, nullptr, &link);
     clear_spawn_secrets(message);
-    if (!receive_local(fd_, reply, &link))
+    if (!receive_local(channel.fd, reply, &link))
       throw std::runtime_error("local workerd exited");
     if (!reply.message->error.empty())
       throw Failed(reply.message->error_kind, reply.message->error);
   } catch (const Failed&) {
     throw;
   } catch (const std::exception& error) {
-    if (fd_ >= 0) {
-      ::close(fd_);
-      fd_ = -1;
-    }
+    ::close(std::exchange(channel.fd, -1));
     throw Failed(FailureKind::worker_failed, error.what());
   }
 }
 
-auto LocalWorkers::command(L::Action action, uint64_t lease, bool force)
-    -> void {
+auto LocalWorkers::command(size_t channel, L::Action action, uint64_t lease,
+                           bool force) -> void {
   L::MessageT request;
   request.action = action;
   request.lease = lease;
   request.force = force;
   LocalPacket reply;
-  exchange(std::move(request), reply);
+  exchange(channel, std::move(request), reply);
 }
 
 auto LocalWorkers::acquire(const std::string& card, const std::string& key,
@@ -136,13 +157,20 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
     value->name = bind.name;
     target->binds.push_back(std::move(value));
   }
-  std::lock_guard leases(leases_mutex_);
+  const size_t channel =
+      reuse ? 0
+            : 1 + next_fresh_channel_.fetch_add(1, std::memory_order_relaxed) %
+                      (kLocalWorkerChannels - 1);
+  std::unique_lock leases(leases_mutex_, std::defer_lock);
+  if (reuse) leases.lock();
   LocalPacket reply;
-  exchange(std::move(request), reply);
-  std::erase_if(idle_,
-                [](const auto& entry) { return !entry.second->alive(); });
+  exchange(channel, std::move(request), reply);
+  if (reuse)
+    std::erase_if(idle_,
+                  [](const auto& entry) { return !entry.second->alive(); });
   const auto& message = *reply.message;
-  if (!message.lease || message.scratch.empty() || reply.descriptors[3] < 0)
+  if (!message.lease || (message.lease - 1) % kLocalWorkerChannels != channel ||
+      message.scratch.empty() || reply.descriptors[3] < 0)
     throw Failed(FailureKind::worker_failed,
                  "workerd did not hand over a worker connection");
   WorkerProc::Borrowed borrowed{
@@ -151,24 +179,32 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
       message.artifact_scratch,
       message.call_id,
       message.lease,
-      [this, id = message.lease] { command(L::Action::ClearScratch, id); },
-      [this, id = message.lease](bool force) {
-        command(L::Action::Terminate, id, force);
+      [this, channel, id = message.lease] {
+        command(channel, L::Action::ClearScratch, id);
       },
-      [this, id = message.lease] { command(L::Action::Release, id); },
+      [this, channel, id = message.lease](bool force) {
+        command(channel, L::Action::Terminate, id, force);
+      },
+      [this, channel, id = message.lease] {
+        command(channel, L::Action::Release, id);
+      },
       spawn.packed};
   std::unique_ptr<WorkerProc> worker;
   try {
-    if (auto found = idle_.extract(message.scratch); found) {
-      worker = std::move(found.mapped());
-      worker->resume(std::move(borrowed));
-    } else {
+    if (reuse) {
+      auto found = idle_.extract(message.scratch);
+      if (found) {
+        worker = std::move(found.mapped());
+        worker->resume(std::move(borrowed));
+      }
+    }
+    if (!worker) {
       worker = std::make_unique<WorkerProc>(std::move(borrowed));
       reply.descriptors.fill(-1);
     }
   } catch (...) {
     try {
-      command(L::Action::Release, message.lease);
+      command(channel, L::Action::Release, message.lease);
     } catch (...) {
     }
     throw;
@@ -183,13 +219,16 @@ auto LocalWorkers::release(std::unique_ptr<WorkerProc> worker, bool keep,
   request.action = L::Action::Release;
   request.lease = worker->lease_id();
   request.call_id = worker->call_id();
-  request.keep = keep;
+  const size_t channel = (request.lease - 1) % kLocalWorkerChannels;
+  request.keep = channel == 0 && keep;
   request.reason = reason;
-  std::lock_guard leases(leases_mutex_);
+  std::unique_lock leases(leases_mutex_, std::defer_lock);
+  if (channel == 0) leases.lock();
   worker->idle();
-  if (!keep) worker.reset();
+  if (!request.keep) worker.reset();
   LocalPacket reply;
-  exchange(std::move(request), reply);
+  exchange(channel, std::move(request), reply);
+  if (channel != 0) return;
   std::erase_if(idle_,
                 [](const auto& entry) { return !entry.second->alive(); });
   if (worker && worker->alive()) {
@@ -201,26 +240,20 @@ auto LocalWorkers::release(std::unique_ptr<WorkerProc> worker, bool keep,
 auto LocalWorkers::clear() -> void {
   std::lock_guard leases(leases_mutex_);
   // Clearing an unused pool must not start a service.
-  {
-    std::lock_guard guard(mutex_);
-    if (fd_ < 0) return;
-  }
-  command(L::Action::Clear, 0);
+  if (!started()) return;
+  command(0, L::Action::Clear, 0);
   idle_.clear();
 }
 auto LocalWorkers::invalidate(const std::string& card,
                               const std::string& reason) -> void {
   std::lock_guard leases(leases_mutex_);
-  {
-    std::lock_guard guard(mutex_);
-    if (fd_ < 0) return;
-  }
+  if (!started()) return;
   L::MessageT request;
   request.action = L::Action::Invalidate;
   request.card = card;
   request.reason = reason;
   LocalPacket reply;
-  exchange(std::move(request), reply);
+  exchange(0, std::move(request), reply);
   std::erase_if(idle_,
                 [](const auto& entry) { return !entry.second->alive(); });
 }

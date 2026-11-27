@@ -10,10 +10,14 @@ auto remote_workerd_main(int argc, char** argv) -> int;
 #endif
 
 auto main(int argc, char** argv) -> int {
-  if (argc == 4 && std::string_view(argv[1]) == "--local") {
+  if (argc >= 2 && std::string_view(argv[1]) == "--local") {
+    using namespace tsugumi::workerd;
+    if (argc != 3 + static_cast<int>(kLocalWorkerChannels)) return 2;
     ::signal(SIGPIPE, SIG_IGN);
     try {
-      tsugumi::workerd::serve_local(std::stoi(argv[2]), argv[3]);
+      std::array<int, kLocalWorkerChannels> fds;
+      for (size_t i = 0; i < fds.size(); ++i) fds[i] = std::stoi(argv[3 + i]);
+      serve_local(fds, argv[2]);
       return 0;
     } catch (const std::exception& error) {
       std::fprintf(stderr, "tsugumi-workerd: %s\n", error.what());

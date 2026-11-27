@@ -94,8 +94,7 @@ auto allocate_shared_result()
           std::make_shared<workerd::SharedBuffer>(std::move(reader))};
 }
 
-auto send_packed_descriptor(int socket, int descriptor,
-                            const std::atomic<bool>* cancel,
+auto send_packed_descriptor(int socket, int descriptor, std::stop_token cancel,
                             PackedDeadline deadline) -> void {
   char marker = 1;
   iovec bytes{&marker, 1};
@@ -116,7 +115,7 @@ auto send_packed_descriptor(int socket, int descriptor,
   constexpr int flags = MSG_DONTWAIT;  // SO_NOSIGPIPE on macOS
 #endif
   for (;;) {
-    if (cancel && cancel->load())
+    if (cancel.stop_requested())
       throw Failed(FailureKind::cancelled, "the invocation was cancelled");
     if (deadline && std::chrono::steady_clock::now() >= *deadline)
       throw Failed(FailureKind::timeout, "the Card exceeded timeoutSeconds");
@@ -138,7 +137,7 @@ void close_fd(int& fd) {
 }
 
 auto send_frame(trace::Link& link, int fd, const std::string& frame,
-                const std::atomic<bool>* cancel,
+                std::stop_token cancel,
                 std::optional<std::chrono::steady_clock::time_point> deadline,
                 bool observe = true) -> void {
   rpc::frame::CheckSize(frame.size(), workerd::kMaxWorkerFrameBytes);
@@ -152,7 +151,7 @@ auto send_frame(trace::Link& link, int fd, const std::string& frame,
   } wipe{buf};
   size_t offset = 0;
   while (offset < buf.size()) {
-    if (cancel && cancel->load())
+    if (cancel.stop_requested())
       throw Failed(FailureKind::cancelled, "the invocation was cancelled");
     if (deadline && std::chrono::steady_clock::now() >= *deadline)
       throw Failed(FailureKind::timeout, "the Card exceeded timeoutSeconds");
@@ -803,7 +802,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp)
       } wipe{builder,
              {reinterpret_cast<const char*>(builder.GetBufferPointer()),
               builder.GetSize()}};
-      send_frame(trace_link_, data_fd_, wipe.frame, nullptr,
+      send_frame(trace_link_, data_fd_, wipe.frame, {},
                  std::chrono::steady_clock::now() + std::chrono::seconds(10));
     }
     if (!sp.channels_borrowed) start_data_reader();
@@ -811,7 +810,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp)
     artifact_guard.path.clear();
     scratch_guard.path.clear();
   } catch (...) {
-    terminate(true);
+    terminate_after_failure(true);
     throw;
   }
 }
@@ -910,11 +909,7 @@ WorkerProc::~WorkerProc() {
     }
     return;
   }
-  try {
-    terminate();
-  } catch (const std::system_error& error) {
-    log::warn(error.what());
-  }
+  terminate_after_failure();
   std::error_code ec;
   for (const auto& directory :
        {std::filesystem::path(scratch_), artifact_scratch_}) {
@@ -1059,7 +1054,19 @@ void WorkerProc::terminate(bool force) {
   close_fd(out_fd_);
   close_fd(err_fd_);
   alive_ = false;
-  if (wait_error) throw std::system_error(wait_error, "cannot wait for worker");
+  if (wait_error)
+    throw Failed(FailureKind::worker_failed,
+                 "cannot wait for worker: " + wait_error.message());
+}
+
+auto WorkerProc::terminate_after_failure(bool force) -> void {
+  try {
+    terminate(force);
+  } catch (const std::exception& error) {
+    log::warn(error.what());
+  } catch (...) {
+    log::warn("cannot terminate worker");
+  }
 }
 
 void WorkerProc::read_logs(bool drain) {
@@ -1095,7 +1102,7 @@ void WorkerProc::read_logs(bool drain) {
 void WorkerProc::send(int fd, const std::string& frame, bool observe) {
   // A stopped worker may also stop draining control messages. Never let the
   // cancellation notification delay escalation to killing the process group.
-  send_frame(trace_link_, fd, frame, nullptr,
+  send_frame(trace_link_, fd, frame, {},
              std::chrono::steady_clock::now() + std::chrono::milliseconds(100),
              observe);
 }
@@ -1510,7 +1517,7 @@ auto WorkerProc::read_data() -> void {
 }
 
 WorkerOutcome WorkerProc::call(
-    std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
+    std::string frame, uint64_t call_id, std::stop_token cancel,
     std::optional<std::chrono::steady_clock::time_point> deadline,
     ArtifactOpen open_artifact, bool create_artifacts) {
   return call_frame(std::move(frame), call_id, cancel, deadline,
@@ -1518,7 +1525,7 @@ WorkerOutcome WorkerProc::call(
 }
 
 auto WorkerProc::call_frame(
-    std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
+    std::string frame, uint64_t call_id, std::stop_token cancel,
     std::optional<std::chrono::steady_clock::time_point> deadline,
     ArtifactOpen open_artifact, bool create_artifacts,
     std::span<const int> descriptors,
@@ -1542,7 +1549,7 @@ auto WorkerProc::call_frame(
   } catch (const Failed& error) {
     workerd::clear_secret(frame);
     // A partially sent call cannot be resumed or reused.
-    terminate();
+    terminate_after_failure();
     return {{}, error.failure};
   }
   workerd::clear_secret(frame);
@@ -1558,8 +1565,14 @@ auto WorkerProc::call_frame(
   while (true) {
     {
       std::unique_lock lock(data_mutex_);
-      if (data_ready_.wait_for(lock, std::chrono::milliseconds(20),
-                               [&] { return pending_.has_value(); })) {
+      const auto ready = [&] { return pending_.has_value(); };
+      if (kill_at)
+        data_ready_.wait_until(lock, *kill_at, ready);
+      else if (deadline)
+        data_ready_.wait_until(lock, cancel, *deadline, ready);
+      else
+        data_ready_.wait(lock, cancel, ready);
+      if (pending_) {
         auto outcome = std::move(*pending_);
         const bool disconnected = data_closed_;
         pending_.reset();
@@ -1567,7 +1580,7 @@ auto WorkerProc::call_frame(
         open_artifact_ = {};
         packed_result_.reset();
         lock.unlock();
-        if (disconnected) terminate();
+        if (disconnected) terminate_after_failure();
         read_logs(false);
         if (kill_at) {
           std::string extra;
@@ -1587,8 +1600,8 @@ auto WorkerProc::call_frame(
     }
     const auto now = std::chrono::steady_clock::now();
     if (!kill_at &&
-        ((cancel && cancel->load()) || (deadline && now >= *deadline))) {
-      timed_out = !(cancel && cancel->load());
+        (cancel.stop_requested() || (deadline && now >= *deadline))) {
+      timed_out = !cancel.stop_requested();
       flatbuffers::FlatBufferBuilder b;
       const auto value = W::CreateWorkerCancel(b);
       W::FinishWorkerMessageBuffer(
@@ -1603,7 +1616,7 @@ auto WorkerProc::call_frame(
       kill_at = now + std::chrono::seconds(1);
     }
     if (kill_at && now >= *kill_at) {
-      terminate(true);
+      terminate_after_failure(true);
       return {{}, stopped()};
     }
   }
@@ -1678,9 +1691,8 @@ std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
 }
 
 auto WorkerProc::call_inputs(CallInputs inputs, uint64_t call_id,
-                             const std::atomic<bool>* cancel,
-                             PackedDeadline deadline, ArtifactOpen open_artifact)
-    -> WorkerOutcome {
+                             std::stop_token cancel, PackedDeadline deadline,
+                             ArtifactOpen open_artifact) -> WorkerOutcome {
   const bool create_artifacts = !inputs.artifact_directory.empty();
   if (!packed_)
     return call(build_worker_call(call_id, inputs), call_id, cancel, deadline,

@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <thread>
+#include <type_traits>
 
 #include "journal.hh"
 #include "tsugumi/protocol/worker_generated.h"
@@ -15,6 +16,7 @@
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/workerd/log.hh"
 #include "tsugumi/workerd/log_limits.hh"
+#include "tsugumi/workerd/path_ids.hh"
 
 namespace tsugumi::workerd {
 namespace {
@@ -52,6 +54,55 @@ auto chunk(const std::string& data) -> R::PutBlobRequestT {
   p.bytes.assign(data.begin(), data.end());
   return p;
 }
+auto test_id(char digit) -> Sha256Hex {
+  return Sha256Hex::parse(std::string(64, digit)).value();
+}
+
+auto put_blob(Journal& journal, const Sha256Hex& job,
+              const R::PutBlobRequestT& chunk, std::string_view core) -> void {
+  journal.put(job, Sha256Hex::parse(chunk.digest).value(), chunk.total,
+              chunk.offset, chunk.bytes, core);
+}
+
+auto get_blob(const Journal& journal, const Sha256Hex& job,
+              const R::GetBlobRequestT& request, std::string_view core)
+    -> R::BlobChunkT {
+  return journal.get(job, Sha256Hex::parse(request.digest).value(),
+                     request.offset, request.limit, core);
+}
+
+auto submit(Journal& journal, const Sha256Hex& job, std::string_view bytes,
+            std::string_view core) -> Record {
+  return journal.submit(job, bytes, parse_input_blobs(*parse_spec(bytes)),
+                        core);
+}
+
+static_assert(!std::is_invocable_v<decltype(&Journal::job_path), const Journal&,
+                                   std::string_view>);
+static_assert(!std::is_invocable_v<decltype(&Journal::supervisor_lock_path),
+                                   const Journal&, std::string_view>);
+static_assert(!std::is_invocable_v<decltype(&Journal::get), const Journal&,
+                                   const Sha256Hex&, std::string_view, uint64_t,
+                                   uint32_t, std::string_view>);
+
+auto path_id_test() -> void {
+  const std::string digest = crypto::sha256_hex("input");
+  const auto parsed = Sha256Hex::parse(digest);
+  expect(parsed && parsed->view() == digest, "canonical digest was rejected");
+  expect(!Sha256Hex::parse(digest.substr(1)), "short digest was accepted");
+  expect(!Sha256Hex::parse(std::string(64, 'A')),
+         "uppercase digest was accepted");
+  auto job_spec = parse_spec(spec(digest));
+  job_spec->input_blobs.push_back("missing");
+  try {
+    parse_input_blobs(*job_spec);
+  } catch (const Error& error) {
+    expect(error.code == R::ErrorCode::Invalid, "unexpected blob ID error");
+    return;
+  }
+  throw std::runtime_error("invalid input blob digest was accepted");
+}
+
 auto log_test() -> void {
   InvocationLog sample(kInvocationLogLimitBytes);
   const auto build = sample.append(LogStream::build, "build");
@@ -123,53 +174,52 @@ auto journal_test(const stdfs::path& root) -> void {
   expect(j.instance() != other.instance(), "project identities overlap");
   expect(Journal(root / "a").instance() == j.instance(),
          "identity did not survive restart");
-  const std::string job(64, '1'), second(64, '2'), cancelled(64, '3');
+  const auto job = test_id('1'), second = test_id('2'),
+             cancelled = test_id('3');
   auto p = chunk("job input");
   auto bytes = spec(p.digest);
   const auto fingerprint = crypto::sha256_hex(bytes);
   expect(j.status(job).state == R::JobState::Missing,
          "unknown job must be missing");
-  rejected([&] { j.submit(job, bytes, *parse_spec(bytes), core); });
-  j.put(job, p, core);
-  j.put(job, p, core);
+  rejected([&] { submit(j, job, bytes, core); });
+  put_blob(j, job, p, core);
+  put_blob(j, job, p, core);
   R::GetBlobRequestT get;
   get.digest = p.digest;
-  expect(j.get(job, get, core).bytes == p.bytes, "blob roundtrip");
-  rejected([&] { other.get(job, get, core); });
+  expect(get_blob(j, job, get, core).bytes == p.bytes, "blob roundtrip");
+  rejected([&] { get_blob(other, job, get, core); });
   auto corrupt = p;
   corrupt.digest = std::string(64, 'a');
-  rejected([&] { j.put(job, corrupt, core); });
+  rejected([&] { put_blob(j, job, corrupt, core); });
   corrupt = p;
   corrupt.total = kMaxBlob + 1;
-  rejected([&] { j.put(job, corrupt, core); });
+  rejected([&] { put_blob(j, job, corrupt, core); });
   corrupt = p;
   corrupt.offset = 1;
-  rejected([&] { j.put(second, corrupt, core); });
+  rejected([&] { put_blob(j, second, corrupt, core); });
   auto large = chunk(std::string(kChunkBytes + 17, 'x'));
   auto tail = large;
   large.bytes.resize(kChunkBytes);
-  j.put(job, large, core);
-  j.put(job, large, core);  // repeat an already acknowledged chunk
+  put_blob(j, job, large, core);
+  put_blob(j, job, large, core);  // repeat an already acknowledged chunk
   tail.offset = kChunkBytes;
   tail.bytes.erase(tail.bytes.begin(), tail.bytes.begin() + kChunkBytes);
-  j.put(job, tail, core);
+  put_blob(j, job, tail, core);
   get.digest = large.digest;
   get.offset = kChunkBytes;
-  expect(j.get(job, get, core).bytes == tail.bytes, "chunked binary transfer");
+  expect(get_blob(j, job, get, core).bytes == tail.bytes,
+         "chunked binary transfer");
   get.limit = kChunkBytes + 1;
-  rejected([&] { j.get(job, get, core); });
-  auto accepted = j.submit(job, bytes, *parse_spec(bytes), core);
+  rejected([&] { get_blob(j, job, get, core); });
+  auto accepted = submit(j, job, bytes, core);
   expect(accepted.state == R::JobState::Queued &&
              accepted.fingerprint == fingerprint,
          "submit receipt");
-  expect(j.submit(job, bytes, *parse_spec(bytes), core).fingerprint ==
-             accepted.fingerprint,
+  expect(submit(j, job, bytes, core).fingerprint == accepted.fingerprint,
          "resubmission changed the receipt");
-  rejected([&] {
-    j.submit(job, spec(p.digest, 61), *parse_spec(spec(p.digest, 61)), core);
-  });
+  rejected([&] { submit(j, job, spec(p.digest, 61), core); });
   rejected([&] { j.cancel(job, std::string(64, 'f')); });
-  rejected([&] { j.put(job, p, core); });
+  rejected([&] { put_blob(j, job, p, core); });
   rejected([&] { j.release(job, fingerprint); });
   std::atomic<int> claims{0};
   std::vector<std::thread> threads;
@@ -193,19 +243,14 @@ auto journal_test(const stdfs::path& root) -> void {
   expect(std::distance(stdfs::directory_iterator(j.job_path(job)),
                        stdfs::directory_iterator{}) == 1,
          "tombstone kept payload");
-  expect(j.submit(job, bytes, *parse_spec(bytes), core).state ==
-             R::JobState::Released,
+  expect(submit(j, job, bytes, core).state == R::JobState::Released,
          "release allowed a late replay");
   j.cancel(cancelled, fingerprint);
-  expect(j.submit(cancelled, bytes, *parse_spec(bytes), core).state ==
-             R::JobState::Cancelled,
+  expect(submit(j, cancelled, bytes, core).state == R::JobState::Cancelled,
          "cancel-before-submit allowed execution");
-  rejected([&] {
-    j.submit(cancelled, spec(p.digest, 62), *parse_spec(spec(p.digest, 62)),
-             core);
-  });
-  j.put(second, p, core);
-  j.submit(second, bytes, *parse_spec(bytes), core);
+  rejected([&] { submit(j, cancelled, spec(p.digest, 62), core); });
+  put_blob(j, second, p, core);
+  submit(j, second, bytes, core);
   Journal reopened(root / "a");
   expect(reopened.status(second).state == R::JobState::Queued,
          "queue lost on reopen");
@@ -214,9 +259,9 @@ auto journal_test(const stdfs::path& root) -> void {
   reopened.finish(second, R::JobState::Interrupted, {}, "supervisor lost");
   expect(!reopened.claim(second, 1, 1, "boot"),
          "interrupted invocation was rerun");
-  const std::string queued(64, '5');
-  j.put(queued, p, core);
-  j.submit(queued, bytes, *parse_spec(bytes), core);
+  const auto queued = test_id('5');
+  put_blob(j, queued, p, core);
+  submit(j, queued, bytes, core);
   rejected([&] { j.discard(queued, false); });
   expect(j.discard(queued, true).state == R::JobState::Queued &&
              j.status(queued).state == R::JobState::Released &&
@@ -227,11 +272,11 @@ auto journal_test(const stdfs::path& root) -> void {
              std::distance(stdfs::directory_iterator(j.job_path(second)),
                            stdfs::directory_iterator{}) == 1,
          "removal kept payload");
-  rejected([&] { j.put(second, p, core); });
-  rejected([&] { j.discard(std::string(64, '6'), true); });
-  const std::string result_job(64, '7');
-  j.put(result_job, p, core);
-  j.submit(result_job, bytes, *parse_spec(bytes), core);
+  rejected([&] { put_blob(j, second, p, core); });
+  rejected([&] { j.discard(test_id('6'), true); });
+  const auto result_job = test_id('7');
+  put_blob(j, result_job, p, core);
+  submit(j, result_job, bytes, core);
   j.claim(result_job, 100, 1, "boot");
   expect(j.log(result_job, 0, kLogChunkBytes, core) ==
              std::pair<uint64_t, std::string>{},
@@ -276,12 +321,12 @@ auto journal_test(const stdfs::path& root) -> void {
   stdfs::remove(output / "link");
   fs::write_atomic(output.parent_path() / "artifact-wanted", "stale request",
                    0600);
-  j.put(result_job, p, core);
+  put_blob(j, result_job, p, core);
   const auto result = j.import_results(result_job);
-  rejected([&] { j.put(result_job, p, core); });
+  rejected([&] { put_blob(j, result_job, p, core); });
   R::GetBlobRequestT manifest_request;
   manifest_request.digest = result;
-  auto manifest_data = j.get(result_job, manifest_request, core);
+  auto manifest_data = get_blob(j, result_job, manifest_request, core);
   flatbuffers::Verifier verifier(manifest_data.bytes.data(),
                                  manifest_data.bytes.size());
   expect(verifier.VerifyBuffer<R::ResultManifest>(nullptr),
@@ -295,12 +340,12 @@ auto journal_test(const stdfs::path& root) -> void {
   // An acknowledged prefix can be replayed after reopening. A crash after
   // writing the tail but before syncing or publishing it must leave the blob
   // invisible until the tail is replayed and the whole blob verified.
-  const std::string interrupted_upload(64, '8');
+  const auto interrupted_upload = test_id('8');
   auto partial = chunk("prefixsuffix");
   auto prefix = partial;
   prefix.bytes.resize(6);
-  j.put(interrupted_upload, prefix, core);
-  reopened.put(interrupted_upload, prefix, core);
+  put_blob(j, interrupted_upload, prefix, core);
+  put_blob(reopened, interrupted_upload, prefix, core);
   {
     std::ofstream tail(
         j.job_path(interrupted_upload) / "parts" / partial.digest,
@@ -312,16 +357,15 @@ auto journal_test(const stdfs::path& root) -> void {
   suffix.bytes.erase(suffix.bytes.begin(), suffix.bytes.begin() + 6);
   R::GetBlobRequestT repaired;
   repaired.digest = partial.digest;
-  rejected([&] { reopened.get(interrupted_upload, repaired, core); });
+  rejected([&] { get_blob(reopened, interrupted_upload, repaired, core); });
   const auto interrupted_spec = spec(partial.digest);
-  rejected([&] {
-    reopened.submit(interrupted_upload, interrupted_spec,
-                    *parse_spec(interrupted_spec), core);
-  });
-  reopened.put(interrupted_upload, suffix, core);
-  expect(Journal(root / "a").get(interrupted_upload, repaired, core).bytes ==
-             partial.bytes,
-         "last-chunk retry did not publish the blob");
+  rejected(
+      [&] { submit(reopened, interrupted_upload, interrupted_spec, core); });
+  put_blob(reopened, interrupted_upload, suffix, core);
+  expect(
+      get_blob(Journal(root / "a"), interrupted_upload, repaired, core).bytes ==
+          partial.bytes,
+      "last-chunk retry did not publish the blob");
   // A crashed release leaves the tombstone before payload deletion; recovery
   // completes it. No run data are promoted into the persistent store.
   fs::write_atomic(j.job_path(job) / "leftover", "data", 0600);
@@ -336,9 +380,9 @@ auto journal_test(const stdfs::path& root) -> void {
 auto timeout_budget_test(const stdfs::path& root) -> void {
   Journal journal(root / "timeouts");
   const std::string core(64, 'b');
-  const std::string job(64, 'e');
+  const auto job = test_id('e');
   const auto input = chunk("input");
-  journal.put(job, input, core);
+  put_blob(journal, job, input, core);
   auto bytes = spec(input.digest, 0);
   auto settings = parse_spec(bytes);
   settings->build_timeout_ms = 1;
@@ -349,8 +393,7 @@ auto timeout_budget_test(const stdfs::path& root) -> void {
   journal.clean_released(job);
   expect(journal.status(job).state == R::JobState::Uploading,
          "cleanup discarded a staged upload");
-  expect(journal.submit(job, bytes, *parse_spec(bytes), core).state ==
-             R::JobState::Queued,
+  expect(submit(journal, job, bytes, core).state == R::JobState::Queued,
          "submission did not queue the job");
   expect(journal.claim(job, 1, 1, "boot"),
          "queue consumed a Card or build budget");
@@ -373,6 +416,7 @@ auto main(int argc, char** argv) -> int {
     }
     log_test();
     protocol_test();
+    path_id_test();
     journal_test(root);
     discard_tree(root);
     std::cout << "workerd protocol and journal tests passed\n";

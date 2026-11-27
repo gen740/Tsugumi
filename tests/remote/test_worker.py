@@ -1076,7 +1076,10 @@ def test_jobs_command_lists_and_removes_only_chosen_jobs(worker):
     lock = (project / "locks" / f"{running}.supervisor").open("w")
     fcntl.flock(lock, fcntl.LOCK_EX)
 
+    queued_lock = project / "locks" / f"{queued}.supervisor"
+    assert not queued_lock.exists()
     rows = listed()
+    assert not queued_lock.exists(), "listing created a supervisor lock"
     assert set(rows) == {staged, cancelled, queued, running}
     assert rows[staged]["state"] == "uploading" and "never submitted" in rows[staged]["reason"]
     assert rows[cancelled]["state"] == "cancelled" and "not released" in rows[cancelled]["reason"]

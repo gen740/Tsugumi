@@ -14,7 +14,6 @@
 #include <utility>
 
 #include "journal.hh"
-#include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/json.hh"
 
 namespace tsugumi::workerd {
@@ -46,8 +45,8 @@ struct ListJson {
 
 struct Entry {
   std::shared_ptr<Journal> journal;
-  std::string scope;
-  std::string job;
+  Sha256Hex scope;
+  Sha256Hex job;
 };
 
 constexpr std::string_view kUsage =
@@ -59,13 +58,13 @@ auto entries(const stdfs::path& root) -> std::vector<Entry> {
   std::vector<Entry> result;
   const auto projects = root / "projects";
   if (!stdfs::is_directory(projects)) return result;
-  std::vector<std::string> scopes;
+  std::vector<Sha256Hex> scopes;
   for (const auto& entry : stdfs::directory_iterator(projects))
-    if (crypto::is_sha256_hex(entry.path().filename().string()))
-      scopes.push_back(entry.path().filename().string());
+    if (const auto scope = Sha256Hex::parse(entry.path().filename().string()))
+      scopes.push_back(*scope);
   std::ranges::sort(scopes);
   for (const auto& scope : scopes) {
-    auto journal = std::make_shared<Journal>(projects / scope);
+    auto journal = std::make_shared<Journal>(projects / scope.view());
     auto jobs = journal->jobs();
     std::ranges::sort(jobs);
     for (auto& job : jobs) result.push_back({journal, scope, std::move(job)});
@@ -75,7 +74,7 @@ auto entries(const stdfs::path& root) -> std::vector<Entry> {
 
 // Takes the job's supervisor lock without waiting. The descriptor is invalid
 // when another process holds it: a supervisor is running the job.
-auto lock_supervisor(const Journal& journal, const std::string& job) -> Fd {
+auto lock_supervisor(const Journal& journal, const Sha256Hex& job) -> Fd {
   Fd lock(::open(journal.supervisor_lock_path(job).c_str(),
                  O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600));
   if (lock.value < 0)
@@ -85,6 +84,23 @@ auto lock_supervisor(const Journal& journal, const std::string& job) -> Fd {
     lock.value = -1;
   }
   return lock;
+}
+
+auto supervisor_running(const Journal& journal, const Sha256Hex& job) -> bool {
+  const Fd lock(::open(journal.supervisor_lock_path(job).c_str(),
+                       O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+  if (lock.value < 0) {
+    if (errno == ENOENT) return false;
+    throw std::runtime_error("cannot open the job's supervisor lock");
+  }
+  // A shared lock probes the supervisor's exclusive lock without writing.
+  int result;
+  do {
+    result = ::flock(lock.value, LOCK_SH | LOCK_NB);
+  } while (result != 0 && errno == EINTR);
+  if (result == 0) return false;
+  if (errno == EWOULDBLOCK) return true;
+  throw std::runtime_error("cannot probe the job's supervisor lock");
 }
 
 struct Usage {
@@ -177,10 +193,10 @@ auto list_jobs(const stdfs::path& root, bool all, bool json) -> int {
   *output.state_dir = root.string();
   for (const auto& [journal, scope, job] : entries(root)) {
     JobJson row;
-    *row.project_scope = scope;
-    *row.job_id = job;
+    *row.project_scope = scope.view();
+    *row.job_id = job.view();
     *row.core_last_seen = "unknown";
-    const bool supervised = lock_supervisor(*journal, job).value < 0;
+    const bool supervised = supervisor_running(*journal, job);
     const auto disk = usage(journal->job_path(job));
     try {
       const auto record = journal->status(job);
@@ -241,7 +257,8 @@ auto find_job(const std::vector<Entry>& all, std::string_view name)
         ": name a job as PROJECT/JOB with at least 8 hex characters of each");
   const Entry* found = nullptr;
   for (const auto& entry : all)
-    if (entry.scope.starts_with(scope) && entry.job.starts_with(job)) {
+    if (entry.scope.view().starts_with(scope) &&
+        entry.job.view().starts_with(job)) {
       if (found)
         throw std::runtime_error(std::string(name) +
                                  ": matches more than one job");
@@ -258,7 +275,8 @@ auto remove_jobs(const stdfs::path& root, bool active,
   for (const auto& name : names) chosen.push_back(&find_job(all, name));
   int status = 0;
   for (const auto* entry : chosen) {
-    const auto name = entry->scope + "/" + entry->job;
+    const auto name =
+        std::string(entry->scope.view()) + "/" + std::string(entry->job.view());
     try {
       // Holding the supervisor lock keeps the listener from starting the job.
       const auto lock = lock_supervisor(*entry->journal, entry->job);

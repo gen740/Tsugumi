@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -15,7 +16,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
-#include <set>
+#include <span>
 #include <thread>
 #include <utility>
 
@@ -31,6 +32,7 @@
 #include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/log.hh"
 #include "tsugumi/workerd/log_limits.hh"
+#include "tsugumi/workerd/path_ids.hh"
 #include "tsugumi/workerd/protocol.hh"
 #include "tsugumi/workerd/staging.hh"
 #include "tsugumi/workerd/store_result.hh"
@@ -55,33 +57,41 @@ using Secrets = std::shared_ptr<WorkerSecrets>;
 auto receive_secrets(const stdfs::path& directory,
                      const workerd::R::JobSpecT& job) -> Secrets {
   const auto marker = directory / workerd::kSecretsWanted;
+  struct ClosePipe {
+    const stdfs::path& marker;
+    ~ClosePipe() {
+      ::close(workerd::kSecretChannelFd);
+      std::error_code ec;
+      stdfs::remove(marker, ec);
+    }
+  } close_pipe{marker};
   fs::write_atomic(marker, "", 0600);
-  std::string frame;
-  frame.reserve(workerd::kMaxFrame + 4);
   bool closed = false;
   const auto deadline = std::chrono::steady_clock::now() + kSecretWait;
-  while (!closed && frame.size() <= workerd::kMaxFrame + 4) {
-    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
-        deadline - std::chrono::steady_clock::now());
-    if (left.count() <= 0) break;
-    pollfd ready{workerd::kSecretChannelFd, POLLIN, 0};
-    const int polled = ::poll(&ready, 1, static_cast<int>(left.count()));
-    if (polled < 0 && errno == EINTR) continue;
-    if (polled <= 0) break;
-    char buffer[4096];
-    const auto n = ::read(workerd::kSecretChannelFd, buffer, sizeof buffer);
-    if (n < 0 && errno == EINTR) continue;
-    if (n <= 0)
-      closed = true;
-    else {
-      frame.append(buffer, static_cast<size_t>(n));
-      workerd::wipe_secret({buffer, static_cast<size_t>(n)});
+  const auto read_exact = [&](std::span<char> buffer) {
+    size_t offset = 0;
+    while (offset < buffer.size()) {
+      const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+          deadline - std::chrono::steady_clock::now());
+      if (left.count() <= 0) break;
+      pollfd ready{workerd::kSecretChannelFd, POLLIN, 0};
+      const int polled = ::poll(&ready, 1, static_cast<int>(left.count()));
+      if (polled < 0 && errno == EINTR) continue;
+      if (polled <= 0) break;
+      const auto n = ::read(workerd::kSecretChannelFd, buffer.data() + offset,
+                            buffer.size() - offset);
+      if (n < 0 && errno == EINTR) continue;
+      if (n <= 0) {
+        closed = n == 0;
+        break;
+      }
+      offset += static_cast<size_t>(n);
     }
-  }
-  ::close(workerd::kSecretChannelFd);
-  std::error_code ec;
-  stdfs::remove(marker, ec);
-  if (frame.empty()) {
+    return offset;
+  };
+  std::array<char, rpc::frame::kPrefixBytes> prefix{};
+  const auto prefix_bytes = read_exact(prefix);
+  if (prefix_bytes == 0) {
     if (closed)
       throw Failed(FailureKind::worker_failed,
                    "the remote worker restarted before the Card started; "
@@ -92,12 +102,20 @@ auto receive_secrets(const stdfs::path& directory,
                  "Card again");
   }
   auto secrets = std::make_shared<WorkerSecrets>();
+  std::string frame;
   try {
-    if (!closed || frame.size() < 4 ||
-        workerd::frame_length(std::string_view(frame).substr(0, 4)) !=
-            frame.size() - 4)
-      throw std::runtime_error("truncated");
-    auto message = workerd::decode(std::string_view(frame).substr(4));
+    if (prefix_bytes != prefix.size())
+      throw std::runtime_error("truncated prefix");
+    frame.resize(workerd::frame_length({prefix.data(), prefix.size()}));
+    if (read_exact(frame) != frame.size())
+      throw std::runtime_error("truncated frame");
+    // The listener sends one frame, then closes the pipe.
+    char trailing = 0;
+    const auto extra = read_exact({&trailing, 1});
+    workerd::wipe_secret({&trailing, 1});
+    if (extra != 0 || !closed)
+      throw std::runtime_error("expected end of secret pipe");
+    auto message = workerd::decode(frame);
     auto* reply = message->payload.AsReply();
     auto* body = reply ? reply->body.AsCardSecrets() : nullptr;
     if (!body) throw std::runtime_error("unexpected message");
@@ -380,7 +398,9 @@ auto fetch_artifact(const stdfs::path& directory, const stdfs::path& blobs,
             throw std::runtime_error("remote artifact staging cancelled");
           const auto destination = target / remote::relative_path(file->path);
           stdfs::create_directories(destination.parent_path());
-          const auto size = fs::link_beneath(blobs, file->sha256, destination);
+          const auto digest =
+              workerd::require_sha256_hex(file->sha256, "artifact blob digest");
+          const auto size = fs::link_beneath(blobs, digest.view(), destination);
           if (!size || *size != file->size)
             throw std::runtime_error("remote artifact member is missing");
         }
@@ -490,18 +510,20 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
     throw std::runtime_error("the job's Card secret channel is missing");
   const auto& derivation = job->derivation;
   const auto& output = job->output;
-  const std::set<std::string> accepted(job->input_blobs.begin(),
-                                       job->input_blobs.end());
-  const auto blob = [&](const std::string& digest) -> stdfs::path {
-    if (!accepted.contains(digest))
+  const auto accepted = parse_input_blobs(*job);
+  const auto blob = [&](const Sha256Hex& digest) -> stdfs::path {
+    if (std::ranges::find(accepted, digest) == accepted.end())
       throw std::runtime_error("remote input blob was not submitted");
-    return blobs / digest;
+    return blobs / digest.view();
   };
-  const auto decoded = remote::decode<remote::RW::Invocation>(
-      read(blob(job->invocation_sha256), kWorkerLimit));
+  const auto decoded = remote::decode<remote::RW::Invocation>(read(
+      blob(require_sha256_hex(job->invocation_sha256, "input blob digest")),
+      kWorkerLimit));
   if (!decoded) throw std::runtime_error("invalid remote invocation manifest");
   const auto& invocation = *decoded;
-  const auto frame = read(blob(invocation.call_sha256), kWorkerLimit);
+  const auto frame = read(
+      blob(require_sha256_hex(invocation.call_sha256, "input blob digest")),
+      kWorkerLimit);
   flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(frame.data()),
                                  frame.size());
   if (!W::VerifyWorkerMessageBuffer(verifier))
@@ -533,8 +555,9 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   // inputs and results remain in job scratch, outside the store.
   try {
     environment = RemoteWorkerStore::realise(
-        ArchiveDerivationTransport(blob(invocation.archive_sha256)), store,
-        WorkerDerivation{derivation, output, job->system},
+        ArchiveDerivationTransport(blob(require_sha256_hex(
+            invocation.archive_sha256, "input blob digest"))),
+        store, WorkerDerivation{derivation, output, job->system},
         [&](const std::string& line) {
           if (!job->card_probe) log(LogStream::build, line);
         },

@@ -2,12 +2,12 @@
 // decisions and storage adapters; this layer owns only execution mechanisms.
 #pragma once
 
-#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <functional>
 #include <optional>
 #include <span>
+#include <stop_token>
 #include <string>
 #include <utility>
 #include <vector>
@@ -32,7 +32,7 @@ struct Invocation {
   std::function<std::filesystem::path(const ArtifactKey&, std::stop_token)>
       resolve_artifact;
   fs::OutputBudget output_budget;
-  const std::atomic<bool>* cancel = nullptr;
+  std::stop_token cancel;
   std::optional<uint64_t> timeout_ms;
   std::chrono::milliseconds deadline_grace{0};
   WorkerProc::LogSink log;

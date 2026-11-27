@@ -250,7 +250,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   };
   invocation.output_budget = {node.settings.output_limit_bytes,
                               node.settings.output_limit_entries};
-  invocation.cancel = &request.cancel;
+  invocation.cancel = request.stop;
   if (node.settings.timeout_seconds)
     invocation.timeout_ms = *node.settings.timeout_seconds * 1000;
   invocation.deadline_grace = std::chrono::milliseconds(500);
