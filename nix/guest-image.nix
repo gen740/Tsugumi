@@ -54,7 +54,9 @@ writeShellApplication {
     out="$(mktemp -d "''${TMPDIR:-/tmp}/tsugumi-image.XXXXXX")"
     builder=""
     # The snapshot holds copies of read-only store files: make them removable.
-    trap '[ -z "$builder" ] || container stop "$builder" >/dev/null 2>&1 || true; chmod -R u+w "$stage" "$out" 2>/dev/null; rm -rf "$stage" "$out"' EXIT
+    # A successful download or build has already moved $out into dist/, so the
+    # chmod may find nothing; under errexit that must not fail the command.
+    trap '[ -z "$builder" ] || container stop "$builder" >/dev/null 2>&1 || true; chmod -R u+w "$stage" "$out" 2>/dev/null || true; rm -rf "$stage" "$out"' EXIT
     # Current tracked and untracked inputs of the guest, including local edits.
     python3 "$repo/vm/guest/tools/vm-snapshot.py" "$repo" "$stage"
     revision="$(git -C "$repo" rev-parse HEAD)"
