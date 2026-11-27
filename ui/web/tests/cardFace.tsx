@@ -82,6 +82,7 @@ const long = card('a long name of a Card '.repeat(6))
   s.connected = true
   const k = await addCodeCard(s, { x: 0, y: 0 })
   s.updateMeta(k, (m) => m.set('description', 'what it does'))
+  await s.save()
   const idle = hoverContent(s, [], { kind: 'card', k })
   assert.deepEqual(idle.lines, ['what it does'])
   assert.equal(idle.openLog, undefined)
