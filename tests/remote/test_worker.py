@@ -332,11 +332,18 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(),
         };
       }
     """
+    derivation, output = publish_derivation(peer, expression, nixDirectory=nix_directory)
+    return job_spec(peer, job, derivation, output, deadline_ms=deadline_ms, outputs=outputs,
+                    inputs=inputs, output_budget=output_budget)
+
+
+def publish_derivation(peer, expression, **arguments):
+    """Instantiates `expression` and publishes its .drv closure to the pull cache."""
+    arguments = {"system": R.string(peer.caps.nativeSystem), **arguments}
     derivation = subprocess.check_output(
         ["nix-instantiate", "--extra-experimental-features", "flakes",
          "--impure", "--expr", expression,
-         "--argstr", "system", R.string(peer.caps.nativeSystem),
-         "--argstr", "nixDirectory", nix_directory],
+         *(item for name, value in arguments.items() for item in ("--argstr", name, value))],
         text=True,
     ).strip()
     output = subprocess.check_output(
@@ -352,7 +359,11 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(),
                    check=True)
     peer.cache_pulls = [CachePullSettingsT(endpoint=cache,
                                           publicKey=public_key.read_text().strip())]
+    return derivation, output
 
+
+def job_spec(peer, job, derivation, output, *, deadline_ms=None, outputs=(), inputs=(),
+             output_budget=None):
     call = WorkerCallT(
         inputs=list(inputs), outputs=list(outputs), deadlineMs=deadline_ms,
     )
@@ -367,6 +378,111 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(),
         invocationSha256=invocation, inputBlobs=[call_digest, invocation],
         logLimitBytes=8 << 20, **(output_budget or {}),
     ))
+
+
+def slow_plan(peer, *builds):
+    """Publishes a plan derivation whose build waits on slow derivations.
+
+    Each `(tag, seconds)` derivation logs that it started and records when it
+    ran in its output. The plan is not a Card plan, so its job ends with a
+    worker failure once the store has realised it.
+    """
+    slow = " ".join(f'${{slow "{tag}" "{seconds}"}}' for tag, seconds in builds)
+    plan = "-".join(tag for tag, _ in builds)
+    expression = """
+      { system }:
+      let
+        pkgs = import (builtins.getFlake (toString ./.)).inputs.nixpkgs { inherit system; };
+        shell = name: script: derivation {
+          inherit name system;
+          builder = "${pkgs.bash}/bin/bash";
+          PATH = "${pkgs.coreutils}/bin";
+          args = [ "-c" script ];
+        };
+        slow = tag: seconds: shell "slow-${tag}" ''
+          echo "slow builder ${tag} started"
+          mkdir "$out"
+          date +%s.%N > "$out/start"
+          sleep ${seconds}
+          date +%s.%N > "$out/end"
+        '';
+      in shell "slow-plan-""" + plan + """" "echo """ + slow + """ > $out"
+    """
+    return publish_derivation(peer, expression)
+
+
+def submit_plan(peer, job, plan):
+    spec = job_spec(peer, job, *plan)
+    reply = peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
+    assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
+    return hashlib.sha256(spec).hexdigest()
+
+
+def realised(peer, job):
+    """Waits for the job and returns its build log and store environment."""
+    peer.wait_state(job, R.JobState.Succeeded)
+    result = peer.journal(job).parent / "work/result"
+    logs = "".join(text for stream, text in R.read_logs((result / "logs").read_bytes())
+                   if stream == LogStream.build)
+    return logs, R.ResultEnvironmentT.InitFromPackedBuf((result / "environment").read_bytes())
+
+
+def slow_output(peer, environment, tag):
+    paths = [R.string(path) for path in environment.paths]
+    [path] = [path for path in paths if path.endswith(f"-slow-{tag}")]
+    output = peer.state / "store" / path.lstrip("/")
+    return output, float((output / "start").read_text()), float((output / "end").read_text())
+
+
+def test_independent_builds_overlap_and_release_does_not_disturb_them(tmp_path):
+    binary = os.environ.get("TSUGUMI_REMOTE_TEST_DAEMON")
+    if not binary:
+        pytest.skip("set TSUGUMI_REMOTE_TEST_DAEMON to the packaged tsugumi-workerd")
+    peer = Worker(tmp_path, binary, extra=("--max-jobs", "2"))
+    try:
+        long_job, short_job = "1" * 64, "3" * 64
+        submit_plan(peer, long_job, slow_plan(peer, ("long", 30)))
+        short = submit_plan(peer, short_job, slow_plan(peer, ("short", 2)))
+        _, short_environment = realised(peer, short_job)
+        _, short_start, short_end = slow_output(peer, short_environment, "short")
+        # Releasing a finished job removes its scratch while the other job is
+        # still building in the shared store.
+        released = peer.call(R.RequestBody.ReleaseRequest, R.ReleaseRequestT(fingerprint=short),
+                             job=short_job)
+        assert released.bodyType == R.ReplyBody.Ack, vars(released.body)
+        assert not (peer.journal(short_job).parent / "work").exists()
+        running = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=long_job).body
+        assert running.state == R.JobState.Running
+        logs, long_environment = realised(peer, long_job)
+        assert "slow builder long started" in logs
+        _, long_start, long_end = slow_output(peer, long_environment, "long")
+        assert long_start < short_end and short_start < long_end, "the builds did not overlap"
+        assert short_end < long_end
+    finally:
+        peer.close()
+
+
+def test_jobs_sharing_a_slow_derivation_build_it_once(tmp_path):
+    binary = os.environ.get("TSUGUMI_REMOTE_TEST_DAEMON")
+    if not binary:
+        pytest.skip("set TSUGUMI_REMOTE_TEST_DAEMON to the packaged tsugumi-workerd")
+    peer = Worker(tmp_path, binary, extra=("--max-jobs", "2"))
+    try:
+        first, second = "1" * 64, "3" * 64
+        plan = slow_plan(peer, ("shared", 10))
+        submit_plan(peer, first, plan)
+        submit_plan(peer, second, plan)
+        # Both supervisors are realising while the builder sleeps.
+        for job in (first, second):
+            peer.wait_state(job, R.JobState.Running)
+        results = [realised(peer, job) for job in (first, second)]
+        builders = [logs.count("slow builder shared started") for logs, _ in results]
+        assert sorted(builders) == [0, 1], builders
+        assert [environment.built for _, environment in results].count(True) == 1
+        outputs = {slow_output(peer, environment, "shared") for _, environment in results}
+        assert len(outputs) == 1
+    finally:
+        peer.close()
 
 
 def test_builds_instead_of_using_an_output_signed_by_an_untrusted_cache_key(worker):
