@@ -64,6 +64,62 @@ auto WebSocketFrame(std::span<const uint8_t> message, uint8_t opcode = 2)
   return frame;
 }
 
+auto Lower(std::string_view value) -> std::string {
+  std::string out(value);
+  std::ranges::transform(out, out.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+  return out;
+}
+
+auto Trim(std::string_view value) -> std::string_view {
+  const auto first = value.find_first_not_of(" \t");
+  if (first == value.npos) return {};
+  return value.substr(first, value.find_last_not_of(" \t") - first + 1);
+}
+
+auto HasToken(std::string_view value, std::string_view token) -> bool {
+  for (;;) {
+    const auto comma = value.find(',');
+    if (Lower(Trim(value.substr(0, comma))) == token) return true;
+    if (comma == value.npos) return false;
+    value.remove_prefix(comma + 1);
+  }
+}
+
+auto VerifyUpgrade(std::string_view response, const std::string& key,
+                   std::string_view protocol) -> void {
+  const auto status_end = response.find("\r\n");
+  const auto status = response.substr(0, status_end);
+  if (status != "HTTP/1.1 101" && !status.starts_with("HTTP/1.1 101 "))
+    throw std::runtime_error("WebSocket upgrade rejected: " +
+                             std::string(status));
+  response.remove_prefix(status_end + 2);
+  std::map<std::string, std::string> headers;
+  while (!response.empty() && !response.starts_with("\r\n")) {
+    const auto end = response.find("\r\n");
+    const auto line = response.substr(0, end);
+    const auto colon = line.find(':');
+    if (colon == line.npos || colon == 0)
+      throw std::runtime_error("invalid WebSocket upgrade header");
+    const auto name = Lower(line.substr(0, colon));
+    const auto value = Trim(line.substr(colon + 1));
+    if (auto old = headers.find(name); old != headers.end())
+      old->second += "," + std::string(value);
+    else
+      headers.emplace(name, value);
+    response.remove_prefix(end + 2);
+  }
+  const auto accept =
+      crypto::sha1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+  if (!HasToken(headers["connection"], "upgrade") ||
+      !HasToken(headers["upgrade"], "websocket") ||
+      headers["sec-websocket-accept"] != Base64(accept) ||
+      headers["sec-websocket-protocol"] != protocol ||
+      headers.contains("sec-websocket-extensions"))
+    throw std::runtime_error("invalid WebSocket upgrade response");
+}
+
 class NativeTransport final : public Transport {
   struct State {
     explicit State(TransportOptions value) : options(std::move(value)) {
@@ -85,6 +141,8 @@ class NativeTransport final : public Transport {
     CURL* curl = nullptr;
     bool websocket = false;
     Bytes incoming;
+    std::optional<Bytes> fragments;
+    Bytes pong;
     Bytes writing;
     size_t write_offset = 0;
 
@@ -286,6 +344,8 @@ class NativeTransport final : public Transport {
                         static_cast<size_t>(count));
       }
       const auto header_end = response.find("\r\n\r\n") + 4;
+      VerifyUpgrade(std::string_view(response).substr(0, header_end), key,
+                    protocol);
       incoming.assign(response.begin() + static_cast<ptrdiff_t>(header_end),
                       response.end());
       websocket = true;
@@ -308,6 +368,11 @@ class NativeTransport final : public Transport {
         }
         if (available < 2) break;
         const uint8_t opcode = data[0] & 15;
+        const bool fin = (data[0] & 0x80) != 0;
+        const bool control = opcode >= 8;
+        if ((data[0] & 0x70) || (data[1] & 0x80) ||
+            (control && (!fin || (data[1] & 127) > 125)))
+          throw std::runtime_error("invalid WebSocket frame header");
         uint64_t length = data[1] & 127;
         size_t header = 2;
         if (length == 126) {
@@ -320,15 +385,35 @@ class NativeTransport final : public Transport {
           for (size_t i = 2; i < 10; ++i) length = (length << 8) | data[i];
           header = 10;
         }
-        if (length > options.max_frame_bytes)
-          throw std::runtime_error("WebSocket frame exceeds its limit");
+        if (!control &&
+            (length > options.max_frame_bytes ||
+             (opcode == 0 && fragments &&
+              fragments->size() > options.max_frame_bytes - length)))
+          throw std::runtime_error("WebSocket message exceeds its limit");
         if (available - header < length) break;
         const std::span payload(data + header, static_cast<size_t>(length));
         consumed += header + static_cast<size_t>(length);
         if (opcode == 8)
           throw std::runtime_error("WebSocket peer closed the connection");
-        if (opcode == 2 && events.received)
-          events.received(Bytes(payload.begin(), payload.end()));
+        if (opcode == 9) {
+          pong = WebSocketFrame(payload, 10);
+        } else if (opcode == 10) {
+          continue;
+        } else if (opcode == 2 && !fragments) {
+          if (!fin)
+            fragments.emplace(payload.begin(), payload.end());
+          else if (events.received)
+            events.received(Bytes(payload.begin(), payload.end()));
+        } else if (opcode == 0 && fragments) {
+          fragments->insert(fragments->end(), payload.begin(), payload.end());
+          if (fin) {
+            auto message = std::move(*fragments);
+            fragments.reset();
+            if (events.received) events.received(std::move(message));
+          }
+        } else {
+          throw std::runtime_error("unexpected WebSocket opcode");
+        }
       }
       incoming.erase(incoming.begin(),
                      incoming.begin() + static_cast<ptrdiff_t>(consumed));
@@ -337,10 +422,14 @@ class NativeTransport final : public Transport {
     auto Flush() -> void {
       for (size_t count = 0; count < 64 && !stopping; ++count) {
         if (writing.empty()) {
-          std::lock_guard lock(mutex);
-          if (outgoing.empty()) return;
-          writing = std::move(outgoing.front());
-          outgoing.pop_front();
+          if (!pong.empty()) {
+            writing.swap(pong);
+          } else {
+            std::lock_guard lock(mutex);
+            if (outgoing.empty()) return;
+            writing = std::move(outgoing.front());
+            outgoing.pop_front();
+          }
           write_offset = 0;
         }
         const auto sent =
@@ -381,7 +470,9 @@ class NativeTransport final : public Transport {
             has_output = !outgoing.empty();
           }
           Wait(static_cast<short>(
-                   POLLIN | ((!writing.empty() || has_output) ? POLLOUT : 0)),
+                   POLLIN |
+                   ((!writing.empty() || !pong.empty() || has_output) ? POLLOUT
+                                                                      : 0)),
                events.deadline ? events.deadline() : std::nullopt);
         }
       } catch (const std::exception& failure) {
