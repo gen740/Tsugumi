@@ -307,6 +307,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     bool in_targets = false;
     bool start = false;
     bool start_fired = false;
+    std::optional<History::LastInput> start_input;
     std::map<std::string, std::deque<TokenGroup>>
         queues;  // connected inputs only
     uint64_t invocations = 0;
@@ -586,6 +587,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }
     for (const auto& j : plan_.joins)
       seed_saved(nodes_[res.index.at(path_key(j.card))], j.saved_ports);
+    for (auto& node : nodes_) {
+      if (!node.start || node.queues.empty() ||
+          (p_.injected_inputs && node.node->path == p_.card))
+        continue;
+      node.start_input = svc_.history().read([&](sql::Db& db) {
+        return History::last_input(db, node.node->path);
+      });
+    }
   }
 
   auto saved_group(const NodeRt& node, const SavedInputGroup& saved,
@@ -755,9 +764,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       }
       if (!n.queues.empty()) {
         try {
-          const auto last = svc_.history().read([&](sql::Db& db) {
-            return History::last_input(db, n.node->path);
-          });
+          const auto last = std::exchange(n.start_input, std::nullopt);
           if (!last) throw missing_saved_inputs(*n.node);
           if (n.node->kind != CardType::Merge)
             for (const auto& [port, _] : n.queues)
@@ -803,10 +810,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   }
 
   void main() {
-    {
-      std::lock_guard lock(mu_);
-      prepare_graph();
-    }
+    // Graph state is private to this thread until the worker pools start.
+    prepare_graph();
     set_state(RunState::preparing);
     journal("run", "started", std::nullopt, std::nullopt, "run started");
     for (const auto& note : seed_notes_)
@@ -1443,9 +1448,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       std::lock_guard lock(mu_);
       worker_budget_ -= count - started.load();
     }
-    // Cancellation and publication are ordered by the same mutex. A
-    // committed batch is complete and routes all its output groups.
-    std::lock_guard lock(mu_);
+    // Decide the batch's outcome under the cancellation lock. Serialize its
+    // write and routing with other batches while allowing status and cancel
+    // to run during the write.
+    std::lock_guard publish(publication_mu_);
+    std::unique_lock lock(mu_);
     if (cancel_.load())
       failure = FailureData::make(FailureKind::cancelled, "run cancelled");
 
@@ -1461,12 +1468,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         batch.outputs.push_back({port.name, sent, batch.execution_list});
       }
     }
+    lock.unlock();
     try {
       publish_batch(batch, members);
     } catch (const Failed&) {
       persistence_lost("batch of " + path_key(node.path));
       failure = persist_failure();
     }
+    lock.lock();
     if (failure) {
       const bool cancelled = failure->kind == FailureKind::cancelled;
       rt.last = cancelled ? CardState::cancelled : CardState::failed;
@@ -2070,6 +2079,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   std::map<std::pair<std::string, uint64_t>, Capture> captured_log_bytes_;
   std::map<std::pair<std::string, uint64_t>, workerd::InvocationLog>
       log_budgets_;
+  std::mutex publication_mu_;
   std::mutex persist_mu_;
   std::optional<FailureData> persist_failure_;
 };
