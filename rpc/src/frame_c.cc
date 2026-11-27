@@ -1,9 +1,9 @@
-#include "tsugumi/rpc/frame.h"
-
 #include <cerrno>
 #include <cstdlib>
+#include <memory>
 #include <new>
 
+#include "tsugumi/rpc/frame.h"
 #include "tsugumi/rpc/frame.hh"
 
 namespace frame = tsugumi::rpc::frame;
@@ -33,17 +33,16 @@ extern "C" tsugumi_frame_status tsugumi_frame_read(int fd, uint32_t max_bytes,
     if (got == 0) return TSUGUMI_FRAME_END;
     if (got < sizeof prefix) return TSUGUMI_FRAME_TRUNCATED;
     const auto length = frame::DecodePrefix(prefix, max_bytes);
-    auto* buffer = static_cast<uint8_t*>(std::malloc(length));
+    std::unique_ptr<uint8_t, decltype(&std::free)> buffer(
+        static_cast<uint8_t*>(std::malloc(length)), std::free);
     if (!buffer) {
       errno = ENOMEM;
       return TSUGUMI_FRAME_IO;
     }
-    if (frame::ReadExact(fd, reinterpret_cast<char*>(buffer), length) <
-        length) {
-      std::free(buffer);
+    if (frame::ReadExact(fd, reinterpret_cast<char*>(buffer.get()), length) <
+        length)
       return TSUGUMI_FRAME_TRUNCATED;
-    }
-    *bytes = buffer;
+    *bytes = buffer.release();
     *size = length;
     return TSUGUMI_FRAME_OK;
   } catch (const frame::Error& error) {

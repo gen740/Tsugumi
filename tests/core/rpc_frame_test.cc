@@ -1,3 +1,4 @@
+#include <fcntl.h>
 #include <gtest/gtest.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -47,6 +48,17 @@ class FrameTest : public ::testing::Test {
   int reader_ = -1;
   int writer_ = -1;
 };
+
+TEST_F(FrameTest, BodyIoErrorLeavesOutputsEmpty) {
+  ASSERT_EQ(::fcntl(reader_, F_SETFL, O_NONBLOCK), 0);
+  Send(10, "abc");
+  uint8_t* bytes = nullptr;
+  uint32_t size = 0;
+  EXPECT_EQ(tsugumi_frame_read(reader_, kLimit, &bytes, &size),
+            TSUGUMI_FRAME_IO);
+  EXPECT_EQ(bytes, nullptr);
+  EXPECT_EQ(size, 0u);
+}
 
 TEST_F(FrameTest, PrefixIsLittleEndian) {
   const auto prefix = EncodePrefix(0x01020304);
