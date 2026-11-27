@@ -745,8 +745,8 @@ void Service::run_record(RequestIn& req) {
     std::optional<InvocationSummaryData> status;
     std::vector<StoredValueMeta> in_meta;
     std::vector<StoredValueMeta> out_meta;
-    std::vector<std::string> in_bytes;
-    std::vector<std::string> out_bytes;
+    std::vector<std::optional<std::string>> in_bytes;
+    std::vector<std::optional<std::string>> out_bytes;
     History::Aggregate agg;
     std::optional<FailureData> past_failure;
   };
@@ -773,14 +773,21 @@ void Service::run_record(RequestIn& req) {
       if (o.record) {
         o.in_meta = History::value_metas(db, run_id, card, *o.selected, true);
         o.out_meta = History::value_metas(db, run_id, card, *o.selected, false);
-        for (const auto& m : o.in_meta)
-          o.in_bytes.push_back(
-              History::value_bytes(db, run_id, card, *o.selected, true, m.name)
-                  .value_or(""));
-        for (const auto& m : o.out_meta)
-          o.out_bytes.push_back(
-              History::value_bytes(db, run_id, card, *o.selected, false, m.name)
-                  .value_or(""));
+        auto budget = kInlineLimit;
+        const auto load = [&](const auto& metas, auto& values, bool input) {
+          values.resize(metas.size());
+          for (size_t i = 0; i < metas.size(); ++i) {
+            const auto& meta = metas[i];
+            if (meta.size_bytes > budget) continue;
+            auto value = History::value_bytes(db, run_id, card, *o.selected,
+                                              input, meta.name);
+            if (!value || value->size() > budget) continue;
+            budget -= value->size();
+            values[i] = std::move(value);
+          }
+        };
+        load(o.in_meta, o.in_bytes, true);
+        load(o.out_meta, o.out_bytes, false);
       }
     }
     o.agg = History::aggregate(db, run_id, card);
@@ -829,9 +836,8 @@ void Service::run_record(RequestIn& req) {
   flatbuffers::Offset<R::InvocationRecord> rec;
   if (exists) {
     InvocationSummaryData summary = o.record ? o.record->summary : *o.status;
-    uint64_t budget = kInlineLimit;
     auto values = [&](const std::vector<StoredValueMeta>& metas,
-                      const std::vector<std::string>& data) {
+                      const std::vector<std::optional<std::string>>& data) {
       std::vector<flatbuffers::Offset<D::NamedValue>> v;
       for (size_t i = 0; i < metas.size(); ++i) {
         const auto& m = metas[i];
@@ -840,11 +846,11 @@ void Service::run_record(RequestIn& req) {
             reinterpret_cast<const uint8_t*>(m.bfbs.data()), m.bfbs.size());
         auto root = b.CreateString(m.root_type);
         flatbuffers::Offset<flatbuffers::Vector<uint8_t>> inl;
-        bool include = data[i].size() <= budget;
+        const bool include = data[i].has_value();
         if (include) {
-          inl = b.CreateVector(reinterpret_cast<const uint8_t*>(data[i].data()),
-                               data[i].size());
-          budget -= data[i].size();
+          inl =
+              b.CreateVector(reinterpret_cast<const uint8_t*>(data[i]->data()),
+                             data[i]->size());
         } else {
           truncated = true;
         }
