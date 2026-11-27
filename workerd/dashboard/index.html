@@ -39,13 +39,13 @@
     <div class="section-header"><h2 id="keys-title" data-l="許可されたホスト鍵"></h2></div>
     <p data-l="最初の公開鍵は、ワーカーの authorized_keys に手動で追加してください。"></p>
     <ul id="keys"></ul>
-    <form id="add-key">
+    <div class="add-key">
       <label for="public-key" data-l="ホストの公開鍵"></label>
       <div class="key-entry">
-        <input id="public-key" type="text" placeholder="ed25519:…" maxlength="128" required autocomplete="off" spellcheck="false">
-        <button id="submit-key" disabled data-l="鍵を追加"></button>
+        <input id="public-key" type="text" placeholder="ed25519:…" maxlength="128" autocomplete="off" spellcheck="false">
+        <button type="button" id="submit-key" disabled data-l="鍵を追加"></button>
       </div>
-    </form>
+    </div>
   </section>
 </main>
 <aside id="review" hidden aria-labelledby="review-text">

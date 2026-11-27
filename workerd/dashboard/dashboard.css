@@ -66,7 +66,7 @@ button:disabled { cursor: default; opacity: .55; }
 button.danger { color: var(--danger); }
 input { accent-color: var(--accent); }
 input[type=text] { flex: 1; min-width: 0; font-family: ui-monospace, monospace; }
-form label { display: block; margin-bottom: 6px; color: var(--muted); }
+.add-key label { display: block; margin-bottom: 6px; color: var(--muted); }
 aside { position: sticky; bottom: 6px; margin-top: 12px; box-shadow: 0 4px 18px #0002; }
 aside label { display: block; margin-top: 10px; }
 .review-actions { justify-content: flex-end; margin-top: 10px; }
@@ -77,4 +77,7 @@ aside label { display: block; margin-top: 10px; }
 @media (max-width: 600px) {
   body { padding: 14px; }
   section, aside { padding: 12px; }
+  th, td { padding: 6px; }
+  th, td time { white-space: normal; }
+  td code { overflow-wrap: anywhere; }
 }

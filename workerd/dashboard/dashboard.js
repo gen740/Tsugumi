@@ -52,7 +52,7 @@ function report(text, error = false) {
 }
 function controls() {
   $('review-jobs').disabled = !send || busy || !!review || !selected.size
-  $('submit-key').disabled = !send || busy || !!review || !keysSnapshot
+  $('submit-key').disabled = !send || busy || !!review || !keysSnapshot || !$('public-key').value.trim()
   for (const input of $('jobs').querySelectorAll('input'))
     input.disabled = !send || busy || !!review || (!input.checked && selected.size >= maxJobs)
   for (const button of $('keys').querySelectorAll('button')) button.disabled = !send || busy || !!review
@@ -213,10 +213,15 @@ $('confirm').addEventListener('click', () => {
   closeReview()
   void change(operation, body)
 })
-$('add-key').addEventListener('submit', event => {
-  event.preventDefault()
-  const key = $('public-key').value.trim()
-  if (key && !review && keysSnapshot) void change('AddKey', { key })
+function addKey() {
+  if (!$('submit-key').disabled) {
+    void change('AddKey', { key: $('public-key').value.trim() })
+  }
+}
+$('submit-key').addEventListener('click', addKey)
+$('public-key').addEventListener('input', controls)
+$('public-key').addEventListener('keydown', event => {
+  if (event.key === 'Enter' && !event.isComposing) addKey()
 })
 function start(exchange) {
   send = exchange
