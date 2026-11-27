@@ -2310,12 +2310,17 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
 }
 
 std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
-  std::lock_guard<std::mutex> l(mu_);
-  if (stopping_.load())
-    throw Failed(FailureKind::interrupted, "the project is shutting down");
-  if (active_)
-    throw Failed(FailureKind::busy, "another run is active",
-                 {{"run_id", *active_->status().run_id}});
+  const auto check_available = [&] {
+    if (stopping_.load())
+      throw Failed(FailureKind::interrupted, "the project is shutting down");
+    if (active_)
+      throw Failed(FailureKind::busy, "another run is active",
+                   {{"run_id", *active_->status().run_id}});
+  };
+  {
+    std::lock_guard lock(mu_);
+    check_available();
+  }
   auto plan = Scheduler::plan(*doc->resolution, p.card, p.propagate);
   if (p.injected_inputs)
     for (const auto& input : *p.injected_inputs)
@@ -2355,6 +2360,8 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
   s.target = p.card;
   s.propagate = p.propagate;
   std::string receipt;
+  std::lock_guard lock(mu_);
+  check_available();
   // The accepted sequence and receipt commit together, before any processing.
   svc_.history().write_sync([&](sql::Db& db) {
     s.status.run_id = History::next_run_id(db);
