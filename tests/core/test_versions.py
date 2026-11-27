@@ -230,6 +230,24 @@ def test_checkout_crash_restores_worktree_index_head_and_branch(tmp_path, core_f
     assert src_text(reopened) == "target"
 
 
+def test_startup_cleans_checkout_previews_and_preserves_saved_originals(
+    tmp_path, core_factory
+):
+    root = tmp_path / "project"
+    builtin_project(root)
+    state = root / ".tsugumi"
+    preview = state / "checkout-Abc123"
+    (preview / "target").mkdir(parents=True)
+    (preview / "original").mkdir()
+    (preview / "target/unused").write_text("incomplete preview")
+    backup = state / "checkout-Def456" / "original"
+    backup.mkdir(parents=True)
+    (backup / "saved").write_text("recoverable")
+    core_factory(project_root=root).connect()
+    assert not preview.exists()
+    assert (backup / "saved").read_text() == "recoverable"
+
+
 def test_runs_version_definitions_and_explicit_paths_only(tmp_path, core_factory):
     """Run commits and named versions exclude stray files and internal state."""
     root = tmp_path / "p"

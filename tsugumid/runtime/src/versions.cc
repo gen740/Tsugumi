@@ -814,15 +814,41 @@ auto sync_checkout_ref(git_repository* repo, const std::string& ref) -> void {
   fs::fsync_dir(common);
 }
 
+auto checkout_scratch_name(std::string_view name) -> bool {
+  return name.size() == sizeof("checkout-XXXXXX") - 1 &&
+         name.starts_with("checkout-") &&
+         name.find_first_not_of(
+             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+             "-") == name.npos;
+}
+
+auto clean_checkout_previews(const stdfs::path& parent) -> void {
+  if (!stdfs::is_directory(stdfs::symlink_status(parent))) return;
+  for (const auto& entry : stdfs::directory_iterator(parent)) {
+    const auto& path = entry.path();
+    if (!checkout_scratch_name(path.filename().string()) ||
+        !stdfs::is_directory(entry.symlink_status()))
+      continue;
+    const auto original = path / "original";
+    std::error_code error;
+    const auto status = stdfs::symlink_status(original, error);
+    // An absent journal may follow a failed fsync when retiring it. Retain
+    // any originals in that case for recovery or inspection.
+    if (error && error != std::errc::no_such_file_or_directory) continue;
+    if (stdfs::exists(status) &&
+        (!stdfs::is_directory(status) || !stdfs::is_empty(original, error)))
+      continue;
+    if (!error || error == std::errc::no_such_file_or_directory)
+      stdfs::remove_all(path, error);
+    if (error) log::warn("remove checkout preview: " + error.message());
+  }
+}
+
 auto restore_checkout(const stdfs::path& root, git_repository* repo,
                       const stdfs::path& journal) -> stdfs::path {
   const auto data = json::Object(fs::read_file_or_throw(journal));
   const auto name = json::Text(data, "scratch");
-  if (name.size() != sizeof("checkout-XXXXXX") - 1 ||
-      !name.starts_with("checkout-") ||
-      name.find_first_not_of(
-          "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-") !=
-          name.npos)
+  if (!checkout_scratch_name(name))
     throw std::runtime_error("invalid checkout journal directory");
   const auto scratch = journal.parent_path() / name;
   const auto backup = scratch / "original";
@@ -910,7 +936,10 @@ auto Versions::checkout_pending(const stdfs::path& root) -> bool {
 
 auto Versions::recover_checkout(const stdfs::path& root) -> void {
   const auto journal = root / ".tsugumi" / kCheckoutJournal;
-  if (!checkout_pending(root)) return;
+  if (!checkout_pending(root)) {
+    clean_checkout_previews(journal.parent_path());
+    return;
+  }
   if (!stdfs::is_regular_file(stdfs::symlink_status(journal)))
     throw std::runtime_error("invalid checkout journal");
   init_once();
