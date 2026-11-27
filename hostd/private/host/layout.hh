@@ -132,9 +132,9 @@ inline constexpr size_t junction_fan = 3;
 
 // Where Arrange puts the junctions of the scene's outputs once the Cards and
 // port orders of `arranged` apply: along the flow halfway from the output to
-// its nearest input (at least two grids past it), across it in line with the
-// output unless every input is to one side, then in line with the closest of
-// them. The UIs place one added by hand by the same rule.
+// its nearest input (two grids past it when no input is further along), across
+// it in line with the output unless every input is to one side, then in line
+// with the closest of them. The UIs place one added by hand by the same rule.
 auto junctions(const Scene& scene, const Proposal& arranged)
     -> std::vector<Junction>;
 

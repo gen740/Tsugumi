@@ -381,7 +381,7 @@ TEST(ProjectOperationLayout, ArrangePlacesJunctionsOnOutputsWithThreeInputs) {
   EXPECT_EQ(json::Text(junction, "port"), "out");
   for (const auto* id : {"t1", "t2", "t3"})
     EXPECT_FALSE(json::Object(cards.at(id)).contains("junctions"));
-  // Below the output, halfway to its nearest input (at least two grids).
+  // Below the output, halfway to its nearest input.
   const double sy = at("s", "y") + 120;
   double nearest = 1e9, low = 1e9, high = -1e9;
   for (const auto* id : {"t1", "t2", "t3"}) {
@@ -390,7 +390,7 @@ TEST(ProjectOperationLayout, ArrangePlacesJunctionsOnOutputsWithThreeInputs) {
     high = std::max(high, at(id, "x") + 40);
   }
   EXPECT_DOUBLE_EQ(std::stod(junction.at("y")),
-                   sy + std::max(40.0, (nearest - sy) / 2));
+                   sy + (nearest - sy) / 2);
   EXPECT_DOUBLE_EQ(std::stod(junction.at("x")),
                    std::clamp(at("s", "x") + 40, low, high));
 

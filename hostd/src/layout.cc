@@ -273,9 +273,16 @@ auto junctions(const Scene& scene, const Proposal& arranged)
       low = std::min(low, down ? p.x : p.y);
       high = std::max(high, down ? p.x : p.y);
     }
-    double j_along = along + std::max(2 * grid, (nearest - along) / 2);
-    // On the grid along the flow only: across it the trunk stays straight.
-    if (scene.snap) j_along = std::floor(j_along / grid + 0.5) * grid;
+    // An input level with or before the output: two grids past it.
+    double j_along =
+        nearest > along ? along + (nearest - along) / 2 : along + 2 * grid;
+    // On the grid along the flow only (across it the trunk stays straight),
+    // when that keeps it between the output and its nearest input.
+    if (scene.snap) {
+      const double snapped = std::floor(j_along / grid + 0.5) * grid;
+      if (snapped > along && (nearest <= along || snapped < nearest))
+        j_along = snapped;
+    }
     const double j_across = std::min(std::max(across, low), high);
     out.push_back({first.from, first.from_port, down ? j_across : j_along,
                    down ? j_along : j_across});
