@@ -159,7 +159,8 @@ class Service : public RequestSink {
   static auto finish_artifact_expiry(const DetachedArtifacts& detached,
                                      bool committed) -> void;
   auto detach_run_artifacts(const std::string& run_id) -> std::filesystem::path;
-  auto collect_unrecorded_run_files() -> void;
+  auto collect_interrupted_artifacts(const std::vector<std::string>& runs)
+      -> void;
   auto remove_run_artifacts(const std::string& run_id) -> uint64_t;
   // The backend that runs the Cards naming execution service `id`.
   auto invalidate_resident(const std::string& card) -> void;

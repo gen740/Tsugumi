@@ -319,7 +319,6 @@ void Service::open() {
       std::make_unique<RemoteExecutionService>(*this, remote_jobs_);
   scheduler_ = std::make_unique<Scheduler>(*this);
   scheduler_->recover_interrupted();
-  collect_unrecorded_run_files();
   if (packed_builds_) {
 #ifdef __APPLE__
     if (packed_builds_->fast) {

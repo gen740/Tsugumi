@@ -2049,12 +2049,17 @@ auto Scheduler::live_log(const std::string& run_id,
 void Scheduler::recover_interrupted() {
   auto runs = svc_.history().read([](sql::Db& db) {
     auto result = History::unfinished_runs(db);
-    auto pending = db.prepare("SELECT DISTINCT run_id FROM remote_jobs");
-    while (pending.step())
-      if (std::ranges::find(result, pending.text(0)) == result.end())
-        result.push_back(pending.text(0));
+    std::set<std::string> known(result.begin(), result.end());
+    auto pending = db.prepare(
+        "SELECT DISTINCT j.run_id FROM remote_jobs AS j "
+        "JOIN runs AS r ON r.run_id=j.run_id");
+    while (pending.step()) {
+      auto id = pending.text(0);
+      if (known.insert(id).second) result.push_back(std::move(id));
+    }
     return result;
   });
+  svc_.collect_interrupted_artifacts(runs);
   for (const auto& run_id : runs) {
     Service::DetachedArtifacts detached;
     try {

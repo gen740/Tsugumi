@@ -69,7 +69,7 @@ When the Agent cites a result in a chat reply, open its evidence link to inspect
 
 Run records are written directly to `.tsugumi/runs.sqlite`. Copy the whole project, including its hidden `.tsugumi` directory, to keep its saved run records and files. There is no second history database or import/export pass. The project's git history holds versions of its document and code; outputs and logs live in run history.
 
-If project startup reports an incompatible history database, use the offered move-aside action before restarting. It preserves the incompatible database and its sidecars under a different name.
+If project startup reports an incompatible history database, use the offered move-aside action before restarting. It moves the database, its sidecars and the project's artifact directory aside under matching names. Run scratch stays in its existing location.
 
 In a Card's **Run History**, use **Delete Records…** to remove a finished run's
 logs, recorded values or artifacts. Deleting a category preserves the run summary.

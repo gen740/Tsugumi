@@ -698,10 +698,11 @@ struct Environments::Impl {
       auto lock = fs::FileLock::try_acquire(lock_file);
       if (!lock)
         throw std::runtime_error("Another process owns this state file");
-      // The document journal can reference staged source files by name.
-      const auto companion = name == "document.sqlite"
-                                 ? path.parent_path() / "document-files"
-                                 : std::filesystem::path{};
+      std::filesystem::path companion;
+      if (name == "document.sqlite")
+        companion = path.parent_path() / "document-files";
+      else if (name == "runs.sqlite")
+        companion = path.parent_path() / "artifacts";
       sql::move_aside(sql::FormatMismatch(path, FormatNumber(issue->found),
                                           FormatNumber(issue->expected)),
                       companion);
