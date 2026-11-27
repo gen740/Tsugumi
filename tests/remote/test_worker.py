@@ -612,10 +612,13 @@ def test_worker_nix_build_log_reaches_the_job_log_while_it_builds(worker):
             break
         assert status.state in (R.JobState.Queued, R.JobState.Running), vars(status)
         time.sleep(0.1)
-    # The marker arrived while the derivation was still building.
+    # The marker arrived while the derivation was still building. Other builds
+    # (the worker's own package) may overlap it and name the activity.
     assert status.state == R.JobState.Running
-    assert status.activity == R.JobActivity.Building and "native-card" in R.string(status.activityDetail)
-    assert any("native-card" in R.string(name) for name in status.building)
+    assert status.activity == R.JobActivity.Building, vars(status)
+    building = [R.string(name) for name in status.building]
+    assert any("native-card" in name for name in building), building
+    assert R.string(status.activityDetail) in building, vars(status)
     worker.wait_state(job, R.JobState.Succeeded)
 
 
