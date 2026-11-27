@@ -1844,7 +1844,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
            svc_.server()->broadcast(timeline_note(
                run_id_, node.path, inv, Phase::validate, lane, begin, end));
          },
-         w.cancellation->stop_event.get_token()});
+         w.cancellation->stop_event.get_token(),
+         [&](const char* event, const std::string& message) {
+           journal(phase_name(s.phase.value_or(Phase::execute)), event,
+                   node.path, inv, message);
+         }});
     s.transfer_direction.clear();
     s.transfer_name.clear();
     Produced p;

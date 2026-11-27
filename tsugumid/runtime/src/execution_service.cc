@@ -241,10 +241,9 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   auto lease = workers_.acquire(worker_card, key, sp, reuse);
   sp.secrets.reset();
   s.worker_reused = lease.reused;
-  if (!lease.replaced.empty() && request.log)
-    request.log(
-        LogStream::output,
-        "Resident worker state started fresh: " + lease.replaced + ".\n");
+  if (!lease.replaced.empty() && request.journal)
+    request.journal("fresh_state",
+                    "resident worker state started fresh: " + lease.replaced);
 
   workerd::Invocation invocation;
   invocation.inputs = request.inputs;

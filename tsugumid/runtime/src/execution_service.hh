@@ -79,6 +79,9 @@ struct ExecutionRequest {
       transfer = {};
   std::function<void(int64_t, int64_t)> on_remote_validation = {};
   std::stop_token stop = {};
+  // Records the core's own notice about this invocation in the run journal.
+  // The Card's output holds only what the Card wrote.
+  std::function<void(const char* event, const std::string&)> journal = {};
 };
 
 // Thrown by execute() when shutdown stops waiting for remote execution.
