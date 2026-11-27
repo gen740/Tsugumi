@@ -36,8 +36,9 @@ export type CardKey = string // "a/b"
 export const key = (p: string[]): CardKey => p.join('/')
 export const path = (k: CardKey): string[] => (k ? k.split('/') : [])
 
-/** An output needs this many connected inputs for its wires to branch at a junction (hostd's layout::junction_fan). */
-export const JUNCTION_FAN = 3
+/** An output needs this many connected inputs for its wires to branch at a junction (hostd's layout::junction_inputs):
+ *  a person may place one from the Card menu. Arrange places one by itself only from three (layout::junction_fan). */
+export const JUNCTION_INPUTS = 2
 /** Where the wires of one output split (world units): layout only, never a Card or a connection. */
 export interface JunctionPlace {
   card: CardKey
@@ -2565,7 +2566,7 @@ export class ProjectSession extends Observable {
 
   /** Where an output's wires split (world units), when it has a junction and enough inputs for one. */
   junction(k: CardKey, port: string): { x: number; y: number } | undefined {
-    if (this.fanout(k, port) < JUNCTION_FAN) return undefined
+    if (this.fanout(k, port) < JUNCTION_INPUTS) return undefined
     const j = this.savedJunction(k, port)
     const x = dbl(get(j, 'x')), y = dbl(get(j, 'y'))
     return x !== undefined && y !== undefined ? { x, y } : undefined
@@ -2584,7 +2585,7 @@ export class ProjectSession extends Observable {
     }
     const out: JunctionPlace[] = []
     for (const { from, port, to } of inputs.values()) {
-      if (to.size < JUNCTION_FAN) continue
+      if (to.size < JUNCTION_INPUTS) continue
       const card = key([...scope, from]), j = this.savedJunction(card, port)
       const x = dbl(get(j, 'x')), y = dbl(get(j, 'y'))
       if (x !== undefined && y !== undefined) out.push({ card, port, at: { x, y } })
@@ -2594,7 +2595,7 @@ export class ProjectSession extends Observable {
 
   /** The outputs of a Card whose wires can branch at a junction. */
   junctionOutputs(k: CardKey): string[] {
-    return this.geometry(k).outputs.filter(p => this.fanout(k, p) >= JUNCTION_FAN)
+    return this.geometry(k).outputs.filter(p => this.fanout(k, p) >= JUNCTION_INPUTS)
   }
 
   /** Puts an output's junction where Arrange would (hostd's layout::junctions): along the flow

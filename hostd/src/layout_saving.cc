@@ -311,15 +311,20 @@ static auto TransformLayout(
     positions[order.id] = json::Encode(position);
   }
   if (action == 0) {
-    // Arrange places the junctions anew: those of outputs with enough inputs.
+    // Arrange places the junctions anew: those of outputs with enough inputs,
+    // and those a person placed on outputs with fewer, which it keeps.
+    std::set<layout::OutputKey> kept;
     for (const auto& card : scene.cards) {
       if (!positions.contains(card.id)) continue;
       auto position = json::Object(positions.at(card.id));
+      for (const auto& raw :
+           json::Array(json::Get(position, "junctions", "[]")))
+        kept.insert({card.id, json::Text(json::Object(raw), "port")});
       if (position.erase("junctions"))
         positions[card.id] = json::Encode(position);
     }
     std::map<std::string, std::vector<std::string>> placed;
-    for (const auto& j : layout::junctions(scene, proposal))
+    for (const auto& j : layout::junctions(scene, proposal, kept))
       placed[j.card].push_back(
           json::Encode(json::Members{{"port", json::Quote(j.port)},
                                      {"x", std::to_string(j.x)},

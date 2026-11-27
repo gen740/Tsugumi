@@ -220,8 +220,8 @@ auto arrange(const Scene& scene) -> Proposal {
   placed.port_orders = std::move(reordered);
   return placed;
 }
-auto junctions(const Scene& scene, const Proposal& arranged)
-    -> std::vector<Junction> {
+auto junctions(const Scene& scene, const Proposal& arranged,
+               const std::set<OutputKey>& kept) -> std::vector<Junction> {
   const double grid = scene.grid > 0 ? scene.grid : 20;
   auto cards = scene.cards;
   for (auto& c : cards) {
@@ -261,7 +261,10 @@ auto junctions(const Scene& scene, const Proposal& arranged)
       if (w.from == first.from && w.from_port == first.from_port &&
           seen.insert({w.to, w.to_port}).second)
         if (const auto p = at(w.to, w.to_port, false)) inputs.push_back(*p);
-    if (inputs.size() < junction_fan) continue;
+    if (inputs.size() <
+        (kept.contains({first.from, first.from_port}) ? junction_inputs
+                                                       : junction_fan))
+      continue;
     // Worked out top-to-bottom; left-to-right swaps x and y.
     const bool down = scene.top_to_bottom;
     const double along = down ? source->y : source->x;

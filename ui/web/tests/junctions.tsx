@@ -2,7 +2,8 @@ import { projectFixture } from './documentFixture'
 import { cardIds } from './cardIds'
 // A junction is where one output's wires split on the canvas: layout only.
 // Arrange places one on an output with three or more inputs, a person moves it
-// or adds and removes it from the Card's menu, and the connections never change.
+// or adds and removes it from the Card's menu (also on an output with two inputs,
+// where Arrange keeps it), and the connections never change.
 import assert from 'node:assert/strict'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import type { Workspace } from '../src/model/workspace'
@@ -43,7 +44,7 @@ cv.size = { width: 800, height: 600 }
 cv.setCamera({ x: 5000, y: 5000, zoom: 1 })
 assert.equal(s.junction(source, 'out'), undefined, 'no junction before Arrange')
 assert.deepEqual(s.junctionOutputs(source), ['out'])
-assert.deepEqual(s.junctionOutputs(pair), [], 'two inputs are not enough')
+assert.deepEqual(s.junctionOutputs(pair), ['out'], 'two inputs can branch at one placed by hand')
 
 {
   // Arrange places the junction of the output with three inputs, in one step of undo,
@@ -110,7 +111,26 @@ assert.deepEqual(s.junctionOutputs(pair), [], 'two inputs are not enough')
   assert.ok(j && j.y > cv.scene().portWorld(source, 'out', true).y, 'placed as Arrange would')
   assert.equal(serialize(s.connections([])), connections)
   assert.ok(label('分岐点を外す'), 'the menu offers to remove it again')
-  assert.equal((cardMenu({} as Workspace, s, tab, pair) as { label?: string }[]).some((i) => i && typeof i === 'object' && i.label?.includes('分岐点')), false)
+}
+
+{
+  // On an output with two inputs only a person places one, from the Card's menu;
+  // it is drawn, and Arrange keeps it.
+  const menu = () => (cardMenu({} as Workspace, s, tab, pair) as { label?: string; action?: () => void }[])
+    .filter((item) => item && typeof item === 'object')
+  const add = menu().find((item) => item.label?.includes('分岐点を置く'))
+  assert.ok(add?.action, 'the menu offers a junction for two inputs')
+  add.action()
+  await s.save()
+  assert.ok(s.junction(pair, 'out'), 'placed by hand')
+  assert.equal(cv.scene().wires.filter((w) => w.trunk).length, 2, 'drawn with its trunk')
+  await cv.arrange()
+  const kept = s.junction(pair, 'out')
+  assert.ok(kept, 'Arrange keeps it')
+  const near = Math.min(...pairTargets.map((t) => cv.scene().portWorld(t, 'in', false).y))
+  assert.ok(kept.y > cv.scene().portWorld(pair, 'out', true).y && kept.y < near, 'moved with the arranged Cards')
+  assert.ok(menu().some((item) => item.label?.includes('分岐点を外す')))
+  assert.equal(serialize(s.connections([])), connections)
 }
 
 {
@@ -120,6 +140,7 @@ assert.deepEqual(s.junctionOutputs(pair), [], 'two inputs are not enough')
   const back = layoutView(Uint8Array.from(bytes), notes)
   assert.equal(serialize(back), serialize(view))
   assert.equal((arr(get(back, 'cards', source, 'junctions')) ?? []).length, 1)
+  assert.equal((arr(get(back, 'cards', pair, 'junctions')) ?? []).length, 1)
 }
 
 prefs.set('showGrid', originalGrid)

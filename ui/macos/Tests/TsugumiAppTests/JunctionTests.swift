@@ -62,15 +62,18 @@ import TsugumiTestSupport
     return layout.serialized()
   }
 
-  @Test func onlyOutputsWithThreeInputsBranchAtAJunction() throws {
+  @Test func outputsWithTwoOrMoreInputsBranchAtAJunction() throws {
     var layout = try JSONValue.parse(withJunction("out", x: 100, y: 300))
     layout["cards"]?["p"]?["junctions"] = .array([.object([("port", .string("out")), ("x", .real(2100)), ("y", .real(300))])])
+    layout["cards"]?["a"]?["junctions"] = .array([.object([("port", .string("out")), ("x", .real(-500)), ("y", .real(900))])])
     let (s, dir) = try session(layout: layout.serialized())
     defer { try? FileManager.default.removeItem(at: dir) }
-    #expect(s.junctions(in: []) == [ProjectSession.JunctionPlace(card: "s", port: "out", at: CGPoint(x: 100, y: 300))])
-    #expect(s.junction("p", "out") == nil, "with two inputs the wires go directly")
-    #expect(s.junctionOutputs("s") == ["out"] && s.junctionOutputs("p").isEmpty)
-    #expect(s.fanout("s", "out") == 3)
+    #expect(s.junctions(in: []) == [ProjectSession.JunctionPlace(card: "s", port: "out", at: CGPoint(x: 100, y: 300)),
+                                    ProjectSession.JunctionPlace(card: "p", port: "out", at: CGPoint(x: 2100, y: 300))])
+    #expect(s.junction("p", "out") == CGPoint(x: 2100, y: 300), "one placed by hand on two inputs is drawn")
+    #expect(s.junction("a", "out") == nil, "without inputs there is nothing to branch")
+    #expect(s.junctionOutputs("s") == ["out"] && s.junctionOutputs("p") == ["out"] && s.junctionOutputs("a").isEmpty)
+    #expect(s.fanout("s", "out") == 3 && s.fanout("p", "out") == 2)
     // layout.bin keeps them as they were saved.
     #expect(Documents.layoutView(fixtureLayout(layout.serialized()), notes: [:])["cards"]?["p"]?["junctions"] == layout["cards"]?["p"]?["junctions"])
   }

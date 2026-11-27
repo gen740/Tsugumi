@@ -670,8 +670,10 @@ extension ProjectSession {
   // MARK: - Junctions
 
   /// An output needs this many connected inputs for its wires to branch at a
-  /// junction (hostd's layout::junction_fan).
-  static let junctionFan = 3
+  /// junction (hostd's layout::junction_inputs): a person may place one from
+  /// the Card menu. Arrange places one by itself only from three
+  /// (layout::junction_fan).
+  static let junctionInputs = 2
 
   /// The inputs an output of a Card is connected to, each once.
   func fanout(_ k: CardKey, _ port: String) -> Int {
@@ -686,7 +688,7 @@ extension ProjectSession {
   /// Where an output's wires split (world units), when it has a junction and
   /// enough inputs for one. Layout only: the connections stay as they are.
   func junction(_ k: CardKey, _ port: String) -> CGPoint? {
-    guard fanout(k, port) >= Self.junctionFan, let j = savedJunction(k, port),
+    guard fanout(k, port) >= Self.junctionInputs, let j = savedJunction(k, port),
           let x = j["x"]?.double, let y = j["y"]?.double else { return nil }
     return CGPoint(x: x, y: y)
   }
@@ -709,7 +711,7 @@ extension ProjectSession {
     }
     return order.compactMap { from, port in
       let k = key(scope + [from])
-      guard (inputs["\(from)\u{0}\(port)"]?.count ?? 0) >= Self.junctionFan, let j = savedJunction(k, port),
+      guard (inputs["\(from)\u{0}\(port)"]?.count ?? 0) >= Self.junctionInputs, let j = savedJunction(k, port),
             let x = j["x"]?.double, let y = j["y"]?.double else { return nil }
       return JunctionPlace(card: k, port: port, at: CGPoint(x: x, y: y))
     }
@@ -722,7 +724,7 @@ extension ProjectSession {
 
   /// The outputs of a Card whose wires can branch at a junction.
   func junctionOutputs(_ k: CardKey) -> [String] {
-    geometry(k).outputs.filter { fanout(k, $0) >= Self.junctionFan }
+    geometry(k).outputs.filter { fanout(k, $0) >= Self.junctionInputs }
   }
 
   /// Puts an output's junction where Arrange would (hostd's

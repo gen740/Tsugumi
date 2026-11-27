@@ -364,11 +364,9 @@ constexpr auto kFanProject =
 
 TEST(ProjectOperationLayout, ArrangePlacesJunctionsOnOutputsWithThreeInputs) {
   const auto scene = FanScene();
-  // A junction placed by hand on the output with two inputs goes.
+  // The output with two inputs gets none of its own.
   const auto arranged = ArrangeProjectLayout(
-      kFanProject,
-      R"({"cards":{"s":{"x":0,"y":0,"junctions":[{"port":"few","x":5,"y":5}]}}})",
-      {}, false, &scene);
+      kFanProject, R"({"cards":{"s":{"x":0,"y":0}}})", {}, false, &scene);
   const auto cards = json::Object(json::Object(arranged).at("cards"));
   auto at = [&](const std::string& id, const char* axis) {
     return std::stod(json::Object(cards.at(id)).at(axis));
@@ -407,6 +405,33 @@ TEST(ProjectOperationLayout, ArrangePlacesJunctionsOnOutputsWithThreeInputs) {
   EXPECT_DOUBLE_EQ(std::stod(after.at("y")), std::stod(junction.at("y")) + 10);
   // Arranged layouts are valid layout.bin views.
   EXPECT_NO_THROW(SplitLayoutView(arranged));
+
+  // One placed by hand on the output with two inputs stays and moves by the
+  // same rule; one on an output without inputs goes.
+  const auto rearranged = json::Object(json::Object(ArrangeProjectLayout(
+      kFanProject,
+      R"({"cards":{"s":{"x":0,"y":0,"junctions":[{"port":"few","x":5,"y":5}]},)"
+      R"("t1":{"x":0,"y":400,"junctions":[{"port":"gone","x":5,"y":5}]}}})",
+      {}, false, &scene)).at("cards"));
+  EXPECT_FALSE(json::Object(rearranged.at("t1")).contains("junctions"));
+  const auto kept = json::Array(json::Object(rearranged.at("s")).at("junctions"));
+  ASSERT_EQ(kept.size(), 2U);
+  const auto few = json::Object(
+      kept[json::Text(json::Object(kept[0]), "port") == "few" ? 0 : 1]);
+  EXPECT_EQ(json::Text(few, "port"), "few");
+  auto now = [&](const std::string& id, const char* axis) {
+    return std::stod(json::Object(rearranged.at(id)).at(axis));
+  };
+  const double few_y = now("s", "y") + 120;
+  double few_nearest = 1e9, few_low = 1e9, few_high = -1e9;
+  for (const auto* id : {"t1", "t2"}) {
+    few_nearest = std::min(few_nearest, now(id, "y"));
+    few_low = std::min(few_low, now(id, "x") + 120);
+    few_high = std::max(few_high, now(id, "x") + 120);
+  }
+  EXPECT_DOUBLE_EQ(std::stod(few.at("y")), few_y + (few_nearest - few_y) / 2);
+  EXPECT_DOUBLE_EQ(std::stod(few.at("x")),
+                   std::clamp(now("s", "x") + 120, few_low, few_high));
 }
 }  // namespace
 }  // namespace tsugumi::host

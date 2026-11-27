@@ -14,7 +14,9 @@
 #pragma once
 
 #include <optional>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace tsugumi::layout {
@@ -129,13 +131,22 @@ struct Junction {
 // The outputs with at least this many connected inputs get a junction when
 // arranged.
 inline constexpr size_t junction_fan = 3;
+// An output with at least this many connected inputs can have a junction: a
+// person may place one by hand, and Arrange keeps it.
+inline constexpr size_t junction_inputs = 2;
+
+// An output's (card, port).
+using OutputKey = std::pair<std::string, std::string>;
 
 // Where Arrange puts the junctions of the scene's outputs once the Cards and
-// port orders of `arranged` apply: along the flow halfway from the output to
-// its nearest input (two grids past it when no input is further along), across
-// it in line with the output unless every input is to one side, then in line
-// with the closest of them. The UIs place one added by hand by the same rule.
-auto junctions(const Scene& scene, const Proposal& arranged)
+// port orders of `arranged` apply: of the outputs with junction_fan inputs,
+// and of those in `kept` (outputs that had a junction) with junction_inputs.
+// Along the flow halfway from the output to its nearest input (two grids past
+// it when no input is further along), across it in line with the output unless
+// every input is to one side, then in line with the closest of them. The UIs
+// place one added by hand by the same rule.
+auto junctions(const Scene& scene, const Proposal& arranged,
+               const std::set<OutputKey>& kept = {})
     -> std::vector<Junction>;
 
 // Reorders ports where the wires then cross less; no Card moves. With `around`
