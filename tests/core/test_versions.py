@@ -7,6 +7,7 @@ in the note says what ran, from what the run did."""
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 
 import pytest
@@ -124,6 +125,37 @@ def test_checkout_rejects_removed_definition_format_before_committing(tmp_path, 
     assert git(root, "branch", "--show-current").strip() == branch
     assert definition.read_bytes() == before and not legacy_link.exists()
     assert c.call("ProjectInspectRequest").rev == snapshot.rev
+
+
+def test_checkout_preserves_git_when_persistence_is_halted(core_factory, project):
+    builtin_project(project, text="target")
+    client = core_factory().connect()
+    target = text(client.call("VersionInitRequest", opId=new_id(), origin="test").commit)
+    set_text(client, "current")
+    _, finished = run_and_wait(client, "start")
+    assert finished.state == RunState.succeeded
+    head = text(finished.commit)
+    assert head != target
+    revision = client.call("ProjectInspectRequest").rev
+    parameter = project / "definitions/src/params.nix"
+    current = parameter.read_bytes()
+    index = (project / ".git/index").read_bytes()
+    with sqlite3.connect(project / ".tsugumi/document.sqlite") as db:
+        db.execute("""
+            CREATE TRIGGER reject_new_intent BEFORE INSERT ON pending_file
+            BEGIN SELECT RAISE(ABORT, 'test journal write failed'); END
+        """)
+    with pytest.raises(RpcFailure) as persistence:
+        set_text(client, "fails to save")
+    assert persistence.value.kind == "persistence_failed"
+    with pytest.raises(RpcFailure) as checkout:
+        client.call("VersionCheckoutRequest", baseRev=revision, opId=new_id(),
+                    origin="test", commit=target)
+    assert checkout.value.kind == "persistence_failed"
+    assert git(project, "rev-parse", "HEAD").strip() == head
+    assert (project / ".git/index").read_bytes() == index
+    assert parameter.read_bytes() == current
+    assert client.call("ProjectInspectRequest").rev == revision
 
 
 @pytest.mark.parametrize("blocker", ["untracked-link", "index.lock", "HEAD.lock"])
