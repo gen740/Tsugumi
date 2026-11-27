@@ -242,6 +242,9 @@ struct ProjectChooser: View {
     }
     .padding(20)
     .frame(width: 380)
+    // Home has no title bar background, and there the default sheet surface is
+    // clear: only its top edge showed. A material gives it the usual sheet body.
+    .presentationBackground(.regularMaterial)
   }
 
   private func openPanel() {
