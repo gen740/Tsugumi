@@ -2,9 +2,11 @@
 
 #include <fcntl.h>
 #include <poll.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -299,7 +301,6 @@ class VMProcess final : public EnvironmentProcess {
   std::atomic<bool> stopping_ = false;
   std::mutex calls_mutex_;
   std::set<int> calls_;
-  int64_t helper_pid_ = 0;
   std::jthread watcher_;
   std::map<int64_t, std::string> keys_;
   std::mutex status_mutex_;
@@ -373,6 +374,7 @@ class VMProcess final : public EnvironmentProcess {
   }
   auto Connect() -> int {
     std::lock_guard lock(open_mutex_);
+    if (stopping_) throw std::runtime_error("VM adapter is stopping");
     if (auto fd = TryConnect(); fd >= 0) return fd;
     EnvironmentLaunch launch;
     launch.vm_helper = true;
@@ -380,13 +382,29 @@ class VMProcess final : public EnvironmentProcess {
                         options_.support.string(), "--image",
                         options_.image.string()};
     launch.log = options_.support / "vmhost.log";
-    auto native = NativeEnvironmentProcess();
-    helper_pid_ = native->Launch(launch);
+    auto exited = std::make_shared<std::atomic<bool>>(false);
+    const auto pid = static_cast<pid_t>(LaunchNativeProcess(launch));
+    // This helper can outlive its connection. Reap only the child we spawned,
+    // without retaining the adapter or relying on a subsequent Watch or RPC.
+    const auto reap = [pid, exited] {
+      while (::waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {
+      }
+      *exited = true;
+    };
+    std::thread reaper;
+    try {
+      reaper = std::thread(reap);
+    } catch (...) {
+      ::kill(pid, SIGKILL);
+      reap();
+      throw;
+    }
+    reaper.detach();
     int connected = -1;
-    WaitForNativeReadiness(path_, helper_pid_, startup_stop_.get_token(), [&] {
+    WaitForNativeReadiness(path_, pid, startup_stop_.get_token(), [&] {
       connected = TryConnect();
       if (connected >= 0) return true;
-      if (native->Poll(helper_pid_, true).has_value())
+      if (*exited)
         throw std::runtime_error(
             "VM helper exited during startup; see vmhost.log");
       return false;

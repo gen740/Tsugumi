@@ -1,3 +1,4 @@
+#include <fcntl.h>
 #include <gtest/gtest.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -6,6 +7,26 @@
 #include "host/environment.hh"
 
 namespace tsugumi::test {
+#ifdef __linux__
+TEST(NativeEnvironment, ClosesInheritedDescriptors) {
+  TemporaryDirectory directory;
+  const int fd = ::open("/dev/null", O_RDONLY);
+  ASSERT_GE(fd, 3);
+  struct Close {
+    int fd;
+    ~Close() { ::close(fd); }
+  } inherited{fd};
+  host::EnvironmentLaunch launch;
+  launch.arguments = {"/bin/sh", "-c", "test ! -e /proc/self/fd/\"$1\"", "sh",
+                      std::to_string(fd)};
+  launch.log = directory.path / "launch.log";
+  auto process = host::NativeEnvironmentProcess();
+  const auto pid = process->Launch(launch);
+  int status = 0;
+  ASSERT_EQ(::waitpid(static_cast<pid_t>(pid), &status, 0), pid);
+  EXPECT_EQ(status, 0);
+}
+#endif
 TEST(NativeEnvironment, StartsWithOnlyRuntimeEnvironmentAndScopedBroker) {
   TemporaryDirectory directory;
   // Poison known credentials, an unknown future secret and shell injection.

@@ -86,6 +86,7 @@ class EnvironmentProcess {
       -> bool = 0;
 };
 
+auto LaunchNativeProcess(const EnvironmentLaunch& launch) -> int64_t;
 auto WaitForNativeReadiness(const std::filesystem::path& file, int64_t pid,
                             std::stop_token stop,
                             const std::function<bool()>& done) -> void;
