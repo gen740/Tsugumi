@@ -132,9 +132,11 @@ auto untangle(const Scene& scene, const std::vector<std::string>& around)
 // near what they belong to. Positions of the scene are not read.
 auto place(const Scene& scene) -> Proposal;
 
-// Fill only missing places, using the same free-room search as notes.
-// Scene cards with an id in missing have no saved position; all others stay
-// put.
+// Fill only missing places. Scene cards with an id in missing have no saved
+// position; all others stay put. New Cards wired to each other are drawn by
+// data flow as `place` draws them, and each such group goes after the placed
+// Cards that feed it (or before those it feeds), else in the free room beside
+// the drawing, as notes do.
 auto place_missing(const Scene& scene, const std::vector<std::string>& missing)
     -> Proposal;
 

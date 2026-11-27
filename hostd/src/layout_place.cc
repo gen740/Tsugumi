@@ -1038,59 +1038,156 @@ auto place(const Scene& scene) -> Proposal {
 auto place_missing(const Scene& scene, const std::vector<std::string>& missing)
     -> Proposal {
   const bool vertical = scene.top_to_bottom;
+  const double grid = scene.snap ? scene.grid : 1;
   auto rect = [&](double x, double y, double w, double h) {
     return vertical ? FlowRect{x, y, w, h} : FlowRect{y, x, h, w};
   };
-  std::vector<FlowRect> room;
-  std::vector<std::pair<std::string, FlowRect>> placed;
   auto wanted = [&](const std::string& id) {
     return std::find(missing.begin(), missing.end(), id) != missing.end();
   };
-  for (const auto& c : scene.cards)
-    if (!wanted(c.id)) {
-      const auto r = rect(c.x, c.y, c.width, c.height);
-      room.push_back(r);
-      placed.emplace_back(c.id, r);
+  std::vector<FlowRect> room;
+  std::vector<std::pair<std::string, FlowRect>> placed;
+  std::vector<const Card*> fresh;
+  for (const auto& c : scene.cards) {
+    if (wanted(c.id)) {
+      fresh.push_back(&c);
+      continue;
     }
+    const auto r = rect(c.x, c.y, c.width, c.height);
+    room.push_back(r);
+    placed.emplace_back(c.id, r);
+  }
   for (const auto& b : scene.notes)
     room.push_back(rect(b.x, b.y, b.width, b.height));
+
+  // New Cards wired to each other are one group, drawn by data flow the way
+  // Arrange draws a graph; Cards that already have a place stay where they are.
+  auto fresh_index = [&](const std::string& id) {
+    for (size_t i = 0; i < fresh.size(); i++)
+      if (fresh[i]->id == id) return static_cast<int>(i);
+    return -1;
+  };
+  std::vector<int> parent(fresh.size());
+  for (size_t i = 0; i < parent.size(); i++) parent[i] = static_cast<int>(i);
+  auto find = [&](int i) {
+    while (parent[i] != i) {
+      parent[i] = parent[parent[i]];
+      i = parent[i];
+    }
+    return i;
+  };
+  for (const auto& w : scene.wires) {
+    const int a = fresh_index(w.from);
+    const int b = fresh_index(w.to);
+    if (a < 0 || b < 0) continue;
+    const int ra = find(a);
+    const int rb = find(b);
+    if (ra != rb) parent[std::max(ra, rb)] = std::min(ra, rb);
+  }
+  std::vector<int> roots;
+  std::vector<std::vector<int>> groups;
+  for (size_t i = 0; i < fresh.size(); i++) {
+    const int r = find(static_cast<int>(i));
+    const auto k = static_cast<size_t>(
+        std::find(roots.begin(), roots.end(), r) - roots.begin());
+    if (k == roots.size()) {
+      roots.push_back(r);
+      groups.emplace_back();
+    }
+    groups[k].push_back(static_cast<int>(i));
+  }
+  // The placed Cards that feed a group and those it feeds.
+  auto neighbours = [&](const std::vector<int>& group, bool upstream) {
+    std::optional<FlowRect> box;
+    for (const auto& w : scene.wires) {
+      const auto& inside = upstream ? w.to : w.from;
+      const auto& outside = upstream ? w.from : w.to;
+      const int i = fresh_index(inside);
+      if (i < 0 || std::find(group.begin(), group.end(), i) == group.end())
+        continue;
+      for (const auto& [id, r] : placed)
+        if (id == outside) box = box ? union_rect(*box, r) : r;
+    }
+    return box;
+  };
+  // Groups wired to placed Cards go next to them, one by one; the others are
+  // laid out together, apart from each other as Arrange lays out unrelated
+  // graphs, and that block goes beside the drawing.
+  std::vector<std::vector<int>> blocks;
+  std::vector<int> loose;
+  for (const auto& group : groups) {
+    if (neighbours(group, true) || neighbours(group, false))
+      blocks.push_back(group);
+    else
+      loose.insert(loose.end(), group.begin(), group.end());
+  }
+  std::sort(loose.begin(), loose.end());
+  if (!loose.empty()) blocks.push_back(loose);
+
   Proposal out;
-  auto pending = missing;
-  while (!pending.empty()) {
-    // Prefer a Card with an already placed neighbour, so a new chain grows
-    // out of its existing graph even when the document lists it backwards.
-    size_t next = 0;
-    std::optional<FlowRect> near;
-    for (size_t i = 0; i < pending.size(); ++i) {
-      for (const auto& w : scene.wires) {
-        const auto other = w.from == pending[i] ? w.to
-                           : w.to == pending[i] ? w.from
-                                                : std::string{};
-        for (const auto& [id, r] : placed)
-          if (id == other) near = near ? union_rect(*near, r) : r;
+  for (const auto& block : blocks) {
+    Scene sub;
+    sub.top_to_bottom = vertical;
+    sub.grid = scene.grid;
+    sub.snap = scene.snap;
+    for (const int i : block) sub.cards.push_back(*fresh[i]);
+    for (const auto& w : scene.wires)
+      if (fresh_index(w.from) >= 0 && fresh_index(w.to) >= 0 &&
+          std::find(block.begin(), block.end(), fresh_index(w.from)) !=
+              block.end())
+        sub.wires.push_back(w);
+    const auto laid = place(sub).cards;
+    std::vector<std::pair<std::string, FlowRect>> rects;
+    std::optional<FlowRect> box;
+    for (const auto& p : laid) {
+      const int i = fresh_index(p.id);
+      const auto r = rect(p.x, p.y, fresh[i]->width, fresh[i]->height);
+      rects.emplace_back(p.id, r);
+      box = box ? union_rect(*box, r) : r;
+    }
+    if (!box) continue;
+    std::optional<FlowRect> target;
+    if (room.empty()) {
+      target = *box;
+    } else {
+      const auto up = neighbours(block, true);
+      const auto down = neighbours(block, false);
+      auto free = [&](const FlowRect& r) {
+        return std::none_of(room.begin(), room.end(), [&](const FlowRect& o) {
+          return hits(r, o, kBoxGap - 1e-6);
+        });
+      };
+      // Further along the flow than what feeds it, or before what it feeds.
+      const double gap = kLayerGap + kLaneGap;
+      if (up) {
+        const FlowRect r{ceil_to(up->across, grid),
+                         ceil_to(up->along + up->along_size + gap, grid),
+                         box->across_size, box->along_size};
+        if (free(r)) target = r;
+      } else if (down) {
+        const FlowRect r{ceil_to(down->across, grid),
+                         floor_to(down->along - gap - box->along_size, grid),
+                         box->across_size, box->along_size};
+        if (free(r)) target = r;
       }
-      if (near) {
-        next = i;
-        break;
+      if (!target) {
+        auto near = up ? *up : down ? *down : room.front();
+        if (!up && !down)
+          for (const auto& r : room) near = union_rect(near, r);
+        target = place_box(box->across_size, box->along_size, near, room, {},
+                           grid);
       }
     }
-    const auto id = pending[next];
-    pending.erase(pending.begin() + static_cast<std::ptrdiff_t>(next));
-    const auto c =
-        std::find_if(scene.cards.begin(), scene.cards.end(),
-                     [&](const auto& card) { return card.id == id; });
-    if (c == scene.cards.end()) continue;
-    if (!near) {
-      near = room.empty() ? FlowRect{} : room.front();
-      for (const auto& r : room) near = union_rect(*near, r);
+    const double dc = target->across - box->across;
+    const double da = target->along - box->along;
+    for (auto [id, r] : rects) {
+      r.across += dc;
+      r.along += da;
+      room.push_back(r);
+      placed.emplace_back(id, r);
+      out.cards.push_back({id, tenth(vertical ? r.across : r.along),
+                           tenth(vertical ? r.along : r.across)});
     }
-    const auto r = place_box(vertical ? c->width : c->height,
-                             vertical ? c->height : c->width, *near, room, {},
-                             scene.snap ? scene.grid : 1);
-    room.push_back(r);
-    placed.emplace_back(id, r);
-    out.cards.push_back(
-        {id, vertical ? r.across : r.along, vertical ? r.along : r.across});
   }
   return out;
 }

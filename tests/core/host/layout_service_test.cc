@@ -628,3 +628,48 @@ TEST(HostLayout, MissingPlacesAndUnmeasuredCardsProduceFiniteCoordinates) {
 }
 }  // namespace
 }  // namespace tsugumi::host
+
+namespace tsugumi::host {
+namespace {
+TEST(HostCardPlacement, NewWiredCardsAreDrawnByDataFlowBesideTheOthers) {
+  namespace json = ::tsugumi::json;
+  // An Agent adds a chain fed by a placed Card and a separate pair, with no
+  // positions: each chain reads down the flow, nothing overlaps, and the
+  // placed Cards stay where they are.
+  const std::string project = R"({"canvas":{"cards":[
+    {"id":"source"},{"id":"other"},
+    {"id":"a"},{"id":"b"},{"id":"c"},{"id":"d"},{"id":"e"},{"id":"f"}],
+    "connections":[
+      {"from":{"card":"source","port":"out"},"to":{"card":"a","port":"in"}},
+      {"from":{"card":"a","port":"out"},"to":{"card":"b","port":"in"}},
+      {"from":{"card":"b","port":"out"},"to":{"card":"c","port":"in"}},
+      {"from":{"card":"a","port":"out"},"to":{"card":"d","port":"in"}},
+      {"from":{"card":"e","port":"out"},"to":{"card":"f","port":"in"}}]}})";
+  const std::string layout =
+      R"({"cards":{"source":{"x":0,"y":0},"other":{"x":600,"y":0}}})";
+  const auto positions =
+      json::Object(json::Object(CompleteLayout(project, layout)).at("cards"));
+  auto at = [&](const std::string& id) {
+    const auto p = json::Object(positions.at(id));
+    return std::pair{std::stod(p.at("x")), std::stod(p.at("y"))};
+  };
+  EXPECT_EQ(at("source"), (std::pair{0.0, 0.0}));
+  EXPECT_EQ(at("other"), (std::pair{600.0, 0.0}));
+  // The host reserves at least 320 x 270 for a Card it has not measured.
+  EXPECT_GE(at("a").second, 270);
+  EXPECT_GT(at("b").second, at("a").second);
+  EXPECT_GT(at("c").second, at("b").second);
+  EXPECT_GT(at("d").second, at("a").second);
+  EXPECT_EQ(at("b").second, at("d").second);
+  EXPECT_GT(at("f").second, at("e").second);
+  for (const auto& [id, a] : positions)
+    for (const auto& [other, b] : positions) {
+      if (id >= other) continue;
+      const auto [ax, ay] = at(id);
+      const auto [bx, by] = at(other);
+      EXPECT_TRUE(std::abs(ax - bx) >= 320 || std::abs(ay - by) >= 270)
+          << id << " overlaps " << other;
+    }
+}
+}  // namespace
+}  // namespace tsugumi::host
