@@ -6,6 +6,9 @@
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/event.h>
+#endif
 
 #include <algorithm>
 #include <cerrno>
@@ -15,8 +18,10 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <mutex>
 #include <stdexcept>
 #include <string_view>
+#include <system_error>
 
 namespace tsugumi::proc {
 namespace {
@@ -28,6 +33,47 @@ namespace {
 // number of deliveries bounded by elapsed time and volume, not by reads.
 constexpr auto kStderrFlushInterval = std::chrono::milliseconds(50);
 constexpr size_t kStderrFlushBytes = 256 << 10;
+
+#ifndef __linux__
+std::mutex fork_mutex;
+#endif
+
+auto make_pipe(int (&fds)[2]) -> void {
+#ifdef __linux__
+  if (::pipe2(fds, O_CLOEXEC) != 0)
+    throw std::system_error(errno, std::generic_category(), "pipe2");
+#else
+  // Keep fork in this process helper out of the pipe/fcntl window.
+  std::lock_guard lock(fork_mutex);
+  if (::pipe(fds) != 0)
+    throw std::system_error(errno, std::generic_category(), "pipe");
+  if (::fcntl(fds[0], F_SETFD, FD_CLOEXEC) == 0 &&
+      ::fcntl(fds[1], F_SETFD, FD_CLOEXEC) == 0)
+    return;
+  const int error = errno;
+  ::close(fds[0]);
+  ::close(fds[1]);
+  throw std::system_error(error, std::generic_category(), "pipe close-on-exec");
+#endif
+}
+
+auto child_exit_event(pid_t pid) -> int {
+#ifdef __APPLE__
+  const int queue = ::kqueue();
+  if (queue < 0) return -1;
+  struct kevent change;
+  EV_SET(&change, pid, EVFILT_PROC, EV_ADD | EV_ONESHOT, NOTE_EXIT, 0, nullptr);
+  if (::fcntl(queue, F_SETFD, FD_CLOEXEC) == 0 &&
+      ::kevent(queue, &change, 1, nullptr, 0, nullptr) == 0)
+    return queue;
+  ::close(queue);
+  return -1;
+#elif defined(SYS_pidfd_open)
+  return static_cast<int>(::syscall(SYS_pidfd_open, pid, 0));
+#else
+  return -1;
+#endif
+}
 
 #ifdef __linux__
 // Use the kernel directory records directly: libc directory streams may
@@ -103,9 +149,17 @@ pid_t spawn(const Spec& spec) {
   if (max_fd < 0) throw std::runtime_error("cannot determine descriptor limit");
 #endif
   int err_pipe[2];
-  if (::pipe(err_pipe) != 0) throw std::runtime_error("pipe failed");
-  ::fcntl(err_pipe[1], F_SETFD, FD_CLOEXEC);
+  make_pipe(err_pipe);
+#ifndef __linux__
+  std::unique_lock fork_lock(fork_mutex);
+#endif
   pid_t pid = ::fork();
+#ifndef __linux__
+  if (pid != 0)
+    fork_lock.unlock();
+  else
+    fork_lock.release();
+#endif
   if (pid < 0) {
     ::close(err_pipe[0]);
     ::close(err_pipe[1]);
@@ -303,17 +357,17 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
            const std::function<void(LineChunk)>& on_stderr,
            std::optional<size_t> stderr_line_limit,
            std::chrono::milliseconds grace, LogFraming framing) {
-  int out_pipe[2] = {-1, -1};
-  int err_pipe[2] = {-1, -1};
-  if (::pipe(out_pipe) != 0) throw std::runtime_error("pipe failed");
-  if (::pipe(err_pipe) != 0) {
+  int out_pipe[2];
+  int err_pipe[2];
+  Spec spec = spec_in;
+  make_pipe(out_pipe);
+  try {
+    make_pipe(err_pipe);
+  } catch (...) {
     ::close(out_pipe[0]);
     ::close(out_pipe[1]);
-    throw std::runtime_error("pipe failed");
+    throw;
   }
-  for (int fd : {out_pipe[0], out_pipe[1], err_pipe[0], err_pipe[1]})
-    ::fcntl(fd, F_SETFD, FD_CLOEXEC);
-  Spec spec = spec_in;
   spec.stdout_fd = out_pipe[1];
   spec.stderr_fd = err_pipe[1];
   pid_t pid;
@@ -381,6 +435,7 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
   };
   bool out_open = true;
   bool err_open = true;
+  std::optional<int> exit_event;
   std::optional<std::chrono::steady_clock::time_point> kill_at;
   bool term_sent = false;
   while (true) {
@@ -391,21 +446,35 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
       siginfo_t info{};
       if (::waitid(P_PID, static_cast<id_t>(pid), &info,
                    WEXITED | WNOHANG | WNOWAIT) == 0) {
-        if (info.si_pid == pid) break;
-      } else if (errno != EINTR) {
+        // Darwin can report a stopped child even with only WEXITED.
+        if (info.si_pid == pid &&
+            (info.si_code == CLD_EXITED || info.si_code == CLD_KILLED ||
+             info.si_code == CLD_DUMPED))
+          break;
+      } else if (errno == ECHILD) {
         break;
       }
+      if (!exit_event) exit_event = child_exit_event(pid);
     }
-    pollfd fds[2] = {{out_open ? out_pipe[0] : -1, POLLIN, 0},
-                     {err_open ? err_pipe[0] : -1, POLLIN, 0}};
-    int timeout_ms = 100;
-    if (flush_at) {
+    pollfd fds[] = {{out_open ? out_pipe[0] : -1, POLLIN, 0},
+                    {err_open ? err_pipe[0] : -1, POLLIN, 0},
+                    {exit_event.value_or(-1), POLLIN, 0}};
+    int timeout_ms = (cancel && !term_sent) || exit_event == -1 ? 100 : -1;
+    const auto poll_until = [&](const auto& until) {
+      if (!until) return;
       const auto left = std::chrono::ceil<std::chrono::milliseconds>(
-          *flush_at - std::chrono::steady_clock::now());
-      timeout_ms =
-          static_cast<int>(std::clamp<int64_t>(left.count(), 0, timeout_ms));
+          *until - std::chrono::steady_clock::now());
+      timeout_ms = static_cast<int>(std::clamp<int64_t>(
+          left.count(), 0, timeout_ms < 0 ? INT_MAX : timeout_ms));
+    };
+    poll_until(flush_at);
+    poll_until(term_sent ? kill_at : deadline);
+    if (cancel && !term_sent && cancel->load()) timeout_ms = 0;
+    ::poll(fds, 3, timeout_ms);
+    if (fds[2].revents & (POLLERR | POLLNVAL)) {
+      ::close(*exit_event);
+      exit_event = -1;
     }
-    ::poll(fds, 2, timeout_ms);
     char buf[8192];
     if (out_open &&
         (fds[0].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
@@ -485,6 +554,7 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
   if ((!lines.empty() || (framed && !pending.empty())) && !log_error) flush();
   ::close(out_pipe[0]);
   ::close(err_pipe[0]);
+  if (exit_event.value_or(-1) >= 0) ::close(*exit_event);
   // Make sure no orphaned grandchildren survive a cancelled build.
   if (term_sent) kill_group(pid, SIGKILL);
   res.status = wait(pid);
