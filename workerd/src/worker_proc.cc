@@ -811,7 +811,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp)
     artifact_guard.path.clear();
     scratch_guard.path.clear();
   } catch (...) {
-    terminate(true);
+    terminate_after_failure(true);
     throw;
   }
 }
@@ -910,11 +910,7 @@ WorkerProc::~WorkerProc() {
     }
     return;
   }
-  try {
-    terminate();
-  } catch (const std::system_error& error) {
-    log::warn(error.what());
-  }
+  terminate_after_failure();
   std::error_code ec;
   for (const auto& directory :
        {std::filesystem::path(scratch_), artifact_scratch_}) {
@@ -1059,7 +1055,19 @@ void WorkerProc::terminate(bool force) {
   close_fd(out_fd_);
   close_fd(err_fd_);
   alive_ = false;
-  if (wait_error) throw std::system_error(wait_error, "cannot wait for worker");
+  if (wait_error)
+    throw Failed(FailureKind::worker_failed,
+                 "cannot wait for worker: " + wait_error.message());
+}
+
+auto WorkerProc::terminate_after_failure(bool force) -> void {
+  try {
+    terminate(force);
+  } catch (const std::exception& error) {
+    log::warn(error.what());
+  } catch (...) {
+    log::warn("cannot terminate worker");
+  }
 }
 
 void WorkerProc::read_logs(bool drain) {
@@ -1542,7 +1550,7 @@ auto WorkerProc::call_frame(
   } catch (const Failed& error) {
     workerd::clear_secret(frame);
     // A partially sent call cannot be resumed or reused.
-    terminate();
+    terminate_after_failure();
     return {{}, error.failure};
   }
   workerd::clear_secret(frame);
@@ -1567,7 +1575,7 @@ auto WorkerProc::call_frame(
         open_artifact_ = {};
         packed_result_.reset();
         lock.unlock();
-        if (disconnected) terminate();
+        if (disconnected) terminate_after_failure();
         read_logs(false);
         if (kill_at) {
           std::string extra;
@@ -1603,7 +1611,7 @@ auto WorkerProc::call_frame(
       kill_at = now + std::chrono::seconds(1);
     }
     if (kill_at && now >= *kill_at) {
-      terminate(true);
+      terminate_after_failure(true);
       return {{}, stopped()};
     }
   }

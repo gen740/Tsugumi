@@ -194,6 +194,8 @@ class WorkerProc {
   std::optional<uint64_t> rss_bytes() const;
 
  private:
+  // Cleanup after a failure whose diagnostic the caller must preserve.
+  auto terminate_after_failure(bool force = false) -> void;
   auto call_frame(
       std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
       std::optional<std::chrono::steady_clock::time_point> deadline,

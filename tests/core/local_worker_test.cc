@@ -96,6 +96,40 @@ TEST(LocalWorker, ExceptionalBorrowerExitReturnsTheLeaseAfterClosingChannels) {
   EXPECT_TRUE(returned);
 }
 
+TEST(LocalWorker, DisconnectPreservesTheOutcomeWhenTerminationFails) {
+  std::array<SocketPair, 4> channels;
+  std::array<int, 4> descriptors;
+  for (size_t i = 0; i < channels.size(); ++i) {
+    descriptors[i] = ::dup(channels[i].fd[0]);
+    ASSERT_GE(descriptors[i], 0);
+    ::fcntl(descriptors[i], F_SETFL, O_NONBLOCK);
+  }
+  bool terminated = false;
+  WorkerProc worker({descriptors,
+                     {},
+                     {},
+                     0,
+                     1,
+                     [] {},
+                     [&](bool) {
+                       terminated = true;
+                       throw std::system_error(ECHILD, std::generic_category(),
+                                               "cannot wait for worker");
+                     },
+                     [] {}});
+  auto peer = std::async(std::launch::async, [&] {
+    EXPECT_EQ(rpc::frame::Read(channels[0].fd[1], 4096), "call");
+    EXPECT_EQ(::shutdown(channels[0].fd[1], SHUT_RDWR), 0);
+  });
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  const auto outcome = worker.call("call", 1, nullptr, deadline);
+  peer.get();
+  ASSERT_TRUE(outcome.failure);
+  EXPECT_EQ(outcome.failure->kind, FailureKind::worker_failed);
+  EXPECT_TRUE(terminated);
+}
+
 TEST(LocalWorker, DiscardsStaleRepliesAndRelaysViewsWhileIdle) {
   namespace W = Tsugumi::Worker;
   std::array<SocketPair, 4> channels;
