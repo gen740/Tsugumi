@@ -484,7 +484,8 @@ Listing list_beneath(const stdfs::path& root, const stdfs::path& rel,
   return out;
 }
 
-std::string sha256_tree(const stdfs::path& p) {
+std::string sha256_tree(const stdfs::path& p,
+                        std::map<std::string, std::string>* member_hashes) {
   const auto listing = list_beneath(p, "");
   crypto::Sha256 hash;
   const auto entry = [&](std::string_view kind, const std::string& name,
@@ -499,7 +500,9 @@ std::string sha256_tree(const stdfs::path& p) {
     crypto::Sha256 file;
     stream_beneath(p, name, UINT64_MAX,
                    [&](std::string_view chunk) { file.update(chunk); });
-    entry("f", name, file.finish_hex());
+    auto digest = file.finish_hex();
+    entry("f", name, digest);
+    if (member_hashes) member_hashes->emplace(name, std::move(digest));
   }
   for (const auto& name : listing.links) entry("l", name);
   for (const auto& name : listing.special) entry("s", name);

@@ -990,6 +990,37 @@ auto artifact_location(const stdfs::path& state, const ArtifactData& artifact)
   throw Failed(FailureKind::integrity_error, "invalid artifact location");
 }
 
+auto artifact_stamp(const stdfs::path& root) -> std::string {
+  crypto::Sha256 stamp;
+  const auto add = [&](const std::string& member) {
+    struct stat st{};
+    const auto path = member.empty() ? root : root / member;
+    if (::lstat(path.c_str(), &st) != 0)
+      throw Failed(FailureKind::integrity_error,
+                   "artifact changed during read");
+#ifdef __APPLE__
+    const auto modified = st.st_mtimespec;
+    const auto changed = st.st_ctimespec;
+#else
+    const auto modified = st.st_mtim;
+    const auto changed = st.st_ctim;
+#endif
+    stamp.update(std::string_view(member.c_str(), member.size() + 1));
+    for (const auto value :
+         {int64_t(st.st_dev), int64_t(st.st_ino), int64_t(st.st_mode),
+          int64_t(st.st_size), int64_t(modified.tv_sec),
+          int64_t(modified.tv_nsec), int64_t(changed.tv_sec),
+          int64_t(changed.tv_nsec)})
+      stamp.update(std::to_string(value) + ":");
+  };
+  add("");
+  const auto listing = fs::list_beneath(root, "");
+  for (const auto* paths :
+       {&listing.directories, &listing.files, &listing.links, &listing.special})
+    for (const auto& path : *paths) add(path);
+  return stamp.finish_hex();
+}
+
 auto artifact_key(std::string_view text) -> ArtifactKey {
   if (auto id = parse_artifact_id(text)) return std::move(*id);
   throw Failed(FailureKind::invalid_request, "invalid artifact UUID");
@@ -1306,19 +1337,48 @@ void Service::artifact_read(RequestIn& req) {
   if (!fs::resolves_inside(root, file))
     throw Failed(FailureKind::invalid_path, "invalid artifact member");
 
-  uint64_t offset = r->offset().value_or(0);
-  uint64_t limit = content_limit(r->limit_bytes());
-  const auto page = fs::read_range_inside(root, file, offset, limit);
-  if (!page)
+  const auto offset = r->offset().value_or(0);
+  const auto limit = content_limit(r->limit_bytes());
+  const auto missing = [] {
     throw Failed(FailureKind::not_found, "the artifact content is missing");
+  };
+  if (!stdfs::is_regular_file(stdfs::symlink_status(file))) missing();
+  if (!a->tree_hash)
+    throw Failed(FailureKind::integrity_error,
+                 "the artifact content is corrupt");
+  const auto stamp = artifact_stamp(root);
+  std::shared_ptr<const VerifiedArtifact> verified;
+  {
+    std::lock_guard lock(artifact_verification_mu_);
+    const auto found = verified_artifacts_.find(id);
+    if (found != verified_artifacts_.end() && found->second->stamp == stamp &&
+        found->second->tree_hash == *a->tree_hash)
+      verified = found->second;
+  }
+  if (!verified) {
+    auto check = std::make_shared<VerifiedArtifact>();
+    check->stamp = stamp;
+    check->tree_hash = "tree:" + fs::sha256_tree(root, &check->members);
+    if (check->tree_hash != *a->tree_hash || artifact_stamp(root) != stamp)
+      throw Failed(FailureKind::integrity_error,
+                   "the artifact content is corrupt");
+    verified = std::move(check);
+    std::lock_guard lock(artifact_verification_mu_);
+    if (verified_artifacts_.size() >= 64 && !verified_artifacts_.contains(id))
+      verified_artifacts_.erase(verified_artifacts_.begin());
+    verified_artifacts_[id] = verified;
+  }
+  const auto hash = verified->members.find(member);
+  if (hash == verified->members.end()) missing();
+  const auto page = fs::read_range_inside(root, file, offset, limit);
+  if (!page) missing();
   if (offset > page->size)
     throw Failed(FailureKind::invalid_range, "offset is past the end");
-  if (!a->tree_hash || *a->tree_hash != "tree:" + fs::sha256_tree(root))
-    throw Failed(FailureKind::integrity_error, "the artifact content is corrupt");
-  reply(req, wire::file_page(req.request_id,
-                             stdfs::path(member).filename().string(),
-                             page->bytes, offset, page->size,
-                             fs::sha256_file(file)));
+  if (artifact_stamp(root) != stamp)
+    throw Failed(FailureKind::integrity_error, "artifact changed during read");
+  reply(req,
+        wire::file_page(req.request_id, stdfs::path(member).filename().string(),
+                        page->bytes, offset, page->size, hash->second));
 }
 
 void Service::card_view_read(RequestIn& req) {

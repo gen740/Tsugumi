@@ -106,7 +106,8 @@ def test_a_corrupted_retained_artifact_is_rejected(core_factory, project, tmp_pa
     artifact = client.call("ArtifactListRequest", runId=run_id).artifacts[0]
     artifact_id = text(artifact.artifactId)
     client.call("ProjectCacheClearRequest", opId=new_id())
-    assert read_pages(client, "ArtifactReadRequest", artifactId=artifact_id, member="report.txt") == original
+    assert read_pages(client, "ArtifactReadRequest", artifactId=artifact_id, member="report.txt",
+                      verify_integrity=True) == original
 
     corrupt_retained_file(project / ".tsugumi/artifacts" / run_id / "work/@1" / text(artifact.label).split(".")[1],
                           original)

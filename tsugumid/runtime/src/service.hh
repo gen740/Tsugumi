@@ -301,6 +301,14 @@ class Service : public RequestSink {
   std::unique_ptr<Versions> versions_;
   std::unique_ptr<NixRunner> nix_;
   std::unique_ptr<PackedBuilds> packed_builds_;
+  struct VerifiedArtifact {
+    std::string tree_hash;
+    std::string stamp;
+    std::map<std::string, std::string> members;
+  };
+  std::mutex artifact_verification_mu_;
+  std::map<ArtifactKey, std::shared_ptr<const VerifiedArtifact>>
+      verified_artifacts_;
   std::filesystem::path run_scratch_;
   std::unique_ptr<CacheUsage> cache_usage_;
   std::mutex worker_selection_mutex_;
