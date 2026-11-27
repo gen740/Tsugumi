@@ -261,10 +261,13 @@ TEST_F(ConversationStoreTest, IncrementalEventsCopyOnlyChangedRows) {
   EXPECT_EQ(page.presentation->rows[0]->row->text, "one");
 
   request.after_seq = page.next_seq;
+  busy = true;
+  EXPECT_THROW(store->Delete(id), host::Failure);
   store->RecordEvent(id, R"({"kind":"text","text":" two"})");
   store->RecordEvent(id, R"({"kind":"text","text":" three"})");
   page = read();
   ASSERT_TRUE(page.presentation);
+  EXPECT_FALSE(page.presentation->reset);
   ASSERT_EQ(page.presentation->rows.size(), 1u);
   EXPECT_EQ(page.presentation->rows[0]->row->text, "one two three");
   EXPECT_GT(page.presentation->seq, page.next_seq);
@@ -611,6 +614,7 @@ TEST_F(ConversationStoreTest,
       "INSERT INTO providers VALUES('conversation','{}')");
   store->RecordEvent("conversation", R"({"kind":"finished"})");
   auto& project = store->ConversationDatabase("conversation");
+  project.exec("INSERT INTO call_counters VALUES('conversation','scope',2)");
   project.exec(
       "CREATE TRIGGER reject_delete BEFORE DELETE ON conversations "
       "BEGIN SELECT RAISE(ABORT,'fixture'); END");
@@ -634,6 +638,9 @@ TEST_F(ConversationStoreTest,
   busy = false;
   EXPECT_NO_THROW(store->Delete("conversation"));
   EXPECT_THROW(store->GetConversation("conversation"), host::Failure);
+  auto counter = project.prepare(
+      "SELECT 1 FROM call_counters WHERE conversation='conversation'");
+  EXPECT_FALSE(counter.step());
 }
 TEST(AgentPresentation, AFailedHelperMarksItsStepFailed) {
   const auto snapshot = Snapshot(R"({"id":"s","messages":[
