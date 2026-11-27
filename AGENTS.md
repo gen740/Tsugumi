@@ -53,7 +53,7 @@ Someone is doing other work on the same Mac. Do not take the foreground, and do 
 ### Where commands live
 
 - What is built from a definition (programs, the guest, packages) is built by CMake or Nix.
-- Commands for working on the repository are flake apps: `nix run .#guest-image` (the guest image from its CI artifact; `--build` builds it here), `nix run .#release`, and the documentation's `.#dev-doc` / `.#build-doc` / `.#test-doc`. CI steps call the same commands, so `tests/ci-local.sh` can run them too.
+- Commands for working on the repository are flake apps: `nix run .#guest-image` (the guest image from its CI artifact; `--build` builds it here), `nix run .#dev` (on a Mac: build Tsugumi Dev from the working tree and open it; agents pass `--no-open` and launch through `run-ui.sh`), `nix run .#release`, and the documentation's `.#dev-doc` / `.#build-doc` / `.#test-doc`. CI steps call the same commands, so `tests/ci-local.sh` can run them too.
 - Shell scripts remain only where the host is needed: Apple's toolchain, `codesign`, `xcrun` (`ui/macos/build-app.sh`, `hostd/tools/build-macos.sh`, `vm/macos/tools/build-vmctl.sh`, `cli/package-*.sh`, `ui/macos/tools/run-ui.sh`).
 
 ### Branches
