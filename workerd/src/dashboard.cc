@@ -32,15 +32,6 @@ struct KeysJson {
   schema::t::Array<"keys", schema::v::String> keys;
   schema::t::String<"current"> current;
 };
-struct RemoveJobsJson {
-  schema::t::String<"token"> token;
-  schema::t::Array<"jobs", schema::v::String> jobs;
-  schema::t::Bool<"active"> active;
-};
-struct EditKeyJson {
-  schema::t::String<"token"> token;
-  schema::t::String<"key"> key;
-};
 struct RemovalJson {
   schema::t::String<"job"> job;
   schema::t::String<"status"> status;
@@ -217,16 +208,33 @@ auto Dashboard::handle(HTTP::Request request, std::string peer) -> HTTP::Reply {
       h.contains("sec-fetch-mode"))
     return ErrorReply(403,
                       "Dashboard changes require a host relay and JSON body");
-  if (request.path == "/dashboard/jobs/remove") {
-    RemoveJobsJson input;
-    if (schema::decode(request.body, input) || input.jobs->empty() ||
-        input.jobs->size() > 256 || !std::ranges::all_of(*input.jobs, JobName))
+  const bool jobs = request.path == "/dashboard/jobs/remove";
+  const bool add_key = request.path == "/dashboard/keys/add";
+  if (!jobs && !add_key && request.path != "/dashboard/keys/remove")
+    return ErrorReply(404, "Unknown dashboard resource");
+
+  // JSON object members are unordered. Decode fields from the validated DOM
+  // so an explicit approval cannot depend on their order or spelling.
+  schema::Json input;
+  schema::v::String token;
+  if (schema::decode(request.body, input) ||
+      input.value()["/token"].decode_into(token) || token.value().empty())
+    return ErrorReply(400, "A dashboard challenge is required");
+  const auto& object = input.value();
+  if (jobs) {
+    schema::v::Array<schema::v::String> names;
+    schema::v::Bool active;
+    if (object["/jobs"].decode_into(names) || names.value().empty() ||
+        names.value().size() > 256 ||
+        !std::ranges::all_of(names.value(), JobName))
       return ErrorReply(400, "Select between 1 and 256 jobs by full ID");
-    if (!consume(*input.token, peer))
+    if (object["/active"].decode_into(active))
+      return ErrorReply(400, "An explicit active jobs choice is required");
+    if (!consume(token.value(), peer))
       return ErrorReply(403, "Dashboard challenge expired or was already used");
     RemovalsJson result;
     for (const auto& [name, status, detail] :
-         remove_jobs(root_, *input.active, *input.jobs)) {
+         remove_jobs(root_, active.value(), names.value())) {
       RemovalJson row;
       *row.job = name;
       *row.status = Status(status);
@@ -235,16 +243,12 @@ auto Dashboard::handle(HTTP::Request request, std::string peer) -> HTTP::Reply {
     }
     return Json(schema::encode(result));
   }
-  if (request.path == "/dashboard/keys/add" ||
-      request.path == "/dashboard/keys/remove") {
-    EditKeyJson input;
-    if (schema::decode(request.body, input) || input.key->empty())
-      return ErrorReply(400, "A public key is required");
-    if (!consume(*input.token, peer))
-      return ErrorReply(403, "Dashboard challenge expired or was already used");
-    edit_key(*input.key, request.path == "/dashboard/keys/add");
-    return Json("{}");
-  }
-  return ErrorReply(404, "Unknown dashboard resource");
+  schema::v::String key;
+  if (object["/key"].decode_into(key) || key.value().empty())
+    return ErrorReply(400, "A public key is required");
+  if (!consume(token.value(), peer))
+    return ErrorReply(403, "Dashboard challenge expired or was already used");
+  edit_key(key.value(), add_key);
+  return Json("{}");
 }
 }  // namespace tsugumi::workerd

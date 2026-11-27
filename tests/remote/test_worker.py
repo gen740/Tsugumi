@@ -141,7 +141,7 @@ class Worker:
         context = TLS.client_context(identity or self.identity, self.state / "identity.pem")
         with socket.create_connection(("127.0.0.1", self.port), timeout=10) as peer:
             with context.wrap_socket(peer, server_hostname=None) as secure:
-                data = b"" if body is None else json.dumps(body).encode()
+                data = b"" if body is None else json.dumps(body, separators=(",", ":")).encode()
                 method = "GET" if body is None else "POST"
                 head = {"Host": "worker", "Connection": "close", **(headers or {})}
                 if body is not None:
@@ -160,7 +160,7 @@ class Worker:
     def dashboard_change(self, path, **values):
         status, challenge = self.dashboard("/dashboard/challenge")
         assert status == 200
-        return self.dashboard(path, body={**challenge, **values})
+        return self.dashboard(path, body={**values, **challenge})
 
     def upload(self, job, data):
         digest = hashlib.sha256(data).hexdigest()
@@ -1183,7 +1183,7 @@ def test_dashboard_authentication_challenges_and_key_updates(worker):
     assert worker.dashboard(add)[0] == 404
     assert worker.dashboard(add, body={"key": key})[0] in (400, 403)
     assert worker.dashboard(challenges, headers={"Origin": "https://example.invalid"})[0] == 403
-    addition = {**challenge, "key": key}
+    addition = {"key": key, **challenge}
     assert worker.dashboard(add, body=addition, headers={"Origin": "https://example.invalid"})[0] == 403
     assert worker.authorized.read_bytes() == before
     assert worker.dashboard(add, body=addition)[0] == 200
@@ -1214,7 +1214,7 @@ def test_dashboard_lists_and_releases_the_same_jobs_as_cli(worker):
     status, challenge = worker.dashboard("/dashboard/challenge")
     assert status == 200
     path = "/dashboard/jobs/remove"
-    body = {**challenge, "jobs": [f"{worker.scope}/{selected}"], "active": False}
+    body = {"jobs": [f"{worker.scope}/{selected}"], "active": False, **challenge}
     with pytest.raises((ssl.SSLError, OSError, http.client.RemoteDisconnected)):
         worker.dashboard(path, body=body, identity=stranger)
     assert worker.dashboard("/dashboard/jobs") == (200, json.loads(listing))
