@@ -1906,6 +1906,97 @@ struct WireLayer: View {
   }
 }
 
+// MARK: - Card view links
+
+/// The line from a Card to one of its view panels on the canvas (world
+/// units). It says which Card a panel belongs to; it is not a connection.
+struct CardViewLink: Equatable {
+  let panel: UUID
+  let card: CardKey
+  /// Where it meets the Card and the panel.
+  let a: CGPoint
+  let b: CGPoint
+  let horizontal: Bool
+
+  /// The ends sit on the edges that face each other (where the two are
+  /// closest), each in the middle of the stretch the two share, or toward
+  /// the other when they share none.
+  init(panel: UUID, card: CardKey, cardRect: CGRect, panelRect: CGRect) {
+    self.panel = panel
+    self.card = card
+    let gx = max(panelRect.minX - cardRect.maxX, cardRect.minX - panelRect.maxX)
+    let gy = max(panelRect.minY - cardRect.maxY, cardRect.minY - panelRect.maxY)
+    func clamp(_ v: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat { lo > hi ? (lo + hi) / 2 : min(max(v, lo), hi) }
+    if gx >= gy {
+      let right = panelRect.midX >= cardRect.midX
+      let lo = max(cardRect.minY, panelRect.minY), hi = min(cardRect.maxY, panelRect.maxY)
+      let ay = lo <= hi ? (lo + hi) / 2 : clamp(panelRect.midY, cardRect.minY + 10, cardRect.maxY - 10)
+      let by = lo <= hi ? (lo + hi) / 2 : clamp(cardRect.midY, panelRect.minY + 10, panelRect.maxY - 10)
+      a = CGPoint(x: right ? cardRect.maxX : cardRect.minX, y: ay)
+      b = CGPoint(x: right ? panelRect.minX : panelRect.maxX, y: by)
+      horizontal = true
+    } else {
+      let down = panelRect.midY >= cardRect.midY
+      let lo = max(cardRect.minX, panelRect.minX), hi = min(cardRect.maxX, panelRect.maxX)
+      let ax = lo <= hi ? (lo + hi) / 2 : clamp(panelRect.midX, cardRect.minX + 10, cardRect.maxX - 10)
+      let bx = lo <= hi ? (lo + hi) / 2 : clamp(cardRect.midX, panelRect.minX + 10, panelRect.maxX - 10)
+      a = CGPoint(x: ax, y: down ? cardRect.maxY : cardRect.minY)
+      b = CGPoint(x: bx, y: down ? panelRect.minY : panelRect.maxY)
+      horizontal = false
+    }
+  }
+
+  /// One link per panel whose Card is on this canvas (`cardRect` gives its
+  /// outline, nil when it is not shown here).
+  static func links(_ panels: [(id: UUID, card: CardKey, rect: CGRect)],
+                    cardRect: (CardKey) -> CGRect?) -> [CardViewLink] {
+    panels.compactMap { panel in
+      cardRect(panel.card).map { CardViewLink(panel: panel.id, card: panel.card, cardRect: $0, panelRect: panel.rect) }
+    }
+  }
+
+  /// A short curve leaving and entering straight.
+  var path: Path {
+    var p = Path()
+    p.move(to: a)
+    if horizontal {
+      let dx = (b.x - a.x) / 2
+      p.addCurve(to: b, control1: CGPoint(x: a.x + dx, y: a.y), control2: CGPoint(x: b.x - dx, y: b.y))
+    } else {
+      let dy = (b.y - a.y) / 2
+      p.addCurve(to: b, control1: CGPoint(x: a.x, y: a.y + dy), control2: CGPoint(x: b.x, y: b.y - dy))
+    }
+    return p
+  }
+}
+
+/// The Card view links as drawn: thin, dashed and faint, under the wires, so
+/// they do not read as data connections; they never take the mouse.
+struct CardViewLinkLayer: View {
+  let links: [CardViewLink]
+  /// World to layer.
+  let transform: CGAffineTransform
+  var zoom: Double = 1
+
+  static let color = Color.purple.opacity(0.45)
+  static let dash: [CGFloat] = [5, 4]
+
+  var body: some View {
+    Canvas { ctx, _ in
+      let w = max(0.8, 1.6 * min(1.4, zoom) * 0.6)
+      let r: CGFloat = 2.5
+      for link in links {
+        ctx.stroke(link.path.applying(transform), with: .color(Self.color),
+                   style: StrokeStyle(lineWidth: w, lineCap: .round, dash: Self.dash))
+        for p in [link.a, link.b].map({ $0.applying(transform) }) {
+          ctx.fill(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r)), with: .color(Self.color))
+        }
+      }
+    }
+    .allowsHitTesting(false)
+  }
+}
+
 // MARK: - Self-contained canvas (previews)
 
 struct CanvasItem: Identifiable, Equatable {

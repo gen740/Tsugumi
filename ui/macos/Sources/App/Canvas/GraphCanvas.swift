@@ -358,6 +358,8 @@ struct GraphCanvas: View {
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
       .padding(m)
+      // Which Card each view panel belongs to: under the wires, quieter than them.
+      CardViewLinkLayer(links: cardViewLinks, transform: toLayer, zoom: camera.zoom)
       WireLayer(wires: routed.map {
         let path = $0.path.applying(toLayer)
         let count = $0.count.map { "×\($0)" } ?? ($0.executionList && session.runActive ? "×?" : nil)
@@ -405,6 +407,14 @@ struct GraphCanvas: View {
     cardViewOpenings.compactMap { opening in
       guard let placement = workspace.cardViewPlacements[opening.id], placement.scope == scopeKey else { return nil }
       return (opening, placement.rect)
+    }
+  }
+
+  /// A line from each view panel in this scope to its Card, when the Card is on this canvas.
+  private var cardViewLinks: [CardViewLink] {
+    let shown = Set(cardKeys)
+    return CardViewLink.links(canvasCardViewRects.map { (id: $0.0.id, card: key($0.0.card), rect: $0.1) }) {
+      shown.contains($0) ? outlineRect($0) : nil
     }
   }
 

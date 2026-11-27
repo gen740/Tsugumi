@@ -260,3 +260,55 @@ private func viewDocument(_ out: Outside) -> String {
   #expect(usage("left") == 0x50 && usage("right") == 0x4f && usage("up") == 0x52 && usage("down") == 0x51)
   #expect(UIScript.keyCodes["f13"] == nil)
 }
+
+@Test func cardViewLinkEndsFollowTheCardAndThePanel() {
+  let id = UUID()
+  let card = CGRect(x: 0, y: 0, width: 200, height: 100)
+  let panel = CGRect(x: 400, y: 20, width: 300, height: 200)
+  let link = CardViewLink(panel: id, card: "plot", cardRect: card, panelRect: panel)
+  // Across, on the facing edges, in the middle of the stretch they share.
+  #expect(link.horizontal)
+  #expect(link.a == CGPoint(x: 200, y: 60))
+  #expect(link.b == CGPoint(x: 400, y: 60))
+
+  // The Card moves down: both ends follow to the middle of what they now share.
+  let moved = CardViewLink(panel: id, card: "plot", cardRect: card.offsetBy(dx: 0, dy: 80), panelRect: panel)
+  #expect(moved.a == CGPoint(x: 200, y: 130))
+  #expect(moved.b == CGPoint(x: 400, y: 130))
+
+  // The panel moves below the Card: the link runs down between them.
+  let below = CardViewLink(panel: id, card: "plot", cardRect: card,
+                           panelRect: CGRect(x: 50, y: 300, width: 300, height: 200))
+  #expect(!below.horizontal)
+  #expect(below.a == CGPoint(x: 125, y: 100))
+  #expect(below.b == CGPoint(x: 125, y: 300))
+}
+
+@MainActor @Test func cardViewLinksGoAwayWithTheirPanels() {
+  NSApplication.shared.setActivationPolicy(.prohibited)
+  let presentation = CardViewPresentation()
+  // One panel per view, however often the Card is called: one link each.
+  let chart = opening(), table = opening()
+  let elsewhere = CardViewOpening(id: UUID(), card: ["outer", "inner"], name: "log", type: "html",
+                                  mode: .panel, width: 0, height: 0)
+  for view in [chart, table, elsewhere] {
+    presentation.open(view, files: .unavailable, send: { _, _ in }, close: {})
+  }
+  defer { presentation.closeAll() }
+  let rects = [chart.id: CGRect(x: 300, y: 0, width: 200, height: 100),
+               table.id: CGRect(x: 300, y: 200, width: 200, height: 100),
+               elsewhere.id: CGRect(x: -300, y: 0, width: 200, height: 100)]
+  func links() -> [CardViewLink] {
+    CardViewLink.links(presentation.panelOpenings.map { (id: $0.id, card: key($0.card), rect: rects[$0.id]!) }) {
+      $0 == "plot" ? CGRect(x: 0, y: 0, width: 200, height: 100) : nil
+    }
+  }
+  // Only a Card on this canvas gets a line.
+  #expect(links().map(\.panel) == [chart.id, table.id])
+  #expect(links().allSatisfy { $0.card == "plot" })
+
+  presentation.close(chart.id)
+  #expect(links().map(\.panel) == [table.id])
+  presentation.detachPanel(table.id)
+  #expect(links().isEmpty)
+}
