@@ -784,6 +784,9 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
   std::unique_lock lock(worker_selection_mutex_);
   if (!node.settings.reuse_worker) resident_targets_.erase(card);
   RemoteTarget selected;
+  using Clock = std::chrono::steady_clock;
+  constexpr auto kCatalogInterval = std::chrono::milliseconds(100);
+  auto catalog_at = Clock::now() + kCatalogInterval;
   for (;;) {
     if (build.cancel.stop_requested())
       throw Failed(FailureKind::cancelled, "worker selection cancelled");
@@ -843,10 +846,39 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
       break;
     }
     if (!selected.id.empty()) break;
-    if (!worker_restarted)
-      worker_selection_cv_.wait_for(lock, std::chrono::milliseconds(100));
+    const auto now = Clock::now();
+    if (!worker_restarted && now < catalog_at) {
+      worker_selection_cv_.wait_until(lock, catalog_at);
+      continue;
+    }
+    std::vector<RemoteTarget> current;
+    if (!worker_restarted && now - worker_catalog_checked_ < kCatalogInterval) {
+      current = worker_catalog_;
+    } else {
+      if (worker_catalog_refreshing_) {
+        worker_selection_cv_.wait_for(lock, kCatalogInterval);
+        continue;
+      }
+      worker_catalog_refreshing_ = true;
+      lock.unlock();
+      try {
+        current = remote_targets(build.cancel);
+      } catch (...) {
+        lock.lock();
+        worker_catalog_refreshing_ = false;
+        worker_selection_cv_.notify_all();
+        throw;
+      }
+      lock.lock();
+      worker_catalog_refreshing_ = false;
+      worker_selection_cv_.notify_all();
+      if (build.cancel.stop_requested())
+        throw Failed(FailureKind::cancelled, "worker selection cancelled");
+      worker_catalog_ = current;
+      worker_catalog_checked_ = Clock::now();
+    }
+    catalog_at = Clock::now() + kCatalogInterval;
     lock.unlock();
-    const auto current = remote_targets(build.cancel);
     const auto unchanged = [measured](const RemoteTarget& a,
                                       const RemoteTarget& b) {
       return a.id == b.id && a.server_id == b.server_id &&

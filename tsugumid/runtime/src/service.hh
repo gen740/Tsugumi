@@ -313,6 +313,9 @@ class Service : public RequestSink {
   std::unique_ptr<CacheUsage> cache_usage_;
   std::mutex worker_selection_mutex_;
   std::condition_variable worker_selection_cv_;
+  std::chrono::steady_clock::time_point worker_catalog_checked_{};
+  std::vector<RemoteTarget> worker_catalog_;
+  bool worker_catalog_refreshing_ = false;
   std::map<std::string, uint32_t> worker_slots_;
   std::map<std::string, std::string> resident_targets_;
   std::unique_ptr<LocalExecutionService> execution_service_;
