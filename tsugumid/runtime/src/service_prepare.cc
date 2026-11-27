@@ -92,7 +92,7 @@ auto Service::prepare_cards(std::ostream& out) -> bool {
       card_record.implementation_labels = plan.implementation_labels;
     } catch (const Failed& f) {
       all = false;
-      card_record.error = f.failure.diagnostic.value_or("");
+      card_record.error = f.failure.diagnostic.value_or(f.what());
     } catch (const std::exception& e) {
       all = false;
       card_record.error = e.what();
