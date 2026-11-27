@@ -793,6 +793,37 @@ auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
   return std::nullopt;
 }
 
+auto spawn_probe(pid_t& pid, char* const argv[]) -> int {
+  posix_spawn_file_actions_t actions;
+  if (const int error = ::posix_spawn_file_actions_init(&actions)) return error;
+  struct DestroyActions {
+    posix_spawn_file_actions_t& actions;
+    ~DestroyActions() { ::posix_spawn_file_actions_destroy(&actions); }
+  } destroy_actions{actions};
+  if (const int error = ::posix_spawn_file_actions_addopen(
+          &actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0))
+    return error;
+#ifdef __APPLE__
+  posix_spawnattr_t attributes;
+  if (const int error = ::posix_spawnattr_init(&attributes)) return error;
+  struct DestroyAttributes {
+    posix_spawnattr_t& attributes;
+    ~DestroyAttributes() { ::posix_spawnattr_destroy(&attributes); }
+  } destroy_attributes{attributes};
+  if (const int error =
+          ::posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT))
+    return error;
+  for (const int fd : {STDOUT_FILENO, STDERR_FILENO})
+    if (const int error = ::posix_spawn_file_actions_addinherit_np(&actions, fd))
+      return error;
+  return ::posix_spawn(&pid, argv[0], &actions, &attributes, argv, environ);
+#else
+  if (const int error = ::posix_spawn_file_actions_addclosefrom_np(&actions, 3))
+    return error;
+  return ::posix_spawn(&pid, argv[0], &actions, nullptr, argv, environ);
+#endif
+}
+
 auto execute_probe(const std::string& package, uint64_t id,
                    flatbuffers::FlatBufferBuilder& reply)
     -> std::optional<Failure> {
@@ -801,8 +832,7 @@ auto execute_probe(const std::string& package, uint64_t id,
   pid_t pid = -1;
   // Keep the executable in the worker's process group so cancellation and
   // sandbox teardown also stop its subprocesses.
-  const int error =
-      ::posix_spawn(&pid, argv[0], nullptr, nullptr, argv, environ);
+  const int error = spawn_probe(pid, argv);
   if (error)
     return Failure{
         D::FailureKind::worker_failed,

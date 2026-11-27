@@ -70,7 +70,7 @@ def library(tmp_path, source, name="main", *, result=None, include_abi=True):
 
 
 @contextlib.contextmanager
-def worker(package, *, startup=None, arguments=()):
+def worker(package, *, startup=None, arguments=(), stdin=None):
     with contextlib.ExitStack() as stack:
         data, child_data = socket.socketpair()
         control, child_control = socket.socketpair()
@@ -93,7 +93,7 @@ def worker(package, *, startup=None, arguments=()):
              str(child_control.fileno()), *arguments],
             pass_fds=(child_data.fileno(), child_control.fileno()),
             cwd=cwd, env={**os.environ, "HOME": str(cwd), "TMPDIR": str(cwd / "tmp")},
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         child_data.close()
         child_control.close()
@@ -166,6 +166,39 @@ def test_worker_passes_inputs_and_schema_unopened(tmp_path):
         assert receive(data).valueType == WorkerPayload.WorkerResult
         data.shutdown(socket.SHUT_WR)
         assert p.stdout.read() == b"loaded\n"
+
+
+def test_probe_uses_null_stdin_and_keeps_its_logs(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    source = tmp_path / "probe.c"
+    source.write_text(textwrap.dedent("""
+        #include <stdio.h>
+        #include <sys/stat.h>
+        #include <unistd.h>
+        int main(void) {
+          struct stat input, expected;
+          if (fstat(STDIN_FILENO, &input) || stat("/dev/null", &expected) ||
+              !S_ISCHR(input.st_mode) || input.st_rdev != expected.st_rdev)
+            return 1;
+          puts("probe stdout");
+          fputs("probe stderr\\n", stderr);
+          return 0;
+        }
+    """))
+    subprocess.run(["cc", str(source), "-o", str(bin_dir / "probe")], check=True)
+    host_stdin = tmp_path / "host-stdin"
+    host_stdin.touch()
+    args = (str(WORKER), "--package", str(tmp_path), "--probe")
+    with host_stdin.open("rb") as input_file, worker(
+        tmp_path, arguments=args, stdin=input_file
+    ) as (process, data, _):
+        send_call(data, tmp_path)
+        assert receive(data).valueType == WorkerPayload.WorkerResult
+        data.shutdown(socket.SHUT_WR)
+        assert process.stdout.read() == b"probe stdout\n"
+        assert process.stderr.read() == b"probe stderr\n"
+
 
 def test_packed_worker_lends_shared_results_and_borrows_upstream_ranges(tmp_path):
     result = packed(CardResultT(outputs=[CardPortT(name="out", bytes=list(PARAMS))]))
