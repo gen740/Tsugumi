@@ -3362,19 +3362,24 @@ auto Service::view_control(
   if (!request.request_id || !receiver) return reply;
   switch (request.kind) {
     case ViewControlKind::open: {
-      std::lock_guard lock(subs_mu_);
+      std::unique_lock lock(subs_mu_);
       ViewKey key{origin, request.view};
-      if (const auto existing = open_views_.find(key);
-          existing != open_views_.end()) {
-        reply.session = existing->second;
-        auto& view = view_sessions_.at(reply.session);
-        if (present_view(reply.session, view))
-          view.presentation_boundary = {endpoint, request.request_id};
-        reply.route =
-            add_view_route(reply.session, view, origin.card, endpoint);
-        reply.status = 0;
-        return reply;
-      }
+      const auto reuse = [&] {
+        if (const auto existing = open_views_.find(key);
+            existing != open_views_.end()) {
+          reply.session = existing->second;
+          auto& view = view_sessions_.at(reply.session);
+          if (present_view(reply.session, view))
+            view.presentation_boundary = {endpoint, request.request_id};
+          reply.route =
+              add_view_route(reply.session, view, origin.card, endpoint);
+          reply.status = 0;
+          return true;
+        }
+        return false;
+      };
+      if (reuse()) return reply;
+      lock.unlock();
       if (request.view.empty() || request.mode > TSUGUMI_VIEW_FULLSCREEN ||
           (request.flags &
            ~(TSUGUMI_VIEW_HIDE_CURSOR | TSUGUMI_VIEW_LOCK_POINTER)) ||
@@ -3394,7 +3399,8 @@ auto Service::view_control(
       auto blob = ViewBlob::open(
           *found->blob, packed_builds_ ? packed_builds_->resources
                                        : stdfs::path(NixStore::store_dir()));
-      if (!blob) return reply;
+      lock.lock();
+      if (reuse() || !blob) return reply;
 
       do {
         reply.session = parse_view_uuid(crypto::uuid4());
