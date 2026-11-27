@@ -178,8 +178,10 @@ struct GraphCanvas: View {
   /// What new view panels are placed again for: new views, another canvas, its Cards loaded.
   private struct CardViewPlacing: Equatable {
     let openings: [UUID]
+    let folded: Set<UUID>
     let scope: CardKey
     let cards: [CardKey]
+    let ready: Bool
   }
 
   private struct ScopeOpening: Equatable {
@@ -310,10 +312,17 @@ struct GraphCanvas: View {
       .onChange(of: geo.size, initial: true) { old, new in
         size = new
         frameAfterResize(from: old, to: new)
-        placeNewCardViews(in: new)
       }
-      .onChange(of: CardViewPlacing(openings: cardViewOpenings.map(\.id), scope: scopeKey, cards: cardKeys),
-                initial: true) {
+      .task(id: CardViewPlacing(openings: cardViewOpenings.map(\.id), folded: workspace.foldedCardViews,
+                                scope: scopeKey, cards: cardKeys,
+                                ready: geo.size.width > 0 && geo.size.height > 0)) {
+        // A canvas just entered can still be computing its Cards' default positions.
+        let shown = Set(cardKeys)
+        for opening in shownCardViewOpenings where CardViewPanelPlacer.scope(of: opening.card) == scopeKey
+          && workspace.cardViewPlacements[opening.id] == nil && shown.contains(key(opening.card)) {
+          _ = await session.waitForPlacement(key(opening.card))
+          if Task.isCancelled { return }
+        }
         placeNewCardViews(in: geo.size)
       }
       .onReceive(NotificationCenter.default.publisher(for: .canvasFitAll)) { n in
@@ -407,12 +416,17 @@ struct GraphCanvas: View {
     }
   }
 
+  /// The views open as panels, folded ones included.
   private var cardViewOpenings: [CardViewOpening] {
     showsCardViews ? session.cardViews.panelOpenings : []
   }
 
+  private var shownCardViewOpenings: [CardViewOpening] {
+    CardViewPanelPlacer.shown(cardViewOpenings, folded: workspace.foldedCardViews)
+  }
+
   private var canvasCardViewRects: [(CardViewOpening, CGRect)] {
-    cardViewOpenings.compactMap { opening in
+    shownCardViewOpenings.compactMap { opening in
       guard let placement = workspace.cardViewPlacements[opening.id], placement.scope == scopeKey else { return nil }
       return (opening, placement.rect)
     }
@@ -428,12 +442,14 @@ struct GraphCanvas: View {
 
   /// Place the new view panels whose Cards are on this canvas: each beside
   /// its Card, clear of the Cards, wires, notes and panels here. A panel is
-  /// placed once; its bounds stay in this canvas's world coordinates from then on.
+  /// placed once; its bounds stay in this canvas's world coordinates from
+  /// then on, also while it is folded away.
   private func placeNewCardViews(in viewport: CGSize) {
     guard showsCardViews, viewport.width > 0, viewport.height > 0 else { return }
-    let openings = cardViewOpenings
-    let ids = Set(openings.map(\.id))
-    let kept = workspace.cardViewPlacements.filter { ids.contains($0.key) }
+    let kept = CardViewPanelPlacer.kept(workspace.cardViewPlacements, for: cardViewOpenings)
+    let folded = workspace.foldedCardViews.intersection(cardViewOpenings.map(\.id))
+    if folded != workspace.foldedCardViews { workspace.foldedCardViews = folded }
+    let openings = shownCardViewOpenings
     let shown = Set(cardKeys)
     let wanted = openings.contains { kept[$0.id] == nil && CardViewPanelPlacer.scope(of: $0.card) == scopeKey }
     guard wanted, !shown.isEmpty else {

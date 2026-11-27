@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import TsugumiRPC
+import TsugumiViewPresentation
 
 /// Right-click menu of a Card.
 struct CardMenu: View {
@@ -32,6 +33,14 @@ struct CardMenu: View {
     Button("実行履歴…") { openWindow(id: "executions", value: ref) }
     Button("成果物…") { openWindow(id: "artifacts", value: ref) }
     Button("ログを表示") { workspace.showLog(for: cardKey) }
+    // The Card's view panels: folded away from the canvas and back (they stay open meanwhile).
+    ForEach(session.cardViews.panelOpenings.filter { key($0.card) == cardKey }, id: \.id) { view in
+      if workspace.foldedCardViews.contains(view.id) {
+        Button("表示「\(view.name)」を広げる") { workspace.foldedCardViews.remove(view.id) }
+      } else {
+        Button("表示「\(view.name)」を折りたたむ") { workspace.foldedCardViews.insert(view.id) }
+      }
+    }
     Menu("Skill を実行") {
       ForEach(AppModel.shared.chat(for: session).skills.filter(\.scoped)) { skill in
         Button("$\(skill.name) (\(skill.scope.joined(separator: ", ")))") {

@@ -298,8 +298,10 @@ private func viewDocument(_ out: Outside) -> String {
   let rects = [chart.id: CGRect(x: 300, y: 0, width: 200, height: 100),
                table.id: CGRect(x: 300, y: 200, width: 200, height: 100),
                elsewhere.id: CGRect(x: -300, y: 0, width: 200, height: 100)]
+  var folded: Set<UUID> = []
   func links() -> [CardViewLink] {
-    CardViewLink.links(presentation.panelOpenings.map { (id: $0.id, card: key($0.card), rect: rects[$0.id]!) }) {
+    let shown = CardViewPanelPlacer.shown(presentation.panelOpenings, folded: folded)
+    return CardViewLink.links(shown.map { (id: $0.id, card: key($0.card), rect: rects[$0.id]!) }) {
       $0 == "plot" ? CGRect(x: 0, y: 0, width: 200, height: 100) : nil
     }
   }
@@ -307,10 +309,75 @@ private func viewDocument(_ out: Outside) -> String {
   #expect(links().map(\.panel) == [chart.id, table.id])
   #expect(links().allSatisfy { $0.card == "plot" })
 
-  presentation.close(chart.id)
+  folded.insert(chart.id)
   #expect(links().map(\.panel) == [table.id])
   presentation.detachPanel(table.id)
   #expect(links().isEmpty)
+  folded.remove(chart.id)
+  #expect(links().map(\.panel) == [chart.id])
+}
+
+// Folding hides a panel and its line; it stays open, keeps its place and
+// still takes the Card's data. Unfolding brings it back where it was, or
+// beside its Card when it never had a place.
+@MainActor @Test func foldingAPanelHidesItAndUnfoldingRestoresIt() async throws {
+  NSApplication.shared.setActivationPolicy(.prohibited)
+  let presentation = CardViewPresentation()
+  let placed = CardViewOpening(id: UUID(), card: ["collect"], name: "markdown", type: "html",
+                               mode: .panel, width: 0, height: 0)
+  let never = CardViewOpening(id: UUID(), card: ["collect"], name: "plot", type: "html",
+                              mode: .panel, width: 0, height: 0)
+  // The view's file arrives only when the test lets it: until then its data waits for it.
+  var release: CheckedContinuation<Void, Never>?
+  let files = CardViewFiles { _, _ in
+    await withCheckedContinuation { release = $0 }
+    return CardViewFilePage(bytes: Data("<p>ok</p>".utf8), eof: true, nextOffset: nil)
+  }
+  var closes = 0
+  presentation.open(placed, files: files, send: { _, _ in }, close: { closes += 1 })
+  presentation.open(never, files: .unavailable, send: { _, _ in }, close: { closes += 1 })
+  defer { release?.resume(); presentation.closeAll() }
+  let card = CGRect(x: 0, y: 0, width: 200, height: 100)
+  let none = CardViewPanelPlacer.Obstacles(rects: [card], wires: [])
+  var folded: Set<UUID> = []
+  func place(_ placements: [UUID: CanvasCardViewPlacement]) -> [UUID: CanvasCardViewPlacement] {
+    CardViewPanelPlacer.placeNew(CardViewPanelPlacer.shown(presentation.panelOpenings, folded: folded),
+                                 in: "", placements: CardViewPanelPlacer.kept(placements, for: presentation.panelOpenings),
+                                 cardRect: { $0 == "collect" ? card : nil }, obstacles: none)
+  }
+  func links(_ placements: [UUID: CanvasCardViewPlacement]) -> [UUID] {
+    let shown = CardViewPanelPlacer.shown(presentation.panelOpenings, folded: folded)
+    return CardViewLink.links(shown.compactMap { o in placements[o.id].map { (id: o.id, card: key(o.card), rect: $0.rect) } }) {
+      $0 == "collect" ? card : nil
+    }.map(\.panel)
+  }
+
+  folded = [never.id]
+  var placements = place([:])
+  placements[placed.id]?.rect.origin = CGPoint(x: 900, y: -400)
+  let moved = try #require(placements[placed.id]?.rect)
+  #expect(placements[never.id] == nil, "a folded panel is not placed")
+
+  folded.insert(placed.id)
+  placements = place(placements)
+  #expect(links(placements).isEmpty, "folded: no panel and no line")
+  #expect(placements[placed.id]?.rect == moved, "its place is kept")
+  #expect(Set(presentation.openings.map(\.id)) == [placed.id, never.id] && closes == 0, "folding closes nothing")
+
+  // A folded view still takes the Card's data: it is queued for the view, not dropped.
+  var delivered = false
+  presentation.receive(placed.id, bytes: Data("next".utf8)) { delivered = true }
+  #expect(!delivered)
+  var dropped = false
+  presentation.receive(UUID(), bytes: Data("x".utf8)) { dropped = true }
+  #expect(dropped, "data for a view that is not open is completed at once")
+
+  folded = []
+  placements = place(placements)
+  #expect(placements[placed.id]?.rect == moved, "back where it was")
+  let fresh = try #require(placements[never.id]?.rect)
+  #expect(!fresh.intersects(card) && !fresh.intersects(moved), "beside its Card")
+  #expect(Set(links(placements)) == [placed.id, never.id])
 }
 
 // A panel belongs to the canvas that shows its Card: a Card inside a Card in
@@ -364,6 +431,46 @@ private func viewDocument(_ out: Outside) -> String {
     #expect(gap >= CardViewPanelPlacer.cardGap && gap < 200)
   }
   #expect(!ra.intersects(rb))
+}
+
+// Closing the window of a detached panel docks it back: the same session is a
+// panel on its Card's canvas again, beside its Card, with its line; nothing is closed.
+@MainActor @Test func closingADetachedPanelsWindowDocksItBesideItsCard() throws {
+  NSApplication.shared.setActivationPolicy(.prohibited)
+  let presentation = CardViewPresentation()
+  let view = CardViewOpening(id: UUID(), card: ["outer", "collect"], name: UUID().uuidString, type: "html",
+                             mode: .panel, width: 0, height: 0)
+  var closes = 0
+  presentation.open(view, files: .unavailable, send: { _, _ in }, close: { closes += 1 })
+  defer { presentation.closeAll() }
+  let card = CGRect(x: 0, y: 0, width: 200, height: 100)
+  let none = CardViewPanelPlacer.Obstacles(rects: [card], wires: [])
+  func place(_ placements: [UUID: CanvasCardViewPlacement]) -> [UUID: CanvasCardViewPlacement] {
+    CardViewPanelPlacer.placeNew(presentation.panelOpenings, in: "outer",
+                                 placements: CardViewPanelPlacer.kept(placements, for: presentation.panelOpenings),
+                                 cardRect: { $0 == "outer/collect" ? card : nil }, obstacles: none)
+  }
+  var placements = place([:])
+  placements[view.id]?.rect.origin = CGPoint(x: 2000, y: 2000)
+
+  presentation.detachPanel(view.id)
+  placements = place(placements)
+  #expect(placements.isEmpty, "a panel shown in a window is not on the canvas")
+  let window = try #require(NSApp.windows.first { $0.title == view.name })
+  window.close()
+
+  #expect(presentation.panelOpenings.map(\.id) == [view.id])
+  #expect(presentation.openings.map(\.id) == [view.id], "the session stays open")
+  #expect(window.contentView == nil)
+  placements = place(placements)
+  let rect = try #require(placements[view.id]?.rect)
+  #expect(placements[view.id]?.scope == "outer")
+  #expect(!rect.intersects(card) && abs(rect.minX - card.maxX) < 200, "beside its Card again")
+  let links = CardViewLink.links([(id: view.id, card: key(view.card), rect: rect)]) { $0 == "outer/collect" ? card : nil }
+  #expect(links.map(\.panel) == [view.id])
+
+  #expect(closes == 0, "the core is not told to close it")
+  #expect(NSApp.windows.filter { $0.title == view.name && $0.isVisible }.isEmpty)
 }
 
 @MainActor @Test func aMovedCardViewPanelKeepsItsPlace() {

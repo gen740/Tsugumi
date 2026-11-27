@@ -369,7 +369,9 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
     window.contentView = view.content
     window.setContentSize(NSSize(width: width, height: height))
     let delegate = CardViewWindowDelegate { [weak self] in
-      self?.close(opening.id, windowIsClosing: true)
+      guard let self else { return }
+      // A panel shown in a window goes back to being a panel; only a view the Card opened as a window closes.
+      if opening.mode == .panel { dock(opening.id) } else { close(opening.id, windowIsClosing: true) }
     }
     window.delegate = delegate
     view.windowDelegate = delegate
@@ -423,31 +425,35 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
     showWindow(view)
     closeEmptyPackedWindow()
   }
+
+  /// The window a view is shown in, if any (scripted UI checks close it as a person would).
+  public func window(of id: UUID) -> NSWindow? { views[id]?.window }
+
+  /// A detached panel's window closed: the same session is a panel again.
+  private func dock(_ id: UUID) {
+    guard let view = views[id], view.window != nil, !panelIDs.contains(id) else { return }
+    view.window?.delegate = nil
+    view.window?.contentView = nil
+    view.window = nil
+    view.windowDelegate = nil
+    panelIDs.append(id)
+    if let packedTitle, packedMainWindow == nil { openPackedMainWindow(title: packedTitle) }
+  }
 }
 
-/// One live renderer and its controls. The caller supplies the title or drag handle.
-public struct CardViewPanel<Title: View>: View {
+/// One live panel's renderer, without controls: the caller supplies its title and frame.
+public struct CardViewPanelContent: View {
   let presentation: CardViewPresentation
   let id: UUID
-  @ViewBuilder let title: () -> Title
 
-  public init(presentation: CardViewPresentation, id: UUID, @ViewBuilder title: @escaping () -> Title) {
+  public init(presentation: CardViewPresentation, id: UUID) {
     self.presentation = presentation
     self.id = id
-    self.title = title
   }
 
   public var body: some View {
     if let view = presentation.panel(id) {
-      VStack(spacing: 0) {
-        HStack {
-          title()
-          PanelButtons(presentation: presentation, id: id)
-        }
-        .padding(8)
-        PanelContent(view: view)
-      }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      PanelContent(view: view).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
   }
 }

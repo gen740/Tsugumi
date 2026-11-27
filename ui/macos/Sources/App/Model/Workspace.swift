@@ -142,6 +142,9 @@ final class Workspace {
   @ObservationIgnored weak var window: NSWindow?
   var session: ProjectSession?
   var cardViewPlacements: [UUID: CanvasCardViewPlacement] = [:]
+  /// Card view panels folded away from the canvas: hidden, still open and
+  /// receiving data; their places are kept for when they are unfolded.
+  var foldedCardViews: Set<UUID> = []
   /// "New project" asked for this window: its Home opens the sheet.
   var requestNewProject = false
   /// What this window could not do, shown as an alert.

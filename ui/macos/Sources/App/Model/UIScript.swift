@@ -39,6 +39,10 @@ import TsugumiAgentClient
 ///   window <n>                      (later steps act on the n-th main window)
 ///   mainwindows                     (a line per main window: its project, connection, run, unsaved edits)
 ///   closewindow                     (as the window's close button)
+///   viewdetach <card path>          (its view panel opens in a window, as the panel's window button)
+///   viewclose <card path>           (as the close button of that Card's view window)
+///   viewfold | viewunfold <card path>  (as the Card menu's fold / unfold of its view panels)
+///   views                           (a line per open Card view: panel or window, and where its panel is)
 ///   offlineedit <card> <param> <v>  (every open project loses its environment and gets an edit; then the app quits, with them unsaved)
 ///   answer <n>                      (presses the n-th button of the next alert: a quit's question)
 ///   modelmenu [capture name]        (lists the chat's model menu; with a name, a picture of the window)
@@ -257,6 +261,26 @@ final class UIScript {
         }
         requestQuit()
       case "closewindow": workspace?.window?.performClose(nil)
+      case "viewdetach":
+        if let views = session?.cardViews, let o = views.panelOpenings.first(where: { key($0.card) == w[1] }) {
+          views.detachPanel(o.id)
+        }
+      case "viewclose":
+        let views = session?.cardViews
+        let window = views?.openings.lazy.filter { key($0.card) == w[1] }.compactMap { views?.window(of: $0.id) }.first
+        say("viewclose \(w[1]) \(window?.windowNumber ?? -1)")
+        window?.performClose(nil)
+      case "viewfold", "viewunfold":
+        for o in session?.cardViews.panelOpenings ?? [] where key(o.card) == w[1] {
+          if w[0] == "viewfold" { workspace?.foldedCardViews.insert(o.id) } else { workspace?.foldedCardViews.remove(o.id) }
+        }
+      case "views":
+        let panels = Set(session?.cardViews.panelOpenings.map(\.id) ?? [])
+        for o in session?.cardViews.openings ?? [] {
+          let placed = workspace?.cardViewPlacements[o.id].map { "/\($0.scope) \(Int($0.rect.minX)),\(Int($0.rect.minY)) \(Int($0.rect.width))x\(Int($0.rect.height))" }
+          let state = !panels.contains(o.id) ? "window" : workspace?.foldedCardViews.contains(o.id) == true ? "folded" : "panel"
+          say("view \(key(o.card)) \(o.name) \(state) \(placed ?? "-")")
+        }
       case "menu":
         let title = w.dropFirst().joined(separator: " ")
         func press(_ menu: NSMenu) -> Bool {

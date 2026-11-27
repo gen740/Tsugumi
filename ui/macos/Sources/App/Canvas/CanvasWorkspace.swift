@@ -126,6 +126,9 @@ extension View {
 
 /// A Card view's contents are laid out in world units. The enclosing canvas
 /// supplies its position and scale, including during a live camera gesture.
+/// One surface: a thin title line (dragging it moves the panel, a double
+/// click shows the view in a window) over the view. It has no close button:
+/// the Card's menu folds it away.
 struct CanvasCardPanel: View {
   let presentation: CardViewPresentation
   let opening: CardViewOpening
@@ -134,20 +137,21 @@ struct CanvasCardPanel: View {
   let onRelease: (CGSize) -> Void
 
   var body: some View {
-    CardViewPanel(presentation: presentation, id: opening.id) {
-      HStack(spacing: 6) {
-        Image(systemName: "line.3.horizontal")
-          .foregroundStyle(.secondary)
-          .frame(width: 24, height: 24)
-        Text(verbatim: "\(opening.card.joined(separator: "/")) / \(opening.name)")
-          .font(.callout)
-          .lineLimit(1)
-        Spacer(minLength: 0)
-      }
-      .overlay {
-        CardViewDragHandle(onPress: onPress, onDrag: onDrag, onRelease: onRelease)
-          .accessibilityHidden(true)
-      }
+    VStack(spacing: 0) {
+      Text(verbatim: "\(opening.card.joined(separator: "/")) / \(opening.name)")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, minHeight: 20, maxHeight: 20, alignment: .leading)
+        .overlay {
+          CardViewDragHandle(onPress: onPress, onDrag: onDrag, onRelease: onRelease,
+                             onDoubleClick: { presentation.detachPanel(opening.id) })
+            .accessibilityHidden(true)
+        }
+        .help("ドラッグで移動、ダブルクリックで別ウインドウに表示")
+      CardViewPanelContent(presentation: presentation, id: opening.id)
     }
     .background(.regularMaterial)
     .clipShape(RoundedRectangle(cornerRadius: 9))
@@ -162,6 +166,7 @@ private struct CardViewDragHandle: NSViewRepresentable {
   let onPress: () -> Void
   let onDrag: (CGSize) -> Void
   let onRelease: (CGSize) -> Void
+  let onDoubleClick: () -> Void
 
   func makeNSView(context: Context) -> Handle { Handle() }
 
@@ -169,12 +174,14 @@ private struct CardViewDragHandle: NSViewRepresentable {
     view.onPress = onPress
     view.onDrag = onDrag
     view.onRelease = onRelease
+    view.onDoubleClick = onDoubleClick
   }
 
   final class Handle: NSView {
     var onPress: (() -> Void)?
     var onDrag: ((CGSize) -> Void)?
     var onRelease: ((CGSize) -> Void)?
+    var onDoubleClick: (() -> Void)?
     private var origin: CGPoint?
     private var dragInProgress: ((CGSize) -> Void)?
     private var finishDrag: ((CGSize) -> Void)?
@@ -182,6 +189,11 @@ private struct CardViewDragHandle: NSViewRepresentable {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
+      if event.clickCount == 2 {
+        origin = nil
+        onDoubleClick?()
+        return
+      }
       origin = event.locationInWindow
       dragInProgress = onDrag
       finishDrag = onRelease

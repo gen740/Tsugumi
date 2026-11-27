@@ -2071,9 +2071,23 @@ enum CardViewPanelPlacer {
     return (gx * gx + gy * gy).squareRoot() + side + along * 0.25
   }
 
-  /// Placements for the panels of this canvas that have none yet; the others
-  /// are returned as they are. `cardRect` gives a Card's outline on this
-  /// canvas (nil when it is not here yet).
+  /// The placements of the panels still open as panels, folded ones
+  /// included. A panel that left (its session ended, or it is shown in a
+  /// window) is placed anew when it comes back.
+  static func kept(_ placements: [UUID: CanvasCardViewPlacement],
+                   for panels: [CardViewOpening]) -> [UUID: CanvasCardViewPlacement] {
+    let ids = Set(panels.map(\.id))
+    return placements.filter { ids.contains($0.key) }
+  }
+
+  /// The panels drawn on the canvas: those not folded away.
+  static func shown(_ panels: [CardViewOpening], folded: Set<UUID>) -> [CardViewOpening] {
+    panels.filter { !folded.contains($0.id) }
+  }
+
+  /// Placements for the shown panels of this canvas that have none yet; the
+  /// others (folded panels' too) are returned as they are. `cardRect` gives
+  /// a Card's outline on this canvas (nil when it is not here yet).
   static func placeNew(_ openings: [CardViewOpening], in scope: CardKey,
                        placements: [UUID: CanvasCardViewPlacement],
                        cardRect: (CardKey) -> CGRect?,
