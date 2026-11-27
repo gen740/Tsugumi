@@ -64,6 +64,15 @@ struct CardRunState: Equatable {
   var phase: Tsugumi_Data_Phase
   var failure: String?
   var executionState: Tsugumi_Data_RemoteExecutionState?
+  /// The execution service ("local" or a remote worker), and what a remote
+  /// job waits for or does now on the worker.
+  var executionService: String?
+  var executionActivity: Tsugumi_Data_ExecutionActivity = .unspecified
+  var executionActivityDetail: String?
+  /// CPU time of its process tree on a remote worker, and when it last wrote
+  /// output or build log (core clock).
+  var cpuMs: UInt64?
+  var lastOutputAt: Int64?
   var transfer: String?
   /// Stages of the latest invocation, in the order the core ran them.
   var stages: [StageRecord] = []
@@ -78,6 +87,54 @@ struct CardRunState: Equatable {
   var readyAt: Int64?
 
   var stage: Stage? { stages.last.map(\.stage) ?? (state == .waiting || state == .ready ? .waiting : nil) }
+}
+
+/// What a remote job waits for or does now on its worker, in words.
+struct ExecutionActivityText: Equatable {
+  let activity: Tsugumi_Data_ExecutionActivity
+  let detail: String
+
+  init?(_ state: CardRunState) {
+    guard state.state == .running || state.state == .preparing else { return nil }
+    if state.executionState == .queued {
+      activity = .waitingStore
+      detail = ""
+      queued = true
+      return
+    }
+    guard state.executionActivity != .unspecified, state.executionActivity != .running else { return nil }
+    activity = state.executionActivity
+    detail = state.executionActivityDetail ?? ""
+    queued = false
+  }
+
+  /// Waiting for the worker (a free slot, or its Nix store) rather than running.
+  private let queued: Bool
+  var waiting: Bool { queued || activity == .waitingStore }
+
+  /// The log view's wording.
+  var text: String {
+    if queued { return String(localized: "ワーカーの空きを待っています") }
+    switch activity {
+    case .waitingStore: return String(localized: "ワーカーの Nix ストアを待っています（別の実行が使用中）")
+    case .preparing: return String(localized: "ワーカーで準備中")
+    case .building: return String(localized: "ワーカーで Nix ビルド中: \(detail)")
+    case .substituting: return String(localized: "ワーカーで取得中: \(detail)")
+    default: return String(localized: "実行中")
+    }
+  }
+
+  /// The Card's status row: short, one line.
+  var short: String {
+    if queued { return String(localized: "待機中（ワーカーの空き）") }
+    switch activity {
+    case .waitingStore: return String(localized: "待機中（Nix ストア）")
+    case .preparing: return String(localized: "ワーカーで準備中")
+    case .building: return String(localized: "ビルド中: \(detail)")
+    case .substituting: return String(localized: "取得中: \(detail)")
+    default: return String(localized: "実行中")
+    }
+  }
 }
 
 extension Tsugumi_Data_RemoteExecutionState {
@@ -333,6 +390,19 @@ final class ProjectSession {
   /// smallest difference seen (an event is never received before it happened).
   private(set) var coreClockOffset: Int64?
   /// The core clock now (ms since 1970), for elapsed times of a running run.
+  /// Whether a running invocation is working: "CPU 12m · 最後の出力 4 分前".
+  func livenessText(_ state: CardRunState) -> String? {
+    guard state.state == .running || state.state == .preparing else { return nil }
+    var parts: [String] = []
+    if let cpu = state.cpuMs { parts.append(String(localized: "CPU \(formatDuration(Double(cpu) / 1000))")) }
+    if let at = state.lastOutputAt {
+      parts.append(String(localized: "最後の出力 \(formatDuration(Double(max(0, coreNow() - at)) / 1000)) 前"))
+    } else if state.stages.contains(where: { $0.stage == .execute }) {
+      parts.append(String(localized: "出力はまだありません"))
+    }
+    return parts.isEmpty ? nil : parts.joined(separator: " · ")
+  }
+
   func coreNow() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) - (coreClockOffset ?? 0) }
   private func sampleClock(_ coreMs: Int64?) {
     guard let coreMs else { return }
@@ -846,6 +916,11 @@ final class ProjectSession {
     if prev == nil || prev!.invocation <= n {
       var next = CardRunState(state: inv.state, invocation: n, phase: inv.phase, failure: inv.failure?.diagnostic)
       next.executionState = inv.executionState
+      next.executionService = inv.executionService
+      next.executionActivity = inv.executionActivity
+      next.executionActivityDetail = inv.executionActivityDetail
+      next.cpuMs = inv.cpuMs
+      next.lastOutputAt = inv.lastOutputAt
       if (inv.state == .running || inv.state == .preparing) && inv.transferDirection?.isEmpty == false && inv.transferDone < inv.transferTotal {
         next.transfer = String(localized: "ファイル転送: \(inv.transferName ?? "") (\(inv.transferDone)/\(inv.transferTotal) bytes)")
       }

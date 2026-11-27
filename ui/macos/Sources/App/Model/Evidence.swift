@@ -10,7 +10,7 @@ struct EvidenceTarget: Hashable, Identifiable {
   var card: [String]?
   var run: String?
   var invocation: UInt64?
-  var stream = "stdout"
+  var stream = "output"
   var offset: UInt64 = 0
   var artifact: String?
   var member: String?
@@ -91,12 +91,12 @@ struct EvidenceTarget: Hashable, Identifiable {
       target.invocation = n
     }
     if let raw = params["offset"] { guard let n = number(raw) else { return nil }; target.offset = n }
-    target.stream = params["stream"] ?? "stdout"
-    guard ["stdout", "stderr", "build", "journal"].contains(target.stream) else { return nil }
+    target.stream = params["stream"] ?? "output"
+    guard ["output", "build", "journal"].contains(target.stream) else { return nil }
     return target
   }
   var logStream: Tsugumi_Data_LogStream {
-    switch stream { case "stderr": return .standardError; case "build": return .build; case "journal": return .journal; default: return .standardOutput }
+    switch stream { case "build": return .build; case "journal": return .journal; default: return .output }
   }
 
   @MainActor func exists(in session: ProjectSession) async -> Bool {

@@ -290,11 +290,8 @@ struct CardExecutionView: View {
                          ? String(localized: "計測なし（同順位）")
                          : score.map { "\(String(localized: "スコア")) \($0)" }
                            ?? probe.unavailableReason ?? probe.failure ?? String(localized: "計測に失敗しました"))
-          if let output = probe.stdoutText, !output.isEmpty {
-            LabeledContent("計測の標準出力") { Text(output).textSelection(.enabled) }
-          }
-          if let output = probe.stderrText, !output.isEmpty {
-            LabeledContent("計測の標準エラー") { Text(output).textSelection(.enabled) }
+          if let output = probe.outputText, !output.isEmpty {
+            LabeledContent("計測の出力") { Text(output).textSelection(.enabled) }
           }
         }
         if s.executionState != .unspecified { LabeledContent("実行サービスの状態", value: s.executionState.label) }

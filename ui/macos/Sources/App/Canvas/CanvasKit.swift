@@ -83,7 +83,7 @@ enum Stage: Int, CaseIterable, Identifiable {
   var logStream: Tsugumi_Data_LogStream {
     switch self {
     case .prepare, .evaluate, .build: return .build
-    case .execute: return .standardOutput
+    case .execute: return .output
     case .waiting, .validate, .save, .done: return .journal
     }
   }
@@ -258,6 +258,10 @@ struct CardNodeData: Equatable {
   var portGrid: CGFloat?
   /// Comments on the Card not resolved yet.
   var openComments = 0
+  /// Whether a remote execution waits (for the worker) rather than runs.
+  var activityWaits = false
+  /// Whether a running invocation is working (CPU time, last output), on hover.
+  var liveness: String?
 
   var isDraft: Bool { kind == .draft }
   var isRouting: Bool { kind == .merge || kind == .collect }
@@ -1137,10 +1141,16 @@ struct CardNodeView: View {
   }
 
   /// Stage strip (or the plain status) of a code Card.
+  /// A Card that has not run shows its stages, none reached yet.
   @ViewBuilder private var statusRow: some View {
     if let p = data.stage, data.invocation > 0 {
       StageStrip(progress: p, zoom: zoom, onTap: onStageTap,
-                 caption: data.executionList ? String(localized: "実行 #\(data.invocation)") : data.runText ?? "")
+                 caption: data.executionList ? String(localized: "実行 #\(data.invocation)") : data.runText ?? "",
+                 waiting: data.activityWaits, liveness: data.liveness)
+    } else if !data.isDraft, data.kind != .invalid, data.state == nil || data.state == .notStarted {
+      StageStrip(progress: StageProgress(items: Stage.applicable(code: data.kind == .code).map {
+        StageProgress.Item(stage: $0, status: .pending)
+      }), zoom: zoom, caption: data.runMark ?? "")
     } else {
       Text(data.idleText).font(font(10)).foregroundStyle(.secondary).lineLimit(1)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1315,6 +1325,10 @@ struct StageStrip: View {
   var zoom: Double = 1
   var onTap: ((Stage) -> Void)?
   var caption = ""
+  /// The running execution waits for its worker.
+  var waiting = false
+  /// CPU time and last output of the running invocation, on hover.
+  var liveness: String?
 
   private func s(_ v: CGFloat) -> CGFloat { v * CGFloat(zoom) }
 
@@ -1331,7 +1345,7 @@ struct StageStrip: View {
           .buttonStyle(.plain)
           .disabled(onTap == nil)
           .help(help(item))
-          .accessibilityLabel(item.stage.label + "：" + item.status.label)
+          .accessibilityLabel(item.stage.label + "：" + SectionStatus(item.status, waiting: waiting && item.stage == .execute).label)
       }
       if progress.workerReused {
         Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: max(6, s(8)))).foregroundStyle(.teal)
@@ -1339,56 +1353,21 @@ struct StageStrip: View {
       }
       Text(caption).font(.system(size: max(6, s(9.5)))).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .help(liveness.map { caption + "\n" + $0 } ?? caption)
     }
     .accessibilityElement(children: .contain)
   }
 
-  private func color(_ st: StageProgress.Status) -> Color {
-    switch st {
-    case .pending, .notRun: return .secondary.opacity(0.45)
-    case .running: return .orange
-    case .done: return .green
-    case .cached: return .blue
-    case .reused: return .teal
-    case .failed: return .red
-    case .cancelled: return .brown
-    }
-  }
-
-  private func badge(_ st: StageProgress.Status) -> String? {
-    switch st {
-    case .done: return "checkmark"
-    case .cached: return "bolt.fill"
-    case .reused: return "arrow.triangle.2.circlepath"
-    case .failed: return "xmark"
-    case .cancelled: return "stop.fill"
-    case .pending, .notRun, .running: return nil
-    }
-  }
-
+  /// The same symbols as the log view's pipeline line.
   private func icon(_ item: StageProgress.Item) -> some View {
-    let c = color(item.status)
-    return Image(systemName: item.status == .running ? item.stage.activeSymbol : item.stage.symbol)
-      .font(.system(size: max(6, s(10))))
-      .foregroundStyle(c)
+    StatusSymbol(status: SectionStatus(item.status, waiting: waiting && item.stage == .execute), size: max(8, s(13)))
       .frame(width: s(15), height: s(15))
-      .background {
-        if item.status == .running { Circle().fill(Color.orange.opacity(0.15)) }
-      }
-      .overlay(alignment: .bottomTrailing) {
-        if let b = badge(item.status) {
-          Image(systemName: b).font(.system(size: max(4, s(5)), weight: .heavy))
-            .foregroundStyle(.white)
-            .padding(max(0.5, s(1)))
-            .background(Circle().fill(c))
-            .offset(x: s(2), y: s(2))
-        }
-      }
   }
 
   private func help(_ item: StageProgress.Item) -> String {
-    var t = item.stage.label + "：" + item.status.label
+    var t = item.stage.label + "：" + SectionStatus(item.status, waiting: waiting && item.stage == .execute).label
     if let sec = item.seconds { t += " · " + formatDuration(sec) }
+    if item.status == .running, let liveness { t += " · " + liveness }
     if item.status == .failed || item.status == .cancelled { t += String(localized: "（クリックでこの段階のログ）") }
     else if onTap != nil, item.status != .pending { t += String(localized: "（クリックでログ）") }
     return t

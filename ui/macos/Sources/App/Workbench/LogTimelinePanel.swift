@@ -55,7 +55,7 @@ struct LogTimelinePanel: View {
           StageLogView(session: session, runId: runId, card: path(card), invocation: workspace.logInvocation, focus: workspace.logStage)
         } else if let runId {
           // The whole run: its own journal (Card logs are shown by stage).
-          RunLogView(session: session, runId: runId, card: nil, invocation: nil, stream: $workspace.logStream)
+          RunLogView(session: session, runId: runId)
         } else {
           ContentUnavailableView("実行履歴はありません", systemImage: "text.alignleft", description: Text("実行するとここにログが表示されます。"))
         }
@@ -93,40 +93,31 @@ struct LogTimelinePanel: View {
   }
 }
 
-/// Log text of a run (or one Card / invocation of it), read incrementally
-/// with LogRange from where it stopped when LogAvailable arrives.
+/// The run's own journal (what happened at each step of the run), read
+/// incrementally with LogRange from where it stopped when LogAvailable
+/// arrives. A Card's log is shown by stage (StageLogView).
 struct RunLogView: View {
   let session: ProjectSession
   let runId: String
-  let card: [String]?
-  let invocation: UInt64?
-  @Binding var stream: Tsugumi_Data_LogStream
-  @State private var reader = LogStreamReader()
-  @State private var resolved: UInt64?
+  @State private var reader = LogStreamReader(form: .journal)
   @State private var exportError: String?
 
   private var source: LogStreamReader.Source {
-    LogStreamReader.Source(runId: runId, card: card, invocation: card == nil ? nil : (invocation ?? resolved), stream: stream,
-                           live: session.runActive && runId == session.currentRunId &&
-                             (stream == .standardOutput || stream == .standardError),
+    LogStreamReader.Source(runId: runId, card: nil, invocation: nil, stream: .journal, live: false,
                            recordingRevision: session.recordingRevision)
   }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
       HStack {
-        Picker("", selection: $stream) {
-          Text("stdout").tag(Tsugumi_Data_LogStream.standardOutput)
-          Text("stderr").tag(Tsugumi_Data_LogStream.standardError)
-          Text("journal").tag(Tsugumi_Data_LogStream.journal)
-        }
-        .pickerStyle(.segmented).frame(width: 240).labelsHidden()
-        Text(card.map { "Card \(session.displayPath($0))" + (invocation.map { " #\($0)" } ?? "") } ?? String(localized: "実行全体"))
-          .font(.caption).foregroundStyle(.secondary)
+        Text("実行全体").font(.caption).foregroundStyle(.secondary)
         Spacer()
         Button("書き出す…") {
-          let source = source, size = reader.size
-          Task { do { try await exportLog(session, source, size: size) } catch { exportError = "\(error)" } }
+          let source = source
+          Task {
+            do { try await exportLog(session, [(String(localized: "実行全体"), source)], name: "\(runId)-journal.log") }
+            catch { exportError = "\(error)" }
+          }
         }
         .disabled(!reader.hasBytes)
       }
@@ -138,14 +129,7 @@ struct RunLogView: View {
       }
       if let error = reader.error ?? exportError { Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal, 6) }
     }
-    .task(id: "\(runId)|\(card?.joined(separator: "/") ?? "")|\(invocation ?? 0)") {
-      // A Card's latest invocation, when none was named.
-      resolved = nil
-      guard let card, invocation == nil else { return }
-      resolved = session.cardStates[key(card)]?.invocation
-      if resolved == nil { resolved = try? await session.rpc?.record(runId: runId, card: card).selectedInvocation }
-    }
-    .onChange(of: source, initial: true) { reader.show(source, session: session) }
+    .onChange(of: source, initial: true) { reader.show(source, form: .journal, session: session) }
     .onChange(of: session.connected) { reader.update() }
   }
 
@@ -153,14 +137,7 @@ struct RunLogView: View {
   private var emptyReason: String {
     if let error = reader.error { return String(localized: "ログを読み込めませんでした: ") + error }
     if !reader.loaded { return String(localized: "読み込んでいます…") }
-    if let card, runId == session.currentRunId, session.cardStates[key(card)] == nil {
-      return String(localized: "この実行では、この Card はまだ動いていません。")
-    }
-    switch stream {
-    case .standardError: return String(localized: "stderr への出力はありません（Nix 評価・build のログもここに出ます）。")
-    case .journal: return String(localized: "記録された段階の出来事はありません。")
-    default: return String(localized: "stdout への出力はありません。")
-    }
+    return String(localized: "記録された段階の出来事はありません。")
   }
 }
 

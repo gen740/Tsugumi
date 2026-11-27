@@ -165,7 +165,6 @@ final class Workspace {
   var logCard: CardKey?
   var logRunId: String?
   var logInvocation: UInt64?
-  var logStream: Tsugumi_Data_LogStream = .journal
   /// Stage whose log section to open (a click on a stage icon).
   var logStage: Stage?
   /// A Card hostd asked this window to show (PageShow), until the project has it.
@@ -207,20 +206,19 @@ final class Workspace {
     if activeTab == id { activeTab = tabs[max(0, i - 1)].id }
   }
 
-  /// Opens the log of a Card. A stage opens the stream that stage writes to
-  /// (Nix evaluation and build: stderr; execution: stdout; others: journal).
   /// The log / timeline icons: a click opens that panel, or closes it when
   /// it is already the one shown.
   func togglePanel(_ p: BottomPanel) {
     if showBottom && bottomPanel == p { showBottom = false } else { bottomPanel = p; showBottom = true }
   }
 
+  /// Opens the log of a Card (or of the whole run), with the section of
+  /// `stage` open.
   func showLog(for card: CardKey?, stage: Stage? = nil, invocation: UInt64? = nil, runId: String? = nil) {
     if let runId { logRunId = runId }
     logCard = card
     logInvocation = invocation
     logStage = stage
-    if card == nil { logStream = .journal }
     bottomPanel = .log
     showBottom = true
   }

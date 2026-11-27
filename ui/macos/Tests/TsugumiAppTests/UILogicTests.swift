@@ -197,7 +197,7 @@ import TsugumiTestSupport
   // The visible stages remain distinguishable as progress moves between them.
   #expect(Set(Stage.allCases.map(\.symbol)).count == Stage.allCases.count)
   #expect(Set(Stage.allCases.map(\.activeSymbol)).count == Stage.allCases.count)
-  #expect(Stage.build.logStream == .build && Stage.execute.logStream == .standardOutput && Stage.save.logStream == .journal)
+  #expect(Stage.build.logStream == .build && Stage.execute.logStream == .output && Stage.save.logStream == .journal)
 }
 
 

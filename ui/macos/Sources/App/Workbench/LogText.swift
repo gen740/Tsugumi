@@ -211,11 +211,13 @@ private enum LogExportError: LocalizedError {
   }
 }
 
-/// Writes a whole stream to a file the reader picks, in pieces.
-@MainActor func exportLog(_ session: ProjectSession, _ source: LogStreamReader.Source, size: UInt64) async throws {
+/// Writes whole streams to one file the reader picks, in pieces: each under
+/// its title when there are several.
+@MainActor func exportLog(_ session: ProjectSession, _ parts: [(title: String, source: LogStreamReader.Source)],
+                          name: String) async throws {
   guard let rpc = session.rpc else { throw LogExportError.disconnected }
   let panel = NSSavePanel()
-  panel.nameFieldStringValue = "\(source.runId)-\(source.stream).log"
+  panel.nameFieldStringValue = name
   guard await panel.begin() == .OK, let url = panel.url else { return }
   let temporary = try FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask,
                                                appropriateFor: url, create: true)
@@ -225,13 +227,25 @@ private enum LogExportError: LocalizedError {
   let output = try FileHandle(forWritingTo: file)
   do {
     defer { try? output.close() }
-    var offset: UInt64 = 0
-    while offset < size {
-      let slice = try await rpc.logRange(runId: source.runId, card: source.card, invocation: source.invocation,
+    for (title, source) in parts {
+      if parts.count > 1 { try output.write(contentsOf: Data("==== \(title) ====\n".utf8)) }
+      // The size when the export starts: output written later is not included.
+      var offset: UInt64 = 0, size: UInt64?
+      while offset < size ?? .max {
+        let slice: Tsugumi_RPC_LogSliceT
+        do {
+          slice = try await rpc.logRange(runId: source.runId, card: source.card, invocation: source.invocation,
                                          stream: source.stream, offset: offset, limit: LogWindow.readBytes, live: source.live)
-      guard let next = slice.nextOffset, next > offset else { throw LogExportError.incomplete }
-      try output.write(contentsOf: Data(slice.text.utf8.prefix(Int(min(next, size) - offset))))
-      offset = next
+        } catch let failure as RPCFailure where failure.kind == .notFound {
+          break
+        }
+        let end = size ?? slice.sizeBytes ?? 0
+        size = end
+        if offset >= end { break }
+        guard let next = slice.nextOffset, next > offset else { throw LogExportError.incomplete }
+        try output.write(contentsOf: Data(slice.text.utf8.prefix(Int(min(next, end) - offset))))
+        offset = next
+      }
     }
   }
   if FileManager.default.fileExists(atPath: url.path) {

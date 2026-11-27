@@ -194,7 +194,7 @@ extension ProjectSession {
       symbol: kind.displaySymbol(def?["symbol"]?.string),
       summary: summary, inputs: visualPorts(k, ports.inputs, output: false), outputs: visualPorts(k, outputs ?? ports.outputs, output: true),
       result: state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil,
-      activity: state?.transfer ?? state?.executionState?.pendingLabel,
+      activity: state?.transfer ?? state.flatMap(ExecutionActivityText.init)?.short ?? state?.executionState?.pendingLabel,
       state: kind == .subgraph ? compositeState(k) : canvasCardState(k), executionList: executionList, stage: empty ? nil : stageProgress(k),
       invocation: empty ? 0 : state?.invocation ?? 0, runContinues: runActive, runMark: (state != nil || batch != nil ? runMark(runStatus) : nil),
       failure: state.flatMap { $0.state == .failed || $0.state == .blocked ? ($0.failure ?? $0.state.label) : nil },
@@ -202,7 +202,9 @@ extension ProjectSession {
       collapsed: !editing && (collapsed ?? self.collapsed(k)), permissions: CardPermission.of(def),
       draftEditing: editing,
       portGrid: AppPreferences.shared.showGrid ? AppPreferences.shared.gridSize : nil,
-      openComments: CardComment.list(in: m).filter { !$0.resolved }.count)
+      openComments: CardComment.list(in: m).filter { !$0.resolved }.count,
+      activityWaits: state.flatMap(ExecutionActivityText.init)?.waiting == true,
+      liveness: state.flatMap(livenessText))
   }
 
   /// Where a Card is drawn: with the grid on, one saved off the grid (placed
