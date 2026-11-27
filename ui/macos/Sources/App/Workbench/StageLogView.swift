@@ -312,7 +312,7 @@ struct StageLogView: View {
 
   /// Writes the invocation's whole log, section by section, to one file.
   private func export() {
-    let parts = groups.compactMap { g in source(g).map { (g.title, $0) } }
+    let parts = groups.compactMap { g in source(g).map { (title: g.title, source: $0) } }
     guard let first = parts.first?.1 else { return }
     exporting = true
     exportError = nil

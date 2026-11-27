@@ -200,6 +200,27 @@ import TsugumiTestSupport
   #expect(Stage.build.logStream == .build && Stage.execute.logStream == .output && Stage.save.logStream == .journal)
 }
 
+@Test func remoteWaitingIsNotRunning() {
+  var state = CardRunState(state: .running, invocation: 1, phase: .execute)
+  #expect(ExecutionActivityText(state) == nil)
+  state.executionActivity = .waitingStore
+  #expect(ExecutionActivityText(state)?.waiting == true)
+  let running: Tsugumi_Data_StageOutcome = .running
+  #expect(SectionStatus(running, waiting: true) == .waiting && SectionStatus(running) == .running)
+  #expect(SectionStatus(StageProgress.Status.notRun) == .pending && SectionStatus(StageProgress.Status.cached) == .cached)
+  state.executionActivity = .building
+  state.executionActivityDetail = "nupipeline-1.0"
+  let building = ExecutionActivityText(state)
+  #expect(building?.waiting == false && building?.short.contains("nupipeline-1.0") == true)
+  state.executionActivity = .running
+  #expect(ExecutionActivityText(state) == nil)
+  state.executionActivity = .unspecified
+  state.executionState = .queued
+  #expect(ExecutionActivityText(state)?.waiting == true)
+  state.state = .succeeded
+  #expect(ExecutionActivityText(state) == nil)
+}
+
 
 @MainActor @Observable private final class HoverLayoutMeasurement {
   var size = CGSize.zero
