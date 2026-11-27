@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
 #include <map>
 #include <mutex>
 #include <string>
@@ -321,17 +322,25 @@ struct Settings::State {
   sql::Db& db;
   std::recursive_mutex& mutex;
   std::unique_ptr<SecretStore> secrets;
-  struct Attempt {
-    std::string id, profile, state = "pending", message, welcome, issuer,
-                             resource, client, subject, nonce, verifier,
-                             oauth_state, redirect;
+  struct AttemptResult {
+    std::string profile, state = "pending", message, welcome, client;
     bool plan_enabled = false;
+  };
+  struct Attempt {
+    AttemptResult result;
+    std::string issuer, resource, client, subject, nonce, verifier,
+        oauth_state, redirect;
+    bool finished = false;
     std::jthread worker;
   };
-  std::map<std::string, std::shared_ptr<Attempt>> attempts;
+  std::map<std::string, std::unique_ptr<Attempt>> active_attempts;
+  std::map<std::string, AttemptResult> attempt_results;
   std::map<std::string, std::string> latest;
   Models models;
   std::function<void(std::string)> publish;
+  std::condition_variable_any attempt_finished;
+  bool stopping = false;
+  std::jthread reaper;
   State(const std::filesystem::path& dir, Credentials& credential_store,
         std::unique_ptr<SecretStore> store, Models model_list,
         std::function<void(std::string)> event_sink)
@@ -345,9 +354,41 @@ struct Settings::State {
     if (!secrets) secrets = std::make_unique<SqlSecrets>(db);
   }
   ~State() {
-    for (auto& [_, a] : attempts) a->worker.request_stop();
-    for (auto& [_, a] : attempts)
-      if (a->worker.joinable()) a->worker.join();
+    {
+      std::lock_guard lock(mutex);
+      stopping = true;
+      for (auto& [_, a] : active_attempts) a->worker.request_stop();
+    }
+    attempt_finished.notify_one();
+    if (reaper.joinable()) reaper.join();
+  }
+  auto ReapAttempts() -> void {
+    std::unique_lock lock(mutex);
+    while (!stopping || !active_attempts.empty()) {
+      const auto finished = std::ranges::find_if(
+          active_attempts, [](const auto& entry) { return entry.second->finished; });
+      if (finished == active_attempts.end()) {
+        attempt_finished.wait(lock);
+        continue;
+      }
+      auto& attempt = *finished->second;
+      const auto profile = attempt.result.profile;
+      const bool notify = attempt.result.state != "cancelled";
+      attempt_results.emplace(finished->first, std::move(attempt.result));
+      auto worker = std::move(attempt.worker);
+      active_attempts.erase(finished);  // Releases the authorization material.
+      lock.unlock();
+      worker.join();
+      if (notify) Publish<H::SignInChangedT>(profile);
+      lock.lock();
+    }
+  }
+  auto FindAttemptResult(const std::string& id) -> const AttemptResult* {
+    if (const auto it = active_attempts.find(id); it != active_attempts.end())
+      return &it->second->result;
+    if (const auto it = attempt_results.find(id); it != attempt_results.end())
+      return &it->second;
+    return nullptr;
   }
   auto Revision() -> std::string {
     auto query = db.prepare(
@@ -460,19 +501,18 @@ struct Settings::State {
                               ? latest.at(profile)
                               : attempt;
     if (!selected.empty()) {
-      const auto it = attempts.find(selected);
-      if (it == attempts.end() || it->second->profile != profile) {
+      const auto* a = FindAttemptResult(selected);
+      if (!a || a->profile != profile) {
         out.state = "failed";
         out.message = "Sign-in was interrupted; try again";
       } else {
-        const auto& a = *it->second;
-        out.attempt_id = a.id;
-        out.state = a.state;
-        out.message = a.message;
-        out.welcome = a.welcome;
-        if (a.state == "complete") {
-          out.client_id = a.client;
-          out.plan_enabled = a.plan_enabled;
+        out.attempt_id = selected;
+        out.state = a->state;
+        out.message = a->message;
+        out.welcome = a->welcome;
+        if (a->state == "complete") {
+          out.client_id = a->client;
+          out.plan_enabled = a->plan_enabled;
         }
       }
     }
@@ -503,21 +543,26 @@ struct Settings::State {
     for (const auto& [key, v] : rows) SaveAccount(profile, key, v);
   }
   auto Cancel(Attempt& attempt) -> void {
-    if (attempt.state != "pending") return;
+    if (attempt.result.state != "pending") return;
     attempt.worker.request_stop();
-    attempt.state = "cancelled";
+    attempt.result.state = "cancelled";
   }
   auto Begin(const H::SignInBeginRequest& p) -> H::SignInBeginT {
-    auto a = std::make_shared<Attempt>();
-    a->profile = p.profile()->str();
-    std::shared_ptr<Attempt> previous_attempt;
-    if (const auto current = latest.find(a->profile); current != latest.end()) {
-      previous_attempt = attempts.at(current->second);
-      const auto& state = previous_attempt->state;
-      if (state == "committing" || (state == "pending" && !p.replace_pending()))
-        throw std::runtime_error("Sign-in is already in progress");
+    auto attempt = std::make_unique<Attempt>();
+    auto* a = attempt.get();
+    a->result.profile = p.profile()->str();
+    const auto& profile = a->result.profile;
+    Attempt* previous_attempt = nullptr;
+    if (const auto current = latest.find(profile); current != latest.end()) {
+      if (const auto previous = active_attempts.find(current->second);
+          previous != active_attempts.end()) {
+        previous_attempt = previous->second.get();
+        const auto& state = previous_attempt->result.state;
+        if (state == "committing" || (state == "pending" && !p.replace_pending()))
+          throw std::runtime_error("Sign-in is already in progress");
+      }
     }
-    a->id = crypto::uuid4();
+    const auto id = crypto::uuid4();
     a->client = Text(p.client_id());
     a->issuer = Text(p.issuer());
     if (a->issuer.empty()) a->issuer = "https://auth.openai.com";
@@ -528,7 +573,7 @@ struct Settings::State {
       throw std::runtime_error("Sign-in requires HTTPS or loopback");
     j::Members previous;
     if (!a->client.empty()) {
-      previous = Account(a->profile, a->client);
+      previous = Account(profile, a->client);
       if (j::Text(previous, "issuer") != a->issuer)
         throw std::runtime_error("Account issuer mismatch");
       a->subject = j::Text(previous, "subject");
@@ -560,12 +605,12 @@ struct Settings::State {
     a->nonce = crypto::random_token(32);
     a->verifier = crypto::random_token(32);
     auto host_query = db.prepare("SELECT id FROM oauth_hosts WHERE profile=?");
-    host_query.bind(1, a->profile);
+    host_query.bind(1, profile);
     auto hostid = host_query.step() ? host_query.text(0) : "";
     if (hostid.empty()) {
       hostid = "urn:uuid:" + crypto::uuid4();
       auto q = db.prepare("INSERT INTO oauth_hosts VALUES(?,?)");
-      q.bind(1, a->profile).bind(2, hostid).run();
+      q.bind(1, profile).bind(2, hostid).run();
     }
     const auto hash = crypto::sha256_hex(a->verifier);
     std::string binary;
@@ -589,10 +634,13 @@ struct Settings::State {
     else
       query["agent_name_hint"] = "Tsugumi";
     if (p.consent()) query["prompt"] = "consent";
-    attempts[a->id] = a;
-    latest[a->profile] = a->id;
-    a->worker = std::jthread(
-        [this, a, listener = std::move(listener)](std::stop_token stop) mutable {
+    H::SignInBeginT out;
+    out.attempt_id = id;
+    out.url = a->issuer + "/api/accounts/authorize?" + Form(query);
+    if (!reaper.joinable()) reaper = std::jthread([this] { ReapAttempts(); });
+    active_attempts.emplace(id, std::move(attempt));
+    auto run = [this, a, listener = std::move(listener)](
+                   std::stop_token stop) mutable {
       try {
         j::Members cb;
         struct CallbackPipe {
@@ -732,11 +780,11 @@ struct Settings::State {
         credentials.Save(a->client, credential);
         bool welcomed = false;
         try {
-          welcomed =
-              j::Bool(j::Get(Account(a->profile, a->client), "welcomed"));
+          welcomed = j::Bool(
+              j::Get(Account(a->result.profile, a->client), "welcomed"));
         } catch (...) {
         }
-        SaveAccount(a->profile, a->client,
+        SaveAccount(a->result.profile, a->client,
                     {{"issuer", j::Quote(a->issuer)},
                      {"resource", j::Quote(a->resource)},
                      {"subject", j::Get(claims, "sub")},
@@ -744,25 +792,33 @@ struct Settings::State {
                      {"signed_in", "true"},
                      {"plan_enabled", plan ? "true" : "false"},
                      {"welcomed", welcomed ? "true" : "false"}});
-        Choose(a->profile, a->client);
+        Choose(a->result.profile, a->client);
         tx.commit();
-        a->state = "complete";
-        a->plan_enabled = plan;
-        if (plan && !welcomed) a->welcome = a->client;
+        a->result.state = "complete";
+        a->result.client = a->client;
+        a->result.plan_enabled = plan;
+        if (plan && !welcomed) a->result.welcome = a->client;
       } catch (...) {
         listener.reset();
         std::lock_guard guard(mutex);
-        if (a->state == "cancelled") return;
-        a->state = "failed";
-        a->message = "Sign-in failed; try again";
+        if (a->result.state != "cancelled") {
+          a->result.state = "failed";
+          a->result.message = "Sign-in failed; try again";
+        }
       }
-      Publish<H::SignInChangedT>(a->profile);
-    });
+      std::lock_guard guard(mutex);
+      a->finished = true;
+      attempt_finished.notify_one();
+    };
+    try {
+      a->worker = std::jthread(std::move(run));
+    } catch (...) {
+      active_attempts.erase(id);
+      throw;
+    }
+    latest[profile] = id;
     if (previous_attempt) Cancel(*previous_attempt);
-    Publish<H::SignInChangedT>(a->profile);
-    H::SignInBeginT out;
-    out.attempt_id = a->id;
-    out.url = a->issuer + "/api/accounts/authorize?" + Form(query);
+    Publish<H::SignInChangedT>(profile);
     return out;
   }
 };
@@ -1056,10 +1112,12 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                    action = p.action()->str(), attempt = Text(p.attempt_id());
         bool revoked = false;
         if (action == "cancel") {
-          auto it = s.attempts.find(attempt);
-          if (it == s.attempts.end() || it->second->profile != profile)
+          const auto* result = s.FindAttemptResult(attempt);
+          if (!result || result->profile != profile)
             throw std::runtime_error("Unknown sign-in attempt");
-          s.Cancel(*it->second);
+          if (const auto it = s.active_attempts.find(attempt);
+              it != s.active_attempts.end())
+            s.Cancel(*it->second);
         } else {
           auto value = s.Account(profile, client);
           if (action == "select")
@@ -1067,12 +1125,16 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           else if (action == "welcomed") {
             value["welcomed"] = "true";
             s.SaveAccount(profile, client, value);
-            for (auto& [_, pending] : s.attempts)
-              if (pending->profile == profile && pending->welcome == client)
-                pending->welcome.clear();
+            const auto clear_welcome = [&](State::AttemptResult& result) {
+              if (result.profile == profile && result.welcome == client)
+                result.welcome.clear();
+            };
+            for (auto& [_, active] : s.active_attempts)
+              clear_welcome(active->result);
+            for (auto& [_, result] : s.attempt_results) clear_welcome(result);
           } else if (action == "signout") {
-            for (auto& [_, pending] : s.attempts)
-              if (pending->profile == profile) s.Cancel(*pending);
+            for (auto& [_, active] : s.active_attempts)
+              if (active->result.profile == profile) s.Cancel(*active);
             lock.unlock();
             std::lock_guard operation(s.credentials.credential_mutex);
             revoked = s.credentials.Revoke(client);
