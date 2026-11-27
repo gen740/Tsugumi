@@ -212,7 +212,7 @@ When the Agent is used, the following is sent to the connected model provider (A
 
 **Note that using the Agent sends part of the code, logs, input and output data and the contents of attached folders in the project to an outside model provider.** Before using the Agent on a project containing unpublished data or confidential information, check that it may be sent to the provider.
 
-Conversely, **without the Agent and with no Card that has `network: true`, the project's content and data stay in the local execution environment, provided all Cards use the local execution service** (apart from Nix fetching packages). A Card allowed `network: true` can send the data it can access (its inputs, the contents of host folders specified for it and so on) to the outside network.
+With the Agent disabled, all Cards using the local service without a network grant, and the host-managed binary cache selected, the project's content and data stay in the local execution environment. Nix can still fetch packages. An external push target receives the closures described in the [binary cache boundary](#binary-cache-boundary). A Card allowed `network: true` can send the data it can access (its inputs, the contents of host folders specified for it and so on) to the outside network.
 
 ### Web search
 

@@ -276,7 +276,8 @@ auto publish_closure(const RemoteJobClient& client, const std::string& service,
   }
   publish_to_external_cache({external_cache_kind(push.kind), push.endpoint,
                              push.cache_name, push.user, push.secret},
-                            stdfs::temp_directory_path(), store, path, stop);
+                            stdfs::temp_directory_path(), {.store = store},
+                            path, stop);
 }
 
 auto publish_remote_derivation(const RemoteJobClient& client,

@@ -19,6 +19,7 @@ import tempfile
 import subprocess
 import threading
 import time
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -46,6 +47,7 @@ from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
 from Tsugumi.Data.RunState import RunState
+from Tsugumi.Host.CachePushKind import CachePushKind
 from Tsugumi.Trace.Client import Client
 from tsugumi_client import path, text
 
@@ -475,6 +477,71 @@ def test_managed_cache_relays_derivations_and_reuses_only_published_outputs(
     assert cached.buildCached is True
     assert text(cached.buildSubstituter) == "tsugumi-cached"
     assert run("explicit_off").summary.buildCached is False
+
+
+def test_configured_file_push_publishes_remote_output(
+        project, core_factory, remote_broker, remote_daemon, tmp_path):
+    if remote_daemon[2] is None:
+        pytest.skip("requires a disposable worker and cache on the same machine")
+
+    cache = tmp_path / "file-push"
+    cache.mkdir()
+    signing_key = tmp_path / "signing-key"
+    public_key = tmp_path / "signing-key.pub"
+    subprocess.run(["nix-store", "--generate-binary-cache-key", "fixture-external",
+                    signing_key, public_key], check=True)
+    downloads = set()
+
+    class CacheHandler(SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=cache, **kwargs)
+
+        def do_GET(self):
+            downloads.add(self.path)
+            super().do_GET()
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), CacheHandler) as server:
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            host = remote_broker["host"]
+            host.call("BinaryCachesPutRequest", cachesJson=json.dumps([{
+                "id": "01234567-89ab-cdef-0123-456789abcdef",
+                "name": "Fixture HTTP pull",
+                "url": f"http://127.0.0.1:{server.server_port}",
+                "publicKey": public_key.read_text().strip(),
+                "username": "",
+                "password": "",
+            }]))
+            host.call("CachePushTargetPutRequest", kind=CachePushKind.NixCopy,
+                      endpoint=cache.as_uri())
+            definition = {
+                **RUN_LIST_REMOTE, "pushOutputs": "on", "recordLogs": "off",
+                "_outputs": "table Outputs {} root_type Outputs;",
+                "_nix": entry(python_run("from card import Output\ndef run(input): return Output()\n")),
+            }
+            write(project, {"work": definition}, [card("work", "work")], [])
+            client = core_factory().connect()
+            run_id, status = run_and_wait(client, "work", propagate=False)
+            assert status.state == RunState.succeeded, text(status.failure.diagnostic) if status.failure else ""
+            record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
+            assert text(record.summary.executionService) == "remote-test"
+            assert record.summary.buildPushed
+            environment, = client.call("RunEnvironmentsRequest", runId=run_id).environments
+
+            def narinfo(store_path):
+                store_hash = Path(store_path).name.split("-", 1)[0]
+                return dict(line.split(": ", 1)
+                            for line in (cache / f"{store_hash}.narinfo").read_text().splitlines()
+                            if ": " in line)
+
+            plan = text(environment.manifest)
+            derivation = text(environment.derivation)
+            assert narinfo(plan)["StorePath"] == plan
+            assert f"/{narinfo(derivation)['URL']}" in downloads
+        finally:
+            server.shutdown()
+            thread.join()
 
 
 def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broker, remote_daemon, remote_gates):

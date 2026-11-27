@@ -44,11 +44,10 @@ struct PrivateConfig {
   }
 };
 
-auto UploadNixConfig(const ExternalCacheTarget& target,
-                     const PrivateConfig& cfg) -> std::string {
-  auto config = std::string("experimental-features = nix-command\n");
+auto NetrcOption(const ExternalCacheTarget& target, const PrivateConfig& cfg)
+    -> std::string {
   if (target.secret.empty() || !target.endpoint.starts_with("https://"))
-    return config;
+    return {};
   auto host = target.endpoint.substr(std::string_view("https://").size());
   host.resize(host.find('/') == host.npos ? host.size() : host.find('/'));
   if (const auto bracket = host.find(']'); bracket != host.npos)
@@ -60,13 +59,13 @@ auto UploadNixConfig(const ExternalCacheTarget& target,
                    "machine " + host + " login " + target.user + " password " +
                        target.secret + '\n',
                    0600);
-  return config + "netrc-file = " + netrc.string() + '\n';
+  return "netrc-file = " + netrc.string() + '\n';
 }
 }  // namespace
 
 auto publish_to_external_cache(const ExternalCacheTarget& target,
                                const std::filesystem::path& scratch,
-                               const std::string& source_store,
+                               const CachePublishSource& source,
                                const std::string& store_path,
                                std::stop_token stop) -> void {
   if (stop.stop_requested())
@@ -77,7 +76,11 @@ auto publish_to_external_cache(const ExternalCacheTarget& target,
   spec.env = {"HOME=" + config.root.string(), "PATH=" + path,
               "XDG_CONFIG_HOME=" + config.root.string(),
               "XDG_CACHE_HOME=" + config.root.string()};
-  if (!source_store.empty()) spec.env.push_back("NIX_REMOTE=" + source_store);
+  if (!source.store.empty()) spec.env.push_back("NIX_REMOTE=" + source.store);
+  std::string nix_options;
+  // The store is opened in the job's user namespace, where the machine's
+  // build-users-group is not mapped.
+  if (source.private_worker_store) nix_options = "build-users-group =\n";
   for (const auto* name : {"SSL_CERT_FILE", "NIX_SSL_CERT_FILE"}) {
     const auto value = ReadEnvironment(name);
     if (!value.empty()) spec.env.push_back(std::string(name) + '=' + value);
@@ -102,13 +105,15 @@ auto publish_to_external_cache(const ExternalCacheTarget& target,
     case ExternalCacheKind::nix_copy:
       spec.argv = {Executable("nix", path), "copy", "--to", target.endpoint,
                    store_path};
-      spec.env.push_back("NIX_CONFIG=" + UploadNixConfig(target, config));
+      nix_options += "experimental-features = nix-command\n";
+      nix_options += NetrcOption(target, config);
       if (!target.secret.empty() && target.endpoint.starts_with("s3://")) {
         spec.env.push_back("AWS_ACCESS_KEY_ID=" + target.user);
         spec.env.push_back("AWS_SECRET_ACCESS_KEY=" + target.secret);
       }
       break;
   }
+  if (!nix_options.empty()) spec.env.push_back("NIX_CONFIG=" + nix_options);
   std::atomic<bool> cancelled{false};
   std::stop_callback cancel(stop, [&] { cancelled = true; });
   const auto result = proc::run(spec, &cancelled, {}, {});

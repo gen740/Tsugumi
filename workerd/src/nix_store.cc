@@ -230,7 +230,9 @@ auto RemoteWorkerStore::realise(
         publish_to_external_cache(
             {kind, push.endpoint, push.cache_name, push.user, push.secret},
             std::filesystem::temp_directory_path(),
-            store->config.getReference().render(), derivation.output, {});
+            {.store = store->config.getReference().render(),
+             .private_worker_store = true},
+            derivation.output, {});
       }
       result.pushed = true;
     } catch (const std::exception&) {
