@@ -13,7 +13,7 @@ import pytest
 from conftest import demo_environment
 from projects import start_run, wait_run
 from harness.document import set_param
-from test_demos import artifact_member, connect, recorded_output, stderr
+from test_demos import artifact_member, connect, output, recorded_output
 from tsugumi_client import text
 from Tsugumi.Data.RunState import RunState
 
@@ -35,7 +35,7 @@ def network(tmp_path, c, run_id):
 def run_ok(c, card, cards, propagate=True):
     rid = start_run(c, [card], propagate=propagate)
     st = wait_run(c, rid)
-    assert st.state == RunState.succeeded, (st.failure and text(st.failure.diagnostic), {x: stderr(c, rid, x)[-1500:] for x in cards})
+    assert st.state == RunState.succeeded, (st.failure and text(st.failure.diagnostic), {x: output(c, rid, x)[-1500:] for x in cards})
     return rid
 
 
