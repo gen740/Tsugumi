@@ -27,6 +27,12 @@ ed25519:PASTE_THE_COMPLETE_HOST_SPKI_HERE
 
 All worker connections, including its private Unix socket `STATE/worker.sock`, use TLS 1.3. `--socket`, `--host` (an IPv4 or IPv6 literal) and `--port` (default 8765) configure listeners. The Unix listener remains for local integration tests and cannot be reached over the network; it has exactly the same mutual authentication as TCP. There is no plaintext listener. The default TCP bind is `127.0.0.1`; use an explicit routable bind for another machine. Review the [authentication boundary](design/security.md#remote-worker-boundary) before authorizing a host.
 
+## Share Nix builds
+
+Tsugumi evaluates the Card on the submitting host and publishes its derivation closure to the configured [push target](BinaryCaches.md). The remote worker checks signatures when it retrieves the derivation and any available substitutes for its build outputs. It builds missing outputs before running the Card. The default, `tsugumi-cached`, is started on demand by hostd. The worker reaches it through its existing TLS connection to hostd.
+
+Each Code Card controls whether its Nix build outputs are published. **Run History → Info** shows the build or cache source and the outcome of publishing. Card inputs, outputs and files stay on the worker execution channel.
+
 ## See which worker runs a Card
 
 Tsugumi chooses among the local environment and authorized external workers. A Card can supply a probe to rank eligible workers. [Worker selection](design/RemoteWorker.md#worker-selection) describes eligibility, scoring and time limits.

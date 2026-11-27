@@ -13,13 +13,14 @@ Tsugumi reads each project from its own `tsugumi.json`. When a required field is
 | `agentExclude` | Files and directories hidden from the Agent. Project creation writes the host's project default when it uses a host. |
 | `recordLogs` | Whether to retain invocation stdout and stderr. |
 | `recordIO` | Whether to retain structured invocation inputs and outputs. |
+| `pushOutputs` | Whether Code Cards publish their built Nix outputs by default. Defaults to `true`. |
 | `logLimitBytes` | Combined retained stdout and stderr budget per invocation. |
 | `outputLimitBytes` | Byte budget for an invocation's output directory. |
 | `outputLimitEntries` | Entry budget for an invocation's output directory. |
 | `canvas` | The `cards` and `connections` arrays. A Card entry has `id`. Each connection has `from` and `to` endpoints, each with `card` and `port`. `port` is absent on a Draft end and required on every other end. |
 | `boundary` | Optional, and only for a child project. It requires both `inputs` and `outputs` arrays, which may be empty. An entry has an outer port `name` and an inner endpoint `card` and `port`. A Draft has no ports, so it cannot be on a boundary. |
 
-Every field except `boundary` is required. Tsugumi refuses to load a root or child project whose `formatVersion` differs from the format it reads. The error reports both formats. Before v1.0, Tsugumi supplies no project migration.
+`boundary` and `pushOutputs` are optional. Tsugumi refuses to load a root or child project whose `formatVersion` differs from the format it reads. The error reports both formats. Before v1.0, Tsugumi supplies no project migration.
 
 The check is on the file format, not on the Tsugumi version. Tsugumi is designed so that the same project gives the same processing on any version, so the version that ran a project does not matter; only the format of its files does.
 
@@ -42,6 +43,7 @@ Each `definitions/<card id>/_card.json` uses the fields for its type. **R** mean
 | `buildTimeoutSeconds` | R | — | — | — | — | — |
 | `recordLogs` | R | — | — | — | — | — |
 | `recordIO` | R | R | R | — | — | — |
+| `pushOutputs` | O | — | — | — | — | — |
 | `sandbox` and `sandbox.limits` | R | — | — | — | — | — |
 | `grants.network` and `grants.gui` | R | — | — | — | — | — |
 | `grants.hostPaths` | O | — | — | — | — | — |
@@ -51,6 +53,7 @@ Each `definitions/<card id>/_card.json` uses the fields for its type. **R** mean
 - `type` is the lowercase kind name. `symbol` is the icon's symbol name, or `"none"` for the UI's own icon for the kind. Tsugumi writes `"none"` when it creates a Card. `inputs` is an array of objects with a `name` field. `maxRuns` bounds activations per run. `reuseWorker` lets the worker keep state across invocations and runs.
 - `timeoutSeconds` limits a Card call and `buildTimeoutSeconds` limits the build. A positive value is in seconds. Zero means no limit.
 - `recordLogs` and `recordIO` use `"project"` to inherit the owning project's value, `"on"` to enable recording, or `"off"` to disable it.
+- `pushOutputs` uses `"project"` to inherit the owning project's value, `"on"` to publish build outputs, or `"off"` to stop future uploads. Its default is `"project"`. Already published paths stay in the cache.
 - `sandbox` contains the four booleans `filesystem`, `pid`, `ipc` and `identity`. Its `limits` object declares `cpu` in cores (0 through 256, fractional values allowed) and `memoryMiB` in MiB (0 through 1048576). Zero means no limit for either resource.
 - `grants` contains the booleans `network` and `gui`. An optional `hostPaths` array lists grants. Each entry requires a `name` declared in the containing project and a boolean `write`. Use `false` for read-only access. The optional project `hostPaths` array contains `name` and `description`; host settings store the folder binding.
 - `systems` lists the Nix systems the Card works on, at least one and without duplicates: `"aarch64-linux"`, `"x86_64-linux"`, `"aarch64-darwin"` or `"x86_64-darwin"`. A worker whose native system is in the list builds and runs the Card natively. Any other worker builds and runs the first entry, which needs a matching emulator. Which worker runs the Card does not depend on this list.

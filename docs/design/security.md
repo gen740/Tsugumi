@@ -299,9 +299,17 @@ Most of these spell out, as practical cautions, what lies outside the boundary i
 - **A Web UI run directly on a Mac host from the repository has weaker isolation.** A Card with filesystem isolation disabled can access files with the user's permissions. A Card with network access can reach devices on the same LAN or VPN. The `tsugumi` command uses the shared VM, so this does not apply to it.
 - **Releases are signed ad hoc, without Apple's notarisation.** GitHub Actions builds them from this repository's tags (`.github/workflows/release.yml`), and requested updates are installed after their checksum, code signature and more are checked ("Updates" in [Releasing](../../RELEASING.md)). The correctness of updates rests on trusting the people who can write to this repository and its GitHub Releases.
 
+## Binary cache boundary
+
+The pull connection's public signing key grants its publisher authority over Nix store paths whose contents cannot be verified by their addresses alone. Remote workers require valid signatures for those paths and verify content-addressed paths against their recorded hashes. A cache can see store path hashes queried by builds. If a Card embeds data into its Nix definition, that data can travel in the published derivation or build closure. Invocation inputs, outputs and Card secrets stay on the execution channel.
+
+Hostd stores push credentials in its own secret store. Its settings responses carry only the presence of a credential. On remote submission, it sends a cache settings snapshot and the necessary credentials over mutually authenticated TLS. The worker uses private client configuration or the uploader's environment. The protocol traces redact credentials, and Tsugumi keeps uploader output out of invocation logs. The worker gets the same publishing authority the credentials confer. Removing its registration prevents future delivery. Revoke an external provider's credential there to remove authority already granted to that worker.
+
+The managed cache signs uploads admitted by hostd. A registered worker can upload during its job, so trust in the managed cache includes trust in those workers. Cache objects persist until a person removes them.
+
 ## Remote worker boundary
 
-A registered execution host receives the Card's inputs and derivation closure, and the values of its [Card secrets](#card-secrets) for the invocations that declare them. Choose a host trusted with those data. It builds and runs the invocation; it does not evaluate Card definitions. The worker keeps Card secret values only in memory and writes them to no journal, blob, log or store.
+A registered execution host receives the Card's inputs, accesses its derivation closure through the binary cache, and receives the values of its [Card secrets](#card-secrets) for the invocations that declare them. Choose a host trusted with those data. It builds and runs the invocation; it does not evaluate Card definitions. The worker keeps Card secret values only in memory and writes them to no journal, blob, log or store.
 
 All worker connections require TLS 1.3 and mutual Ed25519 authentication. hostd verifies the worker's complete SPKI against the registered pin before sending a request. The worker requires a client certificate and checks its SPKI against the owned `authorized_keys` file at each handshake. CA and hostname trust are replaced by these explicit pins; session resumption, tickets and early data are disabled. Removing a key refuses subsequent handshakes; an authenticated request may finish. Private keys stay with their owner and are absent from Host RPC.
 

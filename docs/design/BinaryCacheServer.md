@@ -1,6 +1,6 @@
 # Tsugumi's own binary cache server
 
-`tsugumi-cached` is a standalone Nix binary cache server. Start it explicitly and configure Nix clients with the endpoint and public signing key. See [binary cache settings](../BinaryCaches.md) for configuring substituters.
+`tsugumi-cached` is Tsugumi's default push target and can also run standalone. Hostd starts its managed instance when first requested. See [binary cache settings](../BinaryCaches.md) to configure the push target and substituters.
 
 The cache stores paths fixed by a Nix definition, such as sources, derivations and their build outputs. [Run history](../RunHistory.md) stores Card inputs and outputs.
 
@@ -34,7 +34,7 @@ STATE/
   server.socket      the --socket path, while the server listens on it
 ```
 
-The state folder defaults to `$XDG_STATE_HOME/tsugumi/cache` or `~/.local/state/tsugumi/cache` (`--state-dir` overrides it). One server owns a folder at a time.
+For standalone instances, the state folder defaults to `$XDG_STATE_HOME/tsugumi/cache` or `~/.local/state/tsugumi/cache` (`--state-dir` overrides it). One server owns a folder at a time.
 
 **Writes are atomic.** An upload is written to `uploads/` and reaches its name with one `link(2)`, after it is complete, so a name is served whole or not at all. A NAR must have the hash its name states. A narinfo is accepted only when its NAR is already present with the stated file hash and size, the decompressed NAR is one valid NAR with the stated NAR hash and size, and every reference other than itself is already in the cache under its full store path (hash and name), so a served path unpacks and its closure is always complete. A compressed narinfo or listing upload is limited while it is decompressed. A name that exists keeps its first content; nothing is replaced.
 
@@ -74,6 +74,6 @@ The default listener is `127.0.0.1:8766`; `--host` takes an IP literal and `--po
 
 ## Process boundary
 
-The server links the Nix libraries and runs independently of hostd, the
-guest supervisor and each project's core. Operators start it and maintain
-its registrations and data directory.
+The server links the Nix libraries and runs in a separate process. The managed instance listens on a loopback port and keeps its state in `binary-cache` under hostd's state directory. Hostd obtains the address and public signing key from a private readiness pipe. Closing the lifetime pipe stops the process. Its state survives hostd restarts.
+
+Hostd authorizes its own identity at the managed instance. Core requests go through the project broker. Workers use the existing authenticated submission connection to stream named cache objects through hostd. Hostd connects to the cache with mutual TLS and pins the managed server's identity. The worker uses the advertised Nix signing key to check each substitute before importing it. Operators may run their own standalone instance and manage its keys and data directory.
