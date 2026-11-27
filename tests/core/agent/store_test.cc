@@ -635,6 +635,15 @@ TEST_F(ConversationStoreTest,
   EXPECT_NO_THROW(store->Delete("conversation"));
   EXPECT_THROW(store->GetConversation("conversation"), host::Failure);
 }
+TEST(AgentPresentation, AFailedHelperMarksItsStepFailed) {
+  const auto snapshot = Snapshot(R"({"id":"s","messages":[
+    {"role":"assistant","content":[{"type":"tool_use","id":"delegate","name":"delegate","input":"{}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"delegate","content":"One helper failed."}]}],
+    "helpers":[{"call_id":"delegate","task":0,"spec":{"name":"Read"},"state":"completed","result":{"error":"Read failed"}}]})");
+  ASSERT_EQ(snapshot.rows.size(), 1u);
+  EXPECT_EQ(snapshot.rows.front()->failed, 1u);
+  EXPECT_EQ(snapshot.rows.front()->state, "failed");
+}
 TEST(AgentPresentation, GroupsRetriesAndKeepsTasksAndApprovalsAtTheirCall) {
   const auto conversation = Snapshot(R"({"id":"s","archive":[],"messages":[
     {"role":"user","content":[{"type":"text","text":"Copy the pipelines"}]},

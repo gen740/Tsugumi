@@ -300,6 +300,7 @@ auto Summarize(Rows& rows) -> void {
     if (row->kind != "step") continue;
     row->failed = row->recovered = 0;
     for (const auto& call : row->children) {
+      if (call->kind == "helper") row->failed += call->failed;
       if (call->kind != "tool" || call->name == "operation_approval") continue;
       row->failed += call->state == "failed";
       row->recovered += call->state == "recovered";
@@ -324,8 +325,6 @@ auto Summarize(Rows& rows) -> void {
       row->summary_en += " (" + std::to_string(row->recovered) +
                          " failed, then succeeded on retry)";
     }
-    for (const auto& child : row->children)
-      if (child->kind == "helper") row->failed += child->failed;
     if (row->failed) {
       row->summary_ja += "・" + std::to_string(row->failed) + " 件失敗";
       row->summary_en += "; " + std::to_string(row->failed) + " failed";
