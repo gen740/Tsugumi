@@ -11,10 +11,10 @@ Tsugumi reads each project from its own `tsugumi.json`. When a required field is
 | `nixPath` | A list of `{name, url}` declarations for Nix search paths. The matching pins live in `tsugumi.lock`. |
 | `trackedPaths` | Extra literal paths relative to the project root to keep in Tsugumi's own project versions. This setting does not change Git tracking. |
 | `agentExclude` | Files and directories hidden from the Agent. Project creation writes the host's project default when it uses a host. |
-| `recordLogs` | Whether to retain invocation stdout and stderr. |
+| `recordLogs` | Whether to retain each invocation's output (its stdout and stderr, one stream in write order). |
 | `recordIO` | Whether to retain structured invocation inputs and outputs. |
 | `pushOutputs` | Whether Code Cards publish their built Nix outputs by default. Defaults to `true`. |
-| `logLimitBytes` | Combined retained stdout and stderr budget per invocation. |
+| `logLimitBytes` | Retained output budget per invocation. |
 | `outputLimitBytes` | Byte budget for an invocation's output directory. |
 | `outputLimitEntries` | Entry budget for an invocation's output directory. |
 | `canvas` | The `cards` and `connections` arrays. A Card entry has `id`. Each connection has `from` and `to` endpoints, each with `card` and `port`. `port` is absent on a Draft end and required on every other end. |

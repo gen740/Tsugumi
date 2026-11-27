@@ -401,7 +401,7 @@ TEST_F(BrokerFixture, SharesProbeResultsAndInvalidatesMeasurements) {
     request.result->worker = "worker";
     request.result->probe = "/nix/store/probe";
     request.result->score = score;
-    request.result->stdout_text = "benchmark output\n";
+    request.result->output_text = "benchmark output\n";
     request.result->measured_at = 42;
     auto reply = Broker(std::move(request), project);
     EXPECT_NE(reply->payload.AsReply()->body.AsAck(), nullptr);
@@ -413,7 +413,7 @@ TEST_F(BrokerFixture, SharesProbeResultsAndInvalidatesMeasurements) {
   auto shared = lookup(other);
   ASSERT_TRUE(shared.result);
   EXPECT_EQ(shared.result->score.value(), 0);
-  EXPECT_EQ(shared.result->stdout_text, "benchmark output\n");
+  EXPECT_EQ(shared.result->output_text, "benchmark output\n");
   EXPECT_EQ(shared.result->measured_at, 42);
 
   worker->RestartProbeLife();

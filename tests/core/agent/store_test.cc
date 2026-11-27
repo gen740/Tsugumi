@@ -962,7 +962,7 @@ TEST(AgentPresentation,
   const auto conversation = Snapshot(R"({"id":"s","messages":[
     {"role":"assistant","content":[{"type":"tool_use","id":"run","name":"run","input":"{\"card\":{\"segments\":[\"outer\",\"a\"]}}"}]},
     {"role":"user","content":[{"type":"tool_result","tool_use_id":"run","content":"{\"reply\":\"RunAccepted\",\"value\":{\"run\":{\"run_id\":\"12\"}}}"}]},
-    {"role":"assistant","content":[{"type":"tool_use","id":"log","name":"log_range","input":"{\"run_id\":\"12\",\"card\":{\"segments\":[\"outer\",\"a\"]},\"invocation\":\"2\",\"stream\":\"standard_error\",\"offset\":\"16\"}"}]}]})");
+    {"role":"assistant","content":[{"type":"tool_use","id":"log","name":"log_range","input":"{\"run_id\":\"12\",\"card\":{\"segments\":[\"outer\",\"a\"]},\"invocation\":\"2\",\"stream\":\"output\",\"offset\":\"16\"}"}]}]})");
   ASSERT_EQ(conversation.rows.size(), 1u);
   const auto& calls = conversation.rows[0]->children;
   ASSERT_EQ(calls.size(), 2u);
@@ -974,7 +974,7 @@ TEST(AgentPresentation,
   EXPECT_NE(std::find(run_links.begin(), run_links.end(), "run:12"),
             run_links.end());
   EXPECT_NE(std::find(log_links.begin(), log_links.end(),
-                      "log:12/outer/a?invocation=2&stream=stderr&offset=16"),
+                      "log:12/outer/a?invocation=2&stream=output&offset=16"),
             log_links.end());
 }
 TEST(AgentPresentation,

@@ -15,12 +15,12 @@ namespace tsugumi::workerd {
 // Descriptors are closed unless explicitly taken by the receiver.
 struct LocalPacket {
   std::unique_ptr<Tsugumi::LocalWorker::MessageT> message;
-  std::array<int, 4> descriptors{-1, -1, -1, -1};
+  WorkerProc::Descriptors descriptors{-1, -1, -1};
   ~LocalPacket();
 };
 auto clear_spawn_secrets(Tsugumi::LocalWorker::MessageT& message) -> void;
 auto send_local(int fd, const Tsugumi::LocalWorker::MessageT& message,
-                const std::array<int, 4>* descriptors = nullptr,
+                const WorkerProc::Descriptors* descriptors = nullptr,
                 trace::Link* link = nullptr) -> void;
 auto receive_local(int fd, LocalPacket& packet, trace::Link* link = nullptr)
     -> bool;

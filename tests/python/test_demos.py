@@ -49,8 +49,8 @@ def artifact_member(client, run_id, card, member):
                       member=member, page_bytes=65536)
 
 
-def stderr(c, run_id, *card):
-    return text(c.call("LogRangeRequest", runId=run_id, card=path(*card), stream=2, limitBytes=262144).text)
+def output(c, run_id, *card):
+    return text(c.call("LogRangeRequest", runId=run_id, card=path(*card), stream=1, limitBytes=262144).text)
 
 
 def test_every_listed_demo_resolves(tmp_path):

@@ -26,7 +26,7 @@ auto serve_connection(int fd, WorkerPool& pool, size_t channel) -> void {
     if (!receive_local(fd, packet)) return;
     const auto& request = *packet.message;
     L::MessageT reply;
-    std::optional<std::array<int, 4>> descriptors;
+    std::optional<WorkerProc::Descriptors> descriptors;
     try {
       switch (request.action) {
         case L::Action::Acquire: {

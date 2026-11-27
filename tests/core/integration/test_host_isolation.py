@@ -66,7 +66,7 @@ def test_a_sandboxed_card_reaches_no_port_and_no_file_of_this_host(core_factory,
         log = log_of(c, run_id, "probe")
         record = c.call("RunRecordRequest", runId=run_id, card=path("probe")).status
         why = record.failure and text(record.failure.diagnostic)
-        assert st.state == RunState.succeeded, (why, log, log_of(c, run_id, "probe", stream=2))
+        assert st.state == RunState.succeeded, (why, log, log_of(c, run_id, "probe", stream=1))
         assert "loopback: refused" in log and not accepted, log
         assert "read: no" in log and "of this host" not in log, log
         assert "project read: no" in log, log

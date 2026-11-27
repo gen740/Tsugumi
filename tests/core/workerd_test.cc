@@ -108,17 +108,17 @@ auto path_id_test() -> void {
 auto log_test() -> void {
   InvocationLog sample(kInvocationLogLimitBytes);
   const auto build = sample.append(LogStream::build, "build");
-  const auto error = sample.append(LogStream::standard_error, "\n");
+  const auto error = sample.append(LogStream::output, "\n");
   expect(build && error, "sample entries omitted");
   const auto build_size = build->size();
   const auto error_size = error->size();
   InvocationLog maximum(build_size + error_size);
   expect(maximum.append(LogStream::build, "build").has_value(),
          "build entry omitted");
-  expect(maximum.append(LogStream::standard_error, "\n").has_value(),
+  expect(maximum.append(LogStream::output, "\n").has_value(),
          "exact fit was rejected");
   expect(!maximum.truncated(), "an exact fit was marked truncated");
-  expect(!maximum.append(LogStream::standard_error, "overflow") &&
+  expect(!maximum.append(LogStream::output, "overflow") &&
              maximum.truncated(),
          "omitted entry was not marked truncated");
   expect(!maximum.append(LogStream::journal, "journal"),
@@ -126,7 +126,7 @@ auto log_test() -> void {
 
   InvocationLog short_frame(error_size - 1);
   expect(
-      !short_frame.append(LogStream::standard_error, "\n") &&
+      !short_frame.append(LogStream::output, "\n") &&
           short_frame.truncated(),
       "budget did not account for the complete size-prefixed entry");
 
@@ -134,7 +134,7 @@ auto log_test() -> void {
   expect(combined.append(LogStream::build, "build").has_value(),
          "build entry omitted");
   expect(
-      !combined.append(LogStream::standard_error, "\n") && combined.truncated(),
+      !combined.append(LogStream::output, "\n") && combined.truncated(),
       "combined stream budget was not enforced");
 }
 auto protocol_test() -> void {

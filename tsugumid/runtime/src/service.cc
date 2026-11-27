@@ -622,18 +622,11 @@ auto Service::measure_card_probe(const RemoteTarget& target, const Node& node,
          [&] { return cancelled.load(); },
          stop.get_token(),
          [&](LogStream stream, const std::string& bytes) {
-           if (stream != LogStream::standard_output &&
-               stream != LogStream::standard_error)
-             return;
+           if (stream != LogStream::output) return;
            std::lock_guard guard(output_mutex);
-           auto& destination = stream == LogStream::standard_output
-                                   ? result.stdout_text
-                                   : result.stderr_text;
-           const auto remaining = kProbeOutputBytes -
-                                  result.stdout_text.size() -
-                                  result.stderr_text.size();
+           const auto remaining = kProbeOutputBytes - result.output_text.size();
            const auto accepted = std::min<size_t>(remaining, bytes.size());
-           destination.append(bytes, 0, accepted);
+           result.output_text.append(bytes, 0, accepted);
            truncated |= accepted < bytes.size();
          },
          {},
@@ -650,10 +643,10 @@ auto Service::measure_card_probe(const RemoteTarget& target, const Node& node,
           failure_kind_name(outcome.failure->kind));
     else if (truncated)
       result.failure = "Probe output exceeded 8192 bytes";
-    else if (const auto score = score_from_output(result.stdout_text))
+    else if (const auto score = score_from_output(result.output_text))
       result.score = *score;
     else
-      result.failure = "The last line of probe stdout must be a finite number";
+      result.failure = "The last line of probe output must be a finite number";
   } catch (const ExecutionDetached&) {
     result.failure = "Probe did not finish within the measurement time limit";
   } catch (const std::exception& error) {

@@ -52,8 +52,7 @@ def stdout_of_card(core_factory, tmp_path, body: str, *, tools: str = "", **sett
     d = core_factory(project_root=root)
     c = d.connect()
     run_id, st = run_and_wait(c, "start")
-    stderr = text(c.call("LogRangeRequest", runId=run_id, card=path("probe"), stream=2, limitBytes=65536).text)
-    assert st.state == RunState.succeeded, log_of(c, run_id, "probe") + stderr
+    assert st.state == RunState.succeeded, log_of(c, run_id, "probe")
     return log_of(c, run_id, "probe")
 
 

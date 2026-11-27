@@ -487,7 +487,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     }}, outputs="table Outputs {} root_type Outputs;", plan=mock_plan([package])).save(client)
 
 
-def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path, core_factory):
+def test_live_log_truncation_reaches_record(project, tmp_path, core_factory):
     from Tsugumi.Data.CardState import CardState
 
     daemon = core_factory(mocked_builds=True)
@@ -507,15 +507,15 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
     args = dict(runId=run_id, card=path("work"), invocation=1)
     limit = 7
     try:
-        stderr = wait_for_log(client, run_id, "work", LogStream.standard_error,
+        output = wait_for_log(client, run_id, "work", LogStream.output,
                               lambda log: log.logTruncatedAtBytes is not None)
-        assert stderr.logTruncatedAtBytes == limit and not stderr.truncated
+        assert output.logTruncatedAtBytes == limit and not output.truncated
         live = client.call("RunRecordRequest", **args).record.summary
         assert live.state == CardState.running
         assert live.logTruncatedAtBytes == limit
-        stdout = client.call("LogRangeRequest", **args, stream=LogStream.standard_output, tail=True)
+        stdout = client.call("LogRangeRequest", **args, stream=LogStream.output, tail=True)
         assert stdout.sizeBytes == limit and text(stdout.text) == "1234567"
-        live_stdout = client.call("LogRangeRequest", **args, stream=LogStream.standard_output, tail=True, live=True)
+        live_stdout = client.call("LogRangeRequest", **args, stream=LogStream.output, tail=True, live=True)
         assert text(live_stdout.text) == "1234567890" and live_stdout.logTruncatedAtBytes is None
     finally:
         release.touch()
@@ -554,7 +554,7 @@ def test_recording_switch_and_zero_limit_leave_live_output(project, tmp_path, co
                 changes=[change("SetProject", json=json.dumps(dict(config, recordLogs=project_logs,
                                                                    logLimitBytes=limit)))])
     run_id = start_run(client, "work", propagate=False)
-    args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.standard_output)
+    args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.output)
     try:
         gate.wait()
         client.wait_notification(lambda n: n.valueType == NotificationPayload.LogAvailable and
@@ -563,10 +563,27 @@ def test_recording_switch_and_zero_limit_leave_live_output(project, tmp_path, co
     finally:
         gate.release()
     assert wait_run(client, run_id).state == RunState.failed
-    assert text(client.call("LogRangeRequest", **args).text).strip() == recorded
+    # The failure's diagnostic follows the Card's own output.
+    assert text(client.call("LogRangeRequest", **args).text).split("\ntsugumi:")[0].strip() == recorded
     record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
     assert "record the failure summary" in text(record.summary.failure.diagnostic)
     assert record.summary.durationMs is not None and not record.outputs
+
+
+def test_stdout_and_stderr_are_one_output_stream_in_write_order(project, tmp_path, core_factory):
+    """A Card's stdout and stderr share one pipe: the log keeps the order it wrote in."""
+    client = core_factory(mocked_builds=True).connect()
+    save_logging_card(client, project, tmp_path, """
+        for (int i = 0; i < 6; ++i) {
+            FILE* to = i % 2 ? stderr : stdout;
+            fprintf(to, "%s %d\\n", i % 2 ? "err" : "out", i);
+            fflush(to);
+        }
+    """)
+    run_id = start_run(client, "work", propagate=False)
+    assert wait_run(client, run_id).state == RunState.succeeded
+    log = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1, stream=LogStream.output)
+    assert text(log.text) == "out 0\nerr 1\nout 2\nerr 3\nout 4\nerr 5\n"
 
 
 def test_terminal_update_after_a_carriage_return_in_an_earlier_append(project, tmp_path, core_factory):
@@ -582,12 +599,12 @@ def test_terminal_update_after_a_carriage_return_in_an_earlier_append(project, t
         fputs("雪Y", stdout);
     """)
     run_id = start_run(client, "work", propagate=False)
-    args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.standard_output)
-    wait_for_log(client, run_id, "work", LogStream.standard_output, lambda page: page.sizeBytes == 12)
+    args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.output)
+    wait_for_log(client, run_id, "work", LogStream.output, lambda page: page.sizeBytes == 12)
     initial = client.call("LogRangeRequest", **args, terminal=True, tail=True)
     assert text(initial.text) == "first\nabcdef"
     enter.touch()
-    wait_for_log(client, run_id, "work", LogStream.standard_output, lambda page: page.sizeBytes == 13)
+    wait_for_log(client, run_id, "work", LogStream.output, lambda page: page.sizeBytes == 13)
     cursor = client.call("LogRangeRequest", **args, terminal=True, offset=initial.nextOffset,
                          terminalSince=initial.rawSizeBytes)
     assert not cursor.reset and cursor.nextOffset == initial.nextOffset
@@ -615,7 +632,7 @@ def test_card_log_ui_page_sizes(project, core_factory, tmp_path):
     """)
     run_id = start_run(client, "work", propagate=False)
     assert wait_run(client, run_id).state == RunState.succeeded
-    args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.standard_output)
+    args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.output)
 
     tail = client.call("LogRangeRequest", **args, tail=True, limitBytes=tail_limit)
     # The nominal tail offset lands inside the last character of the prefix.
@@ -646,7 +663,7 @@ def test_card_log_ui_page_sizes(project, core_factory, tmp_path):
     assert start.text + reverse.text + tail.text == expected
 
     for scope in ({}, {"card": path("work")}, {"card": path("work"), "invocation": 1}):
-        last = client.call("LogRangeRequest", runId=run_id, stream=LogStream.standard_output,
+        last = client.call("LogRangeRequest", runId=run_id, stream=LogStream.output,
                            offset=len(expected) - len(b"end\n"), **scope)
         assert last.lineNumber == 3 and last.startsLine and last.text == b"end\n"
 
@@ -672,11 +689,11 @@ def test_run_logs_and_history(project, tmp_path, core_factory):
     rec = c.call("RunRecordRequest", runId=run_id, card=shown)
     assert rec.exists and rec.recordingDisabled is True
     # Read the stdout log in small chunks; never split a character.
-    whole = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.standard_output, limitBytes=262144)
+    whole = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.output, limitBytes=262144)
     assert text(whole.text) == message + "\n"
     pieces, off = [], 0
     while True:
-        s = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.standard_output,
+        s = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.output,
                    offset=off, limitBytes=7)
         pieces.append(text(s.text))
         if s.nextOffset == off:
@@ -685,14 +702,14 @@ def test_run_logs_and_history(project, tmp_path, core_factory):
         if off >= s.sizeBytes:
             break
     assert "".join(pieces) == text(whole.text)
-    tail = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.standard_output, tail=True, limitBytes=10)
+    tail = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.output, tail=True, limitBytes=10)
     assert text(whole.text).endswith(text(tail.text)) and tail.truncated
     inside = text(whole.text).encode().index("日".encode()) + 1  # inside a 3-byte character
     with pytest.raises(RpcFailure) as e:
-        c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.standard_output, offset=inside)
+        c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.output, offset=inside)
     assert e.value.kind == "invalid_range"
     with pytest.raises(RpcFailure):
-        c.call("LogRangeRequest", runId=run_id, stream=LogStream.standard_output, tail=True, offset=3)
+        c.call("LogRangeRequest", runId=run_id, stream=LogStream.output, tail=True, offset=3)
     journal = c.call("LogRangeRequest", runId=run_id, stream=LogStream.journal)
     assert text(journal.text)
     history = c.call("RunHistoryRequest")

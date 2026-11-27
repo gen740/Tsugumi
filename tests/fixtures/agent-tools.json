@@ -402,8 +402,7 @@
           "type": "string",
           "enum": [
             "unspecified",
-            "standard_output",
-            "standard_error",
+            "output",
             "journal",
             "build"
           ]

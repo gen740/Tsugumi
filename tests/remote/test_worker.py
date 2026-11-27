@@ -311,7 +311,7 @@ def test_rejects_unsafe_options_before_listening(tmp_path):
 
 
 def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(),
-              output_budget=None):
+              output_budget=None, build_script=""):
     nix_directory = os.environ.get("TSUGUMI_NIX_DIR")
     if not nix_directory:
         pytest.skip("needs the installed worker build sources")
@@ -320,7 +320,7 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(),
       let
         pkgs = import (builtins.getFlake (toString ./.)).inputs.nixpkgs { inherit system; };
         worker = import (nixDirectory + "/worker/worker.nix") { inherit pkgs; };
-        card = """ + card_package(body) + """;
+        card = """ + card_package(body, build_script=build_script) + """;
       in pkgs.writeTextFile {
         name = "remote-card-plan";
         allowSubstitutes = true;
@@ -515,6 +515,131 @@ def test_builds_instead_of_using_an_output_signed_by_an_untrusted_cache_key(work
     assert any(output in line and "not signed" in line for _, line in build_log)
 
 
+def job_status(peer, job, **query):
+    reply = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(**query), job=job)
+    assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
+    return reply.body
+
+
+def wait_status(peer, job, predicate, timeout=300):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status = job_status(peer, job)
+        if predicate(status):
+            return status
+        assert status.state in (R.JobState.Queued, R.JobState.Running), vars(status)
+        time.sleep(0.05)
+    raise AssertionError((peer.root / "worker.log").read_text())
+
+
+def result_logs(peer, job, record):
+    def blob(digest):
+        response = peer.call(R.RequestBody.GetBlobRequest, R.GetBlobRequestT(digest=digest), job=job)
+        assert response.bodyType == R.ReplyBody.BlobChunk
+        return bytes(response.body.bytes)
+
+    manifest = R.ResultManifestT.InitFromPackedBuf(blob(R.string(record.result)))
+    files = {R.string(file.path): R.string(file.sha256) for file in manifest.outputs}
+    return list(R.read_logs(blob(files["logs"])))
+
+
+def test_card_stdout_and_stderr_are_one_output_stream_in_write_order(worker):
+    job = "b" * 64
+    spec = card_spec(worker, job, r"""
+        for (int i = 0; i < 6; ++i) {
+            FILE* to = i % 2 ? stderr : stdout;
+            std::fprintf(to, "%s %d\n", i % 2 ? "err" : "out", i);
+            std::fflush(to);
+        }
+    """)
+    reply = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
+    assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
+    record = worker.wait_state(job, R.JobState.Succeeded)
+    logs = result_logs(worker, job, record)
+    assert {stream for stream, _ in logs} <= {LogStream.output, LogStream.build}
+    output = "".join(text for stream, text in logs if stream == LogStream.output)
+    assert output == "out 0\nerr 1\nout 2\nerr 3\nout 4\nerr 5\n"
+
+
+def test_invocation_waiting_for_the_store_reports_it_until_it_holds_it(worker):
+    job = "d" * 64
+    spec = card_spec(worker, job, 'std::puts("after the wait");')
+    # Another holder of the worker's Nix store, as another invocation would be.
+    lock = os.open(worker.state / "store" / "realise.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        reply = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
+        assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
+        waiting = wait_status(worker, job, lambda s: s.state == R.JobState.Running and
+                              s.activity == R.JobActivity.StoreWait)
+        assert not waiting.activityDetail
+        time.sleep(1)
+        assert job_status(worker, job).activity == R.JobActivity.StoreWait
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        os.close(lock)
+    wait_status(worker, job, lambda s: s.state != R.JobState.Running or
+                s.activity != R.JobActivity.StoreWait)
+    worker.wait_state(job, R.JobState.Succeeded)
+
+
+def complete_log_entries(buffer):
+    """The entries at the start of a log slice that are already complete."""
+    offset, entries = 0, []
+    while offset + 4 <= len(buffer):
+        size, = struct.unpack_from("<I", buffer, offset)
+        if offset + 4 + size > len(buffer):
+            break
+        entries += R.read_logs(buffer[offset:offset + 4 + size])
+        offset += 4 + size
+    return entries
+
+
+def test_worker_nix_build_log_reaches_the_job_log_while_it_builds(worker):
+    job = "e" * 64
+    spec = card_spec(worker, job, 'std::puts("built");',
+                     build_script="echo remote-build-marker; sleep 20")
+    reply = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
+    assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
+    received = b""
+    deadline = time.monotonic() + 300
+    while True:
+        assert time.monotonic() < deadline, (worker.root / "worker.log").read_text()
+        status = job_status(worker, job, logOffset=len(received), logLimit=1 << 18)
+        received += bytes(status.logBytes or b"")
+        entries = complete_log_entries(received)
+        if any(stream == LogStream.build and "remote-build-marker" in text for stream, text in entries):
+            break
+        assert status.state in (R.JobState.Queued, R.JobState.Running), vars(status)
+        time.sleep(0.1)
+    # The marker arrived while the derivation was still building.
+    assert status.state == R.JobState.Running
+    assert status.activity == R.JobActivity.Building and "native-card" in R.string(status.activityDetail)
+    assert any("native-card" in R.string(name) for name in status.building)
+    worker.wait_state(job, R.JobState.Succeeded)
+
+
+def test_silent_cpu_bound_step_reports_growing_cpu_time(worker):
+    job = "f" * 64
+    spec = card_spec(worker, job, r"""
+        // Computes for about eight seconds and prints nothing.
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+        volatile unsigned long spin = 0;
+        while (std::chrono::steady_clock::now() < until) ++spin;
+    """)
+    reply = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
+    assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
+    first = wait_status(worker, job, lambda s: s.state == R.JobState.Running and
+                        s.activity == R.JobActivity.Card and s.cpuMs is not None)
+    time.sleep(4)
+    later = job_status(worker, job)
+    assert later.state == R.JobState.Running and later.activity == R.JobActivity.Card
+    # Sampled every two seconds: the busy Card added at least two of the four.
+    assert later.cpuMs - first.cpuMs >= 2000, (first.cpuMs, later.cpuMs)
+    record = worker.wait_state(job, R.JobState.Succeeded)
+    assert not [text for stream, text in result_logs(worker, job, record) if stream == LogStream.output]
+
+
 def test_global_cap_reconnects_within_one_core_life_and_enforces_call_budget(tmp_path):
     binary = os.environ.get("TSUGUMI_REMOTE_TEST_RAW_WORKER")
     if not binary:
@@ -612,7 +737,7 @@ read -r line < "$TEST_GATE"
         files = {R.string(file.path): R.string(file.sha256) for file in manifest.outputs}
         assert R.ResultEnvironmentT.InitFromPackedBuf(result_bytes(files["environment"])).built
         logs = R.read_logs(result_bytes(files["logs"]))
-        assert any(stream == LogStream.standard_output and text.strip() == "deadline-card-started"
+        assert any(stream == LogStream.output and text.strip() == "deadline-card-started"
                    for stream, text in logs)
         result = WorkerMessageT.InitFromPackedBuf(result_bytes(R.string(manifest.invocationResultSha256)))
         assert result.valueType == WorkerPayload.WorkerFailure
@@ -924,8 +1049,8 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
     gate = tmp_path / "hold"
     os.mkfifo(gate)
     launcher = tools / "unshare"
-    entry = R.log_entries((LogStream.standard_output, "live entry\n"))
-    later = R.log_entries((LogStream.standard_error, "after restart\n"))
+    entry = R.log_entries((LogStream.output, "live entry\n"))
+    later = R.log_entries((LogStream.build, "after restart\n"))
     entry_file = tmp_path / "entry"
     entry_file.write_bytes(entry)
 

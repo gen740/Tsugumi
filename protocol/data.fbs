@@ -77,7 +77,7 @@ table WorkerProbeResult {
   score:double = null;
   failure:string;
   unavailable_reason:string;
-  stdout_text:string;
-  stderr_text:string;
+  /// What the probe wrote to stdout and stderr, in write order.
+  output_text:string;
   measured_at:long;
 }

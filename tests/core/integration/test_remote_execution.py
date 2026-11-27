@@ -383,7 +383,7 @@ def check_success(client, run_id, name, system):
     received, = record.inputs
     sent, = record.outputs
     assert bytes(sent.inlineBytes) == bytes(received.inlineBytes)
-    logs = client.call("LogRangeRequest", runId=run_id, card=path(name), invocation=1, stream=LogStream.standard_output)
+    logs = client.call("LogRangeRequest", runId=run_id, card=path(name), invocation=1, stream=LogStream.output)
     assert text(logs.text) == "remote-card-stdout\n"
     environments = client.call("RunEnvironmentsRequest", runId=run_id).environments
     assert environments and text(environments[0].system) == system
@@ -705,7 +705,7 @@ def run(input):
     assert cancelled.executionState == RemoteExecutionState.cancelled
     assert text(cancelled.executionJobId) == text(running.executionJobId)
     log = client.call("LogRangeRequest", runId=run_id, card=path("fails"),
-                      invocation=failed.invocation, stream=LogStream.standard_error)
+                      invocation=failed.invocation, stream=LogStream.output)
     assert "expected-batch-member-failure" in text(log.text)
     downstream = client.call("RunInvocationsRequest", runId=run_id, card=path("collect"))
     blocked, = downstream.records
@@ -803,7 +803,7 @@ def test_remote_card_receives_its_secret_and_no_file_keeps_it(secret_project, pr
     assert summary.executionState == RemoteExecutionState.succeeded
     assert text(summary.executionService) == "remote-test"
     assert [text(name) for name in summary.secrets] == ["database_password"]
-    assert log(client, run_id, "use", LogStream.standard_output) == "remote-card-ran\n"
+    assert log(client, run_id, "use", LogStream.output) == "remote-card-ran\n"
     derivations = [text(e.derivation) for e in client.call("RunEnvironmentsRequest", runId=run_id).environments]
     assert derivations
     core.stop()
@@ -882,6 +882,6 @@ def test_remote_worker_restart_before_the_card_starts_fails_the_job(secret_proje
     invocation, = client.call("RunInvocationsRequest", runId=run_id, card=path("use")).records
     assert "restarted before the Card started" in text(invocation.failure.diagnostic), \
         text(invocation.failure.diagnostic)
-    assert "remote-card-ran" not in log(client, run_id, "use", LogStream.standard_output)
+    assert "remote-card-ran" not in log(client, run_id, "use", LogStream.output)
     core.stop()
     assert not secret_leaks(tmp_path, core, host)

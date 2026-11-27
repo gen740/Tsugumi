@@ -4,22 +4,27 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <optional>
 #include <span>
+#include <sstream>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include "display_channel.hh"
 #include "nix_store.hh"
@@ -143,6 +148,149 @@ auto exchange_cache_file(CacheRelay::Method method, const std::string& path,
   }
   return true;
 }
+
+// CPU time of this process and every process below it, in milliseconds:
+// the Nix builds and the Card's process included. Reaped children count
+// through RUSAGE_CHILDREN; running ones and what they reaped through /proc.
+auto tree_cpu_ms() -> uint64_t {
+  const auto ms = [](const timeval& t) {
+    return static_cast<uint64_t>(t.tv_sec) * 1000 +
+           static_cast<uint64_t>(t.tv_usec) / 1000;
+  };
+  rusage self{}, children{};
+  ::getrusage(RUSAGE_SELF, &self);
+  ::getrusage(RUSAGE_CHILDREN, &children);
+  uint64_t total = ms(self.ru_utime) + ms(self.ru_stime) +
+                   ms(children.ru_utime) + ms(children.ru_stime);
+#ifdef __linux__
+  std::map<pid_t, std::vector<pid_t>> below;
+  std::map<pid_t, uint64_t> ticks;
+  std::error_code ec;
+  for (const auto& entry : stdfs::directory_iterator("/proc", ec)) {
+    const auto name = entry.path().filename().string();
+    if (name.empty() || !std::ranges::all_of(name, ::isdigit)) continue;
+    std::ifstream file(entry.path() / "stat");
+    std::string line;
+    if (!std::getline(file, line)) continue;
+    // After "pid (comm)": state ppid ... utime stime cutime cstime are
+    // fields 3, 4 and 14-17 of the line.
+    const auto close = line.rfind(')');
+    if (close == line.npos) continue;
+    std::istringstream rest(line.substr(close + 1));
+    std::vector<std::string> fields{std::istream_iterator<std::string>(rest),
+                                    std::istream_iterator<std::string>()};
+    if (fields.size() < 15) continue;
+    try {
+      const auto pid = static_cast<pid_t>(std::stol(name));
+      below[static_cast<pid_t>(std::stol(fields[1]))].push_back(pid);
+      ticks[pid] = std::stoull(fields[11]) + std::stoull(fields[12]) +
+                   std::stoull(fields[13]) + std::stoull(fields[14]);
+    } catch (const std::exception&) {
+    }
+  }
+  const auto per_second = static_cast<uint64_t>(::sysconf(_SC_CLK_TCK));
+  std::vector<pid_t> todo = below[::getpid()];
+  uint64_t descendants = 0;
+  while (!todo.empty() && per_second) {
+    const auto pid = todo.back();
+    todo.pop_back();
+    descendants += ticks[pid];
+    const auto& next = below[pid];
+    todo.insert(todo.end(), next.begin(), next.end());
+  }
+  if (per_second) total += descendants * 1000 / per_second;
+#endif
+  return total;
+}
+
+// Writes what the job is doing to work/activity for its status replies, and
+// every few seconds the CPU time its process tree has used. Builds may
+// overlap: the latest one still running names the activity.
+class JobActivityFile {
+ public:
+  explicit JobActivityFile(stdfs::path path) : path_(std::move(path)) {
+    sampler_ = std::jthread([this](std::stop_token stop) {
+      std::mutex wait;
+      std::condition_variable_any tick;
+      while (!stop.stop_requested()) {
+        const auto cpu = tree_cpu_ms();
+        {
+          std::lock_guard lock(mutex_);
+          cpu_ms_ = cpu;
+          write();
+        }
+        std::unique_lock lock(wait);
+        tick.wait_for(lock, stop, std::chrono::seconds(2), [] { return false; });
+      }
+    });
+  }
+
+  auto set(remote::RW::JobActivity activity, std::string detail = {})
+      -> void {
+    std::lock_guard lock(mutex_);
+    activity_ = activity;
+    detail_ = std::move(detail);
+    write();
+  }
+  auto build(const std::string& drv, bool active) -> void {
+    std::lock_guard lock(mutex_);
+    const auto name = store_name(drv);
+    if (active) {
+      builds_.push_back(name);
+    } else if (const auto found = std::ranges::find(builds_, name);
+               found != builds_.end()) {
+      builds_.erase(found);
+    }
+    activity_ = builds_.empty() ? remote::RW::JobActivity::Preparing
+                                : remote::RW::JobActivity::Building;
+    detail_ = builds_.empty() ? std::string{} : builds_.back();
+    write();
+  }
+  auto substitute(const std::string& path) -> void {
+    std::lock_guard lock(mutex_);
+    if (!builds_.empty()) return;
+    activity_ = remote::RW::JobActivity::Substituting;
+    detail_ = store_name(path);
+    write();
+  }
+
+ private:
+  // /nix/store/<hash>-<name>[.drv] -> <name>
+  static auto store_name(std::string_view path) -> std::string {
+    if (const auto slash = path.rfind('/'); slash != path.npos)
+      path.remove_prefix(slash + 1);
+    if (const auto dash = path.find('-'); dash != path.npos)
+      path.remove_prefix(dash + 1);
+    if (path.ends_with(".drv")) path.remove_suffix(4);
+    return std::string(path.substr(0, 256));
+  }
+  // Status only, replaced in place: no fsync, and a failure leaves the
+  // previous state.
+  auto write() -> void {
+    remote::RW::JobProgressT progress;
+    progress.activity = activity_;
+    progress.detail = detail_;
+    progress.building = builds_;
+    progress.cpu_ms = cpu_ms_;
+    const auto bytes = remote::encode<remote::RW::JobProgress>(progress);
+    auto temporary = path_;
+    temporary += ".next";
+    {
+      std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+      file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+      if (!file) return;
+    }
+    std::error_code ec;
+    stdfs::rename(temporary, path_, ec);
+  }
+  stdfs::path path_;
+  std::mutex mutex_;
+  remote::RW::JobActivity activity_ = remote::RW::JobActivity::Unspecified;
+  std::string detail_;
+  std::vector<std::string> builds_;
+  std::optional<uint64_t> cpu_ms_;
+  std::jthread sampler_;
+};
 
 // Reads the job's Card secrets from the listener's pipe once the environment
 // is built and nothing but the Card's process remains to start. The values
@@ -642,6 +790,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
       if (fd >= 0) ::close(fd);
     }
   };
+  JobActivityFile activity(directory / workerd::kActivity);
   WorkerStoreResult environment;
   InvocationResult outcome;
   // Only definition data enter this persistent private Nix store. Invocation
@@ -669,10 +818,17 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
           [&](const std::string& line) {
             if (!job->card_probe) log(LogStream::build, line);
           },
-          job->build_timeout_ms);
+          job->build_timeout_ms,
+          {[&] { activity.set(remote::RW::JobActivity::StoreWait); },
+           [&] { activity.set(remote::RW::JobActivity::Preparing); },
+           [&](const std::string& drv, bool active) {
+             activity.build(drv, active);
+           },
+           [&](const std::string& path) { activity.substitute(path); }});
     }
     auto secrets =
         job->secrets.empty() ? Secrets{} : receive_secrets(directory, *job);
+    activity.set(remote::RW::JobActivity::Card);
     outcome = run_worker(*call, *job, invocation, blobs, directory, store,
                          group, environment, log, std::move(secrets));
   } catch (const Failed& error) {

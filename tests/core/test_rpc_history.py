@@ -160,7 +160,7 @@ def test_live_log_is_bounded_when_recording_is_disabled(core_factory, project, t
     try:
         deadline = time.monotonic() + 40
         location = dict(runId=run_id, card=path("work"), invocation=1,
-                        stream=LogStream.standard_output, limitBytes=1024)
+                        stream=LogStream.output, limitBytes=1024)
         while True:
             live = client.call("LogRangeRequest", live=True, **location)
             assert (live.sizeBytes or 0) <= limit

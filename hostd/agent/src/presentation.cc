@@ -209,12 +209,7 @@ auto Links(A::ChatRowT& row, const json::Members& value) -> void {
     if (row.name == "log_range") {
       const auto card = CardReference(json::Get(value, "card"));
       auto stream = json::Text(value, "stream");
-      if (stream == "standard_output")
-        stream = "stdout";
-      else if (stream == "standard_error")
-        stream = "stderr";
-      if (stream == "stdout" || stream == "stderr" || stream == "journal" ||
-          stream == "build") {
+      if (stream == "output" || stream == "journal" || stream == "build") {
         const auto invocation = Number(json::Get(value, "invocation"));
         const auto query =
             invocation ? "invocation=" + std::to_string(invocation) + "&" : "";

@@ -38,6 +38,25 @@ auto remote_execution_state(std::string_view state) -> RemoteExecutionState {
   throw BrokerDisconnected("execution gateway returned an unknown job state");
 }
 
+auto execution_activity(const RemoteJobState& reply) -> ExecutionActivity {
+  using A = Tsugumi::RemoteWorker::JobActivity;
+  if (reply.state != "running") return ExecutionActivity::unspecified;
+  switch (reply.activity) {
+    case A::StoreWait:
+      return ExecutionActivity::waiting_store;
+    case A::Preparing:
+      return ExecutionActivity::preparing;
+    case A::Building:
+      return ExecutionActivity::building;
+    case A::Substituting:
+      return ExecutionActivity::substituting;
+    case A::Card:
+      return ExecutionActivity::running;
+    default:
+      return ExecutionActivity::unspecified;
+  }
+}
+
 // Records a remote job's log while it runs. The cursor counts the bytes
 // received, so reconnects and listener restarts within one core life continue
 // where they stopped and never repeat an entry. A trailing partial entry waits
@@ -429,6 +448,10 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
   std::condition_variable_any next_status;
   while (!request.detach.stop_requested()) {
     const auto before = s.execution_state;
+    const auto activity_before = s.execution_activity;
+    const auto detail_before = s.execution_activity_detail;
+    const auto cpu_before = s.cpu_ms;
+    const auto building_before = s.building.size();
     job.cancel_requested |= request.cancel_requested();
     const auto stop = job.cancel_requested ? request.detach : request.stop;
     std::optional<RemoteJobState> reply;
@@ -495,6 +518,27 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
                                 service_.resolve_artifact(*id), stop);
       }
       s.execution_state = remote_execution_state(reply->state);
+      s.execution_activity = execution_activity(*reply);
+      s.execution_activity_detail =
+          s.execution_activity == ExecutionActivity::unspecified
+              ? std::string{}
+              : reply->activity_detail.substr(0, 256);
+      if (reply->state == "running") {
+        s.cpu_ms = reply->cpu_ms;
+        // Keep when each derivation started, as the core saw it start.
+        std::vector<BuildActivityData> building;
+        for (const auto& name : reply->building) {
+          if (building.size() == 64) break;
+          const auto found =
+              std::ranges::find(s.building, name, &BuildActivityData::derivation);
+          building.push_back(found != s.building.end()
+                                 ? *found
+                                 : BuildActivityData{name.substr(0, 256), now_ms()});
+        }
+        s.building = std::move(building);
+      } else {
+        s.building.clear();
+      }
       if (request.transfer && !reply->transfer_name.empty())
         request.transfer("copy", reply->transfer_name, reply->transfer_done,
                          reply->transfer_total);
@@ -535,7 +579,11 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       } catch (const std::exception&) {
       }
     }
-    if (s.execution_state != before) request.publish();
+    if (s.execution_state != before ||
+        s.execution_activity != activity_before ||
+        s.execution_activity_detail != detail_before || s.cpu_ms != cpu_before ||
+        s.building.size() != building_before)
+      request.publish();
     if (reply && reply->state == "succeeded") {
       // A stopped job keeps its workspace until release: collect the rest
       // of its log first. Each poll is a bounded exchange that advances the

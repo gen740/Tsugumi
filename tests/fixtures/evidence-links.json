@@ -28,7 +28,7 @@
     "invocation": "2"
   },
   {
-    "href": "log:12/spectrum?invocation=2&stream=stderr&offset=128",
+    "href": "log:12/spectrum?invocation=2&stream=output&offset=128",
     "kind": "log",
     "card": [
       "spectrum"

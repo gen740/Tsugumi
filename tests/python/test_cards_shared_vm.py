@@ -112,8 +112,8 @@ def test_artifacts_cross_virtiofs_with_read_only_grants(tmp_path):
                 text(status.failure.diagnostic) if status.failure else None,
                 log(client, run_id, "source", LogStream.build),
                 log(client, run_id, "show", LogStream.build),
-                log(client, run_id, "source", LogStream.standard_error),
-                log(client, run_id, "show", LogStream.standard_error),
+                log(client, run_id, "source", LogStream.output),
+                log(client, run_id, "show", LogStream.output),
             )
             value = read_output(client, run_id, card="show")
             assert decode_scalar(value, "uint64") == len("shared VM")

@@ -71,8 +71,7 @@ auto import_logs(const stdfs::path& path, const RemoteLogPrefix& recorded,
   const auto rest = std::string_view(bytes).substr(recorded.bytes);
   const auto used = remote::decode_log_entries(
       rest, [&](LogStream kind, std::string text, std::string_view) {
-        if (kind == LogStream::standard_output ||
-            kind == LogStream::standard_error) {
+        if (kind == LogStream::output) {
           if (sink) sink(kind, text);
         } else if (auxiliary_budget.append(kind, text)) {
           result.auxiliary_logs.emplace_back(kind, std::move(text));

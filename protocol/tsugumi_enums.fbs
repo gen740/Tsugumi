@@ -32,9 +32,16 @@ enum Phase : ubyte { unspecified = 0, evaluate = 1, build = 2, execute = 3, vali
 /// build/worker kept from an earlier invocation of the same run).
 enum StageOutcome : ubyte { unspecified = 0, running = 1, done = 2, cached = 3, reused = 4, failed = 5, cancelled = 6 }
 
-/// build: what schema preparation, Nix evaluation and build printed (kept apart
-/// from the Card's own stderr so logs can be shown by stage).
-enum LogStream : ubyte { unspecified = 0, standard_output = 1, standard_error = 2, journal = 3, build = 4 }
+/// What a remote execution is doing while its job runs on the worker:
+/// waiting_store waits for the worker's Nix store, which another invocation
+/// holds; preparing imports or checks the closure; building and substituting
+/// build or fetch a derivation (named beside it); running runs the Card.
+enum ExecutionActivity : ubyte { unspecified = 0, waiting_store = 1, preparing = 2, building = 3, substituting = 4, running = 5 }
+
+/// output: what the Card's process wrote to stdout and stderr, as one stream in
+/// write order. build: what schema preparation, Nix evaluation and build
+/// printed (kept apart from the Card's output so logs can be shown by stage).
+enum LogStream : ubyte { unspecified = 0, output = 1, journal = 2, build = 3 }
 
 enum ValueSide : ubyte { unspecified = 0, input = 1, output = 2 }
 

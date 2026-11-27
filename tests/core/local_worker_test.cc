@@ -27,10 +27,10 @@ struct SocketPair {
   }
 };
 
-TEST(LocalWorker, HandsOverFourChannelsWithoutRelayingTheirBytes) {
+TEST(LocalWorker, HandsOverThreeChannelsWithoutRelayingTheirBytes) {
   SocketPair broker;
-  std::array<SocketPair, 4> channels;
-  std::array<int, 4> descriptors;
+  std::array<SocketPair, 3> channels;
+  WorkerProc::Descriptors descriptors;
   for (size_t i = 0; i < channels.size(); ++i)
     descriptors[i] = channels[i].fd[0];
   Tsugumi::LocalWorker::MessageT message;
@@ -67,12 +67,12 @@ TEST(LocalWorker, EmptyControlMessagesNeedNoDescriptors) {
   LocalPacket packet;
   ASSERT_TRUE(receive_local(broker.fd[1], packet));
   EXPECT_EQ(packet.message->action, Tsugumi::LocalWorker::Action::Clear);
-  EXPECT_EQ(packet.descriptors, (std::array<int, 4>{-1, -1, -1, -1}));
+  EXPECT_EQ(packet.descriptors, (WorkerProc::Descriptors{-1, -1, -1}));
 }
 
 TEST(LocalWorker, ExceptionalBorrowerExitReturnsTheLeaseAfterClosingChannels) {
-  std::array<SocketPair, 4> channels;
-  std::array<int, 4> descriptors;
+  std::array<SocketPair, 3> channels;
+  WorkerProc::Descriptors descriptors;
   for (size_t i = 0; i < channels.size(); ++i) {
     descriptors[i] = ::dup(channels[i].fd[0]);
     ASSERT_GE(descriptors[i], 0);
@@ -99,8 +99,8 @@ TEST(LocalWorker, ExceptionalBorrowerExitReturnsTheLeaseAfterClosingChannels) {
 }
 
 TEST(LocalWorker, DisconnectPreservesTheOutcomeWhenTerminationFails) {
-  std::array<SocketPair, 4> channels;
-  std::array<int, 4> descriptors;
+  std::array<SocketPair, 3> channels;
+  WorkerProc::Descriptors descriptors;
   for (size_t i = 0; i < channels.size(); ++i) {
     descriptors[i] = ::dup(channels[i].fd[0]);
     ASSERT_GE(descriptors[i], 0);
@@ -134,8 +134,8 @@ TEST(LocalWorker, DisconnectPreservesTheOutcomeWhenTerminationFails) {
 
 TEST(LocalWorker, StopRequestWakesACallWithoutADeadline) {
   namespace W = Tsugumi::Worker;
-  std::array<SocketPair, 4> channels;
-  std::array<int, 4> descriptors;
+  std::array<SocketPair, 3> channels;
+  WorkerProc::Descriptors descriptors;
   for (size_t i = 0; i < channels.size(); ++i) {
     descriptors[i] = ::dup(channels[i].fd[0]);
     ASSERT_GE(descriptors[i], 0);
@@ -184,8 +184,8 @@ TEST(LocalWorker, StopRequestWakesACallWithoutADeadline) {
 
 TEST(LocalWorker, DiscardsStaleRepliesAndRelaysViewsWhileIdle) {
   namespace W = Tsugumi::Worker;
-  std::array<SocketPair, 4> channels;
-  std::array<int, 4> descriptors;
+  std::array<SocketPair, 3> channels;
+  WorkerProc::Descriptors descriptors;
   for (size_t i = 0; i < channels.size(); ++i) {
     descriptors[i] = ::dup(channels[i].fd[0]);
     ASSERT_GE(descriptors[i], 0);

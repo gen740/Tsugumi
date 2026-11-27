@@ -142,6 +142,9 @@ Off<R::RunStatus> run_status(FBB& b, const RunStatusData& s,
                                                 since(a.start)));
     auto bv = b.CreateVector(building);
     auto card = path(b, inv.card);
+    const auto detail = inv.execution_activity_detail.empty()
+                            ? Off<flatbuffers::String>()
+                            : b.CreateString(inv.execution_activity_detail);
     R::ActiveInvocationBuilder ab(b);
     ab.add_card(card);
     ab.add_invocation(inv.invocation);
@@ -150,6 +153,10 @@ Off<R::RunStatus> run_status(FBB& b, const RunStatusData& s,
       ab.add_stage_elapsed_ms(since(inv.stages.back().start));
     }
     ab.add_building(bv);
+    ab.add_execution_activity(inv.execution_activity);
+    if (!detail.IsNull()) ab.add_execution_activity_detail(detail);
+    if (inv.cpu_ms) ab.add_cpu_ms(*inv.cpu_ms);
+    if (inv.last_output_at) ab.add_output_idle_ms(since(*inv.last_output_at));
     cards.push_back(ab.Finish());
   }
   auto av = active.empty()
@@ -242,6 +249,10 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
                      ? Off<flatbuffers::Vector<Off<flatbuffers::String>>>()
                      : b.CreateVector(secret_names);
   const auto build_substituter = b.CreateString(s.build_substituter);
+  const auto activity_detail =
+      s.execution_activity_detail.empty()
+          ? Off<flatbuffers::String>()
+          : b.CreateString(s.execution_activity_detail);
   R::InvocationSummaryBuilder ib(b);
   ib.add_transfer_name(transfer_name);
   ib.add_transfer_direction(transfer_direction);
@@ -273,6 +284,11 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   if (!system.IsNull()) ib.add_execution_system(system);
   if (!resources.IsNull()) ib.add_execution_resources(resources);
   if (s.execution_state) ib.add_execution_state(*s.execution_state);
+  ib.add_execution_activity(s.execution_activity);
+  if (!activity_detail.IsNull())
+    ib.add_execution_activity_detail(activity_detail);
+  if (s.cpu_ms) ib.add_cpu_ms(*s.cpu_ms);
+  if (s.last_output_at) ib.add_last_output_at(*s.last_output_at);
   if (s.batch_activation) ib.add_batch_activation(*s.batch_activation);
   if (s.batch_index) ib.add_batch_index(*s.batch_index);
   if (s.batch_size) ib.add_batch_size(*s.batch_size);

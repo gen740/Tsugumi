@@ -13,6 +13,7 @@
 namespace tsugumi::workerd {
 namespace {
 constexpr uint32_t kMaxLocalFrame = 1 << 20;
+constexpr size_t kDescriptors = std::tuple_size_v<WorkerProc::Descriptors>;
 auto transfer(int fd, void* buffer, size_t length, bool writing) -> void {
   auto* bytes = static_cast<char*>(buffer);
   while (length) {
@@ -44,7 +45,7 @@ LocalPacket::~LocalPacket() {
 }
 
 auto send_local(int fd, const Tsugumi::LocalWorker::MessageT& message,
-                const std::array<int, 4>* descriptors, trace::Link* link) -> void {
+                const WorkerProc::Descriptors* descriptors, trace::Link* link) -> void {
   flatbuffers::FlatBufferBuilder builder;
   Tsugumi::LocalWorker::FinishMessageBuffer(
       builder, Tsugumi::LocalWorker::Message::Pack(builder, &message));
@@ -60,7 +61,7 @@ auto send_local(int fd, const Tsugumi::LocalWorker::MessageT& message,
       static_cast<unsigned char>(size >> 16),
       static_cast<unsigned char>(size >> 24)};
   iovec data{const_cast<unsigned char*>(prefix.data()), prefix.size()};
-  alignas(cmsghdr) char control[CMSG_SPACE(4 * sizeof(int))]{};
+  alignas(cmsghdr) char control[CMSG_SPACE(kDescriptors * sizeof(int))]{};
   msghdr header{};
   header.msg_iov = &data;
   header.msg_iovlen = 1;
@@ -70,8 +71,9 @@ auto send_local(int fd, const Tsugumi::LocalWorker::MessageT& message,
     auto* rights = CMSG_FIRSTHDR(&header);
     rights->cmsg_level = SOL_SOCKET;
     rights->cmsg_type = SCM_RIGHTS;
-    rights->cmsg_len = CMSG_LEN(4 * sizeof(int));
-    std::memcpy(CMSG_DATA(rights), descriptors->data(), 4 * sizeof(int));
+    rights->cmsg_len = CMSG_LEN(kDescriptors * sizeof(int));
+    std::memcpy(CMSG_DATA(rights), descriptors->data(),
+                kDescriptors * sizeof(int));
   }
 #ifdef MSG_NOSIGNAL
   constexpr int flags = MSG_NOSIGNAL;
@@ -95,7 +97,7 @@ auto send_local(int fd, const Tsugumi::LocalWorker::MessageT& message,
 auto receive_local(int fd, LocalPacket& packet, trace::Link* link) -> bool {
   std::array<unsigned char, 4> prefix{};
   iovec data{prefix.data(), prefix.size()};
-  alignas(cmsghdr) char control[CMSG_SPACE(4 * sizeof(int))]{};
+  alignas(cmsghdr) char control[CMSG_SPACE(kDescriptors * sizeof(int))]{};
   msghdr header{};
   header.msg_iov = &data;
   header.msg_iovlen = 1;
@@ -123,7 +125,7 @@ auto receive_local(int fd, LocalPacket& packet, trace::Link* link) -> bool {
         ::close(fds[i]);
     }
   }
-  if ((header.msg_flags & (MSG_CTRUNC | MSG_TRUNC)) || (count && count != 4))
+  if ((header.msg_flags & (MSG_CTRUNC | MSG_TRUNC)) || (count && count != kDescriptors))
     throw std::runtime_error("invalid worker descriptor handover");
   transfer(fd, prefix.data() + received, prefix.size() - received, false);
   const uint32_t size = uint32_t(prefix[0]) | (uint32_t(prefix[1]) << 8) |

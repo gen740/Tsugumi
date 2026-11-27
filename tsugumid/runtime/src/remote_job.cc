@@ -256,7 +256,11 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
           std::move(credits),
           j->artifact_wanted,
           std::move(view_request),
-          j->cache_settings_wanted};
+          j->cache_settings_wanted,
+          j->activity,
+          j->activity_detail,
+          j->building,
+          j->cpu_ms};
 }
 auto require_ack(const R::ReplyT& reply) -> void {
   if (!reply.body.AsAck())

@@ -243,7 +243,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   s.worker_reused = lease.reused;
   if (!lease.replaced.empty() && request.log)
     request.log(
-        LogStream::standard_error,
+        LogStream::output,
         "Resident worker state started fresh: " + lease.replaced + ".\n");
 
   workerd::Invocation invocation;

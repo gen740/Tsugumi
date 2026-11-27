@@ -634,8 +634,9 @@ NUM = 'table Num { value:ulong; } table Outputs { out:Num (required); } root_typ
 DIRECTORY = 'include "tsugumi/artifact.fbs"; table Outputs { doc:tsugumi.Artifact (required); } root_type Outputs;'
 
 
-def card_package(body, *, declarations=""):
-    """Build a tiny native Card without an SDK dependency."""
+def card_package(body, *, declarations="", build_script=""):
+    """Build a tiny native Card without an SDK dependency. `build_script` runs
+    in its build before the compiler."""
     import json
 
     def literal(value):
@@ -667,6 +668,7 @@ in pkgs.runCommandCC "native-card" {{
   cp ${{card_enums}} card_enums.fbs
   cp ${{artifact}} artifact.fbs
   cp ${{source}} card.cc
+  {build_script}
   flatc --cpp --scoped-enums card.fbs card_enums.fbs artifact.fbs
   mkdir -p "$out/lib"
   $CXX -std=c++20 -fPIC -shared -pthread card.cc -o "$out/lib/main.so"

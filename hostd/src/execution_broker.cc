@@ -583,8 +583,7 @@ struct ExecutionBroker::State {
           // the invocation record that used it.
           auto summary = std::make_unique<Tsugumi::Data::WorkerProbeResultT>(
               *probe.measurement);
-          summary->stdout_text.clear();
-          summary->stderr_text.clear();
+          summary->output_text.clear();
           service->probes.push_back(std::move(summary));
         }
         std::ranges::sort(
@@ -1044,8 +1043,7 @@ struct ExecutionBroker::State {
               Require(measured.worker == entry.id &&
                           measured.probe.size() <= 512 &&
                           measured.failure.size() <= kProbeOutputBytes &&
-                          measured.stdout_text.size() +
-                                  measured.stderr_text.size() <=
+                          measured.output_text.size() <=
                               kProbeOutputBytes &&
                           (measured.score.has_value() !=
                            !measured.failure.empty()) &&

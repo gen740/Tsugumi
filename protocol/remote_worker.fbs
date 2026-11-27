@@ -10,6 +10,11 @@ namespace Tsugumi.RemoteWorker;
 attribute "trace_secret";
 
 enum JobState:ubyte { Missing, Uploading, Queued, Running, Cancelling, Succeeded, Failed, Cancelled, Interrupted, Released }
+// What a running job is doing. StoreWait: another invocation holds the
+// worker's Nix store, and this one waits for it. Preparing: it holds the store
+// and imports or checks its closure. Building and Substituting: Nix builds or
+// fetches the derivation or path named in the detail. Card: the Card runs.
+enum JobActivity:ubyte { Unspecified, StoreWait, Preparing, Building, Substituting, Card }
 enum ErrorCode:ubyte { Invalid, Unauthorized, InstanceChanged, RegistrationChanged, Rejected, NotFound, Busy, Internal }
 table ProbeRequest {}
 table PutBlobRequest { digest:string (required); total:ulong; offset:ulong; bytes:[ubyte] (required); }
@@ -21,8 +26,9 @@ table JobSpec {
   filesystem:bool = true; pid:bool = true; ipc:bool = true; identity:bool = true;
   network:bool;
   card_probe:bool;
-  // Core recording policy for captured stdout and stderr bytes. Zero keeps
-  // live transport available and disables persisted stdout/stderr.
+  // Core recording policy for the Card's captured output bytes (stdout and
+  // stderr, one stream). Zero keeps live transport available and disables
+  // persisted output.
   log_limit_bytes:ulong;
   // Names of the Card secrets the Card's process receives. Their values are
   // never part of the spec: they arrive in a JobSecretsRequest just before the
@@ -142,7 +148,7 @@ table Request {
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  // Zero means no advertised contract. Writers explicitly send contract 21.
+  // Zero means no advertised contract. Writers explicitly send contract 22.
   worker_contract:uint;
   probe_life:string;
   active_jobs:uint;
@@ -171,6 +177,12 @@ table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diag
   // Replayed until a status request includes the matching reply.
   view_request:Tsugumi.Worker.WorkerViewRequest (trace_secret);
   cache_settings_wanted:bool;
+  // What the running job is doing now (work/activity), and the name of the
+  // derivation or path it builds or substitutes.
+  activity:JobActivity; activity_detail:string;
+  // The derivations Nix builds for it now, and the CPU time its process tree
+  // (Nix builds and the Card) has used so far, sampled every few seconds.
+  building:[string]; cpu_ms:ulong = null;
 }
 table Ack {}
 table Failure { code:ErrorCode; message:string (required); }
@@ -201,6 +213,8 @@ table ResultEnvironment {
   substituter:string;
   pushed:bool;
 }
+/// The job's work/activity: what it is doing now, replaced as it changes.
+table JobProgress { activity:JobActivity; detail:string; building:[string]; cpu_ms:ulong = null; }
 /// One entry of the result's logs member: a LogStream value and its bytes.
 /// The member is a sequence of entries, each a uint32 little-endian size and
 /// then its buffer.

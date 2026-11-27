@@ -12,8 +12,9 @@ One `tsugumi-workerd --local` belongs to one core lifetime. The core starts it
 with inherited Unix sockets. One socket handles resident workers and pool
 commands, and four let fresh invocations start and retire concurrently in the
 same pool. The private
-[management contract](../protocol/local_worker.fbs) passes data, cancellation,
-stdout and stderr descriptors to the core via `SCM_RIGHTS`. Calls remain
+[management contract](../protocol/local_worker.fbs) passes data, cancellation
+and output descriptors to the core via `SCM_RIGHTS`; the Card's stdout and
+stderr share the one output pipe, so its log keeps the order it wrote in. Calls remain
 serial per process, with the counter preserved across leases.
 
 The core reads the data stream throughout the lifetime of its borrowed

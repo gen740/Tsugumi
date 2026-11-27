@@ -732,22 +732,22 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp)
   // Not where tsugumid runs, which the sandbox does not let it read (getcwd
   // fails): libraries ask for the current directory while they are imported.
   spec.cwd = work_dir();
-  int data[2]{-1, -1}, control[2]{-1, -1}, out[2]{-1, -1}, err[2]{-1, -1};
+  int data[2]{-1, -1}, control[2]{-1, -1}, out[2]{-1, -1};
   const auto close_channels = [&] {
-    for (const int fd : {data[0], data[1], control[0], control[1], out[0],
-                         out[1], err[0], err[1]})
+    for (const int fd :
+         {data[0], data[1], control[0], control[1], out[0], out[1]})
       if (fd >= 0) ::close(fd);
   };
   if (::socketpair(AF_UNIX, SOCK_STREAM, 0, data) != 0 ||
-      ::socketpair(AF_UNIX, SOCK_STREAM, 0, control) != 0 || ::pipe(out) != 0 ||
-      ::pipe(err) != 0) {
+      ::socketpair(AF_UNIX, SOCK_STREAM, 0, control) != 0 || ::pipe(out) != 0) {
     close_channels();
     remove_card_cgroup(cgroup_);
     throw Failed(FailureKind::worker_failed, "cannot create worker channels");
   }
   spec.fds = {{3, data[1]}, {4, control[1]}};
+  // Like 2>&1: one pipe keeps the order in which the Card wrote.
   spec.stdout_fd = out[1];
-  spec.stderr_fd = err[1];
+  spec.stderr_fd = out[1];
   try {
     pid_ = proc::spawn(spec);
   } catch (const std::exception& e) {
@@ -760,16 +760,13 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp)
   ::close(data[1]);
   ::close(control[1]);
   ::close(out[1]);
-  ::close(err[1]);
   data_fd_ = data[0];
   control_fd_ = control[0];
-  out_fd_ = out[0];
-  err_fd_ = err[0];
+  output_fd_ = out[0];
   ::fcntl(data_fd_, F_SETFL, O_NONBLOCK);
   ::fcntl(control_fd_, F_SETFL, O_NONBLOCK);
-  ::fcntl(out_fd_, F_SETFL, O_NONBLOCK);
-  ::fcntl(err_fd_, F_SETFL, O_NONBLOCK);
-  for (int fd : {data_fd_, control_fd_, out_fd_, err_fd_})
+  ::fcntl(output_fd_, F_SETFL, O_NONBLOCK);
+  for (int fd : {data_fd_, control_fd_, output_fd_})
     ::fcntl(fd, F_SETFD, FD_CLOEXEC);
 #ifdef SO_NOSIGPIPE
   int one = 1;
@@ -818,8 +815,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp)
 WorkerProc::WorkerProc(Borrowed borrowed)
     : data_fd_(borrowed.descriptors[0]),
       control_fd_(borrowed.descriptors[1]),
-      out_fd_(borrowed.descriptors[2]),
-      err_fd_(borrowed.descriptors[3]),
+      output_fd_(borrowed.descriptors[2]),
       alive_(true),
       packed_(borrowed.packed),
       scratch_(std::move(borrowed.scratch)),
@@ -862,14 +858,12 @@ auto WorkerProc::resume_logs() -> void {
   stop_logs_ = false;
   log_thread_ = std::thread([this] {
     while (!stop_logs_) {
-      pollfd fds[3] = {
-          {-1, POLLIN, 0}, {-1, POLLIN, 0}, {log_wake_[0], POLLIN, 0}};
+      pollfd fds[2] = {{-1, POLLIN, 0}, {log_wake_[0], POLLIN, 0}};
       {
         std::lock_guard lock(log_mu_);
-        if (!out_eof_) fds[0].fd = out_fd_;
-        if (!err_eof_) fds[1].fd = err_fd_;
+        if (!output_eof_) fds[0].fd = output_fd_;
       }
-      ::poll(fds, 3, -1);
+      ::poll(fds, 2, -1);
       read_logs(false);
     }
   });
@@ -887,9 +881,9 @@ auto WorkerProc::stop_log_reader() -> void {
   for (auto& fd : log_wake_) close_fd(fd);
 }
 
-auto WorkerProc::hand_over() -> std::array<int, 4> {
+auto WorkerProc::hand_over() -> Descriptors {
   stop_log_reader();
-  return {data_fd_, control_fd_, out_fd_, err_fd_};
+  return {data_fd_, control_fd_, output_fd_};
 }
 
 WorkerProc::~WorkerProc() {
@@ -897,7 +891,7 @@ WorkerProc::~WorkerProc() {
     if (view_receiver_) view_receiver_->close();
     stop_data_reader();
     stop_log_reader();
-    for (auto* fd : {&data_fd_, &control_fd_, &out_fd_, &err_fd_})
+    for (auto* fd : {&data_fd_, &control_fd_, &output_fd_})
       close_fd(*fd);
     // Exceptions during cleanup must not leave an active lease in workerd.
     if (borrowed_abandon_) {
@@ -1051,8 +1045,7 @@ void WorkerProc::terminate(bool force) {
   cgroup_.clear();
   stop_log_reader();
   read_logs(true);
-  close_fd(out_fd_);
-  close_fd(err_fd_);
+  close_fd(output_fd_);
   alive_ = false;
   if (wait_error)
     throw Failed(FailureKind::worker_failed,
@@ -1072,30 +1065,24 @@ auto WorkerProc::terminate_after_failure(bool force) -> void {
 void WorkerProc::read_logs(bool drain) {
   std::lock_guard<std::mutex> l(log_mu_);
   char buf[16384];
-  for (auto [fd, stream] : {std::pair{out_fd_, LogStream::standard_output},
-                            std::pair{err_fd_, LogStream::standard_error}}) {
-    if (fd < 0) continue;
-    const bool stdout_stream = stream == LogStream::standard_output;
-    auto& dec = stdout_stream ? out_dec_ : err_dec_;
-    auto& eof = stdout_stream ? out_eof_ : err_eof_;
-    // Give timeout and cancellation processing a turn even if a worker
-    // keeps a pipe continuously readable.
-    constexpr size_t kReadBudget = 256 * 1024;
-    size_t read = 0;
-    while (!eof && (drain || read < kReadBudget)) {
-      ssize_t r = ::read(fd, buf, sizeof buf);
-      if (r < 0 && errno == EINTR) continue;
-      if (r == 0) eof = true;
-      if (r <= 0) break;
-      read += static_cast<size_t>(r);
-      std::string text =
-          dec.feed(std::string_view(buf, static_cast<size_t>(r)));
-      if (!text.empty() && logs_) logs_(stream, text);
-    }
-    if (drain) {
-      std::string rest = dec.finish();
-      if (!rest.empty() && logs_) logs_(stream, rest);
-    }
+  if (output_fd_ < 0) return;
+  // Give timeout and cancellation processing a turn even if a worker
+  // keeps the pipe continuously readable.
+  constexpr size_t kReadBudget = 256 * 1024;
+  size_t read = 0;
+  while (!output_eof_ && (drain || read < kReadBudget)) {
+    ssize_t r = ::read(output_fd_, buf, sizeof buf);
+    if (r < 0 && errno == EINTR) continue;
+    if (r == 0) output_eof_ = true;
+    if (r <= 0) break;
+    read += static_cast<size_t>(r);
+    std::string text =
+        output_dec_.feed(std::string_view(buf, static_cast<size_t>(r)));
+    if (!text.empty() && logs_) logs_(LogStream::output, text);
+  }
+  if (drain) {
+    std::string rest = output_dec_.finish();
+    if (!rest.empty() && logs_) logs_(LogStream::output, rest);
   }
 }
 

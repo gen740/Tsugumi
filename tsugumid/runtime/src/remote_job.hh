@@ -57,6 +57,11 @@ struct RemoteJobState {
   std::string artifact_wanted = {};
   std::optional<WorkerViewRequest> view_request = std::nullopt;
   bool cache_settings_wanted = false;
+  Tsugumi::RemoteWorker::JobActivity activity =
+      Tsugumi::RemoteWorker::JobActivity::Unspecified;
+  std::string activity_detail = {};
+  std::vector<std::string> building = {};
+  std::optional<uint64_t> cpu_ms = std::nullopt;
 };
 
 struct RemoteProbe {

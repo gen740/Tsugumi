@@ -96,7 +96,7 @@ auto RemoteWorkerStore::realise(
     const workerd::R::CacheSettingsT& caches, CacheRelay::Exchange relay,
     const std::filesystem::path& store_root, const WorkerDerivation& derivation,
     bool push_outputs, const std::function<void(const std::string&)>& log,
-    uint64_t timeout_ms) -> WorkerStoreResult {
+    uint64_t timeout_ms, const StoreProgress& progress) -> WorkerStoreResult {
   // Invocations run in separate supervisor processes that share this
   // persistent store, so the Nix settings below are per process. Opening the
   // store is serialized: LocalStore creates a missing database and its schema,
@@ -113,21 +113,26 @@ auto RemoteWorkerStore::realise(
                                      0600)};
   if (!store_lock)
     throw std::runtime_error("cannot open remote Nix store lock");
+  if (progress.waiting && ::flock(store_lock.get(), LOCK_EX | LOCK_NB) != 0)
+    progress.waiting();
   while (::flock(store_lock.get(), LOCK_EX) != 0) {
     if (errno == EINTR) continue;
     throw std::runtime_error("cannot lock remote Nix store");
   }
+  if (progress.locked) progress.locked();
   nix::initLibStore(true);
   const auto netrc = ConfigurePulls(caches);
   std::mutex provenance;
   std::string substituted_from;
   auto logger = std::make_unique<NixLogSink>(log);
   logger->set_substitutions([&](const auto& path, const auto& uri) {
+    if (progress.substitute) progress.substitute(path);
     if (path != derivation.output) return;
     std::lock_guard lock(provenance);
     substituted_from = text::public_cache_endpoint(uri);
     if (uri.starts_with("file://")) substituted_from = "file://";
   });
+  if (progress.build) logger->set_thread_builds(&progress.build);
   auto* sink = logger.get();
   nix::logger = std::move(logger);
   struct ClearLog {
@@ -135,6 +140,7 @@ auto RemoteWorkerStore::realise(
     ~ClearLog() {
       sink->set({});
       sink->set_substitutions({});
+      sink->set_thread_builds(nullptr);
     }
   } clear_log{sink};
   nix::settings.getLocalSettings().sandboxMode = nix::smEnabled;

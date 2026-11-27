@@ -398,7 +398,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         [self = shared_from_this(), s, persist](bool ok) {
           if (!ok && persist)
             self->persistence_lost("progress of " + path_key(s.card));
-          self->svc_.server()->broadcast(card_note(s));
+          self->svc_.server()->broadcast(
+              card_note(self->svc_.history().with_output(s)));
         });
   }
 
@@ -472,9 +473,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   void card_log(const CardPath& card, uint64_t inv, LogStream stream,
                 proc::LineChunk received) {
     if (svc_.packed_builds() && !svc_.packed_debug()) return;
+    if (stream == LogStream::output || stream == LogStream::build)
+      svc_.history().note_output(run_id_, card, inv);
     std::lock_guard<std::mutex> lock(log_policy_mu_);
-    if (stream == LogStream::standard_output ||
-        stream == LogStream::standard_error) {
+    if (stream == LogStream::output) {
       const auto& settings = doc_->resolution->find(card)->settings;
       const auto limit = settings.record_logs ? settings.log_limit_bytes : 0;
       const auto key = std::pair{path_key(card), inv};
@@ -1587,7 +1589,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                   : CardState::succeeded;
     s.failure = out.failure;
     if (out.failure && out.failure->diagnostic)
-      card_log(node.path, w.invocation, LogStream::standard_error,
+      card_log(node.path, w.invocation, LogStream::output,
                "tsugumi: " + std::string(failure_kind_name(out.failure->kind)) +
                    ": " + *out.failure->diagnostic + "\n");
     s.artifact_outputs = History::output_artifacts(out.outputs);

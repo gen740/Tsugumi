@@ -90,8 +90,15 @@ table ActiveInvocation {
   invocation:uint64 (id: 1);
   stage:Tsugumi.Data.Phase (id: 2);
   stage_elapsed_ms:uint64 (id: 3);
-  /// Derivations being built now; the Card's own derivation is the last to build, after its dependencies.
+  /// Derivations being built now, also on a remote worker; the Card's own derivation is the last to build, after its dependencies.
   building:[BuildActivity] (id: 4);
+  /// What a remote execution does now: waiting for the worker's Nix store, building or substituting a derivation, or running the Card.
+  execution_activity:Tsugumi.Data.ExecutionActivity (id: 5);
+  execution_activity_detail:string (id: 6);
+  /// CPU time used so far by its process tree on a remote worker, Nix builds included.
+  cpu_ms:uint64 = null (id: 7);
+  /// Time since it last wrote output or build log; absent before its first line.
+  output_idle_ms:uint64 = null (id: 8);
 }
 
 table BuildActivity {
@@ -621,10 +628,10 @@ table PackedRunInput {
   bytes:[ubyte] (id: 2, required);
 }
 
-/// -> RunStatus. Cancel run_id.
+/// -> RunStatus. Cancel run_id. A step can be silent for a long time: before cancelling, check with run_status that its CPU time has stopped growing and it is not waiting.
 table RunCancelRequest { run_id:string (id: 0, required); }
 
-/// -> RunStatus. Read run_id; omitted selects the active run, then the latest locally started run, then idle. An active run lists its Cards in progress with their stage and derivations being built.
+/// -> RunStatus. Read run_id; omitted selects the active run, then the latest locally started run, then idle. An active run lists its Cards in progress with their stage, what a remote execution waits for or builds, the derivations being built, CPU time and time since their last output.
 table RunStatusRequest { run_id:string (id: 0); }
 
 table ShellMount { path:string (required); name:string (required); project_relative:bool; writable:bool; }
@@ -797,7 +804,7 @@ table ArtifactReadRequest {
   limit_bytes:uint32 = null (id: 3);
 }
 
-/// -> LogSlice. Read recorded run logs. Select the Card and stream=build for Nix evaluation and build output from its execution target, including failed builds and a build in progress (tail=true for its latest lines). Use run_record for the failure diagnostic. invocation requires card. tail=true reads the end with offset=0.
+/// -> LogSlice. Read recorded run logs. stream=output is what the Card's process wrote to stdout and stderr, as one stream in write order. Select the Card and stream=build for Nix evaluation and build output from its execution target, including failed builds and a build in progress (tail=true for its latest lines). Use run_record for the failure diagnostic. invocation requires card. tail=true reads the end with offset=0.
 table LogRangeRequest {
   run_id:string (id: 0, required);
   card:Tsugumi.Data.CardPath (id: 1);
@@ -814,7 +821,7 @@ table LogRangeRequest {
   terminal:bool = false (id: 8);
   /// Raw byte size of the previous terminal update. Read the tail if a redraw overwrote cells since then.
   terminal_since:uint64 = null (id: 9);
-  /// Read stdout or stderr from the active run's transient log.
+  /// Read the Card's output from the active run's transient log.
   live:bool = false (id: 10);
 }
 
@@ -1193,6 +1200,14 @@ table InvocationSummary {
   build_substituter:string (id: 33);
   /// True after the selected cache accepted the output closure.
   build_pushed:bool = null (id: 34);
+  /// What the remote job does now while it runs on the worker (live only).
+  execution_activity:Tsugumi.Data.ExecutionActivity (id: 35);
+  /// The derivation or path name it builds or substitutes, without its hash.
+  execution_activity_detail:string (id: 36);
+  /// CPU time used so far by its process tree on a remote worker (live only).
+  cpu_ms:uint64 = null (id: 37);
+  /// When it last wrote output or build log (core clock, live only).
+  last_output_at:int64 = null (id: 38);
 }
 
 table StageTime {

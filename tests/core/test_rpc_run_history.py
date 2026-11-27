@@ -259,7 +259,7 @@ def test_category_deletion_preserves_other_categories_and_summary(core_factory, 
         args = dict(projectId=project_id, runId=source)
         host.call("RunCategoryDeleteRequest", **args, category=RunRecordCategory.Logs, opId=new_id())
         assert not client.call("LogRangeRequest", runId=source, stream=1).exists
-        assert client.call("LogRangeRequest", runId=source, stream=3).exists
+        assert client.call("LogRangeRequest", runId=source, stream=2).exists
         artifact, = client.call("ArtifactListRequest", runId=source).artifacts
         artifact_id = text(artifact.artifactId)
         assert read_pages(client, "ArtifactReadRequest", artifactId=artifact_id,

@@ -111,6 +111,13 @@ struct InvocationSummaryData {
   std::string execution_system;
   std::optional<ExecutionResources> execution_resources;
   std::optional<RemoteExecutionState> execution_state;
+  // What the remote job does now, and the derivation it builds (live only).
+  ExecutionActivity execution_activity = ExecutionActivity::unspecified;
+  std::string execution_activity_detail;
+  // CPU time of its process tree on a remote worker, and when it last wrote
+  // output or build log (core clock). Live only.
+  std::optional<uint64_t> cpu_ms;
+  std::optional<int64_t> last_output_at;
   std::optional<uint64_t> batch_activation;
   std::optional<uint32_t> batch_index, batch_size, implementation_index;
   // A run list entry's label; "" for none.

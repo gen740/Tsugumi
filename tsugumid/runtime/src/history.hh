@@ -300,9 +300,16 @@ class History {
   // changes are not written; queries see them through overlay()).
   std::mutex live_mu_;
   std::map<std::string, InvocationSummaryData> live_;
+  // When each running invocation last wrote output or build log.
+  std::map<std::string, int64_t> last_output_;
 
  public:
   void set_live(const InvocationSummaryData& s);
+  // An invocation wrote output or build log now.
+  void note_output(const std::string& run_id, const CardPath& card,
+                   uint64_t invocation);
+  // `s` with when it last wrote output.
+  auto with_output(InvocationSummaryData s) -> InvocationSummaryData;
   void clear_live(const InvocationSummaryData& s);
   // The progress of a run's running invocations.
   std::vector<InvocationSummaryData> live(const std::string& run_id);

@@ -1753,13 +1753,33 @@ void History::set_live(const InvocationSummaryData& s) {
 void History::clear_live(const InvocationSummaryData& s) {
   std::lock_guard<std::mutex> l(live_mu_);
   live_.erase(live_key(s));
+  last_output_.erase(live_key(s));
+}
+
+void History::note_output(const std::string& run_id, const CardPath& card,
+                          uint64_t invocation) {
+  const auto at = now_ms();
+  std::lock_guard<std::mutex> l(live_mu_);
+  last_output_[run_id + "|" + key(card) + "|" + std::to_string(invocation)] =
+      at;
+}
+
+auto History::with_output(InvocationSummaryData s) -> InvocationSummaryData {
+  std::lock_guard<std::mutex> l(live_mu_);
+  if (const auto it = last_output_.find(live_key(s)); it != last_output_.end())
+    s.last_output_at = it->second;
+  return s;
 }
 
 std::vector<InvocationSummaryData> History::live(const std::string& run_id) {
   std::lock_guard<std::mutex> l(live_mu_);
   std::vector<InvocationSummaryData> out;
-  for (const auto& [_, s] : live_)
-    if (s.run_id == run_id) out.push_back(s);
+  for (const auto& [k, s] : live_)
+    if (s.run_id == run_id) {
+      out.push_back(s);
+      if (const auto it = last_output_.find(k); it != last_output_.end())
+        out.back().last_output_at = it->second;
+    }
   return out;
 }
 
@@ -1770,6 +1790,8 @@ void History::overlay(InvocationSummaryData& s) {
     const auto truncated_at = s.log_truncated_at_bytes;
     s = it->second;
     s.log_truncated_at_bytes = truncated_at;
+    if (const auto at = last_output_.find(it->first); at != last_output_.end())
+      s.last_output_at = at->second;
   }
 }
 
@@ -2072,10 +2094,9 @@ auto History::delete_category(sql::Db& db, const std::string& run_id,
     case R::RunRecordCategory::Logs:
       for (const auto* table : {"logs", "log_terminal_ends", "log_terminal_tiles"})
         db.prepare(std::string("DELETE FROM ") + table +
-                   " WHERE run_id=? AND stream IN (?,?)")
+                   " WHERE run_id=? AND stream=?")
             .bind(1, run_id)
-            .bind(2, static_cast<int>(LogStream::standard_output))
-            .bind(3, static_cast<int>(LogStream::standard_error))
+            .bind(2, static_cast<int>(LogStream::output))
             .run();
       db.prepare("DELETE FROM log_truncations WHERE run_id=? AND invocation>0")
           .bind(1, run_id).run();

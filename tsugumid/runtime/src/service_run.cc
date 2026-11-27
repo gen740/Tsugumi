@@ -1429,12 +1429,10 @@ void Service::log_range(RequestIn& req) {
     inv = *r->invocation();
   }
   auto stream = r->stream();
-  if (stream != LogStream::standard_output &&
-      stream != LogStream::standard_error && stream != LogStream::journal &&
+  if (stream != LogStream::output && stream != LogStream::journal &&
       stream != LogStream::build)
-    throw Failed(
-        FailureKind::invalid_request,
-        "stream must be standard_output, standard_error, build or journal");
+    throw Failed(FailureKind::invalid_request,
+                 "stream must be output, build or journal");
   bool tail = r->tail().value_or(false);
   uint64_t offset = r->offset().value_or(0);
   const auto before = r->before();
@@ -1458,8 +1456,7 @@ void Service::log_range(RequestIn& req) {
     return History::read_log(db, run_id, card, inv, stream, offset, tail,
                              limit, before, r->terminal(), r->terminal_since());
   };
-  auto slice = r->live() && (stream == LogStream::standard_output ||
-                             stream == LogStream::standard_error)
+  auto slice = r->live() && stream == LogStream::output
       ? scheduler_->live_log(run_id, read)
       : history_->read([&](sql::Db& db) {
     if (!History::run(db, run_id))

@@ -109,5 +109,5 @@ def test_view_open_rejects_unserveable_declarations(project, tmp_path, core_fact
         record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
         failure = record.summary.failure or status.failure
         stderr = client.call("LogRangeRequest", runId=run_id, card=path("work"),
-                             invocation=1, stream=LogStream.standard_error)
+                             invocation=1, stream=LogStream.output)
         pytest.fail(f"{failure and text(failure.diagnostic)}: {text(stderr.text)}")

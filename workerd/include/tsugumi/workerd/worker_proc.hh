@@ -125,8 +125,10 @@ class WorkerProc {
   explicit WorkerProc(const WorkerSpawn& spawn);
   // A borrowed connection has no process/scratch ownership. Workerd retains
   // that authority and performs cleanup and termination on request.
+  // Data, control, and the Card's output (stdout and stderr share one pipe).
+  using Descriptors = std::array<int, 3>;
   struct Borrowed {
-    std::array<int, 4> descriptors;
+    Descriptors descriptors;
     std::string scratch;
     std::filesystem::path artifact_scratch;
     uint64_t call_id = 0;
@@ -165,7 +167,7 @@ class WorkerProc {
   auto set_call_id(uint64_t value) -> void { call_id_ = value; }
   auto lease_id() const -> uint64_t { return lease_id_; }
   auto returning_lease() -> void { borrowed_abandon_ = {}; }
-  auto hand_over() -> std::array<int, 4>;
+  auto hand_over() -> Descriptors;
   // Releasing a resident lease transfers log ownership to workerd and leaves
   // the core's data reader attached until the process exits.
   auto idle() -> void;
@@ -215,8 +217,8 @@ class WorkerProc {
   pid_t pid_ = -1;
   int data_fd_ = -1;
   int control_fd_ = -1;
-  int out_fd_ = -1;
-  int err_fd_ = -1;
+  // The Card's stdout and stderr, one pipe so the order is the write order.
+  int output_fd_ = -1;
   bool alive_ = false;
   bool packed_ = false;
   std::string scratch_;
@@ -258,10 +260,8 @@ class WorkerProc {
   std::shared_ptr<ViewControl> view_control_;
   LogSink logs_;
   std::mutex log_mu_;
-  bool out_eof_ = false;
-  bool err_eof_ = false;
-  text::Utf8Decoder out_dec_;
-  text::Utf8Decoder err_dec_;
+  bool output_eof_ = false;
+  text::Utf8Decoder output_dec_;
   std::thread log_thread_;
   std::array<int, 2> log_wake_{-1, -1};
   std::atomic<bool> stop_logs_{false};

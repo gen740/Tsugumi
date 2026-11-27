@@ -22,6 +22,7 @@ using Phase = Tsugumi::Data::Phase;
 using StageOutcome = Tsugumi::Data::StageOutcome;
 using LogStream = Tsugumi::Data::LogStream;
 using RemoteExecutionState = Tsugumi::Data::RemoteExecutionState;
+using ExecutionActivity = Tsugumi::Data::ExecutionActivity;
 
 int64_t now_ms();
 

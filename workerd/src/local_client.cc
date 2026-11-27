@@ -170,7 +170,7 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
                   [](const auto& entry) { return !entry.second->alive(); });
   const auto& message = *reply.message;
   if (!message.lease || (message.lease - 1) % kLocalWorkerChannels != channel ||
-      message.scratch.empty() || reply.descriptors[3] < 0)
+      message.scratch.empty() || reply.descriptors[2] < 0)
     throw Failed(FailureKind::worker_failed,
                  "workerd did not hand over a worker connection");
   WorkerProc::Borrowed borrowed{

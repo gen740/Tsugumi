@@ -250,8 +250,8 @@ No fields.
 | --- | --- | --- |
 | [`RunPlan`](#runplan) | RunPlanResult | Preview the Cards a run reaches; propagate defaults to true. |
 | [`Run`](#run) | RunAccepted | Start a run at base_rev. If a required host path is unbound, ask the user to choose a folder in Project Settings > Host Paths. propagate defaults to true, max_concurrency to 4 (1..64). Omitted nix_jobs and nix_cores use the environment defaults for local builds. |
-| [`RunCancel`](#runcancel) | RunStatus | Cancel run_id. |
-| [`RunStatus`](#runstatus) | RunStatus | Read run_id; omitted selects the active run, then the latest locally started run, then idle. An active run lists its Cards in progress with their stage and derivations being built. |
+| [`RunCancel`](#runcancel) | RunStatus | Cancel run_id. A step can be silent for a long time: before cancelling, check with run_status that its CPU time has stopped growing and it is not waiting. |
+| [`RunStatus`](#runstatus) | RunStatus | Read run_id; omitted selects the active run, then the latest locally started run, then idle. An active run lists its Cards in progress with their stage, what a remote execution waits for or builds, the derivations being built, CPU time and time since their last output. |
 | [`WorkerProbeMeasure`](#workerprobemeasure) | WorkerProbeMeasurement | Replay the identified probe with the Card's current permissions. |
 
 ### RunPlan
@@ -310,7 +310,7 @@ No fields.
 | [`RunDefinitionPaths`](#rundefinitionpaths) | RunDefinitionPaths | Accepted definition files for the recorded Card and its enclosing Cards, or for the whole run if card is absent. |
 | [`ArtifactList`](#artifactlist) | ArtifactPage | List a run's artifacts (invocation requires card), or look up artifact_ids: unknown ids are left out. |
 | [`ArtifactRead`](#artifactread) | FileContent | Read a member of a sealed artifact by its UUID. |
-| [`LogRange`](#logrange) | LogSlice | Read recorded run logs. Select the Card and stream=build for Nix evaluation and build output from its execution target, including failed builds and a build in progress (tail=true for its latest lines). Use run_record for the failure diagnostic. invocation requires card. tail=true reads the end with offset=0. |
+| [`LogRange`](#logrange) | LogSlice | Read recorded run logs. stream=output is what the Card's process wrote to stdout and stderr, as one stream in write order. Select the Card and stream=build for Nix evaluation and build output from its execution target, including failed builds and a build in progress (tail=true for its latest lines). Use run_record for the failure diagnostic. invocation requires card. tail=true reads the end with offset=0. |
 | [`RunEnvironments`](#runenvironments) | BuildEnvironmentPage | Read recorded environments in first-use order; no evaluation. |
 | [`RunEnvironmentPaths`](#runenvironmentpaths) | EnvironmentPathPage | Read a recorded runtime closure in store-path order, including its manifest. |
 | [`RunEnvironmentUses`](#runenvironmentuses) | EnvironmentUsePage | Recorded users of a shared environment, ordered by Card and invocation. |
@@ -418,7 +418,7 @@ No fields.
 | `before` | `uint64` |  | Read up to limit_bytes immediately before this exclusive byte offset. Cannot be combined with tail or a nonzero offset. |
 | `terminal` | `bool` |  | Read the terminal display. Offsets and the size use four units per Unicode scalar. |
 | `terminal_since` | `uint64` |  | Raw byte size of the previous terminal update. Read the tail if a redraw overwrote cells since then. |
-| `live` | `bool` |  | Read stdout or stderr from the active run's transient log. |
+| `live` | `bool` |  | Read the Card's output from the active run's transient log. |
 
 ### RunEnvironments
 
@@ -714,5 +714,8 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `ViewPresentationRequest` | `project_id: string` (required), `window: ViewWindow` (required), `closed: bool` |
 | `ViewActionCompleteRequest` | `request: string` (required), `session: string` (required), `png: [ubyte]`, `error: string` |
 | `ExecutionProbeRemeasureRequest` | `id: string` |
+| `WorkerDashboardRequest` | `id: string` (required), `operation: WorkerDashboardOperation`, `language: string`, `generation: string`, `body: string` |
+| `CachePushTargetGetRequest` | None |
+| `CachePushTargetPutRequest` | `kind: CachePushKind`, `endpoint: string`, `cache_name: string`, `credential_user: string`, `credential_secret: string`, `clear_credentials: bool` |
 
-Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`, `HostHome`, `FolderListing`, `CardSecretList`, `HostPathBindings`, `RunCategoryDeleteResult`, `TemplateList`, `ViewWindows`, `ViewActionResult`.
+Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`, `HostHome`, `FolderListing`, `CardSecretList`, `HostPathBindings`, `RunCategoryDeleteResult`, `TemplateList`, `ViewWindows`, `ViewActionResult`, `WorkerDashboardReply`, `CachePushTarget`.

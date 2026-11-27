@@ -100,6 +100,10 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         # A running job's framed log, served by status requests from the
         # core's cursor; hidden ones appear only once the job has stopped.
         self.live_logs = {}
+        # job -> (JobActivity, detail) a running job reports.
+        self.activities = {}
+        # job -> (derivations building, CPU ms) a running job reports.
+        self.progress = {}
         self.hidden_live_logs = False
         self.log_offsets = []
         self.live_displays = {}
@@ -123,7 +127,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
                 directories=["artifacts", "artifacts/0"],
                 built=True, logTruncated=log_truncated,
             )),
-            "logs": R.log_entries((LogStream.standard_output, "one recovered message\n")),
+            "logs": R.log_entries((LogStream.output, "one recovered message\n")),
         }
         files = {"files/artifacts/0/result.txt": b"retained after shutdown\n", **files}
         if logs is not None:
@@ -229,6 +233,10 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             resultSha256=state.get("result_sha256"), diagnostic=state.get("diagnostic"),
             logTruncated=state.get("log_truncated", False))
         status.viewInputReady = state["state"] == "running"
+        if state["state"] == "running" and job in self.activities:
+            status.activity, status.activityDetail = self.activities[job]
+        if state["state"] == "running" and job in self.progress:
+            status.building, status.cpuMs = self.progress[job]
         log = self.live_logs.get(job, b"")
         # Status and Cancel replies carry a slice of the log from the cursor.
         if body.logLimit and log and (
@@ -819,11 +827,66 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
     assert gateway.download_count == 0 and gateway.submit_count == 1
 
 
+def test_remote_waiting_and_building_reach_the_invocation(running_job):
+    """What the job does on the worker is the invocation's live activity."""
+    from Tsugumi.Data.ExecutionActivity import ExecutionActivity
+    gateway, daemon, client, run_id, job_id = running_job
+
+    def activity(expected, detail=None):
+        return wait_invocation(client, run_id, "work", lambda row: row.executionActivity == expected
+                               and (detail is None or text(row.executionActivityDetail) == detail))
+
+    gateway.activities[job_id] = (R.JobActivity.StoreWait, "")
+    waiting = activity(ExecutionActivity.waiting_store)
+    assert waiting.state == CardState.running and not waiting.executionActivityDetail
+    gateway.activities[job_id] = (R.JobActivity.Building, "nupipeline-1.0")
+    activity(ExecutionActivity.building, "nupipeline-1.0")
+    gateway.activities[job_id] = (R.JobActivity.Card, "")
+    activity(ExecutionActivity.running)
+    gateway.finish(job_id)
+    assert wait_run(client, run_id).state == RunState.succeeded
+    record = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1).record
+    assert record.summary.executionActivity == ExecutionActivity.unspecified
+
+
+def test_run_status_tells_a_silent_working_step_from_a_waiting_one(running_job):
+    """The Agent's run_status shows what the job does, its CPU time and how
+    long it has been silent, so a long silent build is not taken for stuck."""
+    from Tsugumi.Data.ExecutionActivity import ExecutionActivity
+    gateway, _, client, run_id, job_id = running_job
+
+    def active(check):
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            rows = client.call("RunStatusRequest", runId=run_id).active or []
+            row = next((r for r in rows if list(map(text, r.card.segments)) == ["work"]), None)
+            if row is not None and check(row):
+                return row
+            time.sleep(0.05)
+        raise AssertionError(f"no matching active invocation: {rows}")
+
+    gateway.activities[job_id] = (R.JobActivity.StoreWait, "")
+    waiting = active(lambda r: r.executionActivity == ExecutionActivity.waiting_store)
+    assert not waiting.building
+    gateway.live_logs[job_id] = R.log_entries((LogStream.build, "building nupipeline\n"))
+    gateway.activities[job_id] = (R.JobActivity.Building, "nupipeline-1.0")
+    gateway.progress[job_id] = (["nupipeline-1.0"], 1000)
+    first = active(lambda r: r.executionActivity == ExecutionActivity.building and r.cpuMs == 1000
+                   and r.outputIdleMs is not None)
+    assert [text(b.derivation) for b in first.building] == ["nupipeline-1.0"]
+    assert text(first.executionActivityDetail) == "nupipeline-1.0"
+    gateway.progress[job_id] = (["nupipeline-1.0"], 61000)
+    later = active(lambda r: r.cpuMs == 61000 and r.outputIdleMs > first.outputIdleMs)
+    assert later.building[0].elapsedMs >= first.building[0].elapsedMs
+    gateway.finish(job_id, logs=gateway.live_logs[job_id])
+    assert wait_run(client, run_id).state == RunState.succeeded
+
+
 @pytest.mark.parametrize("running_job", [6], indirect=True)
 def test_remote_truncation_metadata_survives_import_and_restart(running_job):
     gateway, daemon, client, run_id, job_id = running_job
     limit = 6
-    logs = R.log_entries((LogStream.standard_output, "remote output"))
+    logs = R.log_entries((LogStream.output, "remote output"))
     gateway.live_logs[job_id] = logs
     client.wait_notification(
         lambda n: n.valueType == NotificationPayload.LogAvailable
@@ -835,7 +898,7 @@ def test_remote_truncation_metadata_survives_import_and_restart(running_job):
     assert live.record.summary.logTruncatedAtBytes == limit
     assert live.record.summary.state == CardState.running
     full = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1,
-                       stream=LogStream.standard_output, tail=True, live=True)
+                       stream=LogStream.output, tail=True, live=True)
     assert text(full.text) == "remote output"
     gateway.finish(job_id, logs=logs)
     assert wait_run(client, run_id).state == RunState.succeeded
@@ -844,7 +907,7 @@ def test_remote_truncation_metadata_survives_import_and_restart(running_job):
     record = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1)
     assert record.record.summary.logTruncatedAtBytes == limit
     stdout = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1,
-                         stream=LogStream.standard_output, tail=True)
+                         stream=LogStream.output, tail=True)
     assert stdout.logTruncatedAtBytes == limit
     journal = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1,
                           stream=LogStream.journal)
@@ -900,25 +963,24 @@ def wait_recorded_log(client, run_id, stream, expected, timeout=10):
 def test_running_remote_log_arrives_once_across_reconnects(running_job):
     """Logs arrive while the job runs; the result's log only adds what is new."""
     gateway, _, client, run_id, job_id = running_job
-    first = R.log_entries((LogStream.standard_output, "first line\n"), (LogStream.build, "building\n"))
+    first = R.log_entries((LogStream.output, "first line\n"), (LogStream.build, "building\n"))
     gateway.live_logs[job_id] = first
-    wait_recorded_log(client, run_id, LogStream.standard_output, "first line\n")
+    wait_recorded_log(client, run_id, LogStream.output, "first line\n")
     wait_recorded_log(client, run_id, LogStream.build, "building\n")
     assert client.call("RunStatusRequest", runId=run_id).state == RunState.running
 
     gateway.online = False
     wait_for_state(client, run_id, RemoteExecutionState.disconnected)
-    second = first + R.log_entries((LogStream.standard_output, "after reconnect\n"))
+    second = first + R.log_entries((LogStream.output, "after reconnect\n"))
     gateway.live_logs[job_id] = second
     gateway.online = True
-    wait_recorded_log(client, run_id, LogStream.standard_output, "first line\nafter reconnect\n")
+    wait_recorded_log(client, run_id, LogStream.output, "first line\nafter reconnect\n")
 
-    complete = second + R.log_entries((LogStream.standard_error, "only in the result\n"))
+    complete = second + R.log_entries((LogStream.output, "only in the result\n"))
     gateway.finish(job_id, logs=complete)
     assert wait_run(client, run_id).state == RunState.succeeded
-    assert recorded_log(client, run_id, LogStream.standard_output) == "first line\nafter reconnect\n"
+    assert recorded_log(client, run_id, LogStream.output) == "first line\nafter reconnect\nonly in the result\n"
     assert recorded_log(client, run_id, LogStream.build) == "building\n"
-    assert recorded_log(client, run_id, LogStream.standard_error) == "only in the result\n"
     # The cursor only moves forward, in bounded slices, and never restarts.
     assert gateway.log_offsets == sorted(gateway.log_offsets)
     assert gateway.log_offsets[-1] <= len(complete)
@@ -928,18 +990,20 @@ def test_running_remote_log_arrives_once_across_reconnects(running_job):
 def test_stopped_remote_job_keeps_its_collected_log(running_job):
     gateway, _, client, run_id, job_id = running_job
     gateway.hidden_live_logs = True
-    gateway.live_logs[job_id] = R.log_entries((LogStream.standard_output, "before cancel\n"))
+    gateway.live_logs[job_id] = R.log_entries((LogStream.output, "before cancel\n"))
     assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
     assert wait_run(client, run_id).state == RunState.cancelled
-    assert recorded_log(client, run_id, LogStream.standard_output) == "before cancel\n"
+    # The core's diagnostic follows what the Card wrote, in the same stream.
+    assert recorded_log(client, run_id, LogStream.output) == \
+        "before cancel\ntsugumi: cancelled: external job cancelled\n"
     assert gateway.download_count == 0
 
 
 def test_remote_result_must_extend_the_recorded_log(running_job):
     gateway, _, client, run_id, job_id = running_job
-    gateway.live_logs[job_id] = R.log_entries((LogStream.standard_output, "recorded\n"))
-    wait_recorded_log(client, run_id, LogStream.standard_output, "recorded\n")
-    gateway.finish(job_id, logs=R.log_entries((LogStream.standard_output, "replaced\n")))
+    gateway.live_logs[job_id] = R.log_entries((LogStream.output, "recorded\n"))
+    wait_recorded_log(client, run_id, LogStream.output, "recorded\n")
+    gateway.finish(job_id, logs=R.log_entries((LogStream.output, "replaced\n")))
     assert wait_run(client, run_id).state == RunState.failed
-    assert recorded_log(client, run_id, LogStream.standard_output) == "recorded\n"
+    assert recorded_log(client, run_id, LogStream.output).startswith("recorded\ntsugumi: ")
     assert not client.call("RunRecordRequest", runId=run_id, card=path("work")).record.outputs

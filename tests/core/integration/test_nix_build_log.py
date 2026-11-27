@@ -162,7 +162,7 @@ in
         assert record.summary.state == CardState.failed
         assert record.summary.failure.kind == FailureKind.nix_failed
     if state == RunState.succeeded and not truncating:
-        assert log(client, run_id, "probe", LogStream.standard_output) == "card-ran\n"
+        assert log(client, run_id, "probe", LogStream.output) == "card-ran\n"
 
 
 @pytest.mark.parametrize(
@@ -202,7 +202,7 @@ in
         assert record.summary.failure.kind == FailureKind.nix_failed
     else:
         assert outcome.state == RunState.succeeded, log(client, run_id, "probe", LogStream.build)
-        assert log(client, run_id, "probe", LogStream.standard_output) == expected
+        assert log(client, run_id, "probe", LogStream.output) == expected
 
 def test_stop_disconnects_the_daemon_build(core_factory, monkeypatch, tmp_path):
     monkeypatch.setenv("NIX_REMOTE", "daemon")

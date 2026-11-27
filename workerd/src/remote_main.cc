@@ -688,6 +688,14 @@ class Daemon {
         }
         if (status.state == R::JobState::Running) {
           std::error_code ec;
+          if (const auto progress = remote::decode<R::JobProgress>(
+                  fs::read_file(journal->job_path(job) / "work" / kActivity)
+                      .value_or(""))) {
+            status.activity = progress->activity;
+            status.activity_detail = progress->detail;
+            status.building = progress->building;
+            status.cpu_ms = progress->cpu_ms;
+          }
           status.secrets_wanted = stdfs::exists(
               journal->job_path(job) / "work" / kSecretsWanted, ec);
           if (!stdfs::exists(journal->job_path(job) / "work/artifact-reply",

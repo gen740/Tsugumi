@@ -35,7 +35,7 @@ the person's decision.
   Zero timeouts or sandbox limits mean unlimited. Record settings and the optional Code setting pushOutputs
   inherit the project with "project" and override with "on" or "off". pushOutputs controls publishing
   built Nix outputs. A Code Card may declare a probe derivation from default.nix.
-  The worker runs bin/probe in the Card sandbox. Its last stdout line ranks eligible workers.
+  The worker runs bin/probe in the Card sandbox. Its last line of output ranks eligible workers.
   The highest positive score wins. Invocation history includes the scores and output.
 - A new tsugumi.json carries formatVersion (1, the project file format), name, nixPath ([] or declared sources),
   trackedPaths ([]), agentExclude (the host's defaults), recordLogs (true), recordIO (false), logLimitBytes
@@ -106,7 +106,7 @@ the person's decision.
   descriptions (the app's requests, such as the Draft request, are in English whatever their language is).
 - Cite what you read with links the chat opens, within this project: [Spectrum](card:spectrum) (inside a Card in
   Card, card:outer/inner), [Run 12 (its start time or mark)](run:12), [Spectrum #1 (run 12)](run:12/spectrum#1) for an
-  invocation, [stderr (12/spectrum#1)](log:12/spectrum?invocation=1&stream=stderr&offset=0) (stdout, stderr, build or
+  invocation, [output (12/spectrum#1)](log:12/spectrum?invocation=1&stream=output&offset=0) (output, build or
   journal at a byte offset; no Card and invocation for the run's own log), [plot.png (run
   12)](artifact:<artifact UUID>?path=<URL-encoded member>) (no path for the whole artifact). Label a
   link with the name the person sees and use the run numbers, Card ids, invocations and artifact ids tools returned; a

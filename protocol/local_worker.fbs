@@ -1,5 +1,6 @@
 // Private inherited Unix connection, one request/reply at a time. Acquire
-// replies carry data, control, stdout and stderr descriptors via SCM_RIGHTS.
+// replies carry data, control and output descriptors via SCM_RIGHTS (the
+// Card's stdout and stderr share the output pipe).
 // No Card bytes pass through this connection. EOF ends this core's workers.
 include "worker.fbs";
 namespace Tsugumi.LocalWorker;

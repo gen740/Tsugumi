@@ -11,12 +11,12 @@ The RPC exposes `RunStatus.partial_run` and `RunStatus.uses_partial_result` in s
 ## Inspect an invocation
 
 1. Open **Card settings → Run History** and choose a run. From the bottom timeline, select a Card to see its log and the stage it reached.
-2. Select an invocation when the Card ran more than once. Open **Ports** to inspect recorded values, **Log** to read its output and diagnostics, or **Info** to see its status and execution details.
+2. Select an invocation when the Card ran more than once. Open **Ports** to inspect recorded values, **Log** to read its output and diagnostics, or **Info** to see its status and execution details. The log starts with a line of the stages and their times, then one foldable section per group: preparation, Nix evaluation and build; execution, where the Card's stdout and stderr are one stream in the order it wrote them; output validation and save. Running and failed sections open by themselves.
 3. To keep structured values from future invocations, select **On** for **Record input and output values** under **Card settings → Ports**.
 
 ## Set recording policy
 
-The project settings control what new invocations record. Project creation writes `recordLogs: true` and a combined `logLimitBytes` of 128 MiB per invocation. Set the limit in bytes from 0 through 1 GiB. A zero limit leaves stdout and stderr available only while the run is active. Build logs and journals keep their own limits.
+The project settings control what new invocations record. Project creation writes `recordLogs: true` and a combined `logLimitBytes` of 128 MiB per invocation. Set the limit in bytes from 0 through 1 GiB. A zero limit leaves the output available only while the run is active. Build logs and journals keep their own limits.
 
 Project creation writes `recordIO: false`. What a Card sends to its views is never recorded ([Views](CardGuide.md#views)). Where a Card supports recording, it writes `project` to inherit the setting or `on` or `off` to override it. Each nested project uses its own settings. A run keeps the policy accepted when it started, along with its summary, failure details, timings and versions.
 
