@@ -1287,12 +1287,10 @@ struct GraphCanvas: View {
       let d = session.nodeData(k)
       var lines = session.cardDetails(k)
       if debug.showKeys { lines.append("key: \(k)") }
-      var status = d.runText ?? d.idleText
-      if let id = session.currentRunId, d.invocation > 0 {
-        status += String(localized: "（Run \(String(id.prefix(8))) の中でこの Card の \(d.invocation) 回目の実行）")
+      let stage = d.stage?.failed?.stage ?? session.cardStates[k]?.stage ?? .execute
+      return .card(d, details: lines, runId: session.currentRunId) { [workspace, session] in
+        workspace.showLog(for: k, stage: stage, invocation: session.cardStates[k]?.invocation, runId: session.currentRunId)
       }
-      return .init(title: d.title, subtitle: d.kind.label, symbol: d.symbol ?? "xmark.octagon", lines: lines,
-                   status: status, problems: d.errors + (d.failure.map { [$0] } ?? []), warnings: d.warnings)
     case .wire(let i):
       let conns = session.connections(in: tab.scope)
       let symbol = "point.topleft.down.to.point.bottomright.curvepath"
@@ -1716,9 +1714,38 @@ struct HoverBubble: View {
     var subtitle: String
     var symbol: String
     var lines: [String] = []
+    /// A Card's stages with their state and time.
+    var stages: [StageProgress.Item] = []
+    /// The running execution waits for its worker.
+    var stagesWait = false
+    var facts: [String] = []
     var status: String?
     var problems: [String] = []
     var warnings: [String] = []
+    /// What the failed invocation said, whole.
+    var failure: String?
+    /// Opens the log where the invocation failed.
+    var openLog: (() -> Void)?
+
+    /// What a Card's face leaves out: its description, its stages with their
+    /// times, its run and the whole failure with a way to the log.
+    @MainActor static func card(_ d: CardNodeData, details: [String], runId: String?, openLog: @escaping () -> Void) -> Content {
+      var status = d.runText ?? d.idleText
+      if let runId, d.invocation > 0 {
+        status += String(localized: "（Run \(String(runId.prefix(8))) の中でこの Card の \(d.invocation) 回目の実行）")
+      }
+      // Where it runs, what it waits for, and whether it is working.
+      var facts: [String] = []
+      if let w = d.worker { facts.append(String(localized: "実行サービス") + ": " + w) }
+      if let a = d.activityDetail { facts.append(a) }
+      if let l = d.liveness { facts.append(l) }
+      if d.stage?.workerReused == true { facts.append(String(localized: "前回の worker を再利用して実行しました")) }
+      let failed = d.state == .failed || d.state == .blocked
+      return .init(title: d.title, subtitle: d.kind.label, symbol: d.symbol ?? "xmark.octagon", lines: details,
+                   stages: d.invocation > 0 ? d.stage?.items ?? [] : [], stagesWait: d.activityWaits, facts: facts,
+                   status: status, problems: d.errors, warnings: d.warnings, failure: failed ? d.failure : nil,
+                   openLog: failed ? openLog : nil)
+    }
   }
 
   let content: Content
@@ -1727,13 +1754,15 @@ struct HoverBubble: View {
   @State private var detailHeight: CGFloat = 0
 
   private var wraps: Bool {
-    (content.lines + content.problems + content.warnings + [content.status ?? ""]).contains { $0.count > 28 }
+    !content.stages.isEmpty || content.failure != nil ||
+      (content.lines + content.facts + content.problems + content.warnings + [content.status ?? ""]).contains { $0.count > 28 }
   }
 
   var body: some View {
     let width = max(1, min(340, viewport.width - 32))
     let height = max(1, viewport.height - 32)
-    let hasDiagnostics = !content.problems.isEmpty || !content.warnings.isEmpty
+    // Long content (diagnostics, a long description) scrolls where the canvas ends.
+    let hasDiagnostics = !content.problems.isEmpty || !content.warnings.isEmpty || content.failure != nil || wraps
     let scrolls = hasDiagnostics && detailHeight > height
     Group {
       if hasDiagnostics {
@@ -1749,7 +1778,8 @@ struct HoverBubble: View {
         details.frame(width: wraps ? width : nil, alignment: .leading)
       }
     }
-    .onChange(of: scrolls, initial: true) { _, scrolls in onScrollabilityChange(scrolls) }
+    // It takes the pointer when there is something to scroll or click in it.
+    .onChange(of: scrolls || content.openLog != nil, initial: true) { _, takes in onScrollabilityChange(takes) }
     .padding(10)
     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
     .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(.secondary.opacity(0.25)))
@@ -1764,7 +1794,23 @@ struct HoverBubble: View {
         if !content.subtitle.isEmpty { Text(content.subtitle).font(.caption).foregroundStyle(.secondary) }
       }
       ForEach(Array(content.lines.enumerated()), id: \.offset) { _, l in
-        Text(l).font(.caption).lineLimit(8).fixedSize(horizontal: false, vertical: true)
+        Text(l).font(.caption).fixedSize(horizontal: false, vertical: true)
+      }
+      if !content.stages.isEmpty {
+        VStack(alignment: .leading, spacing: 3) {
+          ForEach(content.stages) { item in
+            HStack(spacing: 6) {
+              StageDot(status: item.status, size: 9, waiting: content.stagesWait && item.stage == .execute)
+              Text(item.stage.label).font(.caption)
+              Text(content.stagesWait && item.stage == .execute && item.status == .running ? SectionStatus.waiting.label : item.status.label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+              Spacer(minLength: 8)
+              Text(item.seconds.map(formatDuration) ?? "—").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            }
+          }
+        }
+      }
+      ForEach(Array(content.facts.enumerated()), id: \.offset) { _, l in
+        Text(l).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       }
       if let s = content.status { Text(s).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
       ForEach(Array(content.problems.enumerated()), id: \.offset) { _, p in
@@ -1774,6 +1820,13 @@ struct HoverBubble: View {
       ForEach(Array(content.warnings.enumerated()), id: \.offset) { _, p in
         Label(p, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
           .fixedSize(horizontal: false, vertical: true)
+      }
+      if let f = content.failure {
+        Text(verbatim: f).font(.caption.monospaced()).foregroundStyle(.red).textSelection(.enabled)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      if let open = content.openLog {
+        Button("ログの該当箇所を開く", action: open).buttonStyle(.link).font(.caption)
       }
     }
   }

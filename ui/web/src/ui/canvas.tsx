@@ -10,23 +10,25 @@ import { app } from '../model/app'
 import { HelperBirds } from './helperBirds'
 import { WritingPanels } from './writingPanel'
 import { Boundary, canvasFor, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
-import { NEW_PORT, Pt, Rect, snapToGrid } from '../model/canvasKit'
+import { failedStage, NEW_PORT, Pt, Rect, snapToGrid, Stage, STAGE_INFO, STAGE_STATUS_LABEL, StageItem } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
 import {
-  CardKey, definitionIcon, DefinitionTemplate, JunctionPlace, key, KIND_LABEL, NOTE_COLORS, path, portTypeName, ProjectSession,
+  CardKey, definitionIcon, DefinitionTemplate, formatDuration, JunctionPlace, key, KIND_LABEL, NOTE_COLORS, path, portTypeName, ProjectSession,
+  runStateStage,
 } from '../model/session'
 import { Workspace, WorkflowTab } from '../model/workspace'
 import { arr, clone, dbl, get, J, JObj, obj, real, str } from '../../shared/json'
 import {
   DEFINITION_DRAG, EXTERNAL_DEFINITION_DRAG, EXTERNAL_DRAG, openCard, openWorkflowWindow, runCard, showLog,
 } from './actions'
-import { BoundaryBarView, CardNodeView, drive, gridStyle, idleText, runText, WireLayer } from './cardNode'
+import { BoundaryBarView, CardNodeView, drive, gridStyle, idleText, runText, StageDot, WireLayer } from './cardNode'
 import { BatchInvocations } from './batchInvocations'
 import { Button, MenuItem, Segmented, Sheet, showMenu, Stepper, TextField, Toggle } from './controls'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
 import { L } from '../i18n'
+import { D } from '../wire/rpc'
 import { newCardItems, TemplatePicker, type TemplatePlacement } from './cardTemplates'
 
 // Kept here for the views that import them from the canvas.
@@ -72,6 +74,8 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>()
   const pointer = useRef<Pt>({ x: 0, y: 0 })
   const bubble = useRef<HTMLDivElement>(null)
+  /** The details shown take the pointer (they have a link to click). */
+  const bubbleTakes = useRef(false)
   const findField = useRef<HTMLInputElement & HTMLTextAreaElement>(null)
 
   const [, cueFrame] = useState(0)
@@ -160,6 +164,11 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   const track = (p: Pt) => {
     pointer.current = p
     if (interacting) return clearHover()
+    // On the way to details that take the pointer, and inside them, they stay.
+    if (hover && bubbleTakes.current) {
+      const at = bubblePosition(hoverAt, bubbleSize, cv.size) as { left: number; top: number }
+      if (p.x >= at.left - 14 && p.x <= at.left + bubbleSize.width + 14 && p.y >= at.top - 14 && p.y <= at.top + bubbleSize.height + 14) return
+    }
     const w = cv.world(p)
     let target: HoverTarget | undefined
     const k = scene.cardAt(w)
@@ -735,11 +744,16 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         )
       })()}
 
-      {shown && !interacting && (
-        <div ref={bubble} className="cv-bubble-host" style={bubblePosition(bubbleAt, bubbleSize, cv.size)}>
-          <HoverBubble content={hoverContent(session, scope, shown)} />
-        </div>
-      )}
+      {shown && !interacting && (() => {
+        const content = hoverContent(session, scope, shown, workspace)
+        bubbleTakes.current = !!content.openLog
+        return (
+          <div ref={bubble} className={`cv-bubble-host${content.openLog ? ' takes' : ''}`} style={bubblePosition(bubbleAt, bubbleSize, cv.size)}
+            onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+            <HoverBubble content={content} />
+          </div>
+        )
+      })()}
 
       {cv.findText !== undefined && (
         <FindBox session={session} keys={scene.cardKeys} text={cv.findText} field={findField}
@@ -944,21 +958,38 @@ interface BubbleContent {
   subtitle: string
   symbol: string
   lines?: string[]
+  /** A Card's stages with their state and time. */
+  stages?: StageItem[]
+  facts?: string[]
   status?: string
   problems?: string[]
   warnings?: string[]
+  /** What the failed invocation said, whole. */
+  failure?: string
+  /** Opens the log where the invocation failed. */
+  openLog?: () => void
 }
 
-function hoverContent(session: ProjectSession, scope: string[], t: HoverTarget): BubbleContent {
+export function hoverContent(session: ProjectSession, scope: string[], t: HoverTarget, workspace?: Workspace): BubbleContent {
   if (t.kind === 'card') {
-    const d = session.nodeData(t.k)
-    const lines = session.cardDetails(t.k)
+    const k = t.k
+    const d = session.nodeData(k)
+    const lines = session.cardDetails(k)
     let status = runText(d) ?? idleText(d)
     const id = session.currentRunId
     if (id && d.invocation > 0n) status += L('（Run {0} の中でこの Card の {1} 回目の実行）', id.slice(0, 8), d.invocation)
+    const facts: string[] = []
+    if (d.stage?.workerReused) facts.push(L('前回の worker を再利用して実行しました'))
+    // The worker, what the invocation waits for, CPU time and the time since
+    // its last output go here once the core reports them in RunStatus.
+    const failed = d.state === D.CardState.failed || d.state === D.CardState.blocked
+    const st = session.cardStates.get(k)
+    const stage: Stage = failedStage(d.stage)?.stage ?? (st ? runStateStage(st) : undefined) ?? Stage.execute
     return {
       title: d.title, subtitle: KIND_LABEL[d.kind], symbol: d.symbol ?? 'xmark.octagon', lines, status,
-      problems: [...d.errors, ...(d.failure ? [d.failure] : [])], warnings: d.warnings,
+      stages: d.invocation > 0n ? d.stage?.items : undefined, facts,
+      problems: d.errors, warnings: d.warnings, failure: failed ? d.failure : undefined,
+      openLog: failed && workspace ? () => showLog(workspace, k, stage, st?.invocation, session.currentRunId) : undefined,
     }
   }
   const symbol = 'point.topleft.down.to.point.bottomright.curvepath'
@@ -990,7 +1021,20 @@ function HoverBubble({ content }: { content: BubbleContent }) {
         <span className="cv-ellipsis" style={{ fontWeight: 600, fontSize: 12 }}>{content.title}</span>
         {content.subtitle && <span className="caption secondary nowrap">{content.subtitle}</span>}
       </div>
-      {content.lines?.map((l, i) => <div key={i} className="caption wrap-pre cv-clamp8">{l}</div>)}
+      {content.lines?.map((l, i) => <div key={i} className="caption wrap-pre">{l}</div>)}
+      {!!content.stages?.length && (
+        <div className="cv-bubble-stages">
+          {content.stages.map((item) => (
+            <div key={item.stage} className="caption cv-bubble-stage">
+              <StageDot status={item.status} size={9} />
+              <span>{STAGE_INFO[item.stage].label}</span>
+              <span className="secondary cv-ellipsis">{STAGE_STATUS_LABEL[item.status]}</span>
+              <span className="secondary mono-digits" style={{ marginLeft: 'auto' }}>{item.seconds !== undefined ? formatDuration(item.seconds) : '—'}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {content.facts?.map((l, i) => <div key={'f' + i} className="caption secondary">{l}</div>)}
       {content.status && <div className="caption secondary">{content.status}</div>}
       {content.problems?.map((p, i) => (
         <div key={'p' + i} className="caption cv-issue" style={{ color: 'var(--red)' }}><Icon name="xmark.octagon" size={11} /><span className="clamp3">{p}</span></div>
@@ -998,6 +1042,8 @@ function HoverBubble({ content }: { content: BubbleContent }) {
       {content.warnings?.map((p, i) => (
         <div key={'w' + i} className="caption cv-issue" style={{ color: 'var(--orange)' }}><Icon name="exclamationmark.triangle" size={11} /><span className="clamp3">{p}</span></div>
       ))}
+      {content.failure && <div className="caption mono wrap-pre cv-bubble-failure" style={{ color: 'var(--red)' }}>{content.failure}</div>}
+      {content.openLog && <button type="button" className="cv-bubble-link caption" onClick={content.openLog}>{L('ログの該当箇所を開く')}</button>}
     </div>
   )
 }

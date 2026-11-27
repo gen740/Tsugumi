@@ -17,11 +17,11 @@
 .tp-full { display: flex; flex-direction: column; gap: 8px; }
 .tp-compact { width: 100%; height: 100%; min-height: 120px; pointer-events: none; overflow: hidden; }
 .tp-compact.tp-root .tp-surface { height: 100%; }
-.tp-compact .cv-port-label, .tp-compact .cv-stage-arrow { display: none; }
+.tp-compact .cv-port-label { display: none; }
 /* In a small thumbnail the Card's text cannot be read and its minimum size runs over the Card: only the shape and the state stay. */
-.tp-small .cv-summary, .tp-small .cv-result > *, .tp-small .cv-stage-row, .tp-small .cv-draft-text span, .tp-small .cv-state .mono-digits { visibility: hidden; }
+.tp-small .cv-summary, .tp-small .cv-face-text, .tp-small .cv-draft-text span, .tp-small .cv-state .mono-digits { visibility: hidden; }
 .tp-small .cv-port > span { transform: scale(0.7); }
-.tp-tiny .cv-card-header > *, .tp-tiny .cv-start > *, .tp-tiny .cv-routing-icon { visibility: hidden; }
+.tp-tiny .cv-card-header > *, .tp-tiny .cv-face > *, .tp-tiny .cv-start > *, .tp-tiny .cv-routing-icon { visibility: hidden; }
 .tp-tiny .cv-port > span { transform: scale(0.45); }
 .tp-message { padding: 16px; color: var(--secondary); }
 .tp-compact.tp-message { background: var(--text-bg); }

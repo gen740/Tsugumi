@@ -13,15 +13,16 @@ export type Rect = { x: number; y: number; width: number; height: number }
 /** One execution stage of an invocation, in the order the core runs them. */
 export enum Stage { waiting, prepare, evaluate, build, execute, validate, save, done }
 
-export const STAGE_INFO: Record<Stage, { label: string; active: string; icon: string; activeIcon: string; stream: D.LogStream }> = {
-  [Stage.waiting]: { label: L('入力待ち'), active: L('入力待ち'), icon: 'tray.and.arrow.down', activeIcon: 'tray.and.arrow.down', stream: D.LogStream.journal },
-  [Stage.prepare]: { label: L('スキーマ生成'), active: L('スキーマ生成中'), icon: 'shippingbox', activeIcon: 'shippingbox', stream: D.LogStream.build },
-  [Stage.evaluate]: { label: L('Nix 評価'), active: L('Nix 評価中'), icon: 'snowflake', activeIcon: 'snowflake', stream: D.LogStream.build },
-  [Stage.build]: { label: 'build', active: L('build 中'), icon: 'hammer', activeIcon: 'hammer', stream: D.LogStream.build },
-  [Stage.execute]: { label: 'run', active: L('実行中'), icon: 'play', activeIcon: 'play.fill', stream: D.LogStream.output },
-  [Stage.validate]: { label: 'validate', active: L('出力を検証中'), icon: 'checkmark.shield', activeIcon: 'checkmark.shield', stream: D.LogStream.journal },
-  [Stage.save]: { label: L('保存'), active: L('保存中'), icon: 'externaldrive', activeIcon: 'externaldrive', stream: D.LogStream.journal },
-  [Stage.done]: { label: L('完了'), active: L('完了'), icon: 'flag.checkered', activeIcon: 'flag.checkered', stream: D.LogStream.journal },
+export const STAGE_INFO: Record<Stage, { label: string; name: string; active: string; icon: string; activeIcon: string; stream: D.LogStream }> = {
+  [Stage.waiting]: { label: L('入力待ち'), name: L('入力待ち'), active: L('入力待ち'), icon: 'tray.and.arrow.down', activeIcon: 'tray.and.arrow.down', stream: D.LogStream.journal },
+  [Stage.prepare]: { label: L('スキーマ生成'), name: L('スキーマ生成'), active: L('スキーマ生成中'), icon: 'shippingbox', activeIcon: 'shippingbox', stream: D.LogStream.build },
+  [Stage.evaluate]: { label: L('Nix 評価'), name: L('Nix 評価'), active: L('Nix 評価中'), icon: 'snowflake', activeIcon: 'snowflake', stream: D.LogStream.build },
+  // `name` is the stage in words on a Card's face (the gist of a failure).
+  [Stage.build]: { label: 'build', name: L('ビルド'), active: L('build 中'), icon: 'hammer', activeIcon: 'hammer', stream: D.LogStream.build },
+  [Stage.execute]: { label: 'run', name: L('実行'), active: L('実行中'), icon: 'play', activeIcon: 'play.fill', stream: D.LogStream.output },
+  [Stage.validate]: { label: 'validate', name: L('出力検証'), active: L('出力を検証中'), icon: 'checkmark.shield', activeIcon: 'checkmark.shield', stream: D.LogStream.journal },
+  [Stage.save]: { label: L('保存'), name: L('保存'), active: L('保存中'), icon: 'externaldrive', activeIcon: 'externaldrive', stream: D.LogStream.journal },
+  [Stage.done]: { label: L('完了'), name: L('完了'), active: L('完了'), icon: 'flag.checkered', activeIcon: 'flag.checkered', stream: D.LogStream.journal },
 }
 
 export function stageOfPhase(p: D.Phase): Stage | undefined {
@@ -65,6 +66,11 @@ export interface StageProgress {
 }
 
 export const currentStage = (p: StageProgress | undefined) => p?.items.find((i) => i.status === 'running')
+export const failedStage = (p: StageProgress | undefined) => p?.items.find((i) => i.status === 'failed' || i.status === 'cancelled')
+
+/** A Card's stages before it ran in this run: all of them still to come. */
+export const notRunStages = (code: boolean): StageProgress =>
+  ({ items: applicableStages(code).map((stage) => ({ stage, status: 'pending' })), workerReused: false })
 
 /** The status of a shown stage from the core's stages it covers. */
 export function mergeStageStatus(parts: StageStatus[], ended: boolean): StageStatus {
@@ -107,15 +113,16 @@ export interface CardNodeData {
   title: string
   kind: CardKind
   symbol?: string
-  /** Short description (one line on the Card, a Draft's content in a few;
-   *  the whole text on hover). */
+  /** Description (on hover; a Draft's content on its Card, a few lines; the
+   *  diagnostic of a Card whose definition cannot be read). */
   summary?: string
   inputs: PortData[]
   outputs: PortData[]
+  /** Why the Card does not run (it waits on a Draft): said in its status line. */
   result?: string
   /** What the invocation is doing outside its stages (a file transfer, the
-   *  execution service's queue): told in the status row, which every Card that
-   *  runs has, so the Card keeps its size and its wires stay where they are. */
+   *  execution service's queue): told in the status line, which every Card
+   *  has, so the Card keeps its size and its wires stay where they are. */
   activity?: string
   state?: D.CardState
   executionList?: boolean
@@ -125,6 +132,9 @@ export interface CardNodeData {
   /** The run is still going on (a succeeded Card may run again). */
   runContinues: boolean
   failure?: string
+  /** When the latest invocation ended (ms since 1970, this machine's clock), and how long it took. */
+  endedAt?: number
+  seconds?: number
   errors: string[]
   warnings: string[]
   collapsed: boolean
@@ -175,10 +185,11 @@ const gridLengthAtLeast = (length: number, grid: number) => 2 * grid * Math.ceil
 export class CardGeometry {
   static readonly width = 220
   static readonly header = 32
+  /** An ordinary Card's face: its name (up to two lines) and status line
+   *  beside the stage circles. Fixed: nothing about a run changes it. */
+  static readonly face = 46
   static readonly summaryRow = 15
   static readonly portRow = 15
-  static readonly resultRow = 18
-  static readonly stageRow = 22
   /** A Draft's content on the Card (three lines), and while it is being written. */
   static readonly draftRow = 50
   static readonly draftEditRow = 120
@@ -196,8 +207,9 @@ export class CardGeometry {
   readonly inputs: string[]
   readonly outputs: string[]
   readonly collapsed: boolean
+  /** The name, status line and stage circles (code and Card in Card Cards). */
+  readonly face: boolean
   readonly summary: boolean
-  readonly result: boolean
   readonly stages: boolean
   readonly shape: CardShape
   readonly draft: boolean
@@ -214,10 +226,11 @@ export class CardGeometry {
     this.draft = d.kind === 'draft'
     this.draftEditing = this.draft && !!d.draftEditing
     this.untitled = this.draft && !!d.untitled && !this.draftEditing && !d.collapsed
-    // The small ones keep their shape: their summary is on hover.
-    this.summary = d.summary !== undefined && !isRouting(d) && d.kind !== 'trigger' && !this.draft
-    // Rows are reserved by kind, so a run never makes a Card grow or shrink.
-    this.result = d.result !== undefined
+    this.face = (d.kind === 'code' || d.kind === 'subgraph') && !d.collapsed
+    // A description is on hover; a Card whose definition cannot be read says
+    // why on a row of its own.
+    this.summary = d.summary !== undefined && d.kind === 'invalid'
+    // The face is the same for every state, so a run never makes a Card grow or shrink.
     this.stages = d.kind === 'code'
     this.shape = shapeOf(d.kind)
     this.grid = d.portGrid
@@ -326,9 +339,9 @@ export class CardGeometry {
     const p = CardGeometry.rowPitch(this.grid)
     return this.firstRow(p) - this.rowsTop + (count - 1) * p + CardGeometry.portRow / 2
   }
-  /** Where the rows of a left-to-right Card begin, under its header and summary. */
+  /** Where the rows of a left-to-right Card begin, under its face (or header and summary). */
   private get rowsTop() {
-    return CardGeometry.header + (this.summary ? CardGeometry.summaryRow : 0)
+    return this.face ? CardGeometry.face : CardGeometry.header + (this.summary ? CardGeometry.summaryRow : 0)
   }
   /** The first grid line a port's row fits under them. */
   private firstRow(pitch: number) {
@@ -360,8 +373,9 @@ export class CardGeometry {
   }
   /** A Card's height without its port rows. */
   private get contentHeight() {
-    return this.topLabels + this.headerRow + (this.summary ? CardGeometry.summaryRow : 0) + this.draftRow +
-      (this.result ? CardGeometry.resultRow : 0) + (this.stages ? CardGeometry.stageRow : 0) + this.bottomLabels + 4
+    // Left to right, a little room under the last port row.
+    if (this.face) return this.topLabels + CardGeometry.face + this.bottomLabels + (this.flow === 'leftToRight' ? 4 : 0)
+    return this.topLabels + this.headerRow + (this.summary ? CardGeometry.summaryRow : 0) + this.draftRow + this.bottomLabels + 4
   }
   get height() {
     return this.size.height

@@ -192,8 +192,8 @@ function emptied(xml, classes) {
  *  it is not drawn, and without it most of a Card's states draw the same. The rows keep their sizes. */
 function unseen(xml) {
   xml = xml.replace(/<span class="cv-port-label[^"]*"[^>]*>[^<]*<\/span>/g, '')
-  if (/class="cv-surface[^"]*\btp-small\b/.test(xml)) xml = emptied(xml, ['cv-param-row', 'cv-summary', 'cv-result', 'cv-stage-row', 'cv-draft-text'])
-  if (/class="cv-surface[^"]*\btp-tiny\b/.test(xml)) xml = emptied(xml, ['cv-card-header', 'cv-start', 'cv-routing-icon'])
+  if (/class="cv-surface[^"]*\btp-small\b/.test(xml)) xml = emptied(xml, ['cv-param-row', 'cv-summary', 'cv-face-text', 'cv-draft-text'])
+  if (/class="cv-surface[^"]*\btp-tiny\b/.test(xml)) xml = emptied(xml, ['cv-card-header', 'cv-face', 'cv-start', 'cv-routing-icon'])
   return xml
 }
 

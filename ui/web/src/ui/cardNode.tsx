@@ -2,17 +2,16 @@
 // player, at the screen scale `zoom`:
 // fonts and spacing are multiplied by the zoom, so text stays sharp at any
 // zoom and the hit areas are the geometry's. Also the wire layer.
-import { CSSProperties, useEffect, useRef } from 'react'
+import { CSSProperties, useEffect, useRef, useState } from 'react'
 import {
-  applicableStages, Camera, CardGeometry, CardNodeData, currentStage, isRouting, PortData, Pt, Rect, Stage, STAGE_INFO,
-  NEW_PORT, StageItem, StageProgress,
+  Camera, CardGeometry, CardNodeData, currentStage, failedStage, isRouting, notRunStages, PortData, Pt, Rect, Stage, STAGE_INFO,
+  NEW_PORT, STAGE_STATUS_LABEL, StageItem, StageProgress, StageStatus,
 } from '../model/canvasKit'
 import { BoundaryPort, WireStyle } from '../model/canvas'
 import type { FlowDirection } from '../model/prefs'
-import { CardKey, cardState, formatDuration, InlineDraft, KIND_LABEL } from '../model/session'
+import { CardKey, cardState, formatDuration, formatShortDuration, InlineDraft, KIND_LABEL, relativeAge } from '../model/session'
 import { D } from '../wire/rpc'
 import { Icon } from './icons'
-import { SECTION_STATUS_LABEL, sectionStatus, StatusSymbol } from './statusSymbol'
 import { permissionInfo } from '../model/permissions'
 import { L } from '../i18n'
 
@@ -41,6 +40,64 @@ export function idleText(d: CardNodeData): string {
   if (d.kind === 'invalid') return L('定義エラー')
   if (d.state !== undefined && d.state !== D.CardState.not_started) return cardState(d.state).label
   return L('未実行（0 回）')
+}
+
+/** The first line of a diagnostic that says something: blank lines and a bare "error:" prefix are skipped. */
+export function firstMeaningfulLine(text: string): string {
+  for (const raw of text.split(/\r?\n/)) {
+    let line = raw.trim()
+    if (line.toLowerCase().startsWith('error:')) line = line.slice(6).trim()
+    if (line) return line
+  }
+  return ''
+}
+
+/** A Card's status line: its text and colour (a colour name of the theme). */
+export interface StatusLine { text: string; color: string }
+
+/** The one line under a Card's name: what it is doing now, how its last
+ *  invocation ended, or the gist of its failure. Always one line, so the
+ *  Card's size never changes with its state. */
+export function statusLine(d: CardNodeData, now = Date.now()): StatusLine {
+  const mark = d.runMark ? ` · ${d.runMark}` : ''
+  const failedColor = cardState(D.CardState.failed).color
+  const st = d.state
+  if (st === D.CardState.failed || st === D.CardState.blocked) {
+    let text = (d.failure !== undefined ? firstMeaningfulLine(d.failure) : '') || cardState(st).label
+    const stage = failedStage(d.stage)?.stage
+    if (stage !== undefined && STAGE_INFO[stage].name !== text) text = STAGE_INFO[stage].name + ': ' + text
+    return { text: text + mark, color: st === D.CardState.failed ? failedColor : cardState(st).color }
+  }
+  if (d.errors.length && (st === undefined || st === D.CardState.not_started)) return { text: firstMeaningfulLine(d.errors[0]), color: failedColor }
+  if (d.executionList) return { text: runText(d) ?? idleText(d), color: st === undefined ? 'secondary' : cardState(st).color }
+  if (st === undefined || st === D.CardState.not_started) return { text: (d.result ?? L('未実行')) + mark, color: 'secondary' }
+  switch (st) {
+    case D.CardState.running:
+    case D.CardState.preparing: {
+      const cur = currentStage(d.stage)
+      return { text: (d.activity ?? (cur ? STAGE_INFO[cur.stage].active : cardState(st).label)) + mark, color: cardState(st).color }
+    }
+    case D.CardState.succeeded: {
+      let text = cardState(st).label
+      if (d.invocation > 1n) text += ` ×${d.invocation}`
+      if (d.endedAt !== undefined) text += ' · ' + relativeAge(d.endedAt, now)
+      if (d.seconds !== undefined) text += ' · ' + formatShortDuration(d.seconds)
+      return { text: text + mark, color: 'secondary' }
+    }
+    case D.CardState.skipped: return { text: cardState(st).label + mark, color: 'secondary' }
+    default: return { text: cardState(st).label + mark, color: cardState(st).color }
+  }
+}
+
+/** Now, again every 30 seconds while `on` (for "3 min ago"). */
+function useNow(on: boolean): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!on) return
+    const t = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(t)
+  }, [on])
+  return on ? now : Date.now()
 }
 
 const colorVar = (c: string) => `var(--${c})`
@@ -192,18 +249,28 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
   const rt = runText(data)
   const edit = g.draftEditing ? p.draftEdit : undefined
   const fields = useDraftFields(edit)
+  const collapse = p.onToggleCollapse && data.kind !== 'trigger' && !edit && (
+    <button type="button" className="cv-collapse secondary" title={data.collapsed ? L('展開') : L('折りたたむ（実行には影響しません）')}
+      onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); p.onToggleCollapse!() }}>
+      <Icon name={data.collapsed ? 'chevron.down' : 'chevron.up'} size={font(9)} />
+    </button>
+  )
+  const permissions = data.permissions?.map((p) => (
+    <Icon key={p} name={permissionInfo(p).icon} size={font(10)} title={permissionInfo(p).label}
+      style={{ color: p === 'sandbox_off' ? 'var(--orange)' : 'var(--secondary)', flex: 'none' }} />
+  ))
   return (
     <div className="cv-card-body" style={{ width: s(g.cardWidth) }}
       onBlur={edit ? (e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) edit.onDone() } : undefined}>
       <div style={{ height: s(g.topLabels) }} />
-      {g.untitled ? <div style={{ height: s(g.headerRow), flex: 'none' }} /> : <div className="cv-card-header" style={{ height: s(CardGeometry.header), padding: `0 ${s(9)}px`, gap: s(6) }}>
+      {g.face ? <CardFace p={p} g={g} marks={<>{permissions}{data.warnings.length ? <Icon name="exclamationmark.triangle.fill" size={font(10)}
+        style={{ color: 'var(--yellow)', flex: 'none' }} title={data.warnings.join('\n')} /> : null}{collapse}</>} />
+        : g.untitled ? <div style={{ height: s(g.headerRow), flex: 'none' }} /> : <div className="cv-card-header" style={{ height: s(CardGeometry.header), padding: `0 ${s(9)}px`, gap: s(6) }}>
         <span className="secondary cv-center" style={{ width: s(15) }}><Icon name={data.symbol ?? 'xmark.octagon'} size={font(12)} /></span>
         <span className="cv-title" style={{ fontSize: font(12) }}>{data.untitled && !edit ? data.summary?.split('\n')[0] ?? data.title : data.title}</span>
         {!edit && <span style={{ flex: 1, minWidth: s(2) }} />}
-        {data.permissions?.map((p) => (
-          <Icon key={p} name={permissionInfo(p).icon} size={font(10)} title={permissionInfo(p).label}
-            style={{ color: p === 'sandbox_off' ? 'var(--orange)' : 'var(--secondary)' }} />
-        ))}
+        {permissions}
         {data.errors.length ? <Icon name="xmark.octagon.fill" size={font(11)} style={{ color: 'var(--red)' }} title={data.errors.join('\n')} />
           : data.warnings.length ? <Icon name="exclamationmark.triangle.fill" size={font(11)} style={{ color: 'var(--yellow)' }} title={data.warnings.join('\n')} /> : null}
         {data.state !== undefined && data.state !== D.CardState.not_started && (
@@ -212,13 +279,7 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
             {data.invocation > 0n && <span className="secondary mono-digits">#{String(data.invocation)}</span>}
           </span>
         )}
-        {p.onToggleCollapse && data.kind !== 'trigger' && !edit && (
-          <button type="button" className="cv-collapse secondary" title={data.collapsed ? L('展開') : L('折りたたむ（実行には影響しません）')}
-            onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); p.onToggleCollapse!() }}>
-            <Icon name={data.collapsed ? 'chevron.down' : 'chevron.up'} size={font(9)} />
-          </button>
-        )}
+        {collapse}
       </div>}
       {!g.collapsed && (
         <>
@@ -235,27 +296,35 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
             </div>
           ))}
           {g.summary && data.summary && (
-            <div className={`cv-summary${data.kind === 'invalid' ? '' : ' secondary'}`} title={data.kind === 'invalid' ? data.summary : undefined}
-              style={{ fontSize: font(10), height: s(CardGeometry.summaryRow), padding: `0 ${s(10)}px`, color: data.kind === 'invalid' ? colorVar(cardState(D.CardState.failed).color) : undefined }}>{data.summary}</div>
+            <div className="cv-summary" title={data.summary}
+              style={{ fontSize: font(10), height: s(CardGeometry.summaryRow), padding: `0 ${s(10)}px`, color: colorVar(cardState(D.CardState.failed).color) }}>{data.summary}</div>
           )}
           {flow === 'leftToRight' && <div style={{ height: s(g.portBand) }} />}
-          {g.result && (
-            <div className="cv-result secondary" style={{ height: s(CardGeometry.resultRow), padding: `0 ${s(10)}px`, gap: s(4) }}>
-              <Icon name="text.below.photo" size={font(9)} />
-              <span className={data.result !== undefined ? 'mono' : ''} style={{ fontSize: font(10) }}>{data.result ?? L('結果はまだありません')}</span>
-            </div>
-          )}
-          {g.stages && (
-            <div className="cv-stage-row" style={{ height: s(CardGeometry.stageRow), padding: `0 ${s(8)}px` }}>
-              {data.stage && data.invocation > 0n
-                ? <StageStrip progress={data.stage} zoom={z} onTap={p.onStageTap} caption={data.executionList ? L('実行 #{0}', data.invocation) : rt ?? ''} waiting={data.activityWaits} liveness={data.liveness} />
-                : notReached(data)
-                ? <StageStrip progress={{ items: applicableStages(data.kind === 'code').map((stage) => ({ stage, status: 'pending' })), workerReused: false }} zoom={z} caption={data.runMark ?? ''} />
-                : <span className="secondary cv-ellipsis" style={{ fontSize: font(10) }}>{idleText(data)}</span>}
-            </div>
-          )}
         </>
       )}
+    </div>
+  )
+}
+
+/** An ordinary Card: its name (two lines at most) and its status line, with
+ *  the stage circles on the right. The marks sit beside the name's first line. */
+function CardFace({ p, g, marks }: { p: CardNodeProps; g: CardGeometry; marks: JSX.Element }) {
+  const { data } = p
+  const z = p.zoom ?? 1
+  const s = (v: number) => v * z
+  const font = (size: number) => Math.max(6, size * z)
+  const line = statusLine(data, useNow(data.state === D.CardState.succeeded))
+  return (
+    <div className="cv-face" style={{ height: s(CardGeometry.face), padding: `0 ${s(9)}px 0 ${s(10)}px`, gap: s(8) }}>
+      <div className="cv-face-text" style={{ gap: s(1) }}>
+        <div className="cv-face-name" style={{ gap: s(4) }}>
+          <span className="cv-name" style={{ fontSize: font(12), lineHeight: `${s(15)}px`, maxHeight: s(30) }}>{data.title}</span>
+          <span className="cv-face-marks" style={{ gap: s(4), height: s(15) }}>{marks}</span>
+        </div>
+        <span className="cv-ellipsis cv-status-line" style={{ fontSize: font(10), lineHeight: `${s(13)}px`, color: colorVar(line.color) }}>{line.text}</span>
+      </div>
+      {g.stages ? <StageDots progress={data.stage && data.invocation > 0n ? data.stage : notRunStages(true)} zoom={z} onTap={p.onStageTap} />
+        : data.kind === 'subgraph' ? <span className="secondary cv-center"><Icon name={data.symbol ?? 'link'} size={font(10)} /></span> : null}
     </div>
   )
 }
@@ -344,52 +413,53 @@ function portHelp(p: PortData, output: boolean): string {
   return s
 }
 
-// ---- Stage strip -----------------------------------------------------------------------
+// ---- Stage circles -----------------------------------------------------------------------
 
-/** A Card that has not run yet shows its stages, none reached; a Draft or a
- *  Card whose definition cannot be read keeps its words. */
-const notReached = (d: CardNodeData) =>
-  d.kind !== 'draft' && d.kind !== 'invalid' && (d.state === undefined || d.state === D.CardState.not_started)
+export const STAGE_COLOR: Record<StageStatus, string> = {
+  pending: 'secondary', notRun: 'secondary', running: 'orange', done: 'green',
+  cached: 'blue', reused: 'teal', failed: 'red', cancelled: 'brown',
+}
 
-/** Stages of the latest invocation in their order, with the same symbols as
- *  the log view's pipeline line: a thin empty circle not yet reached, a
- *  spinner running, an hourglass waiting for the worker, a check done
- *  (blue cached, teal reused), a cross failed. The running stage is also
- *  named in words. */
-export function StageStrip({ progress, zoom = 1, onTap, caption = '', waiting = false, liveness }: {
-  progress: StageProgress; zoom?: number; onTap?: (s: Stage) => void; caption?: string; waiting?: boolean; liveness?: string
-}) {
-  const s = (v: number) => v * zoom
-  const status = (item: StageItem) => sectionStatus(item.status, waiting && item.stage === Stage.execute)
-  const help = (item: StageItem) => {
-    let t = STAGE_INFO[item.stage].label + L('：') + SECTION_STATUS_LABEL[status(item)]
-    if (item.seconds !== undefined) t += ' · ' + formatDuration(item.seconds)
-    if (item.status === 'running' && liveness) t += ' · ' + liveness
-    if (item.status === 'failed' || item.status === 'cancelled') t += L('（クリックでこの段階のログ）')
-    else if (onTap && item.status !== 'pending') t += L('（クリックでログ）')
-    return t
+export function stageHelp(item: StageItem, tappable: boolean): string {
+  let t = STAGE_INFO[item.stage].label + L('：') + STAGE_STATUS_LABEL[item.status]
+  if (item.seconds !== undefined) t += ' · ' + formatDuration(item.seconds)
+  if (item.status === 'failed' || item.status === 'cancelled') t += L('（クリックでこの段階のログ）')
+  else if (tappable && item.status !== 'pending') t += L('（クリックでログ）')
+  return t
+}
+
+/** One stage circle: an empty ring before it is reached, a spinning arc while
+ *  it runs, filled once it ended. */
+export function StageDot({ status, size }: { status: StageStatus; size: number }) {
+  // A stage waiting for something (another build, a worker) will be a dashed
+  // orange ring once the core reports that state.
+  const c = `var(--${STAGE_COLOR[status]}${status === 'reused' ? ', #30b0c7' : ''})`
+  const line = Math.max(0.8, size * 0.15)
+  const style: CSSProperties = { width: size, height: size }
+  if (status === 'pending' || status === 'notRun') return <span className="cv-dot" style={{ ...style, borderWidth: line, borderColor: fade('secondary', 0.6) }} />
+  if (status === 'running') {
+    return <span className="cv-dot cv-dot-running" style={{ ...style, borderWidth: line * 1.2, borderColor: fade('orange', 0.25), borderTopColor: c, borderRightColor: c }} />
   }
+  return <span className="cv-dot filled" style={{ ...style, background: c }} />
+}
+
+/** Stages of the latest invocation as small circles stacked top to bottom
+ *  (build, run, validate) on a thin line: a timeline. Colour and fill say how
+ *  each went; a click opens that stage in the log. */
+export function StageDots({ progress, zoom = 1, onTap }: { progress: StageProgress; zoom?: number; onTap?: (s: Stage) => void }) {
+  const s = (v: number) => v * zoom
+  const n = progress.items.length
   return (
-    <div className="cv-stages" style={{ gap: s(2) }}>
-      {progress.items.flatMap((item, i) => {
-        const info = STAGE_INFO[item.stage]
-        return [
-          ...(i > 0 ? [<span key={'a' + i} className="cv-stage-arrow" aria-hidden><Icon name="arrow.right" size={Math.max(4, s(6))} /></span>] : []),
-          <button key={item.stage} type="button" className="cv-stage" disabled={!onTap} title={help(item)}
-            aria-label={info.label + L('：') + SECTION_STATUS_LABEL[status(item)]}
-            style={{ width: s(15), height: s(15) }}
-            onPointerDown={(e) => onTap && e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); onTap?.(item.stage) }}>
-            <StatusSymbol status={status(item)} size={Math.max(8, s(13))} />
-          </button>,
-        ]
-      })}
-      {progress.workerReused && (
-        <span title={L('前回の worker を再利用して実行しました')} style={{ color: 'var(--teal, #30b0c7)', display: 'inline-flex' }}>
-          <Icon name="arrow.triangle.2.circlepath" size={Math.max(6, s(8))} />
-        </span>
-      )}
-      <span className="secondary cv-ellipsis" title={liveness ? `${caption}\n${liveness}` : caption || undefined} style={{ fontSize: Math.max(6, s(9.5)), flex: 1, minWidth: 0 }}>{caption}</span>
+    <div className="cv-dots" style={{ gap: s(4) }}>
+      <span className="cv-dots-line" style={{ width: Math.max(0.5, s(1)), height: s((n - 1) * 13) }} aria-hidden />
+      {progress.items.map((item) => (
+        <button key={item.stage} type="button" className="cv-stage" disabled={!onTap} title={stageHelp(item, !!onTap)}
+          aria-label={STAGE_INFO[item.stage].label + L('：') + STAGE_STATUS_LABEL[item.status]}
+          onPointerDown={(e) => onTap && e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onTap?.(item.stage) }}>
+          <StageDot status={item.status} size={s(9)} />
+        </button>
+      ))}
     </div>
   )
 }

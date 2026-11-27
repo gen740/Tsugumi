@@ -6,7 +6,7 @@ import { api, Demo, projectsFolder } from '../api'
 import { app } from '../model/app'
 import { useObserve } from '../model/observable'
 import { prefs } from '../model/prefs'
-import { errorText } from '../model/session'
+import { errorText, relativeAge } from '../model/session'
 import { Button, Empty, showMenu, Sheet, Spinner, TextField, Toggle } from './controls'
 import { DemoThumbnailPlayer } from './demoPlayer'
 import { Icon } from './icons'
@@ -254,15 +254,6 @@ export function SetupView() {
 }
 
 // ---- Home --------------------------------------------------------------------------
-
-/** "Just now", "5 min ago", "3 h ago", "2 days ago": no seconds that tick. */
-export function relativeAge(ms: number, now = Date.now()): string {
-  const d = Math.max(0, (now - ms) / 1000)
-  if (d < 60) return L('たった今')
-  if (d < 3600) return L('{0} 分前', Math.floor(d / 60))
-  if (d < 86400) return L('{0} 時間前', Math.floor(d / 3600))
-  return L('{0} 日前', Math.floor(d / 86400))
-}
 
 /** Home (new, existing and recent projects) and the demo list, entered from
  *  "Browse Demos" with a way back. Lists scroll; nothing is cut at the top. */

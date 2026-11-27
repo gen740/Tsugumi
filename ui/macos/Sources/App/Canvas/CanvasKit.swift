@@ -38,6 +38,16 @@ enum Stage: Int, CaseIterable, Identifiable {
     }
   }
 
+  /// The stage in words on a Card's face (the gist of a failure).
+  var name: String {
+    switch self {
+    case .build: return String(localized: "ビルド")
+    case .execute: return String(localized: "実行")
+    case .validate: return String(localized: "出力検証")
+    default: return label
+    }
+  }
+
   /// Short "in progress" wording for the status row.
   var activeLabel: String {
     switch self {
@@ -117,7 +127,7 @@ enum Stage: Int, CaseIterable, Identifiable {
   }
 }
 
-/// Progress of the latest invocation as the stage strip shows it, from the
+/// Progress of the latest invocation as the stage circles show it, from the
 /// stages the core recorded (never inferred from the final state).
 struct StageProgress: Equatable {
   enum Status: Equatable {
@@ -169,6 +179,11 @@ struct StageProgress: Equatable {
     return reached.allSatisfy { $0 == .reused } ? .reused : .cached
   }
   var failed: Item? { items.first { $0.status == .failed || $0.status == .cancelled } }
+
+  /// A Card's stages before it ran in this run: all of them still to come.
+  static func notRun(code: Bool) -> StageProgress {
+    StageProgress(items: Stage.applicable(code: code).map { Item(stage: $0, status: .pending) })
+  }
 }
 
 struct PortData: Hashable {
@@ -226,15 +241,15 @@ struct CardNodeData: Equatable {
   var title: String
   var kind: CardKind
   var symbol: String?
-  /// Short description (one line on the Card, a Draft's content in a few;
-  /// the whole text on hover).
+  /// Description (on hover; a Draft's content on its Card, a few lines).
   var summary: String?
   var inputs: [PortData]
   var outputs: [PortData]
+  /// Why the Card does not run (it waits on a Draft): said in its status line.
   var result: String?
   /// What the invocation is doing outside its stages (a file transfer, the
-  /// execution service's queue): told in the status row, which every Card that
-  /// runs has, so the Card keeps its size and its wires stay where they are.
+  /// execution service's queue): told in the status line, which every Card
+  /// has, so the Card keeps its size and its wires stay where they are.
   var activity: String?
   var state: Tsugumi_Data_CardState?
   var executionList = false
@@ -245,6 +260,9 @@ struct CardNodeData: Equatable {
   var runContinues = false
   var runMark: String?
   var failure: String?
+  /// When the latest invocation ended, and how long it took.
+  var endedAt: Date?
+  var seconds: Double?
   var errors: [String] = []
   var warnings: [String] = []
   var collapsed = false
@@ -262,6 +280,11 @@ struct CardNodeData: Equatable {
   var activityWaits = false
   /// Whether a running invocation is working (CPU time, last output), on hover.
   var liveness: String?
+  /// What a remote execution waits for or does, in full (on hover; the
+  /// status line has the short form in `activity`).
+  var activityDetail: String?
+  /// Where the invocation runs (its execution service), on hover.
+  var worker: String?
 
   var isDraft: Bool { kind == .draft }
   var isRouting: Bool { kind == .merge || kind == .collect }
@@ -289,6 +312,80 @@ struct CardNodeData: Equatable {
     if let state, state != .notStarted { return state.label }
     return String(localized: "未実行（0 回）")
   }
+
+  /// The one line under a Card's name: what it is doing now, how its last
+  /// invocation ended, or the gist of its failure. Always one line, so the
+  /// Card's size never changes with its state.
+  func statusLine(now: Date = Date()) -> CardStatusLine {
+    let mark = runMark.map { " · " + $0 } ?? ""
+    if let state, state == .failed || state == .blocked {
+      var text = failure.map(firstMeaningfulLine) ?? state.label
+      if text.isEmpty { text = state.label }
+      if let stage = stage?.failed?.stage, stage.name != text { text = stage.name + ": " + text }
+      return .init(text: text + mark, tone: state == .failed ? .failed : .state(state))
+    }
+    if !errors.isEmpty, state == nil || state == .notStarted {
+      return .init(text: firstMeaningfulLine(errors[0]), tone: .failed)
+    }
+    if executionList { return .init(text: runText ?? idleText, tone: state.map(CardStatusLine.Tone.state) ?? .plain) }
+    guard let state, state != .notStarted else {
+      return .init(text: (result ?? String(localized: "未実行")) + mark, tone: .plain)
+    }
+    switch state {
+    case .running, .preparing:
+      let doing = activity ?? stage?.current?.stage.activeLabel ?? state.label
+      return .init(text: doing + mark, tone: .state(state))
+    case .succeeded:
+      var text = state.label
+      if invocation > 1 { text += " ×\(invocation)" }
+      if let endedAt { text += " · " + relativeAge(endedAt, now: now) }
+      if let seconds { text += " · " + formatShortDuration(seconds) }
+      return .init(text: text + mark, tone: .plain)
+    case .skipped:
+      return .init(text: state.label + mark, tone: .plain)
+    default:
+      return .init(text: state.label + mark, tone: .state(state))
+    }
+  }
+}
+
+/// A duration as a Card's face says it: "4.0 s", "3:12", "1:02:03".
+func formatShortDuration(_ seconds: Double) -> String {
+  let t = max(0, seconds)
+  if t < 59.95 { return String(format: "%.1f s", t) }
+  let s = Int(t.rounded(.down))
+  if s < 3600 { return String(format: "%d:%02d", s / 60, s % 60) }
+  return String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
+}
+
+/// A Card's status line and how it is coloured.
+struct CardStatusLine: Equatable {
+  enum Tone: Equatable {
+    case plain
+    case failed
+    case state(Tsugumi_Data_CardState)
+  }
+  var text: String
+  var tone: Tone
+
+  var color: Color {
+    switch tone {
+    case .plain: return .secondary
+    case .failed: return Tsugumi_Data_CardState.failed.color
+    case .state(let s): return s.color
+    }
+  }
+}
+
+/// The first line of a diagnostic that says something: blank lines and a
+/// bare "error:" prefix are skipped.
+func firstMeaningfulLine(_ text: String) -> String {
+  for raw in text.split(whereSeparator: \.isNewline) {
+    var line = raw.trimmingCharacters(in: .whitespaces)
+    if line.lowercased().hasPrefix("error:") { line = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces) }
+    if !line.isEmpty { return line }
+  }
+  return ""
 }
 
 /// Outline of a Card on the canvas.
@@ -322,10 +419,11 @@ func snapToGrid(_ v: CGFloat, _ grid: CGFloat) -> CGFloat { ((v / grid + 0.5).ro
 struct CardGeometry {
   static let width: CGFloat = 220
   static let header: CGFloat = 32
+  /// An ordinary Card's face: its name (up to two lines) and status line
+  /// beside the stage circles. Fixed: nothing about a run changes it.
+  static let face: CGFloat = 46
   static let summaryRow: CGFloat = 15
   static let portRow: CGFloat = 15
-  static let resultRow: CGFloat = 18
-  static let stageRow: CGFloat = 22
   /// A Draft's content on the Card (three lines), and while it is being written.
   static let draftRow: CGFloat = 50
   static let draftEditRow: CGFloat = 120
@@ -347,8 +445,9 @@ struct CardGeometry {
   let inputs: [String]
   let outputs: [String]
   let collapsed: Bool
+  /// The name, status line and stage circles (code and Card in Card Cards).
+  let face: Bool
   let summary: Bool
-  let result: Bool
   let stages: Bool
   let flow: FlowDirection
   let shape: CardShape
@@ -366,10 +465,11 @@ struct CardGeometry {
     draft = d.isDraft
     draftEditing = d.isDraft && d.draftEditing
     untitled = d.isDraft && d.untitled && !d.draftEditing && !d.collapsed
-    // The small ones keep their shape: their summary is on hover.
-    summary = d.summary != nil && !d.isRouting && d.kind != .trigger && !d.isDraft
-    // Rows are reserved by kind, so a run never makes a Card grow or shrink.
-    result = d.result != nil
+    face = (d.kind == .code || d.kind == .subgraph) && !d.collapsed
+    // A description is on hover; a Card whose definition cannot be read says
+    // why on a row of its own.
+    summary = d.summary != nil && d.kind == .invalid
+    // The face is the same for every state, so a run never makes a Card grow or shrink.
     stages = d.kind == .code
     self.flow = flow
     shape = CardShape(d.kind)
@@ -488,8 +588,8 @@ struct CardGeometry {
     let p = Self.rowPitch(grid)
     return firstRow(p) - rowsTop + CGFloat(count - 1) * p + Self.portRow / 2
   }
-  /// Where the rows of a left-to-right Card begin, under its header and summary.
-  private var rowsTop: CGFloat { Self.header + (summary ? Self.summaryRow : 0) }
+  /// Where the rows of a left-to-right Card begin, under its face (or header and summary).
+  private var rowsTop: CGFloat { face ? Self.face : Self.header + (summary ? Self.summaryRow : 0) }
   /// The first grid line a port's row fits under them.
   private func firstRow(_ pitch: CGFloat) -> CGFloat {
     ((rowsTop + Self.portRow / 2) / pitch).rounded(.up) * pitch
@@ -513,8 +613,9 @@ struct CardGeometry {
   }
   /// A Card's height without its port rows.
   private var contentHeight: CGFloat {
-    topLabels + headerRow + (summary ? Self.summaryRow : 0) + draftRow +
-      (result ? Self.resultRow : 0) + (stages ? Self.stageRow : 0) + bottomLabels + 4
+    // Left to right, a little room under the last port row.
+    if face { return topLabels + Self.face + bottomLabels + (flow == .leftToRight ? 4 : 0) }
+    return topLabels + headerRow + (summary ? Self.summaryRow : 0) + draftRow + bottomLabels + 4
   }
   var height: CGFloat { size.height }
 
@@ -1024,25 +1125,21 @@ struct CardNodeView: View {
   private func cardBody(_ g: CardGeometry) -> some View {
     VStack(alignment: .leading, spacing: 0) {
       Color.clear.frame(height: s(g.topLabels))
-      if g.untitled { Color.clear.frame(height: s(g.headerRow)) } else { header.frame(height: s(CardGeometry.header)) }
+      if g.face {
+        face(g).frame(height: s(CardGeometry.face))
+      } else if g.untitled {
+        Color.clear.frame(height: s(g.headerRow))
+      } else {
+        header.frame(height: s(CardGeometry.header))
+      }
       if !g.collapsed {
         if g.draft { draftBody(g) }
         if g.summary, let summary = data.summary {
-          Text(summary).font(font(10)).foregroundStyle(data.kind == .invalid ? AnyShapeStyle(Tsugumi_Data_CardState.failed.color) : AnyShapeStyle(.secondary))
-            .lineLimit(1).truncationMode(.tail).help(data.kind == .invalid ? summary : "")
+          Text(summary).font(font(10)).foregroundStyle(Tsugumi_Data_CardState.failed.color)
+            .lineLimit(1).truncationMode(.tail).help(summary)
             .padding(.horizontal, s(10)).frame(height: s(CardGeometry.summaryRow), alignment: .top)
         }
         if flow == .leftToRight { Color.clear.frame(height: s(g.portBand)) }
-        if g.result {
-          HStack(spacing: s(4)) {
-            Image(systemName: "text.below.photo").font(font(9))
-            Text(data.result ?? String(localized: "結果はまだありません")).font(font(10, mono: data.result != nil)).lineLimit(1)
-          }
-          .foregroundStyle(.secondary)
-          .padding(.horizontal, s(10))
-          .frame(height: s(CardGeometry.resultRow))
-        }
-        if g.stages { statusRow.frame(height: s(CardGeometry.stageRow)).padding(.horizontal, s(8)) }
       }
     }
     .frame(width: s(g.cardWidth), alignment: .leading)
@@ -1125,6 +1222,52 @@ struct CardNodeView: View {
     .padding(.horizontal, s(9))
   }
 
+  /// An ordinary Card: its name (two lines at most) and its status line, with
+  /// the stage circles on the right. The marks sit beside the name's first line.
+  private func face(_ g: CardGeometry) -> some View {
+    HStack(alignment: .center, spacing: s(8)) {
+      VStack(alignment: .leading, spacing: s(1)) {
+        HStack(alignment: .firstTextBaseline, spacing: s(4)) {
+          Text(verbatim: data.title).font(font(12, .semibold)).lineLimit(2).truncationMode(.tail)
+            .fixedSize(horizontal: false, vertical: true)
+          Spacer(minLength: 0)
+          marks
+        }
+        TimelineView(.periodic(from: .now, by: 30)) { t in
+          let line = data.statusLine(now: t.date)
+          Text(verbatim: line.text).font(font(10)).foregroundStyle(line.color)
+            .lineLimit(1).truncationMode(.tail)
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      if g.stages {
+        StageDots(progress: data.stage.flatMap { data.invocation > 0 ? $0 : nil } ?? .notRun(code: true),
+                  zoom: zoom, onTap: onStageTap, waiting: data.activityWaits)
+      } else if data.kind == .subgraph {
+        Image(systemName: data.symbol ?? "link").font(font(10)).foregroundStyle(.secondary)
+      }
+    }
+    .padding(.leading, s(10)).padding(.trailing, s(9))
+  }
+
+  /// Permissions and the collapse button.
+  @ViewBuilder private var marks: some View {
+    ForEach(data.permissions, id: \.rawValue) { p in
+      Image(systemName: p.symbol).font(font(10)).foregroundStyle(p == .sandboxOff ? .orange : .secondary).help(p.label)
+    }
+    if !data.warnings.isEmpty {
+      Image(systemName: "exclamationmark.triangle.fill").font(font(10)).foregroundStyle(.yellow)
+        .help(data.warnings.joined(separator: "\n"))
+    }
+    if let toggle = onToggleCollapse {
+      Button(action: toggle) {
+        Image(systemName: data.collapsed ? "chevron.down" : "chevron.up").font(font(9, .semibold))
+      }
+      .buttonStyle(.borderless).foregroundStyle(.secondary)
+      .help(data.collapsed ? "展開" : "折りたたむ（実行には影響しません）")
+    }
+  }
+
   /// State icon and invocation number.
   @ViewBuilder private var stateBadge: some View {
     if !data.errors.isEmpty, data.state != .failed {
@@ -1137,23 +1280,6 @@ struct CardNodeView: View {
       }
       .font(font(10))
       .help(data.runText ?? st.label)
-    }
-  }
-
-  /// Stage strip (or the plain status) of a code Card.
-  /// A Card that has not run shows its stages, none reached yet.
-  @ViewBuilder private var statusRow: some View {
-    if let p = data.stage, data.invocation > 0 {
-      StageStrip(progress: p, zoom: zoom, onTap: onStageTap,
-                 caption: data.executionList ? String(localized: "実行 #\(data.invocation)") : data.runText ?? "",
-                 waiting: data.activityWaits, liveness: data.liveness)
-    } else if !data.isDraft, data.kind != .invalid, data.state == nil || data.state == .notStarted {
-      StageStrip(progress: StageProgress(items: Stage.applicable(code: data.kind == .code).map {
-        StageProgress.Item(stage: $0, status: .pending)
-      }), zoom: zoom, caption: data.runMark ?? "")
-    } else {
-      Text(data.idleText).font(font(10)).foregroundStyle(.secondary).lineLimit(1)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
   }
 
@@ -1317,60 +1443,99 @@ private struct NewPortMark: View {
   }
 }
 
-/// Stages of the latest invocation in their order. Every stage keeps its own
-/// icon; color and a small badge say whether it is pending, running, done,
-/// cached, reused or failed. The running stage is also named in words.
-struct StageStrip: View {
+/// Stages of the latest invocation as small circles stacked top to bottom
+/// (build, run, validate) on a thin line: a timeline. Colour and fill say how
+/// each went; a click opens that stage in the log.
+struct StageDots: View {
   let progress: StageProgress
   var zoom: Double = 1
   var onTap: ((Stage) -> Void)?
-  var caption = ""
   /// The running execution waits for its worker.
   var waiting = false
-  /// CPU time and last output of the running invocation, on hover.
-  var liveness: String?
+
+  static let dot: CGFloat = 9
+  static let gap: CGFloat = 4
 
   private func s(_ v: CGFloat) -> CGFloat { v * CGFloat(zoom) }
 
   var body: some View {
-    HStack(spacing: s(2)) {
-      // The stages in order, joined by arrows: build → run → validate.
-      ForEach(Array(progress.items.enumerated()), id: \.element.id) { i, item in
-        if i > 0 {
-          Image(systemName: "arrow.right").font(.system(size: max(4, s(6)), weight: .semibold))
-            .foregroundStyle(.secondary.opacity(0.6))
-            .accessibilityHidden(true)
-        }
-        Button { onTap?(item.stage) } label: { icon(item) }
+    let n = CGFloat(progress.items.count)
+    VStack(spacing: s(Self.gap)) {
+      ForEach(progress.items) { item in
+        let waits = waiting && item.stage == .execute
+        Button { onTap?(item.stage) } label: { StageDot(status: item.status, size: s(Self.dot), waiting: waits) }
           .buttonStyle(.plain)
           .disabled(onTap == nil)
-          .help(help(item))
-          .accessibilityLabel(item.stage.label + "：" + SectionStatus(item.status, waiting: waiting && item.stage == .execute).label)
+          .help(Self.help(item, tappable: onTap != nil, waiting: waits))
+          .accessibilityLabel(item.stage.label + "：" + SectionStatus(item.status, waiting: waits).label)
       }
-      if progress.workerReused {
-        Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: max(6, s(8)))).foregroundStyle(.teal)
-          .help("前回の worker を再利用して実行しました")
-      }
-      Text(caption).font(.system(size: max(6, s(9.5)))).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .help(liveness.map { caption + "\n" + $0 } ?? caption)
+    }
+    .background {
+      // From the first circle's centre to the last one's.
+      Rectangle().fill(.secondary.opacity(0.35))
+        .frame(width: max(0.5, s(1)), height: max(0, s((n - 1) * (Self.dot + Self.gap))))
     }
     .accessibilityElement(children: .contain)
   }
 
-  /// The same symbols as the log view's pipeline line.
-  private func icon(_ item: StageProgress.Item) -> some View {
-    StatusSymbol(status: SectionStatus(item.status, waiting: waiting && item.stage == .execute), size: max(8, s(13)))
-      .frame(width: s(15), height: s(15))
+  static func help(_ item: StageProgress.Item, tappable: Bool, waiting: Bool = false) -> String {
+    var t = item.stage.label + "：" + SectionStatus(item.status, waiting: waiting).label
+    if let sec = item.seconds { t += " · " + formatDuration(sec) }
+    if item.status == .failed || item.status == .cancelled { t += String(localized: "（クリックでこの段階のログ）") }
+    else if tappable, item.status != .pending { t += String(localized: "（クリックでログ）") }
+    return t
   }
 
-  private func help(_ item: StageProgress.Item) -> String {
-    var t = item.stage.label + "：" + SectionStatus(item.status, waiting: waiting && item.stage == .execute).label
-    if let sec = item.seconds { t += " · " + formatDuration(sec) }
-    if item.status == .running, let liveness { t += " · " + liveness }
-    if item.status == .failed || item.status == .cancelled { t += String(localized: "（クリックでこの段階のログ）") }
-    else if onTap != nil, item.status != .pending { t += String(localized: "（クリックでログ）") }
-    return t
+  static func color(_ st: StageProgress.Status) -> Color {
+    switch st {
+    case .pending, .notRun: return .secondary
+    case .running: return .orange
+    case .done: return .green
+    case .cached: return .blue
+    case .reused: return .teal
+    case .failed: return .red
+    case .cancelled: return .brown
+    }
+  }
+}
+
+/// One stage circle: an empty ring before it is reached, a spinning arc while
+/// it runs, a dashed ring while it waits (for the worker), filled once it ended.
+struct StageDot: View {
+  let status: StageProgress.Status
+  let size: CGFloat
+  var waiting = false
+
+  var body: some View {
+    let c = StageDots.color(status)
+    let line = max(0.8, size * 0.15)
+    Group {
+      switch status {
+      case .running where waiting:
+        Circle().fill(Color(nsColor: .controlBackgroundColor))
+          .overlay(Circle().inset(by: line * 0.6)
+            .stroke(c, style: StrokeStyle(lineWidth: line * 1.1, dash: [size * 0.22, size * 0.16])))
+      case .pending, .notRun:
+        Circle().fill(Color(nsColor: .controlBackgroundColor))
+          .overlay(Circle().strokeBorder(c.opacity(0.6), lineWidth: line))
+      case .running:
+        // Turns for as long as the stage runs.
+        TimelineView(.animation(minimumInterval: 1.0 / 30)) { t in
+          let angle = t.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1) * 360
+          ZStack {
+            Circle().fill(Color(nsColor: .controlBackgroundColor))
+            Circle().strokeBorder(c.opacity(0.25), lineWidth: line * 1.2)
+            Circle().inset(by: line * 0.6).trim(from: 0, to: 0.3)
+              .stroke(c, style: StrokeStyle(lineWidth: line * 1.2, lineCap: .round))
+              .rotationEffect(.degrees(angle))
+          }
+        }
+      default:
+        Circle().fill(c)
+      }
+    }
+    .frame(width: size, height: size)
+    .contentShape(Circle().inset(by: -size * 0.3))
   }
 }
 

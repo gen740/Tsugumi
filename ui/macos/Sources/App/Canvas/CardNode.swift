@@ -110,7 +110,7 @@ extension ProjectSession {
     return waits
   }
 
-  /// Stage strip of the latest invocation (nil before any run of the Card),
+  /// Stages of the latest invocation (nil before any run of the Card),
   /// from the stages the core recorded. Stages the invocation did not reach
   /// are "pending" while it runs and "not run" once it ended.
   func stageProgress(_ k: CardKey) -> StageProgress? {
@@ -198,13 +198,18 @@ extension ProjectSession {
       state: kind == .subgraph ? compositeState(k) : canvasCardState(k), executionList: executionList, stage: empty ? nil : stageProgress(k),
       invocation: empty ? 0 : state?.invocation ?? 0, runContinues: runActive, runMark: (state != nil || batch != nil ? runMark(runStatus) : nil),
       failure: state.flatMap { $0.state == .failed || $0.state == .blocked ? ($0.failure ?? $0.state.label) : nil },
+      // The core's clock, on this Mac's.
+      endedAt: state?.endedAt.map { Date(timeIntervalSince1970: Double($0 + (coreClockOffset ?? 0)) / 1000) },
+      seconds: state.flatMap { s in s.endedAt.flatMap { e in s.startedAt.map { Double(max(0, e - $0)) / 1000 } } },
       errors: errors + invalid, warnings: diags.filter { !$0.error }.map(\.message),
       collapsed: !editing && (collapsed ?? self.collapsed(k)), permissions: CardPermission.of(def),
       draftEditing: editing,
       portGrid: AppPreferences.shared.showGrid ? AppPreferences.shared.gridSize : nil,
       openComments: CardComment.list(in: m).filter { !$0.resolved }.count,
       activityWaits: state.flatMap(ExecutionActivityText.init)?.waiting == true,
-      liveness: state.flatMap(livenessText))
+      liveness: state.flatMap(livenessText),
+      activityDetail: state.flatMap(ExecutionActivityText.init)?.text,
+      worker: state?.executionService.flatMap { $0.isEmpty ? nil : $0 == "local" ? String(localized: "プロジェクトの実行環境") : $0 })
   }
 
   /// Where a Card is drawn: with the grid on, one saved off the grid (placed

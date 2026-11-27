@@ -143,7 +143,7 @@ function useReplay(data: DemoData | undefined, speed: number) {
 
 const SHOWN_STAGES = applicableStages(true)
 
-/** The stage strip of a finished invocation, as the session derives it from the core's stages. */
+/** The stages of a finished invocation, as the session derives it from the core's stages. */
 function finishedStages(f: FinalState): StageItem[] {
   return SHOWN_STAGES.map((shown) => {
     const parts: StageStatus[] = []

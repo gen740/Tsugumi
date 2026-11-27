@@ -2436,7 +2436,7 @@ export class ProjectSession extends Observable {
     return waits
   }
 
-  /** Stage strip of the latest invocation (undefined before any run of the Card). */
+  /** Stages of the latest invocation (undefined before any run of the Card). */
   stageProgress(k: CardKey): StageProgress | undefined {
     const st = this.cardStates.get(k)
     if (!st || st.invocation <= 0n) return undefined
@@ -2526,6 +2526,9 @@ export class ProjectSession extends Observable {
       state: kind === 'subgraph' ? this.compositeState(k) : this.canvasCardState(k), stage: empty ? undefined : this.stageProgress(k), executionList,
       invocation: empty ? 0n : state?.invocation ?? 0n, runContinues: this.runActive,
       failure: state && (state.state === D.CardState.failed || state.state === D.CardState.blocked) ? state.failure ?? cardState(state.state).label : undefined,
+      // The core's clock, on this machine's.
+      endedAt: state?.endedAt !== undefined ? state.endedAt + (this.coreClockOffset ?? 0) : undefined,
+      seconds: state?.endedAt !== undefined && state.startedAt !== undefined ? Math.max(0, state.endedAt - state.startedAt) / 1000 : undefined,
       errors: diags.filter((x) => x.error).map((x) => x.message), warnings: diags.filter((x) => !x.error).map((x) => x.message),
       collapsed: !editing && (opts.collapsed ?? this.collapsed(k)), permissions: cardPermissions(def),
       draftEditing: editing, openComments: cardComments(m).filter((c) => !c.resolved).length,
@@ -2776,6 +2779,25 @@ export const cardState = (st: D.CardState) => CARD_STATE[st] ?? { label: L('不�
 export function formatMillis(ms: bigint | number | null | undefined): string {
   if (ms === null || ms === undefined) return ''
   return new Date(Number(ms)).toLocaleString('ja-JP', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+/** "Just now", "5 min ago", "3 h ago", "2 days ago": no seconds that tick. */
+export function relativeAge(ms: number, now = Date.now()): string {
+  const d = Math.max(0, (now - ms) / 1000)
+  if (d < 60) return L('たった今')
+  if (d < 3600) return L('{0} 分前', Math.floor(d / 60))
+  if (d < 86400) return L('{0} 時間前', Math.floor(d / 3600))
+  return L('{0} 日前', Math.floor(d / 86400))
+}
+
+/** A duration as a Card's face says it: "4.0 s", "3:12", "1:02:03". */
+export function formatShortDuration(seconds: number): string {
+  const t = Math.max(0, seconds)
+  if (t < 59.95) return `${t.toFixed(1)} s`
+  const s = Math.floor(t)
+  const two = (n: number) => String(n).padStart(2, '0')
+  if (s < 3600) return `${Math.floor(s / 60)}:${two(s % 60)}`
+  return `${Math.floor(s / 3600)}:${two(Math.floor(s / 60) % 60)}:${two(s % 60)}`
 }
 
 /** One form everywhere (run, stages, timeline, history): hh:mm:ss.xx. */

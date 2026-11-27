@@ -70,9 +70,6 @@
 .cv-draft-name { flex: 1; min-width: 0; font-weight: 600; pointer-events: auto; outline: none; border: 0; background: none; color: inherit; padding: 0; }
 .cv-draft-problem { color: var(--red); flex: none; }
 .cv-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none; }
-.cv-result { display: flex; align-items: center; flex: none; white-space: nowrap; overflow: hidden; min-width: 0; }
-.cv-result span { overflow: hidden; text-overflow: ellipsis; }
-.cv-stage-row { display: flex; align-items: center; flex: none; min-width: 0; }
 .cv-start { flex-direction: row; align-items: center; box-sizing: border-box; }
 .cv-start-run { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 50%; background: var(--accent); color: #fff; cursor: pointer; }
 .cv-start-run:disabled { background: var(--secondary); cursor: inherit; pointer-events: none; }
@@ -85,13 +82,21 @@
 .cv-port-out { border-radius: 50%; background: var(--accent); display: block; }
 .cv-port-in { display: block; background: var(--control-bg); border: 1.4px solid var(--secondary); box-sizing: border-box; }
 
-/* stage strip */
-.cv-stages { display: flex; align-items: center; width: 100%; min-width: 0; }
+/* An ordinary Card's face: name and status line, stage circles on the right. */
+.cv-face { display: flex; align-items: center; flex: none; box-sizing: border-box; min-width: 0; }
+.cv-face-text { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+.cv-face-name { display: flex; align-items: flex-start; min-width: 0; }
+.cv-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
+.cv-face-marks { display: inline-flex; align-items: center; flex: none; }
+.cv-status-line { display: block; }
+.cv-dots { position: relative; display: flex; flex-direction: column; align-items: center; flex: none; }
+.cv-dots-line { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: color-mix(in srgb, var(--secondary) 35%, transparent); }
+.cv-dot { display: block; box-sizing: border-box; border-radius: 50%; border-style: solid; background: var(--control-bg); position: relative; }
+.cv-dot.filled { border: 0; }
+.cv-dot-running { animation: cv-spin 1s linear infinite; }
+@keyframes cv-spin { to { transform: rotate(360deg); } }
 .cv-stage { position: relative; border: 0; padding: 0; background: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex: none; cursor: pointer; }
 .cv-stage:disabled { cursor: default; opacity: 1; }
-.cv-stage-badge { position: absolute; border-radius: 50%; display: inline-flex; color: #fff; line-height: 0; }
-.cv-stage-badge .icon path { stroke-width: 2.6; }
-.cv-stage-arrow { display: inline-flex; color: color-mix(in srgb, var(--secondary) 60%, transparent); flex: none; }
 
 /* params */
 
@@ -116,7 +121,13 @@
 /* ---- hover bubble and search ---- */
 .cv-bubble-host { position: absolute; pointer-events: none; z-index: 30; }
 .cv-bubble { max-width: 340px; padding: 10px; border-radius: 9px; display: flex; flex-direction: column; gap: 5px; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12); }
-.cv-clamp8 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 8; overflow: hidden; }
+.cv-bubble-host.takes { pointer-events: auto; }
+.cv-bubble-host.takes .cv-bubble { max-height: calc(100vh - 80px); overflow: auto; }
+.cv-bubble-stages { display: flex; flex-direction: column; gap: 3px; }
+.cv-bubble-stage { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.cv-bubble-failure { user-select: text; overflow-wrap: anywhere; }
+.cv-bubble-link { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; text-align: left; align-self: flex-start; }
+.cv-bubble-link:hover { text-decoration: underline; }
 .cv-issue { display: flex; gap: 4px; align-items: flex-start; }
 .cv-issue .icon { margin-top: 1px; }
 .cv-find { position: absolute; top: 52px; left: 50%; transform: translateX(-50%); width: 320px; padding: 8px; border-radius: 9px; display: flex; flex-direction: column; gap: 4px; z-index: 25; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12); }
