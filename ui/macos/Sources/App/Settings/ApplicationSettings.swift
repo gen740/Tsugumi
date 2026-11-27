@@ -121,7 +121,7 @@ struct ApplicationSettings: View {
             case .api: APISettings()
             case .connections: ConnectionSettings()
             case .binaryCaches: BinaryCacheSettings()
-            case .executionEnvironment: VMStartupLog()
+            case .executionEnvironment: ExecutionEnvironmentSettings()
             case .executionServices: ExecutionServicesSettings()
             }
           }
@@ -762,30 +762,32 @@ private struct ConnectionSettings: View {
     VStack(alignment: .leading, spacing: 10) {
       InfoHeader("開いているプロジェクトの接続先", info: "開いているプロジェクトの tsugumid への接続先です。127.0.0.1 にだけ公開しています。外部クライアント（別の UI・Agent）は同じ RPC 契約で接続でき、認証 token は control フォルダの server.ready（0600）にだけ置かれます。")
         .font(.subheadline)
-      List(sessions, id: \.identity.id) { s in
-        VStack(alignment: .leading, spacing: 4) {
-          HStack {
-            Image(systemName: s.connected ? "circle.fill" : "circle").foregroundStyle(s.connected ? .green : .secondary).font(.caption)
-            Text(s.scopeName([])).bold()
-            Text(s.connected ? String(localized: "接続中") : s.environment.label).foregroundStyle(.secondary)
-          }
-          if case .ready(let ep) = s.environment {
+      if sessions.isEmpty {
+        Text("開いているプロジェクトはありません。プロジェクトを開くと、その接続先がここに表示されます。")
+          .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      } else {
+        List(sessions, id: \.identity.id) { s in
+          VStack(alignment: .leading, spacing: 4) {
             HStack {
-              Text(ep.url.absoluteString).font(.caption.monospaced()).textSelection(.enabled)
-              Button("コピー") { copy(ep.url.absoluteString) }.controlSize(.small)
+              Image(systemName: s.connected ? "circle.fill" : "circle").foregroundStyle(s.connected ? .green : .secondary).font(.caption)
+              Text(s.scopeName([])).bold()
+              Text(s.connected ? String(localized: "接続中") : s.environment.label).foregroundStyle(.secondary)
             }
-            let ready = model.environments.controlDir(s.identity).appendingPathComponent("server.ready").path
-            HStack {
-              Text(ready).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-              Button("パスをコピー") { copy(ready) }.controlSize(.small)
+            if case .ready(let ep) = s.environment {
+              HStack {
+                Text(ep.url.absoluteString).font(.caption.monospaced()).textSelection(.enabled)
+                Button("コピー") { copy(ep.url.absoluteString) }.controlSize(.small)
+              }
+              let ready = model.environments.controlDir(s.identity).appendingPathComponent("server.ready").path
+              HStack {
+                Text(ready).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                Button("パスをコピー") { copy(ready) }.controlSize(.small)
+              }
+              Text("project_id \(ep.projectId)").font(.caption2).foregroundStyle(.secondary)
             }
-            Text("project_id \(ep.projectId)").font(.caption2).foregroundStyle(.secondary)
           }
         }
       }
-      .overlay { if sessions.isEmpty { ContentUnavailableView("開いているプロジェクトはありません", systemImage: "network.slash") } }
-      VMResourceSettings()
-      EnvironmentStorageSettings()
     }
     .padding()
   }
@@ -793,6 +795,22 @@ private struct ConnectionSettings: View {
   private func copy(_ s: String) {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(s, forType: .string)
+  }
+}
+
+/// The shared execution environment: the VM's size and its data above the
+/// VM's start-up log.
+private struct ExecutionEnvironmentSettings: View {
+  var body: some View {
+    VStack(spacing: 0) {
+      VStack(alignment: .leading, spacing: 10) {
+        VMResourceSettings()
+        EnvironmentStorageSettings()
+      }
+      .padding()
+      Divider()
+      VMStartupLog()
+    }
   }
 }
 
