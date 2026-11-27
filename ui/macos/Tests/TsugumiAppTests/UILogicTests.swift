@@ -405,8 +405,87 @@ import TsugumiTestSupport
     CardGeometry(CardNodeData(title: "x", kind: kind, summary: "what it does", inputs: [], outputs: []), flow: .topToBottom)
   }
   for kind in [CardKind.trigger, .merge, .collect] { #expect(!geometry(kind).summary, "\(kind)") }
-  #expect(geometry(.code).summary)
-  #expect(geometry(.subgraph).summary)
+  // An ordinary Card's description is on hover: its face has the name and status line.
+  for kind in [CardKind.code, .subgraph] {
+    #expect(geometry(kind).face && !geometry(kind).summary, "\(kind)")
+  }
+}
+
+@Test func aCardsFaceKeepsItsSizeWhateverItsState() {
+  func card(_ title: String) -> CardNodeData {
+    CardNodeData(title: title, kind: .code, summary: "what it does",
+                 inputs: [PortData(name: "a")], outputs: [PortData(name: "b")])
+  }
+  var running = card("x")
+  running.state = .running
+  running.invocation = 1
+  running.stage = StageProgress(items: [.init(stage: .build, status: .done), .init(stage: .execute, status: .running),
+                                        .init(stage: .validate, status: .pending)])
+  var failed = card("x")
+  failed.state = .failed
+  failed.invocation = 1
+  failed.failure = "error: boom\nat line 3"
+  var succeeded = card("x")
+  succeeded.state = .succeeded
+  succeeded.invocation = 3
+  succeeded.seconds = 4
+  succeeded.endedAt = Date()
+  var queued = card("x")
+  queued.state = .preparing
+  queued.invocation = 1
+  queued.activity = "waiting for a worker"
+  let long = card(String(repeating: "a long name of a Card ", count: 6))
+  for flow in [FlowDirection.topToBottom, .leftToRight] {
+    let size = CardGeometry(card("x"), flow: flow).size
+    for d in [running, failed, succeeded, queued, long] {
+      #expect(CardGeometry(d, flow: flow).size == size, "\(d.title) \(flow)")
+    }
+  }
+  #expect(CardGeometry(card("x"), flow: .topToBottom).face)
+}
+
+@Test func aCardsStatusLineSaysItsStateInOneLine() {
+  var d = CardNodeData(title: "x", kind: .code, summary: nil, inputs: [], outputs: [])
+  #expect(d.statusLine().text == String(localized: "未実行"))
+  d.state = .running
+  d.invocation = 1
+  d.stage = StageProgress(items: [.init(stage: .build, status: .running), .init(stage: .execute, status: .pending),
+                                  .init(stage: .validate, status: .pending)])
+  #expect(d.statusLine().text == Stage.build.activeLabel)
+  #expect(d.statusLine().tone == .state(.running))
+  d.activity = "waiting for a worker"
+  #expect(d.statusLine().text == "waiting for a worker")
+  d.activity = nil
+  d.state = .succeeded
+  d.invocation = 3
+  let now = Date()
+  d.endedAt = now.addingTimeInterval(-180)
+  d.seconds = 4
+  #expect(d.statusLine(now: now).text == Tsugumi_Data_CardState.succeeded.label + " ×3 · " + relativeAge(d.endedAt!, now: now) + " · 4.0 s")
+  #expect(d.statusLine().tone == .plain)
+  d.state = .failed
+  d.failure = "\nerror: no such file\n  at main.py:3"
+  d.stage = StageProgress(items: [.init(stage: .build, status: .done), .init(stage: .execute, status: .failed),
+                                  .init(stage: .validate, status: .notRun)])
+  #expect(d.statusLine().text == Stage.execute.name + ": no such file")
+  #expect(d.statusLine().tone == .failed)
+  #expect(formatShortDuration(192) == "3:12" && formatShortDuration(3723) == "1:02:03")
+}
+
+@MainActor @Test func theHoverHasWhatTheFaceLeavesOut() {
+  var d = CardNodeData(title: "x", kind: .code, summary: "what it does", inputs: [], outputs: [])
+  let idle = HoverBubble.Content.card(d, details: ["what it does"], runId: nil) {}
+  #expect(idle.lines == ["what it does"] && idle.stages.isEmpty && idle.openLog == nil)
+  d.state = .failed
+  d.invocation = 1
+  d.failure = "error: no such file\n  at main.py:3"
+  d.stage = StageProgress(items: [.init(stage: .build, status: .done, seconds: 1), .init(stage: .execute, status: .failed),
+                                  .init(stage: .validate, status: .notRun)])
+  let failed = HoverBubble.Content.card(d, details: ["what it does"], runId: "0123456789") {}
+  #expect(failed.lines == ["what it does"])
+  #expect(failed.stages.map(\.stage) == [.build, .execute, .validate])
+  #expect(failed.failure == d.failure && failed.openLog != nil)
+  #expect(failed.problems.isEmpty)
 }
 
 @Test func collapsedCardsKeepTheirPortsOnTheEdges() {

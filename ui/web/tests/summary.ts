@@ -28,14 +28,16 @@ const session = () => {
   assert.equal(s.nodeData(code).summary, undefined, 'the settings hold no summary')
   assert.equal(s.cardDescription(code), undefined)
 
-  // Written in Card settings, it goes to README.md and shows on the Card and on hover.
+  // Written in Card settings, it goes to README.md and shows on hover; the
+  // Card's face has its name and status line.
   const editor = new CardEditorModel(s, code)
   editor.meta = parse('{"title":"Card","description":"logs the value"}')
   assert.ok(await editor.apply())
   assert.equal(str(get(s.cardMeta(code), 'description')), 'logs the value')
   assert.equal(s.nodeData(code).summary, 'logs the value')
   assert.deepEqual(s.cardDetails(code), ['logs the value'])
-  assert.ok(new CardGeometry(s.nodeData(code), 'topToBottom').summary)
+  const g = new CardGeometry(s.nodeData(code), 'topToBottom')
+  assert.ok(g.face && !g.summary)
 }
 
 {
