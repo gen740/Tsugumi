@@ -1707,7 +1707,13 @@ auto Tools::ExecuteTool(const std::string& conversation,
       result = json::Encode(page);
     }
   }
-  if (!view_tool && !UsesRecordedDefinitions(call.name))
+  // ProjectCall projects these replies from the inspected revision. Other
+  // operations can change the policy or return data from a different state.
+  const bool projected_revision = call.name == "project_inspect" ||
+                                  call.name == "project_file_read" ||
+                                  call.name == "project_file_list";
+  if (!view_tool && !projected_revision &&
+      !UsesRecordedDefinitions(call.name))
     result = Exclusions(project, stop).Filter(result);
   const auto envelope = json::Object(result);
   bool error = json::Text(envelope, "reply") == "Failure";
