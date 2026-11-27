@@ -100,7 +100,7 @@ class Scheduler {
   auto reap_completed() -> void;
   std::deque<Completion> completions_;
   std::atomic<bool> stopping_{false};
-  std::thread remote_cleanup_;
+  std::jthread remote_cleanup_;
   std::thread reaper_;
 };
 

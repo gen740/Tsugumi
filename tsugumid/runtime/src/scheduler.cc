@@ -2178,14 +2178,17 @@ void Scheduler::recover_interrupted() {
 }
 
 auto Scheduler::start_remote_cleanup() -> void {
-  remote_cleanup_ = std::thread([this] {
-    while (!stopping_.load()) {
+  remote_cleanup_ = std::jthread([this](std::stop_token stop) {
+    std::mutex timer_mu;
+    std::condition_variable_any timer;
+    while (!stop.stop_requested() && !stopping_.load()) {
       try {
         svc_.remote_execution().release_completed();
       } catch (const std::exception& error) {
         log::warn(std::string("external job cleanup: ") + error.what());
       }
-      std::this_thread::sleep_for(std::chrono::seconds(1));
+      std::unique_lock lock(timer_mu);
+      timer.wait_for(lock, stop, std::chrono::seconds(1), [] { return false; });
     }
   });
 }
@@ -2585,6 +2588,7 @@ void Scheduler::shutdown() {
     finished_.wait(lock, [this] { return !active_; });
     finished_.notify_all();
   }
+  remote_cleanup_.request_stop();
   if (remote_cleanup_.joinable()) remote_cleanup_.join();
   if (reaper_.joinable()) reaper_.join();
 }

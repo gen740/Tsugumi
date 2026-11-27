@@ -31,7 +31,6 @@ using namespace std::chrono_literals;
 
 constexpr Tick kNoDeadline = Clock::duration::max().count();
 constexpr auto kDeadlineGrace = 500ms;
-constexpr auto kDeadlinePollInterval = 10ms;
 
 auto from_abi(const auto& uuid) -> ViewUuid {
   ViewUuid result;
@@ -72,10 +71,16 @@ struct ActiveCall {
   std::deque<std::string> paths;
 };
 
+struct DeadlineWatch {
+  std::mutex mutex;
+  std::condition_variable changed;
+};
+
 class FastCard {
  public:
-  FastCard(Service& service, const std::string& library)
+  FastCard(Service& service, const std::string& library, DeadlineWatch& watch)
       : service_(service),
+        watch_(watch),
         image_(library),
         receiver_(std::make_shared<WorkerProc::ViewReceiver>()) {
     receiver_->remote = [this](const WorkerViewEvent& event,
@@ -103,15 +108,15 @@ class FastCard {
     receiver_->close();
   }
 
-  auto check_deadline(Tick now) -> void {
-    auto deadline = hard_deadline_.load(std::memory_order_relaxed);
-    if (deadline == kNoDeadline || now < deadline) return;
-    if (hard_deadline_.compare_exchange_strong(deadline, kNoDeadline)) {
+  // Called by the watcher under its mutex.
+  auto check_deadline(Tick now) const -> Tick {
+    if (hard_deadline_ != kNoDeadline && now >= hard_deadline_) {
       // A Card that has stopped responding can also hold stdio's locks.
       (void)::write(STDERR_FILENO, deadline_message_.data(),
                     deadline_message_.size());
       std::_Exit(124);
     }
+    return hard_deadline_;
   }
 
   auto run(const ExecutionRequest& request, bool verify) -> ExecutionResult {
@@ -216,14 +221,14 @@ class FastCard {
             std::chrono::duration_cast<std::chrono::seconds>(limit).count());
         const auto deadline = now + std::chrono::seconds(seconds);
         card_.deadline_ = deadline.time_since_epoch().count();
-        card_.hard_deadline_ =
-            (deadline + kDeadlineGrace).time_since_epoch().count();
+        card_.set_hard_deadline(
+            (deadline + kDeadlineGrace).time_since_epoch().count());
       }
       card_.active_ = &active;
     }
 
     ~CallbackScope() {
-      card_.hard_deadline_ = kNoDeadline;
+      card_.set_hard_deadline(kNoDeadline);
       card_.deadline_ = kNoDeadline;
       card_.active_ = nullptr;
       card_.cancelled_ = false;
@@ -233,6 +238,12 @@ class FastCard {
     FastCard& card_;
     std::stop_callback<std::function<void()>> stop_;
   };
+
+  auto set_hard_deadline(Tick deadline) -> void {
+    std::lock_guard lock(watch_.mutex);
+    hard_deadline_ = deadline;
+    watch_.changed.notify_one();
+  }
 
   auto remaining() const -> int64_t {
     const auto deadline = deadline_.load(std::memory_order_relaxed);
@@ -398,12 +409,13 @@ class FastCard {
   static const tsugumi_effects kEffects;
 
   Service& service_;
+  DeadlineWatch& watch_;
   pack::CardImage image_;
   const std::shared_ptr<WorkerProc::ViewReceiver> receiver_;
   std::string deadline_message_;
   std::atomic<ActiveCall*> active_{nullptr};
   std::atomic<Tick> deadline_{kNoDeadline};
-  std::atomic<Tick> hard_deadline_{kNoDeadline};
+  Tick hard_deadline_ = kNoDeadline;  // guarded by watch_.mutex
   std::atomic<bool> cancelled_{false};
   std::atomic<bool> closed_{false};
   std::mutex view_mutex_;
@@ -497,6 +509,7 @@ const tsugumi_effects FastCard::kEffects{
 };
 
 struct Runtime {
+  DeadlineWatch deadlines;
   std::map<std::string, std::unique_ptr<FastCard>, std::less<>> cards;
   std::jthread watchdog;
 };
@@ -527,14 +540,33 @@ class PreparedFastExecution final : public PreparedExecution {
 auto load_fast_pack_images(Service& service,
                            std::span<const std::string> libraries) -> void {
   auto& pack = runtime();
+  if (pack.watchdog.joinable()) {
+    pack.watchdog.request_stop();
+    pack.watchdog.join();
+  }
   for (const auto& library : libraries)
     if (!pack.cards.contains(library))
-      pack.cards.emplace(library, std::make_unique<FastCard>(service, library));
+      pack.cards.emplace(library, std::make_unique<FastCard>(service, library,
+                                                             pack.deadlines));
   pack.watchdog = std::jthread([&pack](std::stop_token stop) {
+    std::stop_callback wake(stop, [&pack] {
+      std::lock_guard lock(pack.deadlines.mutex);
+      pack.deadlines.changed.notify_all();
+    });
+    std::unique_lock lock(pack.deadlines.mutex);
     while (!stop.stop_requested()) {
       const auto now = Clock::now().time_since_epoch().count();
-      for (const auto& [_, card] : pack.cards) card->check_deadline(now);
-      std::this_thread::sleep_for(kDeadlinePollInterval);
+      auto next = kNoDeadline;
+      for (const auto& [_, card] : pack.cards) {
+        const auto deadline = card->check_deadline(now);
+        if (deadline != kNoDeadline && (next == kNoDeadline || deadline < next))
+          next = deadline;
+      }
+      if (next == kNoDeadline)
+        pack.deadlines.changed.wait(lock);
+      else
+        pack.deadlines.changed.wait_until(
+            lock, Clock::time_point(Clock::duration(next)));
     }
   });
 }
