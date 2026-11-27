@@ -1202,11 +1202,12 @@ auto Service::record_artifacts(const InvocationSummaryData& invocation,
          invocation.started_at.value_or(sealed), sealed,
          fs::directory_size(target), "tree:" + fs::sha256_tree(target)});
   }
+  std::vector<stdfs::path> expired;
   history_->write_sync([&](sql::Db& db) {
     const auto run = History::run(db, invocation.run_id);
     for (const auto& artifact : records) {
       if (!artifact.keep && (!run || run->status.terminal())) {
-        remove_artifact_tree(artifact_location(store_->state_dir(), artifact));
+        expired.push_back(artifact_location(store_->state_dir(), artifact));
         continue;
       }
       if (artifact.id.size() != 16 || History::artifact(db, artifact.id))
@@ -1215,6 +1216,7 @@ auto Service::record_artifacts(const InvocationSummaryData& invocation,
       History::put_artifact(db, artifact);
     }
   });
+  for (const auto& path : expired) remove_artifact_tree(path, false);
 }
 
 void Service::artifact_list(RequestIn& req) {
