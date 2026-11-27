@@ -5,7 +5,6 @@
 #include "agent/wire.hh"
 #include "host/failure.hh"
 #include "host/settings.hh"
-#include "host/store.hh"
 #include "host/wire_helpers.hh"
 #include "tsugumi/util/json_object.hh"
 
@@ -13,18 +12,13 @@ namespace tsugumi::host {
 namespace H = Tsugumi::Host;
 namespace json = ::tsugumi::json;
 namespace wire = agent::wire;
-namespace {}  // namespace
 Models::Models(sql::Db& db, Settings& settings, std::stop_token stop,
                std::function<std::string(std::string)> scrub)
     : db(db), host_settings(&settings), stop(stop), scrub(std::move(scrub)) {}
 
-auto Models::StoredChatGPTModels(const std::filesystem::path& state_dir)
-    -> std::vector<std::string> {
+auto Models::StoredChatGPTModels(sql::Db& db) -> std::vector<std::string> {
   std::vector<std::string> models;
-  sql::Db model_db((state_dir / "host.sqlite").string(), true);
-  model_db.check_format(HostStore::kHostFormatVersion);
-  auto q =
-      model_db.prepare("SELECT models FROM model_lists WHERE id='chatgpt'");
+  auto q = db.prepare("SELECT models FROM model_lists WHERE id='chatgpt'");
   while (q.step())
     for (const auto& row : json::Array(q.text(0))) {
       const auto id = json::Text(json::Object(row), "id");
@@ -46,15 +40,12 @@ auto Models::CatalogConnection(std::string_view provider,
       std::vector<std::string>{json::Quote(profile), json::Quote(credentials)});
 }
 
-auto Models::ContextWindowTokens(const std::filesystem::path& state_dir,
-                                 std::string_view provider,
+auto Models::ContextWindowTokens(sql::Db& db, std::string_view provider,
                                  std::string_view model,
                                  std::string_view profile,
                                  std::string_view account_profile) -> uint32_t {
-  if (std::filesystem::exists(state_dir / "host.sqlite")) {
-    sql::Db catalog((state_dir / "host.sqlite").string(), true);
-    catalog.check_format(HostStore::kHostFormatVersion);
-    auto q = catalog.prepare(
+  {
+    auto q = db.prepare(
         "SELECT models FROM model_lists WHERE id=? AND connection=?");
     q.bind(1, std::string(provider))
         .bind(2, CatalogConnection(provider, profile, account_profile));

@@ -42,6 +42,9 @@ class Settings {
   auto Handle(const Tsugumi::Host::Request& request, uint64_t id)
       -> std::string;
   auto Redact(std::string text) -> std::string;
+  auto RedactionStrings() -> std::vector<std::string>;
+  static auto Redact(std::string text, const std::vector<std::string>& secrets)
+      -> std::string;
   // The values of these Card secret names that are set for one project, for
   // one invocation. Only the execution broker calls this, with the project its
   // capability authorizes; no Host or Agent request returns a value.

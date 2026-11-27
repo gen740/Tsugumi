@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <filesystem>
 #include <functional>
 #include <mutex>
 #include <stop_token>
@@ -18,14 +17,12 @@ class Settings;
 struct Models {
   Models(sql::Db& db, Settings& settings, std::stop_token stop,
          std::function<std::string(std::string)> scrub);
-  static auto StoredChatGPTModels(const std::filesystem::path& state_dir)
-      -> std::vector<std::string>;
+  static auto StoredChatGPTModels(sql::Db& db) -> std::vector<std::string>;
   static auto CatalogConnection(std::string_view provider,
                                 std::string_view profile,
                                 std::string_view account_profile = {})
       -> std::string;
-  static auto ContextWindowTokens(const std::filesystem::path& state_dir,
-                                  std::string_view provider,
+  static auto ContextWindowTokens(sql::Db& db, std::string_view provider,
                                   std::string_view model,
                                   std::string_view profile = "desktop",
                                   std::string_view account_profile = {})

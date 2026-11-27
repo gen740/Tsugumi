@@ -1036,8 +1036,7 @@ TEST(HostContextWindow, CatalogOverridesTheFallbackBudget) {
   const auto config = settings.Resolve(
       {{"provider_id", Quote("fixture")}, {"model", Quote("fixture-model")}});
   EXPECT_EQ(config.context_limit_tokens, override_budget);
-  EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "fixture",
-                                              "fixture-model"),
+  EXPECT_EQ(host::Models::ContextWindowTokens(db, "fixture", "fixture-model"),
             100000u);
 }
 
@@ -1068,9 +1067,8 @@ TEST(HostContextWindow, ReportedWindowsBelongToTheSelectedConnection) {
                          std::to_string(window(provider, profile, account)) +
                          "}]")
             .run();
-        EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, provider,
-                                                    "shared-model", profile,
-                                                    account),
+        EXPECT_EQ(host::Models::ContextWindowTokens(
+                      home.db, provider, "shared-model", profile, account),
                   window(provider, profile, account));
       }
   for (const auto* profile : {"web", "desktop", "web"}) {
@@ -1082,12 +1080,12 @@ TEST(HostContextWindow, ReportedWindowsBelongToTheSelectedConnection) {
                   .context_limit_tokens,
               expected - 32768u - expected / 20);
   }
-  EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "anthropic",
+  EXPECT_EQ(host::Models::ContextWindowTokens(home.db, "anthropic",
                                               "shared-model", "other", "first"),
             128000u);
   EXPECT_EQ(host::Models::CatalogConnection("chatgpt", "desktop"),
             host::Models::CatalogConnection("chatgpt", "desktop", "desktop"));
-  EXPECT_EQ(host::Models::StoredChatGPTModels(directory.path),
+  EXPECT_EQ(host::Models::StoredChatGPTModels(home.db),
             std::vector<std::string>{"shared-model"});
 }
 

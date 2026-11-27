@@ -1170,20 +1170,34 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
   }
 }
 auto Settings::Redact(std::string text) -> std::string {
+  return Redact(std::move(text), RedactionStrings());
+}
+auto Settings::RedactionStrings() -> std::vector<std::string> {
   auto& s = *state_;
   std::lock_guard lock(s.mutex);
-  auto remove = [&](const std::string& secret) {
-    if (secret.empty()) return;
-    const auto encoded = j::Quote(secret);
-    const auto escaped = encoded.substr(1, encoded.size() - 2);
-    for (const auto& value : {secret, escaped})
-      for (size_t i = 0; (i = text.find(value, i)) != text.npos;) {
-        text.replace(i, value.size(), "[redacted]");
-        i += 10;
-      }
-  };
+  std::vector<std::string> secrets;
   auto rows = s.db.prepare("SELECT profile,id FROM provider_connections");
-  while (rows.step()) remove(s.secrets->Get(rows.text(0) + ":" + rows.text(1)));
+  while (rows.step()) {
+    auto secret = s.secrets->Get(rows.text(0) + ":" + rows.text(1));
+    if (secret.empty()) continue;
+    const auto encoded = j::Quote(secret);
+    auto escaped = encoded.substr(1, encoded.size() - 2);
+    const bool differs = escaped != secret;
+    secrets.push_back(std::move(secret));
+    if (differs) secrets.push_back(std::move(escaped));
+  }
+  return secrets;
+}
+auto Settings::Redact(std::string text, const std::vector<std::string>& secrets)
+    -> std::string {
+  constexpr std::string_view replacement = "[redacted]";
+  for (const auto& value : secrets) {
+    if (value.empty()) continue;
+    for (size_t i = 0; (i = text.find(value, i)) != text.npos;) {
+      text.replace(i, value.size(), replacement);
+      i += replacement.size();
+    }
+  }
   return text;
 }
 auto Settings::HostPaths(const std::string& project) -> H::HostPathBindingsT {
@@ -1293,7 +1307,8 @@ auto Settings::ModelSelection(const std::string& profile,
     if (!override.empty())
       out.model = override;
     else {
-      const auto offered = s.models ? s.models() : std::vector<std::string>{};
+      const auto offered =
+          s.models ? s.models() : host::Models::StoredChatGPTModels(s.db);
       const auto version = [](const std::string& model) {
         std::vector<int> parts;
         int n = -1;
@@ -1445,7 +1460,7 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
     };
   }
   const auto window = host::Models::ContextWindowTokens(
-      s.directory, id, c.model, profile, j::Text(selection, "account_profile"));
+      s.db, id, c.model, profile, j::Text(selection, "account_profile"));
   const auto margin =
       window / 20;  // Reserve 5% for estimation/protocol overhead.
   if (c.max_tokens >= window - margin)

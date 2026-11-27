@@ -107,9 +107,7 @@ struct Service::State {
         view_requests(4),
         view_updates(1) {
     host_settings = std::make_unique<host::Settings>(
-        options.state_dir, credentials,
-        nullptr,
-        [this] { return host::Models::StoredChatGPTModels(options.state_dir); },
+        options.state_dir, credentials, nullptr, host::Settings::Models{},
         [this](std::string event) {
           requests.submit([this, event = std::move(event)]() {
             std::lock_guard lock(mutex);
@@ -462,16 +460,13 @@ struct Service::State {
   }
   auto Scrub(std::string raw) -> std::string {
     std::lock_guard guard(mutex);
-    const auto secrets = credentials.Secrets();
+    auto secrets = host_settings ? host_settings->RedactionStrings()
+                                 : std::vector<std::string>{};
+    auto credential_secrets = credentials.Secrets();
+    for (auto& secret : credential_secrets)
+      secrets.push_back(std::move(secret));
     auto plain = [&](std::string text) {
-      if (host_settings) text = host_settings->Redact(std::move(text));
-      for (const auto& secret : secrets)
-        if (!secret.empty())
-          for (size_t i = 0; (i = text.find(secret, i)) != text.npos;) {
-            text.replace(i, secret.size(), "[redacted]");
-            i += 10;
-          }
-      return text;
+      return host::Settings::Redact(std::move(text), secrets);
     };
     // Preserve protocol keys and enum values; only data strings can contain a
     // copied credential. Replacing bytes in a serialized envelope corrupts it
