@@ -86,6 +86,23 @@ auto lock_supervisor(const Journal& journal, const Sha256Hex& job) -> Fd {
   return lock;
 }
 
+auto supervisor_running(const Journal& journal, const Sha256Hex& job) -> bool {
+  const Fd lock(::open(journal.supervisor_lock_path(job).c_str(),
+                       O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+  if (lock.value < 0) {
+    if (errno == ENOENT) return false;
+    throw std::runtime_error("cannot open the job's supervisor lock");
+  }
+  // A shared lock probes the supervisor's exclusive lock without writing.
+  int result;
+  do {
+    result = ::flock(lock.value, LOCK_SH | LOCK_NB);
+  } while (result != 0 && errno == EINTR);
+  if (result == 0) return false;
+  if (errno == EWOULDBLOCK) return true;
+  throw std::runtime_error("cannot probe the job's supervisor lock");
+}
+
 struct Usage {
   uint64_t bytes = 0;
   std::time_t written = 0;
@@ -179,7 +196,7 @@ auto list_jobs(const stdfs::path& root, bool all, bool json) -> int {
     *row.project_scope = scope.view();
     *row.job_id = job.view();
     *row.core_last_seen = "unknown";
-    const bool supervised = lock_supervisor(*journal, job).value < 0;
+    const bool supervised = supervisor_running(*journal, job);
     const auto disk = usage(journal->job_path(job));
     try {
       const auto record = journal->status(job);
