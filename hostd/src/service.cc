@@ -107,9 +107,7 @@ struct Service::State {
         view_requests(4),
         view_updates(1) {
     host_settings = std::make_unique<host::Settings>(
-        options.state_dir, credentials,
-        nullptr,
-        [this] { return host::Models::StoredChatGPTModels(options.state_dir); },
+        options.state_dir, credentials, nullptr, host::Settings::Models{},
         [this](std::string event) {
           requests.submit([this, event = std::move(event)]() {
             std::lock_guard lock(mutex);
@@ -157,10 +155,9 @@ struct Service::State {
                   for (const auto& [key, source] : tools->file_calls)
                     if (key.first == id) source.stop->request_stop();
                 },
-            .excluded =
-                [this](const auto& project, const auto& path, auto stop) {
-                  return !project.empty() &&
-                         tools->Exclusions(project, stop).Contains(path);
+            .exclusions =
+                [this](const auto& project, auto stop) {
+                  return tools->Exclusions(project, stop);
                 }});
     tools = std::make_unique<Tools>(
         state_gate, db, *conversations, *providers, *host_settings,
@@ -463,16 +460,13 @@ struct Service::State {
   }
   auto Scrub(std::string raw) -> std::string {
     std::lock_guard guard(mutex);
-    const auto secrets = credentials.Secrets();
+    auto secrets = host_settings ? host_settings->RedactionStrings()
+                                 : std::vector<std::string>{};
+    auto credential_secrets = credentials.Secrets();
+    for (auto& secret : credential_secrets)
+      secrets.push_back(std::move(secret));
     auto plain = [&](std::string text) {
-      if (host_settings) text = host_settings->Redact(std::move(text));
-      for (const auto& secret : secrets)
-        if (!secret.empty())
-          for (size_t i = 0; (i = text.find(secret, i)) != text.npos;) {
-            text.replace(i, secret.size(), "[redacted]");
-            i += 10;
-          }
-      return text;
+      return host::Settings::Redact(std::move(text), secrets);
     };
     // Preserve protocol keys and enum values; only data strings can contain a
     // copied credential. Replacing bytes in a serialized envelope corrupts it
@@ -779,6 +773,8 @@ struct Service::State {
       return wire::HostReply(request.request_id, result);
     }
     if (r->value_as_EnvironmentListRequest()) {
+      if (!environments)
+        throw Failure("unavailable", "Environment service is not running");
       lock.unlock();
       return wire::HostReply(request.request_id, environments->List());
     }
@@ -822,6 +818,8 @@ struct Service::State {
       return wire::HostReply(request.request_id, std::move(result));
     }
     if (const auto* terminal = r->value_as_HostTerminalRequest()) {
+      if (!environments)
+        throw Failure("unavailable", "Environment service is not running");
       auto input = std::unique_ptr<H::HostTerminalRequestT>(terminal->UnPack());
       if (input->action != H::TerminalAction::Open &&
           (!events->terminals.contains(input->session) ||

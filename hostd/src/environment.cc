@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <map>
 #include <mutex>
+#include <shared_mutex>
 #include <thread>
 
 #include "agent/store.hh"
@@ -116,6 +117,16 @@ struct Environments::Impl {
     std::optional<FileIdentity> capability_file;
     int64_t pid = 0;
     bool child = false;
+    bool removed = false;
+    std::atomic<bool> deleting = false;
+
+    auto CheckPresent() const -> void {
+      if (removed) throw std::runtime_error("Project environment was removed");
+    }
+    auto CancelStart() -> void {
+      std::lock_guard lock(start_mutex);
+      if (start_stop) start_stop->request_stop();
+    }
   };
   EnvironmentOptions options;
   EnvironmentAuthorization authorization;
@@ -123,6 +134,8 @@ struct Environments::Impl {
   Progress progress;
   std::mutex mutex;
   std::map<std::string, std::shared_ptr<Entry>> entries;
+  std::shared_mutex operations;
+  std::atomic<bool> maintaining = false;
   std::stop_source shutdown;
   std::jthread observer;
 
@@ -158,6 +171,24 @@ struct Environments::Impl {
     });
   }
   ~Impl() { Shutdown(); }
+  auto BeginOperation() -> std::shared_lock<std::shared_mutex> {
+    const auto check = [&] {
+      if (shutdown.stop_requested())
+        throw std::runtime_error("Host service is stopping");
+      if (maintaining)
+        throw std::runtime_error("Environment maintenance is in progress");
+    };
+    check();
+    std::shared_lock lock(operations);
+    check();
+    return lock;
+  }
+  auto Snapshot() -> std::vector<std::shared_ptr<Entry>> {
+    std::lock_guard lock(mutex);
+    std::vector<std::shared_ptr<Entry>> result;
+    for (const auto& [_, entry] : entries) result.push_back(entry);
+    return result;
+  }
   auto Shutdown() -> void {
     if (!shutdown.request_stop()) return;
     observer.request_stop();
@@ -483,6 +514,10 @@ struct Environments::Impl {
     std::stop_source start_stop;
     {
       std::lock_guard lock(entry.start_mutex);
+      if (maintaining)
+        throw std::runtime_error("Environment maintenance is in progress");
+      if (entry.deleting)
+        throw std::runtime_error("Project environment deletion is in progress");
       entry.start_stop = start_stop;
       entry.starting = true;
       ++entry.start_generation;
@@ -826,11 +861,13 @@ auto Environments::Runtime(const H::HostRuntimeRequestT& request)
     -> H::HostRuntimeT {
   auto input = request;
   if (input.action == H::RuntimeAction::ClearProjectBuildCache) {
+    auto operation = impl_->BeginOperation();
     const auto& key = input.project_id;
     if (key.size() != 16 || key.find_first_not_of("0123456789abcdef") != key.npos)
       throw std::runtime_error("Invalid project key");
     const auto entry = impl_->EntryForKey(key);
     std::lock_guard lock(entry->mutex);
+    entry->CheckPresent();
     impl_->CheckDeath(*entry);
     if (entry->state.phase == H::EnvironmentPhase::Ready ||
         impl_->ReadReady(*entry)) {
@@ -847,46 +884,64 @@ auto Environments::Runtime(const H::HostRuntimeRequestT& request)
     return impl_->options.process->Runtime(input);
   }
   if (input.action == H::RuntimeAction::DeleteEnvironment) {
-    H::EnvironmentRequestT stop;
-    stop.project = input.project;
-    stop.action = H::EnvironmentAction::Stop;
-    const auto state = Handle(stop);
-    input.project_id = state.key;
+    auto operation = impl_->BeginOperation();
+    auto [entry, project] = impl_->EntryFor(input.project);
+    if (entry->deleting.exchange(true))
+      throw std::runtime_error("Project environment deletion is in progress");
+    struct FinishDelete {
+      Impl::Entry& entry;
+      ~FinishDelete() { entry.deleting = false; }
+    } finish{*entry};
+    entry->CancelStart();
+    std::lock_guard lock(entry->mutex);
+    entry->CheckPresent();
+    entry->state.project = std::move(project);
+    impl_->Stop(*entry);
+    input.project_id = entry->state.key;
     input.action = H::RuntimeAction::ForgetProject;
     auto result = impl_->options.process->Runtime(input);
     std::filesystem::remove_all(
-        std::filesystem::path(state.control_dir).parent_path());
+        std::filesystem::path(entry->state.control_dir).parent_path());
+    entry->removed = true;
+    std::lock_guard registry(impl_->mutex);
+    impl_->entries.erase(entry->state.key);
     return result;
   }
-  if (input.action == H::RuntimeAction::Shutdown ||
-      input.action == H::RuntimeAction::Reset ||
-      input.action == H::RuntimeAction::VerifyStore) {
-    std::vector<std::shared_ptr<Impl::Entry>> entries;
-    {
-      std::lock_guard lock(impl_->mutex);
-      for (const auto& [_, entry] : impl_->entries) entries.push_back(entry);
-    }
-    for (const auto& entry : entries) {
-      std::lock_guard lock(entry->mutex);
-      if (impl_->options.process->Guest() &&
-          input.action != H::RuntimeAction::VerifyStore)
-        impl_->Revoke(*entry);
-      else
-        impl_->Stop(*entry);
-    }
+  if (input.action != H::RuntimeAction::Shutdown &&
+      input.action != H::RuntimeAction::Reset &&
+      input.action != H::RuntimeAction::VerifyStore) {
+    auto operation = impl_->BeginOperation();
+    auto result = impl_->options.process->Runtime(input);
+    DescribeVMReset(result);
+    return result;
+  }
+  if (impl_->maintaining.exchange(true))
+    throw std::runtime_error("Environment maintenance is in progress");
+  struct FinishMaintenance {
+    std::atomic<bool>& running;
+    ~FinishMaintenance() { running = false; }
+  } finish{impl_->maintaining};
+  for (const auto& entry : impl_->Snapshot()) entry->CancelStart();
+  // Starts are cancelled before waiting for their shared operation locks.
+  // Keep new mutations out until the adapter and control state agree again.
+  std::unique_lock maintenance(impl_->operations);
+  const auto entries = impl_->Snapshot();
+  const bool stop_guest = impl_->options.process->Guest() &&
+                          input.action != H::RuntimeAction::VerifyStore;
+  for (const auto& entry : entries) {
+    std::lock_guard lock(entry->mutex);
+    if (entry->removed) continue;
+    if (stop_guest)
+      impl_->Revoke(*entry);
+    else
+      impl_->Stop(*entry);
   }
   auto result = impl_->options.process->Runtime(input);
-  if (impl_->options.process->Guest() &&
-      (input.action == H::RuntimeAction::Shutdown ||
-       input.action == H::RuntimeAction::Reset)) {
+  if (stop_guest) {
     // Vmd stops all projects concurrently before powering off.
-    std::vector<std::shared_ptr<Impl::Entry>> snapshot;
-    {
-      std::lock_guard lock(impl_->mutex);
-      for (const auto& [_, entry] : impl_->entries) snapshot.push_back(entry);
-    }
-    for (const auto& entry : snapshot) {
+    for (const auto& entry : entries) {
       std::lock_guard entry_lock(entry->mutex);
+      if (entry->removed) continue;
       entry->pid = 0;
       entry->child = false;
       impl_->ClearEndpoint(*entry);
@@ -903,6 +958,8 @@ auto Environments::Runtime(const H::HostRuntimeRequestT& request)
         ++result.environments;
       }
     }
+    std::lock_guard lock(impl_->mutex);
+    impl_->entries.clear();
   }
   return result;
 }
@@ -941,8 +998,10 @@ auto Environments::Attach(
       selected.push_back(folder);
   }
   if (selected.empty()) throw std::runtime_error("Select at least one folder");
+  auto operation = impl_->BeginOperation();
   auto [entry, project] = impl_->EntryFor(request.project);
   std::lock_guard lock(entry->mutex);
+  entry->CheckPresent();
   entry->state.project = std::move(project);
   impl_->CheckDeath(*entry);
   if (!entry->pid) impl_->ReadReady(*entry);
@@ -997,8 +1056,10 @@ auto Environments::Attach(
 auto Environments::ChangeHostPaths(const std::string& project,
                                    const std::function<std::string()>& change)
     -> std::string {
+  auto operation = impl_->BeginOperation();
   auto [entry, path] = impl_->EntryFor(project);
   std::lock_guard lock(entry->mutex);
+  entry->CheckPresent();
   entry->state.project = std::move(path);
   impl_->CheckDeath(*entry);
   const bool ready = impl_->ReadReady(*entry);
@@ -1041,14 +1102,13 @@ auto Environments::List() -> H::EnvironmentListT {
 auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
   if (impl_->shutdown.stop_requested())
     throw std::runtime_error("Host service is stopping");
+  auto operation = impl_->BeginOperation();
   auto [entry, project] = impl_->EntryFor(request.project);
   const auto generation = entry->start_generation.load();
   const bool joining_start = entry->starting.load();
-  if (request.action == H::EnvironmentAction::Stop) {
-    std::lock_guard lock(entry->start_mutex);
-    if (entry->start_stop) entry->start_stop->request_stop();
-  }
+  if (request.action == H::EnvironmentAction::Stop) entry->CancelStart();
   std::lock_guard lock(entry->mutex);
+  entry->CheckPresent();
   // Concurrent callers share a failed attempt too. A later explicit retry
   // starts again; a ready result may still refresh origins and folder grants.
   if (request.action == H::EnvironmentAction::Start &&

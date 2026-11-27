@@ -28,6 +28,121 @@
 #include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::host {
+auto LaunchNativeProcess(const EnvironmentLaunch& launch) -> int64_t {
+  std::vector<char*> arguments;
+  for (const auto& argument : launch.arguments)
+    arguments.push_back(const_cast<char*>(argument.c_str()));
+  arguments.push_back(nullptr);
+  // Project runtime values come from the OS and fixed installation paths.
+  // The VM helper additionally receives only its named startup options.
+  passwd user{};
+  passwd* found = nullptr;
+  std::vector<char> buffer(16384);
+  if (::getpwuid_r(::getuid(), &user, buffer.data(), buffer.size(), &found) ||
+      !found)
+    throw std::runtime_error("Cannot determine the project process home");
+  const std::string home = user.pw_dir;
+  std::vector<std::string> environment = {
+      "HOME=" + home, "TMPDIR=/tmp", "LANG=C.UTF-8",
+      "PATH=" + home +
+          "/.nix-profile/bin:/nix/var/nix/profiles/default/bin:"
+          "/run/current-system/sw/bin:/usr/bin:/bin:/usr/sbin:/sbin"};
+  // These are filesystem locations, not credentials. Preserve the host's
+  // explicit XDG storage layout when starting a project or VM helper.
+  for (const auto* name :
+       {"XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"})
+    if (const auto* value = std::getenv(name))
+      environment.push_back(std::string(name) + "=" + value);
+#ifdef __linux__
+  if (!launch.vm_helper)
+    for (const auto* name : {"DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
+                             "TSUGUMI_CARD_CGROUP_ROOT"})
+      if (const auto* value = std::getenv(name))
+        environment.push_back(std::string(name) + "=" + value);
+#endif
+  if (trace::LaunchEnabled())
+    environment.push_back(std::string(trace::kLaunchVariable) + "=1");
+  if (launch.vm_helper) {
+    for (const auto* name :
+         {"TSUGUMI_VM_X86", "TSUGUMI_VM_CMDLINE", "TSUGUMI_PY_BINDINGS",
+          "TSUGUMID", "TSUGUMI_WORKER", "TSUGUMI_NIX_DIR", "HOST_LOG",
+          "HOST_BUSY", "TSUGUMI_SOCKET_DIR"}) {
+      if (const auto* value = std::getenv(name))
+        environment.push_back(std::string(name) + "=" + value);
+    }
+  }
+  for (const auto* certificate :
+       {"/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem",
+        "/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt"}) {
+    if (::access(certificate, R_OK) == 0) {
+      environment.push_back(std::string("SSL_CERT_FILE=") + certificate);
+      environment.push_back(std::string("NIX_SSL_CERT_FILE=") + certificate);
+      break;
+    }
+  }
+  if (launch.authorization.available) {
+    environment.push_back("TSUGUMI_EXECUTION_BROKER=" +
+                          launch.authorization.endpoint);
+    environment.push_back("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE=" +
+                          launch.authorization.capability_file);
+  }
+  std::vector<char*> env;
+  for (auto& value : environment) env.push_back(value.data());
+  env.push_back(nullptr);
+  const auto launch_error = [](int error) {
+    return std::runtime_error("Cannot start tsugumid: " +
+                              std::string(std::strerror(error)));
+  };
+  posix_spawn_file_actions_t actions;
+  auto error = posix_spawn_file_actions_init(&actions);
+  if (error) throw launch_error(error);
+  error =
+      posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
+  if (!error)
+    error = posix_spawn_file_actions_addopen(
+        &actions, 1, launch.log.c_str(),
+        O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, 0600);
+  if (!error) error = posix_spawn_file_actions_adddup2(&actions, 1, 2);
+#ifdef __linux__
+  if (!error) error = posix_spawn_file_actions_addclosefrom_np(&actions, 3);
+#endif
+  if (error) {
+    posix_spawn_file_actions_destroy(&actions);
+    throw launch_error(error);
+  }
+  posix_spawnattr_t attributes;
+  error = posix_spawnattr_init(&attributes);
+  if (error) {
+    posix_spawn_file_actions_destroy(&actions);
+    throw launch_error(error);
+  }
+  sigset_t empty, defaults;
+  sigemptyset(&empty);
+  sigemptyset(&defaults);
+  sigaddset(&defaults, SIGPIPE);
+  sigaddset(&defaults, SIGCHLD);
+  sigaddset(&defaults, SIGTERM);
+  sigaddset(&defaults, SIGINT);
+  sigaddset(&defaults, SIGHUP);
+  error = posix_spawnattr_setsigmask(&attributes, &empty);
+  if (!error) error = posix_spawnattr_setsigdefault(&attributes, &defaults);
+  if (!error) error = posix_spawnattr_setpgroup(&attributes, 0);
+  short flags =
+      POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETPGROUP;
+#ifdef POSIX_SPAWN_CLOEXEC_DEFAULT
+  flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
+#endif
+  if (!error) error = posix_spawnattr_setflags(&attributes, flags);
+  pid_t pid = -1;
+  if (!error)
+    error = posix_spawn(&pid, arguments.front(), &actions, &attributes,
+                        arguments.data(), env.data());
+  posix_spawnattr_destroy(&attributes);
+  posix_spawn_file_actions_destroy(&actions);
+  if (error) throw launch_error(error);
+  return pid;
+}
+
 namespace {
 using namespace std::chrono_literals;
 class NativeProcess final : public EnvironmentProcess {
@@ -42,101 +157,7 @@ class NativeProcess final : public EnvironmentProcess {
     return terminals_.Handle(request);
   }
   auto Launch(const EnvironmentLaunch& launch) -> int64_t override {
-    std::vector<char*> arguments;
-    for (const auto& argument : launch.arguments)
-      arguments.push_back(const_cast<char*>(argument.c_str()));
-    arguments.push_back(nullptr);
-    // Project runtime values come from the OS and fixed installation paths.
-    // The VM helper additionally receives only its named startup options.
-    passwd user{};
-    passwd* found = nullptr;
-    std::vector<char> buffer(16384);
-    if (::getpwuid_r(::getuid(), &user, buffer.data(), buffer.size(), &found) ||
-        !found)
-      throw std::runtime_error("Cannot determine the project process home");
-    const std::string home = user.pw_dir;
-    std::vector<std::string> environment = {
-        "HOME=" + home, "TMPDIR=/tmp", "LANG=C.UTF-8",
-        "PATH=" + home +
-            "/.nix-profile/bin:/nix/var/nix/profiles/default/bin:"
-            "/run/current-system/sw/bin:/usr/bin:/bin:/usr/sbin:/sbin"};
-    // These are filesystem locations, not credentials. Preserve the host's
-    // explicit XDG storage layout when starting a project or VM helper.
-    for (const auto* name :
-         {"XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"})
-      if (const auto* value = std::getenv(name))
-        environment.push_back(std::string(name) + "=" + value);
-#ifdef __linux__
-    if (!launch.vm_helper)
-      for (const auto* name : {"DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
-                               "TSUGUMI_CARD_CGROUP_ROOT"})
-        if (const auto* value = std::getenv(name))
-          environment.push_back(std::string(name) + "=" + value);
-#endif
-    if (trace::LaunchEnabled())
-      environment.push_back(std::string(trace::kLaunchVariable) + "=1");
-    if (launch.vm_helper) {
-      for (const auto* name :
-           {"TSUGUMI_VM_X86", "TSUGUMI_VM_CMDLINE", "TSUGUMI_PY_BINDINGS",
-            "TSUGUMID", "TSUGUMI_WORKER", "TSUGUMI_NIX_DIR", "HOST_LOG",
-            "HOST_BUSY", "TSUGUMI_SOCKET_DIR"}) {
-        if (const auto* value = std::getenv(name))
-          environment.push_back(std::string(name) + "=" + value);
-      }
-    }
-    for (const auto* certificate :
-         {"/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem",
-          "/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt"}) {
-      if (::access(certificate, R_OK) == 0) {
-        environment.push_back(std::string("SSL_CERT_FILE=") + certificate);
-        environment.push_back(std::string("NIX_SSL_CERT_FILE=") + certificate);
-        break;
-      }
-    }
-    if (launch.authorization.available) {
-      environment.push_back("TSUGUMI_EXECUTION_BROKER=" +
-                            launch.authorization.endpoint);
-      environment.push_back("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE=" +
-                            launch.authorization.capability_file);
-    }
-    std::vector<char*> env;
-    for (auto& value : environment) env.push_back(value.data());
-    env.push_back(nullptr);
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
-    posix_spawn_file_actions_addopen(&actions, 1, launch.log.c_str(),
-                                     O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW,
-                                     0600);
-    posix_spawn_file_actions_adddup2(&actions, 1, 2);
-    posix_spawnattr_t attributes;
-    posix_spawnattr_init(&attributes);
-    sigset_t empty, defaults;
-    sigemptyset(&empty);
-    sigemptyset(&defaults);
-    sigaddset(&defaults, SIGPIPE);
-    sigaddset(&defaults, SIGCHLD);
-    sigaddset(&defaults, SIGTERM);
-    sigaddset(&defaults, SIGINT);
-    sigaddset(&defaults, SIGHUP);
-    posix_spawnattr_setsigmask(&attributes, &empty);
-    posix_spawnattr_setsigdefault(&attributes, &defaults);
-    posix_spawnattr_setpgroup(&attributes, 0);
-    short flags =
-        POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETPGROUP;
-#ifdef POSIX_SPAWN_CLOEXEC_DEFAULT
-    flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
-#endif
-    posix_spawnattr_setflags(&attributes, flags);
-    pid_t pid = -1;
-    const auto error = posix_spawn(&pid, arguments.front(), &actions,
-                                   &attributes, arguments.data(), env.data());
-    posix_spawnattr_destroy(&attributes);
-    posix_spawn_file_actions_destroy(&actions);
-    if (error)
-      throw std::runtime_error("Cannot start tsugumid: " +
-                               std::string(std::strerror(error)));
-    return pid;
+    return LaunchNativeProcess(launch);
   }
   auto Poll(int64_t value, bool child) -> std::optional<int> override {
     const auto pid = static_cast<pid_t>(value);

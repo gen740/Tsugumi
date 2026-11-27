@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
+#include <future>
 #include <utility>
 
 #include "../agent_fixture_server.hh"
@@ -53,6 +55,7 @@ class HelperDouble final : public host::EnvironmentProcess {
   bool verify = true;
   bool die = false;
   bool change_requirements = false;
+  std::function<void(std::stop_token)> before_launch;
   std::string log;
   auto Busy(const H::EnvironmentStateT&) -> bool override { return false; }
   auto Guest() const -> bool override { return guest; }
@@ -64,6 +67,7 @@ class HelperDouble final : public host::EnvironmentProcess {
   host::EnvironmentLaunch received;
   auto Launch(const host::EnvironmentLaunch& launch) -> int64_t override {
     ++launches;
+    if (before_launch) before_launch(launch.stop);
     received = launch;
     if (guest) {
       accepted = load_host_requirements(launch.project);
@@ -127,6 +131,44 @@ struct AuthorizationDouble {
             [this](const std::string&) { active = false; }};
   }
 };
+TEST(EnvironmentAdapterTest, VerifyStoreCancelsAnInProgressStart) {
+  TemporaryDirectory directory;
+  Write(directory.path / "project/tsugumi.json", FixtureProjectDocument());
+  AuthorizationDouble authorization;
+  auto helper = std::make_shared<HelperDouble>();
+  host::EnvironmentOptions options;
+  options.directory = directory.path / "environments";
+  options.socket_directory = directory.path / "sockets";
+  options.run_scratch_directory = directory.path / "run-scratch";
+  options.process = helper;
+  std::promise<void> launched;
+  auto ready = launched.get_future();
+  std::atomic<bool> cancelled = false;
+  helper->before_launch = [&](std::stop_token stop) {
+    std::mutex mutex;
+    std::unique_lock lock(mutex);
+    std::condition_variable_any wake;
+    launched.set_value();
+    wake.wait_for(lock, stop, std::chrono::seconds(3), [] { return false; });
+    cancelled = stop.stop_requested();
+    throw std::runtime_error("Fixture start ended");
+  };
+  host::Environments service(
+      options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
+  H::EnvironmentRequestT request;
+  request.project = (directory.path / "project").string();
+  request.action = H::EnvironmentAction::Start;
+  auto start =
+      std::async(std::launch::async, [&] { return service.Handle(request); });
+  ASSERT_EQ(ready.wait_for(std::chrono::seconds(3)), std::future_status::ready);
+  H::HostRuntimeRequestT verify;
+  verify.action = H::RuntimeAction::VerifyStore;
+  // This fixture has no VM store to verify, but must cancel startup first.
+  EXPECT_THROW(service.Runtime(verify), std::runtime_error);
+  EXPECT_TRUE(cancelled);
+  EXPECT_NE(start.get().phase, H::EnvironmentPhase::Ready);
+}
+
 TEST(EnvironmentAdapterTest, CoreOwnsReadinessAndStopsTheProcessOnShutdown) {
   TemporaryDirectory directory;
   Write(directory.path / "project/tsugumi.json", FixtureProjectDocument());

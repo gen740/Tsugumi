@@ -753,9 +753,19 @@ struct ModelStream {
   ModelReply reply;
   struct Block {
     Object value;
+    std::string kind, name;
+    Object fragments;
+    std::optional<std::vector<std::string>> citations;
     std::string arguments;
     bool has_arguments = false;
     bool closed = false;
+
+    auto Encoded() const -> std::string {
+      auto fields = value;
+      for (const auto& [key, text] : fragments) fields[key] = Quote(text);
+      if (citations) fields["citations"] = json::Encode(*citations);
+      return Encode(fields);
+    }
   };
   std::map<uint32_t, Block> blocks;
   std::map<uint32_t, std::string> output;
@@ -805,11 +815,12 @@ struct ModelStream {
 
   auto AppendField(Block& block, std::string_view key, std::string_view delta)
       -> void {
-    auto current = block.value.find(std::string(key));
-    std::string value =
-        current == block.value.end() ? "" : String(Parse(current->second), "");
-    value += delta;
-    block.value[std::string(key)] = Quote(value);
+    const auto [field, added] = block.fragments.try_emplace(std::string(key));
+    if (added)
+      if (const auto initial = block.value.find(field->first);
+          initial != block.value.end())
+        field->second = String(Parse(initial->second), "");
+    field->second += delta;
   }
 
   auto Consume(std::string_view event_name, std::string_view data) -> void {
@@ -845,8 +856,9 @@ struct ModelStream {
         throw ProviderError("duplicate model content block");
       auto& block = blocks[index];
       block.value = Members(Parse(Raw(json, "/content_block")));
-      const auto kind = String(json, "/content_block/type");
-      if (kind == "text") {
+      block.kind = String(json, "/content_block/type");
+      block.name = String(json, "/content_block/name");
+      if (block.kind == "text") {
         const auto initial = String(json, "/content_block/text");
         if (!initial.empty()) Emit({"text", initial, {}, {}, index});
       }
@@ -864,25 +876,21 @@ struct ModelStream {
         const auto delta = String(json, "/delta/partial_json");
         block.arguments += delta;
         block.has_arguments = true;
-        if (String(Parse(Encode(block.value)), "/type") == "tool_use") {
-          Emit({"toolInput",
-                delta,
-                {},
-                String(Parse(Encode(block.value)), "/name"),
-                index});
-        }
+        if (block.kind == "tool_use")
+          Emit({"toolInput", delta, {}, block.name, index});
       } else if (kind == "thinking_delta") {
         AppendField(block, "thinking", String(json, "/delta/thinking"));
       } else if (kind == "signature_delta") {
         AppendField(block, "signature", String(json, "/delta/signature"));
       } else if (kind == "citations_delta") {
-        auto citations = block.value.contains("citations")
-                             ? Items(Parse(block.value["citations"]))
-                             : std::vector<Json>{};
-        std::vector<std::string> items;
-        for (const auto& item : citations) items.push_back(schema::text(item));
-        items.push_back(Raw(json, "/delta/citation", "{}"));
-        block.value["citations"] = json::Encode(items);
+        if (!block.citations) {
+          block.citations.emplace();
+          if (const auto initial = block.value.find("citations");
+              initial != block.value.end())
+            for (const auto& item : Items(Parse(initial->second)))
+              block.citations->push_back(schema::text(item));
+        }
+        block.citations->push_back(Raw(json, "/delta/citation", "{}"));
         Emit({"citation",
               String(json, "/delta/citation/url"),
               {},
@@ -898,11 +906,12 @@ struct ModelStream {
       if (block.has_arguments)
         block.value["input"] =
             ValidToolArguments(block.arguments) ? block.arguments : "{}";
-      const auto value = Parse(Encode(block.value));
-      if (String(value, "/type") == "server_tool_use") {
+      if (block.kind == "server_tool_use") {
+        const auto value = Parse(block.Encoded());
         Emit({"searchStarted", String(value, "/input/query"),
               String(value, "/id"), "web_search", index});
-      } else if (String(value, "/type") == "web_search_tool_result") {
+      } else if (block.kind == "web_search_tool_result") {
+        const auto value = Parse(block.Encoded());
         Emit({"searchFinished", Raw(value, "/content"),
               String(value, "/tool_use_id"), "web_search", index});
       }
@@ -1031,7 +1040,7 @@ struct ModelStream {
         if (!block.closed)
           throw ProviderError("the model response contains an unfinished block",
                               true);
-        const auto value = Parse(Encode(block.value));
+        const auto value = Parse(block.Encoded());
         const auto type = String(value, "/type");
         original.push_back(schema::text(value));
         ContentBlock content;
@@ -1248,7 +1257,7 @@ auto StreamReply(const ProviderConfig& config, std::string_view system,
         }
         for (const auto& [index, block] : stream.blocks) {
           (void)index;
-          RequestStrings(Parse(Encode(block.value)), secrets);
+          RequestStrings(Parse(block.Encoded()), secrets);
           if (!block.arguments.empty()) secrets.push_back(block.arguments);
         }
         detail = DiagnosticText(std::move(detail), secrets);

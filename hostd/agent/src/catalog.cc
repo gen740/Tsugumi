@@ -556,17 +556,6 @@ auto Catalog::Find(std::string_view name) const -> const CatalogTool* {
   return found == tools_.end() ? nullptr : &*found;
 }
 
-auto Catalog::Json() const -> std::string {
-  std::vector<std::string> tools;
-  for (const auto& tool : tools_)
-    tools.push_back(json::Encode(
-        json::Members{{"name", json::Quote(tool.spec.name)},
-                      {"description", json::Quote(tool.spec.description)},
-                      {"inputSchema", tool.spec.input_schema},
-                      {"mutating", tool.mutating ? "true" : "false"}}));
-  return json::Encode(tools);
-}
-
 auto Catalog::Request(std::string_view name, std::string_view arguments,
                       uint64_t id) const -> std::string {
   const auto* tool = Find(name);

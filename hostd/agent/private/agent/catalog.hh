@@ -33,7 +33,6 @@ class Catalog {
   auto shared() const -> json::Members;
   auto tools() const -> const std::vector<CatalogTool>& { return tools_; }
   auto Find(std::string_view name) const -> const CatalogTool*;
-  auto Json() const -> std::string;
   auto AllSpecs() const -> std::vector<ToolSpec>;
   auto ModelSpecs(ModelRole role = ModelRole::Main,
                   bool can_delegate = true) const -> std::vector<ToolSpec>;
