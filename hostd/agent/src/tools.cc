@@ -801,9 +801,10 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
                     })
                     .get();
   if (stop.stop_requested()) throw Cancelled();
-  // Only a call that changes something can leave its outcome unknown.
-  if (result.error && name == "run_status")
-    throw Failure("unavailable", "Project connection lost while waiting: " +
+  // The inspection preceding a run status read cannot leave a mutation
+  // unconfirmed if the core exits before replying.
+  if (result.error && (name == "run_status" || name == "project_inspect"))
+    throw Failure("unavailable", "Project connection lost during a read: " +
                                      result.error.message);
   if (result.error) throw Failure("outcome_unknown", result.error.message);
   if (raw)
