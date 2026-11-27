@@ -1588,10 +1588,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                   ? (was_cancel ? CardState::cancelled : CardState::failed)
                   : CardState::succeeded;
     s.failure = out.failure;
-    if (out.failure && out.failure->diagnostic)
-      card_log(node.path, w.invocation, LogStream::output,
-               "tsugumi: " + std::string(failure_kind_name(out.failure->kind)) +
-                   ": " + *out.failure->diagnostic + "\n");
     s.artifact_outputs = History::output_artifacts(out.outputs);
     InvocationRecordData rec;
     rec.summary = s;

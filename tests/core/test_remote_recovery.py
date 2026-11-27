@@ -993,9 +993,9 @@ def test_stopped_remote_job_keeps_its_collected_log(running_job):
     gateway.live_logs[job_id] = R.log_entries((LogStream.output, "before cancel\n"))
     assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
     assert wait_run(client, run_id).state == RunState.cancelled
-    # The core's diagnostic follows what the Card wrote, in the same stream.
-    assert recorded_log(client, run_id, LogStream.output) == \
-        "before cancel\ntsugumi: cancelled: external job cancelled\n"
+    # The output holds only what the Card wrote; the core's diagnostic is in the journal.
+    assert recorded_log(client, run_id, LogStream.output) == "before cancel\n"
+    assert "external job cancelled" in recorded_log(client, run_id, LogStream.journal)
     assert gateway.download_count == 0
 
 
@@ -1005,5 +1005,5 @@ def test_remote_result_must_extend_the_recorded_log(running_job):
     wait_recorded_log(client, run_id, LogStream.output, "recorded\n")
     gateway.finish(job_id, logs=R.log_entries((LogStream.output, "replaced\n")))
     assert wait_run(client, run_id).state == RunState.failed
-    assert recorded_log(client, run_id, LogStream.output).startswith("recorded\ntsugumi: ")
+    assert recorded_log(client, run_id, LogStream.output) == "recorded\n"
     assert not client.call("RunRecordRequest", runId=run_id, card=path("work")).record.outputs
