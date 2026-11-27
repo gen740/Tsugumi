@@ -51,7 +51,7 @@ A template folder contains one directory per Card, each with the original Card d
 
 Edit a boolean parameter in a Code Card's settings to select which optional outputs it produces. Use Merge to bring alternative outputs back to one downstream input. The timeline distinguishes skipped Cards. [Card types and execution](design/Workflow.md)
 
-Use **Arrange** to place Cards and reduce wire crossings. Use **Untangle Wires** when the Cards are already where you want them. Both are available from the Canvas context menu and can be undone. Untangling changes the visual order of ports while preserving the connections and the way the Workflow runs.
+Use **Arrange** to place Cards and reduce wire crossings. Use **Untangle Wires** when the Cards are already where you want them. Both are available from the Canvas context menu and can be undone. Untangling changes the visual order of ports while preserving the connections and the way the Workflow runs. Arranging also adds a junction to an output that feeds three or more inputs: a dot where its wires split. Drag the dot to re-route those wires, or add and remove one from the Card's context menu. A junction is only presentation; the connections stay from the output to each input.
 
 Select several Cards and choose **Group Selection** to keep them together on the Canvas. To reuse another Workflow, use the import button by **Add Card** in the sidebar. It copies the selected project into `externals` as a Card in Card. Its boundary maps the outer ports to steps inside, which you can open by double-clicking the Card.
 

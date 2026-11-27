@@ -58,6 +58,7 @@ await import("./terminalInput")
 await import("./portGrid")
 
 await import("./marquee")
+await import("./junctions")
 
 
 await import("./freeSpot")

@@ -66,6 +66,16 @@ struct CardMenu: View {
       Button("ポートの並びを元に戻す") { session.resetPortOrder(targets) }
         .disabled(!session.isEditable)
     }
+    // An output feeding several inputs: its wires can branch at one point (display only).
+    ForEach(session.junctionOutputs(cardKey), id: \.self) { port in
+      if session.junction(cardKey, port) == nil {
+        Button("「\(port)」の分岐点を置く（見た目だけ）") { session.addJunction(cardKey, port) }
+          .disabled(!session.isEditable)
+      } else {
+        Button("「\(port)」の分岐点を外す") { session.setJunction(cardKey, port, at: nil) }
+          .disabled(!session.isEditable)
+      }
+    }
     Button("グループ化（見た目だけ）") {
       if !tab.selection.contains(cardKey) { tab.selection = [cardKey] }
       onGroup()

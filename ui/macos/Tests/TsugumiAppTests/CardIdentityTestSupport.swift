@@ -97,6 +97,13 @@ func fixtureLayout(_ text: String) -> [UInt8] {
     card.collapsed = placement["collapsed"]?.bool
     card.inputOrder = placement["inputOrder"]?.array?.compactMap(\.string) ?? []
     card.outputOrder = placement["outputOrder"]?.array?.compactMap(\.string) ?? []
+    card.junctions = (placement["junctions"]?.array ?? []).map { value in
+      let junction = Tsugumi_Layout_JunctionT()
+      junction.port = value["port"]?.string ?? ""
+      junction.x = value["x"]?.double
+      junction.y = value["y"]?.double
+      return junction
+    }
     return card
   }
   layout.notes = (view["notes"]?.array ?? []).map { value in

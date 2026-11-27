@@ -558,15 +558,18 @@ extension ProjectSession {
                          new: .object([("x", .real((p.x * 10).rounded() / 10)), ("y", .real((p.y * 10).rounded() / 10)) ]))] }
   }
 
-  /// The host applies the measured layout in one operation with undo.
+  /// The host applies the measured layout in one operation with undo; the
+  /// canvases of the scope then show all of the arranged graph.
   func arrange(_ scope: [String]) async {
     guard let prefix = projectPrefix(scope) else { return }
     let body = Tsugumi_Host_ProjectLayoutT()
     body.projectPath = prefix.isEmpty ? "" : String(prefix.dropLast())
     body.action = .arrange
     body.scene = layoutScene(scope)
-    do { try await operate(.projectlayout, body: body) }
-    catch { notice = .error(error.localizedDescription) }
+    do {
+      try await operate(.projectlayout, body: body)
+      NotificationCenter.default.post(name: .canvasArranged, object: self, userInfo: ["scope": scope])
+    } catch { notice = .error(error.localizedDescription) }
   }
 
   /// Measurements only. Geometry and saved port order belong to presentation;
@@ -661,6 +664,110 @@ extension ProjectSession {
     return Task { @MainActor in
       do { try await operateFields(edits) }
       catch { notice = .error(error.localizedDescription) }
+    }
+  }
+
+  // MARK: - Junctions
+
+  /// An output needs this many connected inputs for its wires to branch at a
+  /// junction (hostd's layout::junction_fan).
+  static let junctionFan = 3
+
+  /// The inputs an output of a Card is connected to, each once.
+  func fanout(_ k: CardKey, _ port: String) -> Int {
+    let scope = Array(path(k).dropLast()), id = path(k).last
+    var seen = Set<String>()
+    for c in connections(in: scope) where c["from"]?["card"]?.string == id && c["from"]?["port"]?.string == port {
+      seen.insert("\(c["to"]?["card"]?.string ?? "")\u{0}\(c["to"]?["port"]?.string ?? "")")
+    }
+    return seen.count
+  }
+
+  /// Where an output's wires split (world units), when it has a junction and
+  /// enough inputs for one. Layout only: the connections stay as they are.
+  func junction(_ k: CardKey, _ port: String) -> CGPoint? {
+    guard fanout(k, port) >= Self.junctionFan, let j = savedJunction(k, port),
+          let x = j["x"]?.double, let y = j["y"]?.double else { return nil }
+    return CGPoint(x: x, y: y)
+  }
+
+  struct JunctionPlace: Equatable, Identifiable {
+    var id: String { "\(card)\u{0}\(port)" }
+    let card: CardKey
+    let port: String
+    let at: CGPoint
+  }
+
+  /// The junctions drawn in a scope: of the outputs with enough inputs.
+  func junctions(in scope: [String]) -> [JunctionPlace] {
+    var inputs: [String: Set<String>] = [:], order: [(String, String)] = []
+    for c in connections(in: scope) {
+      guard let from = c["from"]?["card"]?.string, let port = c["from"]?["port"]?.string else { continue }
+      let id = "\(from)\u{0}\(port)"
+      if inputs[id] == nil { order.append((from, port)) }
+      inputs[id, default: []].insert("\(c["to"]?["card"]?.string ?? "")\u{0}\(c["to"]?["port"]?.string ?? "")")
+    }
+    return order.compactMap { from, port in
+      let k = key(scope + [from])
+      guard (inputs["\(from)\u{0}\(port)"]?.count ?? 0) >= Self.junctionFan, let j = savedJunction(k, port),
+            let x = j["x"]?.double, let y = j["y"]?.double else { return nil }
+      return JunctionPlace(card: k, port: port, at: CGPoint(x: x, y: y))
+    }
+  }
+
+  private func savedJunction(_ k: CardKey, _ port: String) -> JSONValue? {
+    let entry = layout(of: Array(path(k).dropLast()))["cards"]?[layoutKey(k)]
+    return entry?["junctions"]?.array?.first { $0["port"]?.string == port }
+  }
+
+  /// The outputs of a Card whose wires can branch at a junction.
+  func junctionOutputs(_ k: CardKey) -> [String] {
+    geometry(k).outputs.filter { fanout(k, $0) >= Self.junctionFan }
+  }
+
+  /// Puts an output's junction where Arrange would (hostd's
+  /// layout::junctions): along the flow halfway to its nearest input, at
+  /// two grids past the output when no input is further along; across it in line with the output
+  /// unless every input is to one side, then in line with the closest.
+  func addJunction(_ k: CardKey, _ port: String) {
+    let scope = Array(path(k).dropLast()), id = path(k).last
+    func world(_ c: CardKey, _ name: String, output: Bool) -> CGPoint {
+      let o = placedPosition(c), p = geometry(c).port(name, output: output)
+      return CGPoint(x: o.x + p.x, y: o.y + p.y)
+    }
+    let source = world(k, port, output: true)
+    let inputs = connections(in: scope).compactMap { c -> CGPoint? in
+      guard c["from"]?["card"]?.string == id, c["from"]?["port"]?.string == port,
+            let to = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { return nil }
+      let tk = key(scope + [to])
+      return instance(tk) == nil ? nil : world(tk, tp, output: false)
+    }
+    guard !inputs.isEmpty else { return }
+    let down = flow == .topToBottom
+    let grid = CGFloat(AppPreferences.shared.gridSize > 0 ? AppPreferences.shared.gridSize : 20)
+    let along = down ? source.y : source.x, across = down ? source.x : source.y
+    let nearest = inputs.map { down ? $0.y : $0.x }.min() ?? along
+    let acrossInputs = inputs.map { down ? $0.x : $0.y }
+    var at = nearest > along ? along + (nearest - along) / 2 : along + 2 * grid
+    if AppPreferences.shared.showGrid {
+      let snapped = (at / grid + 0.5).rounded(.down) * grid
+      if snapped > along && (nearest <= along || snapped < nearest) { at = snapped }
+    }
+    let side = min(max(across, acrossInputs.min() ?? across), acrossInputs.max() ?? across)
+    setJunction(k, port, at: down ? CGPoint(x: side, y: at) : CGPoint(x: at, y: side))
+  }
+
+  /// Moves an output's junction, or removes it (nil), in one undo step.
+  func setJunction(_ k: CardKey, _ port: String, at p: CGPoint?) {
+    let scope = Array(path(k).dropLast())
+    guard let prefix = projectPrefix(scope) else { return }
+    queueFields { [self] in
+      let old = savedJunction(k, port)
+      let new: JSONValue? = p.map { .object([("port", .string(port)), ("x", .real(($0.x * 10).rounded() / 10)),
+                                               ("y", .real(($0.y * 10).rounded() / 10))]) }
+      if old == nil && new == nil { return [] }
+      return [fieldEdit(prefix + "layout.bin", [.string("cards"), .string(layoutKey(k)), .string("junctions"),
+                                                .object([("port", .string(port))])], old: old, new: new)]
     }
   }
 

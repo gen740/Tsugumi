@@ -35,8 +35,10 @@ enum Documents {
     }
     if let flow = l.flow { view.append(("flow", .string(flow))) }
     let cards: [(String, JSONValue)] = l.cards.map { c in
-      (c.key, object([("x", number(c.x)), ("y", number(c.y)), ("collapsed", c.collapsed.map { .bool($0) }),
-                      ("inputOrder", strings(c.inputOrder)), ("outputOrder", strings(c.outputOrder))]))
+      let junctions = c.junctions.map { object([("port", .string($0.port)), ("x", number($0.x)), ("y", number($0.y))]) }
+      return (c.key, object([("x", number(c.x)), ("y", number(c.y)), ("collapsed", c.collapsed.map { .bool($0) }),
+                             ("inputOrder", strings(c.inputOrder)), ("outputOrder", strings(c.outputOrder)),
+                             ("junctions", junctions.isEmpty ? nil : .array(junctions))]))
     }
     if !cards.isEmpty { view.append(("cards", .object(cards))) }
     let boundaries: [(String, JSONValue)] = l.boundaries.compactMap { b in b.scope.map { ($0, bars(b)) } }

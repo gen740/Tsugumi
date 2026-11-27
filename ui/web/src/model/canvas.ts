@@ -6,7 +6,7 @@ import { D } from '../wire/rpc'
 import { Camera, CardGeometry, CardNodeData, fitCamera, isDraftWire, NEW_PORT, Pt, Rect, union, WireRouter } from './canvasKit'
 import { Observable } from './observable'
 import { ShortcutAction } from './prefs'
-import { portTypeName, CardKey, DefinitionTemplate, key, path, ProjectSession } from './session'
+import { portTypeName, CardKey, DefinitionTemplate, JunctionPlace, key, path, ProjectSession } from './session'
 import type { WorkflowTab } from './workspace'
 import { L } from '../i18n'
 
@@ -26,6 +26,8 @@ export interface RoutedWire {
   dotted?: boolean
   executionList?: boolean
   count?: number
+  /** From an output to its junction: drawn once for all the output's connections. */
+  trunk?: boolean
 }
 
 export interface BoundaryPort {
@@ -48,6 +50,7 @@ export interface SceneDrag {
   /** The selection on the move: its Cards. */
   cards?: { keys: Set<CardKey>; dx: number; dy: number }
   boundary?: { input: boolean; dx: number; dy: number }
+  junction?: { card: CardKey; port: string; dx: number; dy: number }
 }
 
 const LIVE = [D.CardState.waiting, D.CardState.ready, D.CardState.preparing, D.CardState.running]
@@ -69,6 +72,7 @@ export class Scene {
   private geos = new Map<CardKey, CardGeometry>()
   private _boundary?: Boundary | null
   private _wires?: RoutedWire[]
+  private _junctions?: JunctionPlace[]
 
   constructor(readonly session: ProjectSession, readonly scope: string[], readonly selectedConnection?: number, readonly drag: SceneDrag = {}) {
     this.flow = session.flow
@@ -178,6 +182,17 @@ export class Scene {
     return { top, bottom, inputs: ports(ins, top, false), outputs: ports(outs, bottom, true) }
   }
 
+  /** The junctions of the scope (world units), following a Card or a junction being dragged. */
+  get junctions(): JunctionPlace[] {
+    if (this._junctions) return this._junctions
+    this._junctions = this.session.junctions(this.scope).map((j) => {
+      const base = this.session.placedPosition(j.card), now = this.origin(j.card), d = this.drag.junction
+      const own = d && d.card === j.card && d.port === j.port ? d : undefined
+      return { ...j, at: { x: j.at.x + now.x - base.x + (own?.dx ?? 0), y: j.at.y + now.y - base.y + (own?.dy ?? 0) } }
+    })
+    return this._junctions
+  }
+
   /** Every wire of the scope, routed once and used for drawing, hover and clicks alike. */
   get wires(): RoutedWire[] {
     if (this._wires) return this._wires
@@ -188,12 +203,17 @@ export class Scene {
     if (b) obstacles.push(b.top, b.bottom)
     // Routed together: a wire's path must not depend on the order of the connections.
     const ends: { a: Pt; b: Pt; wire: Omit<RoutedWire, 'd' | 'pts'> }[] = []
+    // An output with a junction: its wires branch there, and one trunk joins it to the output.
+    const junctions = new Map(this.junctions.map((j) => [`${j.card}\0${j.port}`, j.at]))
+    const trunks = new Map<string, [CardKey, string, Pt]>()
     s.connections(this.scope).forEach((c, i) => {
       const fc = str(get(c, 'from', 'card')), tc = str(get(c, 'to', 'card'))
       if (!fc || !tc) return
       const fp = str(get(c, 'from', 'port')) ?? NEW_PORT, tp = str(get(c, 'to', 'port')) ?? NEW_PORT
       const fk = key([...this.scope, fc]), tk = key([...this.scope, tc])
-      ends.push({ a: this.portWorld(fk, fp, true), b: this.portWorld(tk, tp, false), wire: {
+      const junction = junctions.get(`${fk}\0${fp}`)
+      if (junction) trunks.set(`${fk}\0${fp}`, [fk, fp, junction])
+      ends.push({ a: junction ?? this.portWorld(fk, fp, true), b: this.portWorld(tk, tp, false), wire: {
         connection: i, style: i === this.selectedConnection ? 'selected' : this.style(fk, fp, tk),
         dotted: isDraftWire(kind, fk, tk), ...s.executionWire(fk, fp),
       } })
@@ -212,6 +232,11 @@ export class Scene {
           style: this.style(p.inner[0], p.inner[1], undefined), dotted: isDraftWire(kind, p.inner[0]), ...s.executionWire(...p.inner),
         } })
       }
+    }
+    for (const [fk, fp, at] of trunks.values()) {
+      ends.push({ a: this.portWorld(fk, fp, true), b: at, wire: {
+        style: this.style(fk, fp, undefined), dotted: isDraftWire(kind, fk), executionList: s.executionWire(fk, fp).executionList, trunk: true,
+      } })
     }
     const routes = new WireRouter(this.flow, obstacles).routeAll(ends)
     const out: RoutedWire[] = ends.map((e, i) => ({ ...e.wire, d: routes[i].d, pts: routes[i].pts }))
@@ -441,6 +466,11 @@ export class CanvasController extends Observable implements CanvasOverlay {
     if (c) this.setCamera(c)
   }
 
+  /** Arrange, then show all of the arranged graph (not where the view was). */
+  async arrange() {
+    if (this.session.connected && await this.session.arrange(this.tab.scope)) this.fitAll()
+  }
+
   /** A scope shown for the first time (no saved camera) shows its whole flow. */
   fitIfNew() {
     if (this.hasCamera || this.size.width <= 0 || !this.session.cards(this.tab.scope).length) return
@@ -597,7 +627,7 @@ export class CanvasController extends Observable implements CanvasOverlay {
       case 'actualSize': this.actualSize(); return true
       case 'zoomIn': this.zoomIn(); return true
       case 'zoomOut': this.zoomOut(); return true
-      case 'arrange': if (this.session.connected) this.session.arrange(this.tab.scope); return true
+      case 'arrange': void this.arrange(); return true
       case 'group': this.toggleGroup(); return true
       case 'toggleCollapse': this.toggleCollapse(); return true
       case 'duplicate': void this.duplicateSelection(); return true

@@ -36,6 +36,15 @@ export type CardKey = string // "a/b"
 export const key = (p: string[]): CardKey => p.join('/')
 export const path = (k: CardKey): string[] => (k ? k.split('/') : [])
 
+/** An output needs this many connected inputs for its wires to branch at a junction (hostd's layout::junction_fan). */
+export const JUNCTION_FAN = 3
+/** Where the wires of one output split (world units): layout only, never a Card or a connection. */
+export interface JunctionPlace {
+  card: CardKey
+  port: string
+  at: { x: number; y: number }
+}
+
 export interface Diagnostic {
   id: string
   error: boolean
@@ -2076,11 +2085,17 @@ export class ProjectSession extends Observable {
 
   layoutHost = layoutHost
 
-  async arrange(scope: string[]) {
+  /** True once the arranged layout is applied. */
+  async arrange(scope: string[]): Promise<boolean> {
     const prefix = this.projectPrefix(scope)
-    if (prefix === undefined) return
-    try { await this.operate(H.ProjectOperationBody.ProjectLayout, new H.ProjectLayoutT(prefix.replace(/\/$/, ''), H.ProjectLayoutAction.Arrange, sceneRequest(this.layoutScene(scope)))) }
-    catch (error) { this.cardEditFailed(error) }
+    if (prefix === undefined) return false
+    try {
+      await this.operate(H.ProjectOperationBody.ProjectLayout, new H.ProjectLayoutT(prefix.replace(/\/$/, ''), H.ProjectLayoutAction.Arrange, sceneRequest(this.layoutScene(scope))))
+      return true
+    } catch (error) {
+      this.cardEditFailed(error)
+      return false
+    }
   }
 
   /** What the canvas draws in a scope, for tsugumi-hostd to lay out. Sizes and port
@@ -2487,6 +2502,100 @@ export class ProjectSession extends Observable {
       }
     }
     try { await this.operateFields(edits) } catch (error) { this.cardEditFailed(error) }
+  }
+
+  // ---- Junctions: where one output's wires split (layout only) ----
+
+  /** The inputs an output of a Card is connected to, each once. */
+  fanout(k: CardKey, port: string): number {
+    const scope = path(k).slice(0, -1), id = path(k).at(-1)
+    const seen = new Set<string>()
+    for (const c of this.connections(scope))
+      if (str(get(c, 'from', 'card')) === id && str(get(c, 'from', 'port')) === port)
+        seen.add(`${str(get(c, 'to', 'card')) ?? ''}\0${str(get(c, 'to', 'port')) ?? ''}`)
+    return seen.size
+  }
+
+  private savedJunction(k: CardKey, port: string): J | undefined {
+    return (arr(get(this.layoutOf(path(k).slice(0, -1)), 'cards', this.layoutKey(k), 'junctions')) ?? [])
+      .find(j => str(get(j, 'port')) === port)
+  }
+
+  /** Where an output's wires split (world units), when it has a junction and enough inputs for one. */
+  junction(k: CardKey, port: string): { x: number; y: number } | undefined {
+    if (this.fanout(k, port) < JUNCTION_FAN) return undefined
+    const j = this.savedJunction(k, port)
+    const x = dbl(get(j, 'x')), y = dbl(get(j, 'y'))
+    return x !== undefined && y !== undefined ? { x, y } : undefined
+  }
+
+  /** The junctions drawn in a scope: of the outputs with enough inputs. */
+  junctions(scope: string[]): JunctionPlace[] {
+    const inputs = new Map<string, { from: string; port: string; to: Set<string> }>()
+    for (const c of this.connections(scope)) {
+      const from = str(get(c, 'from', 'card')), port = str(get(c, 'from', 'port'))
+      if (from === undefined || port === undefined) continue
+      const id = `${from}\0${port}`
+      const entry = inputs.get(id) ?? { from, port, to: new Set<string>() }
+      entry.to.add(`${str(get(c, 'to', 'card')) ?? ''}\0${str(get(c, 'to', 'port')) ?? ''}`)
+      inputs.set(id, entry)
+    }
+    const out: JunctionPlace[] = []
+    for (const { from, port, to } of inputs.values()) {
+      if (to.size < JUNCTION_FAN) continue
+      const card = key([...scope, from]), j = this.savedJunction(card, port)
+      const x = dbl(get(j, 'x')), y = dbl(get(j, 'y'))
+      if (x !== undefined && y !== undefined) out.push({ card, port, at: { x, y } })
+    }
+    return out
+  }
+
+  /** The outputs of a Card whose wires can branch at a junction. */
+  junctionOutputs(k: CardKey): string[] {
+    return this.geometry(k).outputs.filter(p => this.fanout(k, p) >= JUNCTION_FAN)
+  }
+
+  /** Puts an output's junction where Arrange would (hostd's layout::junctions): along the flow
+   *  halfway to its nearest input, two grids past the output when no input is further along; across it in line with
+   *  the output unless every input is to one side, then in line with the closest. */
+  addJunction(k: CardKey, port: string) {
+    const scope = path(k).slice(0, -1), id = path(k).at(-1)
+    const world = (c: CardKey, name: string, output: boolean) => {
+      const o = this.placedPosition(c), p = this.geometry(c).port(name, output)
+      return { x: o.x + p.x, y: o.y + p.y }
+    }
+    const source = world(k, port, true)
+    const inputs = this.connections(scope).flatMap(c => {
+      const to = str(get(c, 'to', 'card')), tp = str(get(c, 'to', 'port'))
+      if (str(get(c, 'from', 'card')) !== id || str(get(c, 'from', 'port')) !== port || to === undefined || tp === undefined) return []
+      const tk = key([...scope, to])
+      return this.instance(tk) ? [world(tk, tp, false)] : []
+    })
+    if (!inputs.length) return
+    const down = this.flow === 'topToBottom'
+    const grid = prefs.gridSize > 0 ? prefs.gridSize : 20
+    const along = down ? source.y : source.x, across = down ? source.x : source.y
+    const nearest = Math.min(...inputs.map(p => down ? p.y : p.x))
+    const sides = inputs.map(p => down ? p.x : p.y)
+    let at = nearest > along ? along + (nearest - along) / 2 : along + 2 * grid
+    if (prefs.showGrid) {
+      const snapped = Math.floor(at / grid + 0.5) * grid
+      if (snapped > along && (nearest <= along || snapped < nearest)) at = snapped
+    }
+    const side = Math.min(Math.max(across, Math.min(...sides)), Math.max(...sides))
+    this.setJunction(k, port, down ? { x: side, y: at } : { x: at, y: side })
+  }
+
+  /** Moves an output's junction, or removes it (undefined), in one undo step. */
+  setJunction(k: CardKey, port: string, p: { x: number; y: number } | undefined) {
+    const scope = path(k).slice(0, -1), prefix = this.projectPrefix(scope)
+    if (prefix === undefined) return
+    void this.operateFields(() => {
+      const old = this.savedJunction(k, port)
+      const value = p && obj([['port', port], ['x', real(Math.round(p.x * 10) / 10)], ['y', real(Math.round(p.y * 10) / 10)]])
+      if (old === undefined && value === undefined) return []
+      return [this.fieldEdit(`${prefix}layout.bin`, ['cards', this.layoutKey(k), 'junctions', obj([['port', port]])], old, value)]
+    }).catch(e => this.cardEditFailed(e))
   }
 
 

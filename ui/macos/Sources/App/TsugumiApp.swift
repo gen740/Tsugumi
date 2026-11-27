@@ -373,8 +373,9 @@ struct WorkbenchCommands: Commands {
         Button("100% で表示") { post(.canvasZoom, ["zoom": 0.0]) }.shortcut(.actualSize).disabled(!onCanvas)
         Button("拡大") { post(.canvasZoom, ["zoom": 1.2]) }.shortcut(.zoomIn).disabled(!onCanvas)
         Button("縮小") { post(.canvasZoom, ["zoom": 1 / 1.2]) }.shortcut(.zoomOut).disabled(!onCanvas)
+        // From the menu without a click on the canvas first; its single key only while the canvas has the keyboard.
         Button("整列") { if let s = session, let t = tab { Task { await s.arrange(t.scope) } } }
-          .shortcut(.arrange).disabled(!onCanvas || !(session?.connected ?? false))
+          .shortcut(.arrange, when: onCanvas).disabled(tab == nil || !(session?.connected ?? false))
         Button("グループ操作") { post(.canvasGroup) }
           .shortcut(.group).disabled(!onCanvas || (tab?.selection.isEmpty ?? true))
         Divider()
@@ -438,6 +439,8 @@ extension Notification.Name {
   static let canvasAddDraft = Notification.Name("tsugumi.canvas.addDraft")
   static let canvasWriteDraft = Notification.Name("tsugumi.canvas.writeDraft")
   static let canvasFitAll = Notification.Name("tsugumi.canvas.fitAll")
+  /// A scope was arranged (object: the session; userInfo "scope"): its canvases show all of it.
+  static let canvasArranged = Notification.Name("tsugumi.canvas.arranged")
   /// As if the pointer came on a row of the version tree (object: the row; UI scripts).
   static let versionHover = Notification.Name("tsugumi.versions.hover")
   static let canvasAddNote = Notification.Name("tsugumi.canvas.addNote")

@@ -29,6 +29,9 @@
 @keyframes cv-dash { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -14; } }
 .cv-marquee { position: absolute; background: color-mix(in srgb, var(--accent) 8%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 60%, transparent); pointer-events: none; }
 .cv-cut { position: absolute; transform: translate(-50%, -50%); z-index: 5; }
+/* Where one output's wires split: display only, dragged to move the branches. */
+.cv-junction { position: absolute; transform: translate(-50%, -50%); box-sizing: border-box; border-radius: 50%; background: var(--secondary); border: 1.5px solid var(--text-bg); cursor: move; }
+.cv-junction::before { content: ''; position: absolute; inset: -5px; border-radius: 50%; }
 /* The file the Agent is writing, by its Card (dark in both themes, as the code it shows). */
 .cv-writing { position: absolute; box-sizing: border-box; padding: calc(var(--s) * 10px); overflow: hidden; pointer-events: none; z-index: 40;
   border-radius: calc(var(--s) * 8px); border: 1px solid color-mix(in srgb, var(--bird, var(--tsugumi-cream)) 55%, transparent); background: #171717; color: rgba(255, 255, 255, 0.88);

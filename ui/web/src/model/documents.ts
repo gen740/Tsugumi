@@ -37,7 +37,12 @@ export function layoutView(bytes: Uint8Array | null | undefined, notes: Map<stri
   const l = Layout.getRootAsLayout(new ByteBuffer(bytes)).unpack()
   if (l.flow) view.set('flow', String(l.flow))
   const cards = obj()
-  for (const c of l.cards) if (c.key) cards.set(String(c.key), fields(c as unknown as Record<string, unknown>, placeKeys))
+  for (const c of l.cards) {
+    if (!c.key) continue
+    const place = fields(c as unknown as Record<string, unknown>, placeKeys)
+    if (c.junctions.length) place.set('junctions', c.junctions.map(j => fields(j as unknown as Record<string, unknown>, ['port', 'x', 'y'])))
+    cards.set(String(c.key), place)
+  }
   if (cards.size) view.set('cards', cards)
   const bars = (b: { inputs: { x: number | null, y: number | null } | null, outputs: { x: number | null, y: number | null } | null }) => {
     const out = obj()

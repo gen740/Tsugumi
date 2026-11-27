@@ -14,7 +14,7 @@ import { NEW_PORT, Pt, Rect, snapToGrid } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
 import {
-  CardKey, definitionIcon, DefinitionTemplate, key, KIND_LABEL, NOTE_COLORS, path, portTypeName, ProjectSession,
+  CardKey, definitionIcon, DefinitionTemplate, JunctionPlace, key, KIND_LABEL, NOTE_COLORS, path, portTypeName, ProjectSession,
 } from '../model/session'
 import { Workspace, WorkflowTab } from '../model/workspace'
 import { arr, clone, dbl, get, J, JObj, obj, real, str } from '../../shared/json'
@@ -58,6 +58,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   const [templatePlacement, setTemplatePlacement] = useState<TemplatePlacement>()
   const [cardDrag, setCardDrag] = useState<SceneDrag['cards']>()
   const [boundaryDrag, setBoundaryDrag] = useState<SceneDrag['boundary']>()
+  const [junctionDrag, setJunctionDrag] = useState<SceneDrag['junction']>()
   /** A wire being drawn from a port: from an output (to an input), or from an input back to an output. */
   const [pending, setPending] = useState<{ from: [CardKey, string]; fromOutput: boolean; point: Pt }>()
   const [marquee, setMarquee] = useState<{ start: Pt; end: Pt }>()
@@ -84,11 +85,11 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     return () => cancelAnimationFrame(id)
   }, [saveStep, session])
   const saveProgress = agentAppearance.animateWork && !prefs.tsugumiStill ? session.presence.progress(Date.now() / 1000) : undefined
-  const scene = cv.scene({ cards: cardDrag, boundary: boundaryDrag })
+  const scene = cv.scene({ cards: cardDrag, boundary: boundaryDrag, junction: junctionDrag })
   const cam = cv.camera
   const z = cam.zoom
   const scope = tab.scope
-  const interacting = !!(cardDrag || pending || marquee || panning || boundaryDrag || noteDrag)
+  const interacting = !!(cardDrag || pending || marquee || panning || boundaryDrag || noteDrag || junctionDrag)
   const screen = (w: Pt) => cv.screen(w)
   const local = (e: { clientX: number; clientY: number }): Pt => {
     const r = root.current?.getBoundingClientRect()
@@ -436,6 +437,30 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     })
   }
 
+  /** Moves a junction (layout only); its branches follow while dragging. */
+  const onJunctionDown = (j: JunctionPlace, e: React.PointerEvent) => {
+    if (e.button !== 0) return
+    e.stopPropagation()
+    focus()
+    if (!session.isEditable) return
+    const start = { x: e.clientX, y: e.clientY }
+    drive(e, 2, (ev) => {
+      clearHover()
+      setJunctionDrag({ card: j.card, port: j.port, dx: (ev.clientX - start.x) / z, dy: (ev.clientY - start.y) / z })
+    }, (ev, moved) => {
+      setJunctionDrag(undefined)
+      if (!moved) return
+      const from = session.junction(j.card, j.port) ?? j.at
+      const p = { x: from.x + (ev.clientX - start.x) / z, y: from.y + (ev.clientY - start.y) / z }
+      // On the grid along the flow, as Arrange puts it: across it the trunk can stay straight.
+      if (prefs.showGrid) {
+        if (flow === 'topToBottom') p.y = snapToGrid(p.y, prefs.gridSize)
+        else p.x = snapToGrid(p.x, prefs.gridSize)
+      }
+      session.setJunction(j.card, j.port, p)
+    })
+  }
+
   const onDrop = (e: React.DragEvent) => {
     const item = e.dataTransfer.getData('text/plain')
     if (!item || !session.isEditable) return
@@ -458,7 +483,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       { label: L('付箋を追加'), action: () => cv.addNote(at) },
       'divider',
       { label: L('全体表示'), action: () => cv.fitAll() },
-      { label: L('整列'), action: () => session.arrange(scope) },
+      { label: L('整列'), action: () => void cv.arrange() },
       { label: L('配線の交差を減らす'), action: () => session.untangle(scope) },
       tab.selection.size > 0 && { label: L('選択をグループ化'), disabled: !session.connected, action: () => cv.groupSelection() },
     ])
@@ -563,6 +588,14 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       </svg>}
 
       {b && <BoundaryBars b={b} zoom={z} screen={screen} drag={boundaryDrag} cardTitle={k => session.displayName(k)} onDown={onBoundaryDown} />}
+
+      {scene.junctions.map((j) => {
+        const p = screen(j.at), d = Math.max(7, 9 * z)
+        return <div key={`${j.card}\0${j.port}`} className="cv-junction" role="img" aria-label={L('分岐点')} title={L('分岐点（見た目だけ。ドラッグで動かせます）')}
+          data-junction={`${j.card}.${j.port}`} style={{ left: p.x, top: p.y, width: d, height: d }}
+          onPointerDown={(e) => onJunctionDown(j, e)}
+          onContextMenu={(e) => showMenu(e, [{ label: L('分岐点を外す'), disabled: !session.isEditable, action: () => session.setJunction(j.card, j.port, undefined) }])} />
+      })}
 
       {scene.cardKeys.map((k) => {
         const data = scene.data(k)
@@ -785,6 +818,10 @@ export function cardMenu(workspace: Workspace, session: ProjectSession, tab: Wor
     [...targets].some((t) => session.hasPortOrder(t)) && {
       label: L('ポートの並びを元に戻す'), disabled: !editable, action: () => session.resetPortOrder(targets),
     },
+    // An output feeding several inputs: its wires can branch at one point (display only).
+    ...session.junctionOutputs(k).map((port) => session.junction(k, port)
+      ? { label: L('「{0}」の分岐点を外す', port), disabled: !editable, action: () => session.setJunction(k, port, undefined) }
+      : { label: L('「{0}」の分岐点を置く（見た目だけ）', port), disabled: !editable, action: () => session.addJunction(k, port) }),
     {
       label: L('グループ化（見た目だけ）'), action: () => {
         if (!tab.selection.has(k)) tab.setSelection([k])

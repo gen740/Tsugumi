@@ -2,7 +2,7 @@ import { implementedCard } from '../src/model/cardFields'
 import { serialize } from '../shared/json'
 import { Builder } from 'flatbuffers'
 import {
-  BoundaryPlaceT, CardGroupT, CardPlaceT, GroupPortT, Layout, LayoutT, NotePlaceT, PositionT,
+  BoundaryPlaceT, CardGroupT, CardPlaceT, GroupPortT, JunctionT, Layout, LayoutT, NotePlaceT, PositionT,
 } from '../shared/gen/tsugumi/layout'
 import { printReadme } from '../src/model/documents'
 import { R } from '../src/wire/rpc'
@@ -16,7 +16,8 @@ export function layoutFixture(text: string) {
     new BoundaryPlaceT(scope ?? null, value.inputs ? Object.assign(new PositionT(), value.inputs) : null,
       value.outputs ? Object.assign(new PositionT(), value.outputs) : null)
   const root = new LayoutT(layout.flow ?? null,
-    Object.entries(layout.cards ?? {}).map(([key, place]) => Object.assign(new CardPlaceT(key), place)),
+    Object.entries(layout.cards ?? {}).map(([key, { junctions, ...place }]: [string, { junctions?: object[] }]) =>
+      Object.assign(new CardPlaceT(key), place, { junctions: (junctions ?? []).map(j => Object.assign(new JunctionT(), j)) })),
     Object.entries(layout.boundaries ?? {}).map(([scope, value]) => bars(value as object, scope)),
     layout.boundary ? bars(layout.boundary) : null,
     (layout.notes ?? []).map(({ text, ...place }: NotePlaceT & { text?: string }) => {

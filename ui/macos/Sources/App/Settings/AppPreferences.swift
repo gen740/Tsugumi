@@ -294,6 +294,12 @@ extension View {
     let b = AppPreferences.shared.shortcut(a)
     return keyboardShortcut(b.keyEquivalent, modifiers: b.modifiers)
   }
+
+  /// The shortcut only while `active` (a single key must not take typing elsewhere).
+  func shortcut(_ a: ShortcutAction, when active: Bool) -> some View {
+    let b = AppPreferences.shared.shortcut(a)
+    return keyboardShortcut(active ? KeyboardShortcut(b.keyEquivalent, modifiers: b.modifiers) : nil)
+  }
 }
 
 /// Colors of the code editor (syntax highlighting).

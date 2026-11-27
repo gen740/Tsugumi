@@ -24,6 +24,8 @@ struct GraphCanvas: View {
   @State private var frontCardView: UUID?
   @State private var drag: (key: CardKey, offset: CGSize)?
   @State private var boundaryDrag: (input: Bool, offset: CGSize)?
+  /// A junction being dragged (screen translation); saved once, on release.
+  @State private var junctionDrag: (card: CardKey, port: String, offset: CGSize)?
   /// A wire being drawn from a port: from an output (to an input), or from
   /// an input back to an output (`toInput` false).
   @State private var pending: (from: (CardKey, String), point: CGPoint, fromOutput: Bool)?
@@ -328,6 +330,10 @@ struct GraphCanvas: View {
       .onReceive(NotificationCenter.default.publisher(for: .canvasFitAll)) { n in
         if (n.object as? UUID) == tab.id || n.object == nil { fitAll() }
       }
+      // After Arrange the view shows the arranged graph, not where it was.
+      .onReceive(NotificationCenter.default.publisher(for: .canvasArranged)) { n in
+        if (n.object as? ProjectSession) === session, (n.userInfo?["scope"] as? [String]) == tab.scope { fitAll() }
+      }
       .onReceive(NotificationCenter.default.publisher(for: .canvasAddNote)) { n in
         if (n.object as? UUID) == tab.id { addNote() }
       }
@@ -395,6 +401,7 @@ struct GraphCanvas: View {
   /// What moves with the canvas, above the wires: laid out for the camera of this pass (CanvasPanHost).
   @ViewBuilder private func panned(_ routed: [RoutedWire]) -> some View {
     if let b = boundary { boundaryBars(b) }
+    ForEach(junctionPoints()) { j in junctionView(j) }
     ForEach(cardKeys, id: \.self) { k in cardView(k) }
     ForEach(noteIds, id: \.self) { id in noteView(id) }
     canvasCardViews
@@ -534,10 +541,10 @@ struct GraphCanvas: View {
   /// The canvas's state in a corner (debug panel).
   private func canvasStats(_ routed: [RoutedWire]) -> some View {
     let c = camera
-    let wires = routed.filter { $0.connection != nil }.count
+    let wires = routed.filter { $0.connection != nil }.count, trunks = routed.filter(\.trunk).count
     let lines = [
       String(format: "zoom %.3f · camera %.0f, %.0f · view %.0f×%.0f", c.zoom, c.x, c.y, size.width, size.height),
-      "cards \(cardKeys.count) · wires \(wires) (+\(routed.count - wires) boundary) · notes \(noteIds.count)",
+      "cards \(cardKeys.count) · wires \(wires) (+\(routed.count - wires - trunks) boundary, \(trunks) junctions) · notes \(noteIds.count)",
       String(format: "routing %.1f ms%@ · pass %d", routes.lastSeconds * 1000, routes.busy ? " (routing…)" : "", layoutPass.count),
       "scope /\(tab.scope.joined(separator: "/")) · selection \(tab.selection.count) · wire \(tab.selectedConnection.map(String.init) ?? "-")",
     ]
@@ -561,6 +568,8 @@ struct GraphCanvas: View {
       rects.append(rect.insetBy(dx: -18, dy: -18).insetBy(dx: 0, dy: -11).offsetBy(dx: 0, dy: -11))
     }
     if let b = boundary { rects += [b.top, b.bottom] }
+    let dot = (junctionDot / 2 + 6) / camera.zoom
+    rects += junctionPoints().map { CGRect(x: $0.at.x, y: $0.at.y, width: 0, height: 0).insetBy(dx: -dot, dy: -dot) }
     // The button that cuts the selected wire, at its middle.
     if let i = tab.selectedConnection, let mid = routed.first(where: { $0.connection == i })?.path.midPoint {
       rects.append(CGRect(x: mid.x, y: mid.y, width: 0, height: 0).insetBy(dx: -60 / camera.zoom, dy: -20 / camera.zoom))
@@ -568,7 +577,7 @@ struct GraphCanvas: View {
     return rects
   }
 
-  private var interacting: Bool { drag != nil || pending != nil || marquee != nil || panStart != nil || zoomStart != nil || noteDrag != nil || selectionDrag != nil }
+  private var interacting: Bool { drag != nil || junctionDrag != nil || pending != nil || marquee != nil || panStart != nil || zoomStart != nil || noteDrag != nil || selectionDrag != nil }
 
   // MARK: - Data
 
@@ -639,6 +648,20 @@ struct GraphCanvas: View {
     var executionList = false
     var count: UInt32?
     var thread: AgentPresence.Wire? = nil  // a connection, as the Agent's thread knows it
+    var trunk = false      // from an output to its junction (drawn once for all its connections)
+  }
+
+  /// The junctions on this canvas (world units), following a Card being dragged.
+  private func junctionPoints() -> [ProjectSession.JunctionPlace] {
+    session.junctions(in: tab.scope).map { j in
+      let base = session.placedPosition(j.card), now = origin(j.card)
+      var at = CGPoint(x: j.at.x + now.x - base.x, y: j.at.y + now.y - base.y)
+      if let d = junctionDrag, d.card == j.card, d.port == j.port {
+        at.x += d.offset.width / camera.zoom
+        at.y += d.offset.height / camera.zoom
+      }
+      return ProjectSession.JunctionPlace(card: j.card, port: j.port, at: at)
+    }
   }
 
   /// Where Cards and wires are, for the Agent's presence on this canvas.
@@ -664,12 +687,18 @@ struct GraphCanvas: View {
     // Routed together: a wire's path must not depend on the order of the connections.
     var ends: [(a: CGPoint, b: CGPoint)] = []
     var out: [RoutedWire] = []
+    // An output with a junction: its wires branch there, and one trunk joins it to the output.
+    var junctions: [String: CGPoint] = [:]
+    for j in junctionPoints() { junctions[j.id] = j.at }
+    var trunks: [(CardKey, String, CGPoint)] = []
     for (i, c) in session.connections(in: tab.scope).enumerated() {
       guard let fc = c["from"]?["card"]?.string, let tc = c["to"]?["card"]?.string else { continue }
       let fp = c["from"]?["port"]?.string ?? "", tp = c["to"]?["port"]?.string ?? ""
       let fk = key(tab.scope + [fc]), tk = key(tab.scope + [tc])
       let batch = session.executionWire(fk, fp)
-      ends.append((portWorld(fk, fp, output: true), portWorld(tk, tp, output: false)))
+      let junction = junctions[ProjectSession.JunctionPlace(card: fk, port: fp, at: .zero).id]
+      if let junction, !trunks.contains(where: { $0.0 == fk && $0.1 == fp }) { trunks.append((fk, fp, junction)) }
+      ends.append((junction ?? portWorld(fk, fp, output: true), portWorld(tk, tp, output: false)))
       out.append(RoutedWire(connection: i, path: Path(),
                             style: i == tab.selectedConnection ? .selected : style(from: fk, port: fp, to: tk),
                             dotted: session.isDraftWire(from: fk, to: tk),
@@ -692,6 +721,12 @@ struct GraphCanvas: View {
         out.append(RoutedWire(connection: nil, path: Path(), style: style(from: inner.0, port: inner.1, to: nil),
                               dotted: session.isDraftWire(from: inner.0, to: nil), executionList: batch.executionList, count: batch.count))
       }
+    }
+    for (fk, fp, at) in trunks {
+      let batch = session.executionWire(fk, fp)
+      ends.append((portWorld(fk, fp, output: true), at))
+      out.append(RoutedWire(connection: nil, path: Path(), style: style(from: fk, port: fp, to: nil),
+                            dotted: session.isDraftWire(from: fk, to: nil), executionList: batch.executionList, trunk: true))
     }
     for (i, path) in routes.paths(flow: flow, obstacles: obstacles, ends: ends, onRouted: { redrawn += 1 }).enumerated() { out[i].path = path }
     return out
@@ -785,6 +820,45 @@ struct GraphCanvas: View {
         .gesture(boundaryMove(input: false, from: undragged(b.bottom.origin, input: false)))
         .help("ドラッグで移動できます")
     }
+  }
+
+  /// The diameter of a junction's dot (screen units).
+  private var junctionDot: CGFloat { max(7, 9 * CGFloat(camera.zoom)) }
+
+  /// Where one output's wires split. Presentation only: it is no Card, has
+  /// no ports and is never selected; dragging it moves the branches.
+  private func junctionView(_ j: ProjectSession.JunctionPlace) -> some View {
+    let d = junctionDot
+    return Circle()
+      .fill(Color.secondary)
+      .overlay(Circle().strokeBorder(Color(nsColor: .textBackgroundColor), lineWidth: 1.5))
+      .frame(width: d, height: d)
+      .padding(4)
+      .contentShape(Circle())
+      .position(screen(j.at))
+      .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .named("canvas"))
+        .onChanged { v in
+          guard session.isEditable else { return }
+          clearHover()
+          junctionDrag = (j.card, j.port, v.translation)
+        }
+        .onEnded { v in
+          guard junctionDrag != nil else { return }
+          junctionDrag = nil
+          let from = session.junction(j.card, j.port) ?? j.at
+          var p = CGPoint(x: from.x + v.translation.width / camera.zoom, y: from.y + v.translation.height / camera.zoom)
+          // On the grid along the flow, as Arrange puts it: across it the trunk can stay straight.
+          if prefs.showGrid {
+            if session.flow == .topToBottom { p.y = snapToGrid(p.y, prefs.gridSize) } else { p.x = snapToGrid(p.x, prefs.gridSize) }
+          }
+          session.setJunction(j.card, j.port, at: p)
+        })
+      .help("分岐点（見た目だけ。ドラッグで動かせます）")
+      .accessibilityLabel(Text("分岐点"))
+      .contextMenu {
+        Button("分岐点を外す") { session.setJunction(j.card, j.port, at: nil) }
+          .disabled(!session.isEditable)
+      }
   }
 
   private func returnToParent() {
