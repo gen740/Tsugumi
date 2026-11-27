@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import SwiftUI
 import Testing
 import TsugumiRPC
 @testable import TsugumiApp
@@ -15,6 +17,36 @@ import TsugumiRPC
     #expect(prompt.groups[0].path == "/work/copy-b")
     #expect(prompt.groups[0].lines[0]?.request == request)
     #expect(prompt.defaultSelection == [request])
+  }
+
+  @Test func operationApprovalSaysWhatHappensAndFoldsTheRequest() throws {
+    let targets = try JSONSerialization.data(withJSONObject: [
+      "project": "p", "arguments_digest": "DIGEST",
+      "permissions": ["nix_source heasoft github:gen740/heasoft", "nix_source nixpkgs github:NixOS/nixpkgs/abc123", "network fetch"],
+    ] as [String: Any])
+    let raw = "project_access operation_approval\nproject_edit\n" + String(decoding: targets, as: UTF8.self)
+    let prompt = ChatController.PermissionPrompt(raw: [raw]) { _ in }
+    let operation = try #require(prompt.operation)
+    #expect(operation.name == "project_edit")
+    let summary = operation.summary
+    #expect(summary.count == 2)
+    #expect(summary[0].contains("heasoft (github:gen740/heasoft), nixpkgs (github:NixOS/nixpkgs/abc123)"))
+    #expect(summary[1].hasSuffix(": fetch"))
+    #expect(!summary.joined().contains("DIGEST"))
+    #expect(operation.detail.contains("\"arguments_digest\" : \"DIGEST\""))
+
+    let lock = try #require(OperationApproval(["project_access operation_approval\nnix_path_lock_update\n{\"revision\":3}\nProposed arguments: {\"name\":\"heasoft\"}"]))
+    #expect(lock.summary.count == 1 && lock.summary[0].contains("heasoft"))
+    #expect(lock.detail.contains("Proposed arguments: {"))
+  }
+
+  @Test func tableCellsWrapAtTheirCapInsideAHorizontalScroll() {
+    let long = String(repeating: "word ", count: 80)
+    let view = NSHostingView(rootView: ScrollView(.horizontal) { CappedWidth(width: 120) { Text(long) } }.frame(width: 400))
+    let cell = NSHostingView(rootView: CappedWidth(width: 120) { Text(long) })
+    #expect(cell.fittingSize.width <= 120)
+    #expect(cell.fittingSize.height > 40)
+    #expect(view.fittingSize.width <= 400)
   }
 
   @Test func scopedSkillPromptNamesOnlyTheDeclaredCardSets() throws {

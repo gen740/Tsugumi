@@ -95,19 +95,47 @@ private struct BlockView: View {
         }
       }
     case .table(let head, let rows):
-      ScrollView(.horizontal, showsIndicators: false) {
+      // Long cells wrap; a table still wider than the column scrolls, with
+      // its scroller shown so a mouse can reach every column.
+      ScrollView(.horizontal, showsIndicators: true) {
         Grid(alignment: .leading, horizontalSpacing: fontSize, verticalSpacing: fontSize * 0.3) {
-          GridRow { ForEach(Array(head.enumerated()), id: \.offset) { _, c in InlineText.make(c, size: fontSize, bold: true, links: links) } }
+          GridRow { ForEach(Array(head.enumerated()), id: \.offset) { _, c in TableCell(text: InlineText.make(c, size: fontSize, bold: true, links: links), fontSize: fontSize) } }
           Divider()
           ForEach(Array(rows.enumerated()), id: \.offset) { _, r in
-            GridRow { ForEach(Array(r.enumerated()), id: \.offset) { _, c in InlineText.make(c, size: fontSize, links: links) } }
+            GridRow { ForEach(Array(r.enumerated()), id: \.offset) { _, c in TableCell(text: InlineText.make(c, size: fontSize, links: links), fontSize: fontSize) } }
           }
         }
         .padding(.vertical, fontSize * 0.2)
+        .padding(.bottom, fontSize * 0.6)
       }
     case .rule:
       Divider()
     }
+  }
+}
+
+/// A table cell up to about 24 em wide; longer text wraps within it.
+private struct TableCell: View {
+  let text: SwiftUI.Text
+  let fontSize: CGFloat
+
+  var body: some View {
+    CappedWidth(width: fontSize * 24) { text }
+  }
+}
+
+/// Proposes at most `width` to its content, also when the proposal is
+/// unspecified (inside a horizontal scroll view), so text wraps there.
+struct CappedWidth: Layout {
+  let width: CGFloat
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard let content = subviews.first else { return .zero }
+    return content.sizeThatFits(ProposedViewSize(width: min(proposal.width ?? width, width), height: nil))
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
   }
 }
 

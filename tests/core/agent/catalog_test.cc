@@ -5,6 +5,7 @@
 
 #include "agent/approval.hh"
 #include "host/agent_policy.hh"
+#include "host/failure.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
 #include "tsugumi/util/json_object.hh"
 
@@ -31,6 +32,33 @@ TEST(AgentCatalog, DraftSaveKeepsPortLessEnds) {
       json::Object(json::Array(json::Get(canvas, "connections")).front());
   const auto from = json::Object(json::Get(wire, "from"));
   EXPECT_FALSE(from.contains("port"));
+}
+
+TEST(AgentCatalog, EnumArgumentsNameTheAcceptedValues) {
+  try {
+    EncodeProjectRequest(
+        "log_range",
+        R"({"run_id":"r","card":{"segments":["a"]},"stream":"stdout"})", 1);
+    ADD_FAILURE() << "accepted an unknown stream";
+  } catch (const host::Failure& error) {
+    EXPECT_EQ(error.code, "invalid_request");
+    EXPECT_NE(std::string(error.what()).find(
+                  "stream must be one of standard_output, standard_error, "
+                  "journal, build"),
+              std::string::npos)
+        << error.what();
+  }
+  EXPECT_NO_THROW(EncodeProjectRequest(
+      "log_range",
+      R"({"run_id":"r","card":{"segments":["a"]},"stream":"standard_output"})",
+      1));
+  // The tool description names the streams and how to find an invocation.
+  const Catalog catalog;
+  EXPECT_NE(catalog.Find("log_range")->spec.input_schema.find("standard_output (a "
+                                                         "Card's stdout)"),
+            std::string::npos);
+  EXPECT_NE(catalog.Find("run_value_read")->spec.input_schema.find("invocations"),
+            std::string::npos);
 }
 
 TEST(AgentCatalog, InternalVersionNoteRequestsAreNotTools) {

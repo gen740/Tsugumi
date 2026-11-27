@@ -189,7 +189,26 @@ auto Normalize(const reflection::Object& object, std::string_view raw)
     auto it = values.find(field->name()->str());
     if (it == values.end() || it->second == "null") continue;
     const auto& type = *field->type();
-    if (type.base_type() == reflection::Obj) {
+    if (type.base_type() >= reflection::UType &&
+        type.base_type() <= reflection::ULong && type.index() >= 0 &&
+        it->second.starts_with('"')) {
+      // Name the accepted values instead of the parser's position.
+      const auto given = json::String(it->second);
+      std::vector<std::string> names;
+      bool known = false;
+      for (const auto* value : *Schema().enums()->Get(type.index())->values()) {
+        if (!value->value()) continue;
+        names.push_back(value->name()->str());
+        known = known || value->name()->str() == given;
+      }
+      if (!known) {
+        std::string list;
+        for (const auto& n : names) list += (list.empty() ? "" : ", ") + n;
+        throw host::Failure("invalid_request", field->name()->str() +
+                                                   " must be one of " + list +
+                                                   " (got \"" + given + "\")");
+      }
+    } else if (type.base_type() == reflection::Obj) {
       it->second =
           Normalize(*Schema().objects()->Get(type.index()), it->second);
     } else if (type.base_type() == reflection::Union) {

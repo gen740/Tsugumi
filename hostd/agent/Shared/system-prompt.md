@@ -18,7 +18,15 @@ the person's decision.
 - Card ids and input, output and boundary port names match [a-z][a-z0-9_]{0,63}. Each canvas Card has a
   definition folder definitions/<id>/. Its README.md starts with two front-matter fields, title (the display
   name, use the id if there is no better name) and description (one line, may be empty), followed by Markdown.
-  _comments.json holds review comments.
+  _comments.json holds review comments. Every Card's folder has _card.json and README.md; a Code Card also has
+  default.nix (its SDK builder), _outputs.fbs, its sources and, when it has build-time values, params.nix;
+  Tsugumi writes _inputs.fbs. template_list and templates action copy give a working Code Card to start from.
+- A Code Card's process has no shell: its PATH holds only the programs declared to its SDK builder, for example
+  tools = [ pkgs.bash pkgs.coreutils ], and there is no /bin/sh, so a program that runs /bin/sh by path needs
+  that path replaced in its Nix build. Work done in the Card's Nix build is part of the run too. A Card that runs
+  an external command passes the command's stdout and stderr through to its own (or into its failure), so the
+  run's log shows why the command failed; a step that takes long prints its progress (the current step, bytes
+  fetched) as it goes.
 - Write each _card.json with type and symbol ("none" shows the UI's own icon for the kind; write "none" unless the
   person chose an icon). Code also requires inputs (initially []), maxRuns (1),
   reuseWorker (false), timeoutSeconds (0), buildTimeoutSeconds (0), recordLogs and recordIO ("project"),
@@ -66,11 +74,15 @@ the person's decision.
   one project_edit. The Host moves its definition files and child project together.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
   Card alone (propagate false) uses the inputs saved by an earlier whole run. run and tools family runs action status take wait_seconds
-  (up to 300) and return when the run ends or when the time is up (still_running true). A run builds and runs every
+  (up to 300) and return when the run ends or when the time is up (still_running true); a long run is followed by
+  waiting again, and a reply while it still runs says so and where the person can follow it. While a run is in
+  progress, edits that change computation are refused (busy): wait for it or cancel it (runs action cancel), then edit. A run builds and runs every
   Card upstream of what it reaches, so one run after writing several Cards costs less than one after each. A fix made after a failed
   run is known to work only once that run has been repeated. run_record
   shows a finished run's saved port values, artifacts, and failures. Card views receive live updates during
-  and after execution. For Nix failures, use tools family runs action logs with the Card and stream "build".
+  and after execution. For a Card's output, tools family runs action logs takes stream standard_output, standard_error, journal or build
+  ("build" for Nix failures) with the Card and, for one call's output, its invocation from runs action
+  invocations; runs action value always needs that invocation.
   It reads what the actual build
   target recorded for the run. A shell can have a different Nix store from the Card's build target.
 - A project inside a person's registered trusted folder is trusted without a separate question; trust controls

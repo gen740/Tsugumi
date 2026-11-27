@@ -957,7 +957,9 @@ void Service::run_value_read(RequestIn& req) {
   std::string run_id = r->run_id()->str();
   auto card = wire::card_arg(r->card());
   if (!r->invocation())
-    throw Failed(FailureKind::invalid_request, "invocation is required");
+    throw Failed(FailureKind::invalid_request,
+                 "invocation is required; run_invocations lists the Card's "
+                 "invocations in this run");
   if (r->side() != D::ValueSide::input && r->side() != D::ValueSide::output)
     throw Failed(FailureKind::invalid_request, "side must be input or output");
   bool input = r->side() == D::ValueSide::input;

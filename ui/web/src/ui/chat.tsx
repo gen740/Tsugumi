@@ -8,7 +8,7 @@ import { ModelListRefresher } from '../model/modelLists'
 import { ChatController, ChatItem, refLabel, Skill, USAGE_URL } from '../model/chat'
 import { chatFollowsAfterScroll } from '../model/chatFollow'
 import { useObserve } from '../model/observable'
-import { permissionCatalog, defaultPermissionSelection, parsePermission, permissionInfo } from '../model/permissions'
+import { permissionCatalog, defaultPermissionSelection, operationSummary, parseOperationApproval, parsePermission, permissionInfo } from '../model/permissions'
 import { isMac, prefs } from '../model/prefs'
 import { CardKey, commentChange, errorText, key, path, ProjectSession } from '../model/session'
 import { AGENT, modelOptions, savedComments, helperScopeLabel, projectAccessNeededNow } from '../../shared/agentShared'
@@ -87,8 +87,8 @@ export function PermissionPrompt({ asked, groups = [], from, callId, reload = fa
       <div className="sheet-body permission-prompt">
         <div className="title2"><Icon name="hand.raised" /> {reload ? L('外部の変更が Card の権限を広げます') : operation ? L('{0} がこの操作の承認を求めています', who) : access.length ? L('{0} がアクセスの許可を求めています', who) : L('{0} が Card の権限を広げようとしています', who)}</div>
         {!groups.length && <p className="secondary">{reload ? L('表示された権限を許可して、外部の変更を読み込みますか？') : operation ? L('表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。') : access.length ? L('表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。') : L('許可すると、この保存が行われます。許可しなければ何も保存されず、{0} には理由を説明するよう伝えます。', who)}</p>}
-        {callId && <p className="caption secondary mono">{callId}</p>}
-        <PermissionRequests asked={asked} groups={groups} selected={selected} onSelect={(request, on) => setSelected(on ? [...selected, request] : selected.filter(r => r !== request))} />
+        {callId && !operation && <p className="caption secondary mono">{callId}</p>}
+        <PermissionRequests asked={asked} groups={groups} callId={callId} selected={selected} onSelect={(request, on) => setSelected(on ? [...selected, request] : selected.filter(r => r !== request))} />
         {!!groups.length && <p className="secondary caption">{L('読み取った内容は接続先のモデルに送信される場合があります。')}</p>}
         <div className="row end gap8">
           <Button onClick={() => onAnswer(false)}>{L('許可しない')}</Button>
@@ -100,17 +100,21 @@ export function PermissionPrompt({ asked, groups = [], from, callId, reload = fa
 }
 
 /** The exact widenings listed before approval, shared by reload and Agent saves. */
-export function PermissionRequests({ asked, groups = [], selected, onSelect }: { asked: string[]; groups?: AccessGroup[]; selected?: string[]; onSelect?: (request: string, on: boolean) => void }) {
+export function PermissionRequests({ asked, groups = [], callId, selected, onSelect }: { asked: string[]; groups?: AccessGroup[]; callId?: string; selected?: string[]; onSelect?: (request: string, on: boolean) => void }) {
   useObserve(permissionCatalog)
   useEffect(() => { void permissionCatalog.load() }, [])
   const requests = asked.map(parsePermission).filter(r => r !== undefined)
-  const operation = asked.find(r => r.startsWith('project_access operation_approval\n'))?.split('operation_approval\n').slice(1).join('operation_approval\n')
+  const operation = parseOperationApproval(asked)
   const access = asked.filter(r => r.startsWith('project_access '))
   return (
         <ul className="permission-list">
-          {operation && <li><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 360, overflow: 'auto' }}>{operation.split('\n').map((line) => {
-            try { return JSON.stringify(JSON.parse(line), null, 2) } catch { return line }
-          }).join('\n')}</pre></li>}
+          {operation && <li className="operation-approval" style={{ display: 'block' }}>
+            {operationSummary(operation).map((line, i) => <div key={i} className="selectable">{line}</div>)}
+            <details>
+              <summary className="caption secondary">{L('詳細')}</summary>
+              <pre className="caption mono selectable" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 300, overflow: 'auto' }}>{(callId ? callId + '\n' : '') + operation.detail}</pre>
+            </details>
+          </li>}
           {!operation && groups.map((g, i) => <li key={i} style={{ display: 'block' }}>
             <strong>{g.title}</strong>
             <div className="caption secondary" title={g.path}>{g.displayPath} · {L('プロジェクト全体・取り消すまで')}</div>
@@ -625,6 +629,19 @@ function Linked({ text }: { text: string }) {
     (i % 2 ? <a key={i} href={part} target="_blank" rel="noreferrer noopener">{part}</a> : part))}</>
 }
 
+/** A tool call unfolded: its arguments and the result, JSON laid out to read. */
+export function toolCallDetail(args: string, result: string): string {
+  const readable = (text: string) => {
+    try {
+      const v = JSON.parse(text)
+      if (v && typeof v === 'object') return JSON.stringify(v, null, 2).split('\\n').join('\n')
+    } catch { /* shown as written */ }
+    return text
+  }
+  const clip = (text: string) => text.split('\n').slice(0, 40).join('\n')
+  return L('引数') + '\n' + clip(readable(args)) + (result ? '\n' + L('結果') + '\n' + clip(readable(result)) : '')
+}
+
 /** A folded tool step: one line saying what was done; details on demand. */
 function ToolRow({ item, session, tab }: { item: ChatItem; session: ProjectSession; tab?: WorkflowTab }) {
   const [open, setOpen] = useState(false)
@@ -661,7 +678,9 @@ function ToolRow({ item, session, tab }: { item: ChatItem; session: ProjectSessi
           {!!c.cards?.length && L('（変更した Card: {0}）', c.cards.map(k => session.displayPath(path(k))).join('、'))}
         </div>
       ))}
-      {open && <pre className="tool-detail selectable">{item.tool?.name === 'web_search' ? <Linked text={item.text} /> : item.text.split('\n').slice(0, 40).join('\n')}</pre>}
+      {open && (item.tool?.name !== 'web_search' && item.presentation
+        ? <pre className="tool-detail selectable">{toolCallDetail(item.presentation.arguments, item.presentation.result)}</pre>
+        : <pre className="tool-detail selectable">{item.tool?.name === 'web_search' ? <Linked text={item.text} /> : item.text.split('\n').slice(0, 40).join('\n')}</pre>)}
     </div>
   )
 }

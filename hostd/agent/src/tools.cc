@@ -839,6 +839,9 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
       return LayoutToolFailure("invalid_document", error.what());
     }
   }
+  // Arguments the schema refuses are the caller's to correct, before any
+  // request is sent (a failure inside the send reads as an unknown outcome).
+  EncodeProjectRequest(name, prepared, 0);
   auto result = connection
                     .Call([&](uint64_t id) {
                       auto bytes = EncodeProjectRequest(name, prepared, id);

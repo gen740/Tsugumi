@@ -16,8 +16,9 @@
 .markdown .md-item-body { display: flex; flex-direction: column; gap: 0.3em; min-width: 0; flex: 1; }
 .markdown .md-check { display: inline-block; width: 0.85em; height: 0.85em; border: 1.2px solid currentColor; border-radius: 0.15em; vertical-align: -0.1em; position: relative; }
 .markdown .md-check.on::after { content: ""; position: absolute; left: 0.22em; top: 0.02em; width: 0.25em; height: 0.48em; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
-.markdown .md-table-wrap { overflow-x: auto; }
-.markdown .md-table { border-collapse: collapse; }
+/* Cells wrap between words only; a table still wider than the column scrolls. */
+.markdown .md-table-wrap { overflow-x: auto; max-width: 100%; padding-bottom: 0.4em; }
+.markdown .md-table { border-collapse: collapse; word-break: normal; overflow-wrap: normal; }
 .markdown .md-table th { font-weight: 600; text-align: left; border-bottom: 1px solid var(--separator-strong); }
 .markdown .md-table th, .markdown .md-table td { padding: 0.15em 1em 0.15em 0; vertical-align: top; }
 .markdown hr { border: 0; border-top: 1px solid var(--separator); margin: 0; width: 100%; }

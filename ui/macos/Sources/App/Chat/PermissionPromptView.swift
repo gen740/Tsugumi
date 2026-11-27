@@ -1,5 +1,92 @@
 import SwiftUI
 
+/// An operation approval as hostd describes it: the tool, its targets as the
+/// project reports them, and the arguments the Agent proposed.
+struct OperationApproval {
+  let name: String
+  let targets: [String: Any]
+  let args: [String: Any]
+  /// Every line hostd sent, JSON laid out to read.
+  let detail: String
+
+  private static let mark = "project_access operation_approval\n"
+  private static let proposed = "Proposed arguments: "
+
+  init?(_ asked: [String]) {
+    guard let raw = asked.first(where: { $0.hasPrefix(Self.mark) }) else { return nil }
+    let lines = String(raw.dropFirst(Self.mark.count)).components(separatedBy: "\n")
+    func object(_ text: String?) -> [String: Any] {
+      guard let data = text?.data(using: .utf8) else { return [:] }
+      return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+    }
+    name = lines.first ?? ""
+    targets = object(lines.count > 1 ? lines[1] : nil)
+    args = object(lines.first(where: { $0.hasPrefix(Self.proposed) }).map { String($0.dropFirst(Self.proposed.count)) })
+    detail = lines.map { line in
+      let prefix = line.hasPrefix(Self.proposed) ? Self.proposed : ""
+      guard let data = String(line.dropFirst(prefix.count)).data(using: .utf8),
+            let value = try? JSONSerialization.jsonObject(with: data),
+            let formatted = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
+            let text = String(data: formatted, encoding: .utf8) else { return line }
+      return prefix + text
+    }.joined(separator: "\n")
+  }
+
+  private static func text(_ value: Any?) -> String {
+    if let s = value as? String { return s }
+    if let n = value as? NSNumber { return n.stringValue }
+    return ""
+  }
+
+  /// What approving will do, in sentences; the detail keeps the exact request.
+  @MainActor var summary: [String] {
+    if let permissions = targets["permissions"] as? [Any] {
+      var out: [String] = []
+      var sources: [String] = []
+      for raw in permissions.map(Self.text) where !raw.isEmpty {
+        guard let request = CardPermission.Request(raw) else { out.append(raw); continue }
+        let folder = request.folder.map { " (\($0))" } ?? ""
+        if request.kind.rawValue == "nix_source" { sources.append(request.card + folder) }
+        else { out.append("\(request.kind.label): \(request.card)\(folder)") }
+      }
+      if !sources.isEmpty {
+        let list = sources.joined(separator: ", ")
+        out.insert(String(localized: "Nix のソースを追加: \(list)"), at: 0)
+      }
+      return out
+    }
+    let name = Self.text(args["name"]).isEmpty ? Self.text(targets["name"]) : Self.text(args["name"])
+    switch self.name {
+    case "nix_path_lock_update":
+      return [name.isEmpty ? String(localized: "すべての Nix のソースの固定（tsugumi.lock）を更新") : String(localized: "Nix のソース \(name) の固定（tsugumi.lock）を更新")]
+    case "run_history_delete":
+      let count = Self.text(targets["run_count"]).isEmpty ? "0" : Self.text(targets["run_count"])
+      return [String(localized: "実行記録 \(count) 件と、その値・ログ・残したファイルを削除")]
+    case "run_scratch_delete":
+      let count = String((targets["folders"] as? [Any])?.count ?? 0)
+      return [String(localized: "作業フォルダ \(count) 個を削除（実行記録と残した出力は残ります）")]
+    case "project_cache_clear":
+      return [String(localized: "このプロジェクトの Nix ビルドキャッシュを削除（実行データは残ります）")]
+    case "template_add":
+      let path = Self.text(args["path"])
+      return [String(localized: "フォルダ \(path) をテンプレート \(name) として追加")]
+    case "template_import":
+      let url = Self.text(args["url"])
+      return [String(localized: "\(url) からテンプレート \(name) を取り込む")]
+    case "version_checkout":
+      let id = String(Self.text((targets["version"] as? [String: Any])?["id"]).prefix(12))
+      let version = id.isEmpty ? Self.text(args["commit"]) : id
+      return [String(localized: "今の状態を記録してから、版 \(version) に切り替える")]
+    case "version_init":
+      return [String(localized: "版の記録を始める")]
+    case "version_mark":
+      return [String(localized: "今の状態を版 \(name) として残す")]
+    default:
+      return [self.name]
+    }
+  }
+}
+
 /// Core supplies the same structured description for live and restored requests.
 enum ProjectAccessLabel {
   static func neededNow(_ request: String) -> Bool {
@@ -36,6 +123,7 @@ struct PermissionPromptView: View {
   let answer: (_ allow: Bool, _ selected: Set<String>) -> Void
   var reload = false
   @State private var selected: Set<String>
+  @State private var showsDetail = false
 
   init(prompt: ChatController.PermissionPrompt,
        answer: @escaping (Bool, Set<String>) -> Void, reload: Bool = false) {
@@ -52,14 +140,19 @@ struct PermissionPromptView: View {
       if prompt.groups.isEmpty { Text(reload ? "表示された権限を許可して、外部の変更を読み込みますか？" : prompt.operation != nil ? "表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。" : prompt.access.isEmpty ? "許可すると、この保存が行われます。許可しなければ何も保存されず、Agent には理由を説明するよう伝えます。" : "表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。")
         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
       VStack(alignment: .leading, spacing: 6) {
-        if let callId = prompt.callId, !callId.isEmpty {
-          Text(callId).font(.caption.monospaced()).textSelection(.enabled)
-        }
         if let operation = prompt.operation {
-          ScrollView {
-            Text(operation).font(.caption.monospaced()).textSelection(.enabled)
-              .frame(maxWidth: .infinity, alignment: .leading)
-          }.frame(maxHeight: 360)
+          ForEach(Array(operation.summary.enumerated()), id: \.offset) { _, line in
+            Text(verbatim: line).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+          }
+          DisclosureGroup("詳細", isExpanded: $showsDetail) {
+            ScrollView {
+              Text(verbatim: [prompt.callId ?? "", operation.detail].filter { !$0.isEmpty }.joined(separator: "\n"))
+                .font(.caption.monospaced()).textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }.frame(maxHeight: 300)
+          }.font(.caption)
+        } else if let callId = prompt.callId, !callId.isEmpty {
+          Text(callId).font(.caption.monospaced()).textSelection(.enabled)
         }
         ForEach(Array(prompt.groups.enumerated()), id: \.offset) { _, group in
           VStack(alignment: .leading, spacing: 6) {
