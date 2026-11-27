@@ -622,15 +622,6 @@ class Daemon {
             status.artifact_wanted =
                 fs::read_file(journal->job_path(job) / "work/artifact-wanted")
                     .value_or("");
-          const auto bytes =
-              fs::read_file(journal->job_path(job) / "work/progress");
-          if (const auto progress =
-                  bytes ? remote::decode<R::TransferProgress>(*bytes)
-                        : std::nullopt) {
-            status.transfer_name = progress->name;
-            status.transfer_done = progress->done;
-            status.transfer_total = progress->total;
-          }
         }
         if (const auto channel = display_channel(*journal, job))
           channel->take(status, query);
@@ -648,13 +639,15 @@ class Daemon {
         if (state.state == R::JobState::Cancelling) notify_cancel(state);
         return reply(slice(with_log_status(state.status())));
       }
-      case R::RequestBody::ReleaseRequest:
+      case R::RequestBody::ReleaseRequest: {
         journal->release(job, q.body.AsReleaseRequest()->fingerprint);
+        decltype(displays_)::node_type removed;
         {
           std::lock_guard guard(channel_mutex_);
-          displays_.erase(channel_key(*journal, job));
+          removed = displays_.extract(channel_key(*journal, job));
         }
         return reply(R::AckT{});
+      }
       case R::RequestBody::JobArtifactRequest:
         journal->deliver_artifact(job, *q.body.AsJobArtifactRequest(),
                                   q.core_life_id);
@@ -702,9 +695,15 @@ class Daemon {
   }
   auto tick(std::span<const pollfd> events) -> void {
     {
+      // Destruction joins the channel threads. Keep references until the map
+      // mutex is free so other requests can still find their channels.
+      std::vector<std::shared_ptr<DisplayChannel>> expired;
       std::lock_guard guard(channel_mutex_);
-      std::erase_if(displays_,
-                    [](const auto& item) { return item.second->expired(); });
+      std::erase_if(displays_, [&](const auto& item) {
+        if (!item.second->expired()) return false;
+        expired.push_back(item.second);
+        return true;
+      });
     }
     while (::waitpid(-1, nullptr, WNOHANG) > 0) {
     }
@@ -988,7 +987,7 @@ class Daemon {
       std::lock_guard guard(channel_mutex_);
       const auto key = channel_key(p, job);
       if (channel) channels_[key] = std::move(channel);
-      displays_[key] = std::move(display);
+      std::swap(displays_[key], display);
     }
     return rc == 0 ? pid : -1;
   }

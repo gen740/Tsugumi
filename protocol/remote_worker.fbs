@@ -154,8 +154,6 @@ table Invocation {
   call_sha256:string (required); archive_sha256:string (required);
   implementation_index:ulong;
 }
-/// work/progress: the input transfer in progress.
-table TransferProgress { name:string; done:ulong; total:ulong; }
 /// The result's environment member: the Card's build environment.
 table ResultEnvironment { paths:[string]; directories:[string]; built:bool; log_truncated:bool; }
 /// One entry of the result's logs member: a LogStream value and its bytes.
