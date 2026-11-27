@@ -2345,6 +2345,9 @@ void Service::version_checkout(RequestIn& req) {
       f.current_rev = base->rev;
       throw Failed(f);
     }
+    if (store_->halted())
+      throw Failed(FailureKind::persistence_failed,
+                   "reopen the project to recover persistence");
     if (auto active = scheduler_->active_status())
       throw Failed(FailureKind::busy, "a run is in progress",
                    {{"run_id", *active->run_id}});
