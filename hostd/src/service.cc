@@ -235,7 +235,35 @@ struct Service::State {
                 throw Failure("unavailable", failure->diagnostic()->str());
             }
             throw Failure("unavailable", "Unexpected project probe reply");
-          });
+          },
+          [this] {
+            const auto support = options.vm.support.empty()
+                                     ? options.state_dir.parent_path()
+                                     : options.vm.support;
+            Tsugumi::RemoteWorker::CacheSettingsT out;
+            out.push =
+                std::make_unique<Tsugumi::RemoteWorker::CachePushSettingsT>(
+                    host_settings->CachePushSettings());
+            auto builtin =
+                std::make_unique<Tsugumi::RemoteWorker::CachePullSettingsT>();
+            builtin->endpoint = "https://tsugumi.cachix.org";
+            builtin->public_key =
+                "tsugumi.cachix.org-1:am26Q4VFWYLyJ+t+"
+                "O5j03MmMVmZ2Ifw6cbNUoLhlrhI=";
+            out.pull.push_back(std::move(builtin));
+            for (auto& pull : host::LoadBinaryCachePulls(support)) {
+              auto entry =
+                  std::make_unique<Tsugumi::RemoteWorker::CachePullSettingsT>();
+              entry->endpoint = std::move(pull.endpoint);
+              entry->public_key = std::move(pull.public_key);
+              entry->host = std::move(pull.host);
+              entry->user = std::move(pull.user);
+              entry->secret = std::move(pull.secret);
+              out.pull.push_back(std::move(entry));
+            }
+            return out;
+          },
+          options.cache_executable);
     if (!options.vm.binary.empty()) {
       options.vm.broker_socket = execution_broker->socket_path();
       options.vm.resources = [this] { return host_settings->VMResources(); };

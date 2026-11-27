@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -50,6 +51,98 @@ constexpr uint64_t kWorkerLimit = workerd::kMaxWorkerFrameBytes;
 constexpr auto kSecretWait = std::chrono::minutes(5);
 
 using Secrets = std::shared_ptr<WorkerSecrets>;
+
+auto read_cache_settings() -> workerd::R::CacheSettingsT {
+  const int fd = workerd::kCacheSettingsFd;
+  struct Close {
+    int fd;
+    ~Close() { ::close(fd); }
+  } close{fd};
+  struct stat stat{};
+  if (::fstat(fd, &stat) != 0 || stat.st_size <= 0 ||
+      stat.st_size > workerd::kMaxFrame)
+    throw std::runtime_error("missing job cache settings");
+  std::string bytes(static_cast<size_t>(stat.st_size), '\0');
+  size_t offset = 0;
+  while (offset < bytes.size()) {
+    const auto count = ::read(fd, bytes.data() + offset, bytes.size() - offset);
+    if (count < 0 && errno == EINTR) continue;
+    if (count <= 0) throw std::runtime_error("incomplete job cache settings");
+    offset += static_cast<size_t>(count);
+  }
+  auto decoded = workerd::decode(bytes);
+  workerd::clear_secret(bytes);
+  auto* reply = decoded->payload.AsReply();
+  auto* settings = reply ? reply->body.AsCacheSettings() : nullptr;
+  if (!settings || !settings->push)
+    throw std::runtime_error("invalid job cache settings");
+  return std::move(*settings);
+}
+
+auto exchange_cache_file(CacheRelay::Method method, const std::string& path,
+                         uint64_t size, const CacheRelay::Source& upload,
+                         const CacheRelay::Sink& download) -> bool {
+  namespace R = workerd::R;
+  namespace frame = rpc::frame;
+  using workerd::kCacheRelayFd;
+  R::CacheFileRequestT body;
+  switch (method) {
+    case CacheRelay::Method::head:
+      body.method = R::CacheMethod::Head;
+      break;
+    case CacheRelay::Method::get:
+      body.method = R::CacheMethod::Get;
+      break;
+    case CacheRelay::Method::put:
+      body.method = R::CacheMethod::Put;
+      break;
+  }
+  body.path = path;
+  body.size = size;
+  R::RequestT request;
+  request.body.Set(std::move(body));
+  R::MessageT message;
+  message.payload.Set(std::move(request));
+  frame::Write(kCacheRelayFd, workerd::encode(std::move(message)),
+               workerd::kMaxFrame);
+  const auto read_reply = [&] {
+    const auto data = frame::Read(kCacheRelayFd, workerd::kMaxFrame);
+    if (!data) throw std::runtime_error("built-in binary cache relay closed");
+    const auto reply = workerd::decode(*data);
+    const auto* envelope = reply->payload.AsReply();
+    const auto* file = envelope ? envelope->body.AsCacheFile() : nullptr;
+    if (!file) throw std::runtime_error("invalid binary cache reply");
+    return *file;
+  };
+  auto reply = read_reply();
+  std::vector<char> chunk;
+  if (upload && reply.status == 100) {
+    chunk.resize(std::min<uint64_t>(size, workerd::kChunkBytes));
+    for (auto remaining = size; remaining > 0;) {
+      const auto want = std::min<uint64_t>(remaining, chunk.size());
+      const auto n = upload(std::span(chunk).first(want));
+      if (n == 0 || n > want)
+        throw std::runtime_error("invalid binary cache upload length");
+      frame::WriteAll(kCacheRelayFd, chunk.data(), n);
+      remaining -= n;
+    }
+    reply = read_reply();
+  }
+  if (reply.status == 404) return false;
+  if (reply.status != 200)
+    throw std::runtime_error("built-in binary cache request failed");
+  if (download) {
+    chunk.resize(std::min<uint64_t>(reply.size, workerd::kChunkBytes));
+    for (auto remaining = reply.size; remaining > 0;) {
+      const auto want = std::min<uint64_t>(remaining, chunk.size());
+      if (frame::ReadExact(kCacheRelayFd, chunk.data(), want) != want)
+        throw std::runtime_error("incomplete binary cache download");
+      download(std::string_view(chunk.data(), want));
+      remaining -= want;
+    }
+  }
+  return true;
+}
 
 // Reads the job's Card secrets from the listener's pipe once the environment
 // is built and nothing but the Card's process remains to start. The values
@@ -554,14 +647,30 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   // Only definition data enter this persistent private Nix store. Invocation
   // inputs and results remain in job scratch, outside the store.
   try {
-    environment = RemoteWorkerStore::realise(
-        ArchiveDerivationTransport(blob(require_sha256_hex(
-            invocation.archive_sha256, "input blob digest"))),
-        store, WorkerDerivation{derivation, output, job->system},
-        [&](const std::string& line) {
-          if (!job->card_probe) log(LogStream::build, line);
-        },
-        job->build_timeout_ms);
+    {
+      const auto caches = read_cache_settings();
+      CacheRelay::Exchange relay;
+      struct CloseRelay {
+        int fd = -1;
+        ~CloseRelay() {
+          if (fd >= 0) ::close(fd);
+        }
+      } close_relay;
+      if (caches.push->kind == R::CacheTargetKind::Own) {
+        if (caches.own_signing_key.empty() ||
+            ::fcntl(kCacheRelayFd, F_SETFD, FD_CLOEXEC) != 0)
+          throw std::runtime_error("missing built-in binary cache relay");
+        close_relay.fd = kCacheRelayFd;
+        relay = exchange_cache_file;
+      }
+      environment = RemoteWorkerStore::realise(
+          BinaryCacheDerivationTransport{}, caches, std::move(relay), store,
+          WorkerDerivation{derivation, output, job->system}, job->push_outputs,
+          [&](const std::string& line) {
+            if (!job->card_probe) log(LogStream::build, line);
+          },
+          job->build_timeout_ms);
+    }
     auto secrets =
         job->secrets.empty() ? Secrets{} : receive_secrets(directory, *job);
     outcome = run_worker(*call, *job, invocation, blobs, directory, store,
@@ -577,6 +686,8 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   remote::RW::ResultEnvironmentT info;
   info.paths = std::move(environment.closure);
   info.built = environment.built;
+  info.substituter = std::move(environment.substituter);
+  info.pushed = environment.pushed;
   info.log_truncated = invocation_log.truncated();
   const auto files = result_dir / "files";
   if (stdfs::is_directory(files)) {

@@ -255,7 +255,8 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
           j->view_input_ready,
           std::move(credits),
           j->artifact_wanted,
-          std::move(view_request)};
+          std::move(view_request),
+          j->cache_settings_wanted};
 }
 auto require_ack(const R::ReplyT& reply) -> void {
   if (!reply.body.AsAck())
@@ -271,11 +272,14 @@ RemoteJobClient::RemoteJobClient()
 
 RemoteJobClient::~RemoteJobClient() { stop(); }
 
-auto RemoteJobClient::request(R::RequestT q,
-                              std::stop_token cancel) const
+auto RemoteJobClient::request(R::RequestT q, std::stop_token cancel,
+                              CacheRelay::Source cache_upload,
+                              CacheRelay::Sink cache_download) const
     -> R::ReplyT {
   q.core_life_id = core_life_id_;
   const bool upload = q.body.type == R::RequestBody::PutBlobRequest;
+  const auto* cache_file = q.body.AsCacheFileRequest();
+  const uint64_t cache_size = cache_file ? cache_file->size : 0;
   int wake[2];
   if (::pipe(wake) < 0)
     throw BrokerDisconnected("cannot open execution broker wake pipe");
@@ -315,13 +319,46 @@ auto RemoteJobClient::request(R::RequestT q,
   if (!view_message)
     trace::Observe(link, "project core", "hostd execution broker", true, bytes,
                    &trace::kFlatBufferCodec);
-  std::string prefix(4, '\0');
-  read_exact(socket.fd, prefix.data(), prefix.size(), io);
-  std::string response(workerd::frame_length(prefix), '\0');
-  read_exact(socket.fd, response.data(), response.size(), io);
+  const auto receive_frame = [&] {
+    std::string prefix(4, '\0');
+    read_exact(socket.fd, prefix.data(), prefix.size(), io);
+    std::string frame(workerd::frame_length(prefix), '\0');
+    read_exact(socket.fd, frame.data(), frame.size(), io);
+    return frame;
+  };
+  auto response = receive_frame();
   auto incoming = workerd::decode(response);
   auto* reply = incoming->payload.AsReply();
   if (!reply) throw BrokerDisconnected("expected execution broker reply");
+  if (auto* file = reply->body.AsCacheFile(); file && file->status == 100) {
+    if (!cache_upload)
+      throw BrokerDisconnected("unexpected binary cache upload request");
+    std::vector<char> chunk(
+        std::min<uint64_t>(cache_size, workerd::kChunkBytes));
+    for (auto remaining = cache_size; remaining > 0;) {
+      const auto count = cache_upload(
+          std::span(chunk).first(std::min<uint64_t>(remaining, chunk.size())));
+      if (count == 0 || count > remaining || count > chunk.size())
+        throw BrokerDisconnected("invalid binary cache upload size");
+      send_exact(socket.fd, std::string_view(chunk.data(), count), io);
+      remaining -= count;
+    }
+    response = receive_frame();
+    incoming = workerd::decode(response);
+    reply = incoming->payload.AsReply();
+    if (!reply) throw BrokerDisconnected("expected binary cache upload result");
+  }
+  if (const auto* file = reply->body.AsCacheFile();
+      file && file->status == 200 && cache_download) {
+    std::vector<char> chunk(
+        std::min<uint64_t>(file->size, workerd::kChunkBytes));
+    for (auto remaining = file->size; remaining > 0;) {
+      const auto count = std::min<uint64_t>(remaining, chunk.size());
+      read_exact(socket.fd, chunk.data(), count, io);
+      cache_download(std::string_view(chunk.data(), count));
+      remaining -= count;
+    }
+  }
   const auto* status = reply->body.AsJobStatus();
   if (!view_message &&
       (!status ||
@@ -382,6 +419,44 @@ auto RemoteJobClient::probe(std::string_view service,
                  "endpoint.");
   return {c.native_system, c.instance_id, c.systems,   c.resource_limits,
           c.max_jobs,      c.active_jobs, c.probe_life};
+}
+auto RemoteJobClient::cache_settings(std::string_view service,
+                                     std::stop_token stop) const
+    -> R::CacheSettingsT {
+  auto reply = request(command(R::CacheSettingsRequestT{}, service), stop);
+  auto* settings = reply.body.AsCacheSettings();
+  if (!settings || !settings->push)
+    throw BrokerDisconnected("missing cache settings");
+  return std::move(*settings);
+}
+auto RemoteJobClient::cache_file(std::string_view service,
+                                 CacheRelay::Method method,
+                                 const std::string& path, uint64_t size,
+                                 CacheRelay::Source upload,
+                                 CacheRelay::Sink download,
+                                 std::stop_token stop) const -> bool {
+  R::CacheFileRequestT body;
+  switch (method) {
+    case CacheRelay::Method::head:
+      body.method = R::CacheMethod::Head;
+      break;
+    case CacheRelay::Method::get:
+      body.method = R::CacheMethod::Get;
+      break;
+    case CacheRelay::Method::put:
+      body.method = R::CacheMethod::Put;
+      break;
+  }
+  body.path = path;
+  body.size = size;
+  const auto reply = request(command(std::move(body), service), stop,
+                             std::move(upload), std::move(download));
+  const auto* file = reply.body.AsCacheFile();
+  if (!file) throw BrokerDisconnected("expected a binary cache file reply");
+  if (file->status == 404) return false;
+  if (file->status != 200)
+    throw BrokerRequestRejected("built-in binary cache request failed");
+  return true;
 }
 auto RemoteJobClient::probe_lookup(std::string_view service,
                                    std::string_view key, std::string_view life,

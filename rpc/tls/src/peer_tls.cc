@@ -1,6 +1,8 @@
 #include "tsugumi/rpc/peer_tls.hh"
 
 #include <fcntl.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
@@ -76,8 +78,17 @@ auto ConfigureSocket(int fd, int timeout_seconds) -> void {
   Check(flags >= 0 && ::fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == 0 &&
             ::fcntl(fd, F_SETFD, FD_CLOEXEC) == 0,
         "Cannot configure blocking peer socket");
-#ifdef SO_NOSIGPIPE
   const int enabled = 1;
+  sockaddr_storage address{};
+  socklen_t address_size = sizeof address;
+  Check(::getsockname(fd, reinterpret_cast<sockaddr*>(&address),
+                      &address_size) == 0,
+        "Cannot identify peer socket address family");
+  if (address.ss_family == AF_INET || address.ss_family == AF_INET6)
+    Check(::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &enabled, sizeof enabled) ==
+              0,
+          "Cannot disable TCP send coalescing");
+#ifdef SO_NOSIGPIPE
   Check(
       ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof enabled) == 0,
       "Cannot disable socket SIGPIPE");

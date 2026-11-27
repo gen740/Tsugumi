@@ -25,6 +25,10 @@ from harness import remote_worker as R
 from harness.host import Host, HostFailure
 from Tsugumi.Host.WorkerDashboardOperation import WorkerDashboardOperation as DashboardOp
 from Tsugumi.RemoteWorker.WorkerReady import WorkerReady
+from Tsugumi.RemoteWorker.CachePullSettings import CachePullSettingsT
+from Tsugumi.RemoteWorker.CachePushSettings import CachePushSettingsT
+from Tsugumi.RemoteWorker.CacheSettings import CacheSettingsT
+from Tsugumi.RemoteWorker.CacheTargetKind import CacheTargetKind
 from Tsugumi.RemoteWorker.DisplayCredit import DisplayCreditT
 from Tsugumi.RemoteWorker.JobStatus import JobStatus
 from Tsugumi.RemoteWorker.Reply import Reply
@@ -63,6 +67,7 @@ class Worker:
                         "--port", str(self.port), "--max-jobs", "1", *extra]
         self.env = env
         self.process = None
+        self.cache_pulls = []
         try:
             self.start()
             self.caps = self.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False).body
@@ -127,6 +132,11 @@ class Worker:
         fields.update(routing)
         if job:
             fields["jobId"] = job
+        if kind == R.RequestBody.SubmitRequest:
+            body.caches = CacheSettingsT(
+                push=CachePushSettingsT(kind=CacheTargetKind.NixCopy),
+                pull=self.cache_pulls,
+            )
         request = R.request(kind, body, **fields)
         peer = socket.socket(socket.AF_UNIX if unix else socket.AF_INET, socket.SOCK_STREAM)
         with peer:
@@ -327,18 +337,16 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(),
     output = subprocess.check_output(
         ["nix-store", "--query", "--outputs", derivation], text=True,
     ).strip()
-    closure = subprocess.check_output(
-        ["nix-store", "--query", "--requisites", derivation], text=True,
-    ).splitlines()
-    archive = peer.root / "card.archive"
-    with archive.open("wb") as stream:
-        subprocess.run(["nix-store", "--export", *closure], stdout=stream, check=True)
-    with archive.open("rb") as stream:
-        archive_digest = hashlib.file_digest(stream, "sha256").hexdigest()
-        stream.seek(0)
-        total = archive.stat().st_size
-        for offset in range(0, total, 1 << 20):
-            peer.put_chunk(job, archive_digest, total, offset, stream.read(1 << 20))
+    cache = (peer.root / "nix-cache").as_uri()
+    secret_key, public_key = peer.root / "sign", peer.root / "sign.pub"
+    if not public_key.exists():
+        subprocess.run(["nix-store", "--generate-binary-cache-key", "remote-fixture",
+                        str(secret_key), str(public_key)], check=True)
+    subprocess.run(["nix", "--extra-experimental-features", "nix-command",
+                    "copy", "--to", f"{cache}?secret-key={secret_key}", derivation],
+                   check=True)
+    peer.cache_pulls = [CachePullSettingsT(endpoint=cache,
+                                          publicKey=public_key.read_text().strip())]
 
     call = WorkerCallT(
         inputs=list(inputs), outputs=list(outputs), deadlineMs=deadline_ms,
@@ -346,14 +354,37 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(),
     message = WorkerMessageT(callId=1, valueType=WorkerPayload.WorkerCall, value=call)
     call_digest = peer.upload(job, R.pack(message, b"TSW1"))
     invocation = peer.upload(job, R.pack(R.InvocationT(
-        callSha256=call_digest, archiveSha256=archive_digest,
+        callSha256=call_digest,
         implementationIndex=1,
     )))
     return R.pack(R.JobSpecT(
         system=peer.caps.nativeSystem, derivation=derivation, output=output,
-        invocationSha256=invocation, inputBlobs=[archive_digest, call_digest, invocation],
+        invocationSha256=invocation, inputBlobs=[call_digest, invocation],
         logLimitBytes=8 << 20, **(output_budget or {}),
     ))
+
+
+def test_builds_instead_of_using_an_output_signed_by_an_untrusted_cache_key(worker):
+    job = "a" * 64
+    spec = card_spec(worker, job, 'std::ofstream("trusted-build") << "ok";')
+    plan = R.JobSpecT.InitFromPackedBuf(spec)
+    derivation, output = R.string(plan.derivation), R.string(plan.output)
+    fake_key, fake_public = worker.root / "foreign-key", worker.root / "foreign-key.pub"
+    subprocess.run(["nix-store", "--generate-binary-cache-key", "foreign-fixture",
+                    str(fake_key), str(fake_public)], check=True)
+    subprocess.run(["nix", "build", "--no-link", f"{derivation}^out"], check=True)
+    cache = worker.root / "nix-cache"
+    subprocess.run(["nix", "copy", "--to", f"{cache.as_uri()}?secret-key={fake_key}", output],
+                   check=True)
+    narinfo = cache / f"{Path(output).name.split('-')[0]}.narinfo"
+    assert "Sig: foreign-fixture:" in narinfo.read_text()
+
+    reply = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
+    assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
+    worker.wait_state(job, R.JobState.Succeeded)
+    work = worker.journal(job).parent / "work/result"
+    result = R.ResultEnvironmentT.InitFromPackedBuf((work / "environment").read_bytes())
+    assert result.built and not result.substituter
 
 
 def test_global_cap_reconnects_within_one_core_life_and_enforces_call_budget(tmp_path):
@@ -403,7 +434,8 @@ read -r line < "$TEST_GATE"
         corrupt.write_bytes(b"corrupt journal record")
         submit(blocker, peer.spec(peer.upload(blocker, b"staged input")))
         peer.wait_state(blocker, R.JobState.Running)
-        submit(next_job, peer.spec(peer.upload(next_job, b"next input")))
+        next_spec = peer.spec(peer.upload(next_job, b"next input"))
+        submit(next_job, next_spec)
         assert state(next_job) == R.JobState.Queued
         remove = "/dashboard/jobs/remove"
         status, refusal = peer.dashboard_change(remove, jobs=[f"{peer.scope}/{blocker}"], active=True)
@@ -419,6 +451,9 @@ read -r line < "$TEST_GATE"
         assert state(discard) == R.JobState.Released
         peer.restart()
         assert state(blocker) == R.JobState.Running and state(next_job) == R.JobState.Queued
+        waiting = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=next_job).body
+        assert waiting.cacheSettingsWanted
+        submit(next_job, next_spec)
         cancel(blocker)
         peer.wait_state(blocker, R.JobState.Cancelled)
         peer.wait_state(next_job, R.JobState.Running)

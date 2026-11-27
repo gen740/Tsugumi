@@ -25,6 +25,7 @@
 #include <nix/fetchers/fetch-settings.hh>
 #include <nix/fetchers/fetchers.hh>
 #include <nix/fetchers/filtering-source-accessor.hh>
+#include <nix/store/build-result.hh>
 #include <nix/store/derivations.hh>
 #include <nix/store/derived-path.hh>
 #include <nix/store/globals.hh>
@@ -65,11 +66,18 @@ constexpr size_t kExpressionBytes = 8u << 20;
 constexpr size_t kExpressionEntries = 2000;
 constexpr size_t kBuildLogTail = 256u << 10;
 
-auto write_build_log(std::string_view line, bool truncated) -> void {
+auto write_build_log(std::string_view line, bool truncated,
+                     std::optional<bool> built = std::nullopt,
+                     const std::string& substituter = {}) -> void {
   flatbuffers::FlatBufferBuilder builder;
-  const auto text = truncated ? flatbuffers::Offset<flatbuffers::String>{}
-                              : builder.CreateString(line);
-  builder.FinishSizePrefixed(E::CreateBuildLog(builder, text, truncated));
+  const auto text = truncated || built
+                        ? flatbuffers::Offset<flatbuffers::String>{}
+                        : builder.CreateString(line);
+  const auto cache = substituter.empty()
+                         ? flatbuffers::Offset<flatbuffers::String>{}
+                         : builder.CreateString(substituter);
+  builder.FinishSizePrefixed(
+      E::CreateBuildLog(builder, text, truncated, built, cache));
   nix::writeFull(STDOUT_FILENO,
                  {reinterpret_cast<const char*>(builder.GetBufferPointer()),
                   builder.GetSize()});
@@ -449,7 +457,7 @@ auto NixEvaluator::build_client(int argc, char** argv) -> std::optional<int> {
       nix::settings.set("sandbox-fallback", "false");
       nix::settings.set("builders", "");
     }
-    nix::logger = std::make_unique<NixLogSink>(
+    auto sink = std::make_unique<NixLogSink>(
         [sandboxed, truncated = false](const std::string& line) mutable {
           if (sandboxed) {
             const std::string_view text(line);
@@ -464,6 +472,23 @@ auto NixEvaluator::build_client(int argc, char** argv) -> std::optional<int> {
           write_build_log(line, truncated);
         });
     auto store = nix::openStore();
+    const auto drv = store->parseStorePath(argv[2]);
+    std::string cache;
+    std::mutex cache_mutex;
+    if (!sandboxed) {
+      const auto outputs = store->queryPartialDerivationOutputMap(drv);
+      const auto out = outputs.find("out");
+      if (out != outputs.end() && out->second)
+        sink->set_substitutions(
+            [&, path = store->printStorePath(*out->second)](
+                const std::string& candidate, const std::string& endpoint) {
+              if (candidate != path) return;
+              std::lock_guard lock(cache_mutex);
+              cache = text::public_cache_endpoint(endpoint);
+              if (endpoint.starts_with("file://")) cache = "file://";
+            });
+    }
+    nix::logger = std::move(sink);
     // Only guest vmd sets TSUGUMI_GUEST_NIX_SANDBOX=1. It selects the shared
     // daemon whose nix.conf enforces the settings above for untrusted clients.
     if (sandboxed && dynamic_cast<nix::RemoteStore*>(&*store) &&
@@ -472,10 +497,16 @@ auto NixEvaluator::build_client(int argc, char** argv) -> std::optional<int> {
             nix::getEnv("TSUGUMI_GUEST_NIX_SANDBOX").value_or("")))
       throw std::runtime_error(
           "the Nix daemon cannot enforce sandbox settings for this client");
-    store->buildPaths({nix::DerivedPath::Built{
-        .drvPath =
-            nix::makeConstantStorePathRef(store->parseStorePath(argv[2])),
-        .outputs = nix::OutputsSpec::All{}}});
+    auto results = store->buildPathsWithResults(
+        {nix::DerivedPath::Built{.drvPath = nix::makeConstantStorePathRef(drv),
+                                 .outputs = nix::OutputsSpec::All{}}});
+    if (results.size() != 1)
+      throw std::runtime_error("missing Nix build result");
+    results.front().tryThrowBuildError();
+    const auto status = results.front().tryGetSuccess()->status;
+    write_build_log(
+        "", false, status == nix::BuildResult::Success::Built,
+        status == nix::BuildResult::Success::Substituted ? cache : "");
     return 0;
   } catch (const std::exception& error) {
     auto diagnostic = tsugumi::text::replace_invalid_utf8(
@@ -1059,7 +1090,7 @@ struct EvaluationState {
   // The Nix client sends these options with its own daemon connection. The
   // evaluator and the other builds can keep using their own settings.
   static auto build(const NixCall& c, const std::string& drv,
-                    bool sandboxed = false) -> void {
+                    bool sandboxed = false) -> std::pair<bool, std::string> {
     const auto executable = nix::getSelfExe();
     if (!executable)
       throw std::runtime_error("cannot locate the Nix build client");
@@ -1075,10 +1106,11 @@ struct EvaluationState {
     // Stop ends the client's process group.
     std::atomic<bool> stopped{false};
     std::stop_callback on_stop(c.cancel, [&] { stopped = true; });
+    bool built = true;
+    std::string substituter;
     const auto result = proc::run(
         spec, &stopped, c.deadline,
         [&](proc::LineChunk chunk) {
-          if (!c.log) return;
           std::vector<std::string> output;
           for (const auto& frame : chunk.lines) {
             const auto* start = reinterpret_cast<const uint8_t*>(frame.data());
@@ -1089,8 +1121,10 @@ struct EvaluationState {
                 flatbuffers::GetSizePrefixedRoot<E::BuildLog>(start);
             if (log->truncated()) chunk.truncated = true;
             if (log->line()) output.push_back(log->line()->str());
+            if (log->built()) built = *log->built();
+            if (log->substituter()) substituter = log->substituter()->str();
           }
-          c.log({output, chunk.truncated});
+          if (c.log) c.log({output, chunk.truncated});
         },
         kInvocationLogLimitBytes + 64, std::chrono::seconds(1),
         proc::LogFraming::stdout_size_prefixed);
@@ -1102,6 +1136,7 @@ struct EvaluationState {
           result.out.empty()
               ? "Nix build failed: " + proc::describe(result.status)
               : tsugumi::text::replace_invalid_utf8(result.out));
+    return {built, std::move(substituter)};
   }
   static auto realise_native(const NixCall& c, NixResult r) -> NixResult {
     auto store = nix::openStore();
@@ -1113,11 +1148,12 @@ struct EvaluationState {
     store->addTempRoot(out);
     // The daemon connection is now established even if Stop raced its setup.
     nix::checkInterrupt();
+    r.built = false;
+    r.substituter.clear();
     if (!store->isValidPath(out)) {
       if (c.on_phase) c.on_phase(true);
       nix::checkInterrupt();
-      build(c, r.derivation.path);
-      r.built = true;
+      std::tie(r.built, r.substituter) = build(c, r.derivation.path);
     }
     nix::checkInterrupt();
     nix::StorePathSet closure;

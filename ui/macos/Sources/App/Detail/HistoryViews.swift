@@ -299,6 +299,14 @@ struct CardExecutionView: View {
         }
         if s.executionState != .unspecified { LabeledContent("実行サービスの状態", value: s.executionState.label) }
         if let system = s.executionSystem, !system.isEmpty { LabeledContent("CPU アーキテクチャ", value: system) }
+        if let cached = s.buildCached {
+          LabeledContent("ビルド出力の取得元", value: s.buildSubstituter
+                         ?? (cached ? String(localized: "既存の Nix ストア") : String(localized: "ビルドで生成")))
+        }
+        if let pushed = s.buildPushed {
+          LabeledContent("ビルド出力のキャッシュ送信",
+                         value: pushed ? String(localized: "送信済み") : String(localized: "未送信"))
+        }
         if let job = s.executionJobId, !job.isEmpty {
           LabeledContent("ジョブ ID", value: job).textSelection(.enabled)
           if r.run.status.failure?.kind == .interrupted {

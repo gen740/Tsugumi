@@ -32,13 +32,15 @@ the person's decision.
   choose its folder in Project Settings > Host Paths.
   Merge also requires inputs (at least one, typically a and b), maxRuns (1) and recordIO ("project").
   Collect also requires maxRuns (1) and recordIO ("project"). Draft, Trigger and Subgraph contain only type and symbol.
-  Zero timeouts or sandbox limits mean unlimited. Record settings inherit the project with "project" and
-  override with "on" or "off". A Code Card may declare a probe derivation from default.nix.
+  Zero timeouts or sandbox limits mean unlimited. Record settings and the optional Code setting pushOutputs
+  inherit the project with "project" and override with "on" or "off". pushOutputs controls publishing
+  built Nix outputs. A Code Card may declare a probe derivation from default.nix.
   The worker runs bin/probe in the Card sandbox. Its last stdout line ranks eligible workers.
   The highest positive score wins. Invocation history includes the scores and output.
 - A new tsugumi.json carries formatVersion (1, the project file format), name, nixPath ([] or declared sources),
   trackedPaths ([]), agentExclude (the host's defaults), recordLogs (true), recordIO (false), logLimitBytes
   (134217728), outputLimitBytes (68719476736), outputLimitEntries (1000) and canvas (cards and connections).
+  The optional pushOutputs defaults to true.
   trackedPaths adds files or folders to Tsugumi's project versions.
   An input takes one wire. Use Merge to join sources. Cards wait for every connected input and are skipped when
   one cannot arrive. Declare outputs in _outputs.fbs and use (required) for outputs every call must emit.

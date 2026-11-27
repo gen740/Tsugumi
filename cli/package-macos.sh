@@ -59,13 +59,14 @@ install -m 755 "$repo/cli/tsugumi-macos" "$tree/tsugumi"
 cp "$bin/tsugumi-vmhost" "$repo/build-host/hostd/tsugumi-hostd" "$repo/build-host/cli/tsugumi" "$tree/bin/"
 cp "$repo/build-host/Frameworks/"*.dylib "$tree/Frameworks/"
 cp -R "$repo/build-host/Resources/git" "$tree/Resources/git"
+cp -R "$repo/build-host/Resources/cache" "$tree/Resources/cache"
 cp -R "$repo/build-host/Resources/git-licenses" "$tree/licenses/git"
 
 for library in "$tree/Frameworks/"*.dylib; do
   /usr/bin/strip -S "$library"
   codesign --force --sign "$sign_identity" "$library"
 done
-for tool in "$tree/Resources/git/"*; do
+for tool in "$tree/Resources/"{git,cache}/*; do
   codesign --force --sign "$sign_identity" "$tool"
 done
 for binary in "$tree/bin/"*; do

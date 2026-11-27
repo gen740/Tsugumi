@@ -240,6 +240,10 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
                             {executionState && <Value label={L('実行サービスの状態')} value={executionState} />}
                             {summary.executionSystem && <Value label={L('CPU アーキテクチャ')} value={s(summary.executionSystem)} />}
                             {summary.executionJobId && <Value label={L('ジョブ ID')} value={s(summary.executionJobId)} />}
+                            {summary.buildCached != null && <Value label={L('ビルド出力の取得元')}
+                              value={s(summary.buildSubstituter) || (summary.buildCached ? L('既存の Nix ストア') : L('ビルドで生成'))} />}
+                            {summary.buildPushed != null && <Value label={L('ビルド出力のキャッシュ送信')}
+                              value={summary.buildPushed ? L('送信済み') : L('未送信')} />}
                             {interruptedRun && (
                               <Row><span className="caption secondary">{L('Tsugumi の再起動により、この実行は中断されました。結果は回収されません。必要な Card を改めて実行してください。')}</span></Row>
                             )}

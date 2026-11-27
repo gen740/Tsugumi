@@ -98,6 +98,8 @@ std::string detail_bytes(const InvocationSummaryData& s) {
   d.implementation_index = s.implementation_index.value_or(0);
   d.implementation_label = s.implementation_label;
   d.secrets = s.secrets;
+  d.build_substituter = s.build_substituter;
+  d.build_pushed = s.build_pushed;
   for (const auto& probe : s.worker_probes)
     d.worker_probes.push_back(
         std::make_unique<Tsugumi::Data::WorkerProbeResultT>(probe));
@@ -127,6 +129,8 @@ void detail_into(const std::string& bytes, InvocationSummaryData& s) {
   if (d.worker_reused) s.worker_reused = *d.worker_reused;
   s.outputs_sent = d.outputs_sent;
   s.secrets = d.secrets;
+  s.build_substituter = d.build_substituter;
+  s.build_pushed = d.build_pushed;
   s.worker_probes.clear();
   for (const auto& probe : d.worker_probes) s.worker_probes.push_back(*probe);
   for (const auto& artifact : d.artifact_outputs) {

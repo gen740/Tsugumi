@@ -229,25 +229,8 @@ std::vector<std::string> configured_substituters(const stdfs::path& file) {
   }
   std::vector<std::string> urls;
   for (auto url : raw) {
-    if (auto query = url.find_first_of("?#"); query != std::string::npos)
-      url.resize(query);
-    auto scheme = url.find("://");
-    // Native hosts can also use file and local stores. Their paths can expose
-    // private filesystem locations and do not identify a remote cache.
-    if (!url.starts_with("http://") && !url.starts_with("https://") &&
-        !url.starts_with("s3://"))
-      continue;
-    auto host = scheme + 3;
-    auto slash = url.find('/', host);
-    auto at =
-        url.rfind('@', slash == std::string::npos ? std::string::npos : slash);
-    if (at != std::string::npos && at >= host) url.erase(host, at + 1 - host);
-    if (url.size() == host || url[host] == '/') continue;
-    bool printable = !url.empty() && url.size() <= 2048 &&
-                     std::all_of(url.begin(), url.end(), [](unsigned char c) {
-                       return c > 32 && c != 127;
-                     });
-    if (printable && urls.size() < 64 &&
+    url = text::public_cache_endpoint(std::move(url));
+    if (!url.empty() && urls.size() < 64 &&
         std::find(urls.begin(), urls.end(), url) == urls.end())
       urls.push_back(url);
   }
@@ -608,14 +591,16 @@ auto Service::measure_card_probe(const RemoteTarget& target, const Node& node,
       cancelled = true;
       stop.request_stop();
     });
-    // Remote admission and exchange have a separate bound from the process.
+    // A cold remote store must fetch the derivation closure before the
+    // worker's build and Card-call deadlines start.
+    const auto wait_budget =
+        std::chrono::seconds(kProbeBuildTimeoutSeconds + kProbeTimeoutSeconds) +
+        std::chrono::minutes(local ? 0 : 10);
     std::mutex timer_mutex;
     std::condition_variable_any timer_ready;
     std::jthread timer([&](std::stop_token done) {
       std::unique_lock lock(timer_mutex);
-      timer_ready.wait_for(lock, done,
-                           std::chrono::seconds(kProbeBuildTimeoutSeconds +
-                                                kProbeTimeoutSeconds),
+      timer_ready.wait_for(lock, done, wait_budget,
                            [] { return false; });
       if (!done.stop_requested()) {
         cancelled = true;

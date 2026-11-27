@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "tsugumi/protocol/host_generated.h"
+#include "tsugumi/protocol/remote_worker_generated.h"
 
 namespace tsugumi::host {
 
@@ -26,9 +27,12 @@ class ExecutionBroker {
   using MeasureProbe = std::function<Tsugumi::Data::WorkerProbeResultT(
       const std::string& project, const std::vector<std::string>& card,
       const std::string& worker, const std::string& key)>;
+  using CacheSettings = std::function<Tsugumi::RemoteWorker::CacheSettingsT()>;
   ExecutionBroker(std::filesystem::path state, std::string socket,
                   CardSecrets card_secrets = {},
-                  MeasureProbe measure_probe = {});
+                  MeasureProbe measure_probe = {},
+                  CacheSettings cache_settings = {},
+                  std::filesystem::path cache_executable = {});
   ~ExecutionBroker();
   ExecutionBroker(const ExecutionBroker&) = delete;
   auto operator=(const ExecutionBroker&) -> ExecutionBroker& = delete;

@@ -114,6 +114,7 @@ done
 cp "$repo/ui/macos/Sources/Grammars/LICENSE.tree-sitter" "$licenses/"
 cp -R "$repo/hostd/formatters/third-party" "$licenses/formatters"
 cp -R "$repo/build-host/Resources/formatters" "$app/Contents/Resources/formatters"
+cp -R "$repo/build-host/Resources/cache" "$app/Contents/Resources/cache"
 cp -R "$repo/build-host/Resources/git" "$app/Contents/Resources/git"
 cp -R "$repo/build-host/Resources/git-licenses" "$licenses/git"
 cp -R "$repo/build-host/Resources/view-licenses/". "$licenses/"
@@ -172,7 +173,7 @@ for library in "$app/Contents/Frameworks/"*.dylib; do
   /usr/bin/strip -S "$library"
   codesign --force --sign "$identity" "$library" >/dev/null
 done
-for tool in "$app/Contents/Resources/"{formatters,git}/*; do
+for tool in "$app/Contents/Resources/"{formatters,git,cache}/*; do
   codesign --force --sign "$identity" "$tool" >/dev/null
 done
 for binary in "$app/Contents/MacOS/"*; do

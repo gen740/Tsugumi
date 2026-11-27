@@ -927,6 +927,12 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
         )}
       </Section>
       <OutputPortsSection model={model} />
+      {model.kind === 'code' && <Section title={L('バイナリキャッシュ')}>
+        <Row label={L('ビルド出力をキャッシュに送信')}>
+          <Select value={str(get(def, 'pushOutputs')) ?? 'project'} onChange={value => model.setSetting('pushOutputs', value)}
+            options={recordSettings.map((value, i) => ({ value, label: [L('プロジェクト設定に従う'), L('オン'), L('オフ')][i] }))} />
+        </Row>
+      </Section>}
       {['code', 'merge', 'collect'].includes(model.kind) && (
         <Section title={L('記録と成果物')}>
           {([

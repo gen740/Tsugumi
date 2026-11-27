@@ -990,10 +990,15 @@ private struct PortsCategory: View {
       OutputPortsSection(model: model)
       if [.code, .merge, .collect].contains(model.kind) {
         Section {
-          if model.kind == .code { recordingOverride("recordLogs", label: "標準出力と標準エラーを記録") }
-          recordingOverride("recordIO", label: "入出力の値を記録")
+          if model.kind == .code { projectOverride("recordLogs", label: "標準出力と標準エラーを記録") }
+          projectOverride("recordIO", label: "入出力の値を記録")
         } header: { Text("記録と成果物") } footer: {
           Text("実行の要約は常に記録します。成果物は常に保存され、残すかどうかは Card が成果物を作るときに選びます。残さない成果物は実行の終了時に削除されます。").font(.caption).foregroundStyle(.secondary)
+        }
+      }
+      if model.kind == .code {
+        Section("バイナリキャッシュ") {
+          projectOverride("pushOutputs", label: "ビルド出力をキャッシュに送信")
         }
       }
     }
@@ -1006,9 +1011,9 @@ private struct PortsCategory: View {
     model.definition?["inputs"] = .array(inputs)
   }
 
-  private func recordingOverride(_ name: String, label: LocalizedStringKey) -> some View {
+  private func projectOverride(_ name: String, label: LocalizedStringKey) -> some View {
     Picker(label, selection: Binding(
-      get: { model.definition?[name]?.string ?? "" },
+      get: { model.definition?[name]?.string ?? RecordSetting.project.rawValue },
       set: { model.definition?[name] = .string($0) })) {
       Text("プロジェクト設定に従う").tag(RecordSetting.project.rawValue)
       Text("オン").tag(RecordSetting.on.rawValue)

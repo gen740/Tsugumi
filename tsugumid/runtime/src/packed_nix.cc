@@ -1,6 +1,7 @@
 // The offline launcher has only the bundled build plans.
 #include "nix_eval.hh"
 #include "nix_params.hh"
+#include "tsugumi/workerd/cache_relay_store.hh"
 #include "tsugumi/workerd/store.hh"
 
 namespace tsugumi {
@@ -38,12 +39,17 @@ auto NixEvaluator::lock_source(const std::string&) -> NixSource {
   unavailable();
 }
 
-auto ArchiveDerivationTransport::send(const WorkerDerivation&) const -> void {
+auto BinaryCacheDerivationTransport::send(const WorkerDerivation&) const
+    -> void {
   unavailable();
 }
-auto ArchiveDerivationTransport::receive(nix::Store&,
-                                         const WorkerDerivation&) const
+auto BinaryCacheDerivationTransport::receive(nix::Store&,
+                                             const WorkerDerivation&) const
     -> void {
+  unavailable();
+}
+auto publish_to_relay_cache(const std::string&, const std::string&,
+                            CacheRelay::Exchange) -> void {
   unavailable();
 }
 

@@ -309,7 +309,7 @@ private struct GeneralProjectSettings: View {
   @State private var agentExclude = ""
   @State private var recording: [String: Bool] = [:]
   @State private var limits: [String: String] = [:]
-  private let recordingKeys = ["recordLogs", "recordIO"]
+  private let recordingKeys = ["recordLogs", "recordIO", "pushOutputs"]
   private let limitFields: [(key: String, label: LocalizedStringKey, max: UInt64)] = [
     ("logLimitBytes", "呼び出しごとのログ上限（バイト）", 1073741824),
     ("outputLimitBytes", "出力の保存上限（バイト）", .max),
@@ -318,7 +318,7 @@ private struct GeneralProjectSettings: View {
 
   private func recordingValues(_ project: JSONValue) -> [String: Bool] {
     Dictionary(uniqueKeysWithValues: recordingKeys.compactMap { key in
-      project[key]?.bool.map { (key, $0) }
+      (project[key]?.bool ?? (key == "pushOutputs" ? true : nil)).map { (key, $0) }
     })
   }
 
@@ -377,6 +377,9 @@ private struct GeneralProjectSettings: View {
           }
         } header: { Text("記録の既定値") } footer: {
           Text("実行の要約は常に記録します。成果物は常に保存され、残すかどうかは Card が成果物を作るときに選びます。残さない成果物は実行の終了時に削除されます。").font(.caption).foregroundStyle(.secondary)
+        }
+        Section("バイナリキャッシュ") {
+          recordingToggle("pushOutputs", "ビルド出力をキャッシュに送信")
         }
         TrustedFoldersSettings()
         LabeledContent("場所", value: session.identity.url.path)

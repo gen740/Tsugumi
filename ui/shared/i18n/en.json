@@ -1,4 +1,12 @@
 {
+  "ビルド出力をキャッシュに送信": "Push build outputs to cache",
+  "リモートワーカーは次のジョブから使用します。共有実行環境は次回の起動から使用します。": "Remote workers use these settings from the next job. The shared execution environment uses them from its next start.",
+  "ビルド出力の取得元": "Build output source",
+  "既存の Nix ストア": "Existing Nix store",
+  "ビルドで生成": "Built",
+  "ビルド出力のキャッシュ送信": "Build output upload",
+  "送信済み": "Uploaded",
+  "未送信": "Not uploaded",
   "キャッシュへの送信先": "Cache push target",
   "Tsugumi のキャッシュ": "Tsugumi cache",
   "キャッシュ名": "Cache name",

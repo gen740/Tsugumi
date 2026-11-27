@@ -1,3 +1,4 @@
+#include "tsugumi/workerd/cache_relay_store.hh"
 #include "tsugumi/workerd/card_plan.hh"
 #include "tsugumi/workerd/store.hh"
 // A build product double, not a Nix interpreter. The real daemon, RPC,
@@ -212,20 +213,22 @@ auto NixEvaluator::reuse(const NixCall&, const NixResult& result) -> bool {
 }
 
 auto NixEvaluator::make_available(const NixCall& call,
-                                  const DerivationClosureTransport& transport,
-                                  const WorkerDerivation& derivation) -> void {
+                                  const DerivationClosureTransport&,
+                                  const WorkerDerivation&) -> void {
   check_interrupted(call);
-  transport.send(derivation);
 }
 
-auto ArchiveDerivationTransport::send(const WorkerDerivation&) const -> void {
-  fs::write_atomic(archive_, "test Nix derivation archive", 0600);
-}
+auto BinaryCacheDerivationTransport::send(const WorkerDerivation&) const
+    -> void {}
 
-auto ArchiveDerivationTransport::receive(nix::Store&,
-                                         const WorkerDerivation&) const
+auto BinaryCacheDerivationTransport::receive(nix::Store&,
+                                             const WorkerDerivation&) const
     -> void {
   throw std::runtime_error("mock evaluator cannot import a derivation");
+}
+auto publish_to_relay_cache(const std::string&, const std::string&,
+                            CacheRelay::Exchange) -> void {
+  throw std::runtime_error("mock evaluator cannot publish a Nix closure");
 }
 
 auto NixEvaluator::realise_native(const NixCall& call, NixResult result)

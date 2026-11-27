@@ -140,6 +140,8 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   for (const auto& secret : secrets->values) s.secrets.push_back(secret.first);
 
   s.build_cached = build.cached;
+  s.build_substituter = build.substituter;
+  s.build_pushed = build.pushed;
   s.emulator = build.emulator;
   s.execution_service = kLocalExecutionService;
   // The environment and its invocation association must survive a crash

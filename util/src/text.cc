@@ -6,6 +6,22 @@
 
 namespace tsugumi::text {
 
+auto public_cache_endpoint(std::string url) -> std::string {
+  if (const auto suffix = url.find_first_of("?#"); suffix != url.npos)
+    url.resize(suffix);
+  if (!url.starts_with("http://") && !url.starts_with("https://") &&
+      !url.starts_with("s3://"))
+    return {};
+  const auto host = url.find("://") + 3;
+  const auto slash = url.find('/', host);
+  const auto at = url.rfind('@', slash);
+  if (at != url.npos && at >= host) url.erase(host, at + 1 - host);
+  if (url.size() == host || url[host] == '/' || url.size() > 2048) return {};
+  for (unsigned char c : url)
+    if (c <= 32 || c == 127) return {};
+  return url;
+}
+
 auto PatchApplier::append(uint64_t offset, uint64_t remove,
                           std::string_view text) -> void {
   if (offset < cursor_)

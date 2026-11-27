@@ -46,7 +46,7 @@ from Tsugumi.RemoteWorker.StatusRequest import StatusRequestT
 from Tsugumi.RemoteWorker.SubmitRequest import SubmitRequestT
 from Tsugumi.RemoteWorker.Target import TargetT
 
-WORKER_CONTRACT = 20
+WORKER_CONTRACT = 21
 
 __all__ = ['BrokerRequestT', 'AckT', 'BlobChunkT', 'CancelRequestT', 'CapabilitiesT', 'CardSecretT', 'CardSecretsT', 'CatalogRequestT', 'CatalogT', 'ErrorCode', 'FailureT', 'GetBlobRequestT', 'JobSecretsRequestT', 'JobSpecT', 'JobState', 'JobStatusT', 'MessageT', 'Payload', 'ProbeRequestT', 'PutBlobRequestT', 'ReleaseRequestT', 'ReplyBody', 'ReplyT', 'RequestBody', 'RequestT', 'ResultFileT', 'ResultManifestT', 'StatusRequestT', 'SubmitRequestT', 'TargetT', 'broker_request', 'exact', 'failure', 'frame', 'pack', 'read', 'read_broker_request', 'reply', 'request', 'string']
 
@@ -72,7 +72,7 @@ def blob_chunk(digest, total, offset, contents):
 
 class _BytePutBlobRequest(PutBlobRequestT):
     def Pack(self, builder):
-        # Archive chunks are bytes already. Pack the whole vector in one go.
+        # Blob chunks are bytes already. Pack the whole vector in one go.
         digest = builder.CreateString(self.digest)
         contents = builder.CreateByteVector(self.bytes)
         PutBlobRequest.Start(builder)

@@ -1,7 +1,5 @@
 #include "nix.hh"
 
-#include "packed_builds.hh"
-
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -9,6 +7,8 @@
 #include <sstream>
 
 #include "nix_eval.hh"
+#include "packed_builds.hh"
+#include "remote_execution_service.hh"
 #include "service.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/flat_file.hh"
@@ -615,6 +615,11 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
   build.environment.paths = std::move(res.closure);
   build.key = build.environment.manifest;
   build.cached = !res.built;
+  build.substituter = std::move(res.substituter);
+  if (!views_only && !req.probe_only && req.target.kind == WorkerKind::native) {
+    build.pushed = svc_.remote_execution().publish_local_build(
+        build.derivation, node.settings.push_outputs, req.cancel);
+  }
   return plan;
 }
 

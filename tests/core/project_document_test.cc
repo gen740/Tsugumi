@@ -279,6 +279,33 @@ TEST_F(ProjectStructure, ResolvesRecordSettingsAgainstTheCardProject) {
   EXPECT_EQ(b.build_timeout_seconds, 17);
 }
 
+TEST_F(ProjectStructure, ResolvesBuildOutputPushForEachCodeCard) {
+  const auto project = [](std::string_view fields) {
+    return test::project_json(
+        "{\"canvas\":{\"cards\":[{\"id\":\"inherit\"},{\"id\":\"enable\"},"
+        "{\"id\":\"disable\"}],\"connections\":[]}" +
+        std::string(fields) + "}");
+  };
+  Put("tsugumi.json", project(""));
+  Define("", "inherit", R"({"type":"code","pushOutputs":"project"})");
+  Define("", "enable", R"({"type":"code","pushOutputs":"on"})");
+  Define("", "disable", R"({"type":"code","pushOutputs":"off"})");
+  const auto graph = [this] {
+    return resolve(*load_from_disk(root), [](const std::string&) {
+      return std::optional<std::string>{};
+    });
+  };
+  auto resolved = graph();
+  EXPECT_TRUE(resolved->find({"inherit"})->settings.push_outputs);
+  EXPECT_TRUE(resolved->find({"enable"})->settings.push_outputs);
+  EXPECT_FALSE(resolved->find({"disable"})->settings.push_outputs);
+  Put("tsugumi.json", project(R"(,"pushOutputs":false)"));
+  resolved = graph();
+  EXPECT_FALSE(resolved->find({"inherit"})->settings.push_outputs);
+  EXPECT_TRUE(resolved->find({"enable"})->settings.push_outputs);
+  EXPECT_FALSE(resolved->find({"disable"})->settings.push_outputs);
+}
+
 auto References(const Resolution& graph, const CardPath& card)
     -> std::set<std::pair<std::string, std::string>> {
   std::set<std::pair<std::string, std::string>> references;

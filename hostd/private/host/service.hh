@@ -22,6 +22,7 @@ struct HostOptions {
   std::string server_id;
   EnvironmentOptions environment;
   VMProcessOptions vm;
+  std::filesystem::path cache_executable;
 };
 
 // Owns component lifetime, shared-gate wiring and both authenticated dispatch

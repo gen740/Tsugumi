@@ -58,6 +58,11 @@ install -m 644 "${TSUGUMI_WASMTIME_LICENSE:?}" "$view_licenses/wasmtime/LICENSE"
 env -u DEVELOPER_DIR -u SDKROOT python3 "$repo/ui/macos/tools/bundle-formatters.py" "$repo/build-host/Resources/formatters" \
   "${TSUGUMI_FORMAT_NIX:?}"
 
+# The cache server links Nix independently of hostd.
+cache_out="$(cd "$repo" && nix build --no-link --print-out-paths '.#tsugumid^out')"
+env -u DEVELOPER_DIR -u SDKROOT python3 "$repo/ui/macos/tools/bundle-formatters.py" "$repo/build-host/Resources/cache" \
+  "$cache_out/bin/tsugumi-cached" tsugumi-cached
+
 # Build the two commands used by template import against Apple's system libs.
 # The /usr/bin/git shim depends on developer tools on the user's Mac.
 git_build="$(mktemp -d "$repo/build-host/git-build.XXXXXX")"

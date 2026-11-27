@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -14,6 +15,7 @@
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/workerd/cache_publish.hh"
 #include "tsugumi/workerd/log.hh"
 #include "tsugumi/workerd/log_limits.hh"
 #include "tsugumi/workerd/path_ids.hh"
@@ -400,6 +402,37 @@ auto timeout_budget_test(const stdfs::path& root) -> void {
   auto decoded = parse_spec(bytes);
   expect(decoded->build_timeout_ms == 1, "build budget was not preserved");
 }
+
+auto cache_publish_credentials_test(const stdfs::path& root) -> void {
+  const auto tools = root / "upload-tools";
+  private_directory(tools);
+  const auto fake = tools / "cachix";
+  fs::write_atomic(fake, R"script(#!/bin/sh
+test "$#" -eq 3 && test "$1" = push && test "$2" = fixture || exit 2
+test "$3" = /nix/store/example && test "$CACHIX_AUTH_TOKEN" = synthetic-cache-token || exit 3
+printf '%s\n' "invoked" > "${0}.ran"
+printf '%s\n' "$CACHIX_AUTH_TOKEN"
+printf '%s\n' "$CACHIX_AUTH_TOKEN" >&2
+exit 1
+)script",
+                   0700);
+  expect(::setenv("PATH", tools.c_str(), 1) == 0, "could not set test path");
+  std::string failure;
+  try {
+    publish_to_external_cache(
+        {ExternalCacheKind::cachix, {}, "fixture", {}, "synthetic-cache-token"},
+        root, {}, "/nix/store/example", {});
+  } catch (const std::exception& error) {
+    failure = error.what();
+  }
+  expect(stdfs::exists(fake.string() + ".ran"),
+         "uploader did not receive the token in its environment alone");
+  expect(failure == "binary cache upload failed",
+         "uploader diagnostic escaped the controlled error message");
+  for (const auto& entry : stdfs::directory_iterator(root))
+    expect(!entry.path().filename().string().starts_with("cache-publish."),
+           "cache publisher left a private configuration directory");
+}
 }  // namespace
 }  // namespace tsugumi::workerd
 
@@ -418,6 +451,7 @@ auto main(int argc, char** argv) -> int {
     protocol_test();
     path_id_test();
     journal_test(root);
+    cache_publish_credentials_test(root);
     discard_tree(root);
     std::cout << "workerd protocol and journal tests passed\n";
     return 0;

@@ -318,9 +318,8 @@ auto initial_project_json(const std::string& name,
              "{\"formatVersion\":" + std::to_string(kProjectFormatVersion) +
              ",\"name\":" + json::Quote(name) +
              R"(,"nixPath":[],"trackedPaths":[],"agentExclude":[)" + exclude +
-             R"(],"recordLogs":true,"recordIO":false,"logLimitBytes":)" +
-             std::to_string(kDefaultLogLimitBytes) +
-             ",\"outputLimitBytes\":" +
+             R"(],"recordLogs":true,"recordIO":false,"pushOutputs":true,"logLimitBytes":)" +
+             std::to_string(kDefaultLogLimitBytes) + ",\"outputLimitBytes\":" +
              std::to_string(kDefaultOutputLimitBytes) +
              ",\"outputLimitEntries\":" +
              std::to_string(kDefaultOutputLimitEntries) +
@@ -423,7 +422,8 @@ auto parse_card_json(const std::string& id, const std::string& text,
   for (const auto field : required)
     require_field(json::Get(fields, field) != "null", rel, field);
   for (const auto& [field, _] : fields)
-    if (!required.contains(field) && !(executable && field == "secrets"))
+    if (!required.contains(field) &&
+        !(executable && (field == "secrets" || field == "pushOutputs")))
       invalid(rel + ": " + field + " is not allowed on type " + type,
               {{"path", rel}});
 
@@ -448,6 +448,7 @@ auto parse_card_json(const std::string& id, const std::string& text,
     check_uint("timeoutSeconds");
     check_uint("buildTimeoutSeconds");
     check_record("recordLogs");
+    if (fields.contains("pushOutputs")) check_record("pushOutputs");
   }
 
   auto doc = parsed(Schema::Card, rel, text);

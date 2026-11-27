@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bundle pinned nixfmt and relocate its Mach-O dylib closure."""
+"""Bundle a pinned executable and relocate its Mach-O dylib closure."""
 from pathlib import Path
 import shutil
 import subprocess
@@ -37,4 +37,4 @@ def bundle(source, name):
     return target
 
 
-bundle(sys.argv[2], "nixfmt")
+bundle(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "nixfmt")

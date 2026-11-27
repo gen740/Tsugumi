@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "tsugumi/workerd/cache_relay_store.hh"
 #include "tsugumi/workerd/protocol.hh"
 #include "tsugumi/workerd/values.hh"
 
@@ -55,6 +56,7 @@ struct RemoteJobState {
   std::map<ViewUuid, uint64_t> view_input_credits = {};
   std::string artifact_wanted = {};
   std::optional<WorkerViewRequest> view_request = std::nullopt;
+  bool cache_settings_wanted = false;
 };
 
 struct RemoteProbe {
@@ -92,6 +94,12 @@ class RemoteJobClient {
   auto catalog(std::stop_token stop = {}) const -> std::vector<RemoteTarget>;
   auto probe(std::string_view service, std::string_view registered_server,
              std::stop_token stop = {}) const -> RemoteProbe;
+  auto cache_settings(std::string_view service, std::stop_token stop) const
+      -> Tsugumi::RemoteWorker::CacheSettingsT;
+  auto cache_file(std::string_view service, CacheRelay::Method method,
+                  const std::string& path, uint64_t size,
+                  CacheRelay::Source upload, CacheRelay::Sink download,
+                  std::stop_token stop) const -> bool;
   auto probe_lookup(std::string_view service, std::string_view key,
                     std::string_view life, std::stop_token stop) const
       -> Tsugumi::RemoteWorker::CardProbeCachedT;
@@ -151,7 +159,8 @@ class RemoteJobClient {
 
  private:
   auto request(Tsugumi::RemoteWorker::RequestT message,
-               std::stop_token cancel = {}) const
+               std::stop_token cancel = {}, CacheRelay::Source upload = {},
+               CacheRelay::Sink download = {}) const
       -> Tsugumi::RemoteWorker::ReplyT;
   const std::string core_life_id_;
   std::string endpoint_;

@@ -18,7 +18,7 @@ inline constexpr uint64_t kMaxBlob = uint64_t{64} << 30;
 inline constexpr uint32_t kMaxSpec = 256 << 10;
 // The largest live log slice one status reply carries.
 inline constexpr uint32_t kLogChunkBytes = 256 << 10;
-inline constexpr uint32_t kContract = 20;
+inline constexpr uint32_t kContract = 21;
 
 struct Error : std::runtime_error {
   R::ErrorCode code;
@@ -53,6 +53,9 @@ inline constexpr int kSecretChannelFd = 6;
 // The invocation sends live view frames to the listener through this socket.
 // Leave room for the log slice and the rest of a Status reply.
 inline constexpr int kDisplayChannelFd = 7;
+// A sealed anonymous file holds the broker's cache snapshot for one job.
+inline constexpr int kCacheSettingsFd = 8;
+inline constexpr int kCacheRelayFd = 9;
 // The marker a running job's work directory holds while its invocation waits
 // for its Card secrets; it never holds a value.
 inline constexpr std::string_view kSecretsWanted = "secrets-wanted";

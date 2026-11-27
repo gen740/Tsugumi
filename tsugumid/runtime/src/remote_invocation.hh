@@ -14,6 +14,8 @@ struct RemoteInvocationResult {
   bool auxiliary_logs_truncated = false;
   BuildEnvironmentData environment;
   bool built = false;
+  std::string substituter;
+  bool pushed = false;
   std::vector<CreatedArtifact> created;
 };
 
@@ -25,25 +27,18 @@ struct RemoteLogPrefix {
   std::string sha256;
 };
 
-auto stage_remote_archive(const RemoteJobClient& client,
-                          const std::string& service,
-                          const std::string& instance,
-                          const std::string& job_id,
-                          const std::filesystem::path& archive,
-                          std::stop_token cancel,
-                          const TransferProgress& progress = {}) -> std::string;
-
 auto deliver_remote_artifact(
     const RemoteJobClient& client, const std::string& service,
     const std::string& instance, const std::string& job_id,
     const std::string& fingerprint, const std::string& uuid,
     const std::filesystem::path& source, std::stop_token stop) -> void;
 
-auto stage_remote_invocation(
-    const RemoteJobClient& client, const std::string& service,
-    const std::string& instance, const std::string& job_id,
-    const std::string& archive_digest, const ExecutionRequest& request)
-    -> std::string;
+auto stage_remote_invocation(const RemoteJobClient& client,
+                             const std::string& service,
+                             const std::string& instance,
+                             const std::string& job_id,
+                             const std::string& cache_revision,
+                             const ExecutionRequest& request) -> std::string;
 auto import_remote_result(
     const RemoteJobClient& client, const std::string& service,
     const std::string& instance, const std::string& job_id,

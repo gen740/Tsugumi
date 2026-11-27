@@ -31,6 +31,8 @@
   gnutar,
   gzip,
   nix,
+  attic-client,
+  cachix,
   util-linux,
   qemu-user,
 }:
@@ -45,6 +47,8 @@ let
     gnutar
     gzip
     nix
+    attic-client
+    cachix
   ];
   # Not part of this closure: fetched only when qemu is asked for.
   qemu = builtins.unsafeDiscardStringContext qemu-user.outPath;

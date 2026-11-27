@@ -8,6 +8,7 @@
 #include <spawn.h>
 #include <sys/file.h>
 #include <sys/inotify.h>
+#include <sys/mman.h>
 #include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -76,6 +77,52 @@ struct Fd {
     if (value >= 0) ::close(value);
   }
 };
+
+auto relay_cache_files(int channel, int stopping_fd, peer_tls::Stream& tls)
+    -> void {
+  namespace frame = tsugumi::rpc::frame;
+  const auto response = [&] {
+    auto bytes = tls.Read(frame_length(tls.Read(4)));
+    auto message = decode(bytes);
+    const auto* reply = message->payload.AsReply();
+    const auto* file = reply ? reply->body.AsCacheFile() : nullptr;
+    frame::Write(channel, bytes, kMaxFrame);
+    if (!file) throw std::runtime_error("binary cache relay ended");
+    return *file;
+  };
+  for (;;) {
+    pollfd wait[]{{channel, POLLIN, 0}, {stopping_fd, POLLIN, 0}};
+    const auto signalled = ::poll(wait, 2, -1);
+    if (signalled < 0 && errno == EINTR) continue;
+    if (signalled <= 0 || wait[1].revents) return;
+    auto bytes = frame::Read(channel, kMaxFrame);
+    if (!bytes) return;
+    auto message = decode(*bytes);
+    auto* request = message->payload.AsRequest();
+    auto* file = request ? request->body.AsCacheFileRequest() : nullptr;
+    if (!file) throw std::runtime_error("invalid binary cache relay request");
+    tls.Write(length_prefix(static_cast<uint32_t>(bytes->size())) + *bytes);
+    auto result = response();
+    if (file->method == R::CacheMethod::Put && result.status == 100) {
+      std::string chunk;
+      for (auto remaining = file->size; remaining > 0;) {
+        chunk.resize(std::min<uint64_t>(remaining, kChunkBytes));
+        if (frame::ReadExact(channel, chunk.data(), chunk.size()) !=
+            chunk.size())
+          throw std::runtime_error("incomplete binary cache upload");
+        tls.Write(chunk);
+        remaining -= chunk.size();
+      }
+      result = response();
+    } else if (file->method == R::CacheMethod::Get && result.status == 200) {
+      for (auto remaining = result.size; remaining > 0;) {
+        const auto chunk = tls.Read(std::min<uint64_t>(remaining, kChunkBytes));
+        frame::WriteAll(channel, chunk.data(), chunk.size());
+        remaining -= chunk.size();
+      }
+    }
+  }
+}
 // The adapter and the project each have an independent credit windows per
 // session and route.
 class DisplayChannel {
@@ -524,7 +571,7 @@ class Daemon {
     projects_.emplace(scope, journal);
     return journal;
   }
-  auto handle(R::RequestT& q) -> R::MessageT {
+  auto handle(R::RequestT& q, Fd& cache_relay) -> R::MessageT {
     if (q.body.type == R::RequestBody::NONE ||
         q.body.type == R::RequestBody::CatalogRequest)
       throw Error(R::ErrorCode::Invalid, "invalid remote request");
@@ -575,7 +622,10 @@ class Daemon {
                                   q.core_life_id));
       }
       case R::RequestBody::SubmitRequest: {
-        const auto& bytes = q.body.AsSubmitRequest()->spec;
+        auto& request = *q.body.AsSubmitRequest();
+        const auto& bytes = request.spec;
+        if (!request.caches || !request.caches->push)
+          throw Error(R::ErrorCode::Invalid, "missing job cache settings");
         const std::string_view data(reinterpret_cast<const char*>(bytes.data()),
                                     bytes.size());
         const auto spec = parse_spec(data);
@@ -597,9 +647,25 @@ class Daemon {
         if ((spec->cpu_millis || spec->memory_bytes) && config_.cgroup.empty())
           throw Error(R::ErrorCode::Rejected,
                       "sandbox limits require a delegated cgroup v2 subtree");
-        return reply(
-            journal->submit(job, data, parse_input_blobs(*spec), q.core_life_id)
-                .status());
+        std::lock_guard guard(channel_mutex_);
+        const auto submitted = journal->submit(
+            job, data, parse_input_blobs(*spec), q.core_life_id);
+        const auto channel = channel_key(*journal, job);
+        if (submitted.state == R::JobState::Queued &&
+            !cache_settings_.contains(channel)) {
+          Fd invocation;
+          if (request.caches->push->kind == R::CacheTargetKind::Own) {
+            int pair[2];
+            if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) != 0)
+              throw std::runtime_error("cannot open binary cache relay");
+            cache_relay.value = pair[0];
+            invocation.value = pair[1];
+          }
+          cache_settings_.try_emplace(
+              channel,
+              PendingCache{std::move(request.caches), std::move(invocation)});
+        }
+        return reply(submitted.status());
       }
       case R::RequestBody::ViewSendRequest: {
         const auto record = journal->status(job, q.core_life_id);
@@ -615,6 +681,11 @@ class Daemon {
         const auto& query = *q.body.AsStatusRequest();
         status =
             log_slice(query.log_offset, query.log_limit)(std::move(status));
+        if (status.state == R::JobState::Queued) {
+          std::lock_guard guard(channel_mutex_);
+          status.cache_settings_wanted =
+              !cache_settings_.contains(channel_key(*journal, job));
+        }
         if (status.state == R::JobState::Running) {
           std::error_code ec;
           status.secrets_wanted = stdfs::exists(
@@ -677,9 +748,12 @@ class Daemon {
       clear_secret(bytes);
       auto* q = m->payload.AsRequest();
       if (!q) throw Error(R::ErrorCode::Invalid, "expected a request");
-      auto response = encode(handle(*q));
+      Fd cache_relay;
+      auto response = encode(handle(*q, cache_relay));
       stream.Write(length_prefix(static_cast<uint32_t>(response.size())) +
                    response);
+      if (cache_relay.value >= 0)
+        relay_cache_files(cache_relay.value, shutdown_fd_, stream);
     } catch (const Error& e) {
       auto bytes = encode(failure(e.code, e.what()));
       stream.Write(length_prefix(static_cast<uint32_t>(bytes.size())) + bytes);
@@ -793,6 +867,10 @@ class Daemon {
         }
         return;
       }
+      {
+        std::lock_guard guard(channel_mutex_);
+        cache_settings_.erase(channel_key(*p, job));
+      }
       queued_.erase(key);
       if (state.state == R::JobState::Running ||
           state.state == R::JobState::Cancelling) {
@@ -811,11 +889,17 @@ class Daemon {
   auto dispatch() -> void {
     const auto occupied = [&] { return running_.size() + handoffs_.size(); };
     while (!queued_.empty() && occupied() < config_.max_jobs && !stopping) {
-      const auto next =
-          std::ranges::min_element(queued_, [](const auto& a, const auto& b) {
-            if (a.second != b.second) return a.second < b.second;
-            return a.first < b.first;
-          });
+      auto next = queued_.end();
+      {
+        std::lock_guard guard(channel_mutex_);
+        for (auto it = queued_.begin(); it != queued_.end(); ++it) {
+          const auto& [project, job] = it->first;
+          if (cache_settings_.contains(channel_key(*project, job)) &&
+              (next == queued_.end() || it->second < next->second))
+            next = it;
+        }
+      }
+      if (next == queued_.end()) break;
       auto pending = queued_.extract(next);
       const auto& [p, job] = pending.key();
       try {
@@ -927,6 +1011,41 @@ class Daemon {
                   "the job's invocation no longer reads its Card secrets");
   }
   auto spawn(Journal& p, const Sha256Hex& job, int lock) -> pid_t {
+    decltype(cache_settings_)::node_type configuration;
+    {
+      std::lock_guard guard(channel_mutex_);
+      configuration = cache_settings_.extract(channel_key(p, job));
+    }
+    if (configuration.empty()) return -1;
+    auto& config = configuration.mapped();
+    Fd cache_file(::memfd_create("tsugumi-cache-settings",
+                                 MFD_CLOEXEC | MFD_ALLOW_SEALING));
+    if (cache_file.value < 0) return -1;
+    auto bytes = encode(reply(std::move(*config.settings)));
+    const auto write_settings = [&] {
+      size_t offset = 0;
+      while (offset < bytes.size()) {
+        const auto written = ::write(cache_file.value, bytes.data() + offset,
+                                     bytes.size() - offset);
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) return false;
+        offset += static_cast<size_t>(written);
+      }
+      return ::lseek(cache_file.value, 0, SEEK_SET) == 0 &&
+             ::fcntl(
+                 cache_file.value, F_ADD_SEALS,
+                 F_SEAL_WRITE | F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) == 0;
+    };
+    const auto cache_written = write_settings();
+    clear_secret(bytes);
+    if (!cache_written) return -1;
+    Fd cache_adapter(::fcntl(cache_file.value, F_DUPFD_CLOEXEC, 10));
+    if (cache_adapter.value < 0) return -1;
+    Fd relay_adapter;
+    if (config.relay.value >= 0) {
+      relay_adapter.value = ::fcntl(config.relay.value, F_DUPFD_CLOEXEC, 10);
+      if (relay_adapter.value < 0) return -1;
+    }
     // A job with Card secrets gets a pipe whose write end only this listener
     // holds; its invocation reads the values from it just before the Card's
     // process starts.
@@ -962,6 +1081,11 @@ class Daemon {
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_adddup2(&actions, lock, 5);
+    posix_spawn_file_actions_adddup2(&actions, cache_adapter.value,
+                                     kCacheSettingsFd);
+    if (relay_adapter.value >= 0)
+      posix_spawn_file_actions_adddup2(&actions, relay_adapter.value,
+                                       kCacheRelayFd);
     posix_spawn_file_actions_adddup2(&actions, adapter_display.value,
                                      kDisplayChannelFd);
     if (channel)
@@ -1016,6 +1140,11 @@ class Daemon {
   // Write ends of the Card secret pipes of running jobs, by journal and job.
   std::map<std::string, std::shared_ptr<Fd>> channels_;
   std::map<std::string, std::shared_ptr<DisplayChannel>> displays_;
+  struct PendingCache {
+    std::unique_ptr<R::CacheSettingsT> settings;
+    Fd relay;
+  };
+  std::map<std::string, PendingCache> cache_settings_;
 };
 
 auto supervise(const std::string& self, const stdfs::path& root,
@@ -1080,6 +1209,8 @@ auto supervise(const std::string& self, const stdfs::path& root,
       ::_exit(127);
     }
     if (!spec->secrets.empty()) ::close(kSecretChannelFd);
+    ::close(kCacheSettingsFd);
+    ::close(kCacheRelayFd);
     ::close(kDisplayChannelFd);
     int status = 0;
     for (;;) {

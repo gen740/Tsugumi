@@ -22,6 +22,7 @@ func implementedCard(_ kind: CardKind, symbol: String, systems: [String]) -> JSO
     definition["timeoutSeconds"] = .number("0")
     definition["buildTimeoutSeconds"] = .number("0")
     definition["recordLogs"] = .string(RecordSetting.project.rawValue)
+    definition["pushOutputs"] = .string(RecordSetting.project.rawValue)
     definition["sandbox"] = .object([
       ("filesystem", .bool(true)), ("pid", .bool(true)), ("ipc", .bool(true)), ("identity", .bool(true)),
       ("limits", .object([("cpu", .number("0")), ("memoryMiB", .number("0"))])),

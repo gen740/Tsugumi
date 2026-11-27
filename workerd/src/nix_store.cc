@@ -4,6 +4,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <sys/file.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -13,11 +14,14 @@
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <nix/store/build-result.hh>
 #include <nix/store/derivations.hh>
 #include <nix/store/derived-path.hh>
+#include <nix/store/filetransfer.hh>
 #include <nix/store/globals.hh>
 #include <nix/store/store-api.hh>
 #include <nix/store/store-open.hh>
+#include <nix/util/config-global.hh>
 #include <nix/util/file-descriptor.hh>
 #include <nix/util/logging.hh>
 #include <nix/util/signals.hh>
@@ -26,17 +30,67 @@
 #include <thread>
 
 #include "nix_store.hh"
+#include "tsugumi/workerd/cache_publish.hh"
 #include "tsugumi/workerd/store_result.hh"
 #include "tsugumi/workerd/values.hh"
 
 namespace tsugumi {
-namespace {}  // namespace
+namespace {
+auto ValidCacheField(std::string_view field) -> bool {
+  return !field.empty() && std::ranges::all_of(field, [](unsigned char c) {
+    return c > 32 && c < 127 && c != '"' && c != '\\' && c != '#';
+  });
+}
+
+auto ConfigurePulls(const workerd::R::CacheSettingsT& cache)
+    -> nix::AutoCloseFD {
+  std::string substituters, public_keys, netrc;
+  for (const auto& entry : cache.pull) {
+    const auto& endpoint = entry->endpoint;
+    if (!ValidCacheField(endpoint) ||
+        endpoint.find_first_of("?@") != endpoint.npos ||
+        !(endpoint.starts_with("https://") || endpoint.starts_with("http://") ||
+          endpoint.starts_with("file:///")) ||
+        !ValidCacheField(entry->public_key))
+      throw std::runtime_error("invalid worker cache pull endpoint or key");
+    substituters += ' ' + endpoint;
+    public_keys += ' ' + entry->public_key;
+    if (!entry->secret.empty()) {
+      if (!endpoint.starts_with("https://") || !ValidCacheField(entry->host) ||
+          !ValidCacheField(entry->user) || !ValidCacheField(entry->secret))
+        throw std::runtime_error("invalid worker cache pull credentials");
+      netrc += "machine " + entry->host + " login " + entry->user +
+               " password " + entry->secret + '\n';
+    }
+  }
+  nix::globalConfig.set("extra-substituters", substituters);
+  if (!cache.own_signing_key.empty()) {
+    if (!ValidCacheField(cache.own_signing_key))
+      throw std::runtime_error("invalid built-in binary cache signing key");
+    public_keys += ' ' + cache.own_signing_key;
+  }
+  nix::globalConfig.set("extra-trusted-public-keys", public_keys);
+  if (netrc.empty()) {
+    nix::fileTransferSettings.netrcFile = "/dev/null";
+    return {};
+  }
+  nix::AutoCloseFD file{::memfd_create("tsugumi-cache-netrc", MFD_CLOEXEC)};
+  if (!file)
+    throw std::runtime_error("cannot create the worker's private netrc");
+  nix::writeFull(file.get(), netrc);
+  workerd::clear_secret(netrc);
+  nix::fileTransferSettings.netrcFile =
+      "/proc/self/fd/" + std::to_string(file.get());
+  return file;
+}
+}  // namespace
 
 auto RemoteWorkerStore::realise(
     const DerivationClosureTransport& transport,
+    const workerd::R::CacheSettingsT& caches, CacheRelay::Exchange relay,
     const std::filesystem::path& store_root, const WorkerDerivation& derivation,
-    const std::function<void(const std::string&)>& log, uint64_t timeout_ms)
-    -> WorkerStoreResult {
+    bool push_outputs, const std::function<void(const std::string&)>& log,
+    uint64_t timeout_ms) -> WorkerStoreResult {
   // Invocations run in separate processes but share this persistent store.
   // Serialize its entire connection lifetime, including database creation and
   // closure import. The lock ends before Card execution, so Cards can still run
@@ -51,12 +105,24 @@ auto RemoteWorkerStore::realise(
     throw std::runtime_error("cannot lock remote Nix store");
   }
   nix::initLibStore(true);
+  const auto netrc = ConfigurePulls(caches);
+  std::mutex provenance;
+  std::string substituted_from;
   auto logger = std::make_unique<NixLogSink>(log);
+  logger->set_substitutions([&](const auto& path, const auto& uri) {
+    if (path != derivation.output) return;
+    std::lock_guard lock(provenance);
+    substituted_from = text::public_cache_endpoint(uri);
+    if (uri.starts_with("file://")) substituted_from = "file://";
+  });
   auto* sink = logger.get();
   nix::logger = std::move(logger);
   struct ClearLog {
     NixLogSink* sink;
-    ~ClearLog() { sink->set({}); }
+    ~ClearLog() {
+      sink->set({});
+      sink->set_substitutions({});
+    }
   } clear_log{sink};
   nix::settings.getLocalSettings().sandboxMode = nix::smEnabled;
   nix::settings.getLocalSettings().sandboxFallback = false;
@@ -65,11 +131,21 @@ auto RemoteWorkerStore::realise(
   // not mapped here, and require setgroups, which the namespace denies.
   nix::settings.getLocalSettings().buildUsersGroup = "";
   nix::settings.getLocalSettings().requireDropSupplementaryGroups = false;
-  auto store = nix::openStore("local", {{"root", store_root.string()}});
+  auto store = nix::openStore(
+      "local", {{"root", store_root.string()}, {"require-sigs", "true"}});
   const auto drv = store->parseStorePath(derivation.path);
   const auto out = store->parseStorePath(derivation.output);
   store->addTempRoot(drv);
   store->addTempRoot(out);
+  auto own = relay ? open_relay_cache(std::move(relay)) : nullptr;
+  const auto substitute = [&](const auto& path) {
+    if (!own || store->isValidPath(path) || !own->isValidPath(path))
+      return false;
+    nix::copyClosure(*own, *store, nix::StorePathSet{path}, nix::NoRepair,
+                     nix::CheckSigs);
+    return true;
+  };
+  substitute(drv);
   transport.receive(*store, derivation);
   const auto began = std::chrono::steady_clock::now();
   const auto thread = pthread_self();
@@ -107,20 +183,54 @@ auto RemoteWorkerStore::realise(
     throw std::runtime_error(
         "remote Nix derivation has a different output path");
   WorkerStoreResult result;
+  if (substitute(out)) result.substituter = "tsugumi-cached";
   if (!store->isValidPath(out)) {
     try {
-      store->buildPaths({nix::DerivedPath::Built{
+      auto builds = store->buildPathsWithResults({nix::DerivedPath::Built{
           .drvPath = nix::makeConstantStorePathRef(drv),
           .outputs = nix::OutputsSpec::All{}}});
+      if (builds.size() != 1)
+        throw std::runtime_error("missing remote Nix build result");
+      builds.front().tryThrowBuildError();
+      const auto status = builds.front().tryGetSuccess()->status;
+      result.built = status == nix::BuildResult::Success::Built;
+      if (status == nix::BuildResult::Success::Substituted) {
+        std::lock_guard lock(provenance);
+        result.substituter = substituted_from;
+      }
     } catch (...) {
       if (timed_out.load())
         throw Failed(FailureKind::timeout, "Nix exceeded buildTimeoutSeconds");
       throw;
     }
-    result.built = true;
   }
   if (!store->isValidPath(out))
     throw std::runtime_error("remote Nix build produced no Card build plan");
+  if (timer.joinable()) {
+    timer.request_stop();
+    timer.join();
+  }
+  if (push_outputs) {
+    try {
+      if (own) {
+        nix::copyClosure(*store, *own, nix::StorePathSet{out});
+      } else {
+        const auto& push = *caches.push;
+        using Kind = workerd::R::CacheTargetKind;
+        const auto kind = push.kind == Kind::Attic ? ExternalCacheKind::attic
+                          : push.kind == Kind::Cachix
+                              ? ExternalCacheKind::cachix
+                              : ExternalCacheKind::nix_copy;
+        publish_to_external_cache(
+            {kind, push.endpoint, push.cache_name, push.user, push.secret},
+            std::filesystem::temp_directory_path(),
+            store->config.getReference().render(), derivation.output, {});
+      }
+      result.pushed = true;
+    } catch (const std::exception&) {
+      log("Could not publish the Nix build outputs to the configured cache.\n");
+    }
+  }
   nix::StorePathSet closure;
   store->computeFSClosure(out, closure);
   for (const auto& path : closure)

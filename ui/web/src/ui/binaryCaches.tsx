@@ -9,6 +9,13 @@ import { Button, Disclosure, Form, Row, Section, Select, TextField } from './con
 type Target = { kind: H.CachePushKind; endpoint: string; cacheName: string }
 
 export function BinaryCacheSettings() {
+  return <Form>
+    <CachePushSettings />
+    <CachePullSettings />
+  </Form>
+}
+
+function CachePushSettings() {
   const [stored, setStored] = useState<H.CachePushTargetT>()
   const [edit, setEdit] = useState<Target>()
   const [user, setUser] = useState('')
@@ -57,8 +64,7 @@ export function BinaryCacheSettings() {
     return () => clearTimeout(timer)
   }, [edit, same, complete]) // Saving does not reschedule an unsuccessful edit.
 
-  return <Form>
-    <Section title={L('キャッシュへの送信先')}>
+  return <Section title={L('キャッシュへの送信先')}>
       {edit && <fieldset disabled={saving} style={{ border: 0, margin: 0, padding: 0 }}>
         <Row label={L('種類')}>
           <Select value={edit.kind} options={[
@@ -94,6 +100,67 @@ export function BinaryCacheSettings() {
         </Disclosure>}
       </fieldset>}
       {problem && <Row>{problem}</Row>}
-    </Section>
-  </Form>
+  </Section>
+}
+
+type PullCache = { id: string; name: string; url: string; publicKey: string; username: string; password: string }
+
+const pullFields = ['name', 'url', 'publicKey'] as const
+const blankPull = (cache: PullCache) => [...pullFields, 'username', 'password'].every(key => !cache[key as keyof PullCache])
+
+function CachePullSettings() {
+  const [caches, setCaches] = useState<PullCache[]>()
+  const [saved, setSaved] = useState<string>()
+  const [problem, setProblem] = useState<string>()
+  const [saving, setSaving] = useState(false)
+  useEffect(() => {
+    void hostCall<H.BinaryCachesT>(H.RequestPayload.BinaryCachesGetRequest,
+      new H.BinaryCachesGetRequestT(), H.ReplyPayload.BinaryCaches)
+      .then(result => {
+        const entries = JSON.parse(s(result.cachesJson)) as PullCache[]
+        setCaches(entries)
+        setSaved(JSON.stringify(entries))
+      }).catch(error => setProblem(errorText(error)))
+  }, [])
+  const update = (id: string, change: Partial<PullCache>) => {
+    setCaches(old => old?.map(cache => cache.id === id ? { ...cache, ...change } : cache))
+  }
+  const encoded = caches && JSON.stringify(caches.filter(cache => !blankPull(cache)))
+  useEffect(() => {
+    if (!encoded || saved === undefined || encoded === saved || saving) return
+    const timer = setTimeout(async () => {
+      setSaving(true)
+      try {
+        await hostCall<H.BinaryCachesT>(H.RequestPayload.BinaryCachesPutRequest,
+          new H.BinaryCachesPutRequestT(encoded), H.ReplyPayload.BinaryCaches)
+        setSaved(encoded)
+        setProblem(undefined)
+      } catch (error) {
+        setProblem(errorText(error))
+      } finally {
+        setSaving(false)
+      }
+    }, 600)
+    return () => clearTimeout(timer)
+  }, [encoded, saved])
+  return <Section title={L('キャッシュ接続')}>
+    {caches?.map(cache => <fieldset key={cache.id} disabled={saving}>
+      <Row label={L('名前')}><TextField value={cache.name} onChange={name => update(cache.id, { name })} /></Row>
+      <Row label={L('キャッシュ URL')}><TextField value={cache.url} onChange={url => update(cache.id, { url })} /></Row>
+      <Row label={L('署名の公開鍵')}><TextField value={cache.publicKey} onChange={publicKey => update(cache.id, { publicKey })} mono /></Row>
+      <Disclosure label={L('認証（非公開キャッシュ）')}>
+        <Row label={L('ユーザー名')}><TextField value={cache.username} onChange={username => update(cache.id, { username })} /></Row>
+        <Row label={L('パスワード・token')}>
+          <input className="field" type="password" autoComplete="new-password" value={cache.password} onChange={e => update(cache.id, { password: e.target.value })} />
+        </Row>
+      </Disclosure>
+      <Row><Button onClick={() => setCaches(caches.filter(next => next.id !== cache.id))}>{L('キャッシュ接続を削除')}</Button></Row>
+    </fieldset>)}
+    {caches && <Row><Button disabled={saving} onClick={() => {
+      const random = [...crypto.getRandomValues(new Uint8Array(16))].map(value => value.toString(16).padStart(2, '0')).join('')
+      const id = random.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5')
+      setCaches([...caches, { id, name: '', url: '', publicKey: '', username: '', password: '' }])
+    }}>{L('キャッシュ接続を追加')}</Button></Row>}
+    {problem && <Row>{problem}</Row>}
+  </Section>
 }

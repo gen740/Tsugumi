@@ -1,7 +1,7 @@
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_library(tsugumi_remote_store STATIC src/nix_store.cc)
   target_compile_features(tsugumi_remote_store PRIVATE cxx_std_23)
-  target_link_libraries(tsugumi_remote_store PRIVATE PkgConfig::NIX tsugumi_worker_values tsugumi_nix_store)
+  target_link_libraries(tsugumi_remote_store PRIVATE PkgConfig::NIX tsugumi_worker_values tsugumi_nix_store tsugumi_workerd_support)
   target_sources(tsugumi-workerd PRIVATE src/remote_main.cc src/jobs_command.cc
     src/invocation.cc src/dashboard.cc)
   include(cmake/dashboard.cmake)

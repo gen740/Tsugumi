@@ -85,28 +85,6 @@ auto import_logs(const stdfs::path& path, const RemoteLogPrefix& recorded,
 
 }  // namespace
 
-auto stage_remote_archive(const RemoteJobClient& client,
-                          const std::string& service,
-                          const std::string& instance,
-                          const std::string& job_id, const stdfs::path& archive,
-                          std::stop_token cancel,
-                          const TransferProgress& progress) -> std::string {
-  crypto::Sha256 archive_hash;
-  const auto archive_size = fs::stream_beneath(
-      archive.parent_path(), archive.filename(), kMaxBlobBytes,
-      [&](std::string_view chunk) {
-        if (cancel.stop_requested())
-          throw Failed(FailureKind::cancelled,
-                       "remote Nix archive transfer cancelled");
-        archive_hash.update(chunk);
-      });
-  const auto archive_digest = archive_hash.finish_hex();
-  std::ifstream nar(archive, std::ios::binary);
-  client.put_blob(service, instance, job_id, archive_digest, archive_size, nar,
-                  cancel, progress);
-  return archive_digest;
-}
-
 auto deliver_remote_artifact(const RemoteJobClient& client,
                              const std::string& service,
                              const std::string& instance,
@@ -170,7 +148,7 @@ auto stage_remote_invocation(const RemoteJobClient& client,
                              const std::string& service,
                              const std::string& instance,
                              const std::string& job_id,
-                             const std::string& archive_digest,
+                             const std::string& cache_revision,
                              const ExecutionRequest& request) -> std::string {
   R::InvocationT invocation;
   invocation.implementation_index = request.build.implementation_index;
@@ -188,14 +166,14 @@ auto stage_remote_invocation(const RemoteJobClient& client,
   invocation.call_sha256 =
       upload(client, service, instance, job_id, call, request.stop);
   blobs.insert(invocation.call_sha256);
-  invocation.archive_sha256 = archive_digest;
-  blobs.insert(archive_digest);
   const auto invocation_digest = upload(
       client, service, instance, job_id,
       remote::encode<remote::RW::Invocation>(invocation), request.stop);
   blobs.insert(invocation_digest);
   R::JobSpecT job;
   job.card_probe = request.build.card_probe;
+  job.push_outputs = !job.card_probe && request.node.settings.push_outputs;
+  job.cache_revision = cache_revision;
   job.input_blobs.assign(blobs.begin(), blobs.end());
   job.invocation_sha256 = invocation_digest;
   job.system = request.build.derivation.system;
@@ -349,6 +327,8 @@ auto import_remote_result(
       info ? remote::decode<remote::RW::ResultEnvironment>(*info) : std::nullopt;
   if (!environment) throw std::runtime_error("invalid remote build environment");
   result.built = environment->built;
+  result.substituter = environment->substituter;
+  result.pushed = environment->pushed;
   result.environment.paths = environment->paths;
   std::vector<RawOutput> raw;
   if (failure) {

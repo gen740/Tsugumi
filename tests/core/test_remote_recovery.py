@@ -455,9 +455,9 @@ def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tm
     assert R.string(spec.system) == text(live.executionSystem) == "aarch64-linux"
     assert R.string(spec.derivation).endswith(".drv")
     invocation = R.InvocationT.InitFromPackedBuf(remote_gateway.blob_contents[R.string(spec.invocationSha256)])
-    assert R.string(invocation.archiveSha256) in [R.string(d) for d in spec.inputBlobs]
-    assert R.string(invocation.callSha256) in [R.string(d) for d in spec.inputBlobs]
-    assert remote_gateway.blob_contents[R.string(invocation.archiveSha256)] == b"test Nix derivation archive"
+    assert {R.string(d) for d in spec.inputBlobs} == {
+        R.string(spec.invocationSha256), R.string(invocation.callSha256),
+    }
     remote_gateway.finish(text(live.executionJobId))
     assert wait_run(client, run_id).state == RunState.succeeded
 

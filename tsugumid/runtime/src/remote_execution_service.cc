@@ -16,6 +16,7 @@
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/workerd/artifact_id.hh"
+#include "tsugumi/workerd/cache_publish.hh"
 #include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/workerd/protocol.hh"
@@ -216,6 +217,9 @@ auto poll_remote_job(const RemoteJobClient& client, RemoteJobRecord& job,
                 "the execution service lost a previously accepted job"};
       reply = client.submit(s.execution_service, job.instance,
                             s.execution_job_id, job.spec, stop);
+    } else if (reply.state == "queued" && reply.cache_settings_wanted) {
+      reply = client.submit(s.execution_service, job.instance,
+                            s.execution_job_id, job.spec, stop);
     }
   }
   if (reply.fingerprint != fingerprint)
@@ -240,29 +244,71 @@ auto remote_failure(const RemoteJobState& result) -> FailureData {
                                      : result.error);
 }
 
-// An activation whose derivation is exported to `archive` for the target
-// `target` (instance `instance`) to build for `system`.
+auto external_cache_kind(Tsugumi::RemoteWorker::CacheTargetKind target)
+    -> ExternalCacheKind {
+  using Kind = Tsugumi::RemoteWorker::CacheTargetKind;
+  switch (target) {
+    case Kind::Attic:
+      return ExternalCacheKind::attic;
+    case Kind::Cachix:
+      return ExternalCacheKind::cachix;
+    case Kind::NixCopy:
+      return ExternalCacheKind::nix_copy;
+    case Kind::Own:
+      break;
+  }
+  throw std::runtime_error("missing built-in binary cache connection");
+}
+
+auto publish_closure(const RemoteJobClient& client, const std::string& service,
+                     const Tsugumi::RemoteWorker::CachePushSettingsT& push,
+                     const std::string& store, const std::string& path,
+                     std::stop_token stop) -> void {
+  if (push.kind == Tsugumi::RemoteWorker::CacheTargetKind::Own) {
+    publish_to_relay_cache(store, path,
+                           [&](auto method, const auto& name, auto size,
+                               auto upload, auto download) {
+                             return client.cache_file(
+                                 service, method, name, size, std::move(upload),
+                                 std::move(download), stop);
+                           });
+    return;
+  }
+  publish_to_external_cache({external_cache_kind(push.kind), push.endpoint,
+                             push.cache_name, push.user, push.secret},
+                            stdfs::temp_directory_path(), store, path, stop);
+}
+
+auto publish_remote_derivation(const RemoteJobClient& client,
+                               const std::string& service,
+                               const std::string& store,
+                               const std::string& path, std::stop_token stop)
+    -> std::string {
+  auto settings = client.cache_settings(service, stop);
+  publish_closure(client, service, *settings.push, store, path, stop);
+  return settings.revision;
+}
+
+// The scheduler selected this worker before evaluating its derivation.
 class PreparedRemoteExecution final : public PreparedExecution {
  public:
   PreparedRemoteExecution(Service& service, const RemoteJobClient& client,
                           std::string target, std::string system,
-                          std::string instance, stdfs::path archive,
+                          std::string instance, std::stop_token stop,
                           DocumentPtr doc)
       : service_(service),
         client_(client),
         target_(std::move(target)),
         system_(std::move(system)),
         instance_(std::move(instance)),
-        archive_(std::move(archive)),
-        transport_(archive_),
+        transport_([this, stop](const auto& store, const auto& path) {
+          cache_revision_ =
+              publish_remote_derivation(client_, target_, store, path, stop);
+        }),
         doc_(std::move(doc)) {}
   PreparedRemoteExecution(const PreparedRemoteExecution&) = delete;
   auto operator=(const PreparedRemoteExecution&)
       -> PreparedRemoteExecution& = delete;
-  ~PreparedRemoteExecution() override {
-    std::error_code ec;
-    stdfs::remove(archive_, ec);
-  }
 
   auto transport() const -> const DerivationClosureTransport& {
     return transport_;
@@ -280,8 +326,8 @@ class PreparedRemoteExecution final : public PreparedExecution {
   std::string target_;
   std::string system_;
   std::string instance_;
-  stdfs::path archive_;
-  ArchiveDerivationTransport transport_;
+  std::string cache_revision_;
+  BinaryCacheDerivationTransport transport_;
   DocumentPtr doc_;
 };
 
@@ -305,13 +351,9 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
             : crypto::sha256_hex(service_.project_id() + "\n" + s.run_id +
                                  "\n" + path_key(node.path) + "\n" +
                                  std::to_string(s.invocation));
-  const auto archive_digest = stage_remote_archive(
-      client_, target_, instance_, s.execution_job_id, archive_, request.stop,
-      [&](uint64_t done, uint64_t total) {
-        if (request.transfer) request.transfer("upload", "Nix", done, total);
-      });
-  auto spec = stage_remote_invocation(
-      client_, target_, instance_, s.execution_job_id, archive_digest, request);
+  auto spec =
+      stage_remote_invocation(client_, target_, instance_, s.execution_job_id,
+                              cache_revision_, request);
   if (request.stop.stop_requested())
     throw Failed(FailureKind::cancelled,
                  "run cancelled before external submission");
@@ -533,6 +575,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
             request.on_remote_validation);
         if (!probe && !result.environment.paths.empty()) {
           s.build_cached = !result.built;
+          s.build_substituter = std::move(result.substituter);
+          s.build_pushed = result.pushed;
           history.write_sync([&](sql::Db& db) {
             s.environment_id =
                 History::put_environment(db, s.run_id, result.environment);
@@ -577,6 +621,27 @@ RemoteExecutionService::RemoteExecutionService(Service& service,
                                                RemoteJobClient& client)
     : service_(service), client_(client) {}
 
+auto RemoteExecutionService::publish_local_build(
+    const WorkerDerivation& derivation, bool push_outputs, std::stop_token stop)
+    -> std::optional<bool> {
+  if (!client_.enabled()) return std::nullopt;
+  try {
+    const auto settings = client_.cache_settings(kLocalExecutionService, stop);
+    try {
+      publish_closure(client_, kLocalExecutionService, *settings.push, {},
+                      derivation.path, stop);
+    } catch (const std::exception&) {
+      log::warn(
+          "Could not publish the local Nix derivation to the binary cache");
+    }
+    if (push_outputs)
+      publish_closure(client_, kLocalExecutionService, *settings.push, {},
+                      derivation.output, stop);
+    return push_outputs;
+  } catch (const std::exception&) {
+    return false;
+  }
+}
 auto RemoteExecutionService::prepare(const RemoteTarget& target,
                                      const Node& node,
                                      const stdfs::path& directory,
@@ -605,9 +670,8 @@ auto RemoteExecutionService::prepare(const RemoteTarget& target,
         "external execution service no longer supports system " + system);
   stdfs::create_directories(directory);
   auto prepared = std::make_unique<PreparedRemoteExecution>(
-      service_, client_, target.id, system,
-      std::move(probe.instance),
-      directory / (".derivation-" + crypto::uuid4()), build.doc);
+      service_, client_, target.id, system, std::move(probe.instance),
+      build.cancel, build.doc);
   build.target = {WorkerKind::remote, prepared->system()};
   build.transport = &prepared->transport();
   return prepared;

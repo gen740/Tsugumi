@@ -12,6 +12,7 @@ import http.client
 import json
 import lzma
 import os
+import select
 import shutil
 import signal
 import socket
@@ -381,6 +382,39 @@ def test_showing_the_keys_changes_no_file(server, tmp_path):
     missing = subprocess.run([str(CACHED), "public-key", "--state-dir", str(empty)],
                              text=True, capture_output=True)
     assert missing.returncode != 0 and list(empty.iterdir()) == []
+
+
+def test_managed_server_reports_readiness_and_exits_with_its_parent(tmp_path):
+    state = tmp_path / "supervised-cache"
+    ready_reader, ready_writer = os.pipe()
+    lifetime_reader, lifetime_writer = os.pipe()
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            [str(CACHED), "--state-dir", str(state), "--port", "0",
+             "--ready-fd", str(ready_writer), "--lifetime-fd", str(lifetime_reader)],
+            stdout=subprocess.DEVNULL, pass_fds=(ready_writer, lifetime_reader),
+        )
+        os.close(ready_writer)
+        ready_writer = -1
+        assert select.select([ready_reader], [], [], 10)[0]
+        with os.fdopen(os.dup(ready_reader), "r") as ready:
+            port, signing_key, tls_key = ready.read().splitlines()
+        assert 0 < int(port) < 65536
+        assert signing_key == (state / "signing-key.pub").read_text().strip()
+        assert tls_key.startswith("ed25519:")
+        assert proc.poll() is None
+        os.close(lifetime_writer)
+        lifetime_writer = -1
+        assert proc.wait(timeout=10) == 0
+        assert (state / "binary-cache/nix-cache-info").is_file()
+    finally:
+        for fd in (ready_reader, ready_writer, lifetime_reader, lifetime_writer):
+            if fd >= 0:
+                os.close(fd)
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=10)
 
 
 def test_usage_reports_what_the_folder_holds(server, client, built_paths, scratch):

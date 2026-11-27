@@ -4,16 +4,20 @@
   lib,
   makeWrapper,
   nix,
+  attic-client,
+  cachix,
   runCommand,
   util-linux,
 }:
 runCommand "tsugumi-workerd" { nativeBuildInputs = [ makeWrapper ]; } ''
   mkdir -p "$out/bin"
-  # Nix's build hook and the namespace launcher are the only external tools.
+  # The namespace launcher, Nix and the supported binary cache clients.
   makeWrapper ${core}/bin/tsugumi-workerd "$out/bin/tsugumi-workerd" \
     --prefix PATH : ${
       lib.makeBinPath [
         nix
+        attic-client
+        cachix
         util-linux
       ]
     }

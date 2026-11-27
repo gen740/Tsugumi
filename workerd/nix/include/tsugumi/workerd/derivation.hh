@@ -1,7 +1,6 @@
 // The contract produced only by host-side tsugumid, for either worker kind.
 #pragma once
 
-#include <filesystem>
 #include <functional>
 #include <string>
 #include <utility>
@@ -26,8 +25,6 @@ struct WorkerDerivation {
 };
 
 // Store availability is independent of evaluation and invocation scheduling.
-// A future binary-cache transport implements this interface instead of
-// archives.
 class DerivationClosureTransport {
  public:
   virtual ~DerivationClosureTransport() = default;
@@ -43,17 +40,19 @@ class SharedStoreDerivationTransport final : public DerivationClosureTransport {
   auto receive(nix::Store&, const WorkerDerivation&) const -> void override {}
 };
 
-// The remote worker's current transport: an exported input-closure archive.
-class ArchiveDerivationTransport final : public DerivationClosureTransport {
+// The publisher copies a store closure to the host-selected cache. The
+// receiving store is configured with the job's substituters and trusted keys.
+class BinaryCacheDerivationTransport final : public DerivationClosureTransport {
  public:
-  explicit ArchiveDerivationTransport(std::filesystem::path archive)
-      : archive_(std::move(archive)) {}
+  using Publish = std::function<void(const std::string&, const std::string&)>;
+  explicit BinaryCacheDerivationTransport(Publish publish = {})
+      : publish_(std::move(publish)) {}
   auto send(const WorkerDerivation& derivation) const -> void override;
   auto receive(nix::Store& store, const WorkerDerivation& derivation) const
       -> void override;
 
  private:
-  std::filesystem::path archive_;
+  Publish publish_;
 };
 
 }  // namespace tsugumi

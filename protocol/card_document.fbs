@@ -11,7 +11,7 @@
 //
 //   code:         type symbol inputs maxRuns reuseWorker timeoutSeconds
 //                 buildTimeoutSeconds recordLogs recordIO sandbox grants
-//                 systems [secrets]
+//                 systems [secrets] [pushOutputs]
 //   merge:        type symbol inputs maxRuns recordIO
 //   collect:      type symbol maxRuns recordIO
 //   draft, trigger, subgraph: type symbol
@@ -84,6 +84,8 @@ table Card {
   buildTimeoutSeconds:ulong = null;
   recordLogs:RecordSetting = null;
   recordIO:RecordSetting = null;
+  /// Optional. Code Cards may override the owning project's build-output push policy.
+  pushOutputs:RecordSetting = null;
   sandbox:Sandbox;
   grants:Grants;
   /// Keep worker state across invocations and runs.

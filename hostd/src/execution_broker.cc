@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -28,10 +29,12 @@
 #include <optional>
 #include <regex>
 #include <set>
+#include <sstream>
 #include <thread>
 #include <utility>
 
 #include "agent/wire.hh"
+#include "host/cache_process.hh"
 #include "tsugumi/rpc/dashboard_http.hh"
 #include "tsugumi/rpc/peer_tls.hh"
 #include "tsugumi/rpc/unix_binding.hh"
@@ -52,6 +55,8 @@ namespace {
 using Clock = std::chrono::steady_clock;
 using Deadline = Clock::time_point;
 constexpr auto kExchangeTimeout = std::chrono::seconds(30);
+constexpr auto kCacheTransferTimeout = std::chrono::minutes(10);
+constexpr auto kCacheSessionTimeout = std::chrono::hours(24);
 constexpr size_t kTransferSlots = 8;
 constexpr size_t kPendingTransfers = 64;
 constexpr size_t kPendingBytes = 64u << 20;
@@ -117,6 +122,47 @@ auto Write(int fd, R::MessageT message, Deadline deadline) -> void {
   auto prefix = W::length_prefix(static_cast<uint32_t>(bytes.size()));
   Exact(fd, prefix, true, deadline);
   Exact(fd, bytes, true, deadline);
+}
+
+struct HttpHead {
+  uint16_t status = 0;
+  uint64_t size = 0;
+  std::string body_prefix;
+};
+
+auto ReadCacheHead(peer_tls::Stream& stream) -> HttpHead {
+  std::string bytes;
+  size_t boundary = std::string::npos;
+  while (boundary == std::string::npos && bytes.size() < 8192) {
+    auto chunk = stream.ReadSome(4096);
+    Require(!chunk.empty(), "The binary cache closed its response");
+    bytes += chunk;
+    boundary = bytes.find("\r\n\r\n");
+  }
+  Require(boundary != bytes.npos && boundary < 8192,
+          "Invalid binary cache response");
+  HttpHead out;
+  std::istringstream header(bytes.substr(0, boundary));
+  std::string line, version;
+  Require(static_cast<bool>(header >> version >> out.status) &&
+              version == "HTTP/1.1",
+          "Invalid binary cache status");
+  std::getline(header, line);
+  bool length = false;
+  while (std::getline(header, line)) {
+    if (line.ends_with('\r')) line.pop_back();
+    constexpr std::string_view prefix = "Content-Length: ";
+    if (!line.starts_with(prefix)) continue;
+    const auto* end = line.data() + line.size();
+    const auto value =
+        std::from_chars(line.data() + prefix.size(), end, out.size);
+    Require(!length && value.ec == std::errc{} && value.ptr == end,
+            "Invalid binary cache content length");
+    length = true;
+  }
+  Require(length || out.status == 100, "Missing binary cache content length");
+  out.body_prefix = bytes.substr(boundary + 4);
+  return out;
 }
 auto Configure(int fd) -> void {
   peer_tls::ConfigureSocket(fd);
@@ -311,23 +357,29 @@ struct ExecutionBroker::State {
     Deadline deadline;
     size_t bytes;
   };
-  std::deque<Transfer> pending;
+  std::deque<Transfer> pending, submissions;
   size_t pending_bytes = 0;
   std::condition_variable transfer_ready;
   std::vector<std::jthread> receivers, transfers;
   CardSecrets card_secrets;
   MeasureProbe measure_probe;
+  CacheSettings cache_settings;
+  std::mutex cache_mutex;
+  CacheProcess cache_process;
   std::mutex remeasure_mutex;
 
   State(std::filesystem::path dir, std::string path, CardSecrets secrets,
-        MeasureProbe measure)
+        MeasureProbe measure, CacheSettings caches,
+        std::filesystem::path cache_executable)
       : state(std::move(dir)),
         socket(std::move(path)),
         db((state / "execution.sqlite").string(),
            sql::FormatVersion{kExecutionFormatVersion}),
         identity(state / "execution-identity.pem"),
         card_secrets(std::move(secrets)),
-        measure_probe(std::move(measure)) {
+        measure_probe(std::move(measure)),
+        cache_settings(std::move(caches)),
+        cache_process(state / "binary-cache", std::move(cache_executable)) {
     ::chmod((state / "execution.sqlite").c_str(), 0600);
     db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
     db.initialize_format(kExecutionFormatVersion, [&] {
@@ -367,8 +419,10 @@ struct ExecutionBroker::State {
             "Cannot configure execution broker wake pipe");
     // Keep broker-local replies and Cancel independent of worker transfers.
     try {
-      for (size_t i = 0; i < kTransferSlots; ++i)
-        transfers.emplace_back([this] { RunTransfers(); });
+      for (size_t i = 0; i < kTransferSlots; ++i) {
+        transfers.emplace_back([this] { RunTransfers(pending); });
+        transfers.emplace_back([this] { RunTransfers(submissions); });
+      }
       for (int i = 0; i < 2; ++i) {
         receivers.emplace_back([this] { Accept(listener.fd, false); });
         receivers.emplace_back([this] { Accept(cancel_listener.fd, true); });
@@ -428,31 +482,32 @@ struct ExecutionBroker::State {
     if (broker && !cancel_only) {
       const auto& body = broker->request->body;
       if (!body.AsCatalogRequest() && !body.AsCardSecretsRequest() &&
-          !body.AsCardProbeLookup() && !body.AsCardProbePublish() &&
-          !body.AsCancelRequest()) {
+          !body.AsCacheSettingsRequest() && !body.AsCardProbeLookup() &&
+          !body.AsCardProbePublish() && !body.AsCancelRequest()) {
         std::lock_guard lock(mutex);
         // EOF leaves a saturated request unconfirmed, like a transport loss.
-        if (stopping || pending.size() >= kPendingTransfers ||
+        if (stopping ||
+            pending.size() + submissions.size() >= kPendingTransfers ||
             bytes.size() > kPendingBytes - pending_bytes)
           return;
-        pending.emplace_back();
-        pending.back() = {std::move(client), std::move(message), deadline,
-                          bytes.size()};
+        auto& queue = body.AsSubmitRequest() ? submissions : pending;
+        queue.push_back(
+            {std::move(client), std::move(message), deadline, bytes.size()});
         pending_bytes += bytes.size();
-        transfer_ready.notify_one();
+        transfer_ready.notify_all();
         return;
       }
     }
     Forward(fd, cancel_only, *message, deadline);
   }
 
-  auto RunTransfers() -> void {
+  auto RunTransfers(std::deque<Transfer>& queue) -> void {
     for (;;) {
       std::unique_lock lock(mutex);
-      transfer_ready.wait(lock, [&] { return stopping || !pending.empty(); });
+      transfer_ready.wait(lock, [&] { return stopping || !queue.empty(); });
       if (stopping) return;
-      auto transfer = std::move(pending.front());
-      pending.pop_front();
+      auto transfer = std::move(queue.front());
+      queue.pop_front();
       pending_bytes -= transfer.bytes;
       lock.unlock();
       try {
@@ -732,6 +787,140 @@ struct ExecutionBroker::State {
     reply.body = std::move(response.body);
     return reply;
   }
+  auto CacheEndpoint() -> CacheProcess::Endpoint {
+    std::lock_guard lock(cache_mutex);
+    // The broker authenticates worker connections before relaying them. Its
+    // own registered key authenticates the inner connection to cached.
+    return cache_process.Start({identity.public_key()});
+  }
+  auto ReadCacheSettings() -> R::CacheSettingsT {
+    Require(cache_settings != nullptr, "Binary caches are unavailable");
+    auto settings = cache_settings();
+    auto bytes = W::encode(W::reply(settings));
+    settings.revision = Tag(key, bytes);
+    W::clear_secret(bytes);
+    return settings;
+  }
+  auto CacheFile(const R::CacheFileRequestT& request, Deadline deadline,
+                 auto send_reply, auto read_raw, auto write_raw) -> void {
+    if (request.path.empty() || request.path.size() > 200 ||
+        !std::ranges::all_of(request.path, [](unsigned char c) {
+          return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' ||
+                 c == '-' || c == '/';
+        }))
+      throw W::Error(R::ErrorCode::Invalid, "Invalid binary cache file path");
+    const auto method = request.method;
+    const bool upload = method == R::CacheMethod::Put;
+    const bool download = method == R::CacheMethod::Get;
+    Require(upload || download || method == R::CacheMethod::Head,
+            "Unknown binary cache method");
+    const auto endpoint = CacheEndpoint();
+    const auto address = ParseEndpoint("tls://127.0.0.1:" + endpoint.port);
+    Socket peer{::socket(AF_INET, SOCK_STREAM, 0)};
+    Require(peer.fd >= 0, "Cannot open binary cache connection");
+    Configure(peer.fd);
+    auto activity = Track(peer.fd);
+    if (::connect(peer.fd, reinterpret_cast<const sockaddr*>(&address.storage),
+                  address.size) != 0) {
+      Require(errno == EINPROGRESS, "Cannot connect to the binary cache");
+      WaitForSocket(peer.fd, POLLOUT, deadline);
+      int error = 0;
+      socklen_t size = sizeof error;
+      Require(::getsockopt(peer.fd, SOL_SOCKET, SO_ERROR, &error, &size) == 0 &&
+                  error == 0,
+              "Cannot connect to the binary cache");
+    }
+    peer_tls::Context context(identity, false, [&](std::string_view key) {
+      return key == endpoint.tls_key;
+    });
+    peer_tls::Stream stream(context, peer.fd, false, -1, deadline);
+    auto header = std::string(upload     ? "PUT "
+                              : download ? "GET "
+                                         : "HEAD ") +
+                  "/" + request.path +
+                  " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n";
+    if (upload)
+      header += "Expect: 100-continue\r\nContent-Length: " +
+                std::to_string(request.size) + "\r\n";
+    stream.Write(header + "\r\n");
+    auto response = ReadCacheHead(stream);
+    const auto send_info = [&] {
+      R::CacheFileT reply;
+      reply.status = response.status;
+      if (download && response.status == 200) reply.size = response.size;
+      send_reply(W::reply(std::move(reply)));
+    };
+    if (upload && response.status == 100) {
+      send_info();
+      auto remaining = request.size;
+      std::string chunk;
+      while (remaining) {
+        chunk.resize(std::min<uint64_t>(remaining, W::kChunkBytes));
+        read_raw(chunk);
+        stream.Write(chunk);
+        remaining -= chunk.size();
+      }
+      response = ReadCacheHead(stream);
+    }
+    send_info();
+    if (!download || response.status != 200) return;
+    Require(response.body_prefix.size() <= response.size,
+            "Binary cache sent more data than advertised");
+    write_raw(response.body_prefix);
+    for (auto remaining = response.size - response.body_prefix.size();
+         remaining > 0;) {
+      auto chunk =
+          stream.ReadSome(std::min<uint64_t>(remaining, W::kChunkBytes));
+      Require(!chunk.empty(),
+              "Binary cache file ended before its advertised size");
+      write_raw(chunk);
+      remaining -= chunk.size();
+    }
+  }
+  auto SubmitWithCache(int fd, const Entry& entry, R::RequestT request,
+                       Deadline deadline) -> void {
+    WithWorker(
+        entry, Clock::now() + kCacheSessionTimeout, -1,
+        [&](peer_tls::Stream& tls) {
+          const auto send = [&](R::MessageT message) {
+            const auto bytes = W::encode(std::move(message));
+            tls.Write(W::length_prefix(static_cast<uint32_t>(bytes.size())) +
+                      bytes);
+          };
+          R::MessageT message;
+          message.payload.Set(std::move(request));
+          send(std::move(message));
+          const auto receive = [&] {
+            auto bytes = tls.Read(W::frame_length(tls.Read(4)));
+            auto decoded = W::decode(bytes);
+            W::clear_secret(bytes);
+            return decoded;
+          };
+          auto reply = receive();
+          const auto* envelope = reply->payload.AsReply();
+          const auto* job = envelope ? envelope->body.AsJobStatus() : nullptr;
+          const bool accepted = job && job->state == R::JobState::Queued;
+          try {
+            Write(fd, std::move(*reply), deadline);
+          } catch (const std::exception&) {
+            if (!accepted) throw;
+          }
+          if (!accepted) return;
+          // The caller now polls status over the normal broker pool. The
+          // accepted submission stream stays open exclusively for cache files.
+          for (;;) {
+            auto operation = receive();
+            const auto* envelope = operation->payload.AsRequest();
+            const auto* file =
+                envelope ? envelope->body.AsCacheFileRequest() : nullptr;
+            if (!file) break;
+            CacheFile(
+                *file, Clock::now() + kCacheTransferTimeout, send,
+                [&](auto& bytes) { bytes = tls.Read(bytes.size()); },
+                [&](const auto& bytes) { tls.Write(bytes); });
+          }
+        });
+  }
   auto Forward(int fd, bool cancel_only, R::MessageT& message,
                Deadline deadline) -> void {
     bool forwarding = false;
@@ -800,9 +989,11 @@ struct ExecutionBroker::State {
           const auto* lookup = request->body.AsCardProbeLookup();
           const auto* publish = request->body.AsCardProbePublish();
           auto found = FindEntry(request->service);
-          if (!found ||
-              (found->id == "local" ? !lookup && !publish
-                                    : found->capabilities.server_id.empty()))
+          if (!found || (found->id == "local"
+                             ? !lookup && !publish &&
+                                   !request->body.AsCacheSettingsRequest() &&
+                                   !request->body.AsCacheFileRequest()
+                             : found->capabilities.server_id.empty()))
             throw W::Error(
                 R::ErrorCode::RegistrationChanged,
                 "Verify the execution service registration in settings");
@@ -915,6 +1106,45 @@ struct ExecutionBroker::State {
         Write(fd, W::reply(std::move(secrets)), deadline);
         return;
       }
+      // Read the settings after checking the project's current worker grant
+      // and outside the broker lock. The worker receives hostd's snapshot.
+      if (request->body.AsCacheSettingsRequest()) {
+        auto caches = ReadCacheSettings();
+        caches.pull.clear();
+        Write(fd, W::reply(std::move(caches)), deadline);
+        return;
+      }
+      if (const auto* file = request->body.AsCacheFileRequest()) {
+        const auto expiry = Clock::now() + kCacheTransferTimeout;
+        CacheFile(
+            *file, expiry,
+            [&](auto reply) { Write(fd, std::move(reply), expiry); },
+            [&](auto& bytes) { Exact(fd, bytes, false, expiry); },
+            [&](auto& bytes) { Exact(fd, bytes, true, expiry); });
+        return;
+      }
+      if (auto* submit = request->body.AsSubmitRequest()) {
+        submit->caches =
+            cache_settings
+                ? std::make_unique<R::CacheSettingsT>(ReadCacheSettings())
+                : nullptr;
+        if (submit->caches) {
+          const std::string_view spec(
+              reinterpret_cast<const char*>(submit->spec.data()),
+              submit->spec.size());
+          if (W::parse_spec(spec)->cache_revision != submit->caches->revision)
+            throw W::Error(R::ErrorCode::Rejected,
+                           "The binary cache settings changed during "
+                           "preparation. Run the Card again.");
+        }
+        if (submit->caches && submit->caches->push &&
+            submit->caches->push->kind == R::CacheTargetKind::Own) {
+          submit->caches->own_signing_key = CacheEndpoint().signing_key;
+          forwarding = true;
+          SubmitWithCache(fd, entry, std::move(*request), deadline);
+          return;
+        }
+      }
       forwarding = true;
       const bool probing = request->body.AsProbeRequest() != nullptr;
       auto response = Remote(entry, std::move(*request), deadline, fd);
@@ -968,6 +1198,7 @@ struct ExecutionBroker::State {
     receivers.clear();
     transfers.clear();
     pending.clear();
+    submissions.clear();
     binding.Remove();
     cancel_binding.Remove();
   }
@@ -975,10 +1206,13 @@ struct ExecutionBroker::State {
 
 ExecutionBroker::ExecutionBroker(std::filesystem::path state,
                                  std::string socket, CardSecrets card_secrets,
-                                 MeasureProbe measure_probe)
-    : state_(std::make_unique<State>(std::move(state), std::move(socket),
-                                     std::move(card_secrets),
-                                     std::move(measure_probe))) {}
+                                 MeasureProbe measure_probe,
+                                 CacheSettings cache_settings,
+                                 std::filesystem::path cache_executable)
+    : state_(std::make_unique<State>(
+          std::move(state), std::move(socket), std::move(card_secrets),
+          std::move(measure_probe), std::move(cache_settings),
+          std::move(cache_executable))) {}
 ExecutionBroker::~ExecutionBroker() { Stop(); }
 auto ExecutionBroker::Stop() -> void { state_->Stop(); }
 auto ExecutionBroker::socket_path() const -> const std::string& {

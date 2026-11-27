@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 from harness import remote_worker as R
+from Tsugumi.RemoteWorker.CacheMethod import CacheMethod
 from Tsugumi.RemoteWorker.WorkerReady import WorkerReady
 from harness.file_events import process_file
 from harness.host import Host
@@ -222,6 +223,30 @@ def broker_request(endpoint, capability_file, body_type, body, **routing):
             return R.read(response).payload
 
 
+def forward_reply(request, downstream, client, response, upstream):
+    def reply():
+        header = R.exact(response, 4)
+        size, = struct.unpack("<I", header)
+        payload = R.exact(response, size)
+        client.sendall(header + payload)
+        return R.MessageT.InitFromPackedBuf(payload).payload
+
+    def copy(source, destination, size):
+        while size:
+            data = R.exact(source, min(size, 65536))
+            destination.sendall(data)
+            size -= len(data)
+
+    first = reply()
+    if first.bodyType != R.ReplyBody.CacheFile:
+        return
+    if first.body.status == 100:
+        copy(downstream, upstream, request.body.size)
+        reply()
+    elif request.body.method == CacheMethod.Get and first.body.status == 200:
+        copy(response, client, first.body.size)
+
+
 @pytest.fixture
 def remote_results(remote_broker, monkeypatch, tmp_path):
     """Observe the disposable worker's result set before the core releases it."""
@@ -246,9 +271,7 @@ def remote_results(remote_broker, monkeypatch, tmp_path):
                 connection.connect(upstream + ".c" if control else upstream)
                 connection.sendall(header + payload)
                 with connection.makefile("rb") as response:
-                    header = R.exact(response, 4)
-                    size, = struct.unpack("<I", header)
-                    self.request.sendall(header + R.exact(response, size))
+                    forward_reply(request, downstream, self.request, response, connection)
 
     with tempfile.TemporaryDirectory(prefix="rr-", dir=os.environ.get("TSUGUMI_SOCKET_DIR")) as sockets:
         address = str(Path(sockets) / "broker")
@@ -403,6 +426,55 @@ def test_remote_probe_records_scores_even_without_run_recording(
         assert result.score == remote_only[worker].score
         assert result.measuredAt > remote_only[worker].measuredAt
     assert len(client.call("RunHistoryRequest").runs) == 1
+
+
+def test_managed_cache_relays_derivations_and_reuses_only_published_outputs(
+        project, core_factory, remote_broker, remote_daemon, tmp_path):
+    if remote_daemon[2] is None:
+        pytest.skip("requires a disposable worker store")
+    definition = {
+        **RUN_LIST_REMOTE,
+        "_outputs": "table Outputs {} root_type Outputs;",
+        "_nix": entry(python_run(
+            "from card import Output, params\n"
+            "def run(input):\n    assert params.example\n    return Output()\n"
+        )),
+    }
+    write(project, {"work": definition}, [
+        card("explicit_on", "work", pushOutputs="on", params={"example": "on"}),
+        card("explicit_off", "work", pushOutputs="off", params={"example": "off"}),
+        card("inherited", "work", pushOutputs="project", params={"example": "project"}),
+    ], [])
+    document = project / "tsugumi.json"
+    config = json.loads(document.read_text())
+    config["pushOutputs"] = False
+    document.write_text(json.dumps(config))
+
+    client = core_factory().connect()
+
+    def run(name):
+        run_id, status = run_and_wait(client, name, propagate=False)
+        assert status.state == RunState.succeeded, text(status.failure.diagnostic) if status.failure else ""
+        return client.call("RunRecordRequest", runId=run_id, card=path(name)).record
+
+    for name, pushed in (("explicit_on", True), ("explicit_off", False), ("inherited", False)):
+        record = run(name)
+        assert text(record.summary.executionService) == "remote-test"
+        assert record.summary.buildCached is False
+        assert record.summary.buildPushed is pushed
+
+    cache = remote_broker["host"].directory / "binary-cache" / "binary-cache"
+    assert any(".drv\n" in file.read_text() for file in cache.glob("*.narinfo"))
+
+    # The listener retains its identity, but its next job starts with no local Nix store.
+    state = tmp_path / "daemon-state"
+    (state / "store").rename(state / "first-store")
+    remote_daemon[2]()
+
+    cached = run("explicit_on").summary
+    assert cached.buildCached is True
+    assert text(cached.buildSubstituter) == "tsugumi-cached"
+    assert run("explicit_off").summary.buildCached is False
 
 
 def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broker, remote_daemon, remote_gates):
@@ -703,9 +775,7 @@ def held_secret_delivery(remote_broker, monkeypatch):
                 connection.connect(upstream + ".c" if control else upstream)
                 connection.sendall(header + payload)
                 with connection.makefile("rb") as response:
-                    header = R.exact(response, 4)
-                    size, = struct.unpack("<I", header)
-                    self.request.sendall(header + R.exact(response, size))
+                    forward_reply(request, downstream, self.request, response, connection)
 
     with tempfile.TemporaryDirectory(prefix="hs-", dir=os.environ.get("TSUGUMI_SOCKET_DIR")) as sockets:
         address = str(Path(sockets) / "broker")

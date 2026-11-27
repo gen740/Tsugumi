@@ -21,6 +21,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <csignal>
@@ -31,6 +32,7 @@
 #include <mutex>
 #include <nix/store/globals.hh>
 #include <set>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -73,6 +75,8 @@ struct Config {
   std::vector<std::string> names;
   stdfs::path authorized_keys;
   std::string store_dir = "/nix/store";
+  int ready_fd = -1;
+  int lifetime_fd = -1;
   bool json = false;
 };
 
@@ -248,6 +252,22 @@ auto Serve(Config config) -> int {
             << "authorized keys: " << config.authorized_keys.string() << '\n';
   if (unix) std::cout << "socket: " << config.socket.string() << '\n';
   std::cout << std::flush;
+  if (config.ready_fd >= 0) {
+    Fd ready(config.ready_fd);
+    const auto message = std::to_string(config.port) + "\n" +
+                         store.public_key() + "\n" + identity->public_key() +
+                         "\n";
+    size_t offset = 0;
+    while (offset < message.size()) {
+      const auto written = ::write(ready.value, message.data() + offset,
+                                   message.size() - offset);
+      if (written < 0 && errno == EINTR) continue;
+      if (written <= 0)
+        throw std::runtime_error("Cannot publish cache readiness");
+      offset += static_cast<size_t>(written);
+    }
+  }
+  Fd lifetime(config.lifetime_fd);
 
   std::mutex mu;
   std::set<int> open;
@@ -263,10 +283,14 @@ auto Serve(Config config) -> int {
       client.thread.join();
       return true;
     });
-    std::vector<pollfd> listeners{{tcp.value, POLLIN, 0}};
-    if (unix) listeners.push_back({unix->value, POLLIN, 0});
-    if (::poll(listeners.data(), listeners.size(), 200) <= 0) continue;
-    for (const auto& listener : listeners) {
+    std::array<pollfd, 3> ready{{
+        {tcp.value, POLLIN, 0},
+        {unix ? unix->value : -1, POLLIN, 0},
+        {lifetime.value, POLLIN, 0},
+    }};
+    if (::poll(ready.data(), ready.size(), 200) <= 0) continue;
+    if (ready.back().revents) break;
+    for (const auto& listener : std::span(ready).first<2>()) {
       if (!(listener.revents & POLLIN)) continue;
       const int fd = ::accept(listener.fd, nullptr, nullptr);
       if (fd < 0) continue;
@@ -377,12 +401,21 @@ auto Parse(int argc, char** argv) -> Config {
       config.authorized_keys = value;
     else if (option == "--store-dir")
       config.store_dir = value;
+    else if (option == "--ready-fd")
+      config.ready_fd = std::stoi(value);
+    else if (option == "--lifetime-fd")
+      config.lifetime_fd = std::stoi(value);
     else
       throw std::runtime_error("Unknown option " + std::string(option));
   }
   if (config.state.empty()) config.state = DefaultState();
   if (config.port < 0 || config.port > 65535)
     throw std::runtime_error("--port must be 0-65535");
+  if ((config.ready_fd >= 0 || config.lifetime_fd >= 0) &&
+      (config.command != "serve" || config.ready_fd < 3 ||
+       config.lifetime_fd < 3 || config.ready_fd == config.lifetime_fd))
+    throw std::runtime_error(
+        "The cache supervisor requires two inherited descriptors");
   return config;
 }
 

@@ -1189,6 +1189,10 @@ table InvocationSummary {
   /// Names of the Card secrets handed to this invocation's process (never
   /// their values), in the order the Card declares them.
   secrets:[string] (id: 32);
+  /// The cache that supplied this build output, when it was substituted.
+  build_substituter:string (id: 33);
+  /// True after the selected cache accepted the output closure.
+  build_pushed:bool = null (id: 34);
 }
 
 table StageTime {

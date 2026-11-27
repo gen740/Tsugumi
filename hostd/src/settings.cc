@@ -1365,6 +1365,35 @@ auto Settings::CardSecretValues(const std::string& project,
   }
   return out;
 }
+auto Settings::CachePushSettings()
+    -> Tsugumi::RemoteWorker::CachePushSettingsT {
+  auto& s = *state_;
+  std::lock_guard lock(s.mutex);
+  const auto stored = s.CachePushTarget();
+  using Kind = Tsugumi::RemoteWorker::CacheTargetKind;
+  Tsugumi::RemoteWorker::CachePushSettingsT result;
+  switch (stored.kind) {
+    case H::CachePushKind::Own:
+      result.kind = Kind::Own;
+      break;
+    case H::CachePushKind::Attic:
+      result.kind = Kind::Attic;
+      break;
+    case H::CachePushKind::Cachix:
+      result.kind = Kind::Cachix;
+      break;
+    case H::CachePushKind::NixCopy:
+      result.kind = Kind::NixCopy;
+      break;
+  }
+  result.endpoint = stored.endpoint;
+  result.cache_name = stored.cache_name;
+  if (stored.has_credentials) {
+    result.user = s.secrets->Get(kCachePushUser);
+    result.secret = s.secrets->Get(kCachePushSecret);
+  }
+  return result;
+}
 auto Settings::AllowUnscopedHelpers() -> bool {
   std::lock_guard lock(state_->mutex);
   const auto values = state_->Values();

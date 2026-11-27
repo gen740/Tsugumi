@@ -125,6 +125,8 @@ table InvocationDetail {
   /// Artifact references are retained independently of recording value bytes.
   artifact_outputs:[InvocationArtifactOutput];
   worker_probes:[Tsugumi.Data.WorkerProbeResult];
+  build_substituter:string;
+  build_pushed:bool = null;
 }
 
 table InputSource {

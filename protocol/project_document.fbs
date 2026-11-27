@@ -73,6 +73,8 @@ table Project {
   agentExclude:[string] (required);
   recordLogs:bool = null;
   recordIO:bool = null;
+  /// Whether Code Cards publish their Nix build outputs by default.
+  pushOutputs:bool = true;
   logLimitBytes:ulong = null;
   outputLimitBytes:ulong = null;
   outputLimitEntries:ulong = null;

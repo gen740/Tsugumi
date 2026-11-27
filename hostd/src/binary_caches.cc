@@ -111,8 +111,10 @@ auto Parse(std::string_view json) -> std::vector<Cache> {
     };
     cache.host = part(CURLUPART_HOST);
     cache.scheme = part(CURLUPART_SCHEME);
-    valid = valid && !cache.host.empty() &&
-            (cache.scheme == "https" || cache.scheme == "http") &&
+    valid = valid &&
+            ((!cache.host.empty() &&
+              (cache.scheme == "https" || cache.scheme == "http")) ||
+             (cache.scheme == "file" && cache.url.starts_with("file:///"))) &&
             part(CURLUPART_USER).empty() && part(CURLUPART_PASSWORD).empty() &&
             cache.url.find_first_of("?#") == std::string::npos &&
             std::all_of(cache.url.begin(), cache.url.end(),
@@ -121,7 +123,8 @@ auto Parse(std::string_view json) -> std::vector<Cache> {
     curl_url_cleanup(url);
     if (!valid)
       Invalid(
-          "Use distinct HTTP(S) cache endpoints without credentials, query "
+          "Use distinct HTTP(S) or file cache endpoints without credentials, "
+          "query "
           "strings or whitespace.");
     const auto colon = cache.key.find(':');
     std::string decoded;
@@ -172,6 +175,15 @@ auto LoadBinaryCaches(const std::filesystem::path& support) -> std::string {
   const auto raw = ReadBinaryCaches(support);
   Parse(raw);
   return raw;
+}
+auto LoadBinaryCachePulls(const std::filesystem::path& support)
+    -> std::vector<BinaryCachePull> {
+  std::vector<BinaryCachePull> out;
+  for (auto& cache : Parse(ReadBinaryCaches(support)))
+    out.push_back({std::move(cache.url), std::move(cache.key),
+                   std::move(cache.host), std::move(cache.username),
+                   std::move(cache.password)});
+  return out;
 }
 auto SaveBinaryCaches(const std::filesystem::path& support,
                       std::string_view json) -> void {

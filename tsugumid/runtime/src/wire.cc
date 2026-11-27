@@ -241,6 +241,7 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   auto secrets = s.secrets.empty()
                      ? Off<flatbuffers::Vector<Off<flatbuffers::String>>>()
                      : b.CreateVector(secret_names);
+  const auto build_substituter = b.CreateString(s.build_substituter);
   R::InvocationSummaryBuilder ib(b);
   ib.add_transfer_name(transfer_name);
   ib.add_transfer_direction(transfer_direction);
@@ -259,6 +260,8 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   if (s.failure) ib.add_failure(f);
   ib.add_waiting_inputs(wv);
   if (s.build_cached) ib.add_build_cached(*s.build_cached);
+  if (!s.build_substituter.empty()) ib.add_build_substituter(build_substituter);
+  if (s.build_pushed) ib.add_build_pushed(*s.build_pushed);
   ib.add_stages(sv);
   if (s.worker_reused) ib.add_worker_reused(*s.worker_reused);
   ib.add_outputs_sent(ov);

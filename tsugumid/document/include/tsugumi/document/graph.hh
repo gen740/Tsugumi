@@ -71,6 +71,7 @@ struct Settings {
   uint64_t output_limit_bytes = 0;
   uint64_t output_limit_entries = 0;
   bool record_io = false;
+  bool push_outputs = true;
   SandboxOptions sandbox;
   CardGrants grants;
   bool reuse_worker = false;

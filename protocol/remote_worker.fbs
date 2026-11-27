@@ -31,10 +31,17 @@ table JobSpec {
   // Output budget for new artifacts (forwards do not count).
   output_limit_bytes:ulong = 68719476736;
   output_limit_entries:ulong = 1000;
+  push_outputs:bool;
+  cache_revision:string;
 }
 // Spec bytes are a FlatBuffer rooted at JobSpec. Keeping the exact buffer
 // makes the fingerprint independent of packing and supports uncertain submits.
-table SubmitRequest { spec:[ubyte] (required); }
+table SubmitRequest {
+  spec:[ubyte] (required);
+  // Filled by the authenticated host broker for the worker. It is not part of
+  // the spec or the job journal.
+  caches:CacheSettings (trace_secret);
+}
 // The core's cursor into the job's combined log (work/result/logs, a sequence
 // of size-prefixed LogEntry buffers): the number of bytes it has already
 // received. A reply carries at most
@@ -65,6 +72,38 @@ table CardProbePublish {
   card:[string];
 }
 table CardProbeCached { revision:string (required); result:Tsugumi.Data.WorkerProbeResult; }
+enum CacheTargetKind:ubyte { Own, Attic, Cachix, NixCopy }
+// Transient settings from hostd. The job journal holds no cache credentials.
+table CachePushSettings {
+  kind:CacheTargetKind;
+  endpoint:string;
+  cache_name:string;
+  user:string (trace_secret);
+  secret:string (trace_secret);
+}
+table CacheSettingsRequest {}
+table CachePullSettings {
+  endpoint:string (required);
+  public_key:string (required);
+  host:string;
+  user:string (trace_secret);
+  secret:string (trace_secret);
+}
+table CacheSettings {
+  push:CachePushSettings (required, trace_secret);
+  pull:[CachePullSettings] (trace_secret);
+  own_signing_key:string;
+  revision:string;
+}
+enum CacheMethod:ubyte { Head, Get, Put }
+// On the private broker lane. PUT waits for a CacheFile reply with 100 before
+// writing its raw body. GET receives a CacheFile reply before its raw body.
+table CacheFileRequest {
+  method:CacheMethod;
+  path:string (required);
+  size:ulong;
+}
+table CacheFile { status:ushort; size:ulong; }
 table CardSecret { name:string (required); value:string (required, trace_secret); }
 // Broker-local: the values of the Card secrets one invocation declares, read
 // from hostd's secret store just before the call, within the project the
@@ -92,7 +131,7 @@ table JobArtifactRequest {
   fingerprint:string (required); id:string (required); found:bool;
   files:[InvocationFile]; directories:[string];
 }
-union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest, StatusRequest, CancelRequest, ReleaseRequest, CatalogRequest, CardSecretsRequest, JobSecretsRequest, ViewSendRequest, JobArtifactRequest, CardProbeLookup, CardProbePublish }
+union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest, StatusRequest, CancelRequest, ReleaseRequest, CatalogRequest, CardSecretsRequest, JobSecretsRequest, ViewSendRequest, JobArtifactRequest, CardProbeLookup, CardProbePublish, CacheSettingsRequest, CacheFileRequest }
 table Request {
   service:string; instance_id:string;
   project_scope:string; job_id:string;
@@ -103,7 +142,7 @@ table Request {
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  // Zero means no advertised contract. Writers explicitly send contract 20.
+  // Zero means no advertised contract. Writers explicitly send contract 21.
   worker_contract:uint;
   probe_life:string;
   active_jobs:uint;
@@ -130,11 +169,13 @@ table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diag
   // with a JobArtifactRequest.
   artifact_wanted:string;
   // Replayed until a status request includes the matching reply.
-  view_request:Tsugumi.Worker.WorkerViewRequest (trace_secret); }
+  view_request:Tsugumi.Worker.WorkerViewRequest (trace_secret);
+  cache_settings_wanted:bool;
+}
 table Ack {}
 table Failure { code:ErrorCode; message:string (required); }
 table CardSecrets { secrets:[CardSecret] (required); }
-union ReplyBody { Capabilities, Catalog, BlobChunk, JobStatus, Ack, Failure, CardSecrets, CardProbeCached }
+union ReplyBody { Capabilities, Catalog, BlobChunk, JobStatus, Ack, Failure, CardSecrets, CardProbeCached, CacheSettings, CacheFile }
 table Reply { body:ReplyBody (required); }
 // Private host broker envelope. Never accepted by or forwarded to a worker.
 table BrokerRequest { capability:string (required, trace_secret); request:Request (required); }
@@ -151,11 +192,15 @@ table ResultManifest { invocation_result_sha256:string (required); outputs:[Resu
 /// The invocation blob (JobSpec.invocation_sha256): what to stage and run.
 table InvocationFile { path:string (required); sha256:string (required); size:ulong; }
 table Invocation {
-  call_sha256:string (required); archive_sha256:string (required);
+  call_sha256:string (required);
   implementation_index:ulong;
 }
 /// The result's environment member: the Card's build environment.
-table ResultEnvironment { paths:[string]; directories:[string]; built:bool; log_truncated:bool; }
+table ResultEnvironment {
+  paths:[string]; directories:[string]; built:bool; log_truncated:bool;
+  substituter:string;
+  pushed:bool;
+}
 /// One entry of the result's logs member: a LogStream value and its bytes.
 /// The member is a sequence of entries, each a uint32 little-endian size and
 /// then its buffer.

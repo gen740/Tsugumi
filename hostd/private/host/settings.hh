@@ -9,6 +9,7 @@
 
 #include "agent/provider.hh"
 #include "tsugumi/protocol/host_generated.h"
+#include "tsugumi/protocol/remote_worker_generated.h"
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::host {
@@ -51,6 +52,8 @@ class Settings {
   auto CardSecretValues(const std::string& project,
                         const std::vector<std::string>& names)
       -> std::vector<std::pair<std::string, std::string>>;
+  // Only the broker's authenticated execution path reads publishing secrets.
+  auto CachePushSettings() -> Tsugumi::RemoteWorker::CachePushSettingsT;
   auto HostPaths(const std::string& project)
       -> Tsugumi::Host::HostPathBindingsT;
   auto AllowUnscopedHelpers() -> bool;

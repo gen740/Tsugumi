@@ -9,7 +9,7 @@ import TsugumiTestSupport
 @Test func explicitCardFields() throws {
   let code = implementedCard(.code, symbol: CardKind.code.symbol, systems: ["aarch64-linux"])
   let executableFields = Set(["type", "symbol", "inputs", "maxRuns", "reuseWorker", "timeoutSeconds",
-    "buildTimeoutSeconds", "recordLogs", "recordIO", "sandbox", "grants", "systems"])
+    "buildTimeoutSeconds", "recordLogs", "recordIO", "pushOutputs", "sandbox", "grants", "systems"])
   #expect(Set(code.object?.map(\.0) ?? []) == executableFields)
   #expect(code["timeoutSeconds"]?.uint64 == 0)
   #expect(code["buildTimeoutSeconds"]?.uint64 == 0)
@@ -17,6 +17,7 @@ import TsugumiTestSupport
   #expect(code["sandbox"]?["limits"]?["memoryMiB"]?.uint64 == 0)
   #expect(code["recordLogs"]?.string == "project")
   #expect(code["recordIO"]?.string == "project")
+  #expect(code["pushOutputs"]?.string == "project")
   #expect(RecordSetting.allCases.map(\.rawValue) == ["project", "on", "off"])
   #expect(Set(implementedCard(.merge, symbol: "star", systems: []).object?.map(\.0) ?? []) ==
     Set(["type", "symbol", "inputs", "maxRuns", "recordIO"]))

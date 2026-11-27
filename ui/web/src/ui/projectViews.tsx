@@ -302,9 +302,13 @@ function NixPathRows({ session, prefix }: { session: ProjectSession; prefix: str
   </div>
 }
 
-const recordingKeys = ['recordLogs', 'recordIO'] as const
+const recordingKeys = ['recordLogs', 'recordIO', 'pushOutputs'] as const
 function projectRecording(project: J) {
-  return { recordLogs: bool(get(project, 'recordLogs'))!, recordIO: bool(get(project, 'recordIO'))! }
+  return {
+    recordLogs: bool(get(project, 'recordLogs'))!,
+    recordIO: bool(get(project, 'recordIO'))!,
+    pushOutputs: bool(get(project, 'pushOutputs')) ?? true,
+  }
 }
 const limitFields = [
   ['logLimitBytes', L('呼び出しごとのログ上限（バイト）'), 1073741824n],
@@ -400,6 +404,9 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
             <Row><span className="secondary caption">{L('実行の要約は常に記録します。成果物は常に保存され、残すかどうかは Card が成果物を作るときに選びます。残さない成果物は実行の終了時に削除されます。')}</span></Row>
           </Section>
           <TrustedFoldersSettings />
+          <Section title={L('バイナリキャッシュ')}>
+            <Row label={L('ビルド出力をキャッシュに送信')}><Toggle checked={recording.pushOutputs} onChange={pushOutputs => setRecording({ ...recording, pushOutputs })} /></Row>
+          </Section>
           <NixPathSettings session={session} />
           <Section>
             <Value label={L('場所')} value={session.dir} />

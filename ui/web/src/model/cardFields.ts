@@ -17,6 +17,7 @@ export function implementedCard(kind: string, symbol: string, systems: string[])
     definition.set('timeoutSeconds', num(0))
     definition.set('buildTimeoutSeconds', num(0))
     definition.set('recordLogs', 'project')
+    definition.set('pushOutputs', 'project')
     definition.set('sandbox', obj([['filesystem', true], ['pid', true], ['ipc', true], ['identity', true],
       ['limits', obj([['cpu', num(0)], ['memoryMiB', num(0)]])]]))
     definition.set('grants', obj([['network', false], ['gui', false]]))

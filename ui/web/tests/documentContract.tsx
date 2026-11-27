@@ -16,12 +16,13 @@ assert.equal(parseReadme('---\ntitle: Results\ndescription:missing space\n---\n'
 assert.equal(parseReadme('---\ntitle: Results\ndescription: \nunknown: value\n---\n'), undefined)
 
 const executable = ['type', 'symbol', 'inputs', 'maxRuns', 'reuseWorker', 'timeoutSeconds',
-  'buildTimeoutSeconds', 'recordLogs', 'recordIO', 'sandbox', 'grants', 'systems'].sort()
+  'buildTimeoutSeconds', 'recordLogs', 'recordIO', 'pushOutputs', 'sandbox', 'grants', 'systems'].sort()
 for (const kind of ['code']) {
   const def = implementedCard(kind, 'star', ['aarch64-linux'])
   assert.deepEqual(def.keys().sort(), executable)
   assert.equal(str(get(def, 'recordIO')), 'project')
   assert.equal(str(get(def, 'recordLogs')), 'project')
+  assert.equal(str(get(def, 'pushOutputs')), 'project')
   assert.equal(numText(get(def, 'timeoutSeconds')), '0')
   assert.equal(numText(get(def, 'buildTimeoutSeconds')), '0')
   assert.equal(numText(get(def, 'sandbox', 'limits', 'cpu')), '0')

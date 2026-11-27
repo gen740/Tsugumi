@@ -221,6 +221,8 @@ class Builder {
     if (const auto v = d.recordLogs())
       s.record_logs = record(*v, s.record_logs);
     if (const auto v = d.recordIO()) s.record_io = record(*v, s.record_io);
+    if (const auto v = d.pushOutputs())
+      s.push_outputs = record(*v, s.push_outputs);
     if (const auto* sandbox = d.sandbox()) {
       s.sandbox.filesystem = *sandbox->filesystem();
       s.sandbox.pid = *sandbox->pid();
@@ -358,6 +360,7 @@ class Builder {
       // runs.
       n.settings.record_logs = *project.recordLogs();
       n.settings.record_io = *project.recordIO();
+      n.settings.push_outputs = project.pushOutputs();
       n.settings.log_limit_bytes = *project.logLimitBytes();
       n.settings.output_limit_bytes = *project.outputLimitBytes();
       n.settings.output_limit_entries = *project.outputLimitEntries();

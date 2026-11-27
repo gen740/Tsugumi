@@ -72,7 +72,7 @@ table ExpressionValue {
 table ResolvedSource { rev:string; narHash:string (required); }
 table Log { line:string; }
 // Size-prefixed stdout frames from the build client.
-table BuildLog { line:string; truncated:bool; }
+table BuildLog { line:string; truncated:bool; built:bool = null; substituter:string; }
 table Build { drv:string (required); active:bool; }
 table Error { message:string; limit:bool; }
 

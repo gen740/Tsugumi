@@ -12,7 +12,9 @@ struct WorkerStoreResult {
   std::string plan;  // the Card build plan JSON
   std::vector<std::string>
       closure;         // runtime references, including the build plan
-  bool built = false;  // false: the result was already in the store
+  bool built = false;
+  std::string substituter;
+  bool pushed = false;
 };
 
 }  // namespace tsugumi

@@ -30,6 +30,11 @@ class NixLogSink final : public nix::Logger {
   auto set_thread_builds(const BuildActivity* builds) -> void {
     thread_builds_ = builds;
   }
+  auto set_substitutions(
+      std::function<void(const std::string&, const std::string&)> receiver)
+      -> void {
+    substitutions_ = std::move(receiver);
+  }
   auto log(nix::Verbosity level, std::string_view message) -> void override {
     if (level <= nix::lvlInfo) emit(message);
   }
@@ -42,6 +47,9 @@ class NixLogSink final : public nix::Logger {
                      nix::ActivityType type, const std::string& text,
                      const Fields& fields, nix::ActivityId) -> void override {
     if (level <= nix::lvlInfo && !text.empty()) emit(text);
+    if (type == nix::actSubstitute && substitutions_ && fields.size() >= 2 &&
+        fields[0].type == Field::tString && fields[1].type == Field::tString)
+      substitutions_(fields[0].s, fields[1].s);
     if (type == nix::actBuild && thread_builds_ && !fields.empty() &&
         fields[0].type == Field::tString) {
       {
@@ -92,5 +100,6 @@ class NixLogSink final : public nix::Logger {
   std::mutex mutex_;
   std::map<nix::ActivityId, std::string> builds_;
   std::function<void(const std::string&)> sink_;
+  std::function<void(const std::string&, const std::string&)> substitutions_;
 };
 }  // namespace tsugumi

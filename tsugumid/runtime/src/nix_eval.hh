@@ -84,6 +84,7 @@ struct NixResult {
   std::string plan_json;
   std::vector<std::string> closure;
   bool built = false;
+  std::string substituter;
   bool execution_list = false;
   uint32_t implementation_count = 1;
   // One per implementation, in run list order; "" for an unlabeled one.

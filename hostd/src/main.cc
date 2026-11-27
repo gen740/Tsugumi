@@ -78,6 +78,17 @@ class StateDirectory {
 auto RunHost(int argc, char** argv) -> int {
   try {
     HostOptions options;
+    if (const auto* cache = std::getenv("TSUGUMI_CACHED"))
+      options.cache_executable = cache;
+    else {
+      const auto bin = std::filesystem::absolute(argv[0]).parent_path();
+      options.cache_executable = bin / "tsugumi-cached";
+#ifdef __APPLE__
+      if (!std::filesystem::exists(options.cache_executable))
+        options.cache_executable =
+            (bin / "../Resources/cache/tsugumi-cached").lexically_normal();
+#endif
+    }
     ServerOptions listener;
     AgentEndpoint(listener);
     listener.tcp_host = "127.0.0.1";

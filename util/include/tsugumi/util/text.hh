@@ -24,6 +24,8 @@ class Utf8Decoder {
 };
 
 auto replace_invalid_utf8(std::string text) -> std::string;
+// For portable run metadata. Removes credentials and store URL settings.
+auto public_cache_endpoint(std::string url) -> std::string;
 
 struct PatchRangeError : std::invalid_argument {
   using std::invalid_argument::invalid_argument;
