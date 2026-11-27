@@ -145,7 +145,7 @@ class WorkerProc {
   // Sends one call and waits for its result. On cancel or deadline the worker
   // gets WorkerCancel, then the process group is killed after one second.
   WorkerOutcome call(
-      std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
+      std::string frame, uint64_t call_id, std::stop_token cancel,
       std::optional<std::chrono::steady_clock::time_point> deadline,
       ArtifactOpen open_artifact = {}, bool create_artifacts = false);
   struct CallInputs {
@@ -155,10 +155,10 @@ class WorkerProc {
     std::filesystem::path artifact_directory;
     bool drain_display;
   };
-  auto call_inputs(CallInputs inputs, uint64_t call_id,
-                   const std::atomic<bool>* cancel,
-                   std::optional<std::chrono::steady_clock::time_point> deadline,
-                   ArtifactOpen open_artifact) -> WorkerOutcome;
+  auto call_inputs(
+      CallInputs inputs, uint64_t call_id, std::stop_token cancel,
+      std::optional<std::chrono::steady_clock::time_point> deadline,
+      ArtifactOpen open_artifact) -> WorkerOutcome;
   auto packed() const -> bool { return packed_; }
   uint64_t next_call_id() { return ++call_id_; }
   auto call_id() const -> uint64_t { return call_id_; }
@@ -196,12 +196,12 @@ class WorkerProc {
  private:
   // Cleanup after a failure whose diagnostic the caller must preserve.
   auto terminate_after_failure(bool force = false) -> void;
-  auto call_frame(
-      std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
-      std::optional<std::chrono::steady_clock::time_point> deadline,
-      ArtifactOpen open_artifact, bool create_artifacts,
-      std::span<const int> descriptors,
-      std::shared_ptr<const workerd::SharedBuffer> result) -> WorkerOutcome;
+  auto call_frame(std::string frame, uint64_t call_id, std::stop_token cancel,
+                  std::optional<std::chrono::steady_clock::time_point> deadline,
+                  ArtifactOpen open_artifact, bool create_artifacts,
+                  std::span<const int> descriptors,
+                  std::shared_ptr<const workerd::SharedBuffer> result)
+      -> WorkerOutcome;
   auto start_data_reader() -> void;
   auto stop_data_reader() -> void;
   auto read_data() -> void;
@@ -242,7 +242,7 @@ class WorkerProc {
   bool awaiting_view_reply_ = false;
   std::optional<WorkerViewReply> view_reply_;
   std::thread display_writer_;
-  std::condition_variable data_ready_;
+  std::condition_variable_any data_ready_;
   std::thread data_thread_;
   std::stop_source data_stop_;
   std::shared_ptr<ViewReceiver> view_receiver_;

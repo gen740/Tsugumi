@@ -123,11 +123,61 @@ TEST(LocalWorker, DisconnectPreservesTheOutcomeWhenTerminationFails) {
   });
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::seconds(3);
-  const auto outcome = worker.call("call", 1, nullptr, deadline);
+  const auto outcome = worker.call("call", 1, {}, deadline);
   peer.get();
   ASSERT_TRUE(outcome.failure);
   EXPECT_EQ(outcome.failure->kind, FailureKind::worker_failed);
   EXPECT_TRUE(terminated);
+}
+
+TEST(LocalWorker, StopRequestWakesACallWithoutADeadline) {
+  namespace W = Tsugumi::Worker;
+  std::array<SocketPair, 4> channels;
+  std::array<int, 4> descriptors;
+  for (size_t i = 0; i < channels.size(); ++i) {
+    descriptors[i] = ::dup(channels[i].fd[0]);
+    ASSERT_GE(descriptors[i], 0);
+    ::fcntl(descriptors[i], F_SETFL, O_NONBLOCK);
+  }
+  const timeval timeout{3, 0};
+  for (size_t i : {0, 1})
+    ASSERT_EQ(::setsockopt(channels[i].fd[1], SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                           sizeof timeout),
+              0);
+  WorkerProc worker({descriptors, {}, {}, 0, 1, [] {}, [](bool) {}, [] {}});
+  std::stop_source stop;
+  auto peer = std::async(std::launch::async, [&] {
+    // Closing the connection also unblocks the call if a check fails.
+    struct Disconnect {
+      int fd;
+      ~Disconnect() { ::shutdown(fd, SHUT_RDWR); }
+    } disconnect{channels[0].fd[1]};
+    EXPECT_EQ(rpc::frame::Read(channels[0].fd[1], 4096), "call");
+    stop.request_stop();
+    const auto cancel = rpc::frame::Read(channels[1].fd[1], 4096);
+    ASSERT_TRUE(cancel);
+    const auto* message = W::GetWorkerMessage(cancel->data());
+    EXPECT_EQ(message->call_id(), 1);
+    EXPECT_NE(message->value_as_WorkerCancel(), nullptr);
+
+    flatbuffers::FlatBufferBuilder builder;
+    const auto result = W::CreateWorkerResult(
+        builder, builder.CreateVector(
+                     std::vector<flatbuffers::Offset<W::WorkerOutput>>{}));
+    W::FinishWorkerMessageBuffer(
+        builder,
+        W::CreateWorkerMessage(builder, 1, W::WorkerPayload::WorkerResult,
+                               result.Union()));
+    rpc::frame::Write(
+        channels[0].fd[1],
+        {reinterpret_cast<const char*>(builder.GetBufferPointer()),
+         builder.GetSize()},
+        4096);
+  });
+  const auto outcome = worker.call("call", 1, stop.get_token(), std::nullopt);
+  peer.get();
+  ASSERT_TRUE(outcome.failure);
+  EXPECT_EQ(outcome.failure->kind, FailureKind::cancelled);
 }
 
 TEST(LocalWorker, DiscardsStaleRepliesAndRelaysViewsWhileIdle) {
@@ -173,7 +223,7 @@ TEST(LocalWorker, DiscardsStaleRepliesAndRelaysViewsWhileIdle) {
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::seconds(3);
   EXPECT_FALSE(
-      worker.call("call", worker.next_call_id(), nullptr, deadline).failure);
+      worker.call("call", worker.next_call_id(), {}, deadline).failure);
   peer.get();
   worker.idle();
   flatbuffers::FlatBufferBuilder b;
