@@ -33,7 +33,7 @@ struct ApplicationSettings: View {
       case .connections: return "network"
       case .binaryCaches: return "shippingbox"
       case .executionEnvironment: return "apple.terminal"
-      case .executionServices: return "network"
+      case .executionServices: return "server.rack"
       }
     }
     /// Where each pane's values are kept, said on the pane.
@@ -485,8 +485,7 @@ private struct SkillSettings: View {
   var body: some View {
     @Bindable var prefs = prefs
     VStack(alignment: .leading, spacing: 8) {
-      InfoButton("チャットで `$名前` として使う Skill のフォルダです。各フォルダの `<名前>/SKILL.md` または `<名前>.md` を読み込みます。プロジェクトの `skills/` も常に読み込みます。")
-      GroupBox("フォルダ") {
+      GroupBox {
         VStack(alignment: .leading, spacing: 4) {
           if prefs.skillFolders.isEmpty {
             Text("フォルダはありません").foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
@@ -507,6 +506,8 @@ private struct SkillSettings: View {
             Button("再読込") { load() }.disabled(state == .loading)
           }
         }
+      } label: {
+        InfoHeader("フォルダ", info: "チャットで `$名前` として使う Skill のフォルダです。各フォルダの `<名前>/SKILL.md` または `<名前>.md` を読み込みます。プロジェクトの `skills/` も常に読み込みます。")
       }
       HStack {
         TextField("Skill を検索", text: $query).textFieldStyle(.roundedBorder)
@@ -655,6 +656,28 @@ private struct APISettings: View {
   }
 }
 
+/// Beside the title of the connection chosen to use: 使用中 only when it can be
+/// used, otherwise that it is chosen but not set up. Nothing while unknown.
+struct ConnectionChoiceBadge: View {
+  enum Kind: Equatable { case inUse, notSetUp }
+  static func kind(selected: Bool, ready: Bool?) -> Kind? {
+    guard selected, let ready else { return nil }
+    return ready ? .inUse : .notSetUp
+  }
+
+  let selected: Bool
+  let ready: Bool?
+  let missing: LocalizedStringKey
+
+  var body: some View {
+    switch Self.kind(selected: selected, ready: ready) {
+    case .inUse?: Text("使用中").font(.caption).foregroundStyle(.green)
+    case .notSetUp?: Text(missing).font(.caption).foregroundStyle(.orange)
+    case nil: EmptyView()
+    }
+  }
+}
+
 /// One API key connection: its key (kept by hostd: never in project files,
 /// settings or logs), its model and the models it offers.
 private struct APIKeySection: View {
@@ -714,7 +737,7 @@ private struct APIKeySection: View {
     } header: {
       HStack {
         Text(id == "openai" ? "OpenAI API キー" : "Anthropic API キー")
-        if provider == id { Text("使用中").font(.caption).foregroundStyle(.green) }
+        ConnectionChoiceBadge(selected: provider == id, ready: stored, missing: "選択中・キー未設定")
       }
     }
     .onAppear {
@@ -737,7 +760,8 @@ private struct ConnectionSettings: View {
   var body: some View {
     let sessions = model.sessions.values.sorted { $0.scopeName([]) < $1.scopeName([]) }
     VStack(alignment: .leading, spacing: 10) {
-      InfoButton("開いているプロジェクトの tsugumid への接続先です。127.0.0.1 にだけ公開しています。外部クライアント（別の UI・Agent）は同じ RPC 契約で接続でき、認証 token は control フォルダの server.ready（0600）にだけ置かれます。")
+      InfoHeader("開いているプロジェクトの接続先", info: "開いているプロジェクトの tsugumid への接続先です。127.0.0.1 にだけ公開しています。外部クライアント（別の UI・Agent）は同じ RPC 契約で接続でき、認証 token は control フォルダの server.ready（0600）にだけ置かれます。")
+        .font(.subheadline)
       List(sessions, id: \.identity.id) { s in
         VStack(alignment: .leading, spacing: 4) {
           HStack {

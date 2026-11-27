@@ -25,6 +25,12 @@ public struct ExecutionServiceConnection: Codable, Identifiable, Equatable, Send
   public let workerPublicKey: String
   public let probes: [ExecutionProbeMeasurement]
   public let capabilities: ExecutionServiceCapabilities
+
+  /// How a list shows the service: its name, and its id only when the two differ.
+  public var label: String { Self.label(name: name, id: id) }
+  public static func label(name: String, id: String) -> String {
+    name.isEmpty || name == id ? id : "\(name) (\(id))"
+  }
 }
 
 public struct ExecutionServiceRegistration: Sendable {

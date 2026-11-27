@@ -17,6 +17,9 @@ const registration = (entry: H.ExecutionServiceT): Registration => ({
   workerPublicKey: s(entry.workerPublicKey),
 })
 
+/** How the list shows a service: its name, and its id only when the two differ. */
+export const serviceLabel = (name: string, id: string) => !name || name === id ? id : `${name} (${id})`
+
 export function ExecutionServicesSettings({ changed }: { changed: () => void }) {
   const [hostPublicKey, setHostPublicKey] = useState('')
   function adopt(state: H.ExecutionServicesT) { setEntries(state.services); setHostPublicKey(s(state.hostPublicKey)) }
@@ -70,7 +73,7 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
     </Section>
     <Section title={L('実行サービス')}>
       {entries.map((entry) => <Row key={s(entry.id)}>
-        <Button kind="borderless" disabled={busy} onClick={() => choose(registration(entry), s(entry.id))}>{s(entry.name)} ({s(entry.id)})</Button>
+        <Button kind="borderless" disabled={busy} onClick={() => choose(registration(entry), s(entry.id))}>{serviceLabel(s(entry.name), s(entry.id))}</Button>
         <span className="secondary">{s(entry.capabilities!.nativeSystem)}</span>
         <Button small disabled={busy} onClick={() => remeasure(s(entry.id))}>{L('測り直す')}</Button>
         {s(entry.id) !== 'local' && entry.capabilities?.serverId &&

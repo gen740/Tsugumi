@@ -54,11 +54,28 @@ final class AppModel {
   /// True once the host check finished and something still needs doing.
   var setupNeeded: Bool { !smokeMode && (setup.map { !$0.ready } ?? false) }
 
+  /// How long the setup check may take before the screen says it has no answer.
+  @ObservationIgnored var setupWait: Duration = .seconds(30)
+  /// The setup check (tests replace it); nil: ask the environments.
+  @ObservationIgnored var checkSetup: (@MainActor () async -> EnvironmentManager.SetupStatus)?
+
+  /// Ends in a definite state: the check's answer or, after `setupWait`, a
+  /// failure saying there is no answer yet (a later answer still replaces it).
   func refreshSetup() async {
     guard !checkingSetup else { return }
     checkingSetup = true
     defer { checkingSetup = false }
-    setup = await environments.setupStatus()
+    let environments = environments
+    let check = checkSetup ?? { await environments.setupStatus() }
+    let wait = setupWait
+    let noAnswer = Task { [weak self] in
+      try? await Task.sleep(for: wait)
+      guard !Task.isCancelled, let self else { return }
+      self.setup = .failed(String(localized: "30 秒待っても応答がありません。応答があれば、ここに表示します。"))
+    }
+    let status = await check()
+    noAnswer.cancel()
+    setup = status
   }
 
   /// First-start preparation of the shared VM happens when the first

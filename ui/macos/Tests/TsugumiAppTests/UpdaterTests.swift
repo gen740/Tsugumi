@@ -72,6 +72,8 @@ private func release(tag: String, draft: Bool = false, prerelease: Bool = false,
   #expect(AppChannel(bundle: Bundle(for: BundleToken.self)) == .dev)
   // a dev build never updates itself
   #expect(Updater(channel: .dev).unavailable != nil)
+  // and offers no update check in the app menu
+  #expect(Updater(channel: .dev).developmentBuild)
 }
 
 private final class BundleToken {}

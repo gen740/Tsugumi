@@ -265,10 +265,21 @@ async function guideState() {
 interface Skill { name: string; description: string; path: string; source: string; source_folder: string; attachment_folder?: string; status: string; always?: boolean; scoped?: boolean; scope?: string[] }
 interface SkillListing { skills: Skill[]; folders: { path: string; status: string }[] }
 
+/** The UI's own one-line description of a built-in Skill (hostd's is in English). */
+export function builtinSkillDescription(path: string): string | undefined {
+  switch (path) {
+    case 'builtin:demo': return L('ツグミが画面を飛び回って、デモや画面の使い方を案内します')
+    case 'builtin:helpers': return L('依頼されたときの手分けの進め方')
+    case 'builtin:review': return L('選択した Card と前提を読む')
+    case 'builtin:rerun-compare': return L('選択した Card を再実行して出力の内容を比較する')
+    default: return undefined
+  }
+}
+
 async function skillMetadata(project?: string, folders = settings().skillFolders.filter((f) => f.enabled).map((f) => f.path), conversationId?: string): Promise<SkillListing> {
   const result = await core.user.call<SkillListing>('SkillsListRequest', { project_path: project, folders, conversation_id: conversationId })
   return { ...result, skills: result.skills.map((s) => ({ ...s,
-    description: s.path === 'builtin:demo' ? L('ツグミが画面を飛び回って、デモや画面の使い方を案内します') : s.path === 'builtin:helpers' ? L('依頼されたときの手分けの進め方') : s.description,
+    description: builtinSkillDescription(s.path) ?? s.description,
     source: s.path.startsWith('builtin:') ? 'Tsugumi' : s.source_folder === (project && `${project}/skills`) ? L('プロジェクト') : (s.source_folder.replace(/\/+$/, '').split('/').pop() ?? ''),
   })) }
 }

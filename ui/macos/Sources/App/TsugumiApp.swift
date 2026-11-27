@@ -104,10 +104,13 @@ struct TsugumiApp: App {
 }
 
 /// Application menu: check for an update, or restart into the one downloaded.
+/// A development build has neither (General → アップデート says why).
 struct UpdateMenuItem: View {
   private let updater = Updater.shared
   var body: some View {
-    if case .ready(let v) = updater.state {
+    if updater.developmentBuild {
+      EmptyView()
+    } else if case .ready(let v) = updater.state {
       Button("再起動して \(v) に更新") { updater.installAndRelaunch() }
     } else {
       if updater.busy {

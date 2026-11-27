@@ -149,6 +149,28 @@ struct WorkflowWindow: View {
   }
 }
 
+/// Why this Mac cannot run virtual machines, from what it reports
+/// (Virtualization.framework itself says only yes or no).
+enum VirtualizationSupport {
+  static func reason(appleSilicon: Bool, hypervisor: Bool) -> String {
+    if !appleSilicon { return String(localized: "この Mac は Apple silicon ではありません。") }
+    if !hypervisor {
+      return String(localized: "この Mac はハードウェア仮想化を提供していません（仮想マシンの中で macOS を動かしている場合など）。")
+    }
+    return String(localized: "Virtualization.framework が、この Mac では仮想マシンを使えないと答えました。")
+  }
+
+  static var current: String {
+    reason(appleSilicon: flag("hw.optional.arm64"), hypervisor: flag("kern.hv_support"))
+  }
+
+  private static func flag(_ name: String) -> Bool {
+    var value: Int32 = 0
+    var size = MemoryLayout<Int32>.size
+    return sysctlbyname(name, &value, &size, nil, 0) == 0 && value != 0
+  }
+}
+
 /// Shows a failed host check separately from confirmed missing prerequisites.
 /// Everything else is set up on the first project start.
 struct EnvironmentSetupView: View {
@@ -167,8 +189,10 @@ struct EnvironmentSetupView: View {
               .font(.headline)
             Text(error).font(.callout).textSelection(.enabled)
           case .checked(let supported, let image, let version)?:
-            step(String(localized: "この Mac で仮想マシンを使える"), ok: supported,
-                 detail: String(localized: "Apple silicon の Mac と macOS 26 以降が必要です。")) { EmptyView() }
+            // Nothing to do here when the Mac says no: a failure with its reason.
+            step(String(localized: "この Mac で仮想マシンを使える"), ok: supported, failed: !supported,
+                 detail: supported ? String(localized: "Apple silicon の Mac と macOS 26 以降が必要です。")
+                                   : VirtualizationSupport.current) { EmptyView() }
             step(String(localized: "実行環境の VM イメージがある"), ok: image,
                  detail: image ? String(localized: "VM イメージ \(version ?? "")")
                                : String(localized: "アプリに VM イメージが含まれていません。開発中は nix run .#guest-image で用意してください。")) {
@@ -192,12 +216,15 @@ struct EnvironmentSetupView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
-  private func step<A: View>(_ title: String, ok: Bool, detail: String, @ViewBuilder action: () -> A) -> some View {
+  /// `failed`: the check finished and there is nothing to do here; otherwise a
+  /// missing step is one still to do.
+  private func step<A: View>(_ title: String, ok: Bool, failed: Bool = false, detail: String,
+                             @ViewBuilder action: () -> A) -> some View {
     HStack(alignment: .top, spacing: 10) {
-      Image(systemName: ok ? "checkmark.circle.fill" : "circle.dashed")
-        .foregroundStyle(ok ? .green : .secondary)
+      Image(systemName: ok ? "checkmark.circle.fill" : failed ? "xmark.circle.fill" : "circle.dashed")
+        .foregroundStyle(ok ? .green : failed ? .red : .secondary)
         .font(.title3)
-        .accessibilityLabel(ok ? "完了" : "未完了")
+        .accessibilityLabel(ok ? "完了" : failed ? "失敗" : "未完了")
       VStack(alignment: .leading, spacing: 2) {
         Text(title).bold()
         Text(detail).font(.callout).foregroundStyle(.secondary)

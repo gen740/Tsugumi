@@ -6,6 +6,13 @@ import { useObserve } from '../model/observable'
 import { Button, Row, Section, Select, Sheet, TextField } from './controls'
 import { Icon } from './icons'
 
+/** The suffix of the title of the connection chosen to use: in use only when it
+ *  can be used, otherwise that it is chosen but not set up. Nothing while unknown. */
+export function choiceSuffix(selected: boolean | undefined, ready: boolean | undefined, missing: string) {
+  if (!selected || ready === undefined) return ''
+  return ready ? L('（使用中）') : missing
+}
+
 /** Shared Settings/first-start presentation. Tokens and the welcome record
  *  stay in the host service. */
 export function ChatGPTSettings({ model = '', setModel, inUse, onboarding = false, onConnected, onChanged, controller }: {
@@ -28,7 +35,7 @@ export function ChatGPTSettings({ model = '', setModel, inUse, onboarding = fals
   </Row>
   return (
     <>
-      <Section info={onboarding ? undefined : <>{L('ChatGPT の Plus・Pro プランで Agent を使います。リクエストは OpenAI の Responses API に送られ、プランの利用枠から使われます（API キーの課金とは別で、Tsugumi に料金はかかりません）。Plus の 5 時間ごとの利用上限は、ほかのアプリ（オープンソースのツールを含む）と共有です。Pro にはこの上限はありません。')}<br />{L('サインインはこのブラウザで行い、Web UI のサーバーが 127.0.0.1 で結果を受け取ります（サーバーと同じマシンのブラウザで開いてください）。トークンはこのサーバーのデータフォルダのファイル（0600）に置かれ、ページ・core・Card には渡されず、プロジェクト・設定・ログにも残りません。macOS アプリのサインインとは別です。')}</>} title={L('ChatGPT プラン（Sign in with ChatGPT）{0}', inUse ? '（使用中）' : '')}>
+      <Section info={onboarding ? undefined : <>{L('ChatGPT の Plus・Pro プランで Agent を使います。リクエストは OpenAI の Responses API に送られ、プランの利用枠から使われます（API キーの課金とは別で、Tsugumi に料金はかかりません）。Plus の 5 時間ごとの利用上限は、ほかのアプリ（オープンソースのツールを含む）と共有です。Pro にはこの上限はありません。')}<br />{L('サインインはこのブラウザで行い、Web UI のサーバーが 127.0.0.1 で結果を受け取ります（サーバーと同じマシンのブラウザで開いてください）。トークンはこのサーバーのデータフォルダのファイル（0600）に置かれ、ページ・core・Card には渡されず、プロジェクト・設定・ログにも残りません。macOS アプリのサインインとは別です。')}</>} title={L('ChatGPT プラン（Sign in with ChatGPT）{0}', choiceSuffix(inUse, connection.loaded ? !!active && active.signedIn && active.planEnabled : undefined, L('（選択中・未サインイン）')))}>
         {st.connectionMessage && <Row><span className="caption selectable">{st.connectionMessage}</span></Row>}
         {!onboarding && active && <Row label={L('使用中のアカウント')}><span className="selectable">{active.email ?? active.clientId}</span></Row>}
         {active?.signedIn && !active.planEnabled && (

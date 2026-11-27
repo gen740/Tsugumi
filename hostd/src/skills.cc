@@ -318,6 +318,17 @@ auto Scan(const fs::path& folder, H::SkillsListT& out) -> void {
     out.skills.push_back(std::move(skill));
   }
 }
+
+// The description: line of a bundled Skill's front matter, or empty.
+auto FrontmatterDescription(std::string_view text) -> std::string {
+  std::istringstream input{std::string(text)};
+  std::string line;
+  if (!std::getline(input, line) || line != "---") return {};
+  while (std::getline(input, line) && line != "---")
+    if (line.starts_with("description:"))
+      return TrimWhitespace(line.substr(12));
+  return {};
+}
 }  // namespace
 
 auto SkillScope(std::string_view text)
@@ -560,7 +571,8 @@ auto ListSkills(const fs::path& project,
       skill->status = "ready";
       skill->scoped = true;
       skill->scope = *SkillScope(BundledSkill(skill->path));
-      skill->description = name;
+      skill->description = FrontmatterDescription(BundledSkill(skill->path));
+      if (skill->description.empty()) skill->description = name;
       out.skills.push_back(std::move(skill));
     }
     auto helpers = std::make_unique<H::SkillT>();

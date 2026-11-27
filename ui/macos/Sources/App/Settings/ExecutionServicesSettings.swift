@@ -41,7 +41,7 @@ struct ExecutionServicesSettings: View {
               Button("ダッシュボードを開く") { dashboard = entry }
             }
           } label: {
-            Button("\(entry.name) (\(entry.id))") { choose(entry) }
+            Button(entry.label) { choose(entry) }
           }
         }
         Button("すべて測り直す") { remeasure(nil) }

@@ -23,7 +23,7 @@ import { Icon } from './icons'
 import { PROJECT_SETTINGS_PANES, type ProjectSettingsPane, ProjectSettingsContent } from './projectViews'
 import { FolderPicker } from './sidebar'
 import { adoptLanguage, L, language, type Language } from '../i18n'
-import { ChatGPTSettings } from './chatgpt'
+import { ChatGPTSettings, choiceSuffix } from './chatgpt'
 import { TrustedFoldersSettings } from './trustedFolders'
 import { ExecutionServicesSettings } from './executionServices'
 
@@ -36,7 +36,7 @@ const CATS: { id: Category; title: string; icon: string; storage: string }[] = [
   { id: 'skills', title: 'Skills', icon: 'wand.and.stars', storage: L('このホスト（Tsugumi web サーバーの設定）') },
   { id: 'api', title: 'API', icon: 'key', storage: L('このホスト（設定と API キーは hostd）') },
   { id: 'connections', title: L('外部接続'), icon: 'network', storage: L('表示のみ（開いているプロジェクトの接続先）') },
-  { id: 'executionServices', title: L('実行サービス'), icon: 'network', storage: L('このホスト（Tsugumi web サーバーの設定）') },
+  { id: 'executionServices', title: L('実行サービス'), icon: 'server.rack', storage: L('このホスト（Tsugumi web サーバーの設定）') },
 ]
 
 /** The settings of one project: kept in the project (or its environment). */
@@ -488,9 +488,8 @@ function SkillSettings() {
   const shown = found.filter((s) => !q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q))
   return (
     <div className="col gap8 pad16 fill">
-      <div className="row"><InfoButton>{L('チャットで `$名前` として使う Skill のフォルダです。各フォルダの `<名前>/SKILL.md` または `<名前>.md` を読み込みます。プロジェクトの `skills/` も常に読み込みます。')}</InfoButton></div>
       <div className="groupbox col gap4">
-        <div className="headline">{L('フォルダ')}</div>
+        <div className="row gap4 center"><span className="headline">{L('フォルダ')}</span><InfoButton>{L('チャットで `$名前` として使う Skill のフォルダです。各フォルダの `<名前>/SKILL.md` または `<名前>.md` を読み込みます。プロジェクトの `skills/` も常に読み込みます。')}</InfoButton></div>
         {folders && !folders.length && <div className="secondary">{L('フォルダはありません')}</div>}
         {folders?.map((f) => (
           <div key={f.path} className="skill-folder-row">
@@ -652,7 +651,7 @@ function KeySection({ id, s, reload, update }: { id: 'anthropic' | 'openai'; s: 
     }
   }
   return (
-    <Section title={L('{0} API キー{1}', name, s.provider === id ? '（使用中）' : '')}>
+    <Section title={L('{0} API キー{1}', name, choiceSuffix(s.provider === id, !!source, L('（選択中・キー未設定）')))}>
       <Row label={L('保存先')}><span className="secondary">{sourceLabel}</span></Row>
       <Row label={L('新しい API キー')}>
         <input type="password" className="field" value={key} onChange={(e) => setKey(e.target.value)} autoComplete="off" spellCheck={false} aria-label={L('新しい {0} API キー', name)} />
@@ -697,7 +696,7 @@ function ConnectionSettings() {
   }, [])
   return (
     <div className="col gap8 pad16 fill">
-      <div className="row"><InfoButton>{L('開いているプロジェクトの tsugumid への接続先です。127.0.0.1 にだけ公開しています。外部クライアント（別の UI・Agent）は同じ RPC 契約で接続でき、認証 token は control フォルダの server.ready（0600）にだけ置かれます。')}</InfoButton></div>
+      <div className="row gap4 center"><span className="headline">{L('開いているプロジェクトの接続先')}</span><InfoButton>{L('開いているプロジェクトの tsugumid への接続先です。127.0.0.1 にだけ公開しています。外部クライアント（別の UI・Agent）は同じ RPC 契約で接続でき、認証 token は control フォルダの server.ready（0600）にだけ置かれます。')}</InfoButton></div>
       <div className="list bordered flex1">
         {list?.map((e) => (
           <div key={e.key} className="list-row col-start gap4">

@@ -43,7 +43,7 @@ func availableSkills(project: URL? = nil, folders: [String], conversationID: Str
     if path == "builtin:demo" { return ChatController.demoSkill }
     let folder = s["source_folder"] as? String ?? ""
     let source = path.hasPrefix("builtin:") ? "Tsugumi" : folder == project?.appendingPathComponent("skills").path ? String(localized: "プロジェクト") : URL(fileURLWithPath: folder).lastPathComponent
-    return Skill(name: s["name"] as? String ?? "", description: path == "builtin:helpers" ? String(localized: "依頼されたときの手分けの進め方") : s["description"] as? String ?? "", path: path, source: source, sourceFolder: folder, attachmentFolder: s["attachment_folder"] as? String ?? "", always: s["always"] as? Bool ?? false, scoped: s["scoped"] as? Bool ?? false, scope: s["scope"] as? [String] ?? [])
+    return Skill(name: s["name"] as? String ?? "", description: ChatController.builtinSkillDescription(path) ?? s["description"] as? String ?? "", path: path, source: source, sourceFolder: folder, attachmentFolder: s["attachment_folder"] as? String ?? "", always: s["always"] as? Bool ?? false, scoped: s["scoped"] as? Bool ?? false, scope: s["scope"] as? [String] ?? [])
   }
   let missing = (value["folders"] as? [[String: String]] ?? []).filter { $0["status"] != "ready" }.compactMap { $0["path"] }
   return (skills, missing)
@@ -408,6 +408,16 @@ final class ChatController {
   /// The built-in $demo: Tsugumi of this chat shows the screen around (it flies only then).
   static let demoSkill = Skill(name: "demo", description: String(localized: "ツグミが画面を飛び回って、デモや画面の使い方を案内します"),
                                path: "builtin:demo", source: "Tsugumi", sourceFolder: "", attachmentFolder: "")
+
+  /// The UI's own one-line description of a built-in Skill (hostd's is in English).
+  static func builtinSkillDescription(_ path: String) -> String? {
+    switch path {
+    case "builtin:helpers": return String(localized: "依頼されたときの手分けの進め方")
+    case "builtin:review": return String(localized: "選択した Card と前提を読む")
+    case "builtin:rerun-compare": return String(localized: "選択した Card を再実行して出力の内容を比較する")
+    default: return nil
+    }
+  }
 
   func reloadSkills() {
     Task {

@@ -22,6 +22,8 @@ export function chatGPTSignInIsLocal(hostname: string) {
  *  are replaceable by the existing API/browser doubles in behavioral tests. */
 export class ChatGPTSignInModel extends Observable {
   state: ChatGPTState = { accounts: [], signingIn: false, outcome: null, usageURL: 'https://chatgpt.com/settings/usage' }
+  /** Whether the accounts were read at least once. */
+  loaded = false
   message?: string
   connectionError?: string
   url?: string
@@ -72,7 +74,7 @@ export class ChatGPTSignInModel extends Observable {
     if (read !== this.read || attempt !== this.attempt) return this.state
     const failure = [shared, own].find(result => result.status === 'rejected')
     this.connectionError = failure && errorText(failure.reason)
-    if (shared.status === 'fulfilled') this.shared = shared.value
+    if (shared.status === 'fulfilled') { this.shared = shared.value; this.loaded = true }
     if (attempt) {
       let status = own.status === 'fulfilled' ? own.value : undefined
       if ((!status || status.signingIn) && shared.status === 'fulfilled' && shared.value.attemptId === attempt.id)

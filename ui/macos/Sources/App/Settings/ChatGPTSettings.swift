@@ -20,7 +20,9 @@ struct ChatGPTSettings: View {
       HStack {
         Text("ChatGPT プラン（Sign in with ChatGPT）")
         InfoButton(Text("ChatGPT の Plus・Pro プランで Agent を使います。リクエストは OpenAI の Responses API に送られ、プランの利用枠から使われます（API キーの課金とは別で、Tsugumi に料金はかかりません）。Plus の 5 時間ごとの利用上限は、ほかのアプリ（オープンソースのツールを含む）と共有です。Pro にはこの上限はありません。"), Text("サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。認証とトークンの保存は hostd が行います。トークンは Card やプロジェクト・設定・ログには残りません。"))
-        if provider == "chatgpt" { Text("使用中").font(.caption).foregroundStyle(.green) }
+        ConnectionChoiceBadge(selected: provider == "chatgpt",
+                              ready: connection.loaded ? connection.active.map { $0.signedIn && $0.planEnabled } ?? false : nil,
+                              missing: "選択中・未サインイン")
       }
     }
     .onAppear { Task { models = (try? await CoreHostClient.shared.storedModels("chatgpt")) ?? [] } }
@@ -60,6 +62,8 @@ final class ChatGPTSignInModel {
   }
 
   var accounts: [ChatGPTAccountInfo] = []
+  /// Whether the accounts were read at least once.
+  private(set) var loaded = false
   var signingIn: Task<Void, Never>?
   var message: String?
   var welcome: String?
@@ -87,6 +91,7 @@ final class ChatGPTSignInModel {
     if let onConnected { connected = onConnected }
     let status = await load()
     accounts = status.accounts
+    loaded = true
     if let message = status.message { self.message = message }
     if let result = status.result, result.account.active, result.account.signedIn, result.account.planEnabled, result.welcome {
       welcome = result.account.clientId

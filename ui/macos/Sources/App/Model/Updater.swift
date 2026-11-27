@@ -139,9 +139,12 @@ final class Updater {
     build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
   }
 
+  /// A build from source (Tsugumi Dev): it never updates itself, so it offers no update check.
+  var developmentBuild: Bool { channel == .dev || app.pathExtension != "app" }
+
   /// Why this copy of the app cannot update itself (nil: it can).
   var unavailable: String? {
-    if channel == .dev || app.pathExtension != "app" {
+    if developmentBuild {
       return String(localized: "ソースからビルドした開発版（Tsugumi Dev）はこの機能では更新できません。")
     }
     if app.path.contains("/AppTranslocation/") {

@@ -85,6 +85,11 @@ TEST(HostSkillScope, CatalogExposesDeclarationsButNeverSkillBodies) {
     return **found;
   };
   EXPECT_EQ(named("review").scope, std::vector<std::string>{"read"});
+  // Built-in Skills carry their own front-matter description, not their name.
+  for (const auto* builtin : {"review", "rerun-compare"}) {
+    EXPECT_NE(named(builtin).description, builtin);
+    EXPECT_FALSE(named(builtin).description.empty());
+  }
   EXPECT_TRUE(named("custom").scoped);
   const auto& scope = named("custom").scope;
   EXPECT_EQ((std::set<std::string>{scope.begin(), scope.end()}),

@@ -1827,5 +1827,18 @@
   },
   "ダッシュボードを読み込み中…": "Loading dashboard…",
   "実行待機中": "Queued",
-  "このホストの鍵を削除しました。再接続するにはワーカー側で許可してください。": "This host’s key was removed. Authorize it again on the worker to reconnect."
+  "このホストの鍵を削除しました。再接続するにはワーカー側で許可してください。": "This host’s key was removed. Authorize it again on the worker to reconnect.",
+  "選択した Card と前提を読む": "Inspect selected Cards and their assumptions",
+  "選択した Card を再実行して出力の内容を比較する": "Rerun selected Cards and compare their output content",
+  "選択中・キー未設定": "Selected, no key",
+  "選択中・未サインイン": "Selected, not signed in",
+  "（使用中）": " (in use)",
+  "（選択中・キー未設定）": " (selected, no key)",
+  "（選択中・未サインイン）": " (selected, not signed in)",
+  "開いているプロジェクトの接続先": "Endpoints of Open Projects",
+  "キャッシュ接続": "Cache Connections",
+  "この Mac は Apple silicon ではありません。": "This Mac does not have Apple silicon.",
+  "この Mac はハードウェア仮想化を提供していません（仮想マシンの中で macOS を動かしている場合など）。": "This Mac does not provide hardware virtualization (for example, when macOS itself runs in a virtual machine).",
+  "Virtualization.framework が、この Mac では仮想マシンを使えないと答えました。": "Virtualization.framework reports that this Mac cannot run virtual machines.",
+  "30 秒待っても応答がありません。応答があれば、ここに表示します。": "No answer after 30 seconds. The answer will appear here when it arrives."
 }
