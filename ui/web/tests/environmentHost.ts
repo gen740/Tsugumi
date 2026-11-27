@@ -12,10 +12,9 @@ assert.deepEqual(environmentState(ready), {
 })
 const diagnostic = { kind: 'incompatible_history', found: '2', expected: '3' }
 const failed = Object.assign(new H.EnvironmentStateT(), {
-  phase: H.EnvironmentPhase.Failed, recovery: 'Retry the virtual machine', message: 'History open failed',
+  phase: H.EnvironmentPhase.Failed, message: 'History open failed',
   startupError: Object.assign(new H.StartupErrorT(), diagnostic),
 })
-assert.equal(environmentState(failed).recovery, failed.recovery)
 assert.deepEqual(environmentState(failed).historyVersionMismatch, diagnostic)
 const progress = environmentProgress(new H.EnvironmentProgressT('/project', 'key', 'booting the VM', 0.5, true))
 assert.equal(progress.state, 'starting')

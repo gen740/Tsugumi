@@ -73,9 +73,7 @@ namespace frame = rpc::frame;
 // accepts the same largest frame and nothing a client could not send.
 constexpr size_t kMaxHelperFrameBytes = TransportLimits{}.max_frame_bytes;
 auto HelperFailure(const std::string& why) -> EnvironmentFailure {
-  return EnvironmentFailure("The VM helper connection closed: " + why,
-                            "Retry the connection. Running processes continue.",
-                            "");
+  return EnvironmentFailure("The VM helper connection closed: " + why, "");
 }
 auto Read(trace::Link& link, int fd) -> std::unique_ptr<V::MessageT> {
   std::optional<std::string> bytes;
@@ -272,8 +270,7 @@ class VMProcess final : public EnvironmentProcess {
     request.key = key;
     if (CallProcess(std::move(request)).running)
       throw EnvironmentFailure(
-          "A resident project process cannot be authenticated",
-          "Stop the environment and retry.", "");
+          "A resident project process cannot be authenticated", "");
   }
   auto Runtime(const H::HostRuntimeRequestT& request)
       -> H::HostRuntimeT override {
@@ -487,8 +484,7 @@ class VMProcess final : public EnvironmentProcess {
     auto* reply = message->payload.AsReply();
     if (!reply) throw std::runtime_error("Expected a VM helper reply");
     if (const auto* failure = reply->value.AsFailure())
-      throw EnvironmentFailure(failure->message, failure->recovery,
-                               failure->log);
+      throw EnvironmentFailure(failure->message, failure->log);
     return std::make_unique<V::ReplyT>(*reply);
   }
   auto CallProcess(V::ProcessRequestT request) -> V::ProcessT {

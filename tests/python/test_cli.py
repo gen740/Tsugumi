@@ -540,7 +540,7 @@ def test_recent_projects_are_owned_by_the_host_core(vm_server):
 
 
 @needs_server
-def test_a_vm_start_failure_preserves_the_hosts_recovery_message(vm_server):
+def test_a_vm_start_failure_preserves_the_helper_diagnostic(vm_server):
     from contextlib import closing
     from harness.remote_worker import string
     from test_web_server import page_host
@@ -552,7 +552,6 @@ def test_a_vm_start_failure_preserves_the_hosts_recovery_message(vm_server):
         state = host.call("EnvironmentRequest", project=str(project), action=EnvironmentAction.Start)
     assert state.phase == EnvironmentPhase.Failed
     assert string(state.message) == "fixture VM failed"
-    assert string(state.recovery) == "Retry the virtual machine"
 
 
 # ---- Running the command again ---------------------------------------------------

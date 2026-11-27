@@ -100,8 +100,7 @@ class HelperDouble final : public host::EnvironmentProcess {
   auto GuardStart(const std::string&) -> void override {
     if (guest && running)
       throw host::EnvironmentFailure(
-          "A resident project process cannot be authenticated",
-          "Stop the environment and retry.", "");
+          "A resident project process cannot be authenticated", "");
   }
   auto Poll(int64_t, bool) -> std::optional<int> override {
     return running ? std::nullopt : std::optional<int>(0);
@@ -304,6 +303,46 @@ TEST(EnvironmentAdapterTest, FailureAndTimeoutIncludeBoundedDaemonTail) {
   EXPECT_FALSE(authorization.active);
   EXPECT_FALSE(helper->running);
 }
+TEST(EnvironmentAdapterTest, InvalidDocumentStopsGuestLaunch) {
+  TemporaryDirectory directory;
+  const auto project = directory.path / "project";
+  const auto path = "definitions/record/_card.json";
+  Write(project / "tsugumi.json",
+        FixtureProjectDocument(
+            R"({"canvas":{"cards":[{"id":"record"}],"connections":[]}})"));
+  Write(project / path, FixtureCodeCard(R"({"workerCapabilities":[]})"));
+  Write(project / "definitions/record/README.md", host::CardReadme("record"));
+  auto helper = std::make_shared<HelperDouble>();
+  helper->guest = true;
+  AuthorizationDouble authorization;
+  host::EnvironmentOptions options;
+  options.directory = directory.path / "environments";
+  options.socket_directory = directory.path / "sockets";
+  options.run_scratch_directory = directory.path / "run-scratch";
+  options.process = helper;
+  host::Environments service(
+      options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
+  H::EnvironmentRequestT input;
+  input.project = project.string();
+  input.action = H::EnvironmentAction::Start;
+
+  const auto failed = service.Handle(input);
+  EXPECT_EQ(failed.phase, H::EnvironmentPhase::Failed);
+  ASSERT_NE(failed.startup_error, nullptr);
+  EXPECT_EQ(failed.startup_error->kind, "invalid_document");
+  EXPECT_EQ(failed.startup_error->path, path);
+  EXPECT_EQ(failed.startup_error->message,
+            "definitions/record/_card.json: workerCapabilities is not allowed "
+            "on type code");
+  EXPECT_EQ(helper->launches.load(), 0);
+
+  Write(project / path, FixtureCodeCard());
+  const auto ready = service.Handle(input);
+  EXPECT_EQ(ready.phase, H::EnvironmentPhase::Ready);
+  EXPECT_EQ(ready.startup_error, nullptr);
+  EXPECT_EQ(helper->launches.load(), 1);
+}
+
 TEST(EnvironmentAdapterTest,
      HostUsesCoreRequirementsAndDoesNotRescanUnacceptedFiles) {
   TemporaryDirectory directory;

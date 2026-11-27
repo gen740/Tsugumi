@@ -89,8 +89,9 @@ table EnvironmentRequest {
   stale_store:string;
 }
 // Why a project daemon could not open its project (its control folder's
-// server.startup-error). kind: incompatible_history, resource_limit or
-// incompatible_state or project_open_failed. Format mismatches include the file path.
+// server.startup-error). kind: incompatible_history, incompatible_state,
+// invalid_document, resource_limit or project_open_failed. The path is
+// project-relative for invalid_document and host-absolute for state mismatches.
 table StartupError { kind:string; found:string; expected:string; source:string; message:string; path:string; }
 // Host-selected attached roots in the running project environment.
 table AttachedRoot { host_path:string (required); execution_path:string (required); }
@@ -107,9 +108,8 @@ table EnvironmentState {
   control_dir:string;
   ready_file:string;
   message:string;
-  recovery:string;
   log:string;
-  // The structured state format mismatch diagnostic, for explicit recovery.
+  // Structured diagnostics for a failure to open the project.
   startup_error:StartupError;
   execution_scope_unavailable:bool;
   folders:[string];

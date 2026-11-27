@@ -19,7 +19,7 @@ table Request { value:RequestPayload; }
 // The host chooses retention; the helper only applies these file operations.
 table Reset { keep_files:[string]; discard_other_files:bool; }
 table Process { pid:long; running:bool; endpoint:string; }
-table Failure { message:string (required); recovery:string; log:string; }
+table Failure { message:string (required); log:string; }
 union ReplyPayload { Process, HostRuntime:Tsugumi.Host.HostRuntime, HostTerminal:Tsugumi.Host.HostTerminal, Acknowledgement:Tsugumi.Service.Acknowledgement, Failure }
 table Reply { value:ReplyPayload; }
 table Progress { key:string (required); stage:string (required); fraction:double = null; preparing:bool; }

@@ -20,6 +20,7 @@ import { Icon } from './icons'
 import { LogTimelinePanel } from './logs'
 import { WorkbenchSidebar } from './sidebar'
 import { L } from '../i18n'
+import type { EnvPublicState } from '../wire/environment'
 
 const readWidth = (k: string, fallback: number) => {
   try {
@@ -276,6 +277,18 @@ function causeIn(log: string): string | undefined {
   return line.slice(i + ' error '.length).trim()
 }
 
+export function environmentFailureText(env: EnvPublicState, localize = L): Pick<Problem, 'message' | 'recovery' | 'cause'> {
+  const invalid = env.invalidDocument
+  if (!invalid) {
+    return { message: env.message ?? '', recovery: localize('ログを確認してから、再試行してください。'), cause: causeIn(env.log ?? '') }
+  }
+  const file = invalid.path
+    ? localize('プロジェクト内の「{0}」は、このバージョンの Tsugumi では無効です。', invalid.path)
+    : localize('このバージョンの Tsugumi では、このプロジェクトの文書を読み込めません。')
+  return { message: [file, invalid.message].filter(Boolean).join('\n'),
+    recovery: localize('エラーメッセージで指摘された箇所を修正または削除してから、再試行してください。') }
+}
+
 /** The page shown when the environment did not start (or stopped, or the
  *  project could not be read): what happened, what to do, the actions, and
  *  the log for the details. It replaces the canvas. */
@@ -299,11 +312,8 @@ function EnvironmentProblemView({ session, onSwitchProject }: { session: Project
       recovery: L('プロジェクトを閉じ、.tsugumi/runs.sqlite を別の場所に保管してから開き直してください。'),
       log: '', canStop: true }
   } else if (env.state === 'failed') {
-    const log = env.log ?? ''
-    p = { icon: 'xmark.octagon.fill', color: 'red', title: L('実行環境を起動できませんでした'), message: env.message ?? '', recovery: env.recovery || undefined, log, canStop: true, cause: causeIn(log) }
-    if (p.cause?.includes('cannot open the project')) {
-      p.recovery = L('プロジェクトのファイル（tsugumi.json・layout.bin・definitions の中）の書式を直してから、再試行してください。文書と実行履歴は消えません。')
-    }
+    p = { icon: 'xmark.octagon.fill', color: 'red', title: L('実行環境を起動できませんでした'),
+      ...environmentFailureText(env), log: env.log ?? '', canStop: true }
   } else if (env.state === 'stopped') {
     p = { icon: 'pause.circle.fill', color: 'secondary', title: L('実行環境は停止しています'), message: L('このプロジェクトの実行環境（tsugumid）は動いていません。起動すると編集と実行ができます。'), log: '', canStop: false }
   } else {

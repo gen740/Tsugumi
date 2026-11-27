@@ -19,6 +19,7 @@
 #include "agent/store.hh"
 #include "host/projects.hh"
 #include "host/vm_process.hh"
+#include "tsugumi/document/document.hh"
 #include "tsugumi/document/host_requirements.hh"
 #include "tsugumi/protocol/runtime_state_generated.h"
 #include "tsugumi/util/crypto.hh"
@@ -306,15 +307,13 @@ struct Environments::Impl {
   }
   auto Failed(
       Entry& entry, const std::string& message,
-      const EnvironmentFailure* failure = nullptr,
       H::EnvironmentFailureCode code = H::EnvironmentFailureCode::LaunchFailed,
-      const sql::FormatMismatch* mismatch = nullptr) -> void {
+      const std::exception* cause = nullptr) -> void {
     Revoke(entry);
     ClearEndpoint(entry);
     entry.state.phase = H::EnvironmentPhase::Failed;
     entry.state.failure_code = code;
-    entry.state.recovery =
-        failure ? failure->recovery : "Check the log and retry.";
+    const auto* failure = dynamic_cast<const EnvironmentFailure*>(cause);
     entry.state.log = failure ? failure->log : LogTail(entry);
     if (entry.state.log.size() > 65536)
       entry.state.log.erase(0, entry.state.log.size() - 65536);
@@ -326,13 +325,21 @@ struct Environments::Impl {
     }
     entry.state.startup_error.reset();
     auto out = std::make_unique<H::StartupErrorT>();
-    if (mismatch) {
+    if (const auto* mismatch = dynamic_cast<const sql::FormatMismatch*>(cause)) {
       out->kind = "incompatible_state";
       out->found = std::to_string(mismatch->found);
       out->expected = std::to_string(mismatch->expected);
       out->source = "local";
       out->message = mismatch->what();
       out->path = mismatch->path.string();
+    } else if (const auto* document = dynamic_cast<const DocumentError*>(cause);
+               document && document->code == "invalid_document") {
+      // The host validates the files while planning the guest's mounts.
+      out->kind = document->code;
+      out->message = document->what();
+      if (const auto path = document->args.find("path");
+          path != document->args.end())
+        out->path = path->second;
     } else if (const auto raw = fs::read_file(
                    std::filesystem::path(entry.state.control_dir) /
                    "server.startup-error")) {
@@ -343,10 +350,13 @@ struct Environments::Impl {
         out->source = error->source;
         out->message = error->message;
         const auto name = std::filesystem::path(error->path).filename();
-        if (name == "runs.sqlite" || name == "document.sqlite")
+        if (error->kind == "invalid_document") {
+          out->path = error->path;
+        } else if (name == "runs.sqlite" || name == "document.sqlite") {
           out->path =
               (std::filesystem::path(entry.state.project) / ".tsugumi" / name)
                   .string();
+        }
       }
     }
     if (!out->kind.empty()) entry.state.startup_error = std::move(out);
@@ -372,14 +382,10 @@ struct Environments::Impl {
       // A native child reports the daemon's exit code. Guest status may
       // establish that the process disappeared without reporting its exit code.
       if (*status >= 0 && WIFEXITED(*status) && WEXITSTATUS(*status) == 4) {
-        const EnvironmentFailure conflict(
-            "tsugumid could not acquire the project lock.",
-            "Another tsugumid owns this project. Stop it and retry.",
-            LogTail(entry));
-        Failed(entry, conflict.what(), &conflict,
+        Failed(entry, "tsugumid could not acquire the project lock.",
                H::EnvironmentFailureCode::ProcessExit);
       } else {
-        Failed(entry, "tsugumid exited. Retry to start it again.", nullptr,
+        Failed(entry, "tsugumid exited.",
                H::EnvironmentFailureCode::ProcessExit);
       }
     }
@@ -427,7 +433,6 @@ struct Environments::Impl {
       entry.ready_file = identity;
       ready.phase = H::EnvironmentPhase::Ready;
       ready.message.clear();
-      ready.recovery.clear();
       ready.log.clear();
       ready.startup_error.reset();
       ready.failure_code = H::EnvironmentFailureCode::None;
@@ -692,19 +697,19 @@ struct Environments::Impl {
             });
       if (ready) return;
       Stop(entry);
-      Failed(entry, "Environment start cancelled", nullptr,
+      Failed(entry, "Environment start cancelled",
              H::EnvironmentFailureCode::Cancelled);
     } catch (const sql::FormatMismatch& error) {
-      Failed(entry, error.what(), nullptr,
-             H::EnvironmentFailureCode::LaunchFailed, &error);
+      Failed(entry, error.what(), H::EnvironmentFailureCode::LaunchFailed,
+             &error);
     } catch (const std::exception& error) {
       if (entry.pid) Stop(entry);
       if (start_stop.stop_requested())
-        Failed(entry, "Environment start cancelled", nullptr,
+        Failed(entry, "Environment start cancelled",
                H::EnvironmentFailureCode::Cancelled);
       else
-        Failed(entry, error.what(),
-               dynamic_cast<const EnvironmentFailure*>(&error));
+        Failed(entry, error.what(), H::EnvironmentFailureCode::LaunchFailed,
+               &error);
     }
   }
   auto MoveStateAside(Entry& entry, const H::EnvironmentRequestT& request)
@@ -744,7 +749,6 @@ struct Environments::Impl {
     entry.state.phase = H::EnvironmentPhase::Stopped;
     entry.state.startup_error.reset();
     entry.state.message.clear();
-    entry.state.recovery.clear();
     entry.state.log.clear();
     entry.state.failure_code = H::EnvironmentFailureCode::None;
     Notify(entry);
@@ -792,7 +796,6 @@ struct Environments::Impl {
     ClearEndpoint(entry);
     entry.state.phase = H::EnvironmentPhase::Stopped;
     entry.state.message.clear();
-    entry.state.recovery.clear();
     entry.state.log.clear();
     entry.state.startup_error.reset();
     entry.state.failure_code = H::EnvironmentFailureCode::None;

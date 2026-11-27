@@ -21,7 +21,7 @@ from harness.file_events import process_file
 
 import pytest
 
-from conftest import BUILD, EMPTY_PROJECT, write_project
+from conftest import BUILD, EMPTY_PROJECT, write_card, write_project
 
 HOST = Path(os.environ.get("TSUGUMI_HOSTD", BUILD / "hostd/tsugumi-hostd"))
 BINDINGS = Path(os.environ.get("TSUGUMI_PY_BINDINGS", BUILD / "generated/python"))
@@ -327,6 +327,31 @@ os._exit(0)
             proc.terminate()
             proc.wait(timeout=10)
             proc.stdout.close()
+
+
+@pytest.mark.parametrize(("field", "value", "diagnostic"), [
+    ("workerCapabilities", [], "workerCapabilities is not allowed on type code"),
+    ("maxRuns", 0, "maxRuns must be at least 1"),
+])
+def test_invalid_card_startup_reports_the_project_relative_path(host, project, field, value, diagnostic):
+    from Tsugumi.Host.EnvironmentAction import EnvironmentAction
+    from Tsugumi.Host.EnvironmentPhase import EnvironmentPhase
+
+    call, _, _ = host
+    fields = {"project": str(project), "action": EnvironmentAction.Start}
+    path = "definitions/record/_card.json"
+    write_project(project, {"canvas": {"cards": [{"id": "record"}], "connections": []}})
+    write_card(project / "definitions/record", **{field: value})
+    result = call("EnvironmentRequest", fields)
+    assert result["phase"] == EnvironmentPhase.Failed, result
+    assert result["startupError"]["kind"] == "invalid_document"
+    assert result["startupError"]["path"] == path
+    assert result["startupError"]["message"] == f"{path}: {diagnostic}"
+
+    write_card(project / "definitions/record")
+    result = call("EnvironmentRequest", fields)
+    assert result["phase"] == EnvironmentPhase.Ready, result
+    assert "startupError" not in result
 
 
 @pytest.mark.parametrize(("name", "kind"), [
