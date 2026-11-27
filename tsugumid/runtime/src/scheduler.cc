@@ -836,9 +836,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   }
 
   void schedule_fast() {
+    for (uint32_t lane = p_.max_concurrency; lane > 0; --lane)
+      fast_lanes_.push_back(lane - 1);
     std::vector<std::future<void>> fan_out;
     for (;;) {
-      std::vector<Work> ready;
+      std::vector<std::pair<Work, uint32_t>> ready;
       bool parallel = false;
       {
         std::unique_lock lock(mu_);
@@ -853,7 +855,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
             work->cancellation =
                 std::make_shared<BatchCancellation>(work_stop_.get_token());
             ++running_;
-            ready.push_back(std::move(*work));
+            ready.emplace_back(std::move(*work), fast_lanes_.back());
+            fast_lanes_.pop_back();
           }
         }
         if (ready.empty()) {
@@ -874,14 +877,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         return true;
       });
       if (parallel) {
-        for (uint32_t lane = 0; lane < ready.size(); ++lane)
-          fan_out.push_back(std::async(
-              std::launch::async,
-              [this, work = std::move(ready[lane]), lane]() mutable {
-                execute_work(work, lane);
-              }));
+        for (auto& [work, lane] : ready)
+          fan_out.push_back(
+              std::async(std::launch::async,
+                         [this, work = std::move(work), lane]() mutable {
+                           execute_work(work, lane);
+                         }));
       } else {
-        execute_work(ready.front(), 0);
+        auto& [work, lane] = ready.front();
+        execute_work(work, lane);
       }
     }
     for (auto& worker : fan_out) worker.get();
@@ -947,6 +951,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       std::lock_guard lock(mu_);
       nodes_[work.node].running = false;
       --running_;
+      if (svc_.packed_fast()) fast_lanes_.push_back(lane);
     }
     cv_.notify_all();
   }
@@ -2005,6 +2010,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   std::condition_variable worker_cv_;
   std::deque<std::function<void(uint32_t)>> worker_tasks_;
   std::vector<std::thread> workers_;
+  std::vector<uint32_t> fast_lanes_;  // guarded by mu_ once scheduling starts
   uint32_t worker_budget_ = 0;
   bool pool_stop_ = false;
   uint32_t running_ = 0;
