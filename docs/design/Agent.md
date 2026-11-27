@@ -29,6 +29,16 @@ budget. Total sizes and `full_output_path` identify complete
 See the [RPC contract](Protocol.md#projectshell) and
 [approval checks](security.md#the-agents-permission-boundary).
 
+## Runs that end after the turn
+
+A model turn's `run` result that is still active registers that run with its conversation and the turn that started it. Hostd watches it with `run_status` waits (`hostd/agent/src/run_wakes.cc`). When it ends, and the conversation's latest turn finished without a later turn from the person, hostd starts one continuation turn through the ordinary turn machinery. Its user message is a host note: the model reads the run id, its state and the failed Cards with their diagnostics' first line, and the presentation shows a `note` row (`run_ended`) instead of the text. A run ending while a turn runs waits for that turn to end. A stopped, failed or interrupted turn leaves the next step to the person, and a result showing the run's end (for example a wait in the same turn) means the Agent already saw it. Each run brings a conversation back at most once.
+
+Only runs the Agent started in that conversation count; external tool calls (MCP clients) and the guide do not. `ConversationRunWakeRequest` (human only) turns it off for one conversation. The choice is a conversation-scoped host setting and `ConversationResult.run_wake` reports it. Watches live for the service's lifetime: after a host restart, a run that ends brings nothing back.
+
+## Edits during a run
+
+A run executes the document it was accepted with (`RunStatus.rev`, `execution_rev`); saves made while it runs create new revisions that the next run uses. The core still reads one thing from the project folder after acceptance: each Card's definition directory (with its project's `tsugumi.lock`) when the run first evaluates that Card. A save that changes those files for a Card in the active run's plan, or a Card whose Nix exports it reads, is refused (`busy`, naming the run and the Card) until the run ends. README, comments and `_card.json` are taken from the run's document, so they can change. Resident workers changed by a save are retired when the run ends, so the run keeps its own.
+
 ## Choosing Claude's features by purpose
 
 Tsugumi uses Claude's models and features by choosing the one that fits each job. Each row's "Where to check" is code and tests.

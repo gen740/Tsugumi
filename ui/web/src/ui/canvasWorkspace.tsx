@@ -172,6 +172,9 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
           <Icon name={info.icon} style={{ color: `var(--${info.color})` }} />
           <span className="nowrap">{label}</span>
           <span className="secondary mono-digits nowrap">{elapsed}</span>
+          {/* Saved while it runs: the run keeps the revision it started with. */}
+          {session.runActive && rs?.rev != null && rs.executionRev != null && rs.executionRev !== session.executionRev &&
+            <span className="caption secondary nowrap">{L('実行中の版: rev {0}（編集は次の実行に反映）', String(rs.rev))}</span>}
         </span>
       )}
       <span ref={issues}>

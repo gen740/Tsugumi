@@ -59,6 +59,8 @@ Select several Cards and choose **Group Selection** to keep them together on the
 
 Run the Workflow once to save its inputs. For example, open a copy of **Visualization → report**, run it, and change the aggregate Card's `offset`. Choose **Run from Here Downstream** on that Card to update the figures and report without running unrelated steps. Choose **Run Only This Card (Last Inputs)** to test just one figure using its saved input. A Card that needs an input without a saved value reports it as missing.
 
+You can keep editing while a run is in progress. The run keeps the revision it started with, and the run control shows **Running rev N (edits apply to the next run)** once a later revision is saved. Files of a Card the run has yet to evaluate stay as they are until it ends: a save that changes them is refused with that reason.
+
 Use the bottom **Timeline** to see which steps ran. Select a Card there to inspect its log, or open **Card settings → Run History** to choose an earlier invocation. [Run history](RunHistory.md)
 
 A thick wire carries a batch of values. Its count shows how many items are in that batch. Connect it to a Collect Card to pass one `Collected` list to the next step. [Run lists and Collect](design/Workflow.md#run-lists-and-collect)
@@ -132,6 +134,8 @@ Add Skill folders in settings or keep Skills under the project's `skills/`; call
 Project conversations are saved in `.tsugumi/agent.sqlite`, outside git, alongside the project's run records. Copy the whole project folder, including `.tsugumi/`, to keep what the Agent said and did and the records linked in its replies. Stop the Agent service before copying. Home conversations stay on the host. API keys, provider settings and access grants stay on the host too: approve project and attached-folder access again on another machine. The Mac app, Web UI and plugin use the same Agent service. Open a copied project to see its saved chats in the conversation list. Deleting a conversation removes it from its project. Resetting host state keeps project conversations. [Storage and deletion](design/security.md#8-where-data-is-kept-and-how-to-delete-it)
 
 One host service at a time can open a project's conversations. If another host service has them open, the chat shows its application name and process ID (PID) when it can verify them. Quit the indicated host service and click **Reload** (`再読込`) to open the conversations here. On a Mac, you can find the host process by its PID in Activity Monitor. Host services can keep running after their browser tab or last project window closes.
+
+When a run the Agent started in a conversation ends after its answer, the conversation continues on its own once, with a note row such as **Run #12 ended (failed) — continuing**, so the Agent can look at the outcome. This does not happen after you wrote another message or stopped the answer (**Continue** stays yours), and it waits while a turn is still running. Turn it off for a conversation with **Continue When a Run the Agent Started Ends** in the chat's **⋯** menu.
 
 An interrupted conversation stays interrupted when opened, refreshed, reconnected or after a service restart. The chat shows the operation recorded by the core at interruption (including the tool call and its arguments, when applicable). Choose **Resume** to continue, or send a new message. Resuming reconciles in-flight tool calls against their durable receipts; it does not blindly run them again. Work still running in the core can be observed from another window without resuming it.
 

@@ -298,6 +298,10 @@ struct CanvasRunControl: View {
       .accessibilityElement(children: .combine)
       .accessibilityLabel(label)
       .accessibilityValue(elapsed)
+      // Saved while it runs: the run keeps the revision it started with.
+      if session.runActive, let s = session.runStatus, let rev = s.rev, let executed = s.executionRev, executed != session.executionRev {
+        Text("実行中の版: rev \(rev)（編集は次の実行に反映）").font(.caption).foregroundStyle(.secondary).fixedSize()
+      }
     }
     .font(.callout)
     .workbenchToolbarCapsule()
