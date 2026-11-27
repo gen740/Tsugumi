@@ -482,7 +482,8 @@ auto Service::measure_card_probe(const RemoteTarget& target, const Node& node,
                                  const stdfs::path& directory,
                                  const BuildRequest& build,
                                  std::string& observed_life,
-                                 std::string_view expected_key)
+                                 std::string_view expected_key,
+                                 std::optional<FailureKind>* evaluation)
     -> D::WorkerProbeResultT {
   D::WorkerProbeResultT result;
   result.worker = target.id;
@@ -649,8 +650,14 @@ auto Service::measure_card_probe(const RemoteTarget& target, const Node& node,
       result.failure = "The last line of probe output must be a finite number";
   } catch (const ExecutionDetached&) {
     result.failure = "Probe did not finish within the measurement time limit";
+  } catch (const Failed& error) {
+    result.failure = error.what();
+    // No probe yet: the Card's evaluation itself failed.
+    if (evaluation && result.probe.empty()) *evaluation = error.failure.kind;
   } catch (const std::exception& error) {
     result.failure = error.what();
+    if (evaluation && result.probe.empty())
+      *evaluation = FailureKind::nix_failed;
   }
   if (build.cancel.stop_requested())
     throw Failed(FailureKind::cancelled, "worker selection cancelled");
@@ -726,19 +733,30 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
   auto targets = remote_targets(build.cancel);
   auto& measurements = summary.worker_probes;
   std::map<std::string, std::string> remote_lives;
+  // The failure kind when the Card's evaluation failed on every worker that
+  // could take it, before any probe: selection then fails with that kind.
+  std::optional<FailureKind> evaluation_failure;
   const auto measure_targets = [&] {
     measurements.clear();
     remote_lives.clear();
-    bool measured = false;
+    evaluation_failure.reset();
+    bool measured = false, every_evaluation_failed = true;
     for (const auto& target : targets) {
+      std::optional<FailureKind> evaluation;
       auto result = measure_card_probe(target, node, directory, build,
-                                       remote_lives[target.id]);
+                                       remote_lives[target.id], {},
+                                       &evaluation);
       // A recorded failure counts as a measurement: a probe whose evaluation
       // fails or times out never reaches needs_probe_build, and treating it
       // as "no probe" would make every worker eligible and erase the cause.
       measured |= !result.probe.empty() || !result.failure.empty();
+      if (result.unavailable_reason.empty()) {
+        every_evaluation_failed &= evaluation.has_value();
+        if (!evaluation_failure) evaluation_failure = evaluation;
+      }
       measurements.push_back(std::move(result));
     }
+    if (!every_evaluation_failed) evaluation_failure.reset();
     if (measured) {
       for (auto& result : measurements)
         if (!result.score && result.failure.empty() &&
@@ -799,10 +817,13 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
             message += probe.unavailable_reason;
           else if (probe.score)
             message += std::to_string(*probe.score);
+          else if (probe.probe.empty())
+            message += "evaluation failed: " + probe.failure;
           else
             message += "probe failed: " + probe.failure;
         }
-        throw Failed(FailureKind::unsupported, std::move(message));
+        throw Failed(evaluation_failure.value_or(FailureKind::unsupported),
+                     std::move(message));
       }
       if (!choice.index) break;
       const auto& target = targets[*choice.index];

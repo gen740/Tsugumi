@@ -91,12 +91,14 @@ ENDLESS = ("builtins.foldl' (a: i: builtins.foldl' (b: j: b + 1) a "
            "(builtins.genList (x: x) 100000)) 0 (builtins.genList (x: x) 100000)")
 
 
-@pytest.mark.parametrize("probe,settings,diagnostic", [
-    ('throw "the probe cannot be evaluated"', {}, "the probe cannot be evaluated"),
-    ("builtins.seq (" + ENDLESS + ") null", {"buildTimeoutSeconds": 1}, "buildTimeoutSeconds"),
+@pytest.mark.parametrize("probe,settings,diagnostic,kind", [
+    ('throw "the probe cannot be evaluated"', {}, "the probe cannot be evaluated",
+     FailureKind.nix_failed),
+    ("builtins.seq (" + ENDLESS + ") null", {"buildTimeoutSeconds": 1}, "buildTimeoutSeconds",
+     FailureKind.timeout),
 ], ids=["evaluation-fails", "evaluation-times-out"])
 def test_probe_evaluation_failure_leaves_no_worker_eligible(
-        core_factory, project, probe, settings, diagnostic):
+        core_factory, project, probe, settings, diagnostic, kind):
     client = core_factory().connect()
     Project(project).card("work", definition(recordLogs="off", recordIO="off", **settings),
                           outputs=EMPTY_OUTPUTS, sources={
@@ -109,7 +111,8 @@ def test_probe_evaluation_failure_leaves_no_worker_eligible(
     assert status.state == RunState.failed
     message = text(status.failure.diagnostic)
     assert "No worker received a positive probe score" in message, message
-    assert "local: probe failed: " in message and diagnostic in message, message
+    assert "local: evaluation failed: " in message and diagnostic in message, message
+    assert status.failure.kind == kind
     assert "must never evaluate run" not in message, message
     record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
     measurement, = record.workerProbes
