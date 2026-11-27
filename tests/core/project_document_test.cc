@@ -37,6 +37,23 @@ TEST(ProjectDocument, EmbeddedNulReportsItsOwnError) {
   Invalid([&] { parse(std::string_view("{}\x00{}", 5)); }, "contains a NUL");
 }
 
+TEST(ProjectDocument, AtomicWriteWithBareFilename) {
+  const auto original = std::filesystem::current_path();
+  const auto directory = std::filesystem::temp_directory_path() /
+                         ("atomic-write-" + crypto::uuid4());
+  std::filesystem::create_directory(directory);
+  struct Restore {
+    std::filesystem::path original, directory;
+    ~Restore() {
+      std::filesystem::current_path(original);
+      std::filesystem::remove_all(directory);
+    }
+  } restore{original, directory};
+  std::filesystem::current_path(directory);
+  ASSERT_NO_THROW(fs::write_atomic("bare-name", "confirmed"));
+  EXPECT_EQ(fs::read_file("bare-name"), "confirmed");
+}
+
 TEST(ProjectDocument, SpecialFileNamesAreSorted) {
   const auto directory = std::filesystem::temp_directory_path() /
                          ("special-entries-" + crypto::uuid4());

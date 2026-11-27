@@ -327,7 +327,7 @@ pid_t spawn(const Spec& spec) {
       if (w <= 0) break;
       written += static_cast<size_t>(w);
     }
-    ::waitpid(pid, nullptr, 0);
+    (void)wait(pid);
     throw std::runtime_error("cannot start " + spec.argv[0] + ": " +
                              std::strerror(child_err.err));
   }

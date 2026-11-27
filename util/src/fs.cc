@@ -164,7 +164,11 @@ auto write_atomic_using(const stdfs::path& p, unsigned mode, Write write)
     throw Error("create " + tmp.string() + ": " + std::strerror(errno));
   try {
     write(fd, tmp);
-    if (::fsync(fd) != 0)
+    int synced;
+    do {
+      synced = ::fsync(fd);
+    } while (synced < 0 && errno == EINTR);
+    if (synced != 0)
       throw Error("fsync " + tmp.string() + ": " + std::strerror(errno));
   } catch (...) {
     ::close(fd);
@@ -177,7 +181,7 @@ auto write_atomic_using(const stdfs::path& p, unsigned mode, Write write)
     ::unlink(tmp.c_str());
     throw Error("rename " + p.string() + ": " + std::strerror(e));
   }
-  fsync_dir(p.parent_path());
+  fsync_dir(p.has_parent_path() ? p.parent_path() : stdfs::path("."));
 }
 
 }  // namespace
