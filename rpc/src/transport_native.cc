@@ -32,6 +32,7 @@ namespace {
 namespace frame = rpc::frame;
 
 using Clock = std::chrono::steady_clock;
+constexpr size_t kPendingSendBytes = 64u << 20;
 
 auto RandomBytes(size_t count) -> Bytes {
   std::random_device random;
@@ -137,6 +138,7 @@ class NativeTransport final : public Transport {
     std::atomic<bool> opened{false};
     std::mutex mutex;
     std::deque<Bytes> outgoing;
+    size_t outgoing_bytes = 0;  // includes the current RPC write buffer
     int fd = -1;
     int wake[2];
     std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl{nullptr,
@@ -146,6 +148,7 @@ class NativeTransport final : public Transport {
     std::optional<Bytes> fragments;
     Bytes pong;
     Bytes writing;
+    bool writing_rpc = false;
     size_t write_offset = 0;
 
     ~State() {
@@ -421,7 +424,8 @@ class NativeTransport final : public Transport {
     auto Flush() -> void {
       for (size_t count = 0; count < 64 && !stopping; ++count) {
         if (writing.empty()) {
-          if (!pong.empty()) {
+          writing_rpc = pong.empty();
+          if (!writing_rpc) {
             writing.swap(pong);
           } else {
             std::lock_guard lock(mutex);
@@ -435,6 +439,10 @@ class NativeTransport final : public Transport {
             Write(writing.data() + write_offset, writing.size() - write_offset);
         write_offset += sent;
         if (write_offset != writing.size()) return;
+        if (writing_rpc) {
+          std::lock_guard lock(mutex);
+          outgoing_bytes -= writing.size();
+        }
         writing.clear();
       }
     }
@@ -520,7 +528,11 @@ class NativeTransport final : public Transport {
       framed.insert(framed.end(), bytes.begin(), bytes.end());
     }
     std::lock_guard lock(state_->mutex);
+    if (state_->stopping) return {ErrorCode::Closed, "transport is not open"};
+    if (framed.size() > kPendingSendBytes - state_->outgoing_bytes)
+      return {ErrorCode::Backpressure, "RPC send queue is full"};
     state_->outgoing.push_back(std::move(framed));
+    state_->outgoing_bytes += state_->outgoing.back().size();
     state_->Wake();
     return {};
   }

@@ -261,5 +261,25 @@ TEST_F(NativeWebSocketTest, ReassemblesFragmentsAndAnswersPing) {
   EXPECT_TRUE(peer.get());
 }
 
+TEST_F(NativeWebSocketTest, BoundsPendingSendBytes) {
+  using namespace std::chrono_literals;
+  constexpr size_t kPayload = 16u << 20;
+  std::promise<client::ErrorCode> sent;
+  auto result = sent.get_future();
+  auto peer = Serve(true, false);
+  auto transport = client::MakeTransport({Endpoint(), "test"});
+  client::TransportEvents events;
+  events.opened = [&] {
+    // The I/O thread cannot drain the queue until this callback returns.
+    for (int i = 0; i < 3; ++i)
+      EXPECT_FALSE(transport->Send(client::Bytes(kPayload)));
+    sent.set_value(transport->Send(client::Bytes(kPayload)).code);
+  };
+  transport->Start(std::move(events));
+  ASSERT_EQ(result.wait_for(5s), std::future_status::ready);
+  EXPECT_EQ(result.get(), client::ErrorCode::Backpressure);
+  EXPECT_TRUE(peer.get());
+}
+
 }  // namespace
 }  // namespace tsugumi::rpc::frame
