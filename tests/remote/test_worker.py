@@ -485,6 +485,32 @@ def test_jobs_sharing_a_slow_derivation_build_it_once(tmp_path):
         peer.close()
 
 
+def test_host_min_free_never_collects_the_private_store(tmp_path):
+    """A host nix.conf asking for automatic GC must not delete finished jobs' paths.
+
+    After realise returns no root protects them, yet Cards still use them.
+    """
+    binary = os.environ.get("TSUGUMI_REMOTE_TEST_DAEMON")
+    if not binary:
+        pytest.skip("set TSUGUMI_REMOTE_TEST_DAEMON to the packaged tsugumi-workerd")
+    settings = "min-free = 1000000000000000\nmin-free-check-interval = 0"
+    config = os.environ.get("NIX_CONFIG", "")
+    peer = Worker(tmp_path, binary, env={
+        **os.environ, "NIX_CONFIG": (config + "\n" if config else "") + settings})
+    try:
+        first, second = "1" * 64, "3" * 64
+        submit_plan(peer, first, slow_plan(peer, ("kept", 0)))
+        _, environment = realised(peer, first)
+        kept, _, _ = slow_output(peer, environment, "kept")
+        # The second build runs Nix's build loop, where min-free would start
+        # a collection of every unrooted path, including the first output.
+        submit_plan(peer, second, slow_plan(peer, ("later", 3)))
+        realised(peer, second)
+        assert (kept / "end").exists()
+    finally:
+        peer.close()
+
+
 def test_builds_instead_of_using_an_output_signed_by_an_untrusted_cache_key(worker):
     job = "a" * 64
     # A private fixture output also rules out valid substitutes on shared

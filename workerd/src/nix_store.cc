@@ -105,8 +105,9 @@ auto RemoteWorkerStore::realise(
   // SQLite and its retries guard the database, temp roots are per process,
   // and every addition (closure import, substitution, build) takes the
   // output's path lock and checks validity again under it, so two invocations
-  // wanting one path produce it once. Nothing collects this store's garbage,
-  // and job removal touches only job scratch. Never unlink the lock: surviving
+  // wanting one path produce it once. Nothing collects this store's garbage
+  // (automatic collection is turned off below), and job removal touches only
+  // job scratch. Never unlink the lock: surviving
   // supervisors also use this inode.
   nix::AutoCloseFD store_lock{::open((store_root / "realise.lock").c_str(),
                                      O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
@@ -150,6 +151,12 @@ auto RemoteWorkerStore::realise(
   // not mapped here, and require setgroups, which the namespace denies.
   nix::settings.getLocalSettings().buildUsersGroup = "";
   nix::settings.getLocalSettings().requireDropSupplementaryGroups = false;
+  // Never collect garbage automatically, whatever min-free the host's
+  // nix.conf sets: once realise returns the store closes and its temp roots
+  // go away while the Card still uses these paths, and other supervisors use
+  // paths of their own that no root protects. With min-free 0, max-free is
+  // never consulted.
+  nix::settings.getLocalSettings().getGCSettings().minFree = 0;
   auto store = nix::openStore(
       "local", {{"root", store_root.string()}, {"require-sigs", "true"}});
   store_lock.close();
