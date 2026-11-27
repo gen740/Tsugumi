@@ -56,11 +56,11 @@ Use [Build Cache settings](../Usage.md#manage-build-and-scratch-space) to inspec
 
 ## Evaluation reuse
 
-The restricted evaluator reads the saved Card definition in place. It resolves
-the definition directory beneath the canonical project root and permits reads
-from the participating definitions and resolved locked sources. The core uses
-saved source digests and generated input schemas in the evaluation key. It
-does not make a separate copy of the definition tree for evaluation.
+The core verifies source bytes against the confirmed document and stages the
+participating definitions by digest for the restricted evaluator. Each
+snapshot includes the generated input schema. Card metadata, README files and
+comments at the root of a definition are outside the snapshot. The evaluator
+also permits reads from the resolved locked sources.
 
 The core can reuse a successful evaluation for the same Card, target system
 and evaluation mode. The key includes evaluated source pins, definition and

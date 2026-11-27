@@ -124,7 +124,7 @@ auto project_pins(const Document& doc, const Store& store, const Node& node)
 
 }  // namespace
 
-NixRunner::NixRunner(Service& svc) : svc_(svc) {
+NixRunner::NixRunner(Service& svc, stdfs::path evaluation_dir) : svc_(svc) {
   std::error_code ec;
   nix_dir_ = stdfs::canonical(svc_.options().nix_dir, ec);
   if (const auto& file = svc_.options().prepared_cards; !file.empty()) {
@@ -141,6 +141,9 @@ NixRunner::NixRunner(Service& svc) : svc_(svc) {
     }
   }
   if (ec) nix_dir_ = svc_.options().nix_dir;
+  stdfs::remove_all(evaluation_dir);
+  stdfs::create_directories(evaluation_dir);
+  evaluation_dir_ = stdfs::canonical(evaluation_dir);
 }
 
 auto NixRunner::prepared(const std::string& card, const std::string& key,
@@ -190,7 +193,12 @@ auto NixRunner::prepared(const std::string& card, const std::string& key,
   return res;
 }
 
-NixRunner::~NixRunner() { evaluator_.reset(); }
+NixRunner::~NixRunner() {
+  evaluator_.reset();
+  std::error_code error;
+  stdfs::remove_all(evaluation_dir_, error);
+  if (error) log::warn("remove Nix evaluation directory: " + error.message());
+}
 
 auto NixRunner::lock_source(const std::string& url) -> NixSource {
   return evaluator().lock_source(url);
@@ -255,6 +263,48 @@ auto NixRunner::declared_views(const BuildRequest& req)
   return build_plan(view_request, !prepared_).common.views;
 }
 
+auto NixRunner::stage_definition(const Document& doc, const Node& owner,
+                                 const std::vector<std::string>& sources,
+                                 const std::string& digest) -> stdfs::path {
+  const auto directory = evaluation_dir_ / digest;
+  if (stdfs::is_directory(directory)) {
+    for (const auto& source : sources) svc_.store().read_source(doc, source);
+    return directory;
+  }
+  auto temporary = (evaluation_dir_ / "definition-XXXXXX").string();
+  if (!::mkdtemp(temporary.data()))
+    throw std::runtime_error("cannot stage the Card definition");
+  struct Staging {
+    stdfs::path path;
+    ~Staging() {
+      std::error_code error;
+      stdfs::remove_all(path, error);
+      if (error) log::warn("remove staged definition: " + error.message());
+    }
+  } staged{temporary};
+  const auto write = [&](const stdfs::path& relative, std::string_view bytes) {
+    const auto destination = staged.path / relative;
+    stdfs::create_directories(destination.parent_path());
+    std::ofstream output(destination, std::ios::binary);
+    output.exceptions(std::ios::badbit | std::ios::failbit);
+    output.write(bytes.data(), bytes.size());
+    output.close();
+  };
+  for (const auto& source : sources)
+    write(source.substr(owner.def_dir.size()),
+          svc_.store().read_source(doc, source));
+  if (owner.generated_inputs) write("_inputs.fbs", *owner.generated_inputs);
+
+  // Publish the verified bytes together. A concurrent evaluation of the same
+  // digest may publish its identical snapshot first.
+  std::error_code error;
+  stdfs::rename(staged.path, directory, error);
+  if (error && !stdfs::is_directory(directory))
+    throw stdfs::filesystem_error("publish the Card definition", staged.path,
+                                  directory, error);
+  return directory;
+}
+
 auto NixRunner::configure_call(NixCall& call, const Document& doc,
                                const Node& node, bool expression_only) -> void {
   const auto& graph = *doc.resolution;
@@ -264,12 +314,12 @@ auto NixRunner::configure_call(NixCall& call, const Document& doc,
   crypto::Sha256 key;
   const auto prepare = [&](const Node& owner) -> json::Members {
     const auto card = path_key(owner.path);
-    auto& store = svc_.store();
     crypto::Sha256 source_hash;
     source_hash.update(json::Quote(card));
     source_hash.update(json::Quote(owner.project_dir));
     source_hash.update(json::Quote(owner.def_dir));
     source_hash.update(project_key);
+    std::vector<std::string> sources;
     for (auto it = doc.sources.lower_bound(owner.def_dir);
          it != doc.sources.end() && it->first.starts_with(owner.def_dir);
          ++it) {
@@ -277,6 +327,7 @@ auto NixRunner::configure_call(NixCall& call, const Document& doc,
       if (rel == "_card.json" || rel == "README.md" ||
           rel == "_comments.json" || rel == "_inputs.fbs")
         continue;
+      sources.push_back(it->first);
       source_hash.update(json::Quote(rel));
       source_hash.update(it->second.hash);
     }
@@ -288,12 +339,7 @@ auto NixRunner::configure_call(NixCall& call, const Document& doc,
         throw std::runtime_error(diagnostic.message);
     if (owner.generated_inputs) source_hash.update(*owner.generated_inputs);
     const auto digest = source_hash.finish_hex();
-    const auto project = stdfs::canonical(store.root());
-    const auto relative = stdfs::path(owner.def_dir).parent_path();
-    const auto definition = stdfs::canonical(project / relative);
-    if (definition != project / relative || !stdfs::is_directory(definition))
-      throw std::runtime_error("invalid Card definition directory: " +
-                               owner.def_dir);
+    const auto definition = stage_definition(doc, owner, sources, digest);
 
     // inputs.<name>: the exports of one or more Cards, merged.
     std::map<std::string, std::vector<std::string>> merged;
