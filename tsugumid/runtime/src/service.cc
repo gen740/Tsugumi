@@ -1558,18 +1558,22 @@ bool Service::replay_or_join(RequestIn& req, const std::string& op_id,
                              const std::string& digest) {
   if (!crypto::is_operation_id(op_id))
     throw Failed(FailureKind::invalid_request, "invalid op_id");
+  const auto pending_digest = kind + ":" + digest;
+  const auto join_pending = [&] {
+    auto it = pending_ops_.find(op_id);
+    if (it == pending_ops_.end()) return false;
+    if (it->second.digest != pending_digest)
+      throw Failed(FailureKind::operation_conflict,
+                   "op_id is pending for a different request");
+    it->second.waiters.emplace_back(req.conn, req.request_id);
+    return true;
+  };
+  // The pending entry publishes before the durable shell uncertainty marker
+  // and disappears after the final receipt. Read them in the same order.
+  std::unique_lock lock(ops_mu_, std::defer_lock);
   if (kind == "shell") {
-    // A running shell has a durable uncertainty receipt. In this process,
-    // duplicate callers wait for its final result instead of reading that
-    // marker.
-    std::lock_guard lock(ops_mu_);
-    if (auto it = pending_ops_.find(op_id); it != pending_ops_.end()) {
-      if (it->second.digest != kind + ":" + digest)
-        throw Failed(FailureKind::operation_conflict,
-                     "op_id is pending for a different request");
-      it->second.waiters.emplace_back(req.conn, req.request_id);
-      return true;
-    }
+    lock.lock();
+    if (join_pending()) return true;
   }
   std::optional<Receipt> rc = store_->receipt(op_id);
   if (!rc) {
@@ -1585,17 +1589,9 @@ bool Service::replay_or_join(RequestIn& req, const std::string& op_id,
     reply(req, receipt_reply(req.request_id, rc->bytes, true));
     return true;
   }
-  std::lock_guard<std::mutex> l(ops_mu_);
-  auto it = pending_ops_.find(op_id);
-  if (it != pending_ops_.end()) {
-    if (it->second.digest != kind + ":" + digest)
-      throw Failed(FailureKind::operation_conflict,
-                   "op_id is pending for a different request",
-                   {{"op_id", op_id}});
-    it->second.waiters.emplace_back(req.conn, req.request_id);
-    return true;
-  }
-  pending_ops_[op_id] = Pending{kind + ":" + digest, {}};
+  if (!lock.owns_lock()) lock.lock();
+  if (join_pending()) return true;
+  pending_ops_[op_id] = Pending{pending_digest, {}};
   return false;
 }
 
