@@ -25,6 +25,7 @@
 #include "host/descriptor.hh"
 #include "host/models.hh"
 #include "host/skills.hh"
+#include "tsugumi/util/c_handle.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/sqlite.hh"
 
@@ -181,6 +182,7 @@ auto Verify(const std::string& token, const std::string& issuer,
   const auto claims = j::Object(Un64(token.substr(a + 1, b - a - 1)));
   if (j::Text(header, "alg") != "RS256")
     throw std::runtime_error("ID token must use RS256");
+  const auto signature = Un64(token.substr(b + 1));
   const auto jwks =
       j::Object(HTTP(issuer + "/.well-known/jwks.json", nullptr, stop));
   bool verified = false;
@@ -194,34 +196,36 @@ auto Verify(const std::string& token, const std::string& issuer,
       continue;
     const auto modulus = Un64(j::Text(key, "n")),
                exponent = Un64(j::Text(key, "e"));
-    auto* n = BN_bin2bn(reinterpret_cast<const unsigned char*>(modulus.data()),
-                        modulus.size(), nullptr);
-    auto* e = BN_bin2bn(reinterpret_cast<const unsigned char*>(exponent.data()),
-                        exponent.size(), nullptr);
-    auto* builder = OSSL_PARAM_BLD_new();
-    OSSL_PARAM_BLD_push_BN(builder, OSSL_PKEY_PARAM_RSA_N, n);
-    OSSL_PARAM_BLD_push_BN(builder, OSSL_PKEY_PARAM_RSA_E, e);
-    auto* params = OSSL_PARAM_BLD_to_param(builder);
-    auto* context = EVP_PKEY_CTX_new_from_name(nullptr, "RSA", nullptr);
-    EVP_PKEY* pkey = nullptr;
-    if (EVP_PKEY_fromdata_init(context) > 0 &&
-        EVP_PKEY_fromdata(context, &pkey, EVP_PKEY_PUBLIC_KEY, params) > 0) {
-      auto* md = EVP_MD_CTX_new();
-      const auto signature = Un64(token.substr(b + 1));
-      verified =
-          EVP_DigestVerifyInit(md, nullptr, EVP_sha256(), nullptr, pkey) > 0 &&
-          EVP_DigestVerify(
-              md, reinterpret_cast<const unsigned char*>(signature.data()),
-              signature.size(),
-              reinterpret_cast<const unsigned char*>(token.data()), b) == 1;
-      EVP_MD_CTX_free(md);
-    }
-    EVP_PKEY_free(pkey);
-    EVP_PKEY_CTX_free(context);
-    OSSL_PARAM_free(params);
-    OSSL_PARAM_BLD_free(builder);
-    BN_free(n);
-    BN_free(e);
+    using BnPtr = CHandle<BIGNUM, BN_free>;
+    BnPtr n{BN_bin2bn(reinterpret_cast<const unsigned char*>(modulus.data()),
+                      modulus.size(), nullptr)};
+    BnPtr e{BN_bin2bn(reinterpret_cast<const unsigned char*>(exponent.data()),
+                      exponent.size(), nullptr)};
+    CHandle<OSSL_PARAM_BLD, OSSL_PARAM_BLD_free> builder{OSSL_PARAM_BLD_new()};
+    if (!n || !e || !builder ||
+        !OSSL_PARAM_BLD_push_BN(builder.get(), OSSL_PKEY_PARAM_RSA_N,
+                                n.get()) ||
+        !OSSL_PARAM_BLD_push_BN(builder.get(), OSSL_PKEY_PARAM_RSA_E, e.get()))
+      continue;
+    CHandle<OSSL_PARAM, OSSL_PARAM_free> params{
+        OSSL_PARAM_BLD_to_param(builder.get())};
+    CHandle<EVP_PKEY_CTX, EVP_PKEY_CTX_free> context{
+        EVP_PKEY_CTX_new_from_name(nullptr, "RSA", nullptr)};
+    if (!params || !context || EVP_PKEY_fromdata_init(context.get()) <= 0)
+      continue;
+    EVP_PKEY* raw_key = nullptr;
+    const auto imported = EVP_PKEY_fromdata(context.get(), &raw_key,
+                                            EVP_PKEY_PUBLIC_KEY, params.get());
+    CHandle<EVP_PKEY, EVP_PKEY_free> pkey{raw_key};
+    CHandle<EVP_MD_CTX, EVP_MD_CTX_free> md{EVP_MD_CTX_new()};
+    verified =
+        imported > 0 && pkey && md &&
+        EVP_DigestVerifyInit(md.get(), nullptr, EVP_sha256(), nullptr,
+                             pkey.get()) > 0 &&
+        EVP_DigestVerify(
+            md.get(), reinterpret_cast<const unsigned char*>(signature.data()),
+            signature.size(),
+            reinterpret_cast<const unsigned char*>(token.data()), b) == 1;
     if (verified) break;
   }
   // A short skew allowance covers clocks on different sides of the exchange.
