@@ -18,14 +18,18 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
+#include <deque>
 #include <map>
 #include <mutex>
 #include <optional>
 #include <regex>
 #include <set>
 #include <thread>
+#include <utility>
 
 #include "agent/wire.hh"
 #include "tsugumi/rpc/peer_tls.hh"
@@ -44,7 +48,17 @@ namespace H = Tsugumi::Host;
 namespace R = Tsugumi::RemoteWorker;
 namespace W = workerd;
 namespace {
+using Clock = std::chrono::steady_clock;
+using Deadline = Clock::time_point;
+constexpr auto kExchangeTimeout = std::chrono::seconds(30);
+constexpr size_t kTransferSlots = 8;
+constexpr size_t kPendingTransfers = 64;
+constexpr size_t kPendingBytes = 64u << 20;
+
 struct Socket {
+  explicit Socket(int value = -1) : fd(value) {}
+  Socket(const Socket&) = delete;
+  Socket(Socket&& other) noexcept : fd(std::exchange(other.fd, -1)) {}
   int fd = -1;
   ~Socket() {
     if (fd >= 0) ::close(fd);
@@ -53,9 +67,26 @@ struct Socket {
 auto Require(bool ok, const char* message) -> void {
   if (!ok) throw std::runtime_error(message);
 }
-auto Exact(int fd, std::string& bytes, bool write) -> void {
+auto Remaining(Deadline deadline) -> int {
+  const auto left =
+      std::chrono::ceil<std::chrono::milliseconds>(deadline - Clock::now());
+  Require(left.count() > 0, "Execution stream timed out");
+  return static_cast<int>(left.count());
+}
+auto WaitForSocket(int fd, short events, Deadline deadline, int client = -1)
+    -> void {
+  pollfd sockets[]{{fd, events, 0}, {client, POLLIN, 0}};
+  int ready;
+  do {
+    ready = ::poll(sockets, 2, Remaining(deadline));
+  } while (ready < 0 && errno == EINTR);
+  Require(ready != 0, "Execution stream timed out");
+  Require(ready > 0 && !sockets[1].revents, "Execution stream disconnected");
+}
+auto Exact(int fd, std::string& bytes, bool write, Deadline deadline) -> void {
   size_t offset = 0;
   while (offset < bytes.size()) {
+    (void)Remaining(deadline);
 #ifdef MSG_NOSIGNAL
     constexpr int flags = MSG_NOSIGNAL;
 #else
@@ -65,24 +96,32 @@ auto Exact(int fd, std::string& bytes, bool write) -> void {
         write ? ::send(fd, bytes.data() + offset, bytes.size() - offset, flags)
               : ::recv(fd, bytes.data() + offset, bytes.size() - offset, 0);
     if (n < 0 && errno == EINTR) continue;
-    Require(n > 0, "Execution stream disconnected or timed out");
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      WaitForSocket(fd, write ? POLLOUT : POLLIN, deadline);
+      continue;
+    }
+    Require(n > 0, "Execution stream disconnected");
     offset += static_cast<size_t>(n);
   }
 }
-auto Read(int fd) -> std::unique_ptr<R::MessageT> {
+auto Read(int fd, Deadline deadline) -> std::string {
   std::string prefix(4, '\0');
-  Exact(fd, prefix, false);
+  Exact(fd, prefix, false, deadline);
   std::string bytes(W::frame_length(prefix), '\0');
-  Exact(fd, bytes, false);
-  return W::decode(bytes);
+  Exact(fd, bytes, false, deadline);
+  return bytes;
 }
-auto Write(int fd, R::MessageT message) -> void {
+auto Write(int fd, R::MessageT message, Deadline deadline) -> void {
   auto bytes = W::encode(std::move(message));
   auto prefix = W::length_prefix(static_cast<uint32_t>(bytes.size()));
-  Exact(fd, prefix, true);
-  Exact(fd, bytes, true);
+  Exact(fd, prefix, true, deadline);
+  Exact(fd, bytes, true, deadline);
 }
-auto Configure(int fd) -> void { peer_tls::ConfigureSocket(fd); }
+auto Configure(int fd) -> void {
+  peer_tls::ConfigureSocket(fd);
+  Require(::fcntl(fd, F_SETFL, O_NONBLOCK) == 0,
+          "Cannot configure nonblocking execution socket");
+}
 auto ValidId(const std::string& id) -> bool {
   return id != "local" && id != "auto" &&
          std::regex_match(id, std::regex("[a-z][a-z0-9-]{0,31}"));
@@ -251,7 +290,30 @@ struct ExecutionBroker::State {
   bool stopping = false;
   Socket listener, cancel_listener, wake_reader, wake_writer;
   unix_socket::Binding binding, cancel_binding;
-  std::vector<std::jthread> receivers;
+  struct Activity {
+    State& state;
+    int fd;
+    ~Activity() {
+      std::lock_guard lock(state.mutex);
+      state.active.erase(fd);
+    }
+  };
+  struct Client {
+    Client(State& state, Socket accepted)
+        : socket(std::move(accepted)), activity(state.Track(socket.fd)) {}
+    Socket socket;
+    Activity activity;
+  };
+  struct Transfer {
+    std::unique_ptr<Client> client;
+    std::unique_ptr<R::MessageT> message;
+    Deadline deadline;
+    size_t bytes;
+  };
+  std::deque<Transfer> pending;
+  size_t pending_bytes = 0;
+  std::condition_variable transfer_ready;
+  std::vector<std::jthread> receivers, transfers;
   CardSecrets card_secrets;
   MeasureProbe measure_probe;
   std::mutex remeasure_mutex;
@@ -302,13 +364,14 @@ struct ExecutionBroker::State {
     Require(::fcntl(wake_reader.fd, F_SETFD, FD_CLOEXEC) == 0 &&
                 ::fcntl(wake_writer.fd, F_SETFD, FD_CLOEXEC) == 0,
             "Cannot configure execution broker wake pipe");
-    // Preserve eight transfer slots. Two independent readers leave room for
-    // another Stop even if a worker does not answer one Cancel.
+    // Keep broker-local replies and Cancel independent of worker transfers.
     try {
-      for (int i = 0; i < 8; ++i)
+      for (size_t i = 0; i < kTransferSlots; ++i)
+        transfers.emplace_back([this] { RunTransfers(); });
+      for (int i = 0; i < 2; ++i) {
         receivers.emplace_back([this] { Accept(listener.fd, false); });
-      for (int i = 0; i < 2; ++i)
         receivers.emplace_back([this] { Accept(cancel_listener.fd, true); });
+      }
     } catch (...) {
       Stop();
       throw;
@@ -321,10 +384,8 @@ struct ExecutionBroker::State {
     Require(listener.fd >= 0, "Cannot open execution broker listener");
     Configure(listener.fd);
     binding.Bind(listener.fd, path);
-    Require(::listen(listener.fd, 64) == 0,
+    Require(::listen(listener.fd, kPendingTransfers) == 0,
             "Cannot listen on execution broker socket");
-    Require(::fcntl(listener.fd, F_SETFL, O_NONBLOCK) == 0,
-            "Cannot configure execution broker listener");
   }
 
   auto Accept(int source, bool cancel_only) -> void {
@@ -347,22 +408,60 @@ struct ExecutionBroker::State {
       }
       try {
         Configure(client.fd);
-        auto activity = Track(client.fd);
-        Forward(client.fd, cancel_only);
+        Dispatch(std::make_unique<Client>(*this, std::move(client)),
+                 cancel_only);
       } catch (const std::exception&) {
         // An incomplete frame or disconnected caller has no reply channel.
       }
     }
   }
 
-  struct Activity {
-    State& state;
-    int fd;
-    ~Activity() {
-      std::lock_guard lock(state.mutex);
-      state.active.erase(fd);
+  auto Dispatch(std::unique_ptr<Client> client, bool cancel_only) -> void {
+    const auto deadline = Clock::now() + kExchangeTimeout;
+    const int fd = client->socket.fd;
+    // Decode before dispatch so catalog, secrets and probe cache requests
+    // can be answered while every worker transfer is in flight.
+    const auto bytes = Read(fd, deadline);
+    auto message = W::decode(bytes);
+    const auto* broker = message->payload.AsBrokerRequest();
+    if (broker && !cancel_only) {
+      const auto& body = broker->request->body;
+      if (!body.AsCatalogRequest() && !body.AsCardSecretsRequest() &&
+          !body.AsCardProbeLookup() && !body.AsCardProbePublish() &&
+          !body.AsCancelRequest()) {
+        std::lock_guard lock(mutex);
+        // EOF leaves a saturated request unconfirmed, like a transport loss.
+        if (stopping || pending.size() >= kPendingTransfers ||
+            bytes.size() > kPendingBytes - pending_bytes)
+          return;
+        pending.emplace_back();
+        pending.back() = {std::move(client), std::move(message), deadline,
+                          bytes.size()};
+        pending_bytes += bytes.size();
+        transfer_ready.notify_one();
+        return;
+      }
     }
-  };
+    Forward(fd, cancel_only, *message, deadline);
+  }
+
+  auto RunTransfers() -> void {
+    for (;;) {
+      std::unique_lock lock(mutex);
+      transfer_ready.wait(lock, [&] { return stopping || !pending.empty(); });
+      if (stopping) return;
+      auto transfer = std::move(pending.front());
+      pending.pop_front();
+      pending_bytes -= transfer.bytes;
+      lock.unlock();
+      try {
+        Forward(transfer.client->socket.fd, false, *transfer.message,
+                transfer.deadline);
+      } catch (const std::exception&) {
+        // The downstream can close while its request is queued.
+      }
+    }
+  }
 
   auto Track(int fd) -> Activity {
     std::lock_guard lock(mutex);
@@ -489,39 +588,39 @@ struct ExecutionBroker::State {
     return List();
   }
 
-  auto Remote(const Entry& entry, R::RequestT request, int client = -1)
-      -> R::MessageT {
+  auto Remote(const Entry& entry, R::RequestT request, Deadline deadline,
+              int client = -1) -> R::MessageT {
+    (void)Remaining(deadline);
+    if (client >= 0) {
+      pollfd downstream{client, POLLIN, 0};
+      int ready;
+      do {
+        ready = ::poll(&downstream, 1, 0);
+      } while (ready < 0 && errno == EINTR);
+      Require(ready == 0, "Execution stream disconnected");
+    }
     const auto address = ParseEndpoint(entry.endpoint);
+    (void)Remaining(deadline);
     Socket peer{::socket(address.storage.ss_family, SOCK_STREAM, 0)};
     Require(peer.fd >= 0, "Cannot open worker connection");
     Configure(peer.fd);
-    Require(::fcntl(peer.fd, F_SETFL, O_NONBLOCK) == 0,
-            "Cannot configure worker connection");
     auto activity = Track(peer.fd);
     auto connected =
         ::connect(peer.fd, reinterpret_cast<const sockaddr*>(&address.storage),
                   address.size) == 0;
     if (!connected && errno == EINPROGRESS) {
-      pollfd p[]{{peer.fd, POLLOUT, 0}, {client, POLLIN, 0}};
+      WaitForSocket(peer.fd, POLLOUT, deadline, client);
       int error = 0;
       socklen_t size = sizeof error;
-      int ready;
-      do {
-        ready = ::poll(p, 2, -1);
-      } while (ready < 0 && errno == EINTR);
       connected =
-          ready > 0 && !p[1].revents &&
           ::getsockopt(peer.fd, SOL_SOCKET, SO_ERROR, &error, &size) == 0 &&
           !error;
     }
     Require(connected, "Cannot connect to remote worker");
-    if (client < 0)
-      Require(::fcntl(peer.fd, F_SETFL, 0) == 0,
-              "Cannot configure worker stream");
     peer_tls::Context context(identity, false, [&](std::string_view key) {
       return key == entry.worker_public_key;
     });
-    peer_tls::Stream tls(context, peer.fd, false, client);
+    peer_tls::Stream tls(context, peer.fd, false, client, deadline);
     const auto* poll = request.body.AsStatusRequest();
     const bool view_message =
         request.body.AsViewSendRequest() ||
@@ -550,12 +649,12 @@ struct ExecutionBroker::State {
     Require(reply->payload.AsReply(), "Expected remote worker reply");
     return std::move(*reply);
   }
-  auto Forward(int fd, bool cancel_only) -> void {
+  auto Forward(int fd, bool cancel_only, R::MessageT& message,
+               Deadline deadline) -> void {
     bool forwarding = false;
-    // A framing/verification failure has no trusted request to answer.
-    auto message = Read(fd);
     try {
-      auto* broker = message->payload.AsBrokerRequest();
+      (void)Remaining(deadline);
+      auto* broker = message.payload.AsBrokerRequest();
       Require(broker, "Expected a private broker envelope");
       auto* request = broker->request.get();
       Require(cancel_only == (request->body.AsCancelRequest() != nullptr),
@@ -587,16 +686,19 @@ struct ExecutionBroker::State {
           secret_names = std::move(asked->names);
         } else if (request->body.AsCatalogRequest()) {
           R::CatalogT catalog;
+          std::map<std::string, std::string> grants;
+          auto grant = db.prepare(
+              "SELECT service,generation FROM project_services WHERE "
+              "project=?");
+          grant.bind(1, q.text(1));
+          while (grant.step()) grants.emplace(grant.text(0), grant.text(1));
           for (const auto& e : Entries()) {
             auto target = std::make_unique<R::TargetT>();
             target->id = e.id;
-            auto grant = db.prepare(
-                "SELECT generation FROM project_services "
-                "WHERE project=? AND service=?");
-            grant.bind(1, q.text(1)).bind(2, e.id);
+            const auto authorized = grants.find(e.id);
             const bool approved =
-                e.id == "local" ||
-                (grant.step() && grant.text(0) == e.generation);
+                e.id == "local" || (authorized != grants.end() &&
+                                    authorized->second == e.generation);
             target->available = e.id == "local" ||
                                 (approved && !e.capabilities.server_id.empty());
             if (!target->available)
@@ -710,11 +812,11 @@ struct ExecutionBroker::State {
         }
       }
       if (probe_reply) {
-        Write(fd, std::move(*probe_reply));
+        Write(fd, std::move(*probe_reply), deadline);
         return;
       }
       if (catalog_reply) {
-        Write(fd, W::reply(std::move(*catalog_reply)));
+        Write(fd, W::reply(std::move(*catalog_reply)), deadline);
         return;
       }
       // Read outside the broker lock: the store has its own.
@@ -727,12 +829,12 @@ struct ExecutionBroker::State {
           secret->value = std::move(value);
           secrets.secrets.push_back(std::move(secret));
         }
-        Write(fd, W::reply(std::move(secrets)));
+        Write(fd, W::reply(std::move(secrets)), deadline);
         return;
       }
       forwarding = true;
       const bool probing = request->body.AsProbeRequest() != nullptr;
-      auto response = Remote(entry, std::move(*request), fd);
+      auto response = Remote(entry, std::move(*request), deadline, fd);
       if (probing) {
         const auto& reply = *response.payload.AsReply();
         if (!reply.body.AsFailure()) {
@@ -758,14 +860,16 @@ struct ExecutionBroker::State {
               .run();
         }
       }
-      Write(fd, std::move(response));
+      Write(fd, std::move(response), deadline);
     } catch (const std::exception& e) {
       // A transport interruption after forwarding leaves submit unconfirmed.
       const auto* worker_error = dynamic_cast<const W::Error*>(&e);
       if (forwarding && !worker_error) return;
-      Write(fd, W::failure(
-                    worker_error ? worker_error->code : R::ErrorCode::Invalid,
-                    e.what()));
+      Write(
+          fd,
+          W::failure(worker_error ? worker_error->code : R::ErrorCode::Invalid,
+                     e.what()),
+          deadline);
     }
   }
   auto Stop() -> void {
@@ -777,7 +881,10 @@ struct ExecutionBroker::State {
       while (::write(wake_writer.fd, "x", 1) < 0 && errno == EINTR) {
       }
     }
+    transfer_ready.notify_all();
     receivers.clear();
+    transfers.clear();
+    pending.clear();
     binding.Remove();
     cancel_binding.Remove();
   }
@@ -920,7 +1027,8 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
       if (entry.id != "local" && p->verify()) {
         R::RequestT probe;
         probe.body.Set(R::ProbeRequestT{});
-        auto response = state_->Remote(entry, std::move(probe));
+        auto response = state_->Remote(entry, std::move(probe),
+                                       Clock::now() + kExchangeTimeout);
         auto* reply = response.payload.AsReply();
         if (reply->body.AsFailure())
           throw std::runtime_error(

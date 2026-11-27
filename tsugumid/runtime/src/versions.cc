@@ -21,6 +21,7 @@
 #include "tsugumi/document/text.hh"
 #include "tsugumi/protocol/runtime_state_generated.h"
 #include "tsugumi/protocol/version_state_generated.h"
+#include "tsugumi/util/c_handle.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/fs.hh"
@@ -42,17 +43,6 @@ constexpr const char* kIgnore = ".tsugumi/\n.DS_Store\n";
 // ---- libgit2 handles
 // ---------------------------------------------------------
 
-template <auto Free>
-struct GitDeleter {
-  template <class T>
-  auto operator()(T* ptr) const -> void {
-    Free(ptr);
-  }
-};
-
-template <class T, auto Free>
-using GitPtr = std::unique_ptr<T, GitDeleter<Free>>;
-
 // libgit2 initializes handles through T** out parameters. Transfer the
 // result into its owner when the C call returns.
 template <class Owner>
@@ -70,20 +60,20 @@ class GitOut {
   Pointer value_ = nullptr;
 };
 
-using Repo = GitPtr<git_repository, git_repository_free>;
-using Index = GitPtr<git_index, git_index_free>;
-using Tree = GitPtr<git_tree, git_tree_free>;
-using Commit = GitPtr<git_commit, git_commit_free>;
-using Sig = GitPtr<git_signature, git_signature_free>;
-using Ref = GitPtr<git_reference, git_reference_free>;
-using Note = GitPtr<git_note, git_note_free>;
-using Walk = GitPtr<git_revwalk, git_revwalk_free>;
-using Diff = GitPtr<git_diff, git_diff_free>;
-using Object = GitPtr<git_object, git_object_free>;
-using RefIter = GitPtr<git_reference_iterator, git_reference_iterator_free>;
-using Patch = GitPtr<git_patch, git_patch_free>;
-using TreeEntry = GitPtr<git_tree_entry, git_tree_entry_free>;
-using Blob = GitPtr<git_blob, git_blob_free>;
+using Repo = CHandle<git_repository, git_repository_free>;
+using Index = CHandle<git_index, git_index_free>;
+using Tree = CHandle<git_tree, git_tree_free>;
+using Commit = CHandle<git_commit, git_commit_free>;
+using Sig = CHandle<git_signature, git_signature_free>;
+using Ref = CHandle<git_reference, git_reference_free>;
+using Note = CHandle<git_note, git_note_free>;
+using Walk = CHandle<git_revwalk, git_revwalk_free>;
+using Diff = CHandle<git_diff, git_diff_free>;
+using Object = CHandle<git_object, git_object_free>;
+using RefIter = CHandle<git_reference_iterator, git_reference_iterator_free>;
+using Patch = CHandle<git_patch, git_patch_free>;
+using TreeEntry = CHandle<git_tree_entry, git_tree_entry_free>;
+using Blob = CHandle<git_blob, git_blob_free>;
 
 void check(int rc, const std::string& what) {
   if (rc >= 0) return;

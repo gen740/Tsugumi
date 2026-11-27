@@ -590,7 +590,6 @@ auto ConversationStore::List(const A::ConversationListRequest& request,
 }
 
 auto ConversationStore::Delete(const std::string& id) -> void {
-  presentation.erase(id);
   if (is_running(id))
     throw Failure("busy", "Cancel the conversation before deleting it");
   auto& store = ConversationDatabase(id);
@@ -610,7 +609,7 @@ auto ConversationStore::Delete(const std::string& id) -> void {
     for (const auto* table :
          {"events", "receipts", "conversation_turns", "model_bindings",
           "archives", "usage", "conversation_resources", "helpers",
-          "helper_delegations"}) {
+          "helper_delegations", "call_counters"}) {
       auto q = store.prepare(std::string("DELETE FROM ") + table +
                              " WHERE conversation=?");
       q.bind(1, id).run();
@@ -622,6 +621,7 @@ auto ConversationStore::Delete(const std::string& id) -> void {
   auto location =
       db.prepare("DELETE FROM conversation_locations WHERE conversation=?");
   location.bind(1, id).run();
+  presentation.erase(id);
 }
 
 auto ConversationStore::Events(const A::EventsRequest& request, bool human)

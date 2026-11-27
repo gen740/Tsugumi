@@ -36,6 +36,7 @@
 #include "tsugumi/document/document.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/locked.hh"
 
 namespace tsugumi::agent {
 namespace A = Tsugumi::Agent;
@@ -312,6 +313,7 @@ auto Tools::InputTypesQuery(const std::string& project, json::Members args,
 
 auto Tools::InspectProject(const std::string& project, std::stop_token stop)
     -> json::Members {
+  lock_scope::AssertUnlocked();
   const auto reply =
       json::Object(RawProjectCall(project, "project_inspect", "{}", stop));
   auto value = json::Object(json::Get(reply, "value", "{}"));
@@ -799,9 +801,10 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
                     })
                     .get();
   if (stop.stop_requested()) throw Cancelled();
-  // Only a call that changes something can leave its outcome unknown.
-  if (result.error && name == "run_status")
-    throw Failure("unavailable", "Project connection lost while waiting: " +
+  // The inspection preceding a run status read cannot leave a mutation
+  // unconfirmed if the core exits before replying.
+  if (result.error && (name == "run_status" || name == "project_inspect"))
+    throw Failure("unavailable", "Project connection lost during a read: " +
                                      result.error.message);
   if (result.error) throw Failure("outcome_unknown", result.error.message);
   if (raw)
@@ -1705,7 +1708,13 @@ auto Tools::ExecuteTool(const std::string& conversation,
       result = json::Encode(page);
     }
   }
-  if (!view_tool && !UsesRecordedDefinitions(call.name))
+  // ProjectCall projects these replies from the inspected revision. Other
+  // operations can change the policy or return data from a different state.
+  const bool projected_revision = call.name == "project_inspect" ||
+                                  call.name == "project_file_read" ||
+                                  call.name == "project_file_list";
+  if (!view_tool && !projected_revision &&
+      !UsesRecordedDefinitions(call.name))
     result = Exclusions(project, stop).Filter(result);
   const auto envelope = json::Object(result);
   bool error = json::Text(envelope, "reply") == "Failure";

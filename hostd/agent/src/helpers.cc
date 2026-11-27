@@ -92,16 +92,29 @@ auto Helpers::RunHelper(
     size_t index, const std::string& task, std::stop_token stop,
     const std::optional<host::TurnAuthorization>& authorization)
     -> std::string {
+  const auto key = std::tuple{conversation, parent_call, index};
   std::shared_ptr<std::mutex> gate;
   {
     std::lock_guard lock(mutex);
-    auto& weak = helper_gates[{conversation, parent_call, index}];
+    auto& weak = helper_gates[key];
     gate = weak.lock();
     if (!gate) {
       gate = std::make_shared<std::mutex>();
       weak = gate;
     }
   }
+  struct ReleaseGate {
+    Helpers& helpers;
+    decltype(key)& id;
+    std::shared_ptr<std::mutex>& gate;
+    ~ReleaseGate() {
+      std::lock_guard lock(helpers.mutex);
+      gate.reset();
+      const auto found = helpers.helper_gates.find(id);
+      if (found != helpers.helper_gates.end() && found->second.expired())
+        helpers.helper_gates.erase(found);
+    }
+  } release{*this, key, gate};
   std::lock_guard helper_lock(*gate);
   const auto spec = json::Object(task);
   HelperScope::Validate(spec, host_settings->AllowUnscopedHelpers());

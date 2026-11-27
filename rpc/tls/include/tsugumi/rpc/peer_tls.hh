@@ -1,8 +1,10 @@
 #pragma once
 
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -59,9 +61,11 @@ class Context {
 };
 class Stream {
  public:
-  // The caller owns fd. If a downstream fd is supplied, fd is nonblocking
-  // and a pending TLS operation also wakes when the downstream disconnects.
-  Stream(const Context& context, int fd, bool server, int downstream = -1);
+  // The caller owns fd. Use a nonblocking fd with a downstream or deadline.
+  // The downstream can interrupt pending I/O. The deadline covers the
+  // handshake and all reads and writes on this stream.
+  Stream(const Context& context, int fd, bool server, int downstream = -1,
+         std::optional<std::chrono::steady_clock::time_point> deadline = {});
   ~Stream();
   Stream(const Stream&) = delete;
   auto operator=(const Stream&) -> Stream& = delete;

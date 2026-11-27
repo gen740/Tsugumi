@@ -261,10 +261,13 @@ TEST_F(ConversationStoreTest, IncrementalEventsCopyOnlyChangedRows) {
   EXPECT_EQ(page.presentation->rows[0]->row->text, "one");
 
   request.after_seq = page.next_seq;
+  busy = true;
+  EXPECT_THROW(store->Delete(id), host::Failure);
   store->RecordEvent(id, R"({"kind":"text","text":" two"})");
   store->RecordEvent(id, R"({"kind":"text","text":" three"})");
   page = read();
   ASSERT_TRUE(page.presentation);
+  EXPECT_FALSE(page.presentation->reset);
   ASSERT_EQ(page.presentation->rows.size(), 1u);
   EXPECT_EQ(page.presentation->rows[0]->row->text, "one two three");
   EXPECT_GT(page.presentation->seq, page.next_seq);
@@ -288,6 +291,47 @@ TEST_F(ConversationStoreTest, IncrementalEventsCopyOnlyChangedRows) {
   ASSERT_TRUE(recovery.presentation);
   EXPECT_TRUE(recovery.presentation->reset);
   EXPECT_EQ(recovery.presentation->rows.size(), kHistoryRows);
+}
+
+TEST_F(ConversationStoreTest, TurnPreparationLoadsExclusionsWithoutTheGate) {
+  const auto project = Register("project");
+  Create("conversation", "project");
+  home.db.exec(
+      "INSERT INTO folders VALUES('a','project','/folder-a','a'),"
+      "('b','project','/folder-b','b');"
+      "INSERT INTO workspace_grants VALUES('allow-a','a',0,1),"
+      "('allow-b','b',0,1)");
+  host::Credentials credentials{gate, home.db, {}};
+  host::Settings settings(directory.path, credentials);
+  agent::Providers providers(gate, home.db, settings);
+  std::stop_source stop;
+  bool stopping = false;
+  host::Access access(gate, home.db, registry, *store, stopping,
+                      {[](const auto&, const auto&) {}, [](const auto&) {}});
+  int inspections = 0;
+  agent::Turns::Dependencies dependencies;
+  dependencies.exclusions = [&](const auto&, auto) {
+    ++inspections;
+    std::jthread other([&] {
+      std::unique_lock lock(gate.mutex, std::try_to_lock);
+      EXPECT_TRUE(lock.owns_lock());
+    });
+    return host::AgentExclude(project, R"({"agentExclude":[]})");
+  };
+  agent::Turns turns(gate, home.db, *store, providers, settings, stop, stopping,
+                     access, std::move(dependencies));
+  A::ConversationSendRequestT request;
+  request.conversation_id = "conversation";
+  request.turn_id = "prepare-fixture";
+  request.text = "Read folders";
+  request.attached_resources = {"a", "b"};
+  const auto block = WithRequest(request, [&](const auto& value) {
+    return turns.PrepareSend(&value, stop.get_token());
+  });
+  EXPECT_EQ(inspections, 1);
+  EXPECT_EQ(block.resource_ids, request.attached_resources);
+  EXPECT_NE(block.text.find("/folder-a"), std::string::npos);
+  EXPECT_NE(block.text.find("/folder-b"), std::string::npos);
 }
 
 TEST_F(ConversationStoreTest,
@@ -570,6 +614,7 @@ TEST_F(ConversationStoreTest,
       "INSERT INTO providers VALUES('conversation','{}')");
   store->RecordEvent("conversation", R"({"kind":"finished"})");
   auto& project = store->ConversationDatabase("conversation");
+  project.exec("INSERT INTO call_counters VALUES('conversation','scope',2)");
   project.exec(
       "CREATE TRIGGER reject_delete BEFORE DELETE ON conversations "
       "BEGIN SELECT RAISE(ABORT,'fixture'); END");
@@ -593,6 +638,18 @@ TEST_F(ConversationStoreTest,
   busy = false;
   EXPECT_NO_THROW(store->Delete("conversation"));
   EXPECT_THROW(store->GetConversation("conversation"), host::Failure);
+  auto counter = project.prepare(
+      "SELECT 1 FROM call_counters WHERE conversation='conversation'");
+  EXPECT_FALSE(counter.step());
+}
+TEST(AgentPresentation, AFailedHelperMarksItsStepFailed) {
+  const auto snapshot = Snapshot(R"({"id":"s","messages":[
+    {"role":"assistant","content":[{"type":"tool_use","id":"delegate","name":"delegate","input":"{}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"delegate","content":"One helper failed."}]}],
+    "helpers":[{"call_id":"delegate","task":0,"spec":{"name":"Read"},"state":"completed","result":{"error":"Read failed"}}]})");
+  ASSERT_EQ(snapshot.rows.size(), 1u);
+  EXPECT_EQ(snapshot.rows.front()->failed, 1u);
+  EXPECT_EQ(snapshot.rows.front()->state, "failed");
 }
 TEST(AgentPresentation, GroupsRetriesAndKeepsTasksAndApprovalsAtTheirCall) {
   const auto conversation = Snapshot(R"({"id":"s","archive":[],"messages":[

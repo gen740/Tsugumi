@@ -25,6 +25,7 @@
 #include "tsugumi/rpc/client_transport.hh"
 #include "tsugumi/rpc/frame.hh"
 #include "tsugumi/rpc/unix_socket.hh"
+#include "tsugumi/util/c_handle.hh"
 #include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::client {
@@ -141,8 +142,7 @@ class NativeTransport final : public Transport {
     size_t outgoing_bytes = 0;  // includes the current RPC write buffer
     int fd = -1;
     int wake[2];
-    std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl{nullptr,
-                                                             curl_easy_cleanup};
+    CHandle<CURL, curl_easy_cleanup> curl;
     bool websocket = false;
     Bytes incoming;
     std::optional<Bytes> fragments;
@@ -264,8 +264,7 @@ class NativeTransport final : public Transport {
         url.replace(0, 3, "https");
       else
         throw std::runtime_error("unsupported endpoint scheme");
-      std::unique_ptr<CURLU, decltype(&curl_url_cleanup)> parsed(
-          curl_url(), curl_url_cleanup);
+      CHandle<CURLU, curl_url_cleanup> parsed(curl_url());
       if (!parsed || curl_url_set(parsed.get(), CURLUPART_URL, url.c_str(),
                                   0) != CURLUE_OK)
         throw std::runtime_error("invalid WebSocket endpoint");

@@ -25,6 +25,7 @@
 #include "host/descriptor.hh"
 #include "host/models.hh"
 #include "host/skills.hh"
+#include "tsugumi/util/c_handle.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/sqlite.hh"
 
@@ -181,6 +182,7 @@ auto Verify(const std::string& token, const std::string& issuer,
   const auto claims = j::Object(Un64(token.substr(a + 1, b - a - 1)));
   if (j::Text(header, "alg") != "RS256")
     throw std::runtime_error("ID token must use RS256");
+  const auto signature = Un64(token.substr(b + 1));
   const auto jwks =
       j::Object(HTTP(issuer + "/.well-known/jwks.json", nullptr, stop));
   bool verified = false;
@@ -194,34 +196,36 @@ auto Verify(const std::string& token, const std::string& issuer,
       continue;
     const auto modulus = Un64(j::Text(key, "n")),
                exponent = Un64(j::Text(key, "e"));
-    auto* n = BN_bin2bn(reinterpret_cast<const unsigned char*>(modulus.data()),
-                        modulus.size(), nullptr);
-    auto* e = BN_bin2bn(reinterpret_cast<const unsigned char*>(exponent.data()),
-                        exponent.size(), nullptr);
-    auto* builder = OSSL_PARAM_BLD_new();
-    OSSL_PARAM_BLD_push_BN(builder, OSSL_PKEY_PARAM_RSA_N, n);
-    OSSL_PARAM_BLD_push_BN(builder, OSSL_PKEY_PARAM_RSA_E, e);
-    auto* params = OSSL_PARAM_BLD_to_param(builder);
-    auto* context = EVP_PKEY_CTX_new_from_name(nullptr, "RSA", nullptr);
-    EVP_PKEY* pkey = nullptr;
-    if (EVP_PKEY_fromdata_init(context) > 0 &&
-        EVP_PKEY_fromdata(context, &pkey, EVP_PKEY_PUBLIC_KEY, params) > 0) {
-      auto* md = EVP_MD_CTX_new();
-      const auto signature = Un64(token.substr(b + 1));
-      verified =
-          EVP_DigestVerifyInit(md, nullptr, EVP_sha256(), nullptr, pkey) > 0 &&
-          EVP_DigestVerify(
-              md, reinterpret_cast<const unsigned char*>(signature.data()),
-              signature.size(),
-              reinterpret_cast<const unsigned char*>(token.data()), b) == 1;
-      EVP_MD_CTX_free(md);
-    }
-    EVP_PKEY_free(pkey);
-    EVP_PKEY_CTX_free(context);
-    OSSL_PARAM_free(params);
-    OSSL_PARAM_BLD_free(builder);
-    BN_free(n);
-    BN_free(e);
+    using BnPtr = CHandle<BIGNUM, BN_free>;
+    BnPtr n{BN_bin2bn(reinterpret_cast<const unsigned char*>(modulus.data()),
+                      modulus.size(), nullptr)};
+    BnPtr e{BN_bin2bn(reinterpret_cast<const unsigned char*>(exponent.data()),
+                      exponent.size(), nullptr)};
+    CHandle<OSSL_PARAM_BLD, OSSL_PARAM_BLD_free> builder{OSSL_PARAM_BLD_new()};
+    if (!n || !e || !builder ||
+        !OSSL_PARAM_BLD_push_BN(builder.get(), OSSL_PKEY_PARAM_RSA_N,
+                                n.get()) ||
+        !OSSL_PARAM_BLD_push_BN(builder.get(), OSSL_PKEY_PARAM_RSA_E, e.get()))
+      continue;
+    CHandle<OSSL_PARAM, OSSL_PARAM_free> params{
+        OSSL_PARAM_BLD_to_param(builder.get())};
+    CHandle<EVP_PKEY_CTX, EVP_PKEY_CTX_free> context{
+        EVP_PKEY_CTX_new_from_name(nullptr, "RSA", nullptr)};
+    if (!params || !context || EVP_PKEY_fromdata_init(context.get()) <= 0)
+      continue;
+    EVP_PKEY* raw_key = nullptr;
+    const auto imported = EVP_PKEY_fromdata(context.get(), &raw_key,
+                                            EVP_PKEY_PUBLIC_KEY, params.get());
+    CHandle<EVP_PKEY, EVP_PKEY_free> pkey{raw_key};
+    CHandle<EVP_MD_CTX, EVP_MD_CTX_free> md{EVP_MD_CTX_new()};
+    verified =
+        imported > 0 && pkey && md &&
+        EVP_DigestVerifyInit(md.get(), nullptr, EVP_sha256(), nullptr,
+                             pkey.get()) > 0 &&
+        EVP_DigestVerify(
+            md.get(), reinterpret_cast<const unsigned char*>(signature.data()),
+            signature.size(),
+            reinterpret_cast<const unsigned char*>(token.data()), b) == 1;
     if (verified) break;
   }
   // A short skew allowance covers clocks on different sides of the exchange.
@@ -1166,20 +1170,34 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
   }
 }
 auto Settings::Redact(std::string text) -> std::string {
+  return Redact(std::move(text), RedactionStrings());
+}
+auto Settings::RedactionStrings() -> std::vector<std::string> {
   auto& s = *state_;
   std::lock_guard lock(s.mutex);
-  auto remove = [&](const std::string& secret) {
-    if (secret.empty()) return;
-    const auto encoded = j::Quote(secret);
-    const auto escaped = encoded.substr(1, encoded.size() - 2);
-    for (const auto& value : {secret, escaped})
-      for (size_t i = 0; (i = text.find(value, i)) != text.npos;) {
-        text.replace(i, value.size(), "[redacted]");
-        i += 10;
-      }
-  };
+  std::vector<std::string> secrets;
   auto rows = s.db.prepare("SELECT profile,id FROM provider_connections");
-  while (rows.step()) remove(s.secrets->Get(rows.text(0) + ":" + rows.text(1)));
+  while (rows.step()) {
+    auto secret = s.secrets->Get(rows.text(0) + ":" + rows.text(1));
+    if (secret.empty()) continue;
+    const auto encoded = j::Quote(secret);
+    auto escaped = encoded.substr(1, encoded.size() - 2);
+    const bool differs = escaped != secret;
+    secrets.push_back(std::move(secret));
+    if (differs) secrets.push_back(std::move(escaped));
+  }
+  return secrets;
+}
+auto Settings::Redact(std::string text, const std::vector<std::string>& secrets)
+    -> std::string {
+  constexpr std::string_view replacement = "[redacted]";
+  for (const auto& value : secrets) {
+    if (value.empty()) continue;
+    for (size_t i = 0; (i = text.find(value, i)) != text.npos;) {
+      text.replace(i, value.size(), replacement);
+      i += replacement.size();
+    }
+  }
   return text;
 }
 auto Settings::HostPaths(const std::string& project) -> H::HostPathBindingsT {
@@ -1289,7 +1307,8 @@ auto Settings::ModelSelection(const std::string& profile,
     if (!override.empty())
       out.model = override;
     else {
-      const auto offered = s.models ? s.models() : std::vector<std::string>{};
+      const auto offered =
+          s.models ? s.models() : host::Models::StoredChatGPTModels(s.db);
       const auto version = [](const std::string& model) {
         std::vector<int> parts;
         int n = -1;
@@ -1441,7 +1460,7 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
     };
   }
   const auto window = host::Models::ContextWindowTokens(
-      s.directory, id, c.model, profile, j::Text(selection, "account_profile"));
+      s.db, id, c.model, profile, j::Text(selection, "account_profile"));
   const auto margin =
       window / 20;  // Reserve 5% for estimation/protocol overhead.
   if (c.max_tokens >= window - margin)
