@@ -52,12 +52,16 @@ public actor EnvironmentManager {
       if let url = (value["endpoint"] as? String).flatMap(URL.init(string:)), let token = value["token"] as? String,
          let id = value["project_id"] as? String {
         state = .ready(Endpoint(url: url, token: token, projectId: id))
-      } else { state = .failed(message: "Invalid environment endpoint", recovery: "Retry", log: "") }
+      } else { state = .failed(message: "Invalid environment endpoint", log: "") }
     case .starting: state = .starting(value["message"] as? String ?? "")
     case .failed:
-      if let diagnostic = value["startup_error"] as? [String: Any], let issue = HistoryVersionMismatch(diagnostic: diagnostic) {
+      let diagnostic = value["startup_error"] as? [String: Any] ?? [:]
+      let log = value["log"] as? String ?? ""
+      if let issue = HistoryVersionMismatch(diagnostic: diagnostic) {
         state = .incompatibleHistory(issue)
-      } else { state = .failed(message: value["message"] as? String ?? "", recovery: value["recovery"] as? String ?? "", log: value["log"] as? String ?? "") }
+      } else if diagnostic["kind"] as? String == "invalid_document" {
+        state = .invalidDocument(path: diagnostic["path"] as? String ?? "", message: diagnostic["message"] as? String ?? "", log: log)
+      } else { state = .failed(message: value["message"] as? String ?? "", log: log) }
     case .stopped: state = .stopped
     }
     if let key = value["key"] as? String { set(key, state) }
@@ -93,7 +97,8 @@ public actor EnvironmentManager {
     switch try await environment(project, .start) {
     case .ready(let endpoint): return endpoint
     case .incompatibleHistory(let issue): throw LauncherError.incompatibleHistory(issue)
-    case .failed(let message, _, let log): throw LauncherError.startFailed(reason: message, log: log)
+    case .failed(let message, let log, _), .invalidDocument(_, let message, let log):
+      throw LauncherError.startFailed(reason: message, log: log)
     default: throw LauncherError.notReady("the environment is not ready")
     }
   }

@@ -275,7 +275,7 @@ enum EnvironmentOverlay {
     guard !session.connected, session.staleHostState == nil else { return nil }
     let dirty = session.dirty
     switch session.environment {
-    case .failed, .stopped, .incompatibleHistory:
+    case .failed, .stopped, .incompatibleHistory, .invalidDocument:
       return nil
     case .reconnecting:
       return LoadingContent(title: String(localized: "再接続しています…"),
@@ -330,7 +330,7 @@ enum EnvironmentOverlay {
   static func hasProblem(_ s: ProjectSession) -> Bool {
     guard !s.connected else { return false }
     switch s.environment {
-    case .failed, .stopped, .incompatibleHistory: return true
+    case .failed, .stopped, .incompatibleHistory, .invalidDocument: return true
     case .ready: return s.connectionMessage != nil
     case .reconnecting, .preparing, .starting: return false
     }
@@ -365,20 +365,32 @@ struct EnvironmentProblemView: View {
     return String(line)
   }
 
+  static func startupFailureText(message: String, documentPath: String?, bundle: Bundle = .main)
+    -> (message: String, recovery: String) {
+    guard let path = documentPath else {
+      return (message, String(localized: "ログを確認してから、再試行してください。", bundle: bundle))
+    }
+    let file = path.isEmpty
+      ? String(localized: "このバージョンの Tsugumi では、このプロジェクトの文書を読み込めません。", bundle: bundle)
+      : String(localized: "プロジェクト内の「\(path)」は、このバージョンの Tsugumi では無効です。", bundle: bundle)
+    return ([file, message].filter { !$0.isEmpty }.joined(separator: "\n"),
+            String(localized: "エラーメッセージで指摘された箇所を修正または削除してから、再試行してください。", bundle: bundle))
+  }
+
   private var problem: Problem {
     switch session.environment {
     case .incompatibleHistory(let issue):
       let error = LauncherError.incompatibleHistory(issue)
       return Problem(symbol: "clock.arrow.circlepath", color: .orange, title: String(localized: "実行履歴の形式が異なります"),
                      message: error.description, recovery: error.recovery, log: "")
-    case .failed(let m, let recovery, let log):
-      var p = Problem(symbol: "xmark.octagon.fill", color: .red, title: String(localized: "実行環境を起動できませんでした"),
-                      message: m, recovery: recovery.isEmpty ? nil : recovery, log: log)
-      p.cause = Self.cause(in: log)
-      if let c = p.cause, c.contains("cannot open the project") {
-        p.recovery = String(localized: "プロジェクトのファイル（tsugumi.json・layout.bin・definitions の中）の書式を直してから、再試行してください。文書と実行履歴は消えません。")
-      }
-      return p
+    case .invalidDocument(let path, let message, let log):
+      let text = Self.startupFailureText(message: message, documentPath: path)
+      return Problem(symbol: "xmark.octagon.fill", color: .red, title: String(localized: "実行環境を起動できませんでした"),
+                     message: text.message, recovery: text.recovery, log: log)
+    case .failed(let message, let log, let recovery):
+      return Problem(symbol: "xmark.octagon.fill", color: .red, title: String(localized: "実行環境を起動できませんでした"),
+                     message: message, recovery: recovery ?? Self.startupFailureText(message: message, documentPath: nil).recovery,
+                     log: log, cause: Self.cause(in: log))
     case .stopped:
       return Problem(symbol: "pause.circle.fill", color: .secondary, title: String(localized: "実行環境は停止しています"),
                      message: String(localized: "このプロジェクトの実行環境（tsugumid）は動いていません。起動すると編集と実行ができます。"),
@@ -446,6 +458,9 @@ struct EnvironmentProblemView: View {
             .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
           if p.canStop {
             Button("環境を停止") { session.stopEnvironment() }
+          }
+          if case .invalidDocument = session.environment {
+            Button("Finder で表示") { NSWorkspace.shared.activateFileViewerSelecting([session.identity.url]) }
           }
           OpenVMStartupLogButton()
           Spacer()

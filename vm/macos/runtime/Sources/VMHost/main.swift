@@ -336,7 +336,7 @@ Thread.detachNewThread {
             defer { finished.signal() }
             do { try await serve(message, peer) }
             catch {
-              let failure = Tsugumi_VMHost_FailureT(); failure.message = "\(error)"; failure.recovery = (error as? LauncherError)?.recovery ?? "Retry the virtual machine"
+              let failure = Tsugumi_VMHost_FailureT(); failure.message = "\(error)"
               peer.emit(encode(failure, reply: .failure, id: message.requestId))
             }
           }

@@ -27,9 +27,9 @@ export interface EnvPublicState {
   /** While starting in the VM: the step, and how far along the start is. */
   stage?: string
   fraction?: number
-  recovery?: string
   log?: string
   historyVersionMismatch?: HistoryVersionMismatch
+  invalidDocument?: { path: string; message: string }
   endpoint?: string
   token?: string
   projectId?: string
@@ -49,7 +49,10 @@ export function environmentState(value: H.EnvironmentStateT): EnvPublicState {
       const mismatch: HistoryVersionMismatch | undefined = error
         ? historyVersionMismatch({ kind: s(error.kind), found: s(error.found), expected: s(error.expected), path: s(error.path) })
         : undefined
-      return { state: 'failed', message, recovery: s(value.recovery), log: s(value.log), historyVersionMismatch: mismatch }
+      const invalidDocument = error?.kind === 'invalid_document'
+        ? { path: s(error.path), message: s(error.message) }
+        : undefined
+      return { state: 'failed', message, log: s(value.log), historyVersionMismatch: mismatch, invalidDocument }
     }
     default:
       return { state: 'stopped' }

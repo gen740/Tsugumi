@@ -331,8 +331,11 @@ int run_daemon(int argc, char** argv) {
     error.kind = "project_open_failed";
     if (failure && failure->failure.kind == FailureKind::resource_limit)
       error.kind = "resource_limit";
-    if (failure && failure->failure.kind == FailureKind::invalid_document)
+    if (failure && failure->failure.kind == FailureKind::invalid_document) {
       error.kind = "invalid_document";
+      for (const auto& [key, value] : failure->failure.args)
+        if (key == "path") error.path = value;
+    }
     return report_startup_failure(std::move(error), e);
   }
   if (!opt.prepare_native_cards.empty()) {

@@ -737,6 +737,15 @@ std::string execution_fingerprint(const Document& doc) {
 
 std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
   auto doc = std::make_shared<Document>();
+  const auto parse_file = [](const std::string& path, auto parse) {
+    try {
+      return parse();
+    } catch (DocumentError& error) {
+      if (error.code == "invalid_document")
+        error.args.insert_or_assign("path", path);
+      throw;
+    }
+  };
   size_t remaining = kMaxDocumentJsonBytes;
   const auto consume = [&](const std::string& path, size_t bytes) {
     if (bytes > remaining)
@@ -748,9 +757,11 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
   };
   auto project_text = fs::read_file(root / "tsugumi.json");
   if (!project_text)
-    throw DocumentError("invalid_document", "tsugumi.json is missing");
+    invalid("tsugumi.json is missing", {{"path", "tsugumi.json"}});
   consume("tsugumi.json", project_text->size());
-  auto project = parse_project_json(*project_text);
+  auto project = parse_file("tsugumi.json", [&] {
+    return parse_project_json(*project_text);
+  });
   doc->project_buffer = std::move(project.buffer);
   doc->project_json = std::move(project.text);
   doc->disk_hashes["tsugumi.json"] = crypto::sha256_hex(*project_text);
@@ -763,7 +774,9 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
                          bytes.append(chunk);
                        });
     doc->sources.emplace(
-        "tsugumi.lock", external_document_source("tsugumi.lock", std::move(bytes)));
+        "tsugumi.lock", parse_file("tsugumi.lock", [&] {
+          return external_document_source("tsugumi.lock", std::move(bytes));
+        }));
   }
 
   if (auto layout = fs::read_file(root / "layout.bin")) {
@@ -782,17 +795,20 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
       std::string id = entry.path().filename().string();
       if (!valid_name(id))
         throw DocumentError("invalid_document", "invalid definition id " + id);
+      const auto prefix = "definitions/" + id + '/';
+      const auto card_path = prefix + "_card.json";
       auto card_text = fs::read_file(entry.path() / "_card.json");
       if (!card_text)
-        throw DocumentError("invalid_document",
-                            "definitions/" + id + " needs _card.json");
-      const auto prefix = "definitions/" + id + '/';
-      consume(prefix + "_card.json", card_text->size());
+        invalid("definitions/" + id + " needs _card.json",
+                {{"path", card_path}});
+      consume(card_path, card_text->size());
       DefinitionDoc d;
-      auto card = parse_card_json(id, *card_text);
+      auto card = parse_file(card_path, [&] {
+        return parse_card_json(id, *card_text, card_path);
+      });
       d.card_buffer = std::move(card.buffer);
       d.card_json = std::move(card.text);
-      doc->disk_hashes[prefix + "_card.json"] = crypto::sha256_hex(*card_text);
+      doc->disk_hashes[card_path] = crypto::sha256_hex(*card_text);
       if (auto readme = fs::read_file(entry.path() / "README.md")) {
         consume(prefix + "README.md", readme->size());
         check_readme(prefix + "README.md", *readme);
@@ -829,9 +845,10 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
           consume(rel, chunk.size());
           bytes.append(chunk);
         });
-        doc->sources.emplace(rel, external ? external_document_source(
-                                                 rel, std::move(bytes))
-                                           : note_source(rel, std::move(bytes)));
+        doc->sources.emplace(rel, parse_file(rel, [&] {
+          return external ? external_document_source(rel, std::move(bytes))
+                          : note_source(rel, std::move(bytes));
+        }));
         continue;
       }
       crypto::Sha256 hash;

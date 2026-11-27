@@ -86,11 +86,37 @@ extension CanvasWindowTests {
   }
 
   @Test func languageRestartNoticeUsesTheSelectedLanguage() throws {
+    let resources = testTemporaryDirectory.appendingPathComponent("language-restart-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: resources) }
+    let bundle = try localizationBundle(at: resources)
+    let english = LanguageRestartText(language: .en, resources: bundle)
+    let japanese = LanguageRestartText(language: .ja, resources: bundle)
+    #expect(!english.now.isEmpty && !english.later.isEmpty && !english.message.isEmpty)
+    #expect(english.now != japanese.now && english.message != japanese.message)
+  }
+
+  @Test func startupGuidanceUsesTheAppLanguage() throws {
+    let resources = testTemporaryDirectory.appendingPathComponent("startup-guidance-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: resources) }
+    _ = try localizationBundle(at: resources)
+    let ja = try #require(Bundle(path: resources.appendingPathComponent("ja.lproj").path))
+    let en = try #require(Bundle(path: resources.appendingPathComponent("en.lproj").path))
+    let path = "definitions/record/_card.json"
+    let diagnostic = "\(path): workerCapabilities is not allowed on type code"
+    let japanese = EnvironmentProblemView.startupFailureText(message: diagnostic, documentPath: path, bundle: ja)
+    let english = EnvironmentProblemView.startupFailureText(message: diagnostic, documentPath: path, bundle: en)
+    #expect(japanese.message == "プロジェクト内の「\(path)」は、このバージョンの Tsugumi では無効です。\n\(diagnostic)")
+    #expect(english.message == "The project file “\(path)” is invalid for this version of Tsugumi.\n\(diagnostic)")
+    #expect(japanese.recovery == "エラーメッセージで指摘された箇所を修正または削除してから、再試行してください。")
+    #expect(english.recovery == "Correct or remove what the error message identifies, then retry.")
+    #expect(EnvironmentProblemView.startupFailureText(message: "", documentPath: nil, bundle: ja).recovery == "ログを確認してから、再試行してください。")
+    #expect(EnvironmentProblemView.startupFailureText(message: "", documentPath: nil, bundle: en).recovery == "Check the log, then retry.")
+  }
+
+  private func localizationBundle(at resources: URL) throws -> Bundle {
     let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .appendingPathComponent("../../Resources").standardizedFileURL
-    let resources = testTemporaryDirectory.appendingPathComponent("language-restart-\(UUID())")
     let fm = FileManager.default
-    defer { try? fm.removeItem(at: resources) }
     let englishFolder = resources.appendingPathComponent("en.lproj")
     try fm.createDirectory(at: englishFolder, withIntermediateDirectories: true)
     try fm.copyItem(at: source.appendingPathComponent("ja.lproj"), to: resources.appendingPathComponent("ja.lproj"))
@@ -107,11 +133,7 @@ extension CanvasWindowTests {
     try output.close()
     try #require(generate.terminationStatus == 0)
 
-    let bundle = try #require(Bundle(path: resources.path))
-    let english = LanguageRestartText(language: .en, resources: bundle)
-    let japanese = LanguageRestartText(language: .ja, resources: bundle)
-    #expect(!english.now.isEmpty && !english.later.isEmpty && !english.message.isEmpty)
-    #expect(english.now != japanese.now && english.message != japanese.message)
+    return try #require(Bundle(path: resources.path))
   }
 }
 

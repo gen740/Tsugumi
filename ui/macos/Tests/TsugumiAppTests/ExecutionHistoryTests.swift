@@ -12,12 +12,15 @@ import Testing
 
 // Serialize with the fixtures that temporarily override the core service state directory.
 extension ChatResumeTests {
-  @MainActor @Test func executionHistoryFailurePreservesTheMismatch() async throws {
+  @MainActor @Test(arguments: ["incompatible_history", "invalid_document"])
+  func startupFailurePreservesTheDiagnostic(kind: String) async throws {
     let dir = try SyncTests.project()
     defer { try? FileManager.default.removeItem(at: dir) }
     let support = dir.appendingPathComponent("test-support")
     try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
     let identity = try ProjectIdentity(url: dir)
+    let path = "definitions/record/_card.json"
+    let validationMessage = "\(path): workerCapabilities is not allowed on type code"
     // Model hostd's public Host contract; the UI never speaks to VMHost.
     let socket = VMHostIPC.socketPath(support: support)
     let listener = try VMHostIPC.listen(path: socket)
@@ -80,7 +83,12 @@ extension ChatResumeTests {
                   attempts += 1
                   environment.phase = .failed; environment.message = "cannot open history"
                   let diagnostic = Tsugumi_Host_StartupErrorT()
-                  diagnostic.kind = "incompatible_history"; diagnostic.found = "2"; diagnostic.expected = "3"
+                  diagnostic.kind = kind
+                  if kind == "incompatible_history" {
+                    diagnostic.found = "2"; diagnostic.expected = "3"
+                  } else {
+                    diagnostic.path = path; diagnostic.message = validationMessage
+                  }
                   environment.startupError = diagnostic
                   latest = environment
                 } else {
@@ -101,25 +109,24 @@ extension ChatResumeTests {
       }
     }
     let session = ProjectSession(identity: identity, environments: EnvironmentManager(support: support, image: nil))
-    func waitForProblem(found: String?) async throws {
-      try await waitForModel {
-        guard EnvironmentOverlay.hasProblem(session), session.connectionMessage != nil else { return false }
-        switch session.environment {
-        case .incompatibleHistory(let issue): return issue.found == found
-        case .failed: return found == nil
-        default: return false
-        }
+    session.start()
+    try await waitForModel {
+      guard EnvironmentOverlay.hasProblem(session), session.connectionMessage != nil else { return false }
+      switch (kind, session.environment) {
+      case ("incompatible_history", .incompatibleHistory), ("invalid_document", .invalidDocument): return true
+      default: return false
       }
     }
-    session.start()
-    try await waitForProblem(found: "2")
-    guard case .incompatibleHistory(let mismatch) = session.environment else {
-      Issue.record("Expected a typed history mismatch")
-      await session.close()
-      return
+    switch (kind, session.environment) {
+    case ("incompatible_history", .incompatibleHistory(let mismatch)):
+      #expect(mismatch.found == "2")
+      #expect(mismatch.expected == "3")
+    case ("invalid_document", .invalidDocument(let file, let message, _)):
+      #expect(file == path)
+      #expect(message == validationMessage)
+    default:
+      Issue.record("Expected a typed startup error for \(kind)")
     }
-    #expect(mismatch.found == "2")
-    #expect(mismatch.expected == "3")
     #expect(try await host.value == 1)
     await session.close()
   }

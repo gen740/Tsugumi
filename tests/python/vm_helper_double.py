@@ -152,7 +152,7 @@ def serve_requests(peer):
                     log.write(json.dumps({"op": "run", "origins": [text(v) for v in request.origins or []]}) + "\n")
                 if Path(os.environ["HOST_BUSY"]).exists():
                     value, tag = FailureT(), ReplyPayload.Failure
-                    value.message, value.recovery = "fixture VM failed", "Retry the virtual machine"
+                    value.message = "fixture VM failed"
                 else:
                     mounts = {text(m.name): Path(text(m.path)) for m in request.mounts or []}
                     controls[key] = mounts["control"]

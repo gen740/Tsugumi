@@ -758,7 +758,13 @@
   "プロジェクト: {0}": {"text": "Project: {0}", "mac": ["@"]},
   "プロジェクトが大きすぎます（64 MB まで）。": "The project is too large (up to 64 MB).",
   "プロジェクトのすべての会話とヘルパーに適用され、取り消すまで有効です。": "Applies to every conversation and helper in the project until revoked.",
-  "プロジェクトのファイル（tsugumi.json・layout.bin・definitions の中）の書式を直してから、再試行してください。文書と実行履歴は消えません。": "Fix the format of the project's files (tsugumi.json, layout.bin, files in definitions) and retry; your documents and history are kept.",
+  "プロジェクト内の「{0}」は、このバージョンの Tsugumi では無効です。": {
+    "text": "The project file “{0}” is invalid for this version of Tsugumi.",
+    "mac": ["@"]
+  },
+  "このバージョンの Tsugumi では、このプロジェクトの文書を読み込めません。": "This version of Tsugumi cannot read a document in this project.",
+  "エラーメッセージで指摘された箇所を修正または削除してから、再試行してください。": "Correct or remove what the error message identifies, then retry.",
+  "ログを確認してから、再試行してください。": "Check the log, then retry.",
   "プロジェクトのフォルダを作成する場所を選んでください": "Choose where to make the project's folder",
   "プロジェクトの実行環境": "Project execution environment",
   "プロジェクトの操作に失敗しました。": "The project operation failed.",

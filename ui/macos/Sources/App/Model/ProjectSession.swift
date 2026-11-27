@@ -534,9 +534,10 @@ final class ProjectSession {
       if connected || Task.isCancelled { return }
       if case .incompatibleHistory = environment { return }
       if case .failed = environment { return }
+      if case .invalidDocument = environment { return }
       // A completed host start/connection failure remains explicitly retryable.
-      environment = .failed(message: String(localized: "tsugumid に再接続できませんでした") + (connectionMessage.map { ": \($0)" } ?? ""),
-                            recovery: String(localized: "「再試行」で接続し直します。未保存の変更は保持しています。"), log: "")
+      environment = .failed(message: String(localized: "tsugumid に再接続できませんでした") + (connectionMessage.map { ": \($0)" } ?? ""), log: "",
+                            recovery: String(localized: "「再試行」で接続し直します。未保存の変更は保持しています。"))
     }
   }
 

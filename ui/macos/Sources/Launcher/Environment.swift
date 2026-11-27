@@ -17,7 +17,8 @@ public enum EnvironmentState: Sendable, Equatable {
   case starting(String)
   case ready(Endpoint)
   case reconnecting
-  case failed(message: String, recovery: String, log: String)
+  case failed(message: String, log: String, recovery: String? = nil)
+  case invalidDocument(path: String, message: String, log: String)
   case incompatibleHistory(HistoryVersionMismatch)
 
   public var label: String {
@@ -27,7 +28,7 @@ public enum EnvironmentState: Sendable, Equatable {
     case .starting(let s): return "Starting: \(s)"
     case .ready: return "Ready"
     case .reconnecting: return "Reconnecting"
-    case .failed(let m, _, _): return "Failed: \(m)"
+    case .failed(let m, _, _), .invalidDocument(_, let m, _): return "Failed: \(m)"
     case .incompatibleHistory(let issue): return "Incompatible history: \(issue.found), expected \(issue.expected)"
     }
   }

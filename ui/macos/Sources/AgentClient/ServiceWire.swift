@@ -458,7 +458,7 @@ enum ServiceWire {
     case let v as Tsugumi_Host_EnvironmentStateT:
       var result: [String: Any] = ["project": v.project, "key": v.key, "phase": v.phase, "endpoint": v.endpoint ?? "", "token": v.token ?? "",
         "project_id": v.projectId ?? "", "control_dir": v.controlDir ?? "",
-        "ready_file": v.readyFile ?? "", "message": v.message ?? "", "recovery": v.recovery ?? "", "log": v.log ?? "",
+        "ready_file": v.readyFile ?? "", "message": v.message ?? "", "log": v.log ?? "",
         "folders": v.folders.compactMap { $0 }]
       if let error = v.startupError {
         result["startup_error"] = ["kind": error.kind ?? "", "found": error.found ?? "",

@@ -16,11 +16,9 @@
 namespace tsugumi::host {
 
 struct EnvironmentFailure : std::runtime_error {
-  std::string recovery, log;
-  EnvironmentFailure(std::string message, std::string r, std::string l)
-      : std::runtime_error(std::move(message)),
-        recovery(std::move(r)),
-        log(std::move(l)) {}
+  std::string log;
+  EnvironmentFailure(std::string message, std::string log)
+      : std::runtime_error(std::move(message)), log(std::move(log)) {}
 };
 
 struct EnvironmentAuthorization {
