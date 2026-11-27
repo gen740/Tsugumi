@@ -476,28 +476,61 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         stream == LogStream::standard_error) {
       const auto& settings = doc_->resolution->find(card)->settings;
       const auto limit = settings.record_logs ? settings.log_limit_bytes : 0;
-      auto& captured = captured_log_bytes_[{path_key(card), inv}];
-      for (const auto& text : received.lines) {
-        // This temporary log is available only while the run is active.
-        try {
-          if (!live_logs_) live_logs_ = History::open_live_logs();
-          sql::Transaction transaction(*live_logs_);
-          auto ends = History::append_log(*live_logs_, run_id_, card, inv, stream, text);
-          transaction.commit();
-          for (auto& end : ends) {
-            end.live = true;
-            svc_.server()->broadcast(log_note(end));
-          }
-        } catch (const std::exception& error) {
-          log::warn(std::string("live log: ") + error.what());
+      const auto key = std::pair{path_key(card), inv};
+      auto& live = live_log_budgets_[key];
+      auto& recorded = captured_log_bytes_[key];
+      constexpr uint64_t kLiveInvocationBytes = 8u << 20;
+      constexpr uint64_t kLiveRunBytes = 128u << 20;
+      const auto append = [&](std::string& chunk, uint64_t remaining) {
+        for (const auto& line : received.lines) {
+          const auto count = std::min<uint64_t>(line.size(), remaining);
+          chunk.append(line.data(), count);
+          remaining -= count;
+          if (count < line.size()) return true;
         }
-        if (limit == 0 || captured > limit) continue;
-        // Keep the exact byte prefix, including when a read spans the limit.
-        const auto accepted = std::min<uint64_t>(text.size(), limit - captured);
-        if (accepted)
-          record_card_log(card, inv, stream, text.substr(0, accepted));
-        captured += text.size();
-        if (captured > limit) mark_card_log_truncated(card, inv, limit);
+        return false;
+      };
+
+      if (!live.truncated) {
+        std::string chunk;
+        const auto remaining = std::min(kLiveInvocationBytes - live.bytes,
+                                        kLiveRunBytes - live_log_bytes_);
+        const bool truncated = append(chunk, remaining) || received.truncated;
+        if (!chunk.empty() || truncated) {
+          try {
+            if (!live_logs_) live_logs_ = History::open_live_logs();
+            sql::Transaction transaction(*live_logs_);
+            auto ends = History::append_log(*live_logs_, run_id_, card, inv,
+                                            stream, chunk);
+            if (truncated)
+              History::mark_log_truncated(*live_logs_, run_id_, card, inv,
+                                          live.bytes + chunk.size());
+            transaction.commit();
+            live.bytes += chunk.size();
+            live_log_bytes_ += chunk.size();
+            live.truncated = truncated;
+            for (auto& end : ends) {
+              end.live = true;
+              svc_.server()->broadcast(log_note(end));
+            }
+            if (truncated)
+              svc_.server()->broadcast(
+                  log_note({run_id_, card, inv, stream, std::nullopt, true}));
+          } catch (const std::exception& error) {
+            log::warn(std::string("live log: ") + error.what());
+          }
+        }
+      }
+      if (limit && !recorded.truncated) {
+        std::string chunk;
+        const bool truncated = append(chunk, limit - recorded.bytes);
+        recorded.bytes += chunk.size();
+        if (!chunk.empty())
+          record_card_log(card, inv, stream, std::move(chunk));
+        if (truncated) {
+          recorded.truncated = true;
+          mark_card_log_truncated(card, inv, limit);
+        }
       }
       return;
     }
@@ -2028,7 +2061,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   std::optional<FailureData> stall_failure_;
   std::mutex log_policy_mu_;
   std::unique_ptr<sql::Db> live_logs_;
-  std::map<std::pair<std::string, uint64_t>, uint64_t> captured_log_bytes_;
+  struct Capture {
+    uint64_t bytes = 0;
+    bool truncated = false;
+  };
+  uint64_t live_log_bytes_ = 0;
+  std::map<std::pair<std::string, uint64_t>, Capture> live_log_budgets_;
+  std::map<std::pair<std::string, uint64_t>, Capture> captured_log_bytes_;
   std::map<std::pair<std::string, uint64_t>, workerd::InvocationLog>
       log_budgets_;
   std::mutex persist_mu_;
