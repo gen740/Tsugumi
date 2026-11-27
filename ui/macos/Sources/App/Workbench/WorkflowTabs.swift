@@ -244,6 +244,13 @@ private struct ChatColumn<Content: View>: View {
   var body: some View {
     content
       .clipped()
+      // The column reaches the window's top edge as the canvas beside it does:
+      // its header floats in the toolbar over the chat's own background.
+      .background(alignment: .leading) {
+        Color(nsColor: .windowBackgroundColor)
+          .overlay(alignment: .leading) { Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1) }
+          .ignoresSafeArea(.container, edges: .top)
+      }
       .onGeometryChange(for: Double.self) { $0.size.width } action: { shown = $0 }
       .overlay(alignment: .leading) {
         Color.clear

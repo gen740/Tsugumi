@@ -159,14 +159,17 @@ struct GraphCanvas: View {
   }
   @State private var layoutPass = LayoutPass()
 
+  /// How far the window's bars and capsules reach over the canvas's top.
+  private let topControlsHeight: CGFloat
   private let bottomControlsHeight: CGFloat
 
   init(workspace: Workspace, session: ProjectSession, tab: WorkflowTab, showsCardViews: Bool = false,
-       bottomControlsHeight: CGFloat = 0) {
+       topControlsHeight: CGFloat = 0, bottomControlsHeight: CGFloat = 0) {
     self.workspace = workspace
     self.session = session
     self.tab = tab
     self.showsCardViews = showsCardViews
+    self.topControlsHeight = topControlsHeight
     self.bottomControlsHeight = bottomControlsHeight
   }
   private var cam: CanvasCamera { CanvasCamera(x: camera.x, y: camera.y, zoom: camera.zoom) }
@@ -232,10 +235,10 @@ struct GraphCanvas: View {
             .allowsHitTesting(bubbleScrolls)
             .transition(.opacity)
         }
-        if findText != nil { findBox.padding(.top, 52).frame(maxWidth: .infinity, alignment: .top) }
+        if findText != nil { findBox.padding(.top, topControlsHeight + 8).frame(maxWidth: .infinity, alignment: .top) }
         if debug.showCanvasStats {
           canvasStats(routed)
-            .padding(.leading, 10).padding(.top, 52)
+            .padding(.leading, 10).padding(.top, topControlsHeight + 8)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .allowsHitTesting(false)
         }
@@ -1266,7 +1269,7 @@ struct GraphCanvas: View {
     var top = hoverAt.y + gap
     if top + h > size.height - 6 { top = hoverAt.y - gap - h }
     left = min(max(6, left), max(6, size.width - w - 6))
-    top = min(max(6, top), max(6, size.height - h - 6))
+    top = min(max(topControlsHeight + 6, top), max(6, size.height - h - 6))
     return CGRect(x: left, y: top, width: w, height: h)
   }
 
@@ -1612,9 +1615,15 @@ struct GraphCanvas: View {
     let viewport = viewport ?? size
     guard !rect.isNull, viewport.width > 0, viewport.height > 0 else { return }
     var c = CanvasCamera()
-    c.fit(rect, in: viewport, insets: EdgeInsets(top: 8, leading: 8, bottom: 48, trailing: 8), maxZoom: 1.2, margin: 24)
+    c.fit(rect, in: viewport, insets: Self.fitInsets(top: topControlsHeight), maxZoom: 1.2, margin: 24)
     session.cameras[scopeKey] = (c.x, c.y, c.zoom)
     saveView()
+  }
+
+  /// The part of the canvas "fit all" frames: clear of the window's bars and
+  /// capsules floating over its top (`top`) and of the bottom controls.
+  static func fitInsets(top: CGFloat) -> EdgeInsets {
+    EdgeInsets(top: top + 8, leading: 8, bottom: 48, trailing: 8)
   }
 }
 

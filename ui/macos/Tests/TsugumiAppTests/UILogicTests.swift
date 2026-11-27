@@ -557,6 +557,18 @@ import TsugumiTestSupport
   #expect(tl.y >= 50 && br.y <= 550 && abs((tl.x + br.x) / 2 - 400) < 0.5)
 }
 
+@Test func fitAllKeepsTheGraphClearOfTheTopCapsules() {
+  // The canvas runs under the window's bars: a tall graph fitted into it
+  // starts below them, whatever their height.
+  for top in [0.0, 28, 52] {
+    var c = CanvasCamera()
+    c.fit(CGRect(x: 0, y: 0, width: 300, height: 900), in: CGSize(width: 800, height: 600),
+          insets: GraphCanvas.fitInsets(top: top), maxZoom: 1.2, margin: 24)
+    #expect(c.screen(CGPoint(x: 0, y: 0)).y >= top + 8)
+    #expect(c.screen(CGPoint(x: 0, y: 900)).y <= 600 - 48)
+  }
+}
+
 @Test func aSavedCameraCanLeaveEveryCardOutsideTheViewport() {
   let cards = [CGRect(x: 320, y: 300, width: 200, height: 82),
                CGRect(x: 640, y: 460, width: 200, height: 82)]

@@ -10,35 +10,46 @@ struct CanvasWorkspace: View {
   @Bindable var tab: WorkflowTab
   let showsCardViews: Bool
   @State private var bottomControlsHeight: CGFloat = 0
+  @State private var topControlsHeight: CGFloat = 0
 
   var body: some View {
-    GraphCanvas(workspace: workspace, session: session, tab: tab, showsCardViews: showsCardViews,
-                bottomControlsHeight: bottomControlsHeight)
-      .overlay(alignment: .topTrailing) {
-        VStack(alignment: .trailing, spacing: 8) {
-          if let notice = session.notice {
-            noticeBanner(notice) { session.notice = nil }
+    // The canvas runs up to the window's top edge, under the title bar and the
+    // toolbar's capsules; the controls here stay in the area below them. The
+    // toolbar's empty strip still moves the window (the title bar takes those
+    // clicks), so the canvas shows there but is not panned from there.
+    ZStack {
+      GraphCanvas(workspace: workspace, session: session, tab: tab, showsCardViews: showsCardViews,
+                  topControlsHeight: topControlsHeight, bottomControlsHeight: bottomControlsHeight)
+        .ignoresSafeArea(.container, edges: .top)
+      Color.clear
+        .overlay(alignment: .topTrailing) {
+          VStack(alignment: .trailing, spacing: 8) {
+            if let notice = session.notice {
+              noticeBanner(notice) { session.notice = nil }
+            }
+            if let error = session.stopError {
+              noticeBanner(.error(error))
+            }
+            HStack(spacing: 8) {
+              CanvasDraftControls(workspace: workspace, session: session, tab: tab).fixedSize()
+              CanvasCommentControls(workspace: workspace, session: session, tab: tab).fixedSize()
+            }
           }
-          if let error = session.stopError {
-            noticeBanner(.error(error))
-          }
-          HStack(spacing: 8) {
-            CanvasDraftControls(workspace: workspace, session: session, tab: tab).fixedSize()
-            CanvasCommentControls(workspace: workspace, session: session, tab: tab).fixedSize()
-          }
+          .padding(10)
         }
-        .padding(10)
-      }
-    // At narrow widths the status moves above the left controls.
-    .overlay(alignment: .bottom) {
-      CanvasBottomControls {
-        viewControls.fixedSize()
-      } status: {
-        StatusBar(workspace: workspace, session: session, tab: tab)
-      }
-      .padding(10)
-      .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { bottomControlsHeight = $0 }
+        // At narrow widths the status moves above the left controls.
+        .overlay(alignment: .bottom) {
+          CanvasBottomControls {
+            viewControls.fixedSize()
+          } status: {
+            StatusBar(workspace: workspace, session: session, tab: tab)
+          }
+          .padding(10)
+          .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { bottomControlsHeight = $0 }
+        }
     }
+    // How far the window's bars reach over the canvas (0 under a tab bar).
+    .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { topControlsHeight = $0 }
   }
 
   private func noticeBanner(_ notice: WorkbenchNotice, dismiss: (() -> Void)? = nil) -> some View {
