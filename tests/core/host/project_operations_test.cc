@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <tuple>
 
 #include "../agent/document_fixture.hh"
 #include "../agent_fixture_server.hh"
@@ -308,6 +309,104 @@ TEST(ProjectOperationLayout,
       {}, false, &scene);
   const auto layout = json::Object(arranged);
   EXPECT_FALSE(layout.contains("boundary"));
+}
+
+// One output feeds three inputs, another feeds two.
+auto FanScene() -> H::LayoutSceneT {
+  H::LayoutSceneT scene;
+  scene.flow = "topToBottom";
+  scene.grid = 20;
+  auto port = [](const std::string& name, double x, double y) {
+    auto p = std::make_unique<H::LayoutPortT>();
+    p->name = name;
+    p->x = x;
+    p->y = y;
+    return p;
+  };
+  for (const auto* id : {"s", "t1", "t2", "t3"}) {
+    auto card = std::make_unique<H::LayoutCardT>();
+    card->id = id;
+    card->width = 160;
+    card->height = 120;
+    if (std::string(id) == "s") {
+      card->outputs.push_back(port("out", 40, 120));
+      card->outputs.push_back(port("few", 120, 120));
+    } else {
+      card->inputs.push_back(port("in", 40, 0));
+      card->inputs.push_back(port("b", 120, 0));
+    }
+    scene.cards.push_back(std::move(card));
+  }
+  for (const auto& [from_port, to, to_port] :
+       std::vector<std::tuple<std::string, std::string, std::string>>{
+           {"out", "t1", "in"},
+           {"out", "t2", "in"},
+           {"out", "t3", "in"},
+           {"few", "t1", "b"},
+           {"few", "t2", "b"}}) {
+    auto wire = std::make_unique<H::LayoutWireT>();
+    wire->from = "s";
+    wire->from_port = from_port;
+    wire->to = to;
+    wire->to_port = to_port;
+    scene.wires.push_back(std::move(wire));
+  }
+  return scene;
+}
+constexpr auto kFanProject =
+    R"({"canvas":{"cards":[{"id":"s"},{"id":"t1"},{"id":"t2"},{"id":"t3"}],)"
+    R"("connections":[)"
+    R"({"from":{"card":"s","port":"out"},"to":{"card":"t1","port":"in"}},)"
+    R"({"from":{"card":"s","port":"out"},"to":{"card":"t2","port":"in"}},)"
+    R"({"from":{"card":"s","port":"out"},"to":{"card":"t3","port":"in"}},)"
+    R"({"from":{"card":"s","port":"few"},"to":{"card":"t1","port":"b"}},)"
+    R"({"from":{"card":"s","port":"few"},"to":{"card":"t2","port":"b"}}]}})";
+
+TEST(ProjectOperationLayout, ArrangePlacesJunctionsOnOutputsWithThreeInputs) {
+  const auto scene = FanScene();
+  // A junction placed by hand on the output with two inputs goes.
+  const auto arranged = ArrangeProjectLayout(
+      kFanProject,
+      R"({"cards":{"s":{"x":0,"y":0,"junctions":[{"port":"few","x":5,"y":5}]}}})",
+      {}, false, &scene);
+  const auto cards = json::Object(json::Object(arranged).at("cards"));
+  auto at = [&](const std::string& id, const char* axis) {
+    return std::stod(json::Object(cards.at(id)).at(axis));
+  };
+  const auto source = json::Object(cards.at("s"));
+  ASSERT_TRUE(source.contains("junctions"));
+  const auto list = json::Array(source.at("junctions"));
+  ASSERT_EQ(list.size(), 1U);
+  const auto junction = json::Object(list[0]);
+  EXPECT_EQ(json::Text(junction, "port"), "out");
+  for (const auto* id : {"t1", "t2", "t3"})
+    EXPECT_FALSE(json::Object(cards.at(id)).contains("junctions"));
+  // Below the output, halfway to its nearest input (at least two grids).
+  const double sy = at("s", "y") + 120;
+  double nearest = 1e9, low = 1e9, high = -1e9;
+  for (const auto* id : {"t1", "t2", "t3"}) {
+    nearest = std::min(nearest, at(id, "y"));
+    low = std::min(low, at(id, "x") + 40);
+    high = std::max(high, at(id, "x") + 40);
+  }
+  EXPECT_DOUBLE_EQ(std::stod(junction.at("y")),
+                   sy + std::max(40.0, (nearest - sy) / 2));
+  EXPECT_DOUBLE_EQ(std::stod(junction.at("x")),
+                   std::clamp(at("s", "x") + 40, low, high));
+
+  // A junction goes with its Card when the Card is moved.
+  H::ProjectMoveT move;
+  move.cards = {"s"};
+  move.dx = 30;
+  move.dy = 10;
+  move.scene = std::make_unique<H::LayoutSceneT>(FanScene());
+  const auto moved = json::Object(json::Object(json::Object(
+      MoveProjectLayout(kFanProject, arranged, {}, move)).at("cards")).at("s"));
+  const auto after = json::Object(json::Array(moved.at("junctions"))[0]);
+  EXPECT_DOUBLE_EQ(std::stod(after.at("x")), std::stod(junction.at("x")) + 30);
+  EXPECT_DOUBLE_EQ(std::stod(after.at("y")), std::stod(junction.at("y")) + 10);
+  // Arranged layouts are valid layout.bin views.
+  EXPECT_NO_THROW(SplitLayoutView(arranged));
 }
 }  // namespace
 }  // namespace tsugumi::host

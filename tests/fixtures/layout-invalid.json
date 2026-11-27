@@ -58,5 +58,21 @@
   {
     "name": "overflowing-coordinate",
     "json": "{\"boundary\":{\"inputs\":{\"x\":1e999,\"y\":0}}}"
+  },
+  {
+    "name": "junction-without-position",
+    "json": "{\"cards\":{\"a\":{\"x\":0,\"y\":0,\"junctions\":[{\"port\":\"out\"}]}}}"
+  },
+  {
+    "name": "junction-half-position",
+    "json": "{\"cards\":{\"a\":{\"x\":0,\"y\":0,\"junctions\":[{\"port\":\"out\",\"x\":1}]}}}"
+  },
+  {
+    "name": "duplicate-junction-port",
+    "json": "{\"cards\":{\"a\":{\"x\":0,\"y\":0,\"junctions\":[{\"port\":\"out\",\"x\":1,\"y\":2},{\"port\":\"out\",\"x\":3,\"y\":4}]}}}"
+  },
+  {
+    "name": "junction-invalid-port",
+    "json": "{\"cards\":{\"a\":{\"x\":0,\"y\":0,\"junctions\":[{\"port\":\"no space\",\"x\":1,\"y\":2}]}}}"
   }
 ]

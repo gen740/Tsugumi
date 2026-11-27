@@ -1,6 +1,7 @@
 #include "host/layout_file.hh"
 
 #include <cmath>
+#include <set>
 
 #include "host/layout_service.hh"
 #include "tsugumi/document/document.hh"
@@ -52,6 +53,17 @@ void check_coordinates(const Tsugumi::Layout::Layout& layout) {
       check_ports(card->inputOrder());
       check_ports(card->outputOrder());
       check_position(*card);
+      if (const auto* junctions = card->junctions()) {
+        std::set<std::string_view> ports;
+        for (const auto* junction : *junctions) {
+          if (!valid_name(junction->port()->string_view()) ||
+              !ports.insert(junction->port()->string_view()).second)
+            throw LayoutFailure("layout: invalid or duplicate junction port");
+          if (!junction->x())
+            throw LayoutFailure("layout: a junction needs its position");
+          check_position(*junction);
+        }
+      }
     }
   if (const auto* notes = layout.notes())
     for (const auto* note : *notes) {

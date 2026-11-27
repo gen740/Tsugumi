@@ -16,6 +16,15 @@ table Position {
   y:double = null;
 }
 
+/// Where the wires of one output split, on the canvas of the output's Card.
+/// Display only: the connections stay from that output to each input, and
+/// nothing about running changes.
+table Junction {
+  port:string (required);
+  x:double = null;
+  y:double = null;
+}
+
 /// One Card's place, by its path key ("a/b" inside a Card in Card).
 table CardPlace {
   key:string (required);
@@ -26,6 +35,8 @@ table CardPlace {
   /// The visual order of its ports by name; connections stay unchanged.
   inputOrder:[string];
   outputOrder:[string];
+  /// Branch points of its outputs, at most one per output.
+  junctions:[Junction];
 }
 
 /// Where the inner canvas of a Card in Card shows its boundary bars ("This

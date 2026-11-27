@@ -354,11 +354,12 @@ def test_validate_revision(client):
 
 
 def test_ui_layout_fields_and_draft_outputs(client):
-    """Groups, note color/size and collapse are layout
+    """Groups, note color/size, collapse and junctions are layout
     only (no execution change); a Draft has no ports, even with a schema."""
     snap = client.open().snapshot
     layout = {
-        "cards": {"src": {"x": 0, "y": 0, "collapsed": True, "inputOrder": ["b", "a"], "outputOrder": ["out"]}},
+        "cards": {"src": {"x": 0, "y": 0, "collapsed": True, "inputOrder": ["b", "a"], "outputOrder": ["out"],
+                          "junctions": [{"port": "out", "x": 40, "y": 200}]}},
         "notes": [{"id": "n", "scope": "", "text": "**memo**", "color": "blue", "x": 1, "y": 2, "width": 240, "height": 120}],
         "groups": [{"id": "g", "scope": "", "name": "G", "color": "green", "cards": ["src"],
                     "outputs": [{"card": "src", "port": "msg"}]}],

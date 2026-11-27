@@ -257,11 +257,25 @@ static auto TransformLayout(
                        [&](const auto& value) { return value.id == id; });
       if (card == scene.cards.end())
         throw LayoutFailure("moved Card is missing: " + id);
+      const auto from_x = card->x, from_y = card->y;
       card->x = snap(card->x) + dx;
       card->y = snap(card->y) + dy;
       auto entry = json::Object(json::Get(positions, id, "{}"));
       entry["x"] = std::to_string(card->x);
       entry["y"] = std::to_string(card->y);
+      // Its junctions go with the Card.
+      if (entry.contains("junctions")) {
+        auto junctions = json::Array(entry.at("junctions"));
+        for (auto& raw : junctions) {
+          auto junction = json::Object(raw);
+          junction["x"] =
+              std::to_string(number(junction, "x", 0) + card->x - from_x);
+          junction["y"] =
+              std::to_string(number(junction, "y", 0) + card->y - from_y);
+          raw = json::Encode(junction);
+        }
+        entry["junctions"] = json::Encode(junctions);
+      }
       positions[id] = json::Encode(entry);
     }
     auto notes = json::Array(json::Get(doc, "notes", "[]"));
@@ -295,6 +309,26 @@ static auto TransformLayout(
     position["inputOrder"] = json::Encode(inputs);
     position["outputOrder"] = json::Encode(outputs);
     positions[order.id] = json::Encode(position);
+  }
+  if (action == 0) {
+    // Arrange places the junctions anew: those of outputs with enough inputs.
+    for (const auto& card : scene.cards) {
+      if (!positions.contains(card.id)) continue;
+      auto position = json::Object(positions.at(card.id));
+      if (position.erase("junctions"))
+        positions[card.id] = json::Encode(position);
+    }
+    std::map<std::string, std::vector<std::string>> placed;
+    for (const auto& j : layout::junctions(scene, proposal))
+      placed[j.card].push_back(
+          json::Encode(json::Members{{"port", json::Quote(j.port)},
+                                     {"x", std::to_string(j.x)},
+                                     {"y", std::to_string(j.y)}}));
+    for (const auto& [id, list] : placed) {
+      auto position = json::Object(json::Get(positions, id, "{}"));
+      position["junctions"] = json::Encode(list);
+      positions[id] = json::Encode(position);
+    }
   }
   if (action >= 0) {
     auto notes = json::Array(json::Get(doc, "notes", "[]"));

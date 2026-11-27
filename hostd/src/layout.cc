@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <set>
+#include <utility>
 
 namespace tsugumi::layout {
 namespace {
@@ -218,5 +219,67 @@ auto arrange(const Scene& scene) -> Proposal {
   }
   placed.port_orders = std::move(reordered);
   return placed;
+}
+auto junctions(const Scene& scene, const Proposal& arranged)
+    -> std::vector<Junction> {
+  const double grid = scene.grid > 0 ? scene.grid : 20;
+  auto cards = scene.cards;
+  for (auto& c : cards) {
+    for (const auto& p : arranged.cards)
+      if (p.id == c.id) {
+        c.x = p.x;
+        c.y = p.y;
+      }
+    for (const auto& o : arranged.port_orders)
+      if (o.id == c.id) {
+        for (size_t i = 0; i < c.inputs.size() && i < o.inputs.size(); ++i)
+          c.inputs[i].name = o.inputs[i];
+        for (size_t i = 0; i < c.outputs.size() && i < o.outputs.size(); ++i)
+          c.outputs[i].name = o.outputs[i];
+      }
+  }
+  auto at = [&](const std::string& id, const std::string& name,
+                bool output) -> std::optional<Point> {
+    auto* c = card_of(cards, id);
+    if (!c) return std::nullopt;
+    const auto* p = port_of(output ? c->outputs : c->inputs, name);
+    if (!p) return std::nullopt;
+    return Point{c->x + p->x, c->y + p->y};
+  };
+  std::vector<Junction> out;
+  std::set<std::pair<std::string, std::string>> done;
+  for (const auto& first : scene.wires) {
+    // A Draft's unnamed anchor is no output of its own.
+    if (first.from_port.empty() ||
+        !done.insert({first.from, first.from_port}).second)
+      continue;
+    const auto source = at(first.from, first.from_port, true);
+    if (!source) continue;
+    std::set<std::pair<std::string, std::string>> seen;
+    std::vector<Point> inputs;
+    for (const auto& w : scene.wires)
+      if (w.from == first.from && w.from_port == first.from_port &&
+          seen.insert({w.to, w.to_port}).second)
+        if (const auto p = at(w.to, w.to_port, false)) inputs.push_back(*p);
+    if (inputs.size() < junction_fan) continue;
+    // Worked out top-to-bottom; left-to-right swaps x and y.
+    const bool down = scene.top_to_bottom;
+    const double along = down ? source->y : source->x;
+    const double across = down ? source->x : source->y;
+    double nearest = std::numeric_limits<double>::infinity();
+    double low = nearest, high = -nearest;
+    for (const auto& p : inputs) {
+      nearest = std::min(nearest, down ? p.y : p.x);
+      low = std::min(low, down ? p.x : p.y);
+      high = std::max(high, down ? p.x : p.y);
+    }
+    double j_along = along + std::max(2 * grid, (nearest - along) / 2);
+    // On the grid along the flow only: across it the trunk stays straight.
+    if (scene.snap) j_along = std::floor(j_along / grid + 0.5) * grid;
+    const double j_across = std::min(std::max(across, low), high);
+    out.push_back({first.from, first.from_port, down ? j_across : j_along,
+                   down ? j_along : j_across});
+  }
+  return out;
 }
 }  // namespace tsugumi::layout

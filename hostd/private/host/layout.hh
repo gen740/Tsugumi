@@ -117,6 +117,27 @@ struct Proposal {
 // are taken to follow the Cards.
 auto arrange(const Scene& scene) -> Proposal;
 
+// A display-only branch point where the wires of one output split
+// (layout.bin's CardPlace.junctions): it never changes a connection.
+struct Junction {
+  std::string card;
+  std::string port;
+  double x = 0;
+  double y = 0;
+};
+
+// The outputs with at least this many connected inputs get a junction when
+// arranged.
+inline constexpr size_t junction_fan = 3;
+
+// Where Arrange puts the junctions of the scene's outputs once the Cards and
+// port orders of `arranged` apply: along the flow halfway from the output to
+// its nearest input (at least two grids past it), across it in line with the
+// output unless every input is to one side, then in line with the closest of
+// them. The UIs place one added by hand by the same rule.
+auto junctions(const Scene& scene, const Proposal& arranged)
+    -> std::vector<Junction>;
+
 // Reorders ports where the wires then cross less; no Card moves. With `around`
 // (the Cards a drag just moved) only they and the Cards wired to them may
 // change.
