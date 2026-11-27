@@ -460,7 +460,7 @@ read -r line < "$TEST_GATE"
                 cancel(job)
             for job in fingerprints:
                 peer.wait_state(job, R.JobState.Cancelled, R.JobState.Succeeded,
-                                R.JobState.Failed, R.JobState.Interrupted)
+                                R.JobState.Failed, R.JobState.Interrupted, R.JobState.Released)
         finally:
             peer.close()
 
