@@ -5,7 +5,7 @@ What sets Tsugumi apart is that this relationship holds all the way through Draf
 
 For a person to understand an analysis an AI has pushed forward, and to try the next condition, the intention, the code and the results have to be tied together. Tsugumi treats that tie as the Workflow: the diagram of the processing is what gets implemented, and after a run it is where you check the results and make changes.
 
-The [README](../README.md#are-you-using-ai-in-your-research-as-much-as-you-could) named three reasons we hesitate to hand research to AI: reproducibility is not assured, the path to the conclusion is invisible, and handing data to AI is frightening. This page answers them in turn. Each section ends with **Where to check**: the screens, demos, code and tests that show the answer holds. Operations are in [Usage](Usage.md) and the details of each mechanism in [Features](features.md).
+The [README](../../README.md#are-you-using-ai-in-your-research-as-much-as-you-could) named three reasons we hesitate to hand research to AI: reproducibility is not assured, the path to the conclusion is invisible, and handing data to AI is frightening. This page answers them in turn. Each section ends with **Where to check**: the screens, demos, code and tests that show the answer holds. Operations are in [Usage](../Usage.md) and the implementation in the [design index](README.md).
 
 | Hesitation | Section | In one line |
 | --- | --- | --- |
@@ -34,7 +34,7 @@ You do not read the AI's report and believe it; you go straight to the place you
 
 **Because the links between steps travel more exactly as a diagram than as prose.**
 
-As in the [README's example](../README.md#what-we-want-to-ask-of-ai-should-be-simple), what you want may be simple enough to draw as three boxes, yet asking in prose turns into long instructions and long reports. With ten steps, branches and merges, writing out in prose which output goes to which input is harder still, and even the writer cannot see what is missing or contradictory.
+As in the [README's example](../../README.md#what-we-want-to-ask-of-ai-should-be-simple), what you want may be simple enough to draw as three boxes, yet asking in prose turns into long instructions and long reports. With ten steps, branches and merges, writing out in prose which output goes to which input is harder still, and even the writer cannot see what is missing or contradictory.
 
 - A **Draft** is a Card with only a name and "what it does", not yet implemented. Press `E` to place one and write it; wire it directly to other Cards without declaring ports.
 - The diagram of Drafts is the specification: press "Generate Cards" at the top right to have the Agent implement it.
@@ -43,7 +43,7 @@ As in the [README's example](../README.md#what-we-want-to-ask-of-ai-should-be-si
 
 Intentions are written in words and relationships as wires, so people and AI point at the same place as they design, implement and check.
 
-**AI takes on the work of building a structure that is easy to check.** Pinning environments, defining input and output types and splitting the processing all make checking easier, but if a person had to arrange them by hand every time, even a short trial would carry that preparation. From the purpose written in a Draft and its connections, the Agent implements all of it: it defines the environment in `default.nix`, writes the output types in `_outputs.fbs`, writes the processing with a language SDK (C++, Python, Go, Rust, C#, Julia, R or Ruby), and fixes it while running it. **Because implementation can be left to AI, a structure people can check easily can be there from the start of an analysis.** That is why Tsugumi takes this shape now. People state the purpose of each step and how they relate, weigh the implementation and results, and ask the next question.
+**AI takes on the work of building a structure that is easy to check.** Pinning environments, defining input and output types and splitting the processing all make checking easier, but if a person had to arrange them by hand every time, even a short trial would carry that preparation. From the purpose written in a Draft and its connections, the Agent implements all of it: it defines the environment in `default.nix`, writes the output types in `_outputs.fbs`, writes the processing with a language SDK (C++, Python, Go, Rust, C#, Julia, R or Ruby), and fixes it while running it. **Because implementation can be left to AI, a structure people can check easily can be there from the start of an analysis.** People state the purpose of each step and how they relate, weigh the implementation and results, and ask the next question.
 
 The Agent and the UI go through the same operations and the same validation rules of the core. Cards the AI saved stay as ordinary project files that people can open and edit, and a finished Workflow runs without an LLM.
 
@@ -68,7 +68,7 @@ Analysis software can require complex environments. Tsugumi uses Nix to pin each
 
 ## What is recorded, and where
 
-**Tsugumi versions the code and the Workflow's definition with git and ties each run to its version.** Keeping the code, reading the results and trying the next condition become one line of research. [Version operations](Versions.md) · [What to retain and inspect](RunHistory.md) · [Who decides what is kept](Philosophy.md#a-laboratory-notebook-and-who-decides-what-is-kept)
+**Tsugumi versions the code and the Workflow's definition with git and ties each run to its version.** Keeping the code, reading the results and trying the next condition become one line of research. [Version operations](../Versions.md) · [What to retain and inspect](../RunHistory.md) · [Who decides what is kept](../Philosophy.md#a-laboratory-notebook-and-who-decides-what-is-kept)
 
 ## Rerunning from the middle
 
@@ -76,7 +76,7 @@ Analysis software can require complex environments. Tsugumi uses Nix to pin each
 
 While you build an analysis, you often want to fix just this Card's processing or change just the conditions of a plot. Running everything from upstream each time makes the back-and-forth slow.
 
-In Tsugumi you can run only the Cards you choose, or from there downstream, with the latest saved inputs. [Run from a Card](Usage.md#run-from-a-card) explains the operations and the need to run the whole Workflow after changing upstream conditions.
+In Tsugumi you can run only the Cards you choose, or from there downstream, with the latest saved inputs. [Run from a Card](../Usage.md#run-from-a-card) explains the operations and the need to run the whole Workflow after changing upstream conditions.
 
 ## Unpublished data
 
@@ -100,7 +100,7 @@ The layout on screen is kept apart from the computation's definition, too: a sav
 
 If a computation of a few lines split into a Card started the Nix evaluator or a language runtime every time, preparation would take longer than the computation.
 
-The Nix evaluator is built into `tsugumid`, and the daemon connection is reused and evaluation caches are scoped by system and locked sources. Every Code Card is a shared library, `lib/main.so`, called by a worker that loads it, whatever its language. By default each invocation gets a fresh worker, so that a Card keeps no hidden state, and the next worker is started and its library loaded ahead of time; a Card that sets `reuseWorker: true` keeps one resident worker, with its interpreter and module state, across invocations.
+Tsugumi reuses [validated Nix evaluations](Nix.md#evaluation-reuse) and the daemon connection. Every Code Card is a shared library, `lib/main.so`, called by a worker that loads it, whatever its language. By default each invocation gets a fresh worker, so that a Card keeps no hidden state, and the next worker is started and its library loaded ahead of time; a Card that sets `reuseWorker: true` keeps one resident worker, with its interpreter and module state, across invocations.
 
 A reused worker's state carries across runs; there is no run-start hook, so a Card that keeps state resets it from its inputs. On failure, cancellation, a deadline or a memory limit, the worker is ended. **The cost of starting is lowered, while computations that keep state, and when they initialise, stay explicit.**
 
@@ -108,15 +108,9 @@ A reused worker's state carries across runs; there is no run-start hook, so a Ca
 
 To fix and try a step in the middle you need what was input just before. Saving only a path is useless once the original temporary file is gone, and mixing inputs from separate invocations gives different conditions from last time.
 
-Tsugumi saves the full set of inputs of the latest invocation and the latest input of each port.
+Tsugumi saves the latest invocation's inputs separately from optional recorded values. A partial run checks their types and artifact availability before passing them to the Card. [Run history](../RunHistory.md) describes the provenance marks and [scheduler rules](Workflow.md#execution-semantics-scheduler) explain how saved inputs enter the run.
 
-- **Sets are kept whole.** An `all` Card keeps the set used in one invocation; an `any` Card uses each port's latest value.
-- **Files are kept too.** File / Directory values are copied into storage, so they can be used after the run cache is cleared.
-- **Checked before use.** On a rerun, the inputs are checked against the current input types and for the files' existence, and if something is missing the reason is returned.
-- **For child Workflows too.** Running a child Workflow alone, these inputs are passed in at its boundary.
-- **Compare again at a merge.** Going downstream from one branch, only the ports of a merging Card that receive nothing this time are filled with these inputs, so the new value of the branch you changed is compared with the values of the other branches. Which run's values were used is kept in the run's journal.
-
-**Researchers can try a change where they were curious without gathering inputs by hand.** These latest inputs are saved separately from the full input and output history chosen with `recordIO`.
+**Researchers can try a change where they were curious without gathering inputs by hand.**
 
 ### A saved record behind every "finished"
 
@@ -133,7 +127,7 @@ When a Card refers to an upstream Card's Nix definition, being reachable by foll
 Say A branches to B or C, and D runs on whichever result arrives. The code Card that always precedes D is A. One of B and C does not run, so if D could refer to both definitions unconditionally, the dependencies would disagree with the execution path drawn on screen.
 
 
-[Nix reference rules](features.md#sharing-nix-exports-through-connections) describe which upstream definitions are available.
+[Nix export rules](../Reference.md#nix-inputs-across-cards) describe which upstream definitions are available.
 
 **The Workflow's connections are reflected not only in the order of execution but also in the dependencies of the environment's definitions.**
 
@@ -148,8 +142,8 @@ Trying code interactively, representing processing as a graph, and managing depe
 | Represent the relationships of processing as a graph | Make the displayed connections the basis of type derivation and the rules of execution |
 | Manage versions of environments, code and experiments | Tie runs to versions of the code, and start the next attempt from a past version |
 
-Each mechanism behind this has its own document: Card isolation in [Security and isolation](security.md), the Card ABI between the worker and a Card's shared library in [Card ABI](CardABI.md), the rules for branches, merges and loops in [Execution semantics](features.md#execution-semantics-scheduler), and saving as text files in [project files](CardGuide.md#a-cards-folder).
+Each mechanism behind this has its own document: Card isolation in [Security and isolation](security.md), the Card ABI between the worker and a Card's shared library in [Card ABI](CardABI.md), the rules for branches, merges and loops in [Execution semantics](Workflow.md#execution-semantics-scheduler), and saving as text files in [project files](../CardGuide.md#a-cards-folder).
 
 **What Tsugumi aims for is a research environment in which people and AI design, run and keep thinking on the same structure.**
 With that structure, researchers can return to the trials an AI pushed forward and test their own questions as concrete changes.
-The idea of extending this relationship from research to learning, development and handing over work is in [Vision and applications](Vision.md); the background is in [What to build so that we are not used by AI](Philosophy.md).
+The idea of extending this relationship from research to learning, development and handing over work is in [Vision and applications](../Vision.md); the background is in [What to build so that we are not used by AI](../Philosophy.md).

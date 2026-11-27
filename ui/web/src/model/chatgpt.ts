@@ -12,7 +12,7 @@ export interface ChatGPTState {
   connectionMessage?: string
 }
 
-/** The loopback callback belongs to the server's machine (docs/security.md).
+/** The loopback callback belongs to the server's machine (docs/design/security.md).
  *  A non-loopback page cannot offer this local sign-in flow. */
 export function chatGPTSignInIsLocal(hostname: string) {
   return ['localhost', '127.0.0.1', '[::1]', '::1'].includes(hostname)

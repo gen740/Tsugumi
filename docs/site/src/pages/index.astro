@@ -6,10 +6,9 @@ const { groups, pages } = catalog()
 const { tagline, lead } = introduction()
 const know = STORY.filter(s => s.know)
 const shortNote = source => (notes.get(source) ?? '').replace(/`/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-const subtitles = { 'Getting started': 'Start using it', 'The ideas': 'Why it takes this shape', 'How it works': 'What is inside', 'Runtime details': 'Identifiers and storage' }
 const doors = [
   { id: 'know', title: 'Learn about Tsugumi', subtitle: 'What problem it takes on, and how', items: know.map(s => ({ out: s.out, title: s.title ?? titleOf(s.source), note: s.sections ? 'The wall and the thread, from three boxes to Cas A' : shortNote(s.source) })) },
-  ...groups.map(g => ({ id: g.title, title: g.title, subtitle: subtitles[g.title], items: g.docs
+  ...groups.map(g => ({ id: g.title, title: g.title, items: g.docs
     .filter(d => !OFF_THE_LIST.has(d) && !know.some(s => s.source === d))
     .map(d => ({ out: pages.get(d), title: titleOf(d), note: shortNote(d) })) })),
 ]
@@ -43,6 +42,6 @@ const doors = [
         </button>)}</div>
       </>)}
     </section>
-    <p class="home-foot"><a href={pages.get('README.md')}>README</a> · <a href={pages.get('docs/README.md')}>All documents</a> · <a href={pages.get('docs/Limitations.md')}>Plans</a> · <a href="llms.txt">A guide for AI (llms.txt)</a></p>
+    <p class="home-foot"><a href={pages.get('README.md')}>README</a> · <a href={pages.get('docs/README.md')}>User guides</a> · <a href={pages.get('docs/design/README.md')}>Design</a> · <a href={pages.get('docs/Limitations.md')}>Before relying on a result</a> · <a href="llms.txt">A guide for AI (llms.txt)</a></p>
   </article>
 </Site>

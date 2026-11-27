@@ -87,5 +87,3 @@ The endpoint accepts newline-delimited JSON RPC frames:
 
 A release export has no debug socket. The packed app's presentation uses
 a separate private connection to its own bundled runtime.
-
-TODO: Consider an optional VM export mode.

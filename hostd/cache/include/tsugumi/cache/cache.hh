@@ -1,5 +1,5 @@
 // Tsugumi's own Nix binary cache: one implementation behind the pull list
-// and the push target (docs/BinaryCacheServer.md).
+// and the push target (docs/design/BinaryCacheServer.md).
 #pragma once
 
 #include <cstdint>

@@ -3,7 +3,7 @@
 The browser workbench supports editing and running Workflows, inspecting results and working with the Agent. It uses the same project and RPC contract as the macOS app. The host environment, rendering support and some shortcuts depend on how you run it. [Workbench operations](Usage.md) · [Platform behaviour](#the-tsugumi-command)
 File paths and commands on this page are relative to the root of the repository.
 
-The browser and Agent use the [project RPC](Protocol.md); review the [execution and data boundaries](security.md) for the chosen host.
+The browser and Agent use the [project RPC](design/Protocol.md); review the [execution and data boundaries](design/security.md) for the chosen host.
 
 Card names appear throughout the UI; exact identifiers remain in tool arguments and file paths. Editors retain text typed while a save is pending. Inline values use the revision from the start of the edit, and an unchanged value is not saved. **Reload External Changes** asks for approval when outside edits widen Card permissions; declining leaves the loaded project unchanged.
 
@@ -15,7 +15,7 @@ Showing is one hostd request (`ShowRequest` in `protocol/agent.fbs`) for the use
 
 Register a Linux worker under **Settings → Execution service** to run individual Code Cards remotely. [Remote execution](RemoteExecution.md)
 
-**On a Mac**, the Web UI and the native app ask host-side `tsugumi-hostd` to manage project environments. Only hostd connects to the signed `tsugumi-vmhost` helper, through `protocol/vm_host.fbs`. [Environment ownership](features.md#1-architecture)
+**On a Mac**, the Web UI and the native app ask host-side `tsugumi-hostd` to manage project environments. Only hostd connects to the signed `tsugumi-vmhost` helper, through `protocol/vm_host.fbs`. [Environment ownership](design/Architecture.md)
 
 ```text
 Browser ── WebSocket /rpc ── loopback relay ── vsock ── tsugumid (one per project in the VM)
@@ -23,13 +23,13 @@ Browser ── WebSocket /rpc ── loopback relay ── vsock ── tsugumid
                                                     └─ private VM RPC ── tsugumi-vmhost
 ```
 
-The page supplies its origin in `EnvironmentRequest`; hostd applies them when starting the project daemon. The browser authenticates to that daemon with its project token. Agent requests run in hostd on the host. [RPC authentication](security.md#6-rpc-authentication)
+The page supplies its origin in `EnvironmentRequest`; hostd applies them when starting the project daemon. The browser authenticates to that daemon with its project token. Agent requests run in hostd on the host. [RPC authentication](design/security.md#6-rpc-authentication)
 
 The installed Mac command uses the release app's support directory by default. A `tsugumi` built from source is the development version, like the app built from source, and uses `~/Library/Application Support/Tsugumi-dev/` instead ("Development and release versions" in [Releasing](../RELEASING.md)):
 
 | Data | Location and sharing |
 | --- | --- |
-| API keys | Stored by the shared hostd, the same keys as the app. [Credential handling](security.md#7-the-models-api-keys-agent) |
+| API keys | Stored by the shared hostd, the same keys as the app. [Credential handling](design/security.md#7-the-models-api-keys-agent) |
 | VM, store, project control folders | `~/Library/Application Support/Tsugumi/`; override with `TSUGUMI_SUPPORT_DIR` |
 | Recent projects | `recent-projects.json` under hostd's state directory; shared by clients of that service |
 | Default project destination | `~/Documents/Tsugumi` |
@@ -73,15 +73,15 @@ build/cli/tsugumi web
 
 The command finds `tsugumi-hostd`, `tsugumid`, the worker and the page (`ui/web/dist/public`) in the checkout and starts hostd with them; `--port` asks for a port and a project folder shows that project at once. Open the `http://127.0.0.1:8780/?key=…` it prints when the browser does not open.
 
-`key` is a key made at each hostd start. hostd replaces it with a cookie only this page sends (HttpOnly, SameSite=Strict) and removes it from the address bar. The page's Host token (`POST /api/host/connect`, which also needs a dedicated header) and its `/rpc/host` and `/rpc/agent` WebSockets require this cookie and the page's own Origin; hostd then authenticates the binary Hello. Responses carry a CSP (`frame-ancestors 'none'`) and `nosniff`. Only the user's principal gets a URL with the key; the Claude Code plugin works as the external principal ([Security §7](security.md#the-agents-permission-boundary)).
+`key` is a key made at each hostd start. hostd replaces it with a cookie only this page sends (HttpOnly, SameSite=Strict) and removes it from the address bar. The page's Host token (`POST /api/host/connect`, which also needs a dedicated header) and its `/rpc/host` and `/rpc/agent` WebSockets require this cookie and the page's own Origin; hostd then authenticates the binary Hello. Responses carry a CSP (`frame-ancestors 'none'`) and `nosniff`. Only the user's principal gets a URL with the key; the Claude Code plugin works as the external principal ([Security §7](design/security.md#the-agents-permission-boundary)).
 
 | Environment variable | Meaning |
 | --- | --- |
 | `TSUGUMID` / `TSUGUMI_WORKER` | Project daemon and worker locations (defaults under `build/`) |
-| `TSUGUMI_NIX_DIR` | The core's Nix files used to evaluate Cards (default `share/tsugumi/nix` beside the installed binaries). Cards obtain SDKs from their project’s [Nix search path](features.md#project-nix-search-path) |
+| `TSUGUMI_NIX_DIR` | The core's Nix files used to evaluate Cards (default `share/tsugumi/nix` beside the installed binaries). Cards obtain SDKs from their project’s [Nix search path](design/Nix.md#project-nix-search-path) |
 | `TSUGUMI_HOSTD` / `TSUGUMI_HOST_STATE` | Host service binary and its state folder (defaults chosen by `cli/src/launch.cc`) |
 | `TSUGUMI_WEB_ROOT` / `TSUGUMI_WEB_PORT` | The built page hostd serves and the port it asks for |
-| `TSUGUMI_VM_X86=qemu` | The Mac's shared VM runs x86_64-linux Cards with qemu instead of Rosetta (by default Rosetta when it is installed; [Another system](features.md#another-system-x86_64-linux)). Also read by the desktop app |
+| `TSUGUMI_VM_X86=qemu` | The Mac's shared VM runs x86_64-linux Cards with qemu instead of Rosetta (by default Rosetta when it is installed; [Another system](design/RemoteWorker.md#target-systems)). Also read by the desktop app |
 | `TSUGUMI_VMHOST` / `TSUGUMI_VM_IMAGE` / `TSUGUMI_SUPPORT_DIR` | `tsugumi-vmhost`, the guest archive directory and the support folder when using the Mac's shared VM (set by `cli/tsugumi-macos`) |
 | `TSUGUMI_WEB_DATA` | Linux: the folder holding hostd's state and native environments (default `~/.local/share/tsugumi-web`) |
 
@@ -89,7 +89,7 @@ The TypeScript bindings and `tsugumi.bfbs` are generated into `ui/web/shared/gen
 
 ## Isolation (macOS host)
 
-Starting the repository's daemon directly on a Mac uses Seatbelt. Review its [weaker guarantees and network limits](security.md#direct-macos-host) before running untrusted Cards. The installed Mac command uses the shared VM instead.
+Starting the repository's daemon directly on a Mac uses Seatbelt. Review its [weaker guarantees and network limits](design/security.md#direct-macos-host) before running untrusted Cards. The installed Mac command uses the shared VM instead.
 
 ## Several projects
 

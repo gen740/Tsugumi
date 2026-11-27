@@ -46,7 +46,7 @@ const STORY = [
     ],
   },
   {
-    out: 'pages/rationale.html', source: 'docs/Rationale.md',
+    out: 'pages/rationale.html', source: 'docs/design/Rationale.md',
     figures: [
       ['Hand an analysis to AI and the trials go fast', 'oneGraph', 'What people draw, what AI edits and what actually runs become one.'],
       ['In Tsugumi you can run only the Cards you choose', 'partial', 'From the Card you fixed, try it with the saved inputs. Finally, run the whole.'],
@@ -83,26 +83,37 @@ const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, 
 
 const titleOf = (rel) => /^# (.+)$/m.exec(read(rel))?.[1].replace(/[`*]/g, '') ?? rel
 
-/** Every other document: docs/README.md is the list, grouped as it groups them. */
+const indexes = [
+  { source: 'docs/README.md', out: 'pages/documents.html', prefix: '' },
+  { source: 'docs/design/README.md', out: 'pages/design.html', prefix: 'Design · ' },
+]
 const notes = new Map()
+
 function documentGroups() {
   notes.clear()
   const groups = []
-  let group = null
-  for (const line of read('docs/README.md').split('\n')) {
-    const h = /^## (.+)$/.exec(line)
-    if (h) { group = { title: h[1], docs: [] }; groups.push(group); continue }
-    const row = /^\| \[[^\]]+\]\(([^)]+)\) \|/.exec(line)
-    if (row && group) group.docs.push(path.normalize(path.join('docs', row[1])))
-    const note = /^\| \[[^\]]+\]\(([^)]+)\) \| (.+) \|$/.exec(line)
-    if (note) notes.set(path.normalize(path.join('docs', note[1])), note[2])
+  for (const { source, prefix } of indexes) {
+    let group = null
+    for (const line of read(source).split('\n')) {
+      const heading = /^## (.+)$/.exec(line)
+      if (heading) {
+        group = { title: prefix + heading[1], docs: [] }
+        groups.push(group)
+        continue
+      }
+      const row = /^\| \[[^\]]+\]\(([^)]+)\) \| (.+) \|$/.exec(line)
+      if (row && group) {
+        const document = path.normalize(path.join(path.dirname(source), row[1]))
+        group.docs.push(document)
+        notes.set(document, row[2])
+      }
+    }
   }
-  return groups
+  return groups.filter(group => group.docs.length)
 }
 
 const outName = (rel) => {
   if (rel === 'README.md') return 'pages/readme.html'
-  if (rel === 'docs/README.md') return 'pages/documents.html'
   return `pages/${path.basename(rel, '.md').toLowerCase().replace(/_/g, '-')}.html`
 }
 
@@ -110,7 +121,7 @@ function pageMap(groups) {
   const map = new Map()
   for (const s of STORY) map.set(s.source, s.out)
   map.set('README.md', 'pages/readme.html')  // the whole README; pages/problem.html is its story
-  map.set('docs/README.md', 'pages/documents.html')
+  for (const { source, out } of indexes) map.set(source, out)
   for (const g of groups) for (const d of g.docs) if (!map.has(d)) map.set(d, outName(d))
   return map
 }
@@ -199,7 +210,7 @@ function llmsTxt(groups, mdPages, tagline) {
   const out = [
     '# Tsugumi', '', `> ${tagline}`, '', about(read('README.md'), tagline).join('\n'), '',
     'The documents are written for both people and AI. The URLs below are the Markdown version of each page.', '',
-    '## Overview', '', `- [README](${SITE}index.md): the problem, how to use it, and the real screens explained`, '',
+    '## Overview', '', ...indexes.map(({ source }) => item(source)), `- [README](${SITE}index.md): the problem, how to use it, and the real screens explained`, '',
   ]
   for (const g of groups) {
     out.push(`## ${g.title}`, '', ...g.docs.map(item), '')

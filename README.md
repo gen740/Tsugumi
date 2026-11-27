@@ -53,9 +53,9 @@ You open the code or the result of a Card you are curious about, change a condit
 - **The diagram you draw is what runs.** Wire up Drafts and the Agent writes the code, the types and the Nix environment; that Workflow is what gets executed.
 - **Try just the Card you are curious about, right away.** Run again only the Cards or child Workflows you choose, with the inputs that were saved.
 - **Pinned down to the environment, so it can be checked again.** Each Card's dependencies are pinned with Nix, and every run is recorded against a git version.
-- **Computation runs isolated.** In a VM of its own on a Mac, under bubblewrap on Linux. Cards have no outside network by default, and a save in which the Agent widens a Card's permissions does not go through without the user's approval. What is sent to the model is [stated](docs/security.md#what-is-sent-to-the-model). Opening a project is a decision to trust its contents; Tsugumi takes responsibility for what happens inside that ([what it guarantees](docs/security.md#what-tsugumi-takes-on)).
+- **Computation runs isolated.** In a VM of its own on a Mac, under bubblewrap on Linux. Cards have no outside network by default, and a save in which the Agent widens a Card's permissions does not go through without the user's approval. What is sent to the model is [stated](docs/design/security.md#what-is-sent-to-the-model). Opening a project is a decision to trust its contents; Tsugumi takes responsibility for what happens inside that ([what it guarantees](docs/design/security.md#what-tsugumi-takes-on)).
 - **A finished Workflow needs no LLM.** The generated code stays as ordinary files that a person can read and fix at any time.
-- **Each Claude feature for what it is good at.** Tool use to implement Cards, subagents to implement independent Drafts at the same time, a Skill for the demo guide, multimodal input for the figures a run keeps as files, and MCP (the Claude Code plugin) for agents outside. Small models write the guide and the summaries ([the list](docs/features.md#choosing-claudes-features-by-purpose)).
+- **Each Claude feature for what it is good at.** Tool use to implement Cards, subagents to implement independent Drafts at the same time, a Skill for the demo guide, multimodal input for the figures a run keeps as files, and MCP (the Claude Code plugin) for agents outside. Small models write the guide and the summaries ([the list](docs/design/Agent.md#choosing-claudes-features-by-purpose)).
 
 ## Are you using AI in your research as much as you could?
 
@@ -120,7 +120,7 @@ Tsugumi is a **macOS app for assembling computation and data processing as a gra
 The more finely you split processing into pieces you can work on, the more effort goes into types and environments, and the more time goes into starting and recording. Tsugumi takes this on with the Agent and its runtime. From a Draft, the Agent writes the code, the output types and the Nix environment; Nix rebuilds the derivations that use a changed parameter; a partial run reruns only the Cards you chose, with saved inputs; and a run is reported as finished only after its record is saved.
 
 **The structure a person draws, the structure the Agent implements and the structure that runs are the same.**
-The generated code stays as ordinary files, and a finished Workflow runs without an LLM. Why these measures were taken, and where their code and tests are, is in [Measures that keep trial and error light](docs/Rationale.md#measures-that-keep-trial-and-error-light).
+The generated code stays as ordinary files, and a finished Workflow runs without an LLM. Why these measures were taken, and where their code and tests are, is in [Measures that keep trial and error light](docs/design/Rationale.md#measures-that-keep-trial-and-error-light).
 
 ## Following an experiment on screen
 
@@ -175,7 +175,7 @@ Use the [installation guide](docs/INSTALL.md) for the macOS app or the `tsugumi`
 1. **Open a demo.** From "Browse Demos" on the home screen, choose "Open a Copy" on the demo you want. An editable copy is made for you; the bundled original is left unchanged.
 2. **Run it.** Once the first preparation is done, press "Run" at the top of the screen. Open a Card, change its code or its conditions, and rerun just that Card.
 3. **Let the thrush guide you.** Send `$demo` in the chat and the thrush points at the screen and guides you step by step. Without an API key, Data to report has a fixed script.
-4. **Connect the Agent (optional).** Register an Anthropic or OpenAI API key under "API" in the settings, or sign in with "Continue with ChatGPT", and the Agent can make Cards, and the thrush answers questions in any demo. The Agent is sent the conversation and what its tools read, such as sources and logs ([what is sent to the model](docs/security.md#what-is-sent-to-the-model)). Without the Agent, everything (making, editing and running Cards) can still be done on screen.
+4. **Connect the Agent (optional).** Register an Anthropic or OpenAI API key under "API" in the settings, or sign in with "Continue with ChatGPT", and the Agent can make Cards, and the thrush answers questions in any demo. The Agent is sent the conversation and what its tools read, such as sources and logs ([what is sent to the model](docs/design/security.md#what-is-sent-to-the-model)). Without the Agent, everything (making, editing and running Cards) can still be done on screen.
 
 The app and the Web UI are in Japanese by default; choose English under "General" in the settings.
 
@@ -198,7 +198,7 @@ This idea starts from research and extends to turning research decisions into te
 
 For remote execution, start `tsugumi-workerd` on a Linux remote worker machine ([installation and registration](docs/RemoteExecution.md)).
 
-[User guides](docs/README.md) · [Repository map](AGENTS.md#map) · [Tests](tests/README.md) · [Releasing](RELEASING.md) · [Documentation site](docs/site/README.md)
+[User guides](docs/README.md) · [Design](docs/design/README.md) · [Repository map](AGENTS.md#map) · [Tests](tests/README.md) · [Releasing](RELEASING.md) · [Documentation site](docs/site/README.md)
 
 ## License
 

@@ -7,7 +7,7 @@ The demos come as a Japanese set and an English set (`ja/`, `en/`), the same dem
 The projects and reference material live in [tsugumi-demos](https://github.com/gen740/tsugumi-demos). Tsugumi pins that repository in `flake.lock` and exposes the pinned tree as `.#demos`. To change a demo, commit the English and Japanese changes together on `tsugumi-demos`'s `main`, push normally, then run `nix flake update tsugumi-demos` in Tsugumi and commit the lock update. Demos use the public project format, Card ABI and tsugumi-kit SDKs.
 Draft entries with a finished counterpart declare both language-qualified counterpart folders in `agentExclude` in their catalog metadata. When the host creates a project from the demo, it appends those resource folders' absolute paths in this installation to the project's ordinary `agentExclude` list. Moving the application later leaves these entries stale; nothing repairs or relocates them automatically.
 
-Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of execution are in [Features](features.md#2-cards-and-workflows).
+Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of execution are in [Features](design/Workflow.md).
 
 ## Demo status
 
@@ -88,7 +88,7 @@ vector and shows three detections out of six comparisons.
 - Add a threshold such as `12` to `thresholds` and compare the two runs. Members
   with the same combination of value and threshold keep the same label.
 
-[Run lists and Collect](features.md#run-lists-and-collect)
+[Run lists and Collect](design/Workflow.md#run-lists-and-collect)
 
 ### Live Stream (`live-stream`)
 

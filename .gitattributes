@@ -9,4 +9,4 @@ docs/index.html linguist-generated
 docs/index.md linguist-generated
 docs/llms.txt linguist-generated
 docs/pages/** linguist-generated
-docs/Protocol.md linguist-generated
+docs/design/Protocol.md linguist-generated

@@ -73,7 +73,7 @@ The Trigger starts the run. The Code Card `convert` reads the temperature from i
 
 `formatVersion` is the project file format (currently `1`), not the Tsugumi version. See [Project files](Reference.md) for the complete format.
 
-The lock below is an example of the pins for these declarations. Use an explicit update to resolve new pins for your own declarations. [Project Nix search path](features.md#project-nix-search-path)
+The lock below is an example of the pins for these declarations. Use an explicit update to resolve new pins for your own declarations. [Project Nix search path](design/Nix.md#project-nix-search-path)
 
 `tsugumi.lock`
 
@@ -267,14 +267,14 @@ uses the SDK's Markdown view. A custom declaration has `name`, `type` and `blob`
 The HTML file receives and sends bytes on a MessagePort. Display traffic is
 live, and data saved for later inspection should go through output ports.
 
-See [Views](CoreAndSDK.md#views) for the display protocol and Dawn contract.
+See [Views](design/CoreAndSDK.md#views) for the display protocol and Dawn contract.
 
 ## Worker state
 
 With `reuseWorker: false`, each call starts with a fresh worker. Set `reuseWorker: true` to keep one worker for the Card: memory, loaded libraries and files in its working directory survive across calls and runs. One worker takes one call at a time. There is no hook at the start of a run, so a Card that keeps state decides from its inputs when to reset it, for example starting over when a loop's initial value arrives. Resident workers have no count, idle-time or memory eviction limit, including workers used for monitoring. They live until the project's environment stops or the Card's definition, SDK, grants or a secret value changes; a call already running when the definition changes finishes on the old version. A failed, cancelled or timed-out call always discards its worker; the next call starts fresh and logs the reason, as it does after a crash. Each invocation records whether its worker already held state (`worker_reused`). Ordinary fresh workers prepared for speed remain limited to 32, ten minutes idle and 2 GiB each.
 A resident worker can open and create artifacts. When a call returns, the
 paths of its artifacts are gone, and the next call opens its own
-([artifact access](SandboxContract.md#artifact-access)).
+([artifact access](design/SandboxContract.md#artifact-access)).
 
 | Location | Use | Lifetime |
 | --- | --- | --- |
@@ -323,7 +323,7 @@ A Code Card has `"type": "code"`. Declare input port names in `inputs`. The conn
 
 Set `grants.network` to true to allow network access. TLS uses the Nix `cacert` bundle through `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
 
-List the Nix systems the Card works on in `systems`. Declare an optional `probe` in `default.nix` to rank workers. A worker whose native system is listed builds and runs the Card natively; any other worker runs the first entry under an emulator. See [Worker selection](RemoteExecution.md#worker-selection). Write all four isolation flags and both resource limits in `sandbox`. Use zero for an unlimited CPU or memory budget. A Linux worker with delegated cgroup v2 applies nonzero limits to the Card's process.
+List the Nix systems the Card works on in `systems`. Declare an optional `probe` in `default.nix` to rank workers. A worker whose native system is listed builds and runs the Card natively; any other worker runs the first entry under an emulator. See [Worker selection](design/RemoteWorker.md#worker-selection). Write all four isolation flags and both resource limits in `sandbox`. Use zero for an unlimited CPU or memory budget. A Linux worker with delegated cgroup v2 applies nonzero limits to the Card's process.
 
 Set `grants.network` or `grants.gui` to enable that access on a supported worker. Declare the folder's purpose in **Project Settings → Host Paths** or in the containing `tsugumi.json`:
 
@@ -344,9 +344,9 @@ import os
 password = os.environ["database_password"]
 ```
 
-The value is not in the project, its parameters, its Nix build or the run history; the history records only that `database_password` was provided. A Card whose secret is not set fails before it runs and names the missing one. When a secret changes, the next run starts a fresh worker. A [remote worker](RemoteExecution.md#card-secrets) receives secrets at launch too.
+The value is not in the project, its parameters, its Nix build or the run history; the history records only that `database_password` was provided. A Card whose secret is not set fails before it runs and names the missing one. When a secret changes, the next run starts a fresh worker. A [remote worker](design/RemoteWorker.md#card-secrets) receives secrets at launch too.
 
-What the Card does with the value is its author's responsibility: child processes inherit the environment, and a value the Card prints, logs or writes to an output is recorded like any other. Pass it on only where it is needed (to a subprocess, in its environment rather than its command line), and never send it to a view or write it to an output. See [Card secrets](security.md#card-secrets).
+What the Card does with the value is its author's responsibility: child processes inherit the environment, and a value the Card prints, logs or writes to an output is recorded like any other. Pass it on only where it is needed (to a subprocess, in its environment rather than its command line), and never send it to a view or write it to an output. See [Card secrets](design/security.md#card-secrets).
 
 ### Run lists and connected Nix exports
 
@@ -446,6 +446,6 @@ working copy open for correction.
 | Conditional outputs, loops, artifacts and data pinned with Nix | [The bundled demos](Demos.md) ([display port status](Demos.md#demo-status)) |
 | Examples of code that runs | [tsugumi-kit's templates](https://github.com/gen740/tsugumi-kit/tree/main/templates) |
 | One language's API, dependencies and threads | [tsugumi-kit](https://github.com/gen740/tsugumi-kit/tree/main) |
-| The contract between the core and an SDK | [Card ABI](CardABI.md) |
-| Leaving implementation to the Agent | [the Agent in Features](features.md#9-agent) |
+| The contract between the core and an SDK | [Card ABI](design/CardABI.md) |
+| Leaving implementation to the Agent | [the Agent in Features](design/Agent.md) |
 | What the words mean | [Glossary](Glossary.md) |

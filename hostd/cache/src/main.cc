@@ -9,7 +9,7 @@
 // Every connection is mutual TLS 1.3. The client presents an Ed25519
 // certificate whose public key is listed in the authorized keys file, the
 // same `ed25519:` keys as Execution Services registrations. See
-// docs/BinaryCacheServer.md.
+// docs/design/BinaryCacheServer.md.
 
 #include <arpa/inet.h>
 #include <fcntl.h>

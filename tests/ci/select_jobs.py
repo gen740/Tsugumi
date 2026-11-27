@@ -82,7 +82,7 @@ def consumers(path):
             "docs/CardGuide.md", "docs/assets/tsugumi-icon.svg",
         }:
             jobs.add("web-contracts")
-        if path == "docs/features.md":
+        if path in {"docs/features.md", "docs/design/Agent.md"}:
             jobs.add("prompt")
         return jobs
     if path.startswith("vm/guest/"):

@@ -42,10 +42,10 @@ All Cards in an exported app come from its author and honor the handoff when
 they return. Development workflows still verify the full result envelope and
 seal artifact snapshots.
 
-Artifact grants come from input envelopes. The worker exposes writable
+Artifact UUIDs travel in value envelopes. The worker exposes writable
 directories through `artifact_create`, seals their snapshots at call
-completion, and resolves active grants through `artifact_open`. Forwarding
-an artifact ID preserves its identity. See the [Card ABI](../docs/CardABI.md).
+completion, and resolves project artifacts through `artifact_open`. Forwarding
+an artifact ID preserves its identity. See the [Card ABI](../docs/design/CardABI.md).
 
 View effects can run on Card threads throughout the process lifetime.
 The worker relays bytes in both directions and uses flow control to bound
@@ -57,7 +57,9 @@ The broker sends authenticated requests to the TLS listener. The listener
 admits jobs through its journal and starts each invocation in its own
 supervised Linux namespace. The invocation transfers input blobs, realises
 the Card build plan in the private Nix store, and runs the worker specified
-by the plan. The invocation engine checks artifact IDs and transfers newly created artifacts with its result. Forwarded grants retain their IDs.
+by the plan. The invocation engine checks artifact IDs and transfers newly created artifacts with its result. Forwarded artifacts retain their IDs.
+
+A borrowed local lease is released on success and discarded on an exceptional exit so workerd can reclaim it. See the [sandbox contract](../docs/design/SandboxContract.md) for process isolation and [remote job lifecycle](../docs/design/RemoteWorker.md) for journal recovery.
 
 ## Verification
 
