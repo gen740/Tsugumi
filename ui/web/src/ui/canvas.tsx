@@ -10,7 +10,7 @@ import { app } from '../model/app'
 import { HelperBirds } from './helperBirds'
 import { WritingPanels } from './writingPanel'
 import { Boundary, canvasFor, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
-import { failedStage, NEW_PORT, Pt, Rect, snapToGrid, Stage, STAGE_INFO, STAGE_STATUS_LABEL, StageItem } from '../model/canvasKit'
+import { CardNodeData, failedStage, NEW_PORT, Pt, Rect, snapToGrid, Stage, STAGE_INFO, STAGE_STATUS_LABEL, StageItem } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
 import {
@@ -953,7 +953,7 @@ function ResizeHandle({ onEnd }: { onEnd: (dx: number, dy: number) => void }) {
 
 // ---- Hover details -------------------------------------------------------------------------
 
-interface BubbleContent {
+export interface BubbleContent {
   title: string
   subtitle: string
   symbol: string
@@ -970,27 +970,32 @@ interface BubbleContent {
   openLog?: () => void
 }
 
+/** What a Card's face leaves out: its description, its stages with their
+ *  times, its run and the whole failure with a way to the log. */
+export function cardHoverContent(d: CardNodeData, lines: string[], runId?: string, openLog?: () => void): BubbleContent {
+  let status = runText(d) ?? idleText(d)
+  if (runId && d.invocation > 0n) status += L('（Run {0} の中でこの Card の {1} 回目の実行）', runId.slice(0, 8), d.invocation)
+  const facts: string[] = []
+  if (d.stage?.workerReused) facts.push(L('前回の worker を再利用して実行しました'))
+  // The worker, what the invocation waits for, CPU time and the time since
+  // its last output go here once the core reports them in RunStatus.
+  const failed = d.state === D.CardState.failed || d.state === D.CardState.blocked
+  return {
+    title: d.title, subtitle: KIND_LABEL[d.kind], symbol: d.symbol ?? 'xmark.octagon', lines, status,
+    stages: d.invocation > 0n ? d.stage?.items : undefined, facts,
+    problems: d.errors, warnings: d.warnings, failure: failed ? d.failure : undefined,
+    openLog: failed ? openLog : undefined,
+  }
+}
+
 export function hoverContent(session: ProjectSession, scope: string[], t: HoverTarget, workspace?: Workspace): BubbleContent {
   if (t.kind === 'card') {
     const k = t.k
     const d = session.nodeData(k)
-    const lines = session.cardDetails(k)
-    let status = runText(d) ?? idleText(d)
-    const id = session.currentRunId
-    if (id && d.invocation > 0n) status += L('（Run {0} の中でこの Card の {1} 回目の実行）', id.slice(0, 8), d.invocation)
-    const facts: string[] = []
-    if (d.stage?.workerReused) facts.push(L('前回の worker を再利用して実行しました'))
-    // The worker, what the invocation waits for, CPU time and the time since
-    // its last output go here once the core reports them in RunStatus.
-    const failed = d.state === D.CardState.failed || d.state === D.CardState.blocked
     const st = session.cardStates.get(k)
     const stage: Stage = failedStage(d.stage)?.stage ?? (st ? runStateStage(st) : undefined) ?? Stage.execute
-    return {
-      title: d.title, subtitle: KIND_LABEL[d.kind], symbol: d.symbol ?? 'xmark.octagon', lines, status,
-      stages: d.invocation > 0n ? d.stage?.items : undefined, facts,
-      problems: d.errors, warnings: d.warnings, failure: failed ? d.failure : undefined,
-      openLog: failed && workspace ? () => showLog(workspace, k, stage, st?.invocation, session.currentRunId) : undefined,
-    }
+    return cardHoverContent(d, session.cardDetails(k), session.currentRunId,
+      workspace ? () => showLog(workspace, k, stage, st?.invocation, session.currentRunId) : undefined)
   }
   const symbol = 'point.topleft.down.to.point.bottomright.curvepath'
   const c = session.connections(scope)[t.i]
@@ -1013,7 +1018,7 @@ export function hoverContent(session: ProjectSession, scope: string[], t: HoverT
 }
 
 /** Details shown near the pointer over a Card or a wire. */
-function HoverBubble({ content }: { content: BubbleContent }) {
+export function HoverBubble({ content }: { content: BubbleContent }) {
   return (
     <div className="cv-bubble material">
       <div className="row gap6" style={{ alignItems: 'center' }}>
