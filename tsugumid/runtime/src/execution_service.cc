@@ -181,10 +181,14 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
         sp.worker_binary.find('/', std::string_view("/nix/store/").size());
     const auto root = sp.worker_binary.substr(0, end);
     if (std::ranges::find(sp.closure, root) == sp.closure.end()) {
-      std::lock_guard lock(closure_mutex_);
+      std::unique_lock lock(closure_mutex_);
       auto found = worker_closures_.find(root);
-      if (found == worker_closures_.end())
-        found = worker_closures_.emplace(root, NixStore::closure(root)).first;
+      if (found == worker_closures_.end()) {
+        lock.unlock();
+        auto closure = NixStore::closure(root);
+        lock.lock();
+        found = worker_closures_.try_emplace(root, std::move(closure)).first;
+      }
       sp.closure.insert(sp.closure.end(), found->second.begin(),
                         found->second.end());
     }
