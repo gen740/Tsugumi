@@ -686,16 +686,19 @@ struct ExecutionBroker::State {
           secret_names = std::move(asked->names);
         } else if (request->body.AsCatalogRequest()) {
           R::CatalogT catalog;
+          std::map<std::string, std::string> grants;
+          auto grant = db.prepare(
+              "SELECT service,generation FROM project_services WHERE "
+              "project=?");
+          grant.bind(1, q.text(1));
+          while (grant.step()) grants.emplace(grant.text(0), grant.text(1));
           for (const auto& e : Entries()) {
             auto target = std::make_unique<R::TargetT>();
             target->id = e.id;
-            auto grant = db.prepare(
-                "SELECT generation FROM project_services "
-                "WHERE project=? AND service=?");
-            grant.bind(1, q.text(1)).bind(2, e.id);
+            const auto authorized = grants.find(e.id);
             const bool approved =
-                e.id == "local" ||
-                (grant.step() && grant.text(0) == e.generation);
+                e.id == "local" || (authorized != grants.end() &&
+                                    authorized->second == e.generation);
             target->available = e.id == "local" ||
                                 (approved && !e.capabilities.server_id.empty());
             if (!target->available)
