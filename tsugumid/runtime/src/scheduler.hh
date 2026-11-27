@@ -76,9 +76,19 @@ class Scheduler {
   // OperationReceipt bytes of the RunAccepted result.
   std::string accept(DocumentPtr doc, const RunParams& p);
   std::optional<RunStatusData> active_status();
+  // Files of the project folder the active run may still read: each Card is
+  // evaluated from its definition folder when the run reaches it, with its
+  // project's lock file. Everything else the run uses is in its document.
+  struct ActiveReads {
+    std::string run_id;
+    std::map<std::string, CardPath> definitions;  // def_dir -> Card
+    std::set<std::string> locks;
+  };
+  std::optional<ActiveReads> active_reads();
   auto live_log(const std::string& run_id, const std::function<LogRead(sql::Db&)>& read) -> LogRead;
   RunStatusData cancel(const std::string& run_id);
-  // Invalidate resident workers whose Card definitions changed.
+  // Invalidate resident workers whose Card definitions changed. While a run
+  // is active it keeps its own revision's workers; they retire when it ends.
   void document_changed(const Document& before, const Document& after);
   void shutdown();
 
@@ -92,6 +102,8 @@ class Scheduler {
   std::mutex mu_;
   std::condition_variable finished_;
   std::shared_ptr<RunExec> active_;
+  std::optional<ActiveReads> active_reads_;
+  std::set<std::string> deferred_invalidations_;
   struct Completion {
     std::shared_ptr<RunExec> run;
     RunStatusData status;

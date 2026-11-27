@@ -209,6 +209,8 @@ class Service : public RequestSink {
   auto prepare_save_reply(Store::Staged& staged, const Document& base,
                           const flatbuffers::Vector<uint8_t>* operation_data =
                               nullptr) -> PreparedSaveReply;
+  // Refuses a save that changes files the active run still reads.
+  void require_unread_by_run(const Document& before, const Document& after);
   void complete_save(
       RequestIn& req, const std::string& op_id, const std::string& kind,
       const std::string& digest, const Document& base, Store::Staged& staged,

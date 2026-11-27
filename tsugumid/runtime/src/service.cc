@@ -2206,14 +2206,9 @@ void Service::save(RequestIn& req) {
                                  *staged.doc->resolution,
                                  r->approved_permissions());
     }
-    if (staged.effective &&
-        staged.doc->execution_fingerprint != base->execution_fingerprint) {
-      if (auto active = scheduler_->active_status())
-        throw Failed(FailureKind::busy,
-                     "a run is in progress; computational changes are rejected "
-                     "until it ends",
-                     {{"run_id", *active->run_id}});
-    }
+    // The active run keeps executing the revision it started with; only the
+    // definition files it still reads from the project folder must stay.
+    if (staged.effective) require_unread_by_run(*base, *staged.doc);
     const auto response =
         prepare_save_reply(staged, *base, r->operation_data());
     complete_save(req, op_id, "save", digest, *base, staged, response,
@@ -2231,6 +2226,62 @@ void Service::save(RequestIn& req) {
     auto f = FailureData::make(FailureKind::internal_error, e.what());
     store_failure_receipt(op_id, "save", digest, f);
     throw Failed(f);
+  }
+}
+
+namespace {
+auto changed_sources(const Document& before, const Document& after)
+    -> std::vector<std::string> {
+  std::vector<std::string> out;
+  auto a = before.sources.begin();
+  auto b = after.sources.begin();
+  while (a != before.sources.end() || b != after.sources.end()) {
+    if (b == after.sources.end() ||
+        (a != before.sources.end() && a->first < b->first)) {
+      out.push_back((a++)->first);
+    } else if (a == before.sources.end() || b->first < a->first) {
+      out.push_back((b++)->first);
+    } else {
+      if (a->second.hash != b->second.hash) out.push_back(a->first);
+      ++a;
+      ++b;
+    }
+  }
+  return out;
+}
+
+// Files the evaluator never reads: the document supplies them to the run.
+auto evaluated_definition_file(std::string_view name) -> bool {
+  return name != "_card.json" && name != "README.md" &&
+         name != "_comments.json" && name != "_inputs.fbs";
+}
+}  // namespace
+
+void Service::require_unread_by_run(const Document& before,
+                                    const Document& after) {
+  const auto reads = scheduler_->active_reads();
+  if (!reads) return;
+  const auto refuse = [&](const std::string& path, const std::string& what,
+                          std::optional<std::string> card) {
+    std::vector<std::pair<std::string, std::string>> args{
+        {"run_id", reads->run_id}, {"path", path}};
+    if (card) args.emplace_back("card", *card);
+    throw Failed(FailureKind::busy,
+                 "run " + reads->run_id + " still reads " + what +
+                     " from the project folder; save this change after the "
+                     "run ends, or cancel the run",
+                 args);
+  };
+  for (const auto& path : changed_sources(before, after)) {
+    if (reads->locks.contains(path)) refuse(path, path, std::nullopt);
+    auto it = reads->definitions.upper_bound(path);
+    if (it == reads->definitions.begin()) continue;
+    --it;
+    if (!path.starts_with(it->first) ||
+        !evaluated_definition_file(path.substr(it->first.size())))
+      continue;
+    const auto card = path_key(it->second);
+    refuse(path, "the definition of " + card, card);
   }
 }
 

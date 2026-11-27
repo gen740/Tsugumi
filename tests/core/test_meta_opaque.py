@@ -31,7 +31,7 @@ def test_direct_rpc_does_not_stamp_comments_or_enforce_draft_intent(tmp_path, co
             save(client, [change("PutDefinition", id="plan", cardJson=json.dumps(card_document({"type": "code"})), commentsJson=invalid)])
 
 
-def test_presentation_saves_while_busy_keep_execution_revision_and_run_source_hash(core_factory, project, tmp_path):
+def test_saves_while_busy_keep_the_run_on_its_execution_revision(core_factory, project, tmp_path):
     daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     gate = Gate(tmp_path, "active")
@@ -47,15 +47,17 @@ def test_presentation_saves_while_busy_keep_execution_revision_and_run_source_ha
         result = save(client, [change("SetProject", json=json.dumps(document)),
             change("PutDefinition", id="work", cardJson=json.dumps(settings), readme=card_readme("Work", "Updated description"))])
         assert result.executionRev == before.executionRev
+        presented = client.call("RunHistoryRequest").runs
         settings["maxRuns"] = 2
-        with pytest.raises(RpcFailure) as failure:
-            save(client, [change("PutDefinition", id="work", cardJson=json.dumps(settings), keepReadme=True, keepComments=True)])
-        assert failure.value.kind == "busy"
+        # A computational setting is saved too; the active run keeps its own.
+        changed = save(client, [change("PutDefinition", id="work", cardJson=json.dumps(settings), keepReadme=True, keepComments=True)])
+        assert changed.executionRev == before.executionRev + 1
     finally:
         gate.release()
-    assert wait_run(client, run_id).state == RunState.succeeded
+    assert wait_run(client, run_id).executionRev == before.executionRev
     second = run(client)
-    assert wait_run(client, second).state == RunState.succeeded
+    assert wait_run(client, second).executionRev == before.executionRev + 1
     summaries = {text(r.status.runId): r for r in client.call("RunHistoryRequest").runs}
-    assert text(summaries[run_id].sourceHash) == text(summaries[second].sourceHash)
+    assert text(summaries[run_id].sourceHash) == text(presented[0].sourceHash)
+    assert text(summaries[run_id].sourceHash) != text(summaries[second].sourceHash)
     assert client.call("RunRecordRequest", runId=run_id, card=path("work")).record

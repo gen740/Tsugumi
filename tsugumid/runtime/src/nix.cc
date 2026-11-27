@@ -274,14 +274,6 @@ auto verify_definitions(const stdfs::path& project, const Document& doc,
     const auto relative = directory.lexically_relative(root);
     std::set<std::string> expected(definition.files.begin(),
                                    definition.files.end());
-    // Metadata is tracked by the document and checked for drift, but it
-    // remains outside the evaluator and the evaluation key.
-    for (const std::string name :
-         {"_card.json", "README.md", "_comments.json"}) {
-      const auto path = (relative / name).generic_string();
-      if (doc.disk_hashes.contains(path) || doc.sources.contains(path))
-        expected.insert(name);
-    }
     try {
       const auto listing = fs::list_beneath(root, relative);
       for (const auto& name : listing.links)
@@ -290,7 +282,10 @@ auto verify_definitions(const stdfs::path& project, const Document& doc,
         changed((relative / name).generic_string());
       for (const auto& name : listing.files) {
         // The evaluator supplies the confirmed generated schema itself.
-        if (name == "_inputs.fbs") continue;
+        // Metadata stays outside the evaluator and the evaluation key: the
+        // run's document holds it, and a later revision may change it on
+        // disk while this run evaluates its own.
+        if (name == "_inputs.fbs" || definition_metadata(name)) continue;
         const auto path = (relative / name).generic_string();
         if (!expected.erase(name)) changed(path);
         crypto::Sha256 hash;

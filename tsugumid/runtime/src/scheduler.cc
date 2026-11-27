@@ -11,6 +11,7 @@
 #include <iterator>
 #include <set>
 #include <stop_token>
+#include <utility>
 
 #include "collect_value.hh"
 #include "execution_service.hh"
@@ -2456,6 +2457,21 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
     History::put_receipt(db, p.op_id, "run", p.digest, receipt);
   });
   svc_.server()->broadcast(status_note(s.status, true));
+  ActiveReads reads{*s.status.run_id, {}, {}};
+  std::vector<const Node*> pending;
+  for (const auto& path : plan.build_candidates)
+    pending.push_back(doc->resolution->find(path));
+  while (!pending.empty()) {
+    const auto* node = pending.back();
+    pending.pop_back();
+    if (!node || node->def_dir.empty() ||
+        !reads.definitions.emplace(node->def_dir, node->path).second)
+      continue;
+    reads.locks.insert(node->project_dir + "tsugumi.lock");
+    for (const auto& ref : node->nix_references)
+      pending.push_back(doc->resolution->find(ref.target));
+  }
+  active_reads_ = std::move(reads);
   active_ = std::make_shared<RunExec>(svc_, *this, doc, p, s, std::move(plan));
   active_->start();
   return receipt;
@@ -2465,6 +2481,12 @@ std::optional<RunStatusData> Scheduler::active_status() {
   std::lock_guard<std::mutex> l(mu_);
   if (!active_) return std::nullopt;
   return active_->status();
+}
+
+auto Scheduler::active_reads() -> std::optional<ActiveReads> {
+  std::lock_guard<std::mutex> l(mu_);
+  if (!active_) return std::nullopt;
+  return active_reads_;
 }
 
 RunStatusData Scheduler::cancel(const std::string& run_id) {
@@ -2518,12 +2540,23 @@ void Scheduler::document_changed(const Document& before,
                                  const Document& after) {
   if (!before.resolution || !after.resolution) return;
   if (before.resolution == after.resolution) return;
+  std::vector<std::string> changed;
   for (const auto& n : before.resolution->nodes) {
     if (!n.settings.reuse_worker) continue;
     const auto* next = after.resolution->find(n.path);
     if (!next || card_content(before, n) != card_content(after, *next))
-      svc_.invalidate_resident(path_key(n.path));
+      changed.push_back(path_key(n.path));
   }
+  {
+    // The active run executes the revision it started with, residents
+    // included: retire them when it ends.
+    std::lock_guard lock(mu_);
+    if (active_) {
+      deferred_invalidations_.insert(changed.begin(), changed.end());
+      return;
+    }
+  }
+  for (const auto& card : changed) svc_.invalidate_resident(card);
 }
 
 auto Scheduler::finished(RunSummaryData sum, std::string record) -> void {
@@ -2533,6 +2566,8 @@ auto Scheduler::finished(RunSummaryData sum, std::string record) -> void {
   // Release the slot before the terminal status can appear in history. Keep
   // admission locked until the result commits and both events are queued.
   auto done = std::move(active_);
+  active_reads_.reset();
+  const auto deferred = std::exchange(deferred_invalidations_, {});
   try {
     svc_.history().write_sync([&](sql::Db& db) {
       svc_.expire_artifacts(db, *sum.status.run_id, detached);
@@ -2562,6 +2597,7 @@ auto Scheduler::finished(RunSummaryData sum, std::string record) -> void {
       {std::move(done), std::move(sum.status), std::move(record)});
   finished_.notify_all();
   lock.unlock();
+  for (const auto& card : deferred) svc_.invalidate_resident(card);
   svc_.finish_artifact_expiry(detached, committed);
 }
 

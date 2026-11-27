@@ -444,11 +444,14 @@ void Service::run_latest_invocations(RequestIn& req) {
   require_run_id(*r->run_id(), "run_id");
   std::string run_id = r->run_id()->str();
   const auto fingerprint = store_->current()->execution_fingerprint;
+  const auto active = scheduler_->active_status();
+  const bool running = active && active->run_id == run_id;
   auto [rows, batches] = history_->read([&](sql::Db& db) {
     const auto run = History::run(db, run_id);
     if (!run)
       throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
-    auto latest = run->source_hash == fingerprint
+    // The active run keeps its batches after a later revision is saved.
+    auto latest = running || run->source_hash == fingerprint
                       ? History::latest_batches(db, run_id)
                       : std::vector<RunBatchData>{};
     return std::pair{History::latest_invocations(db, run_id),
