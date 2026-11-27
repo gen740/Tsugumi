@@ -539,8 +539,11 @@ void TransportServer::parse_ws(Conn& c) {
     if (b.size() < 2) break;
     auto b0 = static_cast<uint8_t>(b[0]);
     auto b1 = static_cast<uint8_t>(b[1]);
-    bool fin = b0 & 0x80;
-    int opcode = b0 & 0x0F;
+    const bool fin = b0 & 0x80;
+    const int opcode = b0 & 0x0F;
+    const bool control = opcode >= 0x8;
+    if ((b0 & 0x70) || !(b1 & 0x80) || (control && (!fin || (b1 & 0x7F) > 125)))
+      return drop(c, "invalid WebSocket frame header");
     uint64_t len = b1 & 0x7F;
     size_t off = 2;
     if (len == 126) {
@@ -553,15 +556,17 @@ void TransportServer::parse_ws(Conn& c) {
       for (int i = 0; i < 8; ++i) len = (len << 8) | uint8_t(b[2 + i]);
       off = 10;
     }
-    if (len > opts_.limits.max_frame_bytes ||
-        c.ws_fragments.size() + len > opts_.limits.max_frame_bytes)
+    if (!control &&
+        (len > opts_.limits.max_frame_bytes ||
+         c.ws_fragments.size() + len > opts_.limits.max_frame_bytes))
       return drop(c, "frame too large");
     if (b.size() < off + 4 + len) break;
     const char* mask = b.data() + off;
     std::string payload(b.substr(off + 4, len));
     for (size_t i = 0; i < payload.size(); ++i) payload[i] ^= mask[i % 4];
     consumed += off + 4 + len;
-    if (opcode >= 0x8) {
+    if (control) {
+      if (opcode > 0xA) return drop(c, "unknown control opcode");
       if (opcode == 0x8) {
         std::string close_frame = "\x88";
         close_frame += static_cast<char>(0);

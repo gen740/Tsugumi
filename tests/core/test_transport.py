@@ -82,6 +82,19 @@ def test_websocket_fragments_and_joined_messages(daemon):
         assert Message.GetRootAs(reply).RequestId() == 4
 
 
+@pytest.mark.parametrize("invalid", [
+    b"\x82\x00",
+    ws_frame(b"ping", opcode=9, fin=False),
+    ws_frame(bytes(126), opcode=9),
+], ids=["unmasked", "fragmented-ping", "long-ping"])
+def test_server_rejects_invalid_websocket_frame_headers(daemon, invalid):
+    connection, status = ws_connect(port_of(daemon))
+    with connection:
+        assert status.split()[1] == "101"
+        connection.sendall(invalid)
+        assert ws_read(connection) is None
+
+
 def test_unix_frames_split_and_joined(daemon):
     """Unix RPC accepts bytewise frames and several frames sent in one write."""
     with unix_connection(daemon) as connection:
