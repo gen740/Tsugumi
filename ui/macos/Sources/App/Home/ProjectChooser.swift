@@ -76,6 +76,9 @@ struct ProjectChooser: View {
                                   if !$0 && GuideController.shared.needsSetup { GuideController.shared.finishSetup() }
                                 })) {
       GuideSetupView {}
+        // As the new project sheet: on Home, which has no title bar background,
+        // the default sheet surface is clear and Home showed through.
+        .presentationBackground(.regularMaterial)
     }
     // The home window shows no title: the key visual and the name are in it.
     .toolbar(removing: .title)
