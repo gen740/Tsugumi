@@ -778,6 +778,8 @@ struct Service::State {
       return wire::HostReply(request.request_id, result);
     }
     if (r->value_as_EnvironmentListRequest()) {
+      if (!environments)
+        throw Failure("unavailable", "Environment service is not running");
       lock.unlock();
       return wire::HostReply(request.request_id, environments->List());
     }
@@ -821,6 +823,8 @@ struct Service::State {
       return wire::HostReply(request.request_id, std::move(result));
     }
     if (const auto* terminal = r->value_as_HostTerminalRequest()) {
+      if (!environments)
+        throw Failure("unavailable", "Environment service is not running");
       auto input = std::unique_ptr<H::HostTerminalRequestT>(terminal->UnPack());
       if (input->action != H::TerminalAction::Open &&
           (!events->terminals.contains(input->session) ||
