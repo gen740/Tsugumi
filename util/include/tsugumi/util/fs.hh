@@ -101,7 +101,6 @@ Listing list_beneath(const stdfs::path& root, const stdfs::path& rel,
                      size_t max_entries = SIZE_MAX);
 // Whether `rel` below root is a directory (true) or a regular file (false),
 // opened without following links. Anything else throws Error.
-bool directory_beneath(const stdfs::path& root, const stdfs::path& rel);
 
 // Exclusive advisory lock held for the lifetime of the object.
 class FileLock {

@@ -514,17 +514,6 @@ std::string sha256_tree(const stdfs::path& p,
   return hash.finish_hex();
 }
 
-bool directory_beneath(const stdfs::path& root, const stdfs::path& rel) {
-  const int fd = open_beneath(root, rel, O_RDONLY | O_NONBLOCK);
-  struct stat st{};
-  const int status = ::fstat(fd, &st);
-  ::close(fd);
-  if (status != 0 || !(S_ISDIR(st.st_mode) || S_ISREG(st.st_mode)))
-    throw Error((root / rel).string() +
-                " is neither a regular file nor a directory");
-  return S_ISDIR(st.st_mode);
-}
-
 FileLock::~FileLock() {
   if (fd_ >= 0) ::close(fd_);
 }

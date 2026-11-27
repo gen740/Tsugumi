@@ -95,7 +95,6 @@ hosq::json::GenericDom<> string_value(const std::string& s);
 // The form the clients write document files in: two spaces, a final newline.
 // `compact` is validated JSON without whitespace between its tokens.
 std::string pretty_text(std::string_view compact);
-bool is_null(const hosq::json::GenericDom<>& value);
 
 // Value of an optional field.
 template <class F>

@@ -247,9 +247,4 @@ std::string pretty_text(std::string_view compact) {
   return out;
 }
 
-bool is_null(const hosq::json::GenericDom<>& value) {
-  v::Null n;
-  return !value[""].decode_into(n);
-}
-
 }  // namespace tsugumi::schema
