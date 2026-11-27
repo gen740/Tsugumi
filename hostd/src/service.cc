@@ -793,6 +793,9 @@ struct Service::State {
               registry.AttachFolder(
                   ready.project_id, item->resource, folder,
                   std::filesystem::path(folder).filename().string());
+              // Attaching a folder is the person giving the Agent read
+              // access to it; the Agent does not ask again.
+              access->Grant(item->resource, S::Access::Read);
               result.folders.push_back(std::move(item));
             }
             transaction.commit();

@@ -36,6 +36,7 @@
 #include "tsugumi/document/document.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/fs.hh"
 #include "tsugumi/util/locked.hh"
 
 namespace tsugumi::agent {
@@ -331,6 +332,50 @@ auto Tools::ExclusionsFor(const std::string& project,
     return host::AgentExclude(std::filesystem::current_path(), json);
   std::lock_guard lock(mutex);
   return host::AgentExclude(registry.Root(project), json, base.files);
+}
+
+// The file tools see Card sources and project documents only. A path the
+// project folder holds outside them reads as missing; say why instead, unless
+// the person hid it from the Agent.
+auto Tools::OutsideProjectFiles(const std::string& project,
+                                const std::string& path,
+                                const std::string& result,
+                                std::stop_token stop) -> std::string {
+  const auto envelope = json::Object(result);
+  if (json::Text(envelope, "reply") != "Failure" ||
+      json::Text(json::Object(json::Get(envelope, "value", "{}")), "kind") !=
+          "not_found" ||
+      path.empty() || path == "." || !fs::valid_relative_path(path))
+    return result;
+  std::filesystem::path root;
+  {
+    std::lock_guard lock(mutex);
+    root = registry.Root(project);
+  }
+  std::error_code error;
+  if (!std::filesystem::exists(std::filesystem::symlink_status(root / path,
+                                                               error)) ||
+      !fs::resolves_inside(root, root / path) ||
+      Exclusions(project, stop).Contains(path))
+    return result;
+  return json::Encode(json::Members{
+      {"reply", json::Quote("Failure")},
+      {"value",
+       json::Encode(json::Members{
+           {"kind", json::Quote("invalid_path")},
+           {"diagnostic",
+            json::Quote(
+                path +
+                " is in the project folder but outside the files Tsugumi's "
+                "file tools read (Card sources under definitions/, skills/, "
+                "externals/, templates/ and notes/, and the project "
+                "documents). trackedPaths only adds it to project versions. "
+                "To read it, ask the person to attach its folder in the chat "
+                "(Attach > Attach Folder), then use files action attached; "
+                "project_copy with source attached copies it into a Card.")},
+           {"args", json::Encode(std::vector<std::string>{json::Encode(
+                        json::Members{{"key", json::Quote("path")},
+                                      {"value", json::Quote(path)}})})}})}});
 }
 
 auto Tools::Exclusions(const std::string& project, std::stop_token stop)
@@ -1708,6 +1753,10 @@ auto Tools::ExecuteTool(const std::string& conversation,
       result = json::Encode(page);
     }
   }
+  if ((call.name == "project_file_read" || call.name == "project_file_list") &&
+      !project.empty() && (!boundary || !boundary->scoped()))
+    result = OutsideProjectFiles(project, json::Text(args, "path"), result,
+                                 stop);
   // ProjectCall projects these replies from the inspected revision. Other
   // operations can change the policy or return data from a different state.
   const bool projected_revision = call.name == "project_inspect" ||

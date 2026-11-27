@@ -380,5 +380,36 @@ TEST_F(EnvironmentFixture, FoldersCanBeWithdrawnAndOmittedVectorsMeanEmpty) {
   EXPECT_EQ(runtime.HostValue()->value_as_HostRuntime()->vm_state()->str(),
             "unavailable");
 }
+TEST_F(EnvironmentFixture, AttachingAFolderGrantsTheAgentReadAccessToIt) {
+  const auto folder = directory.path / "reference";
+  std::filesystem::create_directory(folder);
+  const auto reply =
+      Call(*host, H::RequestPayload::AttachFoldersRequest, [&](Builder& b) {
+        H::AttachFoldersRequestT input;
+        input.project = project.string();
+        input.folders = {folder.string()};
+        return H::AttachFoldersRequest::Pack(b, &input).Union();
+      });
+  ASSERT_TRUE(reply.Code().empty()) << reply.Code();
+  const auto* attached = reply.HostValue()->value_as_AttachedFolders();
+  ASSERT_NE(attached, nullptr);
+  ASSERT_EQ(attached->folders()->size(), 1u);
+  const auto resource = attached->folders()->Get(0)->resource()->str();
+  const auto permissions = Call(
+      *host, H::RequestPayload::ProjectPermissionsRequest, [](Builder& b) {
+        return H::CreateProjectPermissionsRequest(b).Union();
+      });
+  const auto* list = permissions.HostValue()->value_as_ProjectPermissionList();
+  ASSERT_NE(list, nullptr);
+  bool found = false;
+  for (const auto* entry : *list->projects())
+    for (const auto* permission : *entry->permissions())
+      if (permission->resource_id()->str() == resource) {
+        found = true;
+        EXPECT_EQ(permission->access(), Tsugumi::Service::Access::Read);
+        EXPECT_TRUE(permission->allowed());
+      }
+  EXPECT_TRUE(found);
+}
 }  // namespace
 }  // namespace tsugumi::test

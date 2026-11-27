@@ -237,6 +237,16 @@ TEST_F(ProjectStructure, EnforcesDefinitionAndExternalOwnershipAtEveryLevel) {
   Invalid(load, "externals/child/definitions/leaf/README.md");
   Put("externals/child/definitions/leaf/README.md", "---\ndescription:\n---\n");
   Invalid(load, "front matter needs title");
+  Put("externals/child/definitions/leaf/README.md",
+      "---\ntitle: Leaf\n description:\n---\n");
+  Invalid(load,
+          "front matter line 3: key \" description\" has leading whitespace; "
+          "write \"description:\" at the start of the line");
+  Put("externals/child/definitions/leaf/README.md",
+      "---\ntitle: Leaf\nsummary: x\n---\n");
+  Invalid(load,
+          "front matter line 3: unknown key \"summary\" (expected \"title\" "
+          "or \"description\")");
   Put("externals/child/definitions/leaf/README.md", test::readme("Leaf"));
   std::filesystem::create_directories(root /
                                       "externals/child/definitions/extra");

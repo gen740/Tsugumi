@@ -68,6 +68,17 @@ auto Access::HasGrant(const std::string& project, S::Access access) -> bool {
   return q.step();
 }
 
+auto Access::Grant(const std::string& resource, S::Access access) -> void {
+  std::lock_guard lock(mutex);
+  if (HasGrant(resource, access)) return;
+  auto grant = db.prepare("INSERT INTO workspace_grants VALUES(?,?,?,1)");
+  grant.bind(1, crypto::uuid4())
+      .bind(2, resource)
+      .bind(3, static_cast<int>(access))
+      .run();
+  changed.notify_all();
+}
+
 auto Access::AccessDescription(const std::string& resource,
                                Tsugumi::Service::Access access,
                                const std::string& reason, bool needed)
@@ -354,16 +365,10 @@ auto Access::HandleHost(const Tsugumi::Host::Request& request, uint64_t id)
       throw Failure("invalid_request",
                     "This access requires an operation approval");
     }
-    if (!edit->allow()) {
+    if (!edit->allow())
       Revoke(resource, edit->access());
-    } else if (!HasGrant(resource, edit->access())) {
-      auto grant = db.prepare("INSERT INTO workspace_grants VALUES(?,?,?,1)");
-      grant.bind(1, crypto::uuid4())
-          .bind(2, resource)
-          .bind(3, static_cast<int>(edit->access()))
-          .run();
-      changed.notify_all();
-    }
+    else
+      Grant(resource, edit->access());
   }
   H::ProjectPermissionListT result;
   auto projects = db.prepare(

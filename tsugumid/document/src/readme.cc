@@ -29,9 +29,27 @@ auto parse(std::string_view text, std::string* error) -> std::optional<Readme> {
     if (colon == std::string_view::npos || colon == 0)
       return fail(where + ": expected key: value");
     const auto key = line.substr(0, colon);
-    if (!known_key(key))
-      return fail(where + ": unknown key " + std::string(key) +
-                  " (expected title and description)");
+    if (!known_key(key)) {
+      // Quote the key as written so stray whitespace is visible.
+      const auto quoted = "\"" + std::string(key) + "\"";
+      const auto first = key.find_first_not_of(" \t");
+      const auto last = key.find_last_not_of(" \t");
+      const auto trimmed = first == std::string_view::npos
+                               ? std::string_view{}
+                               : key.substr(first, last - first + 1);
+      if (known_key(trimmed)) {
+        const bool leading = first > 0;
+        const bool trailing = last + 1 < key.size();
+        return fail(where + ": key " + quoted + " has " +
+                    (leading && trailing ? "leading and trailing whitespace"
+                     : leading           ? "leading whitespace"
+                                         : "trailing whitespace") +
+                    "; write \"" + std::string(trimmed) +
+                    ":\" at the start of the line");
+      }
+      return fail(where + ": unknown key " + quoted +
+                  " (expected \"title\" or \"description\")");
+    }
     auto value = line.substr(colon + 1);
     if (!value.empty()) {
       if (!value.starts_with(' '))
@@ -41,7 +59,7 @@ auto parse(std::string_view text, std::string* error) -> std::optional<Readme> {
     if (value.find('\r') != std::string_view::npos)
       return fail(where + ": a value is one line");
     if (!out.fields.emplace(std::string(key), std::string(value)).second)
-      return fail(where + ": duplicate key " + std::string(key));
+      return fail(where + ": duplicate key \"" + std::string(key) + "\"");
   }
   for (const auto* key : {"title", "description"})
     if (!out.fields.contains(key))

@@ -75,6 +75,9 @@ struct Tools {
                          std::stop_token stop) -> std::string;
   auto InspectProject(const std::string& project, std::stop_token stop)
       -> json::Members;
+  auto OutsideProjectFiles(const std::string& project, const std::string& path,
+                           const std::string& result, std::stop_token stop)
+      -> std::string;
   auto ExclusionsFor(const std::string& project, const host::SaveBase& base)
       -> host::AgentExclude;
   auto Exclusions(const std::string& project, std::stop_token stop = {})

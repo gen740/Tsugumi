@@ -407,6 +407,30 @@ TEST_F(AgentExclusionRPC, FileReadListWriteAndPolicyChangesAreEnforcedByHost) {
   EXPECT_FALSE(std::filesystem::exists(directory.path /
                                        "project/definitions/hidden/new.txt"));
 }
+TEST_F(AgentExclusionRPC, FilesOutsideTheProjectFilesAreNamedAsSuch) {
+  Write(directory.path / "project/reference/notes/flow.md", "reference");
+  Write(directory.path / "project/private/flow.md", "hidden");
+  const auto c = Open({"private"});
+  for (const auto* name : {"project_file_read", "project_file_list"}) {
+    for (const auto* path : {"reference/notes/flow.md", "reference"}) {
+      const auto result =
+          Tool(c, name, j::Encode(j::Members{{"path", Quote(path)}}));
+      EXPECT_EQ(Error(result), "invalid_path") << name << " " << path;
+      EXPECT_NE(Diagnostic(result).find(
+                    "is in the project folder but outside the files"),
+                std::string::npos)
+          << Diagnostic(result);
+      EXPECT_NE(Diagnostic(result).find("attach its folder"),
+                std::string::npos);
+    }
+  }
+  // Paths the person hid from the Agent and absent paths stay missing.
+  for (const auto* path : {"private/flow.md", "reference/absent.md"})
+    EXPECT_EQ(Error(Tool(c, "project_file_read",
+                         j::Encode(j::Members{{"path", Quote(path)}}))),
+              "not_found")
+        << path;
+}
 TEST_F(AgentExclusionRPC, DemoReadListCopyAndHelpersCannotReachExcludedDemo) {
   const auto demo = directory.path / "demos/ja/finished";
   Write(demo / "tsugumi.json",

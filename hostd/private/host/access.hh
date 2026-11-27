@@ -39,6 +39,9 @@ struct Access {
          Dependencies dependencies);
   auto HasGrant(const std::string& project, Tsugumi::Service::Access access)
       -> bool;
+  // A grant the person gives by their own action, such as attaching a folder.
+  auto Grant(const std::string& resource, Tsugumi::Service::Access access)
+      -> void;
   auto AccessDescription(const std::string& resource,
                          Tsugumi::Service::Access access,
                          const std::string& reason, bool needed = true)
