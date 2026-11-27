@@ -56,11 +56,14 @@ Use [Build Cache settings](../Usage.md#manage-build-and-scratch-space) to inspec
 
 ## Evaluation reuse
 
-The core verifies source bytes against the confirmed document and stages the
-participating definitions by digest for the restricted evaluator. Each
-snapshot includes the generated input schema. Card metadata, README files and
-comments at the root of a definition are outside the snapshot. The evaluator
-also permits reads from the resolved locked sources.
+The restricted evaluator reads participating Card definitions in place.
+Before and after evaluation or reuse, the core checks their live files against
+the confirmed document. A difference requires Reload before evaluation can
+proceed. The accessor exposes only the files in the evaluation key and
+supplies the confirmed generated input schema at `_inputs.fbs` in memory.
+The root `_card.json`, `README.md`, and `_comments.json` stay outside the
+source tree presented to Nix. The evaluator also permits reads from the
+resolved locked sources.
 
 The core can reuse a successful evaluation for the same Card, target system
 and evaluation mode. The key includes evaluated source pins, definition and

@@ -94,7 +94,7 @@ struct CacheClearOutcome {
 
 class NixRunner {
  public:
-  NixRunner(Service& svc, std::filesystem::path evaluation_dir);
+  explicit NixRunner(Service& svc);
   ~NixRunner();
 
   auto build(const BuildRequest& req) -> CardBuildPlan;
@@ -110,9 +110,6 @@ class NixRunner {
   auto build_plan(const BuildRequest& req, bool views_only) -> CardBuildPlan;
   auto configure_call(NixCall& call, const Document& doc, const Node& node,
                       bool expression_only = false) -> void;
-  auto stage_definition(const Document& doc, const Node& owner,
-                        const std::vector<std::string>& sources,
-                        const std::string& digest) -> std::filesystem::path;
   std::filesystem::path cache_dir() const;
   std::filesystem::path gcroots_dir() const;
   NixEvaluator& evaluator();
@@ -123,7 +120,6 @@ class NixRunner {
 
   Service& svc_;
   std::filesystem::path nix_dir_;
-  std::filesystem::path evaluation_dir_;
   std::mutex eval_mu_;
   std::unique_ptr<NixEvaluator> evaluator_;
   // Entries are per Card and system, capped at 256.

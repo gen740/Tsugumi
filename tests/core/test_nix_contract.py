@@ -25,11 +25,30 @@ def test_evaluation_reads_only_confirmed_definition_sources(client, project):
         "message.txt": "confirmed",
     }).save(client)
     definition = project / "definitions/work"
-    (definition / "unconfirmed.txt").write_text("external")
+    (definition / "_comments.json").write_text('{"comments":[]}')
+    reload_project(client)
     names = evaluated(client, "work", "builtins.attrNames (builtins.readDir ./.)")
     assert {"default.nix", "message.txt", "_inputs.fbs"} <= set(names)
-    assert {"README.md", "_card.json", "unconfirmed.txt"}.isdisjoint(names)
+    metadata = {"README.md", "_card.json", "_comments.json"}
+    assert all((definition / name).is_file() for name in metadata)
+    assert metadata.isdisjoint(names)
+    assert evaluated(client, "work", "builtins.pathExists ./_comments.json") is False
+    packaged = evaluated(client, "work", """
+      let source = builtins.path { path = ./.; name = "confirmed-definition"; };
+      in builtins.attrNames (builtins.readDir source)
+    """)
+    assert packaged == names
     assert evaluated(client, "work", "builtins.readFile ./message.txt") == "confirmed"
+    generated = (definition / "_inputs.fbs").read_text()
+    (definition / "_inputs.fbs").unlink()
+    assert evaluated(client, "work", "builtins.readFile ./_inputs.fbs") == generated
+    assert not (definition / "_inputs.fbs").exists()
+
+    (definition / "unconfirmed.txt").write_text("external")
+    with pytest.raises(RpcFailure) as failure:
+        evaluated(client, "work", "builtins.attrNames (builtins.readDir ./.)")
+    assert failure.value.kind == "external_change"
+    (definition / "unconfirmed.txt").unlink()
 
     (definition / "message.txt").write_text("external")
     with pytest.raises(RpcFailure) as failure:

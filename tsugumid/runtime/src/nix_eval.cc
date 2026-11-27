@@ -80,8 +80,29 @@ auto write_build_log(std::string_view line, bool truncated) -> void {
 // lazy nixpkgs values can otherwise hide reads on subsequent evaluations.
 class EvaluationReads : public nix::SourceAccessor {
  public:
-  explicit EvaluationReads(nix::ref<nix::SourceAccessor> next)
-      : next_(std::move(next)) {}
+  EvaluationReads(nix::ref<nix::SourceAccessor> next,
+                  const std::vector<NixDefinitionScope>& definitions)
+      : next_(std::move(next)) {
+    for (const auto& definition : definitions) {
+      const nix::CanonPath root(definition.directory);
+      roots_.push_back(root);
+      directories_.try_emplace(root);
+      const auto add_file = [&](const std::string& name) {
+        auto path = root / nix::CanonPath(name);
+        files_.insert(path);
+        directories_[path.parent().value()]
+                    [std::string(path.baseName().value())] = tRegular;
+        for (path = *path.parent(); path != root; path = *path.parent())
+          directories_[*path.parent()][std::string(*path.baseName())] =
+              tDirectory;
+      };
+      for (const auto& name : definition.files) add_file(name);
+      if (!definition.generated_inputs.empty()) {
+        add_file("_inputs.fbs");
+        generated_.emplace(root / "_inputs.fbs", definition.generated_inputs);
+      }
+    }
+  }
   bool reusable = true;
   // Collected in filesystem callbacks, rooted only after evaluation returns:
   // a callback may be serializing a source on an already-locked store
@@ -100,6 +121,13 @@ class EvaluationReads : public nix::SourceAccessor {
 
   auto readFile(const nix::CanonPath& p, nix::Sink& sink,
                 nix::fun<void(uint64_t)> size) -> void override {
+    if (const auto file = generated_.find(p); file != generated_.end()) {
+      size(file->second.size());
+      sink(file->second);
+      return;
+    }
+    if (definition_path(p) && !files_.contains(p))
+      throw nix::Error("definition source '%s' is not confirmed", p.abs());
     if (!should_record(p)) {
       next_->readFile(p, sink, std::move(size));
       return;
@@ -119,6 +147,11 @@ class EvaluationReads : public nix::SourceAccessor {
     return result;
   }
   auto readDirectory(const nix::CanonPath& p) -> DirEntries override {
+    if (const auto directory = directories_.find(p);
+        directory != directories_.end())
+      return directory->second;
+    if (definition_path(p))
+      throw nix::Error("definition directory '%s' is not confirmed", p.abs());
     auto result = next_->readDirectory(p);
     const bool filtered = std::any_of(
         result.begin(), result.end(),
@@ -129,12 +162,15 @@ class EvaluationReads : public nix::SourceAccessor {
     return result;
   }
   auto readLink(const nix::CanonPath& p) -> std::string override {
+    if (definition_path(p))
+      throw nix::Error("symbolic links are not definition sources");
     auto result = next_->readLink(p);
     remember('l', p, result);
     return result;
   }
   auto getPhysicalPath(const nix::CanonPath& p)
       -> std::optional<std::filesystem::path> override {
+    if (definition_path(p)) return std::nullopt;
     // A consumer could read this path without going through the accessor.
     // Store contents are immutable; other physical reads cannot be tracked.
     if (!store_path(p))
@@ -147,6 +183,10 @@ class EvaluationReads : public nix::SourceAccessor {
  private:
   using Key = std::pair<char, std::string>;
   nix::ref<nix::SourceAccessor> next_;
+  std::vector<nix::CanonPath> roots_;
+  std::set<nix::CanonPath> files_;
+  std::map<nix::CanonPath, DirEntries> directories_;
+  std::map<nix::CanonPath, std::string> generated_;
   std::map<Key, std::string> reads_;
   // Metadata is only a fast gate for rehashing: ctime also detects writes that
   // preserve mtime. Directories are always enumerated, not gated by mtime.
@@ -161,7 +201,22 @@ class EvaluationReads : public nix::SourceAccessor {
     // directory listing or a negative lookup of a not-yet-existing object.
     return p.abs().starts_with("/nix/store/");
   }
+  auto definition_path(const nix::CanonPath& p) const -> bool {
+    return std::ranges::any_of(
+        roots_, [&](const auto& root) { return p.isWithin(root); });
+  }
   auto fresh_lstat(const nix::CanonPath& p) -> std::optional<Stat> {
+    if (definition_path(p)) {
+      if (const auto file = generated_.find(p); file != generated_.end())
+        return Stat{tRegular, file->second.size(), false, std::nullopt};
+      if (!directories_.contains(p) && !files_.contains(p)) return std::nullopt;
+      next_->invalidateCache(p);
+      auto stat = next_->maybeLstat(p);
+      if (!stat || stat->type != (files_.contains(p) ? tRegular : tDirectory))
+        return std::nullopt;
+      stat->isExecutable = false;
+      return stat;
+    }
     // Nix shares its POSIX stat cache across EvalStates. Project sources
     // retain their paths when edited or removed, unlike immutable store paths.
     if (!store_path(p)) next_->invalidateCache(p);
@@ -697,7 +752,7 @@ struct EvaluationState {
     if (!access)
       throw std::runtime_error(
           "restricted evaluator has no filesystem access control");
-    reads = std::make_shared<EvaluationReads>(access->next);
+    reads = std::make_shared<EvaluationReads>(access->next, definitions);
     access->next = nix::ref<nix::SourceAccessor>(reads);
     reads->allowed_path = [ptr = access.get()](const nix::CanonPath& path) {
       return ptr->isAllowed(path);
@@ -1158,6 +1213,9 @@ auto pack_scope(const NixCall& call) -> std::unique_ptr<E::ScopeT> {
     auto entry = std::make_unique<E::DefinitionScopeT>();
     entry->directory = definition.directory;
     entry->card = definition.card;
+    entry->files = definition.files;
+    entry->generated_inputs = definition.generated_inputs;
+    entry->digest = definition.digest;
     result->definitions.push_back(std::move(entry));
   }
   for (const auto& [name, source] : call.locked_nix_path)
@@ -1168,7 +1226,8 @@ auto pack_scope(const NixCall& call) -> std::unique_ptr<E::ScopeT> {
 
 auto unpack_scope(const E::ScopeT& data, NixCall& call) -> void {
   for (const auto& def : data.definitions)
-    call.definitions.push_back({def->directory, def->card});
+    call.definitions.push_back({def->directory, def->card, def->files,
+                                def->generated_inputs, def->digest});
   for (const auto& source : data.entries)
     call.locked_nix_path.emplace(source->name, unpack_source(*source));
 }

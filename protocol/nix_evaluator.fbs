@@ -11,6 +11,9 @@ table Initialize {
 table DefinitionScope {
   directory:string (required);
   card:string (required);
+  files:[string];
+  generated_inputs:string;
+  digest:string;
 }
 table Scope {
   definitions:[DefinitionScope];
