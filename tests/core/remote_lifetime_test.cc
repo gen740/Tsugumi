@@ -162,7 +162,9 @@ class JournalBroker : public testing::Test {
           caps.worker_contract = W::kContract;
           response = W::reply(std::move(caps));
         } else if (const auto* put = q.body.AsPutBlobRequest()) {
-          journal->put(q.job_id, *put, q.core_life_id);
+          journal->put(Sha256Hex::parse(q.job_id).value(),
+                       Sha256Hex::parse(put->digest).value(), put->total,
+                       put->offset, put->bytes, q.core_life_id);
           response = W::reply(R::AckT{});
         } else if (const auto* submit = q.body.AsSubmitRequest()) {
           const std::string_view bytes(
@@ -170,14 +172,18 @@ class JournalBroker : public testing::Test {
               submit->spec.size());
           response =
               W::reply(journal
-                           ->submit(q.job_id, bytes, *W::parse_spec(bytes),
+                           ->submit(Sha256Hex::parse(q.job_id).value(), bytes,
+                                    W::parse_input_blobs(*W::parse_spec(bytes)),
                                     q.core_life_id)
                            .status());
         } else if (const auto* cancel = q.body.AsCancelRequest()) {
-          response =
-              W::reply(journal->cancel(q.job_id, cancel->fingerprint).status());
+          response = W::reply(journal
+                                  ->cancel(Sha256Hex::parse(q.job_id).value(),
+                                           cancel->fingerprint)
+                                  .status());
         } else if (const auto* release = q.body.AsReleaseRequest()) {
-          journal->release(q.job_id, release->fingerprint);
+          journal->release(Sha256Hex::parse(q.job_id).value(),
+                           release->fingerprint);
           response = W::reply(R::AckT{});
         } else
           throw std::runtime_error("unexpected broker request");
@@ -221,12 +227,15 @@ TEST_F(JournalBroker, InterruptedCleanupKeepsUncollectedInputsResultsAndLogs) {
   std::map<std::string, std::string> fingerprints;
   for (const auto& job : {completed, queued, collected}) {
     fingerprints[job] = Submit(previous, job);
-    fs::write_atomic(journal->job_path(job) / "work/result/output", "output",
-                     0600);
-    fs::write_atomic(journal->job_path(job) / "supervisor.log", "log", 0600);
+    fs::write_atomic(
+        journal->job_path(Sha256Hex::parse(job).value()) / "work/result/output",
+        "output", 0600);
+    fs::write_atomic(
+        journal->job_path(Sha256Hex::parse(job).value()) / "supervisor.log",
+        "log", 0600);
   }
-  journal->claim(completed, 1, 1, "boot");
-  journal->finish(completed, R::JobState::Succeeded,
+  journal->claim(Sha256Hex::parse(completed).value(), 1, 1, "boot");
+  journal->finish(Sha256Hex::parse(completed).value(), R::JobState::Succeeded,
                   crypto::sha256_hex("result"), {});
   ServiceOptions options;
   options.root = root / "project";
@@ -253,17 +262,25 @@ TEST_F(JournalBroker, InterruptedCleanupKeepsUncollectedInputsResultsAndLogs) {
   RemoteExecutionService cleanup(current, replacement);
   cleanup.release_completed();
   for (const auto& job : {completed, queued}) {
-    EXPECT_TRUE(std::filesystem::exists(journal->job_path(job) / "blobs" /
-                                        crypto::sha256_hex("input")));
-    EXPECT_EQ(fs::read_file(journal->job_path(job) / "work/result/output"),
+    EXPECT_TRUE(std::filesystem::exists(
+        journal->job_path(Sha256Hex::parse(job).value()) / "blobs" /
+        crypto::sha256_hex("input")));
+    EXPECT_EQ(fs::read_file(journal->job_path(Sha256Hex::parse(job).value()) /
+                            "work/result/output"),
               "output");
-    EXPECT_EQ(fs::read_file(journal->job_path(job) / "supervisor.log"), "log");
-    EXPECT_FALSE(journal->claim(job, 2, 2, "boot"));
+    EXPECT_EQ(fs::read_file(journal->job_path(Sha256Hex::parse(job).value()) /
+                            "supervisor.log"),
+              "log");
+    EXPECT_FALSE(journal->claim(Sha256Hex::parse(job).value(), 2, 2, "boot"));
   }
-  EXPECT_EQ(journal->status(completed).state, R::JobState::Succeeded);
-  EXPECT_EQ(journal->status(queued).state, R::JobState::Cancelled);
-  EXPECT_EQ(journal->status(collected).state, R::JobState::Released);
-  EXPECT_FALSE(std::filesystem::exists(journal->job_path(collected) / "blobs"));
+  EXPECT_EQ(journal->status(Sha256Hex::parse(completed).value()).state,
+            R::JobState::Succeeded);
+  EXPECT_EQ(journal->status(Sha256Hex::parse(queued).value()).state,
+            R::JobState::Cancelled);
+  EXPECT_EQ(journal->status(Sha256Hex::parse(collected).value()).state,
+            R::JobState::Released);
+  EXPECT_FALSE(std::filesystem::exists(
+      journal->job_path(Sha256Hex::parse(collected).value()) / "blobs"));
   current.history().read([](sql::Db& db) {
     EXPECT_FALSE(db.prepare("SELECT 1 FROM remote_releases").step());
   });

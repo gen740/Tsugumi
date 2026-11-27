@@ -6,9 +6,11 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
+#include "tsugumi/util/sha256_hex.hh"
 #include "tsugumi/workerd/protocol.hh"
 
 namespace tsugumi::workerd {
@@ -31,8 +33,6 @@ auto private_directory(const stdfs::path& path) -> void;
 auto identity(const stdfs::path& directory, const std::string& name)
     -> std::string;
 auto discard_tree(const stdfs::path& path) -> void;
-auto file_digest(const stdfs::path& path, uint64_t limit = kMaxBlob)
-    -> std::string;
 
 // All mutations use a per-job flock. A separate supervisor lock is held for
 // the supervisor's lifetime, including while the listening daemon is absent.
@@ -41,48 +41,50 @@ class Journal {
   explicit Journal(stdfs::path root);
   auto root() const -> const stdfs::path& { return root_; }
   auto instance() const -> const std::string& { return instance_; }
-  auto job_path(std::string_view job) const -> stdfs::path;
+  auto job_path(const Sha256Hex& job) const -> stdfs::path;
   // Held by a job's execution supervisor for its whole lifetime.
-  auto supervisor_lock_path(std::string_view job) const -> stdfs::path;
-  auto jobs() const -> std::vector<std::string>;
-  auto status(std::string_view job,
+  auto supervisor_lock_path(const Sha256Hex& job) const -> stdfs::path;
+  auto jobs() const -> std::vector<Sha256Hex>;
+  auto status(const Sha256Hex& job,
               std::optional<std::string_view> core = std::nullopt) const
       -> Record;
-  auto spec(std::string_view job) const -> std::string;
-  auto put(std::string_view job, const R::PutBlobRequestT& chunk,
+  auto spec(const Sha256Hex& job) const -> std::string;
+  auto put(const Sha256Hex& job, const Sha256Hex& digest, uint64_t total,
+           uint64_t offset, std::span<const uint8_t> bytes,
            std::string_view core) -> void;
-  auto deliver_artifact(std::string_view job,
+  auto deliver_artifact(const Sha256Hex& job,
                         const R::JobArtifactRequestT& artifact,
                         std::string_view core) -> void;
-  auto get(std::string_view job, const R::GetBlobRequestT& request,
-           std::string_view core) const -> R::BlobChunkT;
+  auto get(const Sha256Hex& job, const Sha256Hex& digest, uint64_t offset,
+           uint32_t limit, std::string_view core) const -> R::BlobChunkT;
   // Bytes of the running or kept job log from `offset`, at most `limit`, and
   // the log's current size. A job without a log yet has size zero.
-  auto log(std::string_view job, uint64_t offset, uint32_t limit,
+  auto log(const Sha256Hex& job, uint64_t offset, uint32_t limit,
            std::string_view core) const -> std::pair<uint64_t, std::string>;
-  auto submit(std::string_view job, std::string_view bytes,
-              const R::JobSpecT& spec, std::string_view core) -> Record;
-  auto cancel(std::string_view job, const std::string& fingerprint) -> Record;
-  auto release(std::string_view job, const std::string& fingerprint) -> void;
-  auto claim(std::string_view job, uint64_t pid, uint64_t start,
+  auto submit(const Sha256Hex& job, std::string_view bytes,
+              std::span<const Sha256Hex> input_blobs, std::string_view core)
+      -> Record;
+  auto cancel(const Sha256Hex& job, const std::string& fingerprint) -> Record;
+  auto release(const Sha256Hex& job, const std::string& fingerprint) -> void;
+  auto claim(const Sha256Hex& job, uint64_t pid, uint64_t start,
              const std::string& boot) -> bool;
-  auto supervisor_identity(std::string_view job, uint64_t pid, uint64_t start,
+  auto supervisor_identity(const Sha256Hex& job, uint64_t pid, uint64_t start,
                            const std::string& boot) -> void;
-  auto finish(std::string_view job, R::JobState state,
+  auto finish(const Sha256Hex& job, R::JobState state,
               const std::string& result, const std::string& diagnostic) -> void;
-  auto clean_released(std::string_view job) -> void;
+  auto clean_released(const Sha256Hex& job) -> void;
   // A person's removal on the worker machine. Like release, it commits a
   // tombstone that keeps rejecting a delayed submission, then erases the
   // scratch. A queued, running or cancelling record is kept unless `active`.
   // The caller holds the supervisor lock, so no supervisor runs the job.
   // Returns the record that was replaced.
-  auto discard(std::string_view job, bool active) -> Record;
+  auto discard(const Sha256Hex& job, bool active) -> Record;
   // Called only after the sandbox has stopped. Returns a verified manifest.
-  auto import_results(std::string_view job) -> std::string;
+  auto import_results(const Sha256Hex& job) -> std::string;
 
  private:
   enum class Access { Quiet, NotifyScheduler };
-  auto locked(std::string_view job, Access access,
+  auto locked(const Sha256Hex& job, Access access,
               const std::function<void(const stdfs::path&)>& action) const
       -> void;
   auto read(const stdfs::path& directory) const -> Record;

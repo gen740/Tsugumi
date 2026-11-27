@@ -51,6 +51,7 @@
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/invocation.hh"
+#include "tsugumi/workerd/path_ids.hh"
 #include "tsugumi/workerd/worker_proc.hh"
 
 extern char** environ;
@@ -389,13 +390,13 @@ auto check_cgroups(const stdfs::path& root) -> void {
         "cgroup CPU and memory controllers were not enabled");
 }
 auto cgroup_path(const stdfs::path& root, const Journal& journal,
-                 const std::string& job) -> stdfs::path {
+                 const Sha256Hex& job) -> stdfs::path {
   if (root.empty()) return {};
-  return root /
-         ("tsugumi-" +
-          crypto::sha256_hex(journal.root().string() + job).substr(0, 32));
+  return root / ("tsugumi-" + crypto::sha256_hex(journal.root().string() +
+                                                 std::string(job.view()))
+                                  .substr(0, 32));
 }
-auto supervisor_lock(const Journal& journal, const std::string& job,
+auto supervisor_lock(const Journal& journal, const Sha256Hex& job,
                      bool notify_on_exit = false) -> Fd {
   const int mode = notify_on_exit ? O_RDWR : O_RDONLY;
   return Fd(::open(journal.supervisor_lock_path(job).c_str(),
@@ -505,11 +506,12 @@ class Daemon {
     c.worker_contract = kContract;
     return c;
   }
-  auto project(const std::string& scope) -> std::shared_ptr<Journal> {
+  auto project(const Sha256Hex& scope) -> std::shared_ptr<Journal> {
     std::lock_guard guard(project_mutex_);
     if (auto existing = projects_.find(scope); existing != projects_.end())
       return existing->second;
-    auto journal = std::make_shared<Journal>(config_.root / "projects" / scope);
+    auto journal =
+        std::make_shared<Journal>(config_.root / "projects" / scope.view());
     const int watch = ::inotify_add_watch(journal_events_.value,
                                           (journal->root() / "locks").c_str(),
                                           IN_CLOSE_WRITE | IN_ONLYDIR);
@@ -530,7 +532,8 @@ class Daemon {
                     "host-authorized project scope required");
       return reply(capabilities());
     }
-    const auto journal = project(q.project_scope);
+    const auto journal =
+        project(require_sha256_hex(q.project_scope, "project scope"));
     if ((!q.instance_id.empty() && q.instance_id != journal->instance()) ||
         (q.body.type != R::RequestBody::ProbeRequest && q.instance_id.empty()))
       throw Error(R::ErrorCode::InstanceChanged,
@@ -538,15 +541,16 @@ class Daemon {
     if (q.body.type == R::RequestBody::ProbeRequest) {
       return reply(capabilities(journal->instance()));
     }
+    const auto job = require_sha256_hex(q.job_id, "job ID");
     const auto with_log_status = [&](R::JobStatusT status) {
       std::error_code ec;
       status.log_truncated = std::filesystem::is_regular_file(
-          journal->job_path(q.job_id) / "work/log-truncated", ec);
+          journal->job_path(job) / "work/log-truncated", ec);
       return status;
     };
     const auto log_slice = [&](uint64_t offset, uint32_t limit) {
-      auto range = journal->log(
-          q.job_id, offset, std::min(limit, kLogChunkBytes), q.core_life_id);
+      auto range = journal->log(job, offset, std::min(limit, kLogChunkBytes),
+                                q.core_life_id);
       return [offset, range = std::move(range)](R::JobStatusT status) {
         status.log_offset = offset;
         status.log_size = range.first;
@@ -555,12 +559,19 @@ class Daemon {
       };
     };
     switch (q.body.type) {
-      case R::RequestBody::PutBlobRequest:
-        journal->put(q.job_id, *q.body.AsPutBlobRequest(), q.core_life_id);
+      case R::RequestBody::PutBlobRequest: {
+        const auto& chunk = *q.body.AsPutBlobRequest();
+        const auto digest = require_sha256_hex(chunk.digest, "blob digest");
+        journal->put(job, digest, chunk.total, chunk.offset, chunk.bytes,
+                     q.core_life_id);
         return reply(R::AckT{});
-      case R::RequestBody::GetBlobRequest:
-        return reply(
-            journal->get(q.job_id, *q.body.AsGetBlobRequest(), q.core_life_id));
+      }
+      case R::RequestBody::GetBlobRequest: {
+        const auto& request = *q.body.AsGetBlobRequest();
+        const auto digest = require_sha256_hex(request.digest, "blob digest");
+        return reply(journal->get(job, digest, request.offset, request.limit,
+                                  q.core_life_id));
+      }
       case R::RequestBody::SubmitRequest: {
         const auto& bytes = q.body.AsSubmitRequest()->spec;
         const std::string_view data(reinterpret_cast<const char*>(bytes.data()),
@@ -585,11 +596,12 @@ class Daemon {
           throw Error(R::ErrorCode::Rejected,
                       "sandbox limits require a delegated cgroup v2 subtree");
         return reply(
-            journal->submit(q.job_id, data, *spec, q.core_life_id).status());
+            journal->submit(job, data, parse_input_blobs(*spec), q.core_life_id)
+                .status());
       }
       case R::RequestBody::ViewSendRequest: {
-        const auto record = journal->status(q.job_id, q.core_life_id);
-        const auto channel = display_channel(*journal, q.job_id);
+        const auto record = journal->status(job, q.core_life_id);
+        const auto channel = display_channel(*journal, job);
         if (record.state != R::JobState::Running || !channel ||
             !channel->send(*q.body.AsViewSendRequest()))
           throw Error(R::ErrorCode::Rejected, "the Card cannot accept a view message");
@@ -597,21 +609,21 @@ class Daemon {
       }
       case R::RequestBody::StatusRequest: {
         auto status =
-            with_log_status(journal->status(q.job_id, q.core_life_id).status());
+            with_log_status(journal->status(job, q.core_life_id).status());
         const auto& query = *q.body.AsStatusRequest();
         status =
             log_slice(query.log_offset, query.log_limit)(std::move(status));
         if (status.state == R::JobState::Running) {
           std::error_code ec;
           status.secrets_wanted = stdfs::exists(
-              journal->job_path(q.job_id) / "work" / kSecretsWanted, ec);
-          if (!stdfs::exists(
-                  journal->job_path(q.job_id) / "work/artifact-reply", ec))
-            status.artifact_wanted = fs::read_file(journal->job_path(q.job_id) /
-                                                   "work/artifact-wanted")
-                                         .value_or("");
+              journal->job_path(job) / "work" / kSecretsWanted, ec);
+          if (!stdfs::exists(journal->job_path(job) / "work/artifact-reply",
+                             ec))
+            status.artifact_wanted =
+                fs::read_file(journal->job_path(job) / "work/artifact-wanted")
+                    .value_or("");
           const auto bytes =
-              fs::read_file(journal->job_path(q.job_id) / "work/progress");
+              fs::read_file(journal->job_path(job) / "work/progress");
           if (const auto progress =
                   bytes ? remote::decode<R::TransferProgress>(*bytes)
                         : std::nullopt) {
@@ -620,7 +632,7 @@ class Daemon {
             status.transfer_total = progress->total;
           }
         }
-        if (const auto channel = display_channel(*journal, q.job_id))
+        if (const auto channel = display_channel(*journal, job))
           channel->take(status, query);
         return reply(std::move(status));
       }
@@ -632,23 +644,23 @@ class Daemon {
             [](R::JobStatusT status) { return status; };
         if (query.log_limit)
           slice = log_slice(query.log_offset, query.log_limit);
-        const auto state = journal->cancel(q.job_id, query.fingerprint);
+        const auto state = journal->cancel(job, query.fingerprint);
         if (state.state == R::JobState::Cancelling) notify_cancel(state);
         return reply(slice(with_log_status(state.status())));
       }
       case R::RequestBody::ReleaseRequest:
-        journal->release(q.job_id, q.body.AsReleaseRequest()->fingerprint);
+        journal->release(job, q.body.AsReleaseRequest()->fingerprint);
         {
           std::lock_guard guard(channel_mutex_);
-          displays_.erase(channel_key(*journal, q.job_id));
+          displays_.erase(channel_key(*journal, job));
         }
         return reply(R::AckT{});
       case R::RequestBody::JobArtifactRequest:
-        journal->deliver_artifact(q.job_id, *q.body.AsJobArtifactRequest(),
+        journal->deliver_artifact(job, *q.body.AsJobArtifactRequest(),
                                   q.core_life_id);
         return reply(R::AckT{});
       case R::RequestBody::JobSecretsRequest:
-        deliver_secrets(*journal, q.job_id, q.core_life_id,
+        deliver_secrets(*journal, job, q.core_life_id,
                         *q.body.AsJobSecretsRequest());
         return reply(R::AckT{});
       default:
@@ -676,9 +688,9 @@ class Daemon {
   auto recover() -> void {
     for (const auto& entry :
          stdfs::directory_iterator(config_.root / "projects")) {
-      const auto scope = entry.path().filename().string();
-      if (!crypto::is_sha256_hex(scope)) continue;
-      const auto journal = project(scope);
+      const auto scope = Sha256Hex::parse(entry.path().filename().string());
+      if (!scope) continue;
+      const auto journal = project(*scope);
       for (const auto& job : journal->jobs()) refresh({journal, job});
     }
     dispatch();
@@ -721,7 +733,7 @@ class Daemon {
   }
 
  private:
-  using Job = std::pair<std::shared_ptr<Journal>, std::string>;
+  using Job = std::pair<std::shared_ptr<Journal>, Sha256Hex>;
   auto journal_changes(std::set<Job>& dirty) -> bool {
     alignas(inotify_event) char bytes[4096];
     bool overflow = false;
@@ -737,13 +749,13 @@ class Daemon {
         if (event.mask & IN_Q_OVERFLOW) overflow = true;
         // Supervisor lock closures wake the poll for handoffs that are
         // already dirty. Only journal lock names add a new job to the set.
-        if (!(event.mask & IN_CLOSE_WRITE) || !event.len ||
-            !crypto::is_sha256_hex(event.name))
-          continue;
+        if (!(event.mask & IN_CLOSE_WRITE) || !event.len) continue;
+        const auto job = Sha256Hex::parse(event.name);
+        if (!job) continue;
         std::lock_guard guard(project_mutex_);
         if (const auto found = journal_watches_.find(event.wd);
             found != journal_watches_.end())
-          dirty.emplace(found->second, event.name);
+          dirty.emplace(found->second, *job);
       }
     }
   }
@@ -828,24 +840,24 @@ class Daemon {
     }
     active_jobs_.store(static_cast<uint32_t>(occupied() + queued_.size()));
   }
-  static auto channel_key(const Journal& journal, const std::string& job)
+  static auto channel_key(const Journal& journal, const Sha256Hex& job)
       -> std::string {
-    return journal.root().string() + '\n' + job;
+    return journal.root().string() + '\n' + std::string(job.view());
   }
-  auto display_channel(const Journal& journal, const std::string& job)
+  auto display_channel(const Journal& journal, const Sha256Hex& job)
       -> std::shared_ptr<DisplayChannel> {
     std::lock_guard guard(channel_mutex_);
     const auto found = displays_.find(channel_key(journal, job));
     return found == displays_.end() ? nullptr : found->second;
   }
-  auto close_channel(const Journal& journal, const std::string& job) -> void {
+  auto close_channel(const Journal& journal, const Sha256Hex& job) -> void {
     std::lock_guard guard(channel_mutex_);
     channels_.erase(channel_key(journal, job));
   }
   // Writes a running job's Card secrets into the pipe its invocation reads,
   // once, and closes it. Only this listener life holds the pipe: after a
   // restart the invocation reads end of file and fails, and nothing resends.
-  auto deliver_secrets(const Journal& journal, const std::string& job,
+  auto deliver_secrets(const Journal& journal, const Sha256Hex& job,
                        const std::string& core, R::JobSecretsRequestT& body)
       -> void {
     const auto state = journal.status(job, core);
@@ -908,7 +920,7 @@ class Daemon {
       throw Error(R::ErrorCode::Rejected,
                   "the job's invocation no longer reads its Card secrets");
   }
-  auto spawn(Journal& p, const std::string& job, int lock) -> pid_t {
+  auto spawn(Journal& p, const Sha256Hex& job, int lock) -> pid_t {
     // A job with Card secrets gets a pipe whose write end only this listener
     // holds; its invocation reads the values from it just before the Card's
     // process starts.
@@ -960,7 +972,7 @@ class Daemon {
     std::vector<std::string> args{config_.executable,
                                   "--supervise",
                                   p.root().string(),
-                                  job,
+                                  std::string(job.view()),
                                   "5",
                                   (config_.root / "store").string(),
                                   config_.cgroup.string()};
@@ -990,7 +1002,7 @@ class Daemon {
   const std::string probe_life_ = crypto::random_token(32);
   std::atomic<uint32_t> active_jobs_{0};
   std::mutex project_mutex_;
-  std::map<std::string, std::shared_ptr<Journal>> projects_;
+  std::map<Sha256Hex, std::shared_ptr<Journal>> projects_;
   std::map<int, std::shared_ptr<Journal>> journal_watches_;
   std::mutex channel_mutex_;
   // Write ends of the Card secret pipes of running jobs, by journal and job.
@@ -999,7 +1011,7 @@ class Daemon {
 };
 
 auto supervise(const std::string& self, const stdfs::path& root,
-               const std::string& job, int lockfd, const stdfs::path& store,
+               const Sha256Hex& job, int lockfd, const stdfs::path& store,
                const stdfs::path& cgroup_root) -> int {
   Journal journal(root);
   Fd expected(supervisor_lock(journal, job));
@@ -1264,8 +1276,8 @@ auto remote_workerd_main(int argc, char** argv) -> int {
                        std::span(argv + 2, static_cast<size_t>(argc - 2)));
     const auto self = stdfs::canonical("/proc/self/exe").string();
     if (argc == 7 && std::string_view(argv[1]) == "--supervise")
-      return supervise(self, argv[2], argv[3], std::stoi(argv[4]), argv[5],
-                       argv[6]);
+      return supervise(self, argv[2], require_sha256_hex(argv[3], "job ID"),
+                       std::stoi(argv[4]), argv[5], argv[6]);
     Config c;
     c.root = default_root();
     c.executable = self;
