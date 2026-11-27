@@ -358,11 +358,24 @@ class WakeOnStop {
   std::jthread timer_;
 };
 
+class InterruptScope {
+ public:
+  explicit InterruptScope(std::function<bool()> check)
+      : previous_(std::exchange(nix::unix::interruptCheck, std::move(check))) {}
+  InterruptScope(const InterruptScope&) = delete;
+  auto operator=(const InterruptScope&) -> InterruptScope& = delete;
+  ~InterruptScope() { nix::unix::interruptCheck = std::move(previous_); }
+
+ private:
+  std::function<bool()> previous_;
+};
+
 class CallScope {
  public:
   explicit CallScope(const NixCall& call,
                      nix::RemoteStore* build_store = nullptr)
-      : wake_(call,
+      : interrupt_([&call] { return interrupted(call, nullptr); }),
+        wake_(call,
               [thread = pthread_self(), build_store] {
                 if (build_store) build_store->shutdownConnections();
                 pthread_kill(thread, SIGUSR1);
@@ -370,7 +383,6 @@ class CallScope {
         log_line_([&call](const std::string& line) {
           call.log({std::span(&line, 1)});
         }) {
-    nix::unix::interruptCheck = [&call] { return interrupted(call, nullptr); };
     g_logger->set_thread(call.log ? &log_line_ : nullptr);
     g_logger->set_thread_builds(call.on_build ? &call.on_build : nullptr);
   }
@@ -378,10 +390,10 @@ class CallScope {
   ~CallScope() {
     g_logger->set_thread(nullptr);
     g_logger->set_thread_builds(nullptr);
-    nix::unix::interruptCheck = {};
   }
 
  private:
+  InterruptScope interrupt_;
   WakeOnStop wake_;
   const std::function<void(const std::string&)> log_line_;
 };
