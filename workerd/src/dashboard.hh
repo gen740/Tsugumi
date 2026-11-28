@@ -2,7 +2,7 @@
 // the port sees the worker's state. A logged-in administrator can change it.
 #pragma once
 
-#include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 
 #include "tsugumi/rpc/dashboard_http.hh"
 #include "worker_settings.hh"
@@ -37,6 +38,7 @@ class Dashboard {
   };
   Dashboard(std::filesystem::path root, WorkerSettings& settings,
             Listener listener);
+  ~Dashboard();
   // Set once after binding, before the first connection is served.
   auto listening(uint16_t port, uint16_t dashboard_port) -> void {
     port_ = port;
@@ -51,7 +53,14 @@ class Dashboard {
   };
   auto handle(const dashboard_http::Request& request) -> dashboard_http::Reply;
   auto session(const dashboard_http::Request& request) -> const Session*;
-  auto state(const Session* admin) -> std::string;
+  // Who asks, read under mutex_; the state itself is built without it.
+  struct Viewer {
+    bool admin = false;
+    std::string csrf;
+    uint64_t locked_seconds = 0;
+  };
+  auto viewer(const dashboard_http::Request& request) -> Viewer;
+  auto state(const Viewer& viewer) -> std::string;
   auto login(std::string_view password) -> dashboard_http::Reply;
   // Called with mutex_ held so verification and its effects are serialized.
   auto verify_password(std::string_view password)
@@ -61,7 +70,14 @@ class Dashboard {
       -> dashboard_http::Reply;
   auto locked_seconds() -> uint64_t;
   auto edit_key(std::string_view key, bool add) -> void;
-  auto disk() -> std::array<uint64_t, 4>;
+  // The last measured store and job bytes. Walking a large store takes tens
+  // of seconds, so a background thread measures them and the page and logins
+  // never wait for it.
+  struct Measured {
+    uint64_t store = 0, jobs = 0;
+    bool done = false;
+  };
+  auto measured() -> Measured;
 
   std::filesystem::path root_, keys_;
   WorkerSettings& settings_;
@@ -74,7 +90,10 @@ class Dashboard {
   Clock::time_point locked_until_{};
   std::mutex disk_mutex_;
   Clock::time_point disk_at_{};
-  std::array<uint64_t, 4> disk_{};
+  Measured disk_{};
+  bool walking_ = false;
+  std::atomic<bool> stopping_{false};
+  std::thread walker_;
 };
 
 }  // namespace tsugumi::workerd

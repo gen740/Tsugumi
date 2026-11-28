@@ -1835,6 +1835,7 @@
   "やめる": "Cancel",
   "ジョブのデータを削除しますか": "Remove job data?",
   "ジョブの作業領域": "Job scratch",
+  "計算中…": "Measuring…",
   "ジョブの削除、ホストの追加・削除、設定の変更には管理者パスワードが必要です。": "Removing jobs, adding or removing hosts and changing settings need the administrator password.",
   "ダッシュボード": "dashboard",
   "ダッシュボードのポート": "Dashboard port",

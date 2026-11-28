@@ -1747,12 +1747,23 @@ def test_guest_sees_state_without_secrets(worker):
         [worker.command[0], "jobs", "list", "--json", "--state-dir", str(worker.state)]))
     assert [{key: value for key, value in job.items() if key not in ("core_life_id", "core_last_seen")}
             for job in listing["jobs"]] == state["jobs"]
-    assert set(state["disk"]) == {"store_bytes", "jobs_bytes", "free_bytes", "total_bytes"}
+    assert set(state["disk"]) == {"measured", "store_bytes", "jobs_bytes", "free_bytes", "total_bytes"}
     assert state["settings"]["max_jobs"] == 1
     [host] = state["hosts"]
     assert host["key"] == TLS.public_key(worker.identity) and host["comment"] == "test host"
     assert host["last_seen"].endswith("Z")
     assert worker.initial_password not in json.dumps(state)
+
+
+def test_dashboard_measures_disk_use_without_holding_up_the_page(worker):
+    # Walking a large store takes long: state answers at once, and a later
+    # state carries the numbers the background walk found.
+    worker.upload("a" * 64, b"staged input")
+    deadline = time.monotonic() + 30
+    while not (state := worker.page("/api/state")[1])["disk"]["measured"]:
+        assert time.monotonic() < deadline
+        time.sleep(0.1)
+    assert state["disk"]["jobs_bytes"] > 0 and state["disk"]["total_bytes"] > 0
 
 
 def test_initial_admin_password_is_printed_once_and_only_stored_as_a_hash(worker):

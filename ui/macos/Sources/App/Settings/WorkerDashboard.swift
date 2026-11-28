@@ -41,7 +41,7 @@ struct WorkerDashboard: View {
   }
 }
 
-private struct DashboardWebView: NSViewRepresentable {
+struct DashboardWebView: NSViewRepresentable {
   let url: URL
   let certificate: String
   let report: (String) -> Void
@@ -49,12 +49,20 @@ private struct DashboardWebView: NSViewRepresentable {
   func makeCoordinator() -> Coordinator { Coordinator(url: url, certificate: certificate, report: report) }
 
   func makeNSView(context: Context) -> WKWebView {
+    Self.view(url: url, configuration: Self.configuration(), coordinator: context.coordinator)
+  }
+
+  static func configuration() -> WKWebViewConfiguration {
     let configuration = WKWebViewConfiguration()
     // The session cookie lives only as long as this view.
     configuration.websiteDataStore = .nonPersistent()
+    return configuration
+  }
+
+  static func view(url: URL, configuration: WKWebViewConfiguration, coordinator: Coordinator) -> WKWebView {
     let view = WKWebView(frame: .zero, configuration: configuration)
     view.allowsLinkPreview = false
-    view.navigationDelegate = context.coordinator
+    view.navigationDelegate = coordinator
     view.load(URLRequest(url: url))
     return view
   }

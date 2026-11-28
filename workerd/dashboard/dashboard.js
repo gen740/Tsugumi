@@ -36,7 +36,7 @@ function stateIcon(state) {
 }
 
 const selected = new Set()
-let current, busy = false, refreshing = false, dirty = false, lockTimer
+let current, busy = false, dirty = false, lockTimer
 const formatBytes = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 })
 function size(bytes) {
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -114,6 +114,7 @@ async function change(path, body, where, done) {
     report(where, L("変更を完了できませんでした: {0}", e.message), true)
   } finally {
     busy = false
+    changed()
     await refresh()
   }
 }
@@ -209,6 +210,8 @@ function renderJobs(data) {
 }
 function renderDisk({ disk }) {
   const bar = bytes => {
+    // The worker walks its store in the background; a large one takes a while.
+    if (!disk.measured) return element('div', L("計算中…"), 'number')
     const value = element('div', size(bytes), 'number')
     const track = element('div', undefined, 'bar')
     const fill = element('i')
@@ -303,26 +306,37 @@ function render(data) {
   renderHosts(data)
   controls()
 }
+// One state request at a time. A refresh asked for while one is in flight runs
+// after it, and an answer to a request sent before a login, logout or other
+// change is dropped: it was asked with the old session or shows the old state.
+let refreshing = false, refreshAgain = false, changes = 0
+function changed() { changes++ }
 async function refresh() {
+  refreshAgain = true
   if (refreshing) return
   refreshing = true
-  try {
-    const { status, data } = await call('/api/state')
-    if (status !== 200) throw new Error(data.error ?? String(status))
-    render(data)
-    document.body.classList.remove('loading')
-    $('stale').hidden = true
-  } catch (e) {
-    // Keep the last state on the page and say it is not current.
-    if (current) {
-      $('stale').hidden = false
-      $('stale').title = e.message
-    } else {
-      $('loading').textContent = L("ワーカーの情報を取得できません: {0}", e.message)
+  while (refreshAgain) {
+    refreshAgain = false
+    const asked = changes
+    try {
+      const { status, data } = await call('/api/state')
+      if (asked !== changes) continue
+      if (status !== 200) throw new Error(data.error ?? String(status))
+      render(data)
+      document.body.classList.remove('loading')
+      $('stale').hidden = true
+    } catch (e) {
+      if (asked !== changes) continue
+      // Keep the last state on the page and say it is not current.
+      if (current) {
+        $('stale').hidden = false
+        $('stale').title = e.message
+      } else {
+        $('loading').textContent = L("ワーカーの情報を取得できません: {0}", e.message)
+      }
     }
-  } finally {
-    refreshing = false
   }
+  refreshing = false
 }
 
 function ask(title, text, choices) {
@@ -376,6 +390,7 @@ $('login-form').addEventListener('submit', async event => {
     if (status === 200) {
       $('login').hidden = true
       report('header-status', '')
+      changed()
       await refresh()
       return
     }

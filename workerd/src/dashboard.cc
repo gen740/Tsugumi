@@ -68,6 +68,8 @@ struct JobJson {
   t::String<"reason"> reason;
 };
 struct DiskJson {
+  // False until the first walk of the store and the jobs has finished.
+  t::Bool<"measured"> measured;
   t::Uint64<"store_bytes"> store_bytes;
   t::Uint64<"jobs_bytes"> jobs_bytes;
   t::Uint64<"free_bytes"> free_bytes;
@@ -153,7 +155,8 @@ auto Utc(Dashboard::Wall::time_point time) -> std::string {
   return text;
 }
 // Allocated bytes under `directory`, counting each hard-linked file once.
-auto DiskBytes(const std::filesystem::path& directory) -> uint64_t {
+auto DiskBytes(const std::filesystem::path& directory,
+               const std::atomic<bool>& stop) -> uint64_t {
   uint64_t bytes = 0;
   std::set<std::pair<dev_t, ino_t>> seen;
   const auto add = [&](const std::filesystem::path& path) {
@@ -169,7 +172,8 @@ auto DiskBytes(const std::filesystem::path& directory) -> uint64_t {
            i(directory,
              std::filesystem::directory_options::skip_permission_denied, ec),
        end;
-       !ec && i != end; i.increment(ec))
+       !ec && i != end && !stop.load(std::memory_order_relaxed);
+       i.increment(ec))
     add(i->path());
   return bytes;
 }
@@ -206,6 +210,11 @@ Dashboard::Dashboard(std::filesystem::path root, WorkerSettings& settings,
       keys_(root_ / "authorized_keys"),
       settings_(settings),
       listener_(std::move(listener)) {}
+
+Dashboard::~Dashboard() {
+  stopping_ = true;
+  if (walker_.joinable()) walker_.join();
+}
 
 auto Dashboard::serve(peer_tls::Stream& stream) -> void {
   HTTP::Reply reply;
@@ -318,30 +327,39 @@ auto Dashboard::change_password(const Session& admin, std::string_view current,
   return Json("{}");
 }
 
-auto Dashboard::disk() -> std::array<uint64_t, 4> {
+auto Dashboard::measured() -> Measured {
   std::lock_guard guard(disk_mutex_);
-  // Walking a large store takes time; the page refreshes more often.
-  if (disk_at_ == Clock::time_point{} || Clock::now() - disk_at_ > 60s) {
-    struct statvfs fs{};
-    uint64_t free = 0, total = 0;
-    if (::statvfs(root_.c_str(), &fs) == 0) {
-      free = static_cast<uint64_t>(fs.f_bavail) * fs.f_frsize;
-      total = static_cast<uint64_t>(fs.f_blocks) * fs.f_frsize;
-    }
-    disk_ = {DiskBytes(root_ / "store"), DiskBytes(root_ / "projects"), free,
-             total};
+  // The page refreshes more often than the store is walked again.
+  if (!walking_ &&
+      (disk_at_ == Clock::time_point{} || Clock::now() - disk_at_ > 60s)) {
+    if (walker_.joinable()) walker_.join();  // finished: walking_ is false
+    walking_ = true;
     disk_at_ = Clock::now();
+    walker_ = std::thread([this] {
+      Measured next{DiskBytes(root_ / "store", stopping_),
+                    DiskBytes(root_ / "projects", stopping_), true};
+      std::lock_guard guard(disk_mutex_);
+      if (!stopping_) disk_ = next;
+      disk_at_ = Clock::now();
+      walking_ = false;
+    });
   }
   return disk_;
 }
 
-auto Dashboard::state(const Session* admin) -> std::string {
+auto Dashboard::viewer(const HTTP::Request& request) -> Viewer {
+  std::lock_guard guard(mutex_);
+  const auto* admin = session(request);
+  return {admin != nullptr, admin ? admin->csrf : "", locked_seconds()};
+}
+
+auto Dashboard::state(const Viewer& viewer) -> std::string {
   StateJson result;
-  *result.role = admin ? "admin" : "guest";
-  *result.csrf = admin ? admin->csrf : "";
+  *result.role = viewer.admin ? "admin" : "guest";
+  *result.csrf = viewer.csrf;
   *result.login->configured =
       std::filesystem::exists(root_ / "admin-password");
-  *result.login->locked_seconds = locked_seconds();
+  *result.login->locked_seconds = viewer.locked_seconds;
   const auto saved = settings_.saved();
   const auto& started = settings_.started();
   auto& worker = *result.worker;
@@ -371,11 +389,16 @@ auto Dashboard::state(const Session* admin) -> std::string {
     *job.reason = std::move(row.reason);
     result.jobs->push_back(std::move(job));
   }
-  const auto [store, jobs, free, total] = disk();
-  *result.disk->store_bytes = store;
-  *result.disk->jobs_bytes = jobs;
-  *result.disk->free_bytes = free;
-  *result.disk->total_bytes = total;
+  const auto walked = measured();
+  *result.disk->measured = walked.done;
+  *result.disk->store_bytes = walked.store;
+  *result.disk->jobs_bytes = walked.jobs;
+  struct statvfs fs{};
+  if (::statvfs(root_.c_str(), &fs) == 0) {
+    *result.disk->free_bytes = static_cast<uint64_t>(fs.f_bavail) * fs.f_frsize;
+    *result.disk->total_bytes =
+        static_cast<uint64_t>(fs.f_blocks) * fs.f_frsize;
+  }
   auto& settings = *result.settings;
   *settings.name = saved.name;
   *settings.listen_address = saved.listen_address;
@@ -459,10 +482,7 @@ auto Dashboard::handle(const HTTP::Request& request) -> HTTP::Reply {
       if (query == "lang=en") return Page(false);
       return Page(Header(request, "accept-language").starts_with("ja"));
     }
-    if (path == "/api/state") {
-      std::lock_guard guard(mutex_);
-      return Json(state(session(request)));
-    }
+    if (path == "/api/state") return Json(state(viewer(request)));
     return ErrorReply(404, "Unknown dashboard resource");
   }
   // Changes come only from this page: a JSON body, which a cross-site form
@@ -559,8 +579,7 @@ auto Dashboard::handle(const HTTP::Request& request) -> HTTP::Reply {
       next.pull_caches.push_back(std::move(cache));
     }
     settings_.save(std::move(next));
-    std::lock_guard relock(mutex_);
-    return Json(state(session(request)));
+    return Json(state(viewer(request)));
   }
   if (path == "/api/restart") {
     schema::v::String mode;
