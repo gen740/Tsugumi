@@ -242,7 +242,7 @@ struct ChatToggle: View {
       .help(open ? "チャットを閉じる（\(AppPreferences.shared.shortcut(.toggleChat).label)）"
                  : "チャットを開く（\(AppPreferences.shared.shortcut(.toggleChat).label)）")
       .accessibilityLabel(open ? "チャットを閉じる" : "チャットを開く")
-      .guideTarget("chat")
+      .guideTarget("chat", radius: open ? 8 : TopStrip.capsuleHeight / 2)
       .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
         guideFrame = frame
         stage?.corner = frame

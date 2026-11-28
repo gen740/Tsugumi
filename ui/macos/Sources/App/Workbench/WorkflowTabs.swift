@@ -63,6 +63,14 @@ struct WorkflowTabs: View {
         WorkbenchSidebar(workspace: workspace, session: session, tab: tab, onSwitchProject: onSwitchProject)
           .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 380)
           .windowTopStrip(height: safeTop) { WindowDragArea() }
+          // Where the split view's own button was: at the sidebar's end, and
+          // beside the window's buttons while the sidebar is hidden.
+          .toolbar(removing: .sidebarToggle)
+          .toolbar {
+            ToolbarSpacer(.flexible)
+            ToolbarItem { SidebarToggle(columns: $workspace.columns) }
+              .sharedBackgroundVisibility(.hidden)
+          }
       }
     } detail: {
       projectContent.frame(minWidth: 360)
@@ -154,7 +162,7 @@ struct WorkflowTabs: View {
               .workbenchToolbarCapsule()
           } else {
             ChatToggle(open: false) { workspace.showChat = true }
-              .workbenchToolbarCapsule()
+              .buttonStyle(TopStripButtonStyle())
           }
         }
       }

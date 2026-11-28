@@ -17,6 +17,8 @@
 .cv-stop-error { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--red); white-space: normal; overflow-wrap: anywhere; }
 .cv-drafts { gap: 8px; }
 .cv-actions { gap: 4px; padding: 4px 8px !important; }
+/* Its buttons are round, so a pressed or hovered one is no square inside the capsule. */
+.cv-actions .btn-icon:not(.guide-nest-button) { width: 24px; padding: 0; justify-content: center; border-radius: 999px; }
 .cv-view-controls { gap: 2px; padding: 3px 8px; }
 .cv-view-controls .vdivider, .cv-run .vdivider { height: 16px; align-self: center; }
 

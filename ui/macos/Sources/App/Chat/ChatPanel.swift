@@ -38,7 +38,7 @@ struct ChatHeader: View {
       } label: { Image(systemName: "ellipsis.circle") }
         .accessibilityLabel("会話の操作")
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-      if let onClose { ChatToggle(open: true, action: onClose) }
+      if let onClose { ChatToggle(open: true, action: onClose).buttonStyle(.borderless) }
     }
   }
 

@@ -56,6 +56,37 @@ enum TopStrip {
   }
 }
 
+/// A control of the strip that is one icon (the chat toggle, the sidebar
+/// button): a circle of the capsules' height and material, the whole of it
+/// clickable, with no bezel of its own inside.
+struct TopStripButtonStyle: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .font(.system(size: 14, weight: .regular))
+      .foregroundStyle(.secondary)
+      .frame(width: TopStrip.capsuleHeight, height: TopStrip.capsuleHeight)
+      .background(.regularMaterial, in: Circle())
+      .contentShape(Circle())
+      .opacity(configuration.isPressed ? 0.6 : 1)
+  }
+}
+
+/// Shows or hides the sidebar, in place of the split view's own button, so it
+/// is one of the strip's controls (TopStripButtonStyle).
+struct SidebarToggle: View {
+  @Binding var columns: NavigationSplitViewVisibility
+
+  var body: some View {
+    let shown = columns != .detailOnly
+    Button {
+      withAnimation { columns = shown ? .detailOnly : .all }
+    } label: { Image(systemName: "sidebar.left") }
+      .buttonStyle(TopStripButtonStyle())
+      .help(shown ? "サイドバーを隠す" : "サイドバーを表示")
+      .accessibilityLabel(shown ? "サイドバーを隠す" : "サイドバーを表示")
+  }
+}
+
 /// Lays out the strip's two capsules (the run control, then the chat header
 /// or toggle) by `TopStrip.frames`.
 struct TopStripLayout: Layout {
