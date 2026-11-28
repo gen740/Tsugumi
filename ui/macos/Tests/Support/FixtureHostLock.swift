@@ -27,7 +27,9 @@ public final class FixtureHostLock {
       sysopen(my $o, "$d/host.lock-owner", O_RDWR | O_CREAT, 0600) or die "host.lock-owner: $!";
       truncate($o, 0);
       syswrite($o, qq({"pid":$$,"application":"fixture","hostname":") . hostname() . qq("}));
-      fcntl($o, F_SETLK, pack("q q l s s", 0, 0, 0, F_WRLCK, 0)) or die "record lock: $!";
+      # fcntl writes the structure back, so it needs a variable, not a constant.
+      my $lock = pack("q q l s s", 0, 0, 0, F_WRLCK, 0);
+      fcntl($o, F_SETLK, $lock) or die "record lock: $!";
       $| = 1;
       print "locked\\n";
       while (<STDIN>) {}
