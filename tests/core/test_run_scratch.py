@@ -53,6 +53,11 @@ def test_scratch_is_erased_when_the_invocation_ends(core_factory, project, tmp_p
     run_id = run(client)
     gate.wait()
     working = Path(record.read_text())
+    if not working.exists():
+        # A Linux sandbox mounts the call's scratch tmp folder as the Card's
+        # /tmp: the path it reports is its own view, not this host's.
+        working, = (found for root in (scratch, daemon.directory)
+                    for found in root.rglob(f"tmp/{working.name}"))
     assert working.read_text() == "working file"
     # Stands for anything the core put in the run's scratch for this call.
     leftover = scratch / "runs" / run_id / "work" / "work" / "1" / "leftover"
