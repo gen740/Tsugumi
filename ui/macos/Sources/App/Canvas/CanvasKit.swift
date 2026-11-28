@@ -702,7 +702,9 @@ struct CardGeometry {
     case .card:
       return Path(roundedRect: r, cornerRadius: 9 * cornerScale)
     case .start:
-      return Path(roundedRect: r, cornerRadius: r.height / 2)
+      // Round ends. A rounded rectangle's default (continuous) corners flatten
+      // at half the height, and each end drew a short straight upright.
+      return Capsule(style: .circular).path(in: r)
     case .collect:
       func point(_ across: CGFloat, _ along: CGFloat) -> CGPoint {
         flow == .topToBottom ? CGPoint(x: r.minX + r.width * across, y: r.minY + r.height * along)
