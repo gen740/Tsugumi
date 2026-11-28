@@ -82,12 +82,19 @@ enum TitleBarDoubleClick: Equatable {
   case zoom, minimize, none
 
   static func action(_ defaults: UserDefaults = .standard) -> Self {
-    switch defaults.string(forKey: "AppleActionOnDoubleClick") {
+    action(setting: defaults.string(forKey: "AppleActionOnDoubleClick"),
+           miniaturize: defaults.bool(forKey: "AppleMiniaturizeOnDoubleClick"))
+  }
+
+  /// `setting` is the current key's value; `miniaturize` the older key's,
+  /// read only when the current one is not set.
+  static func action(setting: String?, miniaturize: Bool) -> Self {
+    switch setting {
     case "Minimize": return .minimize
     case "None": return .none
     // "Fill" has no public counterpart: zooming fills the screen as near as AppKit offers.
     case "Maximize", "Fill": return .zoom
-    default: return defaults.bool(forKey: "AppleMiniaturizeOnDoubleClick") ? .minimize : .zoom
+    default: return miniaturize ? .minimize : .zoom
     }
   }
 

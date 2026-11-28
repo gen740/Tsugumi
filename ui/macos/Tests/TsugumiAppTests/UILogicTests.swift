@@ -897,16 +897,12 @@ import TsugumiTestSupport
   }
 }
 
-@Test func aTitleBarDoubleClickFollowsTheSystemSetting() throws {
-  let name = "tsugumi.titlebar.\(UUID().uuidString)"
-  let d = try #require(UserDefaults(suiteName: name))
-  defer { d.removePersistentDomain(forName: name) }
-  #expect(TitleBarDoubleClick.action(d) == .zoom)
-  d.set(true, forKey: "AppleMiniaturizeOnDoubleClick")
-  #expect(TitleBarDoubleClick.action(d) == .minimize)
+@Test func aTitleBarDoubleClickFollowsTheSystemSetting() {
+  // Read from the global domain, which differs between Macs: the mapping alone.
+  #expect(TitleBarDoubleClick.action(setting: nil, miniaturize: false) == .zoom)
+  #expect(TitleBarDoubleClick.action(setting: nil, miniaturize: true) == .minimize)
   for (value, action) in [("Maximize", TitleBarDoubleClick.zoom), ("Fill", .zoom), ("Minimize", .minimize), ("None", .none)] {
-    d.set(value, forKey: "AppleActionOnDoubleClick")
-    #expect(TitleBarDoubleClick.action(d) == action, "\(value)")
+    #expect(TitleBarDoubleClick.action(setting: value, miniaturize: true) == action, "\(value)")
   }
 }
 
