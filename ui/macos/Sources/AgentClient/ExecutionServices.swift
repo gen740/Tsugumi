@@ -35,6 +35,8 @@ public struct ExecutionServiceConnection: Codable, Identifiable, Equatable, Send
   public let capabilities: ExecutionServiceCapabilities
   /// hostd found the worker built from another revision (another worker contract): runs do not use it.
   public let outdated: Bool
+  /// Why hostd cannot read what it stored about the worker; empty when it can.
+  public var recordError: String = ""
 
   /// How a list shows the service: its name, and its id only when the two differ.
   public var label: String { Self.label(name: name, id: id) }
@@ -96,7 +98,7 @@ public enum ExecutionServices {
           maxConcurrentJobs: Int(c.maxConcurrentJobs), workerContract: Int(c.workerContract),
           workerLabel: c.workerLabel ?? "", dashboardURL: c.dashboardUrl ?? "",
           dashboardCertificateSHA256: c.dashboardCertificateSha256 ?? "",
-          revision: c.revision ?? ""), outdated: service.outdated)
+          revision: c.revision ?? ""), outdated: service.outdated, recordError: service.recordError ?? "")
     }, hostPublicKey: value.hostPublicKey, workerContract: Int(value.workerContract))
   }
 }

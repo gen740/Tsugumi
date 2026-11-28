@@ -1399,6 +1399,7 @@
   "最大同時ジョブ数": "Maximum concurrent jobs",
   "ワーカー契約": "Worker contract",
   "リビジョン": "Revision",
+  "保存された記録を読めません（{0}）。「接続を確認して更新」を押すと記録し直します。": {"text": "The stored record cannot be read ({0}). Choose Verify and Update to record it again.", "mac": ["@"]},
   "このワーカーは古い版です（契約 {0}、この Tsugumi は {1}）。ワーカーを同じ版で作り直して再起動し、「接続を確認して更新」を押してください。": {"text": "This worker is out of date (contract {0}; this Tsugumi uses {1}). Rebuild it from this Tsugumi revision, restart it, then choose Verify and Update.", "mac": ["@", "@"]},
   "最大発火回数": "Maximum activations",
   "最後に記録された環境": "Last recorded environment",

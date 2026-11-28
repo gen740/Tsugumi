@@ -451,7 +451,10 @@ table ExecutionCapabilities { server_id:string (required); native_system:string 
 // outdated: the worker last verified speaks another worker contract than
 // this Tsugumi (worker_contract in ExecutionServices); runs do not use it
 // until it is rebuilt from this revision and verified again.
-table ExecutionService { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); capabilities:ExecutionCapabilities (required); probes:[Tsugumi.Data.WorkerProbeResult]; outdated:bool; }
+// record_error: why hostd cannot read what it stored about the worker (its
+// capabilities are then empty); empty when it can. Verifying the service
+// again records it anew.
+table ExecutionService { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); capabilities:ExecutionCapabilities (required); probes:[Tsugumi.Data.WorkerProbeResult]; outdated:bool; record_error:string; }
 table ExecutionServices { services:[ExecutionService]; host_public_key:string (required); worker_contract:uint; }
 table ExecutionAuthorization { endpoint:string (required); capability_file:string (required); available:bool; }
 

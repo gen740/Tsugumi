@@ -73,6 +73,39 @@ auto ConnectUnix(const std::string& path) -> int {
   socket.fd = -1;
   return fd;
 }
+// Capabilities as hostd stored them and a worker sent them before revision
+// was added: every later layout keeps these field ids, so a stored record and
+// an out-of-date worker still read.
+auto PreviousLayoutCapabilities(const std::string& server, uint32_t contract,
+                                const std::string& life) -> std::string {
+  flatbuffers::FlatBufferBuilder b;
+  const auto id = b.CreateString(server);
+  const auto native = b.CreateString("x86_64-linux");
+  const auto systems =
+      b.CreateVectorOfStrings(std::vector<std::string>{"x86_64-linux"});
+  const auto probe_life = b.CreateString(life);
+  const auto label = b.CreateString("ttl (dev)");
+  const auto certificate = b.CreateString(std::string(64, 'e'));
+  const auto field = [](int n) {
+    return static_cast<flatbuffers::voffset_t>(4 + 2 * n);
+  };
+  const auto start = b.StartTable();
+  b.AddOffset(field(0), id);
+  b.AddOffset(field(2), native);
+  b.AddOffset(field(3), systems);
+  b.AddElement<uint32_t>(field(5), 6, 0);         // max_jobs
+  b.AddElement<uint32_t>(field(6), contract, 0);  // worker_contract
+  b.AddOffset(field(7), probe_life);
+  b.AddOffset(field(11), label);
+  b.AddElement<uint16_t>(field(12), 8767, 0);  // dashboard_port
+  b.AddOffset(field(13), certificate);
+  const flatbuffers::Offset<R::Capabilities> capabilities{b.EndTable(start)};
+  const auto reply =
+      R::CreateReply(b, R::ReplyBody::Capabilities, capabilities.Union());
+  R::FinishMessageBuffer(b,
+                         R::CreateMessage(b, R::Payload::Reply, reply.Union()));
+  return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};
+}
 class WorkerPeer {
  public:
   explicit WorkerPeer(const std::filesystem::path& path)
@@ -109,7 +142,12 @@ class WorkerPeer {
           if (!q) continue;
           std::lock_guard lock(mutex_);
           requests_.push_back(*q);
-          if (q->body.AsProbeRequest()) {
+          if (q->body.AsProbeRequest() && previous_layout) {
+            const auto bytes =
+                PreviousLayoutCapabilities(server, contract, probe_life);
+            tls.Write(W::length_prefix(static_cast<uint32_t>(bytes.size())) +
+                      bytes);
+          } else if (q->body.AsProbeRequest()) {
             R::CapabilitiesT c;
             c.server_id = server;
             c.instance_id = std::string(64, 'c');
@@ -195,6 +233,8 @@ class WorkerPeer {
   std::string server = std::string(64, 'b');
   uint32_t contract = W::kContract;
   std::string revision = "0123abcd";
+  // Answer probes as a worker built before revision was added.
+  bool previous_layout = false;
 
  private:
   std::string path_;
@@ -571,7 +611,91 @@ TEST_F(BrokerFixture, RelayAndProbeDoNotDecodeUnrelatedRegistrations) {
   auto cached = Broker(std::move(lookup), capability);
   EXPECT_NE(cached->payload.AsReply()->body.AsCardProbeCached(), nullptr);
   auto catalog = Broker(R::CatalogRequestT{}, capability);
-  EXPECT_NE(catalog->payload.AsReply()->body.AsFailure(), nullptr);
+  const auto* services = catalog->payload.AsReply()->body.AsCatalog();
+  ASSERT_NE(services, nullptr);
+  EXPECT_TRUE(CatalogService(*services, "worker").available);
+  const auto& unrelated = CatalogService(*services, "unrelated");
+  EXPECT_FALSE(unrelated.available);
+  EXPECT_NE(unrelated.unavailable_reason.find("cannot be read"),
+            std::string::npos)
+      << unrelated.unavailable_reason;
+}
+TEST_F(BrokerFixture, AnUnreadableRecordStaysOnItsOwnRow) {
+  ASSERT_TRUE(Put().Code().empty());
+  {
+    sql::Db db((directory.path / "state/execution.sqlite").string());
+    db.exec(
+        "INSERT INTO services VALUES "
+        "('broken','Broken','','',X'00','')");
+  }
+  const auto listed = List();
+  ASSERT_TRUE(listed.Code().empty()) << listed.Code();
+  const auto* value = listed.HostValue()->value_as_ExecutionServices();
+  EXPECT_FALSE(value->host_public_key()->str().empty());
+  ASSERT_EQ(ListSize(value->services()), 3u);
+  const auto* worker_row = value->services()->Get(1);
+  EXPECT_EQ(worker_row->id()->str(), "worker");
+  EXPECT_EQ(worker_row->capabilities()->server_id()->str(),
+            std::string(64, 'b'));
+  EXPECT_FALSE(worker_row->record_error());
+  const auto* broken = value->services()->Get(2);
+  EXPECT_EQ(broken->id()->str(), "broken");
+  EXPECT_EQ(broken->name()->str(), "Broken");
+  EXPECT_TRUE(broken->capabilities()->server_id()->str().empty());
+  ASSERT_TRUE(broken->record_error());
+  EXPECT_NE(broken->record_error()->str().find(
+                "invalid remote worker FlatBuffer"),
+            std::string::npos)
+      << broken->record_error()->str();
+
+  // Verifying it again records it anew.
+  const auto verified = Put({}, "broken");
+  ASSERT_TRUE(verified.Code().empty()) << verified.Code();
+  const auto* again =
+      verified.HostValue()->value_as_ExecutionServices()->services()->Get(2);
+  EXPECT_FALSE(again->record_error());
+  EXPECT_EQ(again->capabilities()->server_id()->str(), std::string(64, 'b'));
+}
+TEST_F(BrokerFixture, ARecordStoredInThePreviousLayoutStillReads) {
+  ASSERT_TRUE(Put().Code().empty());
+  {
+    sql::Db db((directory.path / "state/execution.sqlite").string());
+    auto q = db.prepare("UPDATE services SET capabilities=? WHERE id=?");
+    q.bind_blob(1, PreviousLayoutCapabilities(std::string(64, 'b'),
+                                              W::kContract, worker->probe_life))
+        .bind(2, "worker")
+        .run();
+  }
+  const auto listed = List();
+  ASSERT_TRUE(listed.Code().empty()) << listed.Code();
+  const auto* service =
+      listed.HostValue()->value_as_ExecutionServices()->services()->Get(1);
+  EXPECT_FALSE(service->record_error()) << service->record_error()->str();
+  const auto* c = service->capabilities();
+  EXPECT_EQ(c->server_id()->str(), std::string(64, 'b'));
+  EXPECT_EQ(c->worker_contract(), W::kContract);
+  EXPECT_EQ(c->worker_label()->str(), "ttl (dev)");
+  EXPECT_EQ(c->max_concurrent_jobs(), 6u);
+  EXPECT_FALSE(c->revision());
+  EXPECT_FALSE(service->outdated());
+  // Its probe life reads too: the probe cache accepts the worker's.
+  R::CardProbeLookupT lookup;
+  lookup.key = std::string(64, 'a');
+  lookup.life = worker->probe_life;
+  const auto cached = Broker(std::move(lookup), Authorize("project"));
+  EXPECT_NE(cached->payload.AsReply()->body.AsCardProbeCached(), nullptr);
+}
+TEST_F(BrokerFixture, AWorkerSendingThePreviousLayoutIsOutOfDate) {
+  worker->previous_layout = true;
+  worker->SetBuild(W::kContract - 1, "");
+  const auto verified = Put();
+  ASSERT_TRUE(verified.Code().empty()) << verified.Code();
+  const auto* service =
+      verified.HostValue()->value_as_ExecutionServices()->services()->Get(1);
+  EXPECT_TRUE(service->outdated());
+  EXPECT_EQ(service->capabilities()->worker_contract(), W::kContract - 1);
+  EXPECT_EQ(service->capabilities()->worker_label()->str(), "ttl (dev)");
+  EXPECT_FALSE(service->record_error());
 }
 TEST_F(BrokerFixture, AuthorizationSurvivesRestartAndRevocationIsDurable) {
   ASSERT_TRUE(Put().Code().empty());

@@ -47,6 +47,9 @@ struct ExecutionServicesSettings: View {
           if let outdated = Self.outdatedText(entry, contract: workerContract) {
             Text(outdated).font(.caption).foregroundStyle(.red).textSelection(.enabled)
           }
+          if let unreadable = Self.recordErrorText(entry) {
+            Text(unreadable).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+          }
         }
         Button("すべて測り直す") { remeasure(nil) }
         Button { choose(nil) } label: { Label("実行サービスを追加", systemImage: "plus") }
@@ -201,6 +204,14 @@ struct ExecutionServicesSettings: View {
     guard entry.outdated else { return nil }
     let worker = String(entry.capabilities.workerContract), current = String(contract)
     return String(localized: "このワーカーは古い版です（契約 \(worker)、この Tsugumi は \(current)）。ワーカーを同じ版で作り直して再起動し、「接続を確認して更新」を押してください。")
+  }
+
+  /// What settings say about a service whose stored record hostd cannot read;
+  /// nil when it can.
+  static func recordErrorText(_ entry: ExecutionServiceConnection) -> String? {
+    guard !entry.recordError.isEmpty else { return nil }
+    let error = entry.recordError
+    return String(localized: "保存された記録を読めません（\(error)）。「接続を確認して更新」を押すと記録し直します。")
   }
 
   private func refreshServices() {

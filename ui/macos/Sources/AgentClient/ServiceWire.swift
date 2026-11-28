@@ -479,7 +479,7 @@ enum ServiceWire {
               "workerContract": v.workerContract] as [String: Any]
     case let v as Tsugumi_Host_ExecutionServiceT:
       return ["id": v.id, "name": v.name, "endpoint": v.endpoint, "workerPublicKey": v.workerPublicKey, "capabilities": try view(v.capabilities),
-              "outdated": v.outdated] as [String: Any]
+              "outdated": v.outdated, "recordError": v.recordError ?? ""] as [String: Any]
     case let v as Tsugumi_Host_ExecutionCapabilitiesT:
       return ["serverId": v.serverId, "nativeSystem": v.nativeSystem, "systems": v.systems.compactMap { $0 },
               "isolation": v.isolation ?? "pid_namespace", "resourceLimits": v.resourceLimits,

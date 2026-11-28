@@ -284,6 +284,8 @@ struct Entry {
   // Only transport identity changes invalidate a project's grant. Capabilities
   // are observations of the worker and the name is presentation.
   std::string generation;
+  // Why the stored capabilities cannot be read; capabilities are then empty.
+  std::string record_error;
 };
 // A verified remote worker that speaks another worker contract than this
 // Tsugumi: it was built from another revision. Runs do not use it.
@@ -331,6 +333,7 @@ auto Public(const Entry& entry) -> std::unique_ptr<H::ExecutionServiceT> {
   }
   c->revision = entry.capabilities.revision;
   value->outdated = Outdated(entry);
+  value->record_error = entry.record_error;
   return value;
 }
 // The worker's identity and limits. Its contract is kept as it reported it:
@@ -563,19 +566,24 @@ struct ExecutionBroker::State {
     return {*this, fd};
   }
 
+  // A record whose capabilities cannot be read stays listed with the reason,
+  // unverified, so settings, the catalog and the other services still work;
+  // verifying the service again records it anew.
   auto DecodeEntry(sql::Stmt& q) -> Entry {
-    const auto bytes = q.blob(4);
-    Require(bytes.size() <= W::kMaxFrame, "Invalid stored worker capabilities");
-    auto message = W::decode(bytes);
-    const auto* reply = message->payload.AsReply();
-    Require(reply && reply->body.AsCapabilities(),
-            "Invalid stored worker capabilities");
-    return {q.text(0),
-            q.text(1),
-            q.text(2),
-            q.text(3),
-            *reply->body.AsCapabilities(),
-            q.text(5)};
+    Entry entry{q.text(0), q.text(1), q.text(2), q.text(3), {}, q.text(5), {}};
+    try {
+      const auto bytes = q.blob(4);
+      Require(bytes.size() <= W::kMaxFrame, "frame exceeds 18 MiB");
+      auto message = W::decode(bytes);
+      const auto* reply = message->payload.AsReply();
+      Require(reply && reply->body.AsCapabilities(), "not worker capabilities");
+      entry.capabilities = *reply->body.AsCapabilities();
+    } catch (const std::exception& error) {
+      entry.record_error =
+          std::string("The stored capabilities of worker ") + entry.id +
+          " cannot be read (" + error.what() + ")";
+    }
+    return entry;
   }
 
   auto LocalEntry() -> Entry {
@@ -940,7 +948,10 @@ struct ExecutionBroker::State {
                 (approved && !e.capabilities.server_id.empty() && !Outdated(e));
             if (!target->available)
               target->unavailable_reason =
-                  !approved ? "Worker " + e.id +
+                  !e.record_error.empty()
+                      ? e.record_error +
+                            ". Verify it again in Settings > Execution service."
+                  : !approved ? "Worker " + e.id +
                                   " needs a person's approval for this project"
                   : Outdated(e) ? OutdatedReason(e)
                                 : "Worker " + e.id +
@@ -1283,7 +1294,8 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
                   p->endpoint()->str(),
                   p->worker_public_key()->str(),
                   {},
-                  crypto::random_token(32)};
+                  crypto::random_token(32),
+                  {}};
       Require(entry.id == "local" || ValidId(entry.id),
               "Invalid execution service ID (local is reserved)");
       Require(

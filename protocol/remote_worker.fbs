@@ -153,9 +153,6 @@ table Capabilities {
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
   // Zero means no advertised contract. Writers explicitly send contract 22.
   worker_contract:uint;
-  // The source revision the worker was built from (the flake's revision),
-  // empty when the build does not say. Shown to people; never compared.
-  revision:string;
   probe_life:string;
   active_jobs:uint;
   requires_filesystem:bool = true; requires_pid:bool = true;
@@ -165,6 +162,11 @@ table Capabilities {
   // SHA-256 of its certificate (DER, lowercase hex) for clients that pin it.
   dashboard_port:ushort;
   dashboard_certificate_sha256:string;
+  // The source revision the worker was built from (the flake's revision),
+  // empty when the build does not say. Shown to people; never compared.
+  revision:string;
+  // New fields go here, at the end: hostd stores this table and must still
+  // read it from a worker built from another revision to say it is out of date.
 }
 // The host decides availability and supplies its reason; the core only carries it.
 table Target { id:string (required); available:bool; capabilities:Capabilities (required); unavailable_reason:string; probe_revision:string; }

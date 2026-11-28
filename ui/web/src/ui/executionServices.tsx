@@ -33,6 +33,13 @@ export const outdatedText = (entry: H.ExecutionServiceT, contract: number): stri
       String(entry.capabilities?.workerContract ?? 0), String(contract))
     : undefined
 
+/** What settings say about a service whose stored record hostd cannot read;
+ *  undefined when it can. */
+export const recordErrorText = (entry: H.ExecutionServiceT): string | undefined =>
+  s(entry.recordError)
+    ? L('保存された記録を読めません（{0}）。「接続を確認して更新」を押すと記録し直します。', s(entry.recordError))
+    : undefined
+
 /** How the list shows a service: its name, and its id only when the two differ. */
 export const serviceLabel = (name: string, id: string) => !name || name === id ? id : `${name} (${id})`
 
@@ -94,6 +101,7 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
           <Button small disabled={busy} onClick={() => window.open(dashboardUrl(entry), '_blank', 'noopener,noreferrer')}>{L('ダッシュボードを開く')}</Button>}
       </Row>
       {outdatedText(entry, contract) && <Row><span className="caption selectable" style={{ color: 'var(--red)' }}>{outdatedText(entry, contract)}</span></Row>}
+      {recordErrorText(entry) && <Row><span className="caption selectable" style={{ color: 'var(--red)' }}>{recordErrorText(entry)}</span></Row>}
       </Fragment>)}
       <Row><Button disabled={busy} onClick={() => remeasure(null)}>{L('すべて測り直す')}</Button></Row>
       <Row><Button icon="plus" disabled={busy} onClick={() => choose({ id: '', name: '', endpoint: '', workerPublicKey: '' })}>{L('実行サービスを追加')}</Button></Row>

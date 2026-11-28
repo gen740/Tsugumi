@@ -36,6 +36,20 @@ import Testing
   #expect(ExecutionServicesSettings.outdatedText(current22, contract: 22) == nil)
 }
 
+/// A service whose stored record hostd cannot read says so on its own row, with what to do.
+@MainActor @Test func anUnreadableRecordSaysHowToRecordItAgain() {
+  let capabilities = ExecutionServiceCapabilities(serverId: "", nativeSystem: "", systems: [], isolation: "pid_namespace",
+                                                  resourceLimits: false, maxConcurrentJobs: 0, workerContract: 0, revision: "")
+  let error = "The stored capabilities of worker ttl cannot be read (invalid remote worker FlatBuffer)"
+  let ttl = ExecutionServiceConnection(id: "ttl", name: "ttl", endpoint: "tls://ttl:8765", workerPublicKey: "ed25519:x",
+                                       probes: [], capabilities: capabilities, outdated: false, recordError: error)
+  #expect(ExecutionServicesSettings.recordErrorText(ttl)
+          == String(localized: "保存された記録を読めません（\(error)）。「接続を確認して更新」を押すと記録し直します。"))
+  let readable = ExecutionServiceConnection(id: "ttl", name: "ttl", endpoint: "tls://ttl:8765", workerPublicKey: "ed25519:x",
+                                            probes: [], capabilities: capabilities, outdated: false)
+  #expect(ExecutionServicesSettings.recordErrorText(readable) == nil)
+}
+
 @MainActor @Test func builtInSkillsHaveTheirOwnDescriptions() {
   for path in ["builtin:helpers", "builtin:review", "builtin:rerun-compare"] {
     let description = ChatController.builtinSkillDescription(path)
