@@ -18,6 +18,11 @@
 
 namespace tsugumi {
 
+// The run journal's warning when a Card's build outputs could not be
+// published; the Card's result does not depend on it.
+inline constexpr const char* kPushFailedNote =
+    "build outputs were not published to the binary cache: ";
+
 class RemoteExecutionService final {
  public:
   RemoteExecutionService(Service& service, RemoteJobClient& client);

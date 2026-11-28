@@ -7,7 +7,13 @@
 namespace tsugumi {
 auto NixStore::init_process() -> void {
   static std::once_flag initialized;
-  std::call_once(initialized, [] { nix::initLibStore(true); });
+  std::call_once(initialized, [] {
+    nix::initLibStore(true);
+    // A substituter that cannot answer (down, HTTP 5xx) is skipped: Nix logs
+    // it and takes the path from another cache or builds it. A dead cache
+    // never decides a Card's result.
+    nix::settings.getWorkerSettings().tryFallback = true;
+  });
 }
 auto NixStore::store_dir() -> std::string {
   static const std::string dir = nix::openStore()->storeDir;

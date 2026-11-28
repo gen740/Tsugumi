@@ -7,6 +7,7 @@ import concurrent.futures
 import fcntl
 import hashlib
 import http.client
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
@@ -762,6 +763,81 @@ def test_card_succeeds_when_the_push_target_is_unreachable(worker):
     assert not environment.pushed
     assert R.string(environment.pushError)
     assert "Could not publish the Nix build outputs" in logs
+
+
+class DeadCache:
+    """A binary cache whose server is down behind its proxy: it still names
+    itself (Nix keeps a cache's info for days), then answers every request
+    with HTTP 502, as an Attic behind a reverse proxy does when atticd is
+    down."""
+
+    def __init__(self):
+        self.asked = []
+        asked = self.asked
+
+        class Handler(BaseHTTPRequestHandler):
+            def answer(self):
+                asked.append(self.path)
+                if self.command == "GET" and self.path == "/nix-cache-info":
+                    body = b"StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 90\n"
+                    self.send_response(200)
+                else:
+                    body = b"<html>502 Bad Gateway</html>"
+                    self.send_response(502)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(body)
+
+            do_GET = do_HEAD = do_PUT = do_POST = answer
+
+            def log_message(self, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_):
+        self.server.shutdown()
+        self.thread.join(30)
+
+
+def test_a_dead_cache_never_decides_the_cards_result(worker):
+    job = "9" * 64
+    marker = f"dead-cache-{uuid4()}"
+    spec = with_push(card_spec(worker, job, f'std::puts("{marker}");'))
+    with DeadCache() as dead:
+        # The dead cache is the job's push target and the pull cache Nix asks
+        # last (Priority 90): Nix reports a failing substituter only when no
+        # later one answers, as for the Attic on ttl.
+        worker.cache_pulls = [
+            CachePullSettingsT(endpoint=dead.url,
+                               publicKey=(worker.root / "sign.pub").read_text().strip()),
+            *worker.cache_pulls,
+        ]
+        worker.cache_push = CachePushSettingsT(kind=CacheTargetKind.NixCopy, endpoint=dead.url)
+        reply = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
+        assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
+        status = wait_status(worker, job, lambda s: s.state != R.JobState.Running
+                             and s.state != R.JobState.Queued, timeout=600)
+        result = worker.journal(job).parent / "work/result"
+        records = list(R.read_logs((result / "logs").read_bytes()))
+        assert status.state == R.JobState.Succeeded, (vars(status), records)
+    # Nix asked the dead cache, skipped it, and the Card ran.
+    outcome = WorkerMessageT.InitFromPackedBuf((result / "worker.fb").read_bytes())
+    assert outcome.valueType == WorkerPayload.WorkerResult, vars(outcome.value.failure)
+    assert any(path.endswith(".narinfo") for path in dead.asked), dead.asked
+    assert any(stream == LogStream.output and marker in text for stream, text in records), records
+    # The push failed, is recorded as text, and did not fail the Card.
+    environment = R.ResultEnvironmentT.InitFromPackedBuf((result / "environment").read_bytes())
+    assert not environment.pushed
+    error = R.string(environment.pushError)
+    assert error and "\x1b" not in error, error
 
 
 def job_status(peer, job, **query):

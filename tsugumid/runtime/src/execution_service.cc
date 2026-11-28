@@ -355,6 +355,8 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     service_.remote_execution().publish_local_build(
         build.derivation, node.settings.push_outputs, s, request.publish,
         request.stop);
+    if (s.build_push && !s.build_push->error.empty() && request.journal)
+      request.journal("push_failed", kPushFailedNote + s.build_push->error);
   }
   return {std::move(completed.outputs), std::move(completed.failure)};
 }

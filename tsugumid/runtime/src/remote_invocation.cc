@@ -366,8 +366,10 @@ auto import_remote_result(
   import_logs(temp / "logs", recorded, log, result);
   if (stop.stop_requested())
     throw BrokerDisconnected("remote result import stopped");
+  // Only a result is validated: a job that failed (its environment, or the
+  // Card) ends in the stage where it failed.
   if (declared.empty()) {
-    if (on_validation) on_validation(started, now_ms());
+    if (on_validation && !failure) on_validation(started, now_ms());
   } else {
     const int fd =
         ::open(staged.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
@@ -382,7 +384,7 @@ auto import_remote_result(
       for (; moved != declared.end(); ++moved)
         fs::move_staging_artifact(fd, *moved, artifact_destination / *moved,
                                   budget);
-      if (on_validation) on_validation(started, now_ms());
+      if (on_validation && !failure) on_validation(started, now_ms());
     } catch (...) {
       // Only this import's unpublished moves belong to the rollback.
       for (auto it = declared.begin(); it != moved; ++it) {

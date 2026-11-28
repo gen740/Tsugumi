@@ -19,7 +19,7 @@ import tempfile
 import subprocess
 import threading
 import time
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -552,6 +552,65 @@ def test_configured_file_push_publishes_remote_output(
         finally:
             server.shutdown()
             thread.join()
+
+
+def test_a_pull_cache_answering_502_never_fails_the_card(
+        project, core_factory, remote_broker, remote_daemon, tmp_path):
+    """An Attic behind a reverse proxy whose atticd is down: it still names
+    itself, then answers every narinfo with HTTP 502. The worker skips it and
+    the Card's result depends only on the Card."""
+    asked = []
+
+    class DeadCache(BaseHTTPRequestHandler):
+        def do_GET(self):
+            asked.append(self.path)
+            if self.path == "/nix-cache-info":
+                body = b"StoreDir: /nix/store\nWantMassQuery: 1\nPriority: 90\n"
+                self.send_response(200)
+            else:
+                body = b"<html>502 Bad Gateway</html>"
+                self.send_response(502)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        do_HEAD = do_GET
+
+        def log_message(self, *args):
+            pass
+
+    key, public_key = tmp_path / "dead-key", tmp_path / "dead-key.pub"
+    subprocess.run(["nix-store", "--generate-binary-cache-key", "dead-fixture", key, public_key], check=True)
+    with ThreadingHTTPServer(("127.0.0.1", 0), DeadCache) as server:
+        thread = threading.Thread(target=server.serve_forever)
+        thread.start()
+        try:
+            remote_broker["host"].call("BinaryCachesPutRequest", cachesJson=json.dumps([{
+                "id": "fedcba98-7654-3210-fedc-ba9876543210",
+                "name": "Dead Attic",
+                "url": f"http://127.0.0.1:{server.server_port}",
+                "publicKey": public_key.read_text().strip(),
+                "username": "",
+                "password": "",
+            }]))
+            marker = "dead-cache-card-ran"
+            definition = {
+                **RUN_LIST_REMOTE,
+                "_outputs": "table Outputs {} root_type Outputs;",
+                "_nix": entry(python_run(
+                    f"from card import Output\ndef run(input):\n    print({marker!r})\n    return Output()\n")),
+            }
+            write(project, {"work": definition}, [card("work", "work")], [])
+            client = core_factory().connect()
+            run_id, status = run_and_wait(client, "work", propagate=False)
+            assert status.state == RunState.succeeded, text(status.failure.diagnostic) if status.failure else ""
+            record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
+            assert text(record.summary.executionService) == "remote-test"
+            assert marker in log(client, run_id, "work", stream=LogStream.output)
+        finally:
+            server.shutdown()
+            thread.join()
+    assert any(asked_path.endswith(".narinfo") for asked_path in asked), asked
 
 
 def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broker, remote_daemon, remote_gates):

@@ -661,6 +661,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
           s.build_substituter = std::move(result.substituter);
           s.build_pushed = result.pushed;
           s.build_push = std::move(result.push);
+          if (s.build_push && !s.build_push->error.empty() && request.journal)
+            request.journal("push_failed", kPushFailedNote + s.build_push->error);
           history.write_sync([&](sql::Db& db) {
             s.environment_id =
                 History::put_environment(db, s.run_id, result.environment);

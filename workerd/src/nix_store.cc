@@ -70,6 +70,10 @@ auto ConfigurePulls(const workerd::R::CacheSettingsT& cache)
     }
   }
   nix::globalConfig.set("substituters", substituters);
+  // A pull cache that cannot answer (down, HTTP 5xx) is skipped for this job:
+  // Nix logs it, stops asking it for a while, and takes the path from another
+  // cache or builds it. Without this, one dead cache fails the job.
+  nix::settings.getWorkerSettings().tryFallback = true;
   if (!cache.own_signing_key.empty()) {
     if (!ValidCacheField(cache.own_signing_key))
       throw std::runtime_error("invalid built-in binary cache signing key");
