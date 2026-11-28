@@ -4,7 +4,7 @@
 // now in plain words. The same model as StagePipeline in the Mac app.
 import { L } from '../i18n'
 import { D } from '../wire/rpc'
-import { mergeStageStatus, Stage, STAGE_INFO, StageProgress, StageStatus } from './canvasKit'
+import { mergeStageStatus, Stage, STAGE_INFO, StageProgress, StageStatus, unreachedMark, unreachedStage } from './canvasKit'
 import { CardRunState, executionActivityText, formatShortDuration, StageRecord } from './session'
 
 export interface PipelineStep {
@@ -50,9 +50,11 @@ export function formatAgo(seconds: number): string {
  *  state while the run goes on; `now`: the core's clock (ms since 1970);
  *  `cpuMs`: the CPU time it used, said once no stage runs any more;
  *  `buildCached`: whether the worker's build came from a store or cache
- *  (known once it ended). */
+ *  (known once it ended); `cardState`: the Card's state, so a skipped or
+ *  blocked Card's stages say so. */
 export function stagePipeline(stages: Stage[], records: StageRecord[], service: string | undefined,
-  live: CardRunState | undefined, now: number, lastActivity?: D.ExecutionActivity, cpuMs?: number, buildCached?: boolean): StagePipeline {
+  live: CardRunState | undefined, now: number, lastActivity?: D.ExecutionActivity, cpuMs?: number, buildCached?: boolean,
+  cardState?: D.CardState): StagePipeline {
   const record = (st: Stage) => [...records].reverse().find((r) => r.stage === st)
   const seconds = (r: StageRecord | undefined) => {
     if (r?.start === undefined) return undefined
@@ -78,9 +80,11 @@ export function stagePipeline(stages: Stage[], records: StageRecord[], service: 
   }
   const run = step(Stage.execute)
   if (run) {
-    if (worker.execute) Object.assign(run, { status: worker.execute, seconds: worker.execute === 'pending' || worker.execute === 'notRun' ? undefined : run.seconds })
+    if (worker.execute) Object.assign(run, { status: worker.execute, seconds: unreachedStage(worker.execute) ? undefined : run.seconds })
     run.waiting = worker.executeWaiting
   }
+  const mark = unreachedMark(cardState ?? live?.state)
+  if (mark) for (const s of steps) if (unreachedStage(s.status)) s.status = mark
   const current = steps.find((s) => s.status === 'running')
   if (!current && cpuMs !== undefined) return { steps, detail: L('CPU {0}', formatShortDuration(cpuMs / 1000)) }
   return { steps, detail: detail(current, worker.remote ? service : undefined, activity, live, now) }
@@ -105,7 +109,7 @@ export function pipelineSection(line: StagePipeline, stages: Stage[], ended: boo
   let last = -1
   line.steps.forEach((s, i) => { if (stages.includes(s.stage)) last = i })
   if (last < 0) return { status: 'pending', waiting: false, cached: false, reused: false }
-  const later = line.steps.slice(last + 1).some((s) => s.status !== 'pending' && s.status !== 'notRun')
+  const later = line.steps.slice(last + 1).some((s) => !unreachedStage(s.status))
   const status = mergeStageStatus(mine.map((s) => s.status), ended || later)
   const times = mine.flatMap((s) => (s.seconds !== undefined ? [s.seconds] : []))
   return {

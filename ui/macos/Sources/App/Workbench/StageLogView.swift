@@ -179,7 +179,8 @@ struct StageLogView: View {
                   live: live, now: session.coreNow(),
                   lastActivity: live?.executionLastActivity ?? info?.record?.summary.executionLastActivity,
                   cpuMs: live.map(\.cpuMs) ?? info?.record?.summary.cpuMs,
-                  buildCached: live.map { $0.cached ? true : nil } ?? info?.record?.summary.buildCached)
+                  buildCached: live.map { $0.cached ? true : nil } ?? info?.record?.summary.buildCached,
+                  cardState: state)
   }
 
   static func stageLabel(_ st: Stage) -> String {
@@ -239,7 +240,7 @@ struct StageLogView: View {
       }
     }
     if st == .failed, let failure {
-      Text(failure).font(.caption).foregroundStyle(.red).textSelection(.enabled).lineLimit(6)
+      Text(failure).font(.caption).foregroundStyle(StagePalette.failed).textSelection(.enabled).lineLimit(6)
         .padding(.leading, 26).padding(.trailing, 8).padding(.vertical, 4)
     }
     Divider()
@@ -332,7 +333,7 @@ struct StageLogView: View {
 /// The state of a stage or a log section as the log view shows it.
 /// The Card's stage strip on the canvas uses the same states and symbols.
 enum SectionStatus: Equatable {
-  case pending, waiting, running, done, cached, reused, failed, cancelled
+  case pending, waiting, running, done, cached, reused, failed, cancelled, skipped, blocked
 
   init(_ status: StageProgress.Status, waiting: Bool = false) {
     switch status {
@@ -343,6 +344,8 @@ enum SectionStatus: Equatable {
     case .reused: self = .reused
     case .failed: self = .failed
     case .cancelled: self = .cancelled
+    case .skipped: self = .skipped
+    case .blocked: self = .blocked
     }
   }
 
@@ -356,6 +359,8 @@ enum SectionStatus: Equatable {
     case .reused: return String(localized: "再利用")
     case .failed: return String(localized: "失敗")
     case .cancelled: return String(localized: "停止")
+    case .skipped: return String(localized: "スキップ")
+    case .blocked: return String(localized: "ブロック")
     }
   }
 
@@ -369,6 +374,8 @@ enum SectionStatus: Equatable {
     case .reused: return .reused
     case .failed: return .failed
     case .cancelled: return .cancelled
+    case .skipped: return .skipped
+    case .blocked: return .blocked
     }
   }
 }

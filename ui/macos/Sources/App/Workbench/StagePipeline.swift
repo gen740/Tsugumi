@@ -32,8 +32,10 @@ struct StagePipeline: Equatable {
   ///   - lastActivity: the last activity the remote job reported (kept after it ended).
   ///   - cpuMs: the CPU time it used, said once no stage runs any more.
   ///   - buildCached: whether the worker's build came from a store or cache (known once it ended).
+  ///   - cardState: the Card's state; a skipped or blocked Card's stages say so.
   init(stages shown: [Stage], records: [StageRecord], service: String?, live: CardRunState?, now: Int64,
-       lastActivity: Tsugumi_Data_ExecutionActivity? = nil, cpuMs: UInt64? = nil, buildCached: Bool? = nil) {
+       lastActivity: Tsugumi_Data_ExecutionActivity? = nil, cpuMs: UInt64? = nil, buildCached: Bool? = nil,
+       cardState: Tsugumi_Data_CardState? = nil) {
     func record(_ st: Stage) -> StageRecord? { records.last { $0.stage == st } }
     func seconds(_ r: StageRecord?) -> Double? {
       guard let r, let start = r.start else { return nil }
@@ -63,9 +65,12 @@ struct StagePipeline: Equatable {
     update(.execute) {
       if let status = worker.execute {
         $0.status = status
-        if status == .pending || status == .notRun { $0.seconds = nil }
+        if status.unreached { $0.seconds = nil }
       }
       $0.waiting = worker.executeWaiting
+    }
+    if let mark = StageProgress.Status.unreached(cardState ?? live?.state) {
+      for i in steps.indices where steps[i].status.unreached { steps[i].status = mark }
     }
     self.steps = steps
     let current = steps.first { $0.status == .running }
@@ -93,7 +98,7 @@ struct StagePipeline: Equatable {
   func section(_ stages: [Stage], ended: Bool) -> Section {
     let mine = steps.filter { stages.contains($0.stage) }
     guard let i = steps.lastIndex(where: { stages.contains($0.stage) }) else { return Section(status: .pending) }
-    let later = steps[(i + 1)...].contains { $0.status != .pending && $0.status != .notRun }
+    let later = steps[(i + 1)...].contains { !$0.status.unreached }
     let status = StageProgress.merge(mine.map(\.status), ended: ended || later)
     let times = mine.compactMap(\.seconds)
     return Section(status: status, waiting: status == .running && mine.contains { $0.status == .running && $0.waiting },
@@ -270,7 +275,7 @@ struct StagePipelineView: View {
 
   private func stepView(_ step: StagePipeline.Step) -> some View {
     let current = step.status == .running
-    let reached = step.status != .pending && step.status != .notRun
+    let reached = !step.status.unreached
     let label = SectionStatus(step.status, waiting: step.waiting).label
     return Button { onTap(step.stage) } label: {
       HStack(spacing: 4) {

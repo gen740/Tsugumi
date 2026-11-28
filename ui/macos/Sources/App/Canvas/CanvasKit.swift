@@ -137,6 +137,8 @@ struct StageProgress: Equatable {
     case failed
     case cancelled
     case notRun      // the invocation ended before this stage
+    case skipped     // the Card never received its inputs (a branch not taken)
+    case blocked     // the Card never ran: a Card upstream failed or stopped
 
     var label: String {
       switch self {
@@ -148,6 +150,20 @@ struct StageProgress: Equatable {
       case .failed: return String(localized: "失敗")
       case .cancelled: return String(localized: "停止")
       case .notRun: return String(localized: "実行されませんでした")
+      case .skipped: return String(localized: "スキップ")
+      case .blocked: return String(localized: "ブロック")
+      }
+    }
+
+    /// Not reached: the stage did not run (yet).
+    var unreached: Bool { [.pending, .notRun, .skipped, .blocked].contains(self) }
+
+    /// How a Card's stages that never ran look when the Card was skipped or blocked.
+    static func unreached(_ state: Tsugumi_Data_CardState?) -> Status? {
+      switch state {
+      case .skipped?: return .skipped
+      case .blocked?: return .blocked
+      default: return nil
       }
     }
   }
@@ -173,7 +189,7 @@ struct StageProgress: Equatable {
     if parts.contains(.failed) { return .failed }
     if parts.contains(.cancelled) { return .cancelled }
     if parts.contains(.running) { return .running }
-    let reached = parts.filter { $0 != .pending && $0 != .notRun }
+    let reached = parts.filter { !$0.unreached }
     if reached.isEmpty { return parts.first ?? .pending }
     // Part of it done, the rest still to come: in progress while the call runs.
     if reached.count < parts.count { return ended ? (reached.contains(.done) ? .done : reached[0]) : .running }
@@ -237,6 +253,14 @@ struct StageProgress: Equatable {
       default: break
       }
     }
+    return next
+  }
+
+  /// A skipped or blocked Card's stages that never ran say so.
+  func marked(_ state: Tsugumi_Data_CardState?) -> StageProgress {
+    guard let mark = Status.unreached(state) else { return self }
+    var next = self
+    for i in next.items.indices where next.items[i].status.unreached { next.items[i].status = mark }
     return next
   }
 
@@ -1329,7 +1353,7 @@ struct CardNodeView: View {
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       if g.stages {
-        StageDots(progress: data.stage.flatMap { data.invocation > 0 ? $0 : nil } ?? .notRun(code: true),
+        StageDots(progress: (data.stage.flatMap { data.invocation > 0 ? $0 : nil } ?? .notRun(code: true)).marked(data.state),
                   zoom: zoom, onTap: onStageTap)
       } else if data.kind == .subgraph {
         Image(systemName: data.symbol ?? "link").font(font(10)).foregroundStyle(.secondary)
@@ -1590,23 +1614,24 @@ struct StageDots: View {
 /// The stage states' colours, one set for the Card's circles, the log's
 /// pipeline line and sections and the hover's stage table: Okabe–Ito, safe
 /// for colour-blind readers, darker on a light ground. Done is blue, cached
-/// and reused a lighter sky blue, running and waiting orange, failed
-/// vermillion, stopped grey; shapes and marks tell them apart as well. The
-/// same set as STAGE_COLOR in the Web UI (styles.css).
+/// and reused a lighter sky blue, running and waiting orange, stopped grey;
+/// failed and blocked a deep red the owner chose by eye against the running
+/// orange and the done blue (#C8102E in both themes). Shapes and marks tell
+/// them apart as well. The same set as STAGE_COLOR in the Web UI (styles.css).
 enum StagePalette {
   static let done = dynamic(0x0072B2, dark: 0x3D9BE0)
   static let reuse = dynamic(0x3D9BE0, dark: 0x9BD3F3)
   static let run = dynamic(0xC07A00, dark: 0xE69F00)
-  static let failed = dynamic(0xD55E00, dark: 0xF2762E)
+  static let failed = dynamic(0xC8102E, dark: 0xC8102E)
   static let cancelled = dynamic(0x8E8E93, dark: 0x98989D)
 
   static func color(_ status: SectionStatus) -> Color {
     switch status {
-    case .pending: return .secondary
+    case .pending, .skipped: return .secondary
     case .waiting, .running: return run
     case .done: return done
     case .cached, .reused: return reuse
-    case .failed: return failed
+    case .failed, .blocked: return failed
     case .cancelled: return cancelled
     }
   }
@@ -1623,7 +1648,9 @@ enum StagePalette {
 /// it runs, a dashed ring while it waits (for the worker). Once it ended a
 /// shape says how, not the colour alone: done is filled, cached a ring with a
 /// dot, reused filled with a hole, failed filled with a cross, stopped filled
-/// with a bar. The same geometry as StageDot in the Web UI.
+/// with a bar. A stage that never ran because the Card was skipped is the
+/// grey empty ring with a slash; because it was blocked, a red ring with a
+/// thin red cross. The same geometry as StageDot in the Web UI.
 struct StageDot: View {
   let status: StageProgress.Status
   let size: CGFloat
@@ -1641,6 +1668,8 @@ struct StageDot: View {
       case .pending, .notRun:
         Circle().fill(Color(nsColor: .controlBackgroundColor))
           .overlay(Circle().strokeBorder(c.opacity(0.6), lineWidth: line))
+      case .skipped, .blocked:
+        unreachedMark(c, line: line)
       case .running:
         // Turns for as long as the stage runs.
         TimelineView(.animation(minimumInterval: 1.0 / 30)) { t in
@@ -1659,6 +1688,28 @@ struct StageDot: View {
     }
     .frame(width: size, height: size)
     .contentShape(Circle().inset(by: -size * 0.3))
+  }
+
+  /// A stage that never ran: an empty ring (grey for skipped, red for
+  /// blocked) with a slash from bottom left to top right (skipped) or a thin
+  /// cross (blocked) inside.
+  private func unreachedMark(_ c: Color, line: CGFloat) -> some View {
+    Canvas { g, box in
+      let d = box.width, r = d / 2
+      let ink = status == .skipped ? c.opacity(0.6) : c
+      g.fill(Path(ellipseIn: CGRect(origin: .zero, size: box)), with: .color(Color(nsColor: .controlBackgroundColor)))
+      g.stroke(Path(ellipseIn: CGRect(origin: .zero, size: box).insetBy(dx: line / 2, dy: line / 2)), with: .color(ink), lineWidth: line)
+      var mark = Path()
+      if status == .skipped {
+        let o = (r - line) * 0.7071
+        mark.move(to: CGPoint(x: r - o, y: r + o)); mark.addLine(to: CGPoint(x: r + o, y: r - o))
+      } else {
+        let k = d * 0.19
+        mark.move(to: CGPoint(x: r - k, y: r - k)); mark.addLine(to: CGPoint(x: r + k, y: r + k))
+        mark.move(to: CGPoint(x: r + k, y: r - k)); mark.addLine(to: CGPoint(x: r - k, y: r + k))
+      }
+      g.stroke(mark, with: .color(ink), style: StrokeStyle(lineWidth: line * (status == .skipped ? 1 : 0.85), lineCap: .round))
+    }
   }
 
   /// An ended stage: its fill and mark, cut out in the background colour.
@@ -1695,9 +1746,9 @@ struct StageDot: View {
 
 /// A Card's run state as the stage circles draw it, where one stands for it:
 /// waiting for inputs or a slot is a dashed ring, preparing and running the
-/// turning arc, succeeded filled, failed and stopped their marks, not run an
-/// empty ring. Skipped and blocked have no stage of their own and keep their
-/// symbol.
+/// turning arc, succeeded filled, failed and stopped their marks, skipped the
+/// slashed grey ring, blocked the red ring with a thin cross, not run an
+/// empty ring.
 extension Tsugumi_Data_CardState {
   var stageLook: (status: StageProgress.Status, waiting: Bool)? {
     switch self {
@@ -1707,6 +1758,8 @@ extension Tsugumi_Data_CardState {
     case .succeeded: return (.done, false)
     case .failed: return (.failed, false)
     case .cancelled: return (.cancelled, false)
+    case .skipped: return (.skipped, false)
+    case .blocked: return (.blocked, false)
     default: return nil
     }
   }

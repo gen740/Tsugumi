@@ -5,7 +5,7 @@
 import { CSSProperties, useEffect, useRef, useState } from 'react'
 import {
   Camera, CardGeometry, CardNodeData, currentStage, failedStage, isRouting, notRunStages, PortData, Pt, Rect, Stage, STAGE_INFO,
-  NEW_PORT, StageItem, StageProgress, StageStatus,
+  markedStages, NEW_PORT, StageItem, StageProgress, StageStatus,
 } from '../model/canvasKit'
 import { BoundaryPort, WireStyle } from '../model/canvas'
 import type { FlowDirection } from '../model/prefs'
@@ -339,7 +339,7 @@ function CardFace({ p, g, marks }: { p: CardNodeProps; g: CardGeometry; marks: J
         </div>
         <span className="cv-ellipsis cv-status-line" title={line.hover} style={{ fontSize: font(10), lineHeight: `${s(13)}px`, color: colorVar(line.color) }}>{line.text}</span>
       </div>
-      {g.stages ? <StageDots progress={data.stage && data.invocation > 0n ? data.stage : notRunStages(true)} zoom={z} onTap={p.onStageTap} />
+      {g.stages ? <StageDots progress={markedStages(data.stage && data.invocation > 0n ? data.stage : notRunStages(true), data.state)} zoom={z} onTap={p.onStageTap} />
         : data.kind === 'subgraph' ? <span className="secondary cv-center"><Icon name={data.symbol ?? 'link'} size={font(10)} /></span> : null}
     </div>
   )

@@ -48,10 +48,27 @@ export function stageParts(s: Stage): Stage[] {
   return [s]
 }
 
-export type StageStatus = 'pending' | 'running' | 'done' | 'cached' | 'reused' | 'failed' | 'cancelled' | 'notRun'
+/** `skipped`: the Card never received its inputs (a branch not taken);
+ *  `blocked`: it never ran because a Card upstream failed or stopped. */
+export type StageStatus = 'pending' | 'running' | 'done' | 'cached' | 'reused' | 'failed' | 'cancelled' | 'notRun' | 'skipped' | 'blocked'
 export const STAGE_STATUS_LABEL: Record<StageStatus, string> = {
   pending: L('未開始'), running: L('進行中'), done: L('完了'), cached: L('キャッシュを利用（処理なし）'),
   reused: L('この Run で準備済みのものを再利用'), failed: L('失敗'), cancelled: L('停止'), notRun: L('実行されませんでした'),
+  skipped: L('スキップ'), blocked: L('ブロック'),
+}
+
+/** Not reached: the stage did not run (yet). */
+export const unreachedStage = (s: StageStatus) => s === 'pending' || s === 'notRun' || s === 'skipped' || s === 'blocked'
+
+/** How a Card's stages that never ran look when the Card was skipped or blocked. */
+export function unreachedMark(state: D.CardState | undefined): StageStatus | undefined {
+  return state === D.CardState.skipped ? 'skipped' : state === D.CardState.blocked ? 'blocked' : undefined
+}
+
+/** A skipped or blocked Card's stages that never ran say so. */
+export function markedStages(p: StageProgress, state: D.CardState | undefined): StageProgress {
+  const mark = unreachedMark(state)
+  return mark ? { ...p, items: p.items.map((i) => (unreachedStage(i.status) ? { ...i, status: mark } : i)) } : p
 }
 
 export interface StageItem {
@@ -81,7 +98,7 @@ export function mergeStageStatus(parts: StageStatus[], ended: boolean): StageSta
   if (parts.includes('failed')) return 'failed'
   if (parts.includes('cancelled')) return 'cancelled'
   if (parts.includes('running')) return 'running'
-  const reached = parts.filter((p) => p !== 'pending' && p !== 'notRun')
+  const reached = parts.filter((p) => !unreachedStage(p))
   if (!reached.length) return parts[0] ?? 'pending'
   // Part of it done, the rest still to come: in progress while the call runs.
   if (reached.length < parts.length) return ended ? (reached.includes('done') ? 'done' : reached[0]) : 'running'

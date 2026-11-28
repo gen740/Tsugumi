@@ -10,7 +10,7 @@ import { app } from '../model/app'
 import { HelperBirds } from './helperBirds'
 import { WritingPanels } from './writingPanel'
 import { Boundary, canvasFor, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
-import { CardNodeData, failedStage, NEW_PORT, Pt, Rect, snapToGrid, Stage, STAGE_INFO, STAGE_STATUS_LABEL, StageItem } from '../model/canvasKit'
+import { CardNodeData, failedStage, markedStages, NEW_PORT, Pt, Rect, snapToGrid, Stage, STAGE_INFO, STAGE_STATUS_LABEL, StageItem } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { CANVAS_ONLY, prefs, ShortcutAction, tip } from '../model/prefs'
 import {
@@ -1004,7 +1004,7 @@ export function cardHoverContent(d: CardNodeData, lines: string[], runId?: strin
   const failed = d.state === D.CardState.failed || d.state === D.CardState.blocked
   return {
     title: d.title, subtitle: KIND_LABEL[d.kind], symbol: d.symbol ?? 'xmark.octagon', lines, status,
-    stages: d.invocation > 0n ? d.stage?.items : undefined, facts,
+    stages: d.invocation > 0n && d.stage ? markedStages(d.stage, d.state).items : undefined, facts,
     problems: d.errors, warnings: d.warnings, failure: failed ? d.failure : undefined,
     openLog: failed ? openLog : undefined,
   }
@@ -1070,7 +1070,7 @@ export function HoverBubble({ content }: { content: BubbleContent }) {
       {content.warnings?.map((p, i) => (
         <div key={'w' + i} className="caption cv-issue" style={{ color: 'var(--orange)' }}><Icon name="exclamationmark.triangle" size={11} /><span className="clamp3">{p}</span></div>
       ))}
-      {content.failure && <div className="caption mono wrap-pre cv-bubble-failure" style={{ color: 'var(--red)' }}>{content.failure}</div>}
+      {content.failure && <div className="caption mono wrap-pre cv-bubble-failure" style={{ color: 'var(--stage-failed)' }}>{content.failure}</div>}
       {content.openLog && <button type="button" className="cv-bubble-link caption" onClick={content.openLog}>{L('ログの該当箇所を開く')}</button>}
     </div>
   )

@@ -1746,7 +1746,7 @@ struct HoverBubble: View {
       if d.stage?.workerReused == true { facts.append(String(localized: "前回の worker を再利用して実行しました")) }
       let failed = d.state == .failed || d.state == .blocked
       return .init(title: d.title, subtitle: d.kind.label, symbol: d.symbol ?? "xmark.octagon", lines: details,
-                   stages: d.invocation > 0 ? d.stage?.items ?? [] : [], facts: facts,
+                   stages: d.invocation > 0 ? d.stage?.marked(d.state).items ?? [] : [], facts: facts,
                    status: status, problems: d.errors, warnings: d.warnings, failure: failed ? d.failure : nil,
                    openLog: failed ? openLog : nil)
     }
@@ -1826,7 +1826,7 @@ struct HoverBubble: View {
           .fixedSize(horizontal: false, vertical: true)
       }
       if let f = content.failure {
-        Text(verbatim: f).font(.caption.monospaced()).foregroundStyle(.red).textSelection(.enabled)
+        Text(verbatim: f).font(.caption.monospaced()).foregroundStyle(StagePalette.failed).textSelection(.enabled)
           .fixedSize(horizontal: false, vertical: true)
       }
       if let open = content.openLog {

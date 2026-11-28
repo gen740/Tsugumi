@@ -2808,12 +2808,12 @@ export const CARD_STATE: Record<number, { label: string; icon: string; color: st
   [D.CardState.ready]: { label: L('実行待ち'), icon: 'hourglass', color: 'orange' },
   [D.CardState.preparing]: { label: L('準備中'), icon: 'gearshape', color: 'orange' },
   [D.CardState.running]: { label: L('実行中'), icon: 'play.circle.fill', color: 'orange' },
-  // Succeeded and failed in the stage colours (statusSymbol.tsx STAGE_COLOR).
+  // Succeeded, failed and blocked in the stage colours (statusSymbol.tsx STAGE_COLOR).
   [D.CardState.succeeded]: { label: L('成功'), icon: 'checkmark.circle.fill', color: 'stage-done' },
   [D.CardState.failed]: { label: L('失敗'), icon: 'xmark.circle.fill', color: 'stage-failed' },
-  [D.CardState.blocked]: { label: L('ブロック'), icon: 'nosign', color: 'purple' },
+  [D.CardState.blocked]: { label: L('ブロック'), icon: 'nosign', color: 'stage-failed' },
   [D.CardState.cancelled]: { label: L('停止済み'), icon: 'stop.circle.fill', color: 'brown' },
-  [D.CardState.skipped]: { label: L('スキップ'), icon: 'arrow.uturn.right.circle', color: 'gray' },
+  [D.CardState.skipped]: { label: L('スキップ'), icon: 'arrow.uturn.right.circle', color: 'secondary' },
 }
 export const cardState = (st: D.CardState) => CARD_STATE[st] ?? { label: L('不明'), icon: 'circle.dotted', color: 'secondary' }
 

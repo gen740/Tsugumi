@@ -427,6 +427,7 @@ import TsugumiTestSupport
   let cases: [(SectionStatus, StageProgress.Status)] = [
     (.pending, .pending), (.waiting, .running), (.running, .running), (.done, .done),
     (.cached, .cached), (.reused, .reused), (.failed, .failed), (.cancelled, .cancelled),
+    (.skipped, .skipped), (.blocked, .blocked),
   ]
   for (section, stage) in cases {
     #expect(section.stage == stage, "\(section)")
@@ -441,7 +442,25 @@ import TsugumiTestSupport
   #expect(Tsugumi_Data_CardState.failed.stageLook! == (.failed, false))
   #expect(Tsugumi_Data_CardState.cancelled.stageLook! == (.cancelled, false))
   #expect(Tsugumi_Data_CardState.notStarted.stageLook! == (.pending, false))
-  #expect(Tsugumi_Data_CardState.skipped.stageLook == nil && Tsugumi_Data_CardState.blocked.stageLook == nil)
+  #expect(Tsugumi_Data_CardState.skipped.stageLook! == (.skipped, false))
+  #expect(Tsugumi_Data_CardState.blocked.stageLook! == (.blocked, false))
+  // Failed and blocked share the deep red; skipped is the pending grey.
+  #expect(StagePalette.color(.blocked) == StagePalette.failed && StagePalette.color(.skipped) == StagePalette.color(.pending))
+  // A skipped or blocked Card's stages that never ran say so, on the face,
+  // in the hover's stage table and in the log's pipeline line and sections.
+  let notRun = StageProgress.notRun(code: true)
+  #expect(notRun.marked(.blocked).items.map(\.status) == [.blocked, .blocked, .blocked])
+  #expect(notRun.marked(.skipped).items.map(\.status) == [.skipped, .skipped, .skipped])
+  #expect(notRun.marked(.failed) == notRun)
+  let partly = StageProgress(items: [.init(stage: .build, status: .done), .init(stage: .execute, status: .notRun),
+                                     .init(stage: .validate, status: .pending)])
+  #expect(partly.marked(.blocked).items.map(\.status) == [.done, .blocked, .blocked])
+  let line = StagePipeline(stages: [.prepare, .evaluate, .build, .execute, .validate, .save], records: [], service: nil,
+                           live: nil, now: 0, cardState: .blocked)
+  #expect(line.steps.allSatisfy { $0.status == .blocked })
+  #expect(SectionStatus(line.section([.execute], ended: true).status) == .blocked)
+  #expect(StagePipeline(stages: [.execute], records: [], service: nil, live: nil, now: 0, cardState: .skipped)
+    .section([.execute], ended: true).status == .skipped)
 }
 
 /// The log's sections follow the pipeline line (the same rule as the Card's

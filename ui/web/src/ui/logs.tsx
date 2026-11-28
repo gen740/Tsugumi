@@ -2,7 +2,7 @@
 // terminal in the project's folder. A Card's log is shown by stage.
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { LOG_READ_BYTES, readLogFile } from '../model/logWindow'
-import { STAGE_INFO, Stage } from '../model/canvasKit'
+import { STAGE_INFO, Stage, unreachedStage } from '../model/canvasKit'
 import { pipelineSection, PipelineStep, StagePipeline, stagePipeline } from '../model/stagePipeline'
 import { useObserve } from '../model/observable'
 import { CardKey, cardState, errorText, executionActivityText, formatDuration, formatMillis, formatShortDuration, key, path, ProjectSession, runState, StageRecord, stageRecords, TimelineEntry } from '../model/session'
@@ -198,7 +198,7 @@ const STAGE_LABEL: Partial<Record<Stage, string>> = {
  *  the running stage does now. */
 export function StagePipelineView({ line, onTap }: { line: StagePipeline; onTap?: (s: Stage) => void }) {
   const step = (st: PipelineStep) => {
-    const reached = st.status !== 'pending' && st.status !== 'notRun'
+    const reached = !unreachedStage(st.status)
     const label = SECTION_STATUS_LABEL[sectionStatus(st.status, st.waiting)]
     return (
       <button key={st.stage} type="button" className={`stage-step${st.status === 'running' ? ' current' : reached ? '' : ' todo'}`}
@@ -289,7 +289,7 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   const cpuMs = live ? live.cpuMs : summaryCpu != null ? Number(summaryCpu) : undefined
   const buildCached = live ? (live.cached ? true : undefined) : info?.record?.summary?.buildCached ?? undefined
   const line = stagePipeline(groups.flatMap((g) => g.stages), stages, service, live, session.coreNow(),
-    live ? live.executionLastActivity : info?.record?.summary?.executionLastActivity, cpuMs, buildCached)
+    live ? live.executionLastActivity : info?.record?.summary?.executionLastActivity, cpuMs, buildCached, state)
   const part = (g: StageGroup) => pipelineSection(line, g.stages, !ongoing)
   const status = (g: StageGroup): SectionStatus => { const p = part(g); return sectionStatus(p.status, p.waiting) }
   const isOpen = (g: StageGroup) => {
@@ -398,7 +398,7 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
             {log.truncatedAt != null && <div className="caption headline stage-notice">{truncationNotice(log.truncatedAt)}</div>}
           </div>
         )}
-        {st === 'failed' && failure && <div className="caption selectable stage-notice stage-failure" style={{ color: 'var(--red)' }}>{failure}</div>}
+        {st === 'failed' && failure && <div className="caption selectable stage-notice stage-failure" style={{ color: 'var(--stage-failed)' }}>{failure}</div>}
       </Fragment>
     )
   }

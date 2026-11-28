@@ -234,7 +234,23 @@ const long = card('a long name of a Card '.repeat(6))
   assert.deepEqual(look(D.CardState.waiting), { status: 'running', waiting: true })
   assert.deepEqual(look(D.CardState.failed), { status: 'failed', waiting: false })
   assert.deepEqual(look(D.CardState.cancelled), { status: 'cancelled', waiting: false })
-  assert.equal(look(D.CardState.skipped), undefined)
+  assert.deepEqual(look(D.CardState.skipped), { status: 'skipped', waiting: false })
+  assert.deepEqual(look(D.CardState.blocked), { status: 'blocked', waiting: false })
+  // Skipped: the grey ring with a slash; blocked: a red ring (not filled) with a thin cross.
+  assert.ok(dot('skipped').includes('cv-dot-skipped') && dot('skipped').includes('var(--secondary)'))
+  const blocked = dot('blocked')
+  assert.ok(blocked.includes('cv-dot-blocked') && blocked.includes('stroke="var(--stage-failed)"') && blocked.includes('fill="var(--control-bg)"'))
+  assert.ok(dot('failed').includes('fill="var(--stage-failed)"'), 'failed stays the filled red disc')
+  for (const section of ['skipped', 'blocked']) assert.ok(renderToStaticMarkup(<StatusSymbol status={section as never} />).includes(`cv-dot-${section}`))
+  assert.ok(renderToStaticMarkup(<CardStateMark state={D.CardState.blocked} size={10} />).includes('cv-dot-blocked'))
+  // A skipped or blocked Card's stages that never ran say so on the face and in the log's pipeline line.
+  const blockedCard = renderToStaticMarkup(<CardNodeView data={{ ...card('x'), state: D.CardState.blocked }} flow="topToBottom" />)
+  assert.equal(blockedCard.split('cv-dot-blocked').length - 1, 3)
+  const blockedLine = stagePipeline([Stage.prepare, Stage.evaluate, Stage.build, Stage.execute], [], undefined, undefined, 0,
+    undefined, undefined, undefined, D.CardState.blocked)
+  assert.ok(blockedLine.steps.every((s) => s.status === 'blocked'))
+  const skippedLine = stagePipeline([Stage.execute], [], undefined, undefined, 0, undefined, undefined, undefined, D.CardState.skipped)
+  assert.equal(skippedLine.steps[0].status, 'skipped')
   assert.ok(renderToStaticMarkup(<CardStateMark state={D.CardState.succeeded} size={10} />).includes('cv-dot-done'))
 }
 

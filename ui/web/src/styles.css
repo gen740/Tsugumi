@@ -23,7 +23,7 @@
   --brown: #a2845e; --gray: #8e8e93; --blue: #007aff; --pink: #ff2d55;
   --note-yellow: #ffcc00; --note-blue: #007aff; --note-green: #34c759; --note-pink: #ff2d55; --note-gray: #8e8e93;
   /* Stage states (Okabe-Ito, colour-blind safe), darker on a light ground. */
-  --stage-done: #0072b2; --stage-reuse: #3d9be0; --stage-run: #c07a00; --stage-failed: #d55e00; --stage-cancelled: #8e8e93;
+  --stage-done: #0072b2; --stage-reuse: #3d9be0; --stage-run: #c07a00; --stage-failed: #c8102e; --stage-cancelled: #8e8e93;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
@@ -46,7 +46,7 @@
   --green: #32d74b; --red: #ff453a; --orange: #ff9f0a; --yellow: #ffd60a; --purple: #bf5af2;
   --brown: #ac8e68; --gray: #98989d; --blue: #0a84ff; --pink: #ff375f;
   --note-yellow: #ffd60a; --note-blue: #0a84ff; --note-green: #32d74b; --note-pink: #ff375f; --note-gray: #98989d;
-  --stage-done: #3d9be0; --stage-reuse: #9bd3f3; --stage-run: #e69f00; --stage-failed: #f2762e; --stage-cancelled: #98989d;
+  --stage-done: #3d9be0; --stage-reuse: #9bd3f3; --stage-run: #e69f00; --stage-failed: #c8102e; --stage-cancelled: #98989d;
   color-scheme: dark;
 }
 
