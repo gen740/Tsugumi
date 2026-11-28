@@ -99,14 +99,16 @@ The page refreshes every five seconds. Anyone who reaches the port sees it witho
 
 ### Administrator
 
-**Log in as administrator** with the worker's administrator password to change things: remove jobs, add and remove host keys, edit and save the settings, and restart the worker. Set the password on the worker; it takes effect at the next login, without a restart:
+**Log in as administrator** to remove jobs, add and remove host keys, save settings, or restart the worker. On the first start, the worker generates a random password and prints it once on standard output, on the `Initial administrator password` line. Keep that output private. Subsequent starts keep the existing password and omit the notice.
+
+To change it, open **Change password** on the dashboard and enter the current password and the new password twice. This signs out all other sessions. You can also set or reset the password from the worker's command line. The new password takes effect at the next login without a restart.
 
 ```sh
 tsugumi-workerd admin-password                 # asks twice on a terminal
 printf '%s\n' "$PASSWORD" | tsugumi-workerd admin-password   # or one line on standard input
 ```
 
-Use 8 to 1024 bytes. The worker keeps only a salted scrypt hash in `STATE/admin-password` (mode 0600). Without that file there is no administrator, and the page stays read-only. After five wrong passwords in a row the login waits 1 minute, then 3, 5 and 30 minutes after each further wrong one, and 30 minutes from then on; a correct login resets the count. A login lasts 12 hours, or until **Log out** or a restart of the worker.
+Use 8 to 1024 bytes. The worker keeps only a salted scrypt hash in `STATE/admin-password` (mode 0600). Wrong passwords at login and in the **Change password** form count toward the same lockout. Both checks pause for 1 minute after five consecutive failures, then for 3, 5 and 30 minutes after further failures. A successful password check resets the count. Each session lasts up to 12 hours and can end earlier on **Log out**, a dashboard password change from another session, or a worker restart.
 
 - **Jobs:** select jobs and remove their data after confirming. Jobs recorded as queued, running or cancelling cannot be selected, and a job whose supervisor holds its lock is never removed. Tsugumi never removes job data by itself.
 - **Hosts:** add or remove a public key in `authorized_keys`. Add the first key by hand on the worker so a host can connect. Removing a key takes effect at the next handshake.

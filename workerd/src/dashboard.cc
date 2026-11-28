@@ -30,7 +30,7 @@ namespace t = schema::t;
 constexpr std::string_view kCookie = "__Host-tsugumi";
 constexpr auto kSessionLife = 12h;
 constexpr size_t kSessions = 64;
-// Waits after the fifth, sixth, seventh and later failed logins in a row.
+// Waits after the fifth, sixth, seventh and later failed checks in a row.
 constexpr std::chrono::minutes kLockouts[] = {1min, 3min, 5min, 30min};
 constexpr unsigned kFreeAttempts = 4;
 
@@ -41,7 +41,7 @@ struct LoginJson {
   t::Bool<"configured"> configured;
   t::Uint64<"locked_seconds"> locked_seconds;
 };
-struct LoginReplyJson {
+struct PasswordErrorJson {
   t::String<"error"> error;
   t::Uint64<"locked_seconds"> locked_seconds;
 };
@@ -252,36 +252,38 @@ auto Dashboard::locked_seconds() -> uint64_t {
       std::chrono::ceil<std::chrono::seconds>(locked_until_ - now).count());
 }
 
-auto Dashboard::login(std::string_view given) -> HTTP::Reply {
+auto Dashboard::verify_password(std::string_view given)
+    -> std::optional<HTTP::Reply> {
+  if (const auto wait = locked_seconds()) {
+    PasswordErrorJson result;
+    *result.error = "locked";
+    *result.locked_seconds = wait;
+    return Json(schema::encode(result), 429);
+  }
   const auto stored = fs::read_file(root_ / "admin-password");
   if (!stored) return ErrorReply(403, "not_configured");
-  {
-    std::lock_guard guard(mutex_);
-    if (const auto wait = locked_seconds()) {
-      LoginReplyJson result;
-      *result.error = "locked";
-      *result.locked_seconds = wait;
-      return Json(schema::encode(result), 429);
-    }
-  }
-  auto hash = *stored;
+  std::string_view hash = *stored;
   while (!hash.empty() && (hash.back() == '\n' || hash.back() == '\r'))
-    hash.pop_back();
-  const bool matches = tsugumi::password::Verify(hash, given);
-  std::lock_guard guard(mutex_);
-  if (!matches) {
+    hash.remove_suffix(1);
+  if (!tsugumi::password::Verify(hash, given)) {
     if (++failures_ > kFreeAttempts) {
       const auto step = std::min<size_t>(failures_ - kFreeAttempts - 1,
                                          std::size(kLockouts) - 1);
       locked_until_ = Clock::now() + kLockouts[step];
     }
-    LoginReplyJson result;
+    PasswordErrorJson result;
     *result.error = "wrong_password";
     *result.locked_seconds = locked_seconds();
     return Json(schema::encode(result), 401);
   }
   failures_ = 0;
   locked_until_ = {};
+  return std::nullopt;
+}
+
+auto Dashboard::login(std::string_view given) -> HTTP::Reply {
+  std::lock_guard guard(mutex_);
+  if (auto error = verify_password(given)) return std::move(*error);
   const auto now = Clock::now();
   std::erase_if(sessions_,
                 [&](const auto& item) { return item.second.expires <= now; });
@@ -298,6 +300,22 @@ auto Dashboard::login(std::string_view given) -> HTTP::Reply {
       "; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=" +
       std::to_string(std::chrono::seconds(kSessionLife).count()));
   return reply;
+}
+
+auto Dashboard::change_password(const Session& admin, std::string_view current,
+                                std::string_view next,
+                                std::string_view confirmation) -> HTTP::Reply {
+  // Serialize with CLI resets across the read, verification and replacement.
+  const auto lock = fs::FileLock::acquire(root_ / "admin-password.lock");
+  if (auto error = verify_password(current)) return std::move(*error);
+  if (next.size() < 8 || next.size() > 1024)
+    return ErrorReply(400, "password_length");
+  if (next != confirmation) return ErrorReply(400, "password_mismatch");
+  fs::write_atomic(root_ / "admin-password",
+                   tsugumi::password::Hash(next) + "\n", 0600);
+  std::erase_if(sessions_,
+                [&](const auto& item) { return &item.second != &admin; });
+  return Json("{}");
 }
 
 auto Dashboard::disk() -> std::array<uint64_t, 4> {
@@ -485,6 +503,15 @@ auto Dashboard::handle(const HTTP::Request& request) -> HTTP::Reply {
   if (!admin) return ErrorReply(401, "Log in as the administrator");
   if (Header(request, "x-tsugumi-csrf") != admin->csrf)
     return ErrorReply(403, "The page's session token does not match");
+  if (path == "/api/password") {
+    schema::v::String current, next, confirmation;
+    if (object["/current_password"].decode_into(current) ||
+        object["/new_password"].decode_into(next) ||
+        object["/confirm_password"].decode_into(confirmation))
+      return ErrorReply(400, "Enter the current and new passwords");
+    return change_password(*admin, current.value(), next.value(),
+                           confirmation.value());
+  }
   guard.unlock();
 
   if (path == "/api/jobs/remove") {

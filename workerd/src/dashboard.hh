@@ -1,6 +1,5 @@
 // The worker's dashboard: an HTTPS page on its own port. Anyone who reaches
-// the port sees the worker's state; an administrator who logs in with the
-// password set by `tsugumi-workerd admin-password` can change it.
+// the port sees the worker's state. A logged-in administrator can change it.
 #pragma once
 
 #include <array>
@@ -10,6 +9,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -53,6 +53,12 @@ class Dashboard {
   auto session(const dashboard_http::Request& request) -> const Session*;
   auto state(const Session* admin) -> std::string;
   auto login(std::string_view password) -> dashboard_http::Reply;
+  // Called with mutex_ held so verification and its effects are serialized.
+  auto verify_password(std::string_view password)
+      -> std::optional<dashboard_http::Reply>;
+  auto change_password(const Session& admin, std::string_view current,
+                       std::string_view next, std::string_view confirmation)
+      -> dashboard_http::Reply;
   auto locked_seconds() -> uint64_t;
   auto edit_key(std::string_view key, bool add) -> void;
   auto disk() -> std::array<uint64_t, 4>;

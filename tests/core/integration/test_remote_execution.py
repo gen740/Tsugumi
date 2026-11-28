@@ -147,7 +147,8 @@ def remote_daemon(tmp_path, request, remote_store_seed):
         ready = state / "worker.ready"
         ready.unlink(missing_ok=True)
         with daemon_log.open("ab") as log:
-            process = subprocess.Popen(command, env=env, stdout=log, stderr=log)
+            # Standard output can contain the dashboard's initial password.
+            process = subprocess.Popen(command, env=env, stdout=subprocess.DEVNULL, stderr=log)
         published = process_file(process, ready)
         if published is None:
             raise RuntimeError(daemon_log.read_text())

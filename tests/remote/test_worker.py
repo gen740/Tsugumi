@@ -10,6 +10,7 @@ import http.client
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import ssl
@@ -79,6 +80,7 @@ class Worker:
         self.own_signing_key = ""
         try:
             self.start()
+            self.initial_password = self.startup_output.partition("Initial administrator password: ")[2].split("\n", 1)[0]
             self.caps = self.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False).body
             self.instance = self.call(R.RequestBody.ProbeRequest, R.ProbeRequestT()).body.instanceId
         except BaseException:
@@ -89,10 +91,13 @@ class Worker:
         self.log = (self.root / "worker.log").open("ab")
         ready = self.state / "worker.ready"
         ready.unlink(missing_ok=True)
-        self.process = subprocess.Popen(self.command, env=self.env, stdout=self.log, stderr=self.log)
+        self.process = subprocess.Popen(self.command, env=self.env, stdout=subprocess.PIPE, stderr=self.log)
         published = process_file(self.process, ready)
         if published is None:
             raise RuntimeError((self.root / "worker.log").read_text())
+        # The notice is flushed before readiness. Keep it in memory.
+        os.set_blocking(self.process.stdout.fileno(), False)
+        self.startup_output = (self.process.stdout.read() or b"").decode()
         ready = WorkerReady.GetRootAs(published.read_bytes())
         self.port, self.dashboard_port = ready.Port(), ready.DashboardPort()
         # Reconnect scenarios deliberately keep the same real endpoints.
@@ -107,15 +112,17 @@ class Worker:
         self.settings_file.chmod(0o600)
 
     def close(self):
-        if self.process and self.process.poll() is None:
-            self.process.terminate()
-            self.process.wait()
+        if self.process:
+            if self.process.poll() is None:
+                self.process.terminate()
+                self.process.wait()
+            self.process.stdout.close()
         self.log.close()
 
     def restart(self):
         self.process.kill()
         self.process.wait()
-        self.log.close()
+        self.close()
         self.start()
 
     def journal(self, job):
@@ -195,10 +202,10 @@ class Worker:
         subprocess.run([self.command[0], "admin-password", "--state-dir", str(self.state)],
                        input=password + "\n", text=True, check=True, capture_output=True)
 
-    def login(self, password=ADMIN_PASSWORD):
+    def login(self, password=None):
         """An administrator session: the cookie and the page's CSRF token."""
-        if not (self.state / "admin-password").exists():
-            self.set_password(password)
+        if password is None:
+            password = self.initial_password
         status, reply = self.page("/api/login", body={"password": password})
         assert status == 200, reply
         cookie = self.last_headers["Set-Cookie"].split(";")[0]
@@ -1630,9 +1637,7 @@ def test_jobs_command_lists_and_removes_only_chosen_jobs(worker):
         worker.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprint), job=job)
     worker.call(R.RequestBody.ReleaseRequest, R.ReleaseRequestT(fingerprint=fingerprint), job=released)
     # Queued and running records need a listener that does not act on them.
-    worker.process.terminate()
-    worker.process.wait()
-    worker.log.close()
+    worker.close()
     project = worker.state / "projects" / worker.scope
     queued, running = "d" * 64, "e" * 64
     for job, state in ((queued, R.JobState.Queued), (running, R.JobState.Running)):
@@ -1694,6 +1699,11 @@ def test_dashboard_is_https_with_its_own_pinned_certificate(worker):
     assert worker.last_headers["Cache-Control"] == "no-store"
     assert '<html lang="ja">' in worker.page("/", headers={"Accept-Language": "ja,en;q=0.8"})[1]
     assert '<html lang="ja">' in worker.page("/?lang=ja")[1]
+    assert 'id="password-edit" hidden' in html
+    for autocomplete in ('current-password', 'new-password'):
+        assert f'autocomplete="{autocomplete}" required' in html
+    for text in ("Change password", "Current password", "New password", "Confirm new password"):
+        assert text in html
     # Hosts learn the certificate over the pinned mutual TLS link.
     probe = worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False).body
     assert probe.dashboardPort == worker.dashboard_port
@@ -1716,7 +1726,7 @@ def test_guest_sees_state_without_secrets(worker):
     worker.upload(job, b"staged input")
     status, state = worker.page("/api/state")
     assert status == 200 and state["role"] == "guest" and state["csrf"] == ""
-    assert state["login"] == {"configured": False, "locked_seconds": 0}
+    assert state["login"] == {"configured": True, "locked_seconds": 0}
     assert state["worker"]["contract"] == R.WORKER_CONTRACT
     assert state["worker"]["version"] == (Path(__file__).parents[2] / "VERSION").read_text().strip()
     assert state["worker"]["listen"] == f"tls://127.0.0.1:{worker.port}"
@@ -1733,7 +1743,40 @@ def test_guest_sees_state_without_secrets(worker):
     [host] = state["hosts"]
     assert host["key"] == TLS.public_key(worker.identity) and host["comment"] == "test host"
     assert host["last_seen"].endswith("Z")
-    assert ADMIN_PASSWORD not in json.dumps(state)
+    assert worker.initial_password not in json.dumps(state)
+
+
+def test_initial_admin_password_is_printed_once_and_only_stored_as_a_hash(worker):
+    initial = worker.initial_password
+    assert re.fullmatch(r"[2-9A-HJ-NP-Z]{20}", initial)
+    assert worker.startup_output.splitlines() == [
+        f"Initial administrator password: {initial}",
+        "Change it on the dashboard or with tsugumi-workerd admin-password.",
+    ]
+    stored = worker.state / "admin-password"
+    assert stored.stat().st_mode & 0o777 == 0o600
+    original = stored.read_text()
+    algorithm, log_n, r, p, salt, key = original.strip().split("$")
+    assert (algorithm, log_n, r, p) == ("scrypt", "15", "8", "1")
+    assert len(salt) == 32 and len(key) == 64
+    for file in worker.state.rglob("*"):
+        if file.is_file():
+            assert initial.encode() not in file.read_bytes(), file
+    worker.login(initial)
+    worker.restart()
+    assert worker.startup_output == ""
+    assert stored.read_text() == original
+    worker.login(initial)
+
+
+def test_admin_password_cli_replaces_the_generated_password(worker):
+    stored = worker.state / "admin-password"
+    salt = stored.read_text().split("$")[4]
+    worker.set_password()
+    assert stored.read_text().split("$")[4] != salt
+    assert ADMIN_PASSWORD not in stored.read_text()
+    assert worker.page("/api/login", body={"password": worker.initial_password})[0] == 401
+    worker.login(ADMIN_PASSWORD)
 
 
 def test_changes_need_an_administrator_session(worker):
@@ -1746,28 +1789,15 @@ def test_changes_need_an_administrator_session(worker):
                                        "dashboard_port": 2, "max_jobs": 1, "nix_max_jobs": 0,
                                        "nix_cores": 0, "pull_caches": []}},
         "/api/restart": {"mode": "now"},
+        "/api/password": {"current_password": worker.initial_password, "new_password": ADMIN_PASSWORD,
+                          "confirm_password": ADMIN_PASSWORD},
     }
     keys, settings = worker.authorized.read_bytes(), worker.settings_file.read_bytes()
     for path, body in changes.items():
         assert worker.page(path, body=body)[0] == 401, path
-    # Without a password there is no administrator.
-    status, reply = worker.page("/api/login", body={"password": ADMIN_PASSWORD})
-    assert status == 403 and reply["error"] == "not_configured"
-
-    worker.set_password()
-    stored = (worker.state / "admin-password")
-    assert stored.stat().st_mode & 0o777 == 0o600
-    algorithm, log_n, r, p, salt, key = stored.read_text().strip().split("$")
-    assert algorithm == "scrypt" and len(salt) == 32 and len(key) == 64
-    assert ADMIN_PASSWORD not in stored.read_text()
-    for file in worker.state.rglob("*"):
-        if file.is_file():
-            assert ADMIN_PASSWORD.encode() not in file.read_bytes(), file
-    worker.set_password()
-    assert stored.read_text().split("$")[4] != salt, "a new hash takes a fresh salt"
-
     session = worker.login()
-    status, _ = worker.page("/api/login", body={"password": ADMIN_PASSWORD})
+    status, _ = worker.page("/api/login", body={"password": worker.initial_password})
+    assert status == 200
     worker_cookie = worker.last_headers["Set-Cookie"]
     assert worker_cookie.startswith("__Host-tsugumi=")
     for attribute in ("Path=/", "Secure", "HttpOnly", "SameSite=Strict", "Max-Age="):
@@ -1795,18 +1825,53 @@ def test_changes_need_an_administrator_session(worker):
     assert worker.page("/api/state", session=session)[1]["role"] == "guest"
 
 
-def test_login_failures_lock_the_login(worker):
-    worker.set_password()
-    for _ in range(4):
-        status, reply = worker.page("/api/login", body={"password": "wrong password"})
+def test_dashboard_changes_the_password_and_ends_other_sessions(worker):
+    session, other = worker.login(), worker.login()
+    path = "/api/password"
+    body = {"current_password": worker.initial_password, "new_password": ADMIN_PASSWORD,
+            "confirm_password": ADMIN_PASSWORD}
+    assert worker.page(path, body=body, session={**session, "csrf": ""})[0] == 403
+    assert worker.page(path, body=body, session=session, headers={"Origin": "https://other.example"})[0] == 403
+    assert worker.page(path, body={**body, "confirm_password": "different"}, session=session) == (
+        400, {"error": "password_mismatch"})
+    for short_or_long in ("é" * 3, "é" * 513):
+        assert worker.page(path, body={**body, "new_password": short_or_long,
+                                       "confirm_password": short_or_long}, session=session) == (
+            400, {"error": "password_length"})
+    stored = worker.state / "admin-password"
+    salt = stored.read_text().split("$")[4]
+    assert worker.admin(path, body, session) == (200, {})
+    assert stored.read_text().split("$")[4] != salt
+    assert ADMIN_PASSWORD not in stored.read_text()
+    assert worker.page("/api/state", session=session)[1]["role"] == "admin"
+    assert worker.page("/api/state", session=other)[1]["role"] == "guest"
+    assert worker.admin(path, body, other)[0] == 401
+    assert worker.page("/api/login", body={"password": worker.initial_password})[0] == 401
+    worker.login(ADMIN_PASSWORD)
+
+
+@pytest.mark.parametrize("change_attempts", [False, True], ids=["login", "shared"])
+def test_wrong_passwords_lock_both_password_checks(worker, change_attempts):
+    session = worker.login()
+    login = {"password": "wrong password"}
+    change = {"current_password": "wrong password", "new_password": ADMIN_PASSWORD,
+              "confirm_password": ADMIN_PASSWORD}
+    for i in range(4):
+        if change_attempts and i % 2 == 0:
+            status, reply = worker.admin("/api/password", change, session)
+        else:
+            status, reply = worker.page("/api/login", body=login)
         assert status == 401 and reply == {"error": "wrong_password", "locked_seconds": 0}
-    status, reply = worker.page("/api/login", body={"password": "wrong password"})
+    status, reply = (worker.admin("/api/password", change, session) if change_attempts
+                     else worker.page("/api/login", body=login))
     assert status == 401 and reply["error"] == "wrong_password" and 55 <= reply["locked_seconds"] <= 60
     # While locked even the right password is not checked.
-    status, reply = worker.page("/api/login", body={"password": ADMIN_PASSWORD})
+    status, reply = worker.page("/api/login", body={"password": worker.initial_password})
     assert status == 429 and reply["error"] == "locked" and reply["locked_seconds"] > 0
     assert worker.page("/api/state")[1]["login"]["locked_seconds"] > 0
     assert "Set-Cookie" not in worker.last_headers
+    status, reply = worker.admin("/api/password", {**change, "current_password": worker.initial_password}, session)
+    assert status == 429 and reply["error"] == "locked" and reply["locked_seconds"] > 0
 
 
 def test_administrator_removes_jobs_like_the_cli(worker):

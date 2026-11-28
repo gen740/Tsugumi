@@ -87,6 +87,17 @@
     <div class="field admin-only" id="add-host"><label for="host-key" data-l="ホストの公開鍵を追加"></label>
       <div class="pair"><input id="host-key" type="text" maxlength="128" autocomplete="off" spellcheck="false" placeholder="ed25519:…"><button type="button" class="btn" id="add-key" disabled data-l="追加"></button></div></div>
   </section>
+  <section class="wide" id="password-edit" hidden aria-labelledby="password-edit-title">
+    <form id="password-edit-form">
+      <div class="section-header">
+        <h2 id="password-edit-title" data-l="パスワードを変更"></h2>
+        <button type="submit" class="btn primary" id="password-edit-submit" disabled data-l="変更する"></button>
+      </div>
+      <div class="field"><label for="current-password" data-l="現在のパスワード"></label><input id="current-password" type="password" autocomplete="current-password" required></div>
+      <div class="field"><label for="new-password" data-l="新しいパスワード"></label><input id="new-password" type="password" autocomplete="new-password" required></div>
+      <div class="field"><label for="confirm-password" data-l="新しいパスワード（確認）"></label><input id="confirm-password" type="password" autocomplete="new-password" required></div>
+    </form>
+  </section>
 </main>
 <div class="overlay" id="login" hidden>
   <form class="card" id="login-form">

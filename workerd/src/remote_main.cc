@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <openssl/rand.h>
 #include <poll.h>
 #include <signal.h>
 #include <spawn.h>
@@ -14,13 +15,14 @@
 #include <sys/stat.h>
 #include <sys/statfs.h>
 #include <sys/syscall.h>
-#include <termios.h>
 #include <sys/un.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -1462,10 +1464,30 @@ auto admin_password_main(stdfs::path root, std::span<char*> args) -> int {
   const auto chosen = read_password();
   if (chosen.size() < 8 || chosen.size() > 1024)
     throw std::runtime_error("use a password of 8 to 1024 bytes");
+  const auto lock = fs::FileLock::acquire(root / "admin-password.lock");
   fs::write_atomic(root / "admin-password",
                    tsugumi::password::Hash(chosen) + "\n", 0600);
   std::cout << "The administrator password is set. Log in on the dashboard.\n";
   return 0;
+}
+auto initialize_admin_password(const stdfs::path& root) -> void {
+  const auto lock = fs::FileLock::acquire(root / "admin-password.lock");
+  const auto path = root / "admin-password";
+  if (stdfs::exists(path)) return;
+
+  constexpr std::string_view kAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+  static_assert(kAlphabet.size() == 32);
+  std::array<unsigned char, 20> random{};
+  if (RAND_bytes(random.data(), static_cast<int>(random.size())) != 1)
+    throw std::runtime_error(
+        "cannot generate the initial administrator password");
+  std::string initial;
+  for (const auto byte : random) initial += kAlphabet[byte % kAlphabet.size()];
+  fs::write_atomic(path, tsugumi::password::Hash(initial) + "\n", 0600);
+  std::cout
+      << "Initial administrator password: " << initial << '\n'
+      << "Change it on the dashboard or with tsugumi-workerd admin-password.\n"
+      << std::flush;
 }
 // Returns true when the dashboard asked the listener to start again.
 auto run(Config config) -> bool {
@@ -1511,6 +1533,7 @@ auto run(Config config) -> bool {
   ::signal(SIGINT, stop);
   ::signal(SIGPIPE, SIG_IGN);
   daemon.recover();
+  initialize_admin_password(config.root);
   Tsugumi::RemoteWorker::WorkerReadyT ready;
   ready.port = port;
   ready.pid = static_cast<uint64_t>(::getpid());

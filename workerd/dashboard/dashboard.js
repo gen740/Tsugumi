@@ -92,6 +92,13 @@ async function change(path, body, done) {
   report(L("処理中…"))
   try {
     const { status, data } = await call(path, body)
+    if (path === '/api/password' && status !== 200) {
+      const message = passwordError(data)
+      if (message) {
+        report(message, true)
+        return
+      }
+    }
     if (status === 401) {
       report(L("ログインの有効期限が切れました。もう一度ログインしてください。"), true)
       await refresh()
@@ -108,6 +115,17 @@ async function change(path, body, done) {
   }
 }
 
+function passwordError({ error, locked_seconds }) {
+  if (locked_seconds > 0)
+    return L("あと {0} 分でパスワードを確認できます", Math.ceil(locked_seconds / 60))
+  switch (error) {
+    case 'wrong_password': return L("現在のパスワードが違います。")
+    case 'password_length': return L("8〜1024 バイトのパスワードを入力してください。")
+    case 'password_mismatch': return L("新しいパスワードが一致しません。")
+    case 'not_configured': return L("管理者パスワードが設定されていません")
+  }
+}
+
 function controls() {
   const allowed = admin() && !busy
   $('remove-jobs').disabled = !allowed || !selected.size
@@ -115,6 +133,7 @@ function controls() {
   $('save-settings').disabled = !allowed || !dirty
   $('add-key').disabled = !allowed || !$('host-key').value.trim()
   $('add-cache').disabled = !allowed || !$('cache-url').value.trim() || !$('cache-key').value.trim()
+  $('password-edit-submit').disabled = !allowed
   for (const input of $('jobs').querySelectorAll('input'))
     input.disabled = !allowed || input.dataset.active === '1' || (!input.checked && selected.size >= 256)
 }
@@ -132,6 +151,8 @@ function renderHeader(data) {
   $('login-open').hidden = admin()
   $('restart-open').hidden = !admin()
   $('logout').hidden = !admin()
+  $('password-edit').hidden = !admin()
+  if (!admin()) $('password-edit-form').reset()
   $('notice').hidden = !worker.restart_pending
   $('notice').textContent = L("実行中のジョブが終わると再起動します。新しいジョブはそれまで始まりません。")
   $('login-title').textContent = L("{0} の管理者ログイン", worker.name)
@@ -360,6 +381,19 @@ $('login-form').addEventListener('submit', async event => {
   }
 })
 $('logout').addEventListener('click', () => void change('/api/logout', {}))
+$('password-edit-form').addEventListener('submit', event => {
+  event.preventDefault()
+  if ($('password-edit-submit').disabled) return
+  const body = {
+    current_password: $('current-password').value,
+    new_password: $('new-password').value,
+    confirm_password: $('confirm-password').value,
+  }
+  event.currentTarget.reset()
+  void change('/api/password', body, () => {
+    report(L("パスワードを変更し、他のセッションをログアウトしました。"))
+  })
+})
 $('restart-open').addEventListener('click', () => {
   const running = current.worker.running
   ask(L("{0} を再起動しますか", current.worker.name),
