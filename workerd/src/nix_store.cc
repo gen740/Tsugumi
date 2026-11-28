@@ -124,10 +124,16 @@ auto OpenWorkerStore(const std::filesystem::path& store_root,
 auto RemoteWorkerStore::realise(
     const DerivationClosureTransport& transport,
     const workerd::R::CacheSettingsT& caches, CacheRelay::Exchange relay,
-    const std::filesystem::path& store_root, const WorkerDerivation& derivation,
+    const std::filesystem::path& store_root,
+    const workerd::NixBuildLimits& limits, const WorkerDerivation& derivation,
     const std::function<void(const std::string&)>& log, uint64_t timeout_ms,
     const StoreProgress& progress) -> WorkerStoreResult {
   nix::initLibStore(true);
+  // The worker's settings override the machine's nix.conf for this build.
+  if (!limits.max_jobs.empty())
+    nix::settings.getWorkerSettings().maxBuildJobs.set(limits.max_jobs, false);
+  if (!limits.cores.empty())
+    nix::settings.getLocalSettings().buildCores.set(limits.cores, false);
   const auto netrc = ConfigurePulls(caches);
   std::mutex provenance;
   std::string substituted_from;

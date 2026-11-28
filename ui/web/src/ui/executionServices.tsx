@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
-import { L } from '../i18n'
+import { L, language } from '../i18n'
 import * as H from '../../shared/gen/tsugumi/host'
 import { hostCall } from '../wire/host'
 import { s } from '../wire/rpc'
 import { errorText } from '../model/session'
 import { Button, Form, Row, Section, Spinner, TextField, Value } from './controls'
-import { WorkerDashboard } from './workerDashboard'
 
 const executionServices = (type: H.RequestPayload, value: H.RequestT['value']) =>
   hostCall<H.ExecutionServicesT>(type, value, H.ReplyPayload.ExecutionServices)
@@ -17,13 +16,21 @@ const registration = (entry: H.ExecutionServiceT): Registration => ({
   workerPublicKey: s(entry.workerPublicKey),
 })
 
+/** The worker's own HTTPS dashboard, in the UI language. The browser opens it in a
+ * tab of its own: its certificate is self-signed, so the browser asks to trust it
+ * once; compare it with the fingerprint shown here and in the worker's log. */
+const dashboardUrl = (entry: H.ExecutionServiceT) => {
+  const url = s(entry.capabilities?.dashboardUrl)
+  return url.startsWith('https://') ? `${url}?lang=${language()}` : ''
+}
+const fingerprint = (sha256: string) => sha256.toUpperCase().match(/../g)?.join(':') ?? ''
+
 /** How the list shows a service: its name, and its id only when the two differ. */
 export const serviceLabel = (name: string, id: string) => !name || name === id ? id : `${name} (${id})`
 
 export function ExecutionServicesSettings({ changed }: { changed: () => void }) {
   const [hostPublicKey, setHostPublicKey] = useState('')
   function adopt(state: H.ExecutionServicesT) { setEntries(state.services); setHostPublicKey(s(state.hostPublicKey)) }
-  const [dashboard, setDashboard] = useState<Registration>()
   const [entries, setEntries] = useState<H.ExecutionServiceT[]>([])
   const [edit, setEdit] = useState<Registration>()
   const [original, setOriginal] = useState<string>()
@@ -64,8 +71,6 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
   const caps = sameEndpoint && saved.capabilities?.serverId ? saved.capabilities : undefined
   const valid = !!edit && [edit.id, edit.name, ...(edit.id === 'local' ? [] : [edit.endpoint, edit.workerPublicKey])].every((value) => value.trim())
 
-  if (dashboard) return <WorkerDashboard key={dashboard.id} id={dashboard.id} name={dashboard.name} close={() => setDashboard(undefined)} />
-
   return <Form>
     <Section title={L('このホストの公開鍵')} info={L('ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。')}>
       <Row><code className="selectable">{hostPublicKey}</code>
@@ -76,8 +81,8 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
         <Button kind="borderless" disabled={busy} onClick={() => choose(registration(entry), s(entry.id))}>{serviceLabel(s(entry.name), s(entry.id))}</Button>
         <span className="secondary">{s(entry.capabilities!.nativeSystem)}</span>
         <Button small disabled={busy} onClick={() => remeasure(s(entry.id))}>{L('測り直す')}</Button>
-        {s(entry.id) !== 'local' && entry.capabilities?.serverId &&
-          <Button small disabled={busy} onClick={() => setDashboard(registration(entry))}>{L('ダッシュボードを開く')}</Button>}
+        {s(entry.id) !== 'local' && dashboardUrl(entry) &&
+          <Button small disabled={busy} onClick={() => window.open(dashboardUrl(entry), '_blank', 'noopener,noreferrer')}>{L('ダッシュボードを開く')}</Button>}
       </Row>)}
       <Row><Button disabled={busy} onClick={() => remeasure(null)}>{L('すべて測り直す')}</Button></Row>
       <Row><Button icon="plus" disabled={busy} onClick={() => choose({ id: '', name: '', endpoint: '', workerPublicKey: '' })}>{L('実行サービスを追加')}</Button></Row>
@@ -92,6 +97,9 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
         <TextField value={edit.workerPublicKey} mono disabled={busy || edit.id === 'local'} onChange={(value) => update('workerPublicKey', value)} />
       </Row>
       {caps && <>
+        {s(caps.workerLabel) && <Value label={L('ワーカーの表示名')} value={s(caps.workerLabel)} />}
+        {s(caps.dashboardCertificateSha256) && <Value label={L('ダッシュボードの証明書（SHA-256）')}
+          value={fingerprint(s(caps.dashboardCertificateSha256))} />}
         <Value label={L('CPU アーキテクチャ')} value={caps.systems.join(', ')} />
         <Value label={L('隔離方式')} value={L('PID 名前空間')} />
         <Value label={L('CPU とメモリの上限')} value={caps.resourceLimits ? L('対応') : L('非対応')} />

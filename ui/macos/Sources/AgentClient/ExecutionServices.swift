@@ -9,6 +9,12 @@ public struct ExecutionServiceCapabilities: Codable, Equatable, Sendable {
   public let resourceLimits: Bool
   public let maxConcurrentJobs: Int
   public let workerContract: Int
+  /// The display name from the worker's own settings; empty when unset.
+  public var workerLabel: String = ""
+  /// The worker's HTTPS dashboard and the SHA-256 of its certificate, which
+  /// the dashboard view pins. Empty before the worker is verified.
+  public var dashboardURL: String = ""
+  public var dashboardCertificateSHA256: String = ""
 }
 
 public struct ExecutionProbeMeasurement: Codable, Equatable, Sendable {
@@ -71,18 +77,6 @@ public enum ExecutionServices {
     let reply: Tsugumi_Host_ExecutionServicesT = try await CoreHostClient.shared.hostCall(.executionserviceremoverequest, request)
     return state(reply)
   }
-  public static func dashboard(_ id: String, operation: Tsugumi_Host_WorkerDashboardOperation,
-                               language: String? = nil, generation: String? = nil, body: String? = nil)
-    async throws -> Tsugumi_Host_WorkerDashboardReplyT {
-    let request = Tsugumi_Host_WorkerDashboardRequestT()
-    request.id = id
-    request.operation = operation
-    request.language = language
-    request.generation = generation
-    request.body = body
-    return try await CoreHostClient.shared.hostCall(.workerdashboardrequest, request, timeout: .seconds(35))
-  }
-
   private static func state(_ value: Tsugumi_Host_ExecutionServicesT) -> ExecutionServicesState {
     ExecutionServicesState(services: value.services.compactMap { service in
       guard let service else { return nil }
@@ -93,7 +87,9 @@ public enum ExecutionServices {
         },
         capabilities: ExecutionServiceCapabilities(serverId: c.serverId, nativeSystem: c.nativeSystem,
           systems: c.systems.compactMap { $0 }, isolation: c.isolation ?? "", resourceLimits: c.resourceLimits,
-          maxConcurrentJobs: Int(c.maxConcurrentJobs), workerContract: Int(c.workerContract)))
+          maxConcurrentJobs: Int(c.maxConcurrentJobs), workerContract: Int(c.workerContract),
+          workerLabel: c.workerLabel ?? "", dashboardURL: c.dashboardUrl ?? "",
+          dashboardCertificateSHA256: c.dashboardCertificateSha256 ?? ""))
     }, hostPublicKey: value.hostPublicKey)
   }
 }

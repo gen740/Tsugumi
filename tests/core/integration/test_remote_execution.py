@@ -126,8 +126,16 @@ def remote_daemon(tmp_path, request, remote_store_seed):
     # which under pytest's temporary folder can exceed the socket path limit.
     sockets = tempfile.TemporaryDirectory(prefix="w-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))
     request.addfinalizer(sockets.cleanup)
-    command = [binary, "--host", "127.0.0.1", "--port", str(port),
-               "--socket", str(Path(sockets.name) / "w.sock"),
+    settings = state / "settings.json"
+
+    def write_settings():
+        settings.write_text(json.dumps({
+            "name": "", "listen_address": "127.0.0.1", "port": port, "dashboard_port": 0,
+            "max_jobs": 8, "nix_max_jobs": 0, "nix_cores": 0, "pull_caches": []}))
+        settings.chmod(0o600)
+
+    write_settings()
+    command = [binary, "--socket", str(Path(sockets.name) / "w.sock"),
                *getattr(request, "param", ())]
     key_file = tmp_path / "worker-public-key"
     key_file.write_bytes(subprocess.check_output([binary, "--public-key"], env=env))
@@ -144,7 +152,8 @@ def remote_daemon(tmp_path, request, remote_store_seed):
         if published is None:
             raise RuntimeError(daemon_log.read_text())
         port = WorkerReady.GetRootAs(published.read_bytes()).Port()
-        command[command.index("--port") + 1] = str(port)
+        # A restart keeps the same real endpoint.
+        write_settings()
 
     def restart():
         process.kill()

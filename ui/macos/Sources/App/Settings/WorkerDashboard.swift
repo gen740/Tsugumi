@@ -1,12 +1,14 @@
+import CryptoKit
 import SwiftUI
 import TsugumiAgentClient
-import TsugumiRPC
 import WebKit
 
+/// The worker's own dashboard page, loaded from its HTTPS listener. The
+/// certificate is self-signed: the view trusts exactly the certificate whose
+/// SHA-256 the worker reported over the host's pinned connection.
 struct WorkerDashboard: View {
   let service: ExecutionServiceConnection
   let close: () -> Void
-  @State private var page: Tsugumi_Host_WorkerDashboardReplyT?
   @State private var problem: String?
 
   var body: some View {
@@ -21,117 +23,88 @@ struct WorkerDashboard: View {
         Text("ワーカーのダッシュボードを読み込めません: \(problem)")
           .foregroundStyle(.secondary).textSelection(.enabled)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
-      } else if let page {
-        DashboardWebView(id: service.id, generation: page.generation, html: page.body) { problem = $0 }
+      } else if let url = Self.url(service) {
+        DashboardWebView(url: url, certificate: service.capabilities.dashboardCertificateSHA256) { problem = $0 }
       } else {
-        ProgressView("ダッシュボードを読み込み中…")
+        Text("ワーカーのダッシュボードを読み込めません: \(service.capabilities.dashboardURL)")
+          .foregroundStyle(.secondary).textSelection(.enabled)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
-    .task {
-      do {
-        page = try await ExecutionServices.dashboard(service.id, operation: .page,
-          language: AppPreferences.Language.running.rawValue)
-      } catch {
-        problem = error.localizedDescription
-      }
-    }
+  }
+
+  static func url(_ service: ExecutionServiceConnection) -> URL? {
+    guard var parts = URLComponents(string: service.capabilities.dashboardURL), parts.scheme == "https",
+          service.capabilities.dashboardCertificateSHA256.count == 64 else { return nil }
+    parts.queryItems = [URLQueryItem(name: "lang", value: AppPreferences.Language.running.rawValue)]
+    return parts.url
   }
 }
 
 private struct DashboardWebView: NSViewRepresentable {
-  static let bridge = "workerDashboard"
-  static let policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
-
-  let id: String
-  let generation: String
-  let html: String
+  let url: URL
+  let certificate: String
   let report: (String) -> Void
 
-  func makeCoordinator() -> Coordinator { Coordinator(id: id, generation: generation) }
+  func makeCoordinator() -> Coordinator { Coordinator(url: url, certificate: certificate, report: report) }
 
   func makeNSView(context: Context) -> WKWebView {
     let configuration = WKWebViewConfiguration()
+    // The session cookie lives only as long as this view.
     configuration.websiteDataStore = .nonPersistent()
-    let coordinator = context.coordinator
-    configuration.userContentController.addScriptMessageHandler(coordinator, contentWorld: .page, name: Self.bridge)
-
     let view = WKWebView(frame: .zero, configuration: configuration)
     view.allowsLinkPreview = false
-    view.navigationDelegate = coordinator
-    WKContentRuleListStore.default().compileContentRuleList(
-      forIdentifier: "TsugumiWorkerDashboard",
-      encodedContentRuleList: ArtifactHTMLPreview.resourceRules
-    ) { [weak view, weak coordinator] rules, error in
-      guard let view, let coordinator, coordinator.active else { return }
-      guard let rules else {
-        report(error?.localizedDescription ?? "Could not prepare the dashboard resource policy")
-        return
-      }
-      view.configuration.userContentController.add(rules)
-      coordinator.allowLoad = true
-      view.loadHTMLString(ArtifactHTMLPreview.document(html, policy: Self.policy), baseURL: nil)
-    }
+    view.navigationDelegate = context.coordinator
+    view.load(URLRequest(url: url))
     return view
   }
 
   func updateNSView(_ view: WKWebView, context: Context) {}
 
   static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
-    coordinator.active = false
-    view.configuration.userContentController.removeScriptMessageHandler(forName: bridge, contentWorld: .page)
     view.stopLoading()
   }
 
-  @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandlerWithReply {
-    let id: String
-    let generation: String
-    var active = true
-    var allowLoad = false
-    private var pending = 0
+  @MainActor final class Coordinator: NSObject, WKNavigationDelegate {
+    let url: URL
+    let certificate: String
+    let report: (String) -> Void
+    private var mismatch = false
 
-    init(id: String, generation: String) {
-      self.id = id
-      self.generation = generation
+    init(url: URL, certificate: String, report: @escaping (String) -> Void) {
+      self.url = url
+      self.certificate = certificate
+      self.report = report
     }
 
+    /// Only the dashboard's own origin, in this view.
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction)
       async -> WKNavigationActionPolicy {
-      guard active, allowLoad, action.targetFrame?.isMainFrame == true,
-            action.navigationType == .other, action.request.url?.absoluteString == "about:blank" else {
-        return .cancel
-      }
-      allowLoad = false
+      guard let target = action.request.url, target.scheme == url.scheme, target.host == url.host,
+            target.port == url.port, action.targetFrame?.isMainFrame == true else { return .cancel }
       return .allow
     }
 
-    func userContentController(_ userContentController: WKUserContentController,
-                               didReceive message: WKScriptMessage) async -> (Any?, String?) {
-      guard active, !allowLoad, message.frameInfo.isMainFrame,
-            let request = message.body as? [String: String],
-            let name = request["operation"], let body = request["body"],
-            body.utf8.count <= 65536, pending < 4 else {
-        return (nil, "Invalid dashboard request")
+    func webView(_ webView: WKWebView, respondTo challenge: URLAuthenticationChallenge)
+      async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
+      let space = challenge.protectionSpace
+      guard space.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+            space.host == url.host, space.port == url.port, let trust = space.serverTrust,
+            let leaf = (SecTrustCopyCertificateChain(trust) as? [SecCertificate])?.first else {
+        return (.cancelAuthenticationChallenge, nil)
       }
-      let operation: Tsugumi_Host_WorkerDashboardOperation
-      switch name {
-      case "Jobs": operation = .jobs
-      case "Keys": operation = .keys
-      case "Challenge": operation = .challenge
-      case "RemoveJobs": operation = .removejobs
-      case "AddKey": operation = .addkey
-      case "RemoveKey": operation = .removekey
-      default:
-        return (nil, "Unknown dashboard operation")
+      let digest = SHA256.hash(data: SecCertificateCopyData(leaf) as Data)
+        .map { String(format: "%02x", $0) }.joined()
+      guard digest == certificate else {
+        mismatch = true
+        report(String(localized: "ワーカーの証明書が登録時と一致しません。接続を確認し直してください。"))
+        return (.cancelAuthenticationChallenge, nil)
       }
-      pending += 1
-      defer { pending -= 1 }
-      do {
-        let reply = try await ExecutionServices.dashboard(id, operation: operation, generation: generation, body: body)
-        return (reply.body, nil)
-      } catch {
-        return (nil, error.localizedDescription)
-      }
+      return (.useCredential, URLCredential(trust: trust))
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+      if !mismatch { report(error.localizedDescription) }
     }
   }
 }

@@ -24,7 +24,6 @@ from uuid import UUID, uuid4
 import pytest
 from harness import remote_worker as R
 from harness.host import Host, HostFailure
-from Tsugumi.Host.WorkerDashboardOperation import WorkerDashboardOperation as DashboardOp
 from Tsugumi.RemoteWorker.WorkerReady import WorkerReady
 from Tsugumi.RemoteWorker.CachePullSettings import CachePullSettingsT
 from Tsugumi.RemoteWorker.CachePushSettings import CachePushSettingsT
@@ -52,22 +51,27 @@ from Tsugumi.Worker.WorkerMessage import WorkerMessageT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
 
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="remote workers require Linux")
+ADMIN_PASSWORD = "correct horse battery"
 
 
 class Worker:
-    def __init__(self, root, binary, *, extra=(), env=None):
+    def __init__(self, root, binary, *, extra=(), env=None, max_jobs=1):
         self.root = root
         self.identity = TLS.identity(root)
         self.scope = "c" * 64
         self.core_life_id = "e" * 64
         self.port = 0
+        self.dashboard_port = 0
         self.state = root / "state"
         self.state.mkdir(mode=0o700)
         self.authorized = self.state / "authorized_keys"
         self.authorized.write_text(TLS.public_key(self.identity) + " # test host\n")
         self.authorized.chmod(0o600)
-        self.command = [binary, "--state-dir", str(self.state),
-                        "--port", str(self.port), "--max-jobs", "1", *extra]
+        self.settings_file = self.state / "settings.json"
+        self.write_settings(max_jobs=max_jobs)
+        self.command = [binary, "--state-dir", str(self.state), *extra]
+        self.last_headers = {}
+        self.last_certificate = b""
         self.env = env
         self.process = None
         self.cache_pulls = []
@@ -89,9 +93,18 @@ class Worker:
         published = process_file(self.process, ready)
         if published is None:
             raise RuntimeError((self.root / "worker.log").read_text())
-        self.port = WorkerReady.GetRootAs(published.read_bytes()).Port()
-        # Reconnect scenarios deliberately keep the same real endpoint.
-        self.command[self.command.index("--port") + 1] = str(self.port)
+        ready = WorkerReady.GetRootAs(published.read_bytes())
+        self.port, self.dashboard_port = ready.Port(), ready.DashboardPort()
+        # Reconnect scenarios deliberately keep the same real endpoints.
+        settings = json.loads(self.settings_file.read_text())
+        self.write_settings(**{**settings, "port": self.port, "dashboard_port": self.dashboard_port})
+
+    def write_settings(self, **values):
+        settings = {"name": "", "listen_address": "127.0.0.1", "port": self.port,
+                    "dashboard_port": self.dashboard_port, "max_jobs": 8, "nix_max_jobs": 0,
+                    "nix_cores": 0, "pull_caches": [], **values}
+        self.settings_file.write_text(json.dumps(settings, indent=2))
+        self.settings_file.chmod(0o600)
 
     def close(self):
         if self.process and self.process.poll() is None:
@@ -150,30 +163,51 @@ class Worker:
                 with secure.makefile("rb") as stream:
                     return read_reply(stream)
 
-    def dashboard(self, path, *, body=None, identity=None, headers=None):
-        context = TLS.client_context(identity or self.identity, self.state / "identity.pem")
-        with socket.create_connection(("127.0.0.1", self.port), timeout=10) as peer:
-            with context.wrap_socket(peer, server_hostname=None) as secure:
+    def page(self, path, *, body=None, session=None, headers=None):
+        """One HTTPS exchange with the dashboard, as a browser on its page sends it."""
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        with socket.create_connection(("127.0.0.1", self.dashboard_port), timeout=30) as peer:
+            with context.wrap_socket(peer) as secure:
+                self.last_certificate = secure.getpeercert(binary_form=True)
                 data = b"" if body is None else json.dumps(body, separators=(",", ":")).encode()
                 method = "GET" if body is None else "POST"
-                head = {"Host": "worker", "Connection": "close", **(headers or {})}
+                head = {"Host": f"127.0.0.1:{self.dashboard_port}", "Connection": "close"}
                 if body is not None:
                     head.update({"Content-Length": len(data), "Content-Type": "application/json",
-                                 "X-Tsugumi-Dashboard": "1"})
+                                 "Origin": f"https://127.0.0.1:{self.dashboard_port}"})
+                if session:
+                    head.update({"Cookie": session["cookie"], "X-Tsugumi-CSRF": session["csrf"]})
+                head.update(headers or {})
                 request = f"{method} {path} HTTP/1.1\r\n"
-                request += "".join(f"{key}: {value}\r\n" for key, value in head.items())
+                request += "".join(f"{key}: {value}\r\n" for key, value in head.items() if value is not None)
                 secure.sendall(request.encode() + b"\r\n" + data)
                 with http.client.HTTPResponse(secure) as response:
                     response.begin()
+                    self.last_headers = dict(response.getheaders())
                     result = response.read().decode()
                     if response.getheader("Content-Type") == "application/json; charset=utf-8":
                         result = json.loads(result)
                     return response.status, result
 
-    def dashboard_change(self, path, **values):
-        status, challenge = self.dashboard("/dashboard/challenge")
-        assert status == 200
-        return self.dashboard(path, body={**values, **challenge})
+    def set_password(self, password=ADMIN_PASSWORD):
+        subprocess.run([self.command[0], "admin-password", "--state-dir", str(self.state)],
+                       input=password + "\n", text=True, check=True, capture_output=True)
+
+    def login(self, password=ADMIN_PASSWORD):
+        """An administrator session: the cookie and the page's CSRF token."""
+        if not (self.state / "admin-password").exists():
+            self.set_password(password)
+        status, reply = self.page("/api/login", body={"password": password})
+        assert status == 200, reply
+        cookie = self.last_headers["Set-Cookie"].split(";")[0]
+        status, state = self.page("/api/state", session={"cookie": cookie, "csrf": ""})
+        assert status == 200 and state["role"] == "admin"
+        return {"cookie": cookie, "csrf": state["csrf"]}
+
+    def admin(self, path, body, session=None):
+        return self.page(path, body=body, session=session or self.login())
 
     def upload(self, job, data):
         digest = hashlib.sha256(data).hexdigest()
@@ -301,10 +335,24 @@ def test_rejects_unsafe_options_before_listening(tmp_path):
     binary = os.environ.get("TSUGUMI_REMOTE_TEST_DAEMON")
     if not binary:
         pytest.skip("needs packaged worker")
-    for extra in (["--host", "not-an-IP"], ["--max-jobs", "0"], ["--state-dir", "relative"]):
+    for extra in (["--host", "127.0.0.1"], ["--port", "0"], ["--max-jobs", "2"],
+                  ["--authorized-keys", str(tmp_path / "keys")], ["--state-dir", "relative"]):
         result = subprocess.run([binary, "--state-dir", str(tmp_path / "state"), *extra],
                                 capture_output=True, check=False)
         assert result.returncode != 0
+    invalid = tmp_path / "invalid-settings"
+    invalid.mkdir(mode=0o700)
+    for text in ('{"listen_address": "not-an-IP"}', '{"listen_address": "127.0.0.1", "max_jobs": 0}',
+                 '{"listen_address": "127.0.0.1", "port": 0, "dashboard_port": 0, "unknown": 1}',
+                 '{"port": 0}', 'not json'):
+        (invalid / "settings.json").write_text(text)
+        result = subprocess.run([binary, "--state-dir", str(invalid)], capture_output=True, text=True,
+                                check=False, timeout=30)
+        assert result.returncode != 0 and "settings.json" in result.stderr, (text, result.stderr)
+    created = tmp_path / "created-settings"
+    created.mkdir(mode=0o700)
+    result = subprocess.run([binary, "--state-dir", str(created), "--public-key"], capture_output=True, check=False)
+    assert result.returncode == 0
     state = tmp_path / "unsafe-state"
     state.mkdir(mode=0o700)
     pem = TLS.identity(state, "identity")
@@ -441,7 +489,7 @@ def test_independent_builds_overlap_and_release_does_not_disturb_them(tmp_path):
     binary = os.environ.get("TSUGUMI_REMOTE_TEST_DAEMON")
     if not binary:
         pytest.skip("set TSUGUMI_REMOTE_TEST_DAEMON to the packaged tsugumi-workerd")
-    peer = Worker(tmp_path, binary, extra=("--max-jobs", "2"))
+    peer = Worker(tmp_path, binary, max_jobs=2)
     try:
         long_job, short_job = "1" * 64, "3" * 64
         submit_plan(peer, long_job, slow_plan(peer, ("long", 30)))
@@ -469,7 +517,7 @@ def test_jobs_sharing_a_slow_derivation_build_it_once(tmp_path):
     binary = os.environ.get("TSUGUMI_REMOTE_TEST_DAEMON")
     if not binary:
         pytest.skip("set TSUGUMI_REMOTE_TEST_DAEMON to the packaged tsugumi-workerd")
-    peer = Worker(tmp_path, binary, extra=("--max-jobs", "2"))
+    peer = Worker(tmp_path, binary, max_jobs=2)
     try:
         first, second = "1" * 64, "3" * 64
         plan = slow_plan(peer, ("shared", 10))
@@ -878,17 +926,19 @@ read -r line < "$TEST_GATE"
         next_spec = peer.spec(peer.upload(next_job, b"next input"))
         submit(next_job, next_spec)
         assert state(next_job) == R.JobState.Queued
-        remove = "/dashboard/jobs/remove"
-        status, refusal = peer.dashboard_change(remove, jobs=[f"{peer.scope}/{blocker}"], active=True)
+        session = peer.login()
+        remove = "/api/jobs/remove"
+        status, refusal = peer.admin(remove, {"jobs": [f"{peer.scope}/{blocker}"]}, session)
         assert status == 200 and refusal["results"][0]["status"] == "supervised"
         assert state(blocker) == R.JobState.Running
-        status, refusal = peer.dashboard_change(remove, jobs=[f"{peer.scope}/{next_job}"], active=False)
+        status, refusal = peer.admin(remove, {"jobs": [f"{peer.scope}/{next_job}"]}, session)
         assert status == 200 and refusal["results"][0]["status"] == "active"
         discard = "7" * 64
         submit(discard, peer.spec(peer.upload(discard, b"queued data to discard")))
         assert state(discard) == R.JobState.Queued
-        status, removed = peer.dashboard_change(remove, jobs=[f"{peer.scope}/{discard}"], active=True)
-        assert status == 200 and removed["results"][0]["status"] == "removed"
+        # Only the worker's own command line removes a job recorded as queued.
+        subprocess.run([peer.command[0], "jobs", "remove", "--active", "--state-dir", str(peer.state),
+                        f"{peer.scope}/{discard}"], check=True, capture_output=True)
         assert state(discard) == R.JobState.Released
         peer.restart()
         assert state(blocker) == R.JobState.Running and state(next_job) == R.JobState.Queued
@@ -1357,9 +1407,9 @@ def test_bounded_frames_and_single_listener(worker):
                 with secure.makefile("rb") as stream:
                     error = R.read(stream).payload
             assert error.bodyType == R.ReplyBody.Failure and error.body.code == R.ErrorCode.Invalid
-    command = list(worker.command)
-    command[command.index("--port") + 1] = "0"
-    command += ["--socket", str(worker.root / "duplicate.sock")]
+    command = list(worker.command) + ["--socket", str(worker.root / "duplicate.sock")]
+    refused = subprocess.run(command, env=worker.env, capture_output=True, text=True, timeout=30)
+    assert refused.returncode != 0 and "already running" in refused.stderr, refused.stderr
     with subprocess.Popen(command, env=worker.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as duplicate:
         ready = worker.state / "worker.ready"
 
@@ -1635,115 +1685,298 @@ def test_jobs_command_lists_and_removes_only_chosen_jobs(worker):
     late = worker.call(R.RequestBody.PutBlobRequest, R.put_blob_chunk(hashlib.sha256(b"x").hexdigest(), 1, 0, b"x"), job=staged)
     assert late.bodyType == R.ReplyBody.Failure and late.body.code == R.ErrorCode.Rejected
 
-def test_dashboard_authentication_challenges_and_key_updates(worker):
-    stranger = TLS.identity(worker.root, "new-host")
-    key = TLS.public_key(stranger)
-    own_key = TLS.public_key(worker.identity)
-    before = worker.authorized.read_bytes()
-    status, html = worker.dashboard("/dashboard?lang=ja")
-    assert status == 200 and '<html lang="ja">' in html
-    status, keys = worker.dashboard("/dashboard/keys")
-    assert status == 200 and keys == {"keys": [own_key], "current": own_key}
-
-    add = "/dashboard/keys/add"
-    drop = "/dashboard/keys/remove"
-    challenges = "/dashboard/challenge"
-    status, challenge = worker.dashboard(challenges)
-    assert status == 200
-    for path, body in (("/dashboard", None), (add, {**challenge, "key": key}),
-                       (drop, {**challenge, "key": own_key})):
-        with pytest.raises((ssl.SSLError, OSError, http.client.RemoteDisconnected)):
-            worker.dashboard(path, body=body, identity=stranger)
-    assert worker.authorized.read_bytes() == before
-
-    assert worker.dashboard(add)[0] == 404
-    assert worker.dashboard(add, body={"key": key})[0] in (400, 403)
-    assert worker.dashboard(challenges, headers={"Origin": "https://example.invalid"})[0] == 403
-    addition = {"key": key, **challenge}
-    assert worker.dashboard(add, body=addition, headers={"Origin": "https://example.invalid"})[0] == 403
-    assert worker.authorized.read_bytes() == before
-    assert worker.dashboard(add, body=addition)[0] == 200
-    assert worker.authorized.read_bytes().startswith(before)
-    # A fresh handshake accepts the added key. Even another authorized host
-    # cannot use a challenge issued to this peer.
-    assert worker.dashboard("/dashboard", identity=stranger)[0] == 200
-    status, challenge = worker.dashboard(challenges)
-    assert status == 200
-    deletion = {**challenge, "key": key}
-    assert worker.dashboard(drop, body=deletion, identity=stranger)[0] == 403
-    assert worker.dashboard(drop, body=deletion)[0] == 200
-    assert worker.authorized.read_bytes() == before
-    assert worker.dashboard(add, body=addition)[0] == 403
-    with pytest.raises((ssl.SSLError, OSError, http.client.RemoteDisconnected)):
-        worker.dashboard("/dashboard/keys", identity=stranger)
+def test_dashboard_is_https_with_its_own_pinned_certificate(worker):
+    status, html = worker.page("/")
+    assert status == 200 and '<html lang="en">' in html
+    certificate = worker.last_certificate
+    assert worker.last_headers["X-Frame-Options"] == "DENY"
+    assert "frame-ancestors 'none'" in worker.last_headers["Content-Security-Policy"]
+    assert worker.last_headers["Cache-Control"] == "no-store"
+    assert '<html lang="ja">' in worker.page("/", headers={"Accept-Language": "ja,en;q=0.8"})[1]
+    assert '<html lang="ja">' in worker.page("/?lang=ja")[1]
+    # Hosts learn the certificate over the pinned mutual TLS link.
+    probe = worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False).body
+    assert probe.dashboardPort == worker.dashboard_port
+    assert R.string(probe.dashboardCertificateSha256) == hashlib.sha256(certificate).hexdigest()
+    pem = worker.state / "dashboard-identity.pem"
+    assert pem.stat().st_mode & 0o777 == 0o600
+    assert "BEGIN PRIVATE KEY" in pem.read_text()
+    # The same certificate after a restart.
+    worker.restart()
+    worker.page("/")
+    assert worker.last_certificate == certificate
+    # Hosts' mutual TLS jobs listener still refuses a peer without a key.
+    stranger = TLS.identity(worker.root, "stranger")
+    with pytest.raises((ssl.SSLError, OSError)):
+        worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False, identity=stranger)
 
 
-def test_dashboard_lists_and_releases_the_same_jobs_as_cli(worker):
+def test_guest_sees_state_without_secrets(worker):
+    job = "a" * 64
+    worker.upload(job, b"staged input")
+    status, state = worker.page("/api/state")
+    assert status == 200 and state["role"] == "guest" and state["csrf"] == ""
+    assert state["login"] == {"configured": False, "locked_seconds": 0}
+    assert state["worker"]["contract"] == R.WORKER_CONTRACT
+    assert state["worker"]["version"] == (Path(__file__).parents[2] / "VERSION").read_text().strip()
+    assert state["worker"]["listen"] == f"tls://127.0.0.1:{worker.port}"
+    assert state["worker"]["dashboard_port"] == worker.dashboard_port
+    [row] = state["jobs"]
+    assert row["job_id"] == job and row["state"] == "uploading" and row["bytes"] > 0
+    assert "core_life_id" not in row
+    listing = json.loads(subprocess.check_output(
+        [worker.command[0], "jobs", "list", "--json", "--state-dir", str(worker.state)]))
+    assert [{key: value for key, value in job.items() if key not in ("core_life_id", "core_last_seen")}
+            for job in listing["jobs"]] == state["jobs"]
+    assert set(state["disk"]) == {"store_bytes", "jobs_bytes", "free_bytes", "total_bytes"}
+    assert state["settings"]["max_jobs"] == 1
+    [host] = state["hosts"]
+    assert host["key"] == TLS.public_key(worker.identity) and host["comment"] == "test host"
+    assert host["last_seen"].endswith("Z")
+    assert ADMIN_PASSWORD not in json.dumps(state)
+
+
+def test_changes_need_an_administrator_session(worker):
+    other = TLS.public_key(TLS.identity(worker.root, "other-host"))
+    changes = {
+        "/api/jobs/remove": {"jobs": [f"{worker.scope}/{'a' * 64}"]},
+        "/api/keys/add": {"key": other},
+        "/api/keys/remove": {"key": TLS.public_key(worker.identity)},
+        "/api/settings": {"settings": {"name": "x", "listen_address": "127.0.0.1", "port": 1,
+                                       "dashboard_port": 2, "max_jobs": 1, "nix_max_jobs": 0,
+                                       "nix_cores": 0, "pull_caches": []}},
+        "/api/restart": {"mode": "now"},
+    }
+    keys, settings = worker.authorized.read_bytes(), worker.settings_file.read_bytes()
+    for path, body in changes.items():
+        assert worker.page(path, body=body)[0] == 401, path
+    # Without a password there is no administrator.
+    status, reply = worker.page("/api/login", body={"password": ADMIN_PASSWORD})
+    assert status == 403 and reply["error"] == "not_configured"
+
+    worker.set_password()
+    stored = (worker.state / "admin-password")
+    assert stored.stat().st_mode & 0o777 == 0o600
+    algorithm, log_n, r, p, salt, key = stored.read_text().strip().split("$")
+    assert algorithm == "scrypt" and len(salt) == 32 and len(key) == 64
+    assert ADMIN_PASSWORD not in stored.read_text()
+    for file in worker.state.rglob("*"):
+        if file.is_file():
+            assert ADMIN_PASSWORD.encode() not in file.read_bytes(), file
+    worker.set_password()
+    assert stored.read_text().split("$")[4] != salt, "a new hash takes a fresh salt"
+
+    session = worker.login()
+    status, _ = worker.page("/api/login", body={"password": ADMIN_PASSWORD})
+    worker_cookie = worker.last_headers["Set-Cookie"]
+    assert worker_cookie.startswith("__Host-tsugumi=")
+    for attribute in ("Path=/", "Secure", "HttpOnly", "SameSite=Strict", "Max-Age="):
+        assert attribute in worker_cookie
+    # A session alone is not enough: the page's CSRF token, a JSON body and
+    # the page's own origin are required too.
+    path, body = "/api/keys/add", changes["/api/keys/add"]
+    assert worker.page(path, body=body, session={**session, "csrf": ""})[0] == 403
+    assert worker.page(path, body=body, session={**session, "csrf": "0" * 64})[0] == 403
+    assert worker.page(path, body=body, session=session,
+                       headers={"Origin": "https://attacker.example"})[0] == 403
+    assert worker.page(path, body=body, session=session, headers={"Sec-Fetch-Site": "cross-site"})[0] == 403
+    assert worker.page(path, body=body, session=session, headers={"Content-Type": "text/plain"})[0] == 403
+    assert worker.page(path, body=body, session={**session, "cookie": "__Host-tsugumi=" + "0" * 64})[0] == 401
+    assert worker.authorized.read_bytes() == keys and worker.settings_file.read_bytes() == settings
+
+    assert worker.page(path, body=body, session=session)[0] == 200
+    assert other in worker.authorized.read_text()
+    assert worker.page("/api/keys/remove", body={"key": other}, session=session)[0] == 200
+    assert worker.authorized.read_bytes() == keys
+    # Logging out ends the session.
+    assert worker.page("/api/logout", body={}, session=session)[0] == 200
+    assert "Max-Age=0" in worker.last_headers["Set-Cookie"]
+    assert worker.page(path, body=body, session=session)[0] == 401
+    assert worker.page("/api/state", session=session)[1]["role"] == "guest"
+
+
+def test_login_failures_lock_the_login(worker):
+    worker.set_password()
+    for _ in range(4):
+        status, reply = worker.page("/api/login", body={"password": "wrong password"})
+        assert status == 401 and reply == {"error": "wrong_password", "locked_seconds": 0}
+    status, reply = worker.page("/api/login", body={"password": "wrong password"})
+    assert status == 401 and reply["error"] == "wrong_password" and 55 <= reply["locked_seconds"] <= 60
+    # While locked even the right password is not checked.
+    status, reply = worker.page("/api/login", body={"password": ADMIN_PASSWORD})
+    assert status == 429 and reply["error"] == "locked" and reply["locked_seconds"] > 0
+    assert worker.page("/api/state")[1]["login"]["locked_seconds"] > 0
+    assert "Set-Cookie" not in worker.last_headers
+
+
+def test_administrator_removes_jobs_like_the_cli(worker):
     selected, cli, keep = (letter * 64 for letter in "abc")
     for job in (selected, cli, keep):
         worker.upload(job, b"staged input")
-    command = [worker.command[0], "jobs"]
-    listing = subprocess.check_output(command + ["list", "--json", "--state-dir", str(worker.state)])
-    assert worker.dashboard("/dashboard/jobs") == (200, json.loads(listing))
-
-    stranger = TLS.identity(worker.root, "stranger")
-    status, challenge = worker.dashboard("/dashboard/challenge")
-    assert status == 200
-    path = "/dashboard/jobs/remove"
-    body = {"jobs": [f"{worker.scope}/{selected}"], "active": False, **challenge}
-    with pytest.raises((ssl.SSLError, OSError, http.client.RemoteDisconnected)):
-        worker.dashboard(path, body=body, identity=stranger)
-    assert worker.dashboard("/dashboard/jobs") == (200, json.loads(listing))
-
-    assert worker.dashboard(path, body=body)[1]["results"][0]["status"] == "removed"
-    subprocess.run(command + ["remove", "--state-dir", str(worker.state), f"{worker.scope}/{cli}"],
-                   check=True, capture_output=True)
+    path = "/api/jobs/remove"
+    body = {"jobs": [f"{worker.scope}/{selected}"]}
+    assert worker.page(path, body=body)[0] == 401
+    status, removed = worker.admin(path, body)
+    assert status == 200 and removed["results"][0]["status"] == "removed"
+    subprocess.run([worker.command[0], "jobs", "remove", "--state-dir", str(worker.state),
+                    f"{worker.scope}/{cli}"], check=True, capture_output=True)
     assert list(worker.journal(selected).parent.iterdir()) == [worker.journal(selected)]
     assert worker.journal(selected).read_bytes() == worker.journal(cli).read_bytes()
-    record = R.JournalStateT.InitFromPackedBuf(worker.journal(selected).read_bytes())
-    assert record.state == R.JobState.Released
-    status, data = worker.dashboard("/dashboard/jobs")
-    assert status == 200 and [row["job_id"] for row in data["jobs"]] == [keep]
+    assert R.JournalStateT.InitFromPackedBuf(worker.journal(selected).read_bytes()).state == R.JobState.Released
+    status, state = worker.page("/api/state")
+    assert [row["job_id"] for row in state["jobs"]] == [keep]
     late = worker.call(R.RequestBody.PutBlobRequest,
                        R.put_blob_chunk(hashlib.sha256(b"x").hexdigest(), 1, 0, b"x"), job=selected)
     assert late.bodyType == R.ReplyBody.Failure and late.body.code == R.ErrorCode.Rejected
 
 
-def test_host_dashboard_requires_current_verified_registration(worker):
+def settings_of(worker, **values):
+    status, state = worker.page("/api/state")
+    assert status == 200
+    return {**state["settings"], **values}
+
+
+def test_settings_are_saved_as_text_and_persist(worker):
+    session = worker.login()
+    chosen = settings_of(worker, name="研究室 GPU", max_jobs=3, nix_max_jobs=2, nix_cores=1,
+                         pull_caches=[{"url": "file:///srv/cache", "public_key": "lab-1:AAAA"}])
+    before = worker.settings_file.read_bytes()
+    for wrong in ({"pull_caches": [{"url": "ftp://cache", "public_key": "k:AAAA"}]},
+                  {"pull_caches": [{"url": "https://user@cache", "public_key": "k:AAAA"}]},
+                  {"pull_caches": [{"url": "https://cache", "public_key": "nokey"}]},
+                  {"name": "two\nlines"}, {"max_jobs": 0}, {"max_jobs": 70000},
+                  {"listen_address": "worker.example"}, {"port": 8800, "dashboard_port": 8800}):
+        status, reply = worker.admin("/api/settings", {"settings": {**chosen, **wrong}}, session)
+        assert status == 400, (wrong, reply)
+    missing = dict(chosen)
+    del missing["nix_cores"]
+    assert worker.admin("/api/settings", {"settings": missing}, session)[0] == 400
+    assert worker.settings_file.read_bytes() == before
+
+    status, state = worker.admin("/api/settings", {"settings": chosen}, session)
+    assert status == 200 and state["settings"] == chosen
+    assert worker.settings_file.stat().st_mode & 0o777 == 0o600
+    assert json.loads(worker.settings_file.read_text()) == chosen
+    probe = worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False).body
+    assert R.string(probe.label) == "研究室 GPU" and probe.maxJobs == 3
+    assert state["worker"]["name"] == "研究室 GPU"
+
+    worker.restart()
+    assert worker.page("/api/state")[1]["settings"] == chosen
+    # Concurrency follows a save at once; Nix parallelism waits for a restart.
+    status, state = worker.admin("/api/settings", {"settings": {**chosen, "nix_cores": 4}})
+    assert status == 200 and state["worker"]["restart_required"]
+
+
+def test_saved_concurrency_applies_to_the_next_jobs(tmp_path):
+    binary = os.environ.get("TSUGUMI_REMOTE_TEST_DAEMON")
+    if not binary:
+        pytest.skip("set TSUGUMI_REMOTE_TEST_DAEMON to the packaged tsugumi-workerd")
+    peer = Worker(tmp_path, binary, max_jobs=8)
+    try:
+        assert peer.caps.maxJobs == 8
+        session = peer.login()
+
+        def concurrency(count):
+            status, state = peer.admin("/api/settings", {"settings": settings_of(peer, max_jobs=count)}, session)
+            assert status == 200 and state["settings"]["max_jobs"] == count, state
+            probe = peer.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False).body
+            assert probe.maxJobs == count
+
+        concurrency(1)
+        first, second = "1" * 64, "3" * 64
+        submit_plan(peer, first, slow_plan(peer, ("one-first", 4)))
+        submit_plan(peer, second, slow_plan(peer, ("one-second", 1)))
+        _, environment = realised(peer, second)
+        _, second_start, _ = slow_output(peer, environment, "one-second")
+        _, environment = realised(peer, first)
+        _, _, first_end = slow_output(peer, environment, "one-first")
+        assert second_start >= first_end, "a second job started beyond the saved concurrency"
+
+        concurrency(2)
+        long_job, short_job = "5" * 64, "7" * 64
+        submit_plan(peer, long_job, slow_plan(peer, ("two-long", 15)))
+        submit_plan(peer, short_job, slow_plan(peer, ("two-short", 2)))
+        _, environment = realised(peer, short_job)
+        _, short_start, short_end = slow_output(peer, environment, "two-short")
+        _, environment = realised(peer, long_job)
+        _, long_start, long_end = slow_output(peer, environment, "two-long")
+        assert long_start < short_end and short_start < long_end, "the raised concurrency did not apply"
+    finally:
+        peer.close()
+
+
+def test_worker_pull_cache_serves_substitution(worker):
+    tag = "cached-" + uuid4().hex[:12]
+    derivation, output = slow_plan(worker, (tag, 0))
+    # The host's pull cache holds only the derivation. The output is in a
+    # cache that only the worker's own settings name.
+    subprocess.run(["nix", "build", "--no-link", f"{derivation}^out"], check=True)
+    cache = worker.root / "worker-cache"
+    key, public = worker.root / "worker-key", worker.root / "worker-key.pub"
+    subprocess.run(["nix-store", "--generate-binary-cache-key", "worker-fixture",
+                    str(key), str(public)], check=True)
+    subprocess.run(["nix", "--extra-experimental-features", "nix-command", "copy",
+                    "--to", f"{cache.as_uri()}?secret-key={key}", output], check=True)
+    status, _ = worker.admin("/api/settings", {"settings": settings_of(worker, pull_caches=[
+        {"url": cache.as_uri(), "public_key": public.read_text().strip()}])})
+    assert status == 200
+    job = "a" * 64
+    submit_plan(worker, job, (derivation, output))
+    logs, environment = realised(worker, job)
+    assert not environment.built and R.string(environment.substituter) == "file://", vars(environment)
+    assert f"slow builder {tag} started" not in logs
+    assert (worker.state / "store" / output.lstrip("/")).exists()
+
+
+def test_administrator_restarts_the_listener(worker):
+    session = worker.login()
+    pid = worker.process.pid
+    ready = worker.state / "worker.ready"
+
+    def restarted(mode):
+        before = ready.stat().st_mtime_ns
+        assert worker.admin("/api/restart", {"mode": mode}, session)[0] == 200
+        deadline = time.monotonic() + 30
+        while not (ready.exists() and ready.stat().st_mtime_ns != before):
+            assert worker.process.poll() is None and time.monotonic() < deadline, \
+                (worker.root / "worker.log").read_text()
+            time.sleep(0.1)
+        published = WorkerReady.GetRootAs(ready.read_bytes())
+        assert published.Pid() == pid, "the listener starts again in its own process"
+        worker.port, worker.dashboard_port = published.Port(), published.DashboardPort()
+
+    status, state = worker.admin("/api/settings", {"settings": settings_of(worker, nix_cores=2)}, session)
+    assert state["worker"]["restart_required"]
+    restarted("now")
+    status, state = worker.page("/api/state")
+    assert status == 200 and not state["worker"]["restart_required"]
+    # Sessions end with the listener.
+    assert state["role"] == "guest" and worker.page("/api/state", session=session)[1]["role"] == "guest"
+    session = worker.login()
+    restarted("after_jobs")
+    assert worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT()).body.instanceId == worker.instance
+
+
+def test_host_shows_the_dashboard_by_url_and_certificate(worker):
     host = Host(worker.root / "host")
     try:
-        # Use the scratch host's public key and the worker pin from its probe.
         host_key = R.string(host.call("ExecutionServicesRequest").hostPublicKey)
         with worker.authorized.open("a") as keys:
             keys.write(host_key + "\n")
         worker_key = next(line.split("public key: ", 1)[1]
                           for line in (worker.root / "worker.log").read_text().splitlines()
                           if "public key: " in line)
+        worker.admin("/api/settings", {"settings": settings_of(worker, name="Scratch")})
         registration = dict(id="scratch-worker", name="Scratch worker",
                             endpoint=f"tls://127.0.0.1:{worker.port}", workerPublicKey=worker_key)
-
-        def page():
-            return host.call("WorkerDashboardRequest", id=registration["id"],
-                             operation=DashboardOp.Page, language="en")
-
-        host.call("ExecutionServicePutRequest", **registration, verify=False)
-        with pytest.raises(HostFailure, match="Verify the execution service"):
-            page()
         host.call("ExecutionServicePutRequest", **registration, verify=True)
-        opened = page()
-        assert '<html lang="en">' in R.string(opened.body)
-        job = "a" * 64
-        worker.upload(job, b"input staged on scratch worker")
-        args = dict(id=registration["id"], generation=opened.generation)
-        listed = host.call("WorkerDashboardRequest", **args, operation=DashboardOp.Jobs)
-        assert json.loads(listed.body) == worker.dashboard("/dashboard/jobs")[1]
-        token = json.loads(host.call("WorkerDashboardRequest", **args, operation=DashboardOp.Challenge).body)
-        removed = host.call("WorkerDashboardRequest", **args, operation=DashboardOp.RemoveJobs,
-                            body=json.dumps({**token, "jobs": [f"{worker.scope}/{job}"], "active": False}))
-        assert json.loads(removed.body)["results"][0]["status"] == "removed"
-        host.call("ExecutionServiceRemoveRequest", id=registration["id"])
-        host.call("ExecutionServicePutRequest", **registration, verify=True)
-        with pytest.raises(HostFailure, match="The execution service changed"):
-            host.call("WorkerDashboardRequest", **args, operation=DashboardOp.Jobs)
+        [entry] = [service for service in host.call("ExecutionServicesRequest").services
+                   if R.string(service.id) == registration["id"]]
+        caps = entry.capabilities
+        assert R.string(caps.workerLabel) == "Scratch"
+        assert R.string(caps.dashboardUrl) == f"https://127.0.0.1:{worker.dashboard_port}/"
+        worker.page("/")
+        assert R.string(caps.dashboardCertificateSha256) == hashlib.sha256(worker.last_certificate).hexdigest()
     finally:
         host.close()

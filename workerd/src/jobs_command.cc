@@ -304,6 +304,16 @@ auto jobs_json(const stdfs::path& root, bool all) -> std::string {
   return schema::encode(list_jobs(root, all));
 }
 
+auto job_rows(const stdfs::path& root) -> std::vector<JobRow> {
+  std::vector<JobRow> rows;
+  auto listed = list_jobs(root, false);
+  for (auto& row : *listed.jobs)
+    rows.push_back({std::move(*row.project_scope), std::move(*row.job_id),
+                    std::move(*row.state), std::move(*row.last_written),
+                    std::move(*row.reason), *row.bytes});
+  return rows;
+}
+
 auto remove_jobs(const stdfs::path& root, bool active,
                  const std::vector<std::string>& names)
     -> std::vector<JobRemoval> {

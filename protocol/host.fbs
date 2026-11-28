@@ -441,22 +441,15 @@ table ExecutionServiceRemoveRequest { id:string (required); }
 // hostd writes the scoped capability into this project's control share.
 table ExecutionProjectAuthorizeRequest { project_id:string (required); path:string (required); control_dir:string (required); guest:bool; }
 table ExecutionProjectRevokeRequest { project_id:string (required); }
-table ExecutionCapabilities { server_id:string (required); native_system:string (required); systems:[string]; isolation:string; resource_limits:bool; max_concurrent_jobs:uint; worker_contract:uint; }
+table ExecutionCapabilities { server_id:string (required); native_system:string (required); systems:[string]; isolation:string; resource_limits:bool; max_concurrent_jobs:uint; worker_contract:uint;
+  // From the worker's settings and its dashboard listener. dashboard_url uses
+  // the registered endpoint's host; a client opening it pins the certificate
+  // by dashboard_certificate_sha256 (DER, lowercase hex).
+  worker_label:string; dashboard_url:string; dashboard_certificate_sha256:string; }
 table ExecutionService { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); capabilities:ExecutionCapabilities (required); probes:[Tsugumi.Data.WorkerProbeResult]; }
 table ExecutionServices { services:[ExecutionService]; host_public_key:string (required); }
 table ExecutionAuthorization { endpoint:string (required); capability_file:string (required); available:bool; }
 
-// One allowlisted dashboard resource for a registered worker. The generation
-// returned with the page binds subsequent requests to that registration.
-enum WorkerDashboardOperation : ubyte { Invalid, Page, Jobs, Keys, Challenge, RemoveJobs, AddKey, RemoveKey }
-table WorkerDashboardRequest {
-  id:string (required);
-  operation:WorkerDashboardOperation;
-  language:string;
-  generation:string;
-  body:string (trace_secret);
-}
-table WorkerDashboardReply { generation:string (required); body:string (required, trace_secret); }
 
 table ProjectDefaults { agent_exclude:[string]; }
 table ProjectInfo { path:string (required); name:string (required); }
@@ -658,7 +651,7 @@ union RequestPayload {
   RunCategoryDeleteRequest,
   TemplateListRequest, HostTemplateAddRequest,
   ViewWindowsRequest, ViewActionRequest, ViewPresentationRequest, ViewActionCompleteRequest,
-  ExecutionProbeRemeasureRequest, WorkerDashboardRequest,
+  ExecutionProbeRemeasureRequest,
   CachePushTargetGetRequest, CachePushTargetPutRequest,
 }
 table Request { value:RequestPayload; }
@@ -676,7 +669,7 @@ union ReplyPayload {
   CardSecretList, HostPathBindings,
   RunCategoryDeleteResult:Tsugumi.RPC.RunCategoryDeleteResult,
   TemplateList,
-  ViewWindows, ViewActionResult, WorkerDashboardReply,
+  ViewWindows, ViewActionResult,
   CachePushTarget,
 }
 table Reply { value:ReplyPayload; }

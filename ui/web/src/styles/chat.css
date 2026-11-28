@@ -82,9 +82,6 @@
 .storage-note { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--secondary); padding: 4px 20px 0; }
 .settings-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
 .settings-body > .form { max-width: 640px; }
-.worker-dashboard { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 12px 20px 16px; gap: 10px; }
-.worker-dashboard-toolbar { display: flex; align-items: center; gap: 10px; }
-.worker-dashboard-frame { width: 100%; flex: 1; min-height: 240px; border: 1px solid var(--separator); border-radius: 8px; }
 .settings-split { display: flex; align-items: flex-start; min-height: 0; flex: 1; }
 .settings-preview { flex: 1; min-width: 0; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
 .shortcut-table .table-row.three, .shortcut-table .table-head.three { grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 1fr) auto; }

@@ -92,57 +92,31 @@ auto ReadRequest(peer_tls::Stream& stream, std::string prefix) -> Request {
           std::move(message.headers)};
 }
 
-auto WriteRequest(peer_tls::Stream& stream, std::string_view path,
-                  std::string_view server, std::string_view body) -> void {
-  Require(body.size() <= kRequestLimit, "Dashboard request is too large");
-  std::string head = body.empty() ? "GET " : "POST ";
-  head += path;
-  head +=
-      " HTTP/1.1\r\nHost: worker\r\nConnection: close\r\n"
-      "X-Tsugumi-Worker: ";
-  head += server;
-  head += "\r\n";
-  if (!body.empty())
-    head +=
-        "X-Tsugumi-Dashboard: 1\r\nContent-Type: application/json\r\n"
-        "Content-Length: " +
-        std::to_string(body.size()) + "\r\n";
-  stream.Write(head + "\r\n");
-  if (!body.empty()) stream.Write(body);
-}
-
-auto ReadReply(peer_tls::Stream& stream) -> Reply {
-  auto message = Read(stream, {}, kReplyLimit);
-  const auto line = std::string_view(message.line);
-  Require(line.starts_with("HTTP/1.1 ") && line.size() >= 13 && line[12] == ' ',
-          "Invalid worker HTTP reply");
-  const auto status = Number(line.substr(9, 3));
-  Require(status >= 200 && status <= 599 &&
-              message.headers.contains("content-length"),
-          "Invalid worker HTTP status or length");
-  auto type = message.headers["content-type"];
-  Require(type == kHtml || type == kJson,
-          "Invalid worker dashboard content type");
-  return {static_cast<unsigned>(status), std::move(type),
-          std::move(message.body)};
-}
-
 auto WriteReply(peer_tls::Stream& stream, const Reply& reply) -> void {
   Require(reply.body.size() <= kReplyLimit, "Dashboard reply is too large");
   const auto reason = reply.status == 200   ? "OK"
                       : reply.status == 400 ? "Bad Request"
+                      : reply.status == 401 ? "Unauthorized"
                       : reply.status == 403 ? "Forbidden"
                       : reply.status == 404 ? "Not Found"
                       : reply.status == 409 ? "Conflict"
+                      : reply.status == 429 ? "Too Many Requests"
                                             : "Internal Server Error";
+  std::string extra;
+  for (const auto& header : reply.headers) {
+    Require(header.find_first_of("\r\n") == header.npos,
+            "Invalid HTTP reply header");
+    extra += header + "\r\n";
+  }
   stream.Write(
       "HTTP/1.1 " + std::to_string(reply.status) + " " + reason +
       "\r\nContent-Type: " + reply.type +
       "\r\nContent-Length: " + std::to_string(reply.body.size()) +
       "\r\nCache-Control: no-store\r\nConnection: close\r\n"
       "X-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n"
-      "Content-Security-Policy: " +
-      std::string(kPolicy) + "\r\n\r\n");
+      "X-Frame-Options: DENY\r\n" +
+      extra + "Content-Security-Policy: " + std::string(kPolicy) +
+      "\r\n\r\n");
   if (!reply.body.empty()) stream.Write(reply.body);
 }
 

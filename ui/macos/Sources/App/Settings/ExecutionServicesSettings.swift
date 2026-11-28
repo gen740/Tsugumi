@@ -37,7 +37,7 @@ struct ExecutionServicesSettings: View {
           LabeledContent {
             Text(entry.capabilities.nativeSystem)
             Button("測り直す") { remeasure(entry.id) }
-            if entry.id != "local", !entry.capabilities.serverId.isEmpty {
+            if entry.id != "local", WorkerDashboard.url(entry) != nil {
               Button("ダッシュボードを開く") { dashboard = entry }
             }
           } label: {
@@ -56,6 +56,9 @@ struct ExecutionServicesSettings: View {
           TextField("実行デーモンの公開鍵", text: field(\.workerPublicKey))
             .disabled(entry.id == "local").monospaced().help("公開鍵は ed25519: で始まる SPKI 形式です。")
           if let caps = saved?.capabilities, !caps.serverId.isEmpty {
+            if !caps.workerLabel.isEmpty {
+              LabeledContent("ワーカーの表示名", value: caps.workerLabel)
+            }
             LabeledContent("CPU アーキテクチャ", value: caps.systems.joined(separator: ", "))
             LabeledContent("隔離方式", value: String(localized: "PID 名前空間"))
             LabeledContent("CPU とメモリの上限", value: caps.resourceLimits ? String(localized: "対応") : String(localized: "非対応"))

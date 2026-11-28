@@ -33,6 +33,7 @@ class RemoteWorkerStore {
                       const Tsugumi::RemoteWorker::CacheSettingsT& caches,
                       CacheRelay::Exchange relay,
                       const std::filesystem::path& store_root,
+                      const workerd::NixBuildLimits& limits,
                       const WorkerDerivation& derivation,
                       const std::function<void(const std::string&)>& log,
                       uint64_t timeout_ms = 0,

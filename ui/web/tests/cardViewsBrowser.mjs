@@ -11,11 +11,11 @@ export async function checkCardViewsInChromium(browser, web, directory) {
   await fs.mkdir(modules)
   await fs.writeFile(path.join(modules, 'legacy.js'), '')
   installViewer(path.join(web, '../shared/modules'), modules)
-  assert.deepEqual(await fs.readdir(modules), ['viewer.html', 'worker-dashboard.html'])
+  assert.deepEqual(await fs.readdir(modules), ['viewer.html'])
   if (process.env.TSUGUMI_WEB_PUBLIC_DIR) {
     const distribution = path.join(process.env.TSUGUMI_WEB_PUBLIC_DIR, 'modules')
-    assert.deepEqual(await fs.readdir(distribution), ['viewer.html', 'worker-dashboard.html'])
-    for (const name of ['viewer.html', 'worker-dashboard.html']) {
+    assert.deepEqual(await fs.readdir(distribution), ['viewer.html'])
+    for (const name of ['viewer.html']) {
       assert.deepEqual(await fs.readFile(path.join(distribution, name)), await fs.readFile(path.join(modules, name)))
     }
   }

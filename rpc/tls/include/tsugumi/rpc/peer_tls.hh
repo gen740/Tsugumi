@@ -55,12 +55,34 @@ class Identity {
   friend class Context;
 };
 
+// A self-signed ECDSA P-256 server certificate for HTTPS pages. Browsers
+// do not accept Ed25519 server certificates, so a listener serving a page to
+// browsers presents this one, kept in its own private file and created on first
+// use. Clients that know its SHA-256 can pin it.
+class WebIdentity {
+ public:
+  explicit WebIdentity(const std::filesystem::path& file);
+  ~WebIdentity();
+  WebIdentity(const WebIdentity&) = delete;
+  auto operator=(const WebIdentity&) -> WebIdentity& = delete;
+  // SHA-256 of the certificate's DER, lowercase hex.
+  auto certificate_sha256() const -> std::string;
+
+ private:
+  struct State;
+  std::unique_ptr<State> state_;
+  friend class Context;
+};
+
 // Replaces CA/hostname verification with an explicit SPKI decision, on both
 // sides. No session resumption or early data may bypass a current key check.
 class Context {
  public:
   Context(const Identity& identity, bool server,
           std::function<bool(std::string_view)> accepts);
+  // An HTTPS server that asks no client certificate. Streams from it have no
+  // peer_key.
+  explicit Context(const WebIdentity& identity);
   ~Context();
   Context(const Context&) = delete;
   auto operator=(const Context&) -> Context& = delete;

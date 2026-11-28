@@ -156,6 +156,12 @@ table Capabilities {
   probe_life:string;
   active_jobs:uint;
   requires_filesystem:bool = true; requires_pid:bool = true;
+  // The worker's display name from its settings; empty when unset.
+  label:string;
+  // The worker's dashboard: an HTTPS listener on the same address, and the
+  // SHA-256 of its certificate (DER, lowercase hex) for clients that pin it.
+  dashboard_port:ushort;
+  dashboard_certificate_sha256:string;
 }
 // The host decides availability and supplies its reason; the core only carries it.
 table Target { id:string (required); available:bool; capabilities:Capabilities (required); unavailable_reason:string; probe_revision:string; }
@@ -242,4 +248,5 @@ file_identifier "TSR1";
 table WorkerReady {
   port:ushort;
   pid:ulong;
+  dashboard_port:ushort;
 }

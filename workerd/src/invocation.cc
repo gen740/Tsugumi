@@ -722,7 +722,8 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
 
 namespace workerd {
 auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
-            const stdfs::path& store, const stdfs::path& group) -> void {
+            const stdfs::path& store, const stdfs::path& group,
+            const NixBuildLimits& limits) -> void {
   const auto job = parse_spec(read(directory / "spec.fb", kMaxSpec));
   if (::fcntl(kDisplayChannelFd, F_SETFD, FD_CLOEXEC) != 0)
     throw std::runtime_error("the job's live display channel is missing");
@@ -795,7 +796,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
         relay = exchange_cache_file;
       }
       environment = RemoteWorkerStore::realise(
-          BinaryCacheDerivationTransport{}, caches, relay, store,
+          BinaryCacheDerivationTransport{}, caches, relay, store, limits,
           WorkerDerivation{derivation, output, job->system},
           [&](const std::string& line) {
             if (!job->card_probe) log(LogStream::build, line);

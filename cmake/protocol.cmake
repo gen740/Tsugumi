@@ -9,7 +9,7 @@ if(APPLE)
   file(WRITE "${TSUGUMI_GEN_DIR}/python/tsugumi.py"
     "from os.path import dirname, join\n__path__ = [join(dirname(__file__), 'tsugumi')]\n")
 endif()
-set(TSUGUMI_SCHEMAS artifact card_enums tsugumi_enums rpc_trace worker_types data card worker local_worker remote_worker tsugumi service_common agent host vm_host vm_guest runtime_state nix_evaluator version_state)
+set(TSUGUMI_SCHEMAS artifact card_enums tsugumi_enums rpc_trace worker_types data card worker local_worker remote_worker tsugumi service_common agent host vm_host vm_guest runtime_state nix_evaluator version_state worker_settings)
 # Project document schemas. Their fields keep the documents' camelCase keys,
 # which flatc warns about.
 set(TSUGUMI_DOCUMENT_SCHEMAS project_document project_lock card_document comments_document layout_document)

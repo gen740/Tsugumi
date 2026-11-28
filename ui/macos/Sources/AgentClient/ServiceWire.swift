@@ -481,7 +481,9 @@ enum ServiceWire {
     case let v as Tsugumi_Host_ExecutionCapabilitiesT:
       return ["serverId": v.serverId, "nativeSystem": v.nativeSystem, "systems": v.systems.compactMap { $0 },
               "isolation": v.isolation ?? "pid_namespace", "resourceLimits": v.resourceLimits,
-              "maxConcurrentJobs": v.maxConcurrentJobs, "workerContract": v.workerContract] as [String: Any]
+              "maxConcurrentJobs": v.maxConcurrentJobs, "workerContract": v.workerContract,
+              "workerLabel": v.workerLabel ?? "", "dashboardUrl": v.dashboardUrl ?? "",
+              "dashboardCertificateSha256": v.dashboardCertificateSha256 ?? ""] as [String: Any]
     case let v as Tsugumi_Host_ExecutionAuthorizationT:
       return ["endpoint": v.endpoint, "capability_file": v.capabilityFile, "available": v.available] as [String: Any]
     case let v as Tsugumi_Service_HelloResultT:

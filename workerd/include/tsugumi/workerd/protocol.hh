@@ -62,4 +62,9 @@ inline constexpr std::string_view kSecretsWanted = "secrets-wanted";
 // The job's JobProgress, replaced as what it does changes.
 inline constexpr std::string_view kActivity = "activity";
 auto terminal(R::JobState state) -> bool;
+// The Nix build parallelism of one invocation, from the worker's settings, as
+// Nix setting values. Empty keeps the worker machine's Nix configuration.
+struct NixBuildLimits {
+  std::string max_jobs, cores;
+};
 }  // namespace tsugumi::workerd

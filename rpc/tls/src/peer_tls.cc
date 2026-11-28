@@ -278,6 +278,100 @@ Context::Context(const Identity& identity, bool server,
   SSL_CTX_set_max_early_data(ctx, 0);
 }
 Context::~Context() = default;
+struct WebIdentity::State {
+  Key key{nullptr, EVP_PKEY_free};
+  Certificate certificate{nullptr, X509_free};
+  std::string sha256;
+};
+WebIdentity::WebIdentity(const std::filesystem::path& file)
+    : state_(std::make_unique<State>()) {
+  struct stat parent{};
+  Check(::lstat(file.parent_path().c_str(), &parent) == 0 &&
+            S_ISDIR(parent.st_mode) && parent.st_uid == ::geteuid() &&
+            !(parent.st_mode & 0077),
+        "TLS state directory must be private and owned");
+  auto pem = ReadPrivate(file);
+  if (pem.empty()) {
+    Key key(EVP_PKEY_Q_keygen(nullptr, nullptr, "EC", "P-256"),
+            EVP_PKEY_free);
+    Check(bool(key), "Cannot generate the HTTPS key");
+    Certificate cert(X509_new(), X509_free);
+    Check(cert && X509_set_version(cert.get(), 2) &&
+              ASN1_INTEGER_set(X509_get_serialNumber(cert.get()), 1) &&
+              X509_gmtime_adj(X509_getm_notBefore(cert.get()), -300) &&
+              X509_gmtime_adj(X509_getm_notAfter(cert.get()),
+                              10L * 365 * 86400) &&
+              X509_set_pubkey(cert.get(), key.get()),
+          "Cannot create the HTTPS certificate");
+    auto* subject = X509_get_subject_name(cert.get());
+    Check(X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC,
+                                     reinterpret_cast<const unsigned char*>(
+                                         "Tsugumi worker dashboard"),
+                                     -1, -1, 0) &&
+              X509_set_issuer_name(cert.get(), subject),
+          "Cannot create the HTTPS certificate");
+    X509V3_CTX context;
+    X509V3_set_ctx_nodb(&context);
+    X509V3_set_ctx(&context, cert.get(), cert.get(), nullptr, nullptr, 0);
+    Owned<X509_EXTENSION, X509_EXTENSION_free> extension(
+        X509V3_EXT_conf_nid(nullptr, &context, NID_basic_constraints,
+                            "critical,CA:FALSE"),
+        X509_EXTENSION_free);
+    Check(extension && X509_add_ext(cert.get(), extension.get(), -1) &&
+              X509_sign(cert.get(), key.get(), EVP_sha256()) > 0,
+          "Cannot sign the HTTPS certificate");
+    Bio output(BIO_new(BIO_s_mem()), BIO_free);
+    Check(output &&
+              PEM_write_bio_PrivateKey(output.get(), key.get(), nullptr,
+                                       nullptr, 0, nullptr, nullptr) &&
+              PEM_write_bio_X509(output.get(), cert.get()),
+          "Cannot encode the HTTPS identity");
+    char* bytes = nullptr;
+    const auto count = BIO_get_mem_data(output.get(), &bytes);
+    fs::write_atomic(file, std::string_view(bytes, static_cast<size_t>(count)),
+                     0600);
+    pem = ReadPrivate(file);
+  }
+  Bio input(BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size())),
+            BIO_free);
+  state_->key.reset(PEM_read_bio_PrivateKey(
+      input.get(), nullptr, [](char*, int, int, void*) { return 0; }, nullptr));
+  state_->certificate.reset(
+      PEM_read_bio_X509(input.get(), nullptr, nullptr, nullptr));
+  Check(state_->key && state_->certificate &&
+            EVP_PKEY_is_a(state_->key.get(), "EC") &&
+            X509_check_private_key(state_->certificate.get(),
+                                   state_->key.get()),
+        "Invalid HTTPS identity");
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned int length = 0;
+  Check(X509_digest(state_->certificate.get(), EVP_sha256(), digest,
+                    &length) == 1,
+        "Cannot hash the HTTPS certificate");
+  static constexpr char kHex[] = "0123456789abcdef";
+  for (unsigned int i = 0; i < length; ++i) {
+    state_->sha256 += kHex[digest[i] >> 4];
+    state_->sha256 += kHex[digest[i] & 15];
+  }
+}
+WebIdentity::~WebIdentity() = default;
+auto WebIdentity::certificate_sha256() const -> std::string {
+  return state_->sha256;
+}
+Context::Context(const WebIdentity& identity)
+    : state_(std::make_unique<State>()) {
+  state_->context.reset(SSL_CTX_new(TLS_method()));
+  auto* ctx = state_->context.get();
+  Check(ctx && SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION) &&
+            SSL_CTX_use_PrivateKey(ctx, identity.state_->key.get()) &&
+            SSL_CTX_use_certificate(ctx, identity.state_->certificate.get()),
+        "Cannot configure HTTPS server");
+  SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, nullptr);
+  SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
+  SSL_CTX_set_options(ctx, SSL_OP_NO_TICKET | SSL_OP_NO_RENEGOTIATION);
+  SSL_CTX_set_num_tickets(ctx, 0);
+  SSL_CTX_set_max_early_data(ctx, 0);
+}
 struct Stream::State {
   Owned<SSL, SSL_free> ssl{nullptr, SSL_free};
   int fd = -1, downstream = -1;

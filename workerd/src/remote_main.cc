@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 #include <sys/statfs.h>
 #include <sys/syscall.h>
+#include <termios.h>
 #include <sys/un.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
@@ -21,6 +22,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -47,6 +49,7 @@
 #include "jobs_command.hh"
 #include "journal.hh"
 #include "tsugumi/rpc/frame.hh"
+#include "tsugumi/rpc/password.hh"
 #include "tsugumi/rpc/peer_tls.hh"
 #include "tsugumi/rpc/unix_socket.hh"
 #include "tsugumi/util/crypto.hh"
@@ -56,11 +59,13 @@
 #include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/workerd/path_ids.hh"
 #include "tsugumi/workerd/worker_proc.hh"
+#include "worker_settings.hh"
 
 extern char** environ;
 namespace tsugumi::workerd {
 auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
-            const stdfs::path& store, const stdfs::path& group) -> void;
+            const stdfs::path& store, const stdfs::path& group,
+            const NixBuildLimits& limits) -> void;
 namespace {
 using namespace std::chrono_literals;
 constexpr size_t kConnections = 64;
@@ -465,14 +470,13 @@ auto try_supervisor_lock(const Fd& lock) -> bool {
 struct Config {
   stdfs::path root;
   stdfs::path unix_socket;
-  stdfs::path authorized_keys;
   bool print_key = false;
   stdfs::path cgroup;
-  std::string host = "127.0.0.1";
-  uint16_t port = 8765;
-  uint32_t max_jobs = 8;
   std::string executable;
+  // The command line, to start again with on a restart from the dashboard.
+  std::vector<std::string> arguments;
 };
+enum class Restart { None, AfterJobs, Now };
 auto default_root() -> stdfs::path {
   if (const char* value = std::getenv("TSUGUMI_REMOTE_STATE_DIR")) return value;
   if (const char* value = std::getenv("XDG_STATE_HOME");
@@ -527,11 +531,20 @@ auto system() -> std::string {
 
 class Daemon {
  public:
-  explicit Daemon(Config config, int shutdown_fd)
+  Daemon(Config config, WorkerSettings& settings, std::string dashboard_sha256,
+         int shutdown_fd)
       : config_(std::move(config)),
         server_(identity(config_.root, "server_id")),
-        dashboard_(config_.root, config_.authorized_keys, server_),
+        settings_(settings),
         system_(system()),
+        dashboard_(config_.root, settings_,
+                   {.system = system_,
+                    .running = [this] { return running_jobs_.load(); },
+                    .restart = [this](bool now) { request_restart(now); },
+                    .restart_pending =
+                        [this] { return restart_.load() != Restart::None; },
+                    .last_seen = [this] { return last_seen(); }}),
+        dashboard_sha256_(std::move(dashboard_sha256)),
         shutdown_fd_(shutdown_fd),
         journal_events_(::inotify_init1(IN_NONBLOCK | IN_CLOEXEC)) {
     if (journal_events_.value < 0)
@@ -549,7 +562,10 @@ class Daemon {
     c.native_system = system_;
     c.systems = {system_};
     c.resource_limits = !config_.cgroup.empty();
-    c.max_jobs = config_.max_jobs;
+    c.max_jobs = settings_.max_jobs();
+    c.label = settings_.saved().name;
+    c.dashboard_port = dashboard_port_;
+    c.dashboard_certificate_sha256 = dashboard_sha256_;
     c.active_jobs = active_jobs_.load();
     c.probe_life = probe_life_;
     c.worker_contract = kContract;
@@ -741,16 +757,13 @@ class Daemon {
         throw Error(R::ErrorCode::Invalid, "invalid request body");
     }
   }
-  // HTTP request prefixes are larger than any legal binary frame length.
-  // Dispatch only after the mutual TLS handshake has authenticated the peer.
   auto serve_stream(peer_tls::Stream& stream) -> void {
-    auto prefix = stream.Read(4);
-    if (prefix == "GET " || prefix == "POST") {
-      dashboard_.serve(stream, std::move(prefix));
-      return;
+    {
+      std::lock_guard guard(seen_mutex_);
+      seen_[stream.peer_key()] = std::chrono::system_clock::now();
     }
     try {
-      auto n = frame_length(prefix);
+      auto n = frame_length(stream.Read(4));
       auto bytes = stream.Read(n);
       auto m = decode(bytes);
       clear_secret(bytes);
@@ -766,6 +779,36 @@ class Daemon {
       auto bytes = encode(failure(e.code, e.what()));
       stream.Write(length_prefix(static_cast<uint32_t>(bytes.size())) + bytes);
     }
+  }
+  auto serve_dashboard(peer_tls::Stream& stream) -> void {
+    dashboard_.serve(stream);
+  }
+  // Called once the listeners are bound, before any connection is served.
+  auto listening(uint16_t port, uint16_t dashboard_port) -> void {
+    dashboard_port_ = dashboard_port;
+    dashboard_.listening(port, dashboard_port);
+  }
+  auto last_seen() -> std::map<std::string, std::chrono::system_clock::time_point> {
+    std::lock_guard guard(seen_mutex_);
+    return seen_;
+  }
+  auto request_restart(bool now) -> void {
+    auto expected = Restart::None;
+    if (!restart_.compare_exchange_strong(
+            expected, now ? Restart::Now : Restart::AfterJobs) &&
+        now)
+      restart_.store(Restart::Now);
+  }
+  // On the main thread: whether the listener should start again now. A
+  // restart "now" first cancels the running jobs, as a host's cancel would.
+  auto restart_due() -> bool {
+    const auto mode = restart_.load();
+    if (mode == Restart::None) return false;
+    if (mode == Restart::AfterJobs)
+      return running_.empty() && handoffs_.empty();
+    for (const auto& key : running_) cancel_for_restart(key.first);
+    for (const auto& key : handoffs_) cancel_for_restart(key);
+    return true;
   }
   auto recover() -> void {
     for (const auto& entry :
@@ -894,9 +937,26 @@ class Daemon {
       log("cannot recover job " + p->job_path(job).string() + ": " + e.what());
     }
   }
+  auto cancel_for_restart(const Job& key) -> void {
+    const auto& [p, job] = key;
+    try {
+      const auto record = p->status(job);
+      if (record.state != R::JobState::Running &&
+          record.state != R::JobState::Queued)
+        return;
+      const auto state = p->cancel(job, record.fingerprint);
+      if (state.state == R::JobState::Cancelling) notify_cancel(state);
+    } catch (const std::exception& e) {
+      log("cannot cancel job " + p->job_path(job).string() +
+          " for the restart: " + e.what());
+    }
+  }
   auto dispatch() -> void {
     const auto occupied = [&] { return running_.size() + handoffs_.size(); };
-    while (!queued_.empty() && occupied() < config_.max_jobs && !stopping) {
+    // A pending restart starts no further job; queued jobs wait for the
+    // listener that follows.
+    while (!queued_.empty() && occupied() < settings_.max_jobs() && !stopping &&
+           restart_.load() == Restart::None) {
       auto next = queued_.end();
       {
         std::lock_guard guard(channel_mutex_);
@@ -937,6 +997,7 @@ class Daemon {
       }
     }
     active_jobs_.store(static_cast<uint32_t>(occupied() + queued_.size()));
+    running_jobs_.store(static_cast<uint32_t>(occupied()));
   }
   static auto channel_key(const Journal& journal, const Sha256Hex& job)
       -> std::string {
@@ -1026,6 +1087,23 @@ class Daemon {
     }
     if (configuration.empty()) return -1;
     auto& config = configuration.mapped();
+    // The worker's own pull caches follow the host's, for jobs that start
+    // from now on. Nix parallelism is the one this listener started with.
+    for (const auto& cache : settings_.saved().pull_caches) {
+      auto& pulls = config.settings->pull;
+      if (std::ranges::any_of(pulls, [&](const auto& pull) {
+            return pull->endpoint == cache->url;
+          }))
+        continue;
+      auto pull = std::make_unique<R::CachePullSettingsT>();
+      pull->endpoint = cache->url;
+      pull->public_key = cache->public_key;
+      pulls.push_back(std::move(pull));
+    }
+    const auto& own = settings_.started();
+    const auto setting = [](uint32_t value) {
+      return value ? std::to_string(value) : std::string();
+    };
     Fd cache_file(::memfd_create("tsugumi-cache-settings",
                                  MFD_CLOEXEC | MFD_ALLOW_SEALING));
     if (cache_file.value < 0) return -1;
@@ -1113,7 +1191,9 @@ class Daemon {
                                   std::string(job.view()),
                                   "5",
                                   (config_.root / "store").string(),
-                                  config_.cgroup.string()};
+                                  config_.cgroup.string(),
+                                  setting(own.nix_max_jobs),
+                                  setting(own.nix_cores)};
     std::vector<char*> argv;
     for (auto& arg : args) argv.push_back(arg.data());
     argv.push_back(nullptr);
@@ -1132,8 +1212,15 @@ class Daemon {
   }
   Config config_;
   std::string server_;
-  Dashboard dashboard_;
+  WorkerSettings& settings_;
   std::string system_;
+  Dashboard dashboard_;
+  std::string dashboard_sha256_;
+  uint16_t dashboard_port_ = 0;
+  std::atomic<Restart> restart_{Restart::None};
+  std::atomic<uint32_t> running_jobs_{0};
+  std::mutex seen_mutex_;
+  std::map<std::string, std::chrono::system_clock::time_point> seen_;
   int shutdown_fd_;
   Fd journal_events_;
   std::map<Job, Fd> running_;
@@ -1157,7 +1244,8 @@ class Daemon {
 
 auto supervise(const std::string& self, const stdfs::path& root,
                const Sha256Hex& job, int lockfd, const stdfs::path& store,
-               const stdfs::path& cgroup_root) -> int {
+               const stdfs::path& cgroup_root, const std::string& nix_max_jobs,
+               const std::string& nix_cores) -> int {
   Journal journal(root);
   Fd expected(supervisor_lock(journal, job));
   struct stat held{}, named{};
@@ -1213,7 +1301,7 @@ auto supervise(const std::string& self, const stdfs::path& root,
       ::execlp("unshare", "unshare", "--map-current-user", "--pid", "--fork",
                "--kill-child=SIGKILL", "--mount-proc", "--", self.c_str(),
                "--invoke", work.c_str(), blobs.c_str(), store.c_str(),
-               group.c_str(), nullptr);
+               group.c_str(), nix_max_jobs.c_str(), nix_cores.c_str(), nullptr);
       ::_exit(127);
     }
     if (!spec->secrets.empty()) ::close(kSecretChannelFd);
@@ -1281,72 +1369,136 @@ auto unix_listener(const stdfs::path& path) -> int {
   ::chmod(path.c_str(), 0600);
   return fd;
 }
-auto tcp_listener(Config& config) -> int {
-  const bool v6 = config.host.find(':') != std::string::npos;
+// Binds `address` (an IP literal) and `port`, 0 for any free port, which is
+// replaced with the bound one.
+auto tcp_listener(const std::string& address, uint16_t& port) -> int {
+  const bool v6 = address.find(':') != std::string::npos;
   int fd = ::socket(v6 ? AF_INET6 : AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
   const int one = 1;
   ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
   sockaddr_in a{};
   sockaddr_in6 b{};
   a.sin_family = AF_INET;
-  a.sin_port = htons(config.port);
-  const bool ipv4 = ::inet_pton(AF_INET, config.host.c_str(), &a.sin_addr) == 1;
+  a.sin_port = htons(port);
+  const bool ipv4 = ::inet_pton(AF_INET, address.c_str(), &a.sin_addr) == 1;
   b.sin6_family = AF_INET6;
-  b.sin6_port = htons(config.port);
-  const bool ipv6 =
-      ::inet_pton(AF_INET6, config.host.c_str(), &b.sin6_addr) == 1;
+  b.sin6_port = htons(port);
+  const bool ipv6 = ::inet_pton(AF_INET6, address.c_str(), &b.sin6_addr) == 1;
   if (!(v6 ? ipv6 : ipv4))
-    throw std::runtime_error("--host must be an IP literal");
+    throw std::runtime_error("listen_address must be an IP address");
   if (fd < 0 ||
       ::bind(fd,
              v6 ? reinterpret_cast<sockaddr*>(&b)
                 : reinterpret_cast<sockaddr*>(&a),
              v6 ? sizeof b : sizeof a) != 0 ||
       ::listen(fd, 64) != 0)
-    throw std::runtime_error("cannot listen on TLS TCP");
+    throw std::runtime_error("cannot listen on " + address + " port " +
+                             std::to_string(port) + ": " +
+                             std::strerror(errno));
   sockaddr_storage bound{};
   socklen_t size = sizeof bound;
   if (::getsockname(fd, reinterpret_cast<sockaddr*>(&bound), &size) != 0)
-    throw std::runtime_error("cannot read TLS listener port");
-  config.port = ntohs(v6 ? reinterpret_cast<sockaddr_in6*>(&bound)->sin6_port
-                         : reinterpret_cast<sockaddr_in*>(&bound)->sin_port);
+    throw std::runtime_error("cannot read the listener's port");
+  port = ntohs(v6 ? reinterpret_cast<sockaddr_in6*>(&bound)->sin6_port
+                  : reinterpret_cast<sockaddr_in*>(&bound)->sin_port);
   return fd;
 }
-auto run(Config config) -> int {
+// Reads the new administrator password: twice without echo from a terminal,
+// otherwise one line from standard input.
+auto read_password() -> std::string {
+  const auto line = [] {
+    std::string text;
+    if (!std::getline(std::cin, text))
+      throw std::runtime_error("no password was given");
+    if (!text.empty() && text.back() == '\r') text.pop_back();
+    return text;
+  };
+  if (!::isatty(STDIN_FILENO)) return line();
+  termios saved{};
+  if (::tcgetattr(STDIN_FILENO, &saved) != 0)
+    throw std::runtime_error("cannot read the terminal settings");
+  auto quiet = saved;
+  quiet.c_lflag &= ~static_cast<tcflag_t>(ECHO);
+  struct Restore {
+    termios value;
+    ~Restore() { ::tcsetattr(STDIN_FILENO, TCSANOW, &value); }
+  } restore{saved};
+  ::tcsetattr(STDIN_FILENO, TCSANOW, &quiet);
+  std::cerr << "New administrator password: " << std::flush;
+  auto first = line();
+  std::cerr << "\nRepeat it: " << std::flush;
+  const auto second = line();
+  std::cerr << '\n';
+  if (first != second) throw std::runtime_error("the passwords differ");
+  return first;
+}
+auto admin_password_main(stdfs::path root, std::span<char*> args) -> int {
+  for (size_t i = 0; i < args.size(); ++i) {
+    if (std::string_view(args[i]) == "--state-dir" && i + 1 < args.size())
+      root = args[++i];
+    else
+      throw std::runtime_error(
+          "usage: tsugumi-workerd admin-password [--state-dir DIR]");
+  }
+  if (!root.is_absolute())
+    throw std::runtime_error("the state directory must be an absolute path");
+  private_directory(root);
+  const auto chosen = read_password();
+  if (chosen.size() < 8 || chosen.size() > 1024)
+    throw std::runtime_error("use a password of 8 to 1024 bytes");
+  fs::write_atomic(root / "admin-password",
+                   tsugumi::password::Hash(chosen) + "\n", 0600);
+  std::cout << "The administrator password is set. Log in on the dashboard.\n";
+  return 0;
+}
+// Returns true when the dashboard asked the listener to start again.
+auto run(Config config) -> bool {
   private_directory(config.root);
   Fd singleton(::open((config.root / "worker.lock").c_str(),
                       O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600));
   if (singleton.value < 0 || ::flock(singleton.value, LOCK_EX | LOCK_NB) != 0)
-    throw std::runtime_error("another remote worker owns this state directory");
+    throw std::runtime_error(
+        "another tsugumi-workerd is already running with the state directory " +
+        config.root.string() + "; run one worker per user");
   if (config.unix_socket.empty())
     config.unix_socket = config.root / "worker.sock";
   peer_tls::Identity identity(config.root / "identity.pem");
   if (config.print_key) {
     std::cout << identity.public_key() << '\n';
-    return 0;
+    return false;
   }
-  if (config.authorized_keys.empty())
-    config.authorized_keys = config.root / "authorized_keys";
-  if (!stdfs::exists(config.authorized_keys))
-    fs::write_atomic(config.authorized_keys,
-                     "# One ed25519: SPKI key per line.\n", 0600);
+  WorkerSettings settings(config.root);
+  const auto& started = settings.started();
+  const auto authorized_keys = config.root / "authorized_keys";
+  if (!stdfs::exists(authorized_keys))
+    fs::write_atomic(authorized_keys, "# One ed25519: SPKI key per line.\n",
+                     0600);
   peer_tls::Context tls(identity, true, [&](std::string_view key) {
-    return peer_tls::Authorized(config.authorized_keys, key);
+    return peer_tls::Authorized(authorized_keys, key);
   });
+  // Browsers refuse Ed25519 server certificates, so the dashboard has a
+  // P-256 certificate of its own. Hosts learn its hash over the pinned link.
+  peer_tls::WebIdentity web_identity(config.root / "dashboard-identity.pem");
+  peer_tls::Context web(web_identity);
   int shutdown_pipe[2];
   if (::pipe2(shutdown_pipe, O_CLOEXEC) != 0)
     throw std::runtime_error("cannot create shutdown pipe");
   Fd shutdown_reader(shutdown_pipe[0]), shutdown_writer(shutdown_pipe[1]);
-  Daemon daemon(config, shutdown_reader.value);
+  Daemon daemon(config, settings, web_identity.certificate_sha256(),
+                shutdown_reader.value);
   Fd unixfd(unix_listener(config.unix_socket));
-  Fd tcpfd(tcp_listener(config));
+  uint16_t port = started.port, dashboard_port = started.dashboard_port;
+  Fd tcpfd(tcp_listener(started.listen_address, port));
+  Fd webfd(tcp_listener(started.listen_address, dashboard_port));
+  daemon.listening(port, dashboard_port);
   ::signal(SIGTERM, stop);
   ::signal(SIGINT, stop);
   ::signal(SIGPIPE, SIG_IGN);
   daemon.recover();
   Tsugumi::RemoteWorker::WorkerReadyT ready;
-  ready.port = config.port;
+  ready.port = port;
   ready.pid = static_cast<uint64_t>(::getpid());
+  ready.dashboard_port = dashboard_port;
   fs::write_atomic(config.root / "worker.ready",
                    flat::encode<Tsugumi::RemoteWorker::WorkerReady>(ready),
                    0600);
@@ -1356,10 +1508,21 @@ auto run(Config config) -> int {
     std::shared_ptr<std::atomic<bool>> done;
   };
   std::vector<Client> clients;
+  const auto host = started.listen_address.find(':') == std::string::npos
+                        ? started.listen_address
+                        : "[" + started.listen_address + "]";
+  std::string fingerprint;
+  for (const auto c : web_identity.certificate_sha256()) {
+    if (!fingerprint.empty() && fingerprint.size() % 3 == 2) fingerprint += ':';
+    fingerprint += static_cast<char>(std::toupper(c));
+  }
   log("public key: " + identity.public_key());
   log("listening with TLS 1.3 on unix:" + config.unix_socket.string() +
-      " and tls://" + config.host + ":" + std::to_string(config.port));
-  while (!stopping) {
+      " and tls://" + host + ":" + std::to_string(port));
+  log("dashboard: https://" + host + ":" + std::to_string(dashboard_port) +
+      "/ (certificate SHA-256 " + fingerprint + ")");
+  bool restarting = false;
+  while (!stopping && !(restarting = daemon.restart_due())) {
     for (auto i = clients.begin(); i != clients.end();) {
       if (i->done->load()) {
         i->thread.join();
@@ -1368,13 +1531,15 @@ auto run(Config config) -> int {
         ++i;
     }
     std::vector<pollfd> fds{{unixfd.value, POLLIN, 0},
-                            {tcpfd.value, POLLIN, 0}};
+                            {tcpfd.value, POLLIN, 0},
+                            {webfd.value, POLLIN, 0}};
     daemon.watch_events(fds);
     if (::poll(fds.data(), fds.size(), 100) < 0) continue;
     const auto descriptors = std::span(fds);
-    daemon.tick(descriptors.subspan(2));
-    for (const auto& listener : descriptors.first(2))
+    daemon.tick(descriptors.subspan(3));
+    for (const auto& listener : descriptors.first(3))
       if (listener.revents & POLLIN) {
+        const bool page = listener.fd == webfd.value;
         const int fd = ::accept4(listener.fd, nullptr, nullptr, SOCK_CLOEXEC);
         if (fd < 0) continue;
         if (active.load() >= kConnections) {
@@ -1383,12 +1548,16 @@ auto run(Config config) -> int {
         }
         ++active;
         auto done = std::make_shared<std::atomic<bool>>(false);
-        clients.push_back({std::thread([&, fd, done] {
+        clients.push_back({std::thread([&, fd, done, page] {
                              Fd connection(fd);
                              try {
                                peer_tls::ConfigureSocket(fd, 30);
-                               peer_tls::Stream stream(tls, fd, true);
-                               daemon.serve_stream(stream);
+                               peer_tls::Stream stream(page ? web : tls, fd,
+                                                       true);
+                               if (page)
+                                 daemon.serve_dashboard(stream);
+                               else
+                                 daemon.serve_stream(stream);
                              } catch (const std::exception&) {
                              }
                              --active;
@@ -1403,7 +1572,8 @@ auto run(Config config) -> int {
   ::unlink(config.unix_socket.c_str());
   // Detached supervisors and their namespaces continue through listener
   // restarts.
-  return 0;
+  if (restarting) log("restarting as the dashboard asked");
+  return restarting;
 }
 }  // namespace
 }  // namespace tsugumi::workerd
@@ -1414,20 +1584,24 @@ auto remote_workerd_main(int argc, char** argv) -> int {
   try {
     if (argc == 2 && std::string_view(argv[1]) == "--check-namespace")
       return ::getpid() == 1 ? 0 : 1;
-    if (argc == 6 && std::string_view(argv[1]) == "--invoke") {
-      invoke(argv[2], argv[3], argv[4], argv[5]);
+    if (argc == 8 && std::string_view(argv[1]) == "--invoke") {
+      invoke(argv[2], argv[3], argv[4], argv[5], {argv[6], argv[7]});
       return 0;
     }
     if (argc >= 2 && std::string_view(argv[1]) == "jobs")
       return jobs_main(default_root(),
                        std::span(argv + 2, static_cast<size_t>(argc - 2)));
+    if (argc >= 2 && std::string_view(argv[1]) == "admin-password")
+      return admin_password_main(
+          default_root(), std::span(argv + 2, static_cast<size_t>(argc - 2)));
     const auto self = stdfs::canonical("/proc/self/exe").string();
-    if (argc == 7 && std::string_view(argv[1]) == "--supervise")
+    if (argc == 9 && std::string_view(argv[1]) == "--supervise")
       return supervise(self, argv[2], require_sha256_hex(argv[3], "job ID"),
-                       std::stoi(argv[4]), argv[5], argv[6]);
+                       std::stoi(argv[4]), argv[5], argv[6], argv[7], argv[8]);
     Config c;
     c.root = default_root();
     c.executable = self;
+    c.arguments.assign(argv, argv + argc);
     for (int i = 1; i < argc; ++i) {
       const std::string_view option(argv[i]);
       if (option == "--public-key") {
@@ -1440,24 +1614,26 @@ auto remote_workerd_main(int argc, char** argv) -> int {
         c.root = value;
       else if (option == "--socket")
         c.unix_socket = value;
-      else if (option == "--authorized-keys")
-        c.authorized_keys = value;
-      else if (option == "--host")
-        c.host = value;
-      else if (option == "--port") {
-        const auto n = std::stoul(value);
-        if (n > 65535) throw std::runtime_error("invalid port");
-        c.port = static_cast<uint16_t>(n);
-      } else if (option == "--max-jobs") {
-        const auto n = std::stoul(value);
-        if (!n || n > 65536) throw std::runtime_error("invalid max-jobs");
-        c.max_jobs = static_cast<uint32_t>(n);
-      } else if (option == "--cgroup-root")
+      else if (option == "--cgroup-root")
         c.cgroup = value;
       else
-        throw std::runtime_error("unknown remote worker option");
+        throw std::runtime_error(
+            "unknown remote worker option " + std::string(option) +
+            "; listen address, ports and concurrency are in the state "
+            "directory's settings.json");
     }
-    return run(std::move(c));
+    if (!c.root.is_absolute())
+      throw std::runtime_error("the state directory must be an absolute path");
+    auto arguments = c.arguments;
+    if (!run(std::move(c))) return 0;
+    // The dashboard's restart: the same command, so the new listener reads
+    // settings.json again and adopts the running supervisors.
+    std::vector<char*> exec;
+    for (auto& argument : arguments) exec.push_back(argument.data());
+    exec.push_back(nullptr);
+    ::execv(self.c_str(), exec.data());
+    throw std::runtime_error("cannot start the listener again: " +
+                             std::string(std::strerror(errno)));
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
     return 1;

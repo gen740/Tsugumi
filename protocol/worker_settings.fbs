@@ -1,0 +1,43 @@
+// STATE/settings.json: a remote worker's own settings (tsugumi-workerd).
+//
+// Saved as FlatBuffers JSON text (two-space indent, every field written) and
+// read with the FlatBuffers parser, which is the file's schema check. The
+// listener creates the file with the defaults at its first start, reads it at
+// every start, and its dashboard replaces it atomically when an administrator
+// saves. Edit it by hand only while the listener is stopped.
+
+namespace Tsugumi.WorkerSettings;
+
+/// A binary cache the worker substitutes from for every job, after the pull
+/// caches the host sends with the job. Public caches only: no credentials.
+table PullCache {
+  /// An https://, http:// or file:/// URL, without credentials or a query.
+  url:string (required);
+  /// The cache's signing key, name:base64.
+  public_key:string (required);
+}
+
+table Settings {
+  /// Shown on the dashboard and sent to hosts. Empty shows the machine's host
+  /// name on the dashboard.
+  name:string;
+  /// The IP literal both listeners bind to. Takes effect after a restart.
+  listen_address:string (required);
+  /// The hosts' mutual TLS port. Takes effect after a restart. 0 binds any
+  /// free port.
+  port:ushort = 8765;
+  /// The HTTPS dashboard's port on listen_address. Takes effect after a
+  /// restart. 0 binds any free port.
+  dashboard_port:ushort = 8767;
+  /// Jobs that run at once across all projects, 1 to 65536. Applies to the
+  /// next job that starts.
+  max_jobs:uint = 8;
+  /// Nix max-jobs and cores of the worker's private store. 0 keeps the
+  /// machine's Nix configuration. Take effect after a restart.
+  nix_max_jobs:uint;
+  nix_cores:uint;
+  /// Apply to the next job that starts.
+  pull_caches:[PullCache];
+}
+
+root_type Settings;

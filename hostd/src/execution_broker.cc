@@ -35,7 +35,6 @@
 
 #include "agent/wire.hh"
 #include "host/cache_process.hh"
-#include "tsugumi/rpc/dashboard_http.hh"
 #include "tsugumi/rpc/peer_tls.hh"
 #include "tsugumi/rpc/unix_binding.hh"
 #include "tsugumi/rpc/unix_socket.hh"
@@ -300,13 +299,28 @@ auto Public(const Entry& entry) -> std::unique_ptr<H::ExecutionServiceT> {
   c->resource_limits = entry.capabilities.resource_limits;
   c->max_concurrent_jobs = entry.capabilities.max_jobs;
   c->worker_contract = entry.capabilities.worker_contract;
+  c->worker_label = entry.capabilities.label;
+  // The dashboard listens on the worker's address; a host reaches it at the
+  // registered endpoint's host name.
+  std::smatch match;
+  if (entry.capabilities.dashboard_port &&
+      std::regex_match(entry.endpoint, match,
+                       std::regex(R"(tls://(\[[0-9a-fA-F:]+\]|[A-Za-z0-9.-]+):[0-9]{1,5})"))) {
+    c->dashboard_url = "https://" + match[1].str() + ":" +
+                       std::to_string(entry.capabilities.dashboard_port) + "/";
+    c->dashboard_certificate_sha256 =
+        entry.capabilities.dashboard_certificate_sha256;
+  }
   return value;
 }
 auto VerifiedCapabilities(const R::ReplyT& reply) -> const R::CapabilitiesT& {
   const auto* capabilities = reply.body.AsCapabilities();
   if (!capabilities || capabilities->worker_contract != W::kContract ||
       !crypto::is_sha256_hex(capabilities->server_id) ||
-      !capabilities->max_jobs)
+      !capabilities->max_jobs || capabilities->label.size() > 256 ||
+      !text::valid_utf8(capabilities->label) ||
+      !(capabilities->dashboard_certificate_sha256.empty() ||
+        crypto::is_sha256_hex(capabilities->dashboard_certificate_sha256)))
     throw W::Error(R::ErrorCode::Rejected,
                    "Rebuild the remote worker with this Tsugumi revision "
                    "(invalid capabilities)");
@@ -713,79 +727,6 @@ struct ExecutionBroker::State {
     });
   }
 
-  auto Dashboard(const H::WorkerDashboardRequest& request)
-      -> H::WorkerDashboardReplyT {
-    using Op = H::WorkerDashboardOperation;
-    const auto id = request.id()->str();
-    Require(ValidId(id), "Invalid remote execution service ID");
-    const auto operation = request.operation();
-    auto entry = [&] {
-      std::lock_guard lock(mutex);
-      const auto saved = FindEntry(id);
-      Require(saved && crypto::is_sha256_hex(saved->capabilities.server_id),
-              "Verify the execution service before opening its dashboard");
-      Require(operation == Op::Page ||
-                  (request.generation() &&
-                   request.generation()->string_view() == saved->generation),
-              "The execution service changed; reopen its dashboard");
-      return *saved;
-    }();
-
-    std::string_view path;
-    bool changes = false;
-    switch (operation) {
-      case Op::Page: {
-        const auto language =
-            request.language() ? request.language()->string_view() : "en";
-        Require(language == "ja" || language == "en",
-                "Invalid dashboard language");
-        path = language == "ja" ? "/dashboard?lang=ja" : "/dashboard?lang=en";
-        break;
-      }
-      case Op::Jobs:
-        path = "/dashboard/jobs";
-        break;
-      case Op::Keys:
-        path = "/dashboard/keys";
-        break;
-      case Op::Challenge:
-        path = "/dashboard/challenge";
-        break;
-      case Op::RemoveJobs:
-        path = "/dashboard/jobs/remove";
-        changes = true;
-        break;
-      case Op::AddKey:
-        path = "/dashboard/keys/add";
-        changes = true;
-        break;
-      case Op::RemoveKey:
-        path = "/dashboard/keys/remove";
-        changes = true;
-        break;
-      default:
-        throw std::runtime_error("Unknown worker dashboard operation");
-    }
-    const auto body = request.body() ? request.body()->string_view() : "";
-    Require(changes == !body.empty(), "Invalid worker dashboard request body");
-    auto response = WithWorker(
-        entry, Clock::now() + kExchangeTimeout, -1, [&](peer_tls::Stream& tls) {
-          dashboard_http::WriteRequest(tls, path, entry.capabilities.server_id,
-                                       body);
-          return dashboard_http::ReadReply(tls);
-        });
-    if (operation == Op::Page && response.status != 200)
-      throw std::runtime_error("Worker refused the dashboard (HTTP " +
-                               std::to_string(response.status) + ")");
-    Require(response.type == (operation == Op::Page ? dashboard_http::kHtml
-                                                    : dashboard_http::kJson) &&
-                text::valid_utf8(response.body),
-            "Unexpected worker dashboard response");
-    H::WorkerDashboardReplyT reply;
-    reply.generation = std::move(entry.generation);
-    reply.body = std::move(response.body);
-    return reply;
-  }
   auto CacheEndpoint() -> CacheProcess::Endpoint {
     std::lock_guard lock(cache_mutex);
     // The broker authenticates worker connections before relaying them. Its
@@ -1285,8 +1226,7 @@ auto ExecutionBroker::Revoke(const std::string& project) -> void {
       .run();
 }
 auto ExecutionBroker::Handles(H::RequestPayload type) -> bool {
-  return type == H::RequestPayload::WorkerDashboardRequest ||
-         type == H::RequestPayload::ExecutionServicesRequest ||
+  return type == H::RequestPayload::ExecutionServicesRequest ||
          type == H::RequestPayload::ExecutionServicePutRequest ||
          type == H::RequestPayload::ExecutionProbeRemeasureRequest ||
          type == H::RequestPayload::ExecutionServiceRemoveRequest ||
@@ -1296,8 +1236,6 @@ auto ExecutionBroker::Handles(H::RequestPayload type) -> bool {
 auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
     -> std::string {
   try {
-    if (const auto* p = request.value_as_WorkerDashboardRequest())
-      return agent::wire::HostReply(id, state_->Dashboard(*p));
     if (const auto* p = request.value_as_ExecutionProjectAuthorizeRequest())
       return agent::wire::HostReply(
           id, Authorize(p->project_id()->str(), p->path()->str(),

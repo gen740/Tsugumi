@@ -3,59 +3,108 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'">
 <title>Worker dashboard</title>
 <style>
 @dashboard_css@
 </style>
 </head>
 <body>
+<header>
+  <div><div class="name" id="name"></div><div class="meta" id="meta"></div></div>
+  <div class="spacer"></div>
+  <span class="badge" id="badge"></span>
+  <button type="button" class="btn primary" id="login-open" hidden data-l="管理者としてログイン"></button>
+  <button type="button" class="btn" id="restart-open" hidden data-l="↻ ワーカーを再起動…"></button>
+  <button type="button" class="btn" id="logout" hidden data-l="ログアウト"></button>
+</header>
+<p class="notice" id="notice" hidden></p>
 <main>
-  <h1 data-l="ワーカー管理"></h1>
-  <section aria-labelledby="jobs-title">
+  <section class="wide" aria-labelledby="jobs-title">
     <div class="section-header">
       <h2 id="jobs-title" data-l="ジョブ"></h2>
-      <button type="button" id="review-jobs" disabled data-l="選択したジョブを削除"></button>
+      <small id="jobs-note"></small>
+      <button type="button" class="btn danger" id="remove-jobs" hidden disabled></button>
     </div>
-    <div class="table-scroll">
+    <div class="scroll">
       <table>
         <thead>
           <tr>
-            <th scope="col"><span class="visually-hidden" data-l="選択"></span></th>
-            <th scope="col" data-l="プロジェクトスコープ"></th>
-            <th scope="col" data-l="ジョブ ID"></th>
+            <th scope="col" class="admin-only"><span class="visually-hidden" data-l="選択"></span></th>
             <th scope="col" data-l="状態"></th>
-            <th scope="col" data-l="ディスク使用量"></th>
-            <th scope="col" data-l="最終書き込み（UTC）"></th>
-            <th scope="col" data-l="保持されている理由"></th>
+            <th scope="col" data-l="プロジェクト"></th>
+            <th scope="col" data-l="ジョブ ID"></th>
+            <th scope="col" class="number" data-l="ディスク"></th>
+            <th scope="col" data-l="最終書き込み"></th>
+            <th scope="col" data-l="残っている理由"></th>
           </tr>
         </thead>
         <tbody id="jobs"></tbody>
       </table>
     </div>
-    <p id="empty-jobs" hidden data-l="保持されているジョブはありません。"></p>
+    <p class="empty" id="empty-jobs" hidden data-l="保持されているジョブはありません。"></p>
   </section>
-  <section aria-labelledby="keys-title">
-    <div class="section-header"><h2 id="keys-title" data-l="許可されたホスト鍵"></h2></div>
-    <p data-l="最初の公開鍵は、ワーカーの authorized_keys に手動で追加してください。"></p>
-    <ul id="keys"></ul>
-    <div class="add-key">
-      <label for="public-key" data-l="ホストの公開鍵"></label>
-      <div class="key-entry">
-        <input id="public-key" type="text" placeholder="ed25519:…" maxlength="128" autocomplete="off" spellcheck="false">
-        <button type="button" id="submit-key" disabled data-l="鍵を追加"></button>
+  <section id="disk-section" aria-labelledby="disk-title">
+    <div class="section-header"><h2 id="disk-title" data-l="ディスク"></h2></div>
+    <div class="kv" id="disk"></div>
+  </section>
+  <section id="settings-view" aria-labelledby="settings-view-title">
+    <div class="section-header">
+      <h2 id="settings-view-title" data-l="設定"></h2>
+      <span class="lock" data-l="🔒 変更には管理者ログインが必要"></span>
+    </div>
+    <div class="kv" id="settings-values"></div>
+  </section>
+  <section class="wide" id="settings-edit" hidden aria-labelledby="settings-edit-title">
+    <div class="section-header">
+      <h2 id="settings-edit-title" data-l="設定"></h2>
+      <button type="button" class="btn primary" id="save-settings" disabled data-l="保存"></button>
+    </div>
+    <div class="field"><label for="name-input" data-l="表示名"></label><input id="name-input" type="text" maxlength="128" autocomplete="off" spellcheck="false"></div>
+    <div class="field"><label for="max-jobs" data-l="同時に動かすジョブ"></label><input id="max-jobs" type="number" min="1" max="65536" step="1"></div>
+    <div class="field"><label for="nix-max-jobs" data-l="Nix max-jobs / cores"></label>
+      <div class="pair"><input id="nix-max-jobs" type="number" min="0" max="1024" step="1" aria-label="max-jobs"><input id="nix-cores" type="number" min="0" max="4096" step="1" aria-label="cores"><small data-l="0 はマシンの Nix 設定に従います"></small></div></div>
+    <div class="field top"><span class="label" data-l="pull キャッシュ"></span>
+      <div>
+        <ul id="pull-caches"></ul>
+        <div class="stack">
+          <input id="cache-url" type="text" maxlength="1024" autocomplete="off" spellcheck="false" placeholder="URL">
+          <div class="pair"><input id="cache-key" type="text" maxlength="1024" autocomplete="off" spellcheck="false" data-placeholder="公開鍵"><button type="button" class="btn" id="add-cache" data-l="追加"></button></div>
+        </div>
       </div>
     </div>
+    <div class="field"><label for="listen-address" data-l="待ち受け（アドレス / ポート）"></label>
+      <div class="pair"><input id="listen-address" type="text" maxlength="64" autocomplete="off" spellcheck="false"><input id="port" class="port" type="number" min="0" max="65535" step="1" aria-label="port"></div></div>
+    <div class="field"><label for="dashboard-port" data-l="ダッシュボードのポート"></label><input id="dashboard-port" class="port" type="number" min="0" max="65535" step="1"></div>
+    <p class="note"><span data-l="同時に動かすジョブ数と pull キャッシュは次のジョブから効きます。Nix の並列度と待ち受けは再起動後に効きます"></span><span class="restart-needed" id="restart-needed" hidden data-l="↻ 再起動が必要"></span></p>
+  </section>
+  <section class="wide" aria-labelledby="hosts-title">
+    <div class="section-header">
+      <h2 id="hosts-title" data-l="このワーカーを使えるホスト"></h2>
+      <small id="hosts-note"></small>
+    </div>
+    <ul id="hosts"></ul>
+    <div class="field admin-only" id="add-host"><label for="host-key" data-l="ホストの公開鍵を追加"></label>
+      <div class="pair"><input id="host-key" type="text" maxlength="128" autocomplete="off" spellcheck="false" placeholder="ed25519:…"><button type="button" class="btn" id="add-key" disabled data-l="追加"></button></div></div>
   </section>
 </main>
-<aside id="review" hidden aria-labelledby="review-text">
-  <p id="review-text"></p>
-  <label id="active-label" hidden><input id="active" type="checkbox"> <span data-l="スーパーバイザーが動いていない待機中・実行中・キャンセル中のジョブも削除する"></span></label>
-  <div class="review-actions">
-    <button type="button" id="cancel" data-l="キャンセル"></button>
-    <button type="button" id="confirm" class="danger" data-l="削除する"></button>
+<div class="overlay" id="login" hidden>
+  <form class="card" id="login-form">
+    <h1 id="login-title"></h1>
+    <p data-l="ジョブの削除、ホストの追加・削除、設定の変更には管理者パスワードが必要です。"></p>
+    <input type="password" id="password" autocomplete="current-password" aria-labelledby="login-title">
+    <button type="submit" class="btn primary wide-button" id="login-submit" data-l="ログイン"></button>
+    <button type="button" class="btn wide-button" id="login-cancel" data-l="やめる"></button>
+    <div class="error" id="login-error" role="alert"></div>
+  </form>
+</div>
+<div class="overlay" id="confirm" hidden>
+  <div class="card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <h1 id="confirm-title"></h1>
+    <p id="confirm-text"></p>
+    <div class="choices" id="confirm-choices"></div>
   </div>
-</aside>
+</div>
 <div id="feedback" role="status" aria-live="polite"></div>
 <script>
 'use strict'
