@@ -171,7 +171,8 @@ struct StageLogView: View {
     TimelineView(.periodic(from: .now, by: 1)) { _ in
       StagePipelineView(line: StagePipeline(stages: groups.flatMap(\.stages), records: stages, service: service,
                                             live: live, now: session.coreNow(),
-                                            lastActivity: live?.executionLastActivity ?? info?.record?.summary.executionLastActivity)) { open($0) }
+                                            lastActivity: live?.executionLastActivity ?? info?.record?.summary.executionLastActivity,
+                                            cpuMs: live.map(\.cpuMs) ?? info?.record?.summary.cpuMs)) { open($0) }
     }
   }
 

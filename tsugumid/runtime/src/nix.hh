@@ -78,6 +78,9 @@ struct BuildRequest {
   std::function<void(uint32_t)> on_plan;  // implementation count before build
   std::function<void(const std::string& derivation, bool active)>
       on_build;  // a derivation build starting or ending
+  // The CPU time the derivations built for this request used so far, while
+  // they build and when they have finished (also when one failed).
+  std::function<void(uint64_t cpu_ms)> on_build_cpu;
 };
 
 struct ExpressionRequest {

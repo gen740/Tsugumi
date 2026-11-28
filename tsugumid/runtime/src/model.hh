@@ -117,9 +117,10 @@ struct InvocationSummaryData {
   std::string execution_activity_detail;
   // The last activity the remote job reported, kept after it ended.
   ExecutionActivity execution_last_activity = ExecutionActivity::unspecified;
-  // CPU time of its process tree (the remote job, or the local Card worker's
-  // tree since its call began), and when it last wrote output or build log
-  // (core clock). Live only.
+  // CPU time it used: the remote job's process tree, or locally its Nix
+  // build (where the core sees its processes) and the Card worker's tree
+  // since its call began. Kept in history with its last value. And when it
+  // last wrote output or build log (core clock, live only).
   std::optional<uint64_t> cpu_ms;
   std::optional<int64_t> last_output_at;
   std::optional<uint64_t> batch_activation;

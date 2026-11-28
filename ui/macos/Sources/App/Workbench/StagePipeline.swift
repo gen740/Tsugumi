@@ -19,7 +19,8 @@ struct StagePipeline: Equatable {
   }
 
   var steps: [Step]
-  /// What the running stage does now, e.g. "ttl で Nix ビルド中（hello-1.0）· CPU 5:41 · 最後の出力 1 分 25 秒前".
+  /// What the running stage does now, e.g. "ttl で Nix ビルド中（hello-1.0）· CPU 5:41 · 最後の出力 1 分 25 秒前";
+  /// once it ended, the CPU time it used ("CPU 5:41").
   var detail: String?
 
   /// - Parameters:
@@ -29,8 +30,9 @@ struct StagePipeline: Equatable {
   ///   - live: the invocation's live state while the run goes on.
   ///   - now: the core's clock (ms since 1970).
   ///   - lastActivity: the last activity the remote job reported (kept after it ended).
+  ///   - cpuMs: the CPU time it used, said once no stage runs any more.
   init(stages shown: [Stage], records: [StageRecord], service: String?, live: CardRunState?, now: Int64,
-       lastActivity: Tsugumi_Data_ExecutionActivity? = nil) {
+       lastActivity: Tsugumi_Data_ExecutionActivity? = nil, cpuMs: UInt64? = nil) {
     func record(_ st: Stage) -> StageRecord? { records.last { $0.stage == st } }
     func seconds(_ r: StageRecord?) -> Double? {
       guard let r, let start = r.start else { return nil }
@@ -65,8 +67,12 @@ struct StagePipeline: Equatable {
       $0.waiting = worker.executeWaiting
     }
     self.steps = steps
-    detail = Self.detail(steps.first { $0.status == .running }, service: worker.remote ? service : nil,
-                         activity: activity, live: live, now: now)
+    let current = steps.first { $0.status == .running }
+    if current == nil, let cpuMs {
+      detail = String(localized: "CPU \(formatShortDuration(Double(cpuMs) / 1000))")
+      return
+    }
+    detail = Self.detail(current, service: worker.remote ? service : nil, activity: activity, live: live, now: now)
   }
 
   static func status(_ outcome: Tsugumi_Data_StageOutcome?) -> StageProgress.Status {

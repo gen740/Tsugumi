@@ -33,47 +33,61 @@ constexpr uid_t kCardUid = 65534;
 #endif
 
 // Every few seconds while the Card's call runs, the CPU time its worker's
-// process tree used since the call began, published with the invocation's
-// summary as a remote worker's job progress is. The sampler owns cpu_ms only
-// while it runs: stop() returns once it no longer touches the summary, and
-// the caller stops it before anything else changes the summary again.
+// process tree used since the call began, added to what the summary already
+// holds (its Nix build's) and published with the invocation's summary as a
+// remote worker's job progress is. stop() takes a last sample, so a short
+// call counts too. The sampler owns cpu_ms only while it runs: stop() returns
+// once it no longer touches the summary, and the caller stops it before
+// anything else changes the summary again.
 class CpuSampler {
  public:
   CpuSampler(pid_t worker, InvocationSummaryData& summary,
-             std::function<void()> publish) {
-    const auto start = proc::tree_cpu_ms(worker);
-    if (!start) return;
-    thread_ = std::jthread([worker, start = *start, &summary,
-                            publish = std::move(publish)](std::stop_token stop) {
-      std::mutex mutex;
-      std::condition_variable_any tick;
-      for (;;) {
-        {
-          std::unique_lock lock(mutex);
-          tick.wait_for(lock, stop, std::chrono::seconds(2),
-                        [] { return false; });
-        }
-        if (stop.stop_requested()) return;
-        // A process tree only gains CPU time. Less means the worker is gone
-        // (its id may already name another process): keep the last value.
-        const auto now = proc::tree_cpu_ms(worker);
-        if (!now || *now < start) continue;
-        const auto used = *now - start;
-        if (summary.cpu_ms && used <= *summary.cpu_ms) continue;
-        summary.cpu_ms = used;
-        publish();
-      }
-    });
+             std::function<void()> publish)
+      : worker_(worker),
+        base_(summary.cpu_ms.value_or(0)),
+        start_(proc::tree_cpu_ms(worker)),
+        summary_(summary) {
+    if (!start_) return;
+    thread_ = std::jthread(
+        [this, publish = std::move(publish)](std::stop_token stop) {
+          std::mutex mutex;
+          std::condition_variable_any tick;
+          for (;;) {
+            {
+              std::unique_lock lock(mutex);
+              tick.wait_for(lock, stop, std::chrono::seconds(2),
+                            [] { return false; });
+            }
+            if (stop.stop_requested()) return;
+            if (sample()) publish();
+          }
+        });
   }
   auto stop() -> void {
     if (!thread_.joinable()) return;
     thread_.request_stop();
     thread_.join();
+    sample();
   }
   ~CpuSampler() { stop(); }
   CpuSampler(const CpuSampler&) = delete;
 
  private:
+  // A process tree only gains CPU time. Less means the worker is gone (its
+  // id may already name another process): keep the last value.
+  auto sample() -> bool {
+    const auto now = proc::tree_cpu_ms(worker_);
+    if (!now || *now < *start_) return false;
+    const auto used = base_ + (*now - *start_);
+    if (summary_.cpu_ms && used <= *summary_.cpu_ms) return false;
+    summary_.cpu_ms = used;
+    return true;
+  }
+
+  pid_t worker_;
+  uint64_t base_;
+  std::optional<uint64_t> start_;
+  InvocationSummaryData& summary_;
   std::jthread thread_;
 };
 
@@ -317,7 +331,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
           const WorkerViewRequest& control) {
         return service->view_control(origin, views, endpoint, control);
       };
-  s.cpu_ms.reset();
   CpuSampler cpu(lease.worker->process_id(), s, request.publish);
   // The call has answered when its timing arrives; validation changes the
   // summary next.

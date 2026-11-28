@@ -20,7 +20,8 @@ export interface PipelineStep {
 
 export interface StagePipeline {
   steps: PipelineStep[]
-  /** What the running stage does now, e.g. "ttl で Nix ビルド中（hello-1.0）· CPU 5:41 · 最後の出力 1 分 25 秒前". */
+  /** What the running stage does now, e.g. "ttl で Nix ビルド中（hello-1.0）· CPU 5:41 · 最後の出力 1 分 25 秒前";
+   *  once it ended, the CPU time it used ("CPU 5:41"). */
   detail?: string
 }
 
@@ -46,9 +47,10 @@ export function formatAgo(seconds: number): string {
 
 /** `stages`: the stages shown, in order; `records`: what the core recorded;
  *  `service`: "local", a worker, or undefined; `live`: the invocation's live
- *  state while the run goes on; `now`: the core's clock (ms since 1970). */
+ *  state while the run goes on; `now`: the core's clock (ms since 1970);
+ *  `cpuMs`: the CPU time it used, said once no stage runs any more. */
 export function stagePipeline(stages: Stage[], records: StageRecord[], service: string | undefined,
-  live: CardRunState | undefined, now: number, lastActivity?: D.ExecutionActivity): StagePipeline {
+  live: CardRunState | undefined, now: number, lastActivity?: D.ExecutionActivity, cpuMs?: number): StagePipeline {
   const record = (st: Stage) => [...records].reverse().find((r) => r.stage === st)
   const seconds = (r: StageRecord | undefined) => {
     if (r?.start === undefined) return undefined
@@ -78,6 +80,7 @@ export function stagePipeline(stages: Stage[], records: StageRecord[], service: 
     run.waiting = worker.executeWaiting
   }
   const current = steps.find((s) => s.status === 'running')
+  if (!current && cpuMs !== undefined) return { steps, detail: L('CPU {0}', formatShortDuration(cpuMs / 1000)) }
   return { steps, detail: detail(current, worker.remote ? service : undefined, activity, live, now) }
 }
 

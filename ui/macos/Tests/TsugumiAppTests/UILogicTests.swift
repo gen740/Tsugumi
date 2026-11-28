@@ -293,6 +293,9 @@ import TsugumiTestSupport
   #expect(try step(cached, .build).status == .cached && !step(cached, .build).onWorker)
   #expect(try step(cached, .execute).status == .done && step(cached, .execute).seconds == 4)
   #expect(cached.detail == nil)
+  // Once it ended, the second line says the CPU time it used, its Nix build's included.
+  let finished = StagePipeline(stages: order, records: cachedRecords, service: "local", live: nil, now: 9_000, cpuMs: 341_230)
+  #expect(finished.detail == "CPU 5:41")
   // A finished run on a worker: its build is shown done on the worker.
   let remoteRecords = cachedRecords.filter { $0.stage != .build }
   let remote = StagePipeline(stages: order, records: remoteRecords, service: "ttl", live: nil, now: 9_000)

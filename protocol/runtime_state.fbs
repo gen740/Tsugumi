@@ -129,6 +129,8 @@ table InvocationDetail {
   build_pushed:bool = null;
   build_push:Tsugumi.Data.BuildPush;
   execution_last_activity:int;
+  /// The invocation's last CPU time (InvocationSummary.cpu_ms).
+  cpu_ms:ulong = null;
 }
 
 table InputSource {

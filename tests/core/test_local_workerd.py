@@ -183,3 +183,41 @@ def test_resident_worker_counts_cpu_time_from_its_call(core_factory, project, tm
     assert wait_run(client, idle).state == RunState.succeeded
     record, = client.call("RunInvocationsRequest", runId=idle, card=path("work")).records
     assert record.workerReused
+
+
+def test_local_cpu_time_includes_its_build_and_stays_in_history(core_factory, project, tmp_path):
+    """The first member of a local invocation carries the CPU time of the Nix
+    build done for it, the Card's call adds its own, and the last value stays
+    with the finished invocation, also across a core restart. A later run that
+    builds nothing counts its call only."""
+    build_cpu = 40_000
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
+    client = daemon.connect()
+    Project(project).card(
+        "work", {"type": "code", "sandbox": SCRIPTED_WORKER_SANDBOX},
+        outputs="table Outputs {} root_type Outputs;",
+        plan=mock_plan([str(project / "definitions/work")], buildCpuMs=build_cpu),
+        sources={"scenario.json": json.dumps({"actions": [{"op": "spin", "seconds": 3}]})},
+    ).save(client)
+    built = run(client)
+    assert active_row(client, built, lambda r: (r.cpuMs or 0) >= build_cpu).cpuMs >= build_cpu
+    assert wait_run(client, built).state == RunState.succeeded
+
+    def recorded(c, run_id):
+        record, = c.call("RunInvocationsRequest", runId=run_id, card=path("work")).records
+        return record.cpuMs
+
+    # The call spun for three seconds: its last sample is part of the value.
+    final = recorded(client, built)
+    assert final is not None and final >= build_cpu + 2000, final
+    daemon.stop()
+    daemon.start()
+    client = daemon.connect()
+    assert recorded(client, built) == final
+    detail = client.call("RunRecordRequest", runId=built, card=path("work"), invocation=1).record
+    assert detail.summary.cpuMs == final
+
+    again = run(client)
+    assert wait_run(client, again).state == RunState.succeeded
+    reused = recorded(client, again)
+    assert reused is not None and 2000 <= reused < build_cpu, reused

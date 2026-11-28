@@ -396,9 +396,12 @@ final class ProjectSession {
   /// smallest difference seen (an event is never received before it happened).
   private(set) var coreClockOffset: Int64?
   /// The core clock now (ms since 1970), for elapsed times of a running run.
-  /// Whether a running invocation is working: "CPU 12m · 最後の出力 4 分前".
+  /// Whether a running invocation is working: "CPU 12m · 最後の出力 4 分前";
+  /// once it ended, the CPU time it used.
   func livenessText(_ state: CardRunState) -> String? {
-    guard state.state == .running || state.state == .preparing else { return nil }
+    guard state.state == .running || state.state == .preparing else {
+      return state.cpuMs.map { String(localized: "CPU \(formatDuration(Double($0) / 1000))") }
+    }
     var parts: [String] = []
     if let cpu = state.cpuMs { parts.append(String(localized: "CPU \(formatDuration(Double(cpu) / 1000))")) }
     if let at = state.lastOutputAt {

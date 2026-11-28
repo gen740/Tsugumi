@@ -11,8 +11,10 @@
 #endif
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <filesystem>
 #include <fstream>
 #include <list>
 #include <mutex>
@@ -68,20 +70,81 @@ constexpr size_t kBuildLogTail = 256u << 10;
 
 auto write_build_log(std::string_view line, bool truncated,
                      std::optional<bool> built = std::nullopt,
-                     const std::string& substituter = {}) -> void {
+                     const std::string& substituter = {},
+                     std::optional<uint64_t> cpu_ms = std::nullopt) -> void {
   flatbuffers::FlatBufferBuilder builder;
-  const auto text = truncated || built
+  const auto text = truncated || built || cpu_ms
                         ? flatbuffers::Offset<flatbuffers::String>{}
                         : builder.CreateString(line);
   const auto cache = substituter.empty()
                          ? flatbuffers::Offset<flatbuffers::String>{}
                          : builder.CreateString(substituter);
   builder.FinishSizePrefixed(
-      E::CreateBuildLog(builder, text, truncated, built, cache));
+      E::CreateBuildLog(builder, text, truncated, built, cache, cpu_ms));
+  // Log lines and CPU samples come from different threads: one frame at a
+  // time.
+  static std::mutex writing;
+  std::lock_guard lock(writing);
   nix::writeFull(STDOUT_FILENO,
                  {reinterpret_cast<const char*>(builder.GetBufferPointer()),
                   builder.GetSize()});
 }
+
+// The CPU time used for this build client's builds since it began: its own
+// process tree, where a store it opens itself runs the builders, and the
+// nix-daemon processes serving its connections, with the builders below them
+// and those they reaped. nix-daemon names such a process by its client's pid:
+// in argv[1] (Nix 2.34) or as `nix-daemon.worker-<pid>` (Nix 2.36). It is
+// found only where the client sees the daemon's processes
+// (the same PID namespace, a readable /proc). A derivation another client
+// builds meanwhile runs below that client's daemon process and counts there.
+class BuildCpu {
+ public:
+  BuildCpu() : start_(used()) {}
+
+  // The CPU time so far when it grew since the last sample.
+  auto sample() -> std::optional<uint64_t> {
+    const auto now = used();
+    if (now <= start_ || (last_ && now - start_ <= *last_)) return std::nullopt;
+    last_ = now - start_;
+    return last_;
+  }
+
+ private:
+  static auto used() -> uint64_t {
+    uint64_t total = tsugumi::proc::tree_cpu_ms(::getpid()).value_or(0);
+    for (const auto pid : daemon_connections())
+      total += tsugumi::proc::tree_cpu_ms(pid).value_or(0);
+    return total;
+  }
+
+  static auto daemon_connections() -> std::vector<pid_t> {
+    std::vector<pid_t> found;
+#ifdef __linux__
+    const auto self = std::to_string(::getpid());
+    std::error_code ec;
+    for (const auto& entry :
+         std::filesystem::directory_iterator("/proc", ec)) {
+      const auto name = entry.path().filename().string();
+      if (name.empty() ||
+          !std::ranges::all_of(name, [](char c) { return c >= '0' && c <= '9'; }))
+        continue;
+      std::ifstream file(entry.path() / "cmdline", std::ios::binary);
+      std::string program, client;
+      if (!std::getline(file, program, '\0')) continue;
+      std::getline(file, client, '\0');
+      const auto base = std::filesystem::path(program).filename().string();
+      if ((base == "nix-daemon" && client == self) ||
+          base == "nix-daemon.worker-" + self)
+        found.push_back(static_cast<pid_t>(std::stol(name)));
+    }
+#endif
+    return found;
+  }
+
+  uint64_t start_;
+  std::optional<uint64_t> last_;
+};
 
 // Observe below Nix's allow-list, including negative lookups and directory
 // enumeration. Keep observations for the entire EvalState: cached imports and
@@ -489,6 +552,30 @@ auto NixEvaluator::build_client(int argc, char** argv) -> std::optional<int> {
             });
     }
     nix::logger = std::move(sink);
+    // Every second while it builds, and once more when it is done, the CPU
+    // time its builds used so far.
+    BuildCpu cpu;
+    const auto report_cpu = [&cpu] {
+      if (const auto used = cpu.sample())
+        write_build_log("", false, std::nullopt, {}, *used);
+    };
+    std::jthread sampler([&](std::stop_token stop) {
+      std::mutex mutex;
+      std::condition_variable_any tick;
+      for (;;) {
+        std::unique_lock lock(mutex);
+        tick.wait_for(lock, stop, std::chrono::seconds(1), [] { return false; });
+        if (stop.stop_requested()) return;
+        report_cpu();
+      }
+    });
+    const auto stop_sampler = [&] {
+      if (!sampler.joinable()) return;
+      sampler.request_stop();
+      sampler.join();
+      report_cpu();
+    };
+    Finally stop_sampling(stop_sampler);
     // Only guest vmd sets TSUGUMI_GUEST_NIX_SANDBOX=1. It selects the shared
     // daemon whose nix.conf enforces the settings above for untrusted clients.
     if (sandboxed && dynamic_cast<nix::RemoteStore*>(&*store) &&
@@ -500,6 +587,8 @@ auto NixEvaluator::build_client(int argc, char** argv) -> std::optional<int> {
     auto results = store->buildPathsWithResults(
         {nix::DerivedPath::Built{.drvPath = nix::makeConstantStorePathRef(drv),
                                  .outputs = nix::OutputsSpec::All{}}});
+    // The daemon's process for this connection is still there.
+    stop_sampler();
     if (results.size() != 1)
       throw std::runtime_error("missing Nix build result");
     results.front().tryThrowBuildError();
@@ -1128,6 +1217,7 @@ struct EvaluationState {
             if (log->line()) output.push_back(log->line()->str());
             if (log->built()) built = *log->built();
             if (log->substituter()) substituter = log->substituter()->str();
+            if (log->cpu_ms() && c.on_build_cpu) c.on_build_cpu(*log->cpu_ms());
           }
           if (c.log) c.log({output, chunk.truncated});
         },

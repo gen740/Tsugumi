@@ -72,6 +72,8 @@ const cachedRecords = [record(Stage.prepare, D.StageOutcome.done, 0, 100), recor
 const cached = stagePipeline(order, cachedRecords, 'local', undefined, 9_000)
 assert.ok(step(cached, Stage.build).status === 'cached' && !step(cached, Stage.build).onWorker)
 assert.ok(step(cached, Stage.execute).status === 'done' && step(cached, Stage.execute).seconds === 4 && cached.detail === undefined)
+// Once it ended, the second line says the CPU time it used, its Nix build's included.
+assert.equal(stagePipeline(order, cachedRecords, 'local', undefined, 9_000, undefined, 341_230).detail, 'CPU 5:41')
 // A finished run on a worker: its build is shown done on the worker.
 const remote = stagePipeline(order, cachedRecords.filter((r) => r.stage !== Stage.build), 'ttl', undefined, 9_000)
 assert.ok(step(remote, Stage.build).status === 'done' && step(remote, Stage.build).onWorker)

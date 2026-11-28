@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <map>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -31,6 +32,8 @@ struct BuildPlan {
   schema::Opt<"error", schema::v::String> error;
   schema::Opt<"log", schema::v::String> log;
   schema::Opt<"cached", schema::v::Bool> cached;
+  // The CPU time a real build would report for the derivations it built.
+  schema::Opt<"buildCpuMs", schema::v::Uint64> build_cpu_ms;
   schema::Opt<"closure", schema::v::Array<schema::v::String>> closure;
   // Run list labels, one per implementation ("" for none); default: none.
   schema::Opt<"labels", schema::v::Array<schema::v::String>> labels;
@@ -97,6 +100,8 @@ struct NixEvaluator::Impl {
   std::filesystem::path control;
   std::filesystem::path products;
   uint64_t full_evaluations = 0;
+  // buildCpuMs of the latest evaluated plan of each product, by digest.
+  std::map<std::string, uint64_t> build_cpu_ms;
   // Evaluations take turns, as on the real evaluator's single thread.
   std::mutex evaluation;
 };
@@ -202,6 +207,10 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
                        "/nix/store/00000000000000000000000000000000-mock",
                        call.system};
   result.built = !cached;
+  if (const auto* cpu = schema::get(plan.build_cpu_ms))
+    impl_->build_cpu_ms[digest] = *cpu;
+  else
+    impl_->build_cpu_ms.erase(digest);
   if (const auto* closure = schema::get(plan.closure))
     result.closure = *closure;
   return result;
@@ -240,6 +249,9 @@ auto NixEvaluator::realise_native(const NixCall& call, NixResult result)
   const auto digest = crypto::sha256_hex(result.plan_json + call.system);
   const auto product = impl_->products / (digest + "-plan.json");
   if (result.built && call.on_phase) call.on_phase(true);
+  if (const auto cpu = impl_->build_cpu_ms.find(digest);
+      result.built && call.on_build_cpu && cpu != impl_->build_cpu_ms.end())
+    call.on_build_cpu(cpu->second);
   fs::write_atomic(product, result.plan_json, 0444);
   result.derivation.output = product.string();
   result.derivation.path = product.string() + ".drv";

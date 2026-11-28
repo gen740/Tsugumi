@@ -381,8 +381,10 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
     loaded: log.loaded || !!log.error, waiting: activity?.waiting ? activity.text : undefined, slow,
   })
 
+  const summaryCpu = info?.record?.summary?.cpuMs
+  const cpuMs = live ? live.cpuMs : summaryCpu != null ? Number(summaryCpu) : undefined
   const line = stagePipeline(groups.flatMap((g) => g.stages), stages, service, live, session.coreNow(),
-    live ? live.executionLastActivity : info?.record?.summary?.executionLastActivity)
+    live ? live.executionLastActivity : info?.record?.summary?.executionLastActivity, cpuMs)
   const pipeline = <StagePipelineView line={line} onTap={open} />
 
   const section = (g: StageGroup) => {

@@ -603,9 +603,11 @@ export class ProjectSession extends Observable {
   }
 
   /** The core clock now (ms since 1970), for elapsed times of a running run. */
-  /** Whether a running invocation is working: "CPU 12m · 最後の出力 4 分前". */
+  /** Whether a running invocation is working: "CPU 12m · 最後の出力 4 分前";
+   *  once it ended, the CPU time it used. */
   livenessText(state: CardRunState): string | undefined {
-    if (state.state !== D.CardState.running && state.state !== D.CardState.preparing) return
+    if (state.state !== D.CardState.running && state.state !== D.CardState.preparing)
+      return state.cpuMs !== undefined ? L('CPU {0}', formatDuration(state.cpuMs / 1000)) : undefined
     const parts: string[] = []
     if (state.cpuMs !== undefined) parts.push(L('CPU {0}', formatDuration(state.cpuMs / 1000)))
     if (state.lastOutputAt !== undefined) parts.push(L('最後の出力 {0} 前', formatDuration(Math.max(0, this.coreNow() - state.lastOutputAt) / 1000)))

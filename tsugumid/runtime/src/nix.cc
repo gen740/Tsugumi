@@ -471,6 +471,7 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
     call.deadline = budget_start + std::chrono::seconds(*req.timeout_seconds);
   call.log = req.log;
   call.on_build = req.on_build;
+  call.on_build_cpu = req.on_build_cpu;
   call.on_phase = [&](bool building) {
     if (req.on_phase) req.on_phase(building ? Phase::build : Phase::evaluate);
   };

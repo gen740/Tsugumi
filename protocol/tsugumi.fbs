@@ -95,7 +95,7 @@ table ActiveInvocation {
   /// What a remote execution does now: waiting for the worker's Nix store, building or substituting a derivation, or running the Card.
   execution_activity:Tsugumi.Data.ExecutionActivity (id: 5);
   execution_activity_detail:string (id: 6);
-  /// CPU time used so far by its process tree: on a remote worker the whole job, Nix builds included; locally the Card worker's process tree since its call began.
+  /// CPU time used so far: on a remote worker the whole job's process tree, Nix builds included; locally its Nix builds, where the core sees the processes that run them, and the Card worker's process tree since its call began.
   cpu_ms:uint64 = null (id: 7);
   /// Time since it last wrote output or build log; absent before its first line.
   output_idle_ms:uint64 = null (id: 8);
@@ -1209,7 +1209,7 @@ table InvocationSummary {
   execution_activity:Tsugumi.Data.ExecutionActivity (id: 35);
   /// The derivation or path name it builds or substitutes, without its hash.
   execution_activity_detail:string (id: 36);
-  /// CPU time used so far by its process tree, remote or local (live only; see ActiveInvocation.cpu_ms).
+  /// CPU time it used, remote or local (see ActiveInvocation.cpu_ms): growing while it runs, then its last value.
   cpu_ms:uint64 = null (id: 37);
   /// When it last wrote output or build log (core clock, live only).
   last_output_at:int64 = null (id: 38);

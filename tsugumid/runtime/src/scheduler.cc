@@ -1128,6 +1128,12 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       if (active) s.building.push_back({derivation, now_ms()});
       if (published) svc_.history().set_live(s);
     };
+    // The first member carries the build's CPU time, as it carries its
+    // stages; the Card's call adds its own.
+    request.on_build_cpu = [&](uint64_t cpu_ms) {
+      s.cpu_ms = cpu_ms;
+      if (published) svc_.history().set_live(s);
+    };
     request.on_plan = [&](uint32_t implementations) {
       if (implementations == 0) return;
       published = true;

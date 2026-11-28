@@ -76,6 +76,9 @@ struct NixCall {
       on_phase;  // false: evaluating, true: building
   std::function<void(const std::string& derivation, bool active)>
       on_build;  // a derivation build starting or ending
+  // The CPU time this call's builds used so far, while they run and once
+  // more at the end; where the build client cannot see them run, never.
+  std::function<void(uint64_t cpu_ms)> on_build_cpu;
   auto evaluation_key() const -> EvaluationKey {
     return {system, definition_key.empty() ? args : definition_key};
   }

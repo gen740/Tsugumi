@@ -3,6 +3,8 @@
 import os
 import socket
 import sqlite3
+import sys
+import time
 from contextlib import ExitStack, closing
 from uuid import uuid4
 
@@ -17,6 +19,7 @@ from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
+from Tsugumi.Data.Phase import Phase
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
@@ -305,3 +308,45 @@ in
 @run@'''.replace("@id@", uuid4().hex).replace("@port@", str(port)).replace("@card@", name).replace(
             "@run@", python_nix(EXISTS_MAIN, values={"PROBE": "\"${probe}\""}).split("\n", 1)[1]),
     }
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="a Mac's nix-daemon processes are not readable to the core")
+def test_local_cpu_time_includes_the_nix_build(core_factory, tmp_path):
+    """A local invocation's CPU time counts the derivations Nix built for it
+    (here a dependency of the Card's package that computes for four seconds),
+    whether the core's own store builds them or a nix-daemon does, and its last
+    value stays with the finished invocation."""
+    root = tmp_path / "project"
+    definition = {
+        "type": "code",
+        "_outputs": "table Outputs {} root_type Outputs;",
+        "_nix": r'''
+{ params, inputs }:
+let
+  pkgs = import <nixpkgs> { };
+  probe = pkgs.runCommand "tsugumi-build-cpu-@id@" {} ''
+    end=$((SECONDS + 4))
+    while [ "$SECONDS" -lt "$end" ]; do :; done
+    touch "$out"
+  '';
+in
+@run@'''.replace("@id@", uuid4().hex).replace(
+            "@run@", python_nix(EXISTS_MAIN, values={"PROBE": "\"${probe}\""}).split("\n", 1)[1]),
+    }
+    write(root, {"probe": definition}, [card("probe", "probe")], [])
+    client = core_factory(project_root=root).connect()
+    run_id = start_run(client, "probe", propagate=False)
+    # While it builds, its CPU time grows as a remote job's does.
+    building = []
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        status = client.call("RunStatusRequest", runId=run_id)
+        building += [r.cpuMs for r in status.active or [] if r.stage == Phase.build and r.cpuMs is not None]
+        if status.state not in (RunState.queued, RunState.preparing, RunState.running):
+            break
+        time.sleep(0.2)
+    outcome = wait_run(client, run_id)
+    assert outcome.state == RunState.succeeded, log(client, run_id, "probe", LogStream.build)
+    assert building and max(building) >= 1000, building
+    record = client.call("RunRecordRequest", runId=run_id, card=path("probe"), invocation=1).record
+    assert record.summary.cpuMs is not None and record.summary.cpuMs >= 2500, record.summary.cpuMs

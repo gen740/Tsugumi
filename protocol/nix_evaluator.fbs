@@ -71,8 +71,9 @@ table ExpressionValue {
 }
 table ResolvedSource { rev:string; narHash:string (required); }
 table Log { line:string; }
-// Size-prefixed stdout frames from the build client.
-table BuildLog { line:string; truncated:bool; built:bool = null; substituter:string; }
+// Size-prefixed stdout frames from the build client. cpu_ms: the CPU time its
+// builds used so far, where it can see them run.
+table BuildLog { line:string; truncated:bool; built:bool = null; substituter:string; cpu_ms:ulong = null; }
 table Build { drv:string (required); active:bool; }
 table Error { message:string; limit:bool; }
 // During a probe evaluation: the Card declares a probe (sent before the probe

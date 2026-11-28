@@ -230,6 +230,7 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
                             <Value label={L('開始')} value={formatMillis(summary.startedAt)} />
                             <Value label={L('終了')} value={formatMillis(summary.endedAt)} />
                             {summary.durationMs !== null && <Value label={L('所要時間')} value={formatDuration(Number(summary.durationMs) / 1000)} />}
+                            {summary.cpuMs !== null && <Value label={L('CPU 時間')} value={formatDuration(Number(summary.cpuMs) / 1000)} />}
                             {summary.executionService && <Value label={L('実行サービス')} value={s(summary.executionService) === 'local' ? L('プロジェクトの実行環境') : s(summary.executionService)} />}
                             {record.record?.workerProbes.map((probe) => <Fragment key={s(probe.worker)}>
                               <Value label={workerName(s(probe.worker))} value={probeResult(probe)} />

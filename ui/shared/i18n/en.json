@@ -152,6 +152,7 @@
   "CPU とメモリの上限": "CPU and memory limits",
   "CPU とメモリの上限を指定します。実行先のリソースは他のジョブと共有します。": "Set CPU and memory limits. Jobs share the host’s resources.",
   "CPU アーキテクチャ": "CPU architecture",
+  "CPU 時間": "CPU time",
   "CPU 上限（ミリコア）": "CPU limit (millicores)",
   "CPU: {0} 個": {"text": "CPUs: {0}", "mac": ["lld"]},
   "Canvas にフォーカスがあるときだけ働きます（文字の入力中は働きません）": "Works only while the Canvas has the focus (not while typing)",
