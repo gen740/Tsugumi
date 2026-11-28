@@ -39,7 +39,8 @@ the person's decision, so delete them when the person asks.
   fetched) as it goes.
 - Write each _card.json with type and symbol ("none" shows the UI's own icon for the kind; write "none" unless the
   person chose an icon). Code also requires inputs (initially []), maxRuns (1),
-  reuseWorker (false), timeoutSeconds (0), buildTimeoutSeconds (0), recordLogs and recordIO ("project"),
+  reuseWorker (false), timeoutSeconds (0), buildTimeoutSeconds (0), recordLogs ("project"), recordIO ("on" in
+  a Code Card you create or copy, so its run record keeps the values it received and produced for the person and you),
   sandbox (filesystem, pid, ipc and identity true, limits with cpu and memoryMiB both 0),
   grants (network and gui both false), systems (the Nix systems the Card works on, at least one; initially the
   host's native Linux system). A worker whose native system is listed builds and runs

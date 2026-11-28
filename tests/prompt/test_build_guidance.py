@@ -34,6 +34,9 @@ class BuildGuidance(unittest.TestCase):
         self.assertIn("prints its progress", text)
         self.assertIn("stdout and stderr do not reach the Card's log", flat(REVIEW))
 
+    def test_new_code_cards_record_their_values(self):
+        self.assertIn('recordIO ("on" in a Code Card you create or copy', flat(PROMPT))
+
     def test_runs_in_progress_and_long_runs(self):
         text = flat(PROMPT)
         self.assertIn("edits saved while it runs reach the next run", text)

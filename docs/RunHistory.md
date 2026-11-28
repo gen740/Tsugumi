@@ -18,7 +18,7 @@ The RPC exposes `RunStatus.partial_run` and `RunStatus.uses_partial_result` in s
 
 The project settings control what new invocations record. Project creation writes `recordLogs: true` and a combined `logLimitBytes` of 128 MiB per invocation. Set the limit in bytes from 0 through 1 GiB. A zero limit leaves the output available only while the run is active. Build logs and journals keep their own limits.
 
-Project creation writes `recordIO: false`. What a Card sends to its views is never recorded ([Views](CardGuide.md#views)). Where a Card supports recording, it writes `project` to inherit the setting or `on` or `off` to override it. Each nested project uses its own settings. A run keeps the policy accepted when it started, along with its summary, failure details, timings and versions.
+Project creation writes `recordIO: false`. What a Card sends to its views is never recorded ([Views](CardGuide.md#views)). Where a Card supports recording, it writes `project` to inherit the setting or `on` or `off` to override it. The Agent writes `on` in a Code Card it creates or copies, so the record shows what that Card received and produced; set it to `project` or `off` to change that. Each nested project uses its own settings. A run keeps the policy accepted when it started, along with its summary, failure details, timings and versions.
 
 For example, open **Visualization → report**, run it, and inspect a figure Card's input and output. A stopped or failed invocation can have a log and status even when there is no output.
 
