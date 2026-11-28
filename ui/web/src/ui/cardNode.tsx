@@ -71,7 +71,7 @@ export function statusLine(d: CardNodeData, now = Date.now()): StatusLine {
   }
   if (st === D.CardState.failed || st === D.CardState.blocked) {
     let text = (d.failure !== undefined ? firstMeaningfulLine(d.failure) : '') || cardState(st).label
-    const stage = failedStage(d.stage)?.stage
+    const stage = d.stage?.failedPart ?? failedStage(d.stage)?.stage
     if (stage !== undefined && STAGE_INFO[stage].name !== text) text = STAGE_INFO[stage].name + ': ' + text
     return { text: text + mark, color: st === D.CardState.failed ? failedColor : cardState(st).color }
   }

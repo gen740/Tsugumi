@@ -15,7 +15,7 @@ export enum Stage { waiting, prepare, evaluate, build, execute, validate, save, 
 
 export const STAGE_INFO: Record<Stage, { label: string; name: string; active: string; icon: string; activeIcon: string; stream: D.LogStream }> = {
   [Stage.waiting]: { label: L('入力待ち'), name: L('入力待ち'), active: L('入力待ち'), icon: 'tray.and.arrow.down', activeIcon: 'tray.and.arrow.down', stream: D.LogStream.journal },
-  [Stage.prepare]: { label: L('スキーマ生成'), name: L('スキーマ生成'), active: L('スキーマ生成中'), icon: 'shippingbox', activeIcon: 'shippingbox', stream: D.LogStream.build },
+  [Stage.prepare]: { label: L('スキーマ生成'), name: L('準備'), active: L('スキーマ生成中'), icon: 'shippingbox', activeIcon: 'shippingbox', stream: D.LogStream.build },
   [Stage.evaluate]: { label: L('Nix 評価'), name: L('Nix 評価'), active: L('Nix 評価中'), icon: 'snowflake', activeIcon: 'snowflake', stream: D.LogStream.build },
   // `name` is the stage in words on a Card's face (the gist of a failure).
   [Stage.build]: { label: 'build', name: L('ビルド'), active: L('build 中'), icon: 'hammer', activeIcon: 'hammer', stream: D.LogStream.build },
@@ -63,6 +63,8 @@ export interface StageItem {
 export interface StageProgress {
   items: StageItem[]
   workerReused: boolean
+  /** The core's own stage that failed or stopped (a shown stage covers several). */
+  failedPart?: Stage
 }
 
 export const currentStage = (p: StageProgress | undefined) => p?.items.find((i) => i.status === 'running')

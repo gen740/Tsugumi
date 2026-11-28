@@ -116,6 +116,7 @@ extension ProjectSession {
   func stageProgress(_ k: CardKey) -> StageProgress? {
     guard let s = cardStates[k], s.invocation > 0 else { return nil }
     let ended = [.succeeded, .failed, .cancelled, .skipped, .blocked].contains(s.state)
+    let failedPart = s.stages.last(where: { $0.outcome == .failed || $0.outcome == .cancelled })?.stage
     // One shown stage covers several of the core's (build: SDK, Nix
     // evaluation, build; validate: check and save).
     let items = Stage.applicable(code: kind(k) == .code).map { shown -> StageProgress.Item in
@@ -138,7 +139,7 @@ extension ProjectSession {
       }
       return .init(stage: shown, status: StageProgress.merge(parts, ended: ended), seconds: seconds)
     }
-    return StageProgress(items: items, workerReused: s.workerReused)
+    return StageProgress(items: items, workerReused: s.workerReused, failedPart: failedPart)
   }
 
   // Presentation: each UI combines the inner Cards' states itself, not hostd.

@@ -2465,7 +2465,8 @@ export class ProjectSession extends Observable {
       }
       return { stage: shown, status: mergeStageStatus(parts, ended), seconds }
     })
-    return { items, workerReused: st.workerReused }
+    const failedPart = [...st.stages].reverse().find((x) => x.outcome === D.StageOutcome.failed || x.outcome === D.StageOutcome.cancelled)?.stage
+    return { items, workerReused: st.workerReused, failedPart }
   }
 
   // Presentation: each UI combines the inner Cards' states itself, not hostd.

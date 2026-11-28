@@ -41,6 +41,7 @@ enum Stage: Int, CaseIterable, Identifiable {
   /// The stage in words on a Card's face (the gist of a failure).
   var name: String {
     switch self {
+    case .prepare: return String(localized: "準備")
     case .build: return String(localized: "ビルド")
     case .execute: return String(localized: "実行")
     case .validate: return String(localized: "出力検証")
@@ -163,6 +164,8 @@ struct StageProgress: Equatable {
 
   var items: [Item]
   var workerReused = false
+  /// The core's own stage that failed or stopped (a shown stage covers several).
+  var failedPart: Stage?
 
   var current: Item? { items.first { $0.status == .running } }
 
@@ -329,7 +332,7 @@ struct CardNodeData: Equatable {
     if let state, state == .failed || state == .blocked {
       var text = failure.map(firstMeaningfulLine) ?? state.label
       if text.isEmpty { text = state.label }
-      if let stage = stage?.failed?.stage, stage.name != text { text = stage.name + ": " + text }
+      if let stage = stage?.failedPart ?? stage?.failed?.stage, stage.name != text { text = stage.name + ": " + text }
       return .init(text: text + mark, tone: state == .failed ? .failed : .state(state))
     }
     if !errors.isEmpty, state == nil || state == .notStarted {

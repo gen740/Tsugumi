@@ -470,6 +470,11 @@ import TsugumiTestSupport
   #expect(d.statusLine().text == Stage.execute.name + ": no such file")
   #expect(d.statusLine().tone == .failed)
   #expect(d.statusLine().hover == nil)
+  // The shown build stage covers preparation, evaluation and build: the gist
+  // names the core's own stage that failed, as the log does.
+  d.stage = StageProgress(items: [.init(stage: .build, status: .failed), .init(stage: .execute, status: .notRun),
+                                  .init(stage: .validate, status: .notRun)], failedPart: .prepare)
+  #expect(d.statusLine().text == Stage.prepare.name + ": no such file")
   #expect(formatShortDuration(192) == "3:12" && formatShortDuration(3723) == "1:02:03")
 }
 
