@@ -53,8 +53,9 @@ export function firstMeaningfulLine(text: string): string {
   return ''
 }
 
-/** A Card's status line: its text and colour (a colour name of the theme). */
-export interface StatusLine { text: string; color: string }
+/** A Card's status line: its text and colour (a colour name of the theme),
+ *  and what its hover says, when more than the line. */
+export interface StatusLine { text: string; color: string; hover?: string }
 
 /** The one line under a Card's name: what it is doing now, how its last
  *  invocation ended, or the gist of its failure. Always one line, so the
@@ -63,9 +64,11 @@ export function statusLine(d: CardNodeData, now = Date.now()): StatusLine {
   const mark = d.runMark ? ` · ${d.runMark}` : ''
   const failedColor = cardState(D.CardState.failed).color
   const st = d.state
-  // When no worker could be chosen (core failure stage=worker_selection), this
-  // line will say 「worker を選べず未開始」 in red and the hover each worker's
-  // reason, once that lands (proposal 18).
+  // No worker could be chosen (core failure stage=worker_selection): the Card
+  // never started, and the hover says each worker's reason.
+  if (st === D.CardState.failed && d.notStarted !== undefined) {
+    return { text: L('worker を選べず未開始') + mark, color: failedColor, hover: d.notStarted || undefined }
+  }
   if (st === D.CardState.failed || st === D.CardState.blocked) {
     let text = (d.failure !== undefined ? firstMeaningfulLine(d.failure) : '') || cardState(st).label
     const stage = failedStage(d.stage)?.stage
@@ -325,7 +328,7 @@ function CardFace({ p, g, marks }: { p: CardNodeProps; g: CardGeometry; marks: J
           <span className="cv-name" style={{ fontSize: font(12), lineHeight: `${s(15)}px`, maxHeight: s(30) }}>{data.title}</span>
           <span className="cv-face-marks" style={{ gap: s(4), height: s(15) }}>{marks}</span>
         </div>
-        <span className="cv-ellipsis cv-status-line" style={{ fontSize: font(10), lineHeight: `${s(13)}px`, color: colorVar(line.color) }}>{line.text}</span>
+        <span className="cv-ellipsis cv-status-line" title={line.hover} style={{ fontSize: font(10), lineHeight: `${s(13)}px`, color: colorVar(line.color) }}>{line.text}</span>
       </div>
       {g.stages ? <StageDots progress={data.stage && data.invocation > 0n ? data.stage : notRunStages(true)} zoom={z} onTap={p.onStageTap} waiting={data.activityWaits} />
         : data.kind === 'subgraph' ? <span className="secondary cv-center"><Icon name={data.symbol ?? 'link'} size={font(10)} /></span> : null}

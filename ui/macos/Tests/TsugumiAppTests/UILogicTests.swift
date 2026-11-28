@@ -469,7 +469,36 @@ import TsugumiTestSupport
                                   .init(stage: .validate, status: .notRun)])
   #expect(d.statusLine().text == Stage.execute.name + ": no such file")
   #expect(d.statusLine().tone == .failed)
+  #expect(d.statusLine().hover == nil)
   #expect(formatShortDuration(192) == "3:12" && formatShortDuration(3723) == "1:02:03")
+}
+
+@Test func aCardNoWorkerCouldTakeSaysItNeverStarted() {
+  // The core names each worker's reason; the face says in red that the Card
+  // never started, the hover why for each worker, and the size stays.
+  let failure = Tsugumi_Data_FailureT()
+  failure.kind = .unsupported
+  failure.diagnostic = "No worker could be chosen"
+  failure.args = [("stage", "worker_selection"), ("worker:ttl", "timeout"), ("worker:gpu", "failed")].map { k, v in
+    let a = Tsugumi_Data_KeyValueT()
+    a.key = k
+    a.value = v
+    return a
+  }
+  let reasons = failure.notStartedText
+  let ttl = "ttl", gpu = "gpu"
+  #expect(reasons == String(localized: "\(ttl) の probe が時間切れ") + String(localized: "、") + String(localized: "\(gpu) の probe が失敗"))
+  let other = Tsugumi_Data_FailureT()
+  other.diagnostic = "no such file"
+  #expect(other.notStartedText == nil)
+  var d = CardNodeData(title: "x", kind: .code, summary: nil, inputs: [], outputs: [])
+  let size = [FlowDirection.topToBottom, .leftToRight].map { CardGeometry(d, flow: $0).size }
+  d.state = .failed
+  d.invocation = 1
+  d.failure = failure.plainText
+  d.notStarted = reasons
+  #expect(d.statusLine() == CardStatusLine(text: String(localized: "worker を選べず未開始"), tone: .failed, hover: reasons))
+  #expect([FlowDirection.topToBottom, .leftToRight].map { CardGeometry(d, flow: $0).size } == size)
 }
 
 @MainActor @Test func theHoverHasWhatTheFaceLeavesOut() {

@@ -63,6 +63,8 @@ struct CardRunState: Equatable {
   var invocation: UInt64
   var phase: Tsugumi_Data_Phase
   var failure: String?
+  /// Each worker's reason, when no worker could be chosen and so the Card never started.
+  var notStarted: String?
   var executionState: Tsugumi_Data_RemoteExecutionState?
   /// The execution service ("local" or a remote worker), and what a remote
   /// job waits for or does now on the worker.
@@ -915,6 +917,7 @@ final class ProjectSession {
     let n = inv.invocation ?? 0
     if prev == nil || prev!.invocation <= n {
       var next = CardRunState(state: inv.state, invocation: n, phase: inv.phase, failure: inv.failure?.plainText)
+      next.notStarted = inv.failure?.notStartedText
       next.executionState = inv.executionState
       next.executionService = inv.executionService
       next.executionActivity = inv.executionActivity

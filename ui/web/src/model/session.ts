@@ -29,7 +29,7 @@ import { cardNotes, layoutView, noteId, parseReadme, printReadme, splitCardNotes
 import { Observable } from './observable'
 import { FlowDirection, prefs } from './prefs'
 import { runMark } from './runMark'
-import { failureText } from './workerSelection'
+import { failureText, notStartedText } from './workerSelection'
 import { cardPermissions } from './permissions'
 import { L } from '../i18n'
 
@@ -204,6 +204,8 @@ export interface CardRunState {
   invocation: bigint
   phase: D.Phase
   failure?: string
+  /** Each worker's reason, when no worker could be chosen and so the Card never started. */
+  notStarted?: string
   executionState?: D.RemoteExecutionState | null
   /** The execution service ("local" or a remote worker), and what a remote
    *  job waits for or does now on the worker. */
@@ -851,7 +853,7 @@ export class ProjectSession extends Observable {
     if (!prev || prev.invocation <= n) {
       const sent = new Set(inv.outputsSent.map((x) => s(x)))
       this.cardStates.set(k, {
-        state: inv.state, invocation: n, phase: inv.phase, failure: failureText(inv.failure),
+        state: inv.state, invocation: n, phase: inv.phase, failure: failureText(inv.failure), notStarted: notStartedText(inv.failure),
         executionState: inv.executionState,
         executionService: sOpt(inv.executionService), executionActivity: inv.executionActivity,
         executionActivityDetail: sOpt(inv.executionActivityDetail),
@@ -2527,6 +2529,7 @@ export class ProjectSession extends Observable {
       state: kind === 'subgraph' ? this.compositeState(k) : this.canvasCardState(k), stage: empty ? undefined : this.stageProgress(k), executionList,
       invocation: empty ? 0n : state?.invocation ?? 0n, runContinues: this.runActive,
       failure: state && (state.state === D.CardState.failed || state.state === D.CardState.blocked) ? state.failure ?? cardState(state.state).label : undefined,
+      notStarted: state?.state === D.CardState.failed ? state.notStarted : undefined,
       // The core's clock, on this machine's.
       endedAt: state?.endedAt !== undefined ? state.endedAt + (this.coreClockOffset ?? 0) : undefined,
       seconds: state?.endedAt !== undefined && state.startedAt !== undefined ? Math.max(0, state.endedAt - state.startedAt) / 1000 : undefined,

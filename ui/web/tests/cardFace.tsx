@@ -18,6 +18,7 @@ const { ProjectSession, cardState, formatShortDuration, relativeAge } = await im
 const { CardNodeView, statusLine } = await import('../src/ui/cardNode')
 const { cardHoverContent, hoverContent } = await import('../src/ui/canvas')
 const { D } = await import('../src/wire/rpc')
+const { failureText, notStartedText } = await import('../src/model/workerSelection')
 const { parse } = await import('../shared/json')
 type Data = import('../src/model/canvasKit').CardNodeData
 
@@ -107,5 +108,26 @@ const long = card('a long name of a Card '.repeat(6))
   assert.ok(live.stagesWait)
   assert.ok(live.facts?.includes('waiting for a free slot on the worker') && live.facts.includes('CPU 00:00:01.00'))
   assert.ok(live.facts?.some((f) => f.endsWith(': ttl')))
+}
+{
+  // No worker could be chosen: the Card never started. The face says so in
+  // red on its one line, the hover each worker's reason; the size stays.
+  const selection = Object.assign(new D.FailureT(), { kind: D.FailureKind.unsupported, diagnostic: 'No worker could be chosen' })
+  selection.args = [['stage', 'worker_selection'], ['worker:ttl', 'timeout'], ['worker:gpu', 'failed']]
+    .map(([key, value]) => Object.assign(new D.KeyValueT(), { key, value }))
+  const reasons = notStartedText(selection)
+  assert.equal(reasons, 'ttl の probe が時間切れ、gpu の probe が失敗')
+  assert.equal(notStartedText(Object.assign(new D.FailureT(), { diagnostic: 'no such file' })), undefined)
+  const notStarted: Data = {
+    ...card(), state: D.CardState.failed, invocation: 1n, failure: failureText(selection), notStarted: reasons,
+    stage: stages('notRun', 'notRun', 'notRun'),
+  }
+  assert.deepEqual(statusLine(notStarted), { text: 'worker を選べず未開始', color: cardState(D.CardState.failed).color, hover: reasons })
+  for (const flow of ['topToBottom', 'leftToRight'] as const) {
+    assert.deepEqual(new CardGeometry(notStarted, flow).size, new CardGeometry(card(), flow).size)
+  }
+  const html = renderToStaticMarkup(<CardNodeView data={notStarted} flow="topToBottom" />)
+  assert.ok(html.includes('>worker を選べず未開始<') && html.includes(`title="${reasons}"`))
+  assert.equal(statusLine(failed).hover, undefined)
 }
 console.log('card face: passed')

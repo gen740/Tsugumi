@@ -32,11 +32,8 @@ export function failureText(failure?: D.FailureT | null): string | undefined {
   return reasons.length ? `${head}: ${reasons.join(L('、'))}` : head
 }
 
-/** The Card's own short word for it, when it never started. */
-export const notStartedLabel = (failure?: D.FailureT | null): string | undefined =>
-  workerSelectionReasons(failure) ? L('worker を選べず未開始') : undefined
-
-/** The reasons in a line (for a hover), when the Card never started. */
+/** The reasons in a line (for the Card's hover), when the Card never started
+ *  because no worker could be chosen; undefined for any other failure. */
 export const notStartedText = (failure?: D.FailureT | null): string | undefined =>
   workerSelectionReasons(failure)?.join(L('、'))
 

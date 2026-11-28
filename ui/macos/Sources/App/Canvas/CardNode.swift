@@ -198,6 +198,7 @@ extension ProjectSession {
       state: kind == .subgraph ? compositeState(k) : canvasCardState(k), executionList: executionList, stage: empty ? nil : stageProgress(k),
       invocation: empty ? 0 : state?.invocation ?? 0, runContinues: runActive, runMark: (state != nil || batch != nil ? runMark(runStatus) : nil),
       failure: state.flatMap { $0.state == .failed || $0.state == .blocked ? ($0.failure ?? $0.state.label) : nil },
+      notStarted: state.flatMap { $0.state == .failed ? $0.notStarted : nil },
       // The core's clock, on this Mac's.
       endedAt: state?.endedAt.map { Date(timeIntervalSince1970: Double($0 + (coreClockOffset ?? 0)) / 1000) },
       seconds: state.flatMap { s in s.endedAt.flatMap { e in s.startedAt.map { Double(max(0, e - $0)) / 1000 } } },

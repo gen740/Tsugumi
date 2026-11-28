@@ -132,6 +132,9 @@ export interface CardNodeData {
   /** The run is still going on (a succeeded Card may run again). */
   runContinues: boolean
   failure?: string
+  /** Each worker's reason, when the Card failed because no worker could be
+   *  chosen and so never started (its face says so, the reasons on hover). */
+  notStarted?: string
   /** When the latest invocation ended (ms since 1970, this machine's clock), and how long it took. */
   endedAt?: number
   seconds?: number

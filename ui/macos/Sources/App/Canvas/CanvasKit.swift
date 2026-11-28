@@ -260,6 +260,9 @@ struct CardNodeData: Equatable {
   var runContinues = false
   var runMark: String?
   var failure: String?
+  /// Each worker's reason, when the Card failed because no worker could be
+  /// chosen and so never started (its face says so, the reasons on hover).
+  var notStarted: String?
   /// When the latest invocation ended, and how long it took.
   var endedAt: Date?
   var seconds: Double?
@@ -318,9 +321,11 @@ struct CardNodeData: Equatable {
   /// Card's size never changes with its state.
   func statusLine(now: Date = Date()) -> CardStatusLine {
     let mark = runMark.map { " · " + $0 } ?? ""
-    // When no worker could be chosen (core failure stage=worker_selection),
-    // this line will say 「worker を選べず未開始」 in red and the hover each
-    // worker's reason, once that lands (proposal 18).
+    // No worker could be chosen (core failure stage=worker_selection): the
+    // Card never started, and the hover says each worker's reason.
+    if state == .failed, let reasons = notStarted {
+      return .init(text: String(localized: "worker を選べず未開始") + mark, tone: .failed, hover: reasons.isEmpty ? nil : reasons)
+    }
     if let state, state == .failed || state == .blocked {
       var text = failure.map(firstMeaningfulLine) ?? state.label
       if text.isEmpty { text = state.label }
@@ -370,6 +375,8 @@ struct CardStatusLine: Equatable {
   }
   var text: String
   var tone: Tone
+  /// What the line's hover says, when more than the line.
+  var hover: String?
 
   var color: Color {
     switch tone {
@@ -1240,6 +1247,7 @@ struct CardNodeView: View {
           let line = data.statusLine(now: t.date)
           Text(verbatim: line.text).font(font(10)).foregroundStyle(line.color)
             .lineLimit(1).truncationMode(.tail)
+            .help(line.hover ?? "")
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)

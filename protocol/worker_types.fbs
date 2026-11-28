@@ -13,6 +13,9 @@ table Failure {
   kind:FailureKind (id: 0);
   /// Optional source position: source (Card-definition-relative path), line
   /// (one-based decimal), cell (notebook cell name). Carried opaquely by core.
+  /// A Card that never started because no worker could be chosen has
+  /// stage=worker_selection, worker:<id> (timeout, failed, unavailable or
+  /// not_positive) and, for a timed-out probe with a known limit, timeout:<id>.
   args:[KeyValue] (id: 1);
   diagnostic:string (id: 2);
   current_rev:uint64 = null (id: 3);

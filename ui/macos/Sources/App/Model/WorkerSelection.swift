@@ -12,12 +12,8 @@ extension Tsugumi_Data_FailureT {
     return reasons.isEmpty ? head : head + ": " + reasons.joined(separator: String(localized: "、"))
   }
 
-  /// The Card's own short word for it, when it never started.
-  var notStartedLabel: String? {
-    workerSelectionReasons == nil ? nil : String(localized: "worker を選べず未開始")
-  }
-
-  /// The reasons in a line (for a hover), when the Card never started.
+  /// The reasons in a line (for the Card's hover), when the Card never started
+  /// because no worker could be chosen; nil for any other failure.
   var notStartedText: String? {
     workerSelectionReasons.map { $0.joined(separator: String(localized: "、")) }
   }
