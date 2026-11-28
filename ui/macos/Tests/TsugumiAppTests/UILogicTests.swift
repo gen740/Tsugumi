@@ -838,12 +838,75 @@ import TsugumiTestSupport
 @Test func fitAllKeepsTheGraphClearOfTheTopCapsules() {
   // The canvas runs under the window's bars: a tall graph fitted into it
   // starts below them, whatever their height.
-  for top in [0.0, 28, 52] {
+  for safeTop in [0.0, 28, 38, 52] {
+    // What CanvasWorkspace passes: the strip's height, 0 under a tab bar.
+    let top = safeTop > 0 ? TopStrip.height(safeTop: safeTop) : 0
     var c = CanvasCamera()
     c.fit(CGRect(x: 0, y: 0, width: 300, height: 900), in: CGSize(width: 800, height: 600),
           insets: GraphCanvas.fitInsets(top: top), maxZoom: 1.2, margin: 24)
     #expect(c.screen(CGPoint(x: 0, y: 0)).y >= top + 8)
     #expect(c.screen(CGPoint(x: 0, y: 900)).y <= 600 - 48)
+    if safeTop > 0 {
+      // Below the capsules floating in the strip, with room to spare.
+      let strip = CGRect(x: 0, y: 0, width: 800, height: top)
+      for open in [false, true] {
+        let f = TopStrip.frames(in: strip, chatWidth: 320, chatOpen: open,
+                                run: CGSize(width: 170, height: 34), chat: CGSize(width: 40, height: 34))
+        #expect(c.screen(CGPoint(x: 0, y: 0)).y >= max(f.run.maxY, f.chat.maxY) + TopStrip.minVerticalMargin)
+      }
+    }
+  }
+}
+
+@Test func theTopStripsCapsulesKeepTheirInsetInEveryLayout() {
+  let run = CGSize(width: 172, height: 34), toggle = CGSize(width: 40, height: 34)
+  let inset = TopStrip.inset
+  // The detail's width: the window less the sidebar, if shown (a main window
+  // is at least 1100 wide, a Card in Card's window 900).
+  for width: CGFloat in [900 - 250, 900, 1100 - 250, 1100, 1600] {
+    for safeTop: CGFloat in [28, 52] {
+      let strip = CGRect(x: 0, y: 0, width: width, height: TopStrip.height(safeTop: safeTop))
+      // Vertically centered on the strip (the traffic lights' center) and inside it.
+      func checkVertical(_ r: CGRect) {
+        #expect(abs(r.midY - strip.midY) < 0.5)
+        #expect(r.minY >= TopStrip.minVerticalMargin && strip.height - r.maxY >= TopStrip.minVerticalMargin)
+      }
+      // The chat closed: the toggle an inset from the window's edge, the run
+      // capsule beside it.
+      let closed = TopStrip.frames(in: strip, chatWidth: 480, chatOpen: false, run: run, chat: toggle)
+      #expect(closed.chat.size == toggle && closed.run.size == run)
+      #expect(abs(strip.maxX - closed.chat.maxX - inset) < 0.5)
+      #expect(closed.run.maxX <= closed.chat.minX - TopStrip.gap + 0.5)
+      checkVertical(closed.run)
+      checkVertical(closed.chat)
+      // The chat open, at any width it can take: the header an inset inside
+      // its column, the run capsule an inset before the column.
+      for wanted: Double in [ChatSplit.minChat, 480, ChatSplit.maxChat] {
+        let column = ChatSplit.chatWidth(wanted, in: width)
+        guard column - 2 * inset >= TopStrip.minChatHeaderWidth else { continue }
+        let columnX = strip.maxX - column
+        let open = TopStrip.frames(in: strip, chatWidth: wanted, chatOpen: true, run: run, chat: toggle)
+        #expect(abs(open.chat.minX - (columnX + inset)) < 0.5, "\(width) \(wanted)")
+        #expect(abs(strip.maxX - open.chat.maxX - inset) < 0.5)
+        #expect(abs(columnX - open.run.maxX - inset) < 0.5, "\(width) \(wanted)")
+        #expect(open.run.size == run)
+        checkVertical(open.run)
+        checkVertical(open.chat)
+      }
+    }
+  }
+}
+
+@Test func aTitleBarDoubleClickFollowsTheSystemSetting() throws {
+  let name = "tsugumi.titlebar.\(UUID().uuidString)"
+  let d = try #require(UserDefaults(suiteName: name))
+  defer { d.removePersistentDomain(forName: name) }
+  #expect(TitleBarDoubleClick.action(d) == .zoom)
+  d.set(true, forKey: "AppleMiniaturizeOnDoubleClick")
+  #expect(TitleBarDoubleClick.action(d) == .minimize)
+  for (value, action) in [("Maximize", TitleBarDoubleClick.zoom), ("Fill", .zoom), ("Minimize", .minimize), ("None", .none)] {
+    d.set(value, forKey: "AppleActionOnDoubleClick")
+    #expect(TitleBarDoubleClick.action(d) == action, "\(value)")
   }
 }
 

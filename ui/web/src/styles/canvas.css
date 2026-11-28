@@ -2,7 +2,7 @@
 
 /* ---- workspace and floating controls ---- */
 .cv-workspace { position: relative; flex: 1; min-height: 280px; min-width: 0; overflow: hidden; }
-.cv-top { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; align-items: flex-start; gap: 8px; pointer-events: none; z-index: 20; }
+.cv-top { position: absolute; top: var(--canvas-inset, 14px); left: var(--canvas-leading, 14px); right: var(--canvas-inset, 14px); display: flex; align-items: flex-start; gap: 8px; pointer-events: none; z-index: 20; }
 .cv-bottom { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; align-items: flex-end; gap: 8px; pointer-events: none; z-index: 20; }
 .cv-top > *, .cv-bottom > * { pointer-events: auto; }
 .cv-top > .cv-spacer, .cv-bottom > .cv-spacer { flex: 1; min-width: 0; pointer-events: none; }

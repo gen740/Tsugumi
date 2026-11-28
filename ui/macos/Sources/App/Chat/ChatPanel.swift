@@ -3,7 +3,7 @@ import SwiftUI
 import TsugumiAgentClient
 import TsugumiRPC
 
-/// Shared conversation navigation. The docked header is installed in the window toolbar.
+/// Shared conversation navigation. The docked header floats in the window's top strip (TopStrip).
 struct ChatHeader: View {
   @Environment(\.openWindow) private var openWindow
   let chat: ChatController

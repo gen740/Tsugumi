@@ -27,9 +27,11 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; user-select:
 .sidebar-pane { background: var(--bar-bg); }
 .sidebar-pane .sidebar { flex: 1; min-height: 0; height: auto; background: transparent; }
 .sidebar-top { display: flex; justify-content: flex-end; padding: 6px 8px 0; flex: none; }
-.workflow-detail { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; --canvas-leading: 10px; }
-.workflow-detail.sidebar-hidden { --canvas-leading: 50px; }
-.sidebar-show { position: absolute; top: 11px; left: 10px; z-index: 30; height: 30px; border-radius: 999px; padding: 0 9px; }
+/* The canvas's floating top row keeps --canvas-inset from the window's and the columns' edges (as the Mac app's top strip). */
+.workflow-detail { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; --canvas-inset: 14px; --canvas-leading: var(--canvas-inset); }
+/* Right of the sidebar button (34px wide) and a gap. */
+.workflow-detail.sidebar-hidden { --canvas-leading: calc(var(--canvas-inset) + 42px); }
+.sidebar-show { position: absolute; top: var(--canvas-inset); left: var(--canvas-inset); z-index: 30; height: 32px; min-width: 34px; border-radius: 999px; padding: 0 9px; }
 .chat-pane { background: var(--window-bg); }
 .chat-pane > * { flex: 1; min-height: 0; }
 .workbench { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
@@ -165,8 +167,6 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; user-select:
 /* The status bar row spans the free width; only the bar itself takes clicks. */
 .cv-bottom > .statusbar-wrap { pointer-events: none; }
 .statusbar-wrap > .statusbar { pointer-events: auto; }
-/* With the sidebar hidden, the canvas's top row starts right of the sidebar button. */
-.workflow-detail.sidebar-hidden .cv-top { left: var(--canvas-leading); }
 .workflow-detail.sidebar-hidden > .tabbar { padding-left: 50px; }
 .workflow-detail.sidebar-hidden:has(> .tabbar) > .sidebar-show { top: 3px; height: 26px; }
 

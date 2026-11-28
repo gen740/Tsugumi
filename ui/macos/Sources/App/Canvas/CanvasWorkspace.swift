@@ -14,9 +14,9 @@ struct CanvasWorkspace: View {
 
   var body: some View {
     // The canvas runs up to the window's top edge, under the title bar and the
-    // toolbar's capsules; the controls here stay in the area below them. The
-    // toolbar's empty strip still moves the window (the title bar takes those
-    // clicks), so the canvas shows there but is not panned from there.
+    // top strip's capsules; the controls here stay in the area below them. The
+    // strip's empty space moves the window (WindowDragArea over it), so the
+    // canvas shows there but is not panned from there.
     ZStack {
       GraphCanvas(workspace: workspace, session: session, tab: tab, showsCardViews: showsCardViews,
                   topControlsHeight: topControlsHeight, bottomControlsHeight: bottomControlsHeight)
@@ -48,8 +48,10 @@ struct CanvasWorkspace: View {
           .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { bottomControlsHeight = $0 }
         }
     }
-    // How far the window's bars reach over the canvas (0 under a tab bar).
-    .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { topControlsHeight = $0 }
+    // How far the window's top strip reaches over the canvas (0 under a tab bar).
+    .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: {
+      topControlsHeight = $0 > 0 ? TopStrip.height(safeTop: $0) : 0
+    }
   }
 
   private func noticeBanner(_ notice: WorkbenchNotice, dismiss: (() -> Void)? = nil) -> some View {
@@ -130,7 +132,7 @@ struct CanvasBreadcrumbs: View {
 
 extension View {
   func workbenchToolbarCapsule() -> some View {
-    padding(.horizontal, 10).frame(height: 34)
+    padding(.horizontal, 10).frame(height: TopStrip.capsuleHeight)
       .background(.regularMaterial, in: Capsule())
   }
 }

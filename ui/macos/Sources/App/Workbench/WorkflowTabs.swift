@@ -12,7 +12,8 @@ struct WorkflowTabs: View {
   let session: ProjectSession
   @State private var trustAnswered = false
   @State private var showChatList = false
-  @State private var displayedChatWidth = 0.0
+  /// The window's top safe-area inset over the detail (title bar and toolbar).
+  @State private var safeTop: CGFloat = 0
   let onSwitchProject: (() -> Void)?
   @Environment(\.guideWindow) private var guideWindow
   @Environment(\.controlActiveState) private var activeState
@@ -49,7 +50,6 @@ struct WorkflowTabs: View {
             ChatPanel(session: session, chat: model.chat(for: session), detached: false, tab: workspace.active,
                       shown: workspace.showChat, showList: $showChatList)
           }
-          .onGeometryChange(for: Double.self) { $0.size.width } action: { displayedChatWidth = $0 }
         }
       }
     }
@@ -62,9 +62,12 @@ struct WorkflowTabs: View {
       if let tab = workspace.active {
         WorkbenchSidebar(workspace: workspace, session: session, tab: tab, onSwitchProject: onSwitchProject)
           .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 380)
+          .windowTopStrip(height: safeTop) { WindowDragArea() }
       }
     } detail: {
       projectContent.frame(minWidth: 360)
+        .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { safeTop = $0 }
+        .windowTopStrip(height: TopStrip.height(safeTop: safeTop)) { topStrip }
         .toolbar { workbenchToolbar }
     }
     .tsugumiLoading(EnvironmentOverlay.loading(session), onCancel: EnvironmentOverlay.canCancel(session)
@@ -119,32 +122,39 @@ struct WorkflowTabs: View {
     .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
   }
 
+  private var showsWorkbench: Bool { session.staleHostState == nil && !EnvironmentOverlay.hasProblem(session) }
+
+  /// The project's name stays in the toolbar, where AppKit places it beside the
+  /// traffic lights and the sidebar button; the flexible space after it leaves
+  /// the rest of the strip to `topStrip`.
   @ToolbarContentBuilder private var workbenchToolbar: some ToolbarContent {
-    if let tab = workspace.active, session.staleHostState == nil, !EnvironmentOverlay.hasProblem(session) {
+    if let tab = workspace.active, showsWorkbench {
       ToolbarItem {
         CanvasBreadcrumbs(session: session, tab: tab)
       }
       .sharedBackgroundVisibility(.hidden)
       ToolbarSpacer(.flexible)
-      ToolbarItem {
-        HStack(spacing: workspace.showChat ? 20 : 8) {
-          CanvasRunControl(session: session, tab: tab).fixedSize()
-          chatToolbarContent
-        }
-      }
-      .sharedBackgroundVisibility(.hidden)
     }
   }
 
-  @ViewBuilder private var chatToolbarContent: some View {
-    if workspace.showChat {
-      ChatHeader(chat: model.chat(for: session), showList: $showChatList, detached: false,
-                 onClose: { workspace.showChat = false })
-        .frame(width: max(104, displayedChatWidth - 44))
-        .workbenchToolbarCapsule()
-    } else {
-      ChatToggle(open: false) { workspace.showChat = true }
-        .workbenchToolbarCapsule()
+  /// The top strip over the detail: its empty space moves the window, and the
+  /// run and chat capsules float in it at `TopStrip`'s insets.
+  private var topStrip: some View {
+    ZStack {
+      WindowDragArea()
+      if let tab = workspace.active, showsWorkbench {
+        TopStripLayout(chatWidth: chatWidth, chatOpen: workspace.showChat) {
+          CanvasRunControl(session: session, tab: tab).fixedSize()
+          if workspace.showChat {
+            ChatHeader(chat: model.chat(for: session), showList: $showChatList, detached: false,
+                       onClose: { workspace.showChat = false })
+              .workbenchToolbarCapsule()
+          } else {
+            ChatToggle(open: false) { workspace.showChat = true }
+              .workbenchToolbarCapsule()
+          }
+        }
+      }
     }
   }
 
@@ -245,7 +255,7 @@ private struct ChatColumn<Content: View>: View {
     content
       .clipped()
       // The column reaches the window's top edge as the canvas beside it does:
-      // its header floats in the toolbar over the chat's own background.
+      // its header floats in the top strip over the chat's own background.
       .background(alignment: .leading) {
         Color(nsColor: .windowBackgroundColor)
           .overlay(alignment: .leading) { Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1) }
