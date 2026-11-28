@@ -6,6 +6,7 @@ import Foundation
 import Observation
 import FlatBuffers
 import Testing
+import TsugumiTestSupport
 @testable import TsugumiLauncher
 @testable import TsugumiApp
 @testable import TsugumiRPC
@@ -27,7 +28,9 @@ extension ChatResumeTests {
     defer { Darwin.close(listener); unlink(socket) }
     let state = support.appendingPathComponent("host-core")
     try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
-    try JSONSerialization.data(withJSONObject: ["protocol": 1, "pid": getpid(),
+    let holder = try FixtureHostLock(state: state)
+    defer { holder.release() }
+    try JSONSerialization.data(withJSONObject: ["protocol": 1, "pid": holder.pid,
       "unix_socket": socket, "host_socket": socket, "user_token": "fixture"])
       .write(to: state.appendingPathComponent("host.ready"))
     let host = Task {

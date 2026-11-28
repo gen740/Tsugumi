@@ -204,7 +204,7 @@ public actor CoreHostClient {
 
   /// Observe the resident service without starting one just to quit it.
   public func activityBeforeQuit() async throws -> Bool {
-    guard FileManager.default.fileExists(atPath: stateDirectory.appendingPathComponent("host.ready").path) else { return false }
+    guard Self.liveHost(stateDirectory, "host.ready") != nil else { return false }
     let activity: Tsugumi_Host_HostActivityT = try await hostCall(
       .hostactivityrequest, Tsugumi_Host_HostActivityRequestT(), existingOnly: true)
     return activity.busy
@@ -212,11 +212,9 @@ public actor CoreHostClient {
 
   public func stopResident(waitForExit: Bool = true) async {
     HostProcessLifetime.shared.end()
-    let ready = stateDirectory.appendingPathComponent("host.ready")
-    let failure = stateDirectory.appendingPathComponent("host.startup-error")
-    guard let data = (try? Data(contentsOf: ready)) ?? (try? Data(contentsOf: failure)),
-          let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let pid = value["pid"] as? Int32, pid > 1 else { return }
+    let state = stateDirectory
+    guard let value = Self.liveHost(state, "host.ready") ?? Self.liveHost(state, "host.startup-error"),
+          let pid = value["pid"] as? Int32 else { return }
     if !waitForExit {
       HostProcessLifetime.shared.requestStop(pid)
       return
@@ -231,16 +229,40 @@ public actor CoreHostClient {
     }
   }
 
+  /// A publication in the state folder, only while the process that wrote it
+  /// still holds host.lock. A file left by a crash, a power loss or an unclean
+  /// shutdown names a PID that is gone or, after a reboot, belongs to another
+  /// process; the socket paths in it lead nowhere.
+  ///
+  /// hostd keeps an OS record lock on host.lock-owner for as long as it holds
+  /// host.lock (ProcessLock), and the kernel drops it when the process ends.
+  /// F_GETLK only asks who holds it, so this never competes with a starting
+  /// hostd. When it answers no, `--ensure` decides: it takes over a free lock
+  /// and removes the stale files, or prints the live host's publication.
+  static func liveHost(_ state: URL, _ name: String) -> [String: Any]? {
+    guard let bytes = try? Data(contentsOf: state.appendingPathComponent(name)),
+          let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+          let pid = value["pid"] as? Int32, pid > 1 else { return nil }
+    let fd = open(state.appendingPathComponent("host.lock-owner").path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+    guard fd >= 0 else { return nil }
+    defer { Darwin.close(fd) }
+    var writer = flock()
+    writer.l_type = Int16(F_WRLCK)
+    writer.l_whence = Int16(SEEK_SET)
+    guard fcntl(fd, F_GETLK, &writer) == 0, writer.l_type == Int16(F_WRLCK), writer.l_pid == pid else { return nil }
+    return value
+  }
+
+  /// The host service was not reached. Callers that wait for a restart treat
+  /// the code like a closed connection.
+  static var hostUnreachable: CoreHostFailure {
+    CoreHostFailure(code: "disconnected", message: String(localized: "ホストサービスに接続できませんでした"), requestID: nil)
+  }
+
   private func ready(existingOnly: Bool = false) async throws -> [String: Any] {
     let state = stateDirectory
-    let file = state.appendingPathComponent("host.ready")
-    func read() -> [String: Any]? {
-      guard let bytes = try? Data(contentsOf: file),
-            let object = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { return nil }
-      return object
-    }
-    if let existing = read() { return existing }
-    if existingOnly { throw RPCError.disconnected }
+    if let existing = Self.liveHost(state, "host.ready") { return existing }
+    if existingOnly { throw Self.hostUnreachable }
     let socketRoot = ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"] ?? "/private/tmp"
     let directory = URL(fileURLWithPath: socketRoot, isDirectory: true).appendingPathComponent("tsugumi-host-\(UUID().uuidString.prefix(8))")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -355,6 +377,7 @@ public actor CoreHostClient {
     let task = Task { try await self.start(existingOnly: existingOnly) }
     opening = task
     do { try await task.value; opening = nil }
+    catch RPCError.disconnected { opening = nil; close(); throw Self.hostUnreachable }
     catch { opening = nil; close(); throw error }
   }
 

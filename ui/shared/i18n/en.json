@@ -794,6 +794,7 @@
   "ページ": "Page",
   "ホストのフォルダへのアクセスを許可する": "Allow access to folders of the host",
   "ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。": "Add this host's public key to the worker's authorized_keys before verifying the connection.",
+  "ホストサービスに接続できませんでした": "Could not connect to the host service",
   "ホット 炎": "hot flame",
   "ポインタを置いたときの詳細に、tsugumi.json やログでの Card キーと接続の番号を加えます。": "Adds the Card key and the connection number, as in tsugumi.json and the logs, to the details shown under the pointer.",
   "ポートの並びを元に戻す": "Reset Port Order",

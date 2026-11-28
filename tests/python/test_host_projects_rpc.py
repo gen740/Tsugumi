@@ -86,6 +86,39 @@ def test_ensure_reports_the_live_holder_when_readiness_is_missing(tmp_path):
         assert not ready.exists()
 
 
+def test_ensure_takes_over_a_publication_left_without_a_lock_owner(tmp_path):
+    # An unclean shutdown leaves the files of a host that no longer runs. The
+    # recorded PID can even be live (reused after a reboot): only the OS locks
+    # on host.lock and its owner record say whether a host holds the folder.
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    ready = state / "host.ready"
+    ready.write_text(json.dumps({"pid": os.getpid(), "unix_socket": str(tmp_path / "gone"),
+                                 "host_socket": str(tmp_path / "gone"), "user_token": "stale"}))
+    (state / "host.starting").write_text("")
+    (state / "host.lock").write_text("")
+    (state / "host.lock-owner").write_text(json.dumps({
+        "pid": os.getpid(), "application": "Tsugumi Dev", "hostname": socket.gethostname(),
+    }))
+    with tempfile.TemporaryDirectory(prefix="tsugumi-host-") as short:
+        args = ["--ensure", "--state-dir", str(state), "--unix", short + "/s",
+                "--socket-dir", short + "/b", "--no-websocket"]
+        with (tmp_path / "host.log").open("w") as log:
+            proc = subprocess.Popen([str(HOST), *args], stdout=subprocess.PIPE, stderr=log, text=True)
+        try:
+            published = json.loads(proc.stdout.readline())
+            assert published["pid"] == proc.pid
+            assert published["user_token"] != "stale"
+            assert published == json.loads(ready.read_text())
+            owner = json.loads((state / "host.lock-owner").read_text())
+            assert owner["pid"] == proc.pid
+            assert proc.poll() is None
+        finally:
+            proc.terminate()
+            proc.wait(timeout=10)
+    assert not ready.exists()
+
+
 @pytest.mark.parametrize("recovering", [False, True])
 def test_old_host_exit_preserves_replacement_publication_and_sockets(tmp_path, recovering):
     state = tmp_path / "state"
