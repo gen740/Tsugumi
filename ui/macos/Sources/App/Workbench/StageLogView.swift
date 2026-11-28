@@ -358,29 +358,30 @@ enum SectionStatus: Equatable {
     case .cancelled: return String(localized: "停止")
     }
   }
+
+  /// The stage circle's status that draws it (waiting is a running circle that waits).
+  var stage: StageProgress.Status {
+    switch self {
+    case .pending: return .pending
+    case .waiting, .running: return .running
+    case .done: return .done
+    case .cached: return .cached
+    case .reused: return .reused
+    case .failed: return .failed
+    case .cancelled: return .cancelled
+    }
+  }
 }
 
-/// A stage's state as a plain symbol, never shaped like a control: a check,
-/// a spinning indicator, an hourglass, a thin empty circle, a cross, a bar;
-/// in the stage colours (StagePalette).
+/// A section's state as the Card's stage circle draws it (StageDot): the
+/// same shapes and palette as the Card's face, the pipeline line and the
+/// hover's stage table. `size` is the circle's diameter.
 struct StatusSymbol: View {
   let status: SectionStatus
-  var size: CGFloat = 14
+  var size: CGFloat = 11
 
   var body: some View {
-    Group {
-      switch status {
-      case .running: ProgressView().controlSize(.mini).scaleEffect(size / 16)
-      case .waiting: Image(systemName: "hourglass").foregroundStyle(StagePalette.color(status))
-      case .done, .cached, .reused: Image(systemName: "checkmark").foregroundStyle(StagePalette.color(status))
-      case .failed: Image(systemName: "xmark").foregroundStyle(StagePalette.color(status))
-      case .cancelled: Image(systemName: "minus").foregroundStyle(StagePalette.color(status))
-      case .pending:
-        Image(systemName: "circle").font(.system(size: size * 0.6, weight: .light)).foregroundStyle(.secondary)
-      }
-    }
-    .font(.system(size: size * 0.8, weight: .bold))
-    .frame(width: size, height: size)
-    .accessibilityLabel(Text(status.label))
+    StageDot(status: status.stage, size: size, waiting: status == .waiting)
+      .accessibilityLabel(Text(status.label))
   }
 }

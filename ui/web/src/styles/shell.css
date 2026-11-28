@@ -189,9 +189,6 @@ body.resizing-v, body.resizing-v * { cursor: row-resize !important; user-select:
 .version-map text { font-size: 8.5px; fill: var(--label); }
 .versions-detail { width: 320px; flex: none; padding: 14px; border-left: 1px solid var(--separator); }
 .status-symbol { display: inline-flex; align-items: center; justify-content: center; flex: none; }
-.status-symbol .icon path { stroke-width: 2.2; }
-.status-symbol.status-pending .icon path { stroke-width: 1.2; opacity: 0.7; }
-.status-spinner { display: inline-block; box-sizing: border-box; border-radius: 50%; border-style: solid; border-color: color-mix(in srgb, var(--stage-run) 25%, transparent); border-top-color: var(--stage-run); animation: spin 0.8s linear infinite; }
 .stage-pipeline { flex: none; display: flex; flex-direction: column; gap: 3px; padding: 6px 8px; font-size: 11px; white-space: nowrap; border-bottom: 1px solid var(--separator); }
 .stage-steps { display: flex; align-items: center; gap: 12px; overflow-x: auto; scrollbar-width: none; }
 .stage-step { flex: none; display: inline-flex; align-items: center; gap: 4px; border: 0; background: none; padding: 0; font: inherit; color: var(--label); cursor: pointer; }

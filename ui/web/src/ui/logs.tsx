@@ -383,7 +383,7 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
         <button type="button" className={`stage-section-head${opened ? ' open' : ''}`} aria-expanded={opened}
           aria-label={`${g.title} · ${SECTION_STATUS_LABEL[st]}`} onClick={() => setFolded((f) => ({ ...f, [g.id]: opened }))}>
           <Icon name="chevron.right" size={10} className="chevron" />
-          <StatusSymbol status={st} size={13} />
+          <StatusSymbol status={st} size={11} />
           <span>{g.title}</span>
           {g.id === 'execute' && service && <span className="secondary">({service})</span>}
           {p.cached && <span className="caption" style={{ color: 'var(--stage-reuse)' }}>cache</span>}

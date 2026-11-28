@@ -419,6 +419,31 @@ import TsugumiTestSupport
   #expect(StageProgress.of(succeeded, code: true).items.first { $0.stage == .build }?.status == .done)
 }
 
+/// Every per-stage and per-section mark is the Card's stage circle (StageDot):
+/// the log's section headers, the pipeline line, the hover's stage table and
+/// the Card state marks (sidebar, Card header). The Web UI checks the same
+/// (cardFace.tsx).
+@Test func statusMarksAreTheStageCircles() {
+  let cases: [(SectionStatus, StageProgress.Status)] = [
+    (.pending, .pending), (.waiting, .running), (.running, .running), (.done, .done),
+    (.cached, .cached), (.reused, .reused), (.failed, .failed), (.cancelled, .cancelled),
+  ]
+  for (section, stage) in cases {
+    #expect(section.stage == stage, "\(section)")
+    // Drawn back, the circle says the same state.
+    #expect(SectionStatus(section.stage, waiting: section == .waiting) == section)
+  }
+  #expect(Tsugumi_Data_CardState.succeeded.stageLook! == (.done, false))
+  #expect(Tsugumi_Data_CardState.running.stageLook! == (.running, false))
+  #expect(Tsugumi_Data_CardState.preparing.stageLook! == (.running, false))
+  #expect(Tsugumi_Data_CardState.waiting.stageLook! == (.running, true))
+  #expect(Tsugumi_Data_CardState.ready.stageLook! == (.running, true))
+  #expect(Tsugumi_Data_CardState.failed.stageLook! == (.failed, false))
+  #expect(Tsugumi_Data_CardState.cancelled.stageLook! == (.cancelled, false))
+  #expect(Tsugumi_Data_CardState.notStarted.stageLook! == (.pending, false))
+  #expect(Tsugumi_Data_CardState.skipped.stageLook == nil && Tsugumi_Data_CardState.blocked.stageLook == nil)
+}
+
 /// The log's sections follow the pipeline line (the same rule as the Card's
 /// face). While the worker builds, the build section runs, not done because
 /// the core's own preparation and Nix evaluation finished, and holds the

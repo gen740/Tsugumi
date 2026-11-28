@@ -12,7 +12,9 @@ import type { FlowDirection } from '../model/prefs'
 import { CardKey, cardState, formatDuration, formatShortDuration, InlineDraft, KIND_LABEL, relativeAge } from '../model/session'
 import { D } from '../wire/rpc'
 import { Icon } from './icons'
-import { SECTION_STATUS_LABEL, sectionStatus, STAGE_COLOR } from './statusSymbol'
+import { CardStateMark, SECTION_STATUS_LABEL, sectionStatus, StageDot } from './statusSymbol'
+
+export { StageDot }
 import { permissionInfo } from '../model/permissions'
 import { L } from '../i18n'
 
@@ -282,7 +284,7 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
           : data.warnings.length ? <Icon name="exclamationmark.triangle.fill" size={font(11)} style={{ color: 'var(--yellow)' }} title={data.warnings.join('\n')} /> : null}
         {data.state !== undefined && data.state !== D.CardState.not_started && (
           <span className="cv-state" style={{ fontSize: font(10), gap: s(2) }} title={rt ?? cardState(data.state).label}>
-            <Icon name={cardState(data.state).icon} size={font(10)} style={{ color: colorVar(cardState(data.state).color) }} />
+            <CardStateMark state={data.state} size={s(9)} />
             {data.invocation > 0n && <span className="secondary mono-digits">#{String(data.invocation)}</span>}
           </span>
         )}
@@ -352,7 +354,7 @@ function StartBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
       </button>
       <span className="cv-title" style={{ fontSize: font(12) }}>{data.title}</span>
       <span style={{ flex: 1 }} />
-      {running && <Icon name={cardState(data.state!).icon} size={font(10)} style={{ color: colorVar(cardState(data.state!).color) }} />}
+      {running && <CardStateMark state={data.state!} size={s(9)} />}
     </div>
   )
 }
@@ -428,37 +430,6 @@ export function stageHelp(item: StageItem, tappable: boolean, waiting = false): 
   if (item.status === 'failed' || item.status === 'cancelled') t += L('（クリックでこの段階のログ）')
   else if (tappable && item.status !== 'pending') t += L('（クリックでログ）')
   return t
-}
-
-/** One stage circle: an empty ring before it is reached, a spinning arc while
- *  it runs, a dashed ring while it waits (for the worker). Once it ended a
- *  shape says how, not the colour alone: done is filled, cached a ring with a
- *  dot, reused filled with a hole, failed filled with a cross, stopped filled
- *  with a bar. The same geometry as StageDot in the Mac app. */
-export function StageDot({ status, size, waiting = false }: { status: StageStatus; size: number; waiting?: boolean }) {
-  const c = colorVar(STAGE_COLOR[sectionStatus(status, waiting)])
-  const line = Math.max(0.8, size * 0.15)
-  const style: CSSProperties = { width: size, height: size }
-  if (status === 'running' && waiting) return <span className="cv-dot cv-dot-waiting" style={{ ...style, borderWidth: line * 1.1, borderColor: c }} />
-  if (status === 'pending' || status === 'notRun') return <span className="cv-dot" style={{ ...style, borderWidth: line, borderColor: fade('secondary', 0.6) }} />
-  if (status === 'running') {
-    return <span className="cv-dot cv-dot-running" style={{ ...style, borderWidth: line * 1.2, borderColor: fade('stage-run', 0.25), borderTopColor: c, borderRightColor: c }} />
-  }
-  const r = size / 2
-  const k = size * 0.2
-  const hole = 'var(--control-bg)'
-  const mark = Math.max(1, size * 0.15)
-  return (
-    <svg className={`cv-dot-mark cv-dot-${status}`} width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden>
-      {status === 'cached'
-        ? <><circle cx={r} cy={r} r={r - line / 2} fill={hole} stroke={c} strokeWidth={line} /><circle cx={r} cy={r} r={k} fill={c} /></>
-        : <circle cx={r} cy={r} r={r} fill={c} />}
-      {status === 'reused' && <circle cx={r} cy={r} r={k} fill={hole} />}
-      {status === 'failed' && <path d={`M${r - k} ${r - k}L${r + k} ${r + k}M${r + k} ${r - k}L${r - k} ${r + k}`}
-        stroke={hole} strokeWidth={mark} strokeLinecap="round" />}
-      {status === 'cancelled' && <path d={`M${r - size * 0.24} ${r}H${r + size * 0.24}`} stroke={hole} strokeWidth={mark * 1.1} strokeLinecap="round" />}
-    </svg>
-  )
 }
 
 /** Stages of the latest invocation as small circles stacked top to bottom

@@ -291,7 +291,7 @@ struct VisibleCardRow: View {
       }
       if let state {
         HStack(spacing: 2) {
-          Image(systemName: state.state.symbol).foregroundStyle(state.state.color)
+          CardStateMark(state: state.state, size: 10)
           if state.invocation > 0 { Text("#\(state.invocation)").font(.caption2.monospacedDigit()).foregroundStyle(.secondary) }
         }
         .help("\(state.state.label)（実行 #\(state.invocation)）")

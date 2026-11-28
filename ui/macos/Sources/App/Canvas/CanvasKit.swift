@@ -1340,11 +1340,10 @@ struct CardNodeView: View {
   /// State icon and invocation number.
   @ViewBuilder private var stateBadge: some View {
     if !data.errors.isEmpty, data.state != .failed {
-      Image(systemName: Tsugumi_Data_CardState.failed.symbol)
-        .font(font(10)).foregroundStyle(Tsugumi_Data_CardState.failed.color)
+      CardStateMark(state: .failed, size: s(9))
     } else if let st = data.state, st != .notStarted {
       HStack(spacing: s(2)) {
-        Image(systemName: st.symbol).foregroundStyle(st.color)
+        CardStateMark(state: st, size: s(9))
         if data.invocation > 0 { Text("#\(data.invocation)").monospacedDigit().foregroundStyle(.secondary) }
       }
       .font(font(10))
@@ -1367,7 +1366,7 @@ struct CardNodeView: View {
       .help(String(localized: "ここから Workflow を実行"))
       Text(data.title).font(font(12, .semibold)).lineLimit(1).truncationMode(.tail)
       Spacer(minLength: 0)
-      if let st = data.state, st != .notStarted { Image(systemName: st.symbol).font(font(10)).foregroundStyle(st.color) }
+      if let st = data.state, st != .notStarted { CardStateMark(state: st, size: s(9)) }
     }
     .padding(.horizontal, s(7))
     .frame(width: outline.width, height: outline.height)
@@ -1650,6 +1649,40 @@ struct StageDot: View {
         g.stroke(bar, with: hole, style: StrokeStyle(lineWidth: mark * 1.1, lineCap: .round))
       default: break
       }
+    }
+  }
+}
+
+/// A Card's run state as the stage circles draw it, where one stands for it:
+/// waiting for inputs or a slot is a dashed ring, preparing and running the
+/// turning arc, succeeded filled, failed and stopped their marks, not run an
+/// empty ring. Skipped and blocked have no stage of their own and keep their
+/// symbol.
+extension Tsugumi_Data_CardState {
+  var stageLook: (status: StageProgress.Status, waiting: Bool)? {
+    switch self {
+    case .notStarted: return (.pending, false)
+    case .waiting, .ready: return (.running, true)
+    case .preparing, .running: return (.running, false)
+    case .succeeded: return (.done, false)
+    case .failed: return (.failed, false)
+    case .cancelled: return (.cancelled, false)
+    default: return nil
+    }
+  }
+}
+
+/// A Card's state mark (the sidebar's Card list, the Card's header): the
+/// stage circle for the state, sized for the place.
+struct CardStateMark: View {
+  let state: Tsugumi_Data_CardState
+  let size: CGFloat
+
+  var body: some View {
+    if let look = state.stageLook {
+      StageDot(status: look.status, size: size, waiting: look.waiting).accessibilityLabel(Text(state.label))
+    } else {
+      Image(systemName: state.symbol).font(.system(size: size)).foregroundStyle(state.color)
     }
   }
 }

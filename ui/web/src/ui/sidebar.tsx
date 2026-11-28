@@ -12,6 +12,7 @@ import { arr, get, str } from '../../shared/json'
 import { DEFINITION_DRAG, EXTERNAL_DEFINITION_DRAG, EXTERNAL_DRAG, openWorkflowWindow } from './actions'
 import { Button, showMenu, Sheet, Spinner, TextField } from './controls'
 import { Icon } from './icons'
+import { CardStateMark } from './statusSymbol'
 import { L } from '../i18n'
 
 
@@ -265,7 +266,7 @@ function VisibleCardRow({ session, tab, cardKey, indent }: { session: ProjectSes
       {errors > 0 && <Icon name="exclamationmark.triangle.fill" style={{ color: 'var(--yellow)' }} title={L('問題 {0} 件', errors)} />}
       {st && cs && (
         <span className="label" title={L('{0}（実行 #{1}）', cs.label, st.invocation)}>
-          <Icon name={cs.icon} style={{ color: selected ? undefined : `var(--${cs.color})` }} />
+          <CardStateMark state={st.state} size={10} />
           {st.invocation > 0n && <span className="caption2 mono-digits secondary">#{String(st.invocation)}</span>}
         </span>
       )}

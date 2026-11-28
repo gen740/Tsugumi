@@ -210,4 +210,31 @@ const long = card('a long name of a Card '.repeat(6))
   assert.equal(ended(true)[Stage.build].status, 'cached')
   assert.equal(ended(false)[Stage.build].status, 'done')
 }
+{
+  // Every per-stage and per-section mark is the Card's stage circle: the log's
+  // section headers, the pipeline line, the hover's stage table and the Card
+  // state marks (sidebar, Card header) draw StageDot, never a spinner or a symbol.
+  const { CardStateMark, cardStateStage, StageDot, StatusSymbol } = await import('../src/ui/statusSymbol')
+  const dot = (status: string, waiting = false) => renderToStaticMarkup(<StageDot status={status as never} size={11} waiting={waiting} />)
+  const cases: [string, string, boolean][] = [
+    ['pending', 'pending', false], ['waiting', 'running', true], ['running', 'running', false], ['done', 'done', false],
+    ['cached', 'cached', false], ['reused', 'reused', false], ['failed', 'failed', false], ['cancelled', 'cancelled', false],
+  ]
+  for (const [section, status, waiting] of cases) {
+    const html = renderToStaticMarkup(<StatusSymbol status={section as never} />)
+    assert.ok(html.includes(dot(status, waiting)), `section ${section} draws the stage circle`)
+    assert.ok(!html.includes('status-spinner') && !html.includes('class="icon'), `no other glyph for ${section}`)
+  }
+  assert.ok(dot('running').includes('cv-dot-running') && dot('running', true).includes('cv-dot-waiting'))
+  assert.ok(dot('cached').includes('cv-dot-cached') && dot('cancelled').includes('cv-dot-cancelled'))
+  const look = (st: number) => cardStateStage(st)
+  assert.deepEqual(look(D.CardState.succeeded), { status: 'done', waiting: false })
+  assert.deepEqual(look(D.CardState.running), { status: 'running', waiting: false })
+  assert.deepEqual(look(D.CardState.preparing), { status: 'running', waiting: false })
+  assert.deepEqual(look(D.CardState.waiting), { status: 'running', waiting: true })
+  assert.deepEqual(look(D.CardState.failed), { status: 'failed', waiting: false })
+  assert.deepEqual(look(D.CardState.cancelled), { status: 'cancelled', waiting: false })
+  assert.equal(look(D.CardState.skipped), undefined)
+  assert.ok(renderToStaticMarkup(<CardStateMark state={D.CardState.succeeded} size={10} />).includes('cv-dot-done'))
+}
 console.log('card face: passed')
