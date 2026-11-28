@@ -314,6 +314,23 @@ enum EnvironmentOverlay {
     }
   }
 
+  /// The problem to show when a start failed while the environment is still
+  /// stopped or shows the window's own "starting" state. hostd refuses some
+  /// starts before it changes the environment (for example, a project
+  /// identity registered in another folder): no state event follows, so the
+  /// loading card would wait forever or the stopped page would hide the
+  /// reason. nil while hostd is still starting the environment (its events
+  /// carry it on) or once it has reported a failure of its own.
+  static func refusedStart(_ environment: EnvironmentState, error: Error) -> EnvironmentState? {
+    switch environment {
+    case .starting, .preparing, .stopped: break
+    default: return nil
+    }
+    if let launcher = error as? LauncherError, case .notReady = launcher { return nil }
+    return .failed(message: String(describing: error), log: "",
+                   recovery: String(localized: "原因を取り除いてから、再試行してください。"))
+  }
+
   static func canCancel(_ session: ProjectSession) -> Bool {
     switch session.environment {
     case .preparing, .starting, .reconnecting: return !session.connected

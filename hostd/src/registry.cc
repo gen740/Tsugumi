@@ -33,7 +33,9 @@ auto ProjectRegistry::ValidateLocation(const std::string& project,
   if (old.step() && std::filesystem::is_directory(old.text(0)) &&
       std::filesystem::canonical(old.text(0)) != path)
     throw Failure("conflict",
-                  "This project identity is registered in another folder");
+                  "This project identity (.tsugumi/project-id) is registered "
+                  "in another folder: " +
+                      old.text(0));
 }
 auto ProjectRegistry::ReserveLocation(const std::string& project,
                                       const std::filesystem::path& folder)

@@ -13,7 +13,7 @@ import TsugumiTestSupport
 
 // Serialize with the fixtures that temporarily override the core service state directory.
 extension ChatResumeTests {
-  @MainActor @Test(arguments: ["incompatible_history", "invalid_document"])
+  @MainActor @Test(arguments: ["incompatible_history", "invalid_document", "refused"])
   func startupFailurePreservesTheDiagnostic(kind: String) async throws {
     let dir = try SyncTests.project()
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -22,6 +22,7 @@ extension ChatResumeTests {
     let identity = try ProjectIdentity(url: dir)
     let path = "definitions/record/_card.json"
     let validationMessage = "\(path): workerCapabilities is not allowed on type code"
+    let refusal = "This project identity (.tsugumi/project-id) is registered in another folder: /elsewhere"
     // Model hostd's public Host contract; the UI never speaks to VMHost.
     let socket = VMHostIPC.socketPath(support: support)
     let listener = try VMHostIPC.listen(path: socket)
@@ -80,7 +81,14 @@ extension ChatResumeTests {
                 reply.value = Tsugumi_Host_ReplyPayloadUnion(hello, type: .helloresult)
               } else if let input = request.value?.value as? Tsugumi_Host_EnvironmentRequestT {
                 guard input.project == identity.url.path else { throw POSIXError(.EPROTO) }
-                if input.action == .start {
+                if input.action == .start, kind == "refused" {
+                  // hostd refuses some starts before changing the environment:
+                  // no state event follows the failure.
+                  attempts += 1
+                  let failure = Tsugumi_Service_FailureT()
+                  failure.code = "conflict"; failure.message = refusal
+                  reply.value = Tsugumi_Host_ReplyPayloadUnion(failure, type: .failure)
+                } else if input.action == .start {
                   let environment = Tsugumi_Host_EnvironmentStateT()
                   environment.project = identity.url.path; environment.key = identity.id
                   attempts += 1
@@ -97,7 +105,7 @@ extension ChatResumeTests {
                 } else {
                   guard input.action == .state else { throw POSIXError(.EPROTO) }
                 }
-                reply.value = Tsugumi_Host_ReplyPayloadUnion(latest, type: .environmentstate)
+                if reply.value == nil { reply.value = Tsugumi_Host_ReplyPayloadUnion(latest, type: .environmentstate) }
               } else { throw POSIXError(.EPROTO) }
               let response = Tsugumi_Host_MessageT(); response.requestId = message.requestId
               response.payload = Tsugumi_Host_PayloadUnion(reply, type: .reply)
@@ -116,7 +124,7 @@ extension ChatResumeTests {
     try await waitForModel {
       guard EnvironmentOverlay.hasProblem(session), session.connectionMessage != nil else { return false }
       switch (kind, session.environment) {
-      case ("incompatible_history", .incompatibleHistory), ("invalid_document", .invalidDocument): return true
+      case ("incompatible_history", .incompatibleHistory), ("invalid_document", .invalidDocument), ("refused", .failed): return true
       default: return false
       }
     }
@@ -127,6 +135,8 @@ extension ChatResumeTests {
     case ("invalid_document", .invalidDocument(let file, let message, _)):
       #expect(file == path)
       #expect(message == validationMessage)
+    case ("refused", .failed(let message, _, _)):
+      #expect(message == refusal)
     default:
       Issue.record("Expected a typed startup error for \(kind)")
     }

@@ -579,6 +579,17 @@ TEST(HostComponents,
   opened = other / ".tsugumi";
   EXPECT_THROW(registry.ReserveLocation("project", root), host::Failure);
   opened.reset();
+  // A copied folder with the same identity is refused, naming the folder
+  // that holds the registration.
+  try {
+    registry.ReserveLocation("project", std::filesystem::canonical(other));
+    ADD_FAILURE() << "a second folder for one identity was accepted";
+  } catch (const host::Failure& failure) {
+    EXPECT_EQ(failure.code, "conflict");
+    EXPECT_NE(std::string_view(failure.what())
+                  .find(std::filesystem::canonical(root).string()),
+              std::string_view::npos);
+  }
   const auto register_folder = [&](const H::RegisterFolderRequestT& input) {
     flatbuffers::FlatBufferBuilder builder;
     builder.Finish(H::RegisterFolderRequest::Pack(builder, &input));

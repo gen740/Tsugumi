@@ -769,6 +769,7 @@
   "このバージョンの Tsugumi では、このプロジェクトの文書を読み込めません。": "This version of Tsugumi cannot read a document in this project.",
   "エラーメッセージで指摘された箇所を修正または削除してから、再試行してください。": "Correct or remove what the error message identifies, then retry.",
   "ログを確認してから、再試行してください。": "Check the log, then retry.",
+  "原因を取り除いてから、再試行してください。": "Remove the cause, then retry.",
   "プロジェクトのフォルダを作成する場所を選んでください": "Choose where to make the project's folder",
   "プロジェクトの実行環境": "Project execution environment",
   "プロジェクトの操作に失敗しました。": "The project operation failed.",

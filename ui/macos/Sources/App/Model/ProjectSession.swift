@@ -569,6 +569,8 @@ final class ProjectSession {
         : "\(error)"
       if let launcher = error as? LauncherError, case .incompatibleHistory(let issue) = launcher {
         environment = .incompatibleHistory(issue)
+      } else if let refused = EnvironmentOverlay.refusedStart(environment, error: error) {
+        environment = refused
       }
     }
   }
