@@ -205,7 +205,11 @@ auto RunWakes::Watch(Key key, std::string project, std::stop_token stop)
       text += ".";
     }
   }
-  text += " Continue with what this outcome needs.";
+  // The person decides what comes next: the note brings the outcome back to
+  // the request the person made, and does not invite work beyond it.
+  text +=
+      " Tell the person the outcome. Start further runs or edits only where"
+      " the person's request still needs them; ask before going beyond it.";
   const auto note = json::Encode(json::Members{{"kind", json::Quote("run_ended")},
                                                {"run_id", json::Quote(run)},
                                                {"state", json::Quote(state)}});
