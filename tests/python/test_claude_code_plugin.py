@@ -430,8 +430,7 @@ def test_open_runs_core_tools_and_only_the_user_answers_decisions(plugin):
             "store": "project", "name": "added-via-mcp", "path": str(source),
         }}
         added = root / "proj/templates/added-via-mcp/start/_card.json"
-        allow_pending_decision(mcp, "tools", add, user)
-        assert not added.exists()
+        # Adding a template is the Agent's act when asked; no decision waits.
         text, error = mcp.call("tools", add)
         assert not error, text
         assert json.loads(text)["reply"] == "SaveResult"

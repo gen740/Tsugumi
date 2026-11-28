@@ -102,7 +102,8 @@ def test_subgraph_replays_saved_merge_arrival(core_factory, project, tmp_path):
     assert ended[0] < ended[1]
     deleted = client.call("RunHistoryDeleteRequest", endedBefore=ended[0] + 1,
                           opId=new_id())
-    assert deleted.deletedRuns == 1
+    # The first source run and the failed child run that ended before it.
+    assert deleted.deletedRuns == 2
 
     daemon.restart()
     client = daemon.connect()
