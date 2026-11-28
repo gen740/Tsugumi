@@ -8,7 +8,6 @@ import { useEffect, useRef, useState } from 'react'
 import * as R from '../../shared/gen/tsugumi/rpc'
 import { CardGeometry, CardNodeData } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
-import { FlowDirection } from '../model/prefs'
 import { cardKindNamed, CardKind, commentChange, ProjectSession } from '../model/session'
 import { Button, Confirm, Empty, Sheet, TextField } from './controls'
 import { Icon } from './icons'
@@ -87,10 +86,10 @@ function miniMapCardData(c: MiniMapCard): CardNodeData {
 /** Where a version's Cards go in a minimap at most width x height, each with
  *  the outline it has on the canvas: the whole graph fitted and centered
  *  across, the box's height, and whether a Card is wide enough for its name. */
-export function miniMapLayout(cards: MiniMapCard[], flow: FlowDirection, width: number, height: number) {
+export function miniMapLayout(cards: MiniMapCard[], width: number, height: number) {
   const PAD = 8
   if (cards.length === 0) return { cards: [], height: 0, named: false }
-  const placed = cards.map((c) => ({ c, g: new CardGeometry(miniMapCardData(c), flow) }))
+  const placed = cards.map((c) => ({ c, g: new CardGeometry(miniMapCardData(c)) }))
   const left = Math.min(...cards.map((c) => c.x)), top = Math.min(...cards.map((c) => c.y))
   const spanX = Math.max(...placed.map(({ c, g }) => c.x + g.size.width)) - left, spanY = Math.max(...placed.map(({ c, g }) => c.y + g.size.height)) - top
   const k = Math.min((width - PAD * 2) / spanX, (height - PAD * 2) / spanY, 0.3)
@@ -114,7 +113,7 @@ const MAP_H = 132
 function MiniMap({ canvas, changed, cardTitle }: { canvas: H.VersionCanvasT; changed: string[]; cardTitle: (id: string) => string }) {
   const cards = canvas.cards.filter((c): c is H.VersionCanvasCardT => !!c)
     .map((c) => ({ id: str(c.id), x: c.x, y: c.y, kind: cardKindNamed(str(c.kind)), fan: c.fan, collapsed: c.collapsed }))
-  const map = miniMapLayout(cards, str(canvas.flow) === 'topToBottom' ? 'topToBottom' : 'leftToRight', MAP_W, MAP_H)
+  const map = miniMapLayout(cards, MAP_W, MAP_H)
   const at = new Map(map.cards.map((c) => [c.id, c]))
   const touched = new Set(changed.map((k) => k.split('/')[0]))
   return (

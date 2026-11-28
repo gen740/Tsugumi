@@ -18,7 +18,8 @@ TEST_F(AgentProjectFixture,
   ASSERT_TRUE(initialized.Code().empty());
   const auto first =
       JsonString(JsonString(initialized.View(), "/text"), "/value/commit");
-  Write(directory.path / "project/layout.bin", FixtureLayout(R"({"flow":"topToBottom"})"));
+  Write(directory.path / "project/layout.bin",
+        FixtureLayout(R"({"cards":{"a":{"x":1,"y":2}}})"));
   const auto marked = Tool(conversation, "version_mark",
                            R"({"name":"layout","message":"Layout"})");
   ASSERT_TRUE(marked.Code().empty());

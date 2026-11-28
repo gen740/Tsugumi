@@ -289,7 +289,6 @@ TEST(ProjectOperationLayout,
   const std::string project =
       R"({"canvas":{"cards":[{"id":"a"}],"connections":[]}})";
   H::LayoutSceneT scene;
-  scene.flow = "topToBottom";
   auto card = std::make_unique<H::LayoutCardT>();
   card->id = "a";
   card->x = 999;
@@ -314,7 +313,6 @@ TEST(ProjectOperationLayout,
 // One output feeds three inputs, another feeds two.
 auto FanScene() -> H::LayoutSceneT {
   H::LayoutSceneT scene;
-  scene.flow = "topToBottom";
   scene.grid = 20;
   auto port = [](const std::string& name, double x, double y) {
     auto p = std::make_unique<H::LayoutPortT>();
@@ -985,14 +983,13 @@ TEST(ProjectOperationTransform, UntangleThenAtomicMoveAndUndoRetainPortOrder) {
       {"tsugumi.json",
        R"({"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"d"}],"connections":[{"from":{"card":"a","port":"out"},"to":{"card":"d","port":"q"}},{"from":{"card":"b","port":"out"},"to":{"card":"d","port":"p"}}]}})"},
       {"layout.bin",
-       R"({"flow":"topToBottom","cards":{"a":{"x":0,"y":0},"b":{"x":200,"y":0},"d":{"x":100,"y":300}}})"},
+       R"({"cards":{"a":{"x":0,"y":0},"b":{"x":200,"y":0},"d":{"x":100,"y":300}}})"},
       {"definitions/a/_card.json", ::tsugumi::test::FixtureCodeCard()},
       {"definitions/b/_card.json", ::tsugumi::test::FixtureCodeCard()},
       {"definitions/d/_card.json",
        ::tsugumi::test::FixtureCodeCard(
            R"({"inputs":[{"name":"p"},{"name":"q"}]})")}};
   H::LayoutSceneT scene;
-  scene.flow = "topToBottom";
   for (const auto& id : {"a", "b", "d"}) {
     auto card = std::make_unique<H::LayoutCardT>();
     card->id = id;
@@ -1037,14 +1034,14 @@ TEST(ProjectOperationTransform, UntangleThenAtomicMoveAndUndoRetainPortOrder) {
   EXPECT_TRUE(DocumentsEqual(project.files.at("layout.bin"), accepted));
 
   const std::string unplaced =
-      R"({"flow":"topToBottom","cards":{"a":{"x":0,"y":0},"b":{"x":200,"y":0}}})";
+      R"({"cards":{"a":{"x":0,"y":0},"b":{"x":200,"y":0}}})";
   project.files["layout.bin"] = unplaced;
   H::ProjectReplaceDocumentsT update;
   update.expected_rev = project.saves;
   auto layout = std::make_unique<H::ProjectDocumentT>();
   layout->path = "layout.bin";
   layout->json =
-      R"({"flow":"topToBottom","cards":{"a":{"x":0,"y":0},"b":{"x":200,"y":0},"d":{"inputOrder":["q","p"]}}})";
+      R"({"cards":{"a":{"x":0,"y":0},"b":{"x":200,"y":0},"d":{"inputOrder":["q","p"]}}})";
   update.documents.push_back(std::move(layout));
   project.Apply(std::move(update));
   const auto saved = project.files.at("layout.bin");

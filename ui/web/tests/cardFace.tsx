@@ -43,11 +43,9 @@ const long = card('a long name of a Card '.repeat(6))
 
 {
   // The same size whatever the state and the name.
-  for (const flow of ['topToBottom', 'leftToRight'] as const) {
-    const size = new CardGeometry(card(), flow).size
-    for (const d of [running, queued, succeeded, failed, long]) assert.deepEqual(new CardGeometry(d, flow).size, size, `${d.title} ${flow}`)
-  }
-  const g = new CardGeometry(card(), 'topToBottom')
+  const size = new CardGeometry(card()).size
+  for (const d of [running, queued, succeeded, failed, long]) assert.deepEqual(new CardGeometry(d).size, size, d.title)
+  const g = new CardGeometry(card())
   assert.ok(g.face && !g.summary, 'the description is on hover')
 }
 
@@ -66,13 +64,13 @@ const long = card('a long name of a Card '.repeat(6))
 
 {
   // The face: name, status line and three circles; no description.
-  const html = renderToStaticMarkup(<CardNodeView data={failed} flow="topToBottom" />)
+  const html = renderToStaticMarkup(<CardNodeView data={failed} />)
   assert.ok(html.includes('cv-face') && html.includes('no such file'))
   assert.equal(html.match(/class="cv-stage"/g)?.length, 3)
   // Read out to assistive technology, not drawn.
   assert.ok(!html.includes('>what it does<') && html.includes('aria-label="Card x'))
   // A Card in Card keeps its kind's symbol instead of circles.
-  const nested = renderToStaticMarkup(<CardNodeView data={{ ...card('nested'), kind: 'subgraph', symbol: 'link' }} flow="topToBottom" />)
+  const nested = renderToStaticMarkup(<CardNodeView data={{ ...card('nested'), kind: 'subgraph', symbol: 'link' }} />)
   assert.ok(nested.includes('cv-face') && !nested.includes('cv-stage'))
 }
 
@@ -104,8 +102,8 @@ const long = card('a long name of a Card '.repeat(6))
     activity: 'waiting (worker slot)', activityDetail: 'waiting for a free slot on the worker', worker: 'ttl', liveness: 'CPU 00:00:01.00',
   }
   assert.equal(statusLine(waits).text, 'waiting (worker slot)')
-  assert.deepEqual(new CardGeometry(waits, 'topToBottom').size, new CardGeometry(card(), 'topToBottom').size)
-  assert.ok(renderToStaticMarkup(<CardNodeView data={waits} flow="topToBottom" />).includes('cv-dot-waiting'))
+  assert.deepEqual(new CardGeometry(waits).size, new CardGeometry(card()).size)
+  assert.ok(renderToStaticMarkup(<CardNodeView data={waits} />).includes('cv-dot-waiting'))
   const live = cardHoverContent(waits, [])
   assert.ok(live.stages?.some((i) => i.stage === Stage.execute && i.waiting))
   assert.ok(live.facts?.includes('waiting for a free slot on the worker') && live.facts.includes('CPU 00:00:01.00'))
@@ -125,10 +123,8 @@ const long = card('a long name of a Card '.repeat(6))
     stage: stages('notRun', 'notRun', 'notRun'),
   }
   assert.deepEqual(statusLine(notStarted), { text: 'worker を選べず未開始', color: cardState(D.CardState.failed).color, hover: reasons })
-  for (const flow of ['topToBottom', 'leftToRight'] as const) {
-    assert.deepEqual(new CardGeometry(notStarted, flow).size, new CardGeometry(card(), flow).size)
-  }
-  const html = renderToStaticMarkup(<CardNodeView data={notStarted} flow="topToBottom" />)
+  assert.deepEqual(new CardGeometry(notStarted).size, new CardGeometry(card()).size)
+  const html = renderToStaticMarkup(<CardNodeView data={notStarted} />)
   assert.ok(html.includes('>worker を選べず未開始<') && html.includes(`title="${reasons}"`))
   assert.equal(statusLine(failed).hover, undefined)
 }
@@ -260,7 +256,7 @@ const long = card('a long name of a Card '.repeat(6))
   // one stage circle, the run gear while it is under way.
   const start = (state?: number): Data => ({ ...card('start'), kind: 'trigger', inputs: [], state })
   const draw = (d: Data, stop: boolean, enabled = true) => renderToStaticMarkup(
-    <CardNodeView data={d} flow="leftToRight" start={{ stop, enabled, help: 'h' }} rootStart onRun={() => {}} onStop={() => {}} />)
+    <CardNodeView data={d} start={{ stop, enabled, help: 'h' }} rootStart onRun={() => {}} onStop={() => {}} />)
   const idle = draw(start(D.CardState.succeeded), false)
   assert.match(idle, /class="cv-start-run"[^>]*data-guide="run"/)
   assert.match(idle, /aria-label="実行"/)
@@ -274,7 +270,7 @@ const long = card('a long name of a Card '.repeat(6))
   assert.match(draw(start(D.CardState.cancelled), false), /cv-dot-cancelled/)
   assert.match(draw(start(), false), /class="cv-dot"/)
   // Not the root one: no guide target.
-  assert.doesNotMatch(renderToStaticMarkup(<CardNodeView data={start()} flow="leftToRight" start={{ stop: false, enabled: true, help: 'h' }} />), /data-guide="run"/)
+  assert.doesNotMatch(renderToStaticMarkup(<CardNodeView data={start()} start={{ stop: false, enabled: true, help: 'h' }} />), /data-guide="run"/)
 }
 {
   // What a child wrote for a terminal never reaches the face as raw codes,

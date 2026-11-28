@@ -319,19 +319,14 @@ auto Projects::Apply(const A::Request& request) -> std::string {
         const auto* p = request.value_as_HostProjectCreateRequest();
         const auto name = p->name()->str();
         Name(name);
-        const auto flow = Text(p->flow(), "topToBottom");
-        if (flow != "topToBottom" && flow != "leftToRight")
-          throw ProjectFailure("invalid_flow",
-                               "Choose topToBottom or leftToRight");
         const auto document =
             initial_project_json(name, AgentExclude::Defaults());
         const auto destination = Path(p->parent()->str()) / name;
         return Populate(destination, [&] {
           fs::write_atomic(destination / "tsugumi.json", document);
-          Tsugumi::Layout::LayoutT layout;
-          layout.flow = flow;
           fs::write_atomic(destination / "layout.bin",
-                           document_text::pack<Tsugumi::Layout::Layout>(layout));
+                           document_text::pack<Tsugumi::Layout::Layout>(
+                               Tsugumi::Layout::LayoutT{}));
         });
       }
       case A::RequestPayload::HostProjectDuplicateRequest: {

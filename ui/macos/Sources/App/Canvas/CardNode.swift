@@ -5,29 +5,6 @@ import TsugumiRPC
 /// Builds the canvas data of Cards from a project session (and, for previews
 /// in Card settings, from unapplied working copies).
 extension ProjectSession {
-  // Inferring a missing flow from Card places is presentation of the layout:
-  // each UI does it itself rather than asking hostd.
-  /// The direction this project's Cards are laid out in (the layout's
-  /// "flow"; projects without it follow the app's default).
-  /// Without one, it is read from where the wired Cards sit (mostly to the
-  /// right of their sources: left to right), else the app's default.
-  var flow: FlowDirection {
-    if let f = FlowDirection(rawValue: layout["flow"]?.string ?? "") { return f }
-    var across = 0.0, down = 0.0
-    for c in connections(in: []) {
-      guard let f = c["from"]?["card"]?.string, let t = c["to"]?["card"]?.string else { continue }
-      let a = position(f), b = position(t)
-      across += abs(b.x - a.x)
-      down += abs(b.y - a.y)
-    }
-    if across + down > 0 { return across > down ? .leftToRight : .topToBottom }
-    return AppPreferences.shared.flowDirection
-  }
-
-  func setFlow(_ f: FlowDirection) {
-    queueFields { [self] in [fieldEdit("layout.bin", [.string("flow")], old: layout["flow"], new: .string(f.rawValue))] }
-  }
-
   /// Ports for drawing: resolved ports when available, else declared inputs.
   func ports(_ k: CardKey) -> (inputs: [String], outputs: [String]) {
     let d = portData(k)
@@ -203,7 +180,7 @@ extension ProjectSession {
     return orderedPorts(ports, saved: saved)
   }
 
-  func geometry(_ k: CardKey) -> CardGeometry { CardGeometry(nodeData(k), flow: flow) }
+  func geometry(_ k: CardKey) -> CardGeometry { CardGeometry(nodeData(k)) }
 }
 
 func orderedPorts(_ ports: [PortData], saved: [String]) -> [PortData] {

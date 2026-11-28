@@ -18,12 +18,11 @@ extension ProjectSession {
   func notePresence(_ d: Tsugumi_RPC_DocumentDeltaT, before: PresenceSnapshot) {
     let cards = Set(confirmedProject["canvas"]?["cards"]?.array?.compactMap { $0["id"]?.string } ?? [])
     let sources = d.sourcesUpsert.compactMap { $0.flatMap { PresenceEvents.cardOfFile($0.path) } }
-    let across = flow == .leftToRight
     let w = PresenceEvents.written(
       upserted: d.definitionsUpsert.compactMap { $0?.id }, touchedSources: sources, existedBefore: before.existing,
       typeBefore: before.types, typeAfter: confirmedDefinitions.compactMapValues { $0["type"]?.string },
       cards: cards, connectionsBefore: before.connections, connectionsAfter: topConnections(confirmedProject),
-      order: { id in let p = self.position(id); return Double(across ? p.x : p.y) })
+      order: { id in Double(self.position(id).y) })
     presence.name = { [weak self] k in self?.nodeData(k).title ?? k }
     // Each Card is written by its helper's bird (the main Agent's otherwise),
     // and a wire is threaded by the bird that wrote the Card it comes from.

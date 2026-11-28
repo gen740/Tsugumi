@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import { app } from '../model/app'
 import { nixPathLockStatus } from '../model/nixPath'
 import { useObserve } from '../model/observable'
-import { FLOW_LABELS, FlowDirection } from '../model/prefs'
 import { definitionIcon, definitionKind, errorText, formatBytes, key, KIND_LABEL, path, ProjectSession } from '../model/session'
 import { arr, bool, clone, get, isObj, J, JNum, numText, obj, parse, serialize, str } from '../../shared/json'
 import { R, s } from '../wire/rpc'
@@ -154,10 +153,9 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
 
 // ---- Project settings --------------------------------------------------------------
 
-export type ProjectSettingsPane = 'general' | 'canvas' | 'history' | 'cache' | 'secrets' | 'hostPaths'
+export type ProjectSettingsPane = 'general' | 'history' | 'cache' | 'secrets' | 'hostPaths'
 export const PROJECT_SETTINGS_PANES: { id: ProjectSettingsPane; title: string; icon: string }[] = [
   { id: 'general', title: L('名前と実行環境'), icon: 'folder.badge.gearshape' },
-  { id: 'canvas', title: 'Canvas', icon: 'rectangle.3.group' },
   { id: 'history', title: L('実行履歴'), icon: 'clock.arrow.circlepath' },
   { id: 'cache', title: L('ビルドキャッシュ'), icon: 'shippingbox' },
   { id: 'hostPaths', title: L('ホストパス'), icon: 'folder' },
@@ -169,7 +167,6 @@ export function ProjectSettingsContent({ pane, session }: { pane: ProjectSetting
   useObserve(session)
   switch (pane) {
     case 'general': return <GeneralProjectSettings key={session.key} session={session} />
-    case 'canvas': return <CanvasProjectSettings session={session} />
     case 'history': return <RunHistorySettings key={session.key} session={session} />
     case 'cache': return <CacheSettings key={session.key} session={session} />
     case 'hostPaths': return <HostPathsSettings key={session.key} session={session} />
@@ -422,22 +419,6 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
         <span className="spacer" />
         <Button kind="prominent" disabled={!changed || !validLimits || revisionEdit.applying || !session.isEditable} onClick={() => void save()}>{L('保存')}</Button>
       </div>
-    </div>
-  )
-}
-
-/** How the project's Cards are laid out (layout.bin, applied at once). */
-function CanvasProjectSettings({ session }: { session: ProjectSession }) {
-  return (
-    <div className="scroll fill">
-      <Form>
-        <Section footer={<span className="label" style={{ color: 'var(--orange)' }}><Icon name="exclamationmark.triangle" />{L('変えると Card の配置と線が合わなくなることがあります（「整列」で並べ直せます）。')}</span>}>
-          <Row label={L('流れの向き')} help={L('このプロジェクトの Card を並べた向きです（layout.bin に保存され、すぐ反映されます）。線の引き方と「整列」がこの向きに合わせます。')}>
-            <Select<FlowDirection> value={session.flow} onChange={(f) => session.setFlow(f)}
-              options={(Object.keys(FLOW_LABELS) as FlowDirection[]).map((f) => ({ value: f, label: FLOW_LABELS[f] }))} />
-          </Row>
-        </Section>
-      </Form>
     </div>
   )
 }

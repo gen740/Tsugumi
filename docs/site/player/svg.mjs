@@ -19,7 +19,7 @@ import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { demosDir, preparePlayer, finalsFromRun, flowOf, readJson, readLayout, readProject, stepsFromRun } from './build.mjs'
+import { demosDir, preparePlayer, finalsFromRun, readJson, readLayout, readProject, stepsFromRun } from './build.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SITE = path.dirname(HERE)
@@ -82,7 +82,7 @@ export function cardStates(data, frame) {
  *  placed and routed as model/canvas.ts does (computeBoundary, wires), and the camera fitted to all of it. */
 export function innerSurface(data, frame, base, view, boundary) {
   const stepOf = stepsOf(data)
-  const placed = data.cards.map((doc) => ({ doc, g: new CardGeometry(nodeData(data, stepOf, doc, frame), data.flow) }))
+  const placed = data.cards.map((doc) => ({ doc, g: new CardGeometry(nodeData(data, stepOf, doc, frame)) }))
   const rectOf = (p) => ({ x: p.doc.x, y: p.doc.y, ...p.g.size })
   const box = placed.map(rectOf).reduce((u, r) => (u ? union(u, r) : r), null)
   const ins = Object.entries(boundary.inputs ?? {}), outs = Object.entries(boundary.outputs ?? {})
@@ -99,7 +99,7 @@ export function innerSurface(data, frame, base, view, boundary) {
     const at = p.g.port(name, output)
     return { x: p.doc.x + at.x, y: p.doc.y + at.y }
   }
-  const router = new WireRouter(data.flow, [...placed.map(rectOf), top, bottom])
+  const router = new WireRouter([...placed.map(rectOf), top, bottom])
   // The bar's input wires are drawn plain (wires in model/canvas.ts); an output's as the inner Card's sending makes it.
   const out = frame.mode === 'done' ? 'carried' : frame.mode === 'playing' && frame.sub >= 1 ? 'active' : 'normal'
   const draws = [
@@ -920,7 +920,7 @@ function innerDemo(demo, card) {
   const steps = stepsFromRun(cards, timeline)
   const outer = readDemo(demo)
   return {
-    id: `${demo}-${card}`, title: outer.title, flow: flowOf(layout, cards, wires), draftOnly: false, cards, wires, notes: [],
+    id: `${demo}-${card}`, title: outer.title, draftOnly: false, cards, wires, notes: [],
     // The run control shows the whole run's time at its end, as the app does inside a Card in Card.
     run: { ...outer.run, totalMs: outer.run.totalMs }, steps: steps.map((s) => ({ ...s, say: '' })), final: finalsFromRun(cards, timeline), outputs: {},
     boundary: Object.fromEntries(Object.entries(doc.boundary ?? {}).map(([side, ports]) => [side, Object.fromEntries(ports.map(({ name, ...v }) => [name, { ...v,

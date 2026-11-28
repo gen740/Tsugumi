@@ -828,7 +828,6 @@ struct Block {
 }  // namespace
 
 auto place(const Scene& scene) -> Proposal {
-  const bool vertical = scene.top_to_bottom;
   const double grid = scene.grid > 0 ? scene.grid : 20;
   auto card_index = [&](const std::string& id) {
     for (size_t i = 0; i < scene.cards.size(); i++)
@@ -845,10 +844,10 @@ auto place(const Scene& scene) -> Proposal {
     const auto& c = scene.cards[i];
     Node n;
     n.card = static_cast<int>(i);
-    n.across = vertical ? c.width : c.height;
-    n.along = vertical ? c.height : c.width;
-    for (const auto& p : c.inputs) n.inputs.push_back(vertical ? p.x : p.y);
-    for (const auto& p : c.outputs) n.outputs.push_back(vertical ? p.x : p.y);
+    n.across = c.width;
+    n.along = c.height;
+    for (const auto& p : c.inputs) n.inputs.push_back(p.x);
+    for (const auto& p : c.outputs) n.outputs.push_back(p.x);
     nodes.push_back(std::move(n));
   }
 
@@ -861,40 +860,37 @@ auto place(const Scene& scene) -> Proposal {
                      slot(scene.cards[t].inputs, w.to_port), false});
   }
 
-  // Bars are drawn above and below the inner Cards when the flow runs down:
-  // they take part in the order, and wires from them get a lane.
-  if (vertical) {
-    auto add_bar = [&](const std::vector<BarEnd>& list, bool top) {
-      if (std::none_of(list.begin(), list.end(), [&](const BarEnd& e) {
-            return card_index(e.card) >= 0;
-          }))
-        return;
-      const double width = static_cast<double>(list.size()) * 110 + 40;
-      std::vector<double> slots;
-      for (size_t k = 0; k < list.size(); k++)
-        slots.push_back((width * static_cast<double>(k + 1)) /
-                        static_cast<double>(list.size() + 1));
-      const int bar = static_cast<int>(nodes.size());
-      Node n;
-      n.bar = true;
-      n.across = width;
-      (top ? n.outputs : n.inputs) = slots;
-      nodes.push_back(std::move(n));
-      for (size_t k = 0; k < list.size(); k++) {
-        const int c = card_index(list[k].card);
-        if (c < 0) continue;
-        if (top) {
-          edges.push_back({bar, static_cast<int>(k), c,
-                           slot(scene.cards[c].inputs, list[k].port), false});
-        } else {
-          edges.push_back({c, slot(scene.cards[c].outputs, list[k].port), bar,
-                           static_cast<int>(k), false});
-        }
+  // Bars are drawn above and below the inner Cards: they take part in the
+  // order, and wires from them get a lane.
+  auto add_bar = [&](const std::vector<BarEnd>& list, bool top) {
+    if (std::none_of(list.begin(), list.end(),
+                     [&](const BarEnd& e) { return card_index(e.card) >= 0; }))
+      return;
+    const double width = static_cast<double>(list.size()) * 110 + 40;
+    std::vector<double> slots;
+    for (size_t k = 0; k < list.size(); k++)
+      slots.push_back((width * static_cast<double>(k + 1)) /
+                      static_cast<double>(list.size() + 1));
+    const int bar = static_cast<int>(nodes.size());
+    Node n;
+    n.bar = true;
+    n.across = width;
+    (top ? n.outputs : n.inputs) = slots;
+    nodes.push_back(std::move(n));
+    for (size_t k = 0; k < list.size(); k++) {
+      const int c = card_index(list[k].card);
+      if (c < 0) continue;
+      if (top) {
+        edges.push_back({bar, static_cast<int>(k), c,
+                         slot(scene.cards[c].inputs, list[k].port), false});
+      } else {
+        edges.push_back({c, slot(scene.cards[c].outputs, list[k].port), bar,
+                         static_cast<int>(k), false});
       }
-    };
-    add_bar(scene.inputs.ends, true);
-    add_bar(scene.outputs.ends, false);
-  }
+    }
+  };
+  add_bar(scene.inputs.ends, true);
+  add_bar(scene.outputs.ends, false);
 
   // Graphs that have nothing to do with each other are laid out apart.
   std::vector<int> parent(nodes.size());
@@ -924,9 +920,6 @@ auto place(const Scene& scene) -> Proposal {
     members[k].push_back(static_cast<int>(i));
   }
 
-  auto world_rect = [&](double x, double y, double w, double h) {
-    return vertical ? FlowRect{x, y, w, h} : FlowRect{y, x, h, w};
-  };
   // What a Card in Card draws above and below these Cards.
   auto bar_rects =
       [&](const std::vector<FlowRect>& cards) -> std::vector<FlowRect> {
@@ -935,15 +928,15 @@ auto place(const Scene& scene) -> Proposal {
     if ((inputs == 0 && outputs == 0) || cards.empty()) return {};
     FlowRect box = cards[0];
     for (const auto& r : cards) box = union_rect(box, r);
-    const double x = vertical ? box.across : box.along;
-    const double y = vertical ? box.along : box.across;
-    const double w = vertical ? box.across_size : box.along_size;
-    const double h = vertical ? box.along_size : box.across_size;
+    const double x = box.across;
+    const double y = box.along;
+    const double w = box.across_size;
+    const double h = box.along_size;
     const double width =
         std::max(w, static_cast<double>(std::max(inputs, outputs)) * 110 + 40);
     const double left = x + w / 2 - width / 2;
-    return {world_rect(left, y - 96, width, 40),
-            world_rect(left, y + h + 56, width, 40)};
+    return {FlowRect{left, y - 96, width, 40},
+            FlowRect{left, y + h + 56, width, 40}};
   };
   auto card_rect = [&](int i) {
     return FlowRect{nodes[i].at, nodes[i].layer_at, nodes[i].across,
@@ -1015,17 +1008,14 @@ auto place(const Scene& scene) -> Proposal {
   }
 
   auto at = [&](const std::string& id, double across, double along) {
-    return Place{id, tenth(vertical ? across : along),
-                 tenth(vertical ? along : across)};
+    return Place{id, tenth(across), tenth(along)};
   };
   Proposal out;
   // Notes: free room next to everything else.
   for (const auto& note : scene.notes) {
     FlowRect box = room.empty() ? FlowRect{} : room[0];
     for (const auto& r : room) box = union_rect(box, r);
-    const auto r =
-        place_box(vertical ? note.width : note.height,
-                  vertical ? note.height : note.width, box, room, lines, grid);
+    const auto r = place_box(note.width, note.height, box, room, lines, grid);
     room.push_back(r);
     out.notes.push_back(at(note.id, r.across, r.along));
   }
@@ -1037,10 +1027,9 @@ auto place(const Scene& scene) -> Proposal {
 
 auto place_missing(const Scene& scene, const std::vector<std::string>& missing)
     -> Proposal {
-  const bool vertical = scene.top_to_bottom;
   const double grid = scene.snap ? scene.grid : 1;
-  auto rect = [&](double x, double y, double w, double h) {
-    return vertical ? FlowRect{x, y, w, h} : FlowRect{y, x, h, w};
+  auto rect = [](double x, double y, double w, double h) {
+    return FlowRect{x, y, w, h};
   };
   auto wanted = [&](const std::string& id) {
     return std::find(missing.begin(), missing.end(), id) != missing.end();
@@ -1127,7 +1116,6 @@ auto place_missing(const Scene& scene, const std::vector<std::string>& missing)
   Proposal out;
   for (const auto& block : blocks) {
     Scene sub;
-    sub.top_to_bottom = vertical;
     sub.grid = scene.grid;
     sub.snap = scene.snap;
     for (const int i : block) sub.cards.push_back(*fresh[i]);
@@ -1174,8 +1162,8 @@ auto place_missing(const Scene& scene, const std::vector<std::string>& missing)
         auto near = up ? *up : down ? *down : room.front();
         if (!up && !down)
           for (const auto& r : room) near = union_rect(near, r);
-        target = place_box(box->across_size, box->along_size, near, room, {},
-                           grid);
+        target =
+            place_box(box->across_size, box->along_size, near, room, {}, grid);
       }
     }
     const double dc = target->across - box->across;
@@ -1185,8 +1173,7 @@ auto place_missing(const Scene& scene, const std::vector<std::string>& missing)
       r.along += da;
       room.push_back(r);
       placed.emplace_back(id, r);
-      out.cards.push_back({id, tenth(vertical ? r.across : r.along),
-                           tenth(vertical ? r.along : r.across)});
+      out.cards.push_back({id, tenth(r.across), tenth(r.along)});
     }
   }
   return out;

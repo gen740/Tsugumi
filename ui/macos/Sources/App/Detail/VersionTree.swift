@@ -96,8 +96,8 @@ struct VersionMiniMapLayout {
   var height = 0.0
   var named = false
 
-  init(_ cards: [Card], flow: FlowDirection, width: Double, height maxHeight: Double) {
-    let placed = cards.map { (card: $0, g: CardGeometry($0.data, flow: flow)) }
+  init(_ cards: [Card], width: Double, height maxHeight: Double) {
+    let placed = cards.map { (card: $0, g: CardGeometry($0.data)) }
     guard let left = cards.map(\.x).min(), let top = cards.map(\.y).min(),
           let right = placed.map({ $0.card.x + $0.g.size.width }).max(),
           let bottom = placed.map({ $0.card.y + $0.g.size.height }).max() else { return }
@@ -127,7 +127,7 @@ struct VersionMiniMap: View {
     let cards = canvas.cards.compactMap { $0 }
     let map = VersionMiniMapLayout(
       cards.map { .init(id: $0.id, x: $0.x, y: $0.y, kind: CardKind.named($0.kind), fan: Int($0.fan), collapsed: $0.collapsed) },
-      flow: canvas.flow == "topToBottom" ? .topToBottom : .leftToRight, width: Self.width, height: Self.maxHeight)
+      width: Self.width, height: Self.maxHeight)
     let touched = Set(changed.map { String($0.split(separator: "/").first ?? "") })
     Canvas { g, _ in
       for w in canvas.wires.compactMap({ $0 }) {

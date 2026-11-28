@@ -12,7 +12,7 @@ import { guide } from '../model/guide'
 import { Skill } from '../model/chat'
 import { useObserve } from '../model/observable'
 import {
-  bindingLabel, CANVAS_ONLY, EDITOR_THEME_LABELS, EditorTheme, eventBinding, FLOW_LABELS, FlowDirection, Motion, MOTION_LABELS, prefs,
+  bindingLabel, CANVAS_ONLY, EDITOR_THEME_LABELS, EditorTheme, eventBinding, Motion, MOTION_LABELS, prefs,
   SEND_KEY_LABELS, SendKey, SHORTCUT_ACTIONS, SHORTCUT_TITLES, ShortcutAction, Theme, THEME_LABELS,
 } from '../model/prefs'
 import { errorText, ProjectSession } from '../model/session'
@@ -45,7 +45,6 @@ function paneStorage(p: ProjectSettingsPane, s: ProjectSession): string {
   const name = s.dir.split('/').pop() ?? ''
   switch (p) {
     case 'general': return L('このプロジェクト（{0}/tsugumi.json）', name)
-    case 'canvas': return L('このプロジェクト（{0}/layout.bin）', name)
     case 'history': return L('このプロジェクトの実行環境（{0}/.tsugumi/runs.sqlite）', name)
     case 'cache': return L('このプロジェクトの実行環境（このホスト）')
     case 'hostPaths': return L('プロジェクトの tsugumi.json とこのホストの hostd')
@@ -258,9 +257,6 @@ function AppearanceSettings() {
       <Form style={{ width: 340, flex: 'none' }}>
         <Section>
           <Row label={L('テーマ')}><Select<Theme> value={prefs.theme} onChange={(v) => prefs.set('theme', v)} options={options(THEME_LABELS)} /></Row>
-          <Row label={L('新しいプロジェクトの流れの向き')} help={L('新しく作るプロジェクトの Card を並べる向きです。開いているプロジェクトの向きは、設定の「このプロジェクト」→「Canvas」で変えます。')}>
-            <Select<FlowDirection> value={prefs.flowDirection} onChange={(v) => prefs.set('flowDirection', v)} options={options(FLOW_LABELS)} />
-          </Row>
           <Row label={L('グリッドを表示（移動時に吸着）')}><Toggle checked={prefs.showGrid} onChange={(v) => prefs.set('showGrid', v)} /></Row>
           <Row label={L('グリッド間隔 {0}', prefs.gridSize)}>
             <input type="range" min={10} max={60} step={5} value={prefs.gridSize} onChange={(e) => prefs.set('gridSize', Number(e.target.value))} aria-label={L('グリッド間隔')} />
@@ -290,15 +286,12 @@ function CanvasPreview() {
   }, [prefs.animateLines])
   const W = 300, H = 220, g = prefs.gridSize
   const phase = prefs.animateLines ? -((Date.now() / 1000) * 30) % 14 : 0
-  const down = prefs.flowDirection === 'topToBottom'
-  const a = down ? { x: 40, y: 24 } : { x: 16, y: 40 }
-  const b = down ? { x: 160, y: 140 } : { x: 190, y: 130 }
+  const a = { x: 40, y: 24 }
+  const b = { x: 160, y: 140 }
   const cw = 100, ch = 48
-  const from = down ? { x: a.x + cw / 2, y: a.y + ch } : { x: a.x + cw, y: a.y + ch / 2 }
-  const to = down ? { x: b.x + cw / 2, y: b.y } : { x: b.x, y: b.y + ch / 2 }
-  const d = down
-    ? `M${from.x},${from.y} C${from.x},${(from.y + to.y) / 2} ${to.x},${(from.y + to.y) / 2} ${to.x},${to.y}`
-    : `M${from.x},${from.y} C${(from.x + to.x) / 2},${from.y} ${(from.x + to.x) / 2},${to.y} ${to.x},${to.y}`
+  const from = { x: a.x + cw / 2, y: a.y + ch }
+  const to = { x: b.x + cw / 2, y: b.y }
+  const d = `M${from.x},${from.y} C${from.x},${(from.y + to.y) / 2} ${to.x},${(from.y + to.y) / 2} ${to.x},${to.y}`
   return (
     <svg width={W} height={H} className="canvas-preview" role="img" aria-label={L('Canvas のプレビュー')}>
       <rect width={W} height={H} fill="var(--text-bg)" />

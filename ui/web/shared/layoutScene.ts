@@ -3,8 +3,6 @@
 // proposes. The layout itself is worked out in tsugumi-hostd (hostd/src/layout.cc),
 // once for every client; here are only the measurements and the answer
 // (`layoutHost.layoutArrange` and `layoutUntangle` send them).
-export type FlowDirection = 'topToBottom' | 'leftToRight'
-
 export interface LayoutPort { name: string; x: number; y: number }
 export interface LayoutCard {
   id: string
@@ -25,7 +23,6 @@ export interface LayoutBarEnd { name: string; card: string; port: string }
 /** A bar of a Card in Card; `at` only when it was put somewhere by hand. */
 export interface LayoutBar { ends: LayoutBarEnd[]; at?: { x: number; y: number } }
 export interface LayoutScene {
-  flow: FlowDirection
   grid: number
   snap: boolean
   cards: LayoutCard[]

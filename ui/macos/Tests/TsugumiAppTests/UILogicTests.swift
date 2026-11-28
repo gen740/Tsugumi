@@ -105,7 +105,7 @@ import TsugumiTestSupport
 @Test func aVersionHoverFitsItsCards() {
   // Every Card stays inside the box, in the order it has on the canvas.
   let wide = VersionMiniMapLayout([.init(id: "a", x: 100, y: 0), .init(id: "b", x: 5000, y: 300), .init(id: "c", x: 2500, y: -400)],
-                                  flow: .leftToRight, width: 284, height: 132)
+                                  width: 284, height: 132)
   for (_, c) in wide.cards {
     let r = c.box
     #expect(r.minX >= 0 && r.maxX <= 284 && r.minY >= 0 && r.maxY <= wide.height && wide.height <= 132)
@@ -113,29 +113,23 @@ import TsugumiTestSupport
   #expect(wide.cards["a"]!.box.minX < wide.cards["c"]!.box.minX && wide.cards["c"]!.box.minX < wide.cards["b"]!.box.minX)
   #expect(!wide.named)
   // A small graph is not blown up, and is only as tall as it is.
-  let small = VersionMiniMapLayout([.init(id: "a", x: 0, y: 0)], flow: .leftToRight, width: 284, height: 132)
+  let small = VersionMiniMapLayout([.init(id: "a", x: 0, y: 0)], width: 284, height: 132)
   #expect(small.cards["a"]!.box.width == 220 * 0.3 && small.height == small.cards["a"]!.box.height + 16 && small.named)
-  #expect(VersionMiniMapLayout([], flow: .leftToRight, width: 284, height: 132).cards.isEmpty)
+  #expect(VersionMiniMapLayout([], width: 284, height: 132).cards.isEmpty)
 }
 
 @Test func collectFunnelFollowsTheCanvasFlow() {
   let data = CardNodeData(title: "collect", kind: .collect, inputs: [PortData(name: "in")], outputs: [PortData(name: "out")])
-  for flow in [FlowDirection.topToBottom, .leftToRight] {
-    let geometry = CardGeometry(data, flow: flow)
-    let input = geometry.port("in", output: false)
-    let output = geometry.port("out", output: true)
-    #expect(geometry.shape == .collect)
-    if flow == .topToBottom {
-      #expect(input.x == output.x && input.y < output.y)
-    } else {
-      #expect(input.y == output.y && input.x < output.x)
-    }
-  }
+  let geometry = CardGeometry(data)
+  let input = geometry.port("in", output: false)
+  let output = geometry.port("out", output: true)
+  #expect(geometry.shape == .collect)
+  #expect(input.x == output.x && input.y < output.y)
 }
 
 @Test func aVersionsMinimapDrawsWhatIsNotACardWithItsCanvasShape() {
-  func canvas(_ kind: CardKind, fan: Int = 0, flow: FlowDirection = .leftToRight) -> CardGeometry {
-    CardGeometry(VersionMiniMapLayout.Card(id: "c", x: 0, y: 0, kind: kind, fan: fan).data, flow: flow)
+  func canvas(_ kind: CardKind, fan: Int = 0) -> CardGeometry {
+    CardGeometry(VersionMiniMapLayout.Card(id: "c", x: 0, y: 0, kind: kind, fan: fan).data)
   }
   func outline(_ g: CardGeometry, in box: CGRect, _ k: CGFloat) -> Path {
     let o = g.outlineRect
@@ -147,8 +141,8 @@ import TsugumiTestSupport
     .init(id: "start", x: 0, y: 30, kind: .trigger),
     .init(id: "merge", x: start.size.width + 10, y: 20, kind: .merge, fan: 2),
     .init(id: "load", x: start.size.width + merge.size.width + 40, y: -30),
-    .init(id: "draft", x: start.size.width + merge.size.width + 40, y: 60, kind: .draft),
-  ], flow: .leftToRight, width: 284, height: 132)
+    .init(id: "draft", x: start.size.width + merge.size.width + 40, y: canvas(.code).size.height - 10, kind: .draft),
+  ], width: 284, height: 132)
   let at = placed.cards
   #expect(at["start"]!.shape == .start && at["merge"]!.shape == .merge && at["load"]!.shape == .card && at["draft"]!.shape == .card)
   #expect(at["draft"]!.draft && !at["load"]!.draft)
@@ -164,22 +158,20 @@ import TsugumiTestSupport
   #expect(at["start"]!.outline == outline(start, in: at["start"]!.box, k))
   #expect(abs(at["merge"]!.outline.boundingRect.minX - (at["merge"]!.box.minX + merge.outlineRect.minX * k)) < 1)
 
-  func single(_ kind: CardKind, _ fan: Int, _ flow: FlowDirection = .leftToRight) -> VersionMiniMapLayout.Placed {
-    VersionMiniMapLayout([.init(id: "m", x: 0, y: 0, kind: kind, fan: fan)], flow: flow, width: 284, height: 132).cards["m"]!
+  func single(_ kind: CardKind, _ fan: Int) -> VersionMiniMapLayout.Placed {
+    VersionMiniMapLayout([.init(id: "m", x: 0, y: 0, kind: kind, fan: fan)], width: 284, height: 132).cards["m"]!
   }
   #expect(single(.merge, 2).shape == .merge)
-  #expect(single(.merge, 6).box.height > single(.merge, 2).box.height)
-  #expect(single(.merge, 6, .topToBottom).box.width > single(.merge, 2, .topToBottom).box.width)
-  #expect(single(.merge, 2).outline != single(.merge, 2, .topToBottom).outline)
+  #expect(single(.merge, 6).box.width > single(.merge, 2).box.width)
 
   // A loop is a merge and a Collect: they keep their shapes and do not overlap.
   let loop = VersionMiniMapLayout([.init(id: "m", x: 0, y: 0, kind: .merge, fan: 2), .init(id: "step", x: 140, y: 0), .init(id: "b", x: 400, y: 0, kind: .collect)],
-                                  flow: .leftToRight, width: 284, height: 132).cards
+                                  width: 284, height: 132).cards
   #expect(loop["m"]!.shape == .merge && loop["step"]!.shape == .card && loop["b"]!.shape == .collect)
   #expect(!loop["m"]!.box.intersects(loop["step"]!.box) && !loop["step"]!.box.intersects(loop["b"]!.box))
 
   // A folded Card is its header.
-  let folded = VersionMiniMapLayout([.init(id: "a", x: 0, y: 0, collapsed: true)], flow: .leftToRight, width: 284, height: 132).cards["a"]!
+  let folded = VersionMiniMapLayout([.init(id: "a", x: 0, y: 0, collapsed: true)], width: 284, height: 132).cards["a"]!
   #expect(abs(folded.box.height - CardGeometry.header * 0.3) < 1e-9)
 }
 
@@ -656,61 +648,55 @@ import TsugumiTestSupport
   for id in ["old", "future"] {
     let d = s.nodeData(id)
     #expect(d.kind == .invalid && d.inputs.isEmpty && d.outputs.isEmpty, "\(id): no ports, declared or resolved")
-    let g = CardGeometry(d, flow: .topToBottom)
+    let g = CardGeometry(d)
     #expect(g.inputs.isEmpty && g.outputs.isEmpty && !g.draft && !g.stages)
     #expect(g.newPortPoint(output: false) == nil, "nothing to draw a wire from")
     #expect(d.idleText == String(localized: "定義エラー"))
   }
   let old = s.nodeData("old")
   #expect(old.summary == nil && old.errors == [missing])
-  #expect(!CardGeometry(old, flow: .topToBottom).summary)
+  #expect(!CardGeometry(old).summary)
   #expect(s.nodeData("future").errors == [String(localized: "Card の定義を読めません")], "without a diagnostic yet")
 
   // A version from before `type` (or one this build cannot read) has no kind.
   #expect(CardKind.named("") == .invalid && CardKind.named("something new") == .invalid && CardKind.named("merge") == .merge)
   let map = VersionMiniMapLayout([.init(id: "old", x: 0, y: 0, kind: CardKind.named("")), .init(id: "step", x: 300, y: 0)],
-                                 flow: .leftToRight, width: 284, height: 132)
+                                 width: 284, height: 132)
   #expect(map.cards["old"]?.invalid == true && map.cards["step"]?.invalid == false)
 }
 
 @Test func aDraftOffersCardAttachmentsAndOpensWhileWritten() {
   var data = CardNodeData(title: "x", kind: .draft, summary: "plan", inputs: [], outputs: [])
-  let empty = CardGeometry(data, flow: .topToBottom)
+  let empty = CardGeometry(data)
   #expect(empty.newPortPoint(output: true) == CGPoint(x: CardGeometry.width / 2, y: empty.height))
   #expect(empty.port(CardGeometry.newPort, output: false) == CGPoint(x: CardGeometry.width / 2, y: 0))
   data.outputs = [PortData(name: "out")]
-  let wired = CardGeometry(data, flow: .topToBottom)
+  let wired = CardGeometry(data)
   // Even supplied port declarations are ignored: Draft wires use Card anchors.
   #expect(wired.port("out", output: true) == CGPoint(x: CardGeometry.width / 2, y: wired.height))
   #expect(wired.newPortPoint(output: true) == empty.newPortPoint(output: true), "attachment remains available for more wires")
   #expect(wired.height == empty.height)
-  // Across a left-to-right flow: the same anchor at the middle of the side.
-  let right = CardGeometry(data, flow: .leftToRight)
-  #expect(right.port("out", output: true) == CGPoint(x: CardGeometry.width, y: right.height / 2))
-  #expect(right.newPortPoint(output: false) == CGPoint(x: 0, y: right.height / 2))
   data.outputs = [PortData(name: "x"), PortData(name: "y")]
-  let two = CardGeometry(data, flow: .leftToRight)
-  #expect((two.port("x", output: true).y + two.port("y", output: true).y) / 2 == two.height / 2)
+  let two = CardGeometry(data)
+  #expect(two.port("x", output: true) == two.port("y", output: true), "one anchor for every wire")
   // Without a name, a Draft is its content.
   data.untitled = true
-  #expect(CardGeometry(data, flow: .topToBottom).headerRow == CardGeometry.untitledTop)
+  #expect(CardGeometry(data).headerRow == CardGeometry.untitledTop)
   data.untitled = false
   data.draftEditing = true
-  #expect(CardGeometry(data, flow: .topToBottom).draftRow == CardGeometry.draftEditRow)
+  #expect(CardGeometry(data).draftRow == CardGeometry.draftEditRow)
   data.draftEditing = false
   data.outputs = []
   data.collapsed = true
-  #expect(CardGeometry(data, flow: .topToBottom).newPortPoint(output: true) == nil)
+  #expect(CardGeometry(data).newPortPoint(output: true) == nil)
 }
 
 @Test func wirePortsFollowTheFlow() {
   let data = CardNodeData(title: "x", kind: .code, summary: nil,
                           inputs: [PortData(name: "a"), PortData(name: "b")], outputs: [PortData(name: "out")])
-  let down = CardGeometry(data, flow: .topToBottom)
+  let down = CardGeometry(data)
   #expect(down.port("a", output: false).y == 0 && down.port("out", output: true).y == down.height)
   #expect(down.port("a", output: false).x < down.port("b", output: false).x)
-  let right = CardGeometry(data, flow: .leftToRight)
-  #expect(right.port("a", output: false).x == 0 && right.port("out", output: true).x == CardGeometry.width)
 }
 
 @Test func fileTreeGroupsFolders() throws {
@@ -733,7 +719,7 @@ import TsugumiTestSupport
 
 @Test func theSmallCardsKeepTheirShapeWithASummary() {
   func geometry(_ kind: CardKind) -> CardGeometry {
-    CardGeometry(CardNodeData(title: "x", kind: kind, summary: "what it does", inputs: [], outputs: []), flow: .topToBottom)
+    CardGeometry(CardNodeData(title: "x", kind: kind, summary: "what it does", inputs: [], outputs: []))
   }
   for kind in [CardKind.trigger, .merge, .collect] { #expect(!geometry(kind).summary, "\(kind)") }
   // An ordinary Card's description is on hover: its face has the name and status line.
@@ -766,13 +752,11 @@ import TsugumiTestSupport
   queued.invocation = 1
   queued.activity = "waiting for a worker"
   let long = card(String(repeating: "a long name of a Card ", count: 6))
-  for flow in [FlowDirection.topToBottom, .leftToRight] {
-    let size = CardGeometry(card("x"), flow: flow).size
-    for d in [running, failed, succeeded, queued, long] {
-      #expect(CardGeometry(d, flow: flow).size == size, "\(d.title) \(flow)")
-    }
+  let size = CardGeometry(card("x")).size
+  for d in [running, failed, succeeded, queued, long] {
+    #expect(CardGeometry(d).size == size, "\(d.title)")
   }
-  #expect(CardGeometry(card("x"), flow: .topToBottom).face)
+  #expect(CardGeometry(card("x")).face)
 }
 
 @Test func aCardsStatusLineSaysItsStateInOneLine() {
@@ -854,13 +838,13 @@ import TsugumiTestSupport
   other.diagnostic = "no such file"
   #expect(other.notStartedText == nil)
   var d = CardNodeData(title: "x", kind: .code, summary: nil, inputs: [], outputs: [])
-  let size = [FlowDirection.topToBottom, .leftToRight].map { CardGeometry(d, flow: $0).size }
+  let size = CardGeometry(d).size
   d.state = .failed
   d.invocation = 1
   d.failure = failure.plainText
   d.notStarted = reasons
   #expect(d.statusLine() == CardStatusLine(text: String(localized: "worker を選べず未開始"), tone: .failed, hover: reasons))
-  #expect([FlowDirection.topToBottom, .leftToRight].map { CardGeometry(d, flow: $0).size } == size)
+  #expect(CardGeometry(d).size == size)
 }
 
 @Test func aWorkerFromAnotherRevisionIsNamedAsOutOfDate() {
@@ -903,8 +887,8 @@ import TsugumiTestSupport
   waits.worker = "ttl"
   waits.liveness = "CPU 00:00:01.00"
   #expect(waits.statusLine().text == "waiting (worker slot)")
-  #expect(CardGeometry(waits, flow: .topToBottom).size
-    == CardGeometry(CardNodeData(title: "x", kind: .code, summary: nil, inputs: [], outputs: []), flow: .topToBottom).size)
+  #expect(CardGeometry(waits).size
+    == CardGeometry(CardNodeData(title: "x", kind: .code, summary: nil, inputs: [], outputs: [])).size)
   let hover = HoverBubble.Content.card(waits, details: [], runId: nil) {}
   #expect(hover.stages.contains { $0.stage == .execute && $0.waiting })
   #expect(hover.facts.contains("waiting for a free slot on the worker") && hover.facts.contains("CPU 00:00:01.00"))
@@ -915,11 +899,10 @@ import TsugumiTestSupport
   var data = CardNodeData(title: "x", kind: .code, summary: "s",
                           inputs: [PortData(name: "a"), PortData(name: "b")], outputs: [PortData(name: "x")])
   data.collapsed = true
-  let closed = CardGeometry(data, flow: .leftToRight)
+  let closed = CardGeometry(data)
   #expect(closed.height == CardGeometry.header)
-  #expect(closed.port("b", output: false) == CGPoint(x: 0, y: CardGeometry.header / 2))
-  let down = CardGeometry(data, flow: .topToBottom)
-  #expect(down.port("x", output: true).y == CardGeometry.header)
+  #expect(closed.port("b", output: false).y == 0)
+  #expect(closed.port("x", output: true).y == CardGeometry.header)
 }
 
 @Test func shortcutsHaveNoDefaultConflicts() {
@@ -929,17 +912,17 @@ import TsugumiTestSupport
 
 @Test func routingCardsHaveTheirShapeAndPorts() {
   let merge = CardGeometry(CardNodeData(title: "m", kind: .merge, summary: nil,
-                                        inputs: [PortData(name: "a"), PortData(name: "b")], outputs: [PortData(name: "out")]), flow: .topToBottom)
+                                        inputs: [PortData(name: "a"), PortData(name: "b")], outputs: [PortData(name: "out")]))
   #expect(abs(merge.port("out", output: true).x - merge.size.width / 2) < 0.5)
   #expect(merge.port("a", output: false).y == merge.outlineRect.minY)
 }
 
 @Test func portLabelsSitOnTheirPortsOrHide() {
   let few = CardGeometry(CardNodeData(title: "x", kind: .code, summary: nil, inputs: [PortData(name: "a"), PortData(name: "b")],
-                                      outputs: []), flow: .topToBottom)
+                                      outputs: []))
   #expect(few.showLabels(input: true))
   let many = CardGeometry(CardNodeData(title: "x", kind: .code, summary: nil,
-                                       inputs: (0..<12).map { PortData(name: "port\($0)") }, outputs: []), flow: .topToBottom)
+                                       inputs: (0..<12).map { PortData(name: "port\($0)") }, outputs: []))
   // Twelve ports on 220 points leave no room: names are shown on hover instead.
   #expect(!many.showLabels(input: true) && many.topLabels == 0)
 }
@@ -947,7 +930,7 @@ import TsugumiTestSupport
 @Test func feedbackWiresGoAroundTheCards() {
   let cards = [CGRect(x: 0, y: 0, width: 220, height: 80), CGRect(x: 0, y: 160, width: 220, height: 80),
                CGRect(x: 0, y: 320, width: 220, height: 80)]
-  var router = WireRouter(flow: .topToBottom, obstacles: cards)
+  var router = WireRouter(obstacles: cards)
   // From the bottom Card back up to the top one.
   let back = router.route(CGPoint(x: 110, y: 400), CGPoint(x: 110, y: 0))
   let middle = cards[1].insetBy(dx: 2, dy: 2)
@@ -970,21 +953,19 @@ import TsugumiTestSupport
   let merge = CGRect(x: 0, y: 0, width: 80, height: 50)
   for gap in [0, 1, 20, 23, 24, 25, 40] as [CGFloat] {
     let card = CGRect(x: -70, y: 50 + gap, width: 220, height: 90)
-    var down = WireRouter(flow: .topToBottom, obstacles: [merge, card])
+    var down = WireRouter(obstacles: [merge, card])
     #expect(length(down.route(CGPoint(x: 40, y: 50), CGPoint(x: 40, y: 50 + gap))) <= gap + 0.5, "top to bottom, \(gap)")
   }
-  var across = WireRouter(flow: .leftToRight, obstacles: [CGRect(x: 0, y: 0, width: 50, height: 80), CGRect(x: 70, y: -70, width: 90, height: 220)])
-  #expect(length(across.route(CGPoint(x: 50, y: 40), CGPoint(x: 70, y: 46))) < 25)
   // No bulge past either port.
-  var offset = WireRouter(flow: .topToBottom, obstacles: [merge])
+  var offset = WireRouter(obstacles: [merge])
   let bent = offset.route(CGPoint(x: 40, y: 50), CGPoint(x: 52, y: 70)).boundingRect
   #expect(bent.minY >= 49.5 && bent.maxY <= 70.5)
   // Upstream by a point is still upstream: it goes around.
-  var back = WireRouter(flow: .topToBottom, obstacles: [merge, CGRect(x: -70, y: 70, width: 220, height: 90)])
+  var back = WireRouter(obstacles: [merge, CGRect(x: -70, y: 70, width: 220, height: 90)])
   #expect(length(back.route(CGPoint(x: 40, y: 51), CGPoint(x: 40, y: 50))) > 50)
   // The short way through a Card is not taken.
   let wall = CGRect(x: 100, y: 45, width: 60, height: 30)
-  var blocked = WireRouter(flow: .topToBottom, obstacles: [merge, wall])
+  var blocked = WireRouter(obstacles: [merge, wall])
   #expect(!blocked.isForward(CGPoint(x: 40, y: 50), CGPoint(x: 220, y: 60)))
   let around = blocked.route(CGPoint(x: 40, y: 50), CGPoint(x: 220, y: 60))
   for t in stride(from: 0.02, through: 0.98, by: 0.02) {
@@ -999,7 +980,7 @@ import TsugumiTestSupport
   struct Rect: Decodable { let x, y, width, height: CGFloat }
   struct Ends: Decodable { let a, b: Point }
   struct Case: Decodable {
-    let name, flow: String
+    let name: String
     let obstacles: [Rect]
     let wires: [Ends]
   }
@@ -1007,8 +988,7 @@ import TsugumiTestSupport
   let cases = try JSONDecoder().decode([Case].self, from: Data(contentsOf: root.appendingPathComponent("tests/fixtures/wire-routes.json")))
   #expect(!cases.isEmpty)
   for c in cases {
-    var router = WireRouter(flow: c.flow == "leftToRight" ? .leftToRight : .topToBottom,
-                            obstacles: c.obstacles.map { CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) })
+    var router = WireRouter(obstacles: c.obstacles.map { CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) })
     let plans = router.plan(c.wires.map { (a: CGPoint(x: $0.a.x, y: $0.a.y), b: CGPoint(x: $0.b.x, y: $0.b.y)) })
     for (i, plan) in plans.enumerated() {
       let ends = c.wires[i]
@@ -1249,17 +1229,16 @@ import TsugumiTestSupport
     #expect(abs(snapToGrid(CGFloat(c["v"]!), CGFloat(c["grid"]!)) - CGFloat(c["to"]!)) < 1e-9)
   }
   for c in try #require(contract["ports"] as? [[String: Any]]) {
-    let name = "\(c["flow"]!) \(c["kind"]!) grid \(c["grid"]!) \(c["inputs"]!)/\(c["outputs"]!)"
+    let name = "\(c["kind"]!) grid \(c["grid"]!) \(c["inputs"]!)/\(c["outputs"]!)"
     func ports(_ count: Int) -> [PortData] { (0..<count).map { PortData(name: "p\($0)") } }
     var d = CardNodeData(title: "x", kind: try #require(CardKind(rawValue: c["kind"] as! String)), summary: c["summary"] != nil ? "s" : nil,
                          inputs: ports(c["inputs"] as! Int), outputs: ports(c["outputs"] as! Int))
     d.collapsed = c["collapsed"] != nil
     let grid = c["grid"] as? Double
     d.portGrid = grid.map { CGFloat($0) }
-    let flow: FlowDirection = c["flow"] as! String == "topToBottom" ? .topToBottom : .leftToRight
-    let g = CardGeometry(d, flow: flow)
+    let g = CardGeometry(d)
     #expect(g.size.width.isFinite && g.size.width > 0 && g.size.height.isFinite && g.size.height > 0)
-    let edge = flow == .topToBottom ? g.size.width : g.size.height
+    let edge = g.size.width
     if d.kind == .merge {
       let r = g.outlineRect
       for z: CGFloat in [1, 0.25] {
@@ -1271,18 +1250,18 @@ import TsugumiTestSupport
           #expect(line.contains(CGPoint(x: p.x * z, y: p.y * z)), "\(name) port \(i) output \(output) on the outline at \(z)")
         }
         let box = outline.boundingRect
-        #expect((flow == .topToBottom ? box.width : box.height) >= edge * z - 8 * z, "\(name) keeps its width at \(z)")
+        #expect(box.width >= edge * z - 8 * z, "\(name) keeps its width at \(z)")
       }
       // Many ports make it bigger, not flatter.
-      #expect((flow == .topToBottom ? r.height : r.width) >= edge / 4 - 1e-9, "\(name) not flat")
+      #expect(r.height >= edge / 4 - 1e-9, "\(name) not flat")
       let icon = g.iconCenter(in: r)
-      #expect(abs((flow == .topToBottom ? icon.x : icon.y) - (flow == .topToBottom ? r.midX : r.midY)) < 1e-5, "\(name) icon on the axis")
+      #expect(abs(icon.x - r.midX) < 1e-5, "\(name) icon on the axis")
     }
     for (key, output) in [("in", false), ("out", true)] {
       let count = output ? d.outputs.count : d.inputs.count
       let list = (0..<count).map { i in
         let p = g.port("p\(i)", output: output)
-        return flow == .topToBottom ? p.x : p.y
+        return p.x
       }
       let apex = d.kind == .merge && output
       for (i, v) in list.enumerated() {
@@ -1293,7 +1272,7 @@ import TsugumiTestSupport
         #expect(v >= 0 && v <= edge, "\(name) on its edge")
         // A triangle's apex takes everything on that side; elsewhere marks never touch.
         if apex { #expect(abs(v - edge / 2) < 1e-5, "\(name) at the apex") }
-        else if i > 0, c["collapsed"] == nil || flow == .topToBottom { #expect(v - list[i - 1] >= CardGeometry.minPortPitch, "\(name) apart") }
+        else if i > 0 { #expect(v - list[i - 1] >= CardGeometry.minPortPitch, "\(name) apart") }
       }
     }
   }

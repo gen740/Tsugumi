@@ -2,7 +2,7 @@
 //
 // - A project's layout.bin (protocol/layout_document.fbs) and its notes'
 //   Markdown (notes/<id>.md) are one layout view, the JSON object hostd edits
-//   under "layout.bin": {flow, cards: {key: place}, boundaries: {scope: bars},
+//   under "layout.bin": {cards: {key: place}, boundaries: {scope: bars},
 //   boundary, notes: [{id, text, ...}], groups}.
 // - A Card's README.md (front matter `title` and `description`, Markdown body) and its
 //   _comments.json are one note object: {title, description, content, comments}.
@@ -35,7 +35,6 @@ export function layoutView(bytes: Uint8Array | null | undefined, notes: Map<stri
   const view = obj()
   if (!bytes?.length) return view
   const l = Layout.getRootAsLayout(new ByteBuffer(bytes)).unpack()
-  if (l.flow) view.set('flow', String(l.flow))
   const cards = obj()
   for (const c of l.cards) {
     if (!c.key) continue

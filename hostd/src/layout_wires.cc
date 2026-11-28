@@ -81,23 +81,18 @@ struct Near {
 };
 class Router {
  public:
-  Router(bool vertical, const std::vector<Rect>& obstacles)
-      : vertical_(vertical), obstacles_(obstacles) {
-    for (auto o : obstacles)
-      frame_.push_back(vertical ? o : Rect{o.y, o.x, o.height, o.width});
-  }
+  explicit Router(const std::vector<Rect>& obstacles) : obstacles_(obstacles) {}
   auto route(const std::vector<WireEnds>& wires)
       -> std::vector<std::vector<Point>> {
     std::vector<std::vector<Point>> out(wires.size());
     for (size_t i = 0; i < wires.size(); ++i) {
       auto [a, b] = wires[i];
-      if (((vertical_ ? b.y - a.y : b.x - a.x) >= 0 && !crosses_card(a, b)) ||
-          under_cards(a, b))
+      if ((b.y - a.y >= 0 && !crosses_card(a, b)) || under_cards(a, b))
         out[i] = curve(a, b);
       if (!out[i].empty()) {
         std::vector<Point> sampled;
         for (size_t k = 0; k < out[i].size(); k += 4)
-          sampled.push_back(to_frame(out[i][k]));
+          sampled.push_back(out[i][k]);
         remember(a, std::move(sampled), true);
       }
     }
@@ -113,30 +108,22 @@ class Router {
                      [&](size_t a, size_t b) { return key(a) < key(b); });
     for (auto i : order) {
       auto [a, b] = wires[i];
-      auto ps = search(to_frame(a), to_frame(b));
+      auto ps = search(a, b);
       if (ps.empty()) {
         out[i] = curve(a, b);
         continue;
       }
       remember(a, ps, false);
-      for (auto p : ps) out[i].push_back(to_frame(p));
+      out[i] = std::move(ps);
     }
     return out;
   }
 
  private:
-  auto to_frame(Point p) const -> Point {
-    return vertical_ ? p : Point{p.y, p.x};
-  }
   auto controls(Point a, Point b) const -> std::pair<Point, Point> {
-    if (vertical_) {
-      const double d = std::max(std::abs(b.y - a.y) / 2,
-                                std::min(30.0, std::abs(b.x - a.x) / 2));
-      return {{a.x, a.y + d}, {b.x, b.y - d}};
-    }
-    const double d = std::max(std::abs(b.x - a.x) / 2,
-                              std::min(30.0, std::abs(b.y - a.y) / 2));
-    return {{a.x + d, a.y}, {b.x - d, b.y}};
+    const double d = std::max(std::abs(b.y - a.y) / 2,
+                              std::min(30.0, std::abs(b.x - a.x) / 2));
+    return {{a.x, a.y + d}, {b.x, b.y - d}};
   }
   auto curve(Point a, Point b) const -> std::vector<Point> {
     auto [c1, c2] = controls(a, b);
@@ -268,7 +255,7 @@ class Router {
   }
   auto search(Point a, Point b) -> std::vector<Point> {
     std::vector<Rect> obstacles;
-    for (auto o : frame_)
+    for (auto o : obstacles_)
       if (depth(o, a, 1) <= kPortDepth && depth(o, b, -1) <= kPortDepth)
         obstacles.push_back(o);
     const auto out = clear(a, 1, obstacles), into = clear(b, -1, obstacles);
@@ -276,7 +263,7 @@ class Router {
     const Point first{out.x, out.y + stub(out, 1, along, obstacles)},
         last{into.x, into.y - stub(into, -1, along, obstacles)};
     std::vector<double> xs, ys, xe, ye;
-    for (auto o : frame_) {
+    for (auto o : obstacles_) {
       xs.insert(xs.end(), {o.x - kClearance, o.x + o.width + kClearance});
       ys.insert(ys.end(), {o.y - kClearance, o.y + o.height + kClearance});
       xe.insert(xe.end(), {o.x, o.x + o.width});
@@ -293,8 +280,6 @@ class Router {
     xs.insert(xs.end(), {first.x, last.x, (first.x + last.x) / 2});
     ys.insert(ys.end(), {first.y, last.y, (first.y + last.y) / 2});
     std::vector<const Run*> others;
-    // The reference compares the world-space source to a frame-space point.
-    // Preserve that behavior for horizontal flow as well.
     for (const auto& w : routed_)
       if (!equal(w.a, a)) {
         others.push_back(&w);
@@ -387,17 +372,15 @@ class Router {
     std::reverse(corners.begin(), corners.end());
     return straightened(corners);
   }
-  bool vertical_;
   const std::vector<Rect>& obstacles_;
-  std::vector<Rect> frame_;
   std::vector<Run> routed_;
 };
 }  // namespace
 
-auto route_wires(bool top_to_bottom, const std::vector<Rect>& obstacles,
+auto route_wires(const std::vector<Rect>& obstacles,
                  const std::vector<WireEnds>& wires)
     -> std::vector<std::vector<Point>> {
-  return Router(top_to_bottom, obstacles).route(wires);
+  return Router(obstacles).route(wires);
 }
 auto crossing_pairs(const std::vector<std::vector<Point>>& paths,
                     const std::vector<WireEnds>& ends) -> int {

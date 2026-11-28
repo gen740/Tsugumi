@@ -26,7 +26,6 @@ TEST(HostProjectFiles, CreationUsesTheCoreInitialDocumentAndCopiesPreserveIt) {
   H::HostProjectCreateRequestT create;
   create.parent = dir.path.string();
   create.name = "New 日本語";
-  create.flow = "leftToRight";
   H::RequestT request;
   request.value.Set(std::move(create));
   Request(service, std::move(request));
@@ -52,8 +51,7 @@ TEST(HostProjectFiles, CreationUsesTheCoreInitialDocumentAndCopiesPreserveIt) {
   EXPECT_EQ(json::Array(initial.at("agentExclude")).size(),
             pin->agent_exclude()->size());
 
-  EXPECT_NE(Read(source / "layout.bin").find("leftToRight"),
-            std::string::npos);
+  EXPECT_TRUE(std::filesystem::exists(source / "layout.bin"));
   const std::string custom = FixtureProjectDocument(
       R"({"name":"custom","nixPath":[{"name":"custom","url":"github:org/project"}],"canvas":{"cards":[],"connections":[]}})");
   Write(source / "tsugumi.json", custom);

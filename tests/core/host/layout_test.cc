@@ -60,8 +60,7 @@ TEST(Layout, RouterMatchesPresentationPaths) {
       const auto w = object(j);
       wires.push_back({point(w.at("a")), point(w.at("b"))});
     }
-    const auto paths =
-        route_wires(text(c.at("flow")) == "topToBottom", obstacles, wires);
+    const auto paths = route_wires(obstacles, wires);
     ASSERT_EQ(paths.size(), wires.size());
     for (size_t i = 0; i < paths.size(); ++i) {
       const auto& ps = paths[i];

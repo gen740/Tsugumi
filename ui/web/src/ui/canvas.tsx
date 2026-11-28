@@ -482,10 +482,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       const from = session.junction(j.card, j.port) ?? j.at
       const p = { x: from.x + (ev.clientX - start.x) / z, y: from.y + (ev.clientY - start.y) / z }
       // On the grid along the flow, as Arrange puts it: across it the trunk can stay straight.
-      if (prefs.showGrid) {
-        if (flow === 'topToBottom') p.y = snapToGrid(p.y, prefs.gridSize)
-        else p.x = snapToGrid(p.x, prefs.gridSize)
-      }
+      if (prefs.showGrid) p.y = snapToGrid(p.y, prefs.gridSize)
       session.setJunction(j.card, j.port, p)
     })
   }
@@ -522,7 +519,6 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
 
   const b = scene.boundary
   const wires = scene.wires
-  const flow = scene.flow
   const sel = tab.selection
   const selectedMid = tab.selectedConnection !== undefined ? midPoint(wires.find((w) => w.connection === tab.selectedConnection)?.pts ?? []) : undefined
   const shown: HoverTarget | undefined = hover ?? (cv.details !== undefined && session.instance(cv.details) ? { kind: 'card', k: cv.details } : undefined)
@@ -636,7 +632,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         const origin = screen(scene.origin(k))
         return (
           <Fragment key={k}>
-          <CardNodeView data={data} flow={flow} zoom={z} selected={sel.has(k)} guide={'card:' + k}
+          <CardNodeView data={data} zoom={z} selected={sel.has(k)} guide={'card:' + k}
             style={placed(origin, g.size.width * z, g.size.height * z, data.draftEditing ? { zIndex: 1 } : undefined)}
             onPortDown={session.isEditable ? (port, output, e) => onPortDown(k, port, output, e) : undefined}
             draftEdit={session.inlineDraft?.card === k ? {

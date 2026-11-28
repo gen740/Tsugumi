@@ -576,7 +576,6 @@ extension ProjectSession {
   /// all decisions that rewrite the layout are made by the host service.
   func layoutScene(_ scope: [String]) -> Tsugumi_Host_LayoutSceneT {
     let scene = Tsugumi_Host_LayoutSceneT()
-    scene.flow = flow.rawValue
     scene.grid = AppPreferences.shared.gridSize
     scene.snap = AppPreferences.shared.showGrid
     let ids = cards(in: scope).compactMap { $0["id"]?.string }
@@ -749,7 +748,7 @@ extension ProjectSession {
     }
     let grid = CGFloat(AppPreferences.shared.gridSize > 0 ? AppPreferences.shared.gridSize : 20)
     setJunction(k, port, at: Self.junctionPlace(source: source, inputs: inputs, cards: rects,
-                                                down: flow == .topToBottom, grid: grid,
+                                                grid: grid,
                                                 snap: AppPreferences.shared.showGrid))
   }
 
@@ -760,15 +759,12 @@ extension ProjectSession {
   /// along), on the grid when snapping. Across it: at the median of the
   /// inputs, moved to the nearer side of a Card it would fall on.
   nonisolated static func junctionPlace(source: CGPoint, inputs: [CGPoint], cards: [CGRect],
-                                        down: Bool, grid: CGFloat, snap: Bool) -> CGPoint {
-    let along = down ? source.y : source.x, across = down ? source.x : source.y
-    let sides = inputs.map { down ? $0.x : $0.y }.sorted()
-    let nearest = inputs.map { down ? $0.y : $0.x }.min() ?? along
+                                        grid: CGFloat, snap: Bool) -> CGPoint {
+    let along = source.y, across = source.x
+    let sides = inputs.map(\.x).sorted()
+    let nearest = inputs.map(\.y).min() ?? along
     let low = min(across, sides.first ?? across), high = max(across, sides.last ?? across)
-    let extents = cards.map { r in
-      down ? (top: r.minY, bottom: r.maxY, left: r.minX, right: r.maxX)
-           : (top: r.minX, bottom: r.maxX, left: r.minY, right: r.maxY)
-    }
+    let extents = cards.map { r in (top: r.minY, bottom: r.maxY, left: r.minX, right: r.maxX) }
     var laneLow = along, laneHigh = nearest
     if nearest > along {
       var moved = true
@@ -797,7 +793,7 @@ extension ProjectSession {
       }
       if !moved { break }
     }
-    return down ? CGPoint(x: side, y: at) : CGPoint(x: at, y: side)
+    return CGPoint(x: side, y: at)
   }
 
   /// Moves an output's junction, or removes it (nil), in one undo step.

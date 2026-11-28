@@ -189,7 +189,6 @@ final class AppPreferences {
   var showIndentGuides: Bool { didSet { d.set(showIndentGuides, forKey: "editor.guides") } }
   var editorFontSize: Double { didSet { d.set(editorFontSize, forKey: "editor.fontSize") } }
   var editorTheme: EditorTheme { didSet { d.set(editorTheme.rawValue, forKey: "editor.theme") } }
-  var flowDirection: FlowDirection { didSet { d.set(flowDirection.rawValue, forKey: "canvas.flow") } }
   var tsugumiMotion: Motion { didSet { d.set(tsugumiMotion.rawValue, forKey: "app.tsugumiMotion") } }
 
   /// The bird stays still: as set here, or by default as macOS "Reduce motion".
@@ -227,7 +226,6 @@ final class AppPreferences {
     showIndentGuides = d.object(forKey: "editor.guides") as? Bool ?? true
     editorFontSize = d.object(forKey: "editor.fontSize") as? Double ?? 12
     editorTheme = EditorTheme(rawValue: d.string(forKey: "editor.theme") ?? "") ?? .standard
-    flowDirection = FlowDirection(rawValue: d.string(forKey: "canvas.flow") ?? "") ?? .topToBottom
     tsugumiMotion = Motion(rawValue: d.string(forKey: "app.tsugumiMotion") ?? "") ?? .system
     if let data = d.data(forKey: "app.shortcuts"), let s = try? JSONDecoder().decode([String: KeyBinding].self, from: data) {
       shortcuts = Dictionary(uniqueKeysWithValues: s.compactMap { k, v in ShortcutAction(rawValue: k).map { ($0, v) } })

@@ -35,10 +35,6 @@ auto size(double v, const std::string& field) -> double {
 }
 auto scene_of(const R::LayoutScene& in) -> layout::Scene {
   layout::Scene s;
-  const auto flow = in.flow()->str();
-  if (flow != "topToBottom" && flow != "leftToRight")
-    throw LayoutFailure("unknown layout flow");
-  s.top_to_bottom = flow == "topToBottom";
   s.grid = in.grid() == 0 ? 20 : measured(in.grid(), "scene.grid");
   if (s.grid < 1) throw LayoutFailure("layout grid must be at least 1");
   s.snap = in.snap();
@@ -219,11 +215,11 @@ auto VersionCanvas(const R::VersionCanvasRequest& in) -> R::VersionCanvasT {
       document_text::root<Tsugumi::Layout::Layout>(layout).UnPackTo(&saved);
   }
   std::map<std::string, const Tsugumi::Layout::CardPlaceT*> positions;
-  for (const auto& place : saved.cards) positions.emplace(place->key, place.get());
+  for (const auto& place : saved.cards)
+    positions.emplace(place->key, place.get());
   layout::Scene scene;
   std::vector<std::string> missing;
   std::map<std::string, size_t> index;
-  std::set<std::string> placed;
   if (in.cards())
     for (const auto* entry : *in.cards()) {
       auto card = std::make_unique<R::VersionCanvasCardT>();
@@ -238,14 +234,12 @@ auto VersionCanvas(const R::VersionCanvasRequest& in) -> R::VersionCanvasT {
       if (x && y) {
         card->x = *x;
         card->y = *y;
-        placed.insert(card->id);
       } else {
         missing.push_back(card->id);
       }
       index[card->id] = result.cards.size();
       result.cards.push_back(std::move(card));
     }
-  double across = 0, down = 0;
   if (in.wires())
     for (const auto* entry : *in.wires()) {
       const auto from = entry->from()->str(), to = entry->to()->str();
@@ -255,27 +249,19 @@ auto VersionCanvas(const R::VersionCanvasRequest& in) -> R::VersionCanvasT {
       wire->to = to;
       result.wires.push_back(std::move(wire));
       scene.wires.push_back({from, {}, to, {}});
-      if (placed.contains(from) && placed.contains(to)) {
-        const auto& a = *result.cards[index.at(from)];
-        const auto& b = *result.cards[index.at(to)];
-        across += std::abs(b.x - a.x);
-        down += std::abs(b.y - a.y);
-      }
     }
-  const auto& flow = saved.flow;
-  scene.top_to_bottom = flow == "topToBottom" || flow == "leftToRight"
-                            ? flow == "topToBottom"
-                            : down > 0 && down >= across;
-  result.flow = scene.top_to_bottom ? "topToBottom" : "leftToRight";
   if (!missing.empty()) {
     // Reserve room for the preview's Card and any ports shown on its outline.
     for (const auto& card : result.cards) {
       const double port_span = 64.0 * card->fan + 24;
-      scene.cards.push_back(
-          {card->id, card->x, card->y,
-           scene.top_to_bottom ? std::max(320.0, port_span) : 320.0,
-           scene.top_to_bottom ? 120.0 : std::max(120.0, port_span),
-           {}, {}, false});
+      scene.cards.push_back({card->id,
+                             card->x,
+                             card->y,
+                             std::max(320.0, port_span),
+                             120.0,
+                             {},
+                             {},
+                             false});
     }
     for (const auto& p : layout::place_missing(scene, missing).cards) {
       auto& card = *result.cards[index.at(p.id)];

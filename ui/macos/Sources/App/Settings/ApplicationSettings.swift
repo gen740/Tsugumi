@@ -151,14 +151,13 @@ private struct StorageNote: View {
 
 /// The settings of one project: kept in the project (or its environment).
 enum ProjectSettingsPane: String, CaseIterable, Identifiable {
-  case general, canvas, history, cache, hostPaths, secrets
+  case general, history, cache, hostPaths, secrets
   var id: String { rawValue }
   /// The settings window's selection for this pane.
   var selection: String { "project." + rawValue }
   var title: String {
     switch self {
     case .general: return String(localized: "名前と実行環境")
-    case .canvas: return "Canvas"
     case .history: return String(localized: "実行履歴")
     case .cache: return String(localized: "ビルドキャッシュ")
     case .hostPaths: return String(localized: "ホストパス")
@@ -168,7 +167,6 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
   var symbol: String {
     switch self {
     case .general: return "folder.badge.gearshape"
-    case .canvas: return "rectangle.3.group"
     case .history: return "clock.arrow.circlepath"
     case .cache: return "shippingbox"
     case .hostPaths: return "folder"
@@ -179,7 +177,6 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
     let name = s.identity.url.lastPathComponent
     switch self {
     case .general: return String(localized: "このプロジェクト（\(name)/tsugumi.json）")
-    case .canvas: return String(localized: "このプロジェクト（\(name)/layout.bin）")
     case .history: return String(localized: "このプロジェクトの実行環境（\(name)/.tsugumi/runs.sqlite）")
     case .cache: return String(localized: "このプロジェクトの実行環境（VM の中）")
     case .hostPaths: return String(localized: "プロジェクトの tsugumi.json とこのホストの hostd")
@@ -290,10 +287,6 @@ private struct AppearanceSettings: View {
         Picker("テーマ", selection: $prefs.theme) {
           ForEach(AppPreferences.Theme.allCases) { Text($0.label).tag($0) }
         }
-        Picker("新しいプロジェクトの流れの向き", selection: $prefs.flowDirection) {
-          ForEach(FlowDirection.allCases) { Text($0.label).tag($0) }
-        }
-        .help("新しく作るプロジェクトの Card を並べる向きです。開いているプロジェクトの向きは、設定の「このプロジェクト」→「Canvas」で変えます。")
         Toggle("グリッドを表示（移動時に吸着）", isOn: $prefs.showGrid)
         Slider(value: $prefs.gridSize, in: 10...60, step: 5) { Text("グリッド間隔 \(Int(prefs.gridSize))") }
         Toggle("実行中の接続線を動かす", isOn: $prefs.animateLines)
@@ -310,7 +303,7 @@ private struct AppearanceSettings: View {
       VStack(alignment: .leading, spacing: 4) {
         Text("プレビュー（選択・ドラッグ・折りたたみ・拡大縮小を試せます。プロジェクトは変わりません）")
           .font(.caption).foregroundStyle(.secondary)
-        CanvasSurface(items: $items, wires: PreviewSamples.wires, flow: prefs.flowDirection, grid: prefs.showGrid,
+        CanvasSurface(items: $items, wires: PreviewSamples.wires, grid: prefs.showGrid,
                       gridSize: prefs.gridSize, animateWires: prefs.animateLines)
           .clipShape(RoundedRectangle(cornerRadius: 8))
           .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.secondary.opacity(0.3)))

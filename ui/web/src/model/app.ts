@@ -133,9 +133,9 @@ export class AppModel extends Observable {
     return p
   }
 
-  /** Creates an empty project laid out in the given direction. */
-  async createProject(parent: string, name: string, flow: string): Promise<string> {
-    const p = (await api<{ path: string }>('/api/project/create', { parent, name, flow })).path
+  /** Creates an empty project. */
+  async createProject(parent: string, name: string): Promise<string> {
+    const p = (await api<{ path: string }>('/api/project/create', { parent, name })).path
     this.fresh.add(p)
     return p
   }

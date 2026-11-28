@@ -49,7 +49,6 @@ export interface DemoData {
   id: string
   title: string
   description?: string
-  flow: 'topToBottom' | 'leftToRight'
   draftOnly: boolean
   cards: CardDoc[]
   wires: WireDoc[]
@@ -234,7 +233,7 @@ export function Canvas({ data, frame, compact, selected, onSelect, motion, view,
 
   const placed: Placed[] = data.cards.map((doc) => {
     const node = nodeData(data, stepOf, doc, frame)
-    return { doc, node, geometry: new CardGeometry(node, data.flow) }
+    return { doc, node, geometry: new CardGeometry(node) }
   })
   const byId = new Map(placed.map((p) => [p.doc.id, p]))
   const rectOf = (p: Placed): Rect => ({ x: p.doc.x, y: p.doc.y, ...p.geometry.size })
@@ -266,7 +265,7 @@ export function Canvas({ data, frame, compact, selected, onSelect, motion, view,
   }, [boxKey, size.width, size.height])
 
   const z = camera.zoom
-  const router = new WireRouter(data.flow, placed.map(rectOf))
+  const router = new WireRouter(placed.map(rectOf))
   const point = (id: string, port: string | undefined, output: boolean): Pt => {
     const p = byId.get(id)
     if (!p) return { x: 0, y: 0 }
@@ -308,7 +307,7 @@ export function Canvas({ data, frame, compact, selected, onSelect, motion, view,
       ))}
       <WireLayer wires={draws} animate={motion} zoom={z} width={size.width} height={size.height} />
       {placed.map(({ doc, node }) => (
-        <CardNodeView key={doc.id} data={node} flow={data.flow} zoom={z} selected={selected === doc.id}
+        <CardNodeView key={doc.id} data={node} zoom={z} selected={selected === doc.id}
           style={{ position: 'absolute', ...screen(doc) }}
           onPointerDown={compact ? undefined : (e) => {
             if (e.button !== 0) return

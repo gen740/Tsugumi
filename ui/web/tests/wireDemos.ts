@@ -6,13 +6,12 @@ import { CardGeometry, CardNodeData, Pt, Rect, snapToGrid, union, WireRouter } f
 import { ByteBuffer } from 'flatbuffers'
 import { Layout as LayoutBuffer } from '../shared/gen/tsugumi/layout/layout'
 import { parseReadme } from '../src/model/documents'
-import type { FlowDirection } from '../src/model/prefs'
 
 const root = process.argv[2]
 const demosRoot = process.env.TSUGUMI_DEMOS_DIR!
 type Wire = { a: Pt; b: Pt; name: string }
-type Scene = { name: string; flow: FlowDirection; obstacles: Rect[]; wires: Wire[] }
-type Layout = { flow?: string; cards?: Record<string, Partial<Pt> & { collapsed?: boolean }>; boundary?: Record<string, Pt> }
+type Scene = { name: string; obstacles: Rect[]; wires: Wire[] }
+type Layout = { cards?: Record<string, Partial<Pt> & { collapsed?: boolean }>; boundary?: Record<string, Pt> }
 
 const read = (file: string) => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : undefined)
 
@@ -48,14 +47,13 @@ function node(dir: string, id: string): CardNodeData {
 /** One scope as `Scene` in model/canvas.ts lays it out, before any run. With a
  *  grid, as `placedPosition` and `nodeData` in model/session.ts do: Cards on the
  *  nearest line and sized by it, frames where they were saved. */
-function scene(name: string, dir: string, flow: FlowDirection | undefined, moved: Record<string, Pt> = {}, grid?: number): { scene: Scene; flow: FlowDirection } {
+function scene(name: string, dir: string, moved: Record<string, Pt> = {}, grid?: number): Scene {
   const project = read(path.join(dir, 'tsugumi.json'))
   const layoutFile = path.join(dir, 'layout.bin')
   const savedLayout = fs.existsSync(layoutFile)
     ? LayoutBuffer.getRootAsLayout(new ByteBuffer(fs.readFileSync(layoutFile))).unpack()
     : undefined
   const layout: Layout = {
-    flow: typeof savedLayout?.flow === 'string' ? savedLayout.flow : undefined,
     cards: Object.fromEntries((savedLayout?.cards ?? []).map(c => [String(c.key), { x: c.x ?? 0, y: c.y ?? 0, collapsed: c.collapsed ?? false }])),
     boundary: Object.fromEntries((['inputs', 'outputs'] as const).flatMap(side => {
       const p = savedLayout?.boundary?.[side]
@@ -69,23 +67,11 @@ function scene(name: string, dir: string, flow: FlowDirection | undefined, moved
     return grid ? { x: snapToGrid(p.x, grid), y: snapToGrid(p.y, grid) } : p
   }
   const conns: { from: { card: string; port?: string }; to: { card: string; port?: string } }[] = project.canvas.connections
-  if (!flow) {
-    if (layout.flow === 'topToBottom' || layout.flow === 'leftToRight') flow = layout.flow
-    else {
-      let across = 0, down = 0
-      for (const c of conns) {
-        // From where they were saved: the flow does not change with the grid.
-        across += Math.abs(saved(c.to.card).x - saved(c.from.card).x)
-        down += Math.abs(saved(c.to.card).y - saved(c.from.card).y)
-      }
-      flow = across > down ? 'leftToRight' : 'topToBottom'
-    }
-  }
   const datas = new Map(ids.map((id) => {
     const d = node(dir, id)
     return [id, { ...d, collapsed: layout.cards?.[id]?.collapsed ?? false, portGrid: grid }]
   }))
-  const geos = new Map(ids.map((id) => [id, new CardGeometry(datas.get(id)!, flow!)]))
+  const geos = new Map(ids.map((id) => [id, new CardGeometry(datas.get(id)!)]))
   const cardRect = (id: string): Rect => ({ ...place(id), ...geos.get(id)!.size })
   const port = (id: string, p: string | undefined, output: boolean): Pt => {
     const o = place(id), q = geos.get(id)!.port(p ?? '', output)
@@ -110,15 +96,14 @@ function scene(name: string, dir: string, flow: FlowDirection | undefined, moved
       if (ids.includes(v.card)) wires.push({ a: port(v.card, v.port, true), b: { x: bottom.x + (width * (i + 1)) / (bo.length + 1), y: bottom.y }, name: `${v.card}.${v.port}>out.${n}` })
     })
   }
-  return { scene: { name, flow, obstacles, wires }, flow }
+  return { name, obstacles, wires }
 }
 
 /** A demo's top scope and the scopes of its Cards in Card. */
 function scopes(name: string, dir: string, grid?: number): Scene[] {
-  const top = scene(name, dir, undefined, {}, grid)
-  const out = [top.scene]
+  const out = [scene(name, dir, {}, grid)]
   const externals = path.join(dir, 'externals')
-  if (fs.existsSync(externals)) for (const e of fs.readdirSync(externals).sort()) out.push(scene(`${name}/${e}`, path.join(externals, e), top.flow, {}, grid).scene)
+  if (fs.existsSync(externals)) for (const e of fs.readdirSync(externals).sort()) out.push(scene(`${name}/${e}`, path.join(externals, e), {}, grid))
   return out
 }
 
@@ -146,7 +131,7 @@ function crossed(pts: Pt[], obstacles: Rect[]): number {
 for (const scene of [
   ...scopes('casa on the grid', path.join(demosRoot, 'ja/casa'), 20),
 ]) {
-  const routes = new WireRouter(scene.flow, scene.obstacles).routeAll(scene.wires)
+  const routes = new WireRouter(scene.obstacles).routeAll(scene.wires)
   for (const [index, wire] of scene.wires.entries()) {
     const pts = routes[index].pts
     assert.deepEqual(pts[0], wire.a)
@@ -162,8 +147,8 @@ if (process.env.WIRE_ROUTES_WRITE || process.env.TSUGUMI_WIRE_BENCH === '1') {
     const shared = ['report', 'live-stream', 'collatz/collatz_py']
       .map((name) => demos.find((scene) => scene.name === name)!)
       .concat(
-        scene('casa, grid 20', path.join(demosRoot, 'ja/casa'), undefined, {}, 20).scene)
-    const samples = shared.map(({ name, flow, obstacles, wires }) => ({ name, flow, obstacles, wires: wires.map(({ a, b }) => ({ a, b })) }))
+        scene('casa, grid 20', path.join(demosRoot, 'ja/casa'), {}, 20))
+    const samples = shared.map(({ name, obstacles, wires }) => ({ name, obstacles, wires: wires.map(({ a, b }) => ({ a, b })) }))
     fs.writeFileSync(path.join(root, 'tests/fixtures/wire-routes.json'), JSON.stringify(samples) + '\n')
   }
   if (process.env.TSUGUMI_WIRE_BENCH === '1') {

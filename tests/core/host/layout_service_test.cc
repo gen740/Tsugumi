@@ -41,7 +41,6 @@ TEST(HostLayout, ValidationRejectsTheOpaqueCoreVectors) {
 auto SceneFixture(const ::tsugumi::json::Members& value) -> H::LayoutSceneT {
   namespace json = ::tsugumi::json;
   H::LayoutSceneT scene;
-  scene.flow = json::Text(value, "flow");
   scene.grid = std::stod(json::Get(value, "grid", "0"));
   scene.snap = json::Bool(json::Get(value, "snap", "false"));
   auto coordinate = [&](const auto& fields, const auto& key) {
@@ -169,8 +168,7 @@ TEST(HostLayout, ScenesPreserveLayoutConstraints) {
       const auto pair = json::Array(raw);
       const auto a = positions.at(json::String(pair[0])),
                  b = positions.at(json::String(pair[1]));
-      EXPECT_LT(scene.top_to_bottom ? a.y : a.x,
-                scene.top_to_bottom ? b.y : b.x);
+      EXPECT_LT(a.y, b.y);
     }
     std::set<std::string> affected(around.begin(), around.end());
     for (const auto& wire : scene.wires)
@@ -204,7 +202,6 @@ TEST(HostLayout, OmittedVersionCanvasVectorsAreEmpty) {
       *flatbuffers::GetRoot<H::VersionCanvasRequest>(b.GetBufferPointer()));
   EXPECT_TRUE(result.cards.empty());
   EXPECT_TRUE(result.wires.empty());
-  EXPECT_EQ(result.flow, "leftToRight");
 }
 
 TEST(HostLayout, SchemaRejectsIncompleteAndUnknownPresentationFields) {
@@ -247,21 +244,16 @@ auto canvas(const std::string& layout) -> H::VersionCanvasT {
       *flatbuffers::GetRoot<H::VersionCanvasRequest>(b.GetBufferPointer()));
 }
 
-TEST(HostLayout, VersionCanvasGuessesFlowAndReadsCollapsedState) {
-  auto result = canvas(
+TEST(HostLayout, VersionCanvasReadsCollapsedState) {
+  const auto result = canvas(
       R"({"cards":{"a":{"x":0,"y":0},"b":{"x":0,"y":100,"collapsed":true}}})");
-  EXPECT_EQ(result.flow, "topToBottom");
   EXPECT_TRUE(result.cards.at(1)->collapsed);
   EXPECT_EQ(result.cards.at(1)->fan, 3u);
-  result = canvas(
-      R"({"flow":"leftToRight","cards":{"a":{"x":0,"y":0},"b":{"x":0,"y":100}}})");
-  EXPECT_EQ(result.flow, "leftToRight");
 }
 
 TEST(HostLayout, VersionCanvasCompletesOnlyMissingPositions) {
   const auto result = canvas(
-      R"({"flow":"topToBottom","cards":{"a":{"x":407,"y":609,"collapsed":true},"b":{"collapsed":true}}})");
-  EXPECT_EQ(result.flow, "topToBottom");
+      R"({"cards":{"a":{"x":407,"y":609,"collapsed":true},"b":{"collapsed":true}}})");
   const auto& a = *result.cards.at(0);
   const auto& b = *result.cards.at(1);
   EXPECT_DOUBLE_EQ(a.x, 407);
@@ -274,10 +266,10 @@ TEST(HostLayout, VersionCanvasCompletesOnlyMissingPositions) {
 TEST(HostLayout, VersionCanvasFallsBackForMissingOrInvalidLayout) {
   for (const auto* layout : {"{}", "corrupt"}) {
     const auto result = canvas(layout);
-    EXPECT_EQ(result.flow, "leftToRight");
     const auto& a = *result.cards.at(0);
     const auto& b = *result.cards.at(1);
-    EXPECT_TRUE(std::abs(a.x - b.x) >= 320 || std::abs(a.y - b.y) >= 120);
+    // Rows by depth, top to bottom: the Card a feeds goes under it.
+    EXPECT_GE(b.y, a.y + 120) << layout;
   }
 }
 
@@ -555,7 +547,6 @@ TEST(HostLayout, NonFiniteMeasurementsNameTheirFields) {
                                -std::numeric_limits<double>::infinity()}) {
       SCOPED_TRACE(field);
       auto scene = std::make_unique<H::LayoutSceneT>();
-      scene->flow = "topToBottom";
       auto card = std::make_unique<H::LayoutCardT>();
       card->id = "mnist";
       auto port = std::make_unique<H::LayoutPortT>();
@@ -598,30 +589,27 @@ TEST(HostLayout, MovingACardStartsAtItsDerivedPosition) {
 }
 
 TEST(HostLayout, MissingPlacesAndUnmeasuredCardsProduceFiniteCoordinates) {
-  for (const auto* flow : {"topToBottom", "leftToRight"}) {
-    for (const auto* cards :
-         {"[]", R"([{"id":"a"}])",
-          R"([{"id":"a","width":0,"height":0},{"id":"b"}])"}) {
-      SCOPED_TRACE(flow);
-      SCOPED_TRACE(cards);
-      std::vector<std::string> instances;
-      for (const auto& raw : ::tsugumi::json::Array(cards))
-        instances.push_back(::tsugumi::json::Encode(::tsugumi::json::Members{
-            {"id", ::tsugumi::json::Get(::tsugumi::json::Object(raw), "id")}}));
-      const auto document = ::tsugumi::json::Encode(::tsugumi::json::Members{
-          {"canvas", ::tsugumi::json::Encode(::tsugumi::json::Members{
-                         {"cards", ::tsugumi::json::Encode(instances)}})}});
-      const auto completed = CompleteLayout(document, "{}", {});
-      EXPECT_NO_THROW(ValidateLayout(completed));
-      const auto input = SceneFixture(
-          {{"flow", ::tsugumi::json::Quote(flow)}, {"cards", cards}});
-      for (const auto& proposal :
-           {layout::arrange(MeasuredScene(input)),
-            layout::untangle(MeasuredScene(input), {})}) {
-        for (const auto& card : proposal.cards) {
-          EXPECT_TRUE(std::isfinite(card.x));
-          EXPECT_TRUE(std::isfinite(card.y));
-        }
+  for (const auto* cards :
+       {"[]", R"([{"id":"a"}])",
+        R"([{"id":"a","width":0,"height":0},{"id":"b"}])"}) {
+    SCOPED_TRACE(cards);
+    std::vector<std::string> instances;
+    for (const auto& raw : ::tsugumi::json::Array(cards))
+      instances.push_back(::tsugumi::json::Encode(::tsugumi::json::Members{
+          {"id", ::tsugumi::json::Get(::tsugumi::json::Object(raw), "id")}}));
+    const auto document = ::tsugumi::json::Encode(::tsugumi::json::Members{
+        {"canvas", ::tsugumi::json::Encode(::tsugumi::json::Members{
+                       {"cards", ::tsugumi::json::Encode(instances)}})}});
+    const auto completed = CompleteLayout(document, "{}", {});
+    EXPECT_NO_THROW(ValidateLayout(completed));
+    const auto input = SceneFixture(
+        {{"cards", cards}});
+    for (const auto& proposal :
+         {layout::arrange(MeasuredScene(input)),
+          layout::untangle(MeasuredScene(input), {})}) {
+      for (const auto& card : proposal.cards) {
+        EXPECT_TRUE(std::isfinite(card.x));
+        EXPECT_TRUE(std::isfinite(card.y));
       }
     }
   }

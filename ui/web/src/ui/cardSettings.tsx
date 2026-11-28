@@ -614,7 +614,7 @@ export function CardPreview({ session, model, height }: { session: ProjectSessio
       onPointerDown={(e) => { if (e.target === e.currentTarget) setSelected(false) }}>
       <div ref={inner} className="cse-preview-card" style={{ transform: `scale(${scale})` }}
         onPointerDown={() => setSelected(true)}>
-        <CardNodeView data={data} flow={session.flow} selected={selected} onToggleCollapse={() => setCollapsed(!collapsed)} />
+        <CardNodeView data={data} selected={selected} onToggleCollapse={() => setCollapsed(!collapsed)} />
       </div>
       {notice && <div className="cse-preview-notice">{notice}</div>}
       <span className="cse-preview-label caption2 secondary">{L('プレビュー')}</span>

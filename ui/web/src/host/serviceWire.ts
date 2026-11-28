@@ -131,7 +131,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'SkillsListRequest': return new HSkillsListRequest(v.project_path, v.folders, v.conversation_id)
     case 'ModelsListRequest': return new HModelsListRequest(v.provider_id, v.refresh, v.profile, v.account_profile)
     case 'HostProjectInfoRequest': return new HHostProjectInfoRequest(v.path)
-    case 'HostProjectCreateRequest': return new HHostProjectCreateRequest(v.parent, v.name, v.flow)
+    case 'HostProjectCreateRequest': return new HHostProjectCreateRequest(v.parent, v.name)
     case 'HostProjectDuplicateRequest': return new HHostProjectDuplicateRequest(v.path, v.parent, v.name)
     case 'HostDemoListRequest': return new HHostDemoListRequest(v.language)
     case 'HostDemoCopyRequest': return new HHostDemoCopyRequest(v.id, v.parent, v.language)

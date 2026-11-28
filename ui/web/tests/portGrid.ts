@@ -39,11 +39,11 @@ for (const c of contract.ports) {
   const g = new CardGeometry({
     title: 'x', kind: c.kind, inputs: ports(c.inputs), outputs: ports(c.outputs), invocation: 0n, runContinues: false, errors: [], warnings: [],
     collapsed: !!c.collapsed, summary: c.summary ? 's' : undefined, portGrid: c.grid ?? undefined,
-  }, c.flow)
+  })
   assert.ok(Number.isFinite(g.size.width) && g.size.width > 0 && Number.isFinite(g.size.height) && g.size.height > 0)
   const along = (count: number, output: boolean) => Array.from({ length: count }, (_, i) => {
     const p = g.port(`p${i}`, output)
-    return c.flow === 'topToBottom' ? p.x : p.y
+    return p.x
   })
   const edges = [along(c.inputs, false), along(c.outputs, true)]
   // Every Merge port lies on the visible triangle.
@@ -60,17 +60,17 @@ for (const c of contract.ports) {
         assert.ok(distanceTo(pts, { x: p.x * z, y: p.y * z }) < z, `${name} output ${i} on the outline at ${z}`)
       }
       // Rounding takes only a little off the ends of the wide edge.
-      const across = pts.map((p) => (c.flow === 'topToBottom' ? p.x : p.y))
-      assert.ok(Math.max(...across) - Math.min(...across) >= (c.flow === 'topToBottom' ? r.width : r.height) * z - 8 * z, `${name} keeps its width`)
+      const across = pts.map((p) => p.x)
+      assert.ok(Math.max(...across) - Math.min(...across) >= r.width * z - 8 * z, `${name} keeps its width`)
     }
     // Many ports make it bigger, not flatter.
-    const wide = c.flow === 'topToBottom' ? r.width : r.height, long = c.flow === 'topToBottom' ? r.height : r.width
+    const wide = r.width, long = r.height
     assert.ok(long >= wide / 4 - 1e-9, `${name} not flat`)
     const icon = g.iconCenter(r)
-    close(c.flow === 'topToBottom' ? icon.x : icon.y, wide / 2 + (c.flow === 'topToBottom' ? r.x : r.y), `${name} icon on the axis`)
+    close(icon.x, wide / 2 + r.x, `${name} icon on the axis`)
   }
   if (!c.grid) continue
-  const edge = c.flow === 'topToBottom' ? g.size.width : g.size.height
+  const edge = g.size.width
   for (const list of edges) {
     for (const [i, v] of list.entries()) {
       // A Card's corner is on a grid line, so this is its place on the canvas too.
@@ -80,7 +80,7 @@ for (const c of contract.ports) {
       // A triangle's apex takes everything on that side; elsewhere marks never touch.
       const apex = c.kind === 'merge' && list === edges[1]
       if (apex) close(v, edge / 2, `${name} at the apex`)
-      else if (i > 0 && !c.collapsed || i > 0 && c.flow === 'topToBottom') assert.ok(v - list[i - 1] >= CardGeometry.minPortPitch, `${name} apart`)
+      else if (i > 0) assert.ok(v - list[i - 1] >= CardGeometry.minPortPitch, `${name} apart`)
     }
   }
 }

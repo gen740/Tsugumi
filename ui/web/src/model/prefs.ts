@@ -107,9 +107,6 @@ export function eventBinding(e: KeyboardEvent): KeyBinding {
 }
 
 export type Theme = 'system' | 'light' | 'dark'
-import type { FlowDirection } from '../../shared/layoutScene'
-export type { FlowDirection } from '../../shared/layoutScene'
-export const FLOW_LABELS: Record<FlowDirection, string> = { topToBottom: L('上から下'), leftToRight: L('左から右') }
 /** Whether the Tsugumi bird (Home, loading) moves. */
 export type Motion = 'system' | 'on' | 'off'
 export const MOTION_LABELS: Record<Motion, string> = { system: L('システムに従う（視差効果を減らす）'), on: L('動かす'), off: L('動かさない') }
@@ -135,14 +132,13 @@ interface Stored {
   showIndentGuides: boolean
   editorFontSize: number
   editorTheme: EditorTheme
-  flowDirection: FlowDirection
   tsugumiMotion: Motion
   shortcuts: Partial<Record<ShortcutAction, KeyBinding>>
 }
 
 const DEFAULTS: Stored = {
   maxConcurrency: 4, sendKey: 'returnKey', theme: 'system', showGrid: true, gridSize: 20, animateLines: true,
-  indentWidth: 4, showIndentGuides: true, editorFontSize: 12, editorTheme: 'standard', flowDirection: 'topToBottom', tsugumiMotion: 'system',
+  indentWidth: 4, showIndentGuides: true, editorFontSize: 12, editorTheme: 'standard', tsugumiMotion: 'system',
   shortcuts: {},
 }
 
@@ -185,7 +181,6 @@ export class AppPreferences extends Observable {
   get showIndentGuides() { return this.v.showIndentGuides }
   get editorFontSize() { return this.v.editorFontSize }
   get editorTheme() { return this.v.editorTheme }
-  get flowDirection() { return this.v.flowDirection }
   get tsugumiMotion() { return this.v.tsugumiMotion }
 
   /** The bird stays still: as set here, or by default as the system's "reduce motion". */

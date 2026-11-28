@@ -69,12 +69,11 @@ struct GraphCanvas: View {
         let a: CGPoint
         let b: CGPoint
       }
-      let flow: FlowDirection
       let obstacles: [CGRect]
       let ends: [Ends]
 
       func route() -> [Path] {
-        var router = WireRouter(flow: flow, obstacles: obstacles)
+        var router = WireRouter(obstacles: obstacles)
         return router.routeAll(ends.map { ($0.a, $0.b) })
       }
     }
@@ -88,8 +87,8 @@ struct GraphCanvas: View {
     /// Within this, routing is done in the pass.
     private static let quick = 0.006
 
-    func paths(flow: FlowDirection, obstacles: [CGRect], ends: [(a: CGPoint, b: CGPoint)], onRouted: @escaping () -> Void) -> [Path] {
-      let inputs = Inputs(flow: flow, obstacles: obstacles, ends: ends.map { Inputs.Ends(a: $0.a, b: $0.b) })
+    func paths(obstacles: [CGRect], ends: [(a: CGPoint, b: CGPoint)], onRouted: @escaping () -> Void) -> [Path] {
+      let inputs = Inputs(obstacles: obstacles, ends: ends.map { Inputs.Ends(a: $0.a, b: $0.b) })
       if inputs == made { return routed }
       // Not routed yet, a few wires are taken to be quick; after that, what the last routing took says.
       if made == nil ? ends.count <= 40 : seconds < Self.quick {
@@ -103,7 +102,7 @@ struct GraphCanvas: View {
       wanted = inputs
       self.onRouted = onRouted
       work()
-      let plain = WireRouter(flow: flow, obstacles: [])
+      let plain = WireRouter(obstacles: [])
       return inputs.ends.indices.map { i in
         if let made, i < made.ends.count, i < routed.count, made.ends[i] == inputs.ends[i] { return routed[i] }
         return plain.curve(inputs.ends[i].a, inputs.ends[i].b)
@@ -527,7 +526,7 @@ struct GraphCanvas: View {
     }
     let cards = cardKeys.map { k in
       let o = origin(k).applying(transform)
-      return CardNodeView.hitShape(session.nodeData(k), flow: session.flow, zoom: camera.zoom, newPorts: session.isEditable)
+      return CardNodeView.hitShape(session.nodeData(k), zoom: camera.zoom, newPorts: session.isEditable)
         .applying(CGAffineTransform(translationX: o.x, y: o.y))
     }
     return Canvas { ctx, _ in
@@ -686,7 +685,6 @@ struct GraphCanvas: View {
     var obstacles = cardKeys.map(cardRect)
     let b = boundary
     if let b { obstacles += [b.top, b.bottom] }
-    let flow = session.flow
     // Routed together: a wire's path must not depend on the order of the connections.
     var ends: [(a: CGPoint, b: CGPoint)] = []
     var out: [RoutedWire] = []
@@ -731,7 +729,7 @@ struct GraphCanvas: View {
       out.append(RoutedWire(connection: nil, path: Path(), style: style(from: fk, port: fp, to: nil),
                             dotted: session.isDraftWire(from: fk, to: nil), executionList: batch.executionList, trunk: true))
     }
-    for (i, path) in routes.paths(flow: flow, obstacles: obstacles, ends: ends, onRouted: { redrawn += 1 }).enumerated() { out[i].path = path }
+    for (i, path) in routes.paths(obstacles: obstacles, ends: ends, onRouted: { redrawn += 1 }).enumerated() { out[i].path = path }
     return out
   }
 
@@ -859,9 +857,7 @@ struct GraphCanvas: View {
           let from = session.junction(j.card, j.port) ?? j.at
           var p = CGPoint(x: from.x + v.translation.width / camera.zoom, y: from.y + v.translation.height / camera.zoom)
           // On the grid along the flow, as Arrange puts it: across it the trunk can stay straight.
-          if prefs.showGrid {
-            if session.flow == .topToBottom { p.y = snapToGrid(p.y, prefs.gridSize) } else { p.x = snapToGrid(p.x, prefs.gridSize) }
-          }
+          if prefs.showGrid { p.y = snapToGrid(p.y, prefs.gridSize) }
           session.setJunction(j.card, j.port, at: p)
         })
       .help("分岐点（見た目だけ。ドラッグで動かせます）")
@@ -942,7 +938,6 @@ struct GraphCanvas: View {
     let tab: ObjectIdentifier
     let card: CardKey
     let data: CardNodeData
-    let flow: FlowDirection
     let camera: CanvasCamera
     let selected: Bool
     let editable: Bool
@@ -952,8 +947,8 @@ struct GraphCanvas: View {
 
   private func cardView(_ k: CardKey) -> some View {
     let data = session.nodeData(k)
-    let g = CardGeometry(data, flow: session.flow)
-    let flow = session.flow, zoom = camera.zoom, selected = tab.selection.contains(k)
+    let g = CardGeometry(data)
+    let zoom = camera.zoom, selected = tab.selection.contains(k)
     let presence = session.presence(forCard: k)
     // A start Card's button runs from it, and stops the run while one is on.
     let start: CardNodeView.StartButton? = data.kind != .trigger ? nil
@@ -963,10 +958,10 @@ struct GraphCanvas: View {
     let rootStart = start != nil && !k.contains("/")
     // A Draft being written is drawn every time: what is typed is read from the session as it changes.
     let key = data.draftEditing ? nil : CardSlot(
-      session: ObjectIdentifier(session), tab: ObjectIdentifier(tab), card: k, data: data, flow: flow, camera: cam,
+      session: ObjectIdentifier(session), tab: ObjectIdentifier(tab), card: k, data: data, camera: cam,
       selected: selected, editable: session.isEditable, start: start, presence: ObjectIdentifier(presence))
     return Settled(key: key) {
-      CardNodeView(data: data, flow: flow, zoom: zoom, selected: selected,
+      CardNodeView(data: data, zoom: zoom, selected: selected,
                    portsEditable: session.isEditable,
                    onPortDrag: { port, pt in if session.isEditable { clearHover(); pending = ((k, port), live(pt), true) } },
                    onPortDrop: { port, pt in finishConnect(from: (k, port), at: live(pt)) },
@@ -992,7 +987,7 @@ struct GraphCanvas: View {
             .offset(x: -4, y: -8)
         }
       }
-      .contentShape(CardNodeView.hitShape(data, flow: flow, zoom: zoom, newPorts: session.isEditable))
+      .contentShape(CardNodeView.hitShape(data, zoom: zoom, newPorts: session.isEditable))
       .placeScaled(at: screen(origin(k)), size: g.size, zoom: zoom)
       .zIndex(data.draftEditing ? 1 : 0)
       .gesture(cardDrag(k))
@@ -1442,7 +1437,7 @@ struct GraphCanvas: View {
     return cardKeys.reversed().first { k in
       guard cardRect(k).insetBy(dx: -14, dy: -14).contains(w) else { return false }
       let o = origin(k)
-      return CardNodeView.hitShape(session.nodeData(k), flow: session.flow, zoom: z, newPorts: session.isEditable)
+      return CardNodeView.hitShape(session.nodeData(k), zoom: z, newPorts: session.isEditable)
         .contains(CGPoint(x: (w.x - o.x) * z, y: (w.y - o.y) * z))
     }
   }

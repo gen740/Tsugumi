@@ -6,7 +6,7 @@ import TsugumiRPC
 //
 // - A project's layout.bin (protocol/layout_document.fbs) and its notes'
 //   Markdown (notes/<id>.md) are one layout view, the JSON object hostd edits
-//   under "layout.bin": {flow, cards: {key: place}, boundaries: {scope: bars},
+//   under "layout.bin": {cards: {key: place}, boundaries: {scope: bars},
 //   boundary, notes: [{id, text, ...}], groups}.
 // - A Card's README.md (front matter `title` and `description`, Markdown body) and its
 //   _comments.json are one note object: {title, description, content, comments}.
@@ -33,7 +33,6 @@ enum Documents {
         ("outputs", b.outputs.map { object([("x", number($0.x)), ("y", number($0.y))]) }),
       ])
     }
-    if let flow = l.flow { view.append(("flow", .string(flow))) }
     let cards: [(String, JSONValue)] = l.cards.map { c in
       let junctions = c.junctions.map { object([("port", .string($0.port)), ("x", number($0.x)), ("y", number($0.y))]) }
       return (c.key, object([("x", number(c.x)), ("y", number(c.y)), ("collapsed", c.collapsed.map { .bool($0) }),

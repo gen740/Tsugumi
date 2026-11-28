@@ -3,7 +3,7 @@ import { WireRouter } from '../src/model/canvasKit'
 
 const upper = { x: 0, y: 0, width: 80, height: 50 }
 const lower = { x: -70, y: 70, width: 220, height: 90 }
-const down = new WireRouter('topToBottom', [upper, lower])
+const down = new WireRouter([upper, lower])
 const from = { x: 40, y: upper.y + upper.height }
 const to = { x: 52, y: lower.y }
 const forward = down.route(from, to).pts
@@ -11,19 +11,13 @@ assert.deepEqual(forward[0], from)
 assert.deepEqual(forward.at(-1), to)
 assert.ok(forward.every((p) => p.y >= from.y && p.y <= to.y), 'a short wire stays between the ports')
 
-const side = new WireRouter('leftToRight', [
-  { x: 0, y: 0, width: 50, height: 80 },
-  { x: 70, y: -70, width: 90, height: 220 },
-]).route({ x: 50, y: 40 }, { x: 70, y: 46 })
-assert.ok(side.pts.every((p) => p.x >= 50 && p.x <= 70))
-
 const back = down.route({ x: 40, y: lower.y + lower.height }, { x: 40, y: upper.y })
 assert.ok(back.pts.some((p) => p.x <= lower.x || p.x >= lower.x + lower.width), 'a feedback wire goes outside')
 
 const wall = { x: 100, y: 45, width: 60, height: 30 }
 const start = { x: 40, y: 50 }
 const end = { x: 220, y: 60 }
-const blocked = new WireRouter('topToBottom', [wall]).route(start, end).pts
+const blocked = new WireRouter([wall]).route(start, end).pts
 assert.deepEqual(blocked[0], start)
 assert.deepEqual(blocked.at(-1), end)
 for (const [index, point] of blocked.slice(1).entries()) {

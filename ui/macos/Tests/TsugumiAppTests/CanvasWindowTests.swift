@@ -11,27 +11,25 @@ import TsugumiTestSupport
 /// whose delivery depends on an off-screen WindowServer window.
 @Suite(.serialized) @MainActor struct CanvasWindowTests {
   @Test func routingHitRegionsLeaveTheBodyForMoving() {
-    for flow in [FlowDirection.topToBottom, .leftToRight] {
-      for zoom in [1.0, 0.2] {
-        for kind in [CardKind.trigger, .merge, .collect] {
-          let inputs = kind == .trigger ? [] :
-            [PortData(name: "in")]
-          let outputs = [PortData(name: "out")]
-          let data = CardNodeData(title: "start", kind: kind, inputs: inputs, outputs: outputs)
-          let g = CardGeometry(data, flow: flow)
-          let hit = CardNodeView.hitShape(data, flow: flow, zoom: zoom, newPorts: false)
-          let body = kind == .trigger ? CGPoint(x: 55, y: 17) : g.iconCenter(in: g.outlineRect)
-          let point = CGPoint(x: body.x * zoom, y: body.y * zoom)
-          #expect(hit.contains(point), "\(kind), \(flow), \(zoom)")
-          for (ports, output) in [(inputs, false), (outputs, true)] {
-            for port in ports {
-              let pt = g.port(port.name, output: output)
-              let rect = CGRect(x: pt.x * zoom - g.portHitSize(zoom: zoom) / 2,
-                                y: pt.y * zoom - g.portHitSize(zoom: zoom) / 2,
-                                width: g.portHitSize(zoom: zoom), height: g.portHitSize(zoom: zoom))
-              #expect(!rect.contains(point), "The wire target must leave the body free")
-              #expect(hit.contains(CGPoint(x: pt.x * zoom, y: pt.y * zoom)))
-            }
+    for zoom in [1.0, 0.2] {
+      for kind in [CardKind.trigger, .merge, .collect] {
+        let inputs = kind == .trigger ? [] :
+          [PortData(name: "in")]
+        let outputs = [PortData(name: "out")]
+        let data = CardNodeData(title: "start", kind: kind, inputs: inputs, outputs: outputs)
+        let g = CardGeometry(data)
+        let hit = CardNodeView.hitShape(data, zoom: zoom, newPorts: false)
+        let body = kind == .trigger ? CGPoint(x: 55, y: 17) : g.iconCenter(in: g.outlineRect)
+        let point = CGPoint(x: body.x * zoom, y: body.y * zoom)
+        #expect(hit.contains(point), "\(kind), \(zoom)")
+        for (ports, output) in [(inputs, false), (outputs, true)] {
+          for port in ports {
+            let pt = g.port(port.name, output: output)
+            let rect = CGRect(x: pt.x * zoom - g.portHitSize(zoom: zoom) / 2,
+                              y: pt.y * zoom - g.portHitSize(zoom: zoom) / 2,
+                              width: g.portHitSize(zoom: zoom), height: g.portHitSize(zoom: zoom))
+            #expect(!rect.contains(point), "The wire target must leave the body free")
+            #expect(hit.contains(CGPoint(x: pt.x * zoom, y: pt.y * zoom)))
           }
         }
       }

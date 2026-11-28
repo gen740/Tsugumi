@@ -15,7 +15,7 @@ export function layoutFixture(text: string) {
   const bars = (value: { inputs?: object; outputs?: object }, scope?: string) =>
     new BoundaryPlaceT(scope ?? null, value.inputs ? Object.assign(new PositionT(), value.inputs) : null,
       value.outputs ? Object.assign(new PositionT(), value.outputs) : null)
-  const root = new LayoutT(layout.flow ?? null,
+  const root = new LayoutT(
     Object.entries(layout.cards ?? {}).map(([key, { junctions, ...place }]: [string, { junctions?: object[] }]) =>
       Object.assign(new CardPlaceT(key), place, { junctions: (junctions ?? []).map(j => Object.assign(new JunctionT(), j)) })),
     Object.entries(layout.boundaries ?? {}).map(([scope, value]) => bars(value as object, scope)),

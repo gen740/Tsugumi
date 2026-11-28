@@ -179,7 +179,6 @@ enum ServiceWire {
         let v = Tsugumi_Host_HostProjectCreateRequestT()
         v.parent = fields["parent"] as? String ?? ""
         v.name = fields["name"] as? String ?? ""
-        v.flow = fields["flow"] as? String
         return (Tsugumi_Host_RequestPayload.hostprojectcreaterequest.rawValue, v)
       case "HostProjectDuplicateRequest":
         let v = Tsugumi_Host_HostProjectDuplicateRequestT()

@@ -28,7 +28,7 @@ const card = (id: string, x: number, y: number, kind: CardKind = 'code', fan = 0
 const overlap = (a: { x: number; y: number; w: number; h: number }, b: typeof a) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
 
 // Every Card stays inside the box, in the order it has on the canvas.
-const wide = miniMapLayout([card('a', 100, 0), card('b', 5000, 300), card('c', 2500, -400)], 'leftToRight', 284, 132)
+const wide = miniMapLayout([card('a', 100, 0), card('b', 5000, 300), card('c', 2500, -400)], 284, 132)
 for (const c of wide.cards) {
   assert.ok(c.x >= 0 && c.x + c.w <= 284, `${c.id} is inside across`)
   assert.ok(c.y >= 0 && c.y + c.h <= wide.height && wide.height <= 132, `${c.id} is inside down`)
@@ -36,21 +36,21 @@ for (const c of wide.cards) {
 assert.ok(wide.cards[0].x < wide.cards[2].x && wide.cards[2].x < wide.cards[1].x)
 assert.equal(wide.named, false, 'too small for names')
 // A small graph is not blown up, and is centered with its names.
-const small = miniMapLayout([card('a', 0, 0)], 'leftToRight', 284, 132)
+const small = miniMapLayout([card('a', 0, 0)], 284, 132)
 assert.equal(small.cards[0].w, 220 * 0.3)
 assert.equal(small.cards[0].x, (284 - small.cards[0].w) / 2)
 assert.equal(small.named, true)
 assert.equal(small.height, small.cards[0].h + 16, 'the box is only as tall as the graph')
-assert.deepEqual(miniMapLayout([], 'leftToRight', 284, 132).cards, [])
+assert.deepEqual(miniMapLayout([], 284, 132).cards, [])
 
 // What is not a Card has the outline and size it has on the canvas, so a graph
-// laid out on the canvas does not overlap here: start and two Cards feeding a Merge.
-const flow = 'leftToRight'
-const mergeGeometry = new CardGeometry(nodeData('merge', 2), flow), start = new CardGeometry(nodeData('trigger', 0), flow)
+// laid out on the canvas does not overlap here: start and two Cards feeding a Merge, top to bottom.
+const mergeGeometry = new CardGeometry(nodeData('merge', 2)), start = new CardGeometry(nodeData('trigger', 0))
+const below = start.size.height + mergeGeometry.size.height + 40
 const placed = miniMapLayout([
-  card('start', 0, 30, 'trigger'), card('merge', start.size.width + 10, 20, 'merge', 2),
-  card('load', start.size.width + mergeGeometry.size.width + 40, -30), card('draft', start.size.width + mergeGeometry.size.width + 40, 60, 'draft'),
-], flow, 284, 132)
+  card('start', 30, 0, 'trigger'), card('merge', 20, start.size.height + 10, 'merge', 2),
+  card('load', -30, below), card('draft', CardGeometry.width, below, 'draft'),
+], 284, 132)
 const at = Object.fromEntries(placed.cards.map((c) => [c.id, c]))
 assert.equal(at.start.shape, 'start')
 assert.equal(at.merge.shape, 'merge')
@@ -71,23 +71,22 @@ const outlineOf = (g: CardGeometry, c: { x: number; y: number }, scale: number) 
 assert.equal(at.merge.outline, outlineOf(mergeGeometry, at.merge, k))
 assert.equal(at.start.outline, outlineOf(start, at.start, k))
 // The outline leaves the room the canvas leaves for its wires.
-const leftmost = (d: string) => Math.min(...[...d.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) => Number(m[1])))
-assert.ok(Math.abs(leftmost(at.merge.outline) - (at.merge.x + mergeGeometry.outlineRect.x * k)) < 1e-6, 'the outline leaves the room the canvas leaves for its wires')
+const topmost = (d: string) => Math.min(...[...d.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) => Number(m[2])))
+assert.ok(Math.abs(topmost(at.merge.outline) - (at.merge.y + mergeGeometry.outlineRect.y * k)) < 1e-6, 'the outline leaves the room the canvas leaves for its wires')
 
-const merge = (n: number, f: 'leftToRight' | 'topToBottom') => miniMapLayout([card('m', 0, 0, 'merge', n)], f, 284, 132).cards[0]
-assert.equal(merge(2, flow).shape, 'merge')
-assert.ok(merge(6, flow).h > merge(2, flow).h, 'more inputs, a wider edge')
-assert.ok(merge(6, 'topToBottom').w > merge(2, 'topToBottom').w)
-assert.notEqual(merge(2, flow).outline, merge(2, 'topToBottom').outline)
+const merge = (n: number) => miniMapLayout([card('m', 0, 0, 'merge', n)], 284, 132).cards[0]
+assert.equal(merge(2).shape, 'merge')
+assert.ok(merge(6).w > merge(2).w, 'more inputs, a wider edge')
 
 // A loop is a merge and a Collect: wires are the client's, so
 // the two only need not overlap and keep their shapes.
-const loop = miniMapLayout([card('m', 0, 0, 'merge', 2), card('step', 140, 0), card('c', 400, 0, 'collect')], flow, 284, 132)
+const stepAt = mergeGeometry.size.height + 40, collectAt = stepAt + new CardGeometry(nodeData('code', 0)).size.height + 40
+const loop = miniMapLayout([card('m', 0, 0, 'merge', 2), card('step', 0, stepAt), card('c', 0, collectAt, 'collect')], 284, 132)
 assert.deepEqual(loop.cards.map((c) => c.shape), ['merge', 'card', 'collect'])
 for (const [i, a] of loop.cards.entries()) for (const b of loop.cards.slice(i + 1)) assert.ok(!overlap(a, b))
 
 // Only a Card or the start has a name inside it; a folded Card is its header.
-const folded = miniMapLayout([card('a', 0, 0, 'code', 0, true)], flow, 284, 132).cards[0]
+const folded = miniMapLayout([card('a', 0, 0, 'code', 0, true)], 284, 132).cards[0]
 assert.equal(folded.h, CardGeometry.header * 0.3)
 // The kinds as the daemon names them; an unreadable definition is a definition error.
 assert.equal(cardKindNamed('merge'), 'merge')
@@ -98,7 +97,7 @@ assert.equal(cardKindNamed('something new'), 'invalid')
 const { ProjectSession } = await import('../src/model/session')
 const { layoutHost } = await import('../src/wire/hostLayout')
 const rawCanvas = { layout: layoutBytes('{"cards":{"plan":{"x":120,"y":80}}}'), cards: [{ id: 'plan', kind: 'draft', fan: 0 }], wires: [] }
-const hostCanvas = { cards: [card('plan', 120, 80, 'draft')], wires: [], flow: 'topToBottom' }
+const hostCanvas = { cards: [card('plan', 120, 80, 'draft')], wires: [] }
 const fetchBefore = globalThis.fetch
 let failNote = false
 const calls: { path: string; body?: Record<string, unknown> }[] = []

@@ -82,7 +82,6 @@ static auto TransformLayout(
   const auto graph =
       json::Object(json::Get(json::Object(project), "canvas", "{}"));
   layout::Scene scene;
-  scene.top_to_bottom = json::Text(doc, "flow", "topToBottom") == "topToBottom";
   std::vector<std::string> missing;
   auto number = [](const json::Members& value, const std::string& key,
                    double fallback) {
@@ -132,9 +131,7 @@ static auto TransformLayout(
         size_t n = 0;
         for (const auto& name : names) {
           const auto along = 40.0 + 64.0 * static_cast<double>(n++);
-          destination.push_back(
-              {name, scene.top_to_bottom ? along : (output ? width : 0),
-               scene.top_to_bottom ? (output ? height : 0) : along});
+          destination.push_back({name, along, output ? height : 0});
         }
       };
       add_ports(incoming, scene.cards.back().inputs, false);
@@ -167,59 +164,54 @@ static auto TransformLayout(
   }
   if (measurements) {
     const auto measured = MeasuredScene(*measurements);
-    if (!doc.contains("flow")) scene.top_to_bottom = measured.top_to_bottom;
-    // Flow may have changed while the request travelled. Current-document
-    // geometry remains the fallback for new Cards and stale measurements.
-    if (measured.top_to_bottom == scene.top_to_bottom) {
-      scene.grid = measured.grid;
-      scene.snap = measured.snap;
-      for (auto& card : scene.cards) {
-        const auto found = std::find_if(
-            measured.cards.begin(), measured.cards.end(),
-            [&](const auto& value) { return value.id == card.id; });
-        if (found == measured.cards.end()) continue;
-        auto covers = [](const auto& required, const auto& ports) {
-          return std::all_of(
-              required.begin(), required.end(), [&](const auto& port) {
-                return std::any_of(
-                    ports.begin(), ports.end(),
-                    [&](const auto& p) { return p.name == port.name; });
-              });
-        };
-        if (!covers(card.inputs, found->inputs) ||
-            !covers(card.outputs, found->outputs))
-          continue;
-        const auto x = card.x, y = card.y;
-        card = *found;
-        card.x = x;
-        card.y = y;
-        auto saved_order = [&](auto& ports, const std::string& key) {
-          if (!positions.contains(card.id)) return;
-          const auto entry = json::Object(positions.at(card.id));
-          if (!entry.contains(key)) return;
-          std::vector<std::string> names;
-          for (const auto& raw : json::Array(entry.at(key))) {
-            const auto name = json::String(raw);
-            if (std::find(names.begin(), names.end(), name) == names.end() &&
-                std::any_of(ports.begin(), ports.end(),
-                            [&](const auto& p) { return p.name == name; }))
-              names.push_back(name);
-          }
-          for (const auto& port : ports)
-            if (std::find(names.begin(), names.end(), port.name) == names.end())
-              names.push_back(port.name);
-          for (size_t i = 0; i < ports.size(); ++i) ports[i].name = names[i];
-        };
-        saved_order(card.inputs, "inputOrder");
-        saved_order(card.outputs, "outputOrder");
-      }
-      for (auto& note : scene.notes)
-        for (const auto& size : measured.notes)
-          if (size.id == note.id) {
-            note.width = size.width;
-            note.height = size.height;
-          }
+    scene.grid = measured.grid;
+    scene.snap = measured.snap;
+    for (auto& card : scene.cards) {
+      const auto found =
+          std::find_if(measured.cards.begin(), measured.cards.end(),
+                       [&](const auto& value) { return value.id == card.id; });
+      if (found == measured.cards.end()) continue;
+      auto covers = [](const auto& required, const auto& ports) {
+        return std::all_of(
+            required.begin(), required.end(), [&](const auto& port) {
+              return std::any_of(
+                  ports.begin(), ports.end(),
+                  [&](const auto& p) { return p.name == port.name; });
+            });
+      };
+      if (!covers(card.inputs, found->inputs) ||
+          !covers(card.outputs, found->outputs))
+        continue;
+      const auto x = card.x, y = card.y;
+      card = *found;
+      card.x = x;
+      card.y = y;
+      auto saved_order = [&](auto& ports, const std::string& key) {
+        if (!positions.contains(card.id)) return;
+        const auto entry = json::Object(positions.at(card.id));
+        if (!entry.contains(key)) return;
+        std::vector<std::string> names;
+        for (const auto& raw : json::Array(entry.at(key))) {
+          const auto name = json::String(raw);
+          if (std::find(names.begin(), names.end(), name) == names.end() &&
+              std::any_of(ports.begin(), ports.end(),
+                          [&](const auto& p) { return p.name == name; }))
+            names.push_back(name);
+        }
+        for (const auto& port : ports)
+          if (std::find(names.begin(), names.end(), port.name) == names.end())
+            names.push_back(port.name);
+        for (size_t i = 0; i < ports.size(); ++i) ports[i].name = names[i];
+      };
+      saved_order(card.inputs, "inputOrder");
+      saved_order(card.outputs, "outputOrder");
     }
+    for (auto& note : scene.notes)
+      for (const auto& size : measured.notes)
+        if (size.id == note.id) {
+          note.width = size.width;
+          note.height = size.height;
+        }
     const auto boundary =
         json::Object(json::Get(json::Object(project), "boundary", "{}"));
     const auto places = json::Object(json::Get(doc, "boundary", "{}"));
@@ -488,8 +480,8 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
     const auto view =
         layout.validated ? layout.view : ValidateLayout(layout.view);
     const auto split = SplitLayoutView(view);
-    const auto bytes = json::Encode(json::Members{
-        {"base64", json::Quote(crypto::base64(split.layout))}});
+    const auto bytes = json::Encode(
+        json::Members{{"base64", json::Quote(crypto::base64(split.layout))}});
     if (layout.source) {
       value["bytes"] = bytes;
       change["value_type"] = json::Quote("PutSource");
@@ -509,18 +501,18 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
                         {"bytes", json::Quote(text)}};
       if (was != before.end())
         put["base_hash"] = json::Quote(crypto::sha256_hex(was->second));
-      changes.push_back(json::Encode(json::Members{
-          {"value_type", json::Quote("PutSource")},
-          {"value", json::Encode(put)}}));
+      changes.push_back(
+          json::Encode(json::Members{{"value_type", json::Quote("PutSource")},
+                                     {"value", json::Encode(put)}}));
     }
     for (const auto& [id, text] : before)
       if (!split.notes.contains(id))
         changes.push_back(json::Encode(json::Members{
             {"value_type", json::Quote("RemoveSource")},
-            {"value", json::Encode(json::Members{
-                          {"path", json::Quote(NotePath(prefix, id))},
-                          {"base_hash",
-                           json::Quote(crypto::sha256_hex(text))}})}}));
+            {"value",
+             json::Encode(json::Members{
+                 {"path", json::Quote(NotePath(prefix, id))},
+                 {"base_hash", json::Quote(crypto::sha256_hex(text))}})}}));
   }
   args["changes"] = json::Encode(changes);
   return json::Encode(args);

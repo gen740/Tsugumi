@@ -8,7 +8,6 @@ import {
   markedStages, NEW_PORT, StageItem, StageProgress, StageStatus,
 } from '../model/canvasKit'
 import { BoundaryPort, WireStyle } from '../model/canvas'
-import type { FlowDirection } from '../model/prefs'
 import { CardKey, cardState, formatDuration, formatShortDuration, InlineDraft, KIND_LABEL, relativeAge } from '../model/session'
 import { D } from '../wire/rpc'
 import { Icon } from './icons'
@@ -126,7 +125,6 @@ export interface DraftEdit {
 
 export interface CardNodeProps {
   data: CardNodeData
-  flow: FlowDirection
   zoom?: number
   selected?: boolean
   /** What the guide calls this Card when it points at it ("card:<id>"). */
@@ -154,11 +152,11 @@ export interface CardNodeProps {
 }
 
 export function CardNodeView(p: CardNodeProps) {
-  const { data, flow } = p
+  const { data } = p
   const z = p.zoom ?? 1
   const s = (v: number) => v * z
   const font = (size: number) => Math.max(6, size * z)
-  const g = new CardGeometry(data, flow)
+  const g = new CardGeometry(data)
   const o = g.outlineRect
   const outline = g.outline({ x: o.x * z, y: o.y * z, width: o.width * z, height: o.height * z })
   const selected = !!p.selected
@@ -183,7 +181,7 @@ export function CardNodeView(p: CardNodeProps) {
       <svg className="cv-card-stroke" width={w} height={h}>
         <path d={outline} fill="none" stroke={border} strokeWidth={selected ? 2.4 : 1} strokeDasharray={draft ? `${5 * z} ${3 * z}` : undefined} />
       </svg>
-      <PortLabels data={data} g={g} flow={flow} z={z} />
+      <PortLabels data={data} g={g} z={z} />
       {!!data.openComments && (
         <button type="button" className="cv-comments" disabled={!p.onComments} aria-label={L('未解決のコメント {0} 件', data.openComments)}
           title={L('未解決のコメント {0} 件', data.openComments)} {...stopping}
@@ -258,7 +256,7 @@ const stopping = {
 }
 
 function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
-  const { data, flow } = p
+  const { data } = p
   const z = p.zoom ?? 1
   const s = (v: number) => v * z
   const font = (size: number) => Math.max(6, size * z)
@@ -315,7 +313,6 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
             <div className="cv-summary" title={data.summary}
               style={{ fontSize: font(10), height: s(CardGeometry.summaryRow), padding: `0 ${s(10)}px`, color: colorVar(cardState(D.CardState.failed).color) }}>{data.summary}</div>
           )}
-          {flow === 'leftToRight' && <div style={{ height: s(g.portBand) }} />}
         </>
       )}
     </div>
@@ -389,42 +386,29 @@ function RoutingBody({ data, g, z }: { data: CardNodeData; g: CardGeometry; z: n
 }
 
 /** Port names centred on their ports; hidden when there is no room (the whole name and type then show on hover). */
-function PortLabels({ data, g, flow, z }: { data: CardNodeData; g: CardGeometry; flow: FlowDirection; z: number }) {
+function PortLabels({ data, g, z }: { data: CardNodeData; g: CardGeometry; z: number }) {
   const s = (v: number) => v * z
   const font = (size: number) => Math.max(6, size * z)
   const out: JSX.Element[] = []
-  if (flow === 'topToBottom') {
-    for (const [list, output] of [[data.inputs, false], [data.outputs, true]] as const) {
-      if (!g.showLabels(!output)) continue
-      for (const p of list) {
-        const pt = g.port(p.name, output)
-        const w = g.spacing(!output)
-        let style: CSSProperties
-        if (g.shape === 'card') {
-          // Inside an ordinary Card: below its input, above its output.
-          const half = CardGeometry.portRow / 2 + 0.5
-          style = { left: s(pt.x - w / 2), top: s(pt.y + (output ? -half : half)), width: s(w), textAlign: 'center' }
-        } else {
-          // Beside the port of a routing Card, so the wire (vertical at the port) never runs through the name.
-          const left = pt.x < g.outlineRect.x + g.outlineRect.width / 2 - 1 && g.spacing(!output) < 70
-          const lw = Math.max(CardGeometry.minLabel, Math.min(w, 80))
-          const dy = output ? CardGeometry.portRow / 2 : -CardGeometry.portRow / 2
-          const x = left ? pt.x - 6 - lw : pt.x + 6
-          style = { left: s(x), top: s(pt.y + dy), width: s(lw), textAlign: left ? 'right' : 'left' }
-        }
-        out.push(<span key={(output ? 'o:' : 'i:') + p.name} className="cv-port-label secondary" style={{ ...style, fontSize: font(9.5) }}>{p.name}</span>)
+  for (const [list, output] of [[data.inputs, false], [data.outputs, true]] as const) {
+    if (!g.showLabels(!output)) continue
+    for (const p of list) {
+      const pt = g.port(p.name, output)
+      const w = g.spacing(!output)
+      let style: CSSProperties
+      if (g.shape === 'card') {
+        // Inside an ordinary Card: below its input, above its output.
+        const half = CardGeometry.portRow / 2 + 0.5
+        style = { left: s(pt.x - w / 2), top: s(pt.y + (output ? -half : half)), width: s(w), textAlign: 'center' }
+      } else {
+        // Beside the port of a routing Card, so the wire (vertical at the port) never runs through the name.
+        const left = pt.x < g.outlineRect.x + g.outlineRect.width / 2 - 1 && g.spacing(!output) < 70
+        const lw = Math.max(CardGeometry.minLabel, Math.min(w, 80))
+        const dy = output ? CardGeometry.portRow / 2 : -CardGeometry.portRow / 2
+        const x = left ? pt.x - 6 - lw : pt.x + 6
+        style = { left: s(x), top: s(pt.y + dy), width: s(lw), textAlign: left ? 'right' : 'left' }
       }
-    }
-  } else if (g.shape === 'card' && !g.collapsed) {
-    const w = g.cardWidth / 2 - 14
-    if (g.draft) return null
-    for (const p of data.inputs) {
-      const pt = g.port(p.name, false)
-      out.push(<span key={'i:' + p.name} className="cv-port-label secondary" style={{ left: s(pt.x + 10), top: s(pt.y), width: s(w), fontSize: font(10) }}>{p.name}</span>)
-    }
-    for (const p of data.outputs) {
-      const pt = g.port(p.name, true)
-      out.push(<span key={'o:' + p.name} className="cv-port-label secondary" style={{ left: s(pt.x - 10 - w), top: s(pt.y), width: s(w), textAlign: 'right', fontSize: font(10) }}>{p.name}</span>)
+      out.push(<span key={(output ? 'o:' : 'i:') + p.name} className="cv-port-label secondary" style={{ ...style, fontSize: font(9.5) }}>{p.name}</span>)
     }
   }
   return <>{out}</>

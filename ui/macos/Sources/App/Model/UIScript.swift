@@ -344,8 +344,7 @@ final class UIScript {
         // changed Cards and wires together; `thought` adds a sample line.
         if let s = session, let t = workspace?.active {
           let ids = s.cards(in: t.scope).compactMap { $0["id"]?.string }
-          let across = s.flow == .leftToRight
-          let order = ids.sorted { let a = s.position(key(t.scope + [$0])), b = s.position(key(t.scope + [$1])); return across ? a.x < b.x : a.y < b.y }
+          let order = ids.sorted { s.position(key(t.scope + [$0])).y < s.position(key(t.scope + [$1])).y }
           let p = s.presence
           p.name = { [weak s] k in s?.nodeData(k).title ?? k }
           p.turnStarted()

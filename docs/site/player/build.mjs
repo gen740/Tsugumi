@@ -246,18 +246,6 @@ function layers(cards, wires) {
   return layer
 }
 
-/** As ProjectSession.flow in session.ts. */
-function flowOf(layout, cards, wires) {
-  if (layout.flow === 'topToBottom' || layout.flow === 'leftToRight') return layout.flow
-  const pos = new Map(cards.map((c) => [c.id, c]))
-  let across = 0, down = 0
-  for (const w of wires) {
-    const a = pos.get(w.from), b = pos.get(w.to)
-    if (a && b) { across += Math.abs(b.x - a.x); down += Math.abs(b.y - a.y) }
-  }
-  return across > down ? 'leftToRight' : 'topToBottom'
-}
-
 // ---- Notes -----------------------------------------------------------------------------------
 
 /** Markdown with TeX to HTML at build time: MathML needs neither KaTeX's code nor its fonts on the page. */
@@ -355,7 +343,6 @@ export function buildDemo(entry, root, portsOf, narrations, recorded) {
     c.x = p?.x ?? 0
     c.y = p?.y ?? (layer.get(c.id) ?? 0) * 190
   }
-  const flow = flowOf(layout, cards, wires)
   const notes = (layout.notes ?? []).filter((n) => !n.scope).map((n) => ({
     id: n.id, x: n.x ?? 0, y: n.y ?? 0, width: n.width ?? 240, height: n.height ?? 120, color: ['yellow', 'blue', 'green', 'pink', 'gray'].includes(n.color) ? n.color : 'yellow',
     fontSize: n.fontSize ?? 13, html: markdownHtml(n.text ?? ''),
@@ -383,7 +370,7 @@ export function buildDemo(entry, root, portsOf, narrations, recorded) {
   }
   for (const c of cards) delete c.boundary
   return {
-    id: entry.id, title: entry.title, description: entry.description, tags: entry.tags ?? [], flow, draftOnly,
+    id: entry.id, title: entry.title, description: entry.description, tags: entry.tags ?? [], draftOnly,
     cards, wires, notes, run, steps, final, outputs,
     intro: narration?.intro ?? entry.description ?? '', finale: narration?.finale ?? '',
   }
@@ -410,7 +397,7 @@ function scopedStyles() {
 }
 
 /** What svg.mjs reads a Card in Card's inner Workflow with. */
-export { readJson, readProject, flowOf, stepsFromRun, finalsFromRun }
+export { readJson, readProject, stepsFromRun, finalsFromRun }
 
 // ---- Main -------------------------------------------------------------------------------------
 

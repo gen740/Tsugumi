@@ -36,7 +36,7 @@ const session = () => {
   assert.equal(str(get(s.cardMeta(code), 'description')), 'logs the value')
   assert.equal(s.nodeData(code).summary, 'logs the value')
   assert.deepEqual(s.cardDetails(code), ['logs the value'])
-  const g = new CardGeometry(s.nodeData(code), 'topToBottom')
+  const g = new CardGeometry(s.nodeData(code))
   assert.ok(g.face && !g.summary)
 }
 
@@ -47,7 +47,7 @@ const session = () => {
     const k = await s.addCard(kind, [], { x: 0, y: 0 })
     s.updateMeta(k, (m) => m.set('description', 'what it does'))
     await s.save()
-    assert.ok(!new CardGeometry(s.nodeData(k), 'topToBottom').summary, kind)
+    assert.ok(!new CardGeometry(s.nodeData(k)).summary, kind)
     assert.deepEqual(s.cardDetails(k), ['what it does'], kind)
   }
 }

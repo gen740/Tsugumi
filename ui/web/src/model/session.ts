@@ -27,7 +27,7 @@ import type { LayoutBar, LayoutScene } from '../../shared/layoutScene'
 import { cloneDef, cloneExternal, defEq } from './documentValues'
 import { cardNotes, layoutView, noteId, parseReadme, printReadme, splitCardNotes } from './documents'
 import { Observable } from './observable'
-import { FlowDirection, prefs } from './prefs'
+import { prefs } from './prefs'
 import { runMark } from './runMark'
 import { failureText, notStartedText } from './workerSelection'
 import { cardPermissions } from './permissions'
@@ -47,14 +47,12 @@ export const JUNCTION_INPUTS = 2
  *  on the grid when snapping. Across it: at the median of the inputs, moved to the nearer side of a
  *  Card it would fall on. */
 export function junctionPlace(source: { x: number; y: number }, inputs: { x: number; y: number }[],
-  cards: { x: number; y: number; width: number; height: number }[], down: boolean, grid: number, snap: boolean): { x: number; y: number } {
-  const along = down ? source.y : source.x, across = down ? source.x : source.y
-  const sides = inputs.map(p => down ? p.x : p.y).sort((a, b) => a - b)
-  const nearest = inputs.length ? Math.min(...inputs.map(p => down ? p.y : p.x)) : along
+  cards: { x: number; y: number; width: number; height: number }[], grid: number, snap: boolean): { x: number; y: number } {
+  const along = source.y, across = source.x
+  const sides = inputs.map(p => p.x).sort((a, b) => a - b)
+  const nearest = inputs.length ? Math.min(...inputs.map(p => p.y)) : along
   const low = Math.min(across, sides[0] ?? across), high = Math.max(across, sides.at(-1) ?? across)
-  const extents = cards.map(r => down
-    ? { top: r.y, bottom: r.y + r.height, left: r.x, right: r.x + r.width }
-    : { top: r.x, bottom: r.x + r.width, left: r.y, right: r.y + r.height })
+  const extents = cards.map(r => ({ top: r.y, bottom: r.y + r.height, left: r.x, right: r.x + r.width }))
   let laneLow = along, laneHigh = nearest
   if (nearest > along) {
     for (let moved = true; moved;) {
@@ -83,7 +81,7 @@ export function junctionPlace(source: { x: number; y: number }, inputs: { x: num
     }
     if (!moved) break
   }
-  return down ? { x: side, y: at } : { x: at, y: side }
+  return { x: side, y: at }
 }
 /** Where the wires of one output split (world units): layout only, never a Card or a connection. */
 export interface JunctionPlace {
@@ -2212,29 +2210,6 @@ export class ProjectSession extends Observable {
       obj([['x', real(Math.round(p.x * 10) / 10)], ['y', real(Math.round(p.y * 10) / 10)]]))]).catch(e => this.cardEditFailed(e))
   }
 
-  // Inferring a missing flow from Card places is presentation of the layout:
-  // each UI does it itself rather than asking hostd.
-  /** The direction this project's Cards are laid out in (the layout's "flow");
-   *  without one, read from where the wired Cards sit, else the app's default. */
-  get flow(): FlowDirection {
-    const f = str(get(this.layout, 'flow'))
-    if (f === 'topToBottom' || f === 'leftToRight') return f
-    let across = 0, down = 0
-    for (const c of this.connections([])) {
-      const f2 = str(get(c, 'from', 'card')), t = str(get(c, 'to', 'card'))
-      if (!f2 || !t) continue
-      const a = this.position(f2), b = this.position(t)
-      across += Math.abs(b.x - a.x)
-      down += Math.abs(b.y - a.y)
-    }
-    if (across + down > 0) return across > down ? 'leftToRight' : 'topToBottom'
-    return prefs.flowDirection
-  }
-
-  setFlow(f: FlowDirection) {
-    void this.operateFields(() => [this.fieldEdit('layout.bin', ['flow'], get(this.layout, 'flow'), f)]).catch(e => this.cardEditFailed(e))
-  }
-
   layoutHost = layoutHost
 
   /** True once the arranged layout is applied. */
@@ -2281,7 +2256,7 @@ export class ProjectSession extends Observable {
         at: this.boundaryPosition(scope, side),
       }
     }
-    return { flow: this.flow, grid: prefs.gridSize, snap: prefs.showGrid, cards, wires, notes, inputs: bar('inputs'), outputs: bar('outputs') }
+    return { grid: prefs.gridSize, snap: prefs.showGrid, cards, wires, notes, inputs: bar('inputs'), outputs: bar('outputs') }
   }
 
 
@@ -2706,7 +2681,7 @@ export class ProjectSession extends Observable {
       const ck = key([...scope, cid])
       return [{ ...this.placedPosition(ck), ...this.geometry(ck).size }]
     })
-    this.setJunction(k, port, junctionPlace(source, inputs, cards, this.flow === 'topToBottom',
+    this.setJunction(k, port, junctionPlace(source, inputs, cards,
       prefs.gridSize > 0 ? prefs.gridSize : 20, prefs.showGrid))
   }
 
@@ -2725,7 +2700,7 @@ export class ProjectSession extends Observable {
 
 
   geometry(k: CardKey): CardGeometry {
-    return new CardGeometry(this.nodeData(k), this.flow)
+    return new CardGeometry(this.nodeData(k))
   }
 }
 

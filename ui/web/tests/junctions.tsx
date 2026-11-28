@@ -27,7 +27,6 @@ prefs.set('showGrid', false)
 const s = cardIds(new ProjectSession('/p', 'k', 'p'))
 s.project = parse(projectFixture({ name: 't', canvas: { cards: [], connections: [] } }))
 s.layout = parse('{}')
-s.setFlow('topToBottom')
 const source = await s.addCard('collect', [], { x: 0, y: 0 }, 'source')
 const targets = [await s.addCard('collect', [], { x: 900, y: 40 }, 'a'),
   await s.addCard('collect', [], { x: -700, y: 900 }, 'b'),
@@ -151,12 +150,8 @@ assert.deepEqual(s.junctionOutputs(pair), ['out'], 'two inputs can branch at one
   const card = (x: number, y: number, height = 120) => ({ x, y, width: 160, height })
   const cards = [card(0, 0), card(200, 0, 200), card(0, 400), card(200, 400), card(400, 400)]
   const inputs = [{ x: 80, y: 400 }, { x: 280, y: 400 }, { x: 480, y: 400 }]
-  assert.deepEqual(junctionPlace({ x: 80, y: 120 }, inputs, cards, true, 20, false), { x: 280, y: 300 })
-  assert.deepEqual(junctionPlace({ x: 80, y: 120 }, inputs, [...cards, card(220, 250, 100)], true, 20, false), { x: 210, y: 300 })
-  // Left to right swaps the axes.
-  const swap = (p: { x: number; y: number }) => ({ x: p.y, y: p.x })
-  const sideways = cards.map((r) => ({ x: r.y, y: r.x, width: r.height, height: r.width }))
-  assert.deepEqual(junctionPlace(swap({ x: 80, y: 120 }), inputs.map(swap), sideways, false, 20, false), { x: 300, y: 280 })
+  assert.deepEqual(junctionPlace({ x: 80, y: 120 }, inputs, cards, 20, false), { x: 280, y: 300 })
+  assert.deepEqual(junctionPlace({ x: 80, y: 120 }, inputs, [...cards, card(220, 250, 100)], 20, false), { x: 210, y: 300 })
 }
 
 prefs.set('showGrid', originalGrid)

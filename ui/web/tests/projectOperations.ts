@@ -112,7 +112,7 @@ for (const echoFirst of [false, true]) {
   s.projectId = 'p'; s.client = {}; s.connected = true
   s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
-    rev: 0n, projectJson: projectFixture({"name":"old","canvas":{"cards":[],"connections":[]}}), layout: layoutBytes('{"flow":"topToBottom"}'),
+    rev: 0n, projectJson: projectFixture({"name":"old","canvas":{"cards":[],"connections":[]}}), layout: layoutBytes('{"boundary":{"inputs":{"x":0,"y":0}}}'),
   }))
   const first = deferred<H.ProjectOperateRequestT>(), second = deferred<H.ProjectOperateRequestT>()
   const firstReply = deferred<R.SaveResultT>(), secondReply = deferred<R.SaveResultT>()
@@ -121,21 +121,21 @@ for (const echoFirst of [false, true]) {
     if (calls++ === 0) { first.resolve(request); return firstReply.promise }
     second.resolve(request); return secondReply.promise
   }
-  s.setFlow('leftToRight'); s.setFlow('topToBottom')
+  s.setBoundaryPosition([], 'inputs', { x: 1, y: 1 }); s.setBoundaryPosition([], 'inputs', { x: 2, y: 2 })
   const complete = s.operationTask
   const one = await first.promise
   const field = (r: H.ProjectOperateRequestT) => (r.body as H.ProjectEditsT).edits[0].value as H.ProjectFieldEditT
-  assert.equal(JSON.parse(String(field(one).oldValue!.json)), 'topToBottom')
-  const d1 = delta(0n, String(one.opId), 'old'); d1.layoutChanged = true; d1.layout = layoutBytes('{"flow":"leftToRight"}')
+  assert.deepEqual(JSON.parse(String(field(one).oldValue!.json)), { x: 0, y: 0 })
+  const d1 = delta(0n, String(one.opId), 'old'); d1.layoutChanged = true; d1.layout = layoutBytes('{"boundary":{"inputs":{"x":1,"y":1}}}')
   firstReply.resolve(result(d1))
   const two = await second.promise
-  assert.equal(JSON.parse(String(field(two).oldValue!.json)), 'leftToRight')
-  assert.equal(JSON.parse(String(field(two).newValue!.json)), 'topToBottom')
-  const d2 = delta(1n, String(two.opId), 'old'); d2.layoutChanged = true; d2.layout = layoutBytes('{"flow":"topToBottom"}')
+  assert.deepEqual(JSON.parse(String(field(two).oldValue!.json)), { x: 1, y: 1 })
+  assert.deepEqual(JSON.parse(String(field(two).newValue!.json)), { x: 2, y: 2 })
+  const d2 = delta(1n, String(two.opId), 'old'); d2.layoutChanged = true; d2.layout = layoutBytes('{"boundary":{"inputs":{"x":2,"y":2}}}')
   secondReply.resolve(result(d2))
   await complete
   assert.equal(s.rev, 2n)
-  assert.equal(s.flow, 'topToBottom')
+  assert.deepEqual(s.boundaryPosition([], 'inputs'), { x: 2, y: 2 })
   assert.equal(calls, 2)
 }
 
@@ -218,7 +218,7 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
     if (calls++ === 0) { entered.resolve(request); return reply.promise }
     undoEntered.resolve(request); return undoReply.promise
   }
-  s.setFlow('leftToRight')
+  s.setBoundaryPosition([], 'inputs', { x: 1, y: 1 })
   const undo = s.undo()
   const request = await entered.promise
   assert.equal(s.undoStack.length, 0)

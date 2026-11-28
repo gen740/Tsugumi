@@ -129,7 +129,6 @@ def test_new_ids_are_unique_with_shared_descriptions(tmp_path, core_factory):
 
 
 LAID_OUT = {
-    "flow": "topToBottom",
     "cards": {"start": {"x": 0, "y": 0}, "src": {"x": 10.5, "y": 20, "collapsed": True}, "out": {"x": 30, "y": 40},
               "src/inner": {"x": 1, "y": 2}, "src2": {"x": 5, "y": 6}},
     "notes": [{"id": "n", "scope": "", "text": "メモ \"src\"\n改行", "x": 1, "y": 2}],
@@ -290,7 +289,7 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
     assert "invalid_document" not in accepted
     put(root / card_path, draft)
     layout = c.call("ProjectSaveRequest", baseRev=saved.rev, opId=new_id(), origin="t",
-                    changes=[change("SetLayout", layout=layout_bytes({"flow": "topToBottom"}))])
+                    changes=[change("SetLayout", layout=layout_bytes({"cards": {}}))])
     assert layout.executionRev == saved.executionRev
     assert diagnostics(c, nested_card) == accepted
     before = json.loads(text(c.call("ProjectInspectRequest").projectJson))

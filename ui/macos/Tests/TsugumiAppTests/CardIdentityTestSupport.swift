@@ -87,7 +87,6 @@ func fixtureProjectJSON(_ fields: String = "{}") -> String {
 func fixtureLayout(_ text: String) -> [UInt8] {
   guard let view = try? JSONValue.parse(text) else { return [] }
   var layout = Tsugumi_Layout_LayoutT()
-  layout.flow = view["flow"]?.string
   layout.boundary = nil
   layout.cards = (view["cards"]?.object ?? []).map { id, placement in
     let card = Tsugumi_Layout_CardPlaceT()

@@ -12,14 +12,6 @@ import TsugumiViewPresentation
 // pixels, so text stays sharp at any zoom. Ports, wires, the selection and
 // hit-testing all use the same geometry and the same world → screen mapping.
 
-/// Direction the work flows in: inputs enter on the top (or left) edge and
-/// outputs leave on the bottom (or right) edge.
-enum FlowDirection: String, CaseIterable, Identifiable {
-  case topToBottom, leftToRight
-  var id: String { rawValue }
-  var label: String { self == .topToBottom ? String(localized: "上から下") : String(localized: "左から右") }
-}
-
 /// One execution stage of an invocation, in the order the core runs them.
 enum Stage: Int, CaseIterable, Identifiable {
   case waiting, prepare, evaluate, build, execute, validate, save, done
@@ -541,14 +533,13 @@ struct CardGeometry {
   let face: Bool
   let summary: Bool
   let stages: Bool
-  let flow: FlowDirection
   let shape: CardShape
   let draft: Bool
   let draftEditing: Bool
   let untitled: Bool
   let grid: CGFloat?
 
-  init(_ d: CardNodeData, flow: FlowDirection) {
+  init(_ d: CardNodeData) {
     // A Draft and a Card whose definition cannot be read have no ports.
     let portless = d.isDraft || d.kind == .invalid
     inputs = portless ? [] : d.inputs.map(\.name)
@@ -563,7 +554,6 @@ struct CardGeometry {
     summary = d.summary != nil && d.kind == .invalid
     // The face is the same for every state, so a run never makes a Card grow or shrink.
     stages = d.kind == .code
-    self.flow = flow
     shape = CardShape(d.kind)
     grid = d.portGrid
   }
@@ -579,7 +569,7 @@ struct CardGeometry {
     // The start Card: its name and a run button, nothing more.
     case .start:
       guard let grid else { return CGSize(width: 116, height: 34) }
-      return CGSize(width: Self.gridLength(near: 116, grid), height: flow == .leftToRight ? 2 * Self.rowPitch(grid) : 34)
+      return CGSize(width: Self.gridLength(near: 116, grid), height: 34)
     case .card: return .zero
     }
   }
@@ -644,10 +634,8 @@ struct CardGeometry {
   var cardWidth: CGFloat {
     guard let grid else { return Self.width }
     var w = Self.gridLength(near: Self.width, grid)
-    if flow == .topToBottom {
-      for count in [inputs.count, outputs.count] where count > 1 {
-        w = max(w, Self.gridLength(atLeast: CGFloat(count - 1) * edgePitch(count, grid) + 2 * Self.portMargin, grid))
-      }
+    for count in [inputs.count, outputs.count] where count > 1 {
+      w = max(w, Self.gridLength(atLeast: CGFloat(count - 1) * edgePitch(count, grid) + 2 * Self.portMargin, grid))
     }
     return w
   }
@@ -663,50 +651,28 @@ struct CardGeometry {
   }
 
   /// Labels of a routing Card sit outside its outline, in these bands.
-  private var bandIn: CGFloat { shape != .card && flow == .topToBottom && showLabels(input: true) ? Self.portRow : 0 }
-  private var bandOut: CGFloat { shape != .card && flow == .topToBottom && showLabels(input: false) ? Self.portRow : 0 }
+  private var bandIn: CGFloat { shape != .card && showLabels(input: true) ? Self.portRow : 0 }
+  private var bandOut: CGFloat { shape != .card && showLabels(input: false) ? Self.portRow : 0 }
 
-  var portBand: CGFloat {
-    guard flow == .leftToRight, shape == .card else { return 0 }
-    let count = max(inputs.count, outputs.count, 1)
-    if draft {
-      // A Draft's wire anchors sit at the middle of its sides, with no port rows.
-      // On the grid they do not close up, so it makes room.
-      guard let grid else { return 0 }
-      let p = Self.rowPitch(grid)
-      return max(0, CGFloat(count) * p + 8 - contentHeight)
-    }
-    guard let grid else { return CGFloat(count) * Self.portRow }
-    let p = Self.rowPitch(grid)
-    return firstRow(p) - rowsTop + CGFloat(count - 1) * p + Self.portRow / 2
-  }
-  /// Where the rows of a left-to-right Card begin, under its face (or header and summary).
-  private var rowsTop: CGFloat { face ? Self.face : Self.header + (summary ? Self.summaryRow : 0) }
-  /// The first grid line a port's row fits under them.
-  private func firstRow(_ pitch: CGFloat) -> CGFloat {
-    ((rowsTop + Self.portRow / 2) / pitch).rounded(.up) * pitch
-  }
   /// The header, or what is left of it over the content of a Draft without a name.
   var headerRow: CGFloat { untitled ? Self.untitledTop : Self.header }
   /// The room for a Draft's content under its header.
   var draftRow: CGFloat { !draft ? 0 : draftEditing ? Self.draftEditRow : Self.draftRow }
-  var topLabels: CGFloat { shape == .card && flow == .topToBottom && showLabels(input: true) ? Self.portRow : 0 }
-  var bottomLabels: CGFloat { shape == .card && flow == .topToBottom && showLabels(input: false) ? Self.portRow : 0 }
+  var topLabels: CGFloat { shape == .card && showLabels(input: true) ? Self.portRow : 0 }
+  var bottomLabels: CGFloat { shape == .card && showLabels(input: false) ? Self.portRow : 0 }
 
   var size: CGSize {
     if shape == .start { return routingSize }
     if shape != .card {
       let r = routingSize
-      return flow == .topToBottom ? CGSize(width: r.width, height: bandIn + r.height + bandOut)
-                                  : CGSize(width: r.height + 60, height: r.width)
+      return CGSize(width: r.width, height: bandIn + r.height + bandOut)
     }
     if collapsed { return CGSize(width: cardWidth, height: Self.header) }
-    return CGSize(width: cardWidth, height: contentHeight + portBand)
+    return CGSize(width: cardWidth, height: contentHeight)
   }
   /// A Card's height without its port rows.
   private var contentHeight: CGFloat {
-    // Left to right, a little room under the last port row.
-    if face { return topLabels + Self.face + bottomLabels + (flow == .leftToRight ? 4 : 0) }
+    if face { return topLabels + Self.face + bottomLabels }
     return topLabels + headerRow + (summary ? Self.summaryRow : 0) + draftRow + bottomLabels + 4
   }
   var height: CGFloat { size.height }
@@ -715,8 +681,7 @@ struct CardGeometry {
   var outlineRect: CGRect {
     let s = size
     guard shape != .card, shape != .start else { return CGRect(origin: .zero, size: s) }
-    if flow == .topToBottom { return CGRect(x: 0, y: bandIn, width: s.width, height: s.height - bandIn - bandOut) }
-    return CGRect(x: 30, y: 0, width: s.width - 60, height: s.height)
+    return CGRect(x: 0, y: bandIn, width: s.width, height: s.height - bandIn - bandOut)
   }
 
   /// The outline itself (Card box, fan or funnel) inside `r`.
@@ -731,8 +696,7 @@ struct CardGeometry {
       return Capsule(style: .circular).path(in: r)
     case .collect:
       func point(_ across: CGFloat, _ along: CGFloat) -> CGPoint {
-        flow == .topToBottom ? CGPoint(x: r.minX + r.width * across, y: r.minY + r.height * along)
-                            : CGPoint(x: r.minX + r.width * along, y: r.minY + r.height * across)
+        CGPoint(x: r.minX + r.width * across, y: r.minY + r.height * along)
       }
       return roundedPolygon([point(0, 0), point(1, 0), point(0.65, 0.57), point(0.65, 1),
                              point(0.35, 1), point(0.35, 0.57)], radius: 3 * cornerScale)
@@ -740,13 +704,9 @@ struct CardGeometry {
       // Triangle: downstream apex. The apex is listed
       // twice so it stays sharp: the ports of that side are on its very tip.
       // Its corners shrink with the zoom, as `r` does.
-      let radius = 7 * (flow == .topToBottom ? r.height : r.width) / routingSize.height
-      if flow == .topToBottom {
-        let apex = CGPoint(x: r.midX, y: r.maxY)
-        return roundedPolygon([CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), apex, apex], radius: radius)
-      }
-      let apex = CGPoint(x: r.maxX, y: r.midY)
-      return roundedPolygon([CGPoint(x: r.minX, y: r.minY), apex, apex, CGPoint(x: r.minX, y: r.maxY)], radius: radius)
+      let radius = 7 * r.height / routingSize.height
+      let apex = CGPoint(x: r.midX, y: r.maxY)
+      return roundedPolygon([CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), apex, apex], radius: radius)
     }
   }
 
@@ -754,14 +714,12 @@ struct CardGeometry {
   /// flow, and in a triangle toward the wide edge, where it has room.
   func iconCenter(in r: CGRect) -> CGPoint {
     let along: CGFloat = shape == .merge || shape == .collect ? 0.38 : 0.5
-    return flow == .topToBottom ? CGPoint(x: r.midX, y: r.minY + r.height * along)
-                                : CGPoint(x: r.minX + r.width * along, y: r.midY)
+    return CGPoint(x: r.midX, y: r.minY + r.height * along)
   }
 
   // MARK: Ports
 
-  /// The segment ports of one side are spread along (top-to-bottom: an x
-  /// range at a fixed y).
+  /// The segment ports of one side are spread along: an x range at a fixed y.
   private func edgeSpan(input: Bool) -> (start: CGFloat, width: CGFloat, at: CGFloat) {
     switch shape {
     case .card, .start:
@@ -804,8 +762,7 @@ struct CardGeometry {
   func newPortPoint(output: Bool) -> CGPoint? {
     guard draft, !collapsed, (output ? outputs : inputs).isEmpty else { return nil }
     let r = outlineRect
-    return flow == .topToBottom ? CGPoint(x: cardWidth / 2, y: output ? r.maxY : r.minY)
-                                : CGPoint(x: output ? cardWidth : 0, y: grid.map { snapToGrid(r.midY, Self.rowPitch($0)) } ?? r.midY)
+    return CGPoint(x: cardWidth / 2, y: output ? r.maxY : r.minY)
   }
 
   /// Routing bodies must keep room for a move even at the minimum zoom.
@@ -823,28 +780,12 @@ struct CardGeometry {
     let r = outlineRect
     if shape == .start {
       // Its one output, in the middle of the downstream edge.
-      return flow == .topToBottom ? CGPoint(x: r.midX, y: r.maxY) : CGPoint(x: r.maxX, y: r.midY)
+      return CGPoint(x: r.midX, y: r.maxY)
     }
-    switch flow {
-    case .topToBottom:
-      let y = output ? r.maxY : r.minY
-      if let along = alongGrid(index, of: list.count, output: output) { return CGPoint(x: along, y: y) }
-      let span = edgeSpan(input: !output)
-      return CGPoint(x: span.start + span.width * (i + 1) / (n + 1), y: y)
-    case .leftToRight:
-      if shape != .card {
-        if let along = alongGrid(index, of: list.count, output: output) { return CGPoint(x: output ? r.maxX : r.minX, y: r.minY + along) }
-        let h = output ? r.height * Self.narrow : r.height
-        return CGPoint(x: output ? r.maxX : r.minX, y: r.midY - h / 2 + h * (i + 1) / (n + 1))
-      }
-      let x = output ? cardWidth : 0
-      if collapsed { return CGPoint(x: x, y: grid.map { snapToGrid(Self.header / 2, Self.rowPitch($0)) } ?? Self.header / 2) }
-      if let grid {
-        let p = Self.rowPitch(grid)
-        return CGPoint(x: x, y: firstRow(p) + i * p)
-      }
-      return CGPoint(x: x, y: rowsTop + i * Self.portRow + Self.portRow / 2)
-    }
+    let y = output ? r.maxY : r.minY
+    if let along = alongGrid(index, of: list.count, output: output) { return CGPoint(x: along, y: y) }
+    let span = edgeSpan(input: !output)
+    return CGPoint(x: span.start + span.width * (i + 1) / (n + 1), y: y)
   }
 }
 
@@ -1100,7 +1041,6 @@ struct DraftEdit {
 /// A Card as drawn on every canvas, at the screen scale `zoom`.
 struct CardNodeView: View {
   let data: CardNodeData
-  let flow: FlowDirection
   var zoom: Double = 1
   var selected = false
   var portsEditable = true
@@ -1144,7 +1084,7 @@ struct CardNodeView: View {
   }
 
   var body: some View {
-    let g = CardGeometry(data, flow: flow)
+    let g = CardGeometry(data)
     let size = CGSize(width: g.size.width * z, height: g.size.height * z)
     let o = g.outlineRect
     let outline = CGRect(x: o.minX * z, y: o.minY * z, width: o.width * z, height: o.height * z)
@@ -1166,7 +1106,7 @@ struct CardNodeView: View {
     .frame(width: size.width, height: size.height, alignment: .topLeading)
     // The outline and the ports: a port sits on the edge, and the half of it
     // outside the outline must still start a wire.
-    .contentShape(Self.hitShape(data, flow: flow, zoom: zoom, newPorts: onPortDrag != nil && portsEditable))
+    .contentShape(Self.hitShape(data, zoom: zoom, newPorts: onPortDrag != nil && portsEditable))
     .accessibilityElement(children: .contain)
     .accessibilityLabel(accessibilityText)
   }
@@ -1194,8 +1134,8 @@ struct CardNodeView: View {
   /// What of a Card takes the mouse, in its view's own units at `zoom`: the
   /// outline, the ports (with the new-port handles of a Draft) and the
   /// comments badge. The debug panel draws the same shape.
-  static func hitShape(_ data: CardNodeData, flow: FlowDirection, zoom: Double, newPorts: Bool) -> Path {
-    let g = CardGeometry(data, flow: flow)
+  static func hitShape(_ data: CardNodeData, zoom: Double, newPorts: Bool) -> Path {
+    let g = CardGeometry(data)
     let z = CGFloat(zoom)
     let o = g.outlineRect
     let outline = g.outline(in: CGRect(x: o.minX * z, y: o.minY * z, width: o.width * z, height: o.height * z), cornerScale: z)
@@ -1250,7 +1190,6 @@ struct CardNodeView: View {
             .lineLimit(1).truncationMode(.tail).help(summary)
             .padding(.horizontal, s(10)).frame(height: s(CardGeometry.summaryRow), alignment: .top)
         }
-        if flow == .leftToRight { Color.clear.frame(height: s(g.portBand)) }
       }
     }
     .frame(width: s(g.cardWidth), alignment: .leading)
@@ -1453,24 +1392,8 @@ struct CardNodeView: View {
   /// Port names centred on their ports; hidden when there is no room (the
   /// whole name and type then show on hover).
   @ViewBuilder private func portLabels(_ g: CardGeometry) -> some View {
-    if flow == .topToBottom {
-      if g.showLabels(input: true) { ForEach(data.inputs, id: \.name) { p in label(p, g, output: false) } }
-      if g.showLabels(input: false) { ForEach(data.outputs, id: \.name) { p in label(p, g, output: true) } }
-    } else if g.shape == .card, !g.collapsed, !g.draft {
-      let w = g.cardWidth / 2 - 14
-      ForEach(data.inputs, id: \.name) { p in
-        let pt = g.port(p.name, output: false)
-        Text(p.name).font(font(10)).foregroundStyle(.secondary).lineLimit(1)
-          .frame(width: s(w), alignment: .leading)
-          .position(x: s(pt.x + 10 + w / 2), y: s(pt.y))
-      }
-      ForEach(data.outputs, id: \.name) { p in
-        let pt = g.port(p.name, output: true)
-        Text(p.name).font(font(10)).foregroundStyle(.secondary).lineLimit(1)
-          .frame(width: s(w), alignment: .trailing)
-          .position(x: s(pt.x - 10 - w / 2), y: s(pt.y))
-      }
-    }
+    if g.showLabels(input: true) { ForEach(data.inputs, id: \.name) { p in label(p, g, output: false) } }
+    if g.showLabels(input: false) { ForEach(data.outputs, id: \.name) { p in label(p, g, output: true) } }
   }
 
   private func label(_ p: PortData, _ g: CardGeometry, output: Bool) -> some View {
@@ -1894,28 +1817,18 @@ struct WireRouter {
     var wires: [Routed]
   }
 
-  let flow: FlowDirection
   let obstacles: [CGRect]
-  /// The Cards as the search sees them: computed top-to-bottom (left-to-right swaps x and y).
-  private let frame: [CGRect]
   private var cardLines: (xs: [CGFloat], ys: [CGFloat])?
-  /// The wires routed so far, for the search to keep off them (in the search's frame).
+  /// The wires routed so far, for the search to keep off them.
   private var routed: [Routed] = []
 
-  init(flow: FlowDirection, obstacles: [CGRect]) {
-    self.flow = flow
+  init(obstacles: [CGRect]) {
     self.obstacles = obstacles
-    frame = flow == .leftToRight ? obstacles.map { CGRect(x: $0.minY, y: $0.minX, width: $0.height, height: $0.width) } : obstacles
-  }
-
-  private func toFrame(_ p: CGPoint) -> CGPoint {
-    flow == .leftToRight ? CGPoint(x: p.y, y: p.x) : p
   }
 
   /// A wire that goes along the flow, however little, and crosses no Card on the short way.
   func isForward(_ a: CGPoint, _ b: CGPoint) -> Bool {
-    let along = flow == .topToBottom ? b.y - a.y : b.x - a.x
-    return along >= 0 && !crossesCard(a, b)
+    b.y - a.y >= 0 && !crossesCard(a, b)
   }
 
   /// The cheap first check: most wires end here, and only Cards near the curve are looked at.
@@ -1947,14 +1860,8 @@ struct WireRouter {
   /// Leaves and enters along the flow: by half the distance, and by more only
   /// as far as the ports are apart across it, so close ports are joined straight.
   private func controls(_ a: CGPoint, _ b: CGPoint) -> (CGPoint, CGPoint) {
-    switch flow {
-    case .topToBottom:
-      let dy = max(abs(b.y - a.y) / 2, min(30, abs(b.x - a.x) / 2))
-      return (CGPoint(x: a.x, y: a.y + dy), CGPoint(x: b.x, y: b.y - dy))
-    case .leftToRight:
-      let dx = max(abs(b.x - a.x) / 2, min(30, abs(b.y - a.y) / 2))
-      return (CGPoint(x: a.x + dx, y: a.y), CGPoint(x: b.x - dx, y: b.y))
-    }
+    let dy = max(abs(b.y - a.y) / 2, min(30, abs(b.x - a.x) / 2))
+    return (CGPoint(x: a.x, y: a.y + dy), CGPoint(x: b.x, y: b.y - dy))
   }
 
   /// One wire, keeping off those already routed.
@@ -1978,7 +1885,7 @@ struct WireRouter {
       if isForward(w.a, w.b) || underCards(w.a, w.b) {
         // Enough of a curve to tell whether something crosses it.
         let (c1, c2) = controls(w.a, w.b)
-        remember(w.a, stride(from: 0, through: 32, by: 4).map { toFrame(Self.bezier(w.a, c1, c2, w.b, CGFloat($0) / 32)) }, curved: true)
+        remember(w.a, stride(from: 0, through: 32, by: 4).map { Self.bezier(w.a, c1, c2, w.b, CGFloat($0) / 32) }, curved: true)
       } else {
         searched.append(i)
       }
@@ -1990,9 +1897,9 @@ struct WireRouter {
     }
     for i in searched {
       // Shut in by Cards touching all around, nothing is free to take: it stays a curve.
-      guard let pts = search(toFrame(wires[i].a), toFrame(wires[i].b)) else { continue }
+      guard let pts = search(wires[i].a, wires[i].b) else { continue }
       remember(wires[i].a, pts, curved: false)
-      out[i] = pts.map(toFrame)
+      out[i] = pts
     }
     return out
   }
@@ -2048,8 +1955,8 @@ struct WireRouter {
       }
     }
     let c = WireCost.clearance
-    return (frame.flatMap { [$0.minX - c, $0.minX + $0.width + c] } + gaps(frame.flatMap { [$0.minX, $0.minX + $0.width] }),
-            frame.flatMap { [$0.minY - c, $0.minY + $0.height + c] } + gaps(frame.flatMap { [$0.minY, $0.minY + $0.height] }))
+    return (obstacles.flatMap { [$0.minX - c, $0.minX + $0.width + c] } + gaps(obstacles.flatMap { [$0.minX, $0.minX + $0.width] }),
+            obstacles.flatMap { [$0.minY - c, $0.minY + $0.height + c] } + gaps(obstacles.flatMap { [$0.minY, $0.minY + $0.height] }))
   }
 
   /// The cheapest path from port to port (A* over grid node and direction of travel),
@@ -2061,7 +1968,7 @@ struct WireRouter {
 
   private func search(_ a: CGPoint, _ b: CGPoint, lines: (xs: [CGFloat], ys: [CGFloat])) -> [CGPoint]? {
     // A Card laid over a port is no wall for its wire: the wire runs under it.
-    let cards = frame.filter { depth($0, a, 1) <= WireCost.portDepth && depth($0, b, -1) <= WireCost.portDepth }
+    let cards = obstacles.filter { depth($0, a, 1) <= WireCost.portDepth && depth($0, b, -1) <= WireCost.portDepth }
     let out = clear(a, 1, cards), into = clear(b, -1, cards)
     let along = into.y - out.y
     let first = CGPoint(x: out.x, y: out.y + stub(out, 1, along: along, cards))
@@ -2579,7 +2486,6 @@ struct CanvasWire: Equatable {
 struct CanvasSurface: View {
   @Binding var items: [CanvasItem]
   var wires: [CanvasWire]
-  var flow: FlowDirection
   var grid = true
   var gridSize: Double = 20
   var animateWires = false
@@ -2607,9 +2513,9 @@ struct CanvasSurface: View {
           }.onEnded { _ in lastPan = nil })
         WireLayer(wires: wireDraws, animate: animateWires, zoom: camera.zoom)
         ForEach(items) { item in
-          CardNodeView(data: data(item), flow: flow, zoom: camera.zoom, selected: selection.contains(item.id),
+          CardNodeView(data: data(item), zoom: camera.zoom, selected: selection.contains(item.id),
                        onToggleCollapse: { toggle(item.id) })
-            .placeScaled(at: camera.screen(origin(item)), size: CardGeometry(data(item), flow: flow).size,
+            .placeScaled(at: camera.screen(origin(item)), size: CardGeometry(data(item)).size,
                          zoom: camera.zoom)
             .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .named("canvas"))
               .onChanged { v in
@@ -2659,17 +2565,16 @@ struct CanvasSurface: View {
       .onChange(of: itemsBox) { if !userAdjusted { fit(geo.size) } }
       .onChange(of: geo.size) { if !userAdjusted { fit(geo.size) } }
       .onChange(of: fitKey) { userAdjusted = false; fit(geo.size) }
-      .onChange(of: flow) { userAdjusted = false; fit(geo.size) }
     }
   }
 
   /// Bounding box of the Cards (re-framed when a Card appears or changes size).
   private var itemsBox: CGRect {
-    items.reduce(CGRect.null) { $0.union(CGRect(origin: placed($1), size: CardGeometry(data($1), flow: flow).size)) }
+    items.reduce(CGRect.null) { $0.union(CGRect(origin: placed($1), size: CardGeometry(data($1)).size)) }
   }
 
   private var wireDraws: [WireDraw] {
-    var router = WireRouter(flow: flow, obstacles: items.map { CGRect(origin: origin($0), size: CardGeometry(data($0), flow: flow).size) })
+    var router = WireRouter(obstacles: items.map { CGRect(origin: origin($0), size: CardGeometry(data($0)).size) })
     let routes = router.routeAll(wires.map { (a: point($0.from, $0.fromPort, output: true), b: point($0.to, $0.toPort, output: false)) })
     return zip(wires, routes).map { w, world in
       WireDraw(path: world.applying(camera.transform), style: w.active ? .active : .normal)
@@ -2698,7 +2603,7 @@ struct CanvasSurface: View {
   /// A port in world units.
   private func point(_ id: String, _ port: String, output: Bool) -> CGPoint {
     guard let item = items.first(where: { $0.id == id }) else { return .zero }
-    let o = origin(item), p = CardGeometry(data(item), flow: flow).port(port, output: output)
+    let o = origin(item), p = CardGeometry(data(item)).port(port, output: output)
     return CGPoint(x: o.x + p.x, y: o.y + p.y)
   }
 

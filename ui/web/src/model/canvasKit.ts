@@ -2,7 +2,6 @@
 // preview in Settings and the preview in Card settings: Card data, geometry
 // and wire routing (world units; drawing multiplies by the zoom).
 import { D } from '../wire/rpc'
-import type { FlowDirection } from './prefs'
 import type { CardKind } from './session'
 import type { PermissionKind } from './permissions'
 import { L } from '../i18n'
@@ -244,7 +243,7 @@ export class CardGeometry {
   readonly untitled: boolean
   readonly grid?: number
 
-  constructor(d: CardNodeData, readonly flow: FlowDirection) {
+  constructor(d: CardNodeData) {
     // A Draft and a Card whose definition cannot be read have no ports.
     const portless = d.kind === 'draft' || d.kind === 'invalid'
     this.inputs = portless ? [] : d.inputs.map((p) => p.name)
@@ -271,7 +270,7 @@ export class CardGeometry {
       // The start Card: its name and a run button, nothing more.
       case 'start':
         if (!this.grid) return { width: 116, height: 34 }
-        return { width: gridLengthNear(116, this.grid), height: this.flow === 'leftToRight' ? 2 * CardGeometry.rowPitch(this.grid) : 34 }
+        return { width: gridLengthNear(116, this.grid), height: 34 }
       default: return { width: 0, height: 0 }
     }
   }
@@ -328,10 +327,8 @@ export class CardGeometry {
   get cardWidth() {
     if (!this.grid) return CardGeometry.width
     let w = gridLengthNear(CardGeometry.width, this.grid)
-    if (this.flow === 'topToBottom') {
-      for (const count of [this.inputs.length, this.outputs.length]) {
-        if (count > 1) w = Math.max(w, gridLengthAtLeast((count - 1) * this.edgePitch(count, this.grid) + 2 * CardGeometry.portMargin, this.grid))
-      }
+    for (const count of [this.inputs.length, this.outputs.length]) {
+      if (count > 1) w = Math.max(w, gridLengthAtLeast((count - 1) * this.edgePitch(count, this.grid) + 2 * CardGeometry.portMargin, this.grid))
     }
     return w
   }
@@ -347,33 +344,12 @@ export class CardGeometry {
   }
 
   private get bandIn() {
-    return this.shape !== 'card' && this.flow === 'topToBottom' && this.showLabels(true) ? CardGeometry.portRow : 0
+    return this.shape !== 'card' && this.showLabels(true) ? CardGeometry.portRow : 0
   }
   private get bandOut() {
-    return this.shape !== 'card' && this.flow === 'topToBottom' && this.showLabels(false) ? CardGeometry.portRow : 0
+    return this.shape !== 'card' && this.showLabels(false) ? CardGeometry.portRow : 0
   }
 
-  get portBand() {
-    if (this.flow !== 'leftToRight' || this.shape !== 'card') return 0
-    const count = Math.max(this.inputs.length, this.outputs.length, 1)
-    if (this.draft) {
-      // A Draft's wire anchors sit at the middle of its sides, with no port rows.
-      // On the grid they do not close up, so it makes room.
-      if (!this.grid) return 0
-      return Math.max(0, count * CardGeometry.rowPitch(this.grid) + 8 - this.contentHeight)
-    }
-    if (!this.grid) return count * CardGeometry.portRow
-    const p = CardGeometry.rowPitch(this.grid)
-    return this.firstRow(p) - this.rowsTop + (count - 1) * p + CardGeometry.portRow / 2
-  }
-  /** Where the rows of a left-to-right Card begin, under its face (or header and summary). */
-  private get rowsTop() {
-    return this.face ? CardGeometry.face : CardGeometry.header + (this.summary ? CardGeometry.summaryRow : 0)
-  }
-  /** The first grid line a port's row fits under them. */
-  private firstRow(pitch: number) {
-    return Math.ceil((this.rowsTop + CardGeometry.portRow / 2) / pitch) * pitch
-  }
   /** The header, or what is left of it over the content of a Draft without a name. */
   get headerRow() {
     return this.untitled ? CardGeometry.untitledTop : CardGeometry.header
@@ -383,25 +359,24 @@ export class CardGeometry {
     return !this.draft ? 0 : this.draftEditing ? CardGeometry.draftEditRow : CardGeometry.draftRow
   }
   get topLabels() {
-    return this.shape === 'card' && this.flow === 'topToBottom' && this.showLabels(true) ? CardGeometry.portRow : 0
+    return this.shape === 'card' && this.showLabels(true) ? CardGeometry.portRow : 0
   }
   get bottomLabels() {
-    return this.shape === 'card' && this.flow === 'topToBottom' && this.showLabels(false) ? CardGeometry.portRow : 0
+    return this.shape === 'card' && this.showLabels(false) ? CardGeometry.portRow : 0
   }
 
   get size() {
     if (this.shape === 'start') return this.routingSize
     if (this.shape !== 'card') {
       const r = this.routingSize
-      return this.flow === 'topToBottom' ? { width: r.width, height: this.bandIn + r.height + this.bandOut } : { width: r.height + 60, height: r.width }
+      return { width: r.width, height: this.bandIn + r.height + this.bandOut }
     }
     if (this.collapsed) return { width: this.cardWidth, height: CardGeometry.header }
-    return { width: this.cardWidth, height: this.contentHeight + this.portBand }
+    return { width: this.cardWidth, height: this.contentHeight }
   }
   /** A Card's height without its port rows. */
   private get contentHeight() {
-    // Left to right, a little room under the last port row.
-    if (this.face) return this.topLabels + CardGeometry.face + this.bottomLabels + (this.flow === 'leftToRight' ? 4 : 0)
+    if (this.face) return this.topLabels + CardGeometry.face + this.bottomLabels
     return this.topLabels + this.headerRow + (this.summary ? CardGeometry.summaryRow : 0) + this.draftRow + this.bottomLabels + 4
   }
   get height() {
@@ -412,8 +387,7 @@ export class CardGeometry {
   get outlineRect(): Rect {
     const s = this.size
     if (this.shape === 'card' || this.shape === 'start') return { x: 0, y: 0, ...s }
-    if (this.flow === 'topToBottom') return { x: 0, y: this.bandIn, width: s.width, height: s.height - this.bandIn - this.bandOut }
-    return { x: 30, y: 0, width: s.width - 60, height: s.height }
+    return { x: 0, y: this.bandIn, width: s.width, height: s.height - this.bandIn - this.bandOut }
   }
 
   /** The outline (Card box, triangle, funnel) inside `r`, as SVG path data.
@@ -427,9 +401,7 @@ export class CardGeometry {
       case 'start':
         return roundedRect(r, r.height / 2)
       case 'collect': {
-        const point = (across: number, along: number) => this.flow === 'topToBottom'
-          ? P(r.x + r.width * across, r.y + r.height * along)
-          : P(r.x + r.width * along, r.y + r.height * across)
+        const point = (across: number, along: number) => P(r.x + r.width * across, r.y + r.height * along)
         return roundedPolygon([
           point(0, 0), point(1, 0), point(0.65, 0.57), point(0.65, 1), point(0.35, 1), point(0.35, 0.57),
         ], 3 * cornerScale)
@@ -438,14 +410,9 @@ export class CardGeometry {
         // Triangle: downstream apex. The apex is listed
         // twice so it stays sharp: the ports of that side are on its very tip.
         // Its corners shrink with the zoom, as `r` does.
-        const radius = (7 * (this.flow === 'topToBottom' ? r.height : r.width)) / this.routingSize.height
-        const right = r.x + r.width, bottom = r.y + r.height
-        if (this.flow === 'topToBottom') {
-          const apex = P(r.x + r.width / 2, bottom)
-          return roundedPolygon([P(r.x, r.y), P(right, r.y), apex, apex], radius)
-        }
-        const apex = P(right, r.y + r.height / 2)
-        return roundedPolygon([P(r.x, r.y), apex, apex, P(r.x, bottom)], radius)
+        const radius = (7 * r.height) / this.routingSize.height
+        const apex = P(r.x + r.width / 2, r.y + r.height)
+        return roundedPolygon([P(r.x, r.y), P(r.x + r.width, r.y), apex, apex], radius)
       }
     }
   }
@@ -454,7 +421,7 @@ export class CardGeometry {
    *  flow, and in a triangle toward the wide edge, where it has room. */
   iconCenter(r: Rect): Pt {
     const along = this.shape === 'merge' || this.shape === 'collect' ? 0.38 : 0.5
-    return this.flow === 'topToBottom' ? { x: r.x + r.width / 2, y: r.y + r.height * along } : { x: r.x + r.width * along, y: r.y + r.height / 2 }
+    return { x: r.x + r.width / 2, y: r.y + r.height * along }
   }
 
   /** The segment ports of one side are spread along (top-to-bottom: an x range). */
@@ -495,9 +462,7 @@ export class CardGeometry {
   newPort(output: boolean): Pt | undefined {
     if (!this.draft || this.collapsed || (output ? this.outputs : this.inputs).length) return undefined
     const r = this.outlineRect
-    return this.flow === 'topToBottom'
-      ? { x: this.cardWidth / 2, y: output ? r.y + r.height : r.y }
-      : { x: output ? this.cardWidth : 0, y: this.grid ? snapToGrid(r.y + r.height / 2, CardGeometry.rowPitch(this.grid)) : r.y + r.height / 2 }
+    return { x: this.cardWidth / 2, y: output ? r.y + r.height : r.y }
   }
 
   /** Routing bodies retain room for moving at every zoom. */
@@ -516,27 +481,13 @@ export class CardGeometry {
     const r = this.outlineRect
     if (this.shape === 'start') {
       // Its one output, in the middle of the downstream edge.
-      return this.flow === 'topToBottom' ? { x: r.x + r.width / 2, y: r.y + r.height } : { x: r.x + r.width, y: r.y + r.height / 2 }
+      return { x: r.x + r.width / 2, y: r.y + r.height }
     }
     const along = this.alongGrid(index, list.length, output)
-    if (this.flow === 'topToBottom') {
-      const y = output ? r.y + r.height : r.y
-      if (along !== undefined) return { x: along, y }
-      const span = this.edgeSpan(!output)
-      return { x: span.start + (span.width * (index + 1)) / (n + 1), y }
-    }
-    if (this.shape !== 'card') {
-      if (along !== undefined) return { x: output ? r.x + r.width : r.x, y: r.y + along }
-      const h = output ? 0 : r.height
-      return { x: output ? r.x + r.width : r.x, y: r.y + r.height / 2 - h / 2 + (h * (index + 1)) / (n + 1) }
-    }
-    const x = output ? this.cardWidth : 0
-    if (this.collapsed) return { x, y: this.grid ? snapToGrid(CardGeometry.header / 2, CardGeometry.rowPitch(this.grid)) : CardGeometry.header / 2 }
-    if (this.grid) {
-      const p = CardGeometry.rowPitch(this.grid)
-      return { x, y: this.firstRow(p) + index * p }
-    }
-    return { x, y: this.rowsTop + index * CardGeometry.portRow + CardGeometry.portRow / 2 }
+    const y = output ? r.y + r.height : r.y
+    if (along !== undefined) return { x: along, y }
+    const span = this.edgeSpan(!output)
+    return { x: span.start + (span.width * (index + 1)) / (n + 1), y }
   }
 }
 
@@ -598,24 +549,15 @@ export type WireRoute = { d: string; pts: Pt[]; curved: boolean }
  *  crossings of other wires, leaving and entering its ports along the flow.
  *  The same path draws and hit-tests a wire. */
 export class WireRouter {
-  /** The Cards as the search sees them: computed top-to-bottom (left-to-right swaps x and y). */
-  private readonly frame: Rect[]
   private cardLines?: { xs: number[]; ys: number[] }
-  /** The wires routed so far, for the search to keep off them (in the search's frame). */
+  /** The wires routed so far, for the search to keep off them. */
   private routed: RoutedRun[] = []
 
-  constructor(readonly flow: FlowDirection, readonly obstacles: Rect[]) {
-    this.frame = flow === 'leftToRight' ? obstacles.map((r) => ({ x: r.y, y: r.x, width: r.height, height: r.width })) : obstacles
-  }
-
-  private toFrame(p: Pt): Pt {
-    return this.flow === 'leftToRight' ? { x: p.y, y: p.x } : p
-  }
+  constructor(readonly obstacles: Rect[]) {}
 
   /** A wire that goes along the flow, however little, and crosses no Card on the short way. */
   isForward(a: Pt, b: Pt) {
-    const along = this.flow === 'topToBottom' ? b.y - a.y : b.x - a.x
-    return along >= 0 && !this.crossesCard(a, b)
+    return b.y - a.y >= 0 && !this.crossesCard(a, b)
   }
 
   /** The cheap first check: most wires end here, and only Cards near the curve are looked at. */
@@ -647,12 +589,8 @@ export class WireRouter {
   /** Leaves and enters along the flow: by half the distance, and by more only
    *  as far as the ports are apart across it, so close ports are joined straight. */
   private controls(a: Pt, b: Pt): [Pt, Pt] {
-    if (this.flow === 'topToBottom') {
-      const dy = Math.max(Math.abs(b.y - a.y) / 2, Math.min(30, Math.abs(b.x - a.x) / 2))
-      return [{ x: a.x, y: a.y + dy }, { x: b.x, y: b.y - dy }]
-    }
-    const dx = Math.max(Math.abs(b.x - a.x) / 2, Math.min(30, Math.abs(b.y - a.y) / 2))
-    return [{ x: a.x + dx, y: a.y }, { x: b.x - dx, y: b.y }]
+    const dy = Math.max(Math.abs(b.y - a.y) / 2, Math.min(30, Math.abs(b.x - a.x) / 2))
+    return [{ x: a.x, y: a.y + dy }, { x: b.x, y: b.y - dy }]
   }
 
   /** One wire, keeping off those already routed. */
@@ -676,24 +614,22 @@ export class WireRouter {
     })
     for (const i of order) {
       const { a, b } = wires[i]
-      const pts = this.search(this.toFrame(a), this.toFrame(b))
+      const pts = this.search(a, b)
       if (!pts) {
         // Shut in by Cards touching all around: nothing is free to take.
         out[i] = this.curve(a, b)
         continue
       }
       this.remember(a, pts, false)
-      const world = pts.map((p) => this.toFrame(p))
-      out[i] = { d: orthogonal(world, 10), pts: world, curved: false }
+      out[i] = { d: orthogonal(pts, 10), pts, curved: false }
     }
     return out as WireRoute[]
   }
 
   private remember(a: Pt, pts: Pt[], curved: boolean) {
-    const frame = curved ? pts.map((p) => this.toFrame(p)) : pts
-    const xs = frame.map((p) => p.x), ys = frame.map((p) => p.y)
+    const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y)
     const x = Math.min(...xs), y = Math.min(...ys)
-    this.routed.push({ a, pts: frame, box: { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y }, curved })
+    this.routed.push({ a, pts, box: { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y }, curved })
   }
 
   /** How far along the flow a port's wire has to run to get out of a Card's box (0: not in it). */
@@ -742,19 +678,19 @@ export class WireRouter {
       })
       return out
     }
-    const xe = this.frame.flatMap((o) => [o.x, o.x + o.width]), ye = this.frame.flatMap((o) => [o.y, o.y + o.height])
+    const xe = this.obstacles.flatMap((o) => [o.x, o.x + o.width]), ye = this.obstacles.flatMap((o) => [o.y, o.y + o.height])
     this.cardLines = {
-      xs: [...this.frame.flatMap((o) => [o.x - WIRE.clearance, o.x + o.width + WIRE.clearance]), ...lines(xe)],
-      ys: [...this.frame.flatMap((o) => [o.y - WIRE.clearance, o.y + o.height + WIRE.clearance]), ...lines(ye)],
+      xs: [...this.obstacles.flatMap((o) => [o.x - WIRE.clearance, o.x + o.width + WIRE.clearance]), ...lines(xe)],
+      ys: [...this.obstacles.flatMap((o) => [o.y - WIRE.clearance, o.y + o.height + WIRE.clearance]), ...lines(ye)],
     }
     return this.cardLines
   }
 
-  /** The cheapest path from port to port (A* over grid node and direction of travel),
-   *  in the search's frame. Ties go to the lowest state, so nothing depends on chance. */
+  /** The cheapest path from port to port (A* over grid node and direction of travel).
+   *  Ties go to the lowest state, so nothing depends on chance. */
   private search(a: Pt, b: Pt): Pt[] | null {
     // A Card laid over a port is no wall for its wire: the wire runs under it.
-    const obstacles = this.frame.filter((o) => this.depth(o, a, 1) <= WIRE.portDepth && this.depth(o, b, -1) <= WIRE.portDepth)
+    const obstacles = this.obstacles.filter((o) => this.depth(o, a, 1) <= WIRE.portDepth && this.depth(o, b, -1) <= WIRE.portDepth)
     const out = this.clear(a, 1, obstacles), into = this.clear(b, -1, obstacles)
     const along = into.y - out.y
     const first = { x: out.x, y: out.y + this.stub(out, 1, along, obstacles) }

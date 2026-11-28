@@ -47,7 +47,7 @@ export function pageRoutes(broadcast: Listener) {
         const recent = await hostRequest('HostRecentRememberRequest', { path: b.path })
         return { path: recent.path, key: recent.path, name: recent.name }
       },
-      'POST /api/project/create': (b) => hostRequest('HostProjectCreateRequest', { parent: b.parent, name: b.name, flow: b.flow }),
+      'POST /api/project/create': (b) => hostRequest('HostProjectCreateRequest', { parent: b.parent, name: b.name }),
       'POST /api/project/duplicate': (b) => hostRequest('HostProjectDuplicateRequest', { path: b.path, parent: b.parent, name: b.name }),
       'POST /api/recents/forget': (b) => hostRequest('HostRecentForgetRequest', { paths: b.paths }),
       'POST /api/reveal': async (b) => { await hostRequest('HostRevealRequest', { path: String(b.path) }); return { ok: true } },

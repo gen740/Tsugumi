@@ -158,7 +158,6 @@ struct ProjectSettingsContent: View {
   var body: some View {
     switch pane {
     case .general: GeneralProjectSettings(session: session)
-    case .canvas: CanvasProjectSettings(session: session)
     case .history: RunHistorySettings(session: session)
     case .cache: CacheSettings(session: session)
     case .hostPaths: HostPathsSettings(session: session)
@@ -443,23 +442,6 @@ private struct GeneralProjectSettings: View {
       if trackedPaths == sentPaths { trackedPaths = paths.joined(separator: "\n") }
       message = String(localized: "保存しました。")
     }
-  }
-}
-
-/// How the project's Cards are laid out (layout.bin, applied at once).
-private struct CanvasProjectSettings: View {
-  let session: ProjectSession
-
-  var body: some View {
-    Form {
-      Picker("流れの向き", selection: Binding(get: { session.flow }, set: { session.setFlow($0) })) {
-        ForEach(FlowDirection.allCases) { Text($0.label).tag($0) }
-      }
-      .help("このプロジェクトの Card を並べた向きです（layout.bin に保存され、すぐ反映されます）。線の引き方と「整列」がこの向きに合わせます。")
-      Label("変えると Card の配置と線が合わなくなることがあります（「整列」で並べ直せます）。", systemImage: "exclamationmark.triangle")
-        .font(.caption).foregroundStyle(.orange)
-    }
-    .formStyle(.grouped)
   }
 }
 

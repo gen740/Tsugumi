@@ -660,7 +660,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `ModelsListRequest` | `provider_id: string` (required), `refresh: bool`, `profile: string`, `account_profile: string` |
 | `HostProjectDefaultsRequest` | None |
 | `HostProjectInfoRequest` | `path: string` (required) |
-| `HostProjectCreateRequest` | `parent: string` (required), `name: string` (required), `flow: string` |
+| `HostProjectCreateRequest` | `parent: string` (required), `name: string` (required) |
 | `HostProjectDuplicateRequest` | `path: string` (required), `parent: string` (required), `name: string` (required) |
 | `HostDemoListRequest` | `language: string` |
 | `HostDemoCopyRequest` | `id: string` (required), `parent: string` (required), `language: string` |

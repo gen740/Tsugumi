@@ -66,7 +66,6 @@ const contains = (r: Rect, p: Pt) => p.x >= r.x && p.x <= r.x + r.width && p.y >
 
 /** Everything a canvas draws and hit-tests, computed once per update. */
 export class Scene {
-  readonly flow
   readonly cardKeys: CardKey[]
   private datas = new Map<CardKey, CardNodeData>()
   private geos = new Map<CardKey, CardGeometry>()
@@ -75,7 +74,6 @@ export class Scene {
   private _junctions?: JunctionPlace[]
 
   constructor(readonly session: ProjectSession, readonly scope: string[], readonly selectedConnection?: number, readonly drag: SceneDrag = {}) {
-    this.flow = session.flow
     this.cardKeys = session.cards(scope).map((c) => str(get(c, 'id'))).filter((x): x is string => !!x).map((id) => key([...scope, id]))
   }
 
@@ -91,7 +89,7 @@ export class Scene {
   geometry(k: CardKey): CardGeometry {
     let g = this.geos.get(k)
     if (!g) {
-      g = new CardGeometry(this.data(k), this.flow)
+      g = new CardGeometry(this.data(k))
       this.geos.set(k, g)
     }
     return g
@@ -250,7 +248,7 @@ export class Scene {
         style: this.style(fk, fp, undefined), dotted: isDraftWire(kind, fk), executionList: s.executionWire(fk, fp).executionList, trunk: true,
       } })
     }
-    const routes = new WireRouter(this.flow, obstacles).routeAll(ends)
+    const routes = new WireRouter(obstacles).routeAll(ends)
     const out: RoutedWire[] = ends.map((e, i) => ({ ...e.wire, d: routes[i].d, pts: routes[i].pts }))
     this._wires = out
     return out

@@ -273,7 +273,7 @@ import TsugumiTestSupport
     // A normal edit submitted while Redo is pending must retain its own entry.
     let redo = Task { await session.redo() }
     let third = try #require(await iterator.next())
-    session.setFlow(.leftToRight)
+    session.setCollapsed(["a"], true)
     third.reply.resume(returning: result(delta(session.rev, third.request.opId, "redo")))
     let normal = try #require(await iterator.next())
     normal.reply.resume(returning: result(delta(session.rev, normal.request.opId, "normal")))

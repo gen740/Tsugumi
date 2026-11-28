@@ -28,32 +28,32 @@
     "json": "{\"\":{}}"
   },
   {
-    "name": "truncated-flow",
-    "json": "{\"flo\":\"leftToRight\"}"
+    "name": "truncated-cards",
+    "json": "{\"card\":{}}"
   },
   {
-    "name": "plural-flow",
-    "json": "{\"flows\":\"leftToRight\"}"
+    "name": "plural-cards",
+    "json": "{\"cardss\":{}}"
   },
   {
-    "name": "uppercase-flow",
-    "json": "{\"Flow\":\"leftToRight\"}"
+    "name": "uppercase-cards",
+    "json": "{\"Cards\":{}}"
   },
   {
     "name": "leading-space",
-    "json": "{\" flow\":\"leftToRight\"}"
+    "json": "{\" cards\":{}}"
   },
   {
     "name": "trailing-space",
-    "json": "{\"flow \":\"leftToRight\"}"
+    "json": "{\"cards \":{}}"
   },
   {
-    "name": "accented-flow",
-    "json": "{\"flöw\":\"leftToRight\"}"
+    "name": "accented-cards",
+    "json": "{\"cärds\":{}}"
   },
   {
-    "name": "translated-flow",
-    "json": "{\"フロー\":\"leftToRight\"}"
+    "name": "translated-cards",
+    "json": "{\"カード\":{}}"
   },
   {
     "name": "overflowing-coordinate",

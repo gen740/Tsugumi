@@ -84,7 +84,6 @@ struct Bar {
 };
 
 struct Scene {
-  bool top_to_bottom = true;
   double grid = 20;
   // The grid is on: Cards are placed on it.
   bool snap = false;
@@ -149,8 +148,7 @@ using OutputKey = std::pair<std::string, std::string>;
 // the wire to where the inputs are and the branches are short. The UIs place
 // one added by hand by the same rule.
 auto junctions(const Scene& scene, const Proposal& arranged,
-               const std::set<OutputKey>& kept = {})
-    -> std::vector<Junction>;
+               const std::set<OutputKey>& kept = {}) -> std::vector<Junction>;
 
 // Reorders ports where the wires then cross less; no Card moves. With `around`
 // (the Cards a drag just moved) only they and the Cards wired to them may
@@ -184,7 +182,7 @@ struct WireEnds {
   Point a;
   Point b;
 };
-auto route_wires(bool top_to_bottom, const std::vector<Rect>& obstacles,
+auto route_wires(const std::vector<Rect>& obstacles,
                  const std::vector<WireEnds>& wires)
     -> std::vector<std::vector<Point>>;
 

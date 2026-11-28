@@ -80,9 +80,9 @@ table CardGroup {
 }
 
 table Layout {
-  /// The direction the Cards were laid out in: "topToBottom" or
-  /// "leftToRight".
-  flow:string;
+  /// Was the direction the Cards ran in; the canvas always runs top to
+  /// bottom now. Kept only so the later fields keep their ids.
+  flow:string (deprecated);
   cards:[CardPlace];
   /// The boundary bars of the Card in Card scopes, by scope.
   boundaries:[BoundaryPlace];

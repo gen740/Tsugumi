@@ -469,7 +469,7 @@ function NewProjectSheet({ onClose, onCreated }: { onClose: () => void; onCreate
         onPick={async (parent) => {
           setStart(undefined)
           try {
-            const p = await app.createProject(parent, name, prefs.flowDirection)
+            const p = await app.createProject(parent, name)
             onClose()
             onCreated(p)
           } catch (e) {

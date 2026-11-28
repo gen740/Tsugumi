@@ -72,8 +72,8 @@ auto with_bars(const Scene& scene, std::vector<Card>& cards,
     cards.push_back(std::move(c));
   }
 }
-auto orders(bool vertical, std::vector<Card> cards,
-            const std::vector<Wire>& wires) -> std::vector<PortOrder> {
+auto orders(std::vector<Card> cards, const std::vector<Wire>& wires)
+    -> std::vector<PortOrder> {
   const auto original = cards;
   auto score = [&](std::vector<Card>& cs) {
     std::vector<WireEnds> ends;
@@ -88,7 +88,7 @@ auto orders(bool vertical, std::vector<Card> cards,
     }
     std::vector<Rect> obstacles;
     for (const auto& c : cs) obstacles.push_back({c.x, c.y, c.width, c.height});
-    return crossing_pairs(route_wires(vertical, obstacles, ends), ends);
+    return crossing_pairs(route_wires(obstacles, ends), ends);
   };
   int best = score(cards), trials = 0;
   bool done = false;
@@ -120,7 +120,7 @@ auto orders(bool vertical, std::vector<Card> cards,
                                 output ? w.to_port : w.from_port)
                       : nullptr;
             if (port) {
-              sum += vertical ? other->x + port->x : other->y + port->y;
+              sum += other->x + port->x;
               ++count;
             }
           }
@@ -186,7 +186,7 @@ auto untangle(const Scene& scene, const std::vector<std::string>& around)
       c.reorderable = c.reorderable && neighbors.contains(c.id);
   }
   Proposal out;
-  out.port_orders = orders(scene.top_to_bottom, std::move(cards), wires);
+  out.port_orders = orders(std::move(cards), wires);
   return out;
 }
 auto arrange(const Scene& scene) -> Proposal {
@@ -205,7 +205,7 @@ auto arrange(const Scene& scene) -> Proposal {
     }
   }
   with_bars(scene, cards, wires, false);
-  auto reordered = orders(scene.top_to_bottom, std::move(cards), wires);
+  auto reordered = orders(std::move(cards), wires);
   if (!reordered.empty()) {
     auto input = scene;
     for (const auto& o : reordered) {
@@ -261,22 +261,20 @@ auto junctions(const Scene& scene, const Proposal& arranged,
       if (w.from == first.from && w.from_port == first.from_port &&
           seen.insert({w.to, w.to_port}).second)
         if (const auto p = at(w.to, w.to_port, false)) inputs.push_back(*p);
-    if (inputs.size() <
-        (kept.contains({first.from, first.from_port}) ? junction_inputs
-                                                       : junction_fan))
+    if (inputs.size() < (kept.contains({first.from, first.from_port})
+                             ? junction_inputs
+                             : junction_fan))
       continue;
-    // Worked out top-to-bottom; left-to-right swaps x and y.
-    const bool down = scene.top_to_bottom;
-    const double along = down ? source->y : source->x;
-    const double across = down ? source->x : source->y;
+    const double along = source->y;
+    const double across = source->x;
     double nearest = std::numeric_limits<double>::infinity();
     double low = across, high = across;
     std::vector<double> sides;
     for (const auto& p : inputs) {
-      nearest = std::min(nearest, down ? p.y : p.x);
-      low = std::min(low, down ? p.x : p.y);
-      high = std::max(high, down ? p.x : p.y);
-      sides.push_back(down ? p.x : p.y);
+      nearest = std::min(nearest, p.y);
+      low = std::min(low, p.x);
+      high = std::max(high, p.x);
+      sides.push_back(p.x);
     }
     // A Card's extent along and across the flow.
     struct Extent {
@@ -284,8 +282,7 @@ auto junctions(const Scene& scene, const Proposal& arranged,
     };
     std::vector<Extent> extents;
     for (const auto& c : cards)
-      extents.push_back(down ? Extent{c.y, c.y + c.height, c.x, c.x + c.width}
-                             : Extent{c.x, c.x + c.width, c.y, c.y + c.height});
+      extents.push_back({c.y, c.y + c.height, c.x, c.x + c.width});
     // Along the flow: in the middle of the free lane between the output and
     // its nearest input, past the Cards between them that reach into it.
     // An input level with or before the output: two grids past it.
@@ -295,7 +292,8 @@ auto junctions(const Scene& scene, const Proposal& arranged,
         moved = false;
         for (const auto& e : extents) {
           if (e.left >= high || e.right <= low) continue;
-          if (e.top <= lane_low && e.bottom > lane_low && e.bottom < lane_high) {
+          if (e.top <= lane_low && e.bottom > lane_low &&
+              e.bottom < lane_high) {
             lane_low = e.bottom;
             moved = true;
           }
@@ -319,8 +317,9 @@ auto junctions(const Scene& scene, const Proposal& arranged,
     // wire to them and the branches are short; then clear of the Cards.
     std::sort(sides.begin(), sides.end());
     const size_t middle = sides.size() / 2;
-    double j_across = sides.size() % 2 ? sides[middle]
-                                       : (sides[middle - 1] + sides[middle]) / 2;
+    double j_across = sides.size() % 2
+                          ? sides[middle]
+                          : (sides[middle - 1] + sides[middle]) / 2;
     const double margin = grid / 2;
     for (size_t pass = 0; pass <= extents.size(); ++pass) {
       bool moved = false;
@@ -335,8 +334,7 @@ auto junctions(const Scene& scene, const Proposal& arranged,
       }
       if (!moved) break;
     }
-    out.push_back({first.from, first.from_port, down ? j_across : j_along,
-                   down ? j_along : j_across});
+    out.push_back({first.from, first.from_port, j_across, j_along});
   }
   return out;
 }

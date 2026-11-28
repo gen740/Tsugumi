@@ -277,7 +277,7 @@ final class AppModel {
 
   func createProject(at url: URL) async throws {
     let result = try await hostRequest("HostProjectCreateRequest", ["parent": url.deletingLastPathComponent().path,
-      "name": url.lastPathComponent, "flow": AppPreferences.shared.flowDirection.rawValue])
+      "name": url.lastPathComponent])
     _ = try createdProject(result)
   }
 
@@ -302,7 +302,6 @@ struct HostProjectError: LocalizedError, CustomStringConvertible {
     switch code {
     case "invalid_project_name": return String(localized: "フォルダ名に使えない文字が含まれているか、名前が空です。")
     case "project_defaults_unavailable": return String(localized: "このビルドには既定の Nixpkgs が設定されていません。")
-    case "invalid_flow": return String(localized: "フローの方向が正しくありません。")
     case "folder_not_empty": return String(localized: "作成先は空ではありません。空のフォルダか新しい名前を選んでください。")
     case "project_too_large": return String(localized: "プロジェクトが大きすぎます（64 MB まで）。")
     case "invalid_project": return String(localized: "有効なプロジェクトのフォルダを指定してください。複製先は元のフォルダの外にしてください。")

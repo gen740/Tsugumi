@@ -266,7 +266,7 @@ table HostProjectDefaultsRequest {}
 // Binary file payload used by guarded operation inverses.
 table ProjectFile { path:string (required); bytes:[ubyte]; }
 table HostProjectInfoRequest { path:string (required); }
-table HostProjectCreateRequest { parent:string (required); name:string (required); flow:string; }
+table HostProjectCreateRequest { parent:string (required); name:string (required); }
 table HostProjectDuplicateRequest { path:string (required); parent:string (required); name:string (required); }
 table HostDemoListRequest { language:string; }
 table HostDemoCopyRequest { id:string (required); parent:string (required); language:string; }
@@ -523,18 +523,16 @@ table LayoutBar {
 
 /// What a canvas draws in one scope.
 table LayoutScene {
-  /// "topToBottom" or "leftToRight".
-  flow:string (id: 0, required);
   /// The grid's spacing (notes and layers go on it; 20 when 0).
-  grid:double (id: 1);
+  grid:double (id: 0);
   /// The grid is on: Cards are placed on it.
-  snap:bool (id: 2);
-  cards:[LayoutCard] (id: 3);
-  wires:[LayoutWire] (id: 4);
-  notes:[LayoutBox] (id: 5);
+  snap:bool (id: 1);
+  cards:[LayoutCard] (id: 2);
+  wires:[LayoutWire] (id: 3);
+  notes:[LayoutBox] (id: 4);
   /// Inside a Card in Card only.
-  inputs:LayoutBar (id: 6);
-  outputs:LayoutBar (id: 7);
+  inputs:LayoutBar (id: 5);
+  outputs:LayoutBar (id: 6);
 }
 
 
@@ -561,17 +559,14 @@ table VersionCanvasWire {
 }
 
 /// A version's own Cards: Card in Card is one Card here. Saved positions, or
-/// columns by depth when a Card has none.
+/// rows by depth, top to bottom, when a Card has none.
 table VersionCanvas {
   cards:[VersionCanvasCard] (id: 0);
   wires:[VersionCanvasWire] (id: 1);
-  /// The way the Cards run: "leftToRight" or "topToBottom". Columns by depth
-  /// are always leftToRight.
-  flow:string (id: 2, required);
 }
 
 /// A layout view is the JSON object hostd and the UIs edit for a project's
-/// layout.bin and notes/<id>.md: {"flow", "cards": {key: place},
+/// layout.bin and notes/<id>.md: {"cards": {key: place},
 /// "boundaries": {scope: bars}, "boundary", "notes": [{id, text, ...}],
 /// "groups"}.
 /// -> LayoutValidated. Validate a layout view before saving; removed_cards

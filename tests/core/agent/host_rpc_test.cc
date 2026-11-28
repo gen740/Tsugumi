@@ -11,7 +11,7 @@ TEST_F(AgentFixture, EditorFormattingIsAHostRequestWithoutAProject) {
   const auto format = [&](const char* path, const char* text) {
     return Call(*host, H::RequestPayload::FileFormatRequest, [&](Builder& b) {
       return H::CreateFileFormatRequest(b, b.CreateString(path),
-                                         b.CreateString(text))
+                                        b.CreateString(text))
           .Union();
     });
   };
@@ -67,13 +67,12 @@ TEST_F(AgentFixture, HostFramesAreRejectedByTheAgentListener) {
 // Host lifecycle scenarios need no project daemon and no conversation.
 class HostProjectsFixture : public AgentFixture {
  protected:
-  auto Create(const std::string& name, const std::string& flow = "topToBottom")
-      -> Reply {
+  auto Create(const std::string& name) -> Reply {
     return Call(*host, H::RequestPayload::HostProjectCreateRequest,
                 [&](Builder& b) {
                   return H::CreateHostProjectCreateRequest(
                              b, b.CreateString(directory.path.string()),
-                             b.CreateString(name), b.CreateString(flow))
+                             b.CreateString(name))
                       .Union();
                 });
   }
@@ -98,7 +97,7 @@ TEST_F(HostProjectsFixture,
       *host, H::RequestPayload::HostProjectDefaultsRequest, [](Builder& b) {
         return H::CreateHostProjectDefaultsRequest(b).Union();
       });
-  ASSERT_TRUE(Create("new", "leftToRight").Code().empty());
+  ASSERT_TRUE(Create("new").Code().empty());
   const auto folder = directory.path / "new";
   const auto trust =
       Call(*host, H::RequestPayload::ProjectTrustRequest, [&](Builder& b) {
@@ -109,7 +108,10 @@ TEST_F(HostProjectsFixture,
             H::ProjectTrustDecision::Trusted);
   EXPECT_NE(Read(folder / "tsugumi.json").find(R"("nixPath": [])"),
             std::string::npos);
-  EXPECT_EQ(JsonString(FixtureLayoutText(Read(folder / "layout.bin")), "/flow"), "leftToRight");
+  EXPECT_EQ(
+      ::tsugumi::json::Object(FixtureLayoutText(Read(folder / "layout.bin")))
+          .size(),
+      0U);
   std::filesystem::create_directory(directory.path / "empty");
   EXPECT_TRUE(Create("empty").Code().empty());
   EXPECT_EQ(Create("new").Code(), "folder_not_empty");
@@ -120,8 +122,6 @@ TEST_F(HostProjectsFixture,
   Write(directory.path / "finder/.DS_Store", "finder");
   EXPECT_TRUE(Create("finder").Code().empty());
   EXPECT_TRUE(std::filesystem::exists(directory.path / "finder/tsugumi.json"));
-  EXPECT_EQ(Create("bad-flow", "sideways").Code(), "invalid_flow");
-  EXPECT_FALSE(std::filesystem::exists(directory.path / "bad-flow"));
   for (const auto* name :
        {"", ".", "..", "a/b", "a\\b", "trailing ", "bad:name"})
     EXPECT_EQ(Create(name).Code(), "invalid_project_name") << name;

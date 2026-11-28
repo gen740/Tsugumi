@@ -551,7 +551,7 @@ struct CardPreview: View {
   @State private var items: [CanvasItem] = []
 
   var body: some View {
-    CanvasSurface(items: $items, wires: [], flow: session.flow, grid: AppPreferences.shared.showGrid,
+    CanvasSurface(items: $items, wires: [], grid: AppPreferences.shared.showGrid,
                   gridSize: AppPreferences.shared.gridSize, fitKey: model.cardKey)
       .onAppear(perform: refresh)
       .onChange(of: model.definition) { refresh() }

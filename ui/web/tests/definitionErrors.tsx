@@ -52,7 +52,7 @@ for (const id of ['old', 'future']) {
   const d = s.nodeData(id)
   assert.equal(d.kind, 'invalid')
   assert.deepEqual([d.inputs, d.outputs], [[], []], `${id}: no ports, declared or resolved`)
-  const g = new CardGeometry(d, 'topToBottom')
+  const g = new CardGeometry(d)
   assert.deepEqual([g.inputs, g.outputs, g.draft, g.stages], [[], [], false, false])
   assert.equal(g.newPort(false), undefined, 'nothing to draw a wire from')
   assert.equal(idleText(d), '定義エラー')
@@ -61,11 +61,11 @@ for (const id of ['old', 'future']) {
 const old = s.nodeData('old')
 assert.equal(old.summary, missing)
 assert.deepEqual(old.errors, [missing])
-assert.ok(new CardGeometry(old, 'topToBottom').summary, 'the diagnostic has its row')
+assert.ok(new CardGeometry(old).summary, 'the diagnostic has its row')
 assert.equal(s.nodeData('future').summary, 'Card の定義を読めません', 'without a diagnostic yet')
 
 // Drawn as a failure, not as a Draft's dashed outline.
-const html = renderToStaticMarkup(<CardNodeView data={old} flow="topToBottom" />)
+const html = renderToStaticMarkup(<CardNodeView data={old} />)
 assert.ok(html.includes('定義エラー') && html.includes(missing.replace(/"/g, '&quot;')))
 assert.ok(html.includes('var(--red)'))
 assert.ok(!html.includes('stroke-dasharray'))
@@ -75,7 +75,7 @@ assert.ok(!html.includes('cv-port'))
 assert.equal(cardKindNamed(''), 'invalid')
 assert.equal(cardKindNamed('something new'), 'invalid')
 const map = miniMapLayout([{ id: 'old', x: 0, y: 0, kind: cardKindNamed(''), fan: 0, collapsed: false },
-  { id: 'step', x: 300, y: 0, kind: 'code', fan: 0, collapsed: false }], 'leftToRight', 284, 132)
+  { id: 'step', x: 300, y: 0, kind: 'code', fan: 0, collapsed: false }], 284, 132)
 assert.deepEqual(map.cards.map((c) => c.invalid), [true, false])
 
 console.log('definition errors: passed')
