@@ -208,8 +208,9 @@ def test_local_cpu_time_includes_its_build_and_stays_in_history(core_factory, pr
         return record.cpuMs
 
     # The call spun for three seconds: its last sample is part of the value.
+    # A loaded runner gives the spin less CPU than its wall time (1.9 s seen).
     final = recorded(client, built)
-    assert final is not None and final >= build_cpu + 2000, final
+    assert final is not None and final >= build_cpu + 1000, final
     daemon.stop()
     daemon.start()
     client = daemon.connect()
