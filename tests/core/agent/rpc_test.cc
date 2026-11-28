@@ -372,26 +372,29 @@ TEST_F(AgentProjectFixture, ModelCallsIndexedActionsThroughTheProjectPath) {
     EXPECT_EQ(J::Text(J::Object(J::Get(spec, "input_schema")), "type"),
               "object");
   }
-  EXPECT_TRUE(actions.contains("status"));
+  EXPECT_FALSE(actions.contains("status"));  // a core tool
   EXPECT_TRUE(actions.contains("cancel"));
-  const auto direct = Tool(conversation, "run_status", "{}");
+  const auto direct = Tool(conversation, "artifact_list", "{}");
   const auto indexed =
       Tool(conversation, "tools",
-           R"({"family":"runs","action":"status","arguments":{}})");
+           R"({"family":"artifacts","action":"list","arguments":{}})");
   ASSERT_TRUE(direct.Code().empty());
   ASSERT_TRUE(indexed.Code().empty());
   EXPECT_EQ(direct.Value()->value_as_ToolResult()->text()->str(),
             indexed.Value()->value_as_ToolResult()->text()->str());
   model.Queue(
-      AnthropicTool("status", "tools",
-                    R"({"family":"runs","action":"status","arguments":{}})"));
-  model.Queue(AnthropicText("Run status read."));
-  ASSERT_TRUE(Send(conversation, "Read the run status.").Code().empty());
-  EXPECT_NE(WaitUntilIdle(conversation).find("Run status read."),
+      AnthropicTool("artifacts", "tools",
+                    R"({"family":"artifacts","action":"list","arguments":{}})"));
+  model.Queue(AnthropicText("Artifacts listed."));
+  ASSERT_TRUE(Send(conversation, "List the artifacts.").Code().empty());
+  EXPECT_NE(WaitUntilIdle(conversation).find("Artifacts listed."),
             std::string::npos);
   const auto requests = model.Requests();
   ASSERT_EQ(requests.size(), 2u);
-  EXPECT_NE(requests[1].find("RunStatus"), std::string::npos);
+  const auto reply = J::Text(
+      J::Object(direct.Value()->value_as_ToolResult()->text()->str()), "reply");
+  ASSERT_FALSE(reply.empty());
+  EXPECT_NE(requests[1].find(reply), std::string::npos) << reply;
 }
 
 TEST_F(AgentFixture, ModelDemoListIsBoundedAndTheUICatalogKeepsItsMetadata) {

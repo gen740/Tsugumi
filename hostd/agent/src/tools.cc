@@ -12,6 +12,7 @@
 #include "agent/helpers.hh"
 #include "agent/providers.hh"
 #include "agent/tool_images.hh"
+#include "agent/tool_views.hh"
 #include "agent/version_find.hh"
 #include "agent/turns.hh"
 #include "agent/wire.hh"
@@ -37,6 +38,10 @@
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/locked.hh"
+
+// The host's own reference for project files (Shared/project-files.md).
+extern const unsigned char tsugumi_agent_project_files[];
+extern const unsigned long tsugumi_agent_project_files_size;
 
 namespace tsugumi::agent {
 namespace A = Tsugumi::Agent;
@@ -760,7 +765,7 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
         throw Failure("invalid_request",
                       "wait_seconds must be a nonnegative integer");
       // This budget is for the caller’s observation; the run can continue.
-      wait_seconds = std::min<uint64_t>(wait_seconds, 300);
+      wait_seconds = std::min<uint64_t>(wait_seconds, kMaxRunWaitSeconds);
       fields.erase("wait_seconds");
       prepared = json::Encode(fields);
     }
@@ -1141,6 +1146,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
       !catalog.Allows(call.name, role))
     throw Failure("permission_denied", "Tool unavailable for the guide role");
   auto args = json::Object(call.arguments);
+  // A model-side view choice (ModelView), not a project request field.
+  if (call.name == "project_inspect") args.erase("detail");
   if (call.name == "tools") {
     const auto family = json::Text(args, "family");
     std::vector<std::string> specs;
@@ -1233,6 +1240,13 @@ auto Tools::ExecuteTool(const std::string& conversation,
     if (!args.contains("limit") && !args.contains("artifact_ids"))
       args["limit"] = "8";
   }
+  if (call.name == "demo_read" &&
+      json::Text(args, "path") == "reference/project-files.md")
+    return {std::string(reinterpret_cast<const char*>(tsugumi_agent_project_files),
+                        tsugumi_agent_project_files_size),
+            false,
+            {},
+            {}};
   if (call.name == "demo_list" || call.name == "demo_read") {
     const auto policy = Exclusions(project, stop);
     return {call.name == "demo_list"
@@ -1685,18 +1699,6 @@ auto Tools::ExecuteTool(const std::string& conversation,
       result = project_call();
     }
   }
-  if (call.name == "project_file_read") {
-    auto page = json::Object(result);
-    if (json::Text(page, "reply") == "FileContent") {
-      auto value = json::Object(json::Get(page, "value", "{}"));
-      value["hint"] = json::Quote(
-          "Use project_copy to move files without reading them, or "
-          "project_shell to examine large files. Reads default to "
-          "256 KiB; maximum 1 MiB.");
-      page["value"] = json::Encode(value);
-      result = json::Encode(page);
-    }
-  }
   if ((call.name == "project_file_read" || call.name == "project_file_list") &&
       !project.empty() && (!boundary || !boundary->scoped()))
     result = OutsideProjectFiles(project, json::Text(args, "path"), result,
@@ -1796,6 +1798,11 @@ auto Tools::ExecuteTool(const std::string& conversation,
     owned["helper_run_card"] = json::Get(args, "card");
     result = json::Encode(owned);
   }
+  // A run that ended failed names its failed Cards with their failure and the
+  // end of their log, so the caller rarely needs a separate log read.
+  if ((call.name == "run" || call.name == "run_status") && !error &&
+      !(boundary && boundary->scoped()))
+    result = WithFailedCards(project, std::move(result), stop);
   {
     std::lock_guard lock(mutex);
     conversations->RememberResource(conversation, project);
@@ -1858,9 +1865,10 @@ auto Tools::Hooks(const std::string& id, bool helper,
         revision = json::Get(
             json::Object(json::Get(json::Object(result.text), "value", "{}")),
             "rev", "");
-      return boundary ? ScopedResult(*boundary, call, std::move(result),
-                                     HelperReader(id, stop, revision))
-                      : result;
+      return ForModel(call,
+                      boundary ? ScopedResult(*boundary, call, std::move(result),
+                                              HelperReader(id, stop, revision))
+                               : std::move(result));
     } catch (const Cancelled&) {
       throw;
     } catch (const Failure& error) {
@@ -1988,16 +1996,97 @@ auto Tools::Hooks(const std::string& id, bool helper,
                 json::Get(json::Object(json::Get(json::Object(result->text),
                                                  "value", "{}")),
                           "rev", "");
-          return ScopedResult(*boundary, call, std::move(*result),
-                              HelperReader(id, shutdown.get_token(), revision));
+          return ForModel(call, ScopedResult(*boundary, call, std::move(*result),
+                                             HelperReader(id, shutdown.get_token(), revision)));
         }
         return std::nullopt;
       } catch (const std::exception& error) {
         return ToolResult{error.what(), true, {}, {}};
       }
     };
+  } else {
+    const auto reconcile = hooks.reconcile_tool;
+    hooks.reconcile_tool =
+        [this, reconcile](
+            const ToolCall& call) -> std::optional<ToolResult> {
+      auto result = reconcile(call);
+      if (result) result = ForModel(call, std::move(*result));
+      return result;
+    };
   }
   return hooks;
+}
+
+auto Tools::ForModel(const ToolCall& requested, ToolResult result)
+    -> ToolResult {
+  auto call = requested;
+  try {
+    call = catalog.ResolveCall(requested, ModelRole::Main);
+  } catch (const std::exception&) {
+  }
+  json::Members args;
+  try {
+    args = json::Object(call.arguments);
+  } catch (const std::exception&) {
+  }
+  result.text = ModelView(call.name, args, std::move(result.text));
+  return result;
+}
+
+auto Tools::WithFailedCards(const std::string& project, std::string result,
+                            std::stop_token stop) -> std::string {
+  auto envelope = json::Object(result);
+  if (json::Get(envelope, "still_running") == "true") return result;
+  const auto value = json::Object(json::Get(envelope, "value", "{}"));
+  const auto status = json::Text(envelope, "reply") == "RunAccepted"
+                          ? json::Object(json::Get(value, "run", "{}"))
+                          : value;
+  if (json::Text(status, "state") != "failed") return result;
+  const auto run = json::Get(status, "run_id");
+  std::vector<std::string> failed;
+  try {
+    const auto base = host::CaptureSaveBase(InspectProject(project, stop));
+    const auto page = json::Object(ProjectCall(
+        project, "run_latest_invocations",
+        json::Encode(json::Members{{"run_id", run}}), stop, &base));
+    if (json::Text(page, "reply") == "Failure") return result;
+    const auto records = json::Array(json::Get(
+        json::Object(json::Get(page, "value", "{}")), "records", "[]"));
+    for (const auto& raw : records) {
+      const auto record = json::Object(raw);
+      if (json::Text(record, "state") != "failed") continue;
+      if (failed.size() == kFailedCardsShown) break;
+      json::Members card{{"card", json::Get(record, "card")},
+                         {"invocation", json::Get(record, "invocation")},
+                         {"failure", json::Get(record, "failure")}};
+      for (const auto* stream : {"output", "build"}) {
+        const auto slice = json::Object(ProjectCall(
+            project, "log_range",
+            json::Encode(json::Members{
+                {"run_id", run},
+                {"card", card.at("card")},
+                {"invocation", card.at("invocation")},
+                {"stream", json::Quote(stream)},
+                {"tail", "true"},
+                {"limit_bytes", std::to_string(kFailedLogTailBytes)}}),
+            stop, &base));
+        const auto text =
+            json::Text(json::Object(json::Get(slice, "value", "{}")), "text");
+        if (json::Text(slice, "reply") != "LogSlice" || text.empty()) continue;
+        card["log_stream"] = json::Quote(stream);
+        card["log_tail"] = json::Quote(text);
+        break;
+      }
+      failed.push_back(json::Encode(card));
+    }
+  } catch (const Cancelled&) {
+    throw;
+  } catch (const std::exception&) {
+    // The run's status stands on its own; its logs stay readable.
+  }
+  if (failed.empty()) return result;
+  envelope["failed_cards"] = json::Encode(failed);
+  return json::Encode(envelope);
 }
 
 auto Tools::Handle(const RequestIn& request, bool human,
@@ -2130,7 +2219,7 @@ auto Tools::Handle(const RequestIn& request, bool human,
           throw;
         }
       };
-      auto result = execute();
+      auto result = ForModel(call, execute());
       A::ToolResultT reply;
       reply.text = result.text;
       reply.is_error = result.is_error;

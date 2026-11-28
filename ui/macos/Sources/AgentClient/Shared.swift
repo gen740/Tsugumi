@@ -644,11 +644,11 @@ enum Shared {
     }
   ],
   "runWait": {
-    "description": "Returns still_running and wait_reason (ended, timeout or idle).",
+    "description": "Returns still_running, wait_reason (ended, timeout or idle) and, while the run goes on, continue: the run_status call that waits again. A failed run lists failed_cards, each with its failure and the end of its log.",
     "schema": {
       "type": "integer",
       "minimum": 0,
-      "description": "Wait up to this many seconds for completion (max 300); default 0 returns immediately."
+      "description": "Wait up to this many seconds for the run to end (max 1800); default 0 returns immediately. The run goes on when the wait ends."
     }
   },
   "saveNote": "Whole-document changes for project creation or restructuring; small edits use project_edit. Stale base_rev is refused. PutDefinition keep_readme and keep_comments preserve the existing files; fill_description fills an empty description. PutSource base_hash guards replacement. Examples: demo_read reference/cards.md.",
@@ -1097,7 +1097,10 @@ enum Shared {
       "project_validate",
       "run_plan",
       "run",
+      "run_status",
+      "run_history",
       "run_record",
+      "log_range",
       "tool_result_read",
       "template_list",
       "demo_list",
@@ -1117,13 +1120,10 @@ enum Shared {
         "output_types": "output_types"
       },
       "runs": {
-        "status": "run_status",
         "cancel": "run_cancel",
-        "history": "run_history",
         "invocations": "run_invocations",
         "latest": "run_latest_invocations",
         "value": "run_value_read",
-        "logs": "log_range",
         "environments": "run_environments",
         "environment_paths": "run_environment_paths"
       },

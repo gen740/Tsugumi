@@ -179,9 +179,10 @@ class Server {
     const auto dir = (std::filesystem::path(base ? base : std::filesystem::current_path().string()) / folder)
                          .lexically_normal();
     const bool create = json::Bool(json::Get(a, "create"));
+    const bool browser = json::Bool(json::Get(a, "browser"), true);
     AgentTools::Shown o;
     try {
-      o = tools_.Show(dir.string(), create, json::Bool(json::Get(a, "browser"), true));
+      o = tools_.Show(dir.string(), create, browser);
     } catch (const RpcFailure& e) {
       if (e.code == "invalid_project" && !create)
         return {std::string(e.what()) + " Pass create: true to make a new project there.", true, {}};
@@ -191,9 +192,12 @@ class Server {
     if (!o.shown)
       where = o.app      ? "The Tsugumi app opens it in a window."
               : o.opened ? "A browser window opens it."
+              : !browser ? "No Tsugumi window or page shows it (one on another project keeps that project, "
+                           "and browser: false opens none); the person can open it in the Tsugumi app or with "
+                           "`tsugumi web`. The project tools work on it either way."
                          : "No Tsugumi window or page is free to show it (one on another project keeps that "
-                           "project); the user opens it in the Tsugumi app or with `tsugumi web` (or call "
-                           "tsugumi_open again without browser: false).";
+                           "project); the person can open it in the Tsugumi app or with `tsugumi web`. The "
+                           "project tools work on it either way.";
     auto text = "Opened " + o.path + " in Tsugumi" + (o.url.empty() ? "" : " (web UI: " + o.url + ")") + ". " +
                 where;
     if (!rules_sent_.exchange(true)) text += "\n\n" + std::string(kInstructions);

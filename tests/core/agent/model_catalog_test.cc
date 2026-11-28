@@ -98,8 +98,14 @@ TEST(ModelCatalog, EverySchemaIsStructuredAndEveryOperationIsReachableOnce) {
 
 TEST(ModelCatalog, FamilyModesRespectRolesAndRejectUnknownArguments) {
   const Catalog catalog;
-  EXPECT_EQ(catalog.FamilyTool("runs", "status", ModelRole::Guide),
-            "run_status");
+  EXPECT_EQ(catalog.FamilyTool("runs", "invocations", ModelRole::Main),
+            "run_invocations");
+  // Run status, history and logs are core tools, also for the guide.
+  const auto guide = catalog.ModelSpecs(ModelRole::Guide);
+  for (const auto* name : {"run_status", "run_history", "log_range"})
+    EXPECT_TRUE(std::ranges::any_of(
+        guide, [&](const ToolSpec& tool) { return tool.name == name; }))
+        << name;
   const auto helper = catalog.ModelSpecs(ModelRole::ScopedHelper);
   EXPECT_TRUE(std::ranges::any_of(helper, [](const ToolSpec& tool) {
     return tool.name == "evaluate_nix";

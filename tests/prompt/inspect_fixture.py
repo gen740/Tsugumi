@@ -8,8 +8,10 @@ TOOLS = [
     {key: tool[key] for key in ("name", "description", "inputSchema")}
     for tool in json.loads((ROOT / "tests/fixtures/agent-tools.json").read_text())
 ]
-# The one-Card fixture stores its initial value as a Nix literal.
+# The one-Card fixture stores its initial value as a Nix literal. project_inspect
+# returns the summary; detail: true the full snapshot.
 SNAPSHOT = json.loads(Path(__file__).with_name("inspect_snapshot.json").read_text())
+SUMMARY = json.loads(Path(__file__).with_name("inspect_summary.json").read_text())
 
 
 PARAM_PATH = "definitions/initial/params.nix"
@@ -28,6 +30,8 @@ def reply(request):
         name = params["name"]
         arguments = params.get("arguments", {})
         if name == "project_inspect" and arguments == {}:
+            result = SUMMARY
+        elif name == "project_inspect" and arguments == {"detail": True}:
             result = SNAPSHOT
         elif name == "project_file_read" and arguments == {"path": PARAM_PATH}:
             source = next(s for s in SNAPSHOT["value"]["sources"] if s["path"] == PARAM_PATH)

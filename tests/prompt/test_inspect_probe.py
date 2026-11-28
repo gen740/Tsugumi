@@ -29,10 +29,13 @@ class InspectProbeTests(unittest.TestCase):
         self.assertFalse(result["isError"])
         body = json.loads(result["content"][0]["text"])
         self.assertEqual(body["reply"], "ProjectSnapshot")
-        definition = body["value"]["definitions"][0]
+        self.assertEqual(body["value"]["cards"][0]["type"], "code")
+        self.assertIn("definitions/initial/params.nix", body["value"]["files"])
+        full = json.loads(call("project_inspect", {"detail": True})["content"][0]["text"])
+        definition = full["value"]["definitions"][0]
         self.assertEqual(json.loads(definition["card_json"]), {"type": "code"})
         self.assertIn("definitions/initial/params.nix",
-                      [source["path"] for source in body["value"]["sources"]])
+                      [source["path"] for source in full["value"]["sources"]])
         self.assertTrue(call("project_inspect", {"id": "initial"})["isError"])
         self.assertTrue(call("project_save", {})["isError"])
         file = call("project_file_read", {"path": PARAM_PATH})

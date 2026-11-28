@@ -68,6 +68,8 @@ The host-side `tsugumi-hostd` owns provider endpoints, revisioned settings and O
 
 ## Tools and the RPC
 
+The Agent and outside agents (MCP) read the same tool catalog: the core tools by name, the rest through the `tools` families. A model reads a shaped view of each reply, while receipts and the clients keep the complete one (`hostd/agent/src/tool_views.cc`): `project_inspect` summarizes Cards, wires, files and the last run unless `detail` asks for the snapshot; a save reports what changed, its diagnostics and the changed Cards' ports; recorded values appear decoded from their FlatBuffers schema as JSON; a still-running `run` or `run_status` names the `run_status` call that waits again (up to 1800 s); and a failed run lists each failed Card with its failure and the end of its log. Detailed file formats are on demand in `demo_read reference/project-files.md` (`hostd/agent/Shared/project-files.md`).
+
 See the [RPC contract](Protocol.md) and [Agent permission boundary](security.md#the-agents-permission-boundary).
 
 ## Web search

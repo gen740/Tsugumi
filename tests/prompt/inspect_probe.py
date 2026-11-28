@@ -78,9 +78,9 @@ def summarize(case, stdout, process_error=None):
     if case == "concept" and calls:
         return dict(report, outcome="fail", reason="General question attempted a tool")
     if case == "project":
-        allowed = {"project_file_read": {"path": PARAM_PATH}, "project_inspect": {}}
+        allowed = {"project_file_read": [{"path": PARAM_PATH}], "project_inspect": [{}, {"detail": True}]}
         if any(c.get("server") != "tsugumi" or c["tool"] not in allowed
-               or c["arguments"] != allowed[c["tool"]] for c in calls):
+               or c["arguments"] not in allowed[c["tool"]] for c in calls):
             return dict(report, outcome="fail", reason="Unexpected tool, server, or arguments")
         if not calls:
             return dict(report, outcome="fail", reason="Project-specific answer has no observed evidence")

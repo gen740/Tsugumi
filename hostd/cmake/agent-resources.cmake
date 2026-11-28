@@ -1,7 +1,7 @@
 # Host state and Agent execution live in the host service, independently of project
 # lifetimes. Frontends use the separate agent.fbs and host.fbs contracts.
 set(_agent_prompts "")
-foreach(prompt system-prompt guide-prompt demo-skill review-skill rerun-compare-skill helpers-skill)
+foreach(prompt system-prompt guide-prompt demo-skill review-skill rerun-compare-skill helpers-skill project-files)
   string(REPLACE "-" "_" symbol ${prompt})
   set(output ${CMAKE_CURRENT_BINARY_DIR}/agent_${symbol}.cc)
   set(prompt_options "")

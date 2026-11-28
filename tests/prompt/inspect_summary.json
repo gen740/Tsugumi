@@ -1,0 +1,30 @@
+{
+  "reply": "ProjectSnapshot",
+  "value": {
+    "project_id": "1ac641fe-18e2-404c-89bc-e7a6bcf7679b",
+    "rev": 0,
+    "execution_rev": 0,
+    "settings": {
+      "name": "probe",
+      "nixPath": []
+    },
+    "cards": [
+      {
+        "card": "initial",
+        "type": "code",
+        "inputs": ["start"],
+        "outputs": ["value: collatz.Number"]
+      }
+    ],
+    "wires": [],
+    "files": [
+      "definitions/initial/_outputs.fbs",
+      "definitions/initial/params.nix"
+    ],
+    "diagnostics": [],
+    "run": {
+      "state": "idle"
+    },
+    "detail": "project_inspect with detail: true adds each definition's _card.json and README.md, source hashes, resolved ports with Nix references, the layout and the execution services."
+  }
+}

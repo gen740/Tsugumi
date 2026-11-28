@@ -31,6 +31,11 @@ struct Decisions;
 namespace tsugumi::agent {
 struct Providers;
 struct Turns;
+// A run or run_status call waits at most this long for the run to end.
+inline constexpr uint64_t kMaxRunWaitSeconds = 1800;
+// A failed run's result names this many failed Cards with their log tails.
+inline constexpr size_t kFailedCardsShown = 5;
+inline constexpr uint32_t kFailedLogTailBytes = 2048;
 struct Tools {
   using Conversation = ConversationStore::Conversation;
   using Project = host::ProjectRegistry::Project;
@@ -116,6 +121,11 @@ struct Tools {
       -> HelperScope::Reader;
   auto ScopedResult(HelperScope& scope, const ToolCall& call, ToolResult result,
                     const HelperScope::Reader& read) -> ToolResult;
+  /** The model's view of a call's result (tool_views.hh). */
+  auto ForModel(const ToolCall& call, ToolResult result) -> ToolResult;
+  /** A failed run's result with its failed Cards and their log tails. */
+  auto WithFailedCards(const std::string& project, std::string result,
+                       std::stop_token stop) -> std::string;
   auto ExecuteTool(const std::string& conversation,
                    const std::string& requested_project, const ToolCall& call,
                    bool wait, std::stop_token stop, bool helper = false,

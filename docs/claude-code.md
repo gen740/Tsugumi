@@ -61,7 +61,8 @@ The same tools are subcommands of the `tsugumi` command, generated from the cata
 tsugumi --help                      # the tools and families
 tsugumi run plan --help             # one tool's options, from its schema
 tsugumi project inspect             # the project at or above this folder (or --project <folder>)
-tsugumi runs status --run-id <id>   # a family action (through the `tools` tool)
+tsugumi run status --run-id <id>    # a run's status
+tsugumi runs cancel --run-id <id>   # a family action (through the `tools` tool)
 tsugumi agent access --project-id <id> --access Read
 tsugumi call ConversationGetRequest '{"conversation_id":"…"}'   # one raw Agent request, for debugging
 ```

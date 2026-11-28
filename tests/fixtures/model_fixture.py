@@ -280,7 +280,7 @@ def search_reply(query, kind, rest):
     if kind and kind.lower().startswith("with"):
         return [{"type": "text", "text": "Looking it up."}, use], "pause_turn"
     if kind:
-        return [use, {"type": "tool_use", "id": "toolu_" + uuid.uuid4().hex[:12], "name": "project_inspect", "input": {}}], "tool_use"
+        return [use, {"type": "tool_use", "id": "toolu_" + uuid.uuid4().hex[:12], "name": "project_inspect", "input": {"detail": True}}], "tool_use"
     return [{"type": "text", "text": "Looking it up."}, use,
             {"type": "web_search_tool_result", "tool_use_id": use["id"], "content": results}] + answer, "end_turn"
 
@@ -327,7 +327,7 @@ def implement(definition):
 def decide_drafts(messages, text, start):
     results = tool_results(messages[start + 1:])
     if not results:
-        return ("tool", "project_inspect", {})
+        return ("tool", "project_inspect", {"detail": True})
     name, res, is_error = results[-1]
     value = res.get("value", {})
     if name == "project_inspect":
@@ -381,7 +381,7 @@ def last_comment_task(messages):
 def decide_comments(messages, text, start):
     results = tool_results(messages[start + 1:])
     if not results:
-        return ("tool", "project_inspect", {})
+        return ("tool", "project_inspect", {"detail": True})
     name, res, is_error = results[-1]
     value = res.get("value", {})
     if name == "project_inspect":
@@ -464,7 +464,7 @@ def last_permission_task(messages):
 def decide_permission(messages, card, start):
     results = tool_results(messages[start + 1:])
     if not results:
-        return ("tool", "project_inspect", {})
+        return ("tool", "project_inspect", {"detail": True})
     name, res, is_error = results[-1]
     value = res.get("value", {}) if isinstance(res, dict) else {}
     if name == "project_inspect":
@@ -523,7 +523,7 @@ def decide_guide(messages, tools):
         return ("text", f"The run {e.group(1)} ended: {e.group(2)}.")
     results = tool_results(messages[start + 1:])
     if not results:
-        return ("tool", "project_inspect", {})
+        return ("tool", "project_inspect", {"detail": True})
     if len(results) == 1:
         return ("tool", "project_save", {"base_rev": "0", "changes": []})
     if len(results) == 2:
@@ -585,7 +585,7 @@ def decide(messages, system="", tools=()):
     # Only results after the latest task request count.
     results = tool_results(messages[start + 1:])
     if not results:
-        return ("tool", "project_inspect", {})
+        return ("tool", "project_inspect", {"detail": True})
     name, res, is_error = results[-1]
     value_obj = res.get("value", {})
     if is_error or "error" in res:

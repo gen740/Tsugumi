@@ -169,6 +169,10 @@ auto ObjectSchema(const reflection::Object& object, int depth, bool top)
     properties["fill_description"] =
         R"({"type":"string","description":"Fill an empty README.md description, preserving existing text."})";
   }
+  // How much of the snapshot a model reads (tool_views.hh).
+  if (object.name()->str() == "Tsugumi.RPC.ProjectInspectRequest")
+    properties["detail"] =
+        R"({"type":"boolean","description":"Return the full snapshot instead of the summary."})";
   if (object.name()->str() == "Tsugumi.RPC.CardIdRequest") {
     properties.erase("stem");
     properties["name"] =
@@ -361,6 +365,16 @@ Catalog::Catalog() {
         tool.spec.description =
             "Reserve a permanent Card id from name; returns id. project_path "
             "selects an external project; omitted means root.";
+      if (tool.spec.name == "project_inspect")
+        tool.spec.description =
+            "Returns the project's revision, Cards (type, title, ports with "
+            "their types, params, diagnostics), wires, files, settings, notes "
+            "and last run. detail: true returns the full snapshot (_card.json "
+            "and README.md of each Card, source hashes, resolved ports, "
+            "layout, execution services).";
+      if (tool.spec.name == "run_record")
+        tool.spec.description +=
+            " Recorded values are decoded from their schema as JSON (value).";
       if (tool.spec.name == "run_value_read" ||
           tool.spec.name == "artifact_read" || tool.spec.name == "log_range")
         tool.spec.description +=
@@ -430,7 +444,8 @@ auto Catalog::AllSpecs() const -> std::vector<ToolSpec> {
        R"({"type":"object","properties":{},"additionalProperties":false})"});
   specs.push_back(
       {"demo_read",
-       "Read a bundled demo or reference file; path is relative to demos/.",
+       "Read a bundled demo or reference file (reference/cards.md, "
+       "reference/project-files.md); path is relative to demos/.",
        R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})"});
   {
     const auto definition = json::Object(

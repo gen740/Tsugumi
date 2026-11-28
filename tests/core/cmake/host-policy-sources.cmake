@@ -12,6 +12,7 @@ if(NOT TSUGUMI_NATIVE_DARWIN_TESTS)
     host/components_test.cc
     agent/document_edits_test.cc
     agent/catalog_test.cc
+    agent/tool_views_test.cc
     agent/version_find_test.cc
     agent/save_policy_test.cc
     agent/skills_read_test.cc

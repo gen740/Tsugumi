@@ -267,8 +267,8 @@ class AgentFixture : public ::testing::Test {
     return Call(*external, A::RequestPayload::ToolCallRequest, [&](Builder& b) {
       return A::CreateToolCallRequest(
                  b, b.CreateString(conversation), b.CreateString(project_id),
-                 b.CreateString("project_inspect"), b.CreateString("{}"),
-                 b.CreateString(operation))
+                 b.CreateString("project_inspect"),
+                 b.CreateString(R"({"detail":true})"), b.CreateString(operation))
           .Union();
     });
   }

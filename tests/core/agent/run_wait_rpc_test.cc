@@ -336,13 +336,12 @@ TEST_F(AgentRunWaitFixture,
   const auto run = RunId(StartRun(conversation));
   Entered();
   ModelServer model;
-  model.Queue(AnthropicFamilyTool("wait-model", "runs", "status",
-                                  WaitArguments(run, 300)));
+  model.Queue(AnthropicTool("wait-model", "run_status", WaitArguments(run, 300)));
   model.Queue(AnthropicText("Run ended."));
   Configure(model);
   ASSERT_TRUE(Send(conversation, "Wait for the result.").Code().empty());
   ASSERT_TRUE(model.WaitForRequests(1));
-  ToolStarted(conversation, "tools");
+  ToolStarted(conversation, "run_status");
   const auto other = Conversation("other-conversation");
   ASSERT_TRUE(Inspect(other).Code().empty());
   EXPECT_TRUE(JsonBool(Get(conversation).View(), "/busy"));
@@ -361,12 +360,11 @@ TEST_F(AgentRunWaitFixture, StopInterruptsAModelWaitWithoutAnotherModelStep) {
   const auto run = RunId(StartRun(conversation));
   Entered();
   ModelServer model;
-  model.Queue(AnthropicFamilyTool("wait-stop", "runs", "status",
-                                  WaitArguments(run, 300)));
+  model.Queue(AnthropicTool("wait-stop", "run_status", WaitArguments(run, 300)));
   Configure(model);
   ASSERT_TRUE(Send(conversation, "Wait for this run.").Code().empty());
   ASSERT_TRUE(model.WaitForRequests(1));
-  ToolStarted(conversation, "tools");
+  ToolStarted(conversation, "run_status");
   ASSERT_TRUE(Stop(conversation).Code().empty());
   WaitUntilIdle(conversation);
   EXPECT_EQ(model.Requests().size(), 1u);
@@ -615,8 +613,7 @@ TEST_F(AgentRunWaitFixture, HelperCannotWaitOnAnUnownedRun) {
   const auto run = RunId(StartRun(conversation));
   Entered();
   ModelServer model;
-  model.Queue(AnthropicFamilyTool("helper-wait", "runs", "status",
-                                  WaitArguments(run, 300)));
+  model.Queue(AnthropicTool("helper-wait", "run_status", WaitArguments(run, 300)));
   model.Queue(AnthropicText("Run is outside my scope."));
   Configure(model);
   const auto delegated = Tool(

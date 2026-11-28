@@ -780,7 +780,7 @@ TEST_F(AgentProjectFixture, CopyMovesFilesThroughASaveWithoutContentInResults) {
   EXPECT_EQ(Events(conversation).View().find(marker), std::string::npos);
   EXPECT_EQ(Read(directory.path / "project/definitions/data/large.csv"),
             content);
-  EXPECT_EQ(JsonString(result, "/value/delta/origin"), "agent");
+  EXPECT_EQ(JsonString(result, "/value/origin"), "agent");
   const auto stat = Tool(conversation, "project_file_stat",
                          R"({"path":"definitions/data/large.csv"})");
   ASSERT_TRUE(stat.Code().empty());
@@ -853,7 +853,7 @@ TEST_F(AgentProjectFixture,
   ASSERT_TRUE(edited.Code().empty()) << edited.View();
   const auto text = JsonString(edited.View(), "/text");
   ASSERT_EQ(JsonUInt(text, "/value/exit_code"), 0u);
-  EXPECT_EQ(JsonString(text, "/value/save/delta/origin"), "agent");
+  EXPECT_EQ(JsonString(text, "/value/save/origin"), "agent");
   EXPECT_EQ(Read(directory.path / "project/definitions/edit/src/data.txt"),
             "after\n");
   const auto copied = Tool(
@@ -2241,9 +2241,7 @@ TEST_F(AgentProjectFixture,
        R"({"base_rev":0,"changes":[{"value_type":"RemoveDefinition","value":{"id":"allowed"}}]})"}};
   for (size_t i = 0; i < calls.size(); ++i) {
     const auto id = "scope-call-" + std::to_string(i);
-    model.Queue(calls[i].first == "log_range"
-                    ? AnthropicFamilyTool(id, "runs", "logs", calls[i].second)
-                    : AnthropicTool(id, calls[i].first, calls[i].second));
+    model.Queue(AnthropicTool(id, calls[i].first, calls[i].second));
   }
   model.Queue(AnthropicText("Scope checks complete."));
   Configure(model);

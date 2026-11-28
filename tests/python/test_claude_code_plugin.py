@@ -402,6 +402,9 @@ def test_open_runs_core_tools_and_only_the_user_answers_decisions(plugin):
     try:
         text, error = mcp.call("project_inspect", {})
         assert not error, text
+        assert "resolution" not in json.loads(text)["value"]
+        text, error = mcp.call("project_inspect", {"detail": True})
+        assert not error, text
         snap = json.loads(text)
         project = json.loads(snap["value"]["project_json"])
         project["name"] = "renamed by Claude Code"
@@ -477,7 +480,8 @@ def test_open_shows_the_project_without_taking_another_tab_away(plugin):
         assert told(home) == b
         # No page free: nobody loses a project.
         text, error = mcp.call("tsugumi_open", {"folder": "c", "browser": False})
-        assert not error and "No Tsugumi window or page is free" in text, text
+        assert not error and "No Tsugumi window or page shows it" in text, text
+        assert "without browser: false" not in text
         # A page back on Home is free again.
         on_a.call("HostPageRequest")
         text, error = mcp.call("tsugumi_open", {"folder": "c", "browser": False})
@@ -509,11 +513,11 @@ def test_tool_subcommands_work_as_the_external_principal(tmp_path):
         inspected = tsugumi("project", "inspect")
         assert inspected.returncode == 0, inspected.stdout
         assert json.loads(inspected.stdout)["reply"] == "ProjectSnapshot"
-        # A family action: `tsugumi runs status`, typed from the project's `tools` listing.
-        status = tsugumi("runs", "status")
+        status = tsugumi("run", "status")
         assert status.returncode == 0, status.stdout
         assert json.loads(status.stdout)["reply"] == "RunStatus"
+        # A family action (`tsugumi runs cancel`), typed from the project's `tools` listing.
         actions = tsugumi("runs", "--help")
-        assert actions.returncode == 0 and "  runs status - " in actions.stdout
+        assert actions.returncode == 0 and "  runs cancel - " in actions.stdout
     finally:
         stop_resident_services(tmp_path)

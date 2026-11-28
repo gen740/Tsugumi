@@ -2,10 +2,15 @@
   {
     "name": "project_inspect",
     "payloadType": 4,
-    "description": "ProjectInspect: -> ProjectSnapshot. No subscription, build or reload.",
+    "description": "Returns the project's revision, Cards (type, title, ports with their types, params, diagnostics), wires, files, settings, notes and last run. detail: true returns the full snapshot (_card.json and README.md of each Card, source hashes, resolved ports, layout, execution services).",
     "inputSchema": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "detail": {
+          "type": "boolean",
+          "description": "Return the full snapshot instead of the summary."
+        }
+      },
       "additionalProperties": false
     },
     "mutating": false
