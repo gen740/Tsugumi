@@ -297,6 +297,53 @@ import TsugumiTestSupport
   let remoteRecords = cachedRecords.filter { $0.stage != .build }
   let remote = StagePipeline(stages: order, records: remoteRecords, service: "ttl", live: nil, now: 9_000)
   #expect(try step(remote, .build).status == .done && step(remote, .build).onWorker)
+
+  // Stopped while the worker still prepared (the Card never started): the
+  // build carries the stop and the whole time, the execution did not run.
+  let stoppedRecords = [record(.prepare, .done, 0, 100), record(.evaluate, .done, 100, 200), record(.execute, .cancelled, 200, 290_200)]
+  for before in WorkerStages.beforeCard {
+    let stopped = StagePipeline(stages: order, records: stoppedRecords, service: "ttl", live: nil, now: 300_000, lastActivity: before)
+    let b = try step(stopped, .build)
+    #expect(b.status == .cancelled && b.seconds == 290 && b.onWorker, "\(before)")
+    #expect(try step(stopped, .execute).status == .notRun && step(stopped, .execute).seconds == nil)
+  }
+  let failedBefore = StagePipeline(stages: order, records: [stoppedRecords[0], stoppedRecords[1], record(.execute, .failed, 200, 1_200)],
+                                   service: "ttl", live: nil, now: 2_000, lastActivity: .building)
+  #expect(try step(failedBefore, .build).status == .failed && step(failedBefore, .execute).status == .notRun)
+  // Stopped once the Card ran (or while it pushed its outputs after): the build is done, the execution stopped.
+  for after in [Tsugumi_Data_ExecutionActivity.running, .pushing] {
+    let stopped = StagePipeline(stages: order, records: stoppedRecords, service: "ttl", live: nil, now: 300_000, lastActivity: after)
+    #expect(try step(stopped, .build).status == .done && step(stopped, .build).seconds == nil)
+    #expect(try step(stopped, .execute).status == .cancelled && step(stopped, .execute).seconds == 290)
+  }
+  // The Card's face agrees with the pipeline line.
+  var ended = CardRunState(state: .cancelled, invocation: 1, phase: .execute)
+  ended.executionService = "ttl"
+  ended.executionLastActivity = .preparing
+  ended.stages = [record(.prepare, .done, 0, 10), record(.evaluate, .done, 10, 20), record(.execute, .cancelled, 20, 290_020)]
+  let face = StageProgress.of(ended, code: true)
+  let faceBuild = try #require(face.items.first { $0.stage == .build })
+  let faceRun = try #require(face.items.first { $0.stage == .execute })
+  #expect(faceBuild.status == .cancelled && faceBuild.seconds == 290.02)
+  #expect(faceRun.status == .notRun && faceRun.seconds == nil && face.failedPart == .build)
+  let line = StagePipeline(stages: [.prepare, .evaluate, .build, .execute], records: ended.stages, service: "ttl", live: ended, now: 300_000)
+  #expect(line.steps.map(\.status) == [.done, .done, .cancelled, .notRun])
+}
+
+/// An open log section whose stream has not loaded yet says nothing (no
+/// "empty" wording that flashes before the text arrives); after a moment,
+/// that it loads. The Web UI checks the same (stagePipeline.ts).
+@Test func aLoadingLogSectionShowsNoEmptyPlaceholder() {
+  for section in ["build", "execute", "save"] {
+    #expect(StageLogView.sectionPlaceholder(section, known: true, invocation: 1, loaded: false, waiting: nil, slow: false) == "")
+    #expect(StageLogView.sectionPlaceholder(section, known: false, invocation: nil, loaded: false, waiting: nil, slow: false) == "")
+    #expect(StageLogView.sectionPlaceholder(section, known: true, invocation: 1, loaded: false, waiting: nil, slow: true)
+      == String(localized: "読み込んでいます…"))
+  }
+  #expect(StageLogView.sectionPlaceholder("execute", known: true, invocation: 1, loaded: true, waiting: nil, slow: false)
+    == String(localized: "出力はありません"))
+  #expect(StageLogView.sectionPlaceholder("execute", known: true, invocation: nil, loaded: false, waiting: nil, slow: false)
+    == String(localized: "この実行では、この Card はまだ動いていません"))
 }
 
 /// On the Card's face no two stage circles run at once: while a worker
@@ -614,7 +661,7 @@ import TsugumiTestSupport
   d.failure = "\nerror: no such file\n  at main.py:3"
   d.stage = StageProgress(items: [.init(stage: .build, status: .done), .init(stage: .execute, status: .failed),
                                   .init(stage: .validate, status: .notRun)])
-  #expect(d.statusLine().text == Stage.execute.name + ": no such file")
+  #expect(d.statusLine().text == "run: no such file")
   #expect(d.statusLine().tone == .failed)
   #expect(d.statusLine().hover == nil)
   // The shown build stage covers preparation, evaluation and build: the gist

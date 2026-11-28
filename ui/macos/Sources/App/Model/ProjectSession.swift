@@ -71,6 +71,8 @@ struct CardRunState: Equatable {
   var executionService: String?
   var executionActivity: Tsugumi_Data_ExecutionActivity = .unspecified
   var executionActivityDetail: String?
+  /// The last activity the remote job reported, kept after it ended.
+  var executionLastActivity: Tsugumi_Data_ExecutionActivity = .unspecified
   /// CPU time of its process tree on a remote worker, and when it last wrote
   /// output or build log (core clock).
   var cpuMs: UInt64?
@@ -924,6 +926,7 @@ final class ProjectSession {
       next.executionService = inv.executionService
       next.executionActivity = inv.executionActivity
       next.executionActivityDetail = inv.executionActivityDetail
+      next.executionLastActivity = inv.executionLastActivity
       next.cpuMs = inv.cpuMs
       next.lastOutputAt = inv.lastOutputAt
       if (inv.state == .running || inv.state == .preparing) && inv.transferDirection?.isEmpty == false && inv.transferDone < inv.transferTotal {

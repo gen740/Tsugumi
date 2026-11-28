@@ -25,6 +25,8 @@ struct StageLogView: View {
                                 "save": LogStreamReader(form: .journal)]
   @State private var exporting = false
   @State private var exportError: String?
+  /// An open section has been loading for a moment.
+  @State private var slow = false
 
   private struct Refresh: Equatable {
     let runId: String
@@ -146,6 +148,13 @@ struct StageLogView: View {
     .onChange(of: session.connected) { readers.values.forEach { $0.update() } }
     .onChange(of: state) { readers.values.forEach { $0.update() } }
     .onChange(of: focus, initial: true) { open(focus) }
+    // A section still loading shows nothing; after a moment, a quiet word that it loads.
+    .task(id: loading) {
+      slow = false
+      guard loading else { return }
+      try? await Task.sleep(for: .milliseconds(300))
+      if !Task.isCancelled { slow = true }
+    }
   }
 
   private func open(_ stage: Stage?) {
@@ -161,7 +170,8 @@ struct StageLogView: View {
   private var pipeline: some View {
     TimelineView(.periodic(from: .now, by: 1)) { _ in
       StagePipelineView(line: StagePipeline(stages: groups.flatMap(\.stages), records: stages, service: service,
-                                            live: live, now: session.coreNow())) { open($0) }
+                                            live: live, now: session.coreNow(),
+                                            lastActivity: live?.executionLastActivity ?? info?.record?.summary.executionLastActivity)) { open($0) }
     }
   }
 
@@ -169,9 +179,9 @@ struct StageLogView: View {
     switch st {
     case .prepare: return String(localized: "準備")
     case .evaluate: return String(localized: "Nix 評価")
-    case .build: return String(localized: "ビルド")
-    case .execute: return String(localized: "実行")
-    case .validate: return String(localized: "出力検証")
+    case .build: return "build"
+    case .execute: return "run"
+    case .validate: return "validate"
     case .save: return String(localized: "保存")
     default: return st.label
     }
@@ -189,8 +199,8 @@ struct StageLogView: View {
         StatusSymbol(status: st)
         Text(g.title)
         if g.id == "execute", let service { Text("(\(service))").foregroundStyle(.secondary) }
-        if records(g).contains(where: { $0.outcome == .cached }) { Text("cache").font(.caption).foregroundStyle(.blue) }
-        if records(g).contains(where: { $0.outcome == .reused }) { Text("再利用").font(.caption).foregroundStyle(.teal) }
+        if records(g).contains(where: { $0.outcome == .cached }) { Text("cache").font(.caption).foregroundStyle(StagePalette.reuse) }
+        if records(g).contains(where: { $0.outcome == .reused }) { Text("再利用").font(.caption).foregroundStyle(StagePalette.reuse) }
         Spacer()
         TimelineView(.periodic(from: .now, by: 1)) { _ in
           Text(summary(g, st)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
@@ -245,15 +255,31 @@ struct StageLogView: View {
   }
 
   private func placeholder(_ g: Group, _ reader: LogStreamReader) -> String {
-    if shownInvocation == nil || (!reader.loaded && reader.error == nil) {
-      return info == nil && live == nil ? String(localized: "読み込んでいます…") : String(localized: "この実行では、この Card はまだ動いていません")
-    }
-    switch g.id {
+    Self.sectionPlaceholder(g.id, known: info != nil || live != nil || invocation != nil, invocation: shownInvocation,
+                            loaded: reader.loaded || reader.error != nil,
+                            waiting: activity.flatMap { $0.waiting ? $0.text : nil }, slow: slow)
+  }
+
+  /// An open section still reading its stream.
+  private var loading: Bool {
+    groups.contains { g in isOpen(g) && readers[g.id].map { !$0.loaded && $0.error == nil } == true }
+  }
+
+  /// What an open log section says while it has no text. Only a stream that
+  /// finished loading empty says it is empty; while it loads the section
+  /// shows nothing, and after a moment (`slow`) a quiet word that it loads.
+  /// `known`: the invocation's record or live state is in; `invocation`: the
+  /// one shown (nil: the Card has not run in this run); `waiting`: what a
+  /// waiting execution waits for. The same rule as the Web UI's
+  /// sectionPlaceholder.
+  static func sectionPlaceholder(_ section: String, known: Bool, invocation: UInt64?, loaded: Bool,
+                                 waiting: String?, slow: Bool) -> String {
+    if known && invocation == nil { return String(localized: "この実行では、この Card はまだ動いていません") }
+    if !known || !loaded { return slow ? String(localized: "読み込んでいます…") : "" }
+    switch section {
     case "build": return String(localized: "準備・評価・build の出力はありません（キャッシュや再利用のときは空です）")
     case "save": return String(localized: "記録された出来事はありません")
-    default:
-      if let activity, activity.waiting { return activity.text }
-      return String(localized: "出力はありません")
+    default: return waiting ?? String(localized: "出力はありません")
     }
   }
 
@@ -338,8 +364,8 @@ enum SectionStatus: Equatable {
 }
 
 /// A stage's state as a plain symbol, never shaped like a control: a check,
-/// a spinning indicator, an hourglass, a thin empty circle, a cross.
-/// Cached and reused stages are a check in blue and teal.
+/// a spinning indicator, an hourglass, a thin empty circle, a cross, a bar;
+/// in the stage colours (StagePalette).
 struct StatusSymbol: View {
   let status: SectionStatus
   var size: CGFloat = 14
@@ -348,12 +374,10 @@ struct StatusSymbol: View {
     Group {
       switch status {
       case .running: ProgressView().controlSize(.mini).scaleEffect(size / 16)
-      case .waiting: Image(systemName: "hourglass").foregroundStyle(.orange)
-      case .done: Image(systemName: "checkmark").foregroundStyle(.green)
-      case .cached: Image(systemName: "checkmark").foregroundStyle(.blue)
-      case .reused: Image(systemName: "checkmark").foregroundStyle(.teal)
-      case .failed: Image(systemName: "xmark").foregroundStyle(.red)
-      case .cancelled: Image(systemName: "minus").foregroundStyle(.brown)
+      case .waiting: Image(systemName: "hourglass").foregroundStyle(StagePalette.color(status))
+      case .done, .cached, .reused: Image(systemName: "checkmark").foregroundStyle(StagePalette.color(status))
+      case .failed: Image(systemName: "xmark").foregroundStyle(StagePalette.color(status))
+      case .cancelled: Image(systemName: "minus").foregroundStyle(StagePalette.color(status))
       case .pending:
         Image(systemName: "circle").font(.system(size: size * 0.6, weight: .light)).foregroundStyle(.secondary)
       }

@@ -100,6 +100,7 @@ std::string detail_bytes(const InvocationSummaryData& s) {
   d.secrets = s.secrets;
   d.build_substituter = s.build_substituter;
   d.build_pushed = s.build_pushed;
+  d.execution_last_activity = static_cast<int32_t>(s.execution_last_activity);
   if (s.build_push)
     d.build_push = std::make_unique<Tsugumi::Data::BuildPushT>(*s.build_push);
   for (const auto& probe : s.worker_probes)
@@ -134,6 +135,11 @@ void detail_into(const std::string& bytes, InvocationSummaryData& s) {
   s.build_substituter = d.build_substituter;
   s.build_pushed = d.build_pushed;
   if (d.build_push) s.build_push = *d.build_push;
+  if (d.execution_last_activity > 0 &&
+      d.execution_last_activity <=
+          static_cast<int32_t>(ExecutionActivity::pushing))
+    s.execution_last_activity =
+        static_cast<ExecutionActivity>(d.execution_last_activity);
   s.worker_probes.clear();
   for (const auto& probe : d.worker_probes) s.worker_probes.push_back(*probe);
   for (const auto& artifact : d.artifact_outputs) {

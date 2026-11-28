@@ -90,9 +90,8 @@
 .cv-face-marks { display: inline-flex; align-items: center; flex: none; }
 .cv-status-line { display: block; }
 .cv-dots { position: relative; display: flex; flex-direction: column; align-items: center; flex: none; }
-.cv-dots-line { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: color-mix(in srgb, var(--secondary) 35%, transparent); }
 .cv-dot { display: block; box-sizing: border-box; border-radius: 50%; border-style: solid; background: var(--control-bg); position: relative; }
-.cv-dot.filled { border: 0; }
+.cv-dot-mark { display: block; flex: none; overflow: visible; }
 .cv-dot-running { animation: cv-spin 1s linear infinite; }
 .cv-dot-waiting { border-style: dashed; }
 @keyframes cv-spin { to { transform: rotate(360deg); } }

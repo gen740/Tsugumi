@@ -213,6 +213,8 @@ export interface CardRunState {
   executionService?: string
   executionActivity?: D.ExecutionActivity
   executionActivityDetail?: string
+  /** The last activity the remote job reported, kept after it ended. */
+  executionLastActivity?: D.ExecutionActivity
   /** CPU time of its process tree on a remote worker, and when it last wrote
    *  output or build log (core clock). */
   cpuMs?: number
@@ -289,7 +291,7 @@ export function stageProgressOf(st: CardRunState, code: boolean): StageProgress 
     return { stage: shown, status: mergeStageStatus(parts, ended), seconds }
   })
   const failedPart = [...st.stages].reverse().find((x) => x.outcome === D.StageOutcome.failed || x.outcome === D.StageOutcome.cancelled)?.stage
-  return onWorker({ items, workerReused: st.workerReused, failedPart }, workerStages(st.stages, st.executionService, ended ? undefined : st))
+  return onWorker({ items, workerReused: st.workerReused, failedPart }, workerStages(st.stages, st.executionService, ended ? undefined : st, st.executionLastActivity))
 }
 
 export function remoteExecutionLabel(state: D.RemoteExecutionState | null | undefined): string | undefined {
@@ -901,7 +903,7 @@ export class ProjectSession extends Observable {
         state: inv.state, invocation: n, phase: inv.phase, failure: failureText(inv.failure), notStarted: notStartedText(inv.failure),
         executionState: inv.executionState,
         executionService: sOpt(inv.executionService), executionActivity: inv.executionActivity,
-        executionActivityDetail: sOpt(inv.executionActivityDetail),
+        executionActivityDetail: sOpt(inv.executionActivityDetail), executionLastActivity: inv.executionLastActivity,
         cpuMs: inv.cpuMs !== null ? Number(inv.cpuMs) : undefined, lastOutputAt: inv.lastOutputAt !== null ? Number(inv.lastOutputAt) : undefined,
         transfer: (inv.state === D.CardState.running || inv.state === D.CardState.preparing) && inv.transferDirection && inv.transferDone < inv.transferTotal
           ? L('ファイル転送: {0} ({1}/{2} bytes)', s(inv.transferName), String(inv.transferDone), String(inv.transferTotal)) : undefined,
@@ -2796,8 +2798,9 @@ export const CARD_STATE: Record<number, { label: string; icon: string; color: st
   [D.CardState.ready]: { label: L('実行待ち'), icon: 'hourglass', color: 'orange' },
   [D.CardState.preparing]: { label: L('準備中'), icon: 'gearshape', color: 'orange' },
   [D.CardState.running]: { label: L('実行中'), icon: 'play.circle.fill', color: 'orange' },
-  [D.CardState.succeeded]: { label: L('成功'), icon: 'checkmark.circle.fill', color: 'green' },
-  [D.CardState.failed]: { label: L('失敗'), icon: 'xmark.circle.fill', color: 'red' },
+  // Succeeded and failed in the stage colours (statusSymbol.tsx STAGE_COLOR).
+  [D.CardState.succeeded]: { label: L('成功'), icon: 'checkmark.circle.fill', color: 'stage-done' },
+  [D.CardState.failed]: { label: L('失敗'), icon: 'xmark.circle.fill', color: 'stage-failed' },
   [D.CardState.blocked]: { label: L('ブロック'), icon: 'nosign', color: 'purple' },
   [D.CardState.cancelled]: { label: L('停止済み'), icon: 'stop.circle.fill', color: 'brown' },
   [D.CardState.skipped]: { label: L('スキップ'), icon: 'arrow.uturn.right.circle', color: 'gray' },

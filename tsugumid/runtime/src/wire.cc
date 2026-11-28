@@ -289,6 +289,7 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   if (!resources.IsNull()) ib.add_execution_resources(resources);
   if (s.execution_state) ib.add_execution_state(*s.execution_state);
   ib.add_execution_activity(s.execution_activity);
+  ib.add_execution_last_activity(s.execution_last_activity);
   if (!activity_detail.IsNull())
     ib.add_execution_activity_detail(activity_detail);
   if (s.cpu_ms) ib.add_cpu_ms(*s.cpu_ms);

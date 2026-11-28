@@ -680,7 +680,7 @@ function timelineSvg() {
         return w ? `<rect x="${x0.toFixed(1)}" y="${y}" width="${w.toFixed(1)}" height="${h}" style="fill:${STAGE_COLOR[st.phase] ?? 'var(--gray)'};opacity:0.85"/>` : ''
       }).join('')
       const x0 = x(e.startMs), x1 = Math.max(x0 + 2, x(e.endMs))
-      return `<rect x="${x0.toFixed(1)}" y="${y}" width="${(x1 - x0).toFixed(1)}" height="${h}" rx="2" style="fill:var(--green);opacity:0.35"/>${parts}`
+      return `<rect x="${x0.toFixed(1)}" y="${y}" width="${(x1 - x0).toFixed(1)}" height="${h}" rx="2" style="fill:var(--stage-done);opacity:0.35"/>${parts}`
     }).join('')
     const stripes = rows.map((_, i) => (i % 2 ? `<rect x="0" y="${i * TIMELINE.row}" width="${chartW}" height="${TIMELINE.row}" class="timeline-stripe"/>` : '')).join('')
     return `<div class="w-timeline" style="top:${TIMELINE.top}px;width:${canvas.width}px;height:${height}px">

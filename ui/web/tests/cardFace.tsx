@@ -59,7 +59,7 @@ const long = card('a long name of a Card '.repeat(6))
   assert.equal(statusLine(queued).text, 'waiting for a worker')
   assert.equal(statusLine(succeeded, now).text, `${cardState(D.CardState.succeeded).label} ×3 · ${relativeAge(now - 180_000, now)} · 4.0 s`)
   assert.equal(statusLine(succeeded, now).color, 'secondary')
-  assert.equal(statusLine(failed).text, STAGE_INFO[Stage.execute].name + ': no such file')
+  assert.equal(statusLine(failed).text, 'run: no such file')
   assert.equal(statusLine(failed).color, cardState(D.CardState.failed).color)
   assert.deepEqual([formatShortDuration(4), formatShortDuration(192), formatShortDuration(3723)], ['4.0 s', '3:12', '1:02:03'])
 }
@@ -166,5 +166,15 @@ const long = card('a long name of a Card '.repeat(6))
   // The project's own environment builds first, as the core records it.
   const local = stageProgressOf({ ...live, executionService: 'local', stages: [records[0], { stage: Stage.evaluate, outcome: D.StageOutcome.running, start: 10 }] }, true)
   assert.deepEqual(local.items.filter((i) => i.status === 'running').map((i) => i.stage), [Stage.build])
+  // Stopped while the worker prepared: the face agrees with the log's
+  // pipeline line (build stopped with the time, run not run).
+  const stopped = { ...live, state: D.CardState.cancelled, executionLastActivity: D.ExecutionActivity.preparing,
+    stages: [records[0], records[1], { stage: Stage.execute, outcome: D.StageOutcome.cancelled, start: 20, end: 290_020 }] }
+  const face = Object.fromEntries(stageProgressOf(stopped, true).items.map((i) => [i.stage, i]))
+  assert.ok(face[Stage.build].status === 'cancelled' && face[Stage.build].seconds === 290.02)
+  assert.ok(face[Stage.execute].status === 'notRun' && face[Stage.execute].seconds === undefined)
+  assert.equal(stageProgressOf(stopped, true).failedPart, Stage.build)
+  const line = stagePipeline([Stage.prepare, Stage.evaluate, Stage.build, Stage.execute], stopped.stages, 'ttl', stopped, 300_000)
+  assert.deepEqual(line.steps.map((s) => s.status), ['done', 'done', 'cancelled', 'notRun'])
 }
 console.log('card face: passed')

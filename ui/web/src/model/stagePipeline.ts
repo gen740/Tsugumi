@@ -48,7 +48,7 @@ export function formatAgo(seconds: number): string {
  *  `service`: "local", a worker, or undefined; `live`: the invocation's live
  *  state while the run goes on; `now`: the core's clock (ms since 1970). */
 export function stagePipeline(stages: Stage[], records: StageRecord[], service: string | undefined,
-  live: CardRunState | undefined, now: number): StagePipeline {
+  live: CardRunState | undefined, now: number, lastActivity?: D.ExecutionActivity): StagePipeline {
   const record = (st: Stage) => [...records].reverse().find((r) => r.stage === st)
   const seconds = (r: StageRecord | undefined) => {
     if (r?.start === undefined) return undefined
@@ -61,19 +61,20 @@ export function stagePipeline(stages: Stage[], records: StageRecord[], service: 
     return { stage: st, status: pipelineStatus(r?.outcome), waiting: false, seconds: seconds(r), onWorker: false }
   })
   const step = (st: Stage) => steps.find((s) => s.stage === st)
-  const worker = workerStages(records, service, live)
+  const worker = workerStages(records, service, live, lastActivity ?? live?.executionLastActivity)
   const build = step(Stage.build)
   if (build) {
     build.onWorker = worker.onWorker
     if (worker.build) Object.assign(build, {
       status: worker.build, waiting: worker.buildWaiting,
-      // The worker's build is timed by the execution so far.
-      seconds: worker.build === 'running' ? seconds(record(Stage.execute)) : undefined,
+      // The worker's build is timed by the execution so far, or whole when
+      // the invocation ended before the Card started.
+      seconds: worker.build === 'running' || worker.endedInBuild ? seconds(record(Stage.execute)) : undefined,
     })
   }
   const run = step(Stage.execute)
   if (run) {
-    if (worker.execute) Object.assign(run, { status: worker.execute, seconds: worker.execute === 'pending' ? undefined : run.seconds })
+    if (worker.execute) Object.assign(run, { status: worker.execute, seconds: worker.execute === 'pending' || worker.execute === 'notRun' ? undefined : run.seconds })
     run.waiting = worker.executeWaiting
   }
   const current = steps.find((s) => s.status === 'running')
@@ -86,7 +87,10 @@ export function stagePipeline(stages: Stage[], records: StageRecord[], service: 
  *  While it prepares, builds or fetches it, or waits for its Nix store, the
  *  build is the running (or waiting) stage and the execution has not started;
  *  once the Card itself runs, the build is done. Waiting for a free worker
- *  slot is the execution's wait: nothing is built yet. The same rule as
+ *  slot is the execution's wait: nothing is built yet. An invocation that
+ *  ended (failed or stopped) while the worker still waited for its store,
+ *  prepared, built or fetched never ran the Card: the build carries that end
+ *  and the time, and the execution did not run. The same rule as
  *  WorkerStages in the Mac app. */
 export interface WorkerStages {
   /** The build circle stands for the worker's build. */
@@ -98,13 +102,21 @@ export interface WorkerStages {
   executeWaiting: boolean
   /** The execution runs on a worker, not in the project's own environment. */
   remote: boolean
+  /** The invocation ended before the Card started: the build carries the
+   *  end and the execution's time. */
+  endedInBuild: boolean
 }
 
-export function workerStages(records: StageRecord[], service: string | undefined, live: CardRunState | undefined): WorkerStages {
+/** What the worker does before the Card itself runs. */
+const BEFORE_CARD = [D.ExecutionActivity.waiting_store, D.ExecutionActivity.preparing, D.ExecutionActivity.building, D.ExecutionActivity.substituting]
+
+/** `lastActivity`: the last activity the remote job reported (kept after it ended). */
+export function workerStages(records: StageRecord[], service: string | undefined, live: CardRunState | undefined,
+  lastActivity?: D.ExecutionActivity): WorkerStages {
   const remote = !!service && service !== 'local'
   const activity = executionActivityText(live)
   const execute = [...records].reverse().find((r) => r.stage === Stage.execute)
-  const w: WorkerStages = { onWorker: false, buildWaiting: false, executeWaiting: false, remote }
+  const w: WorkerStages = { onWorker: false, buildWaiting: false, executeWaiting: false, remote, endedInBuild: false }
   if (!remote || !execute || records.some((r) => r.stage === Stage.build)) {
     // The build was the core's own (or kept): only the execution can wait.
     w.executeWaiting = execute?.outcome === D.StageOutcome.running && activity?.waiting === true
@@ -117,18 +129,29 @@ export function workerStages(records: StageRecord[], service: string | undefined
     else if (activity && !activity.queued) Object.assign(w, { build: 'running', buildWaiting: activity.waiting, execute: 'pending' })
     else Object.assign(w, { build: 'pending', executeWaiting: activity?.queued === true })
   } else if (execute.outcome === D.StageOutcome.done) w.build = 'done'
+  else if (execute.outcome === D.StageOutcome.failed || execute.outcome === D.StageOutcome.cancelled) {
+    if (lastActivity !== undefined && BEFORE_CARD.includes(lastActivity)) {
+      Object.assign(w, { build: execute.outcome === D.StageOutcome.failed ? 'failed' : 'cancelled', execute: 'notRun', endedInBuild: true })
+    } else if (lastActivity === D.ExecutionActivity.running || lastActivity === D.ExecutionActivity.pushing) w.build = 'done'
+  }
   return w
 }
 
 /** The build and execution circles of a Card's face as workerStages says:
  *  the worker's build runs before the Card does, never both at once. */
 export function onWorker(progress: StageProgress, worker: WorkerStages): StageProgress {
+  const run = progress.items.find((i) => i.stage === Stage.execute)
   return {
-    ...progress, items: progress.items.map((item) => {
-      if (item.stage === Stage.build && worker.build) return { ...item, status: worker.build, waiting: worker.buildWaiting }
+    ...progress,
+    failedPart: worker.endedInBuild ? Stage.build : progress.failedPart,
+    items: progress.items.map((item) => {
+      if (item.stage === Stage.build && worker.build) {
+        const seconds = worker.endedInBuild && run?.seconds !== undefined ? (item.seconds ?? 0) + run.seconds : item.seconds
+        return { ...item, status: worker.build, waiting: worker.buildWaiting, seconds }
+      }
       if (item.stage !== Stage.execute) return item
       const status = worker.execute ?? item.status
-      return { ...item, status, waiting: worker.executeWaiting && status === 'running' }
+      return { ...item, status, waiting: worker.executeWaiting && status === 'running', seconds: worker.endedInBuild ? undefined : item.seconds }
     }),
   }
 }

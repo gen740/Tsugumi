@@ -554,6 +554,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
           s.execution_activity == ExecutionActivity::unspecified
               ? std::string{}
               : reply->activity_detail.substr(0, 256);
+      if (s.execution_activity != ExecutionActivity::unspecified)
+        s.execution_last_activity = s.execution_activity;
       if (reply->state == "running") {
         s.cpu_ms = reply->cpu_ms;
         // Keep when each derivation started, as the core saw it start.

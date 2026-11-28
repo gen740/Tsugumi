@@ -20,14 +20,19 @@ export function sectionStatus(status: StageStatus, waiting = false): SectionStat
   return status
 }
 
-const SYMBOL: Record<Exclude<SectionStatus, 'running'>, { icon: string; color: string }> = {
-  pending: { icon: 'circle', color: 'secondary' },
-  waiting: { icon: 'hourglass', color: 'orange' },
-  done: { icon: 'checkmark', color: 'green' },
-  cached: { icon: 'checkmark', color: 'blue' },
-  reused: { icon: 'checkmark', color: 'teal' },
-  failed: { icon: 'xmark', color: 'red' },
-  cancelled: { icon: 'minus', color: 'brown' },
+/** The stage states' colours, one set for the Card's circles, the log's
+ *  pipeline line and sections and the hover's stage table (theme colours,
+ *  styles.css): Okabe–Ito, safe for colour-blind readers. Done is blue,
+ *  cached and reused a lighter sky blue, running and waiting orange, failed
+ *  vermillion, stopped grey; shapes and marks tell them apart as well. The
+ *  same set as StagePalette in the Mac app. */
+export const STAGE_COLOR: Record<SectionStatus, string> = {
+  pending: 'secondary', waiting: 'stage-run', running: 'stage-run', done: 'stage-done',
+  cached: 'stage-reuse', reused: 'stage-reuse', failed: 'stage-failed', cancelled: 'stage-cancelled',
+}
+
+const SYMBOL: Record<Exclude<SectionStatus, 'running'>, string> = {
+  pending: 'circle', waiting: 'hourglass', done: 'checkmark', cached: 'checkmark', reused: 'checkmark', failed: 'xmark', cancelled: 'minus',
 }
 
 export function StatusSymbol({ status, size = 13 }: { status: SectionStatus; size?: number }) {
@@ -40,10 +45,9 @@ export function StatusSymbol({ status, size = 13 }: { status: SectionStatus; siz
       </span>
     )
   }
-  const { icon, color } = SYMBOL[status]
   return (
-    <span className={`status-symbol status-${status}`} role="img" aria-label={label} style={{ width: size, height: size, color: `var(--${color})` }}>
-      <Icon name={icon} size={status === 'pending' ? size * 0.7 : size * 0.85} />
+    <span className={`status-symbol status-${status}`} role="img" aria-label={label} style={{ width: size, height: size, color: `var(--${STAGE_COLOR[status]})` }}>
+      <Icon name={SYMBOL[status]} size={status === 'pending' ? size * 0.7 : size * 0.85} />
     </span>
   )
 }

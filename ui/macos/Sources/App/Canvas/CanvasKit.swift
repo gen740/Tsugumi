@@ -42,9 +42,6 @@ enum Stage: Int, CaseIterable, Identifiable {
   var name: String {
     switch self {
     case .prepare: return String(localized: "準備")
-    case .build: return String(localized: "ビルド")
-    case .execute: return String(localized: "実行")
-    case .validate: return String(localized: "出力検証")
     default: return label
     }
   }
@@ -215,22 +212,27 @@ struct StageProgress: Equatable {
       return .init(stage: shown, status: StageProgress.merge(parts, ended: ended), seconds: seconds)
     }
     return StageProgress(items: items, workerReused: s.workerReused, failedPart: failedPart)
-      .onWorker(WorkerStages(records: s.stages, service: s.executionService, live: ended ? nil : s))
+      .onWorker(WorkerStages(records: s.stages, service: s.executionService, live: ended ? nil : s,
+                             lastActivity: s.executionLastActivity))
   }
 
   /// The build and execution circles as WorkerStages says: the worker's
   /// build runs before the Card does, never both at once.
   func onWorker(_ worker: WorkerStages) -> StageProgress {
     var next = self
+    let run = items.first { $0.stage == .execute }
+    if worker.endedInBuild { next.failedPart = .build }
     for i in next.items.indices {
       switch next.items[i].stage {
       case .build:
         if let status = worker.build {
           next.items[i].status = status
           next.items[i].waiting = worker.buildWaiting
+          if worker.endedInBuild, let s = run?.seconds { next.items[i].seconds = (next.items[i].seconds ?? 0) + s }
         }
       case .execute:
         if let status = worker.execute { next.items[i].status = status }
+        if worker.endedInBuild { next.items[i].seconds = nil }
         next.items[i].waiting = worker.executeWaiting && next.items[i].status == .running
       default: break
       }
@@ -1511,8 +1513,8 @@ private struct NewPortMark: View {
 }
 
 /// Stages of the latest invocation as small circles stacked top to bottom
-/// (build, run, validate) on a thin line: a timeline. Colour and fill say how
-/// each went; a click opens that stage in the log.
+/// (build, run, validate). Shape and colour say how each went; a click opens
+/// that stage in the log.
 struct StageDots: View {
   let progress: StageProgress
   var zoom: Double = 1
@@ -1523,7 +1525,6 @@ struct StageDots: View {
   private func s(_ v: CGFloat) -> CGFloat { v * CGFloat(zoom) }
 
   var body: some View {
-    let n = CGFloat(progress.items.count)
     VStack(spacing: s(Self.gap)) {
       ForEach(progress.items) { item in
         let waits = item.waiting
@@ -1533,11 +1534,6 @@ struct StageDots: View {
           .help(Self.help(item, tappable: onTap != nil, waiting: waits))
           .accessibilityLabel(item.stage.label + "：" + SectionStatus(item.status, waiting: waits).label)
       }
-    }
-    .background {
-      // From the first circle's centre to the last one's.
-      Rectangle().fill(.secondary.opacity(0.35))
-        .frame(width: max(0.5, s(1)), height: max(0, s((n - 1) * (Self.dot + Self.gap))))
     }
     .accessibilityElement(children: .contain)
   }
@@ -1550,28 +1546,52 @@ struct StageDots: View {
     return t
   }
 
-  static func color(_ st: StageProgress.Status) -> Color {
-    switch st {
-    case .pending, .notRun: return .secondary
-    case .running: return .orange
-    case .done: return .green
-    case .cached: return .blue
-    case .reused: return .teal
-    case .failed: return .red
-    case .cancelled: return .brown
+}
+
+/// The stage states' colours, one set for the Card's circles, the log's
+/// pipeline line and sections and the hover's stage table: Okabe–Ito, safe
+/// for colour-blind readers, darker on a light ground. Done is blue, cached
+/// and reused a lighter sky blue, running and waiting orange, failed
+/// vermillion, stopped grey; shapes and marks tell them apart as well. The
+/// same set as STAGE_COLOR in the Web UI (styles.css).
+enum StagePalette {
+  static let done = dynamic(0x0072B2, dark: 0x3D9BE0)
+  static let reuse = dynamic(0x3D9BE0, dark: 0x9BD3F3)
+  static let run = dynamic(0xC07A00, dark: 0xE69F00)
+  static let failed = dynamic(0xD55E00, dark: 0xF2762E)
+  static let cancelled = dynamic(0x8E8E93, dark: 0x98989D)
+
+  static func color(_ status: SectionStatus) -> Color {
+    switch status {
+    case .pending: return .secondary
+    case .waiting, .running: return run
+    case .done: return done
+    case .cached, .reused: return reuse
+    case .failed: return failed
+    case .cancelled: return cancelled
     }
+  }
+
+  private static func dynamic(_ light: UInt32, dark: UInt32) -> Color {
+    func rgb(_ v: UInt32) -> NSColor {
+      NSColor(srgbRed: CGFloat(v >> 16 & 0xFF) / 255, green: CGFloat(v >> 8 & 0xFF) / 255, blue: CGFloat(v & 0xFF) / 255, alpha: 1)
+    }
+    return Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? rgb(dark) : rgb(light) })
   }
 }
 
 /// One stage circle: an empty ring before it is reached, a spinning arc while
-/// it runs, a dashed ring while it waits (for the worker), filled once it ended.
+/// it runs, a dashed ring while it waits (for the worker). Once it ended a
+/// shape says how, not the colour alone: done is filled, cached a ring with a
+/// dot, reused filled with a hole, failed filled with a cross, stopped filled
+/// with a bar. The same geometry as StageDot in the Web UI.
 struct StageDot: View {
   let status: StageProgress.Status
   let size: CGFloat
   var waiting = false
 
   var body: some View {
-    let c = StageDots.color(status)
+    let c = StagePalette.color(SectionStatus(status, waiting: waiting))
     let line = max(0.8, size * 0.15)
     Group {
       switch status {
@@ -1595,11 +1615,42 @@ struct StageDot: View {
           }
         }
       default:
-        Circle().fill(c)
+        ended(c, line: line)
       }
     }
     .frame(width: size, height: size)
     .contentShape(Circle().inset(by: -size * 0.3))
+  }
+
+  /// An ended stage: its fill and mark, cut out in the background colour.
+  private func ended(_ c: Color, line: CGFloat) -> some View {
+    Canvas { g, box in
+      let d = box.width, r = d / 2, k = d * 0.2, mark = max(1, d * 0.15)
+      let hole = GraphicsContext.Shading.color(Color(nsColor: .controlBackgroundColor))
+      let whole = CGRect(origin: .zero, size: box)
+      let dot = Path(ellipseIn: CGRect(x: r - k, y: r - k, width: 2 * k, height: 2 * k))
+      if status == .cached {
+        g.fill(Path(ellipseIn: whole), with: hole)
+        g.stroke(Path(ellipseIn: whole.insetBy(dx: line / 2, dy: line / 2)), with: .color(c), lineWidth: line)
+        g.fill(dot, with: .color(c))
+      } else {
+        g.fill(Path(ellipseIn: whole), with: .color(c))
+      }
+      switch status {
+      case .reused:
+        g.fill(dot, with: hole)
+      case .failed:
+        var cross = Path()
+        cross.move(to: CGPoint(x: r - k, y: r - k)); cross.addLine(to: CGPoint(x: r + k, y: r + k))
+        cross.move(to: CGPoint(x: r + k, y: r - k)); cross.addLine(to: CGPoint(x: r - k, y: r + k))
+        g.stroke(cross, with: hole, style: StrokeStyle(lineWidth: mark, lineCap: .round))
+      case .cancelled:
+        var bar = Path()
+        bar.move(to: CGPoint(x: r - d * 0.24, y: r)); bar.addLine(to: CGPoint(x: r + d * 0.24, y: r))
+        g.stroke(bar, with: hole, style: StrokeStyle(lineWidth: mark * 1.1, lineCap: .round))
+      default: break
+      }
+    }
   }
 }
 

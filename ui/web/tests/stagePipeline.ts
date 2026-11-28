@@ -76,4 +76,42 @@ assert.ok(step(cached, Stage.execute).status === 'done' && step(cached, Stage.ex
 const remote = stagePipeline(order, cachedRecords.filter((r) => r.stage !== Stage.build), 'ttl', undefined, 9_000)
 assert.ok(step(remote, Stage.build).status === 'done' && step(remote, Stage.build).onWorker)
 
+// Stopped while the worker still prepared (the Card never started): the build
+// carries the stop and the whole time, the execution did not run.
+const stoppedRecords = [record(Stage.prepare, D.StageOutcome.done, 0, 100), record(Stage.evaluate, D.StageOutcome.done, 100, 200),
+  record(Stage.execute, D.StageOutcome.cancelled, 200, 290_200)]
+for (const before of [D.ExecutionActivity.waiting_store, D.ExecutionActivity.preparing, D.ExecutionActivity.building, D.ExecutionActivity.substituting]) {
+  const stopped = stagePipeline(order, stoppedRecords, 'ttl', undefined, 300_000, before)
+  assert.deepEqual({ ...step(stopped, Stage.build) }, { stage: Stage.build, status: 'cancelled', waiting: false, seconds: 290, onWorker: true })
+  assert.deepEqual([step(stopped, Stage.execute).status, step(stopped, Stage.execute).seconds], ['notRun', undefined])
+}
+const failedBefore = stagePipeline(order, [...stoppedRecords.slice(0, 2), record(Stage.execute, D.StageOutcome.failed, 200, 1_200)],
+  'ttl', undefined, 2_000, D.ExecutionActivity.building)
+assert.ok(step(failedBefore, Stage.build).status === 'failed' && step(failedBefore, Stage.execute).status === 'notRun')
+// Stopped once the Card ran (or while it pushed its outputs after): the build is done, the execution stopped.
+for (const after of [D.ExecutionActivity.running, D.ExecutionActivity.pushing]) {
+  const stopped = stagePipeline(order, stoppedRecords, 'ttl', undefined, 300_000, after)
+  assert.ok(step(stopped, Stage.build).status === 'done' && step(stopped, Stage.build).seconds === undefined)
+  assert.ok(step(stopped, Stage.execute).status === 'cancelled' && step(stopped, Stage.execute).seconds === 290)
+}
+
+// An open section whose stream has not loaded yet says nothing (no "empty"
+// wording that flashes before the text arrives); after a moment, that it loads.
+{
+  const page = globalThis as Record<string, unknown>
+  page.document ??= { documentElement: { dataset: {}, style: {} }, addEventListener() {} }
+  page.window ??= globalThis
+  page.matchMedia ??= () => ({ matches: false, addEventListener() {} })
+  page.EventSource ??= class { addEventListener() {} close() {} }
+  const { sectionPlaceholder } = await import('../src/ui/logs')
+  for (const section of ['build', 'execute', 'save'] as const) {
+    assert.equal(sectionPlaceholder(section, { known: true, invocation: 1n, loaded: false, slow: false }), '')
+    assert.equal(sectionPlaceholder(section, { known: false, loaded: false, slow: false }), '')
+    assert.equal(sectionPlaceholder(section, { known: true, invocation: 1n, loaded: false, slow: true }), '読み込んでいます…')
+  }
+  assert.equal(sectionPlaceholder('execute', { known: true, invocation: 1n, loaded: true, slow: false }), '出力はありません')
+  assert.equal(sectionPlaceholder('save', { known: true, invocation: 1n, loaded: true, slow: true }), '記録された出来事はありません')
+  assert.equal(sectionPlaceholder('execute', { known: true, loaded: false, slow: false }), 'この実行では、この Card はまだ動いていません')
+}
+
 console.log('Log pipeline line: stage circles, worker build and plain status line passed')

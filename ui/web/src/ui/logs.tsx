@@ -189,29 +189,26 @@ interface StageGroup {
 }
 
 const STAGE_LABEL: Partial<Record<Stage, string>> = {
-  [Stage.prepare]: L('準備'), [Stage.evaluate]: L('Nix 評価'), [Stage.build]: L('ビルド'),
-  [Stage.execute]: L('実行'), [Stage.validate]: L('出力検証'), [Stage.save]: L('保存'),
+  [Stage.prepare]: L('準備'), [Stage.evaluate]: L('Nix 評価'), [Stage.build]: 'build',
+  [Stage.execute]: 'run', [Stage.validate]: 'validate', [Stage.save]: L('保存'),
 }
 
-/** The pipeline line as drawn: the Card's stage circles joined by a thin
- *  line, each with its name and short time; a click opens its section. Under
- *  them, what the running stage does now. */
+/** The pipeline line as drawn: the Card's stage circles side by side, each
+ *  with its name and short time; a click opens its section. Under them, what
+ *  the running stage does now. */
 export function StagePipelineView({ line, onTap }: { line: StagePipeline; onTap?: (s: Stage) => void }) {
-  const step = (st: PipelineStep, i: number) => {
+  const step = (st: PipelineStep) => {
     const reached = st.status !== 'pending' && st.status !== 'notRun'
     const label = SECTION_STATUS_LABEL[sectionStatus(st.status, st.waiting)]
     return (
-      <Fragment key={st.stage}>
-        {i > 0 && <span className="stage-link" aria-hidden />}
-        <button type="button" className={`stage-step${st.status === 'running' ? ' current' : reached ? '' : ' todo'}`}
-          title={`${STAGE_LABEL[st.stage]}${L('：')}${label}${st.onWorker ? L('（ワーカーが実行の一部としてビルドします）') : ''}`}
-          aria-label={`${STAGE_LABEL[st.stage]}${L('：')}${label}`} onClick={() => onTap?.(st.stage)}>
-          <StageDot status={st.status} size={10} waiting={st.waiting} />
-          <span className="stage-name">{STAGE_LABEL[st.stage]}</span>
-          {st.onWorker && <span className="secondary">{L('ワーカー')}</span>}
-          {st.seconds !== undefined && <span className="secondary mono-digits">{formatShortDuration(st.seconds)}</span>}
-        </button>
-      </Fragment>
+      <button key={st.stage} type="button" className={`stage-step${st.status === 'running' ? ' current' : reached ? '' : ' todo'}`}
+        title={`${STAGE_LABEL[st.stage]}${L('：')}${label}${st.onWorker ? L('（ワーカーが実行の一部としてビルドします）') : ''}`}
+        aria-label={`${STAGE_LABEL[st.stage]}${L('：')}${label}`} onClick={() => onTap?.(st.stage)}>
+        <StageDot status={st.status} size={10} waiting={st.waiting} />
+        <span className="stage-name">{STAGE_LABEL[st.stage]}</span>
+        {st.onWorker && <span className="secondary">{L('ワーカー')}</span>}
+        {st.seconds !== undefined && <span className="secondary mono-digits">{formatShortDuration(st.seconds)}</span>}
+      </button>
     )
   }
   return (
@@ -220,6 +217,24 @@ export function StagePipelineView({ line, onTap }: { line: StagePipeline; onTap?
       {line.detail && <div className="stage-detail secondary mono-digits selectable">{line.detail}</div>}
     </div>
   )
+}
+
+/** What an open log section says while it has no text. Only a stream that
+ *  finished loading empty says it is empty; while it loads the section shows
+ *  nothing, and after a moment (`slow`) a quiet word that it loads.
+ *  `known`: the invocation's record or live state is in; `invocation`: the
+ *  one shown (undefined: the Card has not run in this run); `waiting`: what a
+ *  waiting execution waits for. The same rule as the Mac's StageLogView. */
+export function sectionPlaceholder(section: 'build' | 'execute' | 'save', p: {
+  known: boolean; invocation?: bigint; loaded: boolean; waiting?: string; slow: boolean
+}): string {
+  if (p.known && p.invocation === undefined) return L('この実行では、この Card はまだ動いていません')
+  if (!p.known || !p.loaded) return p.slow ? L('読み込んでいます…') : ''
+  switch (section) {
+    case 'build': return L('準備・評価・build の出力はありません（キャッシュや再利用のときは空です）')
+    case 'save': return L('記録された出来事はありません')
+    default: return p.waiting ?? L('出力はありません')
+  }
 }
 
 /** Re-renders every second while `on`, for the running stage's time. */
@@ -353,18 +368,21 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
       }
     }
   }
-  const placeholder = (g: StageGroup, log: ReturnType<typeof useLogStream>) => {
-    if (shownInvocation === undefined || (!log.loaded && !log.error)) {
-      return !info && !live ? L('読み込んでいます…') : L('この実行では、この Card はまだ動いていません')
-    }
-    switch (g.id) {
-      case 'build': return L('準備・評価・build の出力はありません（キャッシュや再利用のときは空です）')
-      case 'save': return L('記録された出来事はありません')
-      default: return activity?.waiting ? activity.text : L('出力はありません')
-    }
-  }
+  // A section still loading shows nothing; after a moment, a quiet word that it loads.
+  const loading = groups.some((g) => isOpen(g) && !logs[g.id].loaded && !logs[g.id].error)
+  const [slow, setSlow] = useState(false)
+  useEffect(() => {
+    if (!loading) { setSlow(false); return }
+    const timer = setTimeout(() => setSlow(true), 300)
+    return () => clearTimeout(timer)
+  }, [loading])
+  const placeholder = (g: StageGroup, log: ReturnType<typeof useLogStream>) => sectionPlaceholder(g.id, {
+    known: !!info || !!live || invocation !== undefined, invocation: shownInvocation,
+    loaded: log.loaded || !!log.error, waiting: activity?.waiting ? activity.text : undefined, slow,
+  })
 
-  const line = stagePipeline(groups.flatMap((g) => g.stages), stages, service, live, session.coreNow())
+  const line = stagePipeline(groups.flatMap((g) => g.stages), stages, service, live, session.coreNow(),
+    live ? live.executionLastActivity : info?.record?.summary?.executionLastActivity)
   const pipeline = <StagePipelineView line={line} onTap={open} />
 
   const section = (g: StageGroup) => {
@@ -380,8 +398,8 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
           <StatusSymbol status={st} size={13} />
           <span>{g.title}</span>
           {g.id === 'execute' && service && <span className="secondary">({service})</span>}
-          {rs.some((r) => r.outcome === D.StageOutcome.cached) && <span className="caption" style={{ color: 'var(--blue)' }}>cache</span>}
-          {rs.some((r) => r.outcome === D.StageOutcome.reused) && <span className="caption" style={{ color: 'var(--teal)' }}>{L('再利用')}</span>}
+          {rs.some((r) => r.outcome === D.StageOutcome.cached) && <span className="caption" style={{ color: 'var(--stage-reuse)' }}>cache</span>}
+          {rs.some((r) => r.outcome === D.StageOutcome.reused) && <span className="caption" style={{ color: 'var(--stage-reuse)' }}>{L('再利用')}</span>}
           <span className="spacer" />
           <span className="caption secondary mono-digits">{summary(g, st)}</span>
         </button>

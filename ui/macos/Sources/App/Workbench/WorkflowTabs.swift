@@ -627,8 +627,9 @@ extension Tsugumi_Data_CardState {
   var color: Color {
     switch self {
     case .running, .preparing, .waiting, .ready: return .orange
-    case .succeeded: return .green
-    case .failed: return .red
+    // Succeeded and failed in the stage colours (StagePalette).
+    case .succeeded: return StagePalette.done
+    case .failed: return StagePalette.failed
     case .blocked: return .purple
     case .skipped: return .gray
     case .cancelled: return .brown

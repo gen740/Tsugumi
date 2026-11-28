@@ -2,7 +2,7 @@ import SwiftUI
 import TsugumiRPC
 
 /// The log view's pipeline line: the invocation's stages as the Card's face
-/// draws them (the same circles and colours), side by side on a thin line,
+/// draws them (the same circles and colours), side by side,
 /// each with its name and short time, and under them what the running stage
 /// does now in plain words.
 struct StagePipeline: Equatable {
@@ -28,7 +28,9 @@ struct StagePipeline: Equatable {
   ///   - service: the execution service ("local", a worker, or nil).
   ///   - live: the invocation's live state while the run goes on.
   ///   - now: the core's clock (ms since 1970).
-  init(stages shown: [Stage], records: [StageRecord], service: String?, live: CardRunState?, now: Int64) {
+  ///   - lastActivity: the last activity the remote job reported (kept after it ended).
+  init(stages shown: [Stage], records: [StageRecord], service: String?, live: CardRunState?, now: Int64,
+       lastActivity: Tsugumi_Data_ExecutionActivity? = nil) {
     func record(_ st: Stage) -> StageRecord? { records.last { $0.stage == st } }
     func seconds(_ r: StageRecord?) -> Double? {
       guard let r, let start = r.start else { return nil }
@@ -43,20 +45,22 @@ struct StagePipeline: Equatable {
     func update(_ st: Stage, _ change: (inout Step) -> Void) {
       if let i = steps.firstIndex(where: { $0.stage == st }) { change(&steps[i]) }
     }
-    let worker = WorkerStages(records: records, service: service, live: live)
+    let worker = WorkerStages(records: records, service: service, live: live,
+                              lastActivity: lastActivity ?? live?.executionLastActivity)
     update(.build) {
       $0.onWorker = worker.onWorker
       if let status = worker.build {
         $0.status = status
         $0.waiting = worker.buildWaiting
-        // The worker's build is timed by the execution so far.
-        $0.seconds = status == .running ? seconds(record(.execute)) : nil
+        // The worker's build is timed by the execution so far, or whole when
+        // the invocation ended before the Card started.
+        $0.seconds = status == .running || worker.endedInBuild ? seconds(record(.execute)) : nil
       }
     }
     update(.execute) {
       if let status = worker.execute {
         $0.status = status
-        if status == .pending { $0.seconds = nil }
+        if status == .pending || status == .notRun { $0.seconds = nil }
       }
       $0.waiting = worker.executeWaiting
     }
@@ -117,7 +121,10 @@ struct StagePipeline: Equatable {
 /// While it prepares, builds or fetches it, or waits for its Nix store, the
 /// build is the running (or waiting) stage and the execution has not started;
 /// once the Card itself runs, the build is done. Waiting for a free worker
-/// slot is the execution's wait: nothing is built yet.
+/// slot is the execution's wait: nothing is built yet. An invocation that
+/// ended (failed or stopped) while the worker still waited for its store,
+/// prepared, built or fetched never ran the Card: the build carries that end
+/// and the time, and the execution did not run.
 struct WorkerStages: Equatable {
   /// The build circle stands for the worker's build.
   var onWorker = false
@@ -128,8 +135,15 @@ struct WorkerStages: Equatable {
   var executeWaiting = false
   /// The execution runs on a worker, not in the project's own environment.
   var remote = false
+  /// The invocation ended before the Card started: the build carries the
+  /// end and the execution's time.
+  var endedInBuild = false
 
-  init(records: [StageRecord], service: String?, live: CardRunState?) {
+  /// What the worker does before the Card itself runs.
+  static let beforeCard: [Tsugumi_Data_ExecutionActivity] = [.waitingStore, .preparing, .building, .substituting]
+
+  /// - Parameter lastActivity: the last activity the remote job reported (kept after it ended).
+  init(records: [StageRecord], service: String?, live: CardRunState?, lastActivity: Tsugumi_Data_ExecutionActivity? = nil) {
     remote = service.map { !$0.isEmpty && $0 != "local" } ?? false
     let activity = live.flatMap(ExecutionActivityText.init)
     let execute = records.last { $0.stage == .execute }
@@ -154,6 +168,14 @@ struct WorkerStages: Equatable {
       }
     case .done:
       build = .done
+    case .failed, .cancelled:
+      if let lastActivity, Self.beforeCard.contains(lastActivity) {
+        build = execute.outcome == .failed ? .failed : .cancelled
+        self.execute = .notRun
+        endedInBuild = true
+      } else if lastActivity == .running || lastActivity == .pushing {
+        build = .done
+      }
     default:
       break
     }
@@ -168,8 +190,8 @@ func formatAgo(_ seconds: Double) -> String {
   return String(localized: "\(s / 3600) 時間 \(s / 60 % 60) 分前")
 }
 
-/// The pipeline line as drawn: circles joined by a thin line, a click on a
-/// stage opens its section.
+/// The pipeline line as drawn: the circles side by side, a click on a stage
+/// opens its section.
 struct StagePipelineView: View {
   let line: StagePipeline
   var onTap: (Stage) -> Void = { _ in }
@@ -179,13 +201,8 @@ struct StagePipelineView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 3) {
       ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 0) {
-          ForEach(Array(line.steps.enumerated()), id: \.element.id) { index, step in
-            if index > 0 {
-              Rectangle().fill(.secondary.opacity(0.35)).frame(width: 16, height: 1).padding(.horizontal, 5)
-            }
-            stepView(step)
-          }
+        HStack(spacing: 12) {
+          ForEach(line.steps) { step in stepView(step) }
         }
         .font(.caption).lineLimit(1)
       }

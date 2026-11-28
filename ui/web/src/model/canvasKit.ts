@@ -18,9 +18,9 @@ export const STAGE_INFO: Record<Stage, { label: string; name: string; active: st
   [Stage.prepare]: { label: L('スキーマ生成'), name: L('準備'), active: L('スキーマ生成中'), icon: 'shippingbox', activeIcon: 'shippingbox', stream: D.LogStream.build },
   [Stage.evaluate]: { label: L('Nix 評価'), name: L('Nix 評価'), active: L('Nix 評価中'), icon: 'snowflake', activeIcon: 'snowflake', stream: D.LogStream.build },
   // `name` is the stage in words on a Card's face (the gist of a failure).
-  [Stage.build]: { label: 'build', name: L('ビルド'), active: L('build 中'), icon: 'hammer', activeIcon: 'hammer', stream: D.LogStream.build },
-  [Stage.execute]: { label: 'run', name: L('実行'), active: L('実行中'), icon: 'play', activeIcon: 'play.fill', stream: D.LogStream.output },
-  [Stage.validate]: { label: 'validate', name: L('出力検証'), active: L('出力を検証中'), icon: 'checkmark.shield', activeIcon: 'checkmark.shield', stream: D.LogStream.journal },
+  [Stage.build]: { label: 'build', name: 'build', active: L('build 中'), icon: 'hammer', activeIcon: 'hammer', stream: D.LogStream.build },
+  [Stage.execute]: { label: 'run', name: 'run', active: L('実行中'), icon: 'play', activeIcon: 'play.fill', stream: D.LogStream.output },
+  [Stage.validate]: { label: 'validate', name: 'validate', active: L('出力を検証中'), icon: 'checkmark.shield', activeIcon: 'checkmark.shield', stream: D.LogStream.journal },
   [Stage.save]: { label: L('保存'), name: L('保存'), active: L('保存中'), icon: 'externaldrive', activeIcon: 'externaldrive', stream: D.LogStream.journal },
   [Stage.done]: { label: L('完了'), name: L('完了'), active: L('完了'), icon: 'flag.checkered', activeIcon: 'flag.checkered', stream: D.LogStream.journal },
 }

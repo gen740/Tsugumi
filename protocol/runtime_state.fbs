@@ -128,6 +128,7 @@ table InvocationDetail {
   build_substituter:string;
   build_pushed:bool = null;
   build_push:Tsugumi.Data.BuildPush;
+  execution_last_activity:int;
 }
 
 table InputSource {

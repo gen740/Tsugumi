@@ -12,7 +12,7 @@ import type { FlowDirection } from '../model/prefs'
 import { CardKey, cardState, formatDuration, formatShortDuration, InlineDraft, KIND_LABEL, relativeAge } from '../model/session'
 import { D } from '../wire/rpc'
 import { Icon } from './icons'
-import { SECTION_STATUS_LABEL, sectionStatus } from './statusSymbol'
+import { SECTION_STATUS_LABEL, sectionStatus, STAGE_COLOR } from './statusSymbol'
 import { permissionInfo } from '../model/permissions'
 import { L } from '../i18n'
 
@@ -422,11 +422,6 @@ function portHelp(p: PortData, output: boolean): string {
 
 // ---- Stage circles -----------------------------------------------------------------------
 
-export const STAGE_COLOR: Record<StageStatus, string> = {
-  pending: 'secondary', notRun: 'secondary', running: 'orange', done: 'green',
-  cached: 'blue', reused: 'teal', failed: 'red', cancelled: 'brown',
-}
-
 export function stageHelp(item: StageItem, tappable: boolean, waiting = false): string {
   let t = STAGE_INFO[item.stage].label + L('：') + SECTION_STATUS_LABEL[sectionStatus(item.status, waiting)]
   if (item.seconds !== undefined) t += ' · ' + formatDuration(item.seconds)
@@ -436,28 +431,43 @@ export function stageHelp(item: StageItem, tappable: boolean, waiting = false): 
 }
 
 /** One stage circle: an empty ring before it is reached, a spinning arc while
- *  it runs, a dashed ring while it waits (for the worker), filled once it ended. */
+ *  it runs, a dashed ring while it waits (for the worker). Once it ended a
+ *  shape says how, not the colour alone: done is filled, cached a ring with a
+ *  dot, reused filled with a hole, failed filled with a cross, stopped filled
+ *  with a bar. The same geometry as StageDot in the Mac app. */
 export function StageDot({ status, size, waiting = false }: { status: StageStatus; size: number; waiting?: boolean }) {
-  const c = `var(--${STAGE_COLOR[status]}${status === 'reused' ? ', #30b0c7' : ''})`
+  const c = colorVar(STAGE_COLOR[sectionStatus(status, waiting)])
   const line = Math.max(0.8, size * 0.15)
   const style: CSSProperties = { width: size, height: size }
   if (status === 'running' && waiting) return <span className="cv-dot cv-dot-waiting" style={{ ...style, borderWidth: line * 1.1, borderColor: c }} />
   if (status === 'pending' || status === 'notRun') return <span className="cv-dot" style={{ ...style, borderWidth: line, borderColor: fade('secondary', 0.6) }} />
   if (status === 'running') {
-    return <span className="cv-dot cv-dot-running" style={{ ...style, borderWidth: line * 1.2, borderColor: fade('orange', 0.25), borderTopColor: c, borderRightColor: c }} />
+    return <span className="cv-dot cv-dot-running" style={{ ...style, borderWidth: line * 1.2, borderColor: fade('stage-run', 0.25), borderTopColor: c, borderRightColor: c }} />
   }
-  return <span className="cv-dot filled" style={{ ...style, background: c }} />
+  const r = size / 2
+  const k = size * 0.2
+  const hole = 'var(--control-bg)'
+  const mark = Math.max(1, size * 0.15)
+  return (
+    <svg className={`cv-dot-mark cv-dot-${status}`} width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden>
+      {status === 'cached'
+        ? <><circle cx={r} cy={r} r={r - line / 2} fill={hole} stroke={c} strokeWidth={line} /><circle cx={r} cy={r} r={k} fill={c} /></>
+        : <circle cx={r} cy={r} r={r} fill={c} />}
+      {status === 'reused' && <circle cx={r} cy={r} r={k} fill={hole} />}
+      {status === 'failed' && <path d={`M${r - k} ${r - k}L${r + k} ${r + k}M${r + k} ${r - k}L${r - k} ${r + k}`}
+        stroke={hole} strokeWidth={mark} strokeLinecap="round" />}
+      {status === 'cancelled' && <path d={`M${r - size * 0.24} ${r}H${r + size * 0.24}`} stroke={hole} strokeWidth={mark * 1.1} strokeLinecap="round" />}
+    </svg>
+  )
 }
 
 /** Stages of the latest invocation as small circles stacked top to bottom
- *  (build, run, validate) on a thin line: a timeline. Colour and fill say how
- *  each went; a click opens that stage in the log. */
+ *  (build, run, validate). Shape and colour say how each went; a click opens
+ *  that stage in the log. */
 export function StageDots({ progress, zoom = 1, onTap }: { progress: StageProgress; zoom?: number; onTap?: (s: Stage) => void }) {
   const s = (v: number) => v * zoom
-  const n = progress.items.length
   return (
     <div className="cv-dots" style={{ gap: s(4) }}>
-      <span className="cv-dots-line" style={{ width: Math.max(0.5, s(1)), height: s((n - 1) * 13) }} aria-hidden />
       {progress.items.map((item) => {
         const waits = item.waiting === true
         return (

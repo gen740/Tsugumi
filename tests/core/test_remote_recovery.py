@@ -847,6 +847,25 @@ def test_remote_waiting_and_building_reach_the_invocation(running_job):
     assert wait_run(client, run_id).state == RunState.succeeded
     record = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1).record
     assert record.summary.executionActivity == ExecutionActivity.unspecified
+    assert record.summary.executionLastActivity == ExecutionActivity.running
+
+
+def test_a_job_stopped_while_the_worker_builds_keeps_its_last_activity(running_job):
+    """An invocation stopped before the Card ran says so once it ended, and
+    after a restart: the UIs then show the build stopped, not the run."""
+    from Tsugumi.Data.ExecutionActivity import ExecutionActivity
+    gateway, daemon, client, run_id, job_id = running_job
+    gateway.activities[job_id] = (R.JobActivity.Building, "nupipeline-1.0")
+    wait_invocation(client, run_id, "work", lambda row: row.executionActivity == ExecutionActivity.building)
+    assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
+    assert wait_run(client, run_id).state == RunState.cancelled
+    summary = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1).record.summary
+    assert summary.executionActivity == ExecutionActivity.unspecified
+    assert summary.executionLastActivity == ExecutionActivity.building
+    daemon.restart()
+    client = daemon.connect()
+    summary = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1).record.summary
+    assert summary.executionLastActivity == ExecutionActivity.building
 
 
 def test_run_status_tells_a_silent_working_step_from_a_waiting_one(running_job):

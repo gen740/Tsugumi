@@ -1215,6 +1215,10 @@ table InvocationSummary {
   last_output_at:int64 = null (id: 38);
   /// What publishing the build outputs sent or why it failed, when it ran.
   build_push:Tsugumi.Data.BuildPush (id: 39);
+  /// The last activity the remote job reported (kept after it ended): one
+  /// that ended while the worker waited for its store, prepared, built or
+  /// fetched never ran the Card.
+  execution_last_activity:Tsugumi.Data.ExecutionActivity (id: 40);
 }
 
 table StageTime {
