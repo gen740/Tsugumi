@@ -12,6 +12,8 @@
 namespace tsugumi::agent {
 
 // An exact set of permanent Card paths. A container never grants its children.
+// Cards wired upstream of any assigned Card are readable too (never writable
+// or runnable), so a helper can follow what goes into its Cards.
 // The reader is private to hostd: resolving a nested path must not disclose
 // the enclosing project's document to the helper.
 class HelperScope {
@@ -25,6 +27,9 @@ class HelperScope {
   auto authorization() const -> const std::optional<host::TurnAuthorization>& {
     return authorization_;
   }
+  // This scope with reads widened by the Cards wired upstream of the assigned
+  // Cards at the reader's revision. Methods taking a Reader apply it already.
+  auto Reading(const Reader& read) const -> HelperScope;
   auto Require(const std::string& card, bool writing) const -> void;
   auto RequireRun(const std::string& card) const -> void;
   auto Ran(const std::string& run_id, const std::string& card) -> void;
@@ -70,7 +75,7 @@ class HelperScope {
       -> void;
   auto Root(const std::string& card, const Reader& read) const -> std::string;
   uint64_t depth_, count_;
-  bool scoped_;
+  bool scoped_, widened_ = false;
   std::set<std::string> reads_, writes_, runs_;
   std::optional<host::TurnAuthorization> authorization_;
   std::string scratch_identity_;

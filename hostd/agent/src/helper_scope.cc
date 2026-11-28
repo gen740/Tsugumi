@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
 #include <stdexcept>
+#include <vector>
 
 #include "host/comments.hh"
 #include "host/document_edits.hh"
@@ -13,10 +15,11 @@
 
 namespace tsugumi::agent {
 namespace {
-auto Deny(const std::string& detail) -> void {
+auto Deny(const std::string& detail,
+          const std::string& next = "Ask the parent to delegate the required "
+                                    "Cards") -> void {
   throw host::Failure("permission_denied",
-                      "Helper scope denied: " + detail +
-                          ". Ask the parent to delegate the required Cards.");
+                      "Helper scope denied: " + detail + ". " + next + ".");
 }
 // A wire list is a set of edges; its order is not an authority boundary.
 // Projection/expansion puts hidden edges first, which must not deny an edit
@@ -173,9 +176,122 @@ auto HelperScope::Root(const std::string& card, const Reader& read) const
     begin = end + 1;
   }
 }
+auto HelperScope::Reading(const Reader& read) const -> HelperScope {
+  auto scope = *this;
+  if (!scoped_ || widened_) return scope;
+  scope.widened_ = true;
+  // Follow wires backwards from every assigned Card: within a project
+  // document, out of a nested project through its boundary inputs and into a
+  // container through its boundary outputs. Downstream Cards stay out.
+  std::vector<std::string> pending;
+  std::set<std::string> seen, upstream;
+  const auto document = [&](const std::string& base) {
+    const auto text = read(base + "tsugumi.json");
+    return text.empty() ? json::Members{} : json::Object(text);
+  };
+  std::function<void(const std::string&, const std::string&,
+                     const std::string&, const std::string&, int)>
+      output = [&](const std::string& base, const std::string& logical,
+                   const std::string& id, const std::string& port,
+                   int depth) {
+        if (!ValidCard(logical + id) || depth > 64) return;
+        if (IsSubgraph(read(base + "definitions/" + id + "/_card.json"))) {
+          const auto nested = base + "externals/" + id + '/';
+          const auto boundary =
+              json::Object(json::Get(document(nested), "boundary", "{}"));
+          for (const auto& raw :
+               json::Array(json::Get(boundary, "outputs", "[]"))) {
+            const auto bound = json::Object(raw);
+            if (json::Text(bound, "name") == port)
+              output(nested, logical + id + '/', json::Text(bound, "card"),
+                     json::Text(bound, "port"), depth + 1);
+          }
+          return;
+        }
+        upstream.insert(logical + id);
+        if (seen.insert(logical + id).second) pending.push_back(logical + id);
+      };
+  std::function<void(const std::string&, const std::string&,
+                     const std::string&, const std::string*, int)>
+      inputs = [&](const std::string& base, const std::string& logical,
+                   const std::string& id, const std::string* port, int depth) {
+        if (depth > 64) return;
+        const auto project = document(base);
+        const auto canvas = json::Object(json::Get(project, "canvas", "{}"));
+        for (const auto& raw :
+             json::Array(json::Get(canvas, "connections", "[]"))) {
+          const auto wire = json::Object(raw);
+          const auto to = json::Object(json::Get(wire, "to", "{}"));
+          if (json::Text(to, "card") != id ||
+              (port && json::Text(to, "port") != *port))
+            continue;
+          const auto from = json::Object(json::Get(wire, "from", "{}"));
+          output(base, logical, json::Text(from, "card"),
+                 json::Text(from, "port"), depth);
+        }
+        if (logical.empty()) return;
+        const auto boundary = json::Object(json::Get(project, "boundary", "{}"));
+        const auto container = logical.substr(0, logical.size() - 1);
+        for (const auto& raw : json::Array(json::Get(boundary, "inputs", "[]"))) {
+          const auto bound = json::Object(raw);
+          if (json::Text(bound, "card") != id ||
+              (port && json::Text(bound, "port") != *port))
+            continue;
+          std::string root;
+          try {
+            root = Root(container, read);
+          } catch (const std::exception&) {
+            return;
+          }
+          const auto at = root.rfind("definitions/");
+          const auto slash = container.rfind('/');
+          const auto name = json::Text(bound, "name");
+          inputs(root.substr(0, at),
+                 slash == std::string::npos ? ""
+                                            : container.substr(0, slash + 1),
+                 root.substr(at + 12), &name, depth + 1);
+        }
+      };
+  for (const auto* cards : {&reads_, &writes_, &runs_})
+    for (const auto& card : *cards)
+      if (seen.insert(card).second) pending.push_back(card);
+  while (!pending.empty()) {
+    const auto card = pending.back();
+    pending.pop_back();
+    std::string root;
+    try {
+      root = Root(card, read);
+    } catch (const std::exception&) {
+      continue;
+    }
+    const auto at = root.rfind("definitions/");
+    const auto slash = card.rfind('/');
+    inputs(root.substr(0, at),
+           slash == std::string::npos ? "" : card.substr(0, slash + 1),
+           root.substr(at + 12), nullptr, 0);
+  }
+  scope.reads_.insert(upstream.begin(), upstream.end());
+  return scope;
+}
 auto HelperScope::File(const std::string& path, bool writing,
                        const Reader& read) const -> void {
-  if (!fs::valid_relative_path(path)) Deny("invalid file path");
+  const auto folders = [&] {
+    std::string list;
+    for (const auto& card : writing ? writes_ : reads_) {
+      try {
+        list += (list.empty() ? "" : ", ") + Root(card, read) + '/';
+      } catch (const std::exception&) {
+      }
+    }
+    return list.empty() ? std::string("none") : list;
+  };
+  if (!fs::valid_relative_path(path))
+    Deny("file path \"" + path +
+             "\" is not a relative project path (no leading or trailing "
+             "slash, no . or .. segments)",
+         std::string("Use a path inside the ") +
+             (writing ? "writable" : "readable") +
+             " Card folders: " + folders());
   if (!writing && (path == "tsugumi.json" || path.ends_with("/tsugumi.json"))) {
     (void)ProjectPrefix(path, read);
     return;
@@ -193,7 +309,11 @@ auto HelperScope::File(const std::string& path, bool writing,
       return;
     }
   }
-  Deny(std::string(writing ? "write of file " : "read of file ") + path);
+  Deny(std::string(writing ? "write of file " : "read of file ") + path +
+           " outside the " + (writing ? "writable" : "readable") +
+           " Card folders (" + folders() + ")",
+       "Use a path inside those folders, or ask the parent to delegate the "
+       "required Cards");
 }
 auto HelperScope::Created(const std::string& id,
                           const std::string& project_path, const Reader& read)
@@ -228,6 +348,7 @@ auto HelperScope::Created(const std::string& id,
 }
 auto HelperScope::ProjectPrefix(const std::string& path,
                                 const Reader& read) const -> std::string {
+  if (scoped_ && !widened_) return Reading(read).ProjectPrefix(path, read);
   if (path == "tsugumi.json") return "";
   for (const auto& card : reads_) {
     const auto root = Root(card, read);
@@ -243,6 +364,7 @@ auto HelperScope::ProjectPrefix(const std::string& path,
 auto HelperScope::FailureResult(const std::string& result,
                                 const Reader& read) const -> std::string {
   if (!scoped_) return result;
+  if (!widened_) return Reading(read).FailureResult(result, read);
   std::set<std::string> hidden, documents{"tsugumi.json"};
   for (const auto& card : reads_) {
     const auto root = Root(card, read);
@@ -378,6 +500,7 @@ auto HelperScope::Graph(const std::string& text,
 auto HelperScope::ExpandSave(json::Members args, const Reader& read) const
     -> json::Members {
   if (!scoped_) return args;
+  if (!widened_) return Reading(read).ExpandSave(std::move(args), read);
   auto changes = json::Array(json::Get(args, "changes", "[]"));
   for (auto& raw : changes) {
     auto change = json::Object(raw);
@@ -547,6 +670,7 @@ auto HelperScope::ExpandSave(json::Members args, const Reader& read) const
 auto HelperScope::CheckCurrentSave(const json::Members& args,
                                    const Reader& read) const -> void {
   if (!scoped_) return;
+  if (!widened_) return Reading(read).CheckCurrentSave(args, read);
   auto visible = *this;
   visible.reads_.insert(writes_.begin(), writes_.end());
   auto projected = args;
@@ -599,6 +723,7 @@ auto HelperScope::CheckCurrentSave(const json::Members& args,
 auto HelperScope::Check(const std::string& tool, const json::Members& args,
                         const Reader& read) const -> void {
   if (!scoped_) return;
+  if (!widened_) return Reading(read).Check(tool, args, read);
   if (tool == "project_copy" || tool == "project_shell" ||
       tool == "attached_folder_read")
     return;  // Tools::FileOperation checks each materialized
@@ -715,6 +840,7 @@ auto HelperScope::Restore(const std::string& receipt, const Reader& read)
 auto HelperScope::CheckResult(const std::string& result,
                               const Reader& read) const -> void {
   if (!scoped_) return;
+  if (!widened_) return Reading(read).CheckResult(result, read);
   if (result.empty()) return;
   if (result.front() == '[') {
     for (const auto& item : json::Array(result)) CheckResult(item, read);
@@ -748,6 +874,7 @@ auto HelperScope::CheckPlan(const std::string& result, bool executing) const
 }
 auto HelperScope::SaveResult(const std::string& result,
                              const Reader& read) const -> std::string {
+  if (scoped_ && !widened_) return Reading(read).SaveResult(result, read);
   auto envelope = json::Object(result);
   if (json::Text(envelope, "reply") != "SaveResult") return result;
   auto value = json::Object(json::Get(envelope, "value", "{}"));
@@ -800,6 +927,7 @@ auto HelperScope::SaveResult(const std::string& result,
 auto HelperScope::Inspect(const std::string& result, const Reader& read) const
     -> std::string {
   if (!scoped_) return result;
+  if (!widened_) return Reading(read).Inspect(result, read);
   auto envelope = json::Object(result);
   if (json::Text(envelope, "reply") != "ProjectSnapshot") return result;
   const auto snapshot = json::Object(json::Get(envelope, "value", "{}"));

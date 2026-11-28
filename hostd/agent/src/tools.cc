@@ -1102,8 +1102,8 @@ auto Tools::ScopedResult(HelperScope& scope, const ToolCall& requested_call,
           !json::Bool(json::Get(value, "eof")))
         throw Failure("invalid_request",
                       "Read the scoped project document in one request");
-      const auto projected = scope.Graph(json::Text(value, "bytes"),
-                                         scope.ProjectPrefix(path, read));
+      const auto projected = scope.Reading(read).Graph(
+          json::Text(value, "bytes"), scope.ProjectPrefix(path, read));
       value["bytes"] = json::Quote(projected);
       value["next_offset"] = json::Quote(std::to_string(projected.size()));
       reply["value"] = json::Encode(value);
@@ -1374,6 +1374,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
         call.name != "project_make_subgraph" && call.name != "project_layout")
       boundary->Check(call.name, args, read);
     if (boundary->scoped() && call.name == "evaluate_nix") {
+      const auto reading = boundary->Reading(read);
       const auto rev = json::Get(inspected->snapshot, "rev");
       if (json::UInt(json::String(rev, rev)) !=
           json::UInt(json::String(revision, revision)))
@@ -1384,7 +1385,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
         CardPath segments;
         for (const auto& segment : json::Array(card))
           segments.push_back(json::String(segment));
-        boundary->Require(path_key(segments), false);
+        reading.Require(path_key(segments), false);
       }
     }
     if (boundary->scoped() && (call.name == "run" || call.name == "run_plan" ||
@@ -1401,7 +1402,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
       const auto result =
           ProjectCall(project, "run_plan", json::Encode(plan), stop,
                       inspected ? &*inspected : nullptr);
-      boundary->CheckPlan(
+      boundary->Reading(read).CheckPlan(
           result, call.name == "run" || (call.name == "evaluate_nix" &&
                                          json::Bool(json::Get(args, "build"))));
       // A run must supply the same base_rev used by this plan. The project

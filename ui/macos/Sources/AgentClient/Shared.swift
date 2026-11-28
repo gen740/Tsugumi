@@ -691,7 +691,7 @@ enum Shared {
   },
   "delegateTool": {
     "name": "delegate",
-    "description": "Run helper tasks; returns reports, errors and trace locations. Each helper receives its instruction and the shared system prompt. Card sets are exact paths with no implicit descendants; supply all three sets for scoped work. depth/count default to 0/0 and control child delegation. Details: helpers Skill.",
+    "description": "Run helper tasks; returns reports, errors and trace locations. Each helper receives its instruction and the shared system prompt. Card sets are exact paths with no implicit descendants; supply all three sets for scoped work. Cards wired upstream of any Card in the sets are readable too. depth/count default to 0/0 and control child delegation. Details: helpers Skill.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,

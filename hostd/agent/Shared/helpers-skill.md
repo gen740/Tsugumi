@@ -15,7 +15,8 @@ requirements, shared decisions, whether to run), waiting, and reading and checki
   delegate {"tasks": [{"name": "<short>", "instruction": "<task and context>", "read_cards": ["<id or outer/id>"], "write_cards": ["<id or outer/id>"], "run_cards": ["<id or outer/id>"]}]}
   Each id in a Card path matches [a-z][a-z0-9_]{0,63}. Card sets are exact permanent paths (a container does not include its Cards); an empty set permits none, and sets
   are omitted only when the person enabled unscoped helpers. Cards a helper reserves with card_id are its own.
-  Inspection, files, records and logs follow read_cards; a run's whole plan must be in run_cards. A wire edit needs
+  Inspection, files, records and logs follow read_cards, which also covers every Card wired upstream of a Card in the sets
+  (read only); a run's whole plan must be in run_cards. A wire edit needs
   both ends readable or writable and one end writable. A helper implements a Draft only when
   all incident endpoints are in scope, otherwise it leaves type "draft" and returns the definition and rebindings. A nested
   project lives at externals/<id>/. Its tsugumi.json is read with project_file_read and edited with project_edit. Project-wide settings, layout and

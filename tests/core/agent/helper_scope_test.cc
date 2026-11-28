@@ -475,6 +475,113 @@ TEST(HelperScope, WriteDoesNotGrantRunAndReadRunDoesNotGrantWrite) {
                    json::Object(R"({"read_cards":[],"write_cards":[]})"), true),
                std::runtime_error);
 }
+TEST(HelperScope, UpstreamCardsAreReadableButNeverWritableOrRunnable) {
+  // start -> events -> regions -> spectra -> fit; box/deep feeds spectra
+  // through box's boundary output; src feeds outer/inner through outer's
+  // boundary input. unrelated is wired to nothing assigned.
+  const HelperScope::Reader read = [](const std::string& path) -> std::string {
+    if (path == "tsugumi.json")
+      return R"({"canvas":{"cards":[{"id":"start"},{"id":"events"},{"id":"regions"},{"id":"spectra"},{"id":"fit"},{"id":"box"},{"id":"src"},{"id":"outer"},{"id":"unrelated"}],"connections":[
+        {"from":{"card":"start","port":"trigger"},"to":{"card":"events","port":"trigger"}},
+        {"from":{"card":"events","port":"out"},"to":{"card":"regions","port":"in"}},
+        {"from":{"card":"regions","port":"out"},"to":{"card":"spectra","port":"in"}},
+        {"from":{"card":"box","port":"y"},"to":{"card":"spectra","port":"bg"}},
+        {"from":{"card":"spectra","port":"out"},"to":{"card":"fit","port":"in"}},
+        {"from":{"card":"src","port":"out"},"to":{"card":"outer","port":"x"}},
+        {"from":{"card":"unrelated","port":"out"},"to":{"card":"fit","port":"extra"}}]}})";
+    if (path == "definitions/box/_card.json" ||
+        path == "definitions/outer/_card.json")
+      return R"({"type":"subgraph","symbol":"link"})";
+    if (path == "externals/box/tsugumi.json")
+      return R"({"boundary":{"inputs":[],"outputs":[{"name":"y","card":"deep","port":"out"}]},"canvas":{"cards":[{"id":"deep"},{"id":"other"}],"connections":[]}})";
+    if (path == "externals/outer/tsugumi.json")
+      return R"({"boundary":{"inputs":[{"name":"x","card":"inner","port":"in"}],"outputs":[]},"canvas":{"cards":[{"id":"inner"}],"connections":[]}})";
+    return "";
+  };
+  HelperScope scope(json::Object(
+      R"({"read_cards":["spectra"],"write_cards":["spectra","outer/inner"],"run_cards":[]})"));
+  const auto card = [](const std::string& path) {
+    std::vector<std::string> segments;
+    for (size_t begin = 0;;) {
+      const auto end = path.find('/', begin);
+      segments.push_back(json::Quote(path.substr(begin, end - begin)));
+      if (end == std::string::npos) break;
+      begin = end + 1;
+    }
+    return json::Members{
+        {"card", json::Encode(json::Members{
+                     {"segments", json::Encode(segments)}})}};
+  };
+  for (const auto* upstream : {"start", "events", "regions", "box/deep", "src"}) {
+    EXPECT_NO_THROW(scope.Check("run_record", card(upstream), read)) << upstream;
+    EXPECT_NO_THROW(scope.Check("log_range", card(upstream), read)) << upstream;
+    EXPECT_THROW(scope.Check("run", card(upstream), read), std::runtime_error)
+        << upstream;
+  }
+  EXPECT_NO_THROW(scope.Check(
+      "project_file_read",
+      {{"path", json::Quote("definitions/regions/_card.json")}}, read));
+  EXPECT_NO_THROW(scope.Check(
+      "project_file_list", {{"path", json::Quote("definitions/start")}}, read));
+  EXPECT_NO_THROW(scope.Check(
+      "project_file_read",
+      {{"path", json::Quote("externals/box/definitions/deep/_card.json")}},
+      read));
+  for (const auto* outside : {"fit", "unrelated", "box", "box/other"})
+    EXPECT_THROW(scope.Check("run_record", card(outside), read),
+                 std::runtime_error)
+        << outside;
+  for (const auto& change :
+       {R"({"value_type":"PutSource","value":{"path":"definitions/regions/src/a.py","bytes":"x"}})",
+        R"({"value_type":"PutDefinition","value":{"id":"regions","card_json":"{\"type\":\"code\"}"}})"}) {
+    try {
+      scope.Check("project_save",
+                  json::Object(std::string(R"({"changes":[)") + change + "]}"),
+                  read);
+      FAIL() << "Upstream write was accepted: " << change;
+    } catch (const std::runtime_error& error) {
+      EXPECT_NE(std::string(error.what()).find("regions"), std::string::npos);
+    }
+  }
+  const auto inspected = scope.Inspect(
+      json::Encode(json::Members{
+          {"reply", json::Quote("ProjectSnapshot")},
+          {"value",
+           json::Encode(json::Members{
+               {"project_json", json::Quote(read("tsugumi.json"))},
+               {"definitions",
+                R"([{"id":"regions","card_json":"UP"},{"id":"fit","card_json":"DOWN"}])"}})}}),
+      read);
+  EXPECT_NE(inspected.find("UP"), std::string::npos);
+  EXPECT_EQ(inspected.find("DOWN"), std::string::npos);
+  EXPECT_EQ(inspected.find("unrelated"), std::string::npos);
+}
+TEST(HelperScope, FileDenialsNameThePathAndTheUsableFolders) {
+  HelperScope scope(json::Object(
+      R"({"read_cards":["spectra"],"write_cards":["spectra"],"run_cards":[]})"));
+  const auto denial = [&](const std::string& tool, const std::string& path) {
+    try {
+      scope.Check(tool, {{"path", json::Quote(path)}}, kRead);
+    } catch (const std::runtime_error& error) {
+      return std::string(error.what());
+    }
+    return std::string();
+  };
+  for (const auto* path : {"", "/", "definitions/spectra/", "../secret"}) {
+    const auto text = denial("project_file_list", path);
+    EXPECT_NE(text.find(std::string("file path \"") + path + "\""),
+              std::string::npos)
+        << text;
+    EXPECT_NE(text.find("not a relative project path"), std::string::npos);
+    EXPECT_NE(text.find("definitions/spectra/"), std::string::npos) << text;
+    EXPECT_EQ(text.find("delegate"), std::string::npos) << text;
+  }
+  const auto outside = denial("project_file_read", "definitions/fit/a.py");
+  EXPECT_NE(outside.find("definitions/fit/a.py"), std::string::npos);
+  EXPECT_NE(outside.find("readable Card folders (definitions/spectra/)"),
+            std::string::npos)
+      << outside;
+}
 }  // namespace
 }  // namespace tsugumi::agent
 
@@ -485,7 +592,7 @@ TEST(HelperGraphScope, AddsOnlyOwnedCardsAndKeepsTheHiddenGraph) {
       json::Object(R"({"read_cards":["up"],"write_cards":[],"run_cards":[]})"));
   const HelperScope::Reader read = [](const std::string& path) -> std::string {
     if (path == "tsugumi.json")
-      return R"({"name":"P","secret":"keep","canvas":{"cards":[{"id":"up"},{"id":"hidden"}],"connections":[{"from":{"card":"hidden","port":"out"},"to":{"card":"up","port":"in"}}]}})";
+      return R"({"name":"P","secret":"keep","canvas":{"cards":[{"id":"up"},{"id":"hidden"}],"connections":[{"from":{"card":"up","port":"out"},"to":{"card":"hidden","port":"in"}}]}})";
     return "";
   };
   scope.Created("mine", "", read);
