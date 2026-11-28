@@ -13,7 +13,8 @@ import { Icon } from './icons'
 import type { CardEditorModel } from './cardSettings'
 import { L } from '../i18n'
 import { runMark } from '../model/runMark'
-import { failureText, probeResult, workerName } from '../model/workerSelection'
+import { diagnosticText, failureText, probeResult, workerName } from '../model/workerSelection'
+import { plainText } from '../model/terminalText'
 
 export function FailureSourceLink({ failure, onOpenSource }: { failure: D.FailureT; onOpenSource: (source: string, line: number) => void }) {
   const args = new Map(failure.args.map((a) => [s(a.key), s(a.value)]))
@@ -257,12 +258,12 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
                         {record.status!.failure && (
                           <>
                             <Value label={L('失敗の種類')} value={D.FailureKind[record.status!.failure.kind] ?? String(record.status!.failure.kind)} />
-                            {failureText(record.status!.failure) !== sOpt(record.status!.failure.diagnostic)
+                            {failureText(record.status!.failure) !== diagnosticText(record.status!.failure)
                               ? <>
                                 <Row><span className="selectable wrap-pre" style={{ color: 'var(--red)' }}>{failureText(record.status!.failure)}</span></Row>
-                                <Row><span className="caption secondary selectable wrap-pre">{s(record.status!.failure.diagnostic)}</span></Row>
+                                <Row><span className="caption secondary selectable wrap-pre">{diagnosticText(record.status!.failure)}</span></Row>
                               </>
-                              : <Row><span className="selectable wrap-pre" style={{ color: 'var(--red)' }}>{s(record.status!.failure.diagnostic)}</span></Row>}
+                              : <Row><span className="selectable wrap-pre" style={{ color: 'var(--red)' }}>{diagnosticText(record.status!.failure)}</span></Row>}
                             <FailureSourceLink failure={record.status!.failure} onOpenSource={onOpenSource} />
                           </>
                         )}
@@ -469,7 +470,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
 /** What publishing the build outputs did, for Run Info. */
 function buildPushText(summary: R.InvocationSummaryT): string {
   const push = summary.buildPush
-  if (push?.error) return L('送信できませんでした: {0}', s(push.error))
+  if (push?.error) return L('送信できませんでした: {0}', plainText(s(push.error)))
   if (!summary.buildPushed) return L('未送信')
   if (!push || (!push.paths && !push.skipped)) return L('送信済み')
   return L('送信済み: {0} パス（{1}）、キャッシュにある {2} パスは省略', String(push.paths), formatBytes(push.bytes), String(push.skipped))

@@ -790,6 +790,32 @@ import TsugumiTestSupport
   #expect(formatShortDuration(192) == "3:12" && formatShortDuration(3723) == "1:02:03")
 }
 
+@Test func terminalControlsNeverReachTheFace() {
+  // What a child wrote for a terminal never shows as raw codes, even from a
+  // record the core stored before it removed them. The Web UI checks the
+  // same (tests/cardFace.tsx).
+  let raw = "\u{1B}[31;1merror:\u{1B}[0m unable to download '\u{1B}[35;1mhttps://c.example/x.narinfo\u{1B}[0m': HTTP error \u{1B}[35;1m502\u{1B}[0m"
+  let failure = Tsugumi_Data_FailureT()
+  failure.kind = .nixFailed
+  failure.diagnostic = raw
+  #expect(failure.plainText == "error: unable to download 'https://c.example/x.narinfo': HTTP error 502")
+  var d = CardNodeData(title: "x", kind: .code, summary: nil, inputs: [], outputs: [])
+  d.state = .failed
+  d.invocation = 1
+  d.failure = raw
+  d.stage = StageProgress(items: [.init(stage: .build, status: .done), .init(stage: .execute, status: .done),
+                                  .init(stage: .validate, status: .failed)])
+  #expect(d.statusLine().text == Stage.validate.name + ": unable to download 'https://c.example/x.narinfo': HTTP error 502")
+  #expect(strippingTerminalControls("see \u{1B}]8;;https://e.example\u{1B}\\the docs\u{1B}]8;;\u{07}") == "see the docs")
+  #expect(strippingTerminalControls("50%\u{1B}[2K\u{1B}[1G\r100%\u{1B}[?25h") == "50%100%")
+  #expect(strippingTerminalControls("cut\u{1B}") == "cut")
+  #expect(strippingTerminalControls("\u{9B}1m検証 🐦\u{9B}0m\ttab\n") == "検証 🐦\ttab\n")
+  let plain = "検証に失敗しました: キャッシュ 🐦"
+  #expect(strippingTerminalControls(plain) == plain)
+  // The log view shows a coloured line as its text.
+  #expect(LogPage.render("\u{1B}[32mok\u{1B}[0m", number: 3, form: .terminal) == "3\tok")
+}
+
 @Test func aCardNoWorkerCouldTakeSaysItNeverStarted() {
   // The core names each worker's reason; the face says in red that the Card
   // never started, the hover why for each worker, and the size stays.

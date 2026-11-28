@@ -17,6 +17,7 @@ import { CardStateMark, SECTION_STATUS_LABEL, sectionStatus, StageDot } from './
 export { StageDot }
 import { permissionInfo } from '../model/permissions'
 import { L } from '../i18n'
+import { plainText } from '../model/terminalText'
 
 // ---- Texts ------------------------------------------------------------------------
 
@@ -47,7 +48,7 @@ export function idleText(d: CardNodeData): string {
 
 /** The first line of a diagnostic that says something: blank lines and a bare "error:" prefix are skipped. */
 export function firstMeaningfulLine(text: string): string {
-  for (const raw of text.split(/\r?\n/)) {
+  for (const raw of plainText(text).split('\n')) {
     let line = raw.trim()
     if (line.toLowerCase().startsWith('error:')) line = line.slice(6).trim()
     if (line) return line

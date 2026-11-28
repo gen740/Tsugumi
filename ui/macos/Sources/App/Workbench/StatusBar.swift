@@ -208,7 +208,7 @@ struct IssueList: View {
                        detail: s.failure ?? "", card: path(k), isRunFailure: true))
     }
     if let status = session.runStatus, status.state == .failed, let failure = status.failure {
-      let detail = failure.diagnostic ?? String(describing: failure.kind)
+      let detail = failure.diagnosticText ?? String(describing: failure.kind)
       if !out.contains(where: { $0.detail == detail }) {
         out.insert(Issue(error: true, title: status.state.label, detail: detail, card: nil, isRunFailure: true), at: 0)
       }

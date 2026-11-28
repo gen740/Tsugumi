@@ -92,6 +92,7 @@ case "$suite" in
     fi
     (export TSUGUMI_RPC_TRACE=1; run "$bin/tsugumi_rpc_trace_tests")
     run "$bin/tsugumi_rpc_frame_tests"
+    run "$bin/tsugumi_text_tests"
     run "$bin/tsugumi_rpc_cli_tests"
     gtest tsugumi_remote_result_tests 'ShellTest.*' 'RunScratch.*'
     # Evaluation cache invalidation reads real dependencies and filesystem state.

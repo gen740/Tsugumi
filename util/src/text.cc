@@ -145,4 +145,71 @@ auto replace_invalid_utf8(std::string text) -> std::string {
   return repaired;
 }
 
+auto strip_terminal_controls(std::string_view text) -> std::string {
+  const auto at = [&](size_t i) -> unsigned char {
+    return i < text.size() ? static_cast<unsigned char>(text[i]) : 0;
+  };
+  // U+0080..U+009F in UTF-8.
+  const auto c1 = [&](size_t i) {
+    return at(i) == 0xc2 && at(i + 1) >= 0x80 && at(i + 1) <= 0x9f;
+  };
+  // Parameters, intermediates and a final byte. A malformed sequence ends at
+  // the first byte that cannot belong to it, which is kept.
+  const auto csi = [&](size_t i) {
+    while (at(i) >= 0x30 && at(i) <= 0x3f) ++i;
+    while (at(i) >= 0x20 && at(i) <= 0x2f) ++i;
+    if (at(i) >= 0x40 && at(i) <= 0x7e) ++i;
+    return i;
+  };
+  // A string control ends at BEL or ST (ESC \ or its C1 form). Another escape
+  // also ends it and is read as itself.
+  const auto string_control = [&](size_t i) {
+    while (i < text.size()) {
+      if (at(i) == 0x07) return i + 1;
+      if (at(i) == 0x1b) return at(i + 1) == '\\' ? i + 2 : i;
+      if (c1(i) && at(i + 1) == 0x9c) return i + 2;
+      ++i;
+    }
+    return i;
+  };
+  std::string out;
+  out.reserve(text.size());
+  size_t i = 0;
+  while (i < text.size()) {
+    const auto c = at(i);
+    if (c == 0x1b) {
+      const auto next = at(i + 1);
+      if (next == '[') {
+        i = csi(i + 2);
+      } else if (next == ']' || next == 'P' || next == 'X' || next == '^' ||
+                 next == '_') {
+        i = string_control(i + 2);
+      } else if (next >= 0x20 && next <= 0x2f) {
+        i += 2;
+        while (at(i) >= 0x20 && at(i) <= 0x2f) ++i;
+        if (at(i) >= 0x30 && at(i) <= 0x7e) ++i;
+      } else if (next >= 0x30 && next <= 0x7e) {
+        i += 2;
+      } else {
+        ++i;  // a lone ESC
+      }
+    } else if (c1(i)) {
+      const auto code = at(i + 1);
+      if (code == 0x9b)
+        i = csi(i + 2);
+      else if (code == 0x9d || code == 0x90 || code == 0x98 || code == 0x9e ||
+               code == 0x9f)
+        i = string_control(i + 2);
+      else
+        i += 2;
+    } else if ((c < 0x20 && c != '\t' && c != '\n') || c == 0x7f) {
+      ++i;
+    } else {
+      out += static_cast<char>(c);
+      ++i;
+    }
+  }
+  return out;
+}
+
 }  // namespace tsugumi::text

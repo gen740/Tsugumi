@@ -1,5 +1,6 @@
 import { L } from '../i18n'
 import { D, s, sOpt } from '../wire/rpc'
+import { plainText } from './terminalText'
 
 export const workerName = (id: string): string => (id === 'local' ? L('プロジェクトの実行環境') : id)
 
@@ -30,9 +31,15 @@ function workerSelectionReasons(failure?: D.FailureT | null): string[] | undefin
  *  worker could be chosen in plain words, any other failure as its diagnostic. */
 export function failureText(failure?: D.FailureT | null): string | undefined {
   const reasons = workerSelectionReasons(failure)
-  if (!reasons) return sOpt(failure?.diagnostic)
+  if (!reasons) return diagnosticText(failure)
   const head = L('worker を選べなかったため、この Card は開始していません')
   return reasons.length ? `${head}: ${reasons.join(L('、'))}` : head
+}
+
+/** A failure's diagnostic as text (no terminal control). */
+export function diagnosticText(failure?: D.FailureT | null): string | undefined {
+  const diagnostic = sOpt(failure?.diagnostic)
+  return diagnostic === undefined ? undefined : plainText(diagnostic)
 }
 
 /** The reasons in a line (for the Card's hover), when the Card never started

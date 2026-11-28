@@ -24,6 +24,12 @@ class Utf8Decoder {
 };
 
 auto replace_invalid_utf8(std::string text) -> std::string;
+// Text for a person to read from what a program wrote for a terminal: removes
+// escape sequences (CSI such as colours and cursor moves, OSC such as links
+// and titles, DCS/SOS/PM/APC strings, two-byte escapes), their C1 forms, and
+// every other control character except tab and line feed. Other UTF-8 text is
+// kept as it is.
+auto strip_terminal_controls(std::string_view text) -> std::string;
 // For portable run metadata. Removes credentials and store URL settings.
 auto public_cache_endpoint(std::string url) -> std::string;
 

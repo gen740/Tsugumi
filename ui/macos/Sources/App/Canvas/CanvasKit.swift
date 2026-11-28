@@ -448,7 +448,7 @@ struct CardStatusLine: Equatable {
 /// The first line of a diagnostic that says something: blank lines and a
 /// bare "error:" prefix are skipped.
 func firstMeaningfulLine(_ text: String) -> String {
-  for raw in text.split(whereSeparator: \.isNewline) {
+  for raw in strippingTerminalControls(text).split(whereSeparator: \.isNewline) {
     var line = raw.trimmingCharacters(in: .whitespaces)
     if line.lowercased().hasPrefix("error:") { line = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces) }
     if !line.isEmpty { return line }

@@ -41,7 +41,8 @@ FailureData failure(const D::Failure* f) {
     for (const auto* kv : *f->args())
       out.args.emplace_back(kv->key()->str(), kv->value()->str());
   if (f->diagnostic())
-    out.diagnostic = text::replace_invalid_utf8(f->diagnostic()->str());
+    out.diagnostic = text::strip_terminal_controls(
+        text::replace_invalid_utf8(f->diagnostic()->str()));
   if (f->current_rev()) out.current_rev = *f->current_rev();
   if (f->retry_after_ms()) out.retry_after_ms = *f->retry_after_ms();
   return out;

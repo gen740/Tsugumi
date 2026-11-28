@@ -2,6 +2,7 @@ import { CSSProperties, memo, useEffect, useLayoutEffect, useMemo, useRef, useSt
 import { L } from '../i18n'
 import { decodeLog, logLineNumber, LogAnchor, LogForm, LogHeights, LogReadFrames, LogWindow, ReadKind, VisibleLines } from '../model/logWindow'
 import { useObserve } from '../model/observable'
+import { plainText } from '../model/terminalText'
 import { prefs } from '../model/prefs'
 import { errorText, key, ProjectSession } from '../model/session'
 import { D, RPCFailure, s, segs } from '../wire/rpc'
@@ -139,7 +140,7 @@ const Rows = memo(function Rows({ block }: { block: View['blocks'][number] }) {
   return <>{block.lines.map((text, i) => {
     const number = logLineNumber(block, i)
     return <div key={number} className="log-row" data-line={number}>
-      <span className="log-number" aria-hidden="true">{number}</span><span className="log-line">{text}</span>
+      <span className="log-number" aria-hidden="true">{number}</span><span className="log-line">{plainText(text)}</span>
     </div>
   })}</>
 })

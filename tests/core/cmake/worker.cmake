@@ -20,3 +20,11 @@ endforeach()
 if(TSUGUMI_INSTALLED_CORE)
   install(TARGETS tsugumi_workerd_tests tsugumi_worker_staging_tests tsugumi_file_transfer_tests RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()
+
+add_executable(tsugumi_text_tests text_test.cc)
+target_link_libraries(tsugumi_text_tests PRIVATE tsugumi_worker_values GTest::gtest_main)
+gtest_discover_tests(tsugumi_text_tests TEST_PREFIX "core_text."
+  DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 15)
+if(TSUGUMI_INSTALLED_CORE)
+  install(TARGETS tsugumi_text_tests RUNTIME DESTINATION libexec/tsugumi-tests)
+endif()

@@ -343,7 +343,8 @@ auto RemoteWorkerStore::push(const workerd::R::CacheSettingsT& caches,
     }
     outcome.pushed = true;
   } catch (const std::exception& error) {
-    outcome.error = std::string(error.what()).substr(0, 512);
+    outcome.error = text::replace_invalid_utf8(
+        text::strip_terminal_controls(error.what()).substr(0, 512));
   }
   return outcome;
 }

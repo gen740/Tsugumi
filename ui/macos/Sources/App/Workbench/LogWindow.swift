@@ -187,7 +187,7 @@ struct LogPage: Sendable {
       let length = fragmentCells - ((column + scalarOffset) % fragmentCells)
       let end = cells.index(start, offsetBy: length, limitedBy: cells.endIndex) ?? cells.endIndex
       let fragment = String(cells[start..<end])
-      blocks.append(LogBlock(line: number, text: "\(number)\t\(fragment)\n",
+      blocks.append(LogBlock(line: number, text: "\(number)\t\(strippingTerminalControls(fragment))\n",
                              fragmentOffset: offset + UInt64(scalarOffset * 4)))
       start = end
       scalarOffset += length
@@ -199,10 +199,10 @@ struct LogPage: Sendable {
     let text: String
     switch form {
     case .terminal:
-      text = raw
+      text = strippingTerminalControls(raw)
     case .journal:
       guard raw.hasPrefix("validate · ") || raw.hasPrefix("save · ") else { return nil }
-      text = raw
+      text = strippingTerminalControls(raw)
     }
     return "\(number)\t\(text)"
   }

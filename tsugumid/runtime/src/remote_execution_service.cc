@@ -15,6 +15,7 @@
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
+#include "tsugumi/util/text.hh"
 #include "tsugumi/workerd/artifact_id.hh"
 #include "tsugumi/workerd/cache_publish.hh"
 #include "tsugumi/workerd/cache_relay_store.hh"
@@ -740,7 +741,8 @@ auto RemoteExecutionService::publish_local_build(
       s.build_pushed = true;
     }
   } catch (const std::exception& error) {
-    outcome.error = std::string(error.what()).substr(0, 512);
+    outcome.error = text::replace_invalid_utf8(
+        text::strip_terminal_controls(error.what()).substr(0, 512));
   }
   if (push_outputs) s.build_push = std::move(outcome);
   s.execution_activity = ExecutionActivity::unspecified;

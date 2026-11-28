@@ -30,7 +30,12 @@ FailureData FailureData::make(
     std::vector<std::pair<std::string, std::string>> args) {
   FailureData f;
   f.kind = k;
-  if (!diag.empty()) f.diagnostic = text::replace_invalid_utf8(std::move(diag));
+  // Diagnostics often carry what a child wrote for a terminal (Nix, a
+  // compiler): a failure keeps only the text.
+  if (auto plain = text::strip_terminal_controls(
+          text::replace_invalid_utf8(std::move(diag)));
+      !plain.empty())
+    f.diagnostic = std::move(plain);
   f.args = std::move(args);
   return f;
 }

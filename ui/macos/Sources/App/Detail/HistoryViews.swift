@@ -319,11 +319,11 @@ struct CardExecutionView: View {
       }
       if let f = r.status.failure {
         LabeledContent("失敗の種類", value: String(describing: f.kind))
-        if let plain = f.plainText, plain != f.diagnostic {
+        if let plain = f.plainText, plain != f.diagnosticText {
           Text(plain).textSelection(.enabled).foregroundStyle(.red)
-          Text(f.diagnostic ?? "").font(.caption).textSelection(.enabled).foregroundStyle(.secondary)
+          Text(f.diagnosticText ?? "").font(.caption).textSelection(.enabled).foregroundStyle(.secondary)
         } else {
-          Text(f.diagnostic ?? "").textSelection(.enabled).foregroundStyle(.red)
+          Text(f.diagnosticText ?? "").textSelection(.enabled).foregroundStyle(.red)
         }
         let args = f.args.compactMap { $0 }
         if let source = args.first(where: { $0.key == "source" })?.value,
@@ -345,7 +345,7 @@ struct CardExecutionView: View {
 
   /// What publishing the build outputs did, for Run Info.
   static func buildPushText(pushed: Bool, push: Tsugumi_Data_BuildPushT?) -> String {
-    if let error = push?.error, !error.isEmpty { return String(localized: "送信できませんでした: \(error)") }
+    if let error = push?.error.map(strippingTerminalControls), !error.isEmpty { return String(localized: "送信できませんでした: \(error)") }
     guard pushed else { return String(localized: "未送信") }
     guard let push, push.paths > 0 || push.skipped > 0 else { return String(localized: "送信済み") }
     let bytes = ByteCountFormatter.string(fromByteCount: Int64(clamping: push.bytes), countStyle: .file)

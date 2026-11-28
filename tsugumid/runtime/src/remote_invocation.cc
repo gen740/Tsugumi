@@ -14,6 +14,7 @@
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
+#include "tsugumi/util/text.hh"
 #include "tsugumi/workerd/artifact_id.hh"
 #include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/log.hh"
@@ -333,7 +334,8 @@ auto import_remote_result(
     push.paths = environment->push_paths;
     push.bytes = environment->push_bytes;
     push.skipped = environment->push_skipped;
-    push.error = environment->push_error.substr(0, 512);
+    push.error = text::replace_invalid_utf8(
+        text::strip_terminal_controls(environment->push_error).substr(0, 512));
     result.push = std::move(push);
   }
   result.environment.paths = environment->paths;

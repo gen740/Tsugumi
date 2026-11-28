@@ -11,6 +11,7 @@ import { CardKey, cardState, key, path, ProjectSession, runState } from '../mode
 import { canvasFor } from '../model/canvas'
 import { BOTTOM_ICONS, BOTTOM_PANELS, BOTTOM_TITLES, BottomPanel, Workspace, WorkflowTab } from '../model/workspace'
 import { D, s as text } from '../wire/rpc'
+import { plainText } from '../model/terminalText'
 import { CanvasWorkspace } from './canvasWorkspace'
 import { ChatPanel, PermissionHost, PermissionPrompt } from './chat'
 import { guide, OPEN_PANELS } from '../model/guide'
@@ -440,7 +441,7 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
           <Icon name={rs.icon} style={{ color: `var(--${rs.color})` }} />
           <span className="sb-long">実行: {rs.label}</span><span className="sb-short">{rs.label}</span>
           {st === D.RunState.failed && failure && (
-            <span className="sb-long sb-full secondary ellipsis" style={{ maxWidth: 260 }}> · {failure.diagnostic ? text(failure.diagnostic) : D.FailureKind[failure.kind]}</span>
+            <span className="sb-long sb-full secondary ellipsis" style={{ maxWidth: 260 }}> · {failure.diagnostic ? plainText(text(failure.diagnostic)) : D.FailureKind[failure.kind]}</span>
           )}
         </span>
         <span className="vdivider sb-not-min" />

@@ -260,4 +260,22 @@ const long = card('a long name of a Card '.repeat(6))
   // Not the root one: no guide target.
   assert.doesNotMatch(renderToStaticMarkup(<CardNodeView data={start()} flow="leftToRight" start={{ stop: false, enabled: true, help: 'h' }} />), /data-guide="run"/)
 }
+{
+  // What a child wrote for a terminal never reaches the face as raw codes,
+  // even from a record the core stored before it removed them. The Mac app
+  // checks the same (UILogicTests: terminalControlsNeverReachTheFace).
+  const { plainText } = await import('../src/model/terminalText')
+  const esc = '\u001b'
+  const raw = `${esc}[31;1merror:${esc}[0m unable to download '${esc}[35;1mhttps://c.example/x.narinfo${esc}[0m': HTTP error ${esc}[35;1m502${esc}[0m`
+  const old = Object.assign(new D.FailureT(), { kind: D.FailureKind.nix_failed, diagnostic: raw })
+  assert.equal(failureText(old), "error: unable to download 'https://c.example/x.narinfo': HTTP error 502")
+  const line = statusLine({ ...card(), state: D.CardState.failed, invocation: 1n, failure: raw, stage: stages('done', 'done', 'failed') })
+  assert.equal(line.text, "validate: unable to download 'https://c.example/x.narinfo': HTTP error 502")
+  assert.equal(plainText(`see ${esc}]8;;https://e.example${esc}\\the docs${esc}]8;;\u0007`), 'see the docs')
+  assert.equal(plainText(`50%${esc}[2K${esc}[1G\r100%${esc}[?25h`), '50%100%')
+  assert.equal(plainText(`cut${esc}`), 'cut')
+  assert.equal(plainText(`\u009b1m検証 🐦\u009b0m\ttab\n`), '検証 🐦\ttab\n')
+  const plain = '検証に失敗しました: キャッシュ 🐦'
+  assert.equal(plainText(plain), plain)
+}
 console.log('card face: passed')

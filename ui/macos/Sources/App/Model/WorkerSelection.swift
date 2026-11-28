@@ -7,10 +7,13 @@ import TsugumiRPC
 /// probe's limit in `timeout:<id>`); its diagnostic stays the full text.
 extension Tsugumi_Data_FailureT {
   var plainText: String? {
-    guard let reasons = workerSelectionReasons else { return diagnostic }
+    guard let reasons = workerSelectionReasons else { return diagnosticText }
     let head = String(localized: "worker を選べなかったため、この Card は開始していません")
     return reasons.isEmpty ? head : head + ": " + reasons.joined(separator: String(localized: "、"))
   }
+
+  /// The diagnostic as text (no terminal control).
+  var diagnosticText: String? { diagnostic.map(strippingTerminalControls) }
 
   /// The reasons in a line (for the Card's hover), when the Card never started
   /// because no worker could be chosen; nil for any other failure.
