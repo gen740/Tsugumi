@@ -137,8 +137,14 @@ export interface CardNodeProps {
   onToggleCollapse?: () => void
   /** The badge of open comments: opens them (undefined: only shows the number). */
   onComments?: () => void
-  /** The start Card's button: runs the workflow from it (undefined: not offered). */
+  /** What the start Card's button does now (undefined: not offered): run, or
+   *  stop while a run is on, with its tooltip. */
+  start?: { stop: boolean; enabled: boolean; help: string }
+  /** The root start Card: its button is what ⌘R does, and the guide's "run". */
+  rootStart?: boolean
+  /** The start Card's button: runs the workflow from it, or stops the run. */
   onRun?: () => void
+  onStop?: () => void
   style?: CSSProperties
   className?: string
   onPointerDown?: (e: React.PointerEvent) => void
@@ -338,23 +344,30 @@ function CardFace({ p, g, marks }: { p: CardNodeProps; g: CardGeometry; marks: J
   )
 }
 
-/** Its name and a small run button; the run's state beside the name. */
+/** Its name and a small run button (stop while a run is on); the run's state beside the name. */
 function StartBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
   const { data } = p
   const z = p.zoom ?? 1
   const s = (v: number) => v * z
   const font = (size: number) => Math.max(6, size * z)
   const o = g.outlineRect
-  const running = data.state !== undefined && data.state !== D.CardState.not_started
+  // The last state as one stage circle (not run: an empty ring); the run gear while it is under way.
+  const st = data.state ?? D.CardState.not_started
+  const underWay = st === D.CardState.waiting || st === D.CardState.ready || st === D.CardState.preparing || st === D.CardState.running
+  const stop = p.start?.stop ?? false
+  const help = p.start?.help ?? L('ここから Workflow を実行')
   return (
     <div className="cv-card-body cv-start" style={{ width: s(o.width), height: s(o.height), padding: `0 ${s(7)}px`, gap: s(6) }}>
-      <button type="button" className="cv-start-run" style={{ width: s(20), height: s(20) }} disabled={!p.onRun} title={L('ここから Workflow を実行')} {...stopping}
-        onClick={(e) => { e.stopPropagation(); p.onRun?.() }}>
-        <Icon name="play.fill" size={font(9)} />
+      <button type="button" className={'cv-start-run' + (stop ? ' cv-start-stop' : '')} style={{ width: s(20), height: s(20) }}
+        disabled={!p.start?.enabled} title={help} aria-label={stop ? L('停止') : L('実行')} data-guide={p.rootStart ? 'run' : undefined} {...stopping}
+        onClick={(e) => { e.stopPropagation(); if (stop) p.onStop?.(); else p.onRun?.() }}>
+        <Icon name={stop ? 'stop.fill' : 'play.fill'} size={font(9)} />
       </button>
       <span className="cv-title" style={{ fontSize: font(12) }}>{data.title}</span>
       <span style={{ flex: 1 }} />
-      {running && <CardStateMark state={data.state!} size={s(9)} />}
+      <span className="cv-start-status" title={cardState(st).label}>
+        {underWay ? <RunGear size={s(11)} /> : <CardStateMark state={st} size={s(9)} />}
+      </span>
     </div>
   )
 }
@@ -430,6 +443,31 @@ export function stageHelp(item: StageItem, tappable: boolean, waiting = false): 
   if (item.status === 'failed' || item.status === 'cancelled') t += L('（クリックでこの段階のログ）')
   else if (tappable && item.status !== 'pending') t += L('（クリックでログ）')
   return t
+}
+
+/** Eight teeth, outer radius 10, teeth 2.6 deep, a hole of 3.2, in a box of 24 (as RunGearShape in the Mac app). */
+const GEAR_PATH = (() => {
+  const at = (r: number, deg: number) => {
+    const a = (deg - 90) * Math.PI / 180
+    return `${(r * Math.cos(a)).toFixed(3)} ${(r * Math.sin(a)).toFixed(3)}`
+  }
+  const teeth = Array.from({ length: 8 }, (_, i) => {
+    const a = i * 45
+    return [at(7.4, a - 13), at(10, a - 8), at(10, a + 8), at(7.4, a + 13)].join('L')
+  }).join('L')
+  return `M${teeth}Z M3.2 0A3.2 3.2 0 1 0 -3.2 0A3.2 3.2 0 1 0 3.2 0Z`
+})()
+
+/** What a run is doing as a gear in the running colour: it steps one tooth at
+ *  a time (an eased 45° turn, then a hold). Still and dimmed while the run
+ *  only waits (for a worker slot or its Nix store); still with reduced motion
+ *  (canvas.css). The same drawing and timing as RunGear in the Mac app. */
+export function RunGear({ size = 15, waiting = false }: { size?: number; waiting?: boolean }) {
+  return (
+    <svg className={'run-gear' + (waiting ? ' run-gear-waiting' : '')} width={size} height={size} viewBox="-12 -12 24 24" aria-hidden>
+      <path d={GEAR_PATH} fill="var(--stage-run)" fillRule="evenodd" />
+    </svg>
+  )
 }
 
 /** Stages of the latest invocation as small circles stacked top to bottom

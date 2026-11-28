@@ -1087,8 +1087,25 @@ struct CardNodeView: View {
   var onToggleCollapse: (() -> Void)?
   /// The badge of open comments: opens them (nil: only shows the number).
   var onComments: (() -> Void)?
-  /// The start Card's button: runs the workflow from it (nil: not offered).
+  /// What the start Card's button does now (nil: not offered).
+  enum StartButton: Equatable {
+    case run(enabled: Bool)
+    case stop(enabled: Bool)
+
+    /// Whether it shows stop, and whether it can be pressed.
+    var shown: (stop: Bool, enabled: Bool) {
+      switch self {
+      case .run(let e): return (false, e)
+      case .stop(let e): return (true, e)
+      }
+    }
+  }
+  var start: StartButton?
+  /// The root start Card: its button is what ⌘R does, and the guide's "run".
+  var rootStart = false
+  /// The start Card's button: runs the workflow from it, or stops the run.
   var onRun: (() -> Void)?
+  var onStop: (() -> Void)?
   var draftEdit: DraftEdit?
   private enum DraftField { case content }
   @FocusState private var draftField: DraftField?
@@ -1353,23 +1370,44 @@ struct CardNodeView: View {
 
   // MARK: Start Card
 
-  /// Its name and a small run button; the run's state beside the name.
+  /// Its name and a small run button (stop while a run is on); the run's state beside the name.
   private func startBody(outline: CGRect) -> some View {
     HStack(spacing: s(6)) {
-      Button { onRun?() } label: {
-        Image(systemName: "play.fill").font(font(9, .bold)).foregroundStyle(.white)
-          .frame(width: s(20), height: s(20))
-          .background(Circle().fill(onRun == nil ? Color.secondary : Color.accentColor))
-      }
-      .buttonStyle(.plain)
-      .disabled(onRun == nil)
-      .help(String(localized: "ここから Workflow を実行"))
+      startButton
       Text(data.title).font(font(12, .semibold)).lineLimit(1).truncationMode(.tail)
       Spacer(minLength: 0)
-      if let st = data.state, st != .notStarted { CardStateMark(state: st, size: s(9)) }
+      startStatus.help(data.state?.label ?? StageProgress.Status.pending.label)
     }
     .padding(.horizontal, s(7))
     .frame(width: outline.width, height: outline.height)
+  }
+
+  /// The start Card's last state as one stage circle (not run: an empty
+  /// ring); the run gear while it is under way.
+  @ViewBuilder private var startStatus: some View {
+    let state = data.state ?? .notStarted
+    if [.waiting, .ready, .preparing, .running].contains(state) {
+      RunGear(size: s(11))
+    } else {
+      CardStateMark(state: state, size: s(9))
+    }
+  }
+
+  /// Runs the workflow from this Card; while a run is on, stops it.
+  @ViewBuilder private var startButton: some View {
+    let (stop, enabled) = start?.shown ?? (false, false)
+    let run = String(localized: "ここから Workflow を実行")
+    let button = Button { stop ? onStop?() : onRun?() } label: {
+      Image(systemName: stop ? "stop.fill" : "play.fill").font(font(9, .bold)).foregroundStyle(.white)
+        .frame(width: s(20), height: s(20))
+        .background(Circle().fill(!enabled ? Color.secondary : stop ? Color.red : Color.accentColor))
+    }
+    .buttonStyle(.plain)
+    .disabled(!enabled)
+    .accessibilityLabel(stop ? "停止" : "実行")
+    .help(stop ? tip(String(localized: "Workflow の実行を停止（チャットの回答停止とは別の操作です）"), .stop)
+               : rootStart ? tip(run, .run) : run)
+    if rootStart { button.guideTarget("run", radius: s(10), zoom: zoom) } else { button }
   }
 
   // MARK: Routing Card
@@ -1684,6 +1722,65 @@ struct CardStateMark: View {
     } else {
       Image(systemName: state.symbol).font(.system(size: size)).foregroundStyle(state.color)
     }
+  }
+}
+
+/// What a run is doing as a gear in the running colour: it steps one tooth at
+/// a time (an eased 45° turn, then a hold). Still and dimmed while the run only
+/// waits (for a worker slot or its Nix store); still with Reduce Motion. The
+/// same drawing and timing as RunGear in the Web UI.
+struct RunGear: View {
+  var size: CGFloat = 15
+  var waiting = false
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  /// One step: 0.22 s turning (ease in and out), then held until 0.45 s.
+  static let period = 0.45, turn = 0.22
+
+  /// The gear's turn at `time` (seconds), in degrees within one tooth.
+  static func angle(at time: TimeInterval) -> Double {
+    let u = min(1, time.truncatingRemainder(dividingBy: period) / turn)
+    return 45 * (u < 0.5 ? 2 * u * u : 1 - pow(-2 * u + 2, 2) / 2)
+  }
+
+  var body: some View {
+    Group {
+      if waiting || reduceMotion {
+        gear(0)
+      } else {
+        TimelineView(.animation(minimumInterval: 1.0 / 60)) { t in
+          gear(Self.angle(at: t.date.timeIntervalSinceReferenceDate))
+        }
+      }
+    }
+    .frame(width: size, height: size)
+    .opacity(waiting ? 0.45 : 1)
+    .accessibilityHidden(true)
+  }
+
+  private func gear(_ angle: Double) -> some View {
+    RunGearShape().fill(StagePalette.run, style: FillStyle(eoFill: true)).rotationEffect(.degrees(angle))
+  }
+}
+
+/// Eight teeth, outer radius 10, teeth 2.6 deep, a hole of 3.2, in a box of 24.
+struct RunGearShape: Shape {
+  func path(in rect: CGRect) -> Path {
+    let k = min(rect.width, rect.height) / 24, c = CGPoint(x: rect.midX, y: rect.midY)
+    func at(_ r: CGFloat, _ deg: Double) -> CGPoint {
+      let a = (deg - 90) * .pi / 180
+      return CGPoint(x: c.x + r * k * cos(a), y: c.y + r * k * sin(a))
+    }
+    var p = Path()
+    for i in 0..<8 {
+      let a = Double(i) * 45
+      let points = [at(7.4, a - 13), at(10, a - 8), at(10, a + 8), at(7.4, a + 13)]
+      if i == 0 { p.move(to: points[0]) } else { p.addLine(to: points[0]) }
+      for q in points.dropFirst() { p.addLine(to: q) }
+    }
+    p.closeSubpath()
+    p.addEllipse(in: CGRect(x: c.x - 3.2 * k, y: c.y - 3.2 * k, width: 6.4 * k, height: 6.4 * k))
+    return p
   }
 }
 

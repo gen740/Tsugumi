@@ -5,7 +5,8 @@ import { create } from 'react-test-renderer'
 import { L } from '../src/i18n'
 import type { ProjectSession } from '../src/model/session'
 import type { Workspace } from '../src/model/workspace'
-import { ProjectActions, tip } from '../src/ui/canvasWorkspace'
+import { ProjectActions } from '../src/ui/canvasWorkspace'
+import { tip } from '../src/model/prefs'
 
 const workspace = { showChat: true, set() {} } as unknown as Workspace
 const render = (runActive: boolean, onSwitchProject?: () => void) => create(

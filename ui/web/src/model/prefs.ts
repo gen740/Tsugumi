@@ -237,3 +237,6 @@ export class AppPreferences extends Observable {
 }
 
 export const prefs = new AppPreferences()
+
+/** A tooltip that names the shortcut of its action. */
+export const tip = (text: string, action: ShortcutAction) => L('{0}（{1}）', text, prefs.label(action))

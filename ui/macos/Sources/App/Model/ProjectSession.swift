@@ -370,6 +370,11 @@ final class ProjectSession {
   private(set) var stopError: String?
   var stopRequested: Bool { stopRunId != nil }
   var canStopRun: Bool { runActive && !stopRequested && runStatus?.state != .cancelling }
+  /// Every Card of the run that is under way only waits (for a worker slot or its Nix store).
+  var runOnlyWaits: Bool {
+    let live = cardStates.values.filter { $0.state == .running || $0.state == .preparing }
+    return !live.isEmpty && live.allSatisfy { ExecutionActivityText($0)?.waiting == true }
+  }
   private(set) var runStatus: Tsugumi_RPC_RunStatusT? {
     didSet {
       if oldValue?.runId != currentRunId || !runActive || runStatus?.state == .cancelling {

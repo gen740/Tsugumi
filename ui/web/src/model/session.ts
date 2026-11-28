@@ -487,6 +487,11 @@ export class ProjectSession extends Observable {
   get canStopRun() {
     return this.runActive && !this.stopRequested && this.runStatus?.state !== D.RunState.cancelling
   }
+  /** Every Card of the run that is under way only waits (for a worker slot or its Nix store). */
+  get runOnlyWaits() {
+    const live = [...this.cardStates.values()].filter((s) => s.state === D.CardState.running || s.state === D.CardState.preparing)
+    return live.length > 0 && live.every((s) => executionActivityText(s)?.waiting === true)
+  }
   private _runStatus?: R.RunStatusT
   get runStatus() { return this._runStatus }
   set runStatus(status: R.RunStatusT | undefined) {

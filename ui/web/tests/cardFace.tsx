@@ -237,4 +237,27 @@ const long = card('a long name of a Card '.repeat(6))
   assert.equal(look(D.CardState.skipped), undefined)
   assert.ok(renderToStaticMarkup(<CardStateMark state={D.CardState.succeeded} size={10} />).includes('cv-dot-done'))
 }
+
+{
+  // The start Card's button runs, and stops while a run is on (the run
+  // capsule has no button); the root one is the guide's "run". Its state is
+  // one stage circle, the run gear while it is under way.
+  const start = (state?: number): Data => ({ ...card('start'), kind: 'trigger', inputs: [], state })
+  const draw = (d: Data, stop: boolean, enabled = true) => renderToStaticMarkup(
+    <CardNodeView data={d} flow="leftToRight" start={{ stop, enabled, help: 'h' }} rootStart onRun={() => {}} onStop={() => {}} />)
+  const idle = draw(start(D.CardState.succeeded), false)
+  assert.match(idle, /class="cv-start-run"[^>]*data-guide="run"/)
+  assert.match(idle, /aria-label="実行"/)
+  assert.match(idle, /cv-dot-done/)
+  const running = draw(start(D.CardState.running), true)
+  assert.match(running, /class="cv-start-run cv-start-stop"/)
+  assert.match(running, /aria-label="停止"/)
+  assert.match(running, /class="run-gear"/)
+  assert.match(draw(start(D.CardState.running), true, false), /<button[^>]*cv-start-stop[^>]*disabled=""/)
+  assert.match(draw(start(D.CardState.failed), false), /cv-dot-failed/)
+  assert.match(draw(start(D.CardState.cancelled), false), /cv-dot-cancelled/)
+  assert.match(draw(start(), false), /class="cv-dot"/)
+  // Not the root one: no guide target.
+  assert.doesNotMatch(renderToStaticMarkup(<CardNodeView data={start()} flow="leftToRight" start={{ stop: false, enabled: true, help: 'h' }} />), /data-guide="run"/)
+}
 console.log('card face: passed')

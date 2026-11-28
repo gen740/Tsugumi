@@ -225,7 +225,7 @@ In the Card editor's Source view, press **Build SDK** to read the generated name
 
 ## Running it and checking
 
-1. Press **Run** (⌘R). The first build prepares the Card's environment.
+1. Press ▶ on the start Card (⌘R); while it runs, the same button stops it (⌘.). The first build prepares the Card's environment.
 2. Open `convert`'s live view to see `68 °F`. Use **Run History** to inspect the output on `fahrenheit` and the logs for evaluation, build and execution.
 3. In Card Settings, change `celsius` to `-40.0` and run again. The editor saves the new literal in `params.nix`. The rebuilt Card shows `−40 °F`. Select either run in Run History to inspect its result.
 

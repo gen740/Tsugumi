@@ -1351,3 +1351,14 @@ private final class CountingRuler: LineNumberRuler {
   model.closeFile(source)
   #expect(model.sourceLine == nil)
 }
+
+/// The run gear steps one tooth (45°) at a time: an eased turn over 0.22 s, then a hold until the next 0.45 s step.
+@MainActor
+@Test func runGearStepsOneToothAtATime() {
+  #expect(abs(RunGear.angle(at: 0)) < 1e-9)
+  #expect(abs(RunGear.angle(at: 0.11) - 22.5) < 1e-6)
+  #expect(RunGear.angle(at: 0.05) < 22.5 * 0.5)
+  #expect(abs(RunGear.angle(at: 0.22) - 45) < 1e-6)
+  #expect(abs(RunGear.angle(at: 0.40) - 45) < 1e-6)
+  #expect(abs(RunGear.angle(at: 0.45 + 0.11) - 22.5) < 1e-6)
+}

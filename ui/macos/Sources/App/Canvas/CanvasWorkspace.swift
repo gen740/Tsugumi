@@ -251,12 +251,12 @@ struct ChatToggle: View {
   }
 }
 
-/// Run / stop, the run's state and its elapsed time. Per-Card counts and details are on the Cards, in the
-/// history and on the timeline (a share of finished Cards says nothing about
-/// a run with loops, so there is no progress bar).
+/// The run's state and its elapsed time. A run starts and stops from the start
+/// Card's button and the Workflow menu (⌘R, ⌘.). Per-Card counts and details
+/// are on the Cards, in the history and on the timeline (a share of finished
+/// Cards says nothing about a run with loops, so there is no progress bar).
 struct CanvasRunControl: View {
   let session: ProjectSession
-  let tab: WorkflowTab
   /// Shown as running: from the start, and for a moment after a quick run,
   /// so a short run reads as one step instead of a flicker.
   @State private var shownActive = false
@@ -267,31 +267,8 @@ struct CanvasRunControl: View {
     let label = session.stopRequested ? String(localized: "停止を要求中")
       : (shownActive && !session.runActive ? Tsugumi_Data_RunState.running.label : state.label)
     HStack(spacing: 8) {
-      Button {
-        if session.runActive { Task { await session.cancelRun() } } else { RunActions.runAll(session, scope: tab.scope) }
-      } label: {
-        Image(systemName: shownActive ? "stop.fill" : "play.fill")
-          .frame(width: 24, height: 24)
-          .background(Circle().strokeBorder(lineWidth: 1))
-      }
-      .buttonStyle(.borderless)
-      .foregroundStyle(shownActive ? Color.red : Color.accentColor)
-      .guideTarget("run")
-      .disabled(shownActive ? !session.canStopRun : !session.connected)
-      .accessibilityLabel(shownActive ? "停止" : "実行")
-      .help(shownActive ? tip(String(localized: "Workflow の実行を停止（チャットの回答停止とは別の操作です）"), .stop)
-                        : tip(String(localized: "文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）"), .run))
-      Divider().frame(height: 16)
       HStack(spacing: 6) {
-        Group {
-          if shownActive {
-            ProgressView().controlSize(.mini)
-          } else {
-            Image(systemName: state.symbol).foregroundStyle(state.color)
-          }
-        }
-        .frame(width: 15, height: 15)
-        .accessibilityHidden(true)
+        RunStateIndicator(active: shownActive, waiting: session.runActive && session.runOnlyWaits, state: state)
         SwiftUI.TimelineView(.periodic(from: .now, by: session.runActive ? 0.03 : 1)) { _ in
           Text(elapsed).monospacedDigit().foregroundStyle(.secondary).fixedSize()
         }
@@ -338,6 +315,26 @@ struct CanvasRunControl: View {
     guard let s = session.runStatus, let start = s.acceptedAt ?? s.startedAt else { return formatDuration(0) }
     let end = s.endedAt ?? (session.runActive ? session.coreNow() : start)
     return formatDuration(Double(max(0, end - start)) / 1000)
+  }
+}
+
+/// The run's indicator: the gear while it runs (still while it only waits),
+/// the last run's state symbol otherwise.
+struct RunStateIndicator: View {
+  let active: Bool
+  var waiting = false
+  let state: Tsugumi_Data_RunState
+
+  var body: some View {
+    Group {
+      if active {
+        RunGear(size: 15, waiting: waiting)
+      } else {
+        Image(systemName: state.symbol).foregroundStyle(state.color)
+      }
+    }
+    .frame(width: 15, height: 15)
+    .accessibilityHidden(true)
   }
 }
 

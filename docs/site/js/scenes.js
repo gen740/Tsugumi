@@ -336,7 +336,7 @@ export const CasA = {
   sketchRect: (k) => rect(137 + k * 265, 400, 196, 140),
   cardRect: (k) => rect(195 + k * 240, 312, 210, 92),
   startRect: rect(52, 339, 104, 38),
-  runButton: rect(396, 130, 92, 28),
+  runState: rect(396, 130, 200, 28),
   get startPort() { return pt(maxX(this.startRect), midY(this.startRect)) },
   inPort: (r) => pt(r.x, r.y + 64),
   outPort: (r) => pt(maxX(r), r.y + 64),
@@ -424,25 +424,18 @@ export const CasA = {
   drawToolbar(g, p, u) {
     const o = span(u, 0.7, 1)
     faded(g, o, () => {
-      const C = CasA.canvas, B = CasA.runButton
+      const C = CasA.canvas, B = CasA.runState
       const bar = rect(C.x + 16, C.y + 16, 250, 36)
       fillRound(g, bar, 18, 'rgba(255,255,255,0.07)')
       text(g, 'Cas A · Chandra RGB', pt(bar.x + 18, midY(bar)), 14, { weight: 600, color: hex(0xe8e8ea), align: 'left' })
-      fillRound(g, rect(B.x - 8, C.y + 16, 330, 36), 18, 'rgba(255,255,255,0.07)')
-      const pressed = 1 - smooth(Math.abs(p - CasA.press) / 0.05)
-      g.save()
-      g.translate(midX(B), midY(B))
-      g.scale(1 - 0.06 * pressed, 1 - 0.06 * pressed)
-      fillRound(g, rect(-B.w / 2, -B.h / 2, B.w, B.h), 7, hex(pressed > 0.1 ? 0x5a9cff : 0x2f7cf6))
-      text(g, '▶  Run', pt(0, 0), 14, { weight: 600, color: '#fff' })
-      g.restore()
-      const sx = maxX(B) + 14, sy = midY(B)
-      if (p >= CasA.run(0)[0]) {
-        const doneAll = CasA.state(2, p) === 'done'
-        const elapsed = doneAll ? 2.41 : ((p - CasA.run(0)[0]) / (CasA.run(2)[1] - CasA.run(0)[0])) * 2.41
-        text(g, doneAll ? '✓ Succeeded' : '◌ Running', pt(sx, sy), 13, { weight: 600, color: hex(doneAll ? Ink.done : Ink.badge), align: 'left' })
-        text(g, `00:00:${elapsed.toFixed(2).padStart(5, '0')}`, pt(sx + 98, sy), 13, { color: hex(0xc8c8cc), align: 'left', mono: true })
-      }
+      // The run's state and time; the run starts from the start Card's button.
+      fillRound(g, rect(B.x - 8, C.y + 16, 224, 36), 18, 'rgba(255,255,255,0.07)')
+      const sx = B.x + 8, sy = midY(B)
+      const started = p >= CasA.run(0)[0], doneAll = CasA.state(2, p) === 'done'
+      const elapsed = !started ? 0 : doneAll ? 2.41 : ((p - CasA.run(0)[0]) / (CasA.run(2)[1] - CasA.run(0)[0])) * 2.41
+      text(g, doneAll ? '✓ Succeeded' : started ? '◌ Running' : '○ Idle', pt(sx, sy), 13,
+        { weight: 600, color: doneAll ? hex(Ink.done) : started ? hex(Ink.badge) : hex(0xc8c8cc), align: 'left' })
+      text(g, `00:00:${elapsed.toFixed(2).padStart(5, '0')}`, pt(sx + 98, sy), 13, { color: hex(0xc8c8cc), align: 'left', mono: true })
     })
   },
 
@@ -567,9 +560,14 @@ export const CasA = {
     const done = p >= CasA.run(0)[0]
     fillRound(g, r, r.h / 2, css(Ink.cardFill))
     strokeRound(g, r, r.h / 2, done ? hex(Ink.done) : css(Ink.cardStroke), 1.4)
+    // Its button is pressed to run, and is a stop button while the run is on.
     const c = pt(r.x + 19, midY(r))
-    ellipse(g, c.x, c.y, 9, 9, hex(0x2f7cf6))
-    trace(g, [pt(c.x - 3, c.y - 4.5), pt(c.x + 5, c.y), pt(c.x - 3, c.y + 4.5)], true)
+    const pressed = 1 - smooth(Math.abs(p - CasA.press) / 0.05)
+    const running = done && CasA.state(2, p) !== 'done'
+    const k = 1 - 0.12 * pressed
+    ellipse(g, c.x, c.y, 9 * k, 9 * k, hex(running ? 0xe5484d : pressed > 0.1 ? 0x5a9cff : 0x2f7cf6))
+    if (running) { g.beginPath(); g.rect(c.x - 3, c.y - 3, 6, 6) }
+    else trace(g, [pt(c.x - 3, c.y - 4.5), pt(c.x + 5, c.y), pt(c.x - 3, c.y + 4.5)], true)
     g.fillStyle = '#fff'
     g.fill()
     text(g, 'start', pt(r.x + 36, midY(r)), 13, { weight: 600, color: hex(0xe8e8ea), align: 'left' })

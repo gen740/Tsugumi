@@ -12,7 +12,7 @@ import { WritingPanels } from './writingPanel'
 import { Boundary, canvasFor, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
 import { CardNodeData, failedStage, NEW_PORT, Pt, Rect, snapToGrid, Stage, STAGE_INFO, STAGE_STATUS_LABEL, StageItem } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
-import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
+import { CANVAS_ONLY, prefs, ShortcutAction, tip } from '../model/prefs'
 import {
   CardKey, definitionIcon, DefinitionTemplate, formatDuration, JunctionPlace, key, KIND_LABEL, NOTE_COLORS, path, portTypeName, ProjectSession,
   runStateStage,
@@ -51,6 +51,25 @@ function placed(p: Pt, w: number, h: number, extra?: CSSProperties): CSSProperti
 }
 
 const isTyping = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.('input, textarea, select, [contenteditable="true"]')
+
+/** A start Card's button: runs the workflow from it, and stops the run while
+ *  one is on. The root start Card's is what ⌘R does, and the guide's "run". */
+function startButton(session: ProjectSession, k: CardKey, trigger: boolean) {
+  if (!trigger) return {}
+  const rootStart = !k.includes('/')
+  const run = L('ここから Workflow を実行')
+  const stop = session.runActive
+  return {
+    rootStart,
+    start: {
+      stop,
+      enabled: stop ? session.canStopRun : session.connected,
+      help: stop ? tip(L('Workflow の実行を停止（チャットの回答停止とは別の操作です）'), 'stop') : rootStart ? tip(run, 'run') : run,
+    },
+    onRun: () => runCard(session, k, true),
+    onStop: () => void session.cancelRun(),
+  }
+}
 
 // ---- The canvas ---------------------------------------------------------------------
 
@@ -630,7 +649,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
               },
             } : undefined}
             onStageTap={(st) => showLog(workspace, k, st, session.cardStates.get(k)?.invocation, session.currentRunId)}
-            onRun={data.kind === 'trigger' && session.connected && !session.runActive ? () => runCard(session, k, true) : undefined}
+            {...startButton(session, k, data.kind === 'trigger')}
             onToggleCollapse={() => session.setCollapsed([k], !session.collapsed(k))}
             onComments={() => app.openWindow(session, { kind: 'card', card: k, category: 'notes' })}
             onPointerDown={(e) => onCardDown(k, e)}

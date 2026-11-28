@@ -6,23 +6,20 @@ import { guide } from '../model/guide'
 import { app } from '../model/app'
 import { canvasFor } from '../model/canvas'
 import { useObserve } from '../model/observable'
-import { prefs, ShortcutAction } from '../model/prefs'
+import { prefs, tip } from '../model/prefs'
 import { cardState, formatDuration, key, ProjectSession, runState, runStateStage } from '../model/session'
 import { STAGE_INFO } from '../model/canvasKit'
 import { Workspace, WorkflowTab } from '../model/workspace'
 import { get, str } from '../../shared/json'
 import { D } from '../wire/rpc'
-import { runAll } from './actions'
 import { GraphCanvas } from './canvas'
+import { RunGear } from './cardNode'
 import { newCardItems, TemplatePicker, type TemplatePlacement } from './cardTemplates'
 import { GuideNest } from './guide'
 import { Button, Divider, MenuButton, Popover } from './controls'
 import { Icon } from './icons'
 import { IssueList } from './workbench'
 import { L } from '../i18n'
-
-/** A tooltip that names the shortcut of its action. */
-export const tip = (text: string, action: ShortcutAction) => L('{0}（{1}）', text, prefs.label(action))
 
 export function CanvasWorkspace({ workspace, session, tab, onSwitchProject, bottomTrailing }: {
   workspace: Workspace; session: ProjectSession; tab: WorkflowTab
@@ -98,8 +95,17 @@ function Breadcrumbs({ session, tab }: { session: ProjectSession; tab: WorkflowT
   )
 }
 
-/** Run / stop, the run's state and what it is doing now, elapsed time and the
- *  issue list. Per-Card counts and details are on the Cards, in the history
+/** The run's indicator: the gear while it runs (still while it only waits),
+ *  the last run's state symbol otherwise. */
+function RunStateIndicator({ active, waiting, state }: { active: boolean; waiting: boolean; state: D.RunState }) {
+  if (active) return <RunGear size={15} waiting={waiting} />
+  const info = runState(state)
+  return <Icon name={info.icon} style={{ color: `var(--${info.color})` }} />
+}
+
+/** The run's state and what it is doing now, elapsed time and the issue list.
+ *  A run starts and stops from the start Card's button and with the run and
+ *  stop shortcuts (⌘R, ⌘.). Per-Card counts and details are on the Cards, in the history
  *  and on the timeline (a share of finished Cards says nothing about a run
  *  with loops, so there is no progress bar). */
 export function CanvasRunControl({ workspace, session, tab }: { workspace: Workspace; session: ProjectSession; tab: WorkflowTab }) {
@@ -129,7 +135,6 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
   }, [shownActive])
 
   const st = session.runStatus?.state ?? D.RunState.idle
-  const info = runState(shownActive ? D.RunState.running : st)
   const label = session.stopRequested ? L('停止を要求中')
     : shownActive && !session.runActive ? runState(D.RunState.running).label : runState(st).label
   const problems = session.diagnostics.filter((d) => d.error).length + [...session.cardStates.values()].filter((s) => s.state === D.CardState.failed).length
@@ -155,13 +160,6 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
 
   return (
     <div className="capsule material cv-run">
-      {/* One button of a fixed size: its title and color change, nothing moves. */}
-      <Button kind={shownActive ? 'danger' : 'prominent'} icon={shownActive ? 'stop.fill' : 'play.fill'} className="cv-run-button" guide="run"
-        disabled={shownActive ? !session.canStopRun : !session.connected}
-        help={shownActive ? tip(L('Workflow の実行を停止（チャットの回答停止とは別の操作です）'), 'stop') : tip(L('文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）'), 'run')}
-        onClick={() => (session.runActive ? void session.cancelRun() : runAll(session))}>
-        {shownActive ? L('停止') : L('実行')}
-      </Button>
       {session.stopError ? (
         <span className="cv-run-state cv-stop-error" role="alert" title={session.stopError}>
           {session.stopError}
@@ -169,7 +167,7 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
       ) : (
         <span className="cv-run-state"
           title={shownActive ? (session.stopRequested ? label : (activity ?? runState(st).label)) + L('（経過時間は Run の受付から、実行環境の時計で計ります）') : L('Run の状態と経過時間')}>
-          <Icon name={info.icon} style={{ color: `var(--${info.color})` }} />
+          <RunStateIndicator active={shownActive} waiting={session.runActive && session.runOnlyWaits} state={st} />
           <span className="nowrap">{label}</span>
           <span className="secondary mono-digits nowrap">{elapsed}</span>
           {/* Saved while it runs: the run keeps the revision it started with. */}

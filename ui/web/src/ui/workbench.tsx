@@ -112,7 +112,10 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
   }, [guide.scopeRequest])
   useEffect(() => {
     const h = guide.highlight
-    if (!onSwitchProject || !h?.startsWith('card:') || h.slice(5).includes('/') || !tab?.scope.length) return
+    if (!onSwitchProject || !h || !tab?.scope.length) return
+    // Run and stop are the root start Card's button.
+    if (h === 'run' || h === 'stop') { tab.enter([]); return }
+    if (!h.startsWith('card:') || h.slice(5).includes('/')) return
     const id = h.slice(5)
     if (!session.instance(key([...tab.scope, id])) && session.instance(key([id]))) tab.enter([])
   }, [guide.highlight])

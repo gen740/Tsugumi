@@ -946,7 +946,7 @@ struct GraphCanvas: View {
     let camera: CanvasCamera
     let selected: Bool
     let editable: Bool
-    let canRun: Bool
+    let start: CardNodeView.StartButton?
     let presence: ObjectIdentifier
   }
 
@@ -955,11 +955,16 @@ struct GraphCanvas: View {
     let g = CardGeometry(data, flow: session.flow)
     let flow = session.flow, zoom = camera.zoom, selected = tab.selection.contains(k)
     let presence = session.presence(forCard: k)
-    let canRun = data.kind == .trigger && session.connected && !session.runActive
+    // A start Card's button runs from it, and stops the run while one is on.
+    let start: CardNodeView.StartButton? = data.kind != .trigger ? nil
+      : session.runActive ? .stop(enabled: session.canStopRun)
+      : .run(enabled: session.connected)
+    // The root start Card's button is what ⌘R presses, and what the guide calls "run".
+    let rootStart = start != nil && !k.contains("/")
     // A Draft being written is drawn every time: what is typed is read from the session as it changes.
     let key = data.draftEditing ? nil : CardSlot(
       session: ObjectIdentifier(session), tab: ObjectIdentifier(tab), card: k, data: data, flow: flow, camera: cam,
-      selected: selected, editable: session.isEditable, canRun: canRun, presence: ObjectIdentifier(presence))
+      selected: selected, editable: session.isEditable, start: start, presence: ObjectIdentifier(presence))
     return Settled(key: key) {
       CardNodeView(data: data, flow: flow, zoom: zoom, selected: selected,
                    portsEditable: session.isEditable,
@@ -970,8 +975,9 @@ struct GraphCanvas: View {
                    onStageTap: { st in workspace.showLog(for: k, stage: st, invocation: session.cardStates[k]?.invocation, runId: session.currentRunId) },
                    onToggleCollapse: { session.setCollapsed([k], !session.collapsed(k)) },
                    onComments: { openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: k, category: .notes)) },
-                   onRun: canRun
-                     ? { RunActions.run(session, card: k, propagate: true) } : nil,
+                   start: start, rootStart: rootStart,
+                   onRun: { RunActions.run(session, card: k, propagate: true) },
+                   onStop: { Task { await session.cancelRun() } },
                    draftEdit: draftEdit(k))
         .modifier(CardWriting(presence: presence, card: k, title: data.title, zoom: zoom))
         .guideTarget("card:\(k)", radius: 12, zoom: zoom)

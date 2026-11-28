@@ -102,8 +102,11 @@ struct WorkflowTabs: View {
       if session.kind(key(s)) == .subgraph || s.isEmpty { tab.enter(s) }
     }
     .onChange(of: GuideController.shared.highlight) { _, h in
-      guard guideWindow != nil, let h, h.hasPrefix("card:"), !h.dropFirst(5).contains("/"), let tab = workspace.active,
+      guard guideWindow != nil, let h, let tab = workspace.active,
             !tab.scope.isEmpty, GuideController.shared.speakingChat?.session === session else { return }
+      // Run and stop are the root start Card's button.
+      if h == "run" || h == "stop" { tab.enter([]); return }
+      guard h.hasPrefix("card:"), !h.dropFirst(5).contains("/") else { return }
       let id = String(h.dropFirst(5))
       if session.instance(key(tab.scope + [id])) == nil, session.instance(key([id])) != nil { tab.enter([]) }
     }
@@ -142,9 +145,9 @@ struct WorkflowTabs: View {
   private var topStrip: some View {
     ZStack {
       WindowDragArea()
-      if let tab = workspace.active, showsWorkbench {
+      if workspace.active != nil, showsWorkbench {
         TopStripLayout(chatWidth: chatWidth, chatOpen: workspace.showChat) {
-          CanvasRunControl(session: session, tab: tab).fixedSize()
+          CanvasRunControl(session: session).fixedSize()
           if workspace.showChat {
             ChatHeader(chat: model.chat(for: session), showList: $showChatList, detached: false,
                        onClose: { workspace.showChat = false })

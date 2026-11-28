@@ -1347,7 +1347,6 @@
   "文字サイズ: {0}": {"text": "Font size: {0}", "mac": ["lld"]},
   "文字列 テキスト": "string text",
   "文書 ファイル": "document file",
-  "文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）": "Run the document's whole workflow from its start Card (unsaved changes are saved first)",
   "新しい API キー": "New API key",
   "新しい {0} API キー": "New {0} API key",
   "新しいウインドウ": "New Window",
