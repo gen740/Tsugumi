@@ -2,12 +2,14 @@
 
 import sqlite3
 
+import pytest
+
 from harness.fixtures import mock_plan
 from harness.scenario import Project
 from test_run_lists import scripted_implementations
 from projects import card, card_in_card, conn, run_and_wait, write
 from test_rpc_scheduler import NUMBER, record
-from tsugumi_client import new_id, path, text
+from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 
@@ -52,6 +54,12 @@ def test_saved_inputs_use_per_port_records_only_for_merge(core_factory, project)
     merged = inputs(run, "child/merge")
     assert collected.keys() == {"in"}
     assert merged.keys() == {"a", "b"}
+    # A Card in Card's own path points to the records of its inner Cards.
+    with pytest.raises(RpcFailure) as failure:
+        client.call("RunRecordRequest", runId=run, card=path("child"))
+    assert failure.value.kind == "not_found"
+    assert failure.value.args_map["inner_cards"] == "child/merge"
+    assert '"segments": ["child", "merge"]' in failure.value.diagnostic
 
     daemon.restart()
     client = daemon.connect()

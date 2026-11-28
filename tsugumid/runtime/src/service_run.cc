@@ -33,6 +33,30 @@ using FBB = flatbuffers::FlatBufferBuilder;
 namespace stdfs = std::filesystem;
 
 namespace {
+// A Card in Card has no record of its own: name its recorded inner Cards.
+auto no_record(sql::Db& db, const std::string& run_id, const CardPath& card)
+    -> Failed {
+  const auto inner = History::inner_cards(db, run_id, card);
+  if (inner.empty())
+    return Failed(FailureKind::not_found,
+                  "the run has no record of " + path_key(card),
+                  {{"card", path_key(card)}});
+  std::string list;
+  for (const auto& path : inner) list += (list.empty() ? "" : ", ") + path;
+  std::string segments;
+  for (size_t at = 0; at <= inner.front().size();) {
+    const auto end = std::min(inner.front().find('/', at), inner.front().size());
+    segments += (segments.empty() ? "\"" : ", \"") +
+                inner.front().substr(at, end - at) + "\"";
+    at = end + 1;
+  }
+  return Failed(FailureKind::not_found,
+                path_key(card) +
+                    " is a Card in Card: the run recorded its inner Cards " +
+                    list + "; ask for one by its path, for example card " +
+                    "{\"segments\": [" + segments + "]}",
+                {{"card", path_key(card)}, {"inner_cards", list}});
+}
 auto artifact_label(const ArtifactData& artifact) -> std::string {
   return std::to_string(artifact.sequence) + "." +
          std::to_string(artifact.counter);
@@ -514,9 +538,7 @@ void Service::run_invocations(RequestIn& req) {
     if (!History::run(db, run_id))
       throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
     if (!History::run_has_card(db, run_id, card))
-      throw Failed(FailureKind::not_found,
-                   "the run has no record of " + path_key(card),
-                   {{"card", path_key(card)}});
+      throw no_record(db, run_id, card);
     return std::pair{History::invocations(db, run_id, card, after, limit + 1),
                      History::latest_batches(db, run_id, card)};
   });
@@ -774,9 +796,7 @@ void Service::run_record(RequestIn& req) {
     if (!run)
       throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
     if (!History::run_has_card(db, run_id, card))
-      throw Failed(FailureKind::not_found,
-                   "the run has no record of " + path_key(card),
-                   {{"card", path_key(card)}});
+      throw no_record(db, run_id, card);
     o.run = *run;
     if (r->invocation())
       o.selected = *r->invocation();

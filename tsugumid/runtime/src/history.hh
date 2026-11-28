@@ -179,6 +179,10 @@ class History {
                                                   const CardPath& card);
   static bool run_has_card(sql::Db& db, const std::string& run_id,
                            const CardPath& card);
+  // The recorded Cards inside a Card in Card, as path keys.
+  static std::vector<std::string> inner_cards(sql::Db& db,
+                                              const std::string& run_id,
+                                              const CardPath& card);
   struct Aggregate {
     uint64_t calls = 0;
     uint64_t succeeded = 0;

@@ -1462,6 +1462,19 @@ bool History::run_has_card(sql::Db& db, const std::string& run_id,
   return st.step();
 }
 
+std::vector<std::string> History::inner_cards(sql::Db& db,
+                                              const std::string& run_id,
+                                              const CardPath& card) {
+  const auto prefix = key(card) + "/";
+  auto st = db.prepare(
+      "SELECT DISTINCT card FROM run_cards WHERE run_id=? AND "
+      "substr(card,1,length(?2))=?2 ORDER BY card");
+  st.bind(1, run_id).bind(2, prefix);
+  std::vector<std::string> cards;
+  while (st.step()) cards.push_back(st.text(0));
+  return cards;
+}
+
 History::Aggregate History::aggregate(sql::Db& db, const std::string& run_id,
                                       const CardPath& card) {
   auto st = db.prepare(
