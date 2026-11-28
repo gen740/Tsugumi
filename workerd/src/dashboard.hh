@@ -25,6 +25,8 @@ class Dashboard {
   // What the page shows of the listener, and what it asks of it.
   struct Listener {
     std::string system;
+    // The source revision the listener was built from; empty when unknown.
+    std::string revision;
     // Jobs whose supervisors run now.
     std::function<uint32_t()> running;
     // Restart once no job runs, or now, stopping the running jobs.

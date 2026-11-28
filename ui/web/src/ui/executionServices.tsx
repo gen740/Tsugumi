@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { L, language } from '../i18n'
 import * as H from '../../shared/gen/tsugumi/host'
 import { hostCall } from '../wire/host'
@@ -25,12 +25,21 @@ const dashboardUrl = (entry: H.ExecutionServiceT) => {
 }
 const fingerprint = (sha256: string) => sha256.toUpperCase().match(/../g)?.join(':') ?? ''
 
+/** What settings say about a worker hostd found built from another revision;
+ *  undefined for a worker this Tsugumi can use. */
+export const outdatedText = (entry: H.ExecutionServiceT, contract: number): string | undefined =>
+  entry.outdated
+    ? L('このワーカーは古い版です（契約 {0}、この Tsugumi は {1}）。ワーカーを同じ版で作り直して再起動し、「接続を確認して更新」を押してください。',
+      String(entry.capabilities?.workerContract ?? 0), String(contract))
+    : undefined
+
 /** How the list shows a service: its name, and its id only when the two differ. */
 export const serviceLabel = (name: string, id: string) => !name || name === id ? id : `${name} (${id})`
 
 export function ExecutionServicesSettings({ changed }: { changed: () => void }) {
   const [hostPublicKey, setHostPublicKey] = useState('')
-  function adopt(state: H.ExecutionServicesT) { setEntries(state.services); setHostPublicKey(s(state.hostPublicKey)) }
+  const [contract, setContract] = useState(0)
+  function adopt(state: H.ExecutionServicesT) { setEntries(state.services); setHostPublicKey(s(state.hostPublicKey)); setContract(state.workerContract) }
   const [entries, setEntries] = useState<H.ExecutionServiceT[]>([])
   const [edit, setEdit] = useState<Registration>()
   const [original, setOriginal] = useState<string>()
@@ -77,13 +86,15 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
         <Button disabled={!hostPublicKey} onClick={() => void perform(async () => { await navigator.clipboard.writeText(hostPublicKey) })}>{L('公開鍵をコピー')}</Button></Row>
     </Section>
     <Section title={L('実行サービス')}>
-      {entries.map((entry) => <Row key={s(entry.id)}>
+      {entries.map((entry) => <Fragment key={s(entry.id)}><Row>
         <Button kind="borderless" disabled={busy} onClick={() => choose(registration(entry), s(entry.id))}>{serviceLabel(s(entry.name), s(entry.id))}</Button>
         <span className="secondary">{s(entry.capabilities!.nativeSystem)}</span>
         <Button small disabled={busy} onClick={() => remeasure(s(entry.id))}>{L('測り直す')}</Button>
         {s(entry.id) !== 'local' && dashboardUrl(entry) &&
           <Button small disabled={busy} onClick={() => window.open(dashboardUrl(entry), '_blank', 'noopener,noreferrer')}>{L('ダッシュボードを開く')}</Button>}
-      </Row>)}
+      </Row>
+      {outdatedText(entry, contract) && <Row><span className="caption selectable" style={{ color: 'var(--red)' }}>{outdatedText(entry, contract)}</span></Row>}
+      </Fragment>)}
       <Row><Button disabled={busy} onClick={() => remeasure(null)}>{L('すべて測り直す')}</Button></Row>
       <Row><Button icon="plus" disabled={busy} onClick={() => choose({ id: '', name: '', endpoint: '', workerPublicKey: '' })}>{L('実行サービスを追加')}</Button></Row>
     </Section>
@@ -104,6 +115,8 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
         <Value label={L('隔離方式')} value={L('PID 名前空間')} />
         <Value label={L('CPU とメモリの上限')} value={caps.resourceLimits ? L('対応') : L('非対応')} />
         <Value label={L('最大同時ジョブ数')} value={String(caps.maxConcurrentJobs)} />
+        <Value label={L('ワーカー契約')} value={String(caps.workerContract)} />
+        <Value label={L('リビジョン')} value={s(caps.revision) || L('不明')} />
       </>}
       <Row>
         <Button kind="prominent" disabled={!valid || busy} onClick={() => void perform(async () => {
@@ -115,7 +128,9 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
           // A new registration closes the form, so its values cannot be registered twice.
           if (original) choose(registration(registered), s(registered.id))
           else { setEdit(undefined); setOriginal(undefined) }
-          setMessage(edit.id === 'local' ? L('保存しました。') : original ? L('接続を確認しました。') : L('公開鍵を登録しました。authorized_keys にホストの公開鍵を追加してから接続を確認してください。'))
+          const outdated = original && edit.id !== 'local' ? outdatedText(registered, next.workerContract) : undefined
+          if (outdated) setProblem(outdated)
+          else setMessage(edit.id === 'local' ? L('保存しました。') : original ? L('接続を確認しました。') : L('公開鍵を登録しました。authorized_keys にホストの公開鍵を追加してから接続を確認してください。'))
           changed()
         })}>{edit.id === 'local' ? L('保存') : original ? L('接続を確認して更新') : L('登録')}</Button>
         {original && original !== 'local' && <Button kind="destructive" disabled={busy} onClick={() => void perform(async () => {

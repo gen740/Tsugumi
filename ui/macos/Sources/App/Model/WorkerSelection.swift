@@ -34,6 +34,11 @@ extension Tsugumi_Data_FailureT {
         return String(localized: "\(name) の probe が時間切れ")
       case "failed": return String(localized: "\(name) の probe が失敗")
       case "not_positive": return String(localized: "\(name) の probe のスコアが 0 以下")
+      case "outdated":
+        // Built from another revision: its contract in `contract:<id>`, this Tsugumi's in `contract`.
+        let worker = args.first(where: { $0.key == "contract:" + id })?.value ?? "?"
+        let current = args.first(where: { $0.key == "contract" })?.value ?? "?"
+        return String(localized: "\(name) は古い版です（契約 \(worker)、この Tsugumi は \(current)）。ワーカーを同じ版で作り直してください")
       default: return String(localized: "\(name) は使えません")
       }
     }

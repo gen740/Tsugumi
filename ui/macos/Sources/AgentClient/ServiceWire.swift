@@ -475,15 +475,18 @@ enum ServiceWire {
     case let v as Tsugumi_Host_HostTerminalT: return ["session": v.session]
     case let v as Tsugumi_Host_HostTerminalDataT: return ["session": v.session, "data": v.data, "closed": v.closed] as [String: Any]
     case let v as Tsugumi_Host_ExecutionServicesT:
-      return ["services": try v.services.compactMap { try $0.map(view) }, "hostPublicKey": v.hostPublicKey] as [String: Any]
+      return ["services": try v.services.compactMap { try $0.map(view) }, "hostPublicKey": v.hostPublicKey,
+              "workerContract": v.workerContract] as [String: Any]
     case let v as Tsugumi_Host_ExecutionServiceT:
-      return ["id": v.id, "name": v.name, "endpoint": v.endpoint, "workerPublicKey": v.workerPublicKey, "capabilities": try view(v.capabilities)] as [String: Any]
+      return ["id": v.id, "name": v.name, "endpoint": v.endpoint, "workerPublicKey": v.workerPublicKey, "capabilities": try view(v.capabilities),
+              "outdated": v.outdated] as [String: Any]
     case let v as Tsugumi_Host_ExecutionCapabilitiesT:
       return ["serverId": v.serverId, "nativeSystem": v.nativeSystem, "systems": v.systems.compactMap { $0 },
               "isolation": v.isolation ?? "pid_namespace", "resourceLimits": v.resourceLimits,
               "maxConcurrentJobs": v.maxConcurrentJobs, "workerContract": v.workerContract,
               "workerLabel": v.workerLabel ?? "", "dashboardUrl": v.dashboardUrl ?? "",
-              "dashboardCertificateSha256": v.dashboardCertificateSha256 ?? ""] as [String: Any]
+              "dashboardCertificateSha256": v.dashboardCertificateSha256 ?? "",
+              "revision": v.revision ?? ""] as [String: Any]
     case let v as Tsugumi_Host_ExecutionAuthorizationT:
       return ["endpoint": v.endpoint, "capability_file": v.capabilityFile, "available": v.available] as [String: Any]
     case let v as Tsugumi_Service_HelloResultT:

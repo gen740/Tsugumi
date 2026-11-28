@@ -6,6 +6,9 @@ The [worker contract](../../protocol/remote_worker.fbs) defines framed FlatBuffe
 
 [Install and register a remote worker](../RemoteExecution.md#install-and-register).
 
+A worker's capabilities carry its `worker_contract` and the source `revision` it was built from (the flake's revision, set by the `workerd` package's wrapper; empty for other builds). Hostd records them whenever it verifies the worker or forwards a probe. A verified worker whose contract differs from this Tsugumi's is *out of date*: settings say so, the catalog lists it as unavailable with that reason, and a forwarded probe that finds it is refused with the same sentence after the record is updated. Worker selection names it in the failure as `worker:<id>` = `outdated`, with `contract:<id>` (the worker's contract) and `contract` (this core's), so the run fails before any probe is built when no other worker can take the Card. Requests for jobs already on the worker, such as releases, are still forwarded. [Update a worker](../RemoteExecution.md#update-a-worker).
+
+
 ## Dashboard
 
 The listener serves its [dashboard](../RemoteExecution.md#the-workers-dashboard) on its own TCP listener, `dashboard_port` on the same `listen_address`, over HTTPS (TLS 1.2 or 1.3) without client certificates. The page is one self-contained HTML document (`workerd/dashboard/`, embedded at build time with its English strings) that calls a JSON API on the same origin:

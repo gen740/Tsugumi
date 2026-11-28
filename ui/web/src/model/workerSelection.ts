@@ -18,6 +18,9 @@ function workerSelectionReasons(failure?: D.FailureT | null): string[] | undefin
       case 'timeout': return limit ? L('{0} の probe が時間切れ（{1} 秒）', name, limit) : L('{0} の probe が時間切れ', name)
       case 'failed': return L('{0} の probe が失敗', name)
       case 'not_positive': return L('{0} の probe のスコアが 0 以下', name)
+      // Built from another revision: its contract in `contract:<id>`, this Tsugumi's in `contract`.
+      case 'outdated': return L('{0} は古い版です（契約 {1}、この Tsugumi は {2}）。ワーカーを同じ版で作り直してください', name,
+        args.find(([key]) => key === `contract:${id}`)?.[1] ?? '?', args.find(([key]) => key === 'contract')?.[1] ?? '?')
       default: return L('{0} は使えません', name)
     }
   })

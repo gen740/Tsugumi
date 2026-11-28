@@ -133,6 +133,22 @@ const long = card('a long name of a Card '.repeat(6))
   assert.equal(statusLine(failed).hover, undefined)
 }
 {
+  // A worker built from another revision is named as out of date, with both
+  // contracts, and settings say how to bring it up to date.
+  const selection = Object.assign(new D.FailureT(), { kind: D.FailureKind.unsupported, diagnostic: 'No worker could be chosen' })
+  selection.args = [['stage', 'worker_selection'], ['worker:ttl', 'outdated'], ['contract:ttl', '21'], ['contract', '22'],
+    ['worker:local', 'timeout']].map(([key, value]) => Object.assign(new D.KeyValueT(), { key, value }))
+  assert.equal(notStartedText(selection),
+    'ttl は古い版です（契約 21、この Tsugumi は 22）。ワーカーを同じ版で作り直してください、プロジェクトの実行環境 の probe が時間切れ')
+  const { outdatedText } = await import('../src/ui/executionServices')
+  const H = await import('../shared/gen/tsugumi/host')
+  const capabilities = Object.assign(new H.ExecutionCapabilitiesT('server', 'x86_64-linux'), { workerContract: 21, revision: '0ld0rev' })
+  const entry = Object.assign(new H.ExecutionServiceT('ttl', 'ttl', 'tls://ttl:8765', 'ed25519:x', capabilities), { outdated: true })
+  assert.equal(outdatedText(entry, 22),
+    'このワーカーは古い版です（契約 21、この Tsugumi は 22）。ワーカーを同じ版で作り直して再起動し、「接続を確認して更新」を押してください。')
+  assert.equal(outdatedText(Object.assign(entry, { outdated: false }), 22), undefined)
+}
+{
   // On a worker no two stage circles run at once: while the worker builds
   // the Card its build circle runs and its run circle has not started; once
   // the Card runs, the build is done. The log's pipeline line agrees.

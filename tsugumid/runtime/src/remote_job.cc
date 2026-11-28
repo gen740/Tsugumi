@@ -395,7 +395,8 @@ auto RemoteJobClient::catalog(std::stop_token stop) const -> std::vector<RemoteT
     const auto& c = *t->capabilities;
     targets.push_back({t->id, c.native_system, c.systems, c.server_id,
                        t->available, c.resource_limits, c.max_jobs,
-                       t->unavailable_reason, false, false, t->probe_revision});
+                       t->unavailable_reason, false, false, t->probe_revision,
+                       c.worker_contract});
   }
   return targets;
 }

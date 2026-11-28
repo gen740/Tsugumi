@@ -106,7 +106,11 @@ in
         });
       }
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-        workerd = pkgs.callPackage ../workerd.nix { inherit core; };
+        workerd = pkgs.callPackage ../workerd.nix {
+          inherit core;
+          # What the worker reports to hosts and on its dashboard.
+          revision = inputs.self.rev or inputs.self.dirtyRev or "";
+        };
         # The `tsugumi` command (cli/install.sh): the Web UI with tsugumid on this host.
         cli = pkgs.callPackage ../cli.nix {
           tsugumid = core;

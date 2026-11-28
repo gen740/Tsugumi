@@ -445,9 +445,14 @@ table ExecutionCapabilities { server_id:string (required); native_system:string 
   // From the worker's settings and its dashboard listener. dashboard_url uses
   // the registered endpoint's host; a client opening it pins the certificate
   // by dashboard_certificate_sha256 (DER, lowercase hex).
-  worker_label:string; dashboard_url:string; dashboard_certificate_sha256:string; }
-table ExecutionService { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); capabilities:ExecutionCapabilities (required); probes:[Tsugumi.Data.WorkerProbeResult]; }
-table ExecutionServices { services:[ExecutionService]; host_public_key:string (required); }
+  worker_label:string; dashboard_url:string; dashboard_certificate_sha256:string;
+  // The source revision the worker was built from; empty when it does not say.
+  revision:string; }
+// outdated: the worker last verified speaks another worker contract than
+// this Tsugumi (worker_contract in ExecutionServices); runs do not use it
+// until it is rebuilt from this revision and verified again.
+table ExecutionService { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); capabilities:ExecutionCapabilities (required); probes:[Tsugumi.Data.WorkerProbeResult]; outdated:bool; }
+table ExecutionServices { services:[ExecutionService]; host_public_key:string (required); worker_contract:uint; }
 table ExecutionAuthorization { endpoint:string (required); capability_file:string (required); available:bool; }
 
 

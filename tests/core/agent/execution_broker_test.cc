@@ -118,6 +118,7 @@ class WorkerPeer {
             c.max_jobs = 4;
             c.resource_limits = resource_limits;
             c.worker_contract = contract;
+            c.revision = revision;
             c.probe_life = probe_life;
             respond(W::reply(std::move(c)));
           } else if (auto* put = q->body.AsPutBlobRequest()) {
@@ -175,6 +176,12 @@ class WorkerPeer {
     std::lock_guard lock(mutex_);
     server = std::move(value);
   }
+  // A worker built from another revision speaks another contract.
+  auto SetBuild(uint32_t value, std::string from) -> void {
+    std::lock_guard lock(mutex_);
+    contract = value;
+    revision = std::move(from);
+  }
   auto SetResourceLimits(bool value) -> void {
     std::lock_guard lock(mutex_);
     resource_limits = value;
@@ -187,6 +194,7 @@ class WorkerPeer {
   bool resource_limits = true;
   std::string server = std::string(64, 'b');
   uint32_t contract = W::kContract;
+  std::string revision = "0123abcd";
 
  private:
   std::string path_;
@@ -459,6 +467,59 @@ TEST_F(BrokerFixture, CatalogExplainsProjectApprovalUntilGranted) {
       CatalogService(*granted->payload.AsReply()->body.AsCatalog(), "worker");
   EXPECT_TRUE(approved.available);
   EXPECT_TRUE(approved.unavailable_reason.empty());
+}
+TEST_F(BrokerFixture, AWorkerFromAnotherRevisionIsOutOfDateUntilRebuilt) {
+  const auto capability = Authorize("project");
+  const auto service = [](const Reply& reply) {
+    const auto* services = reply.HostValue()->value_as_ExecutionServices();
+    EXPECT_EQ(services->worker_contract(), W::kContract);
+    return services->services()->Get(1);
+  };
+  const auto catalog = [&] {
+    const auto reply = Broker(R::CatalogRequestT{}, capability);
+    const auto& found = CatalogService(
+        *reply->payload.AsReply()->body.AsCatalog(), "worker");
+    return std::pair{found.available, found.unavailable_reason};
+  };
+  const auto sentence = "Worker worker is out of date (worker contract " +
+                        std::to_string(W::kContract - 1) +
+                        ", revision old0rev; this Tsugumi uses contract " +
+                        std::to_string(W::kContract) +
+                        "). Rebuild the worker from this Tsugumi revision";
+
+  // Verification records the worker as it reports itself and says it is out
+  // of date; the catalog keeps it from runs with the same sentence.
+  worker->SetBuild(W::kContract - 1, "old0rev");
+  auto verified = Put();
+  ASSERT_TRUE(verified.Code().empty());
+  EXPECT_TRUE(service(verified)->outdated());
+  EXPECT_EQ(service(verified)->capabilities()->worker_contract(),
+            W::kContract - 1);
+  EXPECT_EQ(service(verified)->capabilities()->revision()->str(), "old0rev");
+  EXPECT_TRUE(service(List())->outdated());
+  Authorize("project");
+  const auto [available, reason] = catalog();
+  EXPECT_FALSE(available);
+  EXPECT_TRUE(reason.starts_with(sentence)) << reason;
+  EXPECT_NE(reason.find("Update a worker"), std::string::npos);
+
+  // Rebuilt and verified again, it is usable.
+  worker->SetBuild(W::kContract, "new0rev");
+  ASSERT_TRUE(Put().Code().empty());
+  EXPECT_FALSE(service(List())->outdated());
+  Authorize("project");
+  EXPECT_TRUE(catalog().first);
+
+  // A probe that finds it replaced by an old build is refused with the
+  // sentence and records it, so settings and the next catalog say so too.
+  worker->SetBuild(W::kContract - 1, "old0rev");
+  const auto probe = Broker(R::ProbeRequestT{}, capability);
+  const auto* failure = probe->payload.AsReply()->body.AsFailure();
+  ASSERT_NE(failure, nullptr);
+  EXPECT_EQ(failure->code, R::ErrorCode::Rejected);
+  EXPECT_TRUE(failure->message.starts_with(sentence)) << failure->message;
+  EXPECT_TRUE(service(List())->outdated());
+  EXPECT_FALSE(catalog().first);
 }
 TEST_F(BrokerFixture, RelayOverwritesScopeAndPreservesChunkBytes) {
   ASSERT_TRUE(Put().Code().empty());

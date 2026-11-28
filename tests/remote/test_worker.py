@@ -1980,3 +1980,92 @@ def test_host_shows_the_dashboard_by_url_and_certificate(worker):
         assert R.string(caps.dashboardCertificateSha256) == hashlib.sha256(worker.last_certificate).hexdigest()
     finally:
         host.close()
+
+
+class OldWorker:
+    """A worker built from another revision: it answers probes with the previous contract."""
+
+    revision = "0ld0rev"
+
+    def __init__(self, root):
+        self.identity = TLS.identity(root, "old-worker")
+        self.public_key = TLS.public_key(self.identity)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_3
+        context.load_cert_chain(str(self.identity))
+        self.listener = socket.create_server(("127.0.0.1", 0))
+        self.port = self.listener.getsockname()[1]
+        self.thread = threading.Thread(target=self.serve, args=(context,), daemon=True)
+        self.thread.start()
+
+    def serve(self, context):
+        while True:
+            try:
+                peer, _ = self.listener.accept()
+            except OSError:
+                return
+            with peer:
+                try:
+                    with context.wrap_socket(peer, server_side=True) as secure, secure.makefile("rwb") as stream:
+                        assert R.read(stream).payload.bodyType == R.RequestBody.ProbeRequest
+                        caps = R.CapabilitiesT(serverId="f" * 64, nativeSystem="x86_64-linux",
+                                               systems=["x86_64-linux"], maxJobs=1,
+                                               workerContract=R.WORKER_CONTRACT - 1, revision=self.revision)
+                        stream.write(R.frame(R.reply(R.ReplyBody.Capabilities, caps)))
+                        stream.flush()
+                except (OSError, EOFError, AssertionError):
+                    pass
+
+    def close(self):
+        # Closing alone does not wake accept() in the serving thread on Linux.
+        self.listener.shutdown(socket.SHUT_RDWR)
+        self.listener.close()
+        self.thread.join()
+
+
+def test_a_worker_from_another_revision_is_reported_out_of_date_and_kept_from_runs(worker, tmp_path):
+    # The real worker says which contract it speaks and which revision it was built from.
+    assert worker.caps.workerContract == R.WORKER_CONTRACT
+    revision = R.string(worker.caps.revision) or ""
+    status, state = worker.page("/api/state")
+    assert status == 200
+    assert state["worker"]["contract"] == R.WORKER_CONTRACT and state["worker"]["revision"] == revision
+    started = (worker.root / "worker.log").read_text()
+    assert f"worker contract {R.WORKER_CONTRACT}, revision {revision or 'unknown'}" in started
+
+    old = OldWorker(tmp_path / "old")
+    host = Host(tmp_path / "host")
+    try:
+        registration = dict(id="old-worker", name="Old worker", endpoint=f"tls://127.0.0.1:{old.port}",
+                            workerPublicKey=old.public_key)
+        host.call("ExecutionServicePutRequest", **registration, verify=False)
+        # Verifying records it as it reports itself, and says it is out of date.
+        services = host.call("ExecutionServicePutRequest", **registration, verify=True)
+        assert services.workerContract == R.WORKER_CONTRACT
+        entry = next(s for s in services.services if R.string(s.id) == "old-worker")
+        assert entry.outdated
+        assert entry.capabilities.workerContract == R.WORKER_CONTRACT - 1
+        assert R.string(entry.capabilities.revision) == OldWorker.revision
+
+        # A project's catalog keeps it from runs, with the sentence a run's failure carries.
+        project, control = tmp_path / "project", tmp_path / "control"
+        project.mkdir()
+        control.mkdir()
+        authorization = host.call("ExecutionProjectAuthorizeRequest", projectId="p" * 16,
+                                  path=str(project), controlDir=str(control))
+        assert authorization.available, "the test filesystem records no birth time"
+        capability = Path(R.string(authorization.capabilityFile)).read_text()
+        endpoint = R.string(authorization.endpoint).removeprefix("unix:")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
+            peer.connect(endpoint)
+            peer.sendall(R.frame(R.broker_request(capability, R.RequestBody.CatalogRequest, R.CatalogRequestT())))
+            with peer.makefile("rb") as stream:
+                catalog = R.read(stream).payload.body
+        target = next(t for t in catalog.services if R.string(t.id) == "old-worker")
+        assert not target.available
+        assert R.string(target.unavailableReason).startswith(
+            f"Worker old-worker is out of date (worker contract {R.WORKER_CONTRACT - 1}, revision "
+            f"{OldWorker.revision}; this Tsugumi uses contract {R.WORKER_CONTRACT}). Rebuild the worker")
+    finally:
+        host.close()
+        old.close()

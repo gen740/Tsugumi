@@ -153,6 +153,9 @@ table Capabilities {
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
   // Zero means no advertised contract. Writers explicitly send contract 22.
   worker_contract:uint;
+  // The source revision the worker was built from (the flake's revision),
+  // empty when the build does not say. Shown to people; never compared.
+  revision:string;
   probe_life:string;
   active_jobs:uint;
   requires_filesystem:bool = true; requires_pid:bool = true;

@@ -824,10 +824,32 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
                        "settings";
         std::vector<std::pair<std::string, std::string>> args{
             {"stage", "worker_selection"}};
+        // An out-of-date worker (built from another revision) is named as
+        // such, with its contract in `contract:<id>` and this core's in
+        // `contract`, so a UI can say how to bring it up to date.
+        const auto outdated = [&](const std::string& id) {
+          const auto target = std::ranges::find(targets, id, &RemoteTarget::id);
+          return target != targets.end() && !target->available &&
+                         id != kLocalExecutionService &&
+                         !target->server_id.empty() &&
+                         target->worker_contract != workerd::kContract
+                     ? &*target
+                     : nullptr;
+        };
+        bool contract = false;
         for (const auto& probe : measurements) {
           message += "\n" + probe.worker + ": ";
           std::string reason;
-          if (!probe.unavailable_reason.empty()) {
+          if (const auto* target = outdated(probe.worker);
+              target && !probe.unavailable_reason.empty()) {
+            reason = "outdated";
+            message += probe.unavailable_reason;
+            args.emplace_back("contract:" + probe.worker,
+                              std::to_string(target->worker_contract));
+            if (!std::exchange(contract, true))
+              args.emplace_back("contract",
+                                std::to_string(workerd::kContract));
+          } else if (!probe.unavailable_reason.empty()) {
             reason = "unavailable";
             message += probe.unavailable_reason;
           } else if (probe.score) {

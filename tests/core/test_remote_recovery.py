@@ -1,5 +1,6 @@
 """Core RPC handles lost replies within a core lifetime and interrupts runs after restart."""
 
+import copy
 import hashlib
 import json
 import os
@@ -67,6 +68,8 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         self.resource_limits = True
         self.catalog_resource_limits = True
         self.catalog_contract = 3
+        # hostd's reason for a worker it found built from another revision.
+        self.catalog_outdated = None
         self.probe_overrides = {}
         self.receipts = {}
         self.view_messages = []
@@ -157,9 +160,14 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             caps.workerContract = self.catalog_contract
             caps.nativeSystem = self.catalog_system
             caps.systems = [self.catalog_system]
+            cluster = R.TargetT(id="cluster", available=True, capabilities=caps)
+            if self.catalog_outdated:
+                cluster.available = False
+                cluster.unavailableReason = self.catalog_outdated
+                cluster.capabilities = copy.copy(caps)
+                cluster.capabilities.workerContract = R.WORKER_CONTRACT - 1
             return R.reply(R.ReplyBody.Catalog, R.CatalogT(services=[
-                R.TargetT(id="local", available=False, capabilities=caps),
-                R.TargetT(id="cluster", available=True, capabilities=caps),
+                R.TargetT(id="local", available=False, capabilities=caps), cluster,
             ]))
         if self.server_id != self.registered_server:
             return R.failure(R.ErrorCode.RegistrationChanged, "execution service was replaced")
@@ -447,6 +455,20 @@ def test_resource_limits_check_both_catalog_and_live_worker(project, remote_gate
         assert status.state == RunState.failed
         assert status.failure.kind == FailureKind.unsupported
     assert remote_gateway.submit_count == 0
+
+
+def test_a_run_refuses_an_out_of_date_worker_before_any_preparation(project, remote_gateway, core_factory, tmp_path):
+    """hostd lists a worker built from another revision as unavailable: with no other worker the run
+    does not start, saying so, and nothing reaches the worker."""
+    remote_gateway.catalog_outdated = ("Worker cluster is out of date (worker contract 21; this Tsugumi uses "
+                                       "contract 22). Rebuild the worker from this Tsugumi revision")
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, systems=[Gateway.system])
+    with pytest.raises(RpcFailure) as failure:
+        start_run(client, "work", propagate=False)
+    assert failure.value.kind == "validation_failed"
+    assert remote_gateway.catalog_outdated in str(failure.value) + repr(vars(failure.value.failure))
+    assert not remote_gateway.blobs and remote_gateway.submit_count == 0
 
 
 def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tmp_path):

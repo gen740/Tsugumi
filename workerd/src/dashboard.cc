@@ -49,6 +49,7 @@ struct WorkerJson {
   t::String<"name"> name;
   t::String<"version"> version;
   t::Uint32<"contract"> contract;
+  t::String<"revision"> revision;
   t::String<"system"> system;
   t::String<"server_id"> server_id;
   t::Uint64<"uptime_seconds"> uptime_seconds;
@@ -329,6 +330,7 @@ auto Dashboard::state(const Session* admin) -> std::string {
   *worker.name = saved.name.empty() ? HostName() : saved.name;
   *worker.version = TSUGUMI_WORKERD_VERSION;
   *worker.contract = kContract;
+  *worker.revision = listener_.revision;
   *worker.system = listener_.system;
   *worker.uptime_seconds = static_cast<uint64_t>(
       std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - began_)

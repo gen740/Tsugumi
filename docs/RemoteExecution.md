@@ -56,6 +56,19 @@ The worker reads `STATE/settings.json` when it starts. The first start writes it
 
 The command line keeps only `--state-dir`, `--socket`, `--cgroup-root` and `--public-key`, and the subcommands `jobs` and `admin-password`.
 
+## Update a worker
+
+A worker speaks the worker contract of the Tsugumi revision it was built from. When Tsugumi moves to a revision with another contract, **Settings → Execution service** shows the worker as out of date, with its contract and this Tsugumi's, and runs do not use it: a Card that only that worker could run fails at once, before any preparation, and its failure says the worker is out of date. The worker's row shows the contract and the revision it reported when last verified; its dashboard shows the same in its header.
+
+Rebuild the worker from the revision your Tsugumi was built from (for a release, its tag such as `v0.9.0`), then restart it:
+
+```sh
+nix build "github:gen740/Tsugumi/<rev>#workerd" --out-link "$HOME/.tsugumi-workerd"
+"$HOME/.tsugumi-workerd/bin/tsugumi-workerd"
+```
+
+Stop the running listener first and start it again with the same options. Its state directory, settings, identity and `authorized_keys` stay, so the registration's public key does not change. Its startup line prints its worker contract and revision. Then choose the service in **Settings → Execution service** and **Verify and Update**: the worker's row no longer says it is out of date.
+
 ## Share Nix builds
 
 Tsugumi evaluates the Card on the submitting host and publishes its derivation closure to the configured [push target](BinaryCaches.md). The remote worker checks signatures when it retrieves the derivation and any available substitutes for its build outputs. It builds missing outputs before running the Card. The default, `tsugumi-cached`, is started on demand by hostd. The worker reaches it through its existing TLS connection to hostd.

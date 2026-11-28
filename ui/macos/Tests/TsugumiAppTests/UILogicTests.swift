@@ -700,6 +700,20 @@ import TsugumiTestSupport
   #expect([FlowDirection.topToBottom, .leftToRight].map { CardGeometry(d, flow: $0).size } == size)
 }
 
+@Test func aWorkerFromAnotherRevisionIsNamedAsOutOfDate() {
+  // The core names the worker's contract and its own; the hover says to rebuild it.
+  let failure = Tsugumi_Data_FailureT()
+  failure.kind = .unsupported
+  failure.args = [("stage", "worker_selection"), ("worker:ttl", "outdated"), ("contract:ttl", "21"), ("contract", "22")].map { k, v in
+    let a = Tsugumi_Data_KeyValueT()
+    a.key = k
+    a.value = v
+    return a
+  }
+  let name = "ttl", worker = "21", current = "22"
+  #expect(failure.notStartedText == String(localized: "\(name) は古い版です（契約 \(worker)、この Tsugumi は \(current)）。ワーカーを同じ版で作り直してください"))
+}
+
 @MainActor @Test func theHoverHasWhatTheFaceLeavesOut() {
   var d = CardNodeData(title: "x", kind: .code, summary: "what it does", inputs: [], outputs: [])
   let idle = HoverBubble.Content.card(d, details: ["what it does"], runId: nil) {}

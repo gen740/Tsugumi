@@ -123,7 +123,8 @@ function renderHeader(data) {
   const { worker } = data
   document.title = L("{0} のワーカー管理", worker.name)
   $('name').textContent = worker.name
-  $('meta').textContent = ['tsugumi-workerd ' + worker.version, L("契約 {0}", worker.contract), worker.system,
+  $('meta').textContent = ['tsugumi-workerd ' + worker.version, L("契約 {0}", worker.contract),
+    L("リビジョン {0}", worker.revision || L("不明")), worker.system,
     L("起動から {0}", duration(worker.uptime_seconds))].join(' · ')
   document.body.classList.toggle('admin', admin())
   $('badge').textContent = admin() ? L("管理者") : L("閲覧のみ（guest）")

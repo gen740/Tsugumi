@@ -5,6 +5,7 @@ import TsugumiAgentClient
 struct ExecutionServicesSettings: View {
   @Environment(AppModel.self) private var model
   @State private var hostPublicKey = ""
+  @State private var workerContract = 0
   @State private var entries: [ExecutionServiceConnection] = []
   @State private var dashboard: ExecutionServiceConnection?
   @State private var draft: ExecutionServiceRegistration?
@@ -43,6 +44,9 @@ struct ExecutionServicesSettings: View {
           } label: {
             Button(entry.label) { choose(entry) }
           }
+          if let outdated = Self.outdatedText(entry, contract: workerContract) {
+            Text(outdated).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+          }
         }
         Button("すべて測り直す") { remeasure(nil) }
         Button { choose(nil) } label: { Label("実行サービスを追加", systemImage: "plus") }
@@ -63,6 +67,10 @@ struct ExecutionServicesSettings: View {
             LabeledContent("隔離方式", value: String(localized: "PID 名前空間"))
             LabeledContent("CPU とメモリの上限", value: caps.resourceLimits ? String(localized: "対応") : String(localized: "非対応"))
             LabeledContent("最大同時ジョブ数", value: String(caps.maxConcurrentJobs))
+            LabeledContent("ワーカー契約", value: String(caps.workerContract))
+            LabeledContent("リビジョン") {
+              Text(caps.revision.isEmpty ? String(localized: "不明") : caps.revision).monospaced().textSelection(.enabled)
+            }
           }
           HStack {
             Button(entry.id == "local" ? "保存" : original == nil ? "登録" : "接続を確認して更新") {
@@ -83,6 +91,10 @@ struct ExecutionServicesSettings: View {
                     original = nil
                   }
                   refreshServices()
+                  if verifying, let worker = entries.first(where: { $0.id == entry.id }),
+                     let outdated = Self.outdatedText(worker, contract: workerContract) {
+                    return report(outdated, failed: true)
+                  }
                   report(entry.id == "local" ? String(localized: "保存しました。") : verifying ? String(localized: "接続を確認しました。") : String(localized: "公開鍵を登録しました。authorized_keys にホストの公開鍵を追加してから接続を確認してください。"))
                 } catch { report(error.localizedDescription, failed: true) }
               }
@@ -180,6 +192,15 @@ struct ExecutionServicesSettings: View {
   private func adopt(_ result: ExecutionServicesState) {
     entries = result.services
     hostPublicKey = result.hostPublicKey
+    workerContract = result.workerContract
+  }
+
+  /// What settings say about a worker hostd found built from another revision;
+  /// nil for a worker this Tsugumi can use.
+  static func outdatedText(_ entry: ExecutionServiceConnection, contract: Int) -> String? {
+    guard entry.outdated else { return nil }
+    let worker = String(entry.capabilities.workerContract), current = String(contract)
+    return String(localized: "このワーカーは古い版です（契約 \(worker)、この Tsugumi は \(current)）。ワーカーを同じ版で作り直して再起動し、「接続を確認して更新」を押してください。")
   }
 
   private func refreshServices() {

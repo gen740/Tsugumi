@@ -476,6 +476,18 @@ struct Config {
   // The command line, to start again with on a restart from the dashboard.
   std::vector<std::string> arguments;
 };
+// The source revision this worker was built from. The flake's package sets
+// it in the wrapper; a build that does not say reports none.
+auto build_revision() -> std::string {
+  const char* value = std::getenv("TSUGUMI_WORKERD_REVISION");
+  const std::string_view revision = value ? value : "";
+  if (revision.empty() || revision.size() > 64 ||
+      !std::ranges::all_of(revision, [](unsigned char c) {
+        return std::isalnum(c) || c == '-' || c == '.';
+      }))
+    return {};
+  return std::string(revision);
+}
 enum class Restart { None, AfterJobs, Now };
 auto default_root() -> stdfs::path {
   if (const char* value = std::getenv("TSUGUMI_REMOTE_STATE_DIR")) return value;
@@ -535,10 +547,12 @@ class Daemon {
          int shutdown_fd)
       : config_(std::move(config)),
         server_(identity(config_.root, "server_id")),
+        revision_(build_revision()),
         settings_(settings),
         system_(system()),
         dashboard_(config_.root, settings_,
                    {.system = system_,
+                    .revision = revision_,
                     .running = [this] { return running_jobs_.load(); },
                     .restart = [this](bool now) { request_restart(now); },
                     .restart_pending =
@@ -569,6 +583,7 @@ class Daemon {
     c.active_jobs = active_jobs_.load();
     c.probe_life = probe_life_;
     c.worker_contract = kContract;
+    c.revision = revision_;
     return c;
   }
   auto project(const Sha256Hex& scope) -> std::shared_ptr<Journal> {
@@ -1212,6 +1227,7 @@ class Daemon {
   }
   Config config_;
   std::string server_;
+  std::string revision_;
   WorkerSettings& settings_;
   std::string system_;
   Dashboard dashboard_;
@@ -1517,6 +1533,9 @@ auto run(Config config) -> bool {
     fingerprint += static_cast<char>(std::toupper(c));
   }
   log("public key: " + identity.public_key());
+  const auto revision = build_revision();
+  log("worker contract " + std::to_string(kContract) + ", revision " +
+      (revision.empty() ? std::string("unknown") : revision));
   log("listening with TLS 1.3 on unix:" + config.unix_socket.string() +
       " and tls://" + host + ":" + std::to_string(port));
   log("dashboard: https://" + host + ":" + std::to_string(dashboard_port) +

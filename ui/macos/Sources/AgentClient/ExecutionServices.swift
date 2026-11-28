@@ -15,6 +15,8 @@ public struct ExecutionServiceCapabilities: Codable, Equatable, Sendable {
   /// the dashboard view pins. Empty before the worker is verified.
   public var dashboardURL: String = ""
   public var dashboardCertificateSHA256: String = ""
+  /// The source revision the worker was built from; empty when it does not say.
+  public var revision: String = ""
 }
 
 public struct ExecutionProbeMeasurement: Codable, Equatable, Sendable {
@@ -31,6 +33,8 @@ public struct ExecutionServiceConnection: Codable, Identifiable, Equatable, Send
   public let workerPublicKey: String
   public let probes: [ExecutionProbeMeasurement]
   public let capabilities: ExecutionServiceCapabilities
+  /// hostd found the worker built from another revision (another worker contract): runs do not use it.
+  public let outdated: Bool
 
   /// How a list shows the service: its name, and its id only when the two differ.
   public var label: String { Self.label(name: name, id: id) }
@@ -51,6 +55,8 @@ public struct ExecutionServiceRegistration: Sendable {
 public struct ExecutionServicesState: Codable, Sendable {
   public let services: [ExecutionServiceConnection]
   public let hostPublicKey: String
+  /// The worker contract this Tsugumi speaks.
+  public let workerContract: Int
 }
 
 /// Settings adapter only: validation, probing, persistence and secrets live in hostd.
@@ -89,7 +95,8 @@ public enum ExecutionServices {
           systems: c.systems.compactMap { $0 }, isolation: c.isolation ?? "", resourceLimits: c.resourceLimits,
           maxConcurrentJobs: Int(c.maxConcurrentJobs), workerContract: Int(c.workerContract),
           workerLabel: c.workerLabel ?? "", dashboardURL: c.dashboardUrl ?? "",
-          dashboardCertificateSHA256: c.dashboardCertificateSha256 ?? ""))
-    }, hostPublicKey: value.hostPublicKey)
+          dashboardCertificateSHA256: c.dashboardCertificateSha256 ?? "",
+          revision: c.revision ?? ""), outdated: service.outdated)
+    }, hostPublicKey: value.hostPublicKey, workerContract: Int(value.workerContract))
   }
 }

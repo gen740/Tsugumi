@@ -285,6 +285,24 @@ struct Entry {
   // are observations of the worker and the name is presentation.
   std::string generation;
 };
+// A verified remote worker that speaks another worker contract than this
+// Tsugumi: it was built from another revision. Runs do not use it.
+auto Outdated(const Entry& entry) -> bool {
+  return entry.id != "local" && !entry.capabilities.server_id.empty() &&
+         entry.capabilities.worker_contract != W::kContract;
+}
+// What a person reads about an out-of-date worker: the catalog's reason that
+// a run's worker selection carries, and a refused probe.
+auto OutdatedReason(const Entry& entry) -> std::string {
+  const auto& revision = entry.capabilities.revision;
+  return "Worker " + entry.id + " is out of date (worker contract " +
+         std::to_string(entry.capabilities.worker_contract) +
+         (revision.empty() ? "" : ", revision " + revision) +
+         "; this Tsugumi uses contract " + std::to_string(W::kContract) +
+         "). Rebuild the worker from this Tsugumi revision, restart it and "
+         "verify it again in Settings > Execution service (see \"Update a "
+         "worker\" in docs/RemoteExecution.md).";
+}
 auto Public(const Entry& entry) -> std::unique_ptr<H::ExecutionServiceT> {
   auto value = std::make_unique<H::ExecutionServiceT>();
   value->id = entry.id;
@@ -311,19 +329,24 @@ auto Public(const Entry& entry) -> std::unique_ptr<H::ExecutionServiceT> {
     c->dashboard_certificate_sha256 =
         entry.capabilities.dashboard_certificate_sha256;
   }
+  c->revision = entry.capabilities.revision;
+  value->outdated = Outdated(entry);
   return value;
 }
+// The worker's identity and limits. Its contract is kept as it reported it:
+// a worker built from another revision is recorded as out of date (Outdated),
+// not refused, so settings can say so.
 auto VerifiedCapabilities(const R::ReplyT& reply) -> const R::CapabilitiesT& {
   const auto* capabilities = reply.body.AsCapabilities();
-  if (!capabilities || capabilities->worker_contract != W::kContract ||
-      !crypto::is_sha256_hex(capabilities->server_id) ||
+  if (!capabilities || !crypto::is_sha256_hex(capabilities->server_id) ||
       !capabilities->max_jobs || capabilities->label.size() > 256 ||
       !text::valid_utf8(capabilities->label) ||
       !(capabilities->dashboard_certificate_sha256.empty() ||
         crypto::is_sha256_hex(capabilities->dashboard_certificate_sha256)))
     throw W::Error(R::ErrorCode::Rejected,
-                   "Rebuild the remote worker with this Tsugumi revision "
-                   "(invalid capabilities)");
+                   "The remote worker sent invalid capabilities. Rebuild it "
+                   "from this Tsugumi revision (see \"Update a worker\" in "
+                   "docs/RemoteExecution.md).");
   return *capabilities;
 }
 }  // namespace
@@ -588,6 +611,7 @@ struct ExecutionBroker::State {
   auto List() -> H::ExecutionServicesT {
     H::ExecutionServicesT result;
     result.host_public_key = identity.public_key();
+    result.worker_contract = W::kContract;
     for (const auto& entry : Entries()) {
       auto service = Public(entry);
       if (auto cache = probes.find(entry.id); cache != probes.end()) {
@@ -911,13 +935,17 @@ struct ExecutionBroker::State {
             const bool approved =
                 e.id == "local" || (authorized != grants.end() &&
                                     authorized->second == e.generation);
-            target->available = e.id == "local" ||
-                                (approved && !e.capabilities.server_id.empty());
+            target->available =
+                e.id == "local" ||
+                (approved && !e.capabilities.server_id.empty() && !Outdated(e));
             if (!target->available)
               target->unavailable_reason =
-                  "Worker " + e.id +
-                  (approved ? " needs its registration verified in settings"
-                            : " needs a person's approval for this project");
+                  !approved ? "Worker " + e.id +
+                                  " needs a person's approval for this project"
+                  : Outdated(e) ? OutdatedReason(e)
+                                : "Worker " + e.id +
+                                      " needs its registration verified in "
+                                      "settings";
             target->capabilities =
                 std::make_unique<R::CapabilitiesT>(e.capabilities);
             if (const auto cache = probes.find(e.id); cache != probes.end())
@@ -1100,6 +1128,8 @@ struct ExecutionBroker::State {
                 R::ErrorCode::Rejected,
                 "The remote worker did not identify its project journal");
           cached.instance_id.clear();
+          auto observed = entry;
+          observed.capabilities = cached;
           std::lock_guard lock(mutex);
           if (const auto cache = probes.find(entry.id);
               cache != probes.end() && cache->second.life != cached.probe_life)
@@ -1110,6 +1140,9 @@ struct ExecutionBroker::State {
               .bind(2, entry.id)
               .bind(3, entry.generation)
               .run();
+          // Recorded first, so settings and the next catalog say it too.
+          if (Outdated(observed))
+            throw W::Error(R::ErrorCode::Rejected, OutdatedReason(observed));
         }
       }
       Write(fd, std::move(response), deadline);

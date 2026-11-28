@@ -33,6 +33,9 @@ struct RemoteTarget {
   bool namespace_isolation = false;
   bool gui = false;
   std::string probe_revision;
+  // The worker contract the worker reported when last verified; another one
+  // than kContract makes the host list it as out of date.
+  uint32_t worker_contract = 0;
 };
 
 struct RemoteJobState {

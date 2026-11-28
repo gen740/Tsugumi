@@ -13,12 +13,27 @@ import Testing
 /// After 登録 the form closes, so the same worker is not registered twice; a saved edit stays open.
 @MainActor @Test func aNewRegistrationClosesTheForm() {
   let capabilities = ExecutionServiceCapabilities(serverId: "", nativeSystem: "aarch64-linux", systems: [], isolation: "",
-                                                  resourceLimits: false, maxConcurrentJobs: 1, workerContract: 0)
+                                                  resourceLimits: false, maxConcurrentJobs: 1, workerContract: 0, revision: "")
   let gpu = ExecutionServiceConnection(id: "gpu", name: "GPU", endpoint: "tls://gpu:8765", workerPublicKey: "ed25519:x",
-                                       probes: [], capabilities: capabilities)
+                                       probes: [], capabilities: capabilities, outdated: false)
   #expect(ExecutionServicesSettings.editedAfterSave(registering: true, id: "gpu", in: [gpu]) == nil)
   #expect(ExecutionServicesSettings.editedAfterSave(registering: false, id: "gpu", in: [gpu]) == gpu)
   #expect(ExecutionServicesSettings.editedAfterSave(registering: false, id: "gone", in: [gpu]) == nil)
+}
+
+/// A worker hostd found built from another revision says so, with both contracts and what to do.
+@MainActor @Test func anOutOfDateWorkerSaysHowToBringItUpToDate() {
+  let capabilities = ExecutionServiceCapabilities(serverId: "server", nativeSystem: "x86_64-linux", systems: ["x86_64-linux"],
+                                                  isolation: "pid_namespace", resourceLimits: false, maxConcurrentJobs: 1,
+                                                  workerContract: 21, revision: "0ld0rev")
+  let ttl = ExecutionServiceConnection(id: "ttl", name: "ttl", endpoint: "tls://ttl:8765", workerPublicKey: "ed25519:x",
+                                       probes: [], capabilities: capabilities, outdated: true)
+  let worker = "21", current = "22"
+  #expect(ExecutionServicesSettings.outdatedText(ttl, contract: 22)
+          == String(localized: "このワーカーは古い版です（契約 \(worker)、この Tsugumi は \(current)）。ワーカーを同じ版で作り直して再起動し、「接続を確認して更新」を押してください。"))
+  let current22 = ExecutionServiceConnection(id: "ttl", name: "ttl", endpoint: "tls://ttl:8765", workerPublicKey: "ed25519:x",
+                                             probes: [], capabilities: capabilities, outdated: false)
+  #expect(ExecutionServicesSettings.outdatedText(current22, contract: 22) == nil)
 }
 
 @MainActor @Test func builtInSkillsHaveTheirOwnDescriptions() {
