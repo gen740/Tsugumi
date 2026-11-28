@@ -4,8 +4,8 @@
 // FlatBuffer of protocol/layout_document.fbs) and each note's Markdown in
 // notes/<id>.md. hostd works on one JSON object for both, keyed like the
 // rest of its document files under "layout.bin":
-//   {"flow", "cards": {key: place}, "boundaries": {scope: bars},
-//    "boundary": bars, "notes": [{id, text, ...}], "groups": [...]}
+//   {"cards": {key: place}, "boundaries": {scope: bars}, "boundary": bars,
+//    "notes": [{id, text, ...}], "groups": [...]}
 #pragma once
 
 #include <map>
