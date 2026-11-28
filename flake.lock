@@ -66,11 +66,11 @@
     "tsugumi-demos": {
       "flake": false,
       "locked": {
-        "lastModified": 1795881172,
-        "narHash": "sha256-KDQh8PoIZ8wulQAq+CvDitRYFGNJubXzVoZSik9OtYM=",
+        "lastModified": 1795893855,
+        "narHash": "sha256-hb04cMFt9NCxy33L78hY6BoML52gtGpcKNxEztbVH1Q=",
         "owner": "gen740",
         "repo": "tsugumi-demos",
-        "rev": "126f15c86eaa661b5aeebdd2f5c5e8d25512ae38",
+        "rev": "a8e19f1860aed7b61bbed3c5faa370076e670f24",
         "type": "github"
       },
       "original": {
