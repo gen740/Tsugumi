@@ -91,16 +91,17 @@ def test_subgraph_replays_saved_merge_arrival(core_factory, project, tmp_path):
     client = daemon.connect()
     _, status = run_and_wait(client, "child", propagate=False)
     assert status.state == RunState.failed and status.failure.kind == FailureKind.input_missing
-    source_runs = []
+    ended = []
     payloads = []
     for _ in range(2):
         run, status = run_and_wait(client, "start")
         assert status.state == RunState.succeeded, text(status.failure.diagnostic)
         value, = record(client, run, "child/relay").outputs
         payloads.append(bytes(value.inlineBytes))
-        source_runs.append(run)
-    deleted = client.call("RunHistoryDeleteRequest", restrictToRunIds=True,
-                          runIds=source_runs[:1], opId=new_id())
+        ended.append(status.endedAt)
+    assert ended[0] < ended[1]
+    deleted = client.call("RunHistoryDeleteRequest", endedBefore=ended[0] + 1,
+                          opId=new_id())
     assert deleted.deletedRuns == 1
 
     daemon.restart()

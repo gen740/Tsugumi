@@ -83,7 +83,7 @@ Merge forwards each envelope unchanged. A Merge-fed port with one distinct schem
 - Users can add templates from a folder, or import them from a public HTTPS Git repository with a ref and a subdirectory.
 - Hostd manages the catalog and imports templates from Git. It saves a copied template through the project document service.
 - The Agent or the user chooses a template. The core never chooses: there is no automatic selection and there are no per-language defaults.
-- The Agent may list and copy templates. Adding or importing one needs a person's approval.
+- The Agent may list, copy, add and import templates (into a store it can reach). It has no tool that deletes one.
 - Scaffolding a new Card is the Agent's job.
 - The "New Card" menu offers Draft, Trigger, Merge and Collect, and "From Template…" with Project and Host sections and nothing preselected. [Reuse Cards from a template](../Usage.md#reuse-cards-from-a-template)
 - No templates ship in the core. Example templates live in tsugumi-kit.

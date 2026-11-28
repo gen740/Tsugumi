@@ -2123,11 +2123,9 @@ auto History::delete_category(sql::Db& db, const std::string& run_id,
   }
 }
 
-// Delete exactly the finished runs selected by the person, in the primary
-// database.
+// Delete the finished runs selected by the cutoff, in the primary database.
 std::vector<std::string> History::delete_runs(
-    std::optional<int64_t> ended_before,
-    const std::optional<std::vector<std::string>>& run_ids) {
+    std::optional<int64_t> ended_before) {
   std::vector<std::string> ids;
   write_sync([&](sql::Db& db) {
     std::vector<std::string> selected_ids;
@@ -2138,24 +2136,10 @@ std::vector<std::string> History::delete_runs(
         std::to_string(static_cast<int>(RunState::succeeded)) + "," +
         std::to_string(static_cast<int>(RunState::failed)) + "," +
         std::to_string(static_cast<int>(RunState::cancelled));
-    std::string candidates = "runs";
-    if (run_ids) {
-      db.exec(
-          "CREATE TEMP TABLE IF NOT EXISTS requested_runs(run_id TEXT PRIMARY "
-          "KEY); DELETE FROM temp.requested_runs");
-      auto insert = db.prepare(
-          "INSERT OR IGNORE INTO temp.requested_runs VALUES (?)");
-      for (const auto& id : *run_ids) {
-        insert.reset();
-        insert.bind(1, id).run();
-      }
-      candidates =
-          "temp.requested_runs CROSS JOIN runs USING (run_id)";
-    }
     auto select = db.prepare(
-        "INSERT INTO temp.deleting_runs SELECT runs.run_id FROM " +
-        candidates + " WHERE state IN (" + states + ")" +
-        (ended_before ? " AND ended_at < ?1" : "") +
+        "INSERT INTO temp.deleting_runs SELECT runs.run_id FROM runs WHERE "
+        "state IN (" +
+        states + ")" + (ended_before ? " AND ended_at < ?1" : "") +
         " AND runs.run_id NOT IN (SELECT run_id FROM remote_jobs)");
     if (ended_before) select.bind(1, *ended_before);
     select.run();

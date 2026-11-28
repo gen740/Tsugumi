@@ -11,8 +11,6 @@ inline const std::set<std::string> OwnedFields{"origin",
                                                "op_id",
                                                "save_intent",
                                                "approved_permissions",
-                                               "run_ids",
-                                               "restrict_to_run_ids",
                                                "check_permissions",
                                                "read_only",
                                                "hide_credentials",
@@ -25,13 +23,9 @@ inline const std::set<std::string> OwnedFields{"origin",
                                                "workspace_only",
                                                "protected_paths",
                                                "excluded_paths"};
-inline auto StripOwnedFields(std::string_view name, bool mutating,
-                             json::Members& args) -> void {
+inline auto StripOwnedFields(bool mutating, json::Members& args) -> void {
   for (const auto& field : OwnedFields) {
     if (field == "op_id" && !mutating) continue;
-    if ((field == "run_ids" || field == "restrict_to_run_ids") &&
-        name != "run_history_delete")
-      continue;
     args.erase(field);
   }
 }

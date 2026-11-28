@@ -718,12 +718,13 @@ TEST_F(AgentFixture, RestartAndObservationLeaveTheTurnInterruptedUntilResume) {
 TEST_F(AgentProjectFixture,
        InterruptedToolIsRecordedAndANewMessageCanReplaceResume) {
   ModelServer model;
-  model.Queue(AnthropicTool("pending-lock", "nix_path_lock_update", "{}"));
+  model.Queue(AnthropicFamilyTool("pending-scratch", "maintenance",
+                                  "delete_scratch", R"({"paths":["runs/1"]})"));
   model.Queue(AnthropicText("Followed the new message"));
   Configure(model);
   StartProject();
   const auto conversation = Conversation("interrupted-operation");
-  ASSERT_TRUE(Send(conversation, "Update the lock").Code().empty());
+  ASSERT_TRUE(Send(conversation, "Delete that scratch").Code().empty());
   // A pending decision is exposed through EventsRequest reads only.
   const auto deadline = std::chrono::steady_clock::now() + 3s;
   while (Events(conversation).View().find("decision") == std::string::npos &&
@@ -738,11 +739,12 @@ TEST_F(AgentProjectFixture,
   const auto snapshot = Get(conversation).View();
   EXPECT_TRUE(JsonBool(snapshot, "/resumable"));
   EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/kind"), "tool");
-  EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/name"),
-            "nix_path_lock_update");
+  // A family action is recorded as the tools call the model made.
+  EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/name"), "tools");
   EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/id"), "1");
-  EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/arguments_json"),
-            "{}");
+  EXPECT_EQ(
+      JsonString(snapshot, "/interrupted_operation/arguments_json"),
+      R"({"family":"maintenance","action":"delete_scratch","arguments":{"paths":["runs/1"]}})");
   EXPECT_FALSE(model.WaitForRequests(2, 150ms));
   // A new message needs a new idempotency key; the fixture defaults to turn-1.
   // Both UIs encode empty selection vectors, rather than omitting them.

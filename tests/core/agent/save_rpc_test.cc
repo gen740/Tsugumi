@@ -67,7 +67,7 @@ TEST_F(AgentProjectFixture,
   StartHost();
   EXPECT_EQ(Tool(conversation, "project_save", args, "saved").View(),
             saved.View());
-  const auto initialized = ApprovedTool(conversation, "version_init", "{}");
+  const auto initialized = Tool(conversation, "version_init", "{}");
   ASSERT_TRUE(initialized.Code().empty());
   const auto commit =
       JsonString(JsonString(initialized.View(), "/text"), "/value/commit");

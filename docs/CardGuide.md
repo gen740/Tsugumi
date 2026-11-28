@@ -407,8 +407,8 @@ HTTPS Git repository with a ref (a commit ID selects an exact version) and the t
 subdirectory. The examples in [tsugumi-kit's templates](https://github.com/gen740/tsugumi-kit/tree/main/templates)
 import with the repository `https://github.com/gen740/tsugumi-kit.git` and a subdirectory such as
 `templates/filter-counts`. Tsugumi lists, imports and copies templates; a person or the Agent
-chooses one, and there is no default per language. The Agent may list and copy templates; adding
-or importing one needs a person's approval. The [template format](https://github.com/gen740/tsugumi-kit/blob/main/docs/templates.md)
+chooses one, and there is no default per language. The Agent may list, copy, add and import
+templates; deleting one is the person's. The [template format](https://github.com/gen740/tsugumi-kit/blob/main/docs/templates.md)
 is described in the kit.
 
 ### Draft wire ends and implementation

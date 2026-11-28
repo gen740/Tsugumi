@@ -28,7 +28,7 @@ tsugumi lock update nixpkgs --project /path/to/project
 tsugumi lock update --project /path/to/project
 ```
 
-Use `--project-path externals/id` to select a child project. The Agent uses `nix_path_lock_update` with approval. The `tsugumi.lock` root contains an `entries` list. Each entry stores `name`, the declared `url`, the resolved `rev` when supplied, and the verifying `narHash`. Updating adds missing entries, removes undeclared ones and resolves changed URLs. It keeps an existing pin for an unchanged declaration. Evaluation requires each declared name's locked URL to match its declaration. [Example lock file](../CardGuide.md#the-files)
+Use `--project-path externals/id` to select a child project. The Agent uses `nix_path_lock_update`; the lock is in the project, so an update can be undone from version history. The `tsugumi.lock` root contains an `entries` list. Each entry stores `name`, the declared `url`, the resolved `rev` when supplied, and the verifying `narHash`. Updating adds missing entries, removes undeclared ones and resolves changed URLs. It keeps an existing pin for an unchanged declaration. Evaluation requires each declared name's locked URL to match its declaration. [Example lock file](../CardGuide.md#the-files)
 
 Imports such as `<nixpkgs>` and `<tsugumi-kit/sdk/cpp>` resolve from Card definition files against their own project's names. An undeclared name raises a catchable evaluation error and lists the declared names. Host `NIX_PATH` is ignored. A project under `externals/<id>/` carries its own `tsugumi.json` and `tsugumi.lock` and resolves names independently of its parent.
 

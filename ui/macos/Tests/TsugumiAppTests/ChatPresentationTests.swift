@@ -22,9 +22,9 @@ import TsugumiRPC
     #expect(!summary.joined().contains("DIGEST"))
     #expect(operation.detail.contains("\"arguments_digest\" : \"DIGEST\""))
 
-    let lock = try #require(OperationApproval(["operation_approval\nnix_path_lock_update\n{\"revision\":3}\nProposed arguments: {\"name\":\"heasoft\"}"]))
-    #expect(lock.summary.count == 1 && lock.summary[0].contains("heasoft"))
-    #expect(lock.detail.contains("Proposed arguments: {"))
+    let scratch = try #require(OperationApproval(["operation_approval\nrun_scratch_delete\n{\"folders\":[{\"path\":\"runs/1\"},{\"path\":\"runs/2\"}]}\nProposed arguments: {\"paths\":[\"runs/1\",\"runs/2\"]}"]))
+    #expect(scratch.summary.count == 1 && scratch.summary[0].contains("2"))
+    #expect(scratch.detail.contains("Proposed arguments: {"))
   }
 
   @Test func tableCellsWrapAtTheirCapInsideAHorizontalScroll() {
@@ -37,7 +37,7 @@ import TsugumiRPC
   }
 
   @Test func aDecisionIsAnsweredOnceAndDeclinedOnRelease() throws {
-    let raw = "operation_approval\nversion_init\n{}"
+    let raw = "operation_approval\nrun_scratch_delete\n{}"
     var answer: Set<String> = ["unanswered"]
     let prompt = ChatController.PermissionPrompt(raw: [raw]) { answer = $0 }
     #expect(prompt.defaultSelection == [raw])

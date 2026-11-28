@@ -107,8 +107,7 @@ struct Tools {
                         const std::string& conversation, const ToolCall& call,
                         const std::string& digest, const json::Members& args,
                         bool wait, std::stop_token stop,
-                        const std::vector<std::string>& permissions)
-      -> std::vector<std::string>;
+                        const std::vector<std::string>& permissions) -> void;
   auto ToolResources(const std::string& conversation,
                      const HelperScope* boundary) -> std::vector<std::string>;
   auto HelperReader(const std::string& conversation, std::stop_token stop,

@@ -55,35 +55,11 @@ struct OperationApproval {
       }
       return out
     }
-    let name = Self.text(args["name"]).isEmpty ? Self.text(targets["name"]) : Self.text(args["name"])
-    switch self.name {
-    case "nix_path_lock_update":
-      return [name.isEmpty ? String(localized: "すべての Nix のソースの固定（tsugumi.lock）を更新") : String(localized: "Nix のソース \(name) の固定（tsugumi.lock）を更新")]
-    case "run_history_delete":
-      let count = Self.text(targets["run_count"]).isEmpty ? "0" : Self.text(targets["run_count"])
-      return [String(localized: "実行記録 \(count) 件と、その値・ログ・残したファイルを削除")]
-    case "run_scratch_delete":
+    if name == "run_scratch_delete" {
       let count = String((targets["folders"] as? [Any])?.count ?? 0)
       return [String(localized: "作業フォルダ \(count) 個を削除（実行記録と残した出力は残ります）")]
-    case "project_cache_clear":
-      return [String(localized: "このプロジェクトの Nix ビルドキャッシュを削除（実行データは残ります）")]
-    case "template_add":
-      let path = Self.text(args["path"])
-      return [String(localized: "フォルダ \(path) をテンプレート \(name) として追加")]
-    case "template_import":
-      let url = Self.text(args["url"])
-      return [String(localized: "\(url) からテンプレート \(name) を取り込む")]
-    case "version_checkout":
-      let id = String(Self.text((targets["version"] as? [String: Any])?["id"]).prefix(12))
-      let version = id.isEmpty ? Self.text(args["commit"]) : id
-      return [String(localized: "今の状態を記録してから、版 \(version) に切り替える")]
-    case "version_init":
-      return [String(localized: "版の記録を始める")]
-    case "version_mark":
-      return [String(localized: "今の状態を版 \(name) として残す")]
-    default:
-      return [self.name]
     }
+    return [name]
   }
 }
 

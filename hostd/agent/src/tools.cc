@@ -956,8 +956,7 @@ auto Tools::ApproveOperation(const std::string& project,
                              const json::Members& args, bool wait,
                              std::stop_token stop,
                              const std::vector<std::string>& permissions)
-    -> std::vector<std::string> {
-  std::vector<std::string> run_ids;
+    -> void {
   const auto binding =
       permissions.empty()
           ? digest
@@ -979,8 +978,7 @@ auto Tools::ApproveOperation(const std::string& project,
                 "approval_unavailable",
                 "Cannot read approval targets: " + json::Encode(reply));
           return json::Object(json::Get(reply, "value", "{}"));
-        },
-        &run_ids);
+        });
   };
   std::unique_lock lock(mutex);
   auto approval = decisions.Find(conversation, call.id, binding);
@@ -1004,7 +1002,6 @@ auto Tools::ApproveOperation(const std::string& project,
     throw Failure("outcome_unknown", "This approval was already consumed");
   if (!matches)
     throw Failure("conflict", "Approval targets changed; propose a new call.");
-  return run_ids;
 }
 
 auto Tools::ToolResources(const std::string& conversation,
@@ -1444,7 +1441,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
                     "The person has not attached this folder");
     folder_resource = folder.text(0);
   }
-  host::StripOwnedFields(call.name, spec->mutating, args);
+  host::StripOwnedFields(spec->mutating, args);
   if (call.name == "evaluate_nix") {
     // Repeated evaluations use the confirmed revision without a durable tool receipt.
     auto result = ProjectCall(project, call.name, json::Encode(args), stop,
@@ -1518,13 +1515,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
     }
   }
   if (spec->approval_required && !interrupted) {
-    const auto run_ids = ApproveOperation(project, conversation, call, digest,
-                                          args, wait, stop, {});
-    if (call.name == "run_history_delete") {
-      args["run_ids"] = json::Encode(run_ids);
-      args["restrict_to_run_ids"] = "true";
-    }
-
+    ApproveOperation(project, conversation, call, digest, args, wait, stop, {});
     std::lock_guard lock(mutex);
     auto q = conversations->ConversationDatabase(conversation)
                  .prepare("INSERT INTO receipts VALUES(?,?,?,'sent','',0,?,?)");
@@ -2061,7 +2052,7 @@ auto Tools::Handle(const RequestIn& request, bool human,
             ModelRole::Main);
         if (const auto* spec = catalog.Find(call.name)) {
           auto args = json::Object(call.arguments);
-          host::StripOwnedFields(call.name, spec->mutating, args);
+          host::StripOwnedFields(spec->mutating, args);
           const auto project =
               conversations->GetConversation(conversation).project;
           const auto digest = crypto::sha256_hex(call.name + "\n" + project +

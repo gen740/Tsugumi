@@ -482,8 +482,6 @@ table RunCategoryDeleteResult {
 table RunHistoryDeleteRequest {
   op_id:string (id: 0, required);
   ended_before:int64 = null (id: 1);
-  run_ids:[string] (id: 2);
-  restrict_to_run_ids:bool = false (id: 3);
 }
 
 /// -> VersionResult. Initialize git version history with the saved project.

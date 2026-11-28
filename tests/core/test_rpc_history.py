@@ -70,8 +70,7 @@ def test_artifacts_survive_without_value_recording(core_factory, project, tmp_pa
     contents = read_pages(client, "ArtifactReadRequest", page_bytes=65536,
                           artifactId=artifact_id, member="big.txt")
     assert contents.decode() == CONTENTS
-    assert client.call("RunHistoryDeleteRequest", opId=new_id(),
-                       restrictToRunIds=True, runIds=[run_id]).deletedRuns == 1
+    assert client.call("RunHistoryDeleteRequest", opId=new_id()).deletedRuns == 1
     assert not directory.exists()
 
 

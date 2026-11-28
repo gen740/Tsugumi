@@ -374,8 +374,6 @@ No fields.
 | --- | --- | --- | --- |
 | `op_id` | `string` | yes |  |
 | `ended_before` | `int64` |  |  |
-| `run_ids` | `[string]` |  |  |
-| `restrict_to_run_ids` | `bool` |  |  |
 
 ### RunDefinitionPaths
 

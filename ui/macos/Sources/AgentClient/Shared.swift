@@ -33,7 +33,12 @@ enum Shared {
     "RunEnvironmentsRequest",
     "RunEnvironmentPathsRequest",
     "ProjectShellRequest",
-    "ProjectCacheUsageRequest"
+    "ProjectCacheUsageRequest",
+    "ProjectCacheClearRequest",
+    "RunHistoryDeleteRequest",
+    "VersionCheckoutRequest",
+    "VersionInitRequest",
+    "VersionMarkRequest"
   ],
   "hostTools": [
     {
@@ -80,7 +85,6 @@ enum Shared {
       "name": "nix_path_lock_update",
       "description": "Update tsugumi.lock for the root project, or an external selected by project_path (externals/<id>). Supply name to check one declaration, or omit it to check all declarations. Missing sources and changed URLs are resolved, matching entries are kept, and undeclared entries are removed.",
       "mutating": true,
-      "approval_required": true,
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -571,7 +575,7 @@ enum Shared {
     },
     {
       "name": "template_add",
-      "description": "Request the person’s approval to add a local template folder to the chosen store.",
+      "description": "Add a local template folder to the chosen store.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -597,12 +601,11 @@ enum Shared {
           "path"
         ]
       },
-      "mutating": true,
-      "approval_required": true
+      "mutating": true
     },
     {
       "name": "template_import",
-      "description": "Request the person’s approval to import a template from a public HTTPS Git repository.",
+      "description": "Import a template from a public HTTPS Git repository into the chosen store.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -637,8 +640,7 @@ enum Shared {
           "subdirectory"
         ]
       },
-      "mutating": true,
-      "approval_required": true
+      "mutating": true
     }
   ],
   "runWait": {
@@ -654,12 +656,7 @@ enum Shared {
     "LayoutValidateRequest"
   ],
   "approvalRequests": [
-    "RunHistoryDeleteRequest",
-    "ProjectCacheClearRequest",
-    "RunScratchDeleteRequest",
-    "VersionCheckoutRequest",
-    "VersionInitRequest",
-    "VersionMarkRequest"
+    "RunScratchDeleteRequest"
   ],
   "agentFields": [
     "save_intent",

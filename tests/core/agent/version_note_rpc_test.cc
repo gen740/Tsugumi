@@ -14,13 +14,13 @@ TEST_F(AgentProjectFixture,
       false,
       R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("version-notes");
-  const auto initialized = ApprovedTool(conversation, "version_init", "{}");
+  const auto initialized = Tool(conversation, "version_init", "{}");
   ASSERT_TRUE(initialized.Code().empty());
   const auto first =
       JsonString(JsonString(initialized.View(), "/text"), "/value/commit");
   Write(directory.path / "project/layout.bin", FixtureLayout(R"({"flow":"topToBottom"})"));
-  const auto marked = ApprovedTool(conversation, "version_mark",
-                                   R"({"name":"layout","message":"Layout"})");
+  const auto marked = Tool(conversation, "version_mark",
+                           R"({"name":"layout","message":"Layout"})");
   ASSERT_TRUE(marked.Code().empty());
   const auto commit =
       JsonString(JsonString(marked.View(), "/text"), "/value/commit");
@@ -74,7 +74,7 @@ TEST_F(AgentProjectFixture,
       false,
       R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("host-presentation");
-  ASSERT_TRUE(ApprovedTool(conversation, "version_init", "{}").Code().empty());
+  ASSERT_TRUE(Tool(conversation, "version_init", "{}").Code().empty());
   for (const auto& [language, expected] :
        std::vector<std::pair<std::string, std::string>>{
            {"en", "Create the project"}, {"ja", "プロジェクトを作成"}}) {

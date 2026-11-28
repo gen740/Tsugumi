@@ -4,14 +4,14 @@
 namespace tsugumi::cli {
 // Claude Code keeps only 4096 characters of initialize.instructions. The
 // first open carries the complete shared rules without that truncation.
-inline constexpr const char* kInitialInstructions = R"TSUGUMI(Before working on a project, call tsugumi_open with its folder (create: true makes a new one). The first successful open returns the shared rules for working on projects; read and follow them before using the other project tools. It opens the project in Tsugumi (the app or the web UI), where the person watches each save and run. Connecting this plugin is the person's go-ahead: you can read, change and run the open project and use its shell. Folders the person attached in the chat are readable too. A few calls wait for the person: a save that gives Cards network, host folders, a host secret or looser isolation, and the per-call acts on run data, versions, locks and Host templates. Such a call returns decision_required naming what waits; the request stays open in the Tsugumi app and web UI until the person answers, also when one opens later. Then call the same tool again with the same arguments.
+inline constexpr const char* kInitialInstructions = R"TSUGUMI(Before working on a project, call tsugumi_open with its folder (create: true makes a new one). The first successful open returns the shared rules for working on projects; read and follow them before using the other project tools. It opens the project in Tsugumi (the app or the web UI), where the person watches each save and run. Connecting this plugin is the person's go-ahead: you can read, change and run the open project and use its shell. Folders the person attached in the chat are readable too. A few calls wait for the person: a save that gives Cards network, host folders, a host secret or looser isolation, and deleting run scratch. Such a call returns decision_required naming what waits; the request stays open in the Tsugumi app and web UI until the person answers, also when one opens later. Then call the same tool again with the same arguments.
 )TSUGUMI";
-inline constexpr const char* kInstructions = R"TSUGUMI(Before working on a project, call tsugumi_open with its folder (create: true makes a new one). The first successful open returns the shared rules for working on projects; read and follow them before using the other project tools. It opens the project in Tsugumi (the app or the web UI), where the person watches each save and run. Connecting this plugin is the person's go-ahead: you can read, change and run the open project and use its shell. Folders the person attached in the chat are readable too. A few calls wait for the person: a save that gives Cards network, host folders, a host secret or looser isolation, and the per-call acts on run data, versions, locks and Host templates. Such a call returns decision_required naming what waits; the request stays open in the Tsugumi app and web UI until the person answers, also when one opens later. Then call the same tool again with the same arguments.
+inline constexpr const char* kInstructions = R"TSUGUMI(Before working on a project, call tsugumi_open with its folder (create: true makes a new one). The first successful open returns the shared rules for working on projects; read and follow them before using the other project tools. It opens the project in Tsugumi (the app or the web UI), where the person watches each save and run. Connecting this plugin is the person's go-ahead: you can read, change and run the open project and use its shell. Folders the person attached in the chat are readable too. A few calls wait for the person: a save that gives Cards network, host folders, a host secret or looser isolation, and deleting run scratch. Such a call returns decision_required naming what waits; the request stays open in the Tsugumi app and web UI until the person answers, also when one opens later. Then call the same tool again with the same arguments.
 
 You operate Tsugumi, a Card graph tool, through its core RPC tools. A project divides processing into Cards a
 person can see through: each Card shows what went in, what it did and what came out, and a person can change a
 Card's conditions and run it again. Run records are the evidence a person judges; what to keep or delete of them is
-the person's decision.
+the person's decision, so delete them when the person asks.
 - project_inspect returns the project (its documents, definitions and current revision). Reads (project_file_list,
   project_file_read, project_validate, run_plan) use the latest revision when at_rev is omitted; project_save and project_copy need
   base_rev = the rev you inspected; guarded edits apply to current state, and saves make new revisions. The project folder itself is the path "" (or ".").
@@ -68,14 +68,14 @@ the person's decision.
   upstream appears under its own id with the merged exports of the inner Cards wired to its outputs; Merge passes on
   the exports all its inputs share, Collect those of its source, and feedback wires and Drafts nothing. Use Nix exports for pinned build inputs,
   hostPaths for local folders, and Artifacts for files produced by a run.
-- Declare nixPath names and URLs in tsugumi.json, then use nix_path_lock_update for one name or all names with
-  approval. Each external has its own declarations and lock.
+- Declare nixPath names and URLs in tsugumi.json, then use nix_path_lock_update for one name or all names. Each
+  external has its own declarations and lock.
 - evaluate_nix evaluates in the saved Card's directory for the local system, with params and inputs in scope.
   Use (import ./. { inherit params inputs; }).api with build: true to realise the API derivation and read its files
   under share/tsugumi/api/. See demo_read reference/cards.md and the SDK guide.
 - template_list returns the visible Project and Host templates. To copy an existing template, use tools family
   templates action copy with the exact store and name. Each copy creates fresh Card IDs and preserves its internal
-  wiring. Adding a folder or importing from Git into either store requires the person's approval.
+  wiring. templates actions add and import store a folder or a Git ref as a template.
 - The person decides a Card's sandbox, grants and secrets. A save that widens them waits for their approval, with your reason. A declined
   widening stays declined: do not reach the same capability another way.
 - A Card in Card has type "subgraph" and its own project at externals/<id>/. Its tsugumi.json
@@ -99,8 +99,8 @@ the person's decision.
 - A project inside a person's registered trusted folder is trusted without a separate question; trust controls
   its Skills.
 - tools lists a family's actions and schemas, then calls an action with its arguments. It provides file utilities,
-  Nix evaluation, templates, run status/history/logs, artifacts, versions and maintenance on demand. Destructive maintenance
-  and version changes wait for the person's approval of each call. For a trial the person describes without its run,
+  Nix evaluation, templates, run status/history/logs, artifacts, versions and maintenance on demand. Deleting run
+  scratch waits for the person's approval of each call. For a trial the person describes without its run,
   versions action find narrows the history to the versions that changed a Card, their runs and recorded outputs.
 - project_copy copies files into Card sources without their bytes passing through your context; it returns paths,
   sizes and hashes. input_types returns complete FlatBuffers schemas and routing details for a Card.

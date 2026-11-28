@@ -118,8 +118,8 @@ def test_invocation_can_open_a_sealed_artifact_by_uuid(core_factory, project):
         for path in (saved, *saved.rglob("*")):
             assert not stat.S_IMODE(path.stat().st_mode) & 0o222
 
-        removed = client.call("RunHistoryDeleteRequest", opId=new_id(),
-                              restrictToRunIds=True, runIds=[run_id])
+        # The earlier run was deleted in the previous pass: this is the only one.
+        removed = client.call("RunHistoryDeleteRequest", opId=new_id())
         assert removed.deletedRuns == 1
         assert not run_root.exists()
 

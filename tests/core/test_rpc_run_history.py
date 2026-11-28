@@ -11,7 +11,7 @@ import pytest
 from harness.fixtures import add_worker, worker_project
 from harness.host import Host, HostConnection, HostFailure
 from harness.observations import read_output, read_pages
-from harness.scenario import FILE_OUTPUT, Gate, Project, run, wait_run
+from harness.scenario import FILE_OUTPUT, Project, run, wait_run
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.ArtifactState import ArtifactState
 from Tsugumi.Data.RunState import RunState
@@ -159,60 +159,6 @@ def test_deleting_history_removes_records_and_artifacts_without_resurrection(cor
     with pytest.raises(RpcFailure) as failure:
         client.call("RunEnvironmentPathsRequest", runId=run_ids[0], environmentId=environment_id)
     assert failure.value.kind == "not_found"
-
-
-def test_history_deletion_keeps_a_run_that_finished_after_selection(core_factory, project, tmp_path):
-    """Deletion removes exactly the selected runs, even if another run finishes meanwhile."""
-    daemon = core_factory(mocked_builds=True, mocked_worker=True)
-    client = daemon.connect()
-    prepare_history(client, project, tmp_path / "first")
-    first, _ = successful_run(client)
-    first_artifact = text(client.call("ArtifactListRequest", runId=first).artifacts[0].artifactId)
-    gate = Gate(tmp_path, "second")
-    worker_project(client, project, tmp_path / "second", [
-        gate.action(),
-        {"op": "file", "port": "doc", "path": "report.txt", "text": CONTENTS},
-    ], outputs=FILE_OUTPUT, recordIO="on")
-    second = run(client)
-    gate.wait()
-    selected = [text(row.status.runId) for row in client.call("RunHistoryRequest", limit=100).runs
-                if row.status.state in {RunState.succeeded, RunState.failed, RunState.cancelled}]
-    assert selected == [first]
-    gate.release()
-    assert wait_run(client, second).state == RunState.succeeded
-    second_artifact = text(client.call("ArtifactListRequest", runId=second).artifacts[0].artifactId)
-
-    assert client.call("RunHistoryDeleteRequest", opId=new_id(),
-                       restrictToRunIds=True, runIds=[]).deletedRuns == 0
-    with pytest.raises(RpcFailure) as failure:
-        client.call("RunHistoryDeleteRequest", opId=new_id(), runIds=selected)
-    assert failure.value.kind == "invalid_request"
-    operation = new_id()
-    assert client.call("RunHistoryDeleteRequest", opId=operation,
-                       restrictToRunIds=True, runIds=selected).deletedRuns == 1
-    assert client.call("RunHistoryDeleteRequest", opId=operation,
-                       restrictToRunIds=True, runIds=selected).deletedRuns == 1
-    with pytest.raises(RpcFailure) as failure:
-        client.call("RunHistoryDeleteRequest", opId=operation,
-                    restrictToRunIds=True, runIds=[second])
-    assert failure.value.kind == "operation_conflict"
-    with pytest.raises(RpcFailure) as failure:
-        client.call("ArtifactReadRequest", artifactId=first_artifact)
-    assert failure.value.kind == "not_found"
-
-    daemon.restart()
-    client = daemon.connect()
-    assert listed(client) == [second]
-    value, = client.call("RunRecordRequest", runId=second, card=path("work")).record.outputs
-    artifact, = value.artifacts
-    assert text(artifact.id) == second_artifact
-    assert read_output(client, second, port="doc") == bytes(value.inlineBytes)
-    assert read_pages(client, "ArtifactReadRequest", artifactId=second_artifact, member="report.txt").decode() == CONTENTS
-    daemon.stop()
-    copied_project = tmp_path / "copy"
-    copy_closed_project(project, copied_project)
-    restored = core_factory(project_root=copied_project)
-    assert listed(restored.connect()) == [second]
 
 
 def test_immediate_reruns_after_finished_keep_accepting(core_factory, project, tmp_path):

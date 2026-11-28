@@ -93,31 +93,9 @@ export function operationSummary(op: OperationApproval): string[] {
     if (sources.length) out.unshift(L('Nix のソースを追加: {0}', sources.join(', ')))
     return out
   }
-  const name = text(op.args.name) || text(op.targets.name)
-  switch (op.name) {
-    case 'nix_path_lock_update':
-      return [name ? L('Nix のソース {0} の固定（tsugumi.lock）を更新', name) : L('すべての Nix のソースの固定（tsugumi.lock）を更新')]
-    case 'run_history_delete':
-      return [L('実行記録 {0} 件と、その値・ログ・残したファイルを削除', text(op.targets.run_count) || '0')]
-    case 'run_scratch_delete':
-      return [L('作業フォルダ {0} 個を削除（実行記録と残した出力は残ります）', Array.isArray(op.targets.folders) ? op.targets.folders.length : 0)]
-    case 'project_cache_clear':
-      return [L('このプロジェクトの Nix ビルドキャッシュを削除（実行データは残ります）')]
-    case 'template_add':
-      return [L('フォルダ {0} をテンプレート {1} として追加', text(op.args.path), name)]
-    case 'template_import':
-      return [L('{0} からテンプレート {1} を取り込む', text(op.args.url), name)]
-    case 'version_checkout': {
-      const version = op.targets.version as Record<string, unknown> | undefined
-      return [L('今の状態を記録してから、版 {0} に切り替える', text(version?.id).slice(0, 12) || text(op.args.commit))]
-    }
-    case 'version_init':
-      return [L('版の記録を始める')]
-    case 'version_mark':
-      return [L('今の状態を版 {0} として残す', name)]
-    default:
-      return [op.name]
-  }
+  if (op.name === 'run_scratch_delete')
+    return [L('作業フォルダ {0} 個を削除（実行記録と残した出力は残ります）', Array.isArray(op.targets.folders) ? op.targets.folders.length : 0)]
+  return [op.name]
 }
 
 /** Only the properties shown as badges on a Card; this is not the permission catalog. */

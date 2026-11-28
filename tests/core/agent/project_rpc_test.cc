@@ -155,8 +155,7 @@ TEST_F(AgentProjectFixture, TemplateStoresCopyWholeGraphsWithFreshIds) {
   EXPECT_EQ(Read(disk / "tsugumi.json"), document);
 }
 
-TEST_F(AgentProjectFixture,
-       AgentTemplateWritesNeedApprovalAndRespectExclusions) {
+TEST_F(AgentProjectFixture, AgentTemplateWritesRespectExclusions) {
   const auto folder = directory.path / "picked-template";
   Write(folder / "start/_card.json",
         R"({"type":"trigger","symbol":"play.circle"})");
@@ -174,25 +173,14 @@ TEST_F(AgentProjectFixture,
       tsugumi::json::Members{{"store", Quote("project")},
                              {"name", Quote("chosen")},
                              {"path", Quote(folder.string())}});
-  const auto pending = Tool(conversation, "template_add", arguments, "add");
-  ASSERT_EQ(pending.Code(), "decision_required") << pending.View();
-  EXPECT_FALSE(
-      std::filesystem::exists(directory.path / "project/templates/chosen"));
-
-  const auto unapproved = Tool(
+  // Template folders change through the template tools, not project_edit.
+  const auto edited = Tool(
       conversation, "project_edit",
       R"({"edits":[{"file_path":"templates/other/start/_card.json","expect_missing":true,"put":"{}"}]})");
-  EXPECT_EQ(JsonString(JsonString(unapproved.View(), "/text"), "/value/kind"),
+  EXPECT_EQ(JsonString(JsonString(edited.View(), "/text"), "/value/kind"),
             "permission_denied")
-      << unapproved.View();
+      << edited.View();
 
-  const auto permit =
-      Call(*human, A::RequestPayload::DecisionResolveRequest, [&](Builder& b) {
-        return A::CreateDecisionResolveRequest(
-                   b, b.CreateString(pending.RequestId()), true)
-            .Union();
-      });
-  ASSERT_TRUE(permit.Code().empty());
   const auto added = Tool(conversation, "template_add", arguments, "add");
   ASSERT_TRUE(added.Code().empty()) << added.View();
   EXPECT_EQ(JsonString(JsonString(added.View(), "/text"), "/reply"),
@@ -1106,7 +1094,8 @@ TEST_F(AgentProjectFixture, ConversationsCannotMoveBetweenCopiedProjects) {
   StartProject();
   const auto original = project_id;
   const auto conversation = Conversation("copy-a");
-  const auto pending = Tool(conversation, "project_cache_clear", "{}");
+  const auto pending =
+      Tool(conversation, "run_scratch_delete", R"({"paths":["runs/1"]})");
   ASSERT_EQ(pending.Code(), "decision_required");
   // Another registered project, with an identical title, is still distinct.
   const auto copy = directory.path / "copy-b";
@@ -1290,20 +1279,6 @@ TEST_F(AgentProjectFixture,
        ClearingProjectCacheUsesItsPublicRequestWithoutAddingOrigin) {
   StartProject();
   const auto conversation = Conversation("cache-clear");
-  EXPECT_EQ(Tool(conversation, "project_cache_clear", "{}").Code(),
-            "decision_required");
-  const auto pending =
-      Tool(conversation, "project_cache_clear", "{}", "clear-once");
-  ASSERT_EQ(pending.Code(), "decision_required");
-  ASSERT_FALSE(pending.RequestId().empty());
-  ASSERT_TRUE(Call(*human, A::RequestPayload::DecisionResolveRequest,
-                   [&](Builder& b) {
-                     return A::CreateDecisionResolveRequest(
-                                b, b.CreateString(pending.RequestId()), true)
-                         .Union();
-                   })
-                  .Code()
-                  .empty());
   const auto cleared =
       Tool(conversation, "project_cache_clear", "{}", "clear-once");
   ASSERT_TRUE(cleared.Code().empty());
@@ -2130,8 +2105,46 @@ TEST_F(AgentProjectFixture, ReloadApprovalCannotWidenADifferentPermissionSet) {
             accepted);
 }
 
-TEST_F(AgentProjectFixture,
-       EveryApprovalOperationIsBoundToOneCallAndArguments) {
+TEST_F(AgentProjectFixture, ActsOnRunDataAndVersionsRunWithoutADecision) {
+  StartProject(
+      false,
+      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
+  const auto conversation = Conversation("operation-acts");
+  auto act = [&](const std::string& name, const std::string& arguments) {
+    SCOPED_TRACE(name);
+    const auto result = Tool(conversation, name, arguments, "act-" + name);
+    EXPECT_TRUE(result.Code().empty()) << result.View();
+    EXPECT_FALSE(JsonBool(result.View(), "/isError")) << result.View();
+    return result;
+  };
+  act("version_init", "{}");
+  const auto graph = Tool(conversation, "version_graph", "{}");
+  ASSERT_TRUE(graph.Code().empty());
+  const auto commit =
+      JsonString(JsonString(graph.View(), "/text"), "/value/head");
+  ASSERT_FALSE(commit.empty());
+  const auto snapshot = JsonString(Inspect(conversation).View(), "/text");
+  const auto base_rev = JsonString(snapshot, "/value/rev");
+  act("run_history_delete", R"({"ended_before":"1"})");
+  act("project_cache_clear", "{}");
+  act("version_checkout", "{\"commit\":" + Quote(commit) +
+                              ",\"base_rev\":" + Quote(base_rev) + "}");
+  act("version_mark",
+      R"({"name":"agent-version","message":"Kept when the person asked"})");
+  const auto versions = Tool(conversation, "version_graph", "{}");
+  namespace J = ::tsugumi::json;
+  const auto graph_value = J::Object(
+      J::Get(J::Object(JsonString(versions.View(), "/text")), "value"));
+  const auto commits = J::Array(J::Get(graph_value, "commits"));
+  EXPECT_TRUE(std::ranges::any_of(commits, [](const auto& commit) {
+    const auto tags = J::Array(J::Get(J::Object(commit), "tags", "[]"));
+    return std::ranges::any_of(tags, [](const auto& tag) {
+      return J::String(tag) == "agent-version";
+    });
+  }));
+}
+
+TEST_F(AgentProjectFixture, ScratchDeletionIsBoundToOneCallAndArguments) {
   StartProject(
       false,
       R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
@@ -2146,85 +2159,39 @@ TEST_F(AgentProjectFixture,
                       .Union();
                 });
   };
-  auto init = Tool(conversation, "version_init", "{}", "setup-versioning");
-  ASSERT_TRUE(resolve(init, true).Code().empty());
-  ASSERT_TRUE(Tool(conversation, "version_init", "{}", "setup-versioning")
-                  .Code()
-                  .empty());
-  const auto graph = Tool(conversation, "version_graph", "{}");
-  ASSERT_TRUE(graph.Code().empty());
-  const auto commit =
-      JsonString(JsonString(graph.View(), "/text"), "/value/head");
-  ASSERT_FALSE(commit.empty());
-  const auto snapshot = JsonString(Inspect(conversation).View(), "/text");
-  const auto base_rev = JsonString(snapshot, "/value/rev");
-  const std::vector<std::pair<std::string, std::string>> operations{
-      {"run_history_delete", R"({"ended_before":"1"})"},
-      {"project_cache_clear", "{}"},
-      {"run_scratch_delete", R"({"paths":["runs/1"]})"},
-      {"version_checkout", "{\"commit\":" + Quote(commit) +
-                               ",\"base_rev\":" + Quote(base_rev) + "}"},
-      {"version_init", "{}"},
-      {"version_mark",
-       R"({"name":"approved-version","message":"Kept by an approved call"})"},
-  };
-  for (const auto& [name, arguments] : operations) {
-    SCOPED_TRACE(name);
-    const auto before = Read(directory.path / "project/tsugumi.json");
-    const auto before_graph =
-        JsonString(Tool(conversation, "version_graph", "{}").View(), "/text");
-    const auto declined_id = "decline-" + name;
-    auto declined = Tool(conversation, name, arguments, declined_id);
-    ASSERT_TRUE(resolve(declined, false).Code().empty());
-    EXPECT_EQ(Tool(conversation, name, arguments, declined_id).Code(),
-              "permission_denied");
-    EXPECT_EQ(Read(directory.path / "project/tsugumi.json"), before);
-    EXPECT_EQ(
-        JsonString(Tool(conversation, "version_graph", "{}").View(), "/text"),
-        before_graph);
-    const auto call_id = "approve-" + name;
-    auto pending = Tool(conversation, name, arguments, call_id);
-    ASSERT_TRUE(resolve(pending, true).Code().empty());
-    // Invalid arguments cannot consume this approval.
-    EXPECT_EQ(Tool(conversation, name, "{\"different\":true}", call_id).Code(),
-              "conflict");
-    const auto result = Tool(conversation, name, arguments, call_id);
-    ASSERT_TRUE(result.Code().empty());
-    EXPECT_FALSE(JsonBool(result.View(), "/isError")) << result.View();
-    const auto replay = Tool(conversation, name, arguments, call_id);
-    ASSERT_TRUE(replay.Code().empty());
-    EXPECT_EQ(replay.View(), result.View());
-    // A new act with exactly the same arguments still asks again.
-    EXPECT_EQ(Tool(conversation, name, arguments, call_id + "-new").Code(),
-              "decision_required");
-  }
+  const std::string name = "run_scratch_delete";
+  const std::string arguments = R"({"paths":["runs/1"]})";
+  auto declined = Tool(conversation, name, arguments, "decline");
+  ASSERT_TRUE(resolve(declined, false).Code().empty());
+  EXPECT_EQ(Tool(conversation, name, arguments, "decline").Code(),
+            "permission_denied");
+  auto pending = Tool(conversation, name, arguments, "approve");
+  ASSERT_TRUE(resolve(pending, true).Code().empty());
+  // Invalid arguments cannot consume this approval.
+  EXPECT_EQ(Tool(conversation, name, "{\"different\":true}", "approve").Code(),
+            "conflict");
+  const auto result = Tool(conversation, name, arguments, "approve");
+  ASSERT_TRUE(result.Code().empty());
+  EXPECT_FALSE(JsonBool(result.View(), "/isError")) << result.View();
+  const auto replay = Tool(conversation, name, arguments, "approve");
+  ASSERT_TRUE(replay.Code().empty());
+  EXPECT_EQ(replay.View(), result.View());
+  // A new act with exactly the same arguments still asks again.
+  EXPECT_EQ(Tool(conversation, name, arguments, "approve-new").Code(),
+            "decision_required");
   const auto recorded = Get(conversation);
   const auto* tools =
       recorded.Value()->value_as_ConversationResult()->conversation()->tools();
   ASSERT_NE(tools, nullptr);
-  for (const auto& operation : operations) {
-    for (const bool denied : {false, true}) {
-      const auto call = (denied ? "approval:decline-" : "approval:approve-") +
-                        operation.first;
-      const auto found = std::ranges::find_if(
-          *tools, [&](const auto* tool) { return tool->id()->str() == call; });
-      ASSERT_NE(found, tools->end()) << call;
-      EXPECT_EQ((*found)->name()->str(), "operation_approval");
-      EXPECT_EQ((*found)->state()->str(), "completed");
-      EXPECT_EQ((*found)->is_error(), denied);
-    }
+  for (const bool denied : {false, true}) {
+    const std::string call = denied ? "approval:decline" : "approval:approve";
+    const auto found = std::ranges::find_if(
+        *tools, [&](const auto* tool) { return tool->id()->str() == call; });
+    ASSERT_NE(found, tools->end()) << call;
+    EXPECT_EQ((*found)->name()->str(), "operation_approval");
+    EXPECT_EQ((*found)->state()->str(), "completed");
+    EXPECT_EQ((*found)->is_error(), denied);
   }
-  const auto versions = Tool(conversation, "version_graph", "{}");
-  namespace J = ::tsugumi::json;
-  const auto graph_value = J::Object(
-      J::Get(J::Object(JsonString(versions.View(), "/text")), "value"));
-  const auto commits = J::Array(J::Get(graph_value, "commits"));
-  EXPECT_TRUE(std::ranges::any_of(commits, [](const auto& commit) {
-    const auto tags = J::Array(J::Get(J::Object(commit), "tags", "[]"));
-    return std::ranges::any_of(tags, [](const auto& tag) {
-      return J::String(tag) == "approved-version";
-    });
-  }));
 }
 
 TEST_F(AgentProjectFixture,
@@ -2233,7 +2200,8 @@ TEST_F(AgentProjectFixture,
       false,
       R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("deleted-approval");
-  const auto pending = Tool(conversation, "version_init", "{}", "pending-init");
+  const auto pending = Tool(conversation, "run_scratch_delete",
+                            R"({"paths":["runs/1"]})", "pending-scratch");
   ASSERT_EQ(pending.Code(), "decision_required");
   ASSERT_TRUE(Call(*human, A::RequestPayload::ConversationDeleteRequest,
                    [&](Builder& b) {
@@ -2366,39 +2334,6 @@ TEST_F(AgentProjectFixture,
   EXPECT_NE(requests[1].find("VISIBLE_CARD_SENTINEL"), std::string::npos);
   EXPECT_EQ(Read(directory.path / "project/definitions/secret/_card.json"),
             before);
-}
-
-
-TEST_F(AgentProjectFixture, ChangedApprovalTargetsNeedANewApproval) {
-  StartProject(
-      false,
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
-  const auto conversation = Conversation("changed-approval-targets");
-  const auto pending =
-      Tool(conversation, "version_init", "{}", "changing-target");
-  ASSERT_EQ(pending.Code(), "decision_required");
-  ASSERT_TRUE(Call(*human, A::RequestPayload::DecisionResolveRequest,
-                   [&](Builder& b) {
-                     return A::CreateDecisionResolveRequest(
-                                b, b.CreateString(pending.RequestId()), true)
-                         .Union();
-                   })
-                  .Code()
-                  .empty());
-  // A real save changes the core's revision after the person saw the target.
-  const auto inspect = JsonString(Inspect(conversation).View(), "/text");
-  const auto rev = JsonString(inspect, "/value/rev");
-  const auto document = FixtureProjectDocument(
-      R"({"name":"Changed approval target","agentExclude":[]})");
-  const auto saved = Tool(
-      conversation, "project_save",
-      "{\"base_rev\":" + Quote(rev) +
-          ",\"changes\":[{\"value_type\":\"SetProject\",\"value\":{\"json\":" +
-          Quote(document) + "}}]}");
-  ASSERT_TRUE(saved.Code().empty());
-  ASSERT_FALSE(JsonBool(saved.View(), "/isError")) << saved.View();
-  EXPECT_EQ(Tool(conversation, "version_init", "{}", "changing-target").Code(),
-            "conflict");
 }
 
 

@@ -262,10 +262,9 @@ class History {
   static auto delete_category(sql::Db& db, const std::string& run_id,
                               Tsugumi::RPC::RunRecordCategory category) -> void;
 
-  // Deletes the selected finished runs from .tsugumi/runs.sqlite.
-  std::vector<std::string> delete_runs(
-      std::optional<int64_t> ended_before,
-      const std::optional<std::vector<std::string>>& run_ids);
+  // Deletes the finished runs that ended before the cutoff (all when omitted)
+  // from .tsugumi/runs.sqlite.
+  std::vector<std::string> delete_runs(std::optional<int64_t> ended_before);
 
  private:
   struct ReaderLease {

@@ -63,22 +63,6 @@ inline auto WriteFixtureProjectTree(const std::filesystem::path& root,
 // project.
 class AgentProjectFixture : public AgentFixture {
  protected:
-  auto ApprovedTool(const std::string& conversation, const std::string& name,
-                    const std::string& arguments) -> Reply {
-    const auto id = "approved-" + name;
-    const auto pending = Tool(conversation, name, arguments, id);
-    if (pending.Code() != "decision_required" || pending.RequestId().empty())
-      throw std::runtime_error("expected a per-call approval for " + name);
-    const auto resolved =
-        Call(*human, A::RequestPayload::DecisionResolveRequest, [&](Builder& b) {
-          return A::CreateDecisionResolveRequest(
-                     b, b.CreateString(pending.RequestId()), true)
-              .Union();
-        });
-    if (!resolved.Code().empty()) throw std::runtime_error(resolved.Code());
-    return Tool(conversation, name, arguments, id);
-  }
-
   auto Delegate(const std::string& conversation, const std::string& arguments,
                 const std::string& operation) -> Reply {
     // This call runs all descendants and several isolated commands. The

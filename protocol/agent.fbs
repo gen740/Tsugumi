@@ -45,9 +45,9 @@ table ToolCallRequest { conversation_id:string (required); project_id:string; na
 // call. It interrupts the call's wait, not the project run it may have started.
 table ToolCallCancelRequest { request_id:ulong; }
 // A decision is a tool call that waits for the person: a save that widens a
-// Card's permissions or passes it a host secret, and the per-call acts that
-// change run data, versions, locks or Host templates. Answering requires the
-// human principal, including over Unix. Each answer applies to that one call.
+// Card's permissions or passes it a host secret, and deleting run scratch.
+// Answering requires the human principal, including over Unix. Each answer
+// applies to that one call.
 table DecisionResolveRequest { request_id:string (required); allow:bool; }
 // Pass next_cursor back with the same filters.
 table DecisionListRequest {
