@@ -431,6 +431,43 @@ TEST_F(AgentExclusionRPC, FilesOutsideTheProjectFilesAreNamedAsSuch) {
               "not_found")
         << path;
 }
+TEST_F(AgentExclusionRPC, AnAttachedProjectFolderIsReadThroughItsAttachment) {
+  const auto folder = directory.path / "project/reference/bambalab";
+  Write(folder / "notes/flow.md", "ATTACHED_REFERENCE");
+  const auto c = Open({});
+  Attach(c, folder);
+  for (const auto& [path, relative] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"reference/bambalab/notes/flow.md", "notes/flow.md"},
+           {"reference/bambalab", ""}}) {
+    const auto result = Tool(c, "project_file_read",
+                             j::Encode(j::Members{{"path", Quote(path)}}));
+    EXPECT_EQ(Error(result), "invalid_path") << path;
+    const auto diagnostic = Diagnostic(result);
+    EXPECT_NE(diagnostic.find("already allowed you to read"),
+              std::string::npos)
+        << diagnostic;
+    EXPECT_EQ(diagnostic.find(" and path notes/flow.md;") != std::string::npos,
+              !relative.empty())
+        << diagnostic;
+    EXPECT_EQ(diagnostic.find("ask the person"), std::string::npos)
+        << diagnostic;
+  }
+  // The read it points to needs no further permission.
+  const auto read =
+      Tool(c, "attached_folder_read",
+           j::Encode(j::Members{{"folder", Quote(folder.string())},
+                                {"path", Quote("notes/flow.md")}}));
+  EXPECT_TRUE(read.Code().empty()) << read.View();
+  EXPECT_NE(read.View().find("ATTACHED_REFERENCE"), std::string::npos);
+  // A project folder that is not attached still says to attach it.
+  Write(directory.path / "project/reference/other/a.md", "other");
+  EXPECT_NE(Diagnostic(Tool(c, "project_file_read",
+                            j::Encode(j::Members{
+                                {"path", Quote("reference/other/a.md")}})))
+                .find("ask the person to attach its folder"),
+            std::string::npos);
+}
 TEST_F(AgentExclusionRPC, DemoReadListCopyAndHelpersCannotReachExcludedDemo) {
   const auto demo = directory.path / "demos/ja/finished";
   Write(demo / "tsugumi.json",

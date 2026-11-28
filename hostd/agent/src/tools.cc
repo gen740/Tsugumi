@@ -358,21 +358,48 @@ auto Tools::OutsideProjectFiles(const std::string& project,
       !fs::resolves_inside(root, root / path) ||
       Exclusions(project, stop).Contains(path))
     return result;
-  return json::Encode(json::Members{
-      {"reply", json::Quote("Failure")},
-      {"value",
-       json::Encode(json::Members{
-           {"kind", json::Quote("invalid_path")},
-           {"diagnostic",
-            json::Quote(
-                path +
+  // A folder the person already attached is read through it: telling the
+  // Agent to ask for the attachment again would ask the person twice.
+  const auto real = std::filesystem::weakly_canonical(root / path, error);
+  std::string folder, relative;
+  {
+    std::lock_guard lock(mutex);
+    auto folders =
+        db.prepare("SELECT id,path FROM folders WHERE project=? ORDER BY path");
+    folders.bind(1, project);
+    while (folders.step()) {
+      if (!access_service.HasGrant(folders.text(0),
+                                   Tsugumi::Service::Access::Read))
+        continue;
+      const auto inside =
+          real.lexically_relative(std::filesystem::weakly_canonical(
+              folders.text(1), error));
+      if (inside.empty() || *inside.begin() == "..") continue;
+      folder = folders.text(1);
+      relative = inside == "." ? "" : inside.generic_string();
+    }
+  }
+  const auto diagnostic =
+      folder.empty()
+          ? path +
                 " is in the project folder but outside the files Tsugumi's "
                 "file tools read (Card sources under definitions/, skills/, "
                 "externals/, templates/ and notes/, and the project "
                 "documents). trackedPaths only adds it to project versions. "
                 "To read it, ask the person to attach its folder in the chat "
                 "(Attach > Attach Folder), then use files action attached; "
-                "project_copy with source attached copies it into a Card.")},
+                "project_copy with source attached copies it into a Card."
+          : path + " is in the attached folder " + folder +
+                ", which the person already allowed you to read. Use files "
+                "action attached with folder " + folder +
+                (relative.empty() ? "" : " and path " + relative) +
+                "; project_copy with source attached copies it into a Card.";
+  return json::Encode(json::Members{
+      {"reply", json::Quote("Failure")},
+      {"value",
+       json::Encode(json::Members{
+           {"kind", json::Quote("invalid_path")},
+           {"diagnostic", json::Quote(diagnostic)},
            {"args", json::Encode(std::vector<std::string>{json::Encode(
                         json::Members{{"key", json::Quote("path")},
                                       {"value", json::Quote(path)}})})}})}});
