@@ -93,6 +93,8 @@ struct StagePipeline: Equatable {
           parts.append(what.isEmpty ? String(localized: "\(worker) で Nix ビルド中") : String(localized: "\(worker) で Nix ビルド中（\(what)）"))
         case .substituting:
           parts.append(what.isEmpty ? String(localized: "\(worker) でビルド済みのものを取得中") : String(localized: "\(worker) でビルド済みのものを取得中（\(what)）"))
+        case .pushing:
+          parts.append(what.isEmpty ? String(localized: "\(worker) からビルド出力をキャッシュへ送信中") : String(localized: "\(worker) からビルド出力をキャッシュへ送信中（\(what)）"))
         default: break
         }
       }
@@ -139,12 +141,13 @@ struct WorkerStages: Equatable {
     onWorker = true
     switch execute.outcome {
     case .running:
-      if let activity, !activity.queued {
+      // Publishing the build outputs follows the Card's run: the build is done.
+      if live?.executionActivity == .running || live?.executionActivity == .pushing {
+        build = .done
+      } else if let activity, !activity.queued {
         build = .running
         buildWaiting = activity.waiting
         self.execute = .pending
-      } else if live?.executionActivity == .running {
-        build = .done
       } else {
         build = .pending
         executeWaiting = activity?.queued == true

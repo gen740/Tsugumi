@@ -23,12 +23,21 @@ For the Mac's shared VM, the pull settings take effect when the VM next starts. 
 
 Use the credential fields for access tokens and keys. Push credentials are stored by hostd outside the project and delivered to a registered worker over TLS when its job needs them. Attic and Cachix use their respective clients. They are packaged in the Mac VM and with the remote worker. On a native Linux host, install the corresponding client on the execution environment's PATH for local publishing.
 
-Tsugumi publishes the `.drv` closure independently of the output setting. For a remote build, the worker retrieves it with signature verification, then uses signed substitutes for the build outputs it can find and builds the rest. If a push target cannot supply the derivation through the pull list, a remote build using that target fails. Locally, the build and invocation can proceed through their shared Nix store when publishing fails.
+## What is pushed, and when
+
+Nothing that a pull cache serves is uploaded. Before it copies a path, Tsugumi asks the pull caches (cache.nixos.org, `tsugumi.cachix.org`, the caches in the pull list, Attic) for its narinfo and leaves the path out when one of them has it with a trusted signature, as `cachix push` does for its upstream. It also leaves out what the push target already holds. Glibc, compilers, Python runtimes and fixed-output sources that a pull cache has therefore never travel through Tsugumi: the worker substitutes them from that cache itself.
+
+- **Before a remote job:** the core publishes the part of the Card's `.drv` closure that no pull cache serves: the derivations and the local sources only this host has. This is the only upload that a job waits for. The worker then fetches what it lacks path by path: from a pull cache when one serves the path, otherwise from the push target. It uses signed substitutes for the build outputs it can find and builds the rest. If the push target cannot supply the derivation through the pull list, a remote build using that target fails.
+- **After the Card ran:** with **Push build outputs** on, the worker (or, for a local build, the core) uploads the outputs' closure minus what a pull cache or the target already has: in practice, what this machine built itself. The Card starts before any of it is uploaded and its result does not depend on it: an unreachable target or a failed upload is recorded and never fails the Card. The job's result arrives once the upload has finished or failed.
+
+Locally, the build and invocation proceed through the shared Nix store when publishing fails.
 
 Project Settings sets the default for **Push build outputs**, which starts on. Each Code Card can inherit the project setting or choose on or off. Off stops future output uploads for that Card. Published paths stay in the cache. The cache holds Nix definitions and their build products. Card call inputs and outputs travel on the execution channel and are recorded according to the project's run-history settings.
 
 ## Run history
 
-**Run History → Info** records whether the invocation built its Nix environment or reused it, the substituter when known, and whether output publishing succeeded. Publishing a remote derivation is required for the job. A failed output upload leaves the completed build available to the invocation.
+**Run History → Info** records whether the invocation built its Nix environment or reused it, the substituter when known, and what output publishing did: how many paths and bytes it uploaded and how many it left out because a cache already had them, or why it failed. Publishing a remote derivation is required for the job. A failed output upload leaves the completed build and the Card's result as they are.
+
+While a remote job runs, its status line names what the worker does, with progress where it moves a closure path by path: fetching (`取得中: heasoft (3/40 · 1.2 GB / 4.0 GB)`) and, after the Card ran, uploading (`キャッシュへ送信中: … (12/34 · …)`). The Agent's run status shows the same activity.
 
 See the [security boundary](design/security.md#binary-cache-boundary) for what a registered worker and signing key can access. Developers changing cache configuration can run the [binary cache checks](../tests/README.md#manual-tools).

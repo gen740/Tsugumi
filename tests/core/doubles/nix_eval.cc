@@ -226,8 +226,12 @@ auto BinaryCacheDerivationTransport::receive(nix::Store&,
     -> void {
   throw std::runtime_error("mock evaluator cannot import a derivation");
 }
+auto plan_store_push(const std::string&, const std::string&) -> CachePushPlan {
+  throw std::runtime_error("mock evaluator cannot publish a Nix closure");
+}
 auto publish_to_relay_cache(const std::string&, const std::string&,
-                            CacheRelay::Exchange) -> void {
+                            CacheRelay::Exchange, const CacheTransferReport&)
+    -> CachePushPlan {
   throw std::runtime_error("mock evaluator cannot publish a Nix closure");
 }
 

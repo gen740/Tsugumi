@@ -11,6 +11,7 @@
 #include <thread>
 
 #include "history.hh"
+#include "remote_execution_service.hh"
 #include "run_scratch.hh"
 #include "service.hh"
 #include "store.hh"
@@ -191,7 +192,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
 
   s.build_cached = build.cached;
   s.build_substituter = build.substituter;
-  s.build_pushed = build.pushed;
   s.emulator = build.emulator;
   s.execution_service = kLocalExecutionService;
   // The environment and its invocation association must survive a crash
@@ -336,7 +336,13 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
       },
       lease, reuse, invocation);
   cpu.stop();
-  if (!build.card_probe) service_.record_artifacts(s, completed.created);
+  if (!build.card_probe) {
+    service_.record_artifacts(s, completed.created);
+    // The Card has run: publishing never delays its start.
+    service_.remote_execution().publish_local_build(
+        build.derivation, node.settings.push_outputs, s, request.publish,
+        request.stop);
+  }
   return {std::move(completed.outputs), std::move(completed.failure)};
 }
 

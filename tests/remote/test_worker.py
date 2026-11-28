@@ -17,6 +17,7 @@ import socket
 import struct
 import subprocess
 import sys
+import threading
 import time
 from uuid import UUID, uuid4
 
@@ -29,6 +30,8 @@ from Tsugumi.RemoteWorker.CachePullSettings import CachePullSettingsT
 from Tsugumi.RemoteWorker.CachePushSettings import CachePushSettingsT
 from Tsugumi.RemoteWorker.CacheSettings import CacheSettingsT
 from Tsugumi.RemoteWorker.CacheTargetKind import CacheTargetKind
+from Tsugumi.RemoteWorker.CacheFile import CacheFileT
+from Tsugumi.RemoteWorker.CacheMethod import CacheMethod
 from Tsugumi.RemoteWorker.DisplayCredit import DisplayCreditT
 from Tsugumi.RemoteWorker.JobStatus import JobStatus
 from Tsugumi.RemoteWorker.Reply import Reply
@@ -68,6 +71,8 @@ class Worker:
         self.env = env
         self.process = None
         self.cache_pulls = []
+        self.cache_push = CachePushSettingsT(kind=CacheTargetKind.NixCopy)
+        self.own_signing_key = ""
         try:
             self.start()
             self.caps = self.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False).body
@@ -133,10 +138,8 @@ class Worker:
         if job:
             fields["jobId"] = job
         if kind == R.RequestBody.SubmitRequest:
-            body.caches = CacheSettingsT(
-                push=CachePushSettingsT(kind=CacheTargetKind.NixCopy),
-                pull=self.cache_pulls,
-            )
+            body.caches = CacheSettingsT(push=self.cache_push, pull=self.cache_pulls,
+                                         ownSigningKey=self.own_signing_key)
         request = R.request(kind, body, **fields)
         peer = socket.socket(socket.AF_UNIX if unix else socket.AF_INET, socket.SOCK_STREAM)
         with peer:
@@ -539,6 +542,162 @@ def test_builds_instead_of_using_an_output_signed_by_an_untrusted_cache_key(work
     assert result.built and not result.substituter, vars(result)
     build_log = list(R.read_logs((work / "logs").read_bytes()))
     assert any(output in line and "not signed" in line for _, line in build_log)
+
+
+class RelayHost:
+    """Plays hostd's side of the built-in cache relay for one submitted job: a
+    dictionary of cache files behind the submit connection.
+
+    The first upload waits for `ready`. `card_ran_first` says whether the
+    job's log already had the Card's output when the first upload arrived."""
+
+    def __init__(self, worker, job, marker):
+        self.worker, self.job, self.marker = worker, job, marker
+        self.files = {"nix-cache-info": b"StoreDir: /nix/store\n"}
+        self.uploaded = []
+        self.ready = threading.Event()
+        self.card_ran_first = None
+        self.thread = None
+
+    def submit(self, spec):
+        """Submits `spec` and serves the relay until the job lets it go."""
+        replied = threading.Event()
+        status = {}
+
+        def serve(stream, secure):
+            status["reply"] = R.read(stream).payload
+            replied.set()
+            while True:
+                try:
+                    request = R.read(stream).payload
+                except (EOFError, OSError):
+                    return
+                self.answer(request.body, stream, secure)
+
+        def connect():
+            peer = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            peer.connect(("127.0.0.1", self.worker.port))
+            context = TLS.client_context(self.worker.identity, self.worker.state / "identity.pem")
+            secure = context.wrap_socket(peer, server_hostname=None)
+            body = R.SubmitRequestT(spec=spec)
+            body.caches = CacheSettingsT(push=self.worker.cache_push, pull=self.worker.cache_pulls,
+                                         ownSigningKey=self.worker.own_signing_key)
+            request = R.request(R.RequestBody.SubmitRequest, body, projectScope=self.worker.scope,
+                                coreLifeId=self.worker.core_life_id,
+                                instanceId=self.worker.instance, jobId=self.job)
+            secure.sendall(R.frame(request))
+            # The submit connection stays open for the relay.
+            with secure, secure.makefile("rb") as stream:
+                serve(stream, secure)
+
+        self.thread = threading.Thread(target=connect, daemon=True)
+        self.thread.start()
+        assert replied.wait(60), "no submit reply"
+        assert status["reply"].bodyType == R.ReplyBody.JobStatus, vars(status["reply"].body)
+
+    def send(self, secure, status, size=0):
+        secure.sendall(R.frame(R.reply(R.ReplyBody.CacheFile, CacheFileT(status=status, size=size))))
+
+    def answer(self, file, stream, secure):
+        name = R.string(file.path)
+        if file.method == CacheMethod.Head:
+            self.send(secure, 200 if name in self.files else 404)
+        elif file.method == CacheMethod.Get:
+            if name not in self.files:
+                self.send(secure, 404)
+            else:
+                self.send(secure, 200, len(self.files[name]))
+                secure.sendall(self.files[name])
+        else:
+            if self.card_ran_first is None:
+                logs = self.worker.journal(self.job).parent / "work/result/logs"
+                self.card_ran_first = logs.exists() and any(
+                    stream_kind == LogStream.output and self.marker in text
+                    for stream_kind, text in R.read_logs(logs.read_bytes()))
+            self.ready.wait(120)
+            self.send(secure, 100)
+            data = R.exact(stream, file.size)
+            self.files[name] = data
+            if name.endswith(".narinfo"):
+                self.uploaded.append(next(line.split(": ", 1)[1] for line in data.decode().splitlines()
+                                          if line.startswith("StorePath: ")))
+            self.send(secure, 200)
+
+    def close(self):
+        self.ready.set()
+        if self.thread:
+            self.thread.join(60)
+
+
+def with_push(spec):
+    plan = R.JobSpecT.InitFromPackedBuf(spec)
+    plan.pushOutputs = True
+    return R.pack(plan)
+
+
+def test_outputs_are_pushed_after_the_card_and_only_what_no_pull_cache_serves(worker):
+    job = "7" * 64
+    marker = f"card-ran-{uuid4()}"
+    spec = with_push(card_spec(worker, job, f'std::puts("{marker}");'))
+    plan = R.JobSpecT.InitFromPackedBuf(spec)
+    derivation, output = R.string(plan.derivation), R.string(plan.output)
+    # The Card's package is built here and served by the job's pull cache: the
+    # worker substitutes it from there itself and never uploads it. The plan,
+    # which only the worker builds, goes to the built-in cache.
+    [card_drv] = [path for path in subprocess.check_output(
+        ["nix-store", "--query", "--references", derivation], text=True).split()
+        if path.endswith("-native-card.drv")]
+    card = subprocess.check_output(
+        ["nix", "--extra-experimental-features", "nix-command", "build", "--no-link",
+         "--print-out-paths", f"{card_drv}^out"], text=True).strip()
+    subprocess.run(["nix", "--extra-experimental-features", "nix-command", "copy",
+                    "--to", f"{(worker.root / 'nix-cache').as_uri()}?secret-key={worker.root / 'sign'}",
+                    card], check=True)
+    worker.cache_push = CachePushSettingsT(kind=CacheTargetKind.Own)
+    worker.own_signing_key = (worker.root / "sign.pub").read_text().strip()
+    relay = RelayHost(worker, job, marker)
+    try:
+        relay.submit(spec)
+        # The first upload waits: the job reports it with its progress.
+        pushing = wait_status(worker, job, lambda s: s.state != R.JobState.Running or (
+            s.activity == R.JobActivity.Pushing and "/" in R.string(s.activityDetail or b"")))
+        if pushing.state != R.JobState.Running:
+            result = worker.journal(job).parent / "work/result"
+            raise AssertionError((vars(R.ResultEnvironmentT.InitFromPackedBuf(
+                (result / "environment").read_bytes())), list(R.read_logs((result / "logs").read_bytes())),
+                relay.files.keys(), (result / "worker.fb").read_bytes()))
+        assert " · " in R.string(pushing.activityDetail), vars(pushing)
+        # The first upload is waiting: by then the Card had already run.
+        deadline = time.monotonic() + 60
+        while relay.card_ran_first is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert relay.card_ran_first is True
+        relay.ready.set()
+        logs, environment = realised(worker, job)
+    finally:
+        relay.close()
+    assert environment.pushed, vars(environment)
+    assert not environment.pushError
+    assert output in relay.uploaded, relay.uploaded
+    assert card not in relay.uploaded, relay.uploaded
+    assert not any("-glibc-" in path for path in relay.uploaded), relay.uploaded
+    assert environment.pushPaths == len(relay.uploaded)
+    assert environment.pushSkipped > 0
+    assert not any("native-card" in line and "building" in line for line in logs.splitlines()), logs
+
+
+def test_card_succeeds_when_the_push_target_is_unreachable(worker):
+    job = "8" * 64
+    spec = with_push(card_spec(worker, job, f'std::puts("unreachable-{uuid4()}");'))
+    # Nothing listens on the discard port.
+    worker.cache_push = CachePushSettingsT(kind=CacheTargetKind.NixCopy,
+                                           endpoint="http://127.0.0.1:9")
+    reply = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
+    assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
+    logs, environment = realised(worker, job)
+    assert not environment.pushed
+    assert R.string(environment.pushError)
+    assert "Could not publish the Nix build outputs" in logs
 
 
 def job_status(peer, job, **query):

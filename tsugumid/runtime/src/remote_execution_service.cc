@@ -17,6 +17,8 @@
 #include "tsugumi/util/log.hh"
 #include "tsugumi/workerd/artifact_id.hh"
 #include "tsugumi/workerd/cache_publish.hh"
+#include "tsugumi/workerd/cache_relay_store.hh"
+#include "tsugumi/workerd/cache_transfer.hh"
 #include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/workerd/protocol.hh"
@@ -52,6 +54,8 @@ auto execution_activity(const RemoteJobState& reply) -> ExecutionActivity {
       return ExecutionActivity::substituting;
     case A::Card:
       return ExecutionActivity::running;
+    case A::Pushing:
+      return ExecutionActivity::pushing;
     default:
       return ExecutionActivity::unspecified;
   }
@@ -279,24 +283,51 @@ auto external_cache_kind(Tsugumi::RemoteWorker::CacheTargetKind target)
   throw std::runtime_error("missing built-in binary cache connection");
 }
 
+// Publishes the part of `path`'s closure that no pull cache serves (and, for
+// the built-in cache, that it lacks), references first.
 auto publish_closure(const RemoteJobClient& client, const std::string& service,
                      const Tsugumi::RemoteWorker::CachePushSettingsT& push,
                      const std::string& store, const std::string& path,
-                     std::stop_token stop) -> void {
-  if (push.kind == Tsugumi::RemoteWorker::CacheTargetKind::Own) {
-    publish_to_relay_cache(store, path,
-                           [&](auto method, const auto& name, auto size,
-                               auto upload, auto download) {
-                             return client.cache_file(
-                                 service, method, name, size, std::move(upload),
-                                 std::move(download), stop);
-                           });
-    return;
+                     std::stop_token stop,
+                     const CacheTransferReport& report = {}) -> CachePushPlan {
+  if (push.kind == Tsugumi::RemoteWorker::CacheTargetKind::Own)
+    return publish_to_relay_cache(
+        store, path,
+        [&](auto method, const auto& name, auto size, auto upload,
+            auto download) {
+          return client.cache_file(service, method, name, size,
+                                   std::move(upload), std::move(download),
+                                   stop);
+        },
+        report);
+  const ExternalCacheTarget target{external_cache_kind(push.kind),
+                                   push.endpoint, push.cache_name, push.user,
+                                   push.secret};
+  // Nix copy takes the whole closure; it skips what the target holds.
+  if (target.kind == ExternalCacheKind::nix_copy) {
+    publish_to_external_cache(target, stdfs::temp_directory_path(),
+                              {.store = store}, {path}, stop);
+    return {};
   }
-  publish_to_external_cache({external_cache_kind(push.kind), push.endpoint,
-                             push.cache_name, push.user, push.secret},
-                            stdfs::temp_directory_path(), {.store = store},
-                            path, stop);
+  auto plan = plan_store_push(store, path);
+  if (!report) {
+    publish_to_external_cache(target, stdfs::temp_directory_path(),
+                              {.store = store}, plan.paths, stop);
+    return plan;
+  }
+  // One upload per path, so the status can count.
+  CacheTransferProgress progress{0, plan.paths.size(), 0, plan.bytes, {}};
+  for (const auto& entry : plan.paths) {
+    progress.path = entry;
+    report(progress);
+    publish_to_external_cache(target, stdfs::temp_directory_path(),
+                              {.store = store}, {entry}, stop);
+    ++progress.done;
+  }
+  progress.path.clear();
+  progress.bytes_done = plan.bytes;
+  report(progress);
+  return plan;
 }
 
 auto publish_remote_derivation(const RemoteJobClient& client,
@@ -626,6 +657,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
           s.build_cached = !result.built;
           s.build_substituter = std::move(result.substituter);
           s.build_pushed = result.pushed;
+          s.build_push = std::move(result.push);
           history.write_sync([&](sql::Db& db) {
             s.environment_id =
                 History::put_environment(db, s.run_id, result.environment);
@@ -671,9 +703,22 @@ RemoteExecutionService::RemoteExecutionService(Service& service,
     : service_(service), client_(client) {}
 
 auto RemoteExecutionService::publish_local_build(
-    const WorkerDerivation& derivation, bool push_outputs, std::stop_token stop)
-    -> std::optional<bool> {
-  if (!client_.enabled()) return std::nullopt;
+    const WorkerDerivation& derivation, bool push_outputs,
+    InvocationSummaryData& s, const std::function<void()>& publish,
+    std::stop_token stop) -> void {
+  if (!client_.enabled()) return;
+  s.build_pushed = false;
+  const auto report = [&](const CacheTransferProgress& progress) {
+    s.execution_activity = ExecutionActivity::pushing;
+    s.execution_activity_detail = format_progress(progress);
+    // /nix/store/<hash>-<name> -> "<name> (progress)"
+    if (const auto dash = progress.path.find('-', progress.path.rfind('/') + 1);
+        !progress.path.empty() && dash != std::string::npos)
+      s.execution_activity_detail = progress.path.substr(dash + 1) + " (" +
+                                    s.execution_activity_detail + ")";
+    if (publish) publish();
+  };
+  Tsugumi::Data::BuildPushT outcome;
   try {
     const auto settings = client_.cache_settings(kLocalExecutionService, stop);
     try {
@@ -683,13 +728,21 @@ auto RemoteExecutionService::publish_local_build(
       log::warn(
           "Could not publish the local Nix derivation to the binary cache");
     }
-    if (push_outputs)
-      publish_closure(client_, kLocalExecutionService, *settings.push, {},
-                      derivation.output, stop);
-    return push_outputs;
-  } catch (const std::exception&) {
-    return false;
+    if (push_outputs) {
+      const auto plan =
+          publish_closure(client_, kLocalExecutionService, *settings.push, {},
+                          derivation.output, stop, report);
+      outcome.paths = plan.paths.size();
+      outcome.bytes = plan.bytes;
+      outcome.skipped = plan.served + plan.present;
+      s.build_pushed = true;
+    }
+  } catch (const std::exception& error) {
+    outcome.error = std::string(error.what()).substr(0, 512);
   }
+  if (push_outputs) s.build_push = std::move(outcome);
+  s.execution_activity = ExecutionActivity::unspecified;
+  s.execution_activity_detail.clear();
 }
 auto RemoteExecutionService::prepare(const RemoteTarget& target,
                                      const Node& node,

@@ -122,6 +122,7 @@ struct ExecutionActivityText: Equatable {
     case .preparing: return String(localized: "ワーカーで準備中")
     case .building: return String(localized: "ワーカーで Nix ビルド中: \(detail)")
     case .substituting: return String(localized: "ワーカーで取得中: \(detail)")
+    case .pushing: return String(localized: "ビルド出力をキャッシュへ送信中: \(detail)")
     default: return String(localized: "実行中")
     }
   }
@@ -134,6 +135,7 @@ struct ExecutionActivityText: Equatable {
     case .preparing: return String(localized: "ワーカーで準備中")
     case .building: return String(localized: "ビルド中: \(detail)")
     case .substituting: return String(localized: "取得中: \(detail)")
+    case .pushing: return String(localized: "キャッシュへ送信中: \(detail)")
     default: return String(localized: "実行中")
     }
   }

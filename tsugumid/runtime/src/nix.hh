@@ -41,7 +41,6 @@ struct CardBuild {
   bool card_probe = false;
   bool cached = false;  // the store already had the result: nothing was built
   std::string substituter;
-  std::optional<bool> pushed;
   uint32_t implementation_index = 1;
   std::string implementation_label;  // "" when its run list entry has none
 };

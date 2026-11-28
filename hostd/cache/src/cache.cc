@@ -211,17 +211,6 @@ struct Cache::State {
       const auto [nar_hash, nar_size] = hasher.finish();
       if (nar_hash != info.narHash || nar_size != info.narSize)
         throw Rejected(400, "The NAR does not have the narinfo's NAR hash");
-      // A reference is present when the cache holds that exact store path,
-      // its name included.
-      for (const auto& reference : info.references) {
-        if (reference == info.path) continue;
-        const auto held = fs::read_file(
-            root / (std::string(reference.hashPart()) + ".narinfo"));
-        if (!held ||
-            nix::NarInfo(store, *held, "cached narinfo").path != reference)
-          throw Rejected(409, "Reference " + store.printStorePath(reference) +
-                                  " is not in the cache yet");
-      }
       info.sigs.clear();
       info.sigs.insert(signer.signDetached(info.fingerprint(store)));
       return info.to_string(store);

@@ -3,8 +3,8 @@
 
 #include <fcntl.h>
 #include <poll.h>
-#include <sys/socket.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -32,6 +32,7 @@
 #include "tsugumi/util/process.hh"
 #include "tsugumi/util/system.hh"
 #include "tsugumi/workerd/artifact_id.hh"
+#include "tsugumi/workerd/cache_transfer.hh"
 #include "tsugumi/workerd/card_plan.hh"
 #include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/log.hh"
@@ -211,6 +212,25 @@ class JobActivityFile {
     if (!builds_.empty()) return;
     activity_ = remote::RW::JobActivity::Substituting;
     detail_ = store_name(path);
+    // Within a fetch of a whole closure, count the paths Nix starts.
+    if (transfer_.total) {
+      transfer_.done = std::min(transfer_.done + 1, transfer_.total);
+      detail_ += " (" + std::to_string(transfer_.done) + "/" +
+                 std::to_string(transfer_.total) + ")";
+    }
+    write();
+  }
+  // Fetching (Substituting) or uploading (Pushing) a closure path by path.
+  auto transfer(remote::RW::JobActivity activity,
+                const CacheTransferProgress& progress) -> void {
+    std::lock_guard lock(mutex_);
+    activity_ = activity;
+    detail_ = format_progress(progress);
+    if (!progress.path.empty())
+      detail_ = store_name(progress.path) + " (" + detail_ + ")";
+    transfer_ = progress;
+    // A fetch that has finished no longer counts Nix's substitutions.
+    if (progress.done >= progress.total) transfer_ = {};
     write();
   }
 
@@ -248,6 +268,7 @@ class JobActivityFile {
   remote::RW::JobActivity activity_ = remote::RW::JobActivity::Unspecified;
   std::string detail_;
   std::vector<std::string> builds_;
+  CacheTransferProgress transfer_;
   std::optional<uint64_t> cpu_ms_;
   std::jthread sampler_;
 };
@@ -752,6 +773,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   };
   JobActivityFile activity(directory / workerd::kActivity);
   WorkerStoreResult environment;
+  CachePushOutcome pushed;
   InvocationResult outcome;
   // Only definition data enter this persistent private Nix store. Invocation
   // inputs and results remain in job scratch, outside the store.
@@ -773,8 +795,8 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
         relay = exchange_cache_file;
       }
       environment = RemoteWorkerStore::realise(
-          BinaryCacheDerivationTransport{}, caches, std::move(relay), store,
-          WorkerDerivation{derivation, output, job->system}, job->push_outputs,
+          BinaryCacheDerivationTransport{}, caches, relay, store,
+          WorkerDerivation{derivation, output, job->system},
           [&](const std::string& line) {
             if (!job->card_probe) log(LogStream::build, line);
           },
@@ -784,13 +806,39 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
            [&](const std::string& drv, bool active) {
              activity.build(drv, active);
            },
-           [&](const std::string& path) { activity.substitute(path); }});
+           [&](const std::string& path) { activity.substitute(path); },
+           [&](const CacheTransferProgress& progress) {
+             activity.transfer(remote::RW::JobActivity::Substituting, progress);
+           }});
+      try {
+        auto secrets =
+            job->secrets.empty() ? Secrets{} : receive_secrets(directory, *job);
+        activity.set(remote::RW::JobActivity::Card);
+        outcome = run_worker(*call, *job, invocation, blobs, directory, store,
+                             group, environment, log, std::move(secrets));
+      } catch (const Failed& error) {
+        outcome.failure = error.failure;
+      } catch (const std::exception& error) {
+        outcome.failure =
+            FailureData::make(FailureKind::worker_failed, error.what());
+      }
+      // The Card has run: publishing its build outputs never delays its
+      // start, and a failed upload never fails it.
+      if (job->push_outputs) {
+        activity.set(remote::RW::JobActivity::Pushing);
+        pushed = RemoteWorkerStore::push(
+            caches, std::move(relay), store,
+            WorkerDerivation{derivation, output, job->system},
+            [&](const CacheTransferProgress& progress) {
+              activity.transfer(remote::RW::JobActivity::Pushing, progress);
+            });
+        if (!pushed.pushed)
+          log(LogStream::build,
+              "Could not publish the Nix build outputs to the configured "
+              "cache: " +
+                  pushed.error + "\n");
+      }
     }
-    auto secrets =
-        job->secrets.empty() ? Secrets{} : receive_secrets(directory, *job);
-    activity.set(remote::RW::JobActivity::Card);
-    outcome = run_worker(*call, *job, invocation, blobs, directory, store,
-                         group, environment, log, std::move(secrets));
   } catch (const Failed& error) {
     outcome.failure = error.failure;
   } catch (const std::exception& error) {
@@ -803,7 +851,11 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   info.paths = std::move(environment.closure);
   info.built = environment.built;
   info.substituter = std::move(environment.substituter);
-  info.pushed = environment.pushed;
+  info.pushed = pushed.pushed;
+  info.push_paths = pushed.paths;
+  info.push_bytes = pushed.bytes;
+  info.push_skipped = pushed.skipped;
+  info.push_error = pushed.error;
   info.log_truncated = invocation_log.truncated();
   const auto files = result_dir / "files";
   if (stdfs::is_directory(files)) {

@@ -112,8 +112,9 @@ export function workerStages(records: StageRecord[], service: string | undefined
   }
   w.onWorker = true
   if (execute.outcome === D.StageOutcome.running) {
-    if (activity && !activity.queued) Object.assign(w, { build: 'running', buildWaiting: activity.waiting, execute: 'pending' })
-    else if (live?.executionActivity === D.ExecutionActivity.running) w.build = 'done'
+    // Publishing the build outputs follows the Card's run: the build is done.
+    if (live?.executionActivity === D.ExecutionActivity.running || live?.executionActivity === D.ExecutionActivity.pushing) w.build = 'done'
+    else if (activity && !activity.queued) Object.assign(w, { build: 'running', buildWaiting: activity.waiting, execute: 'pending' })
     else Object.assign(w, { build: 'pending', executeWaiting: activity?.queued === true })
   } else if (execute.outcome === D.StageOutcome.done) w.build = 'done'
   return w
@@ -147,6 +148,8 @@ function detail(current: PipelineStep | undefined, service: string | undefined,
       case D.ExecutionActivity.building: parts.push(what ? L('{0} で Nix ビルド中（{1}）', worker, what) : L('{0} で Nix ビルド中', worker)); break
       case D.ExecutionActivity.substituting:
         parts.push(what ? L('{0} でビルド済みのものを取得中（{1}）', worker, what) : L('{0} でビルド済みのものを取得中', worker)); break
+      case D.ExecutionActivity.pushing:
+        parts.push(what ? L('{0} からビルド出力をキャッシュへ送信中（{1}）', worker, what) : L('{0} からビルド出力をキャッシュへ送信中', worker)); break
     }
   } else parts.push(service ? L('{0} で実行中', service) : L('実行中'))
   if (live.cpuMs !== undefined) parts.push(L('CPU {0}', formatShortDuration(live.cpuMs / 1000)))

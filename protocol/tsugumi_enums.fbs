@@ -35,8 +35,10 @@ enum StageOutcome : ubyte { unspecified = 0, running = 1, done = 2, cached = 3, 
 /// What a remote execution is doing while its job runs on the worker:
 /// waiting_store waits for the worker's Nix store, which another invocation
 /// holds; preparing imports or checks the closure; building and substituting
-/// build or fetch a derivation (named beside it); running runs the Card.
-enum ExecutionActivity : ubyte { unspecified = 0, waiting_store = 1, preparing = 2, building = 3, substituting = 4, running = 5 }
+/// build or fetch a derivation (named beside it); running runs the Card;
+/// pushing uploads the Card's build outputs to the binary cache after it ran
+/// (the detail names the path and the progress).
+enum ExecutionActivity : ubyte { unspecified = 0, waiting_store = 1, preparing = 2, building = 3, substituting = 4, running = 5, pushing = 6 }
 
 /// output: what the Card's process wrote to stdout and stderr, as one stream in
 /// write order. build: what schema preparation, Nix evaluation and build

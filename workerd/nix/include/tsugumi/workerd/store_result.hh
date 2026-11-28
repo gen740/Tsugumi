@@ -14,7 +14,15 @@ struct WorkerStoreResult {
       closure;         // runtime references, including the build plan
   bool built = false;
   std::string substituter;
-  bool pushed = false;
+};
+
+// What publishing a build's outputs to the push target did, after the Card ran.
+struct CachePushOutcome {
+  bool pushed = false;   // the target accepted every path it lacked
+  uint64_t paths = 0;    // paths uploaded
+  uint64_t bytes = 0;    // their NAR size
+  uint64_t skipped = 0;  // closure paths a pull cache or the target had
+  std::string error;     // why the upload failed
 };
 
 }  // namespace tsugumi

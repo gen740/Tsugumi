@@ -296,8 +296,7 @@ struct CardExecutionView: View {
                          ?? (cached ? String(localized: "既存の Nix ストア") : String(localized: "ビルドで生成")))
         }
         if let pushed = s.buildPushed {
-          LabeledContent("ビルド出力のキャッシュ送信",
-                         value: pushed ? String(localized: "送信済み") : String(localized: "未送信"))
+          LabeledContent("ビルド出力のキャッシュ送信", value: Self.buildPushText(pushed: pushed, push: s.buildPush))
         }
         if let job = s.executionJobId, !job.isEmpty {
           LabeledContent("ジョブ ID", value: job).textSelection(.enabled)
@@ -341,6 +340,15 @@ struct CardExecutionView: View {
       }
       if r.orphaned == true { Text("この Card は文書から削除されています。").foregroundStyle(.secondary) }
     }
+  }
+
+  /// What publishing the build outputs did, for Run Info.
+  static func buildPushText(pushed: Bool, push: Tsugumi_Data_BuildPushT?) -> String {
+    if let error = push?.error, !error.isEmpty { return String(localized: "送信できませんでした: \(error)") }
+    guard pushed else { return String(localized: "未送信") }
+    guard let push, push.paths > 0 || push.skipped > 0 else { return String(localized: "送信済み") }
+    let bytes = ByteCountFormatter.string(fromByteCount: Int64(clamping: push.bytes), countStyle: .file)
+    return String(localized: "送信済み: \(String(push.paths)) パス（\(bytes)）、キャッシュにある \(String(push.skipped)) パスは省略")
   }
 
   private func invocationOrdinal(_ s: Tsugumi_RPC_InvocationSummaryT, total: UInt64?) -> String {

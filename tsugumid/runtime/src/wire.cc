@@ -249,6 +249,9 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
                      ? Off<flatbuffers::Vector<Off<flatbuffers::String>>>()
                      : b.CreateVector(secret_names);
   const auto build_substituter = b.CreateString(s.build_substituter);
+  const auto build_push =
+      s.build_push ? Tsugumi::Data::BuildPush::Pack(b, &*s.build_push)
+                   : Off<Tsugumi::Data::BuildPush>();
   const auto activity_detail =
       s.execution_activity_detail.empty()
           ? Off<flatbuffers::String>()
@@ -273,6 +276,7 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   if (s.build_cached) ib.add_build_cached(*s.build_cached);
   if (!s.build_substituter.empty()) ib.add_build_substituter(build_substituter);
   if (s.build_pushed) ib.add_build_pushed(*s.build_pushed);
+  if (!build_push.IsNull()) ib.add_build_push(build_push);
   ib.add_stages(sv);
   if (s.worker_reused) ib.add_worker_reused(*s.worker_reused);
   ib.add_outputs_sent(ov);

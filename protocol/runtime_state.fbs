@@ -127,6 +127,7 @@ table InvocationDetail {
   worker_probes:[Tsugumi.Data.WorkerProbeResult];
   build_substituter:string;
   build_pushed:bool = null;
+  build_push:Tsugumi.Data.BuildPush;
 }
 
 table InputSource {

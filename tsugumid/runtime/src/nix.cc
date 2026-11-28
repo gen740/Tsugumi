@@ -612,10 +612,6 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
   build.key = build.environment.manifest;
   build.cached = !res.built;
   build.substituter = std::move(res.substituter);
-  if (!views_only && !req.probe_only && req.target.kind == WorkerKind::native) {
-    build.pushed = svc_.remote_execution().publish_local_build(
-        build.derivation, node.settings.push_outputs, req.cancel);
-  }
   return plan;
 }
 

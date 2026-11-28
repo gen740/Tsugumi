@@ -257,6 +257,7 @@ export function executionActivityText(state: CardRunState | undefined): Executio
     case D.ExecutionActivity.preparing: return of(false, L('ワーカーで準備中'), L('ワーカーで準備中'))
     case D.ExecutionActivity.building: return of(false, L('ワーカーで Nix ビルド中: {0}', detail), L('ビルド中: {0}', detail))
     case D.ExecutionActivity.substituting: return of(false, L('ワーカーで取得中: {0}', detail), L('取得中: {0}', detail))
+    case D.ExecutionActivity.pushing: return of(false, L('ビルド出力をキャッシュへ送信中: {0}', detail), L('キャッシュへ送信中: {0}', detail))
     default: return
   }
 }

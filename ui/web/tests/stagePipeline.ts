@@ -52,6 +52,12 @@ const running = stagePipeline(order, records, 'ttl',
 assert.equal(step(running, Stage.build).status, 'done')
 assert.ok(step(running, Stage.execute).status === 'running' && step(running, Stage.execute).seconds === 51)
 assert.match(running.detail!, /^ttl で実行中 · CPU 5:41/)
+// After the Card ran, the worker uploads its build outputs: the build stays done.
+const pushing = stagePipeline(order, records, 'ttl',
+  { ...live, executionActivity: D.ExecutionActivity.pushing, executionActivityDetail: 'remote-card-plan (2/5 · 1.2 GB / 4.0 GB)' }, 100_000)
+assert.equal(step(pushing, Stage.build).status, 'done')
+assert.equal(step(pushing, Stage.execute).status, 'running')
+assert.match(pushing.detail!, /^ttl からビルド出力をキャッシュへ送信中（remote-card-plan \(2\/5 · 1\.2 GB \/ 4\.0 GB\)）/)
 
 // Failed: the failed stage is red, the later ones never ran, no second line.
 const failed = stagePipeline(order, [record(Stage.prepare, D.StageOutcome.done, 0, 10), record(Stage.evaluate, D.StageOutcome.failed, 10, 2_010)],

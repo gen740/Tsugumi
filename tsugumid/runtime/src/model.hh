@@ -91,6 +91,7 @@ struct InvocationSummaryData {
   std::optional<bool> build_cached;
   std::string build_substituter;
   std::optional<bool> build_pushed;
+  std::optional<Tsugumi::Data::BuildPushT> build_push;
   std::optional<uint64_t> log_truncated_at_bytes;
   std::vector<StageTimeData> stages;
   std::vector<BuildActivityData> building;

@@ -298,14 +298,11 @@ def test_uploads_are_checked_before_they_appear(server, client, built_paths, scr
                           body=changed("NarHash", "sha256:" + "0" * 52))[0] == 400
     assert server.request(client, "PUT", f"{fake}.narinfo",
                           body=changed("URL", "nar/" + "2" * 52 + ".nar.xz"))[0] == 409
-    assert server.request(client, "PUT", f"{fake}.narinfo",
-                          body=changed("References", "3" * 32 + "-absent"))[0] == 409
-    # A reference names a whole store path: the same hash with another name
-    # is not in the cache.
-    held = Path(dependency).name[:32]
-    assert server.request(client, "PUT", f"{fake}.narinfo",
-                          body=changed("References", held + "-another-name"))[0] == 409
     assert server.request(client, "GET", f"{fake}.narinfo")[0] == 404
+    # A reference absent from this cache is accepted: a pull cache serves it.
+    assert server.request(client, "PUT", f"{fake}.narinfo",
+                          body=changed("References", "3" * 32 + "-absent"))[0] in (200, 201, 204)
+    assert server.request(client, "GET", f"{fake}.narinfo")[0] == 200
     # Names outside the binary-cache layout are not files of the cache.
     assert server.request(client, "PUT", "../escape", body=b"x")[0] in (400, 404)
     assert server.request(client, "PUT", "nix-cache-info", body=b"StoreDir: /x\n")[0] == 403

@@ -421,7 +421,7 @@ exit 1
   try {
     publish_to_external_cache(
         {ExternalCacheKind::cachix, {}, "fixture", {}, "synthetic-cache-token"},
-        root, {}, "/nix/store/example", {});
+        root, {}, {"/nix/store/example"}, {});
   } catch (const std::exception& error) {
     failure = error.what();
   }

@@ -1202,7 +1202,8 @@ table InvocationSummary {
   secrets:[string] (id: 32);
   /// The cache that supplied this build output, when it was substituted.
   build_substituter:string (id: 33);
-  /// True after the selected cache accepted the output closure.
+  /// True after the selected cache accepted the part of the output closure
+  /// it lacked and no pull cache serves; false when nothing was published.
   build_pushed:bool = null (id: 34);
   /// What the remote job does now while it runs on the worker (live only).
   execution_activity:Tsugumi.Data.ExecutionActivity (id: 35);
@@ -1212,6 +1213,8 @@ table InvocationSummary {
   cpu_ms:uint64 = null (id: 37);
   /// When it last wrote output or build log (core clock, live only).
   last_output_at:int64 = null (id: 38);
+  /// What publishing the build outputs sent or why it failed, when it ran.
+  build_push:Tsugumi.Data.BuildPush (id: 39);
 }
 
 table StageTime {

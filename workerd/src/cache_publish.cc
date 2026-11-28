@@ -66,8 +66,9 @@ auto NetrcOption(const ExternalCacheTarget& target, const PrivateConfig& cfg)
 auto publish_to_external_cache(const ExternalCacheTarget& target,
                                const std::filesystem::path& scratch,
                                const CachePublishSource& source,
-                               const std::string& store_path,
+                               const std::vector<std::string>& store_paths,
                                std::stop_token stop) -> void {
+  if (store_paths.empty()) return;
   if (stop.stop_requested())
     throw std::runtime_error("cache publishing cancelled");
   const PrivateConfig config(scratch);
@@ -95,16 +96,16 @@ auto publish_to_external_cache(const ExternalCacheTarget& target,
                            target.endpoint + "\"\ntoken = \"" + target.secret +
                            "\"\n",
                        0600);
-      spec.argv = {Executable("attic", path), "push", target.name, store_path};
+      spec.argv = {Executable("attic", path), "push", "--no-closure",
+                   target.name};
       break;
     case ExternalCacheKind::cachix:
-      spec.argv = {Executable("cachix", path), "push", target.name, store_path};
+      spec.argv = {Executable("cachix", path), "push", target.name};
       if (!target.secret.empty())
         spec.env.push_back("CACHIX_AUTH_TOKEN=" + target.secret);
       break;
     case ExternalCacheKind::nix_copy:
-      spec.argv = {Executable("nix", path), "copy", "--to", target.endpoint,
-                   store_path};
+      spec.argv = {Executable("nix", path), "copy", "--to", target.endpoint};
       nix_options += "experimental-features = nix-command\n";
       nix_options += NetrcOption(target, config);
       if (!target.secret.empty() && target.endpoint.starts_with("s3://")) {
@@ -113,6 +114,7 @@ auto publish_to_external_cache(const ExternalCacheTarget& target,
       }
       break;
   }
+  spec.argv.insert(spec.argv.end(), store_paths.begin(), store_paths.end());
   if (!nix_options.empty()) spec.env.push_back("NIX_CONFIG=" + nix_options);
   std::atomic<bool> cancelled{false};
   std::stop_callback cancel(stop, [&] { cancelled = true; });

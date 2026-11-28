@@ -241,7 +241,7 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
                             {summary.buildCached != null && <Value label={L('ビルド出力の取得元')}
                               value={s(summary.buildSubstituter) || (summary.buildCached ? L('既存の Nix ストア') : L('ビルドで生成'))} />}
                             {summary.buildPushed != null && <Value label={L('ビルド出力のキャッシュ送信')}
-                              value={summary.buildPushed ? L('送信済み') : L('未送信')} />}
+                              value={buildPushText(summary)} />}
                             {interruptedRun && (
                               <Row><span className="caption secondary">{L('Tsugumi の再起動により、この実行は中断されました。結果は回収されません。必要な Card を改めて実行してください。')}</span></Row>
                             )}
@@ -463,4 +463,13 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
       {error && <div className="caption pad6 selectable" style={{ color: 'var(--red)' }}>{error}</div>}
     </div>
   )
+}
+
+/** What publishing the build outputs did, for Run Info. */
+function buildPushText(summary: R.InvocationSummaryT): string {
+  const push = summary.buildPush
+  if (push?.error) return L('送信できませんでした: {0}', s(push.error))
+  if (!summary.buildPushed) return L('未送信')
+  if (!push || (!push.paths && !push.skipped)) return L('送信済み')
+  return L('送信済み: {0} パス（{1}）、キャッシュにある {2} パスは省略', String(push.paths), formatBytes(push.bytes), String(push.skipped))
 }

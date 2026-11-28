@@ -29,9 +29,14 @@ class RemoteExecutionService final {
 
   // Retries cancellation/release acknowledgements, never result retrieval.
   auto release_completed() -> void;
+  // After a local Card ran: publishes its derivation and, with push_outputs,
+  // its build outputs, leaving out what a pull cache serves. Records the
+  // outcome in the summary and reports progress through its activity; a
+  // failure never fails the Card.
   auto publish_local_build(const WorkerDerivation& derivation,
-                           bool push_outputs, std::stop_token stop)
-      -> std::optional<bool>;
+                           bool push_outputs, InvocationSummaryData& summary,
+                           const std::function<void()>& publish,
+                           std::stop_token stop) -> void;
 
  private:
   Service& service_;

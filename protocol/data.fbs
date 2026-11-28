@@ -70,6 +70,12 @@ table Display {
   credit_id:uint64 = null (id: 2);
 }
 
+/// The upload of an invocation's build outputs to the push-target binary
+/// cache, after the Card ran: the paths and NAR bytes it sent, the closure
+/// paths it left out because a pull cache or the target already had them, and
+/// why it failed (empty when it succeeded).
+table BuildPush { paths:ulong; bytes:ulong; skipped:ulong; error:string; }
+
 /// The bounded output and result used to rank one worker for a Card.
 table WorkerProbeResult {
   worker:string (required);

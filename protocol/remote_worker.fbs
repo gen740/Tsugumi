@@ -12,9 +12,12 @@ attribute "trace_secret";
 enum JobState:ubyte { Missing, Uploading, Queued, Running, Cancelling, Succeeded, Failed, Cancelled, Interrupted, Released }
 // What a running job is doing. StoreWait: another invocation holds the
 // worker's Nix store, and this one waits for it. Preparing: it holds the store
-// and imports or checks its closure. Building and Substituting: Nix builds or
-// fetches the derivation or path named in the detail. Card: the Card runs.
-enum JobActivity:ubyte { Unspecified, StoreWait, Preparing, Building, Substituting, Card }
+// and checks its closure. Building and Substituting: Nix builds or fetches
+// the derivation or path named in the detail; a fetch of a closure path by
+// path adds "done/total · bytes / bytes" to the name. Card: the Card runs.
+// Pushing: after the Card ran, the job uploads its build outputs that no pull
+// cache serves; the detail is the path and the same progress.
+enum JobActivity:ubyte { Unspecified, StoreWait, Preparing, Building, Substituting, Card, Pushing }
 enum ErrorCode:ubyte { Invalid, Unauthorized, InstanceChanged, RegistrationChanged, Rejected, NotFound, Busy, Internal }
 table ProbeRequest {}
 table PutBlobRequest { digest:string (required); total:ulong; offset:ulong; bytes:[ubyte] (required); }
@@ -211,7 +214,15 @@ table Invocation {
 table ResultEnvironment {
   paths:[string]; directories:[string]; built:bool; log_truncated:bool;
   substituter:string;
+  // The upload of the build outputs after the Card ran (JobSpec.push_outputs):
+  // whether the target accepted every path it lacked, how many paths and NAR
+  // bytes went, how many closure paths a pull cache or the target already
+  // had, and why it failed.
   pushed:bool;
+  push_paths:ulong;
+  push_bytes:ulong;
+  push_skipped:ulong;
+  push_error:string;
 }
 /// The job's work/activity: what it is doing now, replaced as it changes.
 table JobProgress { activity:JobActivity; detail:string; building:[string]; cpu_ms:ulong = null; }

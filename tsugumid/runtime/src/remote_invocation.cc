@@ -328,6 +328,14 @@ auto import_remote_result(
   result.built = environment->built;
   result.substituter = environment->substituter;
   result.pushed = environment->pushed;
+  if (environment->pushed || !environment->push_error.empty()) {
+    Tsugumi::Data::BuildPushT push;
+    push.paths = environment->push_paths;
+    push.bytes = environment->push_bytes;
+    push.skipped = environment->push_skipped;
+    push.error = environment->push_error.substr(0, 512);
+    result.push = std::move(push);
+  }
   result.environment.paths = environment->paths;
   std::vector<RawOutput> raw;
   if (failure) {

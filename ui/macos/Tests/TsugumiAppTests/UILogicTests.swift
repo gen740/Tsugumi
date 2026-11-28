@@ -273,6 +273,12 @@ import TsugumiTestSupport
   let running = StagePipeline(stages: order, records: records, service: "ttl", live: live, now: 100_000)
   #expect(try step(running, .build).status == .done && step(running, .execute).status == .running && step(running, .execute).seconds == 51)
   #expect(running.detail?.contains("ttl") == true)
+  // After the Card ran, the worker uploads its build outputs: the build stays done.
+  live.executionActivity = .pushing
+  live.executionActivityDetail = "remote-card-plan (2/5 · 1.2 GB / 4.0 GB)"
+  let pushing = StagePipeline(stages: order, records: records, service: "ttl", live: live, now: 100_000)
+  #expect(try step(pushing, .build).status == .done && step(pushing, .execute).status == .running)
+  #expect(pushing.detail?.contains("remote-card-plan (2/5 · 1.2 GB / 4.0 GB)") == true)
 
   // Failed: the failed stage is red, the later ones never ran, no second line.
   let failedRecords = [record(.prepare, .done, 0, 10), record(.evaluate, .failed, 10, 2_010)]

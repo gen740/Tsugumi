@@ -48,8 +48,12 @@ auto BinaryCacheDerivationTransport::receive(nix::Store&,
     -> void {
   unavailable();
 }
+auto plan_store_push(const std::string&, const std::string&) -> CachePushPlan {
+  unavailable();
+}
 auto publish_to_relay_cache(const std::string&, const std::string&,
-                            CacheRelay::Exchange) -> void {
+                            CacheRelay::Exchange, const CacheTransferReport&)
+    -> CachePushPlan {
   unavailable();
 }
 

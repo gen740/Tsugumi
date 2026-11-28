@@ -16,6 +16,8 @@ struct RemoteInvocationResult {
   bool built = false;
   std::string substituter;
   bool pushed = false;
+  // Set when the worker published the build outputs after the Card ran.
+  std::optional<Tsugumi::Data::BuildPushT> push;
   std::vector<CreatedArtifact> created;
 };
 

@@ -31,6 +31,7 @@
 
 #include "nix_store.hh"
 #include "tsugumi/workerd/cache_publish.hh"
+#include "tsugumi/workerd/cache_transfer.hh"
 #include "tsugumi/workerd/store_result.hh"
 #include "tsugumi/workerd/values.hh"
 
@@ -89,26 +90,20 @@ auto ConfigurePulls(const workerd::R::CacheSettingsT& cache)
       "/proc/self/fd/" + std::to_string(file.get());
   return file;
 }
-}  // namespace
 
-auto RemoteWorkerStore::realise(
-    const DerivationClosureTransport& transport,
-    const workerd::R::CacheSettingsT& caches, CacheRelay::Exchange relay,
-    const std::filesystem::path& store_root, const WorkerDerivation& derivation,
-    bool push_outputs, const std::function<void(const std::string&)>& log,
-    uint64_t timeout_ms, const StoreProgress& progress) -> WorkerStoreResult {
-  // Invocations run in separate supervisor processes that share this
-  // persistent store, so the Nix settings below are per process. Opening the
-  // store is serialized: LocalStore creates a missing database and its schema,
-  // and runs migrations, under only a shared big-lock, so two first-time
-  // openers could race. Everything after the open is safe without this lock:
-  // SQLite and its retries guard the database, temp roots are per process,
-  // and every addition (closure import, substitution, build) takes the
-  // output's path lock and checks validity again under it, so two invocations
-  // wanting one path produce it once. Nothing collects this store's garbage
-  // (automatic collection is turned off below), and job removal touches only
-  // job scratch. Never unlink the lock: surviving
-  // supervisors also use this inode.
+// Opens the worker's persistent private store. Invocations run in separate
+// supervisor processes that share it, so the Nix settings are per process.
+// Opening is serialized: LocalStore creates a missing database and its schema,
+// and runs migrations, under only a shared big-lock, so two first-time
+// openers could race. Everything after the open is safe without this lock:
+// SQLite and its retries guard the database, temp roots are per process, and
+// every addition (closure import, substitution, build) takes the output's
+// path lock and checks validity again under it, so two invocations wanting
+// one path produce it once. Nothing collects this store's garbage (automatic
+// collection is turned off in realise), and job removal touches only job
+// scratch. Never unlink the lock: surviving supervisors also use this inode.
+auto OpenWorkerStore(const std::filesystem::path& store_root,
+                     const StoreProgress& progress) -> nix::ref<nix::Store> {
   nix::AutoCloseFD store_lock{::open((store_root / "realise.lock").c_str(),
                                      O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
                                      0600)};
@@ -121,6 +116,17 @@ auto RemoteWorkerStore::realise(
     throw std::runtime_error("cannot lock remote Nix store");
   }
   if (progress.locked) progress.locked();
+  return nix::openStore(
+      "local", {{"root", store_root.string()}, {"require-sigs", "true"}});
+}
+}  // namespace
+
+auto RemoteWorkerStore::realise(
+    const DerivationClosureTransport& transport,
+    const workerd::R::CacheSettingsT& caches, CacheRelay::Exchange relay,
+    const std::filesystem::path& store_root, const WorkerDerivation& derivation,
+    const std::function<void(const std::string&)>& log, uint64_t timeout_ms,
+    const StoreProgress& progress) -> WorkerStoreResult {
   nix::initLibStore(true);
   const auto netrc = ConfigurePulls(caches);
   std::mutex provenance;
@@ -157,22 +163,19 @@ auto RemoteWorkerStore::realise(
   // paths of their own that no root protects. With min-free 0, max-free is
   // never consulted.
   nix::settings.getLocalSettings().getGCSettings().minFree = 0;
-  auto store = nix::openStore(
-      "local", {{"root", store_root.string()}, {"require-sigs", "true"}});
-  store_lock.close();
+  auto store = OpenWorkerStore(store_root, progress);
   const auto drv = store->parseStorePath(derivation.path);
   const auto out = store->parseStorePath(derivation.output);
   store->addTempRoot(drv);
   store->addTempRoot(out);
   auto own = relay ? open_relay_cache(std::move(relay)) : nullptr;
-  const auto substitute = [&](const auto& path) {
-    if (!own || store->isValidPath(path) || !own->isValidPath(path))
-      return false;
-    nix::copyClosure(*own, *store, nix::StorePathSet{path}, nix::NoRepair,
-                     nix::CheckSigs);
-    return true;
+  // What a pull cache serves the worker substitutes from it; only the rest
+  // comes from the built-in cache over the host's relay.
+  const auto fetch = [&](const nix::StorePath& path) {
+    return fetch_closure(*store, store->printStorePath(path), own.get(),
+                         progress.fetch);
   };
-  substitute(drv);
+  fetch(drv);
   transport.receive(*store, derivation);
   const auto began = std::chrono::steady_clock::now();
   const auto thread = pthread_self();
@@ -210,7 +213,15 @@ auto RemoteWorkerStore::realise(
     throw std::runtime_error(
         "remote Nix derivation has a different output path");
   WorkerStoreResult result;
-  if (substitute(out)) result.substituter = "tsugumi-cached";
+  try {
+    if (fetch(out)) result.substituter = "tsugumi-cached";
+  } catch (const std::exception&) {
+    // Nix builds what it cannot substitute, or reports why below.
+  }
+  if (store->isValidPath(out) && result.substituter.empty()) {
+    std::lock_guard lock(provenance);
+    result.substituter = substituted_from;
+  }
   if (!store->isValidPath(out)) {
     try {
       auto builds = store->buildPathsWithResults({nix::DerivedPath::Built{
@@ -236,29 +247,6 @@ auto RemoteWorkerStore::realise(
   if (timer.joinable()) {
     timer.request_stop();
     timer.join();
-  }
-  if (push_outputs) {
-    try {
-      if (own) {
-        nix::copyClosure(*store, *own, nix::StorePathSet{out});
-      } else {
-        const auto& push = *caches.push;
-        using Kind = workerd::R::CacheTargetKind;
-        const auto kind = push.kind == Kind::Attic ? ExternalCacheKind::attic
-                          : push.kind == Kind::Cachix
-                              ? ExternalCacheKind::cachix
-                              : ExternalCacheKind::nix_copy;
-        publish_to_external_cache(
-            {kind, push.endpoint, push.cache_name, push.user, push.secret},
-            std::filesystem::temp_directory_path(),
-            {.store = store->config.getReference().render(),
-             .private_worker_store = true},
-            derivation.output, {});
-      }
-      result.pushed = true;
-    } catch (const std::exception&) {
-      log("Could not publish the Nix build outputs to the configured cache.\n");
-    }
   }
   nix::StorePathSet closure;
   store->computeFSClosure(out, closure);
@@ -288,6 +276,70 @@ auto RemoteWorkerStore::realise(
   }
   result.derivation = derivation;
   return result;
+}
+
+auto RemoteWorkerStore::push(const workerd::R::CacheSettingsT& caches,
+                             CacheRelay::Exchange relay,
+                             const std::filesystem::path& store_root,
+                             const WorkerDerivation& derivation,
+                             const CacheTransferReport& report)
+    -> CachePushOutcome {
+  CachePushOutcome outcome;
+  try {
+    // realise configured this process; the pull caches need their
+    // credentials again to answer which paths they serve.
+    const auto netrc = ConfigurePulls(caches);
+    auto store = OpenWorkerStore(store_root, {});
+    store->addTempRoot(store->parseStorePath(derivation.output));
+    auto own = relay ? open_relay_cache(std::move(relay)) : nullptr;
+    const auto plan = plan_cache_push(*store, derivation.output, own.get());
+    outcome.skipped = plan.served + plan.present;
+    if (own) {
+      copy_to_relay_cache(*store, *own, plan, report);
+    } else {
+      const auto& target_settings = *caches.push;
+      using Kind = workerd::R::CacheTargetKind;
+      const auto kind =
+          target_settings.kind == Kind::Attic    ? ExternalCacheKind::attic
+          : target_settings.kind == Kind::Cachix ? ExternalCacheKind::cachix
+                                                 : ExternalCacheKind::nix_copy;
+      const ExternalCacheTarget target{
+          kind, target_settings.endpoint, target_settings.cache_name,
+          target_settings.user, target_settings.secret};
+      const CachePublishSource source{
+          .store = store->config.getReference().render(),
+          .private_worker_store = true};
+      // One upload per path, references first, so the status can count.
+      // Nix copy takes the whole closure; it skips what the target holds.
+      const auto paths = kind == ExternalCacheKind::nix_copy
+                             ? std::vector<std::string>{derivation.output}
+                             : plan.paths;
+      if (kind == ExternalCacheKind::nix_copy) outcome.skipped = 0;
+      CacheTransferProgress progress{0, paths.size(), 0,
+                                     kind == ExternalCacheKind::nix_copy
+                                         ? 0
+                                         : plan.bytes,
+                                     {}};
+      for (const auto& path : paths) {
+        progress.path = path;
+        if (report) report(progress);
+        publish_to_external_cache(
+            target, std::filesystem::temp_directory_path(), source, {path}, {});
+        ++progress.done;
+        if (progress.bytes_total)
+          progress.bytes_done +=
+              store->queryPathInfo(store->parseStorePath(path))->narSize;
+      }
+    }
+    if (own || caches.push->kind != workerd::R::CacheTargetKind::NixCopy) {
+      outcome.paths = plan.paths.size();
+      outcome.bytes = plan.bytes;
+    }
+    outcome.pushed = true;
+  } catch (const std::exception& error) {
+    outcome.error = std::string(error.what()).substr(0, 512);
+  }
+  return outcome;
 }
 
 }  // namespace tsugumi
