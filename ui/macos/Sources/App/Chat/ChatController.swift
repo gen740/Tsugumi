@@ -189,6 +189,9 @@ final class ChatController {
   /// Reads a snapshot and attaches to work that is already running.
   @ObservationIgnored private(set) var opening: Task<Void, Never>?
   @ObservationIgnored private var stopping: Task<Void, Never>?
+  /// The last load of the conversation list or of a conversation failed; a
+  /// new host connection (a restarted or recovered host) loads it again.
+  @ObservationIgnored private var loadFailed = false
   @ObservationIgnored private let dir: URL
 
   @ObservationIgnored private let connection: @MainActor () -> ProviderConfig
@@ -245,6 +248,10 @@ final class ChatController {
       // like one this window started.
       Task { [weak self] in
         _ = await CoreHostClient.shared.observeHost { [weak self] event in
+          if event["type"] as? String == "Connected" {
+            Task { @MainActor [weak self] in self?.hostConnected() }
+            return
+          }
           guard event["type"] as? String == "ConversationChanged", let id = event["conversation"] as? String else { return }
           Task { @MainActor [weak self] in
             if id.hasPrefix("external-") { self?.showExternalDecisions() } else { self?.observeHostTurn(id) }
@@ -252,6 +259,15 @@ final class ChatController {
         }
       }
     }
+  }
+
+  /// A failed load's error belongs to the host it came from: once a host is
+  /// connected again (for example after its state was moved aside), the
+  /// error is cleared and the conversation is loaded from the new host.
+  func hostConnected() {
+    guard loadFailed, !loading, !busy else { return }
+    status = nil
+    retryLoad()
   }
 
   private func observeHostTurn(_ id: String) {
@@ -287,12 +303,14 @@ final class ChatController {
         }
       } catch let failure as CoreHostFailure where failure.code == "busy" {
         displayedId = ""
+        loadFailed = true
         status = .error(failure.localizedDescription)
-      } catch { status = .error(error.localizedDescription) }
+      } catch { loadFailed = true; status = .error(error.localizedDescription) }
     }
   }
 
   func retryLoad() {
+    loadFailed = false
     if currentId.isEmpty { refreshSessions() }
     else { select(currentId) }
   }
@@ -309,6 +327,7 @@ final class ChatController {
     failed = false
     usageLimited = false
     status = nil
+    loadFailed = false
     interrupted = false
     interruptedOperation = nil
     canContinue = false
@@ -328,6 +347,7 @@ final class ChatController {
         guard !Task.isCancelled, self.agent === agent, selection == answer else { return }
         loading = false
         displayedId = ""
+        loadFailed = true
         self.status = .error(error.localizedDescription)
         return
       }

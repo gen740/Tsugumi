@@ -167,4 +167,39 @@ import TsugumiTestSupport
     await chat.opening?.value
     #expect(chat.ready && chat.status == nil)
   }
+
+  @Test func aNewHostConnectionClearsTheErrorOfTheReplacedHost() async throws {
+    actor Host {
+      private(set) var stale = true
+      func recover() { stale = false }
+    }
+    let host = Host()
+    let dir = testTemporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let chat = ChatController(session: try session(at: dir), connection: { .fixture }, loadOnInit: false,
+      makeAgent: { id, _, provider in
+        Agent(id: id, transport: Transport(), provider: provider) { method, _ in
+          guard method == "ConversationCreateRequest" else { throw RPCError.unexpectedReply(method) }
+          if await host.stale {
+            throw HostStateFormatMismatch(path: "/state/host.sqlite", found: 1, recoveryURL: nil, recoveryToken: "")
+          }
+          return snapshot(id, "Selected transcript")
+        }
+      })
+    chat.select("selected")
+    await chat.opening?.value
+    #expect(!chat.ready && chat.status != nil)
+
+    // The state is moved aside and the host restarted.
+    await host.recover()
+    chat.hostConnected()
+    await chat.opening?.value
+    #expect(chat.ready && chat.status == nil)
+    #expect(chat.items.map(\.text) == ["Selected transcript"])
+
+    // A connection while the chat is fine leaves it as it is.
+    let opening = chat.opening
+    chat.hostConnected()
+    #expect(chat.opening == opening)
+  }
 }
