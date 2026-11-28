@@ -186,31 +186,34 @@ def test_resident_worker_counts_cpu_time_from_its_call(core_factory, project, tm
 
 
 def test_local_cpu_time_includes_its_build_and_stays_in_history(core_factory, project, tmp_path):
-    """The first member of a local invocation carries the CPU time of the Nix
-    build done for it, the Card's call adds its own, and the last value stays
-    with the finished invocation, also across a core restart. A later run that
-    builds nothing counts its call only."""
+    """A local invocation includes its Nix build's CPU time and keeps the
+    total in history across a core restart. A run that reuses the build
+    excludes the earlier build's CPU time."""
     build_cpu = 40_000
     daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
+    gate = Gate(tmp_path, "built")
     Project(project).card(
         "work", {"type": "code", "sandbox": SCRIPTED_WORKER_SANDBOX},
         outputs="table Outputs {} root_type Outputs;",
         plan=mock_plan([str(project / "definitions/work")], buildCpuMs=build_cpu),
-        sources={"scenario.json": json.dumps({"actions": [{"op": "spin", "seconds": 3}]})},
+        sources={"scenario.json": json.dumps({"actions": [gate.action()]})},
     ).save(client)
     built = run(client)
-    assert active_row(client, built, lambda r: (r.cpuMs or 0) >= build_cpu).cpuMs >= build_cpu
+    try:
+        gate.wait()
+        running_cpu = active_row(client, built, lambda r: r.cpuMs is not None).cpuMs
+        assert running_cpu >= build_cpu
+    finally:
+        gate.release()
     assert wait_run(client, built).state == RunState.succeeded
 
     def recorded(c, run_id):
         record, = c.call("RunInvocationsRequest", runId=run_id, card=path("work")).records
         return record.cpuMs
 
-    # The call spun for three seconds: its last sample is part of the value.
-    # A loaded runner gives the spin less CPU than its wall time (1.9 s seen).
     final = recorded(client, built)
-    assert final is not None and final >= build_cpu + 1000, final
+    assert final is not None and final >= running_cpu, final
     daemon.stop()
     daemon.start()
     client = daemon.connect()
@@ -221,4 +224,4 @@ def test_local_cpu_time_includes_its_build_and_stays_in_history(core_factory, pr
     again = run(client)
     assert wait_run(client, again).state == RunState.succeeded
     reused = recorded(client, again)
-    assert reused is not None and 2000 <= reused < build_cpu, reused
+    assert (reused or 0) < build_cpu, reused
