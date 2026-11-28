@@ -55,10 +55,6 @@ struct OperationApproval {
       }
       return out
     }
-    if name == "run_scratch_delete" {
-      let count = String((targets["folders"] as? [Any])?.count ?? 0)
-      return [String(localized: "作業フォルダ \(count) 個を削除（実行記録と残した出力は残ります）")]
-    }
     return [name]
   }
 }

@@ -1478,7 +1478,7 @@ int main(int argc, char** argv) {
   start_rosetta_cache();
   tsugumi::NixStore::init_process();
   cache_usage = std::make_unique<tsugumi::CacheUsage>(
-      kRoots, kScratch, fs::path{}, fs::path{}, "", kUsage);
+      kRoots, fs::path{}, "", kUsage);
   std::thread(reap_children, child_signal).detach();
   const int rpc_listener = listen_vsock(opt.rpc_port);
   const int terminal_listener = listen_vsock(opt.terminal_port);

@@ -37,7 +37,7 @@ FORMATS = {
         2: "8b1f18bf86da9012eb7a3b741b89e07e0052f70eaea5b10b0dd13af81299cae3",
     },
     "document.sqlite": {1: "30a8e2ec2db7a1145734129946c14e39d3dc2e65be98eaf8d9a803ad13ba0b8e"},
-    "runs.sqlite": {23: "8705917e06af6a0450316e8c8655f3d1ffbfac1c1a2f6e252b6138e11c8b98d1"},
+    "runs.sqlite": {24: "b93564dad1d518cf7845be2aaac4e6e579e9d0f39121cd1090cae6aede01345d"},
 }
 
 # The initializers use adjacent C++ string literals and raw SQL strings. The

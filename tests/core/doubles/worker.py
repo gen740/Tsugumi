@@ -223,6 +223,11 @@ class Worker:
             elif operation == "malformed":
                 self.data.socket.sendall(struct.pack("<I", 8) + b"not-tsw1")
                 return False
+            elif operation == "tmp_file":
+                # A working file in the Card's TMPDIR; its path goes to `record`.
+                written = Path(os.environ["TMPDIR"]) / action["name"]
+                written.write_text("working file")
+                Path(action["record"]).write_text(str(written))
             elif operation == "log":
                 stream = sys.stderr if action.get("stream", "stdout") == "stderr" else sys.stdout
                 print(action["text"], file=stream, flush=True)

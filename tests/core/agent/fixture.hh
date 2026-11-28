@@ -189,7 +189,7 @@ class AgentFixture : public ::testing::Test {
         (directory.path / "agent.sock").string(),
         "--socket-dir",
         (directory.path / "broker").string(),
-        "--usage-scratch-dir",
+        "--run-scratch-root",
         (directory.path / "run-scratch").string(),
         "--demos-dir",
         (directory.path / "demos").string(),

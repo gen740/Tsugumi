@@ -587,7 +587,7 @@ CREATE INDEX IF NOT EXISTS )SQL" +
 }
 
 // Version of the local history's tables (PRAGMA user_version).
-constexpr int kHistoryVersion = 23;
+constexpr int kHistoryVersion = 24;
 }  // namespace
 
 auto History::open_live_logs() -> std::unique_ptr<sql::Db> {
@@ -597,8 +597,7 @@ auto History::open_live_logs() -> std::unique_ptr<sql::Db> {
   return db;
 }
 
-History::History(const std::filesystem::path& db_path, std::string fault,
-                 const std::filesystem::path& run_scratch)
+History::History(const std::filesystem::path& db_path, std::string fault)
     : path_(db_path), fault_(std::move(fault)) {
   writer_db_ = std::make_unique<sql::Db>(path_.string(),
                                          sql::FormatVersion{kHistoryVersion});
@@ -608,16 +607,12 @@ History::History(const std::filesystem::path& db_path, std::string fault,
   writer_db_->exec("PRAGMA foreign_keys=ON");
   writer_db_->initialize_format(kHistoryVersion, [&] {
     init_schema(*writer_db_);
-    // Files may outlive a moved-aside history. Reserve their run numbers so a
-    // new run cannot overwrite them or remove them through its cleanup action.
+    // Artifacts may outlive a moved-aside history. Reserve their run numbers
+    // so a new run cannot overwrite them or remove them through its cleanup.
     uint64_t last_run = 0;
-    const auto scratch_runs = run_scratch.empty() ? std::filesystem::path{}
-                                                  : run_scratch / "runs";
-    for (const auto& directory :
-         {path_.parent_path() / "artifacts", scratch_runs}) {
-      if (directory.empty() || !std::filesystem::is_directory(
-                                   std::filesystem::symlink_status(directory)))
-        continue;
+    const auto directory = path_.parent_path() / "artifacts";
+    if (std::filesystem::is_directory(
+            std::filesystem::symlink_status(directory)))
       for (const auto& entry : std::filesystem::directory_iterator(directory)) {
         const auto name = entry.path().filename().string();
         if (!crypto::is_run_id(name)) continue;
@@ -626,7 +621,6 @@ History::History(const std::filesystem::path& db_path, std::string fault,
             std::from_chars(name.data(), name.data() + name.size(), number);
         if (result.ec == std::errc{}) last_run = std::max(last_run, number);
       }
-    }
     if (last_run)
       writer_db_->prepare("INSERT INTO run_counter VALUES(1,?)")
           .bind(1, last_run)
@@ -668,7 +662,7 @@ CREATE TABLE IF NOT EXISTS remote_jobs(
   UNIQUE(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS remote_releases(
   job_id TEXT PRIMARY KEY, service TEXT NOT NULL,
-  instance TEXT NOT NULL, fingerprint TEXT NOT NULL, delete_data INTEGER NOT NULL);
+  instance TEXT NOT NULL, fingerprint TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS last_inputs(
   card TEXT PRIMARY KEY, run_id TEXT NOT NULL, invocation INTEGER NOT NULL, inputs BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS receipts(
@@ -1035,13 +1029,15 @@ void History::complete_invocation(sql::Db& db,
         "SELECT instance,fingerprint FROM remote_jobs WHERE "
         "job_id=?");
     pending.bind(1, s.execution_job_id);
+    // The job's scratch on the worker goes with the invocation's end, an
+    // interruption included. Scratch is tmp and is cleaned up by design; to
+    // keep files, a Card mounts a host folder (grants.hostPaths).
     if (pending.step())
-      db.prepare("INSERT OR REPLACE INTO remote_releases VALUES(?,?,?,?,?)")
+      db.prepare("INSERT OR REPLACE INTO remote_releases VALUES(?,?,?,?)")
           .bind(1, s.execution_job_id)
           .bind(2, s.execution_service)
           .bind(3, pending.text(0))
           .bind(4, pending.text(1))
-          .bind(5, !s.failure || s.failure->kind != FailureKind::interrupted)
           .run();
     db.prepare("DELETE FROM remote_jobs WHERE job_id=?")
         .bind(1, s.execution_job_id)

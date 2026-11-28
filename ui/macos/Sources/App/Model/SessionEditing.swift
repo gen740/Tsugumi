@@ -821,13 +821,6 @@ extension ProjectSession {
   }
 
 
-  func deleteRunScratch(paths: [String]) async throws -> Tsugumi_RPC_RunScratchDeleteResultT {
-    guard let rpc else { throw RPCError.disconnected }
-    let result = try await rpc.deleteRunScratch(opId: UUID(), paths: paths)
-    await refreshCacheUsage()
-    return result
-  }
-
   func deleteRunCategory(_ runId: String, _ category: Tsugumi_RPC_RunRecordCategory) async throws {
     guard connected, let projectId else { throw RPCError.disconnected }
     let request = Tsugumi_Host_RunCategoryDeleteRequestT()

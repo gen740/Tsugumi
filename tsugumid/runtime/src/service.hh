@@ -62,10 +62,9 @@ struct ServiceOptions {
   // Local folder for the workers' own work/tmp/scripts folders (never the
   // project share). Empty: <system temp>/tsugumi-<project id>.
   std::filesystem::path scratch_dir;
-  // Disk-backed, private scratch for invocation outputs. Never kept history.
+  // Disk-backed, private scratch of each invocation, erased when it ends.
   std::filesystem::path run_scratch_dir;
   std::filesystem::path usage_roots_dir;
-  std::filesystem::path usage_scratch_dir;
   // The VM supervisor publishes one shared measurement for all projects.
   std::filesystem::path usage_file;
   // Folders of the Mac the app shares with this project, one per path at
@@ -220,7 +219,6 @@ class Service : public RequestSink {
                          const std::function<std::string()>& operation) -> void;
   void cache_clear(RequestIn& req);
   void cache_usage(RequestIn& req);
-  void scratch_delete(RequestIn& req);
   void history_delete(RequestIn& req);
   void history_category_delete(RequestIn& req);
   void run(RequestIn& req);

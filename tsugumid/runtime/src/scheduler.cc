@@ -1780,8 +1780,19 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     const auto inv = s.invocation;
     s.artifact_sequence = svc_.history().allocate_invocation_sequence(s);
     int64_t last_transfer = 0;
+    // The outputs come back as values and sealed artifacts, so nothing the
+    // record needs stays in this folder. It is erased however the call ends.
+    // Scratch is tmp and is cleaned up by design; to keep files, a Card
+    // mounts a host folder (grants.hostPaths).
+    struct InvocationScratch {
+      stdfs::path path;
+      ~InvocationScratch() {
+        if (!remove_run_scratch(path))
+          log::warn("cannot erase invocation scratch " + path.string());
+      }
+    } scratch{invocation_dir(node, inv)};
     auto result = w.execution->execute(
-        {node, *w.implementation, in, sources, s, invocation_dir(node, inv),
+        {node, *w.implementation, in, sources, s, scratch.path,
          w.cancellation->stop,
          [&] {
            return explicit_cancel_.load() || w.cancellation->failed.load();
@@ -2031,6 +2042,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       st.failure.reset();
     }
     st.ended_at = now_ms();
+    // Each invocation erased its own folder; this removes what holds them.
+    if (!remove_run_scratch(svc_.run_scratch() / "runs" / run_id_))
+      log::warn("cannot erase the scratch of run " + run_id_);
     journal("run",
             sum.status.state == RunState::succeeded   ? "succeeded"
             : sum.status.state == RunState::cancelled ? "cancelled"

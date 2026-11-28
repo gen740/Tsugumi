@@ -54,8 +54,6 @@ auto Decisions::Summary(const std::string& preview) -> std::string {
       out += (out.empty() ? "" : ", ") + json::String(permission);
     return name + " gives Cards: " + out;
   }
-  if (const auto text = json::Text(targets, "removes"); !text.empty())
-    return name + ": " + text;
   return name;
 }
 

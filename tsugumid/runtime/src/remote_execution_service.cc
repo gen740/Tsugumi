@@ -788,25 +788,21 @@ auto RemoteExecutionService::prepare(const RemoteTarget& target,
 auto RemoteExecutionService::release_completed() -> void {
   struct Release {
     std::string job, service, instance, fingerprint;
-    bool delete_data;
   };
   const auto releases = service_.history().read([](sql::Db& db) {
     std::vector<Release> result;
     auto rows = db.prepare(
-        "SELECT job_id,service,instance,fingerprint,delete_data FROM "
-        "remote_releases");
+        "SELECT job_id,service,instance,fingerprint FROM remote_releases");
     while (rows.step())
-      result.push_back({rows.text(0), rows.text(1), rows.text(2), rows.text(3),
-                        rows.i64(4) != 0});
+      result.push_back({rows.text(0), rows.text(1), rows.text(2), rows.text(3)});
     return result;
   });
   for (const auto& r : releases) {
     try {
       client_.cancel(r.service, r.instance, r.job, r.fingerprint);
-      // Cancellation relinquishes execution. Only acknowledged, collected data
-      // may use the separate payload-deleting release; interruption keeps it.
-      if (r.delete_data)
-        client_.release(r.service, r.instance, r.job, r.fingerprint);
+      // Cancellation relinquishes execution; release erases the job's scratch
+      // once the job is terminal. Until then it is refused and retried.
+      client_.release(r.service, r.instance, r.job, r.fingerprint);
     } catch (const BrokerInstanceChanged&) { /* The original journal no longer
                                                 exists at this endpoint. */
     } catch (const std::exception&) {

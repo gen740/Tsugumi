@@ -1,5 +1,3 @@
-#include "tsugumi/runtime_support/cache_usage.hh"
-
 #include <gtest/gtest.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -55,80 +53,44 @@ TEST_F(RunScratch, RefusesAParentWritableByOtherUsers) {
                std::runtime_error);
 }
 
-TEST_F(RunScratch, MeasurementsRetainAllRunsAndDeletionDoesNotFollowLinks) {
-  const auto old = base / "runs" / crypto::uuid4();
-  const auto latest = base / "runs" / crypto::uuid4();
-  std::filesystem::create_directories(old / "work");
-  std::filesystem::create_directories(latest);
-  std::ofstream(old / "work" / "diagnostic") << "diagnostic";
-  std::ofstream(latest / "output") << "latest";
+TEST_F(RunScratch, ErasingDoesNotFollowLinks) {
+  const auto ended = base / "runs" / crypto::uuid4();
+  const auto other = base / "runs" / crypto::uuid4();
+  std::filesystem::create_directories(ended / "work");
+  std::filesystem::create_directories(other);
+  std::ofstream(ended / "work" / "diagnostic") << "diagnostic";
+  std::ofstream(other / "output") << "other";
   const auto outside = base / "keep";
   std::filesystem::create_directory(outside);
   std::ofstream(outside / "evidence") << "do not delete";
-  std::filesystem::create_directory_symlink(outside, old / "link");
+  std::filesystem::create_directory_symlink(outside, ended / "link");
   std::filesystem::create_directory_symlink(outside, base / "runs" / "link");
-  const auto measured = measure_run_scratch(base);
-  ASSERT_EQ(measured.size(), 3);
-  uint64_t bytes = 0;
-  for (const auto& entry : measured) bytes += entry.bytes.value();
-  EXPECT_EQ(bytes, 16);
-  EXPECT_EQ(measure_run_scratch(base).size(), 3);
-  EXPECT_TRUE(std::filesystem::exists(old / "work" / "diagnostic"));
+  // A Card can leave a folder it cannot write; erasing repairs that.
   std::filesystem::permissions(
-      old / "work",
+      ended / "work",
       std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
-  EXPECT_TRUE(remove_run_scratch(old));
-  EXPECT_FALSE(std::filesystem::exists(old));
-  EXPECT_TRUE(std::filesystem::exists(latest / "output"));
+  EXPECT_TRUE(remove_run_scratch(ended));
+  EXPECT_FALSE(std::filesystem::exists(ended));
+  EXPECT_TRUE(std::filesystem::exists(other / "output"));
   EXPECT_TRUE(std::filesystem::exists(outside / "evidence"));
   EXPECT_TRUE(remove_run_scratch(base / "runs" / "link"));
   EXPECT_TRUE(std::filesystem::exists(outside / "evidence"));
   EXPECT_TRUE(
-      remove_run_scratch(old));  // retry after a partial operation is harmless
+      remove_run_scratch(ended));  // retry after a partial operation is harmless
+  EXPECT_TRUE(remove_run_scratch(base / "runs"));
+  EXPECT_FALSE(std::filesystem::exists(base / "runs"));
+  EXPECT_TRUE(std::filesystem::exists(outside / "evidence"));
 }
 
-// Stopping the service joins the usage thread. A walk that cannot be
-// interrupted makes the stop last as long as every project's scratch.
-TEST_F(RunScratch, ACancelledMeasurementStopsWalking) {
-  for (int run = 0; run < 8; ++run) {
-    const auto folder = base / "runs" / crypto::uuid4();
-    std::filesystem::create_directories(folder);
-    for (int file = 0; file < 8; ++file)
-      std::ofstream(folder / std::to_string(file)) << "value";
-  }
-  int asked = 0;
-  EXPECT_EQ(measure_run_scratch(base, [&] { return ++asked, false; }).size(),
-            8);
-  const int entries = asked;
-  EXPECT_GE(entries, 8 * 8);
-  asked = 0;
-  const auto partial = measure_run_scratch(base, [&] { return ++asked > 3; });
-  EXPECT_EQ(asked,
-            4);  // Never asked again, and nothing read, after the answer.
-  EXPECT_LT(partial.size(), 8);
-}
-
-TEST_F(RunScratch, UnreadableFolderStaysListedAndCanBeRemoved) {
+TEST_F(RunScratch, ErasesAnUnreadableFolder) {
   if (::geteuid() == 0)
     GTEST_SKIP() << "Permission denial requires a non-root user";
   const auto locked = base / "runs" / crypto::uuid4();
-  const auto other = base / "runs" / crypto::uuid4();
   std::filesystem::create_directories(locked / "private");
-  std::filesystem::create_directories(other);
   std::ofstream(locked / "private" / "value") << "unknown";
-  std::ofstream(other / "value") << "known";
   ASSERT_EQ(::chmod((locked / "private").c_str(), 0000), 0);
-  const auto measured = measure_run_scratch(base);
-  ASSERT_EQ(measured.size(), 2);
-  for (const auto& entry : measured) {
-    if (entry.path == locked.lexically_relative(base))
-      EXPECT_FALSE(entry.bytes);
-    else
-      EXPECT_EQ(entry.bytes, 5);
-  }
-  EXPECT_TRUE(remove_run_scratch(other));
   EXPECT_TRUE(remove_run_scratch(locked));
-  EXPECT_TRUE(measure_run_scratch(base).empty());
+  EXPECT_FALSE(std::filesystem::exists(locked));
 }
 
 #ifdef __linux__

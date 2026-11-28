@@ -101,7 +101,7 @@ try {
   await call('permission', { id: 'pending-a', allow: true })
   assert.deepEqual(calls.filter(c => c.method === 'DecisionResolveRequest').at(-1)?.fields,
     { request_id: 'pending-a', allow: true })
-  pendingAsked = ['operation_approval\nrun_scratch_delete\n{}']
+  pendingAsked = ['operation_approval\nproject_save\n{}']
   const later = await call('conversation', { path: folders[0], session: 'a' })
   assert.deepEqual(later.permissions[0].asked, pendingAsked)
   await call('permission', { id: 'pending-a', allow: false })

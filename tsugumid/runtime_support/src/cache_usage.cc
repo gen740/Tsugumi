@@ -7,7 +7,6 @@
 #include <map>
 #include <set>
 
-#include "tsugumi/runtime_support/scratch_usage.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/workerd/store.hh"
@@ -16,13 +15,10 @@ namespace tsugumi {
 namespace stdfs = std::filesystem;
 namespace R = Tsugumi::RPC;
 
-CacheUsage::CacheUsage(stdfs::path roots, stdfs::path scratch,
-                       stdfs::path single_roots, stdfs::path single_scratch,
+CacheUsage::CacheUsage(stdfs::path roots, stdfs::path single_roots,
                        std::string single_id, stdfs::path publish)
     : roots_(std::move(roots)),
-      scratch_(std::move(scratch)),
       single_roots_(std::move(single_roots)),
-      single_scratch_(std::move(single_scratch)),
       publish_(std::move(publish)),
       single_id_(std::move(single_id)) {}
 
@@ -46,18 +42,13 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
   std::error_code error;
   if (!single_id_.empty())
     ids.insert(single_id_);
-  else
-    for (const auto& base : {roots_, scratch_}) {
-      if (!stdfs::exists(base)) continue;
-      for (const auto& entry : stdfs::directory_iterator(base)) {
-        if (stdfs::is_directory(entry.symlink_status()))
-          ids.insert(entry.path().filename().string());
-      }
-    }
+  else if (stdfs::exists(roots_))
+    for (const auto& entry : stdfs::directory_iterator(roots_))
+      if (stdfs::is_directory(entry.symlink_status()))
+        ids.insert(entry.path().filename().string());
   std::vector<std::vector<std::string>> roots;
   for (const auto& id : ids) {
     const auto folder = single_id_.empty() ? roots_ / id : single_roots_;
-    const auto scratch = single_id_.empty() ? scratch_ / id : single_scratch_;
     auto project = std::make_unique<R::ProjectCacheUsageT>();
     project->project = id;
     project->name = id;
@@ -85,28 +76,6 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
         paths.push_back(target.lexically_normal().string());
       }
     if (last && !paths.empty()) project->last_used = last;
-    try {
-      uint64_t bytes = 0;
-      bool known = true;
-      std::string unknown;
-      for (const auto& entry : measure_run_scratch(scratch)) {
-        auto item = std::make_unique<R::RunScratchUsageT>();
-        item->path = entry.path;
-        item->bytes = entry.bytes.value_or(0);
-        item->size_unknown = !entry.bytes;
-        known &= entry.bytes.has_value();
-        if (!entry.bytes) unknown += (unknown.empty() ? "" : ", ") + entry.path;
-        bytes += entry.bytes.value_or(0);
-        project->run_scratch.push_back(std::move(item));
-      }
-      if (known)
-        project->scratch_bytes = bytes;
-      else
-        project->error = "Unknown scratch folder sizes: " + unknown;
-    } catch (const std::exception& e) {
-      project->run_scratch.clear();
-      project->error = e.what();
-    }
     result.projects.push_back(std::move(project));
   }
   try {

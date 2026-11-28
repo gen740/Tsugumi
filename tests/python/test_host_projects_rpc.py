@@ -179,7 +179,7 @@ def host(tmp_path):
         state = tmp_path / "state"
         with (tmp_path / "host.log").open("w") as log:
             proc = subprocess.Popen([str(HOST), "--state-dir", str(state), "--unix", short + "/s",
-                                     "--socket-dir", short + "/b", "--usage-scratch-dir", str(tmp_path.resolve() / "scratch"),
+                                     "--socket-dir", short + "/b", "--run-scratch-root", str(tmp_path.resolve() / "scratch"),
                                      "--demos-dir", str(demos), "--no-websocket"], stdout=log, stderr=log)
         try:
             published = process_file(proc, state / "host.ready")

@@ -3,7 +3,6 @@
 
 #include <gtest/gtest.h>
 
-#include "agent/approval.hh"
 #include "host/agent_policy.hh"
 #include "host/failure.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
@@ -77,24 +76,16 @@ TEST(AgentCatalog, InternalVersionNoteRequestsAreNotTools) {
                std::runtime_error);
 }
 
-TEST(AgentCatalog, ExposesPublicToolsWithTheExpectedApprovalPolicy) {
+TEST(AgentCatalog, ExposesThePublicTools) {
   const Catalog catalog;
-  for (const auto* name : {"project_inspect", "project_file_read"}) {
-    const auto* tool = catalog.Find(name);
-    ASSERT_NE(tool, nullptr) << name;
-    EXPECT_FALSE(tool->approval_required) << name;
-  }
-  // Deleting run scratch is the one call that waits for the person.
   for (const auto* name :
-       {"run_history_delete", "project_cache_clear", "version_checkout",
-        "version_init", "version_mark", "nix_path_lock_update"}) {
-    const auto* tool = catalog.Find(name);
-    ASSERT_NE(tool, nullptr) << name;
-    EXPECT_FALSE(tool->approval_required) << name;
-  }
-  const auto* guarded = catalog.Find("run_scratch_delete");
-  ASSERT_NE(guarded, nullptr);
-  EXPECT_TRUE(guarded->approval_required);
+       {"project_inspect", "project_file_read", "run_history_delete",
+        "project_cache_clear", "version_checkout", "version_init",
+        "version_mark", "nix_path_lock_update"})
+    EXPECT_NE(catalog.Find(name), nullptr) << name;
+  // Run scratch is erased when each invocation ends; there is nothing to
+  // delete by hand.
+  EXPECT_EQ(catalog.Find("run_scratch_delete"), nullptr);
   for (const auto* denied :
        {"view_save", "view_set_visible", "project_open", "session_hello"}) {
     EXPECT_EQ(catalog.Find(denied), nullptr);
@@ -127,7 +118,6 @@ TEST(AgentCatalog, TemplateToolsUseTheExpectedApprovalAndRolePolicy) {
        {"template_list", "template_copy", "template_add", "template_import"}) {
     const auto* tool = catalog.Find(name);
     ASSERT_NE(tool, nullptr);
-    EXPECT_FALSE(tool->approval_required) << name;
     EXPECT_EQ(tool->mutating, std::string_view(name) != "template_list");
   }
 }
@@ -173,20 +163,6 @@ TEST(AgentCatalog, AttachedFoldersHaveNoProjectRPC) {
   EXPECT_THROW(EncodeProjectRequest("attached_folder_read",
                                     R"({"folder":"/ungranted","path":""})", 1),
                std::runtime_error);
-}
-
-TEST(AgentApprovalDescription, ScratchUsesOnlyTheCurrentProjectsMeasurements) {
-  auto read = [](const auto& name, const auto&) {
-    EXPECT_EQ(name, "project_cache_usage");
-    return json::Object(
-        R"({"current_project":"our-cache","projects":[{"project":"other-cache","build_bytes":"9999"},{"project":"our-cache","name":"Our project","build_bytes":"1234","run_scratch":[{"path":"runs/00000000-0000-4000-8000-000000000001","bytes":"75"},{"path":"runs/old","bytes":"80"}]}]})");
-  };
-  const auto scratch = DescribeOperation(
-      "run_scratch_delete",
-      {{"paths", R"(["runs/00000000-0000-4000-8000-000000000001"])"}},
-      "project", read);
-  EXPECT_NE(scratch.find("75"), std::string::npos);
-  EXPECT_EQ(scratch.find("runs/old"), std::string::npos);
 }
 
 }  // namespace

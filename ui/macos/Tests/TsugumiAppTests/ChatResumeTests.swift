@@ -39,7 +39,7 @@ import TsugumiTestSupport
         ?? build.appendingPathComponent("hostd/tsugumi-hostd")
       core.arguments = ["--state-dir", state.path,
                         "--socket-dir", directory.appendingPathComponent("b").path,
-                        "--usage-scratch-dir", canonicalDirectory(directory).appendingPathComponent("scratch").path,
+                        "--run-scratch-root", canonicalDirectory(directory).appendingPathComponent("scratch").path,
                         "--unix", directory.appendingPathComponent("agent.sock").path,
                         "--listen", "127.0.0.1:0"]
       if managed { try useHelperDouble() }

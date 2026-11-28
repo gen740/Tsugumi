@@ -89,7 +89,7 @@ private final class AuthenticationFixture {
     } ?? directory.path
     daemon.arguments = ["--state-dir", state.path,
                         "--socket-dir", directory.appendingPathComponent("b").path,
-                        "--usage-scratch-dir", URL(fileURLWithPath: canonical).appendingPathComponent("scratch").path,
+                        "--run-scratch-root", URL(fileURLWithPath: canonical).appendingPathComponent("scratch").path,
                         "--unix", directory.appendingPathComponent("agent.sock").path,
                         "--listen", "127.0.0.1:0"]
     daemon.standardOutput = FileHandle.nullDevice

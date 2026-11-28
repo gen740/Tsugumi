@@ -714,7 +714,9 @@ def test_long_terminal_redraw_is_consistent_in_forward_and_reverse_pages(running
     ("registration_replaced", True),
 ])
 def test_core_restart_interrupts_the_external_job(running_job, outage, completed):
-    """A new core never fetches old results, even after transport returns."""
+    """A new core never fetches old results, even after transport returns.
+
+    The interrupted invocation has ended, so its job scratch is released."""
     gateway, daemon, client, run_id, job_id = running_job
     if outage == "offline":
         gateway.online = False
@@ -734,7 +736,10 @@ def test_core_restart_interrupts_the_external_job(running_job, outage, completed
     gateway.registered_server = gateway.server_id
     gateway.cancel_received.wait()
     assert job_id in gateway.cancelled
-    assert job_id not in gateway.released
+    deadline = time.monotonic() + 15
+    while job_id not in gateway.released and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert job_id in gateway.released
     assert gateway.receipts[job_id]["state"] == ("succeeded" if completed else "cancelled")
     assert len(gateway.core_ids) == 2
     record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record

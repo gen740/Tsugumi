@@ -89,8 +89,8 @@ the person's decision, so delete them when the person asks.
 - A project inside a person's registered trusted folder is trusted without a separate question; trust controls
   its Skills.
 - tools lists a family's actions and schemas, then calls an action with its arguments. It provides file utilities,
-  Nix evaluation, templates, run status/history/logs, artifacts, versions and maintenance on demand. Deleting run
-  scratch waits for the person's approval of each call. For a trial the person describes without its run,
+  Nix evaluation, templates, run status/history/logs, artifacts, versions and maintenance on demand. For a trial
+  the person describes without its run,
   versions action find narrows the history to the versions that changed a Card, their runs and recorded outputs.
 - project_copy copies files into Card sources without their bytes passing through your context; it returns paths,
   sizes and hashes. input_types returns complete FlatBuffers schemas and routing details for a Card.

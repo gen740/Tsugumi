@@ -119,7 +119,7 @@ class Host(HostConnection):
                 os.environ.get("TSUGUMI_HOSTD", str(BUILD / "hostd/tsugumi-hostd")),
                 "--state-dir", str(self.directory), "--no-websocket",
                 "--socket-dir", str(Path(self.socket_directory.name) / "b"),
-                "--usage-scratch-dir", str(self.directory / "run-scratch"),
+                "--run-scratch-root", str(self.directory / "run-scratch"),
                 "--unix", str(Path(self.socket_directory.name) / "rpc"),
                 *args,
             ], stdout=self.log, stderr=self.log,

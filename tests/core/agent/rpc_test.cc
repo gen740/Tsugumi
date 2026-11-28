@@ -718,13 +718,19 @@ TEST_F(AgentFixture, RestartAndObservationLeaveTheTurnInterruptedUntilResume) {
 TEST_F(AgentProjectFixture,
        InterruptedToolIsRecordedAndANewMessageCanReplaceResume) {
   ModelServer model;
-  model.Queue(AnthropicFamilyTool("pending-scratch", "maintenance",
-                                  "delete_scratch", R"({"paths":["runs/1"]})"));
+  // Giving a Card the network waits for the person's decision.
+  const std::string edit =
+      R"({"edits":[{"file_path":"definitions/a/_card.json","selector":[{"field":"grants"},{"field":"network"}],"old_value":{"present":true,"value":false},"new_value":{"present":true,"value":true}}]})";
+  model.Queue(AnthropicTool("pending-edit", "project_edit", edit));
   model.Queue(AnthropicText("Followed the new message"));
   Configure(model);
-  StartProject();
+  Write(directory.path / "project/definitions/a/_card.json",
+        ::tsugumi::test::FixtureCodeCard());
+  StartProject(
+      false,
+      R"({"name":"Permissions","nixPath": [],"canvas":{"cards":[{"id":"a"}],"connections":[]}})");
   const auto conversation = Conversation("interrupted-operation");
-  ASSERT_TRUE(Send(conversation, "Delete that scratch").Code().empty());
+  ASSERT_TRUE(Send(conversation, "Give the Card the network").Code().empty());
   // A pending decision is exposed through EventsRequest reads only.
   const auto deadline = std::chrono::steady_clock::now() + 3s;
   while (Events(conversation).View().find("decision") == std::string::npos &&
@@ -739,12 +745,11 @@ TEST_F(AgentProjectFixture,
   const auto snapshot = Get(conversation).View();
   EXPECT_TRUE(JsonBool(snapshot, "/resumable"));
   EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/kind"), "tool");
-  // A family action is recorded as the tools call the model made.
-  EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/name"), "tools");
+  EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/name"),
+            "project_edit");
   EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/id"), "1");
-  EXPECT_EQ(
-      JsonString(snapshot, "/interrupted_operation/arguments_json"),
-      R"({"family":"maintenance","action":"delete_scratch","arguments":{"paths":["runs/1"]}})");
+  EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/arguments_json"),
+            edit);
   EXPECT_FALSE(model.WaitForRequests(2, 150ms));
   // A new message needs a new idempotency key; the fixture defaults to turn-1.
   // Both UIs encode empty selection vectors, rather than omitting them.
@@ -772,7 +777,9 @@ TEST_F(AgentProjectFixture,
             "Do something else instead");
   EXPECT_NE(model.Requests()[1].find("Do something else instead"),
             std::string::npos);
-  EXPECT_NE(model.Requests()[1].find("The tool was not replayed"),
+  // The edit was never saved: the project still denies the Card the network.
+  EXPECT_NE(Read(directory.path / "project/definitions/a/_card.json")
+                .find("\"network\":false"),
             std::string::npos);
   const auto recorded = Get(conversation).View();
   EXPECT_EQ(JsonString(recorded, "/conversation/messages/3/display"),

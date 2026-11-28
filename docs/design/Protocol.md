@@ -15,7 +15,7 @@ The shared Unix and WebSocket transport limits each connection to 64 MiB of pend
 
 See [run recovery](RunStorage.md#interrupted-runs), [worker reconnection](RemoteWorker.md#host-authorization-and-following-a-run) and [checkout recovery](VersionRecords.md#checkout-journal-and-recovery) for process and transaction lifetimes.
 
-There are 55 requests.
+There are 54 requests.
 
 ## Connection
 
@@ -58,8 +58,7 @@ No fields.
 | [`ProjectValidate`](#projectvalidate) | ProjectValidateResult | targets = [] means everything; mode = executable. |
 | [`ProjectShell`](#projectshell) | ProjectShellResult | Run a command in a staged Card source workspace; successful source edits save atomically. Attached folders are at attached/<SHA-256(path)[0:16]>; scratch/ persists. timeout_ms defaults to 10000 (1..30000). Returns exit status, bounded stdout/stderr and full-output paths. |
 | [`ProjectCacheClear`](#projectcacheclear) | ProjectCacheClearResult | Clear this project's build cache. |
-| [`ProjectCacheUsage`](#projectcacheusage) | ProjectCacheUsageResult | Measure build and scratch usage. |
-| [`RunScratchDelete`](#runscratchdelete) | RunScratchDeleteResult | Delete paths selected from the scratch usage report. |
+| [`ProjectCacheUsage`](#projectcacheusage) | ProjectCacheUsageResult | Measure build cache usage. |
 | [`OperationGet`](#operationget) | OperationResult |  |
 
 ### ProjectOpen
@@ -143,13 +142,6 @@ No fields.
 ### ProjectCacheUsage
 
 No fields.
-
-### RunScratchDelete
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `op_id` | `string` | yes |  |
-| `paths` | `[string]` | yes |  |
 
 ### OperationGet
 

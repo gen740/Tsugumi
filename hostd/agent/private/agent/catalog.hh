@@ -22,7 +22,6 @@ struct CatalogTool {
   bool host = false;
   bool mutating = false;
   bool has_origin = false;
-  bool approval_required = false;
 };
 
 enum class ModelRole { Main, Helper, ScopedHelper, Guide };

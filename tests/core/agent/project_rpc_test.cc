@@ -1094,8 +1094,19 @@ TEST_F(AgentProjectFixture, ConversationsCannotMoveBetweenCopiedProjects) {
   StartProject();
   const auto original = project_id;
   const auto conversation = Conversation("copy-a");
-  const auto pending =
-      Tool(conversation, "run_scratch_delete", R"({"paths":["runs/1"]})");
+  // A reload that widens a Card's permissions waits for the person.
+  const auto snapshot = JsonString(Inspect(conversation).View(), "/text");
+  Write(directory.path / "project/tsugumi.json",
+        FixtureProjectDocument(
+            R"({"name":"External edit","canvas":{"cards":[{"id":"work"}],"connections":[]}})"));
+  const auto definition =
+      directory.path / "project/definitions/work/_card.json";
+  Write(definition, ::tsugumi::test::FixtureCodeCard(
+                        R"({"grants":{"network":true,"gui":false}})"));
+  Write(definition.parent_path() / "README.md", host::CardReadme("work"));
+  const auto pending = Tool(
+      conversation, "project_reload",
+      "{\"base_rev\":" + Quote(JsonString(snapshot, "/value/rev")) + "}");
   ASSERT_EQ(pending.Code(), "decision_required");
   // Another registered project, with an identical title, is still distinct.
   const auto copy = directory.path / "copy-b";
@@ -2144,82 +2155,6 @@ TEST_F(AgentProjectFixture, ActsOnRunDataAndVersionsRunWithoutADecision) {
   }));
 }
 
-TEST_F(AgentProjectFixture, ScratchDeletionIsBoundToOneCallAndArguments) {
-  StartProject(
-      false,
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
-  const auto conversation = Conversation("operation-approvals");
-  auto resolve = [&](const Reply& pending, bool allow) {
-    EXPECT_EQ(pending.Code(), "decision_required");
-    EXPECT_FALSE(pending.RequestId().empty());
-    return Call(*human, A::RequestPayload::DecisionResolveRequest,
-                [&](Builder& b) {
-                  return A::CreateDecisionResolveRequest(
-                             b, b.CreateString(pending.RequestId()), allow)
-                      .Union();
-                });
-  };
-  const std::string name = "run_scratch_delete";
-  const std::string arguments = R"({"paths":["runs/1"]})";
-  auto declined = Tool(conversation, name, arguments, "decline");
-  ASSERT_TRUE(resolve(declined, false).Code().empty());
-  EXPECT_EQ(Tool(conversation, name, arguments, "decline").Code(),
-            "permission_denied");
-  auto pending = Tool(conversation, name, arguments, "approve");
-  ASSERT_TRUE(resolve(pending, true).Code().empty());
-  // Invalid arguments cannot consume this approval.
-  EXPECT_EQ(Tool(conversation, name, "{\"different\":true}", "approve").Code(),
-            "conflict");
-  const auto result = Tool(conversation, name, arguments, "approve");
-  ASSERT_TRUE(result.Code().empty());
-  EXPECT_FALSE(JsonBool(result.View(), "/isError")) << result.View();
-  const auto replay = Tool(conversation, name, arguments, "approve");
-  ASSERT_TRUE(replay.Code().empty());
-  EXPECT_EQ(replay.View(), result.View());
-  // A new act with exactly the same arguments still asks again.
-  EXPECT_EQ(Tool(conversation, name, arguments, "approve-new").Code(),
-            "decision_required");
-  const auto recorded = Get(conversation);
-  const auto* tools =
-      recorded.Value()->value_as_ConversationResult()->conversation()->tools();
-  ASSERT_NE(tools, nullptr);
-  for (const bool denied : {false, true}) {
-    const std::string call = denied ? "approval:decline" : "approval:approve";
-    const auto found = std::ranges::find_if(
-        *tools, [&](const auto* tool) { return tool->id()->str() == call; });
-    ASSERT_NE(found, tools->end()) << call;
-    EXPECT_EQ((*found)->name()->str(), "operation_approval");
-    EXPECT_EQ((*found)->state()->str(), "completed");
-    EXPECT_EQ((*found)->is_error(), denied);
-  }
-}
-
-TEST_F(AgentProjectFixture,
-       DeletingAConversationInvalidatesItsPendingOperationApprovals) {
-  StartProject(
-      false,
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
-  const auto conversation = Conversation("deleted-approval");
-  const auto pending = Tool(conversation, "run_scratch_delete",
-                            R"({"paths":["runs/1"]})", "pending-scratch");
-  ASSERT_EQ(pending.Code(), "decision_required");
-  ASSERT_TRUE(Call(*human, A::RequestPayload::ConversationDeleteRequest,
-                   [&](Builder& b) {
-                     return A::CreateConversationDeleteRequest(
-                                b, b.CreateString(conversation))
-                         .Union();
-                   })
-                  .Code()
-                  .empty());
-  EXPECT_EQ(Call(*human, A::RequestPayload::DecisionResolveRequest,
-                 [&](Builder& b) {
-                   return A::CreateDecisionResolveRequest(
-                              b, b.CreateString(pending.RequestId()), true)
-                       .Union();
-                 })
-                .Code(),
-            "not_found");
-}
 TEST_F(AgentProjectFixture,
        AnnotationReferencesAreReservedAcrossClientsAndRestarts) {
   StartProject();

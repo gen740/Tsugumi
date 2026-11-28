@@ -641,9 +641,7 @@ struct Environments::Impl {
           "--gcroots-dir",
           (roots / entry.state.key).string(),
           "--usage-roots-dir",
-          roots.string(),
-          "--usage-scratch-dir",
-          scratch.string()};
+          roots.string()};
       // Temporaries stay in the system's temporary folder unless the caller
       // selected its own run storage; then they go beside the control files.
       if (!options.run_scratch_directory.empty() ||

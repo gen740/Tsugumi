@@ -349,9 +349,6 @@ export class RPCClient {
   clearCache(opId: string) {
     return this.call<R.ProjectCacheClearResultT>(RequestPayload.ProjectCacheClearRequest, Object.assign(new R.ProjectCacheClearRequestT(), { opId }))
   }
-  deleteRunScratch(opId: string, paths: string[]) {
-    return this.call<R.RunScratchDeleteResultT>(RequestPayload.RunScratchDeleteRequest, new R.RunScratchDeleteRequestT(opId, paths))
-  }
   cacheUsage() {
     return this.call<R.ProjectCacheUsageResultT>(RequestPayload.ProjectCacheUsageRequest, new R.ProjectCacheUsageRequestT())
   }

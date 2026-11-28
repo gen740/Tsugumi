@@ -47,7 +47,6 @@ struct Options {
   stdfs::path run_scratch_dir;
   stdfs::path scratch_dir;
   stdfs::path usage_roots_dir;
-  stdfs::path usage_scratch_dir;
   stdfs::path usage_file;
   stdfs::path host_folders;
   bool project_shell = false;
@@ -70,7 +69,7 @@ void usage() {
       "                [--worker PATH] [--workerd PATH] [--cpus N] "
       "[--gcroots-dir DIR]\n"
       "                [--scratch-dir DIR] [--run-scratch-dir DIR] "
-      "[--usage-roots-dir DIR] [--usage-scratch-dir DIR]\n"
+      "[--usage-roots-dir DIR]\n"
       "                [--usage-file FILE]\n"
       "                [--host-folders DIR] [--substituters-file FILE]\n"
       "       tsugumid --project DIR --prepare-cards FILE [options]\n"
@@ -127,8 +126,6 @@ std::optional<Options> parse(int argc, char** argv) {
       o.scratch_dir = next();
     else if (a == "--usage-roots-dir")
       o.usage_roots_dir = next();
-    else if (a == "--usage-scratch-dir")
-      o.usage_scratch_dir = next();
     else if (a == "--usage-file")
       o.usage_file = next();
     else if (a == "--host-folders")
@@ -275,7 +272,6 @@ int run_daemon(int argc, char** argv) {
   so.run_scratch_dir = opt.run_scratch_dir;
   so.scratch_dir = opt.scratch_dir;
   so.usage_roots_dir = opt.usage_roots_dir;
-  so.usage_scratch_dir = opt.usage_scratch_dir;
   so.usage_file = opt.usage_file;
   so.host_folders = opt.host_folders;
   so.project_shell = opt.project_shell;

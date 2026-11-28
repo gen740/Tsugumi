@@ -6,7 +6,6 @@
 #include <string>
 #include <vector>
 
-#include "tsugumi/runtime_support/scratch_usage.hh"
 
 namespace tsugumi {
 

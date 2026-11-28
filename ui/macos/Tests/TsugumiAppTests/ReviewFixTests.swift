@@ -50,22 +50,6 @@ import TsugumiRPC
     #expect(answered["third"] == [] && answered["fourth"] == [] && queue.first == nil)
   }
 
-  @Test func scratchSelectionExcludesUnknownBytes() {
-    let a = Tsugumi_RPC_RunScratchUsageT(); a.path = "runs/a"; a.bytes = 1000
-    let b = Tsugumi_RPC_RunScratchUsageT(); b.path = "runs/b"; b.bytes = 5
-    let unknown = Tsugumi_RPC_RunScratchUsageT(); unknown.path = "unreadable"; unknown.bytes = 99; unknown.sizeUnknown = true
-    let candidates = [a, b, unknown]
-    var selection = ScratchSelection()
-    #expect(selection.rows(candidates).isEmpty)
-    selection.paths.insert(b.path)
-    #expect(selection.knownBytes(candidates) == 5 && !selection.hasUnknown(candidates))
-    selection.paths.insert(unknown.path)
-    selection.paths.insert(a.path)
-    selection.paths.remove(a.path)
-    #expect(selection.rows(candidates).map(\.path) == [b.path, unknown.path])
-    #expect(selection.knownBytes(candidates) == 5 && selection.hasUnknown(candidates))
-  }
-
   @Test func stopTracksOnlyTheCurrentActiveRun() async throws {
     let directory = try SyncTests.project()
     defer { try? FileManager.default.removeItem(at: directory) }

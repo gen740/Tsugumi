@@ -90,7 +90,7 @@ await import('./runComparison')
 
 
 
-await import("./runScratch")
+await import("./cacheSettings")
 await import('./cardIdentity')
 await import('./agentAppearance')
 

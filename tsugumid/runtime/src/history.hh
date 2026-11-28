@@ -83,8 +83,7 @@ class History {
  public:
   // `fault` (tests only): "history_invocation" makes every invocation record
   // write fail.
-  History(const std::filesystem::path& db_path, std::string fault = {},
-          const std::filesystem::path& run_scratch = {});
+  History(const std::filesystem::path& db_path, std::string fault = {});
   ~History();
   using Work = std::function<void(sql::Db&)>;
   // Ordered async write. Blocks while the queue is full (backpressure).

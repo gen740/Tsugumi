@@ -25,7 +25,7 @@ extension AuthenticationTests {
       process.executableURL = URL(fileURLWithPath: binary)
       process.arguments = ["--state-dir", state.path, "--unix", root.appendingPathComponent("rpc").path,
                            "--socket-dir", root.appendingPathComponent("b").path, "--no-websocket",
-                           "--usage-scratch-dir", root.appendingPathComponent("scratch").path]
+                           "--run-scratch-root", root.appendingPathComponent("scratch").path]
       process.environment = environment.merging(["TSUGUMI_RPC_TRACE": "1"]) { _, trace in trace }
       try process.run()
       return process

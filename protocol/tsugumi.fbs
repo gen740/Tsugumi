@@ -308,7 +308,6 @@ union ReceiptValue {
   RunHistoryDeleteResult = 7,
   VersionResult = 8,
   ProjectShellResult = 9,
-  RunScratchDeleteResult = 10,
   RunCategoryDeleteResult = 11,
 }
 
@@ -405,27 +404,7 @@ table ProjectValidateRequest {
 /// -> ProjectCacheClearResult. Clear this project's build cache.
 table ProjectCacheClearRequest { op_id:string (id: 0, required); }
 
-/// -> RunScratchDeleteResult. Delete paths selected from the scratch usage report.
-table RunScratchDeleteRequest {
-  op_id:string (id: 0, required);
-  paths:[string] (id: 1, required);
-}
-table RunScratchDeleteResult {
-  deleted:[string] (id: 0, required);
-  retained:[string] (id: 1, required);
-  /// Sum of successfully measured deleted folders; unknown sizes are excluded.
-  freed_bytes:uint64 (id: 2);
-}
-table RunScratchUsage {
-  /// Relative scratch folder: runs/<project run number> or recovery.
-  path:string (id: 0, required);
-  /// Measured bytes; use only when size_unknown is false.
-  bytes:uint64 (id: 1);
-  /// Measurement failed. The folder remains available for explicit deletion.
-  size_unknown:bool (id: 2);
-}
-
-/// -> ProjectCacheUsageResult. Measure build and scratch usage.
+/// -> ProjectCacheUsageResult. Measure build cache usage.
 table ProjectCacheUsageRequest {}
 
 table ProjectCacheUsage {
@@ -434,11 +413,9 @@ table ProjectCacheUsage {
   /// NAR bytes of the rooted closure, including build dependencies. Shared paths
   /// count once in each project, and only once in the total.
   build_bytes:uint64 = null (id: 2);
-  scratch_bytes:uint64 = null (id: 3);
   /// Latest project start or root use; absent when there are no roots.
-  last_used:int64 = null (id: 4);
-  error:string (id: 5);
-  run_scratch:[RunScratchUsage] (id: 6);
+  last_used:int64 = null (id: 3);
+  error:string (id: 4);
 }
 
 table ProjectCacheUsageResult {
@@ -449,8 +426,6 @@ table ProjectCacheUsageResult {
   measured_at:int64 = null (id: 4);
   current_project:string (id: 5);
   error:string (id: 6);
-  /// This project's latest run remains usable; its scratch cannot be deleted here.
-  protected_run:string (id: 7);
 }
 
 /// -> NixPathLockedSource. Fetch a source for an explicit Host lock update.
@@ -925,7 +900,6 @@ union RequestPayload {
   RunEnvironmentPathsRequest = 43,
   ProjectShellRequest = 44,
   ProjectCacheUsageRequest = 48,
-  RunScratchDeleteRequest = 49,
   CardIdRequest = 50,
   VersionNoteRequest = 51,
   RunEnvironmentUsesRequest = 52,
@@ -1386,7 +1360,6 @@ union ReplyPayload {
   EnvironmentPathPage = 33,
   ProjectShellResult = 34,
   ProjectCacheUsageResult = 36,
-  RunScratchDeleteResult = 37,
   CardIdResult = 38,
   VersionNote = 39,
   EnvironmentUsePage = 40,

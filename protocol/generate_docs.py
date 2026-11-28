@@ -14,7 +14,7 @@ OUT = ROOT / "docs" / "design" / "Protocol.md"
 GROUPS = [
     ("Connection", ["SessionHello", "ProjectActivity", "CoreTrace"]),
     ("Projects and saving", ["ProjectOpen", "ProjectInspect", "ProjectHostRequirements", "CardId", "ProjectSave", "ProjectReload",
-                       "ProjectValidate", "ProjectShell", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "OperationGet"]),
+                       "ProjectValidate", "ProjectShell", "ProjectCacheClear", "ProjectCacheUsage", "OperationGet"]),
     ("Files", ["ProjectFileList", "ProjectFileStat", "ProjectFileRead"]),
     ("Nix evaluation and Card types", ["EvaluateNix", "NixPathLockSource", "RewriteParamLiteral", "InputTypes", "OutputTypes"]),
     ("Running", ["RunPlan", "Run", "RunCancel", "RunStatus", "WorkerProbeMeasure"]),

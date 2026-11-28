@@ -655,9 +655,6 @@ enum Shared {
   "hostRequests": [
     "LayoutValidateRequest"
   ],
-  "approvalRequests": [
-    "RunScratchDeleteRequest"
-  ],
   "agentFields": [
     "save_intent",
     "op_id",
@@ -1151,7 +1148,6 @@ enum Shared {
       "maintenance": {
         "usage": "project_cache_usage",
         "clear_cache": "project_cache_clear",
-        "delete_scratch": "run_scratch_delete",
         "delete_history": "run_history_delete",
         "operation": "operation_get",
         "validate_layout": "layout_validate"

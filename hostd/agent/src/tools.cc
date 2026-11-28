@@ -8,7 +8,6 @@
 #include <map>
 #include <set>
 
-#include "agent/approval.hh"
 #include "agent/context.hh"
 #include "agent/helpers.hh"
 #include "agent/providers.hh"
@@ -953,32 +952,17 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
 auto Tools::ApproveOperation(const std::string& project,
                              const std::string& conversation,
                              const ToolCall& call, const std::string& digest,
-                             const json::Members& args, bool wait,
-                             std::stop_token stop,
+                             bool wait, std::stop_token stop,
                              const std::vector<std::string>& permissions)
     -> void {
   const auto binding =
-      permissions.empty()
-          ? digest
-          : crypto::sha256_hex(digest + "\n" + json::Encode(permissions));
+      crypto::sha256_hex(digest + "\n" + json::Encode(permissions));
   auto describe = [&] {
-    if (!permissions.empty())
-      return call.name + "\n" +
-             json::Encode(
-                 json::Members{{"project", json::Quote(project)},
-                               {"arguments_digest", json::Quote(digest)},
-                               {"permissions", json::Encode(permissions)}});
-    return DescribeOperation(
-        call.name, args, project,
-        [&](const std::string& name, const json::Members& query) {
-          const auto reply = json::Object(
-              ProjectCall(project, name, json::Encode(query), stop));
-          if (json::Text(reply, "reply") == "Failure")
-            throw Failure(
-                "approval_unavailable",
-                "Cannot read approval targets: " + json::Encode(reply));
-          return json::Object(json::Get(reply, "value", "{}"));
-        });
+    return call.name + "\n" +
+           json::Encode(
+               json::Members{{"project", json::Quote(project)},
+                             {"arguments_digest", json::Quote(digest)},
+                             {"permissions", json::Encode(permissions)}});
   };
   std::unique_lock lock(mutex);
   auto approval = decisions.Find(conversation, call.id, binding);
@@ -1423,7 +1407,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
       (call.name == "evaluate_nix" && json::Bool(json::Get(args, "build"))) ||
       call.name == "project_shell";
   const bool changes_project =
-      (!execution && (spec->mutating || spec->approval_required)) ||
+      (!execution && spec->mutating) ||
       call.name == "card_id";
   if (c.role == "guide" && (changes_project || execution))
     throw Failure("permission_denied", "The guide cannot change projects");
@@ -1480,7 +1464,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
                           ToolResources(conversation, boundary));
       op_id = old.text(4);
       interrupted = true;
-      if (!spec->approval_required) {
+      {
         auto approval = db.prepare(
             "SELECT state,id FROM decisions WHERE conversation=? AND call=?");
         approval.bind(1, conversation).bind(2, call.id);
@@ -1494,15 +1478,15 @@ auto Tools::ExecuteTool(const std::string& conversation,
             throw Failure("permission_denied",
                           "The user declined this operation. Nothing was "
                           "changed; continue without retrying it.");
-          // The core rejected this attempt before asking for Card permissions;
-          // approval_required has no durable core receipt. Recheck the same
-          // unapproved request, including reload's current on-disk widening.
+          // The core rejected this attempt before asking for Card permissions.
+          // Recheck the same unapproved request, including reload's current
+          // on-disk widening.
           // ApproveOperation compares its exact binding before consuming it.
           // Once consumed, only receipt recovery may resolve the operation.
           if (state == "pending" || state == "allowed") interrupted = false;
         }
       }
-    } else if (!spec->approval_required) {
+    } else {
       auto q =
           conversations->ConversationDatabase(conversation)
               .prepare("INSERT INTO receipts VALUES(?,?,?,'sent','',0,?,?)");
@@ -1513,18 +1497,6 @@ auto Tools::ExecuteTool(const std::string& conversation,
           .bind(5, op_id)
           .run();
     }
-  }
-  if (spec->approval_required && !interrupted) {
-    ApproveOperation(project, conversation, call, digest, args, wait, stop, {});
-    std::lock_guard lock(mutex);
-    auto q = conversations->ConversationDatabase(conversation)
-                 .prepare("INSERT INTO receipts VALUES(?,?,?,'sent','',0,?,?)");
-    q.bind(1, conversation)
-        .bind(2, call.id)
-        .bind(3, digest)
-        .bind(4, project)
-        .bind(5, op_id)
-        .run();
   }
   // Keep the original scoped request across permission approval. Expansion and
   // binding checks are identical on the initial send and after approval.
@@ -1754,7 +1726,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
       if (permissions.empty())
         throw Failure("approval_unavailable",
                       "The project reported no permissions to approve");
-      ApproveOperation(project, conversation, call, digest, args, wait, stop,
+      ApproveOperation(project, conversation, call, digest, wait, stop,
                        permissions);
       args["approved_permissions"] = json::Encode(permissions);
       if (call.name == "project_copy" &&
@@ -1844,13 +1816,6 @@ auto Tools::ExecuteTool(const std::string& conversation,
   if (wait && !error && dependencies.run_result &&
       (call.name == "run" || call.name == "run_status"))
     dependencies.run_result(conversation, project, call.name, result);
-  if (spec->approval_required && !wait)
-    dependencies.event(conversation, json::Encode(json::Members{
-                                         {"kind", json::Quote("toolFinished")},
-                                         {"id", json::Quote(call.id)},
-                                         {"name", json::Quote(call.name)},
-                                         {"text", json::Quote(result)},
-                                         {"ok", error ? "false" : "true"}}));
   std::vector<std::string> resources{project};
   if (!folder_resource.empty()) resources.push_back(folder_resource);
   resources.insert(resources.end(), file_resources.begin(),
@@ -2057,18 +2022,6 @@ auto Tools::Handle(const RequestIn& request, bool human,
               conversations->GetConversation(conversation).project;
           const auto digest = crypto::sha256_hex(call.name + "\n" + project +
                                                  "\n" + json::Encode(args));
-          // Explicitly guarded calls wait for approval before recording a
-          // sent receipt. A retry must resume the approved call ID.
-          if (spec->approval_required) {
-            auto approval = db.prepare(
-                "SELECT call FROM decisions WHERE conversation=? AND "
-                "project=? AND digest=? AND state IN ('pending','allowed') "
-                "ORDER BY rowid DESC LIMIT 1");
-            approval.bind(1, conversation).bind(2, project).bind(3, digest);
-            if (approval.step()) result.id = approval.text(0);
-          }
-          if (!result.id.empty())
-            return wire::AgentReply(request.request_id, std::move(result));
           auto receipts =
               conversations->ConversationDatabase(conversation)
                   .prepare(

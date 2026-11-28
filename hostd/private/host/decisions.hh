@@ -27,7 +27,7 @@ struct Decision {
 };
 
 // The one place a tool call waits for the person: saves that widen a Card's
-// permissions or pass it a host secret, and deleting run scratch. Each answer
+// permissions or pass it a host secret. Each answer
 // applies to one call with those exact arguments. Everything else the Agent
 // does needs no answer.
 struct Decisions {

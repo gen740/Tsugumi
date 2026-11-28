@@ -183,9 +183,14 @@ class JournalBroker : public testing::Test {
                                            cancel->fingerprint)
                                   .status());
         } else if (const auto* release = q.body.AsReleaseRequest()) {
-          journal->release(Sha256Hex::parse(q.job_id).value(),
-                           release->fingerprint);
-          response = W::reply(R::AckT{});
+          try {
+            journal->release(Sha256Hex::parse(q.job_id).value(),
+                             release->fingerprint);
+            response = W::reply(R::AckT{});
+          } catch (const W::Error& error) {
+            // As the listener answers a release of a job still running.
+            response = W::failure(error.code, error.what());
+          }
         } else
           throw std::runtime_error("unexpected broker request");
         auto bytes = W::encode(std::move(response));
@@ -222,11 +227,14 @@ class JournalBroker : public testing::Test {
   std::unique_ptr<ScopedEnvironment> endpoint, capability;
 };
 
-TEST_F(JournalBroker, InterruptedCleanupKeepsUncollectedInputsResultsAndLogs) {
+// Job scratch is a working folder: every ended invocation, an interrupted one
+// included, releases it. A job that is still running is cancelled first, and
+// its release waits until the job is terminal.
+TEST_F(JournalBroker, EndedInvocationsEraseJobScratch) {
   RemoteJobClient previous;
-  const std::string completed(64, '2'), queued(64, '3'), collected(64, '4');
+  const std::string completed(64, '2'), queued(64, '3'), running(64, '4');
   std::map<std::string, std::string> fingerprints;
-  for (const auto& job : {completed, queued, collected}) {
+  for (const auto& job : {completed, queued, running}) {
     fingerprints[job] = Submit(previous, job);
     fs::write_atomic(
         journal->job_path(Sha256Hex::parse(job).value()) / "work/result/output",
@@ -238,6 +246,7 @@ TEST_F(JournalBroker, InterruptedCleanupKeepsUncollectedInputsResultsAndLogs) {
   journal->claim(Sha256Hex::parse(completed).value(), 1, 1, "boot");
   journal->finish(Sha256Hex::parse(completed).value(), R::JobState::Succeeded,
                   crypto::sha256_hex("result"), {});
+  journal->claim(Sha256Hex::parse(running).value(), 1, 1, "boot");
   ServiceOptions options;
   options.root = root / "project";
   std::filesystem::create_directories(options.root);
@@ -251,37 +260,38 @@ TEST_F(JournalBroker, InterruptedCleanupKeepsUncollectedInputsResultsAndLogs) {
   current.open();
   current.history().write_sync([&](sql::Db& db) {
     for (const auto& [job, fingerprint] : fingerprints)
-      db.prepare("INSERT INTO remote_releases VALUES(?,?,?,?,?)")
+      db.prepare("INSERT INTO remote_releases VALUES(?,?,?,?)")
           .bind(1, job)
           .bind(2, "worker")
           .bind(3, journal->instance())
           .bind(4, fingerprint)
-          .bind(5, job == collected)
           .run();
   });
   RemoteJobClient replacement;
   RemoteExecutionService cleanup(current, replacement);
   cleanup.release_completed();
   for (const auto& job : {completed, queued}) {
-    EXPECT_TRUE(std::filesystem::exists(
-        journal->job_path(Sha256Hex::parse(job).value()) / "blobs" /
-        crypto::sha256_hex("input")));
-    EXPECT_EQ(fs::read_file(journal->job_path(Sha256Hex::parse(job).value()) /
-                            "work/result/output"),
-              "output");
-    EXPECT_EQ(fs::read_file(journal->job_path(Sha256Hex::parse(job).value()) /
-                            "supervisor.log"),
-              "log");
-    EXPECT_FALSE(journal->claim(Sha256Hex::parse(job).value(), 2, 2, "boot"));
+    const auto id = Sha256Hex::parse(job).value();
+    EXPECT_EQ(journal->status(id).state, R::JobState::Released);
+    EXPECT_FALSE(std::filesystem::exists(journal->job_path(id) / "blobs"));
+    EXPECT_FALSE(std::filesystem::exists(journal->job_path(id) / "work"));
+    EXPECT_FALSE(
+        std::filesystem::exists(journal->job_path(id) / "supervisor.log"));
+    EXPECT_FALSE(journal->claim(id, 2, 2, "boot"));
   }
-  EXPECT_EQ(journal->status(Sha256Hex::parse(completed).value()).state,
-            R::JobState::Succeeded);
-  EXPECT_EQ(journal->status(Sha256Hex::parse(queued).value()).state,
-            R::JobState::Cancelled);
-  EXPECT_EQ(journal->status(Sha256Hex::parse(collected).value()).state,
-            R::JobState::Released);
-  EXPECT_FALSE(std::filesystem::exists(
-      journal->job_path(Sha256Hex::parse(collected).value()) / "blobs"));
+  // The running job is cancelling; its release is retried once it stops.
+  const auto running_id = Sha256Hex::parse(running).value();
+  EXPECT_EQ(journal->status(running_id).state, R::JobState::Cancelling);
+  current.history().read([&](sql::Db& db) {
+    auto rows = db.prepare("SELECT job_id FROM remote_releases");
+    ASSERT_TRUE(rows.step());
+    EXPECT_EQ(rows.text(0), running);
+    EXPECT_FALSE(rows.step());
+  });
+  journal->finish(running_id, R::JobState::Interrupted, {}, {});
+  cleanup.release_completed();
+  EXPECT_EQ(journal->status(running_id).state, R::JobState::Released);
+  EXPECT_FALSE(std::filesystem::exists(journal->job_path(running_id) / "work"));
   current.history().read([](sql::Db& db) {
     EXPECT_FALSE(db.prepare("SELECT 1 FROM remote_releases").step());
   });

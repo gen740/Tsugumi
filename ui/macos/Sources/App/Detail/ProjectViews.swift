@@ -482,7 +482,7 @@ private struct RunHistorySettings: View {
           }
           if scope == .before { DatePicker("日時", selection: $before) }
         } header: {
-          InfoHeader("削除", info: "実行記録、保存した値、ログ、実行が所有する成果物（.tsugumi/artifacts/<run>）と scratch を削除します。実行中は削除できません。")
+          InfoHeader("削除", info: "実行記録、保存した値、ログ、実行が所有する成果物（.tsugumi/artifacts/<run>）を削除します。実行中は削除できません。")
         }
       }
       .formStyle(.grouped)
@@ -519,28 +519,9 @@ private struct RunHistorySettings: View {
   }
 }
 
-/// A selection can include an unreadable folder, whose bytes do not count as zero.
-struct ScratchSelection {
-  var paths: Set<String> = []
-  func rows(_ candidates: [Tsugumi_RPC_RunScratchUsageT]) -> [Tsugumi_RPC_RunScratchUsageT] { candidates.filter { paths.contains($0.path) } }
-  func knownBytes(_ candidates: [Tsugumi_RPC_RunScratchUsageT]) -> UInt64 { rows(candidates).filter { !$0.sizeUnknown }.reduce(0) { $0 + $1.bytes } }
-  func hasUnknown(_ candidates: [Tsugumi_RPC_RunScratchUsageT]) -> Bool { rows(candidates).contains { $0.sizeUnknown } }
-}
-
 private struct CacheSettings: View {
   let session: ProjectSession
   @Environment(AppModel.self) private var model
-  @State private var scratchSelection: [String] = []
-  @State private var selectedScratch = ScratchSelection()
-  @State private var confirmScratch = false
-  @State private var scratchResult: Tsugumi_RPC_RunScratchDeleteResultT?
-  private var scratchCandidates: [Tsugumi_RPC_RunScratchUsageT] {
-    (session.cacheUsage?.projects.compactMap { $0 }.first {
-      $0.project == session.cacheUsage?.currentProject
-    }?.runScratch.compactMap { $0 } ?? []).filter {
-      $0.path != "runs/" + (session.cacheUsage?.protectedRun ?? "")
-    }
-  }
   private struct CacheProject {
     let id: String
     let name: String
@@ -582,7 +563,6 @@ private struct CacheSettings: View {
                 Text(path).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
               }
               LabeledContent("ビルドキャッシュ", value: bytes(project.buildBytes))
-              LabeledContent("実行の scratch（合計）", value: bytes(project.scratchBytes))
               LabeledContent("root の最終使用", value: project.lastUsed.map { Date(timeIntervalSince1970: Double($0) / 1000).formatted() } ?? String(localized: "不明"))
               if let error = project.error { Text(error).font(.caption).textSelection(.enabled) }
             }
@@ -590,34 +570,7 @@ private struct CacheSettings: View {
           .frame(maxWidth: .infinity, alignment: .leading)
         }
       } label: {
-        InfoHeader("キャッシュ使用量", info: Text("このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。"), Text("実行中は削除できません。"), Text("ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。設定を開いたときに計測します。"))
-      }
-      GroupBox {
-        VStack(alignment: .leading, spacing: 4) {
-          ForEach(scratchCandidates, id: \.path) { item in
-            HStack {
-              Toggle(item.path, isOn: Binding(get: { selectedScratch.paths.contains(item.path) }, set: {
-                if $0 { selectedScratch.paths.insert(item.path) } else { selectedScratch.paths.remove(item.path) }
-              }))
-              Spacer()
-              Text(item.sizeUnknown ? String(localized: "不明") : bytes(item.bytes))
-            }
-          }
-          LabeledContent("削除対象の合計", value: bytes(selectedScratch.knownBytes(scratchCandidates)))
-          if selectedScratch.hasUnknown(scratchCandidates) { Text("合計は容量不明のフォルダを除きます。").font(.caption).foregroundStyle(.secondary) }
-          Button("選択した scratch を削除…", role: .destructive) {
-            scratchSelection = selectedScratch.rows(scratchCandidates).map(\.path)
-            confirmScratch = true
-          }.disabled(working || session.runActive || !session.connected || selectedScratch.rows(scratchCandidates).isEmpty)
-          if let r = scratchResult {
-            LabeledContent("解放", value: bytes(r.freedBytes))
-            if !r.retained.isEmpty {
-              Text(String(localized: "削除できず残ったフォルダ") + ": " + r.retained.compactMap { $0 }.joined(separator: ", "))
-            }
-          }
-        }.frame(maxWidth: .infinity, alignment: .leading)
-      } label: {
-        InfoHeader("このプロジェクトの過去の scratch", info: "過去の scratch は自動では削除しません。削除するフォルダと容量を確認してください。最新の実行の scratch は再実行のため残します。保持した記録・成果物・最後の入力は別に残ります。")
+        InfoHeader("キャッシュ使用量", info: Text("このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。"), Text("実行中は削除できません。"), Text("ビルドキャッシュは NAR サイズの概算です。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。設定を開いたときに計測します。"))
       }
       if let r = result {
         GroupBox("結果") {
@@ -639,18 +592,6 @@ private struct CacheSettings: View {
       async let usage: Void = session.refreshCacheUsage()
       async let names: Void = loadEnvironmentNames()
       _ = await (usage, names)
-    }
-    .confirmationDialog("選択した過去の scratch を削除しますか？", isPresented: $confirmScratch) {
-      Button("削除", role: .destructive) {
-        working = true
-        message = nil
-        Task {
-          do { scratchResult = try await session.deleteRunScratch(paths: scratchSelection); selectedScratch.paths = [] }
-          catch { message = String(localized: "削除できませんでした: \(String(describing: error))") }
-          working = false
-        }
-      }
-      Button("キャンセル", role: .cancel) {}
     }
     .confirmationDialog("ビルドキャッシュを削除しますか？", isPresented: $confirm, titleVisibility: .visible,
                         presenting: clearTarget) { target in

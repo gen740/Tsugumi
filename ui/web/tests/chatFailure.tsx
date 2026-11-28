@@ -51,10 +51,6 @@ const lines = operationSummary(approval)
 assert.equal(lines.length, 1)
 assert.ok(lines[0].includes('heasoft (github:gen740/heasoft), nixpkgs (github:NixOS/nixpkgs/abc123)'), lines[0])
 assert.ok(!lines[0].includes('DIGEST'))
-const scratch = parseOperationApproval(['operation_approval\nrun_scratch_delete\n{"project":"p","folders":[{"path":"runs/1"},{"path":"runs/2"}]}\nProposed arguments: {"paths":["runs/1","runs/2"]}'])!
-assert.deepEqual(scratch.args.paths, ['runs/1', 'runs/2'])
-assert.ok(operationSummary(scratch)[0].includes('2'))
-assert.ok(scratch.detail.includes('Proposed arguments: {\n  "paths": ['))
 let sheet!: ReturnType<typeof create>
 act(() => { sheet = create(<PermissionRequests asked={[sources]} callId="call-1" />) })
 const fold = sheet.root.findByType('details')

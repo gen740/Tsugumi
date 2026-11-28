@@ -2411,13 +2411,6 @@ export class ProjectSession extends Observable {
     await this.refreshVersions()
   }
 
-  async deleteRunScratch(paths: string[]): Promise<R.RunScratchDeleteResultT> {
-    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
-    const result = await this.client.deleteRunScratch(uuid(), paths)
-    await this.refreshCacheUsage()
-    return result
-  }
-
   async deleteRunCategory(runId: string, category: R.RunRecordCategory) {
     if (!this.projectId || !this.connected) throw new RPCError('disconnected', L('接続していません'))
     await hostCall<R.RunCategoryDeleteResultT>(H.RequestPayload.RunCategoryDeleteRequest,

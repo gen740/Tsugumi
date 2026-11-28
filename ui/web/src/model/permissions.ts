@@ -93,8 +93,6 @@ export function operationSummary(op: OperationApproval): string[] {
     if (sources.length) out.unshift(L('Nix のソースを追加: {0}', sources.join(', ')))
     return out
   }
-  if (op.name === 'run_scratch_delete')
-    return [L('作業フォルダ {0} 個を削除（実行記録と残した出力は残ります）', Array.isArray(op.targets.folders) ? op.targets.folders.length : 0)]
   return [op.name]
 }
 

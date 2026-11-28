@@ -326,7 +326,7 @@ Catalog::Catalog() {
       std::string_view(reinterpret_cast<const char*>(tsugumi_agent_settings),
                        tsugumi_agent_settings_size));
   std::set<std::string> seen;
-  for (const auto* list : {"requests", "approvalRequests", "hostRequests"}) {
+  for (const auto* list : {"requests", "hostRequests"}) {
     SchemaScope scope(std::string_view(list) == "hostRequests");
     const auto* requests =
         Schema().enums()->LookupByKey((Namespace() + "RequestPayload").c_str());
@@ -384,7 +384,6 @@ Catalog::Catalog() {
         tool.spec.input_schema = json::Encode(schema);
         tool.spec.description += " " + json::Text(wait, "description");
       }
-      tool.approval_required = std::string_view(list) == "approvalRequests";
       tool.mutating = OwnOperationId(object);
       tool.has_origin = object.fields()->LookupByKey("origin") != nullptr;
       tools_.push_back(std::move(tool));
@@ -400,8 +399,7 @@ Catalog::Catalog() {
          name,
          false,
          json::Bool(json::Get(tool, "mutating", "false")),
-         false,
-         json::Bool(json::Get(tool, "approval_required", "false"))});
+         false});
   }
   for (auto& tool : tools_)
     tool.spec.input_schema = CompactSchema(tool.spec.input_schema);

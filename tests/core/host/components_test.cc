@@ -175,12 +175,7 @@ TEST(HostComponents, DecisionSummaryNamesWhatWaits) {
                 "project_save\n{\"project\":\"p\",\"permissions\":"
                 "[\"network fetch\",\"secret fetch token\"]}"),
             "project_save gives Cards: network fetch, secret fetch token");
-  EXPECT_EQ(host::Decisions::Summary(
-                "run_scratch_delete\n{\"removes\":\"Only these folders\"}\n"
-                "Proposed arguments: {}"),
-            "run_scratch_delete: Only these folders");
-  EXPECT_EQ(host::Decisions::Summary("run_scratch_delete"),
-            "run_scratch_delete");
+  EXPECT_EQ(host::Decisions::Summary("project_save"), "project_save");
 }
 
 TEST(HostComponents, RetiringUnlinkedOAuthCredentialsKeepsCurrentAccounts) {
