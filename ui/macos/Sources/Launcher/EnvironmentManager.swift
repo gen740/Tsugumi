@@ -61,11 +61,25 @@ public actor EnvironmentManager {
         state = .incompatibleHistory(issue)
       } else if diagnostic["kind"] as? String == "invalid_document" {
         state = .invalidDocument(path: diagnostic["path"] as? String ?? "", message: diagnostic["message"] as? String ?? "", log: log)
+      } else if let holders = value["slot_holders"] as? [[String: String]] {
+        state = .failed(message: Self.noProjectSlot(holders), log: log)
       } else { state = .failed(message: value["message"] as? String ?? "", log: log) }
     case .stopped: state = .stopped
     }
     if let key = value["key"] as? String { set(key, state) }
     return state
+  }
+  /// hostd's English no_project_slot failure, in the app's words.
+  static func noProjectSlot(_ holders: [[String: String]]) -> String {
+    let list = holders.map { holder -> String in
+      let name = holder["name"] ?? ""
+      switch holder["reason"] {
+      case "page": return String(localized: "\(name)（ウィンドウで表示中）", bundle: .main)
+      case "session": return String(localized: "\(name)（MCP またはコマンドのセッションが開いています）", bundle: .main)
+      default: return String(localized: "\(name)（実行中）", bundle: .main)
+      }
+    }.joined(separator: String(localized: "、", bundle: .main))
+    return String(localized: "共有 VM のプロジェクト枠がすべて使われています: \(list)。そのどれかのウィンドウを閉じるか、開いたセッションで閉じる（tsugumi_close）かセッションを終えるか、実行が終わるのを待ってください。", bundle: .main)
   }
   private func event(_ event: [String: Any]) {
     switch event["type"] as? String {

@@ -48,6 +48,13 @@ class AgentTools {
   /** ShowRequest: makes the folder the project tools work on. */
   auto Show(const std::string& path, bool create, bool browser) -> Shown;
   auto Current() -> std::optional<Shown>;
+  struct Closed {
+    std::string path;
+    bool stopped = false;
+    std::string held_by;  // page, session or busy when it keeps running
+  };
+  /** CloseRequest on the current project: the tools no longer work on it. */
+  auto Close() -> std::optional<Closed>;
 
   /** A project tool (on the current project) or an agent_* operation. */
   auto Call(const std::string& name, const std::string& arguments, const Track& track = {}) -> Content;

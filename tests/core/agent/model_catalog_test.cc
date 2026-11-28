@@ -98,11 +98,22 @@ TEST(ModelCatalog, EverySchemaIsStructuredAndEveryOperationIsReachableOnce) {
 
 TEST(ModelCatalog, FamilyModesRespectRolesAndRejectUnknownArguments) {
   const Catalog catalog;
-  EXPECT_EQ(catalog.FamilyTool("runs", "invocations", ModelRole::Main),
-            "run_invocations");
-  // Run status, history and logs are core tools, also for the guide.
+  EXPECT_EQ(catalog.FamilyTool("runs", "value", ModelRole::Main),
+            "run_value_read");
+  EXPECT_EQ(catalog.FamilyTool("canvas", "layout", ModelRole::Main),
+            "project_layout");
+  // What agents call most is a core tool, not a family action.
+  const auto main = catalog.ModelSpecs(ModelRole::Main);
+  for (const auto* name :
+       {"project_shell", "run_invocations", "artifact_list", "artifact_read"})
+    EXPECT_TRUE(std::ranges::any_of(
+        main, [&](const ToolSpec& tool) { return tool.name == name; }))
+        << name;
+  // Run status, history, logs and files are core tools, also for the guide.
   const auto guide = catalog.ModelSpecs(ModelRole::Guide);
-  for (const auto* name : {"run_status", "run_history", "log_range"})
+  for (const auto* name :
+       {"run_status", "run_history", "log_range", "artifact_list",
+        "artifact_read"})
     EXPECT_TRUE(std::ranges::any_of(
         guide, [&](const ToolSpec& tool) { return tool.name == name; }))
         << name;

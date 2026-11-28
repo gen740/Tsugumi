@@ -9,6 +9,7 @@ PROMPT = (ROOT / "hostd/agent/Shared/system-prompt.md").read_text()
 REVIEW = (ROOT / "hostd/agent/Shared/review-skill.md").read_text()
 FBS = (ROOT / "protocol/tsugumi.fbs").read_text()
 ENUMS = (ROOT / "protocol/tsugumi_enums.fbs").read_text()
+TRANSPORT = (ROOT / "hostd/agent/Shared/mcp-transport.md").read_text()
 
 
 def flat(text):
@@ -35,14 +36,33 @@ class BuildGuidance(unittest.TestCase):
         self.assertIn("stdout and stderr do not reach the Card's log", flat(REVIEW))
 
     def test_new_code_cards_record_their_values(self):
-        self.assertIn('recordIO ("on" in a Code Card you create or copy', flat(PROMPT))
+        self.assertIn('"recordIO": "on" in a Code Card you create or copy', flat(PROMPT))
+
+    def test_common_card_settings_need_no_reference_read(self):
+        text = flat(PROMPT)
+        self.assertIn('"secrets": ["name"] declares a credential', text)
+        self.assertIn("environment variable of that name", text)
+        self.assertIn('"grants": {"network": true}', text)
+
+    def test_frequent_reads_are_core_tools(self):
+        text = flat(PROMPT)
+        for name in ("artifact_list and artifact_read", "run_invocations", "project_shell runs a command"):
+            self.assertIn(name, text)
+        self.assertIn("a Card in Card's are under its inner Cards' paths", text)
+
+    def test_a_pending_decision_is_reported_not_repeated(self):
+        text = flat(TRANSPORT)
+        self.assertIn("repeating the call before then returns the same request", text)
+        self.assertIn("Report what waits and stop", text)
+        self.assertIn("agent_decision_list", text)
+        self.assertIn("tsugumi_close", text)
 
     def test_runs_in_progress_and_long_runs(self):
         text = flat(PROMPT)
         self.assertIn("edits saved while it runs reach the next run", text)
         self.assertIn("a Card's files the run still evaluates are refused (busy) until it ends", text)
         self.assertIn("ends after your reply brings you back with a note of its outcome", text)
-        self.assertIn("a long run is followed by waiting again", text)
+        self.assertIn("A long run is followed by waiting again with the run_status call its result names", text)
 
     def test_log_streams_named_in_the_prompt_are_the_schema_values(self):
         values = re.search(r"enum LogStream : ubyte \{([^}]*)\}", ENUMS).group(1)

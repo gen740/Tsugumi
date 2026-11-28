@@ -191,6 +191,17 @@ auto WebPages::Show(const std::string& project, const std::string& card,
   return {false, browser && OpenBrowser(project)};
 }
 
+auto WebPages::Shows(const std::string& project) -> bool {
+  std::error_code error;
+  const auto folder = std::filesystem::weakly_canonical(project, error);
+  std::lock_guard lock(mutex_);
+  for (const auto& [id, page] : pages_)
+    if (!page.project.empty() &&
+        std::filesystem::weakly_canonical(page.project, error) == folder)
+      return true;
+  return false;
+}
+
 auto WebPages::PageUrl(const std::string& project) -> std::string {
   std::lock_guard lock(mutex_);
   return edge_ ? edge_->page_url(project) : "";

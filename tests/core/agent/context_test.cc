@@ -39,12 +39,12 @@ TEST(AgentContext, ResultCapKeepsBothEndsAndLeavesTheRecordUntouched) {
   EXPECT_EQ(omitted.front().content[0].input, call.input);
 }
 
-TEST(AgentContext, FamilyCallResultsAreShapedAsTheToolTheyRan) {
+TEST(AgentContext, ShellResultsKeepTheirHeadAndTail) {
   ContentBlock call;
   call.type = "tool_use";
-  call.id = "family-shell";
-  call.name = "tools";
-  call.input = R"({"family":"files","action":"shell","arguments":{}})";
+  call.id = "shell";
+  call.name = "project_shell";
+  call.input = R"({"command":"cat"})";
   ContentBlock result;
   result.type = "tool_result";
   result.id = call.id;

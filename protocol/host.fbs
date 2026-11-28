@@ -85,11 +85,17 @@ table SignInStatusRequest { profile:string (required); attempt_id:string; }
 table Account { client_id:string (required); email:string; signed_in:bool; plan_enabled:bool; active:bool; }
 // client_id and plan_enabled describe the completed attempt, separate from the current accounts.
 table SignInStatus { attempt_id:string; state:string (required); message:string; accounts:[Account]; welcome:string; revoked:bool; client_id:string; plan_enabled:bool; }
-// Environments outlive clients and hostd restarts. Stop is explicit. Start
-// updates origins only; folders change through explicit add/remove operations.
+// Environments outlive clients and hostd restarts. Stop is explicit, except
+// that a start finding every shared VM slot taken stops an idle project no
+// page or Agent client holds. Start updates origins only; folders change
+// through explicit add/remove operations.
 enum EnvironmentAction:ubyte { State, Start, Stop, AddFolders, RemoveFolders, MoveStateAside }
 enum EnvironmentPhase:ubyte { Stopped, Starting, Ready, Failed }
-enum EnvironmentFailureCode:ubyte { None, ProcessExit, Cancelled, LaunchFailed }
+// NoProjectSlot: every shared VM slot is held (slot_holders says by what).
+enum EnvironmentFailureCode:ubyte { None, ProcessExit, Cancelled, LaunchFailed, NoProjectSlot }
+// A project holding a shared VM slot. reason: page (a window or Web UI page
+// shows it), session (an MCP or command session opened it) or busy (it runs).
+table SlotHolder { project:string; name:string; reason:string; }
 table EnvironmentRequest {
   project:string (required);
   action:EnvironmentAction;
@@ -123,6 +129,7 @@ table EnvironmentState {
   execution_scope_unavailable:bool;
   folders:[string];
   attached_roots:[AttachedRoot];
+  slot_holders:[SlotHolder];
 }
 table EnvironmentProgress { project:string (required); key:string (required); stage:string (required); fraction:double = null; preparing:bool; }
 table EnvironmentStopped { state:EnvironmentState (required); }

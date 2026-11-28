@@ -438,7 +438,7 @@ TEST_F(AgentProjectFixture,
   const auto command = "printf HELPER_SHELL_STARTED; cat scratch/secret; cat " +
                        (root / "scratch/secret").string() + "; cat " +
                        sibling.string();
-  model.Queue(AnthropicFamilyTool("scratch", "files", "shell",
+  model.Queue(AnthropicTool("scratch", "project_shell",
                                   "{\"command\":" + Quote(command) + "}"));
   model.Queue(AnthropicText("Checked scratch."));
   Configure(model);
@@ -552,7 +552,7 @@ TEST_F(NestedFileFixture, NestedScratchIsPrivateToEachHelperAtEveryDepth) {
     return "test ! -r '" + path.string() + "' && ";
   };
   const auto shell = [](const std::string& id, const std::string& command) {
-    return AnthropicFamilyTool(id, "files", "shell",
+    return AnthropicTool(id, "project_shell",
                                "{\"command\":" + Quote(command) + "}");
   };
   ModelServer model;
@@ -1044,14 +1044,14 @@ auto NestedHelperFiles::CheckFileScope(bool shell) -> void {
       "denied-read", "project_copy",
       R"({"source":"card","base_rev":"0","files":[{"from":"definitions/other/src/note.txt","to":"definitions/own/copied.txt"}]})"));
   if (shell) {
-    model.Queue(AnthropicFamilyTool(
-        "denied-shell", "files", "shell",
+    model.Queue(AnthropicTool(
+        "denied-shell", "project_shell",
         R"({"command":"printf forbidden > definitions/other/src/note.txt"})"));
-    model.Queue(AnthropicFamilyTool(
-        "write-without-reading", "files", "shell",
+    model.Queue(AnthropicTool(
+        "write-without-reading", "project_shell",
         R"({"command":"printf created > definitions/writer/new.txt"})"));
-    model.Queue(AnthropicFamilyTool(
-        "cannot-read-writer", "files", "shell",
+    model.Queue(AnthropicTool(
+        "cannot-read-writer", "project_shell",
         R"({"command":"cat definitions/writer/src/private.txt"})"));
   }
   model.Queue(AnthropicText("Checked file scope."));
@@ -1732,7 +1732,7 @@ TEST_F(AgentProjectFixture, ModelShellCommandsAndResultsAppearInToolHistory) {
   const auto conversation = Conversation("shell-history");
   ModelServer model;
   model.Queue(
-      AnthropicFamilyTool("shell", "files", "shell",
+      AnthropicTool("shell", "project_shell",
                           R"({"command":"printf shell-history-output"})"));
   model.Queue(AnthropicText("The command finished."));
   Configure(model);
@@ -1754,8 +1754,8 @@ TEST_F(AgentProjectFixture,
   StartProject(true);
   const auto conversation = Conversation("large-shell-continuation");
   ModelServer model;
-  model.Queue(AnthropicFamilyTool(
-      "large-shell", "files", "shell",
+  model.Queue(AnthropicTool(
+      "large-shell", "project_shell",
       R"({"command":"printf 'SHELL_HEAD%0300000dSHELL_TAIL' 0"})"));
   Configure(model);
   ASSERT_TRUE(
@@ -1800,7 +1800,7 @@ TEST_F(AgentProjectFixture, CancellingTheConversationStopsItsShellCommand) {
   const auto conversation = Conversation("shell-cancel");
   ModelServer model;
   model.Queue(
-      AnthropicFamilyTool("shell", "files", "shell",
+      AnthropicTool("shell", "project_shell",
                           R"({"command":"sleep 20","timeout_ms":30000})"));
   Configure(model);
   ASSERT_TRUE(Send(conversation, "Start a command, then wait.").Code().empty());

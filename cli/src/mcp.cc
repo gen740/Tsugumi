@@ -3,11 +3,13 @@
 // tool catalog, execution, conversations and the person's decisions are hostd's.
 #include "mcp.hh"
 
+#include <algorithm>
 #include <atomic>
 #include <iostream>
 #include <map>
 #include <mutex>
 #include <optional>
+#include <string_view>
 #include <thread>
 
 #include "agent_tools.hh"
@@ -45,6 +47,15 @@ auto OpenTool() -> std::string {
                                 {"description", json::Quote("Open a window when none is free to show the project: the Tsugumi app for the command bundled in it, else a browser (default true).")}})}})},
            {"required", json::Encode(std::vector<std::string>{json::Quote("folder")})},
            {"additionalProperties", "false"}})}});
+}
+
+auto CloseTool() -> std::string {
+  return json::Encode(json::Members{
+      {"name", json::Quote("tsugumi_close")},
+      {"description",
+       json::Quote("Closes the project tsugumi_open opened. Its environment stops, freeing its place in the shared "
+                   "VM, unless a window shows it or a run is going on.")},
+      {"inputSchema", R"({"type":"object","properties":{},"additionalProperties":false})"}});
 }
 
 auto ResultJson(const Content& c) -> std::string {
@@ -163,9 +174,15 @@ class Server {
   }
 
   auto Tools() -> std::string {
-    std::vector<std::string> tools = {OpenTool()};
+    // A client resends this list every turn. Of the Agent operations it lists
+    // what an outside agent reads about the person's side (decisions and
+    // conversations); the others stay callable and are `tsugumi agent` commands.
+    constexpr std::string_view kListed[] = {"agent_decision_list", "agent_conversation_list",
+                                            "agent_conversation_get"};
+    std::vector<std::string> tools = {OpenTool(), CloseTool()};
     for (const auto& tool : tools_.Catalog())
-      tools.push_back(json::Encode(json::Members{{"name", json::Quote(tool.name)},
+      if (!tool.name.starts_with("agent_") || std::ranges::find(kListed, tool.name) != std::end(kListed))
+        tools.push_back(json::Encode(json::Members{{"name", json::Quote(tool.name)},
                                                  {"description", json::Quote(tool.description)},
                                                  {"inputSchema", tool.input_schema}}));
     return json::Encode(tools);
@@ -204,8 +221,21 @@ class Server {
     return {text, false, {}};
   }
 
+  auto Close() -> Content {
+    const auto closed = tools_.Close();
+    if (!closed) return {"No project is open.", false, {}};
+    const auto& by = closed->held_by;
+    return {"Closed " + closed->path + (closed->stopped ? "; its environment stopped." :
+                                        by == "page"    ? "; a Tsugumi window or page still shows it." :
+                                        by == "session" ? "; another session still has it open." :
+                                                          "; its environment keeps running until its run ends."),
+            false,
+            {}};
+  }
+
   auto Call(const std::string& mcp_id, const std::string& name, const std::string& args) -> Content {
     if (name == "tsugumi_open") return Open(args);
+    if (name == "tsugumi_close") return Close();
     return tools_.Call(name, args, [&](const std::shared_ptr<C::Connection>& agent, uint64_t request) {
       std::lock_guard lock(mutex_);
       calls_[mcp_id] = Pending{agent, request};

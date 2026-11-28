@@ -336,7 +336,9 @@ Thread.detachNewThread {
             defer { finished.signal() }
             do { try await serve(message, peer) }
             catch {
-              let failure = Tsugumi_VMHost_FailureT(); failure.message = "\(error)"
+              let failure = Tsugumi_VMHost_FailureT()
+              failure.message = (error as? LauncherError)?.english ?? "\(error)"
+              failure.code = (error as? LauncherError)?.code
               peer.emit(encode(failure, reply: .failure, id: message.requestId))
             }
           }

@@ -149,7 +149,13 @@ def allow_pending_decision(mcp, name: str, arguments: dict, user: UserAgent):
     assert error, text
     request = json.loads(text)
     assert request["code"] == "decision_required", request
-    assert "approval in Tsugumi" in request["message"], request
+    assert "approval in Tsugumi" in request["message"] and "stop here" in request["message"], request
+    # The status call it names tells whether the person has answered.
+    status = request["status"]
+    assert status["arguments"]["request_id"] == request["request_id"]
+    listed, failed = mcp.call(status["tool"], status["arguments"])
+    assert not failed, listed
+    assert [d["state"] for d in json.loads(listed)["decisions"]] == ["pending"]
     result, denied = mcp.call("agent_decision_resolve", {"request_id": request["request_id"], "allow": True})
     assert denied, result
     user.call("DecisionResolveRequest", request_id=request["request_id"], allow=True)
@@ -340,10 +346,23 @@ def test_tools_instructions_and_demo_catalog(plugin):
     assert not any(name.startswith(("guide_", "agent_guide_")) for name in names)
     shared = json.loads((ROOT / "hostd/agent/Shared/agent.json").read_text())
     assert set(shared["modelTools"]["core"]) <= set(names)
-    assert not {"agent_hello", "agent_tool_call_cancel", "agent_call_id", "agent_show"} & set(names)
+    assert not {"agent_hello", "agent_tool_call_cancel", "agent_call_id", "agent_show", "agent_close"} & set(names)
+    # The list is resent every turn: it names only the Agent operations that
+    # read the person's side; the others stay callable.
+    assert {n for n in names if n.startswith("agent_")} == {
+        "agent_decision_list", "agent_conversation_list", "agent_conversation_get"}
+    assert "tsugumi_close" in names
     text, error = mcp.call("project_inspect", {})
     assert error
     write_project(root / "proj")
+    text, error = mcp.call("tsugumi_open", {"folder": str(root / "proj"), "browser": False})
+    assert not error, text
+    # Closing ends the session's hold: nothing else shows the project, so its
+    # environment stops, and the project tools need tsugumi_open again.
+    text, error = mcp.call("tsugumi_close", {})
+    assert not error and "environment stopped" in text, text
+    text, error = mcp.call("project_inspect", {})
+    assert error and "tsugumi_open" in text, text
     text, error = mcp.call("tsugumi_open", {"folder": str(root / "proj"), "browser": False})
     assert not error, text
     text, error = mcp.call("tools", {"family": "files"})

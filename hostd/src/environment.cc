@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <charconv>
 #include <cstdio>
 #include <cstdlib>
@@ -99,6 +100,29 @@ auto PrivateDirectory(const std::filesystem::path& path) -> void {
     throw std::runtime_error("Cannot make environment directory private: " +
                              path.string());
 }
+
+// Every VM project slot is held; holders names what holds each one.
+struct NoProjectSlot : EnvironmentFailure {
+  std::vector<H::SlotHolderT> holders;
+  NoProjectSlot(std::string message, std::vector<H::SlotHolderT> held)
+      : EnvironmentFailure(std::move(message), ""), holders(std::move(held)) {}
+};
+auto NoSlotMessage(std::string vm, const std::vector<H::SlotHolderT>& holders)
+    -> std::string {
+  if (!vm.empty())
+    vm[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(vm[0])));
+  std::string list;
+  for (const auto& holder : holders)
+    list += (list.empty() ? "" : ", ") + holder.name + " (" +
+            (holder.reason == "page"      ? "shown in a window or page"
+             : holder.reason == "session" ? "open in an MCP or command session"
+                                          : "running") +
+            ")";
+  return vm + ", and every slot is held" + (list.empty() ? "" : ": " + list) +
+         ". To free one, close a window or page that shows one of them, "
+         "close it in the session that opened it (tsugumi_close) or end that "
+         "session, or wait for its run to end.";
+}
 }  // namespace
 
 struct Environments::Impl {
@@ -120,6 +144,9 @@ struct Environments::Impl {
     bool child = false;
     bool removed = false;
     std::atomic<bool> deleting = false;
+    // The last request about it: a start that finds every slot held stops
+    // the least recently used idle project first.
+    std::chrono::steady_clock::time_point used{};
 
     auto CheckPresent() const -> void {
       if (removed) throw std::runtime_error("Project environment was removed");
@@ -324,6 +351,13 @@ struct Environments::Impl {
           "\n" + log.substr(log.size() > 4096 ? log.size() - 4096 : 0);
     }
     entry.state.startup_error.reset();
+    entry.state.slot_holders.clear();
+    if (const auto* full = dynamic_cast<const NoProjectSlot*>(cause)) {
+      entry.state.failure_code = H::EnvironmentFailureCode::NoProjectSlot;
+      for (const auto& holder : full->holders)
+        entry.state.slot_holders.push_back(
+            std::make_unique<H::SlotHolderT>(holder));
+    }
     auto out = std::make_unique<H::StartupErrorT>();
     if (const auto* mismatch = dynamic_cast<const sql::FormatMismatch*>(cause)) {
       out->kind = "incompatible_state";
@@ -597,6 +631,7 @@ struct Environments::Impl {
     entry.state.message = "Starting tsugumid";
     entry.state.log.clear();
     entry.state.startup_error.reset();
+    entry.state.slot_holders.clear();
     entry.state.failure_code = H::EnvironmentFailureCode::None;
     Notify(entry);
     Stage(entry, "starting tsugumid");
@@ -670,8 +705,7 @@ struct Environments::Impl {
                        options.process->Guest() ? 0644 : 0600);
       entry.mounted = launch.mounts;
       launch.stop = start_stop.get_token();
-      if (!launch.stop.stop_requested())
-        entry.pid = options.process->Launch(launch);
+      if (!launch.stop.stop_requested()) entry.pid = LaunchInSlot(entry, launch);
       entry.child = true;
       Stage(entry, "waiting for tsugumid to become ready");
       bool ready = false;
@@ -709,6 +743,69 @@ struct Environments::Impl {
         Failed(entry, error.what(), H::EnvironmentFailureCode::LaunchFailed,
                &error);
     }
+  }
+  // The VM refuses a start when every project slot is held. Stop the least
+  // recently used environment that nothing holds and nothing runs in, and
+  // start again once the guest has let its slot go.
+  auto LaunchInSlot(Entry& entry, const EnvironmentLaunch& launch) -> int64_t {
+    for (int waits = 0;; ++waits) {
+      try {
+        return options.process->Launch(launch);
+      } catch (const EnvironmentFailure& failure) {
+        if (failure.code != "no_project_slot" || launch.stop.stop_requested())
+          throw;
+        if (waits % 30 == 0 && !FreeSlot(entry)) {
+          auto holders = Holders(entry);
+          auto message = NoSlotMessage(failure.what(), holders);
+          throw NoProjectSlot(std::move(message), std::move(holders));
+        }
+      }
+      std::this_thread::sleep_for(100ms);
+    }
+  }
+  auto Unused(Entry& entry) -> bool {
+    if (options.holder && !options.holder(entry.state.project).empty())
+      return false;
+    try {
+      return !options.process->Busy(entry.state);
+    } catch (const std::exception&) {
+      return false;  // unknown activity counts as running
+    }
+  }
+  auto Others(const Entry& entry) -> std::vector<std::shared_ptr<Entry>> {
+    auto others = Snapshot();
+    std::erase_if(others,
+                  [&](const auto& other) { return other.get() == &entry; });
+    std::sort(others.begin(), others.end(),
+              [](const auto& a, const auto& b) { return a->used < b->used; });
+    return others;
+  }
+  auto FreeSlot(const Entry& starting) -> bool {
+    // An entry locked by another request is in use; skipping it also keeps
+    // two starts from waiting on each other.
+    for (const auto& entry : Others(starting)) {
+      std::unique_lock lock(entry->mutex, std::try_to_lock);
+      if (!lock || entry->starting || entry->removed || !entry->pid ||
+          entry->state.phase != H::EnvironmentPhase::Ready || !Unused(*entry))
+        continue;
+      Stop(*entry);
+      return true;
+    }
+    return false;
+  }
+  auto Holders(const Entry& starting) -> std::vector<H::SlotHolderT> {
+    std::vector<H::SlotHolderT> holders;
+    for (const auto& entry : Others(starting)) {
+      std::unique_lock lock(entry->mutex, std::try_to_lock);
+      if (!lock || entry->removed || !entry->pid) continue;
+      H::SlotHolderT holder;
+      holder.project = entry->state.project;
+      holder.name = ProjectDisplayName(entry->state.project);
+      holder.reason = options.holder ? options.holder(holder.project) : "";
+      if (holder.reason.empty()) holder.reason = "busy";
+      holders.push_back(std::move(holder));
+    }
+    return holders;
   }
   auto MoveStateAside(Entry& entry, const H::EnvironmentRequestT& request)
       -> void {
@@ -797,6 +894,7 @@ struct Environments::Impl {
     entry.state.message.clear();
     entry.state.log.clear();
     entry.state.startup_error.reset();
+    entry.state.slot_holders.clear();
     entry.state.failure_code = H::EnvironmentFailureCode::None;
     Notify(entry);
   }
@@ -823,6 +921,20 @@ auto Environments::Busy() -> bool {
       return true;
   }
   return false;
+}
+auto Environments::StopUnused(const std::string& project) -> bool {
+  auto operation = impl_->BeginOperation();
+  auto [entry, path] = impl_->EntryFor(project);
+  if (entry->starting) return false;
+  std::lock_guard lock(entry->mutex);
+  entry->CheckPresent();
+  impl_->CheckDeath(*entry);
+  if (!entry->pid) impl_->ReadReady(*entry);
+  if (entry->state.phase != H::EnvironmentPhase::Ready ||
+      !impl_->Unused(*entry))
+    return false;
+  impl_->Stop(*entry);
+  return true;
 }
 auto EnvironmentProcess::Runtime(const H::HostRuntimeRequestT& request)
     -> H::HostRuntimeT {
@@ -1111,6 +1223,7 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
   if (request.action == H::EnvironmentAction::Stop) entry->CancelStart();
   std::lock_guard lock(entry->mutex);
   entry->CheckPresent();
+  entry->used = std::chrono::steady_clock::now();
   // Concurrent callers share a failed attempt too. A later explicit retry
   // starts again; a ready result may still refresh origins and folder grants.
   if (request.action == H::EnvironmentAction::Start &&

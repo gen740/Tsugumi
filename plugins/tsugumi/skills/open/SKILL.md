@@ -14,6 +14,7 @@ Work on a Tsugumi project with the Tsugumi MCP tools.
    inspected, runs from the trigger Card, results read with `run_record` and `log_range`.
 3. The user watches the web UI while you work: the Cards you save change on the canvas, runs show live, and Tsugumi
    (the bird) flies to the Card you work on. A save that widens what Cards may do (network, folders, secrets) waits
-   for the user's approval in Tsugumi; the call returns `decision_required`, and after they answer you call it again.
+   for the user's approval in Tsugumi; the call returns `decision_required`: report what waits and stop, and after
+   they approve you call it again. `tsugumi_close` closes the project when the work is done.
    `demo_read reference/project-files.md` gives the fields of `_card.json` and `tsugumi.json`, generated `_inputs.fbs`, `params.nix`, `nix_path_lock_update` and `evaluate_nix`.
 4. Use Card ids and port names matching `[a-z][a-z0-9_]{0,63}` in tools. Report what you changed and ran by the Cards' README.md titles, and what the run showed.

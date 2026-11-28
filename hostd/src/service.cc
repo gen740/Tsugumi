@@ -328,6 +328,10 @@ struct Service::State {
           }
           return release;
         };
+    // A page that shows the project, or an Agent client that showed it last.
+    options.environment.holder = [this](const std::string& project) {
+      return Holder(project);
+    };
     if (execution_broker)
       environments = std::make_unique<host::Environments>(
           options.environment,
@@ -398,6 +402,10 @@ struct Service::State {
   std::unique_ptr<host::Versions> versions;
   std::unique_ptr<host::HostEvents> events;
   std::unique_ptr<host::WebPages> web;
+  // The project each Agent client connection showed last (ShowRequest),
+  // until it closes it (CloseRequest) or disconnects.
+  std::mutex holds_mutex;
+  std::map<ConnId, std::string> agent_holds;
   std::unique_ptr<host::ExecutionBroker> execution_broker;
   // Declared after turns and tools: its threads use them until it ends.
   std::unique_ptr<agent::RunWakes> run_wakes;
@@ -570,6 +578,36 @@ struct Service::State {
       return location->path()->str();
     throw Failure("invalid_request", "Unexpected project reply");
   }
+  static auto SameFolder(const std::string& a, const std::string& b) -> bool {
+    std::error_code error;
+    return std::filesystem::weakly_canonical(a, error) ==
+           std::filesystem::weakly_canonical(b, error);
+  }
+  auto Holder(const std::string& project) -> std::string {
+    if (web && web->Shows(project)) return "page";
+    std::lock_guard guard(holds_mutex);
+    for (const auto& [connection, held] : agent_holds)
+      if (SameFolder(held, project)) return "session";
+    return "";
+  }
+  auto Close(const RequestIn& request, const A::CloseRequest& p,
+             std::unique_lock<std::recursive_mutex>& lock) -> std::string {
+    const auto path = p.path()->str();
+    {
+      std::lock_guard guard(holds_mutex);
+      const auto held = agent_holds.find(request.conn);
+      if (held != agent_holds.end() && SameFolder(held->second, path))
+        agent_holds.erase(held);
+    }
+    lock.unlock();
+    A::ClosedT result;
+    result.held_by = Holder(path);
+    if (result.held_by.empty() && environments) {
+      result.stopped = environments->StopUnused(path);
+      if (!result.stopped) result.held_by = "busy";
+    }
+    return wire::AgentReply(request.request_id, std::move(result));
+  }
   auto Show(const RequestIn& request, const A::ShowRequest& p, bool human,
             std::unique_lock<std::recursive_mutex>& lock) -> std::string {
     A::ShownT result;
@@ -595,6 +633,11 @@ struct Service::State {
     }
     lock.unlock();
     const auto url = web->Url();
+    if (!result.path.empty() && !human) {
+      // Held before the start, so that it does not give its own slot away.
+      std::lock_guard guard(holds_mutex);
+      agent_holds[request.conn] = result.path;
+    }
     if (!result.path.empty()) {
       if (!environments)
         throw Failure("unavailable", "Environment service is not running");
@@ -691,6 +734,8 @@ struct Service::State {
         return tools->Handle(request, human, lock);
       case A::RequestPayload::ShowRequest:
         return Show(request, *r->value_as_ShowRequest(), human, lock);
+      case A::RequestPayload::CloseRequest:
+        return Close(request, *r->value_as_CloseRequest(), lock);
       case A::RequestPayload::DecisionResolveRequest:
       case A::RequestPayload::DecisionListRequest:
         return decisions->Handle(request, human);
@@ -1280,6 +1325,10 @@ auto Service::dispatch(RequestIn request) -> void {
   }
 }
 auto Service::disconnected(ConnId connection) -> void {
+  {
+    std::lock_guard holds(state_->holds_mutex);
+    state_->agent_holds.erase(connection);
+  }
   std::lock_guard lock(state_->mutex);
   if (auto stop = state_->connection_stops.find(connection);
       stop != state_->connection_stops.end()) {

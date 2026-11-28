@@ -119,9 +119,10 @@ auto Decisions::Wait(std::unique_lock<std::recursive_mutex>& lock,
           "decision_required",
           "Waiting for the person's approval in Tsugumi: " +
               Summary(query.text(1)) +
-              ". The request stays open in the Tsugumi app and Web UI, also "
-              "when one opens later. Once the person has answered, call the "
-              "same tool again with the same arguments.",
+              ". Nothing was changed. Only the person can answer, in the "
+              "Tsugumi app or Web UI (also one opened later); until then the "
+              "same call returns this same request. Tell the person what "
+              "waits and stop here.",
           id);
     return false;
   });

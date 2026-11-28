@@ -52,11 +52,23 @@ export function environmentState(value: H.EnvironmentStateT): EnvPublicState {
       const invalidDocument = error?.kind === 'invalid_document'
         ? { path: s(error.path), message: s(error.message) }
         : undefined
-      return { state: 'failed', message, log: s(value.log), historyVersionMismatch: mismatch, invalidDocument }
+      return { state: 'failed', message: value.failureCode === H.EnvironmentFailureCode.NoProjectSlot ? noProjectSlot(value.slotHolders) : message,
+        log: s(value.log), historyVersionMismatch: mismatch, invalidDocument }
     }
     default:
       return { state: 'stopped' }
   }
+}
+
+// hostd's English no_project_slot failure, in this UI's words.
+function noProjectSlot(holders: H.SlotHolderT[]): string {
+  const list = holders.map((holder) => {
+    const name = s(holder.name)
+    if (holder.reason === 'page') return L('{0}（ウィンドウで表示中）', name)
+    if (holder.reason === 'session') return L('{0}（MCP またはコマンドのセッションが開いています）', name)
+    return L('{0}（実行中）', name)
+  }).join(L('、'))
+  return L('共有 VM のプロジェクト枠がすべて使われています: {0}。そのどれかのウィンドウを閉じるか、開いたセッションで閉じる（tsugumi_close）かセッションを終えるか、実行が終わるのを待ってください。', list)
 }
 
 export function environmentProgress(value: H.EnvironmentProgressT): EnvPublicState {

@@ -59,9 +59,24 @@ auto AgentTools::Agent() -> std::shared_ptr<C::Connection> {
   auto stale = std::make_shared<std::atomic<bool>>(false);
   auto agent = std::shared_ptr<C::Connection>(ConnectAgent(ready, false));
   agent->OnClosed([stale](C::Error) { *stale = true; });
-  std::lock_guard lock(mutex_);
-  agent_ = agent;
-  stale_ = stale;
+  std::optional<Shown> current;
+  {
+    std::lock_guard lock(mutex_);
+    agent_ = agent;
+    stale_ = stale;
+    current = current_;
+  }
+  // A new connection holds nothing: show the current project again, so that
+  // hostd keeps its environment for this session.
+  if (current) {
+    A::ShowRequestT again;
+    again.path = current->path;
+    again.browser = false;
+    try {
+      AgentCall<A::Shown>(*agent, std::move(again));
+    } catch (const std::exception&) {
+    }
+  }
   return agent;
 }
 
@@ -98,6 +113,18 @@ auto AgentTools::Show(const std::string& path, bool create, bool browser) -> Sho
 auto AgentTools::Current() -> std::optional<Shown> {
   std::lock_guard lock(mutex_);
   return current_;
+}
+
+auto AgentTools::Close() -> std::optional<Closed> {
+  const auto project = Current();
+  if (!project) return std::nullopt;
+  A::CloseRequestT request;
+  request.path = project->path;
+  const auto reply = AgentCall<A::Closed>(*Agent(), std::move(request));
+  std::lock_guard lock(mutex_);
+  if (current_ && current_->path == project->path) current_.reset();
+  return Closed{project->path, reply.view->stopped(),
+                reply.view->held_by() ? reply.view->held_by()->str() : ""};
 }
 
 auto AgentTools::Call(const std::string& name, const std::string& arguments, const Track& track) -> Content {
@@ -139,9 +166,17 @@ auto AgentTools::Call(const std::string& name, const std::string& arguments, con
   } catch (const RpcFailure& e) {
     // A decision waits for the person in the Tsugumi app or Web UI.
     if (e.code != "decision_required" || e.request_id.empty()) throw;
+    // The status call tells when the person has answered.
+    const auto status = json::Encode(json::Members{
+        {"tool", json::Quote("agent_decision_list")},
+        {"arguments", json::Encode(json::Members{{"conversation_id", json::Quote(conversation)},
+                                                 {"request_id", json::Quote(e.request_id)}})},
+        {"answered", json::Quote("its state is allowed or denied; after allowed, the same call with the same "
+                                 "arguments applies the change")}});
     return {json::Encode(json::Members{{"code", json::Quote(e.code)},
                                        {"message", json::Quote(e.what())},
-                                       {"request_id", json::Quote(e.request_id)}}),
+                                       {"request_id", json::Quote(e.request_id)},
+                                       {"status", status}}),
             true,
             {}};
   }

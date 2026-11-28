@@ -584,7 +584,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, VZVirtioSocketL
         }
         let used = Set(self.slots.values)
         guard let slot = (0..<Self.slotCount).first(where: { !used.contains($0) }) else {
-          answer.resume(throwing: LauncherError.startFailed(reason: "at most \(Self.slotCount) projects can be open at once", log: ""))
+          answer.resume(throwing: LauncherError.noProjectSlot(Self.slotCount))
           return
         }
         self.slots[projectId] = slot

@@ -389,7 +389,7 @@ table ProjectReloadRequest {
   check_permissions:bool (id: 4);
 }
 
-/// -> ProjectValidateResult. targets = [] means everything; mode = executable.
+/// -> ProjectValidateResult. Check the latest revision; targets = [] means everything; mode = executable.
 table ProjectValidateRequest {
   /// Omitted: the latest revision.
   at_rev:uint64 = null (id: 0);
@@ -509,7 +509,7 @@ table VersionCommentsRequest { commit:string (id: 0, required); }
 /// -> OperationResult.
 table OperationGetRequest { op_id:string (id: 0, required); save_intent:string (id: 1); }
 
-/// -> SourcePage. depth = 0 (0..8), include_directories = false, limit = 100.
+/// -> SourcePage. List project files; depth = 0 (0..8), include_directories = false, limit = 100.
 table ProjectFileListRequest {
   /// Relative to the project; "" or "." is the project folder.
   path:string (id: 0, required);
@@ -651,7 +651,7 @@ table ProjectShellResult {
   output_prefix:string (id: 10);
 }
 
-/// -> RunPage, newest accepted first.
+/// -> RunPage. The project's runs, newest accepted first.
 table RunHistoryRequest {
   card:Tsugumi.Data.CardPath (id: 0);
   artifacts_only:bool = null (id: 1);
@@ -659,7 +659,7 @@ table RunHistoryRequest {
   limit:uint32 = null (id: 3);
 }
 
-/// -> InvocationPage, ascending invocation number.
+/// -> InvocationPage. A Card's invocations in a run, ascending by number.
 table RunInvocationsRequest {
   run_id:string (id: 0, required);
   card:Tsugumi.Data.CardPath (id: 1, required);

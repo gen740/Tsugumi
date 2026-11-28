@@ -666,6 +666,7 @@ enum Shared {
     "no_project_socket"
   ],
   "notForModels": {
+    "ProjectSaveRequest": ["operation_data"],
     "ProjectValidateRequest": [
       "changes"
     ],
@@ -1086,12 +1087,11 @@ enum Shared {
       "nix_path_lock_update",
       "project_copy",
       "project_connect",
-      "project_make_subgraph",
-      "project_layout",
       "project_inspect",
       "card_id",
       "project_file_list",
       "project_file_read",
+      "project_shell",
       "input_types",
       "evaluate_nix",
       "project_validate",
@@ -1099,8 +1099,11 @@ enum Shared {
       "run",
       "run_status",
       "run_history",
+      "run_invocations",
       "run_record",
       "log_range",
+      "artifact_list",
+      "artifact_read",
       "tool_result_read",
       "template_list",
       "demo_list",
@@ -1113,7 +1116,6 @@ enum Shared {
         "stat": "project_file_stat",
         "format": "project_file_format",
         "attached": "attached_folder_read",
-        "shell": "project_shell",
         "reload": "project_reload"
       },
       "sdk": {
@@ -1121,7 +1123,6 @@ enum Shared {
       },
       "runs": {
         "cancel": "run_cancel",
-        "invocations": "run_invocations",
         "latest": "run_latest_invocations",
         "value": "run_value_read",
         "environments": "run_environments",
@@ -1132,9 +1133,9 @@ enum Shared {
         "input": "view_input",
         "snapshot": "view_snapshot"
       },
-      "artifacts": {
-        "list": "artifact_list",
-        "read": "artifact_read"
+      "canvas": {
+        "layout": "project_layout",
+        "make_subgraph": "project_make_subgraph"
       },
       "versions": {
         "graph": "version_graph",

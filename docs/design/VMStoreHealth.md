@@ -41,6 +41,20 @@ contain repaired paths and failures. Settings → execution environment data als
 has an explicit check/repair action; it stops project environments first.
 No run history or artifacts are deleted by these checks.
 
+## Project slots
+
+The shared VM gives each running project environment one of `SharedVM.slotCount`
+(16) virtiofs devices. An environment keeps its slot until it stops; closing a
+window does not stop it. A project is held while a window or Web UI page shows
+it (HostPageRequest) or while an Agent client's connection showed it last
+(ShowRequest, until CloseRequest or the connection ends: `tsugumi_close` and the
+end of an MCP session). When the VM refuses a start because every slot is taken
+(`no_project_slot`), hostd stops the least recently used environment that
+nothing holds and in which nothing runs (ProjectActivity), then starts again.
+When none qualifies, the start fails with `NoProjectSlot`: an English message
+and `slot_holders` (each project with page, session or busy), which the UIs
+show in their own words. Stopping keeps the project's documents and run history.
+
 ## Guest image
 
 The guest boots a release-built Linux kernel and EROFS root filesystem.

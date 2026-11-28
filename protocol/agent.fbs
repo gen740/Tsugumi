@@ -63,12 +63,18 @@ table DecisionListRequest {
 // that carries the page key.
 table ShowRequest { path:string; card:string; create:bool; browser:bool = true; }
 table Shown { path:string; project_id:string; shown:bool; opened:bool; url:string; }
+// Ends this connection's hold on a project it showed (a connection holds
+// the last project it showed until it closes). The environment stops, freeing
+// its shared VM slot, when no page or other client holds it and nothing runs
+// in it; held_by names what keeps it (page, session or busy).
+table CloseRequest { path:string (required); }
+table Closed { stopped:bool; held_by:string; }
 
 table ConversationSummarizeRequest { conversation_id:string (required); provider:Tsugumi.Service.ProviderSelection; }
 
 union RequestPayload {
   HelloRequest:Tsugumi.Service.HelloRequest,
-  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, DecisionResolveRequest, DecisionListRequest, ConversationSummarizeRequest, ToolCallCancelRequest, CallIdRequest, ShowRequest, ConversationRunWakeRequest
+  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, DecisionResolveRequest, DecisionListRequest, ConversationSummarizeRequest, ToolCallCancelRequest, CallIdRequest, ShowRequest, ConversationRunWakeRequest, CloseRequest
 }
 table Request { value:RequestPayload; }
 
@@ -125,7 +131,7 @@ union ReplyPayload {
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
   ConversationResult, ConversationList, EventsPage, ToolCatalog,
   ToolResult, DecisionList, TextResult:Tsugumi.Service.TextResult,
-  Failure:Tsugumi.Service.Failure, CallId, Shown
+  Failure:Tsugumi.Service.Failure, CallId, Shown, Closed
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply }

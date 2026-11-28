@@ -314,8 +314,7 @@ TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
            [](Builder& b) { return A::CreateToolCatalogRequest(b).Union(); });
   EXPECT_EQ(names(external_catalog.View()), main_tools);
   for (const auto* name :
-       {"project_edit", "project_copy", "project_connect",
-        "project_make_subgraph", "project_layout", "project_save"}) {
+       {"project_edit", "project_copy", "project_connect", "project_save"}) {
     EXPECT_TRUE(main_tools.contains(name)) << name;
     EXPECT_TRUE(helper_tools.contains(name)) << name;
   }
@@ -323,6 +322,8 @@ TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
   EXPECT_EQ(expected_helper_tools.erase("delegate"), 1u);
   EXPECT_EQ(expected_helper_tools.erase("nix_path_lock_update"), 1u);
   EXPECT_EQ(expected_helper_tools.erase("template_list"), 1u);
+  // A scoped helper reads its Cards' records, not artifacts by id.
+  EXPECT_EQ(expected_helper_tools.erase("artifact_read"), 1u);
   EXPECT_EQ(helper_tools, expected_helper_tools);
   EXPECT_TRUE(guide_tools.contains("template_list"));
   for (const auto* catalog : {&main_tools, &helper_tools, &guide_tools}) {
@@ -374,20 +375,21 @@ TEST_F(AgentProjectFixture, ModelCallsIndexedActionsThroughTheProjectPath) {
   }
   EXPECT_FALSE(actions.contains("status"));  // a core tool
   EXPECT_TRUE(actions.contains("cancel"));
-  const auto direct = Tool(conversation, "artifact_list", "{}");
-  const auto indexed =
-      Tool(conversation, "tools",
-           R"({"family":"artifacts","action":"list","arguments":{}})");
+  const auto direct =
+      Tool(conversation, "project_file_stat", R"({"path":"tsugumi.json"})");
+  const auto indexed = Tool(
+      conversation, "tools",
+      R"({"family":"files","action":"stat","arguments":{"path":"tsugumi.json"}})");
   ASSERT_TRUE(direct.Code().empty());
   ASSERT_TRUE(indexed.Code().empty());
   EXPECT_EQ(direct.Value()->value_as_ToolResult()->text()->str(),
             indexed.Value()->value_as_ToolResult()->text()->str());
   model.Queue(
-      AnthropicTool("artifacts", "tools",
-                    R"({"family":"artifacts","action":"list","arguments":{}})"));
-  model.Queue(AnthropicText("Artifacts listed."));
-  ASSERT_TRUE(Send(conversation, "List the artifacts.").Code().empty());
-  EXPECT_NE(WaitUntilIdle(conversation).find("Artifacts listed."),
+      AnthropicTool("stat", "tools",
+                    R"({"family":"files","action":"stat","arguments":{"path":"tsugumi.json"}})"));
+  model.Queue(AnthropicText("File described."));
+  ASSERT_TRUE(Send(conversation, "Describe tsugumi.json.").Code().empty());
+  EXPECT_NE(WaitUntilIdle(conversation).find("File described."),
             std::string::npos);
   const auto requests = model.Requests();
   ASSERT_EQ(requests.size(), 2u);

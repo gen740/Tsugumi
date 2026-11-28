@@ -6,6 +6,8 @@
 #include <atomic>
 #include <condition_variable>
 #include <future>
+#include <map>
+#include <set>
 #include <utility>
 
 #include "../agent_fixture_server.hh"
@@ -643,5 +645,110 @@ TEST(EnvironmentAdapterTest,
   EXPECT_EQ(restored.attached_roots[0]->execution_path, execution_path);
   request.action = H::EnvironmentAction::Stop;
   service->Handle(request);
+}
+
+// A VM-like helper with a fixed number of project slots.
+class SlotDouble final : public host::EnvironmentProcess {
+ public:
+  size_t slots = 2;
+  std::mutex mutex;
+  std::map<int64_t, bool> running;
+  std::set<std::string> busy;
+  int64_t next = 100;
+  auto Busy(const H::EnvironmentStateT& ready) -> bool override {
+    std::lock_guard lock(mutex);
+    return busy.contains(std::filesystem::path(ready.project).filename());
+  }
+  auto Launch(const host::EnvironmentLaunch& launch) -> int64_t override {
+    std::lock_guard lock(mutex);
+    if (std::count_if(running.begin(), running.end(),
+                      [](const auto& p) { return p.second; }) >=
+        static_cast<std::ptrdiff_t>(slots))
+      throw host::EnvironmentFailure(
+          "the shared VM runs at most 2 projects at once", "",
+          "no_project_slot");
+    const auto control = std::find(launch.arguments.begin(),
+                                   launch.arguments.end(), "--control-dir");
+    Tsugumi::State::ServerReadyT ready;
+    ready.protocol = 1;
+    ready.pid = ++next;
+    ready.endpoint = "ws://localhost:1/rpc";
+    ready.token = "fixture";
+    ready.project_id = "project";
+    ready.unix_socket = "fixture";
+    Write(std::filesystem::path(*std::next(control)) / "server.ready",
+          flat::encode<Tsugumi::State::ServerReady>(ready));
+    Write(launch.log, "");
+    running[ready.pid] = true;
+    return ready.pid;
+  }
+  auto Poll(int64_t pid, bool) -> std::optional<int> override {
+    std::lock_guard lock(mutex);
+    return running[pid] ? std::nullopt : std::optional<int>(0);
+  }
+  auto Signal(int64_t pid, int) -> void override {
+    std::lock_guard lock(mutex);
+    running[pid] = false;
+  }
+  auto Verify(const H::EnvironmentStateT& ready) -> bool override {
+    std::lock_guard lock(mutex);
+    return running[ready.pid] && ready.token == "fixture";
+  }
+};
+
+TEST(EnvironmentAdapterTest, AFullVMStopsAnIdleUnheldProjectForANewOne) {
+  TemporaryDirectory directory;
+  for (const auto* name : {"shown", "idle", "running", "next"})
+    Write(directory.path / name / "tsugumi.json", FixtureProjectDocument());
+  AuthorizationDouble authorization;
+  auto helper = std::make_shared<SlotDouble>();
+  host::EnvironmentOptions options;
+  options.directory = directory.path / "environments";
+  options.socket_directory = directory.path / "sockets";
+  options.run_scratch_directory = directory.path / "run-scratch";
+  options.process = helper;
+  options.holder = [](const std::string& project) -> std::string {
+    return std::filesystem::path(project).filename() == "shown" ? "page" : "";
+  };
+  host::Environments service(
+      options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
+  auto start = [&](const char* name) {
+    H::EnvironmentRequestT request;
+    request.project = (directory.path / name).string();
+    request.action = H::EnvironmentAction::Start;
+    return service.Handle(request);
+  };
+  ASSERT_EQ(start("shown").phase, H::EnvironmentPhase::Ready);
+  ASSERT_EQ(start("idle").phase, H::EnvironmentPhase::Ready);
+  // Both slots held: the project nothing holds and nothing runs in gives
+  // its slot to the new one; the one a page shows keeps its own.
+  const auto running = start("running");
+  ASSERT_EQ(running.phase, H::EnvironmentPhase::Ready) << running.message;
+  EXPECT_EQ(start("shown").phase, H::EnvironmentPhase::Ready);
+  H::EnvironmentRequestT state;
+  state.project = (directory.path / "idle").string();
+  EXPECT_EQ(service.Handle(state).phase, H::EnvironmentPhase::Stopped);
+
+  // Nothing is free: the failure names what holds each slot.
+  helper->busy.insert("running");
+  const auto full = start("next");
+  ASSERT_EQ(full.phase, H::EnvironmentPhase::Failed);
+  EXPECT_EQ(full.failure_code, H::EnvironmentFailureCode::NoProjectSlot);
+  std::map<std::string, std::string> holders;
+  for (const auto& holder : full.slot_holders)
+    holders[std::filesystem::path(holder->project).filename()] = holder->reason;
+  EXPECT_EQ(holders, (std::map<std::string, std::string>{
+                         {"running", "busy"}, {"shown", "page"}}));
+  EXPECT_TRUE(full.message.starts_with(
+      "The shared VM runs at most 2 projects at once, and every slot is held"))
+      << full.message;
+  EXPECT_NE(full.message.find("tsugumi_close"), std::string::npos);
+
+  // Closing: a held or running project keeps its environment.
+  EXPECT_FALSE(service.StopUnused((directory.path / "shown").string()));
+  EXPECT_FALSE(service.StopUnused((directory.path / "running").string()));
+  helper->busy.clear();
+  EXPECT_TRUE(service.StopUnused((directory.path / "running").string()));
+  EXPECT_EQ(start("next").phase, H::EnvironmentPhase::Ready);
 }
 }  // namespace tsugumi::test

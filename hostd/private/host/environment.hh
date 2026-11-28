@@ -17,8 +17,12 @@ namespace tsugumi::host {
 
 struct EnvironmentFailure : std::runtime_error {
   std::string log;
-  EnvironmentFailure(std::string message, std::string log)
-      : std::runtime_error(std::move(message)), log(std::move(log)) {}
+  std::string code;  // no_project_slot: every VM project slot is taken
+  EnvironmentFailure(std::string message, std::string log,
+                     std::string code = {})
+      : std::runtime_error(std::move(message)),
+        log(std::move(log)),
+        code(std::move(code)) {}
 };
 
 struct EnvironmentAuthorization {
@@ -105,6 +109,9 @@ struct EnvironmentOptions {
       host_paths;
   std::function<std::function<void()>(const std::filesystem::path&)>
       reserve_project_identity;
+  // What holds a project folder open: "page" (a window or Web UI page shows
+  // it), "session" (an Agent client opened it) or "" (nothing).
+  std::function<std::string(const std::string&)> holder;
 };
 
 class Environments {
@@ -133,6 +140,9 @@ class Environments {
   auto Terminal(const Tsugumi::Host::HostTerminalRequestT& request)
       -> Tsugumi::Host::HostTerminalT;
   auto Busy() -> bool;
+  // Stops the project's environment when nothing holds it and nothing runs
+  // in it; returns whether it stopped.
+  auto StopUnused(const std::string& project) -> bool;
   // Stops observation and pending starts, then shuts down owned runtimes.
   auto Shutdown() -> void;
 

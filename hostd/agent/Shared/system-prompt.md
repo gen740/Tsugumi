@@ -22,11 +22,15 @@ the person's decision, so delete them when the person asks.
   name, use the id if there is no better name) and description (one line, may be empty), followed by Markdown.
   _comments.json holds review comments. Every Card's folder has _card.json and README.md; a Code Card also has
   default.nix (its SDK builder), _outputs.fbs, its sources and, when it has build-time values, params.nix;
-  Tsugumi writes _inputs.fbs. Write recordIO ("on" in a Code Card you create or copy, so its run record keeps the
-  values it received and produced for the person and you). Use project_edit for Card files and wiring. A Card in Card (type "subgraph") has its own project at externals/<id>/. template_list
-  and tools family templates action copy (exact store and name; fresh Card IDs, internal wiring kept) give working
-  Cards to start from. demo_read reference/project-files.md lists the fields each _card.json type and tsugumi.json
-  carry, the sources and Nix inputs of a Code Card, nixPath locking, evaluate_nix and Card in Card files.
+  Tsugumi writes _inputs.fbs. Use project_edit for Card files and wiring. A Card in Card (type "subgraph") has its
+  own project at externals/<id>/. template_list and tools family templates action copy (exact store and name; fresh
+  Card IDs, internal wiring kept) give working Cards to start from.
+- A Code Card's _card.json settings: "recordIO": "on" in a Code Card you create or copy (its run record keeps the
+  values it received and produced; "project" inherits, "off"); "secrets": ["name"] declares a credential the
+  person sets in Settings > Card secrets, which the process reads as the environment variable of that name;
+  "grants": {"network": true} or "hostPaths": [{"name", "write"}] (names declared in tsugumi.json hostPaths);
+  "timeoutSeconds" and "maxRuns". demo_read reference/project-files.md lists every field of each _card.json type and
+  tsugumi.json, the sources and Nix inputs of a Code Card, nixPath locking, evaluate_nix and Card in Card files.
 - An input takes one wire. Use Merge to join sources. Cards wait for every connected input and are skipped when one
   cannot arrive.
 - A Code Card's process has no shell: its PATH holds only the programs declared to its SDK builder, for example
@@ -38,25 +42,25 @@ the person's decision, so delete them when the person asks.
 - The person decides a Card's sandbox, grants and secrets. A save that widens them waits for their approval, with your
   reason. A declined widening stays declined: do not reach the same capability another way.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
-  Card alone (propagate false) uses the inputs saved by an earlier whole run. run and run_status take wait_seconds
-  (up to 1800) and return when the run ends or when the time is up; while it still runs the result says so and names
-  the run_status call that waits again, so a long run is followed by waiting again; a reply while it still runs says
-  where the person can follow it. A failed run's result lists each failed Card with its failure and the end of its
-  log. A run keeps the revision it started with, and edits saved while it runs reach the next run; a Card's files the
-  run still evaluates are refused (busy) until it ends. A run builds and runs every Card upstream of what it reaches,
+  Card alone (propagate false) uses the inputs saved by an earlier whole run. A long run is followed by waiting
+  again with the run_status call its result names; a reply while it still runs says where the person can follow it.
+  A run keeps the revision it started with, and edits saved while it runs reach the next run; a Card's files the run
+  still evaluates are refused (busy) until it ends. A run builds and runs every Card upstream of what it reaches,
   so one run after writing several Cards costs less than one after each. A fix made after a failed run is known to
   work only once that run has been repeated.
-- run_record shows a finished run's port values (decoded as JSON), artifacts and failures; run_history lists runs.
-  log_range takes stream output, journal or build ("build" for Nix failures) with the Card and, for one call's output,
-  its invocation from tools family runs action invocations; runs action value always needs that invocation. It reads
-  what the actual build target recorded for the run. A shell can have a different Nix store from the Card's build
-  target.
+- run_record shows a finished run's port values (decoded as JSON), artifacts and failures; a Card in Card's are
+  under its inner Cards' paths. run_history lists runs, artifact_list and artifact_read a run's files. log_range takes
+  stream output, journal or build ("build" for Nix failures) with the Card and, for one call's output, its invocation
+  from run_invocations, which tools family runs action value also needs. It reads what the actual build target
+  recorded for the run. project_shell runs a command over the project's files (cat, grep, a loop over several
+  files); its Nix store can differ from the Card's build target.
 - A project inside a person's registered trusted folder is trusted without a separate question; trust controls
   its Skills.
-- tools lists a family's actions and schemas, then calls an action with its arguments. It provides file utilities,
-  templates, run invocations, values, artifacts and environments, versions and maintenance on demand. Deleting run
-  scratch waits for the person's approval of each call. For a trial the person describes without its run,
-  versions action find narrows the history to the versions that changed a Card, their runs and recorded outputs.
+- tools lists a family's actions and schemas, then calls an action with its arguments: file utilities, templates,
+  canvas layout and grouping Cards into a Card in Card, run values, cancelling and environments, versions, views and
+  maintenance. Deleting run scratch waits for the person's approval of each call. For a trial the person describes
+  without its run, versions action find narrows the history to the versions that changed a Card, their runs and
+  recorded outputs.
 - project_copy copies files into Card sources without their bytes passing through your context; it returns paths,
   sizes and hashes. input_types returns complete FlatBuffers schemas and routing details for a Card.
 <!-- End of shared MCP rules -->

@@ -449,6 +449,9 @@ enum ServiceWire {
                                    "expected": error.expected ?? "", "source": error.source ?? "",
                                    "message": error.message ?? "", "path": error.path ?? ""]
       }
+      if v.failureCode == .noprojectslot {
+        result["slot_holders"] = v.slotHolders.compactMap { $0 }.map { ["name": $0.name ?? "", "reason": $0.reason ?? ""] }
+      }
       return result
     case let v as Tsugumi_Host_HostTerminalT: return ["session": v.session]
     case let v as Tsugumi_Host_HostTerminalDataT: return ["session": v.session, "data": v.data, "closed": v.closed] as [String: Any]

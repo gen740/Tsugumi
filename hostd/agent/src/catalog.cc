@@ -81,6 +81,31 @@ auto Docs(
   return out;
 }
 
+// A request's documentation without its reply type ("-> RunStatus."), which
+// says nothing to a model, and without the spaces left by "/// " lines.
+auto ToolDescription(std::string docs) -> std::string {
+  const auto trim = [](std::string& s) {
+    s.erase(0, std::min(s.size(), s.find_first_not_of(' ')));
+    while (!s.empty() && s.back() == ' ') s.pop_back();
+  };
+  trim(docs);
+  if (const auto arrow = docs.find("-> ");
+      arrow != std::string::npos && arrow < 40) {
+    if (const auto end = docs.find_first_of(".,", arrow);
+        end != std::string::npos) {
+      docs.erase(0, end + 1);
+      trim(docs);
+      if (!docs.empty())
+        docs[0] = static_cast<char>(
+            std::toupper(static_cast<unsigned char>(docs[0])));
+    }
+  }
+  for (auto at = docs.find("  "); at != std::string::npos;
+       at = docs.find("  ", at))
+    docs.erase(at, 1);
+  return docs;
+}
+
 auto OwnOperationId(const reflection::Object& object) -> bool {
   const auto name = object.name()->str();
   return object.fields()->LookupByKey("op_id") &&
@@ -156,6 +181,7 @@ auto ObjectSchema(const reflection::Object& object, int depth, bool top)
         docs += " Accepted range is " + schema.at("minimum") + " to " +
                 schema.at("maximum") + " bytes.";
       }
+      docs = ToolDescription(docs);
       if (!docs.empty()) schema["description"] = json::Quote(docs);
       properties[name] = json::Encode(schema);
     }
@@ -345,7 +371,7 @@ Catalog::Catalog() {
                                  name);
       const auto& object =
           *Schema().objects()->Get((*found)->union_type()->index());
-      CatalogTool tool{{Name(name), Docs(object.documentation()),
+      CatalogTool tool{{Name(name), ToolDescription(Docs(object.documentation())),
                         ObjectSchema(object, 0, true)},
                        name,
                        false};

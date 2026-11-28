@@ -484,7 +484,7 @@ class VMProcess final : public EnvironmentProcess {
     auto* reply = message->payload.AsReply();
     if (!reply) throw std::runtime_error("Expected a VM helper reply");
     if (const auto* failure = reply->value.AsFailure())
-      throw EnvironmentFailure(failure->message, failure->log);
+      throw EnvironmentFailure(failure->message, failure->log, failure->code);
     return std::make_unique<V::ReplyT>(*reply);
   }
   auto CallProcess(V::ProcessRequestT request) -> V::ProcessT {

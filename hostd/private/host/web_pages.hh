@@ -54,6 +54,8 @@ class WebPages {
    *  page that shows it already (it comes forward), or one on Home is told
    *  to; else a browser window opens it when browser is set. */
   auto Show(const std::string& project, const std::string& card, bool browser) -> Shown;
+  /** Whether a page shows the project folder. */
+  auto Shows(const std::string& project) -> bool;
   /** The URL that opens a page with the key: for the user alone. */
   auto PageUrl(const std::string& project = {}) -> std::string;
 
