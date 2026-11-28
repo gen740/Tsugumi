@@ -17,6 +17,8 @@
 //                  under /nix/var/nix/gcroots/tsugumi/projects/<id>, a folder
 //                  only vmd creates (the parent is not writable by projects);
 //                  roots are removed only by an explicit user action
+//   build CPU      /run/tsugumi-build-cpu answers a project's process the CPU
+//                  time of the daemon processes serving it (build_cpu.hh)
 //
 // The guest opens the persistent control stream to host port 1024. The
 // host connects to 1025 for project RPC and 1026 for raw terminal streams.
@@ -67,8 +69,10 @@
 #include <thread>
 #include <vector>
 
+#include "build_cpu.hh"
 #include "control_wire.hh"
 #include "tsugumi/runtime_support/cache_usage.hh"
+#include "tsugumi/util/process.hh"
 #include "tsugumi/workerd/store.hh"
 
 namespace fs = std::filesystem;
@@ -342,6 +346,8 @@ std::string rpc_dir(const std::string& id) { return kRpc + "/" + id; }
 // The nix-daemon's binary caches, one URL per line (no keys, no credentials):
 // written by /init, readable by every project.
 const std::string kSubstituters = "/run/tsugumi-substituters";
+// Where a project's Nix build client asks for its builds' CPU time.
+const std::string kBuildCpu = "/run/tsugumi-build-cpu";
 
 // Mount namespace of one project: its folder and control folder at /project
 // and /control, the folders of the Mac it was
@@ -637,6 +643,7 @@ auto start_project(const G::StartT& request) -> G::ReplyT {
   args.env.emplace_back("TSUGUMI_GUEST_NIX_SANDBOX=1");
   args.env.push_back("TSUGUMI_CARD_CGROUP_ROOT=" + cg);
   if (request.rpc_trace) args.env.emplace_back("TSUGUMI_RPC_TRACE=1");
+  args.env.push_back("TSUGUMI_VM_BUILD_CPU=" + kBuildCpu);
   args.env.emplace_back("TSUGUMI_EXECUTION_BROKER=vsock:1027");
   args.env.emplace_back(
       "TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE=/control/"
@@ -790,6 +797,53 @@ auto reap_children(sigset_t signals) -> void {
       exited.notify_all();
     }
   }
+}
+
+// ---- build CPU ----
+
+// The CPU time of the nix-daemon processes serving `peer`, a running
+// project's process. The peer's uid names its project; its pid names it only
+// while it lives, so it must still be in that project's cgroup. A project
+// thus learns only of the daemon processes serving its own processes.
+auto build_cpu(const control_wire::BuildCpuPeer& peer)
+    -> control_wire::project_wire::BuildCpuReplyT {
+  control_wire::project_wire::BuildCpuReplyT reply;
+  std::string id;
+  {
+    std::lock_guard lock(mu);
+    for (const auto& [key, project] : projects)
+      if (project.running && project.uid == peer.uid) id = key;
+  }
+  std::ifstream cgroup("/proc/" + std::to_string(peer.pid) + "/cgroup");
+  std::string line;
+  if (id.empty() || peer.pid <= 0 || !std::getline(cgroup, line) ||
+      !line.starts_with("0::/tsugumi/" + id + "/")) {
+    reply.error = "not a running project's process";
+    return reply;
+  }
+  reply.cpu_ms = tsugumi::proc::nix_daemon_cpu_ms(peer.pid);
+  return reply;
+}
+
+// Every project reaches the socket (0666); the answer depends on the caller.
+auto serve_build_cpu() -> void {
+  const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  sockaddr_un address{};
+  address.sun_family = AF_UNIX;
+  std::strncpy(address.sun_path, kBuildCpu.c_str(),
+               sizeof address.sun_path - 1);
+  ::unlink(kBuildCpu.c_str());
+  if (fd < 0 ||
+      ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof address) != 0 ||
+      ::chmod(kBuildCpu.c_str(), 0666) != 0 || ::listen(fd, 64) != 0) {
+    logf("cannot serve %s (builds' CPU time is not counted): %s",
+         kBuildCpu.c_str(), std::strerror(errno));
+    if (fd >= 0) ::close(fd);
+    return;
+  }
+  control_wire::BuildCpuServer(fd, build_cpu).Run();
+  logf("stopped answering %s: %s", kBuildCpu.c_str(), std::strerror(errno));
+  ::close(fd);
 }
 
 // ---- terminals ----
@@ -1456,5 +1510,6 @@ int main(int argc, char** argv) {
   }).detach();
   std::thread(serve, rpc_listener, rpc).detach();
   std::thread(serve, terminal_listener, terminal).detach();
+  std::thread(serve_build_cpu).detach();
   control();
 }

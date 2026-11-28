@@ -40,6 +40,7 @@ clangStdenv.mkDerivation {
         [
           ../hostd/tools/test-binary-cache.py
           ../vm/guest/src/control_wire.hh
+          ../vm/guest/src/build_cpu.hh
           # The evaluator double compiles the real params.nix parser.
           ../tsugumid/runtime/src/nix_params.cc
           ../tsugumid/runtime/src/nix_params.hh
@@ -87,6 +88,7 @@ clangStdenv.mkDerivation {
             ../tests/core/vm_lifetime_test.cc
             ../tests/core/vm_guest_wire_test.cc
             ../vm/guest/src/control_wire.hh
+            ../vm/guest/src/build_cpu.hh
           ];
         }
         .${target}

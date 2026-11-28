@@ -80,4 +80,12 @@ uint64_t descendants_cpu_ms(pid_t root);
 // descendants_cpu_ms(root); nullopt when `root` cannot be read.
 std::optional<uint64_t> tree_cpu_ms(pid_t root);
 
+// The CPU time of the nix-daemon processes serving `client`'s store
+// connections, with the builders below them and those they reaped (tree_cpu_ms
+// of each). nix-daemon names such a process by its client's pid as the daemon
+// sees it: in argv[1] (Nix 2.34) or as `nix-daemon.worker-<pid>` (Nix 2.36).
+// Found only in a /proc that shows the daemon's processes, with `client` in
+// that /proc's PID namespace; elsewhere 0. Linux only.
+uint64_t nix_daemon_cpu_ms(pid_t client);
+
 }  // namespace tsugumi::proc

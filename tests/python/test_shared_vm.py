@@ -18,6 +18,7 @@ from projects import card
 from projects import run_and_wait, start_run, wait_for_log, wait_run, write_nix_project as write
 from harness.real_cards import ONE_MAIN, log, python_card
 from tsugumi_client import RpcFailure, new_id, path, text
+from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.Host.EventPayload import EventPayload
 from Tsugumi.Trace.CoreTraceRequest import CoreTraceRequestT
@@ -138,6 +139,30 @@ def test_stopping_one_project_keeps_the_other_running(tmp_path):
     finally:
         slow.stop()
         other.stop()
+
+
+def test_build_cpu_time_counts_the_shared_daemon(tmp_path):
+    """The project's core cannot see the shared nix-daemon from its PID
+    namespace; vmd answers the build client the CPU time of the daemon
+    processes serving it, so the invocation counts a derivation that computes
+    for four seconds."""
+    root = tmp_path / "build-cpu"
+    main = "import os\nfrom card import Output\nfrom t.Num import NumT\n\ndef run(input):\n" \
+           "    assert os.path.exists(PROBE)\n    return Output(out=NumT(value=1))\n"
+    let = ("  probe = pkgs.runCommand \"tsugumi-vm-build-cpu-" + new_id() + "\" { allowSubstitutes = false; } ''\n"
+           "    end=$((SECONDS + 4))\n    while [ \"$SECONDS\" -lt \"$end\" ]; do :; done\n    touch \"$out\"\n  '';")
+    write(root, {"trigger": {"type": "trigger"},
+                 "step": python_card(main, let=let, values={"PROBE": "\"${probe}\""}, buildTimeoutSeconds=300)},
+          [card("start", "trigger"), card("step", "step")], [])
+    env = VMEnv(root).start()
+    try:
+        c = env.client()
+        run_id, outcome = run_and_wait(c, "start")
+        assert outcome.state == RunState.succeeded, log(c, run_id, "step", LogStream.build)
+        record = c.call("RunRecordRequest", runId=run_id, card=path("step"), invocation=1).record
+        assert record.summary.cpuMs is not None and record.summary.cpuMs >= 2500, record.summary.cpuMs
+    finally:
+        env.stop()
 
 
 def build_outcome(c, run_id, card_id):

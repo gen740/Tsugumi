@@ -1,13 +1,19 @@
 """Read a real Card's Nix output from run history."""
 
 import os
+import shutil
 import socket
 import sqlite3
+import struct
 import sys
+import tempfile
+import threading
 import time
 from contextlib import ExitStack, closing
+from pathlib import Path
 from uuid import uuid4
 
+import flatbuffers
 import pytest
 
 from harness.nix_path import test_lock_entries as fixture_locks
@@ -23,6 +29,7 @@ from Tsugumi.Data.Phase import Phase
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
+from Tsugumi.VMProject.BuildCpuReply import BuildCpuReplyT
 
 # Cards that depend on the probe derivation through main.py's text.
 PROBE_MAIN = """import os
@@ -350,3 +357,84 @@ in
     assert building and max(building) >= 1000, building
     record = client.call("RunRecordRequest", runId=run_id, card=path("probe"), invocation=1).record
     assert record.summary.cpuMs is not None and record.summary.cpuMs >= 2500, record.summary.cpuMs
+
+
+def test_shared_vm_build_cpu_time_comes_from_vmd(core_factory, tmp_path):
+    """In the shared VM a project's core cannot see the nix-daemon processes
+    serving its build client; tsugumi-vmd, which can, answers their CPU time on
+    TSUGUMI_VM_BUILD_CPU (protocol/vm_project.fbs). With a vmd double that
+    answers 0.5 s when the client starts and 7.5 s after, the invocation's CPU
+    time counts the 7 s between, during the build and after it."""
+    folder = tempfile.mkdtemp(prefix="tsugumi-vmd-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))
+    endpoint = os.path.join(folder, "build-cpu")
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(endpoint)
+    listener.listen()
+    answers, peers = [], []
+
+    def answer(connection):
+        with closing(connection):
+            if sys.platform == "linux":
+                pid = struct.unpack("3i", connection.getsockopt(
+                    socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))[0]
+                peers.append((Path("/proc") / str(pid) / "cmdline").read_bytes())
+            while True:
+                prefix = connection.recv(4, socket.MSG_WAITALL)
+                if len(prefix) < 4:
+                    return
+                connection.recv(struct.unpack("<I", prefix)[0], socket.MSG_WAITALL)
+                reply = BuildCpuReplyT()
+                reply.cpuMs = 7500 if answers else 500
+                answers.append(reply.cpuMs)
+                builder = flatbuffers.Builder(64)
+                builder.FinishSizePrefixed(reply.Pack(builder))
+                connection.sendall(bytes(builder.Output()))
+
+    def serve():
+        while True:
+            try:
+                connection, _ = listener.accept()
+            except OSError:
+                return
+            threading.Thread(target=answer, args=(connection,), daemon=True).start()
+
+    threading.Thread(target=serve, daemon=True).start()
+    try:
+        root = tmp_path / "project"
+        definition = {
+            "type": "code",
+            "_outputs": "table Outputs {} root_type Outputs;",
+            "_nix": r'''
+{ params, inputs }:
+let
+  pkgs = import <nixpkgs> { };
+  probe = pkgs.runCommand "tsugumi-vm-build-cpu-@id@" {} ''
+    sleep 3
+    touch "$out"
+  '';
+in
+@run@'''.replace("@id@", uuid4().hex).replace(
+                "@run@", python_nix(EXISTS_MAIN, values={"PROBE": "\"${probe}\""}).split("\n", 1)[1]),
+        }
+        write(root, {"probe": definition}, [card("probe", "probe")], [])
+        client = core_factory(project_root=root, env={"TSUGUMI_VM_BUILD_CPU": endpoint}).connect()
+        run_id = start_run(client, "probe", propagate=False)
+        building = []
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            status = client.call("RunStatusRequest", runId=run_id)
+            building += [r.cpuMs for r in status.active or [] if r.stage == Phase.build and r.cpuMs is not None]
+            if status.state not in (RunState.queued, RunState.preparing, RunState.running):
+                break
+            time.sleep(0.2)
+        outcome = wait_run(client, run_id)
+        assert outcome.state == RunState.succeeded, log(client, run_id, "probe", LogStream.build)
+        assert len(answers) >= 2, answers
+        assert building and max(building) >= 7000, building
+        record = client.call("RunRecordRequest", runId=run_id, card=path("probe"), invocation=1).record
+        assert record.summary.cpuMs is not None and record.summary.cpuMs >= 7000, record.summary.cpuMs
+        # vmd answers the connecting process: the build client itself.
+        assert all(b"--nix-build-client" in cmdline for cmdline in peers), peers
+    finally:
+        listener.close()
+        shutil.rmtree(folder, ignore_errors=True)

@@ -6,6 +6,8 @@
 #include <signal.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/un.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
@@ -51,6 +53,7 @@
 
 #include "nix_eval.hh"
 #include "tsugumi/protocol/nix_evaluator_generated.h"
+#include "tsugumi/protocol/vm_project_generated.h"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/process.hh"
 #include "tsugumi/workerd/log_limits.hh"
@@ -63,6 +66,7 @@ namespace tsugumi {
 namespace {
 
 namespace E = Tsugumi::NixEvaluator;
+namespace V = Tsugumi::VMProject;
 
 constexpr size_t kExpressionBytes = 8u << 20;
 constexpr size_t kExpressionEntries = 2000;
@@ -93,14 +97,15 @@ auto write_build_log(std::string_view line, bool truncated,
 // The CPU time used for this build client's builds since it began: its own
 // process tree, where a store it opens itself runs the builders, and the
 // nix-daemon processes serving its connections, with the builders below them
-// and those they reaped. nix-daemon names such a process by its client's pid:
-// in argv[1] (Nix 2.34) or as `nix-daemon.worker-<pid>` (Nix 2.36). It is
-// found only where the client sees the daemon's processes
-// (the same PID namespace, a readable /proc). A derivation another client
-// builds meanwhile runs below that client's daemon process and counts there.
+// and those they reaped. It reads those itself where it sees the daemon's
+// processes (the same PID namespace, a readable /proc). In the shared VM its
+// core has a PID namespace of its own, and tsugumi-vmd, which sees the
+// daemon, answers it on TSUGUMI_VM_BUILD_CPU (protocol/vm_project.fbs). A
+// derivation another client builds meanwhile runs below that client's daemon
+// process and counts there.
 class BuildCpu {
  public:
-  BuildCpu() : start_(used()) {}
+  BuildCpu() : vmd_(connect_vmd()), start_(used()) {}
 
   // The CPU time so far when it grew since the last sample.
   auto sample() -> std::optional<uint64_t> {
@@ -111,37 +116,73 @@ class BuildCpu {
   }
 
  private:
-  static auto used() -> uint64_t {
-    uint64_t total = tsugumi::proc::tree_cpu_ms(::getpid()).value_or(0);
-    for (const auto pid : daemon_connections())
-      total += tsugumi::proc::tree_cpu_ms(pid).value_or(0);
-    return total;
+  auto used() -> uint64_t {
+    return tsugumi::proc::tree_cpu_ms(::getpid()).value_or(0) +
+           tsugumi::proc::nix_daemon_cpu_ms(::getpid()) + ask_vmd();
   }
 
-  static auto daemon_connections() -> std::vector<pid_t> {
-    std::vector<pid_t> found;
-#ifdef __linux__
-    const auto self = std::to_string(::getpid());
-    std::error_code ec;
-    for (const auto& entry :
-         std::filesystem::directory_iterator("/proc", ec)) {
-      const auto name = entry.path().filename().string();
-      if (name.empty() ||
-          !std::ranges::all_of(name, [](char c) { return c >= '0' && c <= '9'; }))
-        continue;
-      std::ifstream file(entry.path() / "cmdline", std::ios::binary);
-      std::string program, client;
-      if (!std::getline(file, program, '\0')) continue;
-      std::getline(file, client, '\0');
-      const auto base = std::filesystem::path(program).filename().string();
-      if ((base == "nix-daemon" && client == self) ||
-          base == "nix-daemon.worker-" + self)
-        found.push_back(static_cast<pid_t>(std::stol(name)));
-    }
+  static auto connect_vmd() -> nix::AutoCloseFD {
+    const auto path = nix::getEnv("TSUGUMI_VM_BUILD_CPU");
+    if (!path || path->empty()) return {};
+    sockaddr_un address{};
+    if (path->size() >= sizeof address.sun_path) return {};
+    address.sun_family = AF_UNIX;
+    std::memcpy(address.sun_path, path->data(), path->size());
+    nix::AutoCloseFD fd(::socket(AF_UNIX, SOCK_STREAM, 0));
+    if (!fd) return {};
+    nix::unix::closeOnExec(fd.get());
+    // An answer is a /proc scan away; a vmd that does not answer in time
+    // leaves the build uncounted rather than holding it up.
+    const timeval timeout{2, 0};
+    ::setsockopt(fd.get(), SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+    ::setsockopt(fd.get(), SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
+#ifdef SO_NOSIGPIPE
+    const int on = 1;
+    ::setsockopt(fd.get(), SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on);
 #endif
-    return found;
+    if (::connect(fd.get(), reinterpret_cast<sockaddr*>(&address),
+                  sizeof address) != 0)
+      return {};
+    return fd;
   }
 
+  // vmd's count for this process. Without vmd, or once it failed, the last
+  // answer stays, so a missing answer never shows as a drop.
+  auto ask_vmd() -> uint64_t {
+    if (!vmd_) return vmd_last_;
+    try {
+      flatbuffers::FlatBufferBuilder builder;
+      builder.FinishSizePrefixed(V::CreateBuildCpuRequest(builder));
+      nix::writeFull(vmd_.get(),
+                     {reinterpret_cast<const char*>(builder.GetBufferPointer()),
+                      builder.GetSize()},
+                     false);
+      std::vector<uint8_t> frame(sizeof(uint32_t));
+      nix::readFull(vmd_.get(), reinterpret_cast<char*>(frame.data()),
+                    frame.size());
+      const auto size = flatbuffers::ReadScalar<uint32_t>(frame.data());
+      if (size == 0 || size > 4096)
+        throw std::runtime_error("invalid build CPU reply");
+      frame.resize(sizeof(uint32_t) + size);
+      nix::readFull(vmd_.get(),
+                    reinterpret_cast<char*>(frame.data()) + sizeof(uint32_t),
+                    size);
+      // Verified with its prefix: the builder aligns the whole frame.
+      flatbuffers::Verifier verifier(frame.data(), frame.size());
+      if (!verifier.VerifySizePrefixedBuffer<V::BuildCpuReply>(nullptr))
+        throw std::runtime_error("invalid build CPU reply");
+      const auto* reply =
+          flatbuffers::GetSizePrefixedRoot<V::BuildCpuReply>(frame.data());
+      if (!reply->cpu_ms()) throw std::runtime_error("no build CPU time");
+      vmd_last_ = std::max(vmd_last_, *reply->cpu_ms());
+    } catch (const std::exception&) {
+      vmd_.close();
+    }
+    return vmd_last_;
+  }
+
+  nix::AutoCloseFD vmd_;
+  uint64_t vmd_last_ = 0;
   uint64_t start_;
   std::optional<uint64_t> last_;
 };

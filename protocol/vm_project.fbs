@@ -1,0 +1,16 @@
+// What a project's processes in the shared VM may ask tsugumi-vmd, on the
+// Unix socket /run/tsugumi-build-cpu (TSUGUMI_VM_BUILD_CPU in the project's
+// environment). Each frame is a size-prefixed buffer (uint32 LE length): a
+// BuildCpuRequest, answered by one BuildCpuReply. The connecting process is
+// the subject of every request: vmd takes its pid and uid from the socket's
+// peer credentials, so a request names no process and a project learns
+// nothing of another project's processes.
+namespace Tsugumi.VMProject;
+
+// The CPU time of the nix-daemon processes serving the connecting process's
+// store connections, with their builders and those they reaped.
+table BuildCpuRequest {}
+// cpu_ms: that CPU time, or error when the peer is no running project's
+// process.
+table BuildCpuReply { cpu_ms:ulong = null; error:string; }
+root_type BuildCpuRequest;

@@ -710,4 +710,31 @@ std::optional<uint64_t> tree_cpu_ms(pid_t root) {
   return sample_tree(root, true);
 }
 
+uint64_t nix_daemon_cpu_ms(pid_t client) {
+  uint64_t total = 0;
+#ifdef __linux__
+  if (client <= 0) return 0;
+  const auto self = std::to_string(client);
+  std::error_code ec;
+  for (const auto& entry : std::filesystem::directory_iterator("/proc", ec)) {
+    const auto name = entry.path().filename().string();
+    if (name.empty() || !std::ranges::all_of(name, [](unsigned char c) {
+          return c >= '0' && c <= '9';
+        }))
+      continue;
+    std::ifstream file(entry.path() / "cmdline", std::ios::binary);
+    std::string program, argument;
+    if (!std::getline(file, program, '\0')) continue;
+    std::getline(file, argument, '\0');
+    const auto base = std::filesystem::path(program).filename().string();
+    if ((base == "nix-daemon" && argument == self) ||
+        base == "nix-daemon.worker-" + self)
+      total += tree_cpu_ms(static_cast<pid_t>(std::stol(name))).value_or(0);
+  }
+#else
+  (void)client;
+#endif
+  return total;
+}
+
 }  // namespace tsugumi::proc

@@ -82,6 +82,7 @@ The managing process inside the VM, `tsugumi-vmd`, starts each project's `tsugum
 - **cgroup**: placed at `/sys/fs/cgroup/tsugumi/<id>`. Stopping a project ends exactly the processes in that cgroup with `cgroup.kill`, without affecting other projects.
 - **GC roots**: `/nix/var/nix/gcroots/tsugumi/projects/<id>/` is created by `tsugumi-vmd` as root, and the parent directory is not writable from projects, so another project cannot take it over by creating the directory first (checked in `test_shared_vm.py`).
 - **Kernel**: Linux 6.12 LTS (`vm/guest/kernel.nix`) without io_uring, and with unprivileged BPF off by default. `/init` uses sysctls to restrict reading kernel addresses and logs, ptrace (descendants only) and planting links and files in shared sticky folders (Yama is enabled; BPF JIT and userfaultfd are not built in).
+- **Build CPU time**: `/run/tsugumi-build-cpu` is the one `tsugumi-vmd` socket every project reaches (`protocol/vm_project.fbs`). It answers only the CPU time of the `nix-daemon` processes serving the connecting process, which vmd identifies from the socket's peer credentials (uid of a running project, and still in that project's cgroup); a request names no process, so it reveals nothing about another project's processes.
 - **Terminal**: opening the terminal inside the VM enters the project's namespaces with `setns`, joins the same cgroup and drops to the project's uid before starting `bash`. Stopping the project environment ends its terminals too.
 
 ### What projects share
