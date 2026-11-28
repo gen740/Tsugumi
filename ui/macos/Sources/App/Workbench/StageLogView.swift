@@ -169,11 +169,17 @@ struct StageLogView: View {
   /// The stages as the Card's face draws them, and what the running one does.
   private var pipeline: some View {
     TimelineView(.periodic(from: .now, by: 1)) { _ in
-      StagePipelineView(line: StagePipeline(stages: groups.flatMap(\.stages), records: stages, service: service,
-                                            live: live, now: session.coreNow(),
-                                            lastActivity: live?.executionLastActivity ?? info?.record?.summary.executionLastActivity,
-                                            cpuMs: live.map(\.cpuMs) ?? info?.record?.summary.cpuMs)) { open($0) }
+      StagePipelineView(line: line) { open($0) }
     }
+  }
+
+  /// The pipeline line now; the sections take their state and time from it.
+  private var line: StagePipeline {
+    StagePipeline(stages: groups.flatMap(\.stages), records: stages, service: service,
+                  live: live, now: session.coreNow(),
+                  lastActivity: live?.executionLastActivity ?? info?.record?.summary.executionLastActivity,
+                  cpuMs: live.map(\.cpuMs) ?? info?.record?.summary.cpuMs,
+                  buildCached: live.map { $0.cached ? true : nil } ?? info?.record?.summary.buildCached)
   }
 
   static func stageLabel(_ st: Stage) -> String {
@@ -192,7 +198,8 @@ struct StageLogView: View {
 
   @ViewBuilder private func section(_ g: Group) -> some View {
     let open = isOpen(g)
-    let st = status(g)
+    let part = line.section(g.stages, ended: !ongoing)
+    let st = SectionStatus(part.status, waiting: part.waiting)
     Button { folded[g.id] = open } label: {
       HStack(spacing: 6) {
         Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
@@ -200,11 +207,13 @@ struct StageLogView: View {
         StatusSymbol(status: st)
         Text(g.title)
         if g.id == "execute", let service { Text("(\(service))").foregroundStyle(.secondary) }
-        if records(g).contains(where: { $0.outcome == .cached }) { Text("cache").font(.caption).foregroundStyle(StagePalette.reuse) }
-        if records(g).contains(where: { $0.outcome == .reused }) { Text("再利用").font(.caption).foregroundStyle(StagePalette.reuse) }
+        if part.cached { Text("cache").font(.caption).foregroundStyle(StagePalette.reuse) }
+        if part.reused { Text("再利用").font(.caption).foregroundStyle(StagePalette.reuse) }
         Spacer()
         TimelineView(.periodic(from: .now, by: 1)) { _ in
-          Text(summary(g, st)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+          let now = line.section(g.stages, ended: !ongoing)
+          Text(summary(SectionStatus(now.status, waiting: now.waiting), seconds: now.seconds))
+            .font(.caption).foregroundStyle(.secondary).monospacedDigit()
         }
       }
       .font(.callout).lineLimit(1)
@@ -241,17 +250,13 @@ struct StageLogView: View {
     return [.waiting, .ready, .preparing, .running].contains(state)
   }
 
-  private func summary(_ g: Group, _ st: SectionStatus) -> String {
-    let rs = records(g)
+  /// A section header's words: its time (the sum of its stages' times) and state.
+  private func summary(_ st: SectionStatus, seconds: Double?) -> String {
     switch st {
     case .waiting: return activity?.text ?? st.label
-    case .running:
-      let time = rs.compactMap(\.start).min().map { formatDuration(Double(max(0, session.coreNow() - $0)) / 1000) }
-      return [time, st.label].compactMap { $0 }.joined(separator: " · ")
+    case .running: return [seconds.map(formatDuration), st.label].compactMap { $0 }.joined(separator: " · ")
     case .pending: return ongoing ? String(localized: "まだ") : String(localized: "実行されていません")
-    default:
-      let total = rs.compactMap { r in r.start.flatMap { s in r.end.map { Double($0 - s) / 1000 } } }
-      return total.isEmpty ? st.label : formatDuration(total.reduce(0, +))
+    default: return seconds.map(formatDuration) ?? st.label
     }
   }
 
@@ -284,19 +289,10 @@ struct StageLogView: View {
     }
   }
 
-  private func records(_ g: Group) -> [StageRecord] { stages.filter { g.stages.contains($0.stage) } }
-
+  /// A section's state by the pipeline line's rule (StagePipeline.section).
   private func status(_ g: Group) -> SectionStatus {
-    let rs = records(g)
-    if rs.contains(where: { $0.outcome == .failed }) { return .failed }
-    if rs.contains(where: { $0.outcome == .cancelled }) { return .cancelled }
-    if rs.contains(where: { $0.outcome == .running }) {
-      return g.stages.contains(.execute) && activity?.waiting == true ? .waiting : .running
-    }
-    if rs.isEmpty { return .pending }
-    if rs.allSatisfy({ $0.outcome == .cached }) { return .cached }
-    if rs.allSatisfy({ $0.outcome == .reused }) { return .reused }
-    return .done
+    let part = line.section(g.stages, ended: !ongoing)
+    return SectionStatus(part.status, waiting: part.waiting)
   }
 
   // MARK: Export

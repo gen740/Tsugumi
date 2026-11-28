@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict'
 
 const { Stage } = await import('../src/model/canvasKit')
-const { formatAgo, stagePipeline } = await import('../src/model/stagePipeline')
+const { formatAgo, pipelineSection, stagePipeline } = await import('../src/model/stagePipeline')
 const { D } = await import('../src/wire/rpc')
 type CardRunState = import('../src/model/session').CardRunState
 type StageRecord = import('../src/model/session').StageRecord
@@ -74,9 +74,16 @@ assert.ok(step(cached, Stage.build).status === 'cached' && !step(cached, Stage.b
 assert.ok(step(cached, Stage.execute).status === 'done' && step(cached, Stage.execute).seconds === 4 && cached.detail === undefined)
 // Once it ended, the second line says the CPU time it used, its Nix build's included.
 assert.equal(stagePipeline(order, cachedRecords, 'local', undefined, 9_000, undefined, 341_230).detail, 'CPU 5:41')
-// A finished run on a worker: its build is shown done on the worker.
-const remote = stagePipeline(order, cachedRecords.filter((r) => r.stage !== Stage.build), 'ttl', undefined, 9_000)
+// A finished run on a worker: its build is shown done on the worker when it
+// built, cached when it came from a store (the core's record), and cached
+// when the worker reported no build at all.
+const remoteRecords = cachedRecords.filter((r) => r.stage !== Stage.build)
+const remote = stagePipeline(order, remoteRecords, 'ttl', undefined, 9_000, D.ExecutionActivity.running, undefined, false)
 assert.ok(step(remote, Stage.build).status === 'done' && step(remote, Stage.build).onWorker)
+assert.equal(step(stagePipeline(order, remoteRecords, 'ttl', undefined, 9_000, D.ExecutionActivity.running, undefined, true), Stage.build).status, 'cached')
+assert.equal(step(stagePipeline(order, remoteRecords, 'ttl', undefined, 9_000), Stage.build).status, 'cached')
+assert.equal(step(stagePipeline(order, remoteRecords, 'ttl', undefined, 9_000, D.ExecutionActivity.building), Stage.build).status, 'done')
+
 
 // Stopped while the worker still prepared (the Card never started): the build
 // carries the stop and the whole time, the execution did not run.
@@ -95,6 +102,48 @@ for (const after of [D.ExecutionActivity.running, D.ExecutionActivity.pushing]) 
   const stopped = stagePipeline(order, stoppedRecords, 'ttl', undefined, 300_000, after)
   assert.ok(step(stopped, Stage.build).status === 'done' && step(stopped, Stage.build).seconds === undefined)
   assert.ok(step(stopped, Stage.execute).status === 'cancelled' && step(stopped, Stage.execute).seconds === 290)
+}
+
+// The log's sections follow the pipeline line. While the worker builds, the
+// build section runs (not done because the core's own preparation and Nix
+// evaluation finished) and holds the worker's build time; the execution has
+// not started yet.
+{
+  const groups = { build: [Stage.prepare, Stage.evaluate, Stage.build], execute: [Stage.execute], save: [Stage.validate, Stage.save] }
+  const buildSection = pipelineSection(building, groups.build, false)
+  assert.ok(buildSection.status === 'running' && !buildSection.waiting && Math.abs(buildSection.seconds! - 100) < 1e-9)
+  assert.equal(pipelineSection(building, groups.execute, false).status, 'pending')
+  assert.equal(pipelineSection(building, groups.execute, false).seconds, undefined)
+  assert.equal(pipelineSection(building, groups.save, false).status, 'pending')
+  // Waiting for the worker's Nix store: the build section waits.
+  assert.ok(pipelineSection(store, groups.build, false).status === 'running' && pipelineSection(store, groups.build, false).waiting)
+  // Queued for a free slot: the execution waits, nothing is built yet.
+  const q = pipelineSection(queued, groups.execute, false)
+  assert.ok(q.status === 'running' && q.waiting)
+  // The core's own part of the build is behind the waiting execution.
+  assert.equal(pipelineSection(queued, groups.build, false).status, 'done')
+  // Once the Card runs, the build section is done and the execution runs.
+  assert.equal(pipelineSection(running, groups.build, false).status, 'done')
+  assert.equal(pipelineSection(running, groups.execute, false).status, 'running')
+  // Nothing was built on the worker: the build section is done with the cache mark.
+  const nothing = stagePipeline(order, records, 'ttl',
+    { ...live, executionActivity: D.ExecutionActivity.unspecified, executionState: D.RemoteExecutionState.running }, 100_000)
+  const nothingBuild = pipelineSection(nothing, groups.build, false)
+  assert.ok(nothingBuild.status === 'done' && nothingBuild.cached)
+  // A stage that reported nothing while a later one started is behind it,
+  // not still running: no build recorded, the execution runs.
+  const local = { ...live, executionService: 'local', executionActivity: undefined }
+  const later = stagePipeline(order, records, 'local', local, 100_000)
+  assert.equal(pipelineSection(later, groups.build, false).status, 'done')
+  assert.equal(pipelineSection(later, groups.execute, false).status, 'running')
+  // A section partly done with the rest to come runs: validate done, save not yet.
+  const saving = stagePipeline(order, cachedRecords.slice(0, 5), 'local', local, 9_000)
+  assert.equal(pipelineSection(saving, groups.save, false).status, 'running')
+  assert.ok(pipelineSection(saving, groups.build, false).status === 'done' && pipelineSection(saving, groups.build, false).cached)
+  // Stopped while the worker built: the build section carries the stop, the execution never ran.
+  const stopped = stagePipeline(order, stoppedRecords, 'ttl', undefined, 300_000, D.ExecutionActivity.building)
+  assert.equal(pipelineSection(stopped, groups.build, true).status, 'cancelled')
+  assert.equal(pipelineSection(stopped, groups.execute, true).status, 'notRun')
 }
 
 // An open section whose stream has not loaded yet says nothing (no "empty"

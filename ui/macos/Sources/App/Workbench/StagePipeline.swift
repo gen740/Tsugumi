@@ -31,8 +31,9 @@ struct StagePipeline: Equatable {
   ///   - now: the core's clock (ms since 1970).
   ///   - lastActivity: the last activity the remote job reported (kept after it ended).
   ///   - cpuMs: the CPU time it used, said once no stage runs any more.
+  ///   - buildCached: whether the worker's build came from a store or cache (known once it ended).
   init(stages shown: [Stage], records: [StageRecord], service: String?, live: CardRunState?, now: Int64,
-       lastActivity: Tsugumi_Data_ExecutionActivity? = nil, cpuMs: UInt64? = nil) {
+       lastActivity: Tsugumi_Data_ExecutionActivity? = nil, cpuMs: UInt64? = nil, buildCached: Bool? = nil) {
     func record(_ st: Stage) -> StageRecord? { records.last { $0.stage == st } }
     func seconds(_ r: StageRecord?) -> Double? {
       guard let r, let start = r.start else { return nil }
@@ -48,7 +49,7 @@ struct StagePipeline: Equatable {
       if let i = steps.firstIndex(where: { $0.stage == st }) { change(&steps[i]) }
     }
     let worker = WorkerStages(records: records, service: service, live: live,
-                              lastActivity: lastActivity ?? live?.executionLastActivity)
+                              lastActivity: lastActivity ?? live?.executionLastActivity, buildCached: buildCached)
     update(.build) {
       $0.onWorker = worker.onWorker
       if let status = worker.build {
@@ -73,6 +74,31 @@ struct StagePipeline: Equatable {
       return
     }
     detail = Self.detail(current, service: worker.remote ? service : nil, activity: activity, live: live, now: now)
+  }
+
+  /// A log section's state from the stages it covers, by the rule the
+  /// circles follow: a section with a stage still running runs; once a later
+  /// stage started, the section's stages that reported nothing are behind
+  /// it. Its time is the sum of its stages' times, so the worker's build
+  /// counts in the build section and not in the execution.
+  struct Section: Equatable {
+    var status: StageProgress.Status
+    var waiting = false
+    var seconds: Double?
+    var cached = false
+    var reused = false
+  }
+
+  /// - Parameter ended: the invocation ended.
+  func section(_ stages: [Stage], ended: Bool) -> Section {
+    let mine = steps.filter { stages.contains($0.stage) }
+    guard let i = steps.lastIndex(where: { stages.contains($0.stage) }) else { return Section(status: .pending) }
+    let later = steps[(i + 1)...].contains { $0.status != .pending && $0.status != .notRun }
+    let status = StageProgress.merge(mine.map(\.status), ended: ended || later)
+    let times = mine.compactMap(\.seconds)
+    return Section(status: status, waiting: status == .running && mine.contains { $0.status == .running && $0.waiting },
+                   seconds: times.isEmpty ? nil : times.reduce(0, +),
+                   cached: mine.contains { $0.status == .cached }, reused: mine.contains { $0.status == .reused })
   }
 
   static func status(_ outcome: Tsugumi_Data_StageOutcome?) -> StageProgress.Status {
@@ -127,7 +153,11 @@ struct StagePipeline: Equatable {
 /// While it prepares, builds or fetches it, or waits for its Nix store, the
 /// build is the running (or waiting) stage and the execution has not started;
 /// once the Card itself runs, the build is done. Waiting for a free worker
-/// slot is the execution's wait: nothing is built yet. An invocation that
+/// slot is the execution's wait: nothing is built yet. A worker that runs the
+/// job but reports no activity built nothing before the Card (everything was
+/// in its store or substituted): once a later stage started, or the
+/// invocation ended after the Card ran, a build that reported no work shows
+/// as cached. An invocation that
 /// ended (failed or stopped) while the worker still waited for its store,
 /// prepared, built or fetched never ran the Card: the build carries that end
 /// and the time, and the execution did not run.
@@ -148,8 +178,22 @@ struct WorkerStages: Equatable {
   /// What the worker does before the Card itself runs.
   static let beforeCard: [Tsugumi_Data_ExecutionActivity] = [.waitingStore, .preparing, .building, .substituting]
 
-  /// - Parameter lastActivity: the last activity the remote job reported (kept after it ended).
-  init(records: [StageRecord], service: String?, live: CardRunState?, lastActivity: Tsugumi_Data_ExecutionActivity? = nil) {
+  /// The worker's build once the Card is behind it: what the core recorded
+  /// when the job ended, else cached when no build was ever reported
+  /// (nothing at all, or only fetching), else done.
+  static func behindCard(lastActivity: Tsugumi_Data_ExecutionActivity?, buildCached: Bool?) -> StageProgress.Status {
+    if let buildCached { return buildCached ? .cached : .done }
+    switch lastActivity {
+    case nil, .unspecified?, .substituting?: return .cached
+    default: return .done
+    }
+  }
+
+  /// - Parameters:
+  ///   - lastActivity: the last activity the remote job reported (kept after it ended).
+  ///   - buildCached: whether the build came from a store or cache (known once it ended).
+  init(records: [StageRecord], service: String?, live: CardRunState?, lastActivity: Tsugumi_Data_ExecutionActivity? = nil,
+       buildCached: Bool? = nil) {
     remote = service.map { !$0.isEmpty && $0 != "local" } ?? false
     let activity = live.flatMap(ExecutionActivityText.init)
     let execute = records.last { $0.stage == .execute }
@@ -168,19 +212,22 @@ struct WorkerStages: Equatable {
         build = .running
         buildWaiting = activity.waiting
         self.execute = .pending
+      } else if live?.executionState == .running {
+        // The worker runs the job and reports nothing before the Card: it had nothing to build.
+        build = Self.behindCard(lastActivity: lastActivity ?? live?.executionLastActivity, buildCached: buildCached)
       } else {
         build = .pending
         executeWaiting = activity?.queued == true
       }
     case .done:
-      build = .done
+      build = Self.behindCard(lastActivity: lastActivity, buildCached: buildCached)
     case .failed, .cancelled:
       if let lastActivity, Self.beforeCard.contains(lastActivity) {
         build = execute.outcome == .failed ? .failed : .cancelled
         self.execute = .notRun
         endedInBuild = true
       } else if lastActivity == .running || lastActivity == .pushing {
-        build = .done
+        build = Self.behindCard(lastActivity: lastActivity, buildCached: buildCached)
       }
     default:
       break

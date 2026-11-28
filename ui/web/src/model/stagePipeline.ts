@@ -4,7 +4,7 @@
 // now in plain words. The same model as StagePipeline in the Mac app.
 import { L } from '../i18n'
 import { D } from '../wire/rpc'
-import { Stage, STAGE_INFO, StageProgress, StageStatus } from './canvasKit'
+import { mergeStageStatus, Stage, STAGE_INFO, StageProgress, StageStatus } from './canvasKit'
 import { CardRunState, executionActivityText, formatShortDuration, StageRecord } from './session'
 
 export interface PipelineStep {
@@ -48,9 +48,11 @@ export function formatAgo(seconds: number): string {
 /** `stages`: the stages shown, in order; `records`: what the core recorded;
  *  `service`: "local", a worker, or undefined; `live`: the invocation's live
  *  state while the run goes on; `now`: the core's clock (ms since 1970);
- *  `cpuMs`: the CPU time it used, said once no stage runs any more. */
+ *  `cpuMs`: the CPU time it used, said once no stage runs any more;
+ *  `buildCached`: whether the worker's build came from a store or cache
+ *  (known once it ended). */
 export function stagePipeline(stages: Stage[], records: StageRecord[], service: string | undefined,
-  live: CardRunState | undefined, now: number, lastActivity?: D.ExecutionActivity, cpuMs?: number): StagePipeline {
+  live: CardRunState | undefined, now: number, lastActivity?: D.ExecutionActivity, cpuMs?: number, buildCached?: boolean): StagePipeline {
   const record = (st: Stage) => [...records].reverse().find((r) => r.stage === st)
   const seconds = (r: StageRecord | undefined) => {
     if (r?.start === undefined) return undefined
@@ -63,7 +65,7 @@ export function stagePipeline(stages: Stage[], records: StageRecord[], service: 
     return { stage: st, status: pipelineStatus(r?.outcome), waiting: false, seconds: seconds(r), onWorker: false }
   })
   const step = (st: Stage) => steps.find((s) => s.stage === st)
-  const worker = workerStages(records, service, live, lastActivity ?? live?.executionLastActivity)
+  const worker = workerStages(records, service, live, lastActivity ?? live?.executionLastActivity, buildCached)
   const build = step(Stage.build)
   if (build) {
     build.onWorker = worker.onWorker
@@ -84,13 +86,46 @@ export function stagePipeline(stages: Stage[], records: StageRecord[], service: 
   return { steps, detail: detail(current, worker.remote ? service : undefined, activity, live, now) }
 }
 
+/** A log section's state from the stages it covers, by the rule the circles
+ *  follow: a section with a stage still running runs; once a later stage
+ *  started, the section's stages that reported nothing are behind it. Its
+ *  time is the sum of its stages' times, so the worker's build counts in the
+ *  build section and not in the execution. The same rule as
+ *  StagePipeline.section in the Mac app. `ended`: the invocation ended. */
+export interface PipelineSection {
+  status: StageStatus
+  waiting: boolean
+  seconds?: number
+  cached: boolean
+  reused: boolean
+}
+
+export function pipelineSection(line: StagePipeline, stages: Stage[], ended: boolean): PipelineSection {
+  const mine = line.steps.filter((s) => stages.includes(s.stage))
+  let last = -1
+  line.steps.forEach((s, i) => { if (stages.includes(s.stage)) last = i })
+  if (last < 0) return { status: 'pending', waiting: false, cached: false, reused: false }
+  const later = line.steps.slice(last + 1).some((s) => s.status !== 'pending' && s.status !== 'notRun')
+  const status = mergeStageStatus(mine.map((s) => s.status), ended || later)
+  const times = mine.flatMap((s) => (s.seconds !== undefined ? [s.seconds] : []))
+  return {
+    status, waiting: status === 'running' && mine.some((s) => s.status === 'running' && s.waiting),
+    seconds: times.length ? times.reduce((a, b) => a + b, 0) : undefined,
+    cached: mine.some((s) => s.status === 'cached'), reused: mine.some((s) => s.status === 'reused'),
+  }
+}
+
 /** One rule for the Card's face and the log's pipeline line, so that exactly
  *  one stage shows as running. On a worker the core records no build stage of
  *  its own: the worker builds the Card's derivation as part of the execution.
  *  While it prepares, builds or fetches it, or waits for its Nix store, the
  *  build is the running (or waiting) stage and the execution has not started;
  *  once the Card itself runs, the build is done. Waiting for a free worker
- *  slot is the execution's wait: nothing is built yet. An invocation that
+ *  slot is the execution's wait: nothing is built yet. A worker that runs the
+ *  job but reports no activity built nothing before the Card (everything was
+ *  in its store or substituted): once a later stage started, or the
+ *  invocation ended after the Card ran, a build that reported no work shows
+ *  as cached. An invocation that
  *  ended (failed or stopped) while the worker still waited for its store,
  *  prepared, built or fetched never ran the Card: the build carries that end
  *  and the time, and the execution did not run. The same rule as
@@ -113,9 +148,20 @@ export interface WorkerStages {
 /** What the worker does before the Card itself runs. */
 const BEFORE_CARD = [D.ExecutionActivity.waiting_store, D.ExecutionActivity.preparing, D.ExecutionActivity.building, D.ExecutionActivity.substituting]
 
-/** `lastActivity`: the last activity the remote job reported (kept after it ended). */
+/** The worker's build once the Card is behind it: what the core recorded when
+ *  the job ended, else cached when no build was ever reported (nothing at
+ *  all, or only fetching), else done. */
+export function buildBehindCard(lastActivity: D.ExecutionActivity | undefined, buildCached: boolean | undefined): StageStatus {
+  if (buildCached !== undefined) return buildCached ? 'cached' : 'done'
+  return lastActivity === undefined || lastActivity === D.ExecutionActivity.unspecified || lastActivity === D.ExecutionActivity.substituting
+    ? 'cached' : 'done'
+}
+
+/** `lastActivity`: the last activity the remote job reported (kept after it
+ *  ended); `buildCached`: whether the build came from a store or cache (known
+ *  once it ended). */
 export function workerStages(records: StageRecord[], service: string | undefined, live: CardRunState | undefined,
-  lastActivity?: D.ExecutionActivity): WorkerStages {
+  lastActivity?: D.ExecutionActivity, buildCached?: boolean): WorkerStages {
   const remote = !!service && service !== 'local'
   const activity = executionActivityText(live)
   const execute = [...records].reverse().find((r) => r.stage === Stage.execute)
@@ -130,12 +176,14 @@ export function workerStages(records: StageRecord[], service: string | undefined
     // Publishing the build outputs follows the Card's run: the build is done.
     if (live?.executionActivity === D.ExecutionActivity.running || live?.executionActivity === D.ExecutionActivity.pushing) w.build = 'done'
     else if (activity && !activity.queued) Object.assign(w, { build: 'running', buildWaiting: activity.waiting, execute: 'pending' })
+    // The worker runs the job and reports nothing before the Card: it had nothing to build.
+    else if (live?.executionState === D.RemoteExecutionState.running) w.build = buildBehindCard(lastActivity ?? live.executionLastActivity, buildCached)
     else Object.assign(w, { build: 'pending', executeWaiting: activity?.queued === true })
-  } else if (execute.outcome === D.StageOutcome.done) w.build = 'done'
+  } else if (execute.outcome === D.StageOutcome.done) w.build = buildBehindCard(lastActivity, buildCached)
   else if (execute.outcome === D.StageOutcome.failed || execute.outcome === D.StageOutcome.cancelled) {
     if (lastActivity !== undefined && BEFORE_CARD.includes(lastActivity)) {
       Object.assign(w, { build: execute.outcome === D.StageOutcome.failed ? 'failed' : 'cancelled', execute: 'notRun', endedInBuild: true })
-    } else if (lastActivity === D.ExecutionActivity.running || lastActivity === D.ExecutionActivity.pushing) w.build = 'done'
+    } else if (lastActivity === D.ExecutionActivity.running || lastActivity === D.ExecutionActivity.pushing) w.build = buildBehindCard(lastActivity, buildCached)
   }
   return w
 }

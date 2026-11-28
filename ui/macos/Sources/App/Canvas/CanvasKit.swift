@@ -213,7 +213,7 @@ struct StageProgress: Equatable {
     }
     return StageProgress(items: items, workerReused: s.workerReused, failedPart: failedPart)
       .onWorker(WorkerStages(records: s.stages, service: s.executionService, live: ended ? nil : s,
-                             lastActivity: s.executionLastActivity))
+                             lastActivity: s.executionLastActivity, buildCached: s.cached ? true : nil))
   }
 
   /// The build and execution circles as WorkerStages says: the worker's

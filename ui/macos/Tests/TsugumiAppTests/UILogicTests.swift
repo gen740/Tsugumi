@@ -296,10 +296,18 @@ import TsugumiTestSupport
   // Once it ended, the second line says the CPU time it used, its Nix build's included.
   let finished = StagePipeline(stages: order, records: cachedRecords, service: "local", live: nil, now: 9_000, cpuMs: 341_230)
   #expect(finished.detail == "CPU 5:41")
-  // A finished run on a worker: its build is shown done on the worker.
+  // A finished run on a worker: its build is shown done on the worker when it
+  // built, cached when it came from a store (the core's record), and cached
+  // when the worker reported no build at all.
   let remoteRecords = cachedRecords.filter { $0.stage != .build }
-  let remote = StagePipeline(stages: order, records: remoteRecords, service: "ttl", live: nil, now: 9_000)
+  let remote = StagePipeline(stages: order, records: remoteRecords, service: "ttl", live: nil, now: 9_000,
+                             lastActivity: .running, buildCached: false)
   #expect(try step(remote, .build).status == .done && step(remote, .build).onWorker)
+  #expect(try step(StagePipeline(stages: order, records: remoteRecords, service: "ttl", live: nil, now: 9_000,
+                                 lastActivity: .running, buildCached: true), .build).status == .cached)
+  #expect(try step(StagePipeline(stages: order, records: remoteRecords, service: "ttl", live: nil, now: 9_000), .build).status == .cached)
+  #expect(try step(StagePipeline(stages: order, records: remoteRecords, service: "ttl", live: nil, now: 9_000,
+                                 lastActivity: .building), .build).status == .done)
 
   // Stopped while the worker still prepared (the Card never started): the
   // build carries the stop and the whole time, the execution did not run.
@@ -386,6 +394,88 @@ import TsugumiTestSupport
                   StageRecord(stage: .evaluate, outcome: .running, start: 10)]
   let localProgress = StageProgress.of(local, code: true)
   #expect(localProgress.items.filter { $0.status == .running }.map(\.stage) == [.build])
+  // The worker runs the Card but reported no build (everything was in its
+  // store or substituted): the build circle is not left empty behind the
+  // running one; it takes the cached look, on the face, in the hover's stage
+  // table (the same items) and in the pipeline line.
+  let nothingBuilt = try circles(.unspecified)
+  #expect(nothingBuilt[.build]?.status == .cached && nothingBuilt[.execute]?.status == .running)
+  var fetched = live
+  fetched.executionState = .running
+  fetched.executionLastActivity = .substituting
+  #expect(StageProgress.of(fetched, code: true).items.first { $0.stage == .build }?.status == .cached)
+  var quiet = live
+  quiet.executionState = .running
+  let quietLine = StagePipeline(stages: [.prepare, .evaluate, .build, .execute], records: records, service: "ttl", live: quiet, now: 100)
+  #expect(quietLine.steps.map(\.status) == [.done, .done, .cached, .running])
+  // Ended: the core's record of whether the build came from a store decides.
+  var succeeded = live
+  succeeded.state = .succeeded
+  succeeded.executionLastActivity = .running
+  succeeded.stages = [records[0], records[1], StageRecord(stage: .execute, outcome: .done, start: 20, end: 3_020)]
+  succeeded.cached = true
+  #expect(StageProgress.of(succeeded, code: true).items.first { $0.stage == .build }?.status == .cached)
+  succeeded.cached = false
+  #expect(StageProgress.of(succeeded, code: true).items.first { $0.stage == .build }?.status == .done)
+}
+
+/// The log's sections follow the pipeline line (the same rule as the Card's
+/// face). While the worker builds, the build section runs, not done because
+/// the core's own preparation and Nix evaluation finished, and holds the
+/// worker's build time; the execution has not started yet. The Web UI checks
+/// the same (stagePipeline.ts).
+@Test func logSectionsAgreeWithThePipelineLine() throws {
+  let order: [Stage] = [.prepare, .evaluate, .build, .execute, .validate, .save]
+  let build: [Stage] = [.prepare, .evaluate, .build], execute: [Stage] = [.execute], save: [Stage] = [.validate, .save]
+  let records = [StageRecord(stage: .prepare, outcome: .done, start: 0, end: 1_300),
+                 StageRecord(stage: .evaluate, outcome: .done, start: 1_300, end: 5_420),
+                 StageRecord(stage: .execute, outcome: .running, start: 5_420)]
+  var live = CardRunState(state: .running, invocation: 1, phase: .execute)
+  live.executionService = "ttl"
+  live.executionState = .running
+  live.executionActivity = .building
+  live.executionActivityDetail = "rmfgen"
+  live.stages = records
+  let now: Int64 = 5_420 + 239_990
+  func line(_ state: CardRunState?, _ rs: [StageRecord] = records, service: String = "ttl", lastActivity: Tsugumi_Data_ExecutionActivity? = nil) -> StagePipeline {
+    StagePipeline(stages: order, records: rs, service: service, live: state, now: now, lastActivity: lastActivity)
+  }
+  let building = line(live)
+  let b = building.section(build, ended: false)
+  #expect(b.status == .running && !b.waiting)
+  #expect(abs(try #require(b.seconds) - (1.3 + 4.12 + 239.99)) < 1e-9, "The worker's build time counts in the build section")
+  let e = building.section(execute, ended: false)
+  #expect(e.status == .pending && e.seconds == nil, "実行 says まだ until the Card starts")
+  #expect(building.section(save, ended: false).status == .pending)
+  // Waiting for the worker's Nix store: the build section waits.
+  live.executionActivity = .waitingStore
+  #expect(line(live).section(build, ended: false) == .init(status: .running, waiting: true, seconds: b.seconds))
+  // Queued for a free slot: the execution waits, nothing is built yet.
+  live.executionActivity = .unspecified
+  live.executionState = .queued
+  let queued = line(live).section(execute, ended: false)
+  #expect(queued.status == .running && queued.waiting)
+  // Once the Card runs, the build section is done and the execution runs.
+  live.executionState = .running
+  live.executionActivity = .running
+  #expect(line(live).section(build, ended: false).status == .done)
+  #expect(line(live).section(execute, ended: false).status == .running)
+  // Nothing was built on the worker: the build section is done with the cache mark.
+  live.executionActivity = .unspecified
+  let nothing = line(live).section(build, ended: false)
+  #expect(nothing.status == .done && nothing.cached)
+  // A stage that reported nothing while a later one started is behind it,
+  // not still running: no build recorded, the execution runs.
+  var local = live
+  local.executionService = "local"
+  #expect(line(local, service: "local").section(build, ended: false).status == .done)
+  #expect(line(local, service: "local").section(execute, ended: false).status == .running)
+  // Stopped while the worker built: the build section carries the stop, the execution never ran.
+  let stopped = [records[0], records[1], StageRecord(stage: .execute, outcome: .cancelled, start: 5_420, end: 100_000)]
+  let ended = line(nil, stopped, lastActivity: .building)
+  #expect(ended.section(build, ended: true).status == .cancelled)
+  #expect(ended.section(execute, ended: true).status == .notRun)
+  #expect(SectionStatus(ended.section(execute, ended: true).status) == .pending)
 }
 
 /// An open log section is as tall as its text: one line of output leaves no

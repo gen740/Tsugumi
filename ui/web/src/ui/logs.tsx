@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { LOG_READ_BYTES, readLogFile } from '../model/logWindow'
 import { STAGE_INFO, Stage } from '../model/canvasKit'
-import { PipelineStep, StagePipeline, stagePipeline } from '../model/stagePipeline'
+import { pipelineSection, PipelineStep, StagePipeline, stagePipeline } from '../model/stagePipeline'
 import { useObserve } from '../model/observable'
 import { CardKey, cardState, errorText, executionActivityText, formatDuration, formatMillis, formatShortDuration, key, path, ProjectSession, runState, StageRecord, stageRecords, TimelineEntry } from '../model/session'
 import { BOTTOM_ICONS, BOTTOM_TITLES, Workspace, WorkflowTab } from '../model/workspace'
@@ -284,17 +284,14 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   const ongoing = state === D.CardState.waiting || state === D.CardState.ready || state === D.CardState.preparing || state === D.CardState.running
   useTick(ongoing)
 
-  const records = (g: StageGroup) => stages.filter((r) => g.stages.includes(r.stage))
-  const status = (g: StageGroup): SectionStatus => {
-    const rs = records(g)
-    if (rs.some((r) => r.outcome === D.StageOutcome.failed)) return 'failed'
-    if (rs.some((r) => r.outcome === D.StageOutcome.cancelled)) return 'cancelled'
-    if (rs.some((r) => r.outcome === D.StageOutcome.running)) return g.stages.includes(Stage.execute) && activity?.waiting ? 'waiting' : 'running'
-    if (!rs.length) return 'pending'
-    if (rs.every((r) => r.outcome === D.StageOutcome.cached)) return 'cached'
-    if (rs.every((r) => r.outcome === D.StageOutcome.reused)) return 'reused'
-    return 'done'
-  }
+  // The pipeline line now; the sections take their state and time from it.
+  const summaryCpu = info?.record?.summary?.cpuMs
+  const cpuMs = live ? live.cpuMs : summaryCpu != null ? Number(summaryCpu) : undefined
+  const buildCached = live ? (live.cached ? true : undefined) : info?.record?.summary?.buildCached ?? undefined
+  const line = stagePipeline(groups.flatMap((g) => g.stages), stages, service, live, session.coreNow(),
+    live ? live.executionLastActivity : info?.record?.summary?.executionLastActivity, cpuMs, buildCached)
+  const part = (g: StageGroup) => pipelineSection(line, g.stages, !ongoing)
+  const status = (g: StageGroup): SectionStatus => { const p = part(g); return sectionStatus(p.status, p.waiting) }
   const isOpen = (g: StageGroup) => {
     const closed = folded[g.id]
     if (closed !== undefined) return !closed
@@ -352,20 +349,13 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus])
 
-  const elapsed = (start: number) => formatDuration(Math.max(0, session.coreNow() - start) / 1000)
-  const summary = (g: StageGroup, st: SectionStatus) => {
-    const rs = records(g)
+  // A section header's words: its time (the sum of its stages' times) and state.
+  const summary = (st: SectionStatus, seconds: number | undefined) => {
     switch (st) {
       case 'waiting': return activity?.text ?? SECTION_STATUS_LABEL[st]
-      case 'running': {
-        const starts = rs.flatMap((r) => (r.start !== undefined ? [r.start] : []))
-        return [starts.length ? elapsed(Math.min(...starts)) : undefined, SECTION_STATUS_LABEL[st]].filter(Boolean).join(' · ')
-      }
+      case 'running': return [seconds !== undefined ? formatDuration(seconds) : undefined, SECTION_STATUS_LABEL[st]].filter(Boolean).join(' · ')
       case 'pending': return ongoing ? L('まだ') : L('実行されていません')
-      default: {
-        const total = rs.flatMap((r) => (r.start !== undefined && r.end !== undefined ? [(r.end - r.start) / 1000] : []))
-        return total.length ? formatDuration(total.reduce((a, b) => a + b, 0)) : SECTION_STATUS_LABEL[st]
-      }
+      default: return seconds !== undefined ? formatDuration(seconds) : SECTION_STATUS_LABEL[st]
     }
   }
   // A section still loading shows nothing; after a moment, a quiet word that it loads.
@@ -381,17 +371,13 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
     loaded: log.loaded || !!log.error, waiting: activity?.waiting ? activity.text : undefined, slow,
   })
 
-  const summaryCpu = info?.record?.summary?.cpuMs
-  const cpuMs = live ? live.cpuMs : summaryCpu != null ? Number(summaryCpu) : undefined
-  const line = stagePipeline(groups.flatMap((g) => g.stages), stages, service, live, session.coreNow(),
-    live ? live.executionLastActivity : info?.record?.summary?.executionLastActivity, cpuMs)
   const pipeline = <StagePipelineView line={line} onTap={open} />
 
   const section = (g: StageGroup) => {
     const opened = isOpen(g)
-    const st = status(g)
+    const p = part(g)
+    const st = sectionStatus(p.status, p.waiting)
     const log = logs[g.id]
-    const rs = records(g)
     return (
       <Fragment key={g.id}>
         <button type="button" className={`stage-section-head${opened ? ' open' : ''}`} aria-expanded={opened}
@@ -400,10 +386,10 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
           <StatusSymbol status={st} size={13} />
           <span>{g.title}</span>
           {g.id === 'execute' && service && <span className="secondary">({service})</span>}
-          {rs.some((r) => r.outcome === D.StageOutcome.cached) && <span className="caption" style={{ color: 'var(--stage-reuse)' }}>cache</span>}
-          {rs.some((r) => r.outcome === D.StageOutcome.reused) && <span className="caption" style={{ color: 'var(--stage-reuse)' }}>{L('再利用')}</span>}
+          {p.cached && <span className="caption" style={{ color: 'var(--stage-reuse)' }}>cache</span>}
+          {p.reused && <span className="caption" style={{ color: 'var(--stage-reuse)' }}>{L('再利用')}</span>}
           <span className="spacer" />
-          <span className="caption secondary mono-digits">{summary(g, st)}</span>
+          <span className="caption secondary mono-digits">{summary(st, p.seconds)}</span>
         </button>
         {opened && (
           <div className="stage-section-body">

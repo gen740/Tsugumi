@@ -192,5 +192,22 @@ const long = card('a long name of a Card '.repeat(6))
   assert.equal(stageProgressOf(stopped, true).failedPart, Stage.build)
   const line = stagePipeline([Stage.prepare, Stage.evaluate, Stage.build, Stage.execute], stopped.stages, 'ttl', stopped, 300_000)
   assert.deepEqual(line.steps.map((s) => s.status), ['done', 'done', 'cancelled', 'notRun'])
+  // The worker runs the Card but reported no build (everything was in its
+  // store or substituted): the build circle is not left empty behind the
+  // running one; it takes the cached look, on the face and in the pipeline line.
+  const nothingBuilt = circles(D.ExecutionActivity.unspecified)
+  assert.ok(nothingBuilt[Stage.build].status === 'cached' && nothingBuilt[Stage.execute].status === 'running')
+  const fetched = { ...live, executionState: D.RemoteExecutionState.running, executionActivity: D.ExecutionActivity.unspecified,
+    executionLastActivity: D.ExecutionActivity.substituting }
+  assert.equal(Object.fromEntries(stageProgressOf(fetched, true).items.map((i) => [i.stage, i]))[Stage.build].status, 'cached')
+  const nothingLine = stagePipeline([Stage.prepare, Stage.evaluate, Stage.build, Stage.execute], records, 'ttl',
+    { ...live, executionState: D.RemoteExecutionState.running, executionActivity: D.ExecutionActivity.unspecified }, 100)
+  assert.deepEqual(nothingLine.steps.map((s) => s.status), ['done', 'done', 'cached', 'running'])
+  // Ended: the core's record of whether the build came from a store decides.
+  const succeeded = { ...live, state: D.CardState.succeeded, executionLastActivity: D.ExecutionActivity.running,
+    stages: [records[0], records[1], { stage: Stage.execute, outcome: D.StageOutcome.done, start: 20, end: 3_020 }] }
+  const ended = (cached: boolean) => Object.fromEntries(stageProgressOf({ ...succeeded, cached }, true).items.map((i) => [i.stage, i]))
+  assert.equal(ended(true)[Stage.build].status, 'cached')
+  assert.equal(ended(false)[Stage.build].status, 'done')
 }
 console.log('card face: passed')

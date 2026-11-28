@@ -291,7 +291,7 @@ export function stageProgressOf(st: CardRunState, code: boolean): StageProgress 
     return { stage: shown, status: mergeStageStatus(parts, ended), seconds }
   })
   const failedPart = [...st.stages].reverse().find((x) => x.outcome === D.StageOutcome.failed || x.outcome === D.StageOutcome.cancelled)?.stage
-  return onWorker({ items, workerReused: st.workerReused, failedPart }, workerStages(st.stages, st.executionService, ended ? undefined : st, st.executionLastActivity))
+  return onWorker({ items, workerReused: st.workerReused, failedPart }, workerStages(st.stages, st.executionService, ended ? undefined : st, st.executionLastActivity, st.cached ? true : undefined))
 }
 
 export function remoteExecutionLabel(state: D.RemoteExecutionState | null | undefined): string | undefined {
