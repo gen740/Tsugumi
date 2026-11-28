@@ -29,7 +29,7 @@ All host connections, including the worker's private Unix socket `STATE/worker.s
 
 ### Worker settings
 
-The worker reads `STATE/settings.json` when it starts. The first start writes it with the defaults below; change it on the [dashboard](#the-workers-dashboard) as the administrator, or by hand while the worker is stopped. It is FlatBuffers JSON text with the schema [`protocol/worker_settings.fbs`](../protocol/worker_settings.fbs), and a worker refuses to start with a file that does not match it, naming the line and column.
+The worker reads `STATE/settings.json` when it starts. The first start writes it with the defaults below; change it on the [dashboard](#the-workers-dashboard) as the administrator, or by hand while the worker is stopped. It is FlatBuffers JSON text with the schema [`protocol/worker_settings.fbs`](../protocol/worker_settings.fbs), and a worker refuses to start with a file that does not match it, naming the line and column. By hand you may leave keys unquoted and end a list or object with a comma; the dashboard writes the quoted form below.
 
 ```json
 {
@@ -95,7 +95,7 @@ The certificate is self-signed and kept in `STATE/dashboard-identity.pem`; it st
 
 In **Settings → Execution service**, choose **Open Dashboard** beside a verified worker. The Mac app shows the page in its own view, trusting exactly that certificate, in the UI language. The Web UI opens it in a new browser tab and shows the fingerprint beside the worker.
 
-The page refreshes every five seconds. Anyone who reaches the port sees it without logging in, read-only: the worker's name, version, worker contract, system and uptime, its jobs across project scopes with state, disk use, last write and why each is kept, the disk used by the private Nix store and by job scratch and the free space, the settings, and the host keys in `authorized_keys` with when each last connected. It shows no secrets: no passwords, Card secrets or core identities.
+The page refreshes every five seconds; when a refresh fails, it keeps the last data and marks it **Cannot refresh**. Anyone who reaches the port sees it without logging in, read-only: the worker's name, version, worker contract, system and uptime, its jobs across project scopes with state, disk use, last write and why each is kept, the disk used by the private Nix store and by job scratch and the free space, the settings, and the host keys in `authorized_keys` with when each last connected. It shows no secrets: no passwords, Card secrets or core identities.
 
 ### Administrator
 
@@ -109,6 +109,8 @@ printf '%s\n' "$PASSWORD" | tsugumi-workerd admin-password   # or one line on st
 ```
 
 Use 8 to 1024 bytes. The worker keeps only a salted scrypt hash in `STATE/admin-password` (mode 0600). Wrong passwords at login and in the **Change password** form count toward the same lockout. Both checks pause for 1 minute after five consecutive failures, then for 3, 5 and 30 minutes after further failures. A successful password check resets the count. Each session lasts up to 12 hours and can end earlier on **Log out**, a dashboard password change from another session, or a worker restart.
+
+Each change shows its result, or the worker's error, beside its button.
 
 - **Jobs:** select jobs and remove their data after confirming. Jobs recorded as queued, running or cancelling cannot be selected, and a job whose supervisor holds its lock is never removed. Tsugumi never removes job data by itself.
 - **Hosts:** add or remove a public key in `authorized_keys`. Add the first key by hand on the worker so a host can connect. Removing a key takes effect at the next handshake.

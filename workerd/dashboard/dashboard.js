@@ -70,10 +70,13 @@ function button(text, className, action) {
   node.addEventListener('click', action)
   return node
 }
-function report(text, error = false) {
-  $('feedback').textContent = text
-  $('feedback').toggleAttribute('data-error', error)
+// Shows an action's outcome in its status element, beside the control.
+function report(where, text, error = false) {
+  $(where).textContent = text
+  $(where).toggleAttribute('data-error', error)
+  return $(where)
 }
+const adminStatuses = ['jobs-status', 'settings-status', 'hosts-status', 'password-status']
 const admin = () => current?.role === 'admin'
 
 async function call(path, body) {
@@ -85,30 +88,30 @@ async function call(path, body) {
   const data = await response.json().catch(() => ({}))
   return { status: response.status, data }
 }
-async function change(path, body, done) {
+async function change(path, body, where, done) {
   if (busy) return
   busy = true
   controls()
-  report(L("処理中…"))
+  report(where, L("処理中…"))
   try {
     const { status, data } = await call(path, body)
     if (path === '/api/password' && status !== 200) {
       const message = passwordError(data)
       if (message) {
-        report(message, true)
+        report(where, message, true)
         return
       }
     }
     if (status === 401) {
-      report(L("ログインの有効期限が切れました。もう一度ログインしてください。"), true)
-      await refresh()
+      report(where, '')
+      report('header-status', L("ログインの有効期限が切れました。もう一度ログインしてください。"), true)
       return
     }
     if (status !== 200) throw new Error(data.error ?? String(status))
-    report('')
+    report(where, '')
     await done?.(data)
   } catch (e) {
-    report(L("変更を完了できませんでした: {0}", e.message), true)
+    report(where, L("変更を完了できませんでした: {0}", e.message), true)
   } finally {
     busy = false
     await refresh()
@@ -177,6 +180,7 @@ function renderJobs(data) {
     input.addEventListener('change', () => {
       if (input.checked) selected.add(name)
       else selected.delete(name)
+      report('jobs-status', '')
       controls()
     })
     cell(input, 'admin-only')
@@ -275,7 +279,9 @@ function renderHosts({ hosts }) {
     if (admin()) {
       line.append(button(L("削除"), 'danger', () => ask(L("ホスト鍵を削除しますか"),
         L("このホストはワーカーに接続できなくなります: {0}", host.key), [
-          [L("削除する"), 'danger', () => change('/api/keys/remove', { key: host.key })],
+          [L("削除する"), 'danger', () => change('/api/keys/remove', { key: host.key }, 'hosts-status', () => {
+            report('hosts-status', L("削除しました"))
+          })],
         ])))
     } else {
       line.append(element('small', host.last_seen ? L("最終接続 {0}", ago(host.last_seen)) : L("起動後は未接続")))
@@ -290,7 +296,10 @@ function render(data) {
   renderDisk(data)
   renderSettingsView(data)
   if (admin()) renderSettingsForm(data)
-  else dirty = false
+  else {
+    dirty = false
+    for (const id of adminStatuses) report(id, '')
+  }
   renderHosts(data)
   controls()
 }
@@ -301,11 +310,16 @@ async function refresh() {
     const { status, data } = await call('/api/state')
     if (status !== 200) throw new Error(data.error ?? String(status))
     render(data)
-    if ($('feedback').dataset.refreshError === '1') report('')
-    $('feedback').dataset.refreshError = ''
+    document.body.classList.remove('loading')
+    $('stale').hidden = true
   } catch (e) {
-    report(L("ワーカーの情報を取得できません: {0}", e.message), true)
-    $('feedback').dataset.refreshError = '1'
+    // Keep the last state on the page and say it is not current.
+    if (current) {
+      $('stale').hidden = false
+      $('stale').title = e.message
+    } else {
+      $('loading').textContent = L("ワーカーの情報を取得できません: {0}", e.message)
+    }
   } finally {
     refreshing = false
   }
@@ -323,6 +337,7 @@ function ask(title, text, choices) {
 }
 function edited() {
   dirty = true
+  report('settings-status', '')
   controls()
 }
 function number(id) {
@@ -360,7 +375,7 @@ $('login-form').addEventListener('submit', async event => {
     $('password').value = ''
     if (status === 200) {
       $('login').hidden = true
-      report('')
+      report('header-status', '')
       await refresh()
       return
     }
@@ -380,7 +395,7 @@ $('login-form').addEventListener('submit', async event => {
     $('login-error').textContent = e.message
   }
 })
-$('logout').addEventListener('click', () => void change('/api/logout', {}))
+$('logout').addEventListener('click', () => void change('/api/logout', {}, 'header-status'))
 $('password-edit-form').addEventListener('submit', event => {
   event.preventDefault()
   if ($('password-edit-submit').disabled) return
@@ -390,8 +405,8 @@ $('password-edit-form').addEventListener('submit', event => {
     confirm_password: $('confirm-password').value,
   }
   event.currentTarget.reset()
-  void change('/api/password', body, () => {
-    report(L("パスワードを変更し、他のセッションをログアウトしました。"))
+  void change('/api/password', body, 'password-status', () => {
+    report('password-status', L("パスワードを変更し、他のセッションをログアウトしました。"))
   })
 })
 $('restart-open').addEventListener('click', () => {
@@ -403,16 +418,17 @@ $('restart-open').addEventListener('click', () => {
     ])
 })
 function restart(mode) {
-  return change('/api/restart', { mode }, () => {
-    report(mode === 'now' ? L("再起動しています…") : L("実行中のジョブが終わると再起動します。新しいジョブはそれまで始まりません。"))
+  // Waiting for the jobs shows as the notice under the header.
+  return change('/api/restart', { mode }, 'header-status', () => {
+    if (mode === 'now') report('header-status', L("再起動しています…"))
   })
 }
 $('remove-jobs').addEventListener('click', () => ask(L("ジョブのデータを削除しますか"),
   L("選択した {0} 件のジョブのデータをワーカーから削除します。元に戻せません。", selected.size), [
-    [L("削除する"), 'danger', () => change('/api/jobs/remove', { jobs: [...selected] }, data => {
+    [L("削除する"), 'danger', () => change('/api/jobs/remove', { jobs: [...selected] }, 'jobs-status', data => {
       const failed = data.results.filter(row => row.status !== 'removed' && row.status !== 'released')
       for (const row of data.results) if (!failed.includes(row)) selected.delete(row.job)
-      report(failed.length
+      report('jobs-status', failed.length
         ? failed.map(row => row.job.slice(65, 77) + ' · ' + row.detail).join(' ')
         : L("{0} 件のジョブを削除しました。", data.results.length), !!failed.length)
     })],
@@ -428,13 +444,15 @@ $('save-settings').addEventListener('click', () => {
       pull_caches: [...$('pull-caches').children].map(line => ({ url: line.dataset.url, public_key: line.dataset.key })),
     }
   } catch (e) {
-    report(e.message, true)
+    report('settings-status', e.message, true)
     return
   }
-  void change('/api/settings', { settings }, data => {
+  void change('/api/settings', { settings }, 'settings-status', data => {
     dirty = false
     render(data)
-    report(L("設定を保存しました。"))
+    const status = report('settings-status', L("保存しました"))
+    if (data.worker.restart_required)
+      status.append(' ', element('span', L("↻ 再起動が必要"), 'restart-needed'))
   })
 })
 for (const id of ['name-input', 'max-jobs', 'nix-max-jobs', 'nix-cores', 'listen-address', 'port', 'dashboard-port'])
@@ -444,12 +462,16 @@ $('add-cache').addEventListener('click', () => {
   $('cache-url').value = $('cache-key').value = ''
   edited()
 })
-for (const id of ['cache-url', 'cache-key', 'host-key']) $(id).addEventListener('input', controls)
+for (const id of ['cache-url', 'cache-key']) $(id).addEventListener('input', controls)
+$('host-key').addEventListener('input', () => {
+  report('hosts-status', '')
+  controls()
+})
 $('add-key').addEventListener('click', () => {
   const key = $('host-key').value.trim()
-  void change('/api/keys/add', { key }, () => {
+  void change('/api/keys/add', { key }, 'hosts-status', () => {
     $('host-key').value = ''
-    report(L("ホスト鍵を追加しました。"))
+    report('hosts-status', L("追加しました"))
   })
 })
 addEventListener('keydown', event => {

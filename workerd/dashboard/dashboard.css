@@ -90,8 +90,14 @@ li small { color: var(--muted); white-space: nowrap; }
 .choices { display: grid; gap: 8px; }
 .choices .btn { width: 100%; padding: 9px; }
 .error { color: var(--danger); font-size: 12px; margin-top: 8px; min-height: 1.5em; }
-#feedback { margin: 0 24px; font-size: 13px; overflow-wrap: anywhere; }
-#feedback[data-error] { color: var(--danger); }
+/* Until the first state arrives the page is one quiet line. */
+#loading { margin: 0; padding: 14px 24px; color: var(--muted); font-size: 13px; }
+body:not(.loading) #loading, body.loading > :not(#loading) { display: none !important; }
+/* The outcome of an action, beside the control that started it. */
+.status { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; text-align: right; }
+.status:empty { display: none; }
+.status[data-error] { color: var(--danger); }
+.stale { font-size: 12px; color: var(--danger); white-space: nowrap; }
 body:not(.admin) .admin-only { display: none; }
 [hidden] { display: none !important; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }

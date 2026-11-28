@@ -147,8 +147,9 @@ auto WorkerSettings::validate(const WS::SettingsT& settings) -> void {
 }
 
 auto WorkerSettings::parse(std::string_view text) -> WS::SettingsT {
+  // The FlatBuffers JSON text a person writes by hand: keys without quotes and
+  // trailing commas are accepted, unknown fields still refused.
   flatbuffers::IDLOptions options;
-  options.strict_json = true;
   options.natural_utf8 = true;
   options.no_warnings = true;
   flatbuffers::Parser parser(options);

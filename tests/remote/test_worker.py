@@ -99,10 +99,13 @@ class Worker:
         os.set_blocking(self.process.stdout.fileno(), False)
         self.startup_output = (self.process.stdout.read() or b"").decode()
         ready = WorkerReady.GetRootAs(published.read_bytes())
+        first = not self.port
         self.port, self.dashboard_port = ready.Port(), ready.DashboardPort()
-        # Reconnect scenarios deliberately keep the same real endpoints.
-        settings = json.loads(self.settings_file.read_text())
-        self.write_settings(**{**settings, "port": self.port, "dashboard_port": self.dashboard_port})
+        # Reconnect scenarios deliberately keep the same real endpoints, which
+        # later starts read from the file.
+        if first:
+            settings = json.loads(self.settings_file.read_text())
+            self.write_settings(**{**settings, "port": self.port, "dashboard_port": self.dashboard_port})
 
     def write_settings(self, **values):
         settings = {"name": "", "listen_address": "127.0.0.1", "port": self.port,
@@ -356,6 +359,12 @@ def test_rejects_unsafe_options_before_listening(tmp_path):
         result = subprocess.run([binary, "--state-dir", str(invalid)], capture_output=True, text=True,
                                 check=False, timeout=30)
         assert result.returncode != 0 and "settings.json" in result.stderr, (text, result.stderr)
+    # Hand-written text is still checked against the schema, by line and column.
+    (invalid / "settings.json").write_text('{\n  listen_address: "127.0.0.1",\n  bogus: 1,\n}\n')
+    result = subprocess.run([binary, "--state-dir", str(invalid)], capture_output=True, text=True,
+                            check=False, timeout=30)
+    assert result.returncode != 0 and "line 3, column" in result.stderr, result.stderr
+    assert "unknown field" in result.stderr, result.stderr
     created = tmp_path / "created-settings"
     created.mkdir(mode=0o700)
     result = subprocess.run([binary, "--state-dir", str(created), "--public-key"], capture_output=True, check=False)
@@ -1931,6 +1940,55 @@ def test_settings_are_saved_as_text_and_persist(worker):
     # Concurrency follows a save at once; Nix parallelism waits for a restart.
     status, state = worker.admin("/api/settings", {"settings": {**chosen, "nix_cores": 4}})
     assert status == 200 and state["worker"]["restart_required"]
+
+
+def test_hand_written_settings_with_unquoted_keys_start_the_worker(worker):
+    worker.process.kill()
+    worker.process.wait()
+    worker.close()
+    # What a person writes while the worker is stopped: bare keys, trailing commas.
+    worker.settings_file.write_text(f"""{{
+  name: "手書き",
+  listen_address: "127.0.0.1",
+  port: {worker.port},
+  dashboard_port: {worker.dashboard_port},
+  max_jobs: 2,
+  pull_caches: [
+    {{ url: "file:///srv/cache", public_key: "lab-1:AAAA", }},
+  ],
+}}
+""")
+    worker.start()
+    expected = {"name": "手書き", "listen_address": "127.0.0.1", "port": worker.port,
+                "dashboard_port": worker.dashboard_port, "max_jobs": 2, "nix_max_jobs": 0, "nix_cores": 0,
+                "pull_caches": [{"url": "file:///srv/cache", "public_key": "lab-1:AAAA"}]}
+    status, state = worker.page("/api/state")
+    assert status == 200 and state["settings"] == expected
+    probe = worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False).body
+    assert R.string(probe.label) == "手書き" and probe.maxJobs == 2
+    # The dashboard writes the canonical quoted form back.
+    status, _ = worker.admin("/api/settings", {"settings": expected})
+    assert status == 200
+    text = worker.settings_file.read_text()
+    assert text.startswith('{\n  "name": "手書き",\n') and json.loads(text) == expected
+
+
+def test_dashboard_page_waits_for_state_and_reports_beside_each_action(worker):
+    status, html = worker.page("/")
+    assert status == 200
+    # Only a loading line until the first state arrives.
+    assert '<body class="loading">\n<p id="loading" role="status" data-l="読み込み中…"></p>' in html
+    assert 'body.loading > :not(#loading) { display: none !important; }' in html
+    # A status beside each action's button, and a note for a failed refresh.
+    for where in ("header", "jobs", "settings", "hosts", "password"):
+        assert f'<span class="status" id="{where}-status" role="status"></span>' in html, where
+    assert 'id="stale" role="status" hidden data-l="更新できません"' in html
+    assert 'id="feedback"' not in html
+    english = json.loads(html.partition("const english = ")[2].partition("\nconst locale = ")[0])
+    for ja, en in {"読み込み中…": "Loading…", "保存しました": "Saved", "追加しました": "Added",
+                   "削除しました": "Removed", "更新できません": "Cannot refresh",
+                   "↻ 再起動が必要": "↻ Restart needed"}.items():
+        assert english[ja] == en, ja
 
 
 def test_saved_concurrency_applies_to_the_next_jobs(tmp_path):
