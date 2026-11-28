@@ -584,6 +584,51 @@ def test_a_build_from_source_uses_the_dev_apps_support_folder(tmp_path):
     assert not (support / "Tsugumi").exists()
 
 
+@needs_cli
+@pytest.mark.skipif(sys.platform != "darwin", reason="the Mac app's bundle")
+@pytest.mark.parametrize("channel, folder", [("dev", "Tsugumi-dev"), ("release", "Tsugumi")])
+def test_the_command_in_the_mac_app_starts_the_apps_own_host(tmp_path, channel, folder):
+    """Contents/Helpers/tsugumi starts hostd as the app does (CoreHostClient.swift):
+    the app's binaries, page, demos and guest, the support folder of the
+    channel its Info.plist names, and no flag from the caller."""
+    contents = tmp_path.resolve() / "Some Name.app/Contents"
+    for sub in ("Helpers", "MacOS", "Resources/web"):
+        (contents / sub).mkdir(parents=True)
+    (contents / "Resources/web/index.html").write_text("")
+    (contents / "Info.plist").write_text(textwrap.dedent(f"""\
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict>
+          <key>CFBundleName</key><string>Tsugumi Test</string>
+          <key>CFBundleDisplayName</key><string>Tsugumi Test</string>
+          <key>CFBundleIdentifier</key><string>app.tsugumi.test</string>
+          <key>TsugumiChannel</key><string>{channel}</string>
+        </dict></plist>
+        """))
+    command = contents / "Helpers/tsugumi"
+    shutil.copy2(CLI, command)
+    executable(contents / "MacOS/tsugumi-hostd", f'#!/bin/sh\nprintf "%s\\n" "$@" > "{tmp_path / "args"}"\n')
+    env = isolated_environment(tmp_path)
+    for key in ("TSUGUMI_HOST_STATE", "TSUGUMI_SUPPORT_DIR", "TSUGUMI_WEB_DATA", "TSUGUMI_WEB_ROOT", "TSUGUMI_HOSTD",
+                "TSUGUMI_REPO", "TSUGUMID", "TSUGUMI_DEMOS_DIR"):
+        env.pop(key, None)
+    r = subprocess.run([str(command), "web", "--no-browser"], capture_output=True, text=True, env=env)
+    assert r.returncode != 0 and "did not start" in r.stderr
+    args = (tmp_path / "args").read_text().splitlines()
+    value = lambda flag: args[args.index(flag) + 1]
+    support = Path(env["HOME"]) / "Library/Application Support" / folder
+    resources = contents / "Resources"
+    assert value("--state-dir") == str(support / "host-core")
+    assert value("--application-name") == "Tsugumi Test"
+    assert value("--repo-root") == str(resources)
+    assert value("--demos-dir") == str(resources / "demos")
+    assert value("--web-root") == str(resources / "web")
+    assert value("--vmhost") == str(contents / "MacOS/tsugumi-vmhost")
+    assert value("--vm-support") == str(support)
+    assert value("--vm-image") == str(resources / "tsugumi-vm")
+    assert "--tsugumid" not in args and "--worker" not in args
+
+
 @needs_server
 def test_a_copy_of_a_read_only_demo_can_be_edited(tmp_path):
     from contextlib import closing

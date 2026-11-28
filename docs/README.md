@@ -41,6 +41,7 @@ Language SDK guides and templates live in [tsugumi-kit](https://github.com/gen74
 | [Remote execution](RemoteExecution.md) | Register a Linux worker and inspect or remove retained job data |
 | [Binary caches](BinaryCaches.md) | Configure signed Nix substituters |
 | [Claude Code](claude-code.md) | Make and run Cards through the plugin |
+| [Codex](codex.md) | Make and run Cards from Codex through the Mac app's `tsugumi` command |
 
 ## The ideas
 

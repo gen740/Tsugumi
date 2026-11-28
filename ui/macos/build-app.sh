@@ -63,7 +63,7 @@ build_opts=(-c release --build-system swiftbuild --arch arm64)
 bin="$(cd "$repo/ui/macos" && "${swiftenv[@]}" swift build "${build_opts[@]}" --show-bin-path)"
 
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers" "$app/Contents/Resources" "$app/Contents/Frameworks"
 cp "$repo/build-host/Frameworks/"*.dylib "$app/Contents/Frameworks/"
 cp "$bin/Tsugumi" "$app/Contents/MacOS/Tsugumi"
 wasmtime="$app/Contents/Frameworks/libwasmtime.dylib"
@@ -89,6 +89,10 @@ for binary in "$app/Contents/MacOS/Tsugumi" "$app/Contents/Frameworks/"*.dylib; 
 done
 vm_bin="$(cd "$repo/vm/macos/runtime" && "${swiftenv[@]}" swift build "${build_opts[@]}" --show-bin-path)"
 cp "$vm_bin/tsugumi-vmhost" "$repo/build-host/hostd/tsugumi-hostd" "$app/Contents/MacOS/"
+# The tsugumi command (MCP server for Codex and Claude Code, tool subcommands).
+# It reaches this app's host (cli/src/launch.cc). Not in MacOS: there it would
+# be the app's own Tsugumi on a case-insensitive volume.
+cp "$repo/build-host/cli/tsugumi" "$app/Contents/Helpers/tsugumi"
 cp "$repo/build-host/generated/bfbs/"{agent,host}.bfbs "$app/Contents/Resources/"
 
 # Nothing may look for files where this machine built them (that only works here).
@@ -176,10 +180,11 @@ done
 for tool in "$app/Contents/Resources/"{formatters,git,cache}/*; do
   codesign --force --sign "$identity" "$tool" >/dev/null
 done
-for binary in "$app/Contents/MacOS/"*; do
+for binary in "$app/Contents/MacOS/"* "$app/Contents/Helpers/tsugumi"; do
   /usr/bin/strip -S "$binary"
 done
 codesign --force --sign "$identity" "$app/Contents/MacOS/tsugumi-hostd" >/dev/null
+codesign --force --sign "$identity" "$app/Contents/Helpers/tsugumi" >/dev/null
 codesign --force --sign "$identity" --entitlements "$repo/vm/macos/Resources/Tsugumi.entitlements" "$app/Contents/MacOS/tsugumi-vmhost" >/dev/null
 codesign --force --sign "$identity" --entitlements "$repo/vm/macos/Resources/Tsugumi.entitlements" "$app" >/dev/null
 # The bundle was made anew: Finder and the Dock read its icon again.

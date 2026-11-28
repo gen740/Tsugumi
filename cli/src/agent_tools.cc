@@ -1,5 +1,9 @@
 #include "agent_tools.hh"
 
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include "agent_catalog.hh"
 #include "rpc.hh"
 #include "tsugumi/util/json_object.hh"
@@ -7,6 +11,31 @@
 namespace tsugumi::cli {
 namespace A = Tsugumi::Agent;
 namespace C = tsugumi::client;
+
+namespace {
+// `open -g -a <app> <folder>`: the app opens the project in a window of its
+// own (behind the frontmost app) and reaches the same host.
+auto OpenApp(const std::filesystem::path& app, const std::string& folder) -> bool {
+#ifdef __APPLE__
+  const pid_t child = ::fork();
+  if (child < 0) return false;
+  if (child == 0) {
+    const int null = ::open("/dev/null", O_RDWR);
+    ::dup2(null, 0);
+    ::dup2(null, 1);
+    ::dup2(null, 2);
+    ::execl("/usr/bin/open", "open", "-g", "-a", app.c_str(), folder.c_str(), static_cast<char*>(nullptr));
+    _exit(127);
+  }
+  int status = 0;
+  return ::waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+#else
+  (void)app;
+  (void)folder;
+  return false;
+#endif
+}
+}  // namespace
 
 AgentTools::AgentTools(Launch launch) : launch_(std::move(launch)) {
   const auto [schema, size] = AgentSchema();
@@ -51,11 +80,16 @@ auto AgentTools::Show(const std::string& path, bool create, bool browser) -> Sho
   A::ShowRequestT request;
   request.path = path;
   request.create = create;
-  request.browser = browser;
+  // The Mac app's command shows the project in the app, not in a browser.
+  request.browser = browser && launch_.app.empty();
   const auto reply = AgentCall<A::Shown>(*Agent(), std::move(request));
   const auto* o = reply.view;
   Shown shown{o->path() ? o->path()->str() : "", o->project_id() ? o->project_id()->str() : "",
               o->url() ? o->url()->str() : "", o->shown(), o->opened()};
+  if (browser && !shown.shown && !launch_.app.empty() && !shown.path.empty()) {
+    shown.opened = OpenApp(launch_.app, shown.path);
+    shown.app = shown.opened;
+  }
   std::lock_guard lock(mutex_);
   if (!shown.project_id.empty()) current_ = shown;
   return shown;

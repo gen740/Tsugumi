@@ -1,13 +1,16 @@
 #!/bin/sh
-# Starts the plugin's MCP server (`tsugumi mcp`) from a built Tsugumi
-# checkout: the one set in the plugin's options, else the checkout this
-# plugin folder is in (a plugin loaded from a checkout rather than from
-# Claude Code's cache).
+# Starts the plugin's MCP server (`tsugumi mcp`): the command inside the Mac
+# app (Tsugumi, then Tsugumi Dev), which uses that app's own host; else a
+# built Tsugumi checkout: the one set in the plugin's options, else the
+# checkout this plugin folder is in (a plugin loaded from a checkout rather
+# than from Claude Code's cache).
 here=$(cd "$(dirname "$0")" && pwd)
-for repo in "$1" "$here/../../.."; do
-  if [ -n "$repo" ] && [ -x "$repo/build/cli/tsugumi" ]; then
-    exec "$repo/build/cli/tsugumi" mcp
+for command in "/Applications/Tsugumi.app/Contents/Helpers/tsugumi" \
+  "/Applications/Tsugumi Dev.app/Contents/Helpers/tsugumi" \
+  "${1:+$1/build/cli/tsugumi}" "$here/../../../build/cli/tsugumi"; do
+  if [ -n "$command" ] && [ -x "$command" ]; then
+    exec "$command" mcp
   fi
 done
-echo "tsugumi: no built Tsugumi checkout found (build/cli/tsugumi). Build it (docs/claude-code.md) and set the plugin's \"Tsugumi checkout\" option." >&2
+echo "tsugumi: neither the Tsugumi app (/Applications/Tsugumi.app) nor a built Tsugumi checkout (build/cli/tsugumi) was found. Install the app, or build a checkout and set the plugin's \"Tsugumi checkout\" option (docs/claude-code.md)." >&2
 exit 1

@@ -42,7 +42,7 @@ struct ApplicationSettings: View {
       case .executionEnvironment: return nil
       case .appearance: return String(localized: "この Mac の外観設定と、このホストの hostd の Agent 表示設定")
       case .api: return String(localized: "このホスト（設定と API キーは hostd）")
-      case .connections: return String(localized: "表示のみ（開いているプロジェクトの接続先）")
+      case .connections: return String(localized: "表示のみ（外部 Agent の登録コマンドと、開いているプロジェクトの接続先）")
       case .binaryCaches: return String(localized: "この Mac の共有実行環境（全プロジェクト）")
       default: return String(localized: "このアプリ（この Mac のユーザー設定）")
       }
@@ -760,6 +760,8 @@ private struct ConnectionSettings: View {
   var body: some View {
     let sessions = model.sessions.values.sorted { $0.scopeName([]) < $1.scopeName([]) }
     VStack(alignment: .leading, spacing: 10) {
+      AgentCommandSettings()
+      Divider()
       InfoHeader("開いているプロジェクトの接続先", info: "開いているプロジェクトの tsugumid への接続先です。127.0.0.1 にだけ公開しています。外部クライアント（別の UI・Agent）は同じ RPC 契約で接続でき、認証 token は control フォルダの server.ready（0600）にだけ置かれます。")
         .font(.subheadline)
       if sessions.isEmpty {
@@ -795,6 +797,45 @@ private struct ConnectionSettings: View {
   private func copy(_ s: String) {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(s, forType: .string)
+  }
+}
+
+/// The setup commands that register this app's bundled `tsugumi` command
+/// (Contents/Helpers/tsugumi, build-app.sh) as an MCP server of Codex or
+/// Claude Code. It reaches this app's host (docs/codex.md).
+private struct AgentCommandSettings: View {
+  private static let command = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/tsugumi").path
+  private static func setup(_ client: String) -> String { "\(client) mcp add tsugumi -- \"\(command)\" mcp" }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      InfoHeader("Codex / Claude Code から使う", info: "このアプリに入っている tsugumi コマンドを MCP サーバーとして登録すると、Codex や Claude Code がこのアプリのホストでプロジェクトを開き（tsugumi_open）、Card を作り、実行できます。作業はこのアプリのキャンバスに表示されます。アプリを閉じていても、コマンドがホストを起動します。")
+        .font(.subheadline)
+      if FileManager.default.isExecutableFile(atPath: Self.command) {
+        row("Codex", Self.setup("codex"))
+        row("Claude Code", Self.setup("claude"))
+      } else {
+        Text("このビルドには tsugumi コマンドが入っていません（ui/macos/build-app.sh で作ったアプリに入ります）。")
+          .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      }
+    }
+  }
+
+  private func row(_ client: String, _ command: String) -> some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text(verbatim: client).font(.caption).foregroundStyle(.secondary)
+      HStack(alignment: .firstTextBaseline) {
+        Text(verbatim: command).font(.caption.monospaced()).textSelection(.enabled)
+          .fixedSize(horizontal: false, vertical: true)
+        Spacer(minLength: 4)
+        Button("コピー") {
+          NSPasteboard.general.clearContents()
+          NSPasteboard.general.setString(command, forType: .string)
+        }
+        .controlSize(.small)
+        .accessibilityIdentifier("settings.agentCommand.copy.\(client)")
+      }
+    }
   }
 }
 

@@ -14,9 +14,11 @@ namespace tsugumi::cli {
 
 struct Launch {
   std::filesystem::path root;      // checkout or installed runtime (VERSION)
+  std::filesystem::path app;       // the Mac app this command is bundled in (else empty)
   std::filesystem::path hostd;
   std::filesystem::path state;     // hostd's state folder
   std::filesystem::path web_root;  // the built page
+  std::filesystem::path demos;     // --demos-dir (empty: hostd's own default)
   std::string application;
   int web_port = 0;                // 0: the usual one, or any free port
   std::vector<std::string> runtime;  // native binaries, or the shared Mac VM

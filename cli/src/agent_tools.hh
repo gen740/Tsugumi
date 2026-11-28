@@ -43,6 +43,7 @@ class AgentTools {
   struct Shown {
     std::string path, project_id, url;
     bool shown = false, opened = false;
+    bool app = false;  // opened in the Mac app (the command bundled in it)
   };
   /** ShowRequest: makes the folder the project tools work on. */
   auto Show(const std::string& path, bool create, bool browser) -> Shown;

@@ -179,7 +179,7 @@ Use the [installation guide](docs/INSTALL.md) for the macOS app or the `tsugumi`
 
 The app and the Web UI are in Japanese by default; choose English under "General" in the settings.
 
-If you use Claude Code, the `tsugumi` plugin lets Claude Code work on a project in the Web UI ([Using it from Claude Code](docs/claude-code.md)).
+Codex and Claude Code can work on a project through the `tsugumi` command inside the app, and you watch their work in the app ([Using it from Codex](docs/codex.md), [Using it from Claude Code](docs/claude-code.md)).
 
 ### Bundled demos
 

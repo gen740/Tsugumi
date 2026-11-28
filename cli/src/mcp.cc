@@ -26,9 +26,9 @@ auto OpenTool() -> std::string {
   return json::Encode(json::Members{
       {"name", json::Quote("tsugumi_open")},
       {"description",
-       json::Quote("Opens a Tsugumi project (a folder with tsugumi.json) in the Tsugumi web UI, starting the web UI "
-                   "host when none runs, and makes it the project the other tools work on. The first call also "
-                   "returns the rules for working with them.")},
+       json::Quote("Opens a Tsugumi project (a folder with tsugumi.json) where the user watches it (a Tsugumi app "
+                   "window or web UI page), starting the Tsugumi host when none runs, and makes it the project the "
+                   "other tools work on. The first call also returns the rules for working with them.")},
       {"inputSchema",
        json::Encode(json::Members{
            {"type", json::Quote("object")},
@@ -42,7 +42,7 @@ auto OpenTool() -> std::string {
                                {"description", json::Quote("Make a new empty project in this folder when it has no tsugumi.json (the folder must not exist yet).")}})},
                 {"browser", json::Encode(json::Members{
                                 {"type", json::Quote("boolean")},
-                                {"description", json::Quote("Open a browser window when no web UI page is open (default true).")}})}})},
+                                {"description", json::Quote("Open a window when none is free to show the project: the Tsugumi app for the command bundled in it, else a browser (default true).")}})}})},
            {"required", json::Encode(std::vector<std::string>{json::Quote("folder")})},
            {"additionalProperties", "false"}})}});
 }
@@ -187,14 +187,15 @@ class Server {
         return {std::string(e.what()) + " Pass create: true to make a new project there.", true, {}};
       throw;
     }
-    std::string where = "The open web UI page shows it now.";
+    std::string where = "An open Tsugumi window or page shows it now.";
     if (!o.shown)
-      where = o.opened ? "A browser window opens it."
-                          : "No web UI page is free to show it (a page on another project keeps that project); the "
-                            "user opens it with `tsugumi web` (or call tsugumi_open again without "
-                            "browser: false).";
-    auto text = "Opened " + o.path + " in the Tsugumi web UI (" + o.url +
-                "). " + where + " Opening a project does not grant Agent access to its contents.";
+      where = o.app      ? "The Tsugumi app opens it in a window."
+              : o.opened ? "A browser window opens it."
+                         : "No Tsugumi window or page is free to show it (one on another project keeps that "
+                           "project); the user opens it in the Tsugumi app or with `tsugumi web` (or call "
+                           "tsugumi_open again without browser: false).";
+    auto text = "Opened " + o.path + " in Tsugumi" + (o.url.empty() ? "" : " (web UI: " + o.url + ")") + ". " +
+                where + " Opening a project does not grant Agent access to its contents.";
     if (!rules_sent_.exchange(true)) text += "\n\n" + std::string(kInstructions);
     return {text, false, {}};
   }

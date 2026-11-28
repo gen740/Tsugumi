@@ -5,9 +5,14 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
+#endif
+
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <random>
 #include <stdexcept>
 
@@ -44,6 +49,45 @@ auto RandomName() -> std::string {
   return out;
 }
 
+#ifdef __APPLE__
+// The Mac app a command at <name>.app/Contents/Helpers/tsugumi belongs to
+// (build-app.sh puts it there): its channel and name from its Info.plist.
+struct AppBundle {
+  f::path app;
+  bool release = false;
+  std::string name;
+};
+
+auto InfoString(CFBundleRef bundle, const char* key) -> std::string {
+  const auto name = CFStringCreateWithCString(nullptr, key, kCFStringEncodingUTF8);
+  const auto value = CFBundleGetValueForInfoDictionaryKey(bundle, name);
+  CFRelease(name);
+  if (!value || CFGetTypeID(value) != CFStringGetTypeID()) return "";
+  char text[1024];
+  if (!CFStringGetCString(static_cast<CFStringRef>(value), text, sizeof text, kCFStringEncodingUTF8)) return "";
+  return text;
+}
+
+auto BundleOf(const f::path& self) -> std::optional<AppBundle> {
+  const auto contents = self.parent_path().parent_path();
+  const auto app = contents.parent_path();
+  if (self.parent_path().filename() != "Helpers" || contents.filename() != "Contents" || app.extension() != ".app" ||
+      !f::exists(contents / "Info.plist"))
+    return std::nullopt;
+  const auto path = app.string();
+  const auto url = CFURLCreateFromFileSystemRepresentation(nullptr, reinterpret_cast<const UInt8*>(path.data()),
+                                                           static_cast<CFIndex>(path.size()), true);
+  const auto bundle = url ? CFBundleCreate(nullptr, url) : nullptr;
+  if (url) CFRelease(url);
+  if (!bundle) return std::nullopt;
+  AppBundle out{app, InfoString(bundle, "TsugumiChannel") == "release", InfoString(bundle, "CFBundleDisplayName")};
+  if (out.name.empty()) out.name = InfoString(bundle, "CFBundleName");
+  CFRelease(bundle);
+  if (out.name.empty()) out.name = "Tsugumi";
+  return out;
+}
+#endif
+
 }  // namespace
 
 auto LaunchFromEnvironment(const f::path& executable, std::string application)
@@ -51,6 +95,30 @@ auto LaunchFromEnvironment(const f::path& executable, std::string application)
   Launch launch;
   launch.application = std::move(application);
   const auto self = f::weakly_canonical(executable);
+#ifdef __APPLE__
+  if (const auto bundle = BundleOf(self)) {
+    // Inside the Mac app: its own host, started as the app starts it
+    // (CoreHostClient.swift, HostRuntimeConfiguration.swift), in the support
+    // folder of the app's channel (AppChannel.swift).
+    const auto resources = bundle->app / "Contents" / "Resources";
+    const auto macos = bundle->app / "Contents" / "MacOS";
+    const auto support = !Env("TSUGUMI_SUPPORT_DIR").empty()
+                             ? f::path(Env("TSUGUMI_SUPPORT_DIR"))
+                             : Home() / "Library" / "Application Support" / (bundle->release ? "Tsugumi" : "Tsugumi-dev");
+    launch.app = bundle->app;
+    launch.application = bundle->name;
+    launch.root = resources;
+    launch.hostd = !Env("TSUGUMI_HOSTD").empty() ? f::path(Env("TSUGUMI_HOSTD")) : macos / "tsugumi-hostd";
+    launch.web_root = !Env("TSUGUMI_WEB_ROOT").empty() ? f::path(Env("TSUGUMI_WEB_ROOT")) : resources / "web";
+    launch.demos = resources / "demos";
+    if (!Env("TSUGUMI_WEB_PORT").empty()) launch.web_port = std::stoi(Env("TSUGUMI_WEB_PORT"));
+    launch.state = !Env("TSUGUMI_HOST_STATE").empty() ? f::absolute(Env("TSUGUMI_HOST_STATE")) : support / "host-core";
+    launch.runtime = {"--vmhost", !Env("TSUGUMI_VMHOST").empty() ? Env("TSUGUMI_VMHOST") : (macos / "tsugumi-vmhost").string(),
+                      "--vm-support", support.string(),
+                      "--vm-image", !Env("TSUGUMI_VM_IMAGE").empty() ? Env("TSUGUMI_VM_IMAGE") : (resources / "tsugumi-vm").string()};
+    return launch;
+  }
+#endif
   // A checkout's build/cli/tsugumi, or an installed runtime's bin/tsugumi.
   launch.root = !Env("TSUGUMI_REPO").empty() ? f::path(Env("TSUGUMI_REPO"))
                                               : self.parent_path().parent_path();
@@ -85,6 +153,7 @@ auto LaunchFromEnvironment(const f::path& executable, std::string application)
   launch.state = data / "host-core";
 #endif
   if (!Env("TSUGUMI_HOST_STATE").empty()) launch.state = f::absolute(Env("TSUGUMI_HOST_STATE"));
+  launch.demos = Env("TSUGUMI_DEMOS_DIR");
   if (!Env("TSUGUMI_VMHOST").empty()) {
     // The shared Mac VM's helper (a stand-in for it in checks).
     const auto vm_support = !Env("TSUGUMI_SUPPORT_DIR").empty() ? f::path(Env("TSUGUMI_SUPPORT_DIR")) : data.parent_path();
@@ -129,8 +198,7 @@ auto EnsureHost(const Launch& launch) -> Ready {
                                    (sockets / "agent.sock").string(),
                                    "--repo-root",
                                    launch.root.string()};
-  if (const auto demos = Env("TSUGUMI_DEMOS_DIR"); !demos.empty())
-    args.insert(args.end(), {"--demos-dir", demos});
+  if (!launch.demos.empty()) args.insert(args.end(), {"--demos-dir", launch.demos.string()});
   args.insert(args.end(), launch.runtime.begin(), launch.runtime.end());
   if (f::exists(launch.web_root / "index.html")) {
     args.insert(args.end(), {"--web-root", launch.web_root.string()});
