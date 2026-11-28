@@ -66,11 +66,11 @@
     "tsugumi-demos": {
       "flake": false,
       "locked": {
-        "lastModified": 1795763363,
-        "narHash": "sha256-AJuAp98cYC15TMyv4AO6hjYT71zrUpe1q3Lu7tZ9V0c=",
+        "lastModified": 1795881172,
+        "narHash": "sha256-KDQh8PoIZ8wulQAq+CvDitRYFGNJubXzVoZSik9OtYM=",
         "owner": "gen740",
         "repo": "tsugumi-demos",
-        "rev": "519e2f6b24cc0f2df48c2c71ba9956593691f4d7",
+        "rev": "126f15c86eaa661b5aeebdd2f5c5e8d25512ae38",
         "type": "github"
       },
       "original": {
@@ -89,11 +89,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1795694743,
-        "narHash": "sha256-5V0fJV5ucEswNvo9WfqeiBMWJgqXzzJyng5Y/2PaFRQ=",
+        "lastModified": 1795880614,
+        "narHash": "sha256-9a9854JzXeHK8HPN9v9NxFOGA3OAZOcIDF3P01gIol0=",
         "owner": "gen740",
         "repo": "tsugumi-kit",
-        "rev": "1473ee71a6ecfd5ae41c07a5ed58cbff8818c483",
+        "rev": "e2407fe0c1381dd980326e2327d6edbf7ee624ea",
         "type": "github"
       },
       "original": {
