@@ -479,7 +479,7 @@ def test_open_shows_the_project_without_taking_another_tab_away(plugin):
         assert told(home) == b
         # No page free: nobody loses a project.
         text, error = mcp.call("tsugumi_open", {"folder": "c", "browser": False})
-        assert not error and "No web UI page is free" in text, text
+        assert not error and "No Tsugumi window or page is free" in text, text
         # A page back on Home is free again.
         on_a.call("HostPageRequest")
         text, error = mcp.call("tsugumi_open", {"folder": "c", "browser": False})
