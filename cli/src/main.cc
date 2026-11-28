@@ -150,10 +150,18 @@ auto main(int argc, char** argv) -> int {
     std::vector<std::string> args(argv + 1, argv + argc);
     const auto command = args.empty() ? "" : args[0];
     if (command == "--version") {
-      std::ifstream version(LaunchFromEnvironment(executable).root / "VERSION");
+      const auto launch = LaunchFromEnvironment(executable);
+      if (!launch.app.empty()) {
+        std::cout << launch.version << '\n';
+        return 0;
+      }
+      std::ifstream version(launch.root / "VERSION");
       std::cout << version.rdbuf();
       return 0;
     }
+    if ((command == "update" || command == "uninstall") && !LaunchFromEnvironment(executable).app.empty())
+      throw std::runtime_error("this command is part of " + LaunchFromEnvironment(executable).app.string() +
+                               ": update or remove the app instead");
     if (command.empty() || command == "-h" || command == "--help") {
       Usage();
       PrintTools(executable);

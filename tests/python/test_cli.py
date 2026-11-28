@@ -602,6 +602,7 @@ def test_the_command_in_the_mac_app_starts_the_apps_own_host(tmp_path, channel, 
           <key>CFBundleName</key><string>Tsugumi Test</string>
           <key>CFBundleDisplayName</key><string>Tsugumi Test</string>
           <key>CFBundleIdentifier</key><string>app.tsugumi.test</string>
+          <key>CFBundleShortVersionString</key><string>9.8.7</string>
           <key>TsugumiChannel</key><string>{channel}</string>
         </dict></plist>
         """))
@@ -627,6 +628,10 @@ def test_the_command_in_the_mac_app_starts_the_apps_own_host(tmp_path, channel, 
     assert value("--vm-support") == str(support)
     assert value("--vm-image") == str(resources / "tsugumi-vm")
     assert "--tsugumid" not in args and "--worker" not in args
+    r = subprocess.run([str(command), "--version"], capture_output=True, text=True, env=env)
+    assert r.returncode == 0 and r.stdout.strip() == "9.8.7"
+    r = subprocess.run([str(command), "update"], capture_output=True, text=True, env=env)
+    assert r.returncode == 1 and "update or remove the app" in r.stderr
 
 
 @needs_server

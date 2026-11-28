@@ -16,6 +16,13 @@ For Tsugumi Dev, use `/Applications/Tsugumi Dev.app/Contents/Helpers/tsugumi`. *
 
 `codex mcp list` shows the registered server. `codex mcp remove tsugumi` removes it.
 
+Codex asks before each call of an MCP tool unless you allow the server's tools. For `codex exec`, which cannot ask, allow them in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.tsugumi]
+default_tools_approval_mode = "approve"
+```
+
 ## Opening a project
 
 Ask Codex to work on a Tsugumi project folder (a folder with `tsugumi.json`). It calls the `tsugumi_open` tool with the folder before working; `create: true` makes a new project in a folder that does not exist yet. The first `tsugumi_open` returns the rules for the other tools.

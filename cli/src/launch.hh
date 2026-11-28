@@ -15,6 +15,7 @@ namespace tsugumi::cli {
 struct Launch {
   std::filesystem::path root;      // checkout or installed runtime (VERSION)
   std::filesystem::path app;       // the Mac app this command is bundled in (else empty)
+  std::string version;             // the app's CFBundleShortVersionString
   std::filesystem::path hostd;
   std::filesystem::path state;     // hostd's state folder
   std::filesystem::path web_root;  // the built page

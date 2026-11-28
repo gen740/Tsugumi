@@ -56,6 +56,7 @@ struct AppBundle {
   f::path app;
   bool release = false;
   std::string name;
+  std::string version;
 };
 
 auto InfoString(CFBundleRef bundle, const char* key) -> std::string {
@@ -80,8 +81,9 @@ auto BundleOf(const f::path& self) -> std::optional<AppBundle> {
   const auto bundle = url ? CFBundleCreate(nullptr, url) : nullptr;
   if (url) CFRelease(url);
   if (!bundle) return std::nullopt;
-  AppBundle out{app, InfoString(bundle, "TsugumiChannel") == "release", InfoString(bundle, "CFBundleDisplayName")};
+  AppBundle out{app, InfoString(bundle, "TsugumiChannel") == "release", InfoString(bundle, "CFBundleDisplayName"), {}};
   if (out.name.empty()) out.name = InfoString(bundle, "CFBundleName");
+  out.version = InfoString(bundle, "CFBundleShortVersionString");
   CFRelease(bundle);
   if (out.name.empty()) out.name = "Tsugumi";
   return out;
@@ -107,6 +109,7 @@ auto LaunchFromEnvironment(const f::path& executable, std::string application)
                              : Home() / "Library" / "Application Support" / (bundle->release ? "Tsugumi" : "Tsugumi-dev");
     launch.app = bundle->app;
     launch.application = bundle->name;
+    launch.version = bundle->version;
     launch.root = resources;
     launch.hostd = !Env("TSUGUMI_HOSTD").empty() ? f::path(Env("TSUGUMI_HOSTD")) : macos / "tsugumi-hostd";
     launch.web_root = !Env("TSUGUMI_WEB_ROOT").empty() ? f::path(Env("TSUGUMI_WEB_ROOT")) : resources / "web";
