@@ -161,7 +161,8 @@
     "DecisionListRequest",
     "ConversationSummarizeRequest",
     "ShowRequest",
-    "ConversationRunWakeRequest"
+    "ConversationRunWakeRequest",
+    "CloseRequest"
   ],
   "operationRequests": [
     {
