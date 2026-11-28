@@ -1469,6 +1469,8 @@
   "添付フォルダ": "Attached folder",
   "添付フォルダ · {0} · {1}": {"text": "Attached folder · {0} · {1}", "mac": ["@", "@"]},
   "添付（環境を再起動）": "Attach (restarts the environment)",
+  "実行環境を再起動しています…": "Restarting the environment…",
+  "共有するフォルダが変わるため、実行環境を再起動しています": "Restarting the environment to change the folders it shares",
   "減らす": "Decrease",
   "温度": "Temperature",
   "準備・評価・build の出力はありません（キャッシュや再利用のときは空です）": "No preparation, evaluation or build output (empty when cached or reused)",

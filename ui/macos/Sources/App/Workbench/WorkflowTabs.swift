@@ -282,14 +282,16 @@ private struct ChatColumn<Content: View>: View {
 
 /// What the window shows instead of the workbench while the environment is
 /// not usable: the loading card while it starts and connects (`loading(_:)`),
-/// the problem page when it stopped or failed (`hasProblem(_:)`).
+/// the problem page when it stopped or failed (`hasProblem(_:)`). A restart
+/// for attached folders is neither: the window keeps the project and the chat,
+/// and the status bar shows the restart.
 @MainActor
 enum EnvironmentOverlay {
 
   /// What the loading card says while the environment starts or the project
   /// opens; nil once connected or when there is a problem to show instead.
   static func loading(_ session: ProjectSession) -> LoadingContent? {
-    guard !session.connected, session.staleHostState == nil else { return nil }
+    guard !session.connected, !session.restartingEnvironment, session.staleHostState == nil else { return nil }
     let dirty = session.dirty
     switch session.environment {
     case .failed, .stopped, .incompatibleHistory, .invalidDocument:
@@ -345,7 +347,7 @@ enum EnvironmentOverlay {
   /// Whether the environment or the project cannot be used now (a problem
   /// is shown instead of the canvas).
   static func hasProblem(_ s: ProjectSession) -> Bool {
-    guard !s.connected else { return false }
+    guard !s.connected, !s.restartingEnvironment else { return false }
     switch s.environment {
     case .failed, .stopped, .incompatibleHistory, .invalidDocument: return true
     case .ready: return s.connectionMessage != nil

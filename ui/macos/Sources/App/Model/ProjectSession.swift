@@ -255,6 +255,9 @@ final class ProjectSession {
   private(set) var closed = false
   private(set) var staleHostState: HostStateFormatMismatch?
   private(set) var connectionMessage: String?
+  /// Hostd is restarting the environment to share attached folders: the view
+  /// keeps the project and the chat and shows the restart as a status.
+  private(set) var restartingEnvironment = false
   @ObservationIgnored private var client: RPCClient?
   @ObservationIgnored private var subscription: String?
   @ObservationIgnored private var lastSeq: UInt64 = 0
@@ -639,6 +642,8 @@ final class ProjectSession {
   }
 
   private func performAttachFolders(_ paths: [String]) async throws -> [(folder: String, resource: String)] {
+    restartingEnvironment = true
+    defer { restartingEnvironment = false }
     listenTask?.cancel()
     let reconnecting = reconnectTask
     reconnecting?.cancel()

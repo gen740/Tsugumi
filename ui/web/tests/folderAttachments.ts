@@ -74,6 +74,7 @@ page.window ??= globalThis
 page.matchMedia ??= () => ({ matches: false, addEventListener() {} })
 page.EventSource ??= class { addEventListener() {} close() {} }
 const { ProjectSession } = await import('../src/model/session')
+const { hasProblem, loadingContent } = await import('../src/ui/workbench')
 const session = Object.create(ProjectSession.prototype) as any
 const order: string[] = []
 let release!: () => void
@@ -82,8 +83,18 @@ Object.assign(session, { connected: true, closed: false, liveViews: new LiveView
   client: { close() { order.push('close') } },
   async openConnection() { order.push('connect'); this.connected = true; this.client = { close() { order.push('close') } } },
 })
+let changes = 0
+session.changed = () => { changes++ }
+assert.ok(!session.restartingEnvironment)
 const first = session.withEnvironmentChange(async () => {
   assert.equal(session.connected, false)
+  // The restart is a status: the canvas and the chat stay, with no cover.
+  assert.equal(session.restartingEnvironment, true)
+  assert.equal(loadingContent(session), undefined)
+  assert.equal(hasProblem(session), false)
+  session.environment = { state: 'stopped' }
+  assert.equal(hasProblem(session), false)
+  session.environment = { state: 'starting', message: '' }
   order.push('first')
   await held
   return 'registered'
@@ -102,6 +113,8 @@ release()
 assert.deepEqual(await Promise.all([first, second]), ['registered', 'registered-again'])
 assert.deepEqual(order, ['close', 'first', 'connect', 'close', 'second', 'connect'])
 assert.equal(session.connected, true)
+assert.ok(!session.restartingEnvironment)
+assert.ok(changes > 0, 'The end of the restart is announced')
 await assert.rejects(session.withEnvironmentChange(async () => { throw new Error('Host restored old shares') }), /Host restored/)
 assert.equal(session.connected, true, 'A host failure reconnects the view to the restored environment')
 

@@ -424,6 +424,9 @@ export class ProjectSession extends Observable {
   readyFile?: string
   private reconnecting = false
   private environmentChange?: Promise<unknown>
+  /** Hostd is restarting the environment to change its shared folders: the
+   *  window keeps the project and the chat and shows the restart as a status. */
+  restartingEnvironment = false
 
   // Confirmed document (owned by core)
   rev = 0n
@@ -807,6 +810,7 @@ export class ProjectSession extends Observable {
       this.connected = false
       this.resetLiveViews()
       this.environment = { state: 'starting', message: L('tsugumid の応答を待っています') }
+      this.restartingEnvironment = true
       this.changed()
       try {
         const value = await operation()
@@ -821,7 +825,13 @@ export class ProjectSession extends Observable {
       }
     })()
     this.environmentChange = run
-    try { return await run } finally { if (this.environmentChange === run) this.environmentChange = undefined }
+    try { return await run } finally {
+      if (this.environmentChange === run) {
+        this.environmentChange = undefined
+        this.restartingEnvironment = false
+        this.changed()
+      }
+    }
   }
 
   /** The project was left: no more connections, whatever is under way. */

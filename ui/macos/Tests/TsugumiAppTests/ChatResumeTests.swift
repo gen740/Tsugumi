@@ -326,7 +326,23 @@ import TsugumiTestSupport
       // Invalid batches do not appear attached, and can be retried.
       await chat.attach(folders: [first, t.directory.appendingPathComponent("missing")])
       #expect(chat.folders.isEmpty && chat.status != nil && !chat.attaching)
+      // While hostd restarts the environment for the share, the window keeps
+      // the project and the chat: no loading card, no problem page.
+      let session = t.session
+      let seen = SeenDuringRestart()
+      let watching = Task { @MainActor in
+        while !Task.isCancelled {
+          if session.restartingEnvironment {
+            seen.restart = true
+            if EnvironmentOverlay.loading(session) != nil || EnvironmentOverlay.hasProblem(session) { seen.cover = true }
+          }
+          await Task.yield()
+        }
+      }
       await chat.attach(folders: [first, second, first])
+      watching.cancel()
+      _ = await watching.value
+      #expect(seen.restart && !seen.cover && !session.restartingEnvironment)
       let paths = [first, second].map { $0.standardizedFileURL.path }
       #expect(chat.folders == paths && chat.status == nil && !chat.attaching)
       let attached = try await CoreHostClient(support: t.session.environments.support).call("EnvironmentRequest", ["project": t.session.identity.url.path, "action": Tsugumi_Host_EnvironmentAction.state])
@@ -394,4 +410,9 @@ import TsugumiTestSupport
       #expect(complete.conversation.messages.compactMap { $0 }.last?.role == "assistant")
     }
   }
+}
+
+@MainActor private final class SeenDuringRestart {
+  var restart = false
+  var cover = false
 }

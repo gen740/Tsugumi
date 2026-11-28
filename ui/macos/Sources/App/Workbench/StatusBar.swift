@@ -50,6 +50,10 @@ struct StatusBar: View {
 
   private func bar(compact: Bool) -> some View {
     HStack(spacing: 6) {
+      if session.restartingEnvironment {
+        restarting(compact: compact)
+        Divider().frame(height: 14)
+      }
       counts(compact: compact)
       Divider().frame(height: 14)
       revision(compact: compact)
@@ -57,6 +61,17 @@ struct StatusBar: View {
       panelPicker
     }
     .fixedSize(horizontal: true, vertical: false)
+  }
+
+  /// The environment restarts to share attached folders; the project stays shown.
+  private func restarting(compact: Bool) -> some View {
+    HStack(spacing: 4) {
+      ProgressView().controlSize(.mini)
+      if !compact { Text("実行環境を再起動しています…").foregroundStyle(.secondary) }
+    }
+    .help(String(localized: "共有するフォルダが変わるため、実行環境を再起動しています"))
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(String(localized: "実行環境を再起動しています…"))
   }
 
   /// Log, timeline and terminal icons: each opens its panel, a second click closes

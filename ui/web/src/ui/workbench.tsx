@@ -196,7 +196,7 @@ export function Workbench({ workspace, session, tab }: { workspace: Workspace; s
 /** What the loading card says while the environment starts or the project
  *  opens; undefined once connected or when there is a problem to show instead. */
 export function loadingContent(session: ProjectSession): LoadingContent | undefined {
-  if (session.connected) return undefined
+  if (session.connected || session.restartingEnvironment) return undefined
   const dirty = session.dirty
   const env = session.environment
   switch (env.state) {
@@ -216,7 +216,7 @@ export function loadingContent(session: ProjectSession): LoadingContent | undefi
 /** Whether the environment or the project cannot be used now (a problem is
  *  shown instead of the canvas). */
 export function hasProblem(session: ProjectSession): boolean {
-  if (session.connected) return false
+  if (session.connected || session.restartingEnvironment) return false
   const st = session.environment.state
   if (st === 'failed' || st === 'stopped') return true
   if (st === 'ready') return !!session.connectionMessage
@@ -425,6 +425,14 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
   return (
     <div className="statusbar-wrap">
       <div className="statusbar material">
+        {session.restartingEnvironment && (
+          <>
+            <span className="label nowrap" title={L('共有するフォルダが変わるため、実行環境を再起動しています')}>
+              <Spinner small /><span className="sb-long">{L('実行環境を再起動しています…')}</span>
+            </span>
+            <span className="vdivider sb-not-min" />
+          </>
+        )}
         <span className="label nowrap" title={rs.label}>
           <Icon name={rs.icon} style={{ color: `var(--${rs.color})` }} />
           <span className="sb-long">実行: {rs.label}</span><span className="sb-short">{rs.label}</span>
