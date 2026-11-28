@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 import subprocess
 
@@ -68,6 +69,37 @@ def test_changed_paths_produce_only_selected_matrix_entries():
         for entry in plan["matrix"]["include"]
         for job in entry["tests"]["include"]
     )
+
+
+def guest_fileset():
+    """The entries of nix/core-source.nix's fileset, without the Darwin extras."""
+    text = (ROOT / "nix/core-source.nix").read_text()
+    body = text[text.index("lib.fileset.unions"):text.index("++ extra")]
+    return re.findall(r"\.\./([^\s()\]]+)", body)
+
+
+def test_every_guest_identity_input_selects_the_vm_job():
+    # The guest image's identity is the vm-boot output of guest-source
+    # (nix/flake/packages.nix): core.src, nix/, flake.{nix,lock}, vm/guest/.
+    # Without the vm job, no image for the new identity is ever published.
+    entries = guest_fileset()
+    assert "hostd/agent/src" in entries and "protocol" in entries
+    paths = ["flake.nix", "flake.lock", "nix/core.nix", "vm/guest/vm-boot.nix"]
+    for entry in entries:
+        if entry == "protocol":  # the fileFilter of its .fbs files
+            paths.append("protocol/host.fbs")
+        elif (ROOT / entry).is_dir():
+            paths.append(f"{entry}/new-file.cc")
+        else:
+            paths.append(entry)
+    missing = [path for path in paths if not selection.select([path])["vm"]]
+    assert not missing, f"guest identity inputs that do not select the vm job: {missing}"
+
+
+def test_paths_outside_the_guest_identity_do_not_select_the_vm_job():
+    for path in ["hostd/agent/Shared/mcp-transport.md", "hostd/tools/build-macos.sh", "ui/macos/Package.swift",
+                 "client/swift/Package.swift", "cli/package-macos.sh"]:
+        assert not selection.select([path])["vm"], path
 
 
 def test_a_shared_native_test_fixture_selects_all_its_consumers():

@@ -33,7 +33,36 @@ WEB_AGENT_ASSETS = {
 }
 
 
+# nix/core-source.nix's fileset without its Darwin extras. With nix/,
+# flake.{nix,lock} and vm/guest/ (which select the vm job already) these name
+# the guest image's identity (nix/guest-image.nix): a change to any of them
+# needs a new image, which only the vm job builds and publishes.
+GUEST_SOURCES = (
+    "VERSION", "CMakeLists.txt", "cmake/", "workerd/", "ui/shared/i18n/en.json", "util/", "rpc/",
+    "tsugumid/", "hostd/CMakeLists.txt", "hostd/cmake/", "hostd/src/", "hostd/cache/", "hostd/private/",
+    "hostd/agent/src/", "hostd/agent/private/", "vm/guest/CMakeLists.txt", "vm/guest/src/",
+    "client/CMakeLists.txt", "client/cmake/", "client/include/", "client/src/", "cli/CMakeLists.txt",
+    "cli/src/", "nix/card-entry.nix", "nix/worker.nix", "protocol/CMakeLists.txt", "protocol/include/",
+    "protocol/trace_codec.cc", "hostd/agent/Shared/system-prompt.md", "hostd/agent/Shared/guide-prompt.md",
+    "hostd/agent/Shared/demo-skill.md", "hostd/agent/Shared/helpers-skill.md",
+    "hostd/agent/Shared/review-skill.md", "hostd/agent/Shared/rerun-compare-skill.md",
+    "hostd/agent/Shared/agent.json", "hostd/agent/Shared/guide-script.json",
+    "hostd/agent/Shared/guide-script.en.json",
+)
+
+
+def guest_source(path):
+    if path.startswith("protocol/") and path.endswith(".fbs"):
+        return True
+    return any(path.startswith(entry) if entry.endswith("/") else path == entry for entry in GUEST_SOURCES)
+
+
 def consumers(path):
+    jobs = path_consumers(path)
+    return jobs | {"vm"} if guest_source(path) else jobs
+
+
+def path_consumers(path):
     # Repository metadata (funding, issue templates) is not built or tested.
     if path.startswith(".github/") and not path.startswith((".github/workflows/", ".github/actions/")):
         return set()
