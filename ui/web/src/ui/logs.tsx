@@ -3,8 +3,9 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { LOG_READ_BYTES, readLogFile } from '../model/logWindow'
 import { STAGE_INFO, Stage } from '../model/canvasKit'
+import { PipelineStep, StagePipeline, stagePipeline } from '../model/stagePipeline'
 import { useObserve } from '../model/observable'
-import { CardKey, cardState, errorText, executionActivityText, formatDuration, formatMillis, key, path, ProjectSession, runState, StageRecord, stageRecords, TimelineEntry } from '../model/session'
+import { CardKey, cardState, errorText, executionActivityText, formatDuration, formatMillis, formatShortDuration, key, path, ProjectSession, runState, StageRecord, stageRecords, TimelineEntry } from '../model/session'
 import { BOTTOM_ICONS, BOTTOM_TITLES, Workspace, WorkflowTab } from '../model/workspace'
 import { D, R, RPCFailure, s } from '../wire/rpc'
 import { failureText } from '../model/workerSelection'
@@ -12,7 +13,8 @@ import { Button, download, Empty, Segmented, Select, Sheet, Spinner } from './co
 import { RunComparisonView } from './runComparison'
 import { LogSource, LogText, useLogStream } from './logWindowView'
 import { Icon } from './icons'
-import { SECTION_STATUS_LABEL, SectionStatus, StatusSymbol } from './statusSymbol'
+import { StageDot } from './cardNode'
+import { SECTION_STATUS_LABEL, SectionStatus, sectionStatus, StatusSymbol } from './statusSymbol'
 import { ProjectTerminalPanel } from './terminal'
 import { L } from '../i18n'
 
@@ -191,16 +193,33 @@ const STAGE_LABEL: Partial<Record<Stage, string>> = {
   [Stage.execute]: L('実行'), [Stage.validate]: L('出力検証'), [Stage.save]: L('保存'),
 }
 
-function stageStatus(outcome: D.StageOutcome | undefined, waiting = false): SectionStatus {
-  switch (outcome) {
-    case D.StageOutcome.running: return waiting ? 'waiting' : 'running'
-    case D.StageOutcome.failed: return 'failed'
-    case D.StageOutcome.cancelled: return 'cancelled'
-    case D.StageOutcome.cached: return 'cached'
-    case D.StageOutcome.reused: return 'reused'
-    case undefined: case D.StageOutcome.unspecified: return 'pending'
-    default: return 'done'
+/** The pipeline line as drawn: the Card's stage circles joined by a thin
+ *  line, each with its name and short time; a click opens its section. Under
+ *  them, what the running stage does now. */
+export function StagePipelineView({ line, onTap }: { line: StagePipeline; onTap?: (s: Stage) => void }) {
+  const step = (st: PipelineStep, i: number) => {
+    const reached = st.status !== 'pending' && st.status !== 'notRun'
+    const label = SECTION_STATUS_LABEL[sectionStatus(st.status, st.waiting)]
+    return (
+      <Fragment key={st.stage}>
+        {i > 0 && <span className="stage-link" aria-hidden />}
+        <button type="button" className={`stage-step${st.status === 'running' ? ' current' : reached ? '' : ' todo'}`}
+          title={`${STAGE_LABEL[st.stage]}${L('：')}${label}${st.onWorker ? L('（ワーカーが実行の一部としてビルドします）') : ''}`}
+          aria-label={`${STAGE_LABEL[st.stage]}${L('：')}${label}`} onClick={() => onTap?.(st.stage)}>
+          <StageDot status={st.status} size={10} waiting={st.waiting} />
+          <span className="stage-name">{STAGE_LABEL[st.stage]}</span>
+          {st.onWorker && <span className="secondary">{L('ワーカー')}</span>}
+          {st.seconds !== undefined && <span className="secondary mono-digits">{formatShortDuration(st.seconds)}</span>}
+        </button>
+      </Fragment>
+    )
   }
+  return (
+    <div className="stage-pipeline">
+      <div className="stage-steps">{line.steps.map(step)}</div>
+      {line.detail && <div className="stage-detail secondary mono-digits selectable">{line.detail}</div>}
+    </div>
+  )
 }
 
 /** Re-renders every second while `on`, for the running stage's time. */
@@ -319,11 +338,6 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   }, [focus])
 
   const elapsed = (start: number) => formatDuration(Math.max(0, session.coreNow() - start) / 1000)
-  const duration = (r: StageRecord | undefined) => {
-    if (r?.start === undefined) return undefined
-    if (r.end !== undefined) return formatDuration((r.end - r.start) / 1000)
-    return r.outcome === D.StageOutcome.running ? elapsed(r.start) : undefined
-  }
   const summary = (g: StageGroup, st: SectionStatus) => {
     const rs = records(g)
     switch (st) {
@@ -350,30 +364,8 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
     }
   }
 
-  const pipeline = (
-    <div className="stage-pipeline">
-      {groups.flatMap((g) => g.stages).flatMap((st, i) => {
-        const r = [...stages].reverse().find((x) => x.stage === st)
-        const shownStatus = stageStatus(r?.outcome, st === Stage.execute && activity?.waiting)
-        const current = shownStatus === 'running' || shownStatus === 'waiting'
-        const time = duration(r)
-        return [
-          ...(i > 0 ? [<span key={'a' + i} className="stage-arrow" aria-hidden>→</span>] : []),
-          <button key={st} type="button" className={`stage-step${current ? ' current' : r ? '' : ' todo'}`}
-            title={`${STAGE_LABEL[st]} · ${SECTION_STATUS_LABEL[shownStatus]}`} onClick={() => open(st)}>
-            <StatusSymbol status={shownStatus} size={12} />
-            <span>{shownStatus === 'waiting' ? L('待機中') : STAGE_LABEL[st]}</span>
-            {st === Stage.execute && service && <span className={current ? '' : 'secondary'}>· {service}</span>}
-            {st === Stage.execute && current && activity && <span className="secondary">· {activity.text}</span>}
-            {st === Stage.execute && current && live && session.livenessText(live) && <span className="secondary">· {session.livenessText(live)}</span>}
-            {time && <span className="secondary mono-digits">{time}</span>}
-            {r?.outcome === D.StageOutcome.cached && <span className="secondary">· cache</span>}
-            {r?.outcome === D.StageOutcome.reused && <span className="secondary">· {L('再利用')}</span>}
-          </button>,
-        ]
-      })}
-    </div>
-  )
+  const line = stagePipeline(groups.flatMap((g) => g.stages), stages, service, live, session.coreNow())
+  const pipeline = <StagePipelineView line={line} onTap={open} />
 
   const section = (g: StageGroup) => {
     const opened = isOpen(g)

@@ -120,7 +120,7 @@ struct StageLogView: View {
         if let e = exportError { Text(e).font(.caption).foregroundStyle(.red).padding(.horizontal, 8) }
         VStack(alignment: .leading, spacing: 0) {
           ForEach(groups) { g in section(g) }
-          if !groups.contains(where: isOpen) { Spacer(minLength: 0) }
+          Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
       }
@@ -157,45 +157,12 @@ struct StageLogView: View {
 
   // MARK: Pipeline
 
-  /// The stages in order joined by arrows, each with its state and time.
+  /// The stages as the Card's face draws them, and what the running one does.
   private var pipeline: some View {
     TimelineView(.periodic(from: .now, by: 1)) { _ in
-      ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 6) {
-          let shown = groups.flatMap(\.stages)
-          ForEach(Array(shown.enumerated()), id: \.element) { index, st in
-            if index > 0 { Text("→").foregroundStyle(.tertiary) }
-            pipelineStage(st)
-          }
-        }
-        .font(.caption).lineLimit(1)
-        .padding(.horizontal, 8).padding(.vertical, 6)
-      }
-      .fixedSize(horizontal: false, vertical: true)
+      StagePipelineView(line: StagePipeline(stages: groups.flatMap(\.stages), records: stages, service: service,
+                                            live: live, now: session.coreNow())) { open($0) }
     }
-  }
-
-  private func pipelineStage(_ st: Stage) -> some View {
-    let r = stages.last { $0.stage == st }
-    let shownStatus = SectionStatus(r?.outcome, waiting: st == .execute && activity?.waiting == true)
-    let current = shownStatus == .running || shownStatus == .waiting
-    return Button { open(st) } label: {
-      HStack(spacing: 4) {
-        StatusSymbol(status: shownStatus)
-        Text(shownStatus == .waiting ? String(localized: "待機中") : Self.stageLabel(st))
-          .fontWeight(current ? .semibold : .regular)
-          .foregroundStyle(r == nil ? Color.secondary : current ? Color.orange : Color.primary)
-        if st == .execute, let service { Text("· " + service).foregroundStyle(current ? Color.orange : Color.secondary) }
-        if st == .execute, current, let activity { Text("· " + activity.text).foregroundStyle(.secondary) }
-        if st == .execute, current, let live, let text = session.livenessText(live) { Text("· " + text).foregroundStyle(.secondary) }
-        if let time = duration(r) { Text(time).foregroundStyle(.secondary).monospacedDigit() }
-        if r?.outcome == .cached { Text("· cache").foregroundStyle(.secondary) }
-        if r?.outcome == .reused { Text("· " + String(localized: "再利用")).foregroundStyle(.secondary) }
-      }
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .help(Self.stageLabel(st) + " · " + shownStatus.label)
   }
 
   static func stageLabel(_ st: Stage) -> String {
@@ -208,14 +175,6 @@ struct StageLogView: View {
     case .save: return String(localized: "保存")
     default: return st.label
     }
-  }
-
-  /// A stage's time: its duration, or how long it has run so far.
-  private func duration(_ r: StageRecord?) -> String? {
-    guard let r, let start = r.start else { return nil }
-    if let end = r.end { return formatDuration(Double(end - start) / 1000) }
-    guard r.outcome == .running else { return nil }
-    return formatDuration(Double(max(0, session.coreNow() - start)) / 1000)
   }
 
   // MARK: Sections
@@ -247,9 +206,12 @@ struct StageLogView: View {
     .accessibilityValue(Text(open ? String(localized: "開いています") : String(localized: "閉じています")))
     if open, let reader = readers[g.id] {
       if let e = reader.error { Text(e).font(.caption).foregroundStyle(.red).padding(.horizontal, 8) }
-      LogTextView(reader: reader, placeholder: placeholder(g, reader))
-        .frame(maxWidth: .infinity, minHeight: 60, maxHeight: .infinity)
+      // As tall as its text, up to the room there is; the room left goes
+      // below the last section.
+      LogTextView(reader: reader, placeholder: placeholder(g, reader), fitsText: true)
+        .frame(maxWidth: .infinity)
         .padding(.leading, 18)
+        .layoutPriority(1)
       // At the end of the section's stream, where the output stops.
       if let limit = reader.truncatedAt {
         Text("ログはここで切り詰めました（上限 \(limit) バイト）")

@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { CSSProperties, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { L } from '../i18n'
 import { decodeLog, logLineNumber, LogAnchor, LogForm, LogHeights, LogReadFrames, LogWindow, ReadKind, VisibleLines } from '../model/logWindow'
 import { useObserve } from '../model/observable'
@@ -157,6 +157,8 @@ export const LogText = memo(function LogText({ log, placeholder }: { log: View; 
   const heights = useMemo(() => new WeakMap<View['blocks'][number], number>(), [area.width, lineHeight])
   const layout = useMemo(() => new LogHeights(log.blocks, heights, lineHeight), [log.blocks, heights, lineHeight, measurement])
   const lastScroll = useRef(0)
+  const lastBlock = log.blocks.at(-1)
+  const digits = Math.max(2, String(lastBlock ? logLineNumber(lastBlock, lastBlock.lines.length - 1) : 1).length)
   const anchor = cursor?.id === log.id ? cursor.anchor : undefined
   const maxTop = Math.max(0, layout.total - area.height)
   const target = log.following ? maxTop : Math.max(0, Math.min(maxTop, anchor ? layout.position(anchor) : 0))
@@ -218,7 +220,7 @@ export const LogText = memo(function LogText({ log, placeholder }: { log: View; 
     }
   }
   return <div className="log-pane">
-    <div className="log-text" ref={viewport} tabIndex={0} style={{ fontSize, lineHeight: `${lineHeight}px` }}
+    <div className="log-text" ref={viewport} tabIndex={0} style={{ fontSize, lineHeight: `${lineHeight}px`, '--log-digits': digits } as CSSProperties}
       onScroll={(event) => {
         const el = event.currentTarget
         const next = el.scrollTop

@@ -231,18 +231,31 @@ export interface CardRunState {
 
 /** What a remote job waits for or does now on its worker, in words:
  *  `text` for the log view, `short` for the Card's status row. */
-export function executionActivityText(state: CardRunState | undefined): { waiting: boolean; text: string; short: string } | undefined {
+/** What a remote execution waits for or does now: `queued` waits for a free
+ *  slot on the worker; `text` is the log view's wording, `short` the Card's. */
+export interface ExecutionActivityText {
+  activity: D.ExecutionActivity
+  detail: string
+  queued: boolean
+  waiting: boolean
+  text: string
+  short: string
+}
+
+export function executionActivityText(state: CardRunState | undefined): ExecutionActivityText | undefined {
   if (!state || (state.state !== D.CardState.running && state.state !== D.CardState.preparing)) return
   if (state.executionState === D.RemoteExecutionState.queued) {
-    return { waiting: true, text: L('ワーカーの空きを待っています'), short: L('待機中（ワーカーの空き）') }
+    return { activity: D.ExecutionActivity.waiting_store, detail: '', queued: true, waiting: true, text: L('ワーカーの空きを待っています'), short: L('待機中（ワーカーの空き）') }
   }
   const detail = state.executionActivityDetail ?? ''
-  switch (state.executionActivity) {
+  const activity = state.executionActivity ?? D.ExecutionActivity.unspecified
+  const of = (waiting: boolean, text: string, short: string) => ({ activity, detail, queued: false, waiting, text, short })
+  switch (activity) {
     case D.ExecutionActivity.waiting_store:
-      return { waiting: true, text: L('ワーカーの Nix ストアを待っています（別の実行が使用中）'), short: L('待機中（Nix ストア）') }
-    case D.ExecutionActivity.preparing: return { waiting: false, text: L('ワーカーで準備中'), short: L('ワーカーで準備中') }
-    case D.ExecutionActivity.building: return { waiting: false, text: L('ワーカーで Nix ビルド中: {0}', detail), short: L('ビルド中: {0}', detail) }
-    case D.ExecutionActivity.substituting: return { waiting: false, text: L('ワーカーで取得中: {0}', detail), short: L('取得中: {0}', detail) }
+      return of(true, L('ワーカーの Nix ストアを待っています（別の実行が使用中）'), L('待機中（Nix ストア）'))
+    case D.ExecutionActivity.preparing: return of(false, L('ワーカーで準備中'), L('ワーカーで準備中'))
+    case D.ExecutionActivity.building: return of(false, L('ワーカーで Nix ビルド中: {0}', detail), L('ビルド中: {0}', detail))
+    case D.ExecutionActivity.substituting: return of(false, L('ワーカーで取得中: {0}', detail), L('取得中: {0}', detail))
     default: return
   }
 }

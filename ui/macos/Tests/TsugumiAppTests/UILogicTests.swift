@@ -222,6 +222,108 @@ import TsugumiTestSupport
 }
 
 
+/// The log view's pipeline line draws the Card's stage circles and says in a
+/// second line what the running stage does.
+@Test func thePipelineLineDrawsEachStageAsTheCardDoes() throws {
+  let order: [Stage] = [.prepare, .evaluate, .build, .execute, .validate, .save]
+  func record(_ stage: Stage, _ outcome: Tsugumi_Data_StageOutcome, _ start: Int64, _ end: Int64? = nil) -> StageRecord {
+    StageRecord(stage: stage, outcome: outcome, start: start, end: end)
+  }
+  func step(_ line: StagePipeline, _ stage: Stage) throws -> StagePipeline.Step { try #require(line.steps.first { $0.stage == stage }) }
+
+  // Not run: every circle is an empty ring, with no time and no second line.
+  let none = StagePipeline(stages: order, records: [], service: nil, live: nil, now: 0)
+  #expect(none.steps.map(\.stage) == order)
+  #expect(none.steps.allSatisfy { $0.status == .pending && $0.seconds == nil && !$0.waiting } && none.detail == nil)
+
+  // Running on a worker that builds the Card: the build circle runs (the
+  // worker builds as part of execution), execution has not started yet.
+  let records = [record(.prepare, .done, 0, 41_910), record(.evaluate, .done, 41_910, 49_000), record(.execute, .running, 49_000)]
+  var live = CardRunState(state: .running, invocation: 1, phase: .execute)
+  live.executionService = "ttl"
+  live.executionActivity = .building
+  live.executionActivityDetail = "rcw86-nustar-events"
+  live.cpuMs = 341_230
+  live.lastOutputAt = 100_000 - 85_190
+  live.stages = records
+  let building = StagePipeline(stages: order, records: records, service: "ttl", live: live, now: 100_000)
+  #expect(try step(building, .prepare).status == .done && step(building, .prepare).seconds == 41.91)
+  #expect(formatShortDuration(try #require(step(building, .prepare).seconds)) == "41.9 s")
+  let build = try step(building, .build)
+  #expect(build.status == .running && build.onWorker && !build.waiting && build.seconds == 51)
+  #expect(try step(building, .execute).status == .pending && step(building, .execute).seconds == nil)
+  let detail = try #require(building.detail)
+  for part in ["ttl", "rcw86-nustar-events", "CPU 5:41", formatAgo(85.19)] { #expect(detail.contains(part), "\(part) in \(detail)") }
+  #expect(!detail.contains("00:0"), "No long times in the pipeline line")
+  #expect(formatAgo(85.19) == String(localized: "\(1) 分 \(25) 秒前"))
+  #expect(formatAgo(12) == String(localized: "\(12) 秒前") && formatAgo(7500) == String(localized: "\(2) 時間 \(5) 分前"))
+
+  // Waiting for the worker's Nix store: the build circle waits (dashed).
+  live.executionActivity = .waitingStore
+  let store = StagePipeline(stages: order, records: records, service: "ttl", live: live, now: 100_000)
+  #expect(try step(store, .build).status == .running && step(store, .build).waiting)
+  // Waiting for a free worker slot: nothing reached the worker; the execution waits.
+  live.executionActivity = .unspecified
+  live.executionState = .queued
+  let queued = StagePipeline(stages: order, records: records, service: "ttl", live: live, now: 100_000)
+  #expect(try step(queued, .build).status == .pending && step(queued, .execute).status == .running && step(queued, .execute).waiting)
+  // The Card's program runs: the worker's build is behind it.
+  live.executionState = .running
+  live.executionActivity = .running
+  let running = StagePipeline(stages: order, records: records, service: "ttl", live: live, now: 100_000)
+  #expect(try step(running, .build).status == .done && step(running, .execute).status == .running && step(running, .execute).seconds == 51)
+  #expect(running.detail?.contains("ttl") == true)
+
+  // Failed: the failed stage is red, the later ones never ran, no second line.
+  let failedRecords = [record(.prepare, .done, 0, 10), record(.evaluate, .failed, 10, 2_010)]
+  let failed = StagePipeline(stages: order, records: failedRecords, service: nil, live: nil, now: 5_000)
+  #expect(try step(failed, .evaluate).status == .failed && step(failed, .evaluate).seconds == 2)
+  #expect(try step(failed, .build).status == .pending && failed.detail == nil)
+
+  // Succeeded with a cached build, on the project's own environment.
+  let cachedRecords = [record(.prepare, .done, 0, 100), record(.evaluate, .done, 100, 200), record(.build, .cached, 200, 200),
+                       record(.execute, .done, 200, 4_200), record(.validate, .done, 4_200, 4_300), record(.save, .done, 4_300, 4_310)]
+  let cached = StagePipeline(stages: order, records: cachedRecords, service: "local", live: nil, now: 9_000)
+  #expect(try step(cached, .build).status == .cached && !step(cached, .build).onWorker)
+  #expect(try step(cached, .execute).status == .done && step(cached, .execute).seconds == 4)
+  #expect(cached.detail == nil)
+  // A finished run on a worker: its build is shown done on the worker.
+  let remoteRecords = cachedRecords.filter { $0.stage != .build }
+  let remote = StagePipeline(stages: order, records: remoteRecords, service: "ttl", live: nil, now: 9_000)
+  #expect(try step(remote, .build).status == .done && step(remote, .build).onWorker)
+}
+
+/// An open log section is as tall as its text: one line of output leaves no
+/// empty area before the next section.
+@MainActor @Test(.timeLimit(.minutes(1))) func aShortLogIsOnlyAsTallAsItsText() async throws {
+  NSApplication.shared.setActivationPolicy(.prohibited)
+  let reader = LogStreamReader()
+  let read = try #require(reader.window.request(.tail))
+  let text = "Regions: NE2\n"
+  let size = UInt64(text.utf8.count)
+  reader.apply(.init(kind: .tail, read: read, result: .success(
+    LogPage(offset: 0, end: size, size: size, line: 1, startsLine: true, text: text, form: .terminal))))
+  let measurement = LogHeightMeasurement()
+  let host = NSHostingView(rootView: VStack(spacing: 0) {
+    LogTextView(reader: reader, fitsText: true).layoutPriority(1)
+      .background(GeometryReader { geometry in
+        Color.clear.onChange(of: geometry.size.height, initial: true) { measurement.height = geometry.size.height }
+      })
+    Color.red.frame(height: 10)
+    Spacer(minLength: 0)
+  }.frame(width: 400, height: 400))
+  let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 400), styleMask: [.borderless], backing: .buffered, defer: true)
+  window.contentView = host
+  defer { window.contentView = nil }
+  host.layoutSubtreeIfNeeded()
+  // One line of text, not the room offered (400) nor the old minimum (60).
+  try await waitForModel("the log's height") { measurement.height > 10 && measurement.height < 40 }
+}
+
+@MainActor @Observable private final class LogHeightMeasurement {
+  var height: CGFloat = 0
+}
+
 @MainActor @Observable private final class HoverLayoutMeasurement {
   var size = CGSize.zero
 }

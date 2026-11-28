@@ -111,7 +111,7 @@ struct ExecutionActivityText: Equatable {
   }
 
   /// Waiting for the worker (a free slot, or its Nix store) rather than running.
-  private let queued: Bool
+  let queued: Bool
   var waiting: Bool { queued || activity == .waitingStore }
 
   /// The log view's wording.

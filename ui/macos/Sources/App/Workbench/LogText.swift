@@ -259,9 +259,17 @@ private enum LogExportError: LocalizedError {
 struct LogTextView: View {
   let reader: LogStreamReader
   var placeholder = ""
+  /// As tall as its text (up to the room offered, then it scrolls), rather
+  /// than taking all the room.
+  var fitsText = false
+  @State private var textHeight: CGFloat?
 
   var body: some View {
-    LogScrollView(reader: reader, placeholder: placeholder, fontSize: AppPreferences.shared.editorFontSize - 1)
+    LogScrollView(reader: reader, placeholder: placeholder, fontSize: AppPreferences.shared.editorFontSize - 1,
+                  onTextHeight: fitsText ? { textHeight = $0 } : nil)
+      .frame(minHeight: fitsText ? min(textHeight ?? 60, 60) : nil,
+             idealHeight: fitsText ? textHeight ?? 60 : nil,
+             maxHeight: fitsText ? textHeight ?? 60 : .infinity)
       .overlay(alignment: .bottomTrailing) {
         if reader.waiting {
           Button("新しい出力 · 末尾へ") { reader.jump() }.controlSize(.small).padding(8)
@@ -272,6 +280,16 @@ struct LogTextView: View {
 
 final class LogScroll: NSScrollView {
   var wheel: ((CGFloat) -> Void)?
+  var resized: (() -> Void)?
+  private var size = NSSize.zero
+
+  override func tile() {
+    super.tile()
+    if contentSize != size {
+      size = contentSize
+      resized?()
+    }
+  }
 
   override func scrollWheel(with event: NSEvent) {
     super.scrollWheel(with: event)
@@ -306,8 +324,11 @@ final class LogScroll: NSScrollView {
     return scroll
   }
 
-  static func attributes(font: NSFont) -> [NSAttributedString.Key: Any] {
-    let indent = ceil(("999999999" as NSString).size(withAttributes: [.font: font]).width) + 12
+  /// The text after a line number starts one gap past the widest number
+  /// shown (at least two digits), not at a fixed wide column.
+  static func attributes(font: NSFont, digits: Int = 2) -> [NSAttributedString.Key: Any] {
+    let widest = String(repeating: "9", count: max(2, digits)) as NSString
+    let indent = ceil(widest.size(withAttributes: [.font: font]).width) + 8
     let paragraph = NSMutableParagraphStyle()
     paragraph.lineBreakMode = .byCharWrapping
     paragraph.headIndent = indent
@@ -320,8 +341,12 @@ struct LogScrollView: NSViewRepresentable {
   let reader: LogStreamReader
   let placeholder: String
   let fontSize: CGFloat
+  var onTextHeight: ((CGFloat) -> Void)?
 
   @MainActor final class Coordinator: NSObject {
+    var onTextHeight: ((CGFloat) -> Void)?
+    private var reportedHeight: CGFloat?
+    private var shownDigits = 0
     weak var scroll: LogScroll?
     weak var reader: LogStreamReader?
     var link: CADisplayLink?
@@ -393,7 +418,9 @@ struct LogScrollView: NSViewRepresentable {
       let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
       let empty = blocks.isEmpty
       let message = empty ? placeholder : nil
-      let changed = shown != blocks || shownFont != font || shownPlaceholder != message
+      let digits = String(blocks.last?.rows.last?.id.line ?? 1).count
+      let changed = shown != blocks || shownFont != font || shownPlaceholder != message || shownDigits != digits
+      defer { reportHeight() }
       let scrollToEnd = reader.window.following && (changed || !following) && !empty
       following = reader.window.following
       guard changed || scrollToEnd else { return }
@@ -420,13 +447,13 @@ struct LogScrollView: NSViewRepresentable {
         }
       }
 
-      let attributes = LogScroll.attributes(font: font)
+      let attributes = LogScroll.attributes(font: font, digits: digits)
       storage.beginEditing()
       if let message {
         storage.setAttributedString(NSAttributedString(string: message, attributes: [
           .font: NSFont.systemFont(ofSize: fontSize), .foregroundColor: NSColor.secondaryLabelColor,
         ]))
-      } else if edit.shared == 0 || shownFont != font || shownPlaceholder != nil {
+      } else if edit.shared == 0 || shownFont != font || shownPlaceholder != nil || shownDigits != digits {
         storage.setAttributedString(NSAttributedString(string: blocks.map(\.text).joined(), attributes: attributes))
       } else {
         func replace(_ range: NSRange, _ text: String) {
@@ -443,6 +470,7 @@ struct LogScrollView: NSViewRepresentable {
       shown = blocks
       shownFont = font
       shownPlaceholder = message
+      shownDigits = digits
       if scrollToEnd {
         text.scrollRangeToVisible(NSRange(location: storage.length, length: 0))
       } else if let anchor, let character = anchor.position.character(in: blocks) {
@@ -455,6 +483,30 @@ struct LogScrollView: NSViewRepresentable {
         scroll.reflectScrolledClipView(scroll.contentView)
       }
     }
+
+    /// The text's laid out height, for a view as tall as its text. A long
+    /// text is not laid out whole: it is taller than any room offered.
+    func reportHeight() {
+      guard let onTextHeight, let scroll, let text = scroll.documentView as? NSTextView,
+            let layout = text.layoutManager, let container = text.textContainer else { return }
+      // A text that fits is shown from its top, not scrolled to the empty
+      // line after its last newline.
+      if let reportedHeight, scroll.contentSize.height >= reportedHeight - 0.5, scroll.contentView.bounds.minY > 0 {
+        scroll.contentView.scroll(to: .zero)
+        scroll.reflectScrolledClipView(scroll.contentView)
+      }
+      var height: CGFloat = 10_000
+      if (text.textStorage?.length ?? 0) <= 20_000 {
+        layout.ensureLayout(for: container)
+        // Not the empty line after the last newline.
+        let used = layout.usedRect(for: container).height - layout.extraLineFragmentRect.height
+        height = ceil(max(used, 0) + text.textContainerInset.height * 2) + 2
+      }
+      guard reportedHeight.map({ abs($0 - height) > 0.5 }) ?? true else { return }
+      reportedHeight = height
+      // Not while SwiftUI updates this view.
+      DispatchQueue.main.async { onTextHeight(height) }
+    }
   }
 
   func makeCoordinator() -> Coordinator { Coordinator() }
@@ -464,6 +516,7 @@ struct LogScrollView: NSViewRepresentable {
     let coordinator = context.coordinator
     coordinator.scroll = scroll
     scroll.wheel = { [weak coordinator] in coordinator?.nearEdge($0) }
+    scroll.resized = { [weak coordinator] in coordinator?.reportHeight() }
     NotificationCenter.default.addObserver(coordinator, selector: #selector(Coordinator.scrolled),
                                            name: NSView.boundsDidChangeNotification, object: scroll.contentView)
     let link = scroll.displayLink(target: coordinator, selector: #selector(Coordinator.tick))
@@ -477,6 +530,7 @@ struct LogScrollView: NSViewRepresentable {
     let coordinator = context.coordinator
     coordinator.fontSize = fontSize
     coordinator.placeholder = placeholder
+    coordinator.onTextHeight = onTextHeight
     coordinator.attach(reader)
     coordinator.apply()
   }
