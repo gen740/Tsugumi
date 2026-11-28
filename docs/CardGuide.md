@@ -255,10 +255,9 @@ Include `tsugumi/artifact.fbs` and use `tsugumi.Artifact` for a file or director
 Use the SDK to create a writable directory or upload existing contents. Return
 the Artifact in an output. Any Card in the project that knows the UUID can open
 the sealed directory or pass the UUID on. The directory is sealed when the
-creating call ends. The SDK keeps artifacts by default. For a scratch artifact,
-define `keep_scratch = false;` in `params.nix` and pass it to the SDK's keep
-option when creating the artifact. A person can then opt in to keeping it for
-a particular run.
+creating call ends. The SDK keeps artifacts by default. An artifact created
+without the SDK's keep option exists only while its run runs: later Cards of
+the same run can open it, and it is removed when the run ends.
 
 ## Views
 
@@ -279,8 +278,10 @@ paths of its artifacts are gone, and the next call opens its own
 | Location | Use | Lifetime |
 | --- | --- | --- |
 | Working directory, also `HOME` | The Card's files and caches. New outputs are created here. | The worker. A reused worker keeps the contents. |
-| `TMPDIR` | Scratch. Read the path from the environment. | Cleared for each call. |
+| `TMPDIR` | Scratch. Read the path from the environment. | Erased when each call ends, whether it succeeded, failed or was cancelled. |
 | `/tmp` | On Linux workers, the shared VM and remote workers, the same scratch as `TMPDIR`. | On native macOS only `TMPDIR` is scratch. |
+
+Scratch is tmp and is cleaned up by design; to keep files, a Card mounts a host folder ([`grants.hostPaths`](#code-card-settings)). A Card's results still go in its outputs and artifacts.
 
 The worker sets the working directory, `HOME`, `TMPDIR` and the environment at launch. An opened artifact's path is valid only during its call. A cache in `HOME` should be safe to rebuild when a later call finds it missing. The Card's process gets no shell and no `PATH` of its own: there is no implicit `/bin/sh`. A Card that runs other programs declares them to its SDK's builder, for example `sdk.pythonCard (common // { src = ./src; tools = [ pkgs.coreutils pkgs.ripgrep ]; })`, and the builder puts exactly those on the Card's `PATH`. Packages come from the project's pinned nixpkgs.
 

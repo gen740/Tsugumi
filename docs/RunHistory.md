@@ -69,14 +69,20 @@ When the Agent cites a result in a chat reply, open its evidence link to inspect
 
 Run records are written directly to `.tsugumi/runs.sqlite`. Copy the whole project, including its hidden `.tsugumi` directory, to keep its saved run records and files. There is no second history database or import/export pass. The project's git history holds versions of its document and code; outputs and logs live in run history.
 
-If project startup reports an incompatible history database, use the offered move-aside action before restarting. It moves the database, its sidecars and the project's artifact directory aside under matching names. Run scratch stays in its existing location.
+If project startup reports an incompatible history database, use the offered move-aside action before restarting. It moves the database, its sidecars and the project's artifact directory aside under matching names.
 
 In a Card's **Run History**, use **Delete Records…** to remove a finished run's
 logs, recorded values or artifacts. Deleting a category preserves the run summary.
 Deleting the Artifacts category removes the run's artifact directories and their
 database rows. Values that contain their UUIDs show them as unavailable. Project Run History can delete complete runs, including
-their owned artifact directories. Build cache removal and scratch cleanup
-are separate actions. Recorded runs and their scratch remain until a person
-deletes them.
+their owned artifact directories. Build cache removal is a separate action.
+Recorded runs remain until a person deletes them.
 
-See [build and scratch space](Usage.md#manage-build-and-scratch-space) and [history storage](design/RunStorage.md#history-storage).
+Run scratch is not part of history. It is a working folder that the runtime
+erases when each invocation ends, whether it succeeded, failed or was
+cancelled, after its outputs are recorded. Scratch is tmp and is cleaned up by
+design; to keep files, a Card mounts a host folder (`grants.hostPaths`). A
+rerun uses the recorded inputs, not an earlier run's scratch. Run data
+(records, values, logs and artifacts) is never deleted automatically.
+
+See [build cache space](Usage.md#manage-build-cache-space), [run scratch](design/RunStorage.md#run-scratch) and [history storage](design/RunStorage.md#history-storage).

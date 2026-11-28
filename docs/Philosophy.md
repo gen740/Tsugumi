@@ -65,6 +65,7 @@ Those the machine may build once, share and reuse without asking anyone.
 Results are different. What a result means, and whether it is worth keeping, is not something a machine can say.
 So Tsugumi keeps the record of what ran, and the inputs of the last run so that you can try again. Beyond that, it keeps only the values and files a person chose to keep.
 It may suggest clearing old runs. It should not decide on its own what to keep, what to reuse in place of a new run, or what to throw away.
+A Card's scratch is not a result. It is the working folder of one call, like the scrap paper beside the notebook, and Tsugumi clears it when the call ends. What the call produced stays in the record: its values, logs and files.
 Data you want shared the way code is shared, you put into a definition yourself, and by doing so you are the one who says it is fixed.
 
 Caching every result and reusing it automatically would be more convenient.

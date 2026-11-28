@@ -52,7 +52,7 @@ how upstream exports reach a Card and how built-in Cards propagate them.
 
 ## Keeping build results
 
-Use [Build Cache settings](../Usage.md#manage-build-and-scratch-space) to inspect and explicitly clear build registrations and store space. [Binary caches](../BinaryCaches.md) explains shared caches.
+Use [Build Cache settings](../Usage.md#manage-build-cache-space) to inspect and explicitly clear build registrations and store space. [Binary caches](../BinaryCaches.md) explains shared caches.
 
 ## Evaluation reuse
 

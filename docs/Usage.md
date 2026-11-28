@@ -85,11 +85,13 @@ On Mac, the app and the installed browser command use the project's environment 
 - How the screen is organised, and the settings: [The screen](#the-screen)
 - Installation, and how API keys are handled: [Installation and development builds](INSTALL.md), [What is sent to the model](design/security.md#what-is-sent-to-the-model)
 
-## Manage build and scratch space
+## Manage build cache space
 
-Open **Settings → project → Build Cache** in Mac or Web. Review the shared total, per-project build cache, last root use and each project's total run scratch. **Delete** beside an open project removes its build registrations; open a closed project first to use that action. **Clean shared store** in the Mac app's External Connections settings then removes unrooted store paths. Shared dependencies can stay because another project still keeps them. For this project, select individual past scratch folders and review the selected total, then choose **Delete selected scratch…**. A folder whose size cannot be measured shows **Unknown**; the selected total excludes unknown sizes. The latest run stays available for reruns; older scratch remains until a person deletes it, including after restarting.
+Open **Settings → project → Build Cache** in Mac or Web. Review the shared total, per-project build cache and last root use. **Delete** beside an open project removes its build registrations; open a closed project first to use that action. **Clean shared store** in the Mac app's External Connections settings then removes unrooted store paths. Shared dependencies can stay because another project still keeps them.
 
-Opening this Settings pane measures build and scratch usage. Build sizes use NAR estimates; scratch sizes sum file lengths without following links. Errors and unknown sizes are shown explicitly. There is no background polling or large-cache notice. For scratch lifetime and retained copies, see [Run history](RunHistory.md#copy-or-delete-history).
+Opening this Settings pane measures build usage. Build sizes use NAR estimates. Errors and unknown sizes are shown explicitly. There is no background polling or large-cache notice.
+
+Run scratch needs no cleanup: the runtime erases each invocation's scratch when it ends. See [Run history](RunHistory.md#copy-or-delete-history).
 
 ## Card settings and app settings
 
