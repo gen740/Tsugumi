@@ -1716,8 +1716,6 @@ struct HoverBubble: View {
     var lines: [String] = []
     /// A Card's stages with their state and time.
     var stages: [StageProgress.Item] = []
-    /// The running execution waits for its worker.
-    var stagesWait = false
     var facts: [String] = []
     var status: String?
     var problems: [String] = []
@@ -1742,7 +1740,7 @@ struct HoverBubble: View {
       if d.stage?.workerReused == true { facts.append(String(localized: "前回の worker を再利用して実行しました")) }
       let failed = d.state == .failed || d.state == .blocked
       return .init(title: d.title, subtitle: d.kind.label, symbol: d.symbol ?? "xmark.octagon", lines: details,
-                   stages: d.invocation > 0 ? d.stage?.items ?? [] : [], stagesWait: d.activityWaits, facts: facts,
+                   stages: d.invocation > 0 ? d.stage?.items ?? [] : [], facts: facts,
                    status: status, problems: d.errors, warnings: d.warnings, failure: failed ? d.failure : nil,
                    openLog: failed ? openLog : nil)
     }
@@ -1800,9 +1798,9 @@ struct HoverBubble: View {
         VStack(alignment: .leading, spacing: 3) {
           ForEach(content.stages) { item in
             HStack(spacing: 6) {
-              StageDot(status: item.status, size: 9, waiting: content.stagesWait && item.stage == .execute)
+              StageDot(status: item.status, size: 9, waiting: item.waiting)
               Text(item.stage.label).font(.caption)
-              Text(content.stagesWait && item.stage == .execute && item.status == .running ? SectionStatus.waiting.label : item.status.label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+              Text(item.waiting && item.status == .running ? SectionStatus.waiting.label : item.status.label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
               Spacer(minLength: 8)
               Text(item.seconds.map(formatDuration) ?? "—").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }

@@ -330,7 +330,7 @@ function CardFace({ p, g, marks }: { p: CardNodeProps; g: CardGeometry; marks: J
         </div>
         <span className="cv-ellipsis cv-status-line" title={line.hover} style={{ fontSize: font(10), lineHeight: `${s(13)}px`, color: colorVar(line.color) }}>{line.text}</span>
       </div>
-      {g.stages ? <StageDots progress={data.stage && data.invocation > 0n ? data.stage : notRunStages(true)} zoom={z} onTap={p.onStageTap} waiting={data.activityWaits} />
+      {g.stages ? <StageDots progress={data.stage && data.invocation > 0n ? data.stage : notRunStages(true)} zoom={z} onTap={p.onStageTap} />
         : data.kind === 'subgraph' ? <span className="secondary cv-center"><Icon name={data.symbol ?? 'link'} size={font(10)} /></span> : null}
     </div>
   )
@@ -452,18 +452,14 @@ export function StageDot({ status, size, waiting = false }: { status: StageStatu
 /** Stages of the latest invocation as small circles stacked top to bottom
  *  (build, run, validate) on a thin line: a timeline. Colour and fill say how
  *  each went; a click opens that stage in the log. */
-export function StageDots({ progress, zoom = 1, onTap, waiting = false }: {
-  progress: StageProgress; zoom?: number; onTap?: (s: Stage) => void
-  /** The running execution waits for its worker. */
-  waiting?: boolean
-}) {
+export function StageDots({ progress, zoom = 1, onTap }: { progress: StageProgress; zoom?: number; onTap?: (s: Stage) => void }) {
   const s = (v: number) => v * zoom
   const n = progress.items.length
   return (
     <div className="cv-dots" style={{ gap: s(4) }}>
       <span className="cv-dots-line" style={{ width: Math.max(0.5, s(1)), height: s((n - 1) * 13) }} aria-hidden />
       {progress.items.map((item) => {
-        const waits = waiting && item.stage === Stage.execute
+        const waits = item.waiting === true
         return (
           <button key={item.stage} type="button" className="cv-stage" disabled={!onTap} title={stageHelp(item, !!onTap, waits)}
             aria-label={STAGE_INFO[item.stage].label + L('：') + SECTION_STATUS_LABEL[sectionStatus(item.status, waits)]}

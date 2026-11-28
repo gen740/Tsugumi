@@ -4,7 +4,7 @@
 // now in plain words. The same model as StagePipeline in the Mac app.
 import { L } from '../i18n'
 import { D } from '../wire/rpc'
-import { Stage, STAGE_INFO, StageStatus } from './canvasKit'
+import { Stage, STAGE_INFO, StageProgress, StageStatus } from './canvasKit'
 import { CardRunState, executionActivityText, formatShortDuration, StageRecord } from './session'
 
 export interface PipelineStep {
@@ -61,24 +61,75 @@ export function stagePipeline(stages: Stage[], records: StageRecord[], service: 
     return { stage: st, status: pipelineStatus(r?.outcome), waiting: false, seconds: seconds(r), onWorker: false }
   })
   const step = (st: Stage) => steps.find((s) => s.stage === st)
-  const remote = !!service && service !== 'local'
-  const execute = record(Stage.execute)
+  const worker = workerStages(records, service, live)
   const build = step(Stage.build)
-  if (remote && build && !record(Stage.build) && execute) {
-    // The worker builds the Card's derivation before it runs it: shown on the
-    // build circle, not as an execution that has started.
-    build.onWorker = true
-    if (execute.outcome === D.StageOutcome.running) {
-      if (activity && !activity.queued) {
-        Object.assign(build, { status: 'running', waiting: activity.waiting, seconds: seconds(execute) })
-        Object.assign(step(Stage.execute)!, { status: 'pending', seconds: undefined })
-      } else if (live?.executionActivity === D.ExecutionActivity.running) build.status = 'done'
-    } else if (execute.outcome === D.StageOutcome.done) build.status = 'done'
+  if (build) {
+    build.onWorker = worker.onWorker
+    if (worker.build) Object.assign(build, {
+      status: worker.build, waiting: worker.buildWaiting,
+      // The worker's build is timed by the execution so far.
+      seconds: worker.build === 'running' ? seconds(record(Stage.execute)) : undefined,
+    })
   }
   const run = step(Stage.execute)
-  if (activity?.queued && run?.status === 'running') run.waiting = true
+  if (run) {
+    if (worker.execute) Object.assign(run, { status: worker.execute, seconds: worker.execute === 'pending' ? undefined : run.seconds })
+    run.waiting = worker.executeWaiting
+  }
   const current = steps.find((s) => s.status === 'running')
-  return { steps, detail: detail(current, remote ? service : undefined, activity, live, now) }
+  return { steps, detail: detail(current, worker.remote ? service : undefined, activity, live, now) }
+}
+
+/** One rule for the Card's face and the log's pipeline line, so that exactly
+ *  one stage shows as running. On a worker the core records no build stage of
+ *  its own: the worker builds the Card's derivation as part of the execution.
+ *  While it prepares, builds or fetches it, or waits for its Nix store, the
+ *  build is the running (or waiting) stage and the execution has not started;
+ *  once the Card itself runs, the build is done. Waiting for a free worker
+ *  slot is the execution's wait: nothing is built yet. The same rule as
+ *  WorkerStages in the Mac app. */
+export interface WorkerStages {
+  /** The build circle stands for the worker's build. */
+  onWorker: boolean
+  /** What the build and execution circles show instead of the core's record. */
+  build?: StageStatus
+  buildWaiting: boolean
+  execute?: StageStatus
+  executeWaiting: boolean
+  /** The execution runs on a worker, not in the project's own environment. */
+  remote: boolean
+}
+
+export function workerStages(records: StageRecord[], service: string | undefined, live: CardRunState | undefined): WorkerStages {
+  const remote = !!service && service !== 'local'
+  const activity = executionActivityText(live)
+  const execute = [...records].reverse().find((r) => r.stage === Stage.execute)
+  const w: WorkerStages = { onWorker: false, buildWaiting: false, executeWaiting: false, remote }
+  if (!remote || !execute || records.some((r) => r.stage === Stage.build)) {
+    // The build was the core's own (or kept): only the execution can wait.
+    w.executeWaiting = execute?.outcome === D.StageOutcome.running && activity?.waiting === true
+    return w
+  }
+  w.onWorker = true
+  if (execute.outcome === D.StageOutcome.running) {
+    if (activity && !activity.queued) Object.assign(w, { build: 'running', buildWaiting: activity.waiting, execute: 'pending' })
+    else if (live?.executionActivity === D.ExecutionActivity.running) w.build = 'done'
+    else Object.assign(w, { build: 'pending', executeWaiting: activity?.queued === true })
+  } else if (execute.outcome === D.StageOutcome.done) w.build = 'done'
+  return w
+}
+
+/** The build and execution circles of a Card's face as workerStages says:
+ *  the worker's build runs before the Card does, never both at once. */
+export function onWorker(progress: StageProgress, worker: WorkerStages): StageProgress {
+  return {
+    ...progress, items: progress.items.map((item) => {
+      if (item.stage === Stage.build && worker.build) return { ...item, status: worker.build, waiting: worker.buildWaiting }
+      if (item.stage !== Stage.execute) return item
+      const status = worker.execute ?? item.status
+      return { ...item, status, waiting: worker.executeWaiting && status === 'running' }
+    }),
+  }
 }
 
 function detail(current: PipelineStep | undefined, service: string | undefined,

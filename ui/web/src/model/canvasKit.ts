@@ -58,6 +58,8 @@ export interface StageItem {
   stage: Stage
   status: StageStatus
   seconds?: number
+  /** Running, but waiting (for a free worker slot or its Nix store). */
+  waiting?: boolean
 }
 
 export interface StageProgress {
@@ -153,8 +155,6 @@ export interface CardNodeData {
   portGrid?: number
   /** Comments on the Card not resolved yet. */
   openComments?: number
-  /** Whether a remote execution waits (for the worker) rather than runs. */
-  activityWaits?: boolean
   /** Whether a running invocation is working (CPU time, last output), on hover. */
   liveness?: string
   /** What a remote execution waits for or does, in full (on hover; the

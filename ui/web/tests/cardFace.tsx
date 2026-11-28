@@ -14,7 +14,8 @@ page.window ??= globalThis
 page.matchMedia ??= () => ({ matches: false, addEventListener() {} })
 page.EventSource ??= class { addEventListener() {} close() {} }
 const { CardGeometry, Stage, STAGE_INFO } = await import('../src/model/canvasKit')
-const { ProjectSession, cardState, formatShortDuration, relativeAge } = await import('../src/model/session')
+const { ProjectSession, cardState, formatShortDuration, relativeAge, stageProgressOf } = await import('../src/model/session')
+const { stagePipeline } = await import('../src/model/stagePipeline')
 const { CardNodeView, statusLine } = await import('../src/ui/cardNode')
 const { cardHoverContent, hoverContent } = await import('../src/ui/canvas')
 const { D } = await import('../src/wire/rpc')
@@ -98,14 +99,15 @@ const long = card('a long name of a Card '.repeat(6))
   // A remote execution waiting for its worker: a dashed ring, the short form
   // on the face, the full one in the hover with where it runs and whether it works.
   const waits: Data = {
-    ...card(), state: D.CardState.running, invocation: 1n, stage: stages('done', 'running', 'pending'),
-    activity: 'waiting (worker slot)', activityWaits: true, activityDetail: 'waiting for a free slot on the worker', worker: 'ttl', liveness: 'CPU 00:00:01.00',
+    ...card(), state: D.CardState.running, invocation: 1n,
+    stage: { ...stages('done', 'running', 'pending'), items: stages('done', 'running', 'pending').items.map((i) => i.stage === Stage.execute ? { ...i, waiting: true } : i) },
+    activity: 'waiting (worker slot)', activityDetail: 'waiting for a free slot on the worker', worker: 'ttl', liveness: 'CPU 00:00:01.00',
   }
   assert.equal(statusLine(waits).text, 'waiting (worker slot)')
   assert.deepEqual(new CardGeometry(waits, 'topToBottom').size, new CardGeometry(card(), 'topToBottom').size)
   assert.ok(renderToStaticMarkup(<CardNodeView data={waits} flow="topToBottom" />).includes('cv-dot-waiting'))
   const live = cardHoverContent(waits, [])
-  assert.ok(live.stagesWait)
+  assert.ok(live.stages?.some((i) => i.stage === Stage.execute && i.waiting))
   assert.ok(live.facts?.includes('waiting for a free slot on the worker') && live.facts.includes('CPU 00:00:01.00'))
   assert.ok(live.facts?.some((f) => f.endsWith(': ttl')))
 }
@@ -129,5 +131,40 @@ const long = card('a long name of a Card '.repeat(6))
   const html = renderToStaticMarkup(<CardNodeView data={notStarted} flow="topToBottom" />)
   assert.ok(html.includes('>worker を選べず未開始<') && html.includes(`title="${reasons}"`))
   assert.equal(statusLine(failed).hover, undefined)
+}
+{
+  // On a worker no two stage circles run at once: while the worker builds
+  // the Card its build circle runs and its run circle has not started; once
+  // the Card runs, the build is done. The log's pipeline line agrees.
+  const records = [
+    { stage: Stage.prepare, outcome: D.StageOutcome.done, start: 0, end: 10 },
+    { stage: Stage.evaluate, outcome: D.StageOutcome.done, start: 10, end: 20 },
+    { stage: Stage.execute, outcome: D.StageOutcome.running, start: 20 },
+  ]
+  const live = {
+    state: D.CardState.running, invocation: 1n, phase: D.Phase.execute, executionService: 'ttl', stages: records,
+    cached: false, workerReused: false, sent: new Set<string>(), sentInRun: new Set<string>(),
+  }
+  const circles = (activity: number, queued = false) => {
+    const state = { ...live, executionActivity: activity, executionState: queued ? D.RemoteExecutionState.queued : D.RemoteExecutionState.running }
+    const progress = stageProgressOf(state, true)
+    assert.ok(progress.items.filter((i) => i.status === 'running').length <= 1, `two circles running for activity ${activity}`)
+    const line = stagePipeline([Stage.prepare, Stage.evaluate, Stage.build, Stage.execute, Stage.validate, Stage.save], records, 'ttl', state, 100)
+    assert.ok(line.steps.filter((s) => s.status === 'running').length <= 1)
+    return Object.fromEntries(progress.items.map((i) => [i.stage, i]))
+  }
+  for (const activity of [D.ExecutionActivity.preparing, D.ExecutionActivity.building, D.ExecutionActivity.substituting]) {
+    const c = circles(activity)
+    assert.ok(c[Stage.build].status === 'running' && !c[Stage.build].waiting && c[Stage.execute].status === 'pending')
+  }
+  const store = circles(D.ExecutionActivity.waiting_store)
+  assert.ok(store[Stage.build].status === 'running' && store[Stage.build].waiting && store[Stage.execute].status === 'pending')
+  const queued = circles(D.ExecutionActivity.unspecified, true)
+  assert.ok(queued[Stage.build].status === 'pending' && queued[Stage.execute].status === 'running' && queued[Stage.execute].waiting)
+  const running = circles(D.ExecutionActivity.running)
+  assert.ok(running[Stage.build].status === 'done' && running[Stage.execute].status === 'running' && !running[Stage.execute].waiting)
+  // The project's own environment builds first, as the core records it.
+  const local = stageProgressOf({ ...live, executionService: 'local', stages: [records[0], { stage: Stage.evaluate, outcome: D.StageOutcome.running, start: 10 }] }, true)
+  assert.deepEqual(local.items.filter((i) => i.status === 'running').map((i) => i.stage), [Stage.build])
 }
 console.log('card face: passed')

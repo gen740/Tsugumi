@@ -159,6 +159,8 @@ struct StageProgress: Equatable {
     var stage: Stage
     var status: Status
     var seconds: Double?
+    /// Running, but waiting (for a free worker slot or its Nix store).
+    var waiting = false
     var id: Int { stage.rawValue }
   }
 
@@ -182,6 +184,59 @@ struct StageProgress: Equatable {
     return reached.allSatisfy { $0 == .reused } ? .reused : .cached
   }
   var failed: Item? { items.first { $0.status == .failed || $0.status == .cancelled } }
+
+  /// The latest invocation's stages from the stages the core recorded.
+  /// Stages the invocation did not reach are "pending" while it runs and
+  /// "not run" once it ended. On a worker, WorkerStages decides the build
+  /// and execution circles.
+  static func of(_ s: CardRunState, code: Bool) -> StageProgress {
+    let ended = [.succeeded, .failed, .cancelled, .skipped, .blocked].contains(s.state)
+    let failedPart = s.stages.last(where: { $0.outcome == .failed || $0.outcome == .cancelled })?.stage
+    // One shown stage covers several of the core's (build: SDK, Nix
+    // evaluation, build; validate: check and save).
+    let items = Stage.applicable(code: code).map { shown -> StageProgress.Item in
+      var parts: [StageProgress.Status] = []
+      var seconds: Double?
+      for st in shown.parts {
+        guard let r = s.stages.last(where: { $0.stage == st }) else {
+          parts.append(ended ? .notRun : .pending)
+          continue
+        }
+        switch r.outcome {
+        case .running: parts.append(ended ? .notRun : .running)
+        case .cached: parts.append(.cached)
+        case .reused: parts.append(.reused)
+        case .failed: parts.append(.failed)
+        case .cancelled: parts.append(.cancelled)
+        default: parts.append(.done)
+        }
+        if let e = r.end, let b = r.start { seconds = (seconds ?? 0) + Double(max(0, e - b)) / 1000 }
+      }
+      return .init(stage: shown, status: StageProgress.merge(parts, ended: ended), seconds: seconds)
+    }
+    return StageProgress(items: items, workerReused: s.workerReused, failedPart: failedPart)
+      .onWorker(WorkerStages(records: s.stages, service: s.executionService, live: ended ? nil : s))
+  }
+
+  /// The build and execution circles as WorkerStages says: the worker's
+  /// build runs before the Card does, never both at once.
+  func onWorker(_ worker: WorkerStages) -> StageProgress {
+    var next = self
+    for i in next.items.indices {
+      switch next.items[i].stage {
+      case .build:
+        if let status = worker.build {
+          next.items[i].status = status
+          next.items[i].waiting = worker.buildWaiting
+        }
+      case .execute:
+        if let status = worker.execute { next.items[i].status = status }
+        next.items[i].waiting = worker.executeWaiting && next.items[i].status == .running
+      default: break
+      }
+    }
+    return next
+  }
 
   /// A Card's stages before it ran in this run: all of them still to come.
   static func notRun(code: Bool) -> StageProgress {
@@ -282,8 +337,6 @@ struct CardNodeData: Equatable {
   var portGrid: CGFloat?
   /// Comments on the Card not resolved yet.
   var openComments = 0
-  /// Whether a remote execution waits (for the worker) rather than runs.
-  var activityWaits = false
   /// Whether a running invocation is working (CPU time, last output), on hover.
   var liveness: String?
   /// What a remote execution waits for or does, in full (on hover; the
@@ -1256,7 +1309,7 @@ struct CardNodeView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       if g.stages {
         StageDots(progress: data.stage.flatMap { data.invocation > 0 ? $0 : nil } ?? .notRun(code: true),
-                  zoom: zoom, onTap: onStageTap, waiting: data.activityWaits)
+                  zoom: zoom, onTap: onStageTap)
       } else if data.kind == .subgraph {
         Image(systemName: data.symbol ?? "link").font(font(10)).foregroundStyle(.secondary)
       }
@@ -1464,9 +1517,6 @@ struct StageDots: View {
   let progress: StageProgress
   var zoom: Double = 1
   var onTap: ((Stage) -> Void)?
-  /// The running execution waits for its worker.
-  var waiting = false
-
   static let dot: CGFloat = 9
   static let gap: CGFloat = 4
 
@@ -1476,7 +1526,7 @@ struct StageDots: View {
     let n = CGFloat(progress.items.count)
     VStack(spacing: s(Self.gap)) {
       ForEach(progress.items) { item in
-        let waits = waiting && item.stage == .execute
+        let waits = item.waiting
         Button { onTap?(item.stage) } label: { StageDot(status: item.status, size: s(Self.dot), waiting: waits) }
           .buttonStyle(.plain)
           .disabled(onTap == nil)

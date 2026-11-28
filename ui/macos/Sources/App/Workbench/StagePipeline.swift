@@ -43,36 +43,25 @@ struct StagePipeline: Equatable {
     func update(_ st: Stage, _ change: (inout Step) -> Void) {
       if let i = steps.firstIndex(where: { $0.stage == st }) { change(&steps[i]) }
     }
-    let remote = service.map { !$0.isEmpty && $0 != "local" } ?? false
-    let execute = record(.execute)
-    if remote, shown.contains(.build), record(.build) == nil, let execute {
-      // The worker builds the Card's derivation before it runs it: shown on
-      // the build circle, not as an execution that has started.
-      update(.build) { $0.onWorker = true }
-      switch execute.outcome {
-      case .running:
-        if let activity, !activity.queued {
-          update(.build) {
-            $0.status = .running
-            $0.waiting = activity.waiting
-            $0.seconds = seconds(execute)
-          }
-          update(.execute) {
-            $0.status = .pending
-            $0.seconds = nil
-          }
-        } else if live?.executionActivity == .running {
-          update(.build) { $0.status = .done }
-        }
-      case .done:
-        update(.build) { $0.status = .done }
-      default:
-        break
+    let worker = WorkerStages(records: records, service: service, live: live)
+    update(.build) {
+      $0.onWorker = worker.onWorker
+      if let status = worker.build {
+        $0.status = status
+        $0.waiting = worker.buildWaiting
+        // The worker's build is timed by the execution so far.
+        $0.seconds = status == .running ? seconds(record(.execute)) : nil
       }
     }
-    if activity?.queued == true { update(.execute) { $0.waiting = $0.status == .running } }
+    update(.execute) {
+      if let status = worker.execute {
+        $0.status = status
+        if status == .pending { $0.seconds = nil }
+      }
+      $0.waiting = worker.executeWaiting
+    }
     self.steps = steps
-    detail = Self.detail(steps.first { $0.status == .running }, service: remote ? service : nil,
+    detail = Self.detail(steps.first { $0.status == .running }, service: worker.remote ? service : nil,
                          activity: activity, live: live, now: now)
   }
 
@@ -117,6 +106,54 @@ struct StagePipeline: Equatable {
       parts.append(String(localized: "出力はまだありません"))
     }
     return parts.joined(separator: " · ")
+  }
+}
+
+/// One rule for the Card's face and the log's pipeline line, so that exactly
+/// one stage shows as running. On a worker the core records no build stage of
+/// its own: the worker builds the Card's derivation as part of the execution.
+/// While it prepares, builds or fetches it, or waits for its Nix store, the
+/// build is the running (or waiting) stage and the execution has not started;
+/// once the Card itself runs, the build is done. Waiting for a free worker
+/// slot is the execution's wait: nothing is built yet.
+struct WorkerStages: Equatable {
+  /// The build circle stands for the worker's build.
+  var onWorker = false
+  /// What the build and execution circles show instead of the core's record.
+  var build: StageProgress.Status?
+  var buildWaiting = false
+  var execute: StageProgress.Status?
+  var executeWaiting = false
+  /// The execution runs on a worker, not in the project's own environment.
+  var remote = false
+
+  init(records: [StageRecord], service: String?, live: CardRunState?) {
+    remote = service.map { !$0.isEmpty && $0 != "local" } ?? false
+    let activity = live.flatMap(ExecutionActivityText.init)
+    let execute = records.last { $0.stage == .execute }
+    guard remote, let execute, !records.contains(where: { $0.stage == .build }) else {
+      // The build was the core's own (or kept): only the execution can wait.
+      executeWaiting = execute?.outcome == .running && activity?.waiting == true
+      return
+    }
+    onWorker = true
+    switch execute.outcome {
+    case .running:
+      if let activity, !activity.queued {
+        build = .running
+        buildWaiting = activity.waiting
+        self.execute = .pending
+      } else if live?.executionActivity == .running {
+        build = .done
+      } else {
+        build = .pending
+        executeWaiting = activity?.queued == true
+      }
+    case .done:
+      build = .done
+    default:
+      break
+    }
   }
 }
 

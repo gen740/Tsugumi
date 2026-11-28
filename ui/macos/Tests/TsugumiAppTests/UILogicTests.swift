@@ -206,7 +206,7 @@ import TsugumiTestSupport
   state.executionActivity = .waitingStore
   #expect(ExecutionActivityText(state)?.waiting == true)
   let running: Tsugumi_Data_StageOutcome = .running
-  #expect(SectionStatus(running, waiting: true) == .waiting && SectionStatus(running) == .running)
+  #expect(SectionStatus(StagePipeline.status(running), waiting: true) == .waiting && SectionStatus(StagePipeline.status(running)) == .running)
   #expect(SectionStatus(StageProgress.Status.notRun) == .pending && SectionStatus(StageProgress.Status.cached) == .cached)
   state.executionActivity = .building
   state.executionActivityDetail = "nupipeline-1.0"
@@ -291,6 +291,45 @@ import TsugumiTestSupport
   let remoteRecords = cachedRecords.filter { $0.stage != .build }
   let remote = StagePipeline(stages: order, records: remoteRecords, service: "ttl", live: nil, now: 9_000)
   #expect(try step(remote, .build).status == .done && step(remote, .build).onWorker)
+}
+
+/// On the Card's face no two stage circles run at once: while a worker
+/// builds the Card, its build circle runs and its run circle has not started;
+/// once the Card runs, the build is done.
+@Test func aCardOnAWorkerRunsOneStageAtATime() throws {
+  let records = [StageRecord(stage: .prepare, outcome: .done, start: 0, end: 10),
+                 StageRecord(stage: .evaluate, outcome: .done, start: 10, end: 20),
+                 StageRecord(stage: .execute, outcome: .running, start: 20)]
+  var live = CardRunState(state: .running, invocation: 1, phase: .execute)
+  live.executionService = "ttl"
+  live.stages = records
+  func circles(_ activity: Tsugumi_Data_ExecutionActivity, queued: Bool = false) throws -> [Stage: StageProgress.Item] {
+    var state = live
+    state.executionActivity = activity
+    state.executionState = queued ? .queued : .running
+    let progress = StageProgress.of(state, code: true)
+    #expect(progress.items.filter { $0.status == .running }.count <= 1, "Two circles running for \(activity)")
+    #expect(StagePipeline(stages: [.prepare, .evaluate, .build, .execute, .validate, .save], records: records,
+                          service: "ttl", live: state, now: 100).steps.filter { $0.status == .running }.count <= 1)
+    return Dictionary(uniqueKeysWithValues: progress.items.map { ($0.stage, $0) })
+  }
+  for activity in [Tsugumi_Data_ExecutionActivity.preparing, .building, .substituting] {
+    let c = try circles(activity)
+    #expect(c[.build]?.status == .running && c[.build]?.waiting == false && c[.execute]?.status == .pending)
+  }
+  let store = try circles(.waitingStore)
+  #expect(store[.build]?.status == .running && store[.build]?.waiting == true && store[.execute]?.status == .pending)
+  let queued = try circles(.unspecified, queued: true)
+  #expect(queued[.build]?.status == .pending && queued[.execute]?.status == .running && queued[.execute]?.waiting == true)
+  let running = try circles(.running)
+  #expect(running[.build]?.status == .done && running[.execute]?.status == .running && running[.execute]?.waiting == false)
+  // The project's own environment builds first, as the core records it.
+  var local = live
+  local.executionService = "local"
+  local.stages = [StageRecord(stage: .prepare, outcome: .done, start: 0, end: 10),
+                  StageRecord(stage: .evaluate, outcome: .running, start: 10)]
+  let localProgress = StageProgress.of(local, code: true)
+  #expect(localProgress.items.filter { $0.status == .running }.map(\.stage) == [.build])
 }
 
 /// An open log section is as tall as its text: one line of output leaves no
@@ -627,10 +666,9 @@ import TsugumiTestSupport
   var waits = CardNodeData(title: "x", kind: .code, summary: nil, inputs: [], outputs: [])
   waits.state = .running
   waits.invocation = 1
-  waits.stage = StageProgress(items: [.init(stage: .build, status: .done), .init(stage: .execute, status: .running),
+  waits.stage = StageProgress(items: [.init(stage: .build, status: .done), .init(stage: .execute, status: .running, waiting: true),
                                       .init(stage: .validate, status: .pending)])
   waits.activity = "waiting (worker slot)"
-  waits.activityWaits = true
   waits.activityDetail = "waiting for a free slot on the worker"
   waits.worker = "ttl"
   waits.liveness = "CPU 00:00:01.00"
@@ -638,7 +676,7 @@ import TsugumiTestSupport
   #expect(CardGeometry(waits, flow: .topToBottom).size
     == CardGeometry(CardNodeData(title: "x", kind: .code, summary: nil, inputs: [], outputs: []), flow: .topToBottom).size)
   let hover = HoverBubble.Content.card(waits, details: [], runId: nil) {}
-  #expect(hover.stagesWait)
+  #expect(hover.stages.contains { $0.stage == .execute && $0.waiting })
   #expect(hover.facts.contains("waiting for a free slot on the worker") && hover.facts.contains("CPU 00:00:01.00"))
   #expect(hover.facts.contains { $0.hasSuffix(": ttl") })
 }

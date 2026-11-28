@@ -961,8 +961,6 @@ export interface BubbleContent {
   lines?: string[]
   /** A Card's stages with their state and time. */
   stages?: StageItem[]
-  /** The running execution waits for its worker. */
-  stagesWait?: boolean
   facts?: string[]
   status?: string
   problems?: string[]
@@ -987,7 +985,7 @@ export function cardHoverContent(d: CardNodeData, lines: string[], runId?: strin
   const failed = d.state === D.CardState.failed || d.state === D.CardState.blocked
   return {
     title: d.title, subtitle: KIND_LABEL[d.kind], symbol: d.symbol ?? 'xmark.octagon', lines, status,
-    stages: d.invocation > 0n ? d.stage?.items : undefined, stagesWait: d.activityWaits, facts,
+    stages: d.invocation > 0n ? d.stage?.items : undefined, facts,
     problems: d.errors, warnings: d.warnings, failure: failed ? d.failure : undefined,
     openLog: failed ? openLog : undefined,
   }
@@ -1036,9 +1034,9 @@ export function HoverBubble({ content }: { content: BubbleContent }) {
         <div className="cv-bubble-stages">
           {content.stages.map((item) => (
             <div key={item.stage} className="caption cv-bubble-stage">
-              <StageDot status={item.status} size={9} waiting={content.stagesWait && item.stage === Stage.execute} />
+              <StageDot status={item.status} size={9} waiting={item.waiting} />
               <span>{STAGE_INFO[item.stage].label}</span>
-              <span className="secondary cv-ellipsis">{content.stagesWait && item.stage === Stage.execute && item.status === 'running'
+              <span className="secondary cv-ellipsis">{item.waiting && item.status === 'running'
                 ? SECTION_STATUS_LABEL.waiting : STAGE_STATUS_LABEL[item.status]}</span>
               <span className="secondary mono-digits" style={{ marginLeft: 'auto' }}>{item.seconds !== undefined ? formatDuration(item.seconds) : '—'}</span>
             </div>

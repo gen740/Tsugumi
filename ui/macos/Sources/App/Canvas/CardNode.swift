@@ -110,36 +110,10 @@ extension ProjectSession {
     return waits
   }
 
-  /// Stages of the latest invocation (nil before any run of the Card),
-  /// from the stages the core recorded. Stages the invocation did not reach
-  /// are "pending" while it runs and "not run" once it ended.
+  /// Stages of the latest invocation (nil before any run of the Card).
   func stageProgress(_ k: CardKey) -> StageProgress? {
     guard let s = cardStates[k], s.invocation > 0 else { return nil }
-    let ended = [.succeeded, .failed, .cancelled, .skipped, .blocked].contains(s.state)
-    let failedPart = s.stages.last(where: { $0.outcome == .failed || $0.outcome == .cancelled })?.stage
-    // One shown stage covers several of the core's (build: SDK, Nix
-    // evaluation, build; validate: check and save).
-    let items = Stage.applicable(code: kind(k) == .code).map { shown -> StageProgress.Item in
-      var parts: [StageProgress.Status] = []
-      var seconds: Double?
-      for st in shown.parts {
-        guard let r = s.stages.last(where: { $0.stage == st }) else {
-          parts.append(ended ? .notRun : .pending)
-          continue
-        }
-        switch r.outcome {
-        case .running: parts.append(ended ? .notRun : .running)
-        case .cached: parts.append(.cached)
-        case .reused: parts.append(.reused)
-        case .failed: parts.append(.failed)
-        case .cancelled: parts.append(.cancelled)
-        default: parts.append(.done)
-        }
-        if let e = r.end, let b = r.start { seconds = (seconds ?? 0) + Double(max(0, e - b)) / 1000 }
-      }
-      return .init(stage: shown, status: StageProgress.merge(parts, ended: ended), seconds: seconds)
-    }
-    return StageProgress(items: items, workerReused: s.workerReused, failedPart: failedPart)
+    return .of(s, code: kind(k) == .code)
   }
 
   // Presentation: each UI combines the inner Cards' states itself, not hostd.
@@ -208,7 +182,6 @@ extension ProjectSession {
       draftEditing: editing,
       portGrid: AppPreferences.shared.showGrid ? AppPreferences.shared.gridSize : nil,
       openComments: CardComment.list(in: m).filter { !$0.resolved }.count,
-      activityWaits: state.flatMap(ExecutionActivityText.init)?.waiting == true,
       liveness: state.flatMap(livenessText),
       activityDetail: state.flatMap(ExecutionActivityText.init)?.text,
       worker: state?.executionService.flatMap { $0.isEmpty ? nil : $0 == "local" ? String(localized: "プロジェクトの実行環境") : $0 })

@@ -32,6 +32,7 @@ import { runMark } from './runMark'
 import { failureText, notStartedText } from './workerSelection'
 import { cardPermissions } from './permissions'
 import { L } from '../i18n'
+import { onWorker, workerStages } from './stagePipeline'
 
 export type CardKey = string // "a/b"
 export const key = (p: string[]): CardKey => p.join('/')
@@ -258,6 +259,36 @@ export function executionActivityText(state: CardRunState | undefined): Executio
     case D.ExecutionActivity.substituting: return of(false, L('ワーカーで取得中: {0}', detail), L('取得中: {0}', detail))
     default: return
   }
+}
+
+/** The latest invocation's stages from the stages the core recorded. Stages
+ *  it did not reach are "pending" while it runs and "not run" once it ended.
+ *  On a worker, workerStages decides the build and execution circles. */
+export function stageProgressOf(st: CardRunState, code: boolean): StageProgress {
+  const ended = ENDED.includes(st.state)
+  const items = applicableStages(code).map((shown) => {
+    const parts: StageStatus[] = []
+    let seconds: number | undefined
+    for (const sp of stageParts(shown)) {
+      const r = [...st.stages].reverse().find((x) => x.stage === sp)
+      if (!r) {
+        parts.push(ended ? 'notRun' : 'pending')
+        continue
+      }
+      switch (r.outcome) {
+        case D.StageOutcome.running: parts.push(ended ? 'notRun' : 'running'); break
+        case D.StageOutcome.cached: parts.push('cached'); break
+        case D.StageOutcome.reused: parts.push('reused'); break
+        case D.StageOutcome.failed: parts.push('failed'); break
+        case D.StageOutcome.cancelled: parts.push('cancelled'); break
+        default: parts.push('done')
+      }
+      if (r.end !== undefined && r.start !== undefined) seconds = (seconds ?? 0) + Math.max(0, r.end - r.start) / 1000
+    }
+    return { stage: shown, status: mergeStageStatus(parts, ended), seconds }
+  })
+  const failedPart = [...st.stages].reverse().find((x) => x.outcome === D.StageOutcome.failed || x.outcome === D.StageOutcome.cancelled)?.stage
+  return onWorker({ items, workerReused: st.workerReused, failedPart }, workerStages(st.stages, st.executionService, ended ? undefined : st))
 }
 
 export function remoteExecutionLabel(state: D.RemoteExecutionState | null | undefined): string | undefined {
@@ -2456,30 +2487,7 @@ export class ProjectSession extends Observable {
   stageProgress(k: CardKey): StageProgress | undefined {
     const st = this.cardStates.get(k)
     if (!st || st.invocation <= 0n) return undefined
-    const ended = ENDED.includes(st.state)
-    const items = applicableStages(this.kind(k) === 'code').map((shown) => {
-      const parts: StageStatus[] = []
-      let seconds: number | undefined
-      for (const sp of stageParts(shown)) {
-        const r = [...st.stages].reverse().find((x) => x.stage === sp)
-        if (!r) {
-          parts.push(ended ? 'notRun' : 'pending')
-          continue
-        }
-        switch (r.outcome) {
-          case D.StageOutcome.running: parts.push(ended ? 'notRun' : 'running'); break
-          case D.StageOutcome.cached: parts.push('cached'); break
-          case D.StageOutcome.reused: parts.push('reused'); break
-          case D.StageOutcome.failed: parts.push('failed'); break
-          case D.StageOutcome.cancelled: parts.push('cancelled'); break
-          default: parts.push('done')
-        }
-        if (r.end !== undefined && r.start !== undefined) seconds = (seconds ?? 0) + Math.max(0, r.end - r.start) / 1000
-      }
-      return { stage: shown, status: mergeStageStatus(parts, ended), seconds }
-    })
-    const failedPart = [...st.stages].reverse().find((x) => x.outcome === D.StageOutcome.failed || x.outcome === D.StageOutcome.cancelled)?.stage
-    return { items, workerReused: st.workerReused, failedPart }
+    return stageProgressOf(st, this.kind(k) === 'code')
   }
 
   // Presentation: each UI combines the inner Cards' states itself, not hostd.
@@ -2550,7 +2558,6 @@ export class ProjectSession extends Observable {
       errors: diags.filter((x) => x.error).map((x) => x.message), warnings: diags.filter((x) => !x.error).map((x) => x.message),
       collapsed: !editing && (opts.collapsed ?? this.collapsed(k)), permissions: cardPermissions(def),
       draftEditing: editing, openComments: cardComments(m).filter((c) => !c.resolved).length,
-      activityWaits: executionActivityText(state)?.waiting === true,
       liveness: state ? this.livenessText(state) : undefined,
       activityDetail: executionActivityText(state)?.text,
       worker: state?.executionService ? (state.executionService === 'local' ? L('プロジェクトの実行環境') : state.executionService) : undefined,

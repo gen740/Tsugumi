@@ -311,18 +311,6 @@ struct StageLogView: View {
 enum SectionStatus: Equatable {
   case pending, waiting, running, done, cached, reused, failed, cancelled
 
-  init(_ outcome: Tsugumi_Data_StageOutcome?, waiting: Bool = false) {
-    switch outcome {
-    case .running?: self = waiting ? .waiting : .running
-    case .failed?: self = .failed
-    case .cancelled?: self = .cancelled
-    case .cached?: self = .cached
-    case .reused?: self = .reused
-    case nil, .unspecified?: self = .pending
-    default: self = .done
-    }
-  }
-
   init(_ status: StageProgress.Status, waiting: Bool = false) {
     switch status {
     case .pending, .notRun: self = .pending
